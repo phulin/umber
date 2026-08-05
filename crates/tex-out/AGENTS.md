@@ -13,21 +13,20 @@ Use this crate for stable, driver-facing artifact structures and serialization c
 - `AGENTS.md`: Crate-local guidance, boundaries, validation expectations, and this file map.
 - `Cargo.toml`: Crate manifest declaring shared arithmetic and content-identity dependencies.
 - `src/binary.rs`: Versioned compact binary writer/reader, nested list and token streaming encoders/decoders, and parse error types.
-- `src/dvi.rs`: Slice-compatible and incremental output-sink DVI APIs, one-page writer state, errors, and submodule wiring.
+- `src/dvi.rs`: Slice-compatible and incremental output-sink DVI APIs, the private body compiler and file writer, one-page writer state, errors, and submodule wiring.
 - `src/bin/texout-dvitype.rs`: Small host-side DVI disassembly binary for parity triage, enabled by the opt-in `dvi-tools` feature.
 - `src/dvi/disasm.rs`: Bounded backpointer-graph validator and single-pass retained DVI command index/disassembler.
 - `src/dvi/coordinates.rs`: DVI-traversal coordinate oracle and exact positioned-stream comparator.
 - `src/dvi/disasm/tests.rs`: Page-graph corruption, retained-index, disassembly, and command lookup tests.
-- `src/dvi/extent.rs`: Page extent accounting for DVI postamble maximum dimensions.
 - `src/dvi/fonts.rs`: Indexed page/global font selection, cross-page identity checks, first-use definitions, and postamble emission.
-- `src/dvi/framing.rs`: Streaming DVI framing, page `bop`/`eop`, preamble/postamble, offsets, and one-page byte staging.
+- `src/dvi/framing.rs`: Streaming DVI preamble/postamble, offsets, and one-page byte staging.
 - `src/dvi/glue.rs`: TeX.web-style cumulative glue-set arithmetic and checked scaled-position helpers.
 - `src/dvi/leaders.rs`: TeX.web hlist/vlist leader repetition loops for aligned, centered, expanded, rule, and degenerate leader cases.
 - `src/dvi/movement.rs`: TeX.web-style DVI `movement()` lookback stack and w/x/y/z command optimization.
 - `src/dvi/opcodes.rs`: Private DVI opcode and file unit constants shared by the writer modules and tests.
-- `src/dvi/plan.rs`: Owned precompiled page bodies, scalar-event and artifact-stream compilation, first-use font-definition relocations, and final plan assembly.
+- `src/dvi/plan.rs`: The common page-plan currency, owned/scalar/artifact-stream adapters, first-use font-definition relocations, and final file assembly.
 - `src/dvi/tests.rs`: Byte-level DVI writer tests for file structure, traversal, movement optimization, rules, fonts, glue, and specials.
-- `src/dvi/traversal.rs`: TeX.web-style owned traversal plus the explicit-frame direct-emission state machine for boxes, rules, specials, glue, and movement synchronization.
+- `src/dvi/traversal.rs`: The sole explicit-frame DVI body traversal for boxes, rules, specials, glue, leaders, movement synchronization, and coordinate inspection.
 - `src/html.rs`: deterministic coordinate-locked standalone HTML serializer over already-retained font assets, asset modes, escaping, and limits.
 - `src/html/incremental.rs`: canonical keyed render revisions, stable cross-revision identity reuse, detached resource inventory, and bounded artifact/positioned-page builders.
 - `src/html/incremental/digest.rs`: versioned canonical render hashing and key derivation.

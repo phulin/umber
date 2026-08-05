@@ -172,6 +172,13 @@ needs and atomically accepts the root, generated files, bibliography
 diagnostics, auxiliary files, and final DVI/HTML. The single-pass APIs retain
 their existing meaning.
 
+All DVI publication surfaces use `tex-out`'s detached page-plan currency.
+Live shipout, committed artifact streams, incremental suffix publication, and
+coordinate inspection feed one page-local compiler; one streaming file writer
+adds cross-page framing and font state while retaining at most one encoded
+page. Library callers may therefore choose artifact or plan adapters without
+selecting a different DVI traversal or movement implementation.
+
 ### npm and browser worker
 
 Publish the format and exact base-corpus input closure, then select the named

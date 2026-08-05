@@ -5,8 +5,7 @@ use crate::{
 };
 
 use super::{
-    DviError, DviWriter,
-    extent::page_extent,
+    DviBodyCompiler, DviError, DviFileWriter,
     fonts::{DefinedFont, FontKey},
     opcodes::{BOP, EOP},
     traversal::DirectStreamState,
@@ -33,7 +32,7 @@ pub struct DviPagePlan {
 /// Incremental fresh-page compiler driven by the same detached node events as
 /// canonical artifact encoding.
 pub struct DviPagePlanBuilder {
-    writer: DviWriter<Vec<u8>>,
+    writer: DviBodyCompiler,
     job: JobInfo,
     counts: [i32; 10],
     state: Option<DirectStreamState>,
@@ -49,7 +48,7 @@ impl DviPagePlanBuilder {
         root: &BoxNode,
         vertical: bool,
     ) -> Result<Self, DviError> {
-        let mut writer = DviWriter::new(Vec::new());
+        let mut writer = DviBodyCompiler::new();
         writer.font_definition_sites = Some(Vec::new());
         writer.reset_page_state();
         let state = writer.begin_direct_stream(job.h_offset, job.v_offset, root, vertical)?;
@@ -96,51 +95,61 @@ impl DviPagePlanBuilder {
     }
 
     fn push_owned_node(&mut self, node: &PageNode, effects: &[PageEffect]) -> Result<(), DviError> {
-        match node {
-            PageNode::Char { font_id, ch, width }
-            | PageNode::Lig {
-                font_id, ch, width, ..
-            } => self.char(*font_id, *ch, *width),
-            PageNode::Kern { amount, .. } | PageNode::MarginKern { amount, .. } => {
-                self.kern(*amount)
-            }
-            PageNode::Glue {
-                spec, leader: None, ..
-            } => self.glue(*spec),
-            PageNode::Glue {
-                leader: Some(_), ..
-            } => self.writer.direct_owned_leader(
-                self.state.as_mut().expect("unfinished page plan"),
-                effects,
-                node,
-            ),
-            PageNode::Penalty(_)
-            | PageNode::Disc { .. }
-            | PageNode::Mark { .. }
-            | PageNode::Insert { .. }
-            | PageNode::Adjust(_) => Ok(()),
-            PageNode::Rule {
-                width,
-                height,
-                depth,
-            } => self.rule(*width, *height, *depth),
-            PageNode::HList(box_node) | PageNode::VList(box_node) => {
-                let entered = self.begin_box(
-                    box_node,
-                    matches!(node, PageNode::VList(_)),
-                    box_node.children.is_empty(),
-                )?;
-                if entered {
-                    for child in &box_node.children {
-                        self.push_owned_node(child, effects)?;
-                    }
-                    self.end_box()?;
-                }
-                Ok(())
-            }
-            PageNode::WhatsitAnchor { effect_index } => self.whatsit(*effect_index, effects),
-            PageNode::MathOn(width) | PageNode::MathOff(width) => self.math(*width),
+        self.writer.direct_owned_node(
+            self.state.as_mut().expect("unfinished page plan"),
+            node,
+            effects,
+        )
+    }
+
+    fn push_owned_list(
+        &mut self,
+        nodes: &[PageNode],
+        effects: &[PageEffect],
+    ) -> Result<(), DviError> {
+        self.writer.direct_owned_list(
+            self.state.as_mut().expect("unfinished page plan"),
+            nodes,
+            effects,
+        )
+    }
+
+    pub(super) fn trace_page(
+        page: &PageArtifact,
+    ) -> Result<Vec<super::coordinates::DviCoordinateEvent>, DviError> {
+        let (vertical, root) = match &page.root {
+            PageNode::HList(root) => (false, root),
+            PageNode::VList(root) => (true, root),
+            _ => unreachable!("validated page root is a box"),
+        };
+        let mut builder = Self::new(page.job.clone(), page.counts, root, vertical)?;
+        builder.writer.coordinate_trace = Some(Vec::new());
+        builder.writer.snap_reference = crate::snapping::initial_reference(&page.effects);
+        if vertical {
+            builder.writer.cur_v = builder
+                .writer
+                .cur_v
+                .checked_add(root.height)
+                .ok_or(DviError::PositionOverflow)?;
         }
+        builder.writer.trace_box(vertical, root)?;
+        if vertical {
+            builder.writer.cur_v = builder
+                .writer
+                .cur_v
+                .checked_sub(root.height)
+                .ok_or(DviError::PositionOverflow)?;
+        }
+        builder.add_fonts(&page.fonts)?;
+        builder.push_owned_list(&root.children, &page.effects)?;
+        builder
+            .writer
+            .finish_direct_stream(builder.state.take().expect("unfinished page trace"))?;
+        Ok(builder
+            .writer
+            .coordinate_trace
+            .take()
+            .expect("coordinate tracing enabled"))
     }
 
     pub fn char(
@@ -267,38 +276,16 @@ pub(super) struct FontDefinitionSite {
 impl DviPagePlan {
     /// Compiles all page-local traversal decisions into final DVI body bytes.
     pub fn compile(page: &PageArtifact) -> Result<Self, DviError> {
-        let mut writer = DviWriter::new(Vec::new());
-        writer.font_definition_sites = Some(Vec::new());
-        writer.index_page_fonts(page)?;
-        writer.reset_page_state();
-
-        let extent = page_extent(&page.root);
-        let max_height_depth = extent
-            .height_depth
-            .checked_add(page.job.v_offset.raw())
-            .ok_or(DviError::PositionOverflow)?;
-        let max_width = extent
-            .width
-            .checked_add(page.job.h_offset.raw())
-            .ok_or(DviError::PositionOverflow)?;
-        writer.ship_box(page, &page.root)?;
-        let body = std::mem::take(&mut writer.bytes);
-        let font_definition_sites = writer
-            .font_definition_sites
-            .take()
-            .expect("page-plan compiler enables font relocation recording");
-
-        Ok(Self {
-            banner: page.job.banner.clone(),
-            mag: page.job.mag,
-            counts: page.counts,
-            fonts: page.fonts.clone(),
-            body,
-            font_definition_sites,
-            max_height_depth,
-            max_width,
-            max_stack_depth: writer.max_stack_depth,
-        })
+        let (vertical, root) = match &page.root {
+            PageNode::HList(root) => (false, root),
+            PageNode::VList(root) => (true, root),
+            _ => unreachable!("validated page root is a box"),
+        };
+        let mut builder = DviPagePlanBuilder::new(page.job.clone(), page.counts, root, vertical)?;
+        builder.writer.snap_reference = crate::snapping::initial_reference(&page.effects);
+        builder.add_fonts(&page.fonts)?;
+        builder.push_owned_list(&root.children, &page.effects)?;
+        builder.finish(&page.fonts)
     }
 
     /// Validates and compiles canonical artifact bytes without materializing the
@@ -315,6 +302,7 @@ impl DviPagePlan {
 
         let mut builder =
             DviPagePlanBuilder::new(page.job.clone(), page.counts, &root, root_vertical)?;
+        builder.writer.snap_reference = crate::snapping::initial_reference(&page.effects);
         builder.add_fonts(&page.fonts)?;
         let mut children = decoder.stream_children();
         feed_v10_list(&mut builder, &mut children, &page.effects)?;
@@ -463,7 +451,7 @@ fn materialize_v10_list(nodes: &mut V10NodeListReader<'_, '_>) -> Result<Vec<Pag
     Ok(materialized)
 }
 
-impl<W: std::io::Write> DviWriter<W> {
+impl<W: std::io::Write> DviFileWriter<W> {
     pub(super) fn page_plan(&mut self, plan: &DviPagePlan) -> Result<(), DviError> {
         self.index_fonts(&plan.fonts)?;
         let bop_location = self.current_pointer()?;
@@ -471,7 +459,8 @@ impl<W: std::io::Write> DviWriter<W> {
         for count in plan.counts {
             self.i32(count);
         }
-        self.i32(self.previous_bop);
+        let previous_bop = self.previous_bop;
+        self.i32(previous_bop);
         self.previous_bop = bop_location;
 
         self.max_height_depth = self.max_height_depth.max(plan.max_height_depth);

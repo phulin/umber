@@ -338,22 +338,15 @@ Rollback is a single revert of the output-protocol migration; there is no parall
 
 Affected crates: `tex-out`, `tex-exec`, `umber`, `tex-incr`, and `tex-command-stream`.
 
-**Current design — observed.** `tex-out` contains stream and plan-oriented DVI production beginning at [`crates/tex-out/src/dvi.rs:118`](/home/phulin/umber/crates/tex-out/src/dvi.rs:118) and [`crates/tex-out/src/dvi.rs:212`](/home/phulin/umber/crates/tex-out/src/dvi.rs:212), with page-plan logic at [`crates/tex-out/src/dvi/plan.rs:267`](/home/phulin/umber/crates/tex-out/src/dvi/plan.rs:267). `tex-exec` has a separate direct shipout path at [`crates/tex-exec/src/assignments/shipout/direct.rs:235`](/home/phulin/umber/crates/tex-exec/src/assignments/shipout/direct.rs:235).
+**Current design — implemented.** `tex-out` owns one private `DviBodyCompiler` and one private `DviFileWriter`. Owned artifacts, serialized artifact streams, live `tex-exec` shipout events, incremental page publication, and coordinate inspection adapt to the same explicit-frame compiler and use `DviPagePlan` as the detached page currency. The file writer alone owns preamble/postamble framing, backpointers, cross-page font definitions, maxima, page counts, and bounded flushing. The former recursive owned traversal and separate page-extent pass are deleted.
 
-**End state.** Create one private `DviBodyCompiler` and one `DviFileWriter`. Live execution, owned page plans, incremental publication, and inspection use thin adapters over the same movement, framing, font-definition, and special-command implementation. The design remains one-pass and streaming; this is not a recommendation to materialize all pages solely to simplify code.
+**End state.** Live execution, owned page plans, incremental publication, and inspection use thin adapters over the same movement, framing, font-definition, and special-command implementation. The design remains one-pass and streaming: live shipout compiles scalar events as they arrive, serialized artifacts decode one node list at a time, and the file writer retains at most one encoded page.
 
 **Estimated net reduction.** 350–650 production LOC and 100–250 test LOC. Confidence: medium.
 
 **Preservation argument.** DVI movement compression, preamble/postamble fields, page counts, font definitions, specials, coordinate movement, and streaming behavior are externally observable.
 
-**Migration and rollback.**
-
-1. Route one page-plan variant through the common compiler.
-2. Compare its bytes and disassembly with the current writer.
-3. Route direct shipout and incremental output.
-4. Delete duplicate movement/framing/traversal implementations.
-
-Retain the old writer behind an output-policy switch until every profile passes.
+**Migration status.** Complete. Direct shipout retains its simultaneous artifact/DVI walk, owned and serialized pages compile to the same plan representation, and incremental and inspection consumers retain their existing public adapters. There is no alternate production traversal or output-policy switch.
 
 **Gates and risks.** Require byte-exact DVI oracle parity, disassembler coordinates, page hashes, font-definition ordering, incremental output, and memory/streaming bounds. Risks are movement optimization changes and page-origin or postamble timing.
 

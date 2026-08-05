@@ -3,7 +3,7 @@ use tex_arith::Scaled;
 use crate::{BoxNode, GlueKind, LeaderPayload, PageEffect};
 
 use super::{
-    DviError, DviWriter,
+    DviBodyCompiler, DviError,
     glue::{add_scaled, sub_scaled},
 };
 
@@ -38,7 +38,7 @@ pub(super) struct VLeaderContext<'a> {
     pub(super) top_edge: Scaled,
 }
 
-impl<W: std::io::Write> DviWriter<W> {
+impl DviBodyCompiler {
     pub(super) fn move_right_or_output_leaders(
         &mut self,
         context: HLeaderContext<'_>,
@@ -156,8 +156,10 @@ impl<W: std::io::Write> DviWriter<W> {
         self.synch_h()?;
         let save_h = self.dvi_h;
         match leader {
-            LeaderPayload::HList(_) => self.hlist_out(effects, box_node)?,
-            LeaderPayload::VList(_) => self.vlist_out(effects, box_node)?,
+            LeaderPayload::HList(_) => {
+                self.direct_owned_box_at_current(effects, box_node, false)?
+            }
+            LeaderPayload::VList(_) => self.direct_owned_box_at_current(effects, box_node, true)?,
             LeaderPayload::Rule { .. } => unreachable!("caller handles rule leaders"),
         }
         self.dvi_v = save_v;
@@ -183,8 +185,10 @@ impl<W: std::io::Write> DviWriter<W> {
         self.synch_v()?;
         let save_v = self.dvi_v;
         match leader {
-            LeaderPayload::HList(_) => self.hlist_out(effects, box_node)?,
-            LeaderPayload::VList(_) => self.vlist_out(effects, box_node)?,
+            LeaderPayload::HList(_) => {
+                self.direct_owned_box_at_current(effects, box_node, false)?
+            }
+            LeaderPayload::VList(_) => self.direct_owned_box_at_current(effects, box_node, true)?,
             LeaderPayload::Rule { .. } => unreachable!("caller handles rule leaders"),
         }
         self.dvi_v = save_v;

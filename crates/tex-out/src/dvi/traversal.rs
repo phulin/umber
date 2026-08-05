@@ -3,7 +3,7 @@ use tex_arith::Scaled;
 use crate::{BoxNode, PageEffect, PageNode};
 
 use super::{
-    DviError, DviWriter,
+    DviBodyCompiler, DviError,
     coordinates::DviCoordinateEvent,
     glue::{add_scaled, adjusted_glue_width, sub_scaled},
     leaders,
@@ -72,7 +72,7 @@ enum DirectContinuation {
     },
 }
 
-impl<W: std::io::Write> DviWriter<W> {
+impl DviBodyCompiler {
     pub(super) fn begin_direct_stream(
         &mut self,
         h_offset: Scaled,
@@ -97,6 +97,7 @@ impl<W: std::io::Write> DviWriter<W> {
         vertical: bool,
         continuation: DirectContinuation,
     ) -> Result<(), DviError> {
+        self.trace_box(vertical, fields)?;
         self.enter_box();
         if self.cur_s > 0 {
             self.u8(PUSH);
@@ -367,15 +368,26 @@ impl<W: std::io::Write> DviWriter<W> {
                 cur_g,
                 cur_glue,
             } => {
-                self.output_hlist_child(
-                    effects,
-                    &frame.fields,
-                    node,
-                    *base_line,
-                    *left_edge,
-                    cur_g,
+                let PageNode::Glue { spec, kind, leader } = node else {
+                    unreachable!("direct leader emission requires glue")
+                };
+                let rule_wd = adjusted_glue_width(
+                    *spec,
+                    frame.fields.glue_sign,
+                    frame.fields.glue_order,
+                    frame.fields.glue_set,
                     cur_glue,
+                    cur_g,
                 )?;
+                self.move_right_or_output_leaders(leaders::HLeaderContext {
+                    effects,
+                    this_box: &frame.fields,
+                    kind: *kind,
+                    leader,
+                    rule_wd,
+                    left_edge: *left_edge,
+                    base_line: *base_line,
+                })?;
                 self.cur_v = *base_line;
             }
             DirectAxis::V {
@@ -384,18 +396,129 @@ impl<W: std::io::Write> DviWriter<W> {
                 cur_g,
                 cur_glue,
             } => {
-                self.output_vlist_child(
-                    effects,
-                    &frame.fields,
-                    node,
-                    *left_edge,
-                    *top_edge,
-                    cur_g,
+                let PageNode::Glue { spec, kind, leader } = node else {
+                    unreachable!("direct leader emission requires glue")
+                };
+                let rule_ht = adjusted_glue_width(
+                    *spec,
+                    frame.fields.glue_sign,
+                    frame.fields.glue_order,
+                    frame.fields.glue_set,
                     cur_glue,
+                    cur_g,
                 )?;
+                self.move_down_or_output_leaders(leaders::VLeaderContext {
+                    effects,
+                    this_box: &frame.fields,
+                    kind: *kind,
+                    leader,
+                    rule_ht,
+                    left_edge: *left_edge,
+                    top_edge: *top_edge,
+                })?;
             }
         }
         Ok(())
+    }
+
+    pub(super) fn direct_owned_node(
+        &mut self,
+        state: &mut DirectStreamState,
+        node: &PageNode,
+        effects: &[PageEffect],
+    ) -> Result<(), DviError> {
+        match node {
+            PageNode::Char { font_id, ch, width } => {
+                self.trace_glyph(*font_id, &[*ch])?;
+                self.direct_char(state, *font_id, *ch, *width)
+            }
+            PageNode::Lig {
+                font_id,
+                ch,
+                source,
+                width,
+            } => {
+                self.trace_glyph(*font_id, source)?;
+                self.direct_char(state, *font_id, *ch, *width)
+            }
+            PageNode::Kern { amount, .. } | PageNode::MarginKern { amount, .. } => {
+                self.direct_kern(state, *amount)
+            }
+            PageNode::Glue {
+                leader: None, spec, ..
+            } => self.direct_glue(state, *spec),
+            PageNode::Glue {
+                leader: Some(_), ..
+            } => self.direct_owned_leader(state, effects, node),
+            PageNode::Penalty(_)
+            | PageNode::Disc { .. }
+            | PageNode::Mark { .. }
+            | PageNode::Insert { .. }
+            | PageNode::Adjust(_) => Ok(()),
+            PageNode::Rule {
+                width,
+                height,
+                depth,
+            } => self.direct_rule(state, *width, *height, *depth),
+            PageNode::HList(box_node) | PageNode::VList(box_node) => {
+                let entered = self.direct_begin_box(
+                    state,
+                    box_node,
+                    matches!(node, PageNode::VList(_)),
+                    box_node.children.is_empty(),
+                )?;
+                if entered {
+                    self.direct_owned_list(state, &box_node.children, effects)?;
+                    self.direct_end_box(state)?;
+                }
+                Ok(())
+            }
+            PageNode::WhatsitAnchor { effect_index } => {
+                self.direct_whatsit(state, effects, *effect_index)
+            }
+            PageNode::MathOn(width) | PageNode::MathOff(width) => self.direct_math(state, *width),
+        }
+    }
+
+    pub(super) fn direct_owned_list(
+        &mut self,
+        state: &mut DirectStreamState,
+        nodes: &[PageNode],
+        effects: &[PageEffect],
+    ) -> Result<(), DviError> {
+        for (index, node) in nodes.iter().enumerate() {
+            if let PageNode::WhatsitAnchor { effect_index } = node {
+                let frame = state.frames.last().expect("direct stream has a root frame");
+                if let DirectAxis::V {
+                    cur_g, cur_glue, ..
+                } = frame.axis
+                {
+                    self.out_what_v(
+                        effects,
+                        *effect_index,
+                        &nodes[index + 1..],
+                        &frame.fields,
+                        cur_g,
+                        cur_glue,
+                    )?;
+                    continue;
+                }
+            }
+            self.direct_owned_node(state, node, effects)?;
+        }
+        Ok(())
+    }
+
+    pub(super) fn direct_owned_box_at_current(
+        &mut self,
+        effects: &[PageEffect],
+        box_node: &BoxNode,
+        vertical: bool,
+    ) -> Result<(), DviError> {
+        let mut state = DirectStreamState { frames: Vec::new() };
+        self.enter_direct_frame(&mut state, box_node, vertical, DirectContinuation::Root)?;
+        self.direct_owned_list(&mut state, &box_node.children, effects)?;
+        self.finish_direct_stream(state)
     }
 
     pub(super) fn direct_whatsit(
@@ -415,399 +538,6 @@ impl<W: std::io::Write> DviWriter<W> {
         }
         Ok(())
     }
-    #[allow(clippy::too_many_arguments)] // Explicit TeX hlist traversal registers.
-    fn output_hlist_child(
-        &mut self,
-        effects: &[PageEffect],
-        this_box: &BoxNode,
-        child: &PageNode,
-        base_line: Scaled,
-        left_edge: Scaled,
-        cur_g: &mut Scaled,
-        cur_glue: &mut Scaled,
-    ) -> Result<(), DviError> {
-        match child {
-            PageNode::Char { font_id, ch, width }
-            | PageNode::Lig {
-                font_id, ch, width, ..
-            } => {
-                self.synch_h()?;
-                self.synch_v()?;
-                self.change_font(*font_id)?;
-                self.set_char(*ch)?;
-                self.cur_h = add_scaled(self.cur_h, *width)?;
-                self.dvi_h = self.cur_h;
-            }
-            PageNode::HList(box_node) | PageNode::VList(box_node) => {
-                self.output_box_in_hlist(effects, box_node, matches!(child, PageNode::VList(_)))?;
-            }
-            PageNode::Rule {
-                width,
-                height,
-                depth,
-            } => {
-                let rule_ht = height.unwrap_or(this_box.height);
-                let rule_dp = depth.unwrap_or(this_box.depth);
-                let rule_wd = width.unwrap_or(Scaled::from_raw(0));
-                self.output_rule_in_hlist(rule_ht, rule_dp, rule_wd, base_line)?;
-                self.cur_h = add_scaled(self.cur_h, rule_wd)?;
-            }
-            PageNode::Glue { spec, kind, leader } => {
-                let rule_wd = adjusted_glue_width(
-                    *spec,
-                    this_box.glue_sign,
-                    this_box.glue_order,
-                    this_box.glue_set,
-                    cur_glue,
-                    cur_g,
-                )?;
-                self.move_right_or_output_leaders(leaders::HLeaderContext {
-                    effects,
-                    this_box,
-                    kind: *kind,
-                    leader,
-                    rule_wd,
-                    left_edge,
-                    base_line,
-                })?;
-            }
-            PageNode::Kern { amount, .. } | PageNode::MarginKern { amount, .. } => {
-                self.cur_h = add_scaled(self.cur_h, *amount)?;
-            }
-            PageNode::MathOn(width) | PageNode::MathOff(width) => {
-                self.cur_h = add_scaled(self.cur_h, *width)?;
-            }
-            PageNode::WhatsitAnchor { effect_index } => {
-                self.out_what(effects, *effect_index)?;
-            }
-            PageNode::Penalty(_)
-            | PageNode::Disc { .. }
-            | PageNode::Mark { .. }
-            | PageNode::Insert { .. }
-            | PageNode::Adjust(_) => {}
-        }
-        Ok(())
-    }
-
-    #[allow(clippy::too_many_arguments)] // Explicit TeX vlist traversal registers.
-    fn output_vlist_child(
-        &mut self,
-        effects: &[PageEffect],
-        this_box: &BoxNode,
-        child: &PageNode,
-        left_edge: Scaled,
-        top_edge: Scaled,
-        cur_g: &mut Scaled,
-        cur_glue: &mut Scaled,
-    ) -> Result<(), DviError> {
-        match child {
-            PageNode::HList(box_node) | PageNode::VList(box_node) => {
-                self.output_box_in_vlist(effects, box_node, matches!(child, PageNode::VList(_)))?;
-                self.cur_h = left_edge;
-            }
-            PageNode::Rule {
-                width,
-                height,
-                depth,
-            } => {
-                let rule_ht = add_scaled(
-                    height.unwrap_or(Scaled::from_raw(0)),
-                    depth.unwrap_or(Scaled::from_raw(0)),
-                )?;
-                self.output_rule_in_vlist(rule_ht, width.unwrap_or(this_box.width))?;
-            }
-            PageNode::Glue { spec, kind, leader } => {
-                let rule_ht = adjusted_glue_width(
-                    *spec,
-                    this_box.glue_sign,
-                    this_box.glue_order,
-                    this_box.glue_set,
-                    cur_glue,
-                    cur_g,
-                )?;
-                self.move_down_or_output_leaders(leaders::VLeaderContext {
-                    effects,
-                    this_box,
-                    kind: *kind,
-                    leader,
-                    rule_ht,
-                    left_edge,
-                    top_edge,
-                })?;
-            }
-            PageNode::Kern { amount, .. } | PageNode::MarginKern { amount, .. } => {
-                self.cur_v = add_scaled(self.cur_v, *amount)?;
-            }
-            PageNode::WhatsitAnchor { effect_index } => {
-                self.out_what(effects, *effect_index)?;
-            }
-            PageNode::Char { .. }
-            | PageNode::Lig { .. }
-            | PageNode::Penalty(_)
-            | PageNode::Disc { .. }
-            | PageNode::Mark { .. }
-            | PageNode::Insert { .. }
-            | PageNode::MathOn(_)
-            | PageNode::MathOff(_)
-            | PageNode::Adjust(_) => {}
-        }
-        Ok(())
-    }
-
-    pub(super) fn hlist_out(
-        &mut self,
-        effects: &[PageEffect],
-        this_box: &BoxNode,
-    ) -> Result<(), DviError> {
-        let g_order = this_box.glue_order;
-        let g_sign = this_box.glue_sign;
-        self.trace_box(false, this_box)?;
-        self.enter_box();
-        if self.cur_s > 0 {
-            self.u8(PUSH);
-        }
-        let save_loc = self.bytes.len();
-        let base_line = self.cur_v;
-        let left_edge = self.cur_h;
-        let mut cur_g = Scaled::from_raw(0);
-        let mut cur_glue = Scaled::from_raw(0);
-
-        for child in &this_box.children {
-            match child {
-                PageNode::Char { font_id, ch, width } => {
-                    self.trace_glyph(*font_id, &[*ch])?;
-                    self.synch_h()?;
-                    self.synch_v()?;
-                    self.change_font(*font_id)?;
-                    self.set_char(*ch)?;
-                    self.cur_h = add_scaled(self.cur_h, *width)?;
-                    self.dvi_h = self.cur_h;
-                }
-                PageNode::Lig {
-                    font_id,
-                    ch,
-                    source,
-                    width,
-                } => {
-                    self.trace_glyph(*font_id, source)?;
-                    self.synch_h()?;
-                    self.synch_v()?;
-                    self.change_font(*font_id)?;
-                    self.set_char(*ch)?;
-                    self.cur_h = add_scaled(self.cur_h, *width)?;
-                    self.dvi_h = self.cur_h;
-                }
-                PageNode::HList(box_node) | PageNode::VList(box_node) => {
-                    self.output_box_in_hlist(
-                        effects,
-                        box_node,
-                        matches!(child, PageNode::VList(_)),
-                    )?;
-                }
-                PageNode::Rule {
-                    width,
-                    height,
-                    depth,
-                } => {
-                    let rule_ht = height.unwrap_or(this_box.height);
-                    let rule_dp = depth.unwrap_or(this_box.depth);
-                    let rule_wd = width.unwrap_or(Scaled::from_raw(0));
-                    self.output_rule_in_hlist(rule_ht, rule_dp, rule_wd, base_line)?;
-                    self.cur_h = add_scaled(self.cur_h, rule_wd)?;
-                }
-                PageNode::Glue { spec, kind, leader } => {
-                    let rule_wd = adjusted_glue_width(
-                        *spec,
-                        g_sign,
-                        g_order,
-                        this_box.glue_set,
-                        &mut cur_glue,
-                        &mut cur_g,
-                    )?;
-                    self.move_right_or_output_leaders(leaders::HLeaderContext {
-                        effects,
-                        this_box,
-                        kind: *kind,
-                        leader,
-                        rule_wd,
-                        left_edge,
-                        base_line,
-                    })?;
-                }
-                PageNode::Kern { amount, .. } | PageNode::MarginKern { amount, .. } => {
-                    self.cur_h = add_scaled(self.cur_h, *amount)?;
-                }
-                PageNode::MathOn(width) | PageNode::MathOff(width) => {
-                    self.cur_h = add_scaled(self.cur_h, *width)?;
-                }
-                PageNode::WhatsitAnchor { effect_index } => {
-                    self.out_what(effects, *effect_index)?;
-                }
-                PageNode::Penalty(_)
-                | PageNode::Disc { .. }
-                | PageNode::Mark { .. }
-                | PageNode::Insert { .. }
-                | PageNode::Adjust(_) => {}
-            }
-            self.cur_v = base_line;
-        }
-
-        self.prune_movements(save_loc);
-        if self.cur_s > 0 {
-            self.dvi_pop(save_loc);
-        }
-        self.cur_s -= 1;
-        Ok(())
-    }
-
-    pub(super) fn vlist_out(
-        &mut self,
-        effects: &[PageEffect],
-        this_box: &BoxNode,
-    ) -> Result<(), DviError> {
-        let g_order = this_box.glue_order;
-        let g_sign = this_box.glue_sign;
-        self.trace_box(true, this_box)?;
-        self.enter_box();
-        if self.cur_s > 0 {
-            self.u8(PUSH);
-        }
-        let save_loc = self.bytes.len();
-        let left_edge = self.cur_h;
-        self.cur_v = sub_scaled(self.cur_v, this_box.height)?;
-        let top_edge = self.cur_v;
-        let mut cur_g = Scaled::from_raw(0);
-        let mut cur_glue = Scaled::from_raw(0);
-
-        for (index, child) in this_box.children.iter().enumerate() {
-            match child {
-                PageNode::HList(box_node) | PageNode::VList(box_node) => {
-                    self.output_box_in_vlist(
-                        effects,
-                        box_node,
-                        matches!(child, PageNode::VList(_)),
-                    )?;
-                    self.cur_h = left_edge;
-                }
-                PageNode::Rule {
-                    width,
-                    height,
-                    depth,
-                } => {
-                    let rule_ht = add_scaled(
-                        height.unwrap_or(Scaled::from_raw(0)),
-                        depth.unwrap_or(Scaled::from_raw(0)),
-                    )?;
-                    let rule_wd = width.unwrap_or(this_box.width);
-                    self.output_rule_in_vlist(rule_ht, rule_wd)?;
-                }
-                PageNode::Glue { spec, kind, leader } => {
-                    let rule_ht = adjusted_glue_width(
-                        *spec,
-                        g_sign,
-                        g_order,
-                        this_box.glue_set,
-                        &mut cur_glue,
-                        &mut cur_g,
-                    )?;
-                    self.move_down_or_output_leaders(leaders::VLeaderContext {
-                        effects,
-                        this_box,
-                        kind: *kind,
-                        leader,
-                        rule_ht,
-                        left_edge,
-                        top_edge,
-                    })?;
-                }
-                PageNode::Kern { amount, .. } | PageNode::MarginKern { amount, .. } => {
-                    self.cur_v = add_scaled(self.cur_v, *amount)?;
-                }
-                PageNode::WhatsitAnchor { effect_index } => {
-                    self.out_what_v(
-                        effects,
-                        *effect_index,
-                        &this_box.children[index + 1..],
-                        this_box,
-                        cur_g,
-                        cur_glue,
-                    )?;
-                }
-                PageNode::Char { .. }
-                | PageNode::Lig { .. }
-                | PageNode::Penalty(_)
-                | PageNode::Disc { .. }
-                | PageNode::Mark { .. }
-                | PageNode::Insert { .. }
-                | PageNode::MathOn(_)
-                | PageNode::MathOff(_)
-                | PageNode::Adjust(_) => {}
-            }
-        }
-
-        self.prune_movements(save_loc);
-        if self.cur_s > 0 {
-            self.dvi_pop(save_loc);
-        }
-        self.cur_s -= 1;
-        Ok(())
-    }
-
-    fn output_box_in_hlist(
-        &mut self,
-        effects: &[PageEffect],
-        box_node: &BoxNode,
-        is_vlist: bool,
-    ) -> Result<(), DviError> {
-        if box_node.children.is_empty() {
-            self.cur_h = add_scaled(self.cur_h, box_node.width)?;
-            return Ok(());
-        }
-        let save_h = self.dvi_h;
-        let save_v = self.dvi_v;
-        let edge = self.cur_h;
-        let base_line = self.cur_v;
-        self.cur_v = add_scaled(base_line, box_node.shift)?;
-        if is_vlist {
-            self.vlist_out(effects, box_node)?;
-        } else {
-            self.hlist_out(effects, box_node)?;
-        }
-        self.dvi_h = save_h;
-        self.dvi_v = save_v;
-        self.cur_h = add_scaled(edge, box_node.width)?;
-        self.cur_v = base_line;
-        Ok(())
-    }
-
-    fn output_box_in_vlist(
-        &mut self,
-        effects: &[PageEffect],
-        box_node: &BoxNode,
-        is_vlist: bool,
-    ) -> Result<(), DviError> {
-        if box_node.children.is_empty() {
-            self.cur_v = add_scaled(add_scaled(self.cur_v, box_node.height)?, box_node.depth)?;
-            return Ok(());
-        }
-        self.cur_v = add_scaled(self.cur_v, box_node.height)?;
-        self.synch_v()?;
-        let save_h = self.dvi_h;
-        let save_v = self.dvi_v;
-        let left_edge = self.cur_h;
-        self.cur_h = add_scaled(left_edge, box_node.shift)?;
-        if is_vlist {
-            self.vlist_out(effects, box_node)?;
-        } else {
-            self.hlist_out(effects, box_node)?;
-        }
-        self.dvi_h = save_h;
-        self.dvi_v = save_v;
-        self.cur_v = add_scaled(save_v, box_node.depth)?;
-        self.cur_h = left_edge;
-        Ok(())
-    }
-
     pub(super) fn output_rule_in_hlist(
         &mut self,
         rule_ht: Scaled,
@@ -957,7 +687,7 @@ impl<W: std::io::Write> DviWriter<W> {
         Ok(())
     }
 
-    fn trace_box(&mut self, vertical: bool, node: &BoxNode) -> Result<(), DviError> {
+    pub(super) fn trace_box(&mut self, vertical: bool, node: &BoxNode) -> Result<(), DviError> {
         if let Some(trace) = &mut self.coordinate_trace {
             trace.push(DviCoordinateEvent::Box {
                 vertical,
@@ -971,7 +701,11 @@ impl<W: std::io::Write> DviWriter<W> {
         Ok(())
     }
 
-    fn trace_glyph(&mut self, font_id: u32, source_codes: &[u32]) -> Result<(), DviError> {
+    pub(super) fn trace_glyph(
+        &mut self,
+        font_id: u32,
+        source_codes: &[u32],
+    ) -> Result<(), DviError> {
         if let Some(trace) = &mut self.coordinate_trace {
             let source_codes = source_codes
                 .iter()

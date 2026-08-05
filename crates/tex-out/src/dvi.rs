@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 use std::fmt;
 use std::io::Write;
+use std::ops::{Deref, DerefMut};
 
 use tex_arith::Scaled;
 
@@ -14,7 +15,6 @@ mod tests;
 
 pub mod coordinates;
 pub mod disasm;
-mod extent;
 mod fonts;
 mod framing;
 pub(crate) mod glue;
@@ -117,7 +117,7 @@ pub fn write_dvi(pages: &[PageArtifact]) -> Result<Vec<u8>, DviError> {
 
 /// Incremental DVI emitter that retains at most one encoded page buffer.
 pub struct DviStreamWriter<W: Write> {
-    writer: DviWriter<W>,
+    writer: DviFileWriter<W>,
     failed: bool,
 }
 
@@ -125,7 +125,7 @@ impl<W: Write> DviStreamWriter<W> {
     #[must_use]
     pub fn new(sink: W) -> Self {
         Self {
-            writer: DviWriter::new(sink),
+            writer: DviFileWriter::new(sink),
             failed: false,
         }
     }
@@ -155,24 +155,8 @@ impl<W: Write> DviStreamWriter<W> {
     }
 
     fn write_page_inner(&mut self, page: &PageArtifact) -> Result<(), DviError> {
-        if self.writer.page_count == u16::MAX {
-            return Err(DviError::TooManyPages {
-                pages: usize::from(self.writer.page_count) + 1,
-            });
-        }
-        match (&self.writer.job_banner, self.writer.job_mag) {
-            (None, None) => {
-                self.writer.preamble(&page.job.banner, page.job.mag)?;
-                self.writer.job_banner = Some(page.job.banner.clone());
-                self.writer.job_mag = Some(page.job.mag);
-                self.writer.flush_buffer()?;
-            }
-            (Some(banner), Some(mag)) if banner == &page.job.banner && mag == page.job.mag => {}
-            _ => return Err(DviError::InconsistentJobInfo),
-        }
-        self.writer.page(page)?;
-        self.writer.page_count += 1;
-        self.writer.flush_buffer()
+        let plan = DviPagePlan::compile(page)?;
+        self.write_page_plan_inner(&plan)
     }
 
     fn write_page_plan_inner(&mut self, plan: &DviPagePlan) -> Result<(), DviError> {
@@ -209,19 +193,13 @@ impl<W: Write> DviStreamWriter<W> {
     }
 }
 
-struct DviWriter<W: Write> {
-    sink: W,
+/// The one page-local DVI state machine. Adapters feed it owned nodes,
+/// serialized node events, or live shipout events.
+struct DviBodyCompiler {
     bytes: Vec<u8>,
-    committed_offset: usize,
     fonts: BTreeMap<fonts::FontKey, DefinedFont>,
     fonts_by_number: BTreeMap<u32, fonts::FontKey>,
     page_fonts: BTreeMap<u32, crate::FontResource>,
-    job_banner: Option<String>,
-    job_mag: Option<i32>,
-    page_count: u16,
-    previous_bop: i32,
-    max_height_depth: i32,
-    max_width: i32,
     max_stack_depth: u16,
     right_stack: MovementStack,
     down_stack: MovementStack,
@@ -236,21 +214,27 @@ struct DviWriter<W: Write> {
     snap_reference: (Scaled, Scaled),
 }
 
-impl<W: Write> DviWriter<W> {
-    fn new(sink: W) -> Self {
+/// The one streaming DVI file assembler. It retains only the current encoded
+/// page while owning cross-page framing, fonts, maxima, and backpointers.
+struct DviFileWriter<W: Write> {
+    sink: W,
+    body: DviBodyCompiler,
+    committed_offset: usize,
+    job_banner: Option<String>,
+    job_mag: Option<i32>,
+    page_count: u16,
+    previous_bop: i32,
+    max_height_depth: i32,
+    max_width: i32,
+}
+
+impl DviBodyCompiler {
+    fn new() -> Self {
         Self {
-            sink,
             bytes: Vec::new(),
-            committed_offset: 0,
             fonts: BTreeMap::new(),
             fonts_by_number: BTreeMap::new(),
             page_fonts: BTreeMap::new(),
-            job_banner: None,
-            job_mag: None,
-            page_count: 0,
-            previous_bop: -1,
-            max_height_depth: 0,
-            max_width: 0,
             max_stack_depth: 0,
             right_stack: MovementStack::default(),
             down_stack: MovementStack::default(),
@@ -265,18 +249,48 @@ impl<W: Write> DviWriter<W> {
             snap_reference: (Scaled::from_raw(0), Scaled::from_raw(0)),
         }
     }
+}
+
+impl<W: Write> DviFileWriter<W> {
+    fn new(sink: W) -> Self {
+        Self {
+            sink,
+            body: DviBodyCompiler::new(),
+            committed_offset: 0,
+            job_banner: None,
+            job_mag: None,
+            page_count: 0,
+            previous_bop: -1,
+            max_height_depth: 0,
+            max_width: 0,
+        }
+    }
 
     fn flush_buffer(&mut self) -> Result<(), DviError> {
         self.sink
-            .write_all(&self.bytes)
+            .write_all(&self.body.bytes)
             .map_err(|error| DviError::Sink {
                 message: error.to_string(),
             })?;
         self.committed_offset = self
             .committed_offset
-            .checked_add(self.bytes.len())
+            .checked_add(self.body.bytes.len())
             .ok_or(DviError::OffsetOverflow { offset: usize::MAX })?;
-        self.bytes.clear();
+        self.body.bytes.clear();
         Ok(())
+    }
+}
+
+impl<W: Write> Deref for DviFileWriter<W> {
+    type Target = DviBodyCompiler;
+
+    fn deref(&self) -> &Self::Target {
+        &self.body
+    }
+}
+
+impl<W: Write> DerefMut for DviFileWriter<W> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.body
     }
 }

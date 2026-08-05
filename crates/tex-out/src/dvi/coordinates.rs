@@ -5,7 +5,7 @@ use tex_arith::Scaled;
 use crate::positioned::{BoxKind, PositionedEvent, PositionedPage, TextUnit};
 use crate::{PageArtifact, PageNode};
 
-use super::{DviError, DviWriter};
+use super::{DviError, DviPagePlanBuilder};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum DviCoordinateEvent {
@@ -68,15 +68,7 @@ impl From<DviError> for CoordinateError {
 }
 
 pub fn trace_page(page: &PageArtifact) -> Result<Vec<DviCoordinateEvent>, DviError> {
-    let mut writer = DviWriter::new(Vec::new());
-    writer.coordinate_trace = Some(Vec::new());
-    writer.index_page_fonts(page)?;
-    writer.reset_page_state();
-    writer.ship_box(page, &page.root)?;
-    Ok(writer
-        .coordinate_trace
-        .take()
-        .expect("coordinate tracing enabled"))
+    DviPagePlanBuilder::trace_page(page)
 }
 
 /// Compares the driver-neutral stream with the canonical DVI traversal.

@@ -11,7 +11,7 @@ use tex_arith::Scaled;
 // Umber policy: a page is staged in one growable byte vector, so every prior
 // opcode remains patchable; TeX's `dvi_gone` rejection for already-flushed
 // ring-buffer bytes is consequently unnecessary.  The two independent
-// MovementStack values in DviWriter are TeX's right and down stacks.
+// MovementStack values in DviBodyCompiler are TeX's right and down stacks.
 
 const Y0_OFFSET: u8 = 161 - 157;
 const Z0_OFFSET: u8 = 166 - 157;

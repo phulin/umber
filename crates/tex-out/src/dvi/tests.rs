@@ -700,7 +700,7 @@ fn dvi_movement_reuse_rewrite_prune_and_page_initialization_match_tex82() {
     stack.movement(&mut bytes, sp(10), RIGHT1);
     assert_eq!(bytes.last(), Some(&W0));
 
-    let mut writer = super::DviWriter::new(Vec::new());
+    let mut writer = super::DviBodyCompiler::new();
     writer
         .right_stack
         .movement(&mut writer.bytes, sp(11), RIGHT1);
@@ -771,7 +771,7 @@ fn dvi_opcode_width_boundaries() {
         );
     }
 
-    let mut writer = super::DviWriter::new(Vec::new());
+    let mut writer = super::DviBodyCompiler::new();
     writer.set_char(127).expect("set_char 127");
     writer.set_char(128).expect("set_char 128");
     assert_eq!(writer.bytes, [127, SET1, 128]);
@@ -788,7 +788,7 @@ fn dvi_opcode_width_boundaries() {
         (u32::MAX, FNT4, FNT_DEF4),
     ];
     for (font_id, selection, definition) in font_cases {
-        let mut writer = super::DviWriter::new(Vec::new());
+        let mut writer = super::DviBodyCompiler::new();
         writer
             .index_fonts(&[font_resource(font_id, "f")])
             .expect("font index");
@@ -827,13 +827,13 @@ fn dvi_opcode_width_boundaries() {
 /// lengths in one byte and reject no legal 255-byte value.
 #[test]
 fn dvi_field_length_boundaries() {
-    let mut writer = super::DviWriter::new(Vec::new());
+    let mut writer = super::DviFileWriter::new(Vec::new());
     writer
         .preamble(&"c".repeat(255), 1_000)
         .expect("255-byte comment");
     assert_eq!(writer.bytes[14], 255);
     assert_eq!(
-        super::DviWriter::new(Vec::new()).preamble(&"c".repeat(256), 1_000),
+        super::DviFileWriter::new(Vec::new()).preamble(&"c".repeat(256), 1_000),
         Err(DviError::FieldTooLong {
             field: "comment",
             len: 256,
@@ -844,7 +844,7 @@ fn dvi_field_length_boundaries() {
         ("font area", format!("{}/n", "a".repeat(254))),
         ("font name", "n".repeat(255)),
     ] {
-        let mut writer = super::DviWriter::new(Vec::new());
+        let mut writer = super::DviBodyCompiler::new();
         writer
             .fnt_def(0, &font_resource(0, &name))
             .expect("255-byte font field");
@@ -855,7 +855,7 @@ fn dvi_field_length_boundaries() {
         ("font name", "n".repeat(256)),
     ] {
         assert_eq!(
-            super::DviWriter::new(Vec::new()).fnt_def(0, &font_resource(0, &name)),
+            super::DviBodyCompiler::new().fnt_def(0, &font_resource(0, &name)),
             Err(DviError::FieldTooLong { field, len: 256 })
         );
     }
