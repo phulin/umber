@@ -9,7 +9,9 @@ use tex_state::meaning::{Meaning, MeaningFlags, UnexpandablePrimitive};
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 
 use crate::input::SharedTokenBuffer;
-use crate::processor::status::{ArgumentBuilderId, MatchingContext, ScannerStatus, ScannerWarning};
+use crate::processor::status::{
+    ArgumentBuilderId, MatchingContext, ScannerStatus, ScannerStatusVisibility, ScannerWarning,
+};
 use crate::{CommandError, CommandProcessor};
 
 use crate::observation::{
@@ -257,7 +259,7 @@ impl CommandProcessor<'_> {
         // `matching` scanner episode. Literal leading tokens still need the
         // matcher even when there are no numbered parameters.
         let needs_matching = !pattern.leading().is_empty() || pattern.parameter_count() != 0;
-        let prior = if needs_matching {
+        let episode = if needs_matching {
             let builder = ArgumentBuilderId(self.command.transient.next_builder_identity);
             self.command.transient.next_builder_identity =
                 self.command.transient.next_builder_identity.wrapping_add(1);
@@ -269,12 +271,7 @@ impl CommandProcessor<'_> {
                 // warning slot now so outer recovery has one canonical path.
                 warning: ScannerWarning(0),
             });
-            let prior = self.command.begin_scanner_status(status.clone());
-            self.observe_scanner_status_transition(
-                prior.status().clone(),
-                self.command.scanner.status().clone(),
-            );
-            Some((prior, status))
+            Some(self.begin_scanner_episode(status, ScannerStatusVisibility::Observed))
         } else {
             None
         };
@@ -298,14 +295,14 @@ impl CommandProcessor<'_> {
                     },
                 );
                 self.observe_command_diagnostic("macro_prefix_mismatch", &call);
-                if let Some((prior, status)) = prior {
-                    self.restore_scanner_status_with_observation(status, prior);
+                if let Some(episode) = episode {
+                    self.finish_scanner_episode(episode);
                 }
                 return Ok(MacroCallOutcome::PrefixMismatchRecovered);
             }
             Err(error) => {
-                if let Some((prior, status)) = prior {
-                    self.restore_scanner_status_with_observation(status, prior);
+                if let Some(episode) = episode {
+                    self.finish_scanner_episode(episode);
                 }
                 return Err(error);
             }
@@ -352,8 +349,8 @@ impl CommandProcessor<'_> {
                 tokens: Vec::new(),
             }),
         );
-        if let Some((prior, status)) = prior {
-            self.restore_scanner_status_with_observation(status, prior);
+        if let Some(episode) = episode {
+            self.finish_scanner_episode(episode);
         }
         Ok(MacroCallOutcome::Activated)
     }

@@ -18,7 +18,7 @@ use crate::input::{
     SharedBackedUpBuffer, SharedTokenBuffer, TokenBehavior, TokenPayload,
 };
 use crate::macro_call::MacroArguments;
-use crate::processor::status::ScannerStatus;
+use crate::processor::status::{ScannerStatus, ScannerStatusVisibility};
 use crate::profile::CommandProfile;
 use crate::{
     CommandError, CommandReplayDelivery, CurrentCommand, RegisteredSourceKind, SourceNameClass,
@@ -1006,17 +1006,10 @@ impl CommandProcessor<'_> {
             return self.get_token();
         }
 
-        let prior = self.command.begin_scanner_status(ScannerStatus::Normal);
-        self.observe_scanner_status_transition(
-            prior.status().clone(),
-            self.command.scanner.status().clone(),
-        );
+        let episode =
+            self.begin_scanner_episode(ScannerStatus::Normal, ScannerStatusVisibility::Observed);
         let target = self.get_token();
-        self.observe_scanner_status_transition(
-            self.command.scanner.status().clone(),
-            prior.status().clone(),
-        );
-        self.command.restore_scanner_status(prior);
+        self.finish_scanner_episode(episode);
         target
     }
 

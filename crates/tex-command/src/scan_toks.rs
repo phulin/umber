@@ -16,7 +16,8 @@ use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 use crate::processor::alignment::TEMPLATE_ALIGN_STATE;
 use crate::processor::expand::is_expandable_command;
 use crate::processor::status::{
-    AbsorbingContext, DefinitionContext, ScannerStatus, ScannerWarning, TokenBuilderId,
+    AbsorbingContext, DefinitionContext, ScannerEpisode, ScannerStatus, ScannerStatusVisibility,
+    ScannerWarning, TokenBuilderId,
 };
 use crate::{CommandError, CommandProcessor};
 use tex_state::CommandLineSource;
@@ -57,6 +58,171 @@ pub(crate) enum ScanToksMode {
     MacroDefinition { expanded: bool },
     /// Production macro definition scan, carrying §479's `warning_index`.
     MacroDefinitionFor { expanded: bool, target: Symbol },
+}
+
+/// Parsed grammar of one canonical token-list collection.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ScanToksGrammar {
+    General,
+    MacroDefinition,
+}
+
+/// How the collector reaches the opening delimiter of its body.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ScanToksOpening {
+    /// Scan TeX82 §403's mandatory opening brace.
+    Required,
+    /// Consume the already classified and backed-up §1227 opener.
+    Prevalidated { primary: OriginId },
+    /// Scan a macro's parameter text through its terminating opening brace.
+    AfterParameterText,
+}
+
+/// Expansion policy inside the replacement collector.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ScanToksExpansion {
+    Expanded,
+    Unexpanded,
+}
+
+impl ScanToksExpansion {
+    const fn is_expanded(self) -> bool {
+        matches!(self, Self::Expanded)
+    }
+}
+
+/// Semantic owner of the scanner status and its runaway warning target.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ScanToksOwner {
+    Absorbed(Option<Symbol>),
+    Definition(Option<Symbol>),
+}
+
+/// Detached token-list observation emitted when collection completes.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ScanToksPurpose {
+    Balanced,
+    ExpandedBalanced,
+    MacroReplacement,
+    GeneralText(&'static str),
+}
+
+impl ScanToksPurpose {
+    const fn canonical_name(self) -> &'static str {
+        match self {
+            Self::Balanced => "scan_toks",
+            Self::ExpandedBalanced => "expanded_scan_toks",
+            Self::MacroReplacement => "macro_replacement",
+            Self::GeneralText(purpose) => purpose,
+        }
+    }
+
+    fn renders_detokenized_result(self) -> bool {
+        matches!(self, Self::GeneralText("detokenize"))
+    }
+}
+
+/// Fully typed internal configuration parsed once from [`ScanToksMode`].
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct ScanToksConfig {
+    grammar: ScanToksGrammar,
+    opening: ScanToksOpening,
+    expansion: ScanToksExpansion,
+    owner: ScanToksOwner,
+    purpose: ScanToksPurpose,
+    status_visibility: ScannerStatusVisibility,
+}
+
+impl ScanToksConfig {
+    fn parse(mode: ScanToksMode) -> Self {
+        let expansion = |expanded| {
+            if expanded {
+                ScanToksExpansion::Expanded
+            } else {
+                ScanToksExpansion::Unexpanded
+            }
+        };
+        let balanced_purpose = |expanded| {
+            if expanded {
+                ScanToksPurpose::ExpandedBalanced
+            } else {
+                ScanToksPurpose::Balanced
+            }
+        };
+        match mode {
+            ScanToksMode::General { expanded } => Self {
+                grammar: ScanToksGrammar::General,
+                opening: ScanToksOpening::Required,
+                expansion: expansion(expanded),
+                owner: ScanToksOwner::Absorbed(None),
+                purpose: balanced_purpose(expanded),
+                status_visibility: ScannerStatusVisibility::Observed,
+            },
+            ScanToksMode::GeneralFor { expanded, owner } => Self {
+                grammar: ScanToksGrammar::General,
+                opening: ScanToksOpening::Required,
+                expansion: expansion(expanded),
+                owner: ScanToksOwner::Absorbed(Some(owner)),
+                purpose: balanced_purpose(expanded),
+                status_visibility: ScannerStatusVisibility::Observed,
+            },
+            ScanToksMode::GeneralAfterOpening {
+                expanded,
+                primary,
+                owner,
+            } => Self {
+                grammar: ScanToksGrammar::General,
+                opening: ScanToksOpening::Prevalidated { primary },
+                expansion: expansion(expanded),
+                owner: ScanToksOwner::Absorbed(owner),
+                purpose: balanced_purpose(expanded),
+                status_visibility: ScannerStatusVisibility::Observed,
+            },
+            ScanToksMode::GeneralText { purpose } => Self {
+                grammar: ScanToksGrammar::General,
+                opening: ScanToksOpening::Required,
+                expansion: ScanToksExpansion::Unexpanded,
+                owner: ScanToksOwner::Absorbed(None),
+                purpose: ScanToksPurpose::GeneralText(purpose),
+                status_visibility: ScannerStatusVisibility::Hidden,
+            },
+            ScanToksMode::MacroDefinition { expanded } => Self {
+                grammar: ScanToksGrammar::MacroDefinition,
+                opening: ScanToksOpening::AfterParameterText,
+                expansion: expansion(expanded),
+                owner: ScanToksOwner::Definition(None),
+                purpose: ScanToksPurpose::MacroReplacement,
+                status_visibility: ScannerStatusVisibility::Observed,
+            },
+            ScanToksMode::MacroDefinitionFor { expanded, target } => Self {
+                grammar: ScanToksGrammar::MacroDefinition,
+                opening: ScanToksOpening::AfterParameterText,
+                expansion: expansion(expanded),
+                owner: ScanToksOwner::Definition(Some(target)),
+                purpose: ScanToksPurpose::MacroReplacement,
+                status_visibility: ScannerStatusVisibility::Observed,
+            },
+        }
+    }
+
+    const fn scanner_status(
+        self,
+        builder: TokenBuilderId,
+        warning: ScannerWarning,
+    ) -> ScannerStatus {
+        match self.owner {
+            ScanToksOwner::Absorbed(owner) => ScannerStatus::Absorbing(AbsorbingContext {
+                owner,
+                builder,
+                warning,
+            }),
+            ScanToksOwner::Definition(target) => ScannerStatus::Defining(DefinitionContext {
+                target,
+                builder,
+                warning,
+            }),
+        }
+    }
 }
 
 /// Frozen output of one `scan_toks` episode.
@@ -114,48 +280,18 @@ impl CommandProcessor<'_> {
     /// the collector's closing brace inaccessible to expansion that happens
     /// to retire an inserted replay level.
     pub(crate) fn scan_toks(&mut self, mode: ScanToksMode) -> Result<ScannedToks, CommandError> {
+        let config = ScanToksConfig::parse(mode);
         let builder = TokenBuilderId(self.command.transient.next_builder_identity);
         self.command.transient.next_builder_identity =
             self.command.transient.next_builder_identity.wrapping_add(1);
         let warning = ScannerWarning(builder.0);
-        let status = match mode {
-            ScanToksMode::General { .. }
-            | ScanToksMode::GeneralFor { .. }
-            | ScanToksMode::GeneralAfterOpening { .. }
-            | ScanToksMode::GeneralText { .. } => ScannerStatus::Absorbing(AbsorbingContext {
-                owner: match mode {
-                    ScanToksMode::GeneralFor { owner, .. } => Some(owner),
-                    ScanToksMode::GeneralAfterOpening { owner, .. } => owner,
-                    _ => None,
-                },
-                builder,
-                warning,
-            }),
-            ScanToksMode::MacroDefinition { .. } | ScanToksMode::MacroDefinitionFor { .. } => {
-                ScannerStatus::Defining(DefinitionContext {
-                    target: match mode {
-                        ScanToksMode::MacroDefinitionFor { target, .. } => Some(target),
-                        _ => None,
-                    },
-                    builder,
-                    warning,
-                })
-            }
-        };
-        let prior = self.command.begin_scanner_status(status.clone());
-        let observe_status = !matches!(mode, ScanToksMode::GeneralText { .. });
-        if observe_status {
-            self.observe_scanner_status_transition(
-                prior.status().clone(),
-                self.command.scanner.status().clone(),
-            );
-        }
-        let result = self.scan_toks_inner(mode);
+        let episode = self.begin_scanner_episode(
+            config.scanner_status(builder, warning),
+            config.status_visibility,
+        );
+        let result = self.scan_toks_inner(config, &episode);
         if let Ok(result) = &result {
-            let mut partial = if matches!(
-                mode,
-                ScanToksMode::MacroDefinition { .. } | ScanToksMode::MacroDefinitionFor { .. }
-            ) {
+            let mut partial = if matches!(config.grammar, ScanToksGrammar::MacroDefinition) {
                 parameter_text_for_runaway(result, &self.state)
             } else {
                 Vec::new()
@@ -169,20 +305,11 @@ impl CommandProcessor<'_> {
             );
             self.set_runaway_partial(crate::processor::RUNAWAY_SCAN_DIAGNOSTIC, &partial);
         }
-        if observe_status {
-            self.restore_scanner_status_with_observation(status, prior);
-        } else {
-            self.command.restore_scanner_status(prior);
-        }
+        self.finish_scanner_episode(episode);
         let result = result?;
         let completed_tokens = if !self.is_observed() {
             Vec::new()
-        } else if matches!(
-            mode,
-            ScanToksMode::GeneralText {
-                purpose: "detokenize"
-            }
-        ) {
+        } else if config.purpose.renders_detokenized_result() {
             crate::processor::expand::token_list_string_text(
                 &mut self.state,
                 result.replacement_text.token_list(),
@@ -214,54 +341,38 @@ impl CommandProcessor<'_> {
             self,
             CommandObservation::TokenList(TokenListRecord {
                 transition: "complete",
-                purpose: match mode {
-                    ScanToksMode::General { expanded: true }
-                    | ScanToksMode::GeneralFor { expanded: true, .. }
-                    | ScanToksMode::GeneralAfterOpening { expanded: true, .. } =>
-                        "expanded_scan_toks",
-                    ScanToksMode::General { expanded: false }
-                    | ScanToksMode::GeneralFor {
-                        expanded: false, ..
-                    }
-                    | ScanToksMode::GeneralAfterOpening {
-                        expanded: false, ..
-                    } => "scan_toks",
-                    ScanToksMode::GeneralText { purpose } => purpose,
-                    ScanToksMode::MacroDefinition { .. }
-                    | ScanToksMode::MacroDefinitionFor { .. } => {
-                        "macro_replacement"
-                    }
-                },
+                purpose: config.purpose.canonical_name(),
                 tokens: completed_tokens,
             }),
         );
         Ok(result)
     }
 
-    fn scan_toks_inner(&mut self, mode: ScanToksMode) -> Result<ScannedToks, CommandError> {
+    fn scan_toks_inner(
+        &mut self,
+        config: ScanToksConfig,
+        episode: &ScannerEpisode,
+    ) -> Result<ScannedToks, CommandError> {
         // `macro_parameters` is TeX82 §477's `macro_def` flag carried together
         // with §479's `t`: `Some(highest)` selects the parameter-character
         // rule and bounds a legal parameter number, `None` leaves parameter
         // characters as ordinary text (`\message`, `\write`, `\toks`, ...).
         let (
-            expanded,
             parameter_text,
             macro_parameters,
             hash_brace,
             primary,
             malformed_parameter,
             missing_left_brace,
-        ) = match mode {
-            ScanToksMode::General { expanded } | ScanToksMode::GeneralFor { expanded, .. } => {
+        ) = match (config.grammar, config.opening) {
+            (ScanToksGrammar::General, ScanToksOpening::Required) => {
                 // TeX scans the required opening brace through the ordinary
                 // expanded path even when the replacement text itself is
                 // collected unexpanded.
                 let primary = self.scan_left_brace(true)?.origin();
-                (expanded, Vec::new(), None, None, primary, false, false)
+                (Vec::new(), None, None, primary, false, false)
             }
-            ScanToksMode::GeneralAfterOpening {
-                expanded, primary, ..
-            } => {
+            (ScanToksGrammar::General, ScanToksOpening::Prevalidated { primary }) => {
                 // The opening command was already classified through
                 // `get_x_token` by §1227 and backed up solely so the
                 // absorbing scanner status precedes its replay. Preserve
@@ -282,41 +393,31 @@ impl CommandProcessor<'_> {
                     return Err(CommandError::input_invariant());
                 }
                 self.observe_expanded_delivery(&opening);
-                (expanded, Vec::new(), None, None, primary, false, false)
+                (Vec::new(), None, None, primary, false, false)
             }
-            ScanToksMode::GeneralText { .. } => {
-                let primary = self.scan_left_brace(true)?.origin();
-                (false, Vec::new(), None, None, primary, false, false)
-            }
-            ScanToksMode::MacroDefinition { expanded } => {
+            (ScanToksGrammar::MacroDefinition, ScanToksOpening::AfterParameterText) => {
                 let parameters = self.scan_parameter_text()?;
                 (
-                    expanded,
                     parameters.tokens,
-                    Some((parameters.highest_parameter, None)),
+                    Some((
+                        parameters.highest_parameter,
+                        match config.owner {
+                            ScanToksOwner::Definition(target) => target,
+                            ScanToksOwner::Absorbed(_) => unreachable!(),
+                        },
+                    )),
                     parameters.hash_brace,
                     parameters.primary,
                     parameters.malformed_parameter,
                     parameters.missing_left_brace,
                 )
             }
-            ScanToksMode::MacroDefinitionFor { expanded, target } => {
-                let parameters = self.scan_parameter_text()?;
-                (
-                    expanded,
-                    parameters.tokens,
-                    Some((parameters.highest_parameter, Some(target))),
-                    parameters.hash_brace,
-                    parameters.primary,
-                    parameters.malformed_parameter,
-                    parameters.missing_left_brace,
-                )
-            }
+            _ => unreachable!("ScanToksConfig admits no other grammar/opening pair"),
         };
         let replacement = if missing_left_brace {
             Vec::new()
         } else {
-            self.collect_replacement(expanded, macro_parameters)?
+            self.collect_replacement(config.expansion, macro_parameters, episode)?
         };
         let mut replacement = replacement;
         // TeX's `#{` parameter-text special case treats that left brace as a
@@ -535,23 +636,23 @@ impl CommandProcessor<'_> {
     /// `\mark`, ...) stores parameter characters verbatim.
     fn collect_replacement(
         &mut self,
-        expanded: bool,
+        expansion: ScanToksExpansion,
         macro_parameters: Option<(u8, Option<Symbol>)>,
+        episode: &ScannerEpisode,
     ) -> Result<Vec<TracedTokenWord>, CommandError> {
         let mut output = Vec::new();
         let mut depth = 1_u32;
         let mut pending_parameter: Option<(_, u8, Option<Symbol>)> = None;
-        let collector_status = self.command.scanner.status().clone();
         loop {
             let delivered;
             let spelling = {
-                let mut command = if expanded {
+                let mut command = if expansion.is_expanded() {
                     self.get_next()?
                 } else {
                     self.get_token()?
                 }
                 .ok_or(CommandError::input_invariant())?;
-                if expanded && is_expandable_command(&command) {
+                if expansion.is_expanded() && is_expandable_command(&command) {
                     if matches!(
                         command.meaning(),
                         Meaning::ExpandablePrimitive(ExpandablePrimitive::The)
@@ -605,7 +706,7 @@ impl CommandProcessor<'_> {
                         match self.expand(command) {
                             Ok(()) | Err(CommandError::ParagraphInMacroArgument) => continue,
                             Err(CommandError::OuterInMacroArgument) => {
-                                self.restore_collector_status_after_outer_abort(&collector_status);
+                                self.resume_scanner_episode_after_recovery(episode);
                                 continue;
                             }
                             Err(error) => return Err(error),
@@ -617,7 +718,7 @@ impl CommandProcessor<'_> {
                 // for each retained unexpandable token. Emit that boundary before
                 // storing the spelling, while expandable commands above remain
                 // represented by their own expansion transitions.
-                if expanded {
+                if expansion.is_expanded() {
                     self.observe_expanded_delivery(&command);
                 }
                 let spelling = command.spelling();
@@ -692,22 +793,6 @@ impl CommandProcessor<'_> {
             } else {
                 output.push(spelling);
             }
-        }
-    }
-
-    /// Reasserts §400's saved caller status after a nested §394 abort.
-    fn restore_collector_status_after_outer_abort(&mut self, collector_status: &ScannerStatus) {
-        // TeX82 §400 restores `scan_toks`'s saved absorbing/defining status
-        // when §394 aborts a macro call after §23 outer-token recovery. A
-        // nested expansion can unwind through more than one macro call, so
-        // the collector reasserts its own saved status before it rereads the
-        // backed outer token.
-        if matches!(self.command.scanner.status(), ScannerStatus::Normal) {
-            let prior = self.command.begin_scanner_status(collector_status.clone());
-            self.observe_scanner_status_transition(
-                prior.status().clone(),
-                self.command.scanner.status().clone(),
-            );
         }
     }
 
@@ -1083,18 +1168,14 @@ impl CommandProcessor<'_> {
             builder,
             warning: ScannerWarning(builder.0),
         });
-        let prior = self.command.begin_scanner_status(status.clone());
-        self.observe_scanner_status_transition(
-            prior.status().clone(),
-            self.command.scanner.status().clone(),
-        );
+        let episode = self.begin_scanner_episode(status, ScannerStatusVisibility::Observed);
         // §482: `s:=align_state; align_state:=1000000` disables tab marks and
         // `\cr` for the whole collection, and is restored whatever happens.
         let saved_align_state = self.command.alignment.align_state;
         self.command.alignment.align_state = TEMPLATE_ALIGN_STATE;
         let result = self.read_toks_lines(stream, target, raw_catcodes);
         self.command.alignment.align_state = saved_align_state;
-        self.restore_scanner_status_with_observation(status, prior);
+        self.finish_scanner_episode(episode);
         let tokens = result?;
         // §482 leaves the collected list in `cur_val`; §1225 immediately
         // installs it with `define(p,call,cur_val)`. Unlike §473's

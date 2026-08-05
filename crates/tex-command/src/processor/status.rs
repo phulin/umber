@@ -84,6 +84,60 @@ impl CommandState {
 }
 
 impl CommandProcessor<'_> {
+    /// Enters one processor-owned scanner episode.
+    ///
+    /// The returned value retains both the installed semantic status and the
+    /// complete prior scanner state.  Callers hand it back to
+    /// [`Self::finish_scanner_episode`] on every normal or recoverable exit;
+    /// outer-validity recovery may clear the live state in between without
+    /// losing the canonical exit transition.
+    pub(crate) fn begin_scanner_episode(
+        &mut self,
+        status: ScannerStatus,
+        visibility: ScannerStatusVisibility,
+    ) -> ScannerEpisode {
+        let prior = self.command.begin_scanner_status(status.clone());
+        if visibility.is_observed() {
+            self.observe_scanner_status_transition(
+                prior.status().clone(),
+                self.command.scanner.status().clone(),
+            );
+        }
+        ScannerEpisode {
+            installed: status,
+            prior,
+            visibility,
+        }
+    }
+
+    /// Reasserts an episode cleared by nested outer-validity recovery.
+    ///
+    /// TeX82 §400 restores an enclosing collector after §394 aborts a
+    /// macro argument.  Keeping this on the episode prevents the collector
+    /// from reconstructing status or observation policy independently.
+    pub(crate) fn resume_scanner_episode_after_recovery(&mut self, episode: &ScannerEpisode) {
+        if !matches!(self.command.scanner.status(), ScannerStatus::Normal) {
+            return;
+        }
+        let displaced = self.command.begin_scanner_status(episode.installed.clone());
+        if episode.visibility.is_observed() {
+            self.observe_scanner_status_transition(
+                displaced.status().clone(),
+                self.command.scanner.status().clone(),
+            );
+        }
+    }
+
+    /// Publishes an episode's recovery-aware exit and restores its complete
+    /// prior scanner state.
+    pub(crate) fn finish_scanner_episode(&mut self, episode: ScannerEpisode) {
+        if episode.visibility.is_observed() {
+            self.restore_scanner_status_with_observation(episode.installed, episode.prior);
+        } else {
+            self.command.restore_scanner_status(episode.prior);
+        }
+    }
+
     #[allow(unused_variables)]
     pub(crate) fn observe_scanner_status_transition(
         &mut self,
@@ -121,6 +175,26 @@ impl CommandProcessor<'_> {
         self.observe_scanner_status_transition(from, prior.status().clone());
         self.command.restore_scanner_status(prior);
     }
+}
+
+/// Whether a semantic scanner episode appears in the detached TeX observer.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ScannerStatusVisibility {
+    Observed,
+    Hidden,
+}
+
+impl ScannerStatusVisibility {
+    const fn is_observed(self) -> bool {
+        matches!(self, Self::Observed)
+    }
+}
+
+/// Processor-owned lifetime of one live scanner-status installation.
+pub(crate) struct ScannerEpisode {
+    installed: ScannerStatus,
+    prior: ScannerState,
+    visibility: ScannerStatusVisibility,
 }
 
 /// Typed shell for TeX's live `scanner_status`.

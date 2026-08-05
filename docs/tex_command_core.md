@@ -1219,6 +1219,17 @@ retires, before raw delivery resumes a parent source or token list. That
 decision does not inject recovery tokens; command-owned outer-validity
 recovery consumes it at that boundary.
 
+`CommandProcessor` owns one `ScannerEpisode` lifetime mechanism above that
+state. It installs the typed status and warning together, applies the explicit
+observer-visibility policy, reasserts an enclosing collector after nested
+outer-validity recovery, and publishes the recovery-aware exit before
+restoring the complete prior state. Balanced token collection, `read_toks`,
+macro matching, conditional skipping, temporary-normal operand reads, and
+alignment preamble scanning all use that seam rather than pairing status and
+warning mutations by hand. e-TeX general-text recursion selects the hidden
+visibility policy explicitly; it still receives the same live absorbing
+recovery semantics.
+
 If outer-validity recovery clears a non-normal episode before its scoped
 caller returns, that caller publishes the installed-status-to-prior-status
 transition (rather than a misleading `normal -> normal`) and then restores the
@@ -2115,6 +2126,20 @@ matcher types.
 ## 20. Canonical `scan_toks`
 
 `scan_toks` is not implemented by blindly calling generic `get_x_token`.
+
+Each semantic `ScanToksMode` constructor is decoded once at entry into a
+private typed configuration. Distinct enums retain the grammar, opening
+strategy, expansion policy, scanner warning owner or macro target, completed
+token-list purpose, and scanner-status visibility. The collector consumes
+that configuration without reclassifying the original mode or exposing a bag
+of boolean switches. In particular, `GeneralAfterOpening` remains the typed
+§1227 prevalidated-opener path and `GeneralText` retains its extension-specific
+observation suppression.
+
+TeX82 §482 `read_toks` uses the shared scanner-episode lifetime but remains a
+separate whole-line collector, not another `ScanToksMode`: it holds
+`align_state=1000000`, continues across imbalanced lines, and performs §486's
+runaway recovery without inventing balancing braces.
 
 It owns:
 

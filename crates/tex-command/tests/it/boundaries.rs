@@ -266,8 +266,8 @@ fn condition_delivery_and_alignment_lifecycle_remain_on_the_canonical_seams() {
     assert_eq!(ifx.matches("self.get_next()").count(), 2);
     assert!(!ifx.contains("self.get_token()?"));
     assert!(!ifx.contains("self.get_x_token()?"));
-    assert!(ifx.contains("begin_scanner_status(ScannerStatus::Normal)"));
-    assert!(ifx.contains("restore_scanner_status(prior)"));
+    assert!(ifx.contains("begin_scanner_episode(ScannerStatus::Normal"));
+    assert!(ifx.contains("finish_scanner_episode(episode)"));
     assert!(conditionals.contains("fn expand_unless("));
     assert!(conditionals.contains("inverted"));
     assert!(!input.contains("ConditionStack"));
@@ -287,6 +287,37 @@ fn condition_delivery_and_alignment_lifecycle_remain_on_the_canonical_seams() {
     assert!(state.contains("Starting a v-template is intentionally absent"));
     assert!(next.contains("pub fn begin_alignment_v_template("));
     assert!(next.contains("AlignmentDeliveryEvent::EndTemplate"));
+}
+
+#[test]
+#[allow(clippy::disallowed_methods)] // host-side architecture test
+fn scanner_status_lifetimes_have_one_processor_episode_mechanism() {
+    let manifest_dir = test_support::repository_root().join("crates/tex-command/src");
+    let status = fs::read_to_string(manifest_dir.join("processor/status.rs"))
+        .expect("read scanner-status implementation");
+    assert!(status.contains("fn begin_scanner_episode("));
+    assert!(status.contains("fn finish_scanner_episode("));
+    assert!(status.contains("fn resume_scanner_episode_after_recovery("));
+
+    for relative in [
+        "scan_toks.rs",
+        "macro_call.rs",
+        "conditionals.rs",
+        "processor/expand.rs",
+        "scanners/structured.rs",
+    ] {
+        let source = fs::read_to_string(manifest_dir.join(relative))
+            .unwrap_or_else(|error| panic!("read {relative}: {error}"));
+        assert!(
+            !source.contains(".begin_scanner_status("),
+            "{relative} bypasses the processor scanner episode"
+        );
+    }
+
+    let scan_toks = fs::read_to_string(manifest_dir.join("scan_toks.rs")).expect("read scan_toks");
+    assert!(scan_toks.contains("let config = ScanToksConfig::parse(mode);"));
+    assert_eq!(scan_toks.matches("match mode {").count(), 1);
+    assert!(scan_toks.contains("`read_toks` is deliberately not a `scan_toks` mode"));
 }
 
 fn dependency_names(manifest: &str) -> BTreeSet<&str> {

@@ -98,6 +98,9 @@ print channel of its own outside the borrowed
   parameter replay ownership, and trace-independence tests.
 - `src/processor/`: public borrow-only processor facade with private raw
   delivery, expansion, scanner-status, and alignment orchestration.
+  `status.rs` owns the one processor-level scanner episode mechanism for
+  typed status entry, observation visibility, recovery re-entry, and complete
+  prior-state restoration; scanner families do not open-code that lifecycle.
 - `src/processor/alignment.rs`, `src/processor/alignment/tests.rs`: canonical
   alignment-delivery state and focused stack, brace-depth, template, and omit
   lifecycle tests.
@@ -176,7 +179,10 @@ print channel of its own outside the borrowed
   group-close sites are tracked by `umber2-aqx9`.
 - `src/scan_toks.rs`, `src/scan_toks/tests.rs`: private canonical token-list
   scanner and focused parameter, collection, expansion, scanner-status, and
-  recovery tests. It also owns TeX82 §482's `read_toks`, which is deliberately
+  recovery tests. Its semantic `ScanToksMode` constructors are parsed once
+  into a typed internal grammar, opener, expansion, warning owner,
+  observation purpose, and status-visibility configuration. It also owns
+  TeX82 §482's `read_toks`, which is deliberately
   _not_ a `scan_toks` mode: it collects whole lines rather than a
   brace-balanced group, holds `align_state` at `1000000` for its whole
   duration, and continues across a brace imbalance instead of ending at a

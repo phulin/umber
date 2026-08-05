@@ -23,6 +23,55 @@ impl CommandObserver for Recorder {
     }
 }
 
+#[test]
+fn scan_toks_modes_parse_into_semantic_configurations() {
+    let owner = tex_state::interner::Symbol::testing_new(41);
+    let primary = tex_state::token::OriginId::UNKNOWN;
+
+    assert_eq!(
+        ScanToksConfig::parse(ScanToksMode::GeneralAfterOpening {
+            expanded: true,
+            primary,
+            owner: Some(owner),
+        }),
+        ScanToksConfig {
+            grammar: ScanToksGrammar::General,
+            opening: ScanToksOpening::Prevalidated { primary },
+            expansion: ScanToksExpansion::Expanded,
+            owner: ScanToksOwner::Absorbed(Some(owner)),
+            purpose: ScanToksPurpose::ExpandedBalanced,
+            status_visibility: ScannerStatusVisibility::Observed,
+        }
+    );
+    assert_eq!(
+        ScanToksConfig::parse(ScanToksMode::GeneralText {
+            purpose: "detokenize",
+        }),
+        ScanToksConfig {
+            grammar: ScanToksGrammar::General,
+            opening: ScanToksOpening::Required,
+            expansion: ScanToksExpansion::Unexpanded,
+            owner: ScanToksOwner::Absorbed(None),
+            purpose: ScanToksPurpose::GeneralText("detokenize"),
+            status_visibility: ScannerStatusVisibility::Hidden,
+        }
+    );
+    assert_eq!(
+        ScanToksConfig::parse(ScanToksMode::MacroDefinitionFor {
+            expanded: false,
+            target: owner,
+        }),
+        ScanToksConfig {
+            grammar: ScanToksGrammar::MacroDefinition,
+            opening: ScanToksOpening::AfterParameterText,
+            expansion: ScanToksExpansion::Unexpanded,
+            owner: ScanToksOwner::Definition(Some(owner)),
+            purpose: ScanToksPurpose::MacroReplacement,
+            status_visibility: ScannerStatusVisibility::Observed,
+        }
+    );
+}
+
 fn traced(token: Token) -> TracedTokenWord {
     TracedTokenWord::pack(token, OriginId::UNKNOWN)
 }
@@ -2136,14 +2185,15 @@ fn expanded_scan_toks_outer_abort_reinstates_saved_collector_status() {
         builder: TokenBuilderId(17),
         warning: ScannerWarning(17),
     });
-    processor.command.begin_scanner_status(collector.clone());
-    processor
-        .command
-        .begin_scanner_status(ScannerStatus::Normal);
+    let episode =
+        processor.begin_scanner_episode(collector.clone(), ScannerStatusVisibility::Observed);
+    processor.command.scanner.clear_for_recovery();
 
-    processor.restore_collector_status_after_outer_abort(&collector);
+    processor.resume_scanner_episode_after_recovery(&episode);
 
     assert_eq!(processor.command.scanner.status(), &collector);
+    processor.finish_scanner_episode(episode);
+    assert_eq!(processor.command.scanner.status(), &ScannerStatus::Normal);
 }
 
 #[test]

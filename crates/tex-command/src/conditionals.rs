@@ -12,7 +12,9 @@ use crate::input::{
     ReplayTrace, RetirementBehavior, SharedTokenBuffer, TokenBehavior, TokenPayload,
 };
 use crate::processor::CommandProcessor;
-use crate::processor::status::{ConditionId, ScannerStatus, ScannerWarning, SkippingContext};
+use crate::processor::status::{
+    ConditionId, ScannerStatus, ScannerStatusVisibility, ScannerWarning, SkippingContext,
+};
 use crate::scanners::RestrictedIntegerClass;
 use crate::{CommandError, CommandState};
 
@@ -800,17 +802,10 @@ impl CommandProcessor<'_> {
     /// control-sequence spelling; both that dummy command and an existing
     /// undefined meaning nevertheless carry `undefined_cs`.
     fn evaluate_ifdefined(&mut self) -> Result<bool, CommandError> {
-        let prior = self.command.begin_scanner_status(ScannerStatus::Normal);
-        self.observe_scanner_status_transition(
-            prior.status().clone(),
-            self.command.scanner.status().clone(),
-        );
+        let episode =
+            self.begin_scanner_episode(ScannerStatus::Normal, ScannerStatusVisibility::Observed);
         let operand = self.get_next();
-        self.observe_scanner_status_transition(
-            self.command.scanner.status().clone(),
-            prior.status().clone(),
-        );
-        self.command.restore_scanner_status(prior);
+        self.finish_scanner_episode(episode);
         Ok(operand?.ok_or(CommandError::input_invariant())?.meaning() != Meaning::Undefined)
     }
 
@@ -874,21 +869,14 @@ impl CommandProcessor<'_> {
     /// `scanner_status := normal` across both deliveries, then restoring the
     /// complete prior scanner state.
     fn evaluate_ifx(&mut self) -> Result<bool, CommandError> {
-        let prior = self.command.begin_scanner_status(ScannerStatus::Normal);
-        self.observe_scanner_status_transition(
-            prior.status().clone(),
-            self.command.scanner.status().clone(),
-        );
+        let episode =
+            self.begin_scanner_episode(ScannerStatus::Normal, ScannerStatusVisibility::Observed);
         let operands = (|| {
             let first = self.get_next()?.ok_or(CommandError::input_invariant())?;
             let second = self.get_next()?.ok_or(CommandError::input_invariant())?;
             Ok::<_, CommandError>((first, second))
         })();
-        self.observe_scanner_status_transition(
-            self.command.scanner.status().clone(),
-            prior.status().clone(),
-        );
-        self.command.restore_scanner_status(prior);
+        self.finish_scanner_episode(episode);
         let (first, second) = operands?;
         Ok(self.ifx_meaning_eq(first.meaning(), second.meaning()))
     }
@@ -1266,26 +1254,22 @@ impl CommandProcessor<'_> {
             .conditions
             .current()
             .map_or(ConditionalKind::IfTrue, |frame| frame.kind);
-        let prior = self
-            .command
-            .begin_scanner_status(ScannerStatus::Skipping(SkippingContext {
+        let episode = self.begin_scanner_episode(
+            ScannerStatus::Skipping(SkippingContext {
                 condition,
                 warning,
                 skip_line,
                 conditional,
-            }));
-        self.observe_scanner_status_transition(
-            prior.status().clone(),
-            self.command.scanner.status().clone(),
+            }),
+            ScannerStatusVisibility::Observed,
         );
-        let skipping = self.command.scanner.status().clone();
         let result = self.pass_text_scalar(condition);
         // `check_outer_validity` clears a live skipping episode before it
         // inserts frozen `\\fi`.  The lexical recovery is still the end of
         // this `pass_text` invocation, so retain its canonical
         // skipping-to-prior transition instead of publishing a spurious
         // normal-to-normal restoration after nested-source EOF.
-        self.restore_scanner_status_with_observation(skipping, prior);
+        self.finish_scanner_episode(episode);
         if let Ok(stop) = &result {
             self.observe_pass_text_branch(stop.delimiter);
         }

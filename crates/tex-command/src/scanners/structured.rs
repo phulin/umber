@@ -23,7 +23,8 @@ use crate::input::{
 };
 use crate::processor::alignment::PREAMBLE_ALIGN_STATE;
 use crate::processor::status::{
-    AlignmentId, AlignmentScanContext, ScannerStatus, ScannerWarning, TokenBuilderId,
+    AlignmentId, AlignmentScanContext, ScannerStatus, ScannerStatusVisibility, ScannerWarning,
+    TokenBuilderId,
 };
 use crate::scan_toks::{ScanToksMode, ScannedToks};
 use crate::scanners::RestrictedIntegerClass;
@@ -3206,17 +3207,14 @@ impl CommandProcessor<'_> {
                 identity: builder.0,
                 tokens: Vec::new(),
             });
-        let _prior =
-            self.command
-                .begin_scanner_status(ScannerStatus::Aligning(AlignmentScanContext {
-                    alignment: AlignmentId(alignment.raw()),
-                    builder,
-                    owner,
-                    warning: ScannerWarning(0),
-                }));
-        self.observe_scanner_status_transition(
-            _prior.status().clone(),
-            self.command.scanner.status().clone(),
+        let scanner_episode = self.begin_scanner_episode(
+            ScannerStatus::Aligning(AlignmentScanContext {
+                alignment: AlignmentId(alignment.raw()),
+                builder,
+                owner,
+                warning: ScannerWarning(0),
+            }),
+            ScannerStatusVisibility::Observed,
         );
         observe!(
             self,
@@ -3454,11 +3452,7 @@ impl CommandProcessor<'_> {
         // returns to normal. Retain the live aligning episode while publishing
         // its completion, then restore normal status; otherwise an exit record
         // loses its `aligning` identity and reverses the canonical ordering.
-        let prior = self.command.begin_scanner_status(ScannerStatus::Normal);
-        self.observe_scanner_status_transition(
-            prior.status().clone(),
-            self.command.scanner.status().clone(),
-        );
+        self.finish_scanner_episode(scanner_episode);
         self.command
             .transient
             .builders
