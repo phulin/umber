@@ -19,11 +19,11 @@ use tex_state::provenance::ProvenanceStats;
 use tex_state::{EffectRecord, PrintSink};
 use tex_state::{JobClock, Universe, World};
 
+use umber::FormatCacheStore;
 use umber::{
     EngineMode, FormatGenerationGuards, FormatRecipe, FormatResource, LoadedFormatResource,
     OutputCapability, PreparedFormatJob, PreparedFormatProvider, dvi_from_page_plans,
 };
-use umber_fetch::FormatCacheStore;
 
 #[path = "e2e_conformance/assets.rs"]
 mod assets;
@@ -731,7 +731,7 @@ fn trip_profiles_reuse_authenticated_provider_entries_and_fresh_jobs() {
 
     assert_ne!(identities[0], identities[1]);
     assert_eq!(
-        fs::read_dir(cache.path().join("formats-v2"))
+        fs::read_dir(cache.path().join("blobs-v1"))
             .expect("provider cache namespace")
             .filter_map(Result::ok)
             .filter(|entry| entry.file_name().to_string_lossy().starts_with("sha256-"))
@@ -1300,7 +1300,7 @@ fn plain_provider_reuses_one_authenticated_construction_with_fresh_jobs() {
         assert_eq!(loaded.macro_invocation_provenance_stats().invocations(), 0);
     }
     assert_eq!(
-        fs::read_dir(cache.path().join("formats-v2"))
+        fs::read_dir(cache.path().join("blobs-v1"))
             .expect("Plain provider namespace")
             .filter_map(Result::ok)
             .filter(|entry| entry.file_name().to_string_lossy().starts_with("sha256-"))

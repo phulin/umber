@@ -1,12 +1,13 @@
 # Generated format cache
 
-Status: schema-11 cache identity, validated native entry storage, and pinned
-LaTeX/pdfLaTeX generation integration implemented.
+Status: schema-11 cache identity and TeX validation in `umber`, unified verified
+native blob persistence in `umber-fetch`, and pinned LaTeX/pdfLaTeX generation
+integration implemented.
 
 ## Identity contract
 
 A generated format is reusable only when every input that can affect its bytes
-is identical. `umber-fetch::FormatCacheIdentity` therefore keys an entry by:
+is identical. `umber::FormatCacheIdentity` therefore keys an entry by:
 
 - the composed engine mode (TeX82, e-TeX, pdfTeX, LaTeX, or pdfLaTeX);
 - the format schema, container ABI fingerprint, and frozen-lookup configuration
@@ -78,24 +79,22 @@ the pinned TeX Live 2026-03-01 LaTeX and pdfLaTeX tiers.
 
 ## Native entry and validation
 
-`umber-fetch::FormatCacheStore` uses `formats-v2/sha256-<key>` below an
-explicit root or the platform Umber cache directory. Each path is one atomic
-binary entry containing an entry magic/schema, canonical key preimage, declared
-payload length, payload SHA-256, and the schema-11 format bytes. A same-directory
-temporary file is fully written and synchronized before no-clobber rename, so
-readers see either the old complete entry or the new complete entry. Competing
-publishers validate the winner before accepting it; if a corrupt entry won the
-race, it is removed and publication is retried.
+`umber::FormatCacheStore` owns the canonical key preimage, legacy format
+envelope, schema-11 decoder, and construction-evidence policy. It persists that
+opaque envelope through `umber-fetch::BlobStore` under the `formats-v2`
+namespace. New entries live in the shared `blobs-v1` substrate; the former
+`formats-v2/sha256-<key>` layout remains a verified compatibility input and is
+warm-migrated on a hit. The exact schema-11 payload bytes are unchanged.
 
-Native storage opens the cache root one component at a time and retains root
-and namespace directory handles. Root components, the namespace, entries,
-locks, temporaries, and quarantines are accessed relative to those handles
+The shared native blob storage opens the cache root one component at a time and
+retains root and namespace directory handles. Root components, the namespace,
+entries, locks, temporaries, and quarantines are accessed relative to those handles
 with no-follow semantics; a symlink or non-directory authority component fails
 closed. Per-key advisory locks serialize separate processes and are released
 by the kernel after a crash. Lock files remain as inert key identities so
 unlinking one can never split waiters across different inodes.
 
-Corrupt entries are renamed without replacement to a uniquely owned quarantine
+Corrupt blob or TeX envelope entries are renamed without replacement to a uniquely owned quarantine
 name while the key lock is held, then unlinked through the same namespace
 handle. Publication synchronizes the payload, uses an atomic no-clobber rename,
 and synchronizes the namespace directory. Interrupted temporary and quarantine
@@ -104,8 +103,9 @@ temporary or quarantine name it created. Platforms without the required
 anchored directory and atomic no-clobber primitives reject native format-cache
 operations rather than falling back to pathname-based I/O.
 
-Every read independently checks file bounds, entry geometry and version, exact
-key metadata, payload length and SHA-256, and finally calls
+Every read independently checks the shared blob bounds, geometry, namespace,
+key, payload length and SHA-256. The `umber` format policy then checks its
+envelope geometry and version, exact identity metadata, payload SHA-256, and calls
 `Universe::from_format(World::memory(), bytes)`. Only the opaque
 `ValidatedFormatImage` wrapper is returned. Store input passes the same
 Universe validation before publication. A mismatched, truncated, corrupt, or
@@ -116,8 +116,8 @@ performance event, not a source of trusted engine state.
 ## Native/browser and portability boundaries
 
 The schema-11 image and key preimage are host-neutral. Filesystem discovery,
-temporary files, atomic rename, permissions, and recovery belong only to the
-native `umber-fetch` boundary. Browser-packaged formats and HTTP/IndexedDB
+temporary files, atomic rename, locks, quarantine, permissions, and recovery
+belong only to the native `umber-fetch` boundary. Browser-packaged formats and HTTP/IndexedDB
 caches must not refer to native paths or treat a native entry envelope as a
 distribution artifact. They may reproduce the documented key encoding, but
 must validate transport length and SHA-256 and pass the extracted image through

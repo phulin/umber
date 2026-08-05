@@ -16,8 +16,8 @@ use std::process::Command;
 use sha2::{Digest, Sha256};
 use tex_command::FatalError;
 use tex_state::Universe;
+use umber::FormatCacheStore;
 use umber::{FormatWorkerLauncher, PreparedFormatProvider};
-use umber_fetch::FormatCacheStore;
 
 use tex_command_stream::semantic::channels::compare;
 use tex_command_stream::semantic::*;
@@ -161,7 +161,7 @@ fn declared_command_semantic_cases_match() {
         cases.len(),
         failures.join("\n")
     );
-    let published_entries = fs::read_dir(root.path().join("formats-v2"))
+    let published_entries = fs::read_dir(root.path().join("blobs-v1"))
         .expect("persistent format namespace")
         .filter_map(Result::ok)
         .filter(|entry| entry.file_name().to_string_lossy().starts_with("sha256-"))

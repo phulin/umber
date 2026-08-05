@@ -4,12 +4,12 @@ use std::sync::Arc;
 
 use tex_command::{CommandObserver, RegisteredSourceKind};
 use tex_state::{InteractionMode, JobClock, World};
-use umber_fetch::FormatCacheStore;
 
 use crate::format_fixture::LoadedRunConfiguration;
 use crate::{
-    EngineMode, FormatFixture, FormatFixtureError, FormatGenerationGuards, FormatRecipe,
-    FormatWorkerLauncher, LoadedFormatResource, LoadedFormatRun, OutputCapability, ensure_format,
+    EngineMode, FormatCacheStore, FormatFixture, FormatFixtureError, FormatGenerationGuards,
+    FormatRecipe, FormatWorkerLauncher, LoadedFormatResource, LoadedFormatRun, OutputCapability,
+    ensure_format,
 };
 
 /// One explicit, job-local execution episode for an authenticated format.

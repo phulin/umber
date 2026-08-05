@@ -75,18 +75,21 @@ fn retained_revision_does_not_refetch_resolved_distribution_file() {
         expansion_fuel: None,
     };
     let cache_root = directory.path().join("cache");
+    let cache = ObjectCache::new(&cache_root);
     let cancellation = FetchCancellation::new();
-    let mut session = NativeCompileSession::new_with_cache(
-        &options,
-        &cancellation,
-        ObjectCache::new(&cache_root),
-    )
-    .expect("session");
+    let mut session = NativeCompileSession::new_with_cache(&options, &cancellation, cache.clone())
+        .expect("session");
     let cold = session.compile(&cancellation).expect("cold compile");
 
     std::fs::remove_file(objects.join(object)).expect("remove source object");
-    std::fs::remove_file(cache_root.join("objects").join(format!("sha256-{digest}")))
-        .expect("remove cached object");
+    let spec = umber_fetch::VerifiedBlobSpec::content_addressed(
+        "objects",
+        &digest,
+        package.len() as u64,
+        package.len() as u64,
+    )
+    .expect("object blob specification");
+    std::fs::remove_file(cache.entry_path(&spec)).expect("remove cached object");
     session
         .apply_source(RevisionId::new(2), edited)
         .expect("apply edit");

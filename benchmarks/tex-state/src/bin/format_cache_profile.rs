@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use tex_state::{Universe, World};
-use umber_fetch::{
+use umber::{
     FormatCacheClock, FormatCacheIdentity, FormatCacheStore, FormatEngineMode, FormatFingerprint,
 };
 

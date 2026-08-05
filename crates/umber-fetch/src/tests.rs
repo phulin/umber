@@ -12,7 +12,7 @@ use tempfile::TempDir;
 use umber_distribution::ObjectEntry;
 
 use super::*;
-use crate::cache::hex_digest;
+use crate::cache::{BLOB_DIRECTORY, hex_digest};
 use crate::manifest::fetch_manifest_with_test_agent;
 
 use self::fixture::{FixtureServer, Reply};
@@ -107,6 +107,64 @@ fn fetches_a_manifest_only_when_it_matches_the_trust_pin() {
     .expect_err("mismatched manifest pin");
     assert!(matches!(error, ManifestFetchError::DigestMismatch { .. }));
     server.finish();
+}
+
+#[test]
+fn distribution_client_persists_manifest_through_shared_blob_store() {
+    let bytes = br#"{"schema":1}"#;
+    let server = FixtureServer::new(vec![Reply::ok(bytes)]);
+    let temp = TempDir::new().expect("cache tempdir");
+    let client = DistributionClient::with_agent(
+        BlobStore::new(temp.path()),
+        FetchClientConfig {
+            timeout: Duration::from_secs(1),
+            ..FetchClientConfig::default()
+        },
+        server.agent(Duration::from_secs(1)),
+    );
+    let url = format!("{}manifest.json", server.base_url);
+    let digest = hex_digest(bytes);
+
+    let cold = client
+        .acquire_manifest(&url, &digest, &FetchCancellation::new())
+        .expect("cold manifest acquisition");
+    let warm = client
+        .acquire_manifest(&url, &digest, &FetchCancellation::new())
+        .expect("warm manifest acquisition");
+
+    assert_eq!(cold.bytes, bytes);
+    assert!(!cold.cache_hit);
+    assert_eq!(warm.bytes, bytes);
+    assert!(warm.cache_hit);
+    assert_eq!(server.finish().0, 1);
+}
+
+#[test]
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the compatibility test writes the previous native cache layout"
+)]
+fn legacy_object_layout_is_verified_and_migrated() {
+    let temp = TempDir::new().expect("cache tempdir");
+    let bytes = b"legacy cached object";
+    let digest = hex_digest(bytes);
+    let legacy = temp.path().join("objects").join(format!("sha256-{digest}"));
+    std::fs::create_dir_all(legacy.parent().expect("legacy parent")).expect("legacy directory");
+    std::fs::write(&legacy, bytes).expect("legacy object");
+    let store = BlobStore::new(temp.path());
+    let spec = VerifiedBlobSpec::content_addressed(
+        "objects",
+        &digest,
+        bytes.len() as u64,
+        bytes.len() as u64,
+    )
+    .expect("object specification");
+
+    assert_eq!(
+        store.load(&spec).expect("legacy load"),
+        Some(bytes.to_vec())
+    );
+    assert!(store.entry_path(&spec).is_file(), "entry migrated in place");
 }
 
 #[test]
@@ -375,10 +433,15 @@ fn manifest_cache_is_digest_keyed_and_reverified() {
         cache.load_manifest(&digest).expect("load manifest"),
         Some(bytes.to_vec())
     );
-    let path = temp
-        .path()
-        .join("manifests")
-        .join(format!("sha256-{digest}"));
+    let path = cache.entry_path(
+        &VerifiedBlobSpec::content_addressed(
+            "manifests",
+            &digest,
+            bytes.len() as u64,
+            32 * 1024 * 1024,
+        )
+        .expect("manifest blob specification"),
+    );
     let mut file = std::fs::File::create(path).expect("open cached manifest");
     file.write_all(b"corrupt").expect("corrupt cached manifest");
     assert_eq!(
@@ -436,9 +499,16 @@ fn concurrent_processes_publish_one_verified_cache_object() {
             .expect("load raced object"),
         Some(RACE_BYTES.to_vec())
     );
-    let entries = std::fs::read_dir(temp.path().join("objects"))
-        .expect("object directory")
+    let entries = std::fs::read_dir(temp.path().join(BLOB_DIRECTORY))
+        .expect("blob directory")
         .collect::<Result<Vec<_>, _>>()
         .expect("object entries");
-    assert_eq!(entries.len(), 1, "temporary files are cleaned up");
+    assert_eq!(
+        entries
+            .iter()
+            .filter(|entry| entry.file_name().to_string_lossy().starts_with("sha256-"))
+            .count(),
+        1,
+        "temporary files are cleaned up"
+    );
 }

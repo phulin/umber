@@ -14,6 +14,8 @@ use tex_state::Universe;
 
 use super::*;
 
+const BLOB_DIRECTORY: &str = "blobs-v1";
+
 fn identity(mode: FormatEngineMode) -> FormatCacheIdentity {
     FormatCacheIdentity::current(
         mode,
@@ -143,6 +145,27 @@ fn canonical_key_covers_every_identity_component() {
     for mutation in mutations {
         assert_ne!(mutation.key(), original.key());
     }
+}
+
+#[test]
+fn legacy_format_layout_is_validated_and_migrated() {
+    let temp = TempDir::new().expect("tempdir");
+    let cache = FormatCacheStore::new(temp.path());
+    let key = identity(FormatEngineMode::Latex);
+    let image = format();
+    let legacy = temp.path().join(DIRECTORY).join(cache.name(&key));
+    fs::create_dir_all(legacy.parent().expect("legacy parent")).expect("legacy namespace");
+    fs::write(&legacy, encode_entry(&key, &image)).expect("legacy format entry");
+
+    assert_eq!(
+        cache
+            .load(&key)
+            .expect("legacy format load")
+            .expect("legacy format hit")
+            .as_bytes(),
+        image
+    );
+    assert!(cache.path(&key).is_file(), "entry migrated to blob store");
 }
 
 #[test]
@@ -321,14 +344,26 @@ fn corrupt_truncated_and_decoder_invalid_entries_recover_as_misses() {
         let path = cache.path(&key);
         let mut entry = fs::read(&path).expect("entry");
         match mutation {
-            0 => entry[24] ^= 0x80,
+            0 => entry[28] ^= 0x80,
             1 => entry.truncate(entry.len() - 1),
             _ => {
-                let metadata_len = read_u32(&entry, 12).expect("metadata length") as usize;
-                let payload = ENTRY_HEADER_LEN + metadata_len;
-                entry[payload] ^= 0x01;
-                let digest = Sha256::digest(&entry[payload..]);
-                entry[24..56].copy_from_slice(&digest);
+                let namespace_len = u16::from_le_bytes(
+                    entry[12..14]
+                        .try_into()
+                        .expect("blob namespace length field"),
+                ) as usize;
+                let key_len =
+                    u16::from_le_bytes(entry[14..16].try_into().expect("blob key length field"))
+                        as usize;
+                let outer_payload = 64 + namespace_len + key_len;
+                let metadata_len =
+                    read_u32(&entry[outer_payload..], 12).expect("metadata length") as usize;
+                let image = outer_payload + ENTRY_HEADER_LEN + metadata_len;
+                entry[image] ^= 0x01;
+                let image_digest = Sha256::digest(&entry[image..]);
+                entry[outer_payload + 24..outer_payload + 56].copy_from_slice(&image_digest);
+                let blob_digest = Sha256::digest(&entry[outer_payload..]);
+                entry[28..60].copy_from_slice(&blob_digest);
             }
         }
         fs::write(&path, entry).expect("corrupt entry");
@@ -341,7 +376,7 @@ fn corrupt_truncated_and_decoder_invalid_entries_recover_as_misses() {
 fn interrupted_temporary_file_is_ignored() {
     let temp = TempDir::new().expect("tempdir");
     let cache = FormatCacheStore::new(temp.path());
-    let directory = temp.path().join(DIRECTORY);
+    let directory = temp.path().join(BLOB_DIRECTORY);
     fs::create_dir_all(&directory).expect("directory");
     fs::write(directory.join(".tmp-interrupted"), b"partial").expect("partial temp");
     assert!(
@@ -409,7 +444,7 @@ fn symlink_namespace_and_entry_are_never_followed() {
     let temp = TempDir::new().expect("tempdir");
     let outside = TempDir::new().expect("outside");
     let cache = FormatCacheStore::new(temp.path());
-    symlink(outside.path(), temp.path().join(DIRECTORY)).expect("namespace symlink");
+    symlink(outside.path(), temp.path().join(BLOB_DIRECTORY)).expect("namespace symlink");
     assert!(
         cache
             .store(&identity(FormatEngineMode::Latex), &format())
@@ -422,8 +457,8 @@ fn symlink_namespace_and_entry_are_never_followed() {
             .is_none()
     );
 
-    fs::remove_file(temp.path().join(DIRECTORY)).expect("remove namespace symlink");
-    fs::create_dir(temp.path().join(DIRECTORY)).expect("real namespace");
+    fs::remove_file(temp.path().join(BLOB_DIRECTORY)).expect("remove namespace symlink");
+    fs::create_dir(temp.path().join(BLOB_DIRECTORY)).expect("real namespace");
     let target = outside.path().join("target");
     fs::write(&target, b"untouched").expect("target");
     let key = identity(FormatEngineMode::Latex);
@@ -480,7 +515,7 @@ fn competing_processes_serialize_publication_and_leave_no_temporary_files() {
             .as_bytes(),
         format()
     );
-    let names: Vec<_> = fs::read_dir(temp.path().join(DIRECTORY))
+    let names: Vec<_> = fs::read_dir(temp.path().join(BLOB_DIRECTORY))
         .expect("cache namespace")
         .map(|entry| {
             entry
@@ -529,7 +564,7 @@ fn crashed_lock_owner_is_recovered_and_corrupt_quarantine_is_exact() {
             .expect("quarantine corrupt entry")
             .is_none()
     );
-    let names: Vec<_> = fs::read_dir(temp.path().join(DIRECTORY))
+    let names: Vec<_> = fs::read_dir(temp.path().join(BLOB_DIRECTORY))
         .expect("cache namespace")
         .map(|entry| {
             entry
@@ -585,9 +620,15 @@ fn process_cache_worker() {
     let cache = FormatCacheStore::new(PathBuf::from(root));
     let key = identity(FormatEngineMode::Latex);
     if std::env::var_os("UMBER_FORMAT_CACHE_WORKER_ABORT_WITH_LOCK").is_some() {
-        let authority = native::Authority::open(cache.root(), true).expect("worker authority");
-        let _lock = authority.lock(&cache.name(&key)).expect("worker lock");
-        std::process::abort();
+        let spec = cache
+            .spec(&key, compound_limit())
+            .expect("worker blob specification");
+        let _ = cache.blobs.ensure_validated::<FormatCacheError>(
+            &spec,
+            |_| Ok(()),
+            || -> Result<Vec<u8>, FormatCacheError> { std::process::abort() },
+        );
+        unreachable!("abort terminates the worker");
     }
     cache.store(&key, &format()).expect("worker store");
 }

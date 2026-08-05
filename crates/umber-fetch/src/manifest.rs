@@ -57,7 +57,7 @@ pub fn fetch_manifest_cancellable(
     fetch_manifest_with_agent(url, expected_sha256, cancellation, &agent(timeout))
 }
 
-fn fetch_manifest_with_agent(
+pub(crate) fn fetch_manifest_with_agent(
     url: &str,
     expected_sha256: &str,
     cancellation: &FetchCancellation,

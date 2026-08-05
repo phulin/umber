@@ -145,11 +145,13 @@ and omits hints already shadowed locally. Required distribution requests are
 unchanged, and the VFS continues to reject any true attempt to rebind an
 already provisioned request key to different content.
 
-The cache is a content-addressed store under the platform cache directory
-(`$XDG_CACHE_HOME/umber` / `~/Library/Caches/umber`), objects named by
-SHA-256, written via temp-file-plus-atomic-rename so concurrent CLI
-processes are safe, plus cached manifests keyed by their own digest. Cache
-loss is a performance event only; Rust re-verifies every object.
+The cache is one verified blob store under the platform cache directory
+(`$XDG_CACHE_HOME/umber` / `~/Library/Caches/umber`). Objects and manifests
+retain their digest identities, while the store supplies one per-key lock,
+quarantine, bounded read, digest envelope, and no-clobber atomic publication
+protocol. Cache loss is a performance event only; Rust re-verifies every blob.
+Compatibility readers verify and warm-migrate the former `objects`,
+`manifests`, and `formats-v2` layouts.
 
 ### 5. Networking stays out of engine crates
 
@@ -160,10 +162,11 @@ and `umber-distribution` remain free of filesystem, network, and environment
 access. The WASM build keeps JavaScript-owned fetch; nothing network-related
 compiles into the browser package.
 
-The implemented native boundary is `crates/umber-fetch`. `ObjectCache` stores
-objects and manifests in separate digest-keyed namespaces, re-verifies every
-read, discards corrupt entries as cache misses, and publishes verified bytes
-with same-directory temporary files plus no-clobber atomic persistence.
+The implemented native boundary is `crates/umber-fetch`. `BlobStore` and
+`VerifiedBlobSpec` own bounded persistence for every native cached blob;
+`DistributionClient` binds manifest and object acquisition to one store.
+Corrupt entries are quarantined as misses, and verified bytes are published
+with anchored same-directory temporary files plus no-clobber atomic persistence.
 `umber` exposes this native CLI resource surface and depends on `umber-fetch`
 only outside `wasm32`, so the browser build retains the shared compile-session
 protocol without compiling the blocking native HTTP client.

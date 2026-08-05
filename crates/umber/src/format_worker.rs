@@ -1076,13 +1076,13 @@ fn decode_source_kind(tag: u8) -> Result<RegisteredSourceKind, String> {
 #[cfg(all(test, target_os = "linux"))]
 mod tests {
     use super::*;
+    use crate::FormatCacheStore;
     use std::ffi::OsString;
     use std::fs;
     use std::io::{Seek, SeekFrom};
     use std::os::unix::process::ExitStatusExt;
     use std::sync::Barrier;
     use tempfile::TempDir;
-    use umber_fetch::FormatCacheStore;
 
     #[test]
     fn production_worker_argument_classification_is_fail_closed() {

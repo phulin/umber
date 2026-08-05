@@ -22,6 +22,8 @@ mod editor_session;
 mod engine_session;
 mod fixed_point;
 #[cfg(not(target_arch = "wasm32"))]
+mod format_cache;
+#[cfg(not(target_arch = "wasm32"))]
 mod format_fixture;
 #[cfg(not(target_arch = "wasm32"))]
 mod format_worker;
@@ -51,6 +53,11 @@ pub use engine_session::{
     StartupInput,
 };
 pub use fixed_point::FixedPointLimits;
+#[cfg(not(target_arch = "wasm32"))]
+pub use format_cache::{
+    FormatCacheClock, FormatCacheError, FormatCacheIdentity, FormatCacheStore, FormatEngineMode,
+    FormatFingerprint, FormatFixtureIdentity, ValidatedFormatEntry, ValidatedFormatImage,
+};
 #[cfg(not(target_arch = "wasm32"))]
 pub use format_fixture::{
     FormatFixture, FormatFixtureError, FormatGenerationGuards, FormatRecipe, FormatResource,

@@ -1,21 +1,12 @@
-//! Validated native storage for generated schema-11 format images.
+//! TeX-specific identity and validation policy for persistent generated formats.
 
 use std::error::Error;
 use std::fmt;
-use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 
 use sha2::{Digest, Sha256};
 use tex_state::{Universe, World};
-
-use crate::cache::platform_cache_root;
-
-#[cfg(unix)]
-#[path = "format_cache_unix.rs"]
-mod native;
-#[cfg(not(unix))]
-#[path = "format_cache_unsupported.rs"]
-mod native;
+use umber_fetch::{BlobStore, CacheError, VerifiedBlobSpec};
 
 const DIRECTORY: &str = "formats-v2";
 const KEY_DOMAIN: &[u8] = b"umber.format-cache.key\0";
@@ -246,38 +237,15 @@ impl ValidatedFormatEntry {
 
 #[derive(Debug)]
 pub enum FormatCacheError {
-    Io {
-        operation: &'static str,
-        path: PathBuf,
-        source: io::Error,
-    },
     InvalidFormat(String),
     FormatTooLarge(u64),
     WrongEntryKind,
-}
-
-impl FormatCacheError {
-    fn io(operation: &'static str, path: impl Into<PathBuf>, source: io::Error) -> Self {
-        Self::Io {
-            operation,
-            path: path.into(),
-            source,
-        }
-    }
+    Storage(CacheError),
 }
 
 impl fmt::Display for FormatCacheError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Io {
-                operation,
-                path,
-                source,
-            } => write!(
-                f,
-                "failed to {operation} format cache path {}: {source}",
-                path.display()
-            ),
             Self::InvalidFormat(message) => write!(f, "invalid schema-11 format image: {message}"),
             Self::FormatTooLarge(bytes) => {
                 write!(
@@ -288,6 +256,7 @@ impl fmt::Display for FormatCacheError {
             Self::WrongEntryKind => {
                 write!(f, "format cache API does not match identity entry kind")
             }
+            Self::Storage(error) => write!(f, "format cache storage failed: {error}"),
         }
     }
 }
@@ -295,9 +264,15 @@ impl fmt::Display for FormatCacheError {
 impl Error for FormatCacheError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
-            Self::Io { source, .. } => Some(source),
+            Self::Storage(error) => Some(error),
             Self::InvalidFormat(_) | Self::FormatTooLarge(_) | Self::WrongEntryKind => None,
         }
+    }
+}
+
+impl From<CacheError> for FormatCacheError {
+    fn from(error: CacheError) -> Self {
+        Self::Storage(error)
     }
 }
 
@@ -305,27 +280,23 @@ impl Error for FormatCacheError {
 #[derive(Clone, Debug)]
 pub struct FormatCacheStore {
     root: PathBuf,
+    blobs: BlobStore,
 }
 
 impl FormatCacheStore {
     #[must_use]
     pub fn new(root: impl Into<PathBuf>) -> Self {
-        Self { root: root.into() }
+        let root = root.into();
+        Self {
+            blobs: BlobStore::new(&root),
+            root,
+        }
     }
 
     /// Discovers the platform Umber cache root without creating it.
     pub fn from_environment() -> Result<Self, FormatCacheError> {
-        let root = platform_cache_root().ok_or_else(|| {
-            FormatCacheError::io(
-                "discover",
-                "umber",
-                io::Error::new(
-                    io::ErrorKind::NotFound,
-                    "no platform cache directory is set",
-                ),
-            )
-        })?;
-        Ok(Self::new(root.join("umber")))
+        let blobs = BlobStore::from_environment()?;
+        Ok(Self::new(blobs.root()))
     }
 
     #[must_use]
@@ -334,10 +305,6 @@ impl FormatCacheStore {
     }
 
     /// Loads and revalidates metadata, payload identity, and the full format image.
-    #[allow(
-        clippy::disallowed_methods,
-        reason = "this crate is the explicit native host cache I/O boundary"
-    )]
     pub fn load(
         &self,
         identity: &FormatCacheIdentity,
@@ -345,56 +312,16 @@ impl FormatCacheStore {
         if identity.entry_kind != FormatCacheEntryKind::ImageOnly {
             return Err(FormatCacheError::WrongEntryKind);
         }
-        let authority = self.authority(false)?;
-        let Some(authority) = authority else {
-            return Ok(None);
-        };
-        let name = self.name(identity);
-        let _lock = authority.lock(&name)?;
-        self.load_locked(&authority, &name, identity)
-    }
-
-    #[allow(
-        clippy::disallowed_methods,
-        reason = "this crate is the explicit native host cache I/O boundary"
-    )]
-    fn load_locked(
-        &self,
-        authority: &native::Authority,
-        name: &str,
-        identity: &FormatCacheIdentity,
-    ) -> Result<Option<ValidatedFormatImage>, FormatCacheError> {
-        let path = authority.path(name);
-        let Some(mut file) = authority.open_entry(name)? else {
-            return Ok(None);
-        };
-        let opened = file
-            .metadata()
-            .map_err(|error| FormatCacheError::io("inspect", &path, error))?;
-        let length = opened.len();
-        if length > MAX_FORMAT_BYTES + 4096 {
-            authority.quarantine(name)?;
-            return Ok(None);
-        }
-        let mut entry = Vec::with_capacity(length as usize);
-        file.read_to_end(&mut entry)
-            .map_err(|error| FormatCacheError::io("read", &path, error))?;
-        let Some(payload) = decode_entry(&entry, identity) else {
-            authority.quarantine(name)?;
-            return Ok(None);
-        };
-        if Universe::from_format(World::memory(), payload).is_err() {
-            authority.quarantine(name)?;
-            return Ok(None);
-        }
-        Ok(Some(ValidatedFormatImage(payload.to_vec())))
+        let spec = self.spec(identity, MAX_FORMAT_BYTES + 4096)?;
+        let entry = self
+            .blobs
+            .load_validated(&spec, |entry| validate_image_entry(entry, identity))?;
+        Ok(entry.and_then(|entry| {
+            decode_entry(&entry, identity).map(|bytes| ValidatedFormatImage(bytes.to_vec()))
+        }))
     }
 
     /// Validates and atomically publishes a complete entry without replacing a peer.
-    #[allow(
-        clippy::disallowed_methods,
-        reason = "this crate is the explicit native host cache I/O boundary"
-    )]
     pub fn store(
         &self,
         identity: &FormatCacheIdentity,
@@ -408,23 +335,13 @@ impl FormatCacheStore {
         }
         Universe::from_format(World::memory(), format)
             .map_err(|error| FormatCacheError::InvalidFormat(error.to_string()))?;
-        let authority = self
-            .authority(true)?
-            .expect("create_namespace=true always returns an authority");
-        let name = self.name(identity);
-        let _lock = authority.lock(&name)?;
-        if self.load_locked(&authority, &name, identity)?.is_some() {
-            return Ok(());
-        }
         let entry = encode_entry(identity, format);
-        loop {
-            if authority.publish(&name, &entry)? {
-                return Ok(());
-            }
-            if self.load_locked(&authority, &name, identity)?.is_some() {
-                return Ok(());
-            }
-        }
+        self.blobs.ensure_validated::<FormatCacheError>(
+            &self.spec(identity, MAX_FORMAT_BYTES + 4096)?,
+            |entry| validate_image_entry(entry, identity),
+            || Ok(entry),
+        )?;
+        Ok(())
     }
 
     /// Loads one compound entry while holding the per-key lock through opaque validation.
@@ -436,50 +353,11 @@ impl FormatCacheStore {
         if identity.entry_kind != FormatCacheEntryKind::CompoundEvidence {
             return Err(FormatCacheError::WrongEntryKind);
         }
-        let Some(authority) = self.authority(false)? else {
-            return Ok(None);
-        };
-        let name = self.name(identity);
-        let _lock = authority.lock(&name)?;
-        self.load_entry_locked(&authority, &name, identity, &validate_evidence)
-    }
-
-    fn load_entry_locked(
-        &self,
-        authority: &native::Authority,
-        name: &str,
-        identity: &FormatCacheIdentity,
-        validate_evidence: &impl Fn(&[u8]) -> Result<(), String>,
-    ) -> Result<Option<ValidatedFormatEntry>, FormatCacheError> {
-        let path = authority.path(name);
-        let Some(mut file) = authority.open_entry(name)? else {
-            return Ok(None);
-        };
-        let length = file
-            .metadata()
-            .map_err(|error| FormatCacheError::io("inspect", &path, error))?
-            .len();
-        if length > MAX_FORMAT_BYTES + MAX_OPAQUE_EVIDENCE_BYTES + 4096 {
-            authority.quarantine(name)?;
-            return Ok(None);
-        }
-        let mut bytes = Vec::with_capacity(length as usize);
-        file.read_to_end(&mut bytes)
-            .map_err(|error| FormatCacheError::io("read", &path, error))?;
-        let Some((image, evidence)) = decode_compound_entry(&bytes, identity) else {
-            authority.quarantine(name)?;
-            return Ok(None);
-        };
-        if Universe::from_format(World::memory(), image).is_err()
-            || validate_evidence(evidence).is_err()
-        {
-            authority.quarantine(name)?;
-            return Ok(None);
-        }
-        Ok(Some(ValidatedFormatEntry {
-            image: ValidatedFormatImage(image.to_vec()),
-            evidence: evidence.to_vec(),
-        }))
+        let spec = self.spec(identity, compound_limit())?;
+        let bytes = self.blobs.load_validated(&spec, |bytes| {
+            validate_encoded_compound(bytes, identity, &validate_evidence)
+        })?;
+        Ok(bytes.and_then(|bytes| decoded_compound(&bytes, identity)))
     }
 
     /// Validates and atomically publishes image and opaque evidence as one entry.
@@ -504,27 +382,13 @@ impl FormatCacheStore {
         Universe::from_format(World::memory(), image)
             .map_err(|error| FormatCacheError::InvalidFormat(error.to_string()))?;
         validate_evidence(evidence).map_err(FormatCacheError::InvalidFormat)?;
-        let authority = self.authority(true)?.expect("created authority");
-        let name = self.name(identity);
-        let _lock = authority.lock(&name)?;
-        if self
-            .load_entry_locked(&authority, &name, identity, &validate_evidence)?
-            .is_some()
-        {
-            return Ok(());
-        }
         let entry = encode_compound_entry(identity, image, evidence);
-        loop {
-            if authority.publish(&name, &entry)? {
-                return Ok(());
-            }
-            if self
-                .load_entry_locked(&authority, &name, identity, &validate_evidence)?
-                .is_some()
-            {
-                return Ok(());
-            }
-        }
+        self.blobs.ensure_validated::<FormatCacheError>(
+            &self.spec(identity, compound_limit())?,
+            |entry| validate_encoded_compound(entry, identity, &validate_evidence),
+            || Ok(entry),
+        )?;
+        Ok(())
     }
 
     /// Returns a validated compound entry, constructing at most once while the key is locked.
@@ -538,40 +402,27 @@ impl FormatCacheStore {
         construct: impl FnOnce() -> Result<(Vec<u8>, Vec<u8>), E>,
     ) -> Result<ValidatedFormatEntry, E>
     where
-        E: From<FormatCacheError>,
+        E: From<FormatCacheError> + From<CacheError>,
     {
         if identity.entry_kind != FormatCacheEntryKind::CompoundEvidence {
             return Err(E::from(FormatCacheError::WrongEntryKind));
         }
-        let authority = self
-            .authority(true)
-            .map_err(E::from)?
-            .expect("create_namespace=true always returns an authority");
-        let name = self.name(identity);
-        let _lock = authority.lock(&name).map_err(E::from)?;
-        if let Some(entry) = self
-            .load_entry_locked(&authority, &name, identity, &validate_evidence)
-            .map_err(E::from)?
-        {
-            return Ok(entry);
-        }
-        let (image, evidence) = construct()?;
-        validate_compound_payload(&image, &evidence, &validate_evidence).map_err(E::from)?;
-        let encoded = encode_compound_entry(identity, &image, &evidence);
-        loop {
-            if authority.publish(&name, &encoded).map_err(E::from)? {
-                return Ok(ValidatedFormatEntry {
-                    image: ValidatedFormatImage(image),
-                    evidence,
-                });
-            }
-            if let Some(entry) = self
-                .load_entry_locked(&authority, &name, identity, &validate_evidence)
-                .map_err(E::from)?
-            {
-                return Ok(entry);
-            }
-        }
+        let spec = self.spec(identity, compound_limit()).map_err(E::from)?;
+        let bytes = self.blobs.ensure_validated::<E>(
+            &spec,
+            |bytes| validate_encoded_compound(bytes, identity, &validate_evidence),
+            || {
+                let (image, evidence) = construct()?;
+                validate_compound_payload(&image, &evidence, &validate_evidence)
+                    .map_err(E::from)?;
+                Ok(encode_compound_entry(identity, &image, &evidence))
+            },
+        )?;
+        decoded_compound(&bytes, identity).ok_or_else(|| {
+            E::from(FormatCacheError::InvalidFormat(
+                "validated compound entry could not be decoded".into(),
+            ))
+        })
     }
 
     fn name(&self, identity: &FormatCacheIdentity) -> String {
@@ -580,28 +431,50 @@ impl FormatCacheStore {
 
     #[cfg(test)]
     fn path(&self, identity: &FormatCacheIdentity) -> PathBuf {
-        self.root.join(DIRECTORY).join(self.name(identity))
+        self.blobs.entry_path(
+            &self
+                .spec(identity, compound_limit())
+                .expect("fixed format blob specification"),
+        )
     }
 
-    fn authority(&self, create: bool) -> Result<Option<native::Authority>, FormatCacheError> {
-        match native::Authority::open(&self.root, create) {
-            Ok(authority) => Ok(Some(authority)),
-            Err(FormatCacheError::Io { source, .. })
-                if !create && source.kind() == io::ErrorKind::NotFound =>
-            {
-                Ok(None)
-            }
-            Err(error) => Err(error),
-        }
+    fn spec(
+        &self,
+        identity: &FormatCacheIdentity,
+        max_bytes: u64,
+    ) -> Result<VerifiedBlobSpec, FormatCacheError> {
+        VerifiedBlobSpec::new(DIRECTORY, self.name(identity), max_bytes).map_err(Into::into)
     }
 }
 
-fn authority_error(path: &Path, message: &str) -> FormatCacheError {
-    FormatCacheError::io(
-        "validate authority for",
-        path,
-        io::Error::new(io::ErrorKind::PermissionDenied, message),
-    )
+fn compound_limit() -> u64 {
+    MAX_FORMAT_BYTES + MAX_OPAQUE_EVIDENCE_BYTES + 4096
+}
+
+fn validate_image_entry(entry: &[u8], identity: &FormatCacheIdentity) -> Result<(), String> {
+    let payload = decode_entry(entry, identity).ok_or("invalid format cache envelope")?;
+    Universe::from_format(World::memory(), payload)
+        .map(|_| ())
+        .map_err(|error| error.to_string())
+}
+
+fn validate_encoded_compound(
+    bytes: &[u8],
+    identity: &FormatCacheIdentity,
+    validate_evidence: &impl Fn(&[u8]) -> Result<(), String>,
+) -> Result<(), String> {
+    let (image, evidence) =
+        decode_compound_entry(bytes, identity).ok_or("invalid compound cache envelope")?;
+    Universe::from_format(World::memory(), image).map_err(|error| error.to_string())?;
+    validate_evidence(evidence)
+}
+
+fn decoded_compound(bytes: &[u8], identity: &FormatCacheIdentity) -> Option<ValidatedFormatEntry> {
+    let (image, evidence) = decode_compound_entry(bytes, identity)?;
+    Some(ValidatedFormatEntry {
+        image: ValidatedFormatImage(image.to_vec()),
+        evidence: evidence.to_vec(),
+    })
 }
 
 fn encode_entry(identity: &FormatCacheIdentity, format: &[u8]) -> Vec<u8> {

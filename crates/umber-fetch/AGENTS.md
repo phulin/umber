@@ -1,7 +1,8 @@
 # umber-fetch Guidance
 
 Read the repository-level `AGENTS.md` before editing here. This crate owns
-native host policy for persistent distribution caching and HTTPS acquisition.
+native host policy for bounded verified blob persistence and HTTPS distribution
+acquisition. It does not own TeX format identity or engine validation.
 
 ## Boundaries
 
@@ -16,12 +17,11 @@ native host policy for persistent distribution caching and HTTPS acquisition.
 
 ## File Map
 
-- `src/cache.rs`: platform cache discovery and verified atomic blob storage.
+- `src/cache.rs`: one bounded `BlobStore`, `VerifiedBlobSpec`, platform cache discovery, compatibility readers, and verified atomic persistence.
+- `src/blob_store_unix.rs`: root-handle-relative Unix authority, per-key process locks, durable quarantine, and no-clobber publication for every blob.
+- `src/blob_store_unsupported.rs`: fail-closed native persistence boundary for hosts without the required anchored I/O primitives.
+- `src/distribution_client.rs`: store-owning native distribution acquisition façade for verified manifest and object batches.
 - `src/fetch.rs`: bounded blocking batch acquisition, cooperative cancellation, retry, and diagnostics.
-- `src/format_cache.rs`: canonical generated-format identity, including generic producer/semantic/resource/guard contracts, and validated atomic schema-11 entry storage.
-- `src/format_cache_unix.rs`: root-handle-relative Unix cache authority, per-key process locks, durable quarantine, and no-clobber publication.
-- `src/format_cache_unsupported.rs`: fail-closed native-cache boundary for hosts without the required anchored I/O primitives.
-- `src/format_cache/tests.rs`: format-cache identity, validation, recovery, and concurrency tests.
 - `src/manifest.rs`: cancellable bounded HTTPS manifest download and trust-pin verification.
 - `src/lib.rs`: public native cache/fetch contract.
 - `src/tests.rs`: cache and local fixture-server contract tests.

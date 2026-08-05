@@ -443,11 +443,21 @@ Rollback is possible by retaining the existing visitors while the schema feeds o
 
 Affected crates: `umber-fetch`, `umber`, and `umber-distribution`.
 
-**Current design — observed.** `umber-fetch` combines object caching, HTTP acquisition, manifest loading, and generated-format caching. `ObjectCache` has one persistence implementation at [`crates/umber-fetch/src/cache.rs:160`](/home/phulin/umber/crates/umber-fetch/src/cache.rs:160), while Unix format caching has another anchored authority and lock protocol at [`crates/umber-fetch/src/format_cache_unix.rs:17`](/home/phulin/umber/crates/umber-fetch/src/format_cache_unix.rs:17). `umber` separately performs manifest, shard, object, local-file, and format verification in paths including [`crates/umber/src/cli_resource.rs:1623`](/home/phulin/umber/crates/umber/src/cli_resource.rs:1623) and [`crates/umber/src/cli_resource.rs:1663`](/home/phulin/umber/crates/umber/src/cli_resource.rs:1663).
+**Current design — implemented.** `umber-fetch` owns one bounded `BlobStore`
+and `VerifiedBlobSpec`, backed by one anchored per-key lock, quarantine, digest,
+and atomic-publication implementation. Its store-owning `DistributionClient`
+acquires verified manifest and object bytes without exposing caller-managed
+cache publication. `umber` owns format identity, closure and local-first
+selection, compatibility metadata, opaque construction evidence, and full
+`Universe` validation. `umber-distribution` remains dependency-free and I/O-free.
 
-**End state.** `umber-fetch` owns one bounded native `BlobStore`, one `VerifiedBlobSpec`, and one `DistributionClient` for acquisition, locks, quarantine, and digest verification. `umber` retains TeX-specific format identity, format input closure, local-first resolution, and engine validation. `umber-distribution` remains pure catalog/selection code.
+The shared store writes `blobs-v1` entries and compatibility-reads the former
+`objects`, `manifests`, and `formats-v2` layouts. A successfully verified old
+entry is republished through the new substrate, so upgrades warm-migrate rather
+than invalidate persistent data.
 
-**Estimated net reduction.** 400–750 production LOC and 250–600 test LOC. Confidence: medium.
+**Implemented net reduction.** See issue `umber2-fjfh.13` for the measured
+production and test/support line-count receipt.
 
 **Preservation argument.** Preserve offline mode, cache corruption handling, per-key locking, quarantine, retry policy, pinned snapshot selection, local-file precedence, format identity, and exact format bytes.
 

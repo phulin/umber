@@ -11,7 +11,7 @@ criterion = "0.5"
 tex-command = { path = "../../crates/tex-command" }
 tex-exec = { path = "../../crates/tex-exec" }
 tex-state = { path = "../../crates/tex-state", features = ["testing"] }
-umber-fetch = { path = "../../crates/umber-fetch" }
+umber = { path = "../../crates/umber" }
 
 [[bench]]
 name = "state_budgets"

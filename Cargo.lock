@@ -1377,7 +1377,6 @@ dependencies = [
  "rustix",
  "sha2",
  "tempfile",
- "tex-state",
  "umber-distribution",
  "ureq",
 ]

@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use tex_state::{World, WorldError};
-use umber_fetch::{
+use umber::{
     FormatCacheClock, FormatCacheError, FormatCacheIdentity, FormatCacheStore, FormatEngineMode,
     FormatFingerprint,
 };

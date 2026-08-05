@@ -19,8 +19,8 @@ use umber_distribution::{
     select_shard, shard_index_for_key,
 };
 use umber_fetch::{
-    FetchCancellation, FetchClient, FetchClientConfig, FetchFailure, FetchRequest,
-    ManifestFetchError, ObjectCache, fetch_manifest_cancellable,
+    DistributionClient, DistributionClientError, FetchCancellation, FetchClientConfig,
+    FetchFailure, FetchRequest, ManifestFetchError, ObjectCache,
 };
 
 use crate::{
@@ -779,7 +779,7 @@ struct ResolvedDistributionBatch {
 }
 
 struct DistributionResolver {
-    cache: ObjectCache,
+    client: DistributionClient,
     source: Option<String>,
     expected: Option<String>,
     offline: bool,
@@ -794,7 +794,7 @@ impl DistributionResolver {
         offline: bool,
     ) -> Self {
         Self {
-            cache,
+            client: DistributionClient::new(cache, FetchClientConfig::default()),
             source,
             expected,
             offline,
@@ -1265,7 +1265,8 @@ impl DistributionResolver {
             .transpose()?
             .unwrap_or_default();
         if let Some(bytes) = self
-            .cache
+            .client
+            .store()
             .load_object(&entry.sha256, entry.bytes)
             .map_err(|error| NativeRunError::Cache(error.to_string()))?
         {
@@ -1282,7 +1283,8 @@ impl DistributionResolver {
         if let Some(root) = &loaded.local_root {
             let bytes = read(&local_object_path(root, &object.object))?;
             check_cancelled(cancellation)?;
-            self.cache
+            self.client
+                .store()
                 .store_object(&object.sha256, object.bytes, &bytes)
                 .map_err(|error| NativeRunError::Cache(error.to_string()))?;
             eprintln!("umber: acquired 1 distribution resource(s)");
@@ -1301,13 +1303,9 @@ impl DistributionResolver {
             object,
             max_bytes: crate::SessionLimits::FORMAT_IMAGE_BYTES as u64,
         };
-        let object = FetchClient::new(FetchClientConfig::default())
-            .fetch_batch_cancellable(
-                &self.cache,
-                &loaded.root.objects_base_url,
-                &[request],
-                cancellation,
-            )
+        let object = self
+            .client
+            .acquire_batch(&loaded.root.objects_base_url, &[request], cancellation)
             .map_err(map_fetch_error)?
             .pop()
             .expect("one format result");
@@ -1338,7 +1336,8 @@ impl DistributionResolver {
         for request in requests {
             check_cancelled(cancellation)?;
             match self
-                .cache
+                .client
+                .store()
                 .load_object(&request.object.sha256, request.object.bytes)
             {
                 Ok(Some(bytes)) => found.push((request.request_key.clone(), bytes, true)),
@@ -1354,7 +1353,8 @@ impl DistributionResolver {
                 check_cancelled(cancellation)?;
                 let bytes = read(&local_object_path(&local_root, &request.object.object))?;
                 check_cancelled(cancellation)?;
-                self.cache
+                self.client
+                    .store()
                     .store_object(&request.object.sha256, request.object.bytes, &bytes)
                     .map_err(|error| NativeRunError::Cache(error.to_string()))?;
                 found.push((request.request_key, bytes, false));
@@ -1369,9 +1369,8 @@ impl DistributionResolver {
                     .collect(),
             ));
         }
-        let client = FetchClient::new(FetchClientConfig::default());
-        client
-            .fetch_batch_cancellable(&self.cache, objects_base_url, &remaining, cancellation)
+        self.client
+            .acquire_batch(objects_base_url, &remaining, cancellation)
             .map_err(map_fetch_error)
             .map(|objects| {
                 found.extend(
@@ -1407,7 +1406,7 @@ impl DistributionResolver {
             .expect("canonical shard index is bounded by shardBits")
             .to_owned();
         let bytes = if let Some(bytes) = self
-            .cache
+            .client
             .load_manifest(&digest)
             .map_err(|error| NativeRunError::Cache(error.to_string()))?
         {
@@ -1431,14 +1430,14 @@ impl DistributionResolver {
                         .root
                         .objects_base_url
                 );
-                fetch_manifest_cancellable(&url, &digest, Duration::from_secs(30), cancellation)
-                    .map_err(|error| match error {
-                        ManifestFetchError::Cancelled => NativeRunError::Cancelled,
-                        error => NativeRunError::ManifestFetch(error.to_string()),
-                    })?
+                self.client
+                    .acquire_manifest(&url, &digest, cancellation)
+                    .map_err(map_distribution_client_error)?
+                    .bytes
             };
             check_cancelled(cancellation)?;
-            self.cache
+            self.client
+                .store()
                 .store_manifest(&digest, &bytes)
                 .map_err(|error| NativeRunError::Cache(error.to_string()))?;
             bytes
@@ -1522,7 +1521,7 @@ impl DistributionResolver {
                 let expected = expected
                     .ok_or_else(|| NativeRunError::DistributionPinRequired(source.clone()))?;
                 let bytes = if let Some(bytes) = self
-                    .cache
+                    .client
                     .load_manifest(&expected)
                     .map_err(|error| NativeRunError::Cache(error.to_string()))?
                 {
@@ -1533,21 +1532,10 @@ impl DistributionResolver {
                             "manifest".into(),
                         ]));
                     }
-                    let bytes = fetch_manifest_cancellable(
-                        &source,
-                        &expected,
-                        Duration::from_secs(30),
-                        cancellation,
-                    )
-                    .map_err(|error| match error {
-                        ManifestFetchError::Cancelled => NativeRunError::Cancelled,
-                        error => NativeRunError::ManifestFetch(error.to_string()),
-                    })?;
-                    check_cancelled(cancellation)?;
-                    self.cache
-                        .store_manifest(&expected, &bytes)
-                        .map_err(|error| NativeRunError::Cache(error.to_string()))?;
-                    bytes
+                    self.client
+                        .acquire_manifest(&source, &expected, cancellation)
+                        .map_err(map_distribution_client_error)?
+                        .bytes
                 };
                 (bytes, None)
             };
@@ -1685,6 +1673,18 @@ fn map_fetch_error(error: umber_fetch::BatchFetchError) -> NativeRunError {
                 .collect::<Vec<_>>()
                 .join("; "),
         )
+    }
+}
+
+fn map_distribution_client_error(error: DistributionClientError) -> NativeRunError {
+    match error {
+        DistributionClientError::Manifest(ManifestFetchError::Cancelled) => {
+            NativeRunError::Cancelled
+        }
+        DistributionClientError::Manifest(error) => {
+            NativeRunError::ManifestFetch(error.to_string())
+        }
+        DistributionClientError::Cache(error) => NativeRunError::Cache(error.to_string()),
     }
 }
 

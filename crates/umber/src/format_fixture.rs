@@ -6,6 +6,10 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use crate::{
+    FormatCacheClock, FormatCacheError, FormatCacheIdentity, FormatCacheStore, FormatEngineMode,
+    FormatFingerprint, FormatFixtureIdentity, ValidatedFormatImage,
+};
 use sha2::{Digest, Sha256};
 use tex_command::{
     CommandObserver, FileEnquiryResource, FontResource, RegisteredSourceKind, SourceRegistration,
@@ -15,10 +19,6 @@ use tex_observe::{LiveSessionTranslator, LiveSource};
 use tex_oracle::SchemaVersion;
 use tex_oracle::{OracleBundle, decode_oracle_bundle, encode_oracle_bundle};
 use tex_state::{JobClock, Universe, World};
-use umber_fetch::{
-    FormatCacheClock, FormatCacheError, FormatCacheIdentity, FormatCacheStore, FormatEngineMode,
-    FormatFingerprint, FormatFixtureIdentity, ValidatedFormatImage,
-};
 
 use crate::{
     EngineMode, EngineSession, ResourceFulfillment, ResourceHost, ResourceOutcome, ResourceWorld,
@@ -922,6 +922,12 @@ impl std::error::Error for FormatFixtureError {}
 impl From<FormatCacheError> for FormatFixtureError {
     fn from(error: FormatCacheError) -> Self {
         Self::Cache(error)
+    }
+}
+
+impl From<umber_fetch::CacheError> for FormatFixtureError {
+    fn from(error: umber_fetch::CacheError) -> Self {
+        Self::Cache(FormatCacheError::from(error))
     }
 }
 

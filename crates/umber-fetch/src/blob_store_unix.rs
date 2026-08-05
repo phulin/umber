@@ -1,4 +1,4 @@
-//! Directory-handle-relative authority for the native format cache.
+//! Directory-handle-relative authority for verified native blobs.
 
 use std::ffi::OsStr;
 use std::fs::File;
@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use rustix::fs::{AtFlags, FlockOperation, Mode, OFlags, RenameFlags};
 
-use super::{FormatCacheError, authority_error};
+use super::{CacheError, authority_error};
 
 const DIRECTORY_MODE: Mode = Mode::RUSR.union(Mode::WUSR).union(Mode::XUSR);
 const FILE_MODE: Mode = Mode::RUSR.union(Mode::WUSR);
@@ -25,35 +25,35 @@ pub(super) struct KeyGuard {
 }
 
 impl Authority {
-    pub(super) fn open(root: &Path, create_namespace: bool) -> Result<Self, FormatCacheError> {
+    pub(super) fn open(root: &Path, create_namespace: bool) -> Result<Self, CacheError> {
         let root_fd = open_root(root, create_namespace)?;
-        let namespace = match open_directory_at(&root_fd, super::DIRECTORY) {
+        let namespace = match open_directory_at(&root_fd, super::BLOB_DIRECTORY) {
             Ok(fd) => fd,
             Err(error) if error.kind() == io::ErrorKind::NotFound && create_namespace => {
-                match mkdir_at(&root_fd, super::DIRECTORY) {
+                match mkdir_at(&root_fd, super::BLOB_DIRECTORY) {
                     Ok(()) => sync_fd(&root_fd)
-                        .map_err(|error| FormatCacheError::io("sync anchored root", root, error))?,
+                        .map_err(|error| CacheError::io("sync anchored root", root, error))?,
                     Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
                     Err(error) => {
-                        return Err(FormatCacheError::io(
+                        return Err(CacheError::io(
                             "create anchored namespace",
-                            root.join(super::DIRECTORY),
+                            root.join(super::BLOB_DIRECTORY),
                             error,
                         ));
                     }
                 }
-                open_directory_at(&root_fd, super::DIRECTORY).map_err(|error| {
-                    FormatCacheError::io(
+                open_directory_at(&root_fd, super::BLOB_DIRECTORY).map_err(|error| {
+                    CacheError::io(
                         "open anchored namespace",
-                        root.join(super::DIRECTORY),
+                        root.join(super::BLOB_DIRECTORY),
                         error,
                     )
                 })?
             }
             Err(error) => {
-                return Err(FormatCacheError::io(
+                return Err(CacheError::io(
                     "open anchored namespace",
-                    root.join(super::DIRECTORY),
+                    root.join(super::BLOB_DIRECTORY),
                     error,
                 ));
             }
@@ -61,23 +61,21 @@ impl Authority {
         Ok(Self {
             _root: root_fd,
             namespace,
-            display: root.join(super::DIRECTORY),
+            display: root.join(super::BLOB_DIRECTORY),
         })
     }
 
-    pub(super) fn lock(&self, name: &str) -> Result<KeyGuard, FormatCacheError> {
+    pub(super) fn lock(&self, name: &str) -> Result<KeyGuard, CacheError> {
         let lock_name = format!(".{name}.lock");
         let fd = open_file_at(
             &self.namespace,
             &lock_name,
             OFlags::RDWR | OFlags::CREATE | OFlags::CLOEXEC | OFlags::NOFOLLOW,
         )
-        .map_err(|error| {
-            FormatCacheError::io("open anchored key lock", self.path(&lock_name), error)
-        })?;
+        .map_err(|error| CacheError::io("open anchored key lock", self.path(&lock_name), error))?;
         let file = File::from(fd);
         rustix::fs::flock(&file, FlockOperation::LockExclusive).map_err(|error| {
-            FormatCacheError::io(
+            CacheError::io(
                 "lock anchored key",
                 self.path(&lock_name),
                 io::Error::from(error),
@@ -86,7 +84,7 @@ impl Authority {
         Ok(KeyGuard { _file: file })
     }
 
-    pub(super) fn open_entry(&self, name: &str) -> Result<Option<File>, FormatCacheError> {
+    pub(super) fn open_entry(&self, name: &str) -> Result<Option<File>, CacheError> {
         match open_file_at(
             &self.namespace,
             name,
@@ -95,7 +93,7 @@ impl Authority {
             Ok(fd) => {
                 let file = File::from(fd);
                 let metadata = file.metadata().map_err(|error| {
-                    FormatCacheError::io("inspect anchored entry", self.path(name), error)
+                    CacheError::io("inspect anchored entry", self.path(name), error)
                 })?;
                 if !metadata.file_type().is_file() {
                     return Err(authority_error(
@@ -106,7 +104,7 @@ impl Authority {
                 Ok(Some(file))
             }
             Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
-            Err(error) => Err(FormatCacheError::io(
+            Err(error) => Err(CacheError::io(
                 "open anchored entry",
                 self.path(name),
                 error,
@@ -114,7 +112,7 @@ impl Authority {
         }
     }
 
-    pub(super) fn quarantine(&self, name: &str) -> Result<(), FormatCacheError> {
+    pub(super) fn quarantine(&self, name: &str) -> Result<(), CacheError> {
         static NONCE: AtomicU64 = AtomicU64::new(0);
         let quarantine = format!(
             ".corrupt-{}-{}-{}",
@@ -122,17 +120,16 @@ impl Authority {
             NONCE.fetch_add(1, Ordering::Relaxed),
             name
         );
-        rename_noreplace_at(&self.namespace, name, &self.namespace, &quarantine).map_err(
-            |error| FormatCacheError::io("quarantine anchored entry", self.path(name), error),
-        )?;
+        rename_noreplace_at(&self.namespace, name, &self.namespace, &quarantine)
+            .map_err(|error| CacheError::io("quarantine anchored entry", self.path(name), error))?;
         unlink_at(&self.namespace, &quarantine).map_err(|error| {
-            FormatCacheError::io("remove quarantined entry", self.path(&quarantine), error)
+            CacheError::io("remove quarantined entry", self.path(&quarantine), error)
         })?;
         sync_fd(&self.namespace)
-            .map_err(|error| FormatCacheError::io("sync namespace", &self.display, error))
+            .map_err(|error| CacheError::io("sync namespace", &self.display, error))
     }
 
-    pub(super) fn publish(&self, name: &str, bytes: &[u8]) -> Result<bool, FormatCacheError> {
+    pub(super) fn publish(&self, name: &str, bytes: &[u8]) -> Result<bool, CacheError> {
         static NONCE: AtomicU64 = AtomicU64::new(0);
         let temporary = format!(
             ".tmp-{}-{}",
@@ -145,7 +142,7 @@ impl Authority {
             OFlags::WRONLY | OFlags::CREATE | OFlags::EXCL | OFlags::CLOEXEC | OFlags::NOFOLLOW,
         )
         .map_err(|error| {
-            FormatCacheError::io("create anchored temporary", self.path(&temporary), error)
+            CacheError::io("create anchored temporary", self.path(&temporary), error)
         })?;
         let mut file = File::from(fd);
         let result = (|| {
@@ -169,8 +166,7 @@ impl Authority {
         {
             let _ = unlink_at(&self.namespace, &temporary);
         }
-        result
-            .map_err(|error| FormatCacheError::io("publish anchored entry", self.path(name), error))
+        result.map_err(|error| CacheError::io("publish anchored entry", self.path(name), error))
     }
 
     pub(super) fn path(&self, name: &str) -> PathBuf {
@@ -178,12 +174,11 @@ impl Authority {
     }
 }
 
-fn open_root(path: &Path, create: bool) -> Result<OwnedFd, FormatCacheError> {
+fn open_root(path: &Path, create: bool) -> Result<OwnedFd, CacheError> {
     let (mut fd, components): (OwnedFd, Vec<&OsStr>) = if path.is_absolute() {
         (
-            open_directory_path(Path::new("/")).map_err(|error| {
-                FormatCacheError::io("open filesystem root", Path::new("/"), error)
-            })?,
+            open_directory_path(Path::new("/"))
+                .map_err(|error| CacheError::io("open filesystem root", Path::new("/"), error))?,
             path.components()
                 .filter_map(|component| match component {
                     Component::Normal(value) => Some(value),
@@ -194,9 +189,8 @@ fn open_root(path: &Path, create: bool) -> Result<OwnedFd, FormatCacheError> {
         )
     } else {
         (
-            open_directory_path(Path::new(".")).map_err(|error| {
-                FormatCacheError::io("open current directory", Path::new("."), error)
-            })?,
+            open_directory_path(Path::new("."))
+                .map_err(|error| CacheError::io("open current directory", Path::new("."), error))?,
             path.components()
                 .map(|component| match component {
                     Component::Normal(value) => value,
@@ -218,18 +212,18 @@ fn open_root(path: &Path, create: bool) -> Result<OwnedFd, FormatCacheError> {
             Err(error) if error.kind() == io::ErrorKind::NotFound && create => {
                 match mkdir_at(&fd, &name) {
                     Ok(()) => sync_fd(&fd).map_err(|error| {
-                        FormatCacheError::io("sync anchored root parent", path, error)
+                        CacheError::io("sync anchored root parent", path, error)
                     })?,
                     Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
                     Err(error) => {
-                        return Err(FormatCacheError::io("create anchored root", path, error));
+                        return Err(CacheError::io("create anchored root", path, error));
                     }
                 }
                 fd = open_directory_at(&fd, &name)
-                    .map_err(|error| FormatCacheError::io("open anchored root", path, error))?;
+                    .map_err(|error| CacheError::io("open anchored root", path, error))?;
             }
             Err(error) => {
-                return Err(FormatCacheError::io("open anchored root", path, error));
+                return Err(CacheError::io("open anchored root", path, error));
             }
         }
     }
