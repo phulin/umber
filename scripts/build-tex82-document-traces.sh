@@ -31,6 +31,7 @@ source_date_epoch="${SOURCE_DATE_EPOCH:-1783604160}"
 all_documents=(plain story gentle)
 selected=()
 test_publication=()
+test_tree_publication=()
 
 usage() {
   cat <<'EOF'
@@ -71,6 +72,9 @@ while [[ "$#" -gt 0 ]]; do
     --test-publish-candidate)
       [[ "$#" -ge 3 ]] || exit 2
       test_publication=("$2" "$3"); shift 2 ;;
+    --test-publish-tree)
+      [[ "$#" -ge 4 ]] || exit 2
+      test_tree_publication=("$2" "$3" "$4"); shift 3 ;;
     --help|-h) usage; exit 0 ;;
     *) printf 'build-tex82-document-traces: unknown option: %s\n' "$1" >&2; usage >&2; exit 2 ;;
   esac
@@ -90,8 +94,31 @@ publish_candidate() {
     fail "could not stage the document trace candidate"
 }
 
+published_tree_had_previous=0
+publish_tree() {
+  local candidate="$1" published="$2" previous="$3"
+  published_tree_had_previous=0
+  rm -rf "$previous"
+  if [[ -e "$published" ]]; then
+    mv "$published" "$previous" ||
+      fail "could not preserve the previous document trace tree"
+    published_tree_had_previous=1
+  fi
+  if ! mv "$candidate" "$published"; then
+    if [[ "$published_tree_had_previous" -eq 1 ]]; then
+      mv "$previous" "$published" ||
+        fail "could not restore the previous document trace tree"
+    fi
+    fail "could not publish the staged document trace tree"
+  fi
+}
+
 if [[ "${#test_publication[@]}" -ne 0 ]]; then
   publish_candidate "${test_publication[@]}"
+  exit 0
+fi
+if [[ "${#test_tree_publication[@]}" -ne 0 ]]; then
+  publish_tree "${test_tree_publication[@]}"
   exit 0
 fi
 
@@ -311,18 +338,15 @@ if [[ "$publish_contract" -eq 1 ]]; then
   } >"$contract_candidate"
   previous_fixture_root="${oracle_dir}/documents/published-previous"
   previous_contract="${oracle_dir}/documents/trace-manifest-previous.txt"
-  rm -rf "$previous_fixture_root"
   rm -f "$previous_contract"
-  mv "$fixture_root" "$previous_fixture_root"
-  if ! mv "$publication_root" "$fixture_root"; then
-    mv "$previous_fixture_root" "$fixture_root"
-    fail "could not publish the staged document trace tree"
-  fi
+  publish_tree "$publication_root" "$fixture_root" "$previous_fixture_root"
   cp "$contract" "$previous_contract"
   if ! mv "$contract_candidate" "$contract"; then
     rm -rf "$publication_root"
     mv "$fixture_root" "$publication_root"
-    mv "$previous_fixture_root" "$fixture_root"
+    if [[ "$published_tree_had_previous" -eq 1 ]]; then
+      mv "$previous_fixture_root" "$fixture_root"
+    fi
     cp "$previous_contract" "$contract"
     fail "could not publish the staged document trace contract"
   fi

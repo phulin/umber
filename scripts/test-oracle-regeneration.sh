@@ -37,6 +37,31 @@ if scripts/regen-fixtures.sh --oracle tex82 --profile initex-eight-bit \
   exit 1
 fi
 
+assert_document_trace_tree_publication() {
+  local tmp_root
+  tmp_root="$(mktemp -d)"
+
+  mkdir -p "${tmp_root}/first-candidate"
+  printf 'first\n' >"${tmp_root}/first-candidate/marker"
+  scripts/build-tex82-document-traces.sh --test-publish-tree \
+    "${tmp_root}/first-candidate" "${tmp_root}/published" \
+    "${tmp_root}/previous"
+  [[ "$(cat "${tmp_root}/published/marker")" == first ]]
+  [[ ! -e "${tmp_root}/previous" ]]
+
+  mkdir -p "${tmp_root}/replacement-candidate"
+  printf 'replacement\n' >"${tmp_root}/replacement-candidate/marker"
+  scripts/build-tex82-document-traces.sh --test-publish-tree \
+    "${tmp_root}/replacement-candidate" "${tmp_root}/published" \
+    "${tmp_root}/previous"
+  [[ "$(cat "${tmp_root}/published/marker")" == replacement ]]
+  [[ "$(cat "${tmp_root}/previous/marker")" == first ]]
+
+  rm -rf "$tmp_root"
+}
+
+assert_document_trace_tree_publication
+
 assert_source_manifest_drift_is_actionable() {
   local engine="$1"
   local profile="$2"

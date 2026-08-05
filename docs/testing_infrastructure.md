@@ -1597,6 +1597,14 @@ repeats; then derives a fully validated `tex-oracle` fixture through
 records instead of rewriting the contract, so the pinned file can never
 describe a half-regenerated tree.
 
+A full run stages all three fixtures before publishing them as one tree. If a
+prior generated tree exists, the script moves it aside until the new tree and
+committed identity contract have both been installed, then discards it. If
+contract publication fails, it restores that prior tree; on a fresh checkout,
+where the gitignored tree is documented to be absent, rollback restores that
+absent state instead. Thus first publication and replacement use the same
+staged transaction without requiring an old generated tree.
+
 No run that generates zero traces exits `0`. On a fresh checkout the pinned
 oracle or the external inputs are absent, and that is expected rather than
 broken -- but it means the tracer's worklist will be short by three documents,
