@@ -13661,9 +13661,9 @@ fn meaning_mutation_value(meaning: Meaning, stores: &Universe) -> ObservationVal
         }
         Meaning::CharGiven(character) => ObservationValue::Character(u32::from(character)),
         Meaning::MathCharGiven(code) => ObservationValue::Integer(i64::from(code)),
-        meaning => ObservationValue::Name(
-            tex_command::canonical_names::meaning_command_name(meaning).into(),
-        ),
+        meaning => {
+            ObservationValue::Name(tex_command::canonical_names::meaning_command_name(meaning))
+        }
     }
 }
 
