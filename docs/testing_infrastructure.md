@@ -63,15 +63,19 @@ report. The routine `test-support` gate uses the shared `ClosedCase` validator
 to equate each directory with Git's regular tracked-file inventory,
 so ignored, untracked, symlinked, nonlocal, target-backed, missing, and extra
 authorities fail rather than escaping discovery.
-The live-reference log generators for `exec` and `typeset` invoke pdfTeX in
-INITEX mode, while `etex_exec` uses the extended INITEX profile. Each stages
-the seven printable catcodes that `umber run` installs on top of tex.web
-§232's table. The resulting state matches the fresh parameters and lexical
-conventions of the corresponding Umber session, so normalized logs retain
-TeX82 §660-§675 box diagnostics rather than comparing against assignments
-inherited from Plain. Fixture generation also resolves the corpus's explicit
-Computer Modern requests to the selected checkout's committed TFM files before
-the isolated reference run; it does not substitute ambient font metrics.
+The live-reference terminal generators for `exec` and `typeset` invoke pdfTeX
+in INITEX mode and commit `expected.terminal`, matching the `umber run` stdout
+channel that their integration tests capture. They do not derive those files
+from pdfTeX's transcript: canonical TeX deliberately differs between terminal
+and log around diagnostic completion. `etex_exec` retains its separate
+extended-INITEX log-fixture contract. Each generator stages the seven printable
+catcodes that `umber run` installs on top of tex.web §232's table. The
+resulting state matches the fresh parameters and lexical conventions of the
+corresponding Umber session, so normalized diagnostics retain TeX82 §660-§675
+box output rather than comparing against assignments inherited from Plain.
+Fixture generation also resolves the corpus's explicit Computer Modern
+requests to the selected checkout's committed TFM files before the isolated
+reference run; it does not substitute ambient font metrics.
 The WASM target reserves a 4 MiB linear-memory stack because retained compile
 sessions exceed wasm-ld's 1 MiB default during Firefox retry and incremental
 HTML coverage; native targets keep their platform stack policy.

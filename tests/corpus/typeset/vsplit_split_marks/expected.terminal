@@ -5,7 +5,6 @@
 .\mark{M1}
 
 ! OK.
-
 > \box10=
 \vbox(14.0+0.0)x7.0
 .\glue(\splittopskip) 6.0
@@ -15,13 +14,11 @@
 .\rule(4.0+0.0)x7.0
 
 ! OK.
-
 > \box13=
 \vbox(5.0+0.0)x8.0
 .\rule(4.0+0.0)x8.0
 
 ! OK.
-
 > \box12=
 \vbox(10.0+0.0)x9.0
 .\glue(\splittopskip) 6.0

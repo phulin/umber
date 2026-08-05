@@ -246,13 +246,15 @@ ignored additions, symlinks, non-regular files, and authorities that resolve
 outside the selected checkout.
 
 `tests/corpus/exec` contains fast execution-core parity cases. These compare
-`umber run` output with committed normalized reference log fixtures through the
-shared `test_support::normalize::exec_log` helper. Normal test runs read the
-committed `expected.log` files; regenerate them through
+`umber run`'s terminal output with committed normalized reference terminal
+fixtures through the shared `test_support::normalize::exec_log` helper. The
+manual parity test reads the committed `expected.terminal` files; regenerate them through
 `scripts/regen-fixtures.sh` when reference output intentionally changes. Live
 reference regeneration uses `-ini` plus the seven printable catcodes installed
 by `umber run`, matching its fresh INITEX parameter state rather than
-inheriting Plain's format assignments.
+inheriting Plain's format assignments. It captures pdfTeX's terminal channel,
+not its transcript file: canonical TeX deliberately emits some diagnostic
+newlines to only one of those channels.
 
 `tests/corpus/etex_exec` contains extension-mode e-TeX diagnostic parity
 cases. The `umber` runner supplies `--etex`, while fixture regeneration uses
@@ -261,13 +263,13 @@ seven printable catcodes. Small `<case>.txt` case-local inputs
 are copied into the reference run directory for `\readline` coverage.
 
 `tests/corpus/typeset` contains fast box/list dump parity cases for the
-typesetting layer. These compare `umber run --show-fixtures` output with
-committed normalized reference log fixtures through the shared
+typesetting layer. These compare `umber run --show-fixtures` terminal output
+with committed normalized reference terminal fixtures through the shared
 `test_support::normalize::box_dump` helper; that helper uses the same
 diagnostic-log normalizer as `exec_log`. Reference regeneration uses `-ini`
 plus `umber run`'s printable catcodes, so TeX82 §660-§675 box diagnostics
-are compared under the same parameters and are not normalized away. In this
-mode, `umber` writes only the
+are compared under the same parameters and on the same output channel; they
+are not normalized away. In this mode, `umber` writes only the
 collected terminal/log diagnostic text to stdout and skips the CLI's extra
 final `World` effect commit. TeX shipouts still commit their own effect prefix,
 so stream whatsits shipped by `\shipout` or final cleanup can materialize

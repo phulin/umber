@@ -1494,36 +1494,10 @@ fn run_recovered_diagnostic_after_tfm_load_exits_successfully() {
 #[allow(clippy::disallowed_methods)] // host-side corpus discovery and command execution.
 #[ignore = "manual compatibility/parity tier: not a cutover closure gate"]
 fn run_exec_corpus_matches_committed_diagnostics() {
-    // The excluded cases are excluded for a harness reason, not an engine
-    // one: this test compares `umber run`'s *terminal* (stdout) capture
-    // against each `tests/corpus/exec/<case>/expected.log`, but that fixture is
-    // generated from the reference engine's *log* (transcript) file
-    // (`fixturegen` reruns pdftex and captures its `.log`, independent of
-    // `\tracingonline`). The two channels agree byte-for-byte for most
-    // fixtures here, but tex.web §90's `error`/`help_on_transcript` tail
-    // (crates/tex-state/src/print.rs) deliberately writes one more
-    // `print_ln` to the log than to the terminal around a `\show` family
-    // completion (`decr(selector); ...; incr(selector); print_ln`), so two
-    // back-to-back `\show`-family completions -- each excluded fixture's
-    // shape -- leave a blank line between them on the log that the terminal
-    // never gets. `\tracingonline=1` (needed so `\showbox`/`\showlists`
-    // reach the terminal at all post-umber2-alfh.9) does not change that
-    // tail, so these fixtures cannot match on both channels at once through
-    // this harness. See umber2-gn1p (the channel-comparison gap itself) and
-    // umber2-sob4 (found alongside it: `umber run` never shows §310
-    // context at all, independent of channel).
-    run_corpus_matches_committed_log_fixtures(
+    run_corpus_matches_committed_terminal_fixtures(
         "exec",
         false,
-        &[
-            "hmode_ligkern",
-            "hmode_material_primitives",
-            "hmode_space_factor",
-            "math_component_recovery",
-            "paragraph_line_shape",
-            "showbox_simple",
-            "vbox_baseline_spacing",
-        ],
+        &["hmode_material_primitives"], // umber2-johp.757
     );
 }
 
@@ -1539,37 +1513,38 @@ fn run_etex_exec_corpus_matches_committed_diagnostics() {
 #[allow(clippy::disallowed_methods)] // host-side corpus discovery and command execution.
 #[ignore = "manual compatibility/parity tier: not a cutover closure gate"]
 fn run_typeset_corpus_matches_committed_box_dumps() {
-    // See `run_exec_corpus_matches_committed_diagnostics`'s comment: same
-    // terminal-vs-log channel mismatch (umber2-gn1p), this area's own set of
-    // fixtures with two or more back-to-back `\show`-family completions.
-    run_corpus_matches_committed_log_fixtures(
+    run_corpus_matches_committed_terminal_fixtures(
         "typeset",
         true,
         &[
-            "alignment_math_group_balance",
-            "alignment_widths_spans",
-            "display_math_machinery",
-            "ligkern_words",
-            "material_primitives",
-            "paragraph_line_shape",
-            "space_factor",
-            "vbox_baseline_spacing",
-            "vsplit_split_marks",
+            "alignment_showlists_unset", // umber2-johp.758
+            "alignment_widths_spans",    // umber2-johp.759
+            "material_primitives",       // umber2-johp.757
         ],
     );
 }
 
 #[allow(clippy::disallowed_methods)] // host-side corpus discovery and command execution.
-fn run_corpus_matches_committed_log_fixtures(
+fn run_corpus_matches_committed_terminal_fixtures(
     area: &str,
     show_fixtures: bool,
-    ignored_cases: &[&str],
+    excluded_semantic_cases: &[&str],
 ) {
     for case in corpus_cases(area) {
-        if !ignored_cases.contains(&case.name()) {
-            assert_log_case_matches_committed_fixture(area, &case, show_fixtures, false);
+        if !excluded_semantic_cases.contains(&case.name()) {
+            assert_terminal_case_matches_committed_fixture(area, &case, show_fixtures);
         }
     }
+}
+
+#[allow(clippy::disallowed_methods)] // host-side command execution and expected-output reads.
+fn assert_terminal_case_matches_committed_fixture(
+    area: &str,
+    case: &CorpusCase,
+    show_fixtures: bool,
+) {
+    let actual = run_diagnostic_case(case, show_fixtures, false);
+    assert_matches_fixture(area, case.name(), "terminal", &actual);
 }
 
 #[allow(clippy::disallowed_methods)] // host-side command execution and expected-output reads.
@@ -1579,6 +1554,12 @@ fn assert_log_case_matches_committed_fixture(
     show_fixtures: bool,
     etex: bool,
 ) {
+    let actual = run_diagnostic_case(case, show_fixtures, etex);
+    assert_matches_fixture(area, case.name(), "log", &actual);
+}
+
+#[allow(clippy::disallowed_methods)] // host-side command execution.
+fn run_diagnostic_case(case: &CorpusCase, show_fixtures: bool, etex: bool) -> String {
     let mut command = Command::new(env!("CARGO_BIN_EXE_umber"));
     command.env("SOURCE_DATE_EPOCH", PINNED_SOURCE_DATE_EPOCH);
     if etex {
@@ -1611,7 +1592,7 @@ fn assert_log_case_matches_committed_fixture(
     } else {
         normalize::exec_log(&actual_stdout)
     };
-    assert_matches_fixture(area, case.name(), "log", &actual);
+    actual
 }
 
 #[test]

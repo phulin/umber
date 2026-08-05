@@ -177,13 +177,13 @@ test_command_for_area() {
       printf '%s\n' 'cargo test -p umber --test it lexer_dynamic_corpus_covers_mutable_input_state'
       ;;
     exec)
-      printf '%s\n' 'cargo test -p umber --test it run_exec_corpus_matches_committed_diagnostics'
+      printf '%s\n' 'cargo test -p umber --test it run_exec_corpus_matches_committed_diagnostics -- --ignored'
       ;;
     etex_exec)
       printf '%s\n' 'cargo test -p umber --test it run_etex_exec_corpus_matches_committed_diagnostics'
       ;;
     typeset)
-      printf '%s\n' 'cargo test -p umber --test it run_typeset_corpus_matches_committed_box_dumps'
+      printf '%s\n' 'cargo test -p umber --test it run_typeset_corpus_matches_committed_box_dumps -- --ignored'
       ;;
     tex_exec)
       printf '%s\n' 'cargo test -p tex-exec --lib grouping_parity'
@@ -1448,6 +1448,7 @@ case_name_from_arg() {
   name="${name%.tex}"
   name="${name%.expected.dvi}"
   name="${name%.expected.log}"
+  name="${name%.expected.terminal}"
   name="${name%.expected.tokens}"
   name="${name%.expected.ref}"
   name="${name%.expected.out}"

@@ -1,0 +1,10 @@
+! Missing $ inserted.
+<inserted text>
+...
+! Math formula deleted: Insufficient symbol fonts.
+> \box0=
+\hbox(0.0+0.0)x0.0
+.\mathon
+.\mathoff
+
+! OK.

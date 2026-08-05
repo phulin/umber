@@ -192,10 +192,12 @@ fn regenerate_area(area: &str) -> Result<()> {
         }),
         "lexer_dynamic" => regenerate_cases(area, regenerate_lexer_dynamic_case),
         "exec" => regenerate_cases(area, |case| {
-            regenerate_reference_log_case(area, case, false)
+            regenerate_reference_terminal_case(area, case, false)
         }),
         "etex_exec" => regenerate_cases(area, regenerate_etex_reference_log_case),
-        "typeset" => regenerate_cases(area, |case| regenerate_reference_log_case(area, case, true)),
+        "typeset" => regenerate_cases(area, |case| {
+            regenerate_reference_terminal_case(area, case, true)
+        }),
         "tex_exec" => regenerate_cases(area, regenerate_tex_exec_case),
         "tex_exec_io" => regenerate_cases(area, regenerate_tex_exec_io_case),
         "pdf" => pdf::regenerate_area(),
@@ -230,9 +232,9 @@ fn regenerate_case(area: &str, case: &str) -> Result<()> {
         "lexer" => regenerate_umber_dump_case(area, case, "lex-dump"),
         "expand" => regenerate_umber_dump_case(area, case, "expand-dump"),
         "lexer_dynamic" => regenerate_lexer_dynamic_case(case),
-        "exec" => regenerate_reference_log_case(area, case, false),
+        "exec" => regenerate_reference_terminal_case(area, case, false),
         "etex_exec" => regenerate_etex_reference_log_case(case),
-        "typeset" => regenerate_reference_log_case(area, case, true),
+        "typeset" => regenerate_reference_terminal_case(area, case, true),
         "tex_exec" => regenerate_tex_exec_case(case),
         "tex_exec_io" => regenerate_tex_exec_io_case(case),
         _ => unreachable!("known area already checked"),
@@ -278,7 +280,7 @@ fn regenerate_lexer_dynamic_case(case: &str) -> Result<()> {
     write_text_fixture("lexer_dynamic", case, "tokens", &actual)
 }
 
-fn regenerate_reference_log_case(area: &str, case: &str, box_dump: bool) -> Result<()> {
+fn regenerate_reference_terminal_case(area: &str, case: &str, box_dump: bool) -> Result<()> {
     let source = initex_source(area, case)?;
     let output = RefTex::locate()?.run(
         &source.path,
@@ -288,11 +290,11 @@ fn regenerate_reference_log_case(area: &str, case: &str, box_dump: bool) -> Resu
         },
     )?;
     let actual = if box_dump {
-        normalize::box_dump(&output.log)
+        normalize::box_dump(&output.stdout)
     } else {
-        normalize::exec_log(&output.log)
+        normalize::exec_log(&output.stdout)
     };
-    write_text_fixture(area, case, "log", &actual)
+    write_text_fixture(area, case, "terminal", &actual)
 }
 
 fn regenerate_etex_reference_log_case(case: &str) -> Result<()> {
@@ -703,6 +705,7 @@ fn strip_case_suffixes(case: &str) -> String {
     for suffix in [
         ".expected.dvi",
         ".expected.log",
+        ".expected.terminal",
         ".expected.tokens",
         ".expected.ref",
         ".expected.out",
@@ -839,7 +842,8 @@ fn push_token(actual: &mut String, token: SourceToken) {
         ),
         SourceToken::ControlSequence { name, .. } => format!(
             "cs:{}",
-            name.iter().copied()
+            name.iter()
+                .copied()
                 .map(|code| char::from(code.to_byte().expect("exact-byte control sequence")))
                 .collect::<String>()
         ),

@@ -6,7 +6,6 @@
 .\tenrm x
 
 ! OK.
-
 > \box33=
 \hbox(6.83331+0.0)x12.77782
 .\tenrm A

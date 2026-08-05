@@ -1,7 +1,6 @@
 hello 42
 > \foo=macro:
 #1->A#1B.
-
 > 0.5pt.
 
 ### vertical mode entered at line 0
