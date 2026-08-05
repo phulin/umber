@@ -1,6 +1,7 @@
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
+use crate::CommandState;
 use crate::conditionals::{ConditionFrame, ConditionalKind, IfLimit};
 use crate::input::SharedTokenBuffer;
 use crate::macro_call::{MacroActivation, MacroActivationId, MacroArgumentRange, MacroArguments};
@@ -11,7 +12,6 @@ use crate::processor::{
 };
 use crate::profile::{CommandProfile, CommandProfileBoundary, CommandProfileFingerprint};
 use crate::state::LiveTokenBuilder;
-use crate::{CommandRuntime, CommandState};
 use crate::{RegisteredSourceKind, SourceRegistration};
 use tex_state::ids::TokenListId;
 use tex_state::input::TracedTokenList;
@@ -117,11 +117,9 @@ fn snapshot_roundtrip_preserves_nonquiescent_semantic_state() {
     });
 
     state = CommandState::new(expected.profile());
-    let runtime = CommandRuntime::default();
     state.rollback(snapshot).expect("matching snapshot profile");
 
     assert_eq!(state, expected);
-    drop(runtime);
 }
 
 #[test]

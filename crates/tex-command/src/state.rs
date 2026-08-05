@@ -1689,7 +1689,9 @@ pub(crate) struct LiveTokenBuilder {
 /// It intentionally implements neither equality nor hashing, preventing it
 /// from becoming part of semantic state comparisons by convenience.
 #[derive(Debug, Default)]
-pub struct CommandRuntime;
+pub struct CommandRuntime {
+    _private: (),
+}
 
 #[cfg(test)]
 mod tests;

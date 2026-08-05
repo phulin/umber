@@ -1153,13 +1153,13 @@ format and checkpoint identities compose that fingerprint.
 
 The design distinguishes five state classes:
 
-| Class                       | Examples                                                              | Snapshot rule                                                  |
-| --------------------------- | --------------------------------------------------------------------- | -------------------------------------------------------------- |
-| Semantic command state      | input cursors, macro activations, conditions, `align_state`           | captured and restored                                          |
-| Aggregate engine state      | meanings, registers, code tables, fonts, World stream state           | owned and snapshotted by `Universe`                            |
-| Call-local semantic state   | `CurrentCommand`, local scanner accumulator, expansion budget scope   | absent at durable boundaries; replayed from the enclosing step |
-| Diagnostic/provenance state | source map, origins, macro invocation DAG                             | rollback-coupled but excluded from semantic equality           |
-| Discardable acceleration    | measured future caches or buffer pools                                | may be dropped without changing behavior                       |
+| Class                       | Examples                                                            | Snapshot rule                                                  |
+| --------------------------- | ------------------------------------------------------------------- | -------------------------------------------------------------- |
+| Semantic command state      | input cursors, macro activations, conditions, `align_state`         | captured and restored                                          |
+| Aggregate engine state      | meanings, registers, code tables, fonts, World stream state         | owned and snapshotted by `Universe`                            |
+| Call-local semantic state   | `CurrentCommand`, local scanner accumulator, expansion budget scope | absent at durable boundaries; replayed from the enclosing step |
+| Diagnostic/provenance state | source map, origins, macro invocation DAG                           | rollback-coupled but excluded from semantic equality           |
+| Discardable acceleration    | measured future caches or buffer pools                              | may be dropped without changing behavior                       |
 
 No type may mix fields from these classes merely because they are used by the
 same procedure.
@@ -1300,7 +1300,9 @@ Acceleration does not live in `CommandState`. The current runtime capability
 is deliberately zero-sized:
 
 ```rust
-pub struct CommandRuntime;
+pub struct CommandRuntime {
+    _private: (),
+}
 ```
 
 Measured optimization work may add discardable acceleration here only with
@@ -2787,15 +2789,15 @@ the summary and reconstructed only in their unique quiescent forms.
 The initial command-state substrate is guarded by executable architecture
 tests, not by a parallel compatibility facade:
 
-| Invariant                                                                                   | Executable boundary                                                                 |
-| ------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
-| `tex-state <- tex-command`, with no dependency on the retired command crates or `tex-exec`  | `crates/tex-command/tests/it/boundaries.rs` manifest-direction test                 |
-| crate-private state machines and opaque ownership fields                                    | compile-fail fixtures under `crates/tex-command/tests/ui/`                          |
-| one explicitly classified field for each semantic ownership domain                          | exhaustive destructuring in `crates/tex-command/src/state/tests.rs`                 |
-| runtime capability remains outside semantic equality, hashing, and serialization             | runtime-trait compile-fail fixture                                                  |
-| host capabilities and call-local command values cannot enter owned serialized boundaries    | host and ephemeral compile-fail fixtures                                            |
-| snapshots preserve all live semantic fields without runtime or host access                  | nonquiescent snapshot roundtrip in `crates/tex-command/src/snapshot/tests.rs`       |
-| durable summaries reconstruct exact quiescent state and reject every nonquiescent class     | summary roundtrip and rejection tests in `crates/tex-command/src/snapshot/tests.rs` |
+| Invariant                                                                                  | Executable boundary                                                                 |
+| ------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------- |
+| `tex-state <- tex-command`, with no dependency on the retired command crates or `tex-exec` | `crates/tex-command/tests/it/boundaries.rs` manifest-direction test                 |
+| crate-private state machines and opaque ownership fields                                   | compile-fail fixtures under `crates/tex-command/tests/ui/`                          |
+| one explicitly classified field for each semantic ownership domain                         | exhaustive destructuring in `crates/tex-command/src/state/tests.rs`                 |
+| runtime capability remains outside semantic equality, hashing, and serialization           | runtime-trait compile-fail fixture                                                  |
+| host capabilities and call-local command values cannot enter owned serialized boundaries   | host and ephemeral compile-fail fixtures                                            |
+| snapshots preserve all live semantic fields without runtime or host access                 | nonquiescent snapshot roundtrip in `crates/tex-command/src/snapshot/tests.rs`       |
+| durable summaries reconstruct exact quiescent state and reject every nonquiescent class    | summary roundtrip and rejection tests in `crates/tex-command/src/snapshot/tests.rs` |
 
 These gates audit the ownership substrate only. They do not supply command
 semantics or an alternate API while the canonical state machines are still
