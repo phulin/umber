@@ -10,6 +10,22 @@ const NOTO_SANS_ARABIC: &[u8] = include_bytes!("../../tests/fixtures/shaping/Not
 const NOTO_SANS_DEVANAGARI: &[u8] =
     include_bytes!("../../tests/fixtures/shaping/NotoSansDevanagari.ttf");
 
+struct TestShapingContext {
+    direction: WritingDirection,
+    script: Option<OpenTypeTag>,
+    language: Option<FontLanguage>,
+}
+
+impl Default for TestShapingContext {
+    fn default() -> Self {
+        Self {
+            direction: WritingDirection::LeftToRight,
+            script: None,
+            language: None,
+        }
+    }
+}
+
 fn cmu_serif(features: FontFeaturePolicy) -> LoadedFont {
     loaded_font(
         "cmu-serif",
@@ -17,9 +33,7 @@ fn cmu_serif(features: FontFeaturePolicy) -> LoadedFont {
         FontContainer::Woff2,
         AcceptedFontContainers::WASM,
         features,
-        WritingDirection::LeftToRight,
-        None,
-        None,
+        TestShapingContext::default(),
     )
 }
 
@@ -29,13 +43,11 @@ fn loaded_font(
     container: FontContainer,
     accepted_containers: AcceptedFontContainers,
     features: FontFeaturePolicy,
-    direction: WritingDirection,
-    script: Option<OpenTypeTag>,
-    language: Option<FontLanguage>,
+    context: TestShapingContext,
 ) -> LoadedFont {
     let key = FontRequestKey::new(name, 0, VariationSelection::default(), features.clone())
         .expect("fixture request key")
-        .with_shaping_context(direction, script, language)
+        .with_shaping_context(context.direction, context.script, context.language)
         .expect("fixture shaping context");
     let request = FontRequest {
         key: key.clone(),
@@ -128,9 +140,10 @@ fn complex_script_fixtures_match_glyph_and_position_snapshots() {
             FontContainer::TrueType,
             AcceptedFontContainers::NATIVE,
             features.clone(),
-            direction,
-            None,
-            None,
+            TestShapingContext {
+                direction,
+                ..TestShapingContext::default()
+            },
         );
         let shaped = font
             .shape_run(ShapingRequest::new(text))
@@ -188,9 +201,11 @@ fn explicit_script_language_and_mark_policy_reach_rustybuzz() {
         FontContainer::TrueType,
         AcceptedFontContainers::NATIVE,
         enabled.clone(),
-        WritingDirection::RightToLeft,
-        Some(OpenTypeTag::new(*b"arab")),
-        Some(FontLanguage::new("ar").expect("language")),
+        TestShapingContext {
+            direction: WritingDirection::RightToLeft,
+            script: Some(OpenTypeTag::new(*b"arab")),
+            language: Some(FontLanguage::new("ar").expect("language")),
+        },
     );
     let positioned = font
         .shape_run(ShapingRequest::new("لَا"))
@@ -201,9 +216,11 @@ fn explicit_script_language_and_mark_policy_reach_rustybuzz() {
         FontContainer::TrueType,
         AcceptedFontContainers::NATIVE,
         disabled,
-        WritingDirection::RightToLeft,
-        Some(OpenTypeTag::new(*b"arab")),
-        Some(FontLanguage::new("ar").expect("language")),
+        TestShapingContext {
+            direction: WritingDirection::RightToLeft,
+            script: Some(OpenTypeTag::new(*b"arab")),
+            language: Some(FontLanguage::new("ar").expect("language")),
+        },
     )
     .shape_run(ShapingRequest::new("لَا"))
     .expect("OpenType fixture");
