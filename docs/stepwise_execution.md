@@ -30,10 +30,13 @@ immediately after a named paragraph or shipout boundary;
 it also yields whenever TeX's execution-group depth changes so the environment
 snapshot remains a valid rollback root. Named checkpoints are staged and
 delivered only after that bounded operation chunk returns successfully.
-`CommandRuntime` and every font, image, and read-recorder capability are
-discarded or borrow-scoped between calls. `CommandStateSnapshot` captures the
-complete owned command state for private step rollback, while validated
-`CommandSummary` is the only durable named-checkpoint continuation.
+`MainControl` retains `CommandRuntime` across successful operation calls so its
+bounded traced-token scratch pool can remain warm. The runtime is discardable,
+is reset to a fresh empty value on step rollback, and never enters a step
+snapshot or named checkpoint. Font, image, and read-recorder host capabilities
+remain borrow-scoped. `CommandStateSnapshot` captures the complete owned
+command state for private step rollback, while validated `CommandSummary` is
+the only durable named-checkpoint continuation.
 
 `MainControl` wraps every candidate operation in a private aggregate
 step savepoint. `CanonicalStepRunner` and its `OutputLedger` are the shared
@@ -123,7 +126,7 @@ remain on the stack lives in `MainControl`, `Universe`, or the retained session:
 | `ExecutionStats`     | Delivered and fully dispatched token counts, text-span counts, dump flag, committed prepared DVI page plans, shipped-artifact suffix, and final DVI plans. Candidate increments are not published early.                                                                 |
 | checkpoint publisher | Whether `JobStart` has been emitted, the cached mode projection, boundary occurrence/schedule state, staged `EngineCheckpoint`s, and stop-after-boundary policy. The caller-owned `CheckpointSink` is not retained.                                                      |
 | run artifact state   | The artifact/effect prefixes at run entry, prepared-page queues keyed by artifact identity, and the committed prefix belonging to the current run.                                                                                                                       |
-| command runtime      | Discardable caches, scanner watchdogs, and borrow-scoped host context. None enters step snapshots or named checkpoints; replay recreates it around the restored `CommandState`.                                                                                          |
+| command runtime      | The discardable two-slot traced-token scratch pool retained across successful calls. It enters neither step snapshots nor named checkpoints, and rollback replaces it with a fresh empty runtime before replaying the restored `CommandState`.                           |
 | lifecycle            | The next `ExecutionStep`, whether `\end` or `\dump` was seen, end/output cleanup progress, terminal result, and cancellation latch. Recursive output, alignment, math, and scanner frames never appear here: a step either unwinds them successfully or rolls them back. |
 | output state         | Pending page fire-up already represented in `Universe`, prepared DVI pages in stats, recoverable/terminal diagnostics in the virtual `World`, and generated output/effect prefixes in the private build stage.                                                           |
 | accounting           | Committed execution statistics, cumulative fuel, hard fuel limit, advance count, suspension serial, and optional failure-injection sequence.                                                                                                                             |
@@ -306,7 +309,7 @@ change request identity or atomicity:
 
 | Site                                  | Contract on `Need`                                                                                                                                                                                                                               |
 | ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| expansion                             | Roll back token acquisition, macro/scanner frames, input cursors, resolution index, paragraph reads, recoverable diagnostics, and all expansion fuel state except cumulative run fuel.                                                           |
+| expansion                             | Roll back token acquisition, macro/scanner frames, input cursors, resolution index, staged read-recorder observations, recoverable diagnostics, and all expansion fuel state except cumulative run fuel.                                         |
 | main-control dispatch                 | Roll back the delivered token, assignment/group mutations, mode changes, virtual effects, and candidate statistics; replay starts before expansion of that token.                                                                                |
 | paragraph finishing and line building | Roll back the entire paragraph-ending dispatch, line nodes, contribution/page-list changes, and any output it triggered. Pure line breaking itself must not call a host; resource-dependent font/shaping inputs are resolved before entering it. |
 | page building                         | Roll back contribution consumption, page totals, insertion splitting, fire-up state, and candidate output work. Pure page-cost calculation has no resolver.                                                                                      |

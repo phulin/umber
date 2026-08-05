@@ -1326,32 +1326,45 @@ therefore recreates the same budget deterministically.
 
 ### 8.7 Transient state
 
-`TransientState` owns pooled token buffers, builders referenced by live scanner
-status, and rollback roots for temporary command data. Pools and spare
-capacity are discardable; the contents of a live builder are semantic until
-its enclosing call completes or rolls back.
+`TransientState` owns builders referenced by live scanner status and rollback
+roots for temporary command data. The contents of a live builder are semantic
+until its enclosing call completes or rolls back. Discardable pooled buffers
+belong to `CommandRuntime`, not to this snapshotted state.
 
 ## 9. Discardable runtime state
 
 Acceleration does not live in `CommandState`. The current runtime capability
-is deliberately zero-sized:
+owns one typed, bounded pool:
 
 ```rust
 pub struct CommandRuntime {
-    _private: (),
+    traced_tokens: Arc<TracedTokenBufferPool>,
 }
 ```
 
-Measured optimization work may add discardable acceleration here only with
-canonical identity and exact generation or content guards. Dropping
-`CommandRuntime` owns a two-slot pool solely for copied-before-return
-`Vec<TracedTokenWord>` scratch used by token-list absorption, macro parameter
-and replacement collection, `\read`, and output replay expansion. An RAII
-checkout clears and returns each buffer on success or error, retains at most
-4,096 token words per slot, and never receives alignment columns, glue specs,
-character vectors, pattern data, or any other element type. Dropping
-`CommandRuntime` and continuing with a fresh default produces identical
-semantic events, diagnostics, effects, output, snapshots, and summaries.
+The `Arc` owns a mutex-protected array of exactly two optional
+`Vec<TracedTokenWord>` values. Checkout takes the first available vector or
+creates an empty one; the returned RAII guard exclusively owns that vector
+while it is checked out. Guard destruction clears the vector on success and
+error paths. It returns the empty allocation only when its capacity is at most
+4,096 token words and a slot is empty; a larger allocation or a third returned
+buffer is dropped. The pool therefore retains at most two empty vectors and at
+most 8,192 token words of total capacity. An outstanding private guard keeps
+the pool allocation alive through its cloned `Arc`, but never enters semantic
+state.
+
+The pool is used solely for copied-before-return collectors in balanced and
+macro-definition `scan_toks`, `\read` line collection, and output replay
+expansion. Before the guard returns, those paths copy or intern the live token
+contents into semantic ownership. Macro arguments, shift-case output,
+alignment columns and templates, glue specs, character and name vectors,
+pattern data, and every other element type are excluded. `CommandRuntime` is
+non-cloneable, absent from snapshots, summaries, equality, and hashing, and is
+replaced by a fresh empty runtime on step rollback. Dropping it and continuing
+with a fresh default produces identical semantic events, diagnostics, effects,
+output, snapshots, and summaries. Further discardable acceleration belongs
+here only after measurement and with canonical identity plus exact generation
+or content guards.
 
 The input stack does not carry meaning-cache state or expansion-policy bits.
 
@@ -3344,7 +3357,8 @@ Its performance foundations are:
 - no per-scanner generic state facade;
 - cold typed error and resource paths;
 - immutable stored token lists; and
-- a dedicated zero-sized runtime capability for measured future acceleration.
+- a dedicated discardable runtime capability with the measured bounded
+  traced-token scratch pool described in section 9.
 
 ### 32.1 Optimization promotion
 

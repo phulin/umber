@@ -1,8 +1,11 @@
 # Paragraph replay deletion baseline
 
-This is the reproducible pre-deletion receipt for `umber2-9hid.8`. The parent
-decision is to delete paragraph input transaction replay completely. These
-measurements quantify the tradeoff and do not reopen that decision.
+This is a historical pre-deletion receipt for `umber2-9hid.8`, not a supported
+current runtime or benchmark configuration. The parent decision deleted
+paragraph input transaction recording and replay completely. These
+measurements quantify that tradeoff and do not reopen the decision; see
+[`incremental_memoization.md`](incremental_memoization.md) for the current
+restart-from-summary contract.
 
 ## Identity
 
