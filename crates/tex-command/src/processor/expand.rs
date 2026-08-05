@@ -1208,13 +1208,13 @@ impl CommandProcessor<'_> {
         observe!(
             self,
             CommandObservation::Effect(EffectRecord {
-                kind: "input",
-                detail: _input.file_name.packed(),
+                kind: crate::ObservationEffectKind::Input,
+                channel: _input.file_name.packed(),
+                value: crate::ObservationValue::None,
                 source: Some(crate::observation::OpenedSourceSnapshot {
                     id: _input.source,
                     bytes: _input.bytes,
                 }),
-                tokens: None,
             }),
         );
         let _ = opener;

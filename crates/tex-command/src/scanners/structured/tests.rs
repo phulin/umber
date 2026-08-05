@@ -10,7 +10,7 @@ use super::*;
 use crate::input::{
     ReplayTrace, RetirementBehavior, SharedTokenBuffer, TokenBehavior, TokenPayload,
 };
-use crate::observation::{ObservationValue, RecoveryKind};
+use crate::observation::{MutationTarget, ObservationValue, RecoveryKind};
 use crate::{
     CommandHostCapabilities, CommandHostContext, CommandObservation, CommandObserver,
     CommandReplayDelivery, CommandRuntime, CommandState, RegisteredSourceKind, SourceRegistration,
@@ -503,9 +503,9 @@ fn font_definition_scanner_defines_the_null_font_before_scanning_operands() {
             matches!(
                 observation,
                 CommandObservation::Mutation(record)
-                    if record.target == "meaning"
-                        && record.value == "set_font"
-                        && record.key.as_deref() == Some("tenrm")
+                    if record.target == MutationTarget::Meaning
+                        && record.value == ObservationValue::Name("set_font".into())
+                        && record.key == ObservationValue::Name("tenrm".into())
                         && !record.global
             )
         })

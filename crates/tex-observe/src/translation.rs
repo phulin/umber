@@ -199,6 +199,7 @@ pub(crate) fn observation_value(value: ObservationValue) -> CanonicalValue {
             shrink_order: shrink_order.into(),
         },
         ObservationValue::Name(value) => CanonicalValue::Name(value),
+        ObservationValue::Bytes(value) => CanonicalValue::Bytes(value),
         ObservationValue::Tokens(tokens) => {
             CanonicalValue::Tokens(tokens.into_iter().map(oracle_token).collect())
         }
@@ -466,178 +467,35 @@ pub(crate) fn translate_alignment(record: AlignmentRecord) -> Event {
     })
 }
 pub(crate) fn translate_mutation(record: MutationRecord) -> Event {
-    let keyed_target = match record.target {
-        "meaning" => Some(StateTarget::Meaning),
-        "register" => Some(StateTarget::Register),
-        "parameter" => Some(StateTarget::Parameter),
-        _ => None,
-    };
-    if let Some(target) = keyed_target
-        && let Some(key) = record.key.as_ref()
-    {
-        let value = if let Some(tokens) = record.tokens.as_ref() {
-            Some(CanonicalValue::Tokens(
-                tokens.iter().cloned().map(oracle_token).collect(),
-            ))
-        } else if let Some(value) = record.value.strip_prefix("scaled:") {
-            value.parse::<i64>().ok().map(CanonicalValue::Scaled)
-        } else if let Some(value) = record.value.strip_prefix("glue:") {
-            parse_glue_mutation_value(value)
-        } else {
-            record
-                .value
-                .strip_prefix("name:")
-                .map(|value| CanonicalValue::Name(value.into()))
-        };
-        if let Some(value) = value {
-            return Event::Mutation(MutationEvent {
-                target,
-                key: CanonicalValue::Name(key.clone()),
-                value,
-                scope: if record.global { "global" } else { "local" }.into(),
-            });
-        }
-    }
-    if record.target == "catcode"
-        && let Some((character, value)) = record.value.split_once('=')
-        && let (Ok(character), Some(value)) = (
-            character.parse::<u32>(),
-            canonical_catcode_assignment(value),
-        )
-    {
-        return Event::Mutation(MutationEvent {
-            target: StateTarget::Catcode,
-            key: CanonicalValue::Character(character),
-            value: CanonicalValue::Name(value.into()),
-            scope: if record.global { "global" } else { "local" }.into(),
-        });
-    }
-    if record.target == "meaning"
-        && let Some(key) = record.key
-    {
-        let value = if let Some(value) = record.value.strip_prefix("character:") {
-            value
-                .parse::<u32>()
-                .map(CanonicalValue::Character)
-                .unwrap_or_else(|_| CanonicalValue::Name(record.value.clone()))
-        } else if let Some(value) = record.value.strip_prefix("integer:") {
-            value
-                .parse::<i64>()
-                .map(CanonicalValue::Integer)
-                .unwrap_or_else(|_| CanonicalValue::Name(record.value.clone()))
-        } else {
-            CanonicalValue::Name(record.value)
-        };
-        return Event::Mutation(MutationEvent {
-            target: StateTarget::Meaning,
-            key: CanonicalValue::Name(key),
-            value,
-            scope: if record.global { "global" } else { "local" }.into(),
-        });
-    }
-    let parsed = record.value.split_once('=').and_then(|(key, value)| {
-        value
-            .parse::<i64>()
-            .ok()
-            .map(|value| (key.to_owned(), value))
-    });
-    let (key, value) = match parsed {
-        Some((key, value)) => (CanonicalValue::Name(key), CanonicalValue::Integer(value)),
-        None => (
-            CanonicalValue::Name(record.target.into()),
-            CanonicalValue::Name(record.value),
-        ),
-    };
     Event::Mutation(MutationEvent {
         target: match record.target {
-            "meaning" => StateTarget::Meaning,
-            "catcode" => StateTarget::Catcode,
-            "code_table" => StateTarget::CodeTable,
-            "parameter" => StateTarget::Parameter,
-            _ => StateTarget::Register,
+            MutationTarget::Meaning => StateTarget::Meaning,
+            MutationTarget::Catcode => StateTarget::Catcode,
+            MutationTarget::CodeTable => StateTarget::CodeTable,
+            MutationTarget::Parameter => StateTarget::Parameter,
+            MutationTarget::Register => StateTarget::Register,
         },
-        key,
-        value,
+        key: observation_value(record.key),
+        value: observation_value(record.value),
         scope: if record.global { "global" } else { "local" }.into(),
     })
 }
 
-fn parse_glue_mutation_value(value: &str) -> Option<CanonicalValue> {
-    let mut fields = value.split(';').map(|field| field.split_once('='));
-    let width = fields.next()??.1.parse().ok()?;
-    let stretch = fields.next()??.1.parse().ok()?;
-    let stretch_order = fields.next()??.1.to_owned();
-    let shrink = fields.next()??.1.parse().ok()?;
-    let shrink_order = fields.next()??.1.to_owned();
-    (fields.next().is_none()).then_some(CanonicalValue::Glue {
-        width,
-        stretch,
-        stretch_order,
-        shrink,
-        shrink_order,
-    })
-}
-
-pub(crate) fn canonical_catcode_assignment(value: &str) -> Option<&'static str> {
-    canonical_names::catcode_assignment_name(value.parse::<i64>().ok()?)
-}
-
 pub(crate) fn translate_effect(record: EffectRecord) -> Event {
-    if record.kind == "message" {
-        return Event::Effect(EffectEvent {
-            kind: EffectKind::Message,
-            channel: "terminal".into(),
-            value: CanonicalValue::Bytes(record.detail.into_bytes()),
-        });
-    }
-    let (channel, detail) = match record.detail.split_once('\0') {
-        Some((channel, detail)) => (channel.to_owned(), detail.to_owned()),
-        None => (record.kind.to_owned(), record.detail),
-    };
-    if record.kind == "shipout" {
-        let page = detail
-            .parse::<i64>()
-            .expect("shipout effects carry their canonical DVI page number");
-        return Event::Effect(EffectEvent {
-            kind: EffectKind::Shipout,
-            channel,
-            value: CanonicalValue::Integer(page),
-        });
-    }
-    if record.kind == "terminate" {
-        return Event::Effect(EffectEvent {
-            kind: EffectKind::Terminate,
-            channel,
-            value: CanonicalValue::None,
-        });
-    }
-    if record.kind == "close" {
-        // tex.web §1374's close branch closes `write_file[j]` without naming
-        // it -- only the open branch assigns `cur_name`/`cur_area`/`cur_ext`,
-        // and TeX keeps no name for an open stream (§1378 closes the
-        // survivors the same way). The stream number in `channel` is the
-        // whole committed identity, so the value is `None` rather than an
-        // empty name.
-        return Event::Effect(EffectEvent {
-            kind: EffectKind::Close,
-            channel,
-            value: CanonicalValue::None,
-        });
-    }
     Event::Effect(EffectEvent {
         kind: match record.kind {
-            "message" => EffectKind::Message,
-            "write" => EffectKind::Write,
-            "open" => EffectKind::Open,
-            "close" => EffectKind::Close,
-            "shipout" => EffectKind::Shipout,
-            _ => EffectKind::Terminate,
+            ObservationEffectKind::Message => EffectKind::Message,
+            ObservationEffectKind::Write => EffectKind::Write,
+            ObservationEffectKind::Open => EffectKind::Open,
+            ObservationEffectKind::Close => EffectKind::Close,
+            ObservationEffectKind::Shipout => EffectKind::Shipout,
+            ObservationEffectKind::Input
+            | ObservationEffectKind::Terminate
+            | ObservationEffectKind::ShowTokens
+            | ObservationEffectKind::ShowIfs
+            | ObservationEffectKind::ShowGroups => EffectKind::Terminate,
         },
-        channel,
-        value: record
-            .tokens
-            .map_or(CanonicalValue::Name(detail), |tokens| {
-                CanonicalValue::Tokens(tokens.into_iter().map(oracle_token).collect())
-            }),
+        channel: record.channel,
+        value: observation_value(record.value),
     })
 }

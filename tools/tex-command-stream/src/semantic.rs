@@ -1815,8 +1815,8 @@ pub fn observation_projection(run: &SemanticRun, projection: &Projection) -> Vec
                 Some(format!(
                     "mutation:{}:{}:{}:{}",
                     record.target,
-                    record.key.as_deref().unwrap_or("-"),
-                    record.value,
+                    observation_value_text(&record.key),
+                    observation_value_text(&record.value),
                     if record.global { "global" } else { "local" }
                 ))
             }
@@ -1840,7 +1840,12 @@ pub fn observation_projection(run: &SemanticRun, projection: &Projection) -> Vec
             CommandObservation::Effect(record)
                 if projection.kinds.contains(&ObservationKind::Effect) =>
             {
-                Some(format!("effect:{}:{}", record.kind, record.detail))
+                Some(format!(
+                    "effect:{}:{}:{}",
+                    record.kind,
+                    record.channel,
+                    observation_value_text(&record.value)
+                ))
             }
             _ => None,
         };
@@ -1875,7 +1880,31 @@ fn scanner_value_text(record: &tex_command::ScannerRecord) -> String {
             }
         ),
         ObservationValue::Name(value) => value.clone(),
+        ObservationValue::Bytes(value) => String::from_utf8_lossy(value).into_owned(),
         ObservationValue::Tokens(_) => "tokens".into(),
+    }
+}
+
+fn observation_value_text(value: &tex_command::ObservationValue) -> String {
+    use tex_command::ObservationValue;
+
+    match value {
+        ObservationValue::None => "none".into(),
+        ObservationValue::Integer(value) => value.to_string(),
+        ObservationValue::Character(value) => value.to_string(),
+        ObservationValue::Scaled(value) => format!("scaled:{value}"),
+        ObservationValue::Glue {
+            width,
+            stretch,
+            stretch_order,
+            shrink,
+            shrink_order,
+        } => format!(
+            "glue:width={width};stretch={stretch};stretch_order={stretch_order};shrink={shrink};shrink_order={shrink_order}"
+        ),
+        ObservationValue::Name(value) => value.clone(),
+        ObservationValue::Bytes(value) => String::from_utf8_lossy(value).into_owned(),
+        ObservationValue::Tokens(tokens) => observed_tokens_text(tokens),
     }
 }
 
@@ -1990,10 +2019,11 @@ pub fn project(run: &SemanticRun, projection: &Projection) -> Vec<String> {
             let CommandObservation::Mutation(record) = observation else {
                 return None;
             };
-            record
-                .value
-                .starts_with("count:")
-                .then(|| format!("mutation:{}", record.value))
+            let tex_command::ObservationValue::Name(key) = &record.key else {
+                return None;
+            };
+            key.starts_with("count:")
+                .then(|| format!("mutation:{key}={}", observation_value_text(&record.value)))
         }));
     }
     if matches!(projection.kind, ProjectionKind::SkippingConditionSteps) {

@@ -192,10 +192,10 @@ fn recovery_transport_preserves_the_command_owned_kind() {
 fn message_effects_use_terminal_bytes() {
     assert_eq!(
         translate_effect(EffectRecord {
-            kind: "message",
-            detail: "READY".into(),
+            kind: ObservationEffectKind::Message,
+            channel: "terminal".into(),
+            value: ObservationValue::Bytes(b"READY".to_vec()),
             source: None,
-            tokens: None,
         }),
         Event::Effect(EffectEvent {
             kind: EffectKind::Message,
@@ -214,25 +214,25 @@ fn live_transport_suppresses_only_uninstrumented_print_effects() {
     let mut translator = LiveSessionTranslator::new("terminal", SchemaVersion::V1);
     for record in [
         EffectRecord {
-            kind: "showgroups",
-            detail: "\n\n### bottom level".into(),
+            kind: ObservationEffectKind::ShowGroups,
+            channel: "showgroups".into(),
+            value: ObservationValue::Name("\n\n### bottom level".into()),
             source: None,
-            tokens: None,
         },
         EffectRecord {
-            kind: "showifs",
-            detail: "\n### no active conditionals".into(),
+            kind: ObservationEffectKind::ShowIfs,
+            channel: "showifs".into(),
+            value: ObservationValue::Name("\n### no active conditionals".into()),
             source: None,
-            tokens: None,
         },
         EffectRecord {
-            kind: "showtokens",
-            detail: "A".into(),
-            source: None,
-            tokens: Some(vec![ObservedToken::Character {
+            kind: ObservationEffectKind::ShowTokens,
+            channel: "showtokens".into(),
+            value: ObservationValue::Tokens(vec![ObservedToken::Character {
                 character: 'A',
                 catcode: Catcode::Letter,
             }]),
+            source: None,
         },
     ] {
         translator.committed(CommandObservation::Effect(record));
@@ -241,37 +241,37 @@ fn live_transport_suppresses_only_uninstrumented_print_effects() {
 
     for record in [
         EffectRecord {
-            kind: "message",
-            detail: "READY".into(),
+            kind: ObservationEffectKind::Message,
+            channel: "terminal".into(),
+            value: ObservationValue::Bytes(b"READY".to_vec()),
             source: None,
-            tokens: None,
         },
         EffectRecord {
-            kind: "open",
-            detail: "stream:1\0result.log".into(),
+            kind: ObservationEffectKind::Open,
+            channel: "stream:1".into(),
+            value: ObservationValue::Name("result.log".into()),
             source: None,
-            tokens: None,
         },
         EffectRecord {
-            kind: "write",
-            detail: "stream:1\0".into(),
-            source: None,
-            tokens: Some(vec![ObservedToken::Character {
+            kind: ObservationEffectKind::Write,
+            channel: "stream:1".into(),
+            value: ObservationValue::Tokens(vec![ObservedToken::Character {
                 character: 'W',
                 catcode: Catcode::Letter,
             }]),
+            source: None,
         },
         EffectRecord {
-            kind: "shipout",
-            detail: "dvi\0".to_owned() + "1",
+            kind: ObservationEffectKind::Shipout,
+            channel: "dvi".into(),
+            value: ObservationValue::Integer(1),
             source: None,
-            tokens: None,
         },
         EffectRecord {
-            kind: "terminate",
-            detail: "engine\0".into(),
+            kind: ObservationEffectKind::Terminate,
+            channel: "engine".into(),
+            value: ObservationValue::None,
             source: None,
-            tokens: None,
         },
     ] {
         translator.committed(CommandObservation::Effect(record));
@@ -321,10 +321,10 @@ fn live_transport_suppresses_only_uninstrumented_print_effects() {
 fn shipout_effects_use_dvi_page_numbers() {
     assert_eq!(
         translate_effect(EffectRecord {
-            kind: "shipout",
-            detail: "dvi\x001".into(),
+            kind: ObservationEffectKind::Shipout,
+            channel: "dvi".into(),
+            value: ObservationValue::Integer(1),
             source: None,
-            tokens: None,
         }),
         Event::Effect(EffectEvent {
             kind: EffectKind::Shipout,
@@ -449,10 +449,9 @@ fn engine_owned_alignment_nesting_projects_without_shadow_state() {
 #[test]
 fn catcode_mutations_use_canonical_assignment_names_and_scope() {
     let event = translate_mutation(MutationRecord {
-        target: "catcode",
-        value: "123=1".into(),
-        key: None,
-        tokens: None,
+        target: MutationTarget::Catcode,
+        key: ObservationValue::Character(123),
+        value: ObservationValue::Name("left_brace".into()),
         global: true,
     });
     assert_eq!(
@@ -464,16 +463,14 @@ fn catcode_mutations_use_canonical_assignment_names_and_scope() {
             scope: "global".into(),
         })
     );
-    assert_eq!(canonical_catcode_assignment("16"), None);
 }
 
 #[test]
 fn token_register_mutations_keep_the_frozen_list() {
     let event = translate_mutation(MutationRecord {
-        target: "register",
-        value: "tokens".into(),
-        key: Some("toks:0".into()),
-        tokens: Some(vec![ObservedToken::Character {
+        target: MutationTarget::Register,
+        key: ObservationValue::Name("toks:0".into()),
+        value: ObservationValue::Tokens(vec![ObservedToken::Character {
             character: 'X',
             catcode: Catcode::Letter,
         }]),
@@ -498,10 +495,9 @@ fn token_register_mutations_keep_the_frozen_list() {
 #[test]
 fn sparse_box_mutations_keep_the_named_state() {
     let event = translate_mutation(MutationRecord {
-        target: "register",
-        value: "name:occupied".into(),
-        key: Some("box:300".into()),
-        tokens: None,
+        target: MutationTarget::Register,
+        key: ObservationValue::Name("box:300".into()),
+        value: ObservationValue::Name("occupied".into()),
         global: true,
     });
     assert_eq!(
@@ -518,10 +514,9 @@ fn sparse_box_mutations_keep_the_named_state() {
 #[test]
 fn meaning_mutations_keep_the_assigned_control_sequence() {
     let event = translate_mutation(MutationRecord {
-        target: "meaning",
-        value: "begin_group".into(),
-        key: Some("alignmentbegingroup".into()),
-        tokens: None,
+        target: MutationTarget::Meaning,
+        key: ObservationValue::Name("alignmentbegingroup".into()),
+        value: ObservationValue::Name("begin_group".into()),
         global: false,
     });
     assert_eq!(
@@ -538,10 +533,9 @@ fn meaning_mutations_keep_the_assigned_control_sequence() {
 #[test]
 fn toksdef_meanings_project_as_assign_toks() {
     let event = translate_mutation(MutationRecord {
-        target: "meaning",
-        value: "assign_toks".into(),
-        key: Some("tokens".into()),
-        tokens: None,
+        target: MutationTarget::Meaning,
+        key: ObservationValue::Name("tokens".into()),
+        value: ObservationValue::Name("assign_toks".into()),
         global: false,
     });
     assert_eq!(
@@ -560,7 +554,6 @@ fn glue_scanners_and_mutations_keep_structured_orders() {
     // The producer already spells tex.web §135's order names; the
     // transport carries them through verbatim rather than re-casing a
     // Rust `Debug` rendering (`umber2-johp.141`).
-    let value = "width=131072;stretch=196608;stretch_order=fil;shrink=262144;shrink_order=normal";
     let expected = CanonicalValue::Glue {
         width: 131_072,
         stretch: 196_608,
@@ -580,10 +573,15 @@ fn glue_scanners_and_mutations_keep_structured_orders() {
     );
     assert_eq!(
         translate_mutation(MutationRecord {
-            target: "register",
-            value: format!("glue:{value}"),
-            key: Some("skip:0".into()),
-            tokens: None,
+            target: MutationTarget::Register,
+            key: ObservationValue::Name("skip:0".into()),
+            value: ObservationValue::Glue {
+                width: 131_072,
+                stretch: 196_608,
+                stretch_order: "fil",
+                shrink: 262_144,
+                shrink_order: "normal",
+            },
             global: false,
         }),
         Event::Mutation(MutationEvent {
@@ -595,10 +593,15 @@ fn glue_scanners_and_mutations_keep_structured_orders() {
     );
     assert_eq!(
         translate_mutation(MutationRecord {
-            target: "parameter",
-            value: format!("glue:{value}"),
-            key: Some("glue_parameter:11".into()),
-            tokens: None,
+            target: MutationTarget::Parameter,
+            key: ObservationValue::Name("glue_parameter:11".into()),
+            value: ObservationValue::Glue {
+                width: 131_072,
+                stretch: 196_608,
+                stretch_order: "fil",
+                shrink: 262_144,
+                shrink_order: "normal",
+            },
             global: false,
         }),
         Event::Mutation(MutationEvent {

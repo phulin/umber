@@ -69,31 +69,25 @@ impl CommandObserver for TripProfileObserver {
                 name: "terminal".into(),
             }))),
             CommandObservation::Effect(EffectRecord {
-                kind: "shipout",
-                detail,
+                kind: tex_command::ObservationEffectKind::Shipout,
+                channel,
+                value: tex_command::ObservationValue::Integer(page),
                 ..
             }) => {
-                let Some((channel, page)) = detail.split_once('\0') else {
-                    return;
-                };
-                let Ok(page) = page.parse::<i64>() else {
-                    return;
-                };
                 self.events.push(self.normalizer.normalize(Event::Effect(EffectEvent {
                     kind: EffectKind::Shipout,
-                    channel: channel.into(),
+                    channel,
                     value: CanonicalValue::Integer(page),
                 })));
             }
             CommandObservation::Effect(EffectRecord {
-                kind: "terminate",
-                detail,
+                kind: tex_command::ObservationEffectKind::Terminate,
+                channel,
                 ..
             }) => {
-                let channel = detail.strip_suffix('\0').unwrap_or(&detail);
                 self.events.push(self.normalizer.normalize(Event::Effect(EffectEvent {
                     kind: EffectKind::Terminate,
-                    channel: channel.into(),
+                    channel,
                     value: CanonicalValue::None,
                 })));
             }
@@ -266,16 +260,16 @@ mod tests {
     fn bounded_profile_is_nonempty_contiguous_and_uses_pinned_header() {
         let mut observer = TripProfileObserver::default();
         observer.committed(CommandObservation::Effect(EffectRecord {
-            kind: "message",
-            detail: "not stable".into(),
+            kind: tex_command::ObservationEffectKind::Message,
+            channel: "terminal".into(),
+            value: tex_command::ObservationValue::Bytes(b"not stable".to_vec()),
             source: None,
-            tokens: None,
         }));
         observer.committed(CommandObservation::Effect(EffectRecord {
-            kind: "shipout",
-            detail: "dvi\0\u{31}".into(),
+            kind: tex_command::ObservationEffectKind::Shipout,
+            channel: "dvi".into(),
+            value: tex_command::ObservationValue::Integer(1),
             source: None,
-            tokens: None,
         }));
         observer.committed(CommandObservation::Input(InputRecord {
             transition: CommandInputTransition::Stop,
@@ -286,10 +280,10 @@ mod tests {
             position: 0,
         }));
         observer.committed(CommandObservation::Effect(EffectRecord {
-            kind: "terminate",
-            detail: "engine\0".into(),
+            kind: tex_command::ObservationEffectKind::Terminate,
+            channel: "engine".into(),
+            value: tex_command::ObservationValue::None,
             source: None,
-            tokens: None,
         }));
         let expected = oracle();
         let actual = observer

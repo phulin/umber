@@ -280,7 +280,8 @@ fn loaded_projection_distinguishes_explicit_end_from_nested_source_exhaustion() 
         matches!(
             observation,
             tex_command::CommandObservation::Effect(effect)
-                if effect.kind == "terminate" && effect.detail == "engine\0"
+                if effect.kind == tex_command::ObservationEffectKind::Terminate
+                    && effect.channel == "engine"
         )
     }));
 
@@ -294,8 +295,8 @@ fn loaded_projection_distinguishes_explicit_end_from_nested_source_exhaustion() 
         [.., tex_command::CommandObservation::Input(input), tex_command::CommandObservation::Effect(effect)]
             if input.transition == tex_command::InputTransition::Stop
                 && input.reason == tex_command::InputReason::Source
-                && effect.kind == "terminate"
-                && effect.detail == "engine\0"
+                && effect.kind == tex_command::ObservationEffectKind::Terminate
+                && effect.channel == "engine"
     ));
 }
 

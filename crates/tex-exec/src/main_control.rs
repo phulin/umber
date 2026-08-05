@@ -26,8 +26,8 @@ use tex_command::{
 };
 use tex_command::{
     CommandObservation, CommandObserver, EffectRecord, GeometryRecord, MutationRecord,
-    ObservedToken, ParameterClass, TokenListRecord, canonical_names::glue_order_name,
-    parameter_mutation_key_for_dialect,
+    MutationTarget, ObservationEffectKind, ObservationValue, ObservedToken, ParameterClass,
+    TokenListRecord, canonical_names::glue_order_name, parameter_mutation_key_for_dialect,
 };
 use tex_state::GeometryObservation;
 use tex_state::code_tables::{DelCode, LcCode, MathCode, SfCode, UcCode};
@@ -12288,17 +12288,14 @@ impl PendingMutation {
     }
 }
 
-/// Serializes a committed glue value the way the reference instrumentation's
-/// `umber_trace_glue_value` does.
-fn glue_mutation_value(value: &GlueSpec) -> String {
-    format!(
-        "glue:width={};stretch={};stretch_order={};shrink={};shrink_order={}",
-        value.width.raw(),
-        value.stretch.raw(),
-        glue_order_name(value.stretch_order),
-        value.shrink.raw(),
-        glue_order_name(value.shrink_order),
-    )
+fn glue_mutation_value(value: &GlueSpec) -> ObservationValue {
+    ObservationValue::Glue {
+        width: i64::from(value.width.raw()),
+        stretch: i64::from(value.stretch.raw()),
+        stretch_order: glue_order_name(value.stretch_order),
+        shrink: i64::from(value.shrink.raw()),
+        shrink_order: glue_order_name(value.shrink_order),
+    }
 }
 
 /// Reads back the value TeX82 §1236's `do_register_command` committed at its
@@ -12321,57 +12318,47 @@ fn committed_arithmetic_mutation(
 ) -> MutationRecord {
     match target {
         ArithmeticTarget::IntegerRegister(index) => MutationRecord {
-            target: "register",
-            value: format!("count:{index}={}", stores.count(index)),
-            key: None,
-            tokens: None,
+            target: MutationTarget::Register,
+            key: ObservationValue::Name(format!("count:{index}")),
+            value: ObservationValue::Integer(i64::from(stores.count(index))),
             global,
         },
         ArithmeticTarget::DimensionRegister(index) => MutationRecord {
-            target: "register",
-            value: format!("scaled:{}", stores.dimen(index).raw()),
-            key: Some(format!("dimen:{index}")),
-            tokens: None,
+            target: MutationTarget::Register,
+            key: ObservationValue::Name(format!("dimen:{index}")),
+            value: ObservationValue::Scaled(i64::from(stores.dimen(index).raw())),
             global,
         },
         ArithmeticTarget::GlueRegister { index, mu } => MutationRecord {
-            target: "register",
+            target: MutationTarget::Register,
+            key: ObservationValue::Name(format!("{}:{index}", if mu { "muskip" } else { "skip" })),
             value: glue_mutation_value(&stores.glue(if mu {
                 stores.muskip(index)
             } else {
                 stores.skip(index)
             })),
-            key: Some(format!("{}:{index}", if mu { "muskip" } else { "skip" })),
-            tokens: None,
             global,
         },
         ArithmeticTarget::IntegerParameter(index) => MutationRecord {
-            target: "parameter",
-            value: format!(
-                "{}={}",
-                parameter_mutation_key_for_dialect(
-                    profile.dialect(),
-                    ParameterClass::Integer,
-                    index,
-                ),
-                stores.int_param(IntParam::new(index))
-            ),
-            key: None,
-            tokens: None,
+            target: MutationTarget::Parameter,
+            key: ObservationValue::Name(parameter_mutation_key_for_dialect(
+                profile.dialect(),
+                ParameterClass::Integer,
+                index,
+            )),
+            value: ObservationValue::Integer(i64::from(stores.int_param(IntParam::new(index)))),
             global,
         },
         ArithmeticTarget::DimensionParameter(index) => MutationRecord {
-            target: "parameter",
-            value: format!(
-                "scaled:{}",
-                stores.dimen_param(DimenParam::new(index)).raw()
-            ),
-            key: Some(parameter_mutation_key_for_dialect(
+            target: MutationTarget::Parameter,
+            key: ObservationValue::Name(parameter_mutation_key_for_dialect(
                 profile.dialect(),
                 ParameterClass::Dimension,
                 index,
             )),
-            tokens: None,
+            value: ObservationValue::Scaled(i64::from(
+                stores.dimen_param(DimenParam::new(index)).raw(),
+            )),
             global,
         },
         // TeX82 keeps `\thinmuskip`/`\medmuskip`/`\thickmuskip` in the same
@@ -12380,14 +12367,13 @@ fn committed_arithmetic_mutation(
         // `glue_parameter:<n>`; the `mu` flag only selected which scanner
         // §1236 used for the operand.
         ArithmeticTarget::GlueParameter { index, .. } => MutationRecord {
-            target: "parameter",
-            value: glue_mutation_value(&stores.glue(stores.glue_param(GlueParam::new(index)))),
-            key: Some(parameter_mutation_key_for_dialect(
+            target: MutationTarget::Parameter,
+            key: ObservationValue::Name(parameter_mutation_key_for_dialect(
                 profile.dialect(),
                 ParameterClass::Glue,
                 index,
             )),
-            tokens: None,
+            value: glue_mutation_value(&stores.glue(stores.glue_param(GlueParam::new(index)))),
             global,
         },
     }
@@ -12447,10 +12433,9 @@ fn applied_mutation_observation(
             value,
             global,
         } => MutationRecord {
-            target: "register",
-            value: format!("count:{index}={value}"),
-            key: None,
-            tokens: None,
+            target: MutationTarget::Register,
+            key: ObservationValue::Name(format!("count:{index}")),
+            value: ObservationValue::Integer(i64::from(*value)),
             global: *global,
         },
         ScannedStep::Dimen {
@@ -12458,10 +12443,9 @@ fn applied_mutation_observation(
             value,
             global,
         } => MutationRecord {
-            target: "register",
-            value: format!("scaled:{}", value.raw()),
-            key: Some(format!("dimen:{index}")),
-            tokens: None,
+            target: MutationTarget::Register,
+            key: ObservationValue::Name(format!("dimen:{index}")),
+            value: ObservationValue::Scaled(i64::from(value.raw())),
             global: *global,
         },
         ScannedStep::Skip {
@@ -12470,10 +12454,9 @@ fn applied_mutation_observation(
             global,
             ..
         } => MutationRecord {
-            target: "register",
+            target: MutationTarget::Register,
+            key: ObservationValue::Name(format!("skip:{index}")),
             value: glue_mutation_value(value),
-            key: Some(format!("skip:{index}")),
-            tokens: None,
             global: *global,
         },
         ScannedStep::Muskip {
@@ -12481,10 +12464,9 @@ fn applied_mutation_observation(
             value,
             global,
         } => MutationRecord {
-            target: "register",
+            target: MutationTarget::Register,
+            key: ObservationValue::Name(format!("muskip:{index}")),
             value: glue_mutation_value(value),
-            key: Some(format!("muskip:{index}")),
-            tokens: None,
             global: *global,
         },
         ScannedStep::Toks {
@@ -12492,10 +12474,9 @@ fn applied_mutation_observation(
             tokens,
             global,
         } => MutationRecord {
-            target: "register",
-            value: "tokens".into(),
-            key: Some(format!("toks:{index}")),
-            tokens: Some(
+            target: MutationTarget::Register,
+            key: ObservationValue::Name(format!("toks:{index}")),
+            value: ObservationValue::Tokens(
                 stores
                     .tokens(tokens.token_list())
                     .iter()
@@ -12512,9 +12493,8 @@ fn applied_mutation_observation(
         // registers 256..259. The shape node is not a token list; its
         // canonical token projection is therefore empty.
         ScannedStep::PenaltyArray { kind, global, .. } => MutationRecord {
-            target: "register",
-            value: "tokens".into(),
-            key: Some(format!(
+            target: MutationTarget::Register,
+            key: ObservationValue::Name(format!(
                 "toks:{}",
                 match kind {
                     PenaltyArrayKind::InterLine => 256,
@@ -12523,7 +12503,7 @@ fn applied_mutation_observation(
                     PenaltyArrayKind::DisplayWidow => 259,
                 }
             )),
-            tokens: Some(Vec::new()),
+            value: ObservationValue::Tokens(Vec::new()),
             global: *global,
         },
         // e-TeX 2.6 [47.1070] extends TeX82 §1070's `normal_paragraph` by
@@ -12544,10 +12524,9 @@ fn applied_mutation_observation(
             && !stores.penalty_array(PenaltyArrayKind::InterLine).is_empty() =>
         {
             MutationRecord {
-                target: "register",
-                value: "tokens".into(),
-                key: Some("toks:256".into()),
-                tokens: Some(Vec::new()),
+                target: MutationTarget::Register,
+                key: ObservationValue::Name("toks:256".into()),
+                value: ObservationValue::Tokens(Vec::new()),
                 global: false,
             }
         }
@@ -12558,17 +12537,13 @@ fn applied_mutation_observation(
             value,
             global,
         } => MutationRecord {
-            target: "parameter",
-            value: format!(
-                "{}={value}",
-                parameter_mutation_key_for_dialect(
-                    profile.dialect(),
-                    ParameterClass::Integer,
-                    *index,
-                )
-            ),
-            key: None,
-            tokens: None,
+            target: MutationTarget::Parameter,
+            key: ObservationValue::Name(parameter_mutation_key_for_dialect(
+                profile.dialect(),
+                ParameterClass::Integer,
+                *index,
+            )),
+            value: ObservationValue::Integer(i64::from(*value)),
             global: *global,
         },
         ScannedStep::DimenParam {
@@ -12576,14 +12551,13 @@ fn applied_mutation_observation(
             value,
             global,
         } => MutationRecord {
-            target: "parameter",
-            value: format!("scaled:{}", value.raw()),
-            key: Some(parameter_mutation_key_for_dialect(
+            target: MutationTarget::Parameter,
+            key: ObservationValue::Name(parameter_mutation_key_for_dialect(
                 profile.dialect(),
                 ParameterClass::Dimension,
                 *index,
             )),
-            tokens: None,
+            value: ObservationValue::Scaled(i64::from(value.raw())),
             global: *global,
         },
         ScannedStep::GlueParam {
@@ -12591,14 +12565,13 @@ fn applied_mutation_observation(
             value,
             global,
         } => MutationRecord {
-            target: "parameter",
-            value: glue_mutation_value(value),
-            key: Some(parameter_mutation_key_for_dialect(
+            target: MutationTarget::Parameter,
+            key: ObservationValue::Name(parameter_mutation_key_for_dialect(
                 profile.dialect(),
                 ParameterClass::Glue,
                 *index,
             )),
-            tokens: None,
+            value: glue_mutation_value(value),
             global: *global,
         },
         ScannedStep::TokParam {
@@ -12606,14 +12579,13 @@ fn applied_mutation_observation(
             tokens,
             global,
         } => MutationRecord {
-            target: "parameter",
-            value: "tokens".into(),
-            key: Some(parameter_mutation_key_for_dialect(
+            target: MutationTarget::Parameter,
+            key: ObservationValue::Name(parameter_mutation_key_for_dialect(
                 profile.dialect(),
                 ParameterClass::Token,
                 *index,
             )),
-            tokens: Some(
+            value: ObservationValue::Tokens(
                 stores
                     .tokens(tokens.token_list())
                     .iter()
@@ -12633,37 +12605,47 @@ fn applied_mutation_observation(
             value,
             global,
         } => {
-            let (target, value) = match primitive {
-                UnexpandablePrimitive::CatCode => {
-                    ("catcode", format!("{}={value}", u32::from(*character)))
-                }
+            let (target, key, value) = match primitive {
+                UnexpandablePrimitive::CatCode => (
+                    MutationTarget::Catcode,
+                    ObservationValue::Character(u32::from(*character)),
+                    ObservationValue::Name(
+                        tex_command::canonical_names::catcode_assignment_name(i64::from(*value))
+                            .expect("the catcode scanner commits a canonical category code")
+                            .into(),
+                    ),
+                ),
                 UnexpandablePrimitive::LcCode => (
-                    "code_table",
-                    format!("lccode:{}={value}", u32::from(*character)),
+                    MutationTarget::CodeTable,
+                    ObservationValue::Name(format!("lccode:{}", u32::from(*character))),
+                    ObservationValue::Integer(i64::from(*value)),
                 ),
                 UnexpandablePrimitive::UcCode => (
-                    "code_table",
-                    format!("uccode:{}={value}", u32::from(*character)),
+                    MutationTarget::CodeTable,
+                    ObservationValue::Name(format!("uccode:{}", u32::from(*character))),
+                    ObservationValue::Integer(i64::from(*value)),
                 ),
                 UnexpandablePrimitive::SfCode => (
-                    "code_table",
-                    format!("sfcode:{}={value}", u32::from(*character)),
+                    MutationTarget::CodeTable,
+                    ObservationValue::Name(format!("sfcode:{}", u32::from(*character))),
+                    ObservationValue::Integer(i64::from(*value)),
                 ),
                 UnexpandablePrimitive::MathCode => (
-                    "code_table",
-                    format!("mathcode:{}={value}", u32::from(*character)),
+                    MutationTarget::CodeTable,
+                    ObservationValue::Name(format!("mathcode:{}", u32::from(*character))),
+                    ObservationValue::Integer(i64::from(*value)),
                 ),
                 UnexpandablePrimitive::DelCode => (
-                    "code_table",
-                    format!("delcode:{}={value}", u32::from(*character)),
+                    MutationTarget::CodeTable,
+                    ObservationValue::Name(format!("delcode:{}", u32::from(*character))),
+                    ObservationValue::Integer(i64::from(*value)),
                 ),
                 _ => unreachable!("only code-table primitives are scanned"),
             };
             MutationRecord {
                 target,
+                key,
                 value,
-                key: None,
-                tokens: None,
                 global: *global,
             }
         }
@@ -12673,17 +12655,15 @@ fn applied_mutation_observation(
             character,
             value,
         } => MutationRecord {
-            target: "pdf_font_code",
-            value: format!("{table:?}:{}:{character}={value}", font.raw()),
-            key: None,
-            tokens: None,
+            target: MutationTarget::Register,
+            key: ObservationValue::Name(format!("{table:?}:{}:{character}", font.raw())),
+            value: ObservationValue::Integer(i64::from(*value)),
             global: true,
         },
         ScannedStep::PdfNoLigatures { font } => MutationRecord {
-            target: "pdf_no_ligatures",
-            value: font.raw().to_string(),
-            key: None,
-            tokens: None,
+            target: MutationTarget::Register,
+            key: ObservationValue::Name("pdf_no_ligatures".into()),
+            value: ObservationValue::Name(font.raw().to_string()),
             global: true,
         },
         // -- Meanings: §1221's `let`, §1224's `shorthand_def`, and §1218's
@@ -12700,16 +12680,12 @@ fn applied_mutation_observation(
             meaning,
             global,
             ..
-        } => {
-            let (value, tokens) = meaning_mutation_value(*meaning, stores);
-            MutationRecord {
-                target: "meaning",
-                value,
-                key: Some(stores.resolve(*target).to_owned()),
-                tokens,
-                global: *global,
-            }
-        }
+        } => MutationRecord {
+            target: MutationTarget::Meaning,
+            key: ObservationValue::Name(stores.resolve(*target).to_owned()),
+            value: meaning_mutation_value(*meaning, stores),
+            global: *global,
+        },
         ScannedStep::CharacterDefinition {
             primitive,
             target,
@@ -12720,15 +12696,17 @@ fn applied_mutation_observation(
             // §1224 defines the meaning from `cur_val` *after* §434/§436's
             // recovery, so the observed mutation carries the recovered value.
             let value = match primitive {
-                UnexpandablePrimitive::CharDef => format!("character:{value}"),
-                UnexpandablePrimitive::MathCharDef => format!("integer:{value}"),
+                UnexpandablePrimitive::CharDef => ObservationValue::Character(
+                    u32::try_from(*value)
+                        .expect("the character-definition scanner returns a character code"),
+                ),
+                UnexpandablePrimitive::MathCharDef => ObservationValue::Integer(i64::from(*value)),
                 _ => unreachable!("character-definition step carries only §1224 primitives"),
             };
             MutationRecord {
-                target: "meaning",
+                target: MutationTarget::Meaning,
+                key: ObservationValue::Name(stores.resolve(*target).to_owned()),
                 value,
-                key: Some(stores.resolve(*target).to_owned()),
-                tokens: None,
                 global: *global,
             }
         }
@@ -12762,10 +12740,9 @@ fn applied_mutation_observation(
                 }
             };
             MutationRecord {
-                target: "meaning",
-                value: value.into(),
-                key: Some(stores.resolve(*target).to_owned()),
-                tokens: None,
+                target: MutationTarget::Meaning,
+                key: ObservationValue::Name(stores.resolve(*target).to_owned()),
+                value: ObservationValue::Name(value.into()),
                 global: *global,
             }
         }
@@ -12777,10 +12754,9 @@ fn applied_mutation_observation(
             global,
             ..
         } => MutationRecord {
-            target: "meaning",
-            value: "macro definition".into(),
-            key: Some(stores.resolve(*target).to_owned()),
-            tokens: Some(observed_stored_macro_body(
+            target: MutationTarget::Meaning,
+            key: ObservationValue::Name(stores.resolve(*target).to_owned()),
+            value: ObservationValue::Tokens(observed_stored_macro_body(
                 *flags,
                 parameter_text.token_list(),
                 replacement_text.token_list(),
@@ -12849,18 +12825,16 @@ fn applied_mutation_observation(
                 return None;
             }
             MutationRecord {
-                target: "meaning",
-                value: "set_font".into(),
-                key: Some(stores.resolve(request.target).to_owned()),
-                tokens: None,
+                target: MutationTarget::Meaning,
+                key: ObservationValue::Name(stores.resolve(request.target).to_owned()),
+                value: ObservationValue::Name("set_font".into()),
                 global: *global,
             }
         }
         ScannedStep::GeneratedFontDefinition { definition, global } => MutationRecord {
-            target: "meaning",
-            value: "set_font".into(),
-            key: Some(stores.resolve(definition.target).to_owned()),
-            tokens: None,
+            target: MutationTarget::Meaning,
+            key: ObservationValue::Name(stores.resolve(definition.target).to_owned()),
+            value: ObservationValue::Name("set_font".into()),
             global: *global,
         },
         // -- §1225's `read_to_cs` runs `define(p,call,cur_val)` after
@@ -12876,10 +12850,9 @@ fn applied_mutation_observation(
                 },
             ..
         } => MutationRecord {
-            target: "meaning",
-            value: "macro definition".into(),
-            key: Some(stores.resolve(*target).to_owned()),
-            tokens: Some(observed_read_body(tokens.token_list(), stores)),
+            target: MutationTarget::Meaning,
+            key: ObservationValue::Name(stores.resolve(*target).to_owned()),
+            value: ObservationValue::Tokens(observed_read_body(tokens.token_list(), stores)),
             global: *global,
         },
         ScannedStep::InputStream {
@@ -13124,10 +13097,13 @@ fn pdf_image_page_box(
 fn committed_shipout_observations(before: usize, stores: &Universe) -> Vec<EffectRecord> {
     (before..stores.world().artifact_commits().len())
         .map(|committed| EffectRecord {
-            kind: "shipout",
-            detail: format!("dvi\0{}", committed.saturating_add(1)),
+            kind: ObservationEffectKind::Shipout,
+            channel: "dvi".into(),
+            value: ObservationValue::Integer(
+                i64::try_from(committed.saturating_add(1))
+                    .expect("the committed page count fits the oracle integer domain"),
+            ),
             source: None,
-            tokens: None,
         })
         .collect()
 }
@@ -13163,22 +13139,22 @@ fn committed_stream_effect_observations(
 fn stream_effect_observation(record: &tex_state::EffectRecord) -> Option<EffectRecord> {
     match record {
         tex_state::EffectRecord::StreamOpen { slot, target } => Some(EffectRecord {
-            kind: "open",
-            detail: format!("stream:{}\0{}", slot.raw(), target.path().to_string_lossy()),
+            kind: ObservationEffectKind::Open,
+            channel: format!("stream:{}", slot.raw()),
+            value: ObservationValue::Name(target.path().to_string_lossy().into_owned()),
             source: None,
-            tokens: None,
         }),
         tex_state::EffectRecord::StreamClose { slot } => Some(EffectRecord {
-            kind: "close",
-            detail: format!("stream:{}\0", slot.raw()),
+            kind: ObservationEffectKind::Close,
+            channel: format!("stream:{}", slot.raw()),
+            value: ObservationValue::None,
             source: None,
-            tokens: None,
         }),
         _ => None,
     }
 }
 
-fn write_effect_detail(sink: PrintSink) -> String {
+fn write_effect_channel(sink: PrintSink) -> String {
     let stream = match sink {
         PrintSink::Stream(slot) => i32::from(slot.raw()),
         // TeX82 §§1342/1370 reserve selector 16 for writes above the stream
@@ -13187,27 +13163,26 @@ fn write_effect_detail(sink: PrintSink) -> String {
         PrintSink::Terminal | PrintSink::TerminalAndLog => 16,
         PrintSink::Log => 17,
     };
-    format!("stream:{stream}\0")
+    format!("stream:{stream}")
 }
 
 fn applied_effect_observation(scanned: &ScannedStep, stores: &Universe) -> Option<EffectRecord> {
     match scanned {
         ScannedStep::Message { tokens, .. } => Some(EffectRecord {
-            kind: "message",
+            kind: ObservationEffectKind::Message,
             // TeX82 §1279 observes the string produced by
             // `token_show(def_ref)`, not a character-only projection of the
             // expanded list. Control-sequence tokens can deliberately survive
             // expansion through `\noexpand` and must retain `print_cs`'s
             // spelling and separator.
-            detail: message_text(stores, tokens.token_list()),
+            channel: "terminal".into(),
+            value: ObservationValue::Bytes(message_text(stores, tokens.token_list()).into_bytes()),
             source: None,
-            tokens: None,
         }),
         ScannedStep::ShowTokens { tokens } => Some(EffectRecord {
-            kind: "showtokens",
-            detail: show_tokens_text(stores, tokens.token_list()),
-            source: None,
-            tokens: Some(
+            kind: ObservationEffectKind::ShowTokens,
+            channel: "showtokens".into(),
+            value: ObservationValue::Tokens(
                 stores
                     .tokens(tokens.token_list())
                     .iter()
@@ -13215,28 +13190,28 @@ fn applied_effect_observation(scanned: &ScannedStep, stores: &Universe) -> Optio
                     .map(|token| observed_macro_token(token, stores))
                     .collect(),
             ),
+            source: None,
         }),
         ScannedStep::ShowIfs { conditions } => Some(EffectRecord {
-            kind: "showifs",
-            detail: render_showifs(conditions),
+            kind: ObservationEffectKind::ShowIfs,
+            channel: "showifs".into(),
+            value: ObservationValue::Name(render_showifs(conditions)),
             source: None,
-            tokens: None,
         }),
         ScannedStep::ShowGroups {
             diagnostic: Some(diagnostic),
         } => Some(EffectRecord {
-            kind: "showgroups",
-            detail: crate::diagnostics::render_showgroups(diagnostic),
+            kind: ObservationEffectKind::ShowGroups,
+            channel: "showgroups".into(),
+            value: ObservationValue::Name(crate::diagnostics::render_showgroups(diagnostic)),
             source: None,
-            tokens: None,
         }),
         ScannedStep::ShowGroups { diagnostic: None } => None,
         ScannedStep::ImmediateExtension(ImmediateExtension::Write { stream, tokens }) => {
             Some(EffectRecord {
-                kind: "write",
-                detail: format!("stream:{}\0", stream.normalized_number()),
-                source: None,
-                tokens: Some(
+                kind: ObservationEffectKind::Write,
+                channel: format!("stream:{}", stream.normalized_number()),
+                value: ObservationValue::Tokens(
                     stores
                         .tokens(tokens.token_list())
                         .iter()
@@ -13244,6 +13219,7 @@ fn applied_effect_observation(scanned: &ScannedStep, stores: &Universe) -> Optio
                         .map(|token| observed_macro_token(token, stores))
                         .collect(),
                 ),
+                source: None,
             })
         }
         // TeX82 §1335's `final_cleanup` and §1333's
@@ -13257,10 +13233,10 @@ fn applied_effect_observation(scanned: &ScannedStep, stores: &Universe) -> Optio
 
 fn engine_termination_effect() -> EffectRecord {
     EffectRecord {
-        kind: "terminate",
-        detail: "engine\0".into(),
+        kind: ObservationEffectKind::Terminate,
+        channel: "engine".into(),
+        value: ObservationValue::None,
         source: None,
-        tokens: None,
     }
 }
 
@@ -13488,10 +13464,9 @@ fn shipout_replay_box(
                 observations
                     .0
                     .push(CommandObservation::Effect(EffectRecord {
-                        kind: "write",
-                        detail: write_effect_detail(sink),
-                        source: None,
-                        tokens: Some(
+                        kind: ObservationEffectKind::Write,
+                        channel: write_effect_channel(sink),
+                        value: ObservationValue::Tokens(
                             stores
                                 .tokens(expanded.tokens.token_list())
                                 .iter()
@@ -13499,6 +13474,7 @@ fn shipout_replay_box(
                                 .map(|token| observed_macro_token(token, stores))
                                 .collect(),
                         ),
+                        source: None,
                     }));
             }
             if expanded.unbalanced {
@@ -13672,28 +13648,21 @@ pub(crate) fn test_shipout_replay_box(
 /// It must never fall back to a spelling (the source control sequence of a
 /// `\let`) or to a Rust `Debug` rendering: both name where the meaning came
 /// from rather than what it is (`umber2-johp.141`).
-fn meaning_mutation_value(
-    meaning: Meaning,
-    stores: &Universe,
-) -> (String, Option<Vec<ObservedToken>>) {
+fn meaning_mutation_value(meaning: Meaning, stores: &Universe) -> ObservationValue {
     match meaning {
         Meaning::Macro { definition, flags } => {
             let macro_meaning = stores.macro_definition(definition);
-            (
-                "macro definition".into(),
-                Some(observed_stored_macro_body(
-                    flags,
-                    macro_meaning.parameter_text(),
-                    macro_meaning.replacement_text(),
-                    stores,
-                )),
-            )
+            ObservationValue::Tokens(observed_stored_macro_body(
+                flags,
+                macro_meaning.parameter_text(),
+                macro_meaning.replacement_text(),
+                stores,
+            ))
         }
-        Meaning::CharGiven(character) => (format!("character:{}", u32::from(character)), None),
-        Meaning::MathCharGiven(code) => (format!("integer:{code}"), None),
-        meaning => (
-            tex_command::canonical_names::meaning_command_name(meaning),
-            None,
+        Meaning::CharGiven(character) => ObservationValue::Character(u32::from(character)),
+        Meaning::MathCharGiven(code) => ObservationValue::Integer(i64::from(code)),
+        meaning => ObservationValue::Name(
+            tex_command::canonical_names::meaning_command_name(meaning).into(),
         ),
     }
 }
@@ -18758,15 +18727,11 @@ fn commit_set_box_target(
         observations
             .0
             .push(CommandObservation::Mutation(MutationRecord {
-                target: "register",
-                value: if boxed.is_some() {
-                    "name:occupied"
-                } else {
-                    "name:void"
-                }
-                .into(),
-                key: Some(format!("box:{}", target.index)),
-                tokens: None,
+                target: MutationTarget::Register,
+                key: ObservationValue::Name(format!("box:{}", target.index)),
+                value: ObservationValue::Name(
+                    if boxed.is_some() { "occupied" } else { "void" }.into(),
+                ),
                 global: target.global,
             }));
     }

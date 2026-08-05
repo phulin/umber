@@ -335,23 +335,6 @@ impl<'a> CommandProcessor<'a> {
         self.observer.is_some() || self.command.paragraph_input_is_recording()
     }
 
-    /// Records a completed typed mutation selected by the replay consumer.
-    ///
-    /// The command processor remains the sole owner of the observer stream;
-    /// replay supplies only a value it has already scanned through this
-    /// processor and will apply after the processor borrow ends.
-    pub fn observe_typed_mutation(&mut self, target: &'static str, value: impl Into<String>) {
-        self.observe(crate::observation::CommandObservation::Mutation(
-            crate::observation::MutationRecord {
-                target,
-                value: value.into(),
-                key: None,
-                tokens: None,
-                global: false,
-            },
-        ));
-    }
-
     pub(crate) fn observe(&mut self, observation: crate::observation::CommandObservation) {
         self.command.record_paragraph_observation(&observation);
         if let Some(observer) = self.observer.as_deref_mut() {

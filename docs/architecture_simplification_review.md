@@ -192,6 +192,9 @@ semantic/geometry `OracleBundle`, including the byte-compatible evidence
 codec, validation, and resource limits. `tex-observe` only projects live
 engine records into that owned bundle; format construction, replay, and TRIP
 parity bind its independently sequenced channels through the same oracle API.
+Command-owned source/alignment context and typed scanner, mutation, and effect
+values now project directly; the observer-side shadow machines and structured
+string decoders have been deleted.
 
 **End state.** The engine emits a typed neutral observation record containing source identity, source location, command identity, alignment identity, semantic effect, and geometry references. `tex-observe` becomes a thin adapter from engine-owned records to oracle values. `tex-oracle` owns the detached evidence codec, canonical JSONL transport, normalization, sequence checks, and stream identity. Replay, TRIP capture, and live parity all consume one bundle format.
 
@@ -204,8 +207,8 @@ parity bind its independently sequenced channels through the same oracle API.
 1. Add typed producer fields while continuing to emit the old records.
 2. Compare old and new translations for every live observation. _(Completed for source identity and alignment nesting: the complete committed TeX82 command suite is byte-equivalent after deleting both projection-side stacks.)_
 3. Move detached evidence encoding behind the oracle crate while retaining the old decoder. _(Completed: the existing schema-2 `UMBREVID` bytes and all limits moved unchanged.)_
-4. Migrate command-stream, TRIP, and parity consumers.
-5. Delete shadow source/alignment state and string conversion only after byte-level stream parity.
+4. Migrate command-stream, TRIP, and parity consumers. _(Completed through the oracle-owned bundle and typed effect projection.)_
+5. Delete shadow source/alignment state and string conversion only after byte-level stream parity. _(Completed after the committed TeX82 semantic fixtures remained byte-identical.)_
 
 Rollback retains the old translator and codec readers behind a schema/profile switch.
 

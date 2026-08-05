@@ -3437,6 +3437,12 @@ meaning's command name -- is spelled once, in
 `tex-exec` and the differential tracer use the same table instead of each
 keeping their own.
 
+Scalar, mutation, and effect payload structure is typed before this naming
+boundary: mutations carry their state domain, key, value, and scope
+separately, while effects carry kind, channel, and value. Portable observers
+map those fields directly and never decode numeric text, prefixes, or embedded
+separators.
+
 This exists because three consecutive `umber2-johp` root causes
 (`.134` parameter names, `.140` catcode names, part of `.135`) were naming
 defects rather than engine defects: Umber behaved correctly and only the

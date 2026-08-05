@@ -224,7 +224,10 @@ or spelling, a meaning's command name -- is spelled once, in
 `tex-command` and `tex-exec` and the differential tracer all call it.
 Scanner results use `ObservationValue`; producers must retain integer, scaled,
 glue, name, and token-list domains instead of rendering values for a detached
-consumer to parse.
+consumer to parse. Mutations pair a typed `MutationTarget` with typed key and
+value fields; effects pair `ObservationEffectKind` with separate channel and
+value fields. Neither family may encode structure with prefixes, separators,
+or numeric text for `tex-observe` to reverse.
 
 Rules, all of them load-bearing (umber2-johp.141):
 

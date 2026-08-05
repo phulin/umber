@@ -1433,7 +1433,8 @@ fn recursive_input_during_filename_scan_inserts_frozen_relax_before_restored_inp
     assert!(
         !recorder.0.iter().any(|observation| matches!(
             observation,
-            CommandObservation::Effect(effect) if effect.kind == "input"
+            CommandObservation::Effect(effect)
+                if effect.kind == crate::ObservationEffectKind::Input
         )),
         "the child must not open before the frozen-relax boundary"
     );
@@ -1475,7 +1476,8 @@ fn recursive_input_during_filename_scan_inserts_frozen_relax_before_restored_inp
             .filter(|observation| matches!(
                 observation,
                 CommandObservation::Effect(effect)
-                    if effect.kind == "input" && effect.detail == "inc.tex"
+                    if effect.kind == crate::ObservationEffectKind::Input
+                        && effect.channel == "inc.tex"
             ))
             .count(),
         1,

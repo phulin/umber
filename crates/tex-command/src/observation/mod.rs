@@ -572,7 +572,7 @@ pub struct ConditionRecord {
     pub branch: Option<String>,
 }
 
-/// A scanner or mutation value captured in its semantic domain.
+/// An observation value captured in its semantic domain.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ObservationValue {
     None,
@@ -587,6 +587,7 @@ pub enum ObservationValue {
         shrink_order: &'static str,
     },
     Name(String),
+    Bytes(Vec<u8>),
     Tokens(Vec<ObservedToken>),
 }
 
@@ -632,23 +633,75 @@ pub struct AlignmentRecord {
     pub previous_align_state: Option<i32>,
 }
 
-/// A typed command-relevant assignment seam. Assignment dispatch owns the
-/// payload in later slices; retaining this record here keeps the observer
-/// union complete without depending on an oracle transport.
+/// Canonical state domain changed by a committed assignment.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MutationTarget {
+    Meaning,
+    Catcode,
+    CodeTable,
+    Parameter,
+    Register,
+}
+
+impl std::fmt::Display for MutationTarget {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(match self {
+            Self::Meaning => "meaning",
+            Self::Catcode => "catcode",
+            Self::CodeTable => "code_table",
+            Self::Parameter => "parameter",
+            Self::Register => "register",
+        })
+    }
+}
+
+/// A typed command-relevant assignment seam.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MutationRecord {
-    pub target: &'static str,
-    pub value: String,
-    pub key: Option<String>,
-    pub tokens: Option<Vec<ObservedToken>>,
+    pub target: MutationTarget,
+    pub key: ObservationValue,
+    pub value: ObservationValue,
     pub global: bool,
+}
+
+/// Canonical class of a committed externally visible effect.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ObservationEffectKind {
+    Input,
+    Message,
+    Write,
+    Open,
+    Close,
+    Shipout,
+    Terminate,
+    ShowTokens,
+    ShowIfs,
+    ShowGroups,
+}
+
+impl std::fmt::Display for ObservationEffectKind {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(match self {
+            Self::Input => "input",
+            Self::Message => "message",
+            Self::Write => "write",
+            Self::Open => "open",
+            Self::Close => "close",
+            Self::Shipout => "shipout",
+            Self::Terminate => "terminate",
+            Self::ShowTokens => "showtokens",
+            Self::ShowIfs => "showifs",
+            Self::ShowGroups => "showgroups",
+        })
+    }
 }
 
 /// A committed externally-visible command effect or final ordering marker.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EffectRecord {
-    pub kind: &'static str,
-    pub detail: String,
+    pub kind: ObservationEffectKind,
+    pub channel: String,
+    pub value: ObservationValue,
     /// Exact source selected by TeX82 §537's successful `start_input`.
     ///
     /// Identity and immutable bytes are captured together at the successful
@@ -656,9 +709,6 @@ pub struct EffectRecord {
     /// from the packed name or mutable aggregate world state. Non-input
     /// effects leave this absent.
     pub source: Option<OpenedSourceSnapshot>,
-    /// The frozen expanded token payload for token-oriented effects such as
-    /// TeX82 `\\write`; textual effects leave this absent.
-    pub tokens: Option<Vec<ObservedToken>>,
 }
 
 /// Immutable source identity and backing captured by a successful file open.

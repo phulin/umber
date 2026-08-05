@@ -1106,10 +1106,9 @@ impl CommandProcessor<'_> {
         observe!(
             self,
             crate::CommandObservation::Mutation(crate::MutationRecord {
-                target: "meaning",
-                value: "relax".into(),
-                key: Some(self.state.resolve(target).to_owned()),
-                tokens: None,
+                target: crate::MutationTarget::Meaning,
+                key: crate::ObservationValue::Name(self.state.resolve(target).to_owned()),
+                value: crate::ObservationValue::Name("relax".into()),
                 global: provisional_global,
             }),
         );
@@ -1141,10 +1140,9 @@ impl CommandProcessor<'_> {
         observe!(
             self,
             crate::CommandObservation::Mutation(crate::MutationRecord {
-                target: "meaning",
-                value: "relax".into(),
-                key: Some(self.state.resolve(target).to_owned()),
-                tokens: None,
+                target: crate::MutationTarget::Meaning,
+                key: crate::ObservationValue::Name(self.state.resolve(target).to_owned()),
+                value: crate::ObservationValue::Name("relax".into()),
                 global: provisional_global,
             }),
         );
@@ -2127,10 +2125,9 @@ impl CommandProcessor<'_> {
         observe!(
             self,
             crate::CommandObservation::Mutation(crate::MutationRecord {
-                target: "meaning",
-                value: "set_font".into(),
-                key: Some(self.state.resolve(target).to_owned()),
-                tokens: None,
+                target: crate::MutationTarget::Meaning,
+                key: crate::ObservationValue::Name(self.state.resolve(target).to_owned()),
+                value: crate::ObservationValue::Name("set_font".into()),
                 global: provisional_global,
             }),
         );
@@ -2194,10 +2191,9 @@ impl CommandProcessor<'_> {
         observe!(
             self,
             crate::CommandObservation::Mutation(crate::MutationRecord {
-                target: "meaning",
-                value: "set_font".into(),
-                key: Some(self.state.resolve(target).to_owned()),
-                tokens: None,
+                target: crate::MutationTarget::Meaning,
+                key: crate::ObservationValue::Name(self.state.resolve(target).to_owned()),
+                value: crate::ObservationValue::Name("set_font".into()),
                 global: provisional_global,
             }),
         );

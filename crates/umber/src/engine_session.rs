@@ -1148,10 +1148,10 @@ impl<'a> EngineSession<'a> {
 
 fn engine_termination_observation() -> tex_command::CommandObservation {
     tex_command::CommandObservation::Effect(tex_command::EffectRecord {
-        kind: "terminate",
-        detail: "engine\0".into(),
+        kind: tex_command::ObservationEffectKind::Terminate,
+        channel: "engine".into(),
+        value: tex_command::ObservationValue::None,
         source: None,
-        tokens: None,
     })
 }
 
@@ -1524,7 +1524,8 @@ mod tests {
             );
             assert!(matches!(
                 observations.0.last(),
-                Some(CommandObservation::Effect(effect)) if effect.kind == "terminate"
+                Some(CommandObservation::Effect(effect))
+                    if effect.kind == tex_command::ObservationEffectKind::Terminate
             ));
             assert_eq!(
                 observations
@@ -1532,7 +1533,8 @@ mod tests {
                     .iter()
                     .filter(|event| matches!(
                         event,
-                        CommandObservation::Effect(effect) if effect.kind == "terminate"
+                        CommandObservation::Effect(effect)
+                            if effect.kind == tex_command::ObservationEffectKind::Terminate
                     ))
                     .count(),
                 1,
@@ -1626,7 +1628,7 @@ mod tests {
         assert!(matches!(
             observations.0.as_slice(),
             [.., CommandObservation::Diagnostic(_), CommandObservation::Effect(effect)]
-                if effect.kind == "terminate"
+                if effect.kind == tex_command::ObservationEffectKind::Terminate
         ));
         assert_eq!(
             observations
@@ -1634,7 +1636,8 @@ mod tests {
                 .iter()
                 .filter(|event| matches!(
                     event,
-                    CommandObservation::Effect(effect) if effect.kind == "terminate"
+                    CommandObservation::Effect(effect)
+                        if effect.kind == tex_command::ObservationEffectKind::Terminate
                 ))
                 .count(),
             1
@@ -1676,7 +1679,8 @@ mod tests {
             .filter(|(_, observation)| {
                 matches!(
                     observation,
-                    CommandObservation::Effect(effect) if effect.kind == "terminate"
+                    CommandObservation::Effect(effect)
+                        if effect.kind == tex_command::ObservationEffectKind::Terminate
                 )
             })
             .map(|(index, _)| index)
@@ -1698,7 +1702,8 @@ mod tests {
                 .iter()
                 .filter(|observation| matches!(
                     observation,
-                    CommandObservation::Effect(effect) if effect.kind == "terminate"
+                    CommandObservation::Effect(effect)
+                        if effect.kind == tex_command::ObservationEffectKind::Terminate
                 ))
                 .count(),
             1
@@ -1856,7 +1861,8 @@ mod tests {
         assert!(
             !observations.0.iter().any(|observation| matches!(
                 observation,
-                CommandObservation::Effect(effect) if effect.kind == "terminate"
+                CommandObservation::Effect(effect)
+                    if effect.kind == tex_command::ObservationEffectKind::Terminate
             )),
             "rolled-back suspension cannot terminate the session"
         );
@@ -1883,7 +1889,8 @@ mod tests {
                 .iter()
                 .filter(|observation| matches!(
                     observation,
-                    CommandObservation::Effect(effect) if effect.kind == "terminate"
+                    CommandObservation::Effect(effect)
+                        if effect.kind == tex_command::ObservationEffectKind::Terminate
                 ))
                 .count(),
             1
@@ -2443,7 +2450,8 @@ mod tests {
             assert!(
                 !observations.0.iter().any(|event| matches!(
                     event,
-                    CommandObservation::Effect(effect) if effect.kind == "terminate"
+                    CommandObservation::Effect(effect)
+                        if effect.kind == tex_command::ObservationEffectKind::Terminate
                 )),
                 "fuel exhaustion is an aborted outcome, not engine completion"
             );

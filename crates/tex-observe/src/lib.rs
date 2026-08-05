@@ -6,8 +6,9 @@ use tex_command::canonical_names;
 use tex_command::{
     AlignmentRecord, CommandDeliveryBoundary, CommandObservation, CommandObserver, ConditionRecord,
     EffectRecord, GeometryRecord, InputReason as CommandInputReason, InputRecord, InputTransition,
-    MacroRecord, MutationRecord, ObservationValue, ObservedToken,
-    RecoveryKind as CommandRecoveryKind, RecoveryRecord, ScannerStatusRecord, TokenListRecord,
+    MacroRecord, MutationRecord, MutationTarget, ObservationEffectKind, ObservationValue,
+    ObservedToken, RecoveryKind as CommandRecoveryKind, RecoveryRecord, ScannerStatusRecord,
+    TokenListRecord,
 };
 use tex_oracle::OracleBundle;
 use tex_oracle::{
@@ -317,7 +318,9 @@ impl CommandObserver for Recorder {
         if matches!(
             observation,
             CommandObservation::Effect(EffectRecord {
-                kind: "showgroups" | "showifs" | "showtokens",
+                kind: ObservationEffectKind::ShowGroups
+                    | ObservationEffectKind::ShowIfs
+                    | ObservationEffectKind::ShowTokens,
                 ..
             })
         ) {
@@ -332,15 +335,15 @@ impl CommandObserver for Recorder {
             return;
         }
         if let CommandObservation::Effect(EffectRecord {
-            kind: "input",
-            detail,
+            kind: ObservationEffectKind::Input,
+            channel,
             source: Some(source),
             ..
         }) = &observation
         {
             // The effect carries the command-core capability hand-off, while
             // the portable trace observes only the resulting source push.
-            self.activate_registered_input(detail, source.id, Arc::clone(&source.bytes));
+            self.activate_registered_input(channel, source.id, Arc::clone(&source.bytes));
             return;
         }
         let source_id = observation_source(&observation).or(self.current_source);

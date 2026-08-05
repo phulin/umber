@@ -3,7 +3,8 @@ use std::sync::Arc;
 use tex_command::{
     CommandDeliveryBoundary, CommandDeliveryRecord, CommandObservation, CommandObserver,
     CommandProvenance, DiagnosticRecord, EffectRecord, GeneratedSourceRecord, GeometryRecord,
-    ObservedToken, OpenedSourceSnapshot, SourceLocation as CommandSourceLocation,
+    ObservationEffectKind, ObservationValue, ObservedToken, OpenedSourceSnapshot,
+    SourceLocation as CommandSourceLocation,
 };
 use tex_observe::{LiveSessionOutcome, LiveSessionTranslator, LiveSource};
 use tex_oracle::{
@@ -77,10 +78,10 @@ fn extraction_preserves_representative_detached_semantic_and_geometry_evidence()
             arguments: Vec::new(),
         }),
         CommandObservation::Effect(EffectRecord {
-            kind: "write",
-            detail: "stream:1\0done".into(),
+            kind: ObservationEffectKind::Write,
+            channel: "stream:1".into(),
+            value: ObservationValue::Name("done".into()),
             source: None,
-            tokens: None,
         }),
         CommandObservation::Geometry(GeometryRecord::Hpack {
             width_sp: 10,
@@ -184,10 +185,10 @@ fn failure_before_any_stable_event_yields_valid_terminated_diagnostic_stream() {
 fn normal_stable_projection_is_byte_identical() {
     let observations = vec![
         CommandObservation::Effect(EffectRecord {
-            kind: "shipout",
-            detail: "dvi\0".to_owned() + "1",
+            kind: ObservationEffectKind::Shipout,
+            channel: "dvi".into(),
+            value: ObservationValue::Integer(1),
             source: None,
-            tokens: None,
         }),
         CommandObservation::Input(tex_command::InputRecord {
             transition: tex_command::InputTransition::Retire,
@@ -206,10 +207,10 @@ fn normal_stable_projection_is_byte_identical() {
             position: 0,
         }),
         CommandObservation::Effect(EffectRecord {
-            kind: "terminate",
-            detail: "engine\0".into(),
+            kind: ObservationEffectKind::Terminate,
+            channel: "engine".into(),
+            value: ObservationValue::None,
             source: None,
-            tokens: None,
         }),
     ];
     let mut translator = translator();
@@ -243,10 +244,10 @@ fn normal_stable_projection_is_byte_identical() {
 fn captured_observations_are_not_replayed_or_duplicated() {
     let mut translator = translator();
     translator.translate_captured([CommandObservation::Effect(EffectRecord {
-        kind: "message",
-        detail: "once".into(),
+        kind: ObservationEffectKind::Message,
+        channel: "terminal".into(),
+        value: ObservationValue::Bytes(b"once".to_vec()),
         source: None,
-        tokens: None,
     })]);
     let streams = translator
         .finish(
@@ -334,13 +335,13 @@ fn input_effect_source_identity_resolves_after_unobserved_source_allocations() {
     );
     translator.translate_captured([
         CommandObservation::Effect(EffectRecord {
-            kind: "input",
-            detail: "etrip.out".into(),
+            kind: ObservationEffectKind::Input,
+            channel: "etrip.out".into(),
+            value: ObservationValue::None,
             source: Some(OpenedSourceSnapshot {
                 id: SourceId::new(41),
                 bytes: Arc::from(&b"\\endgroup\n"[..]),
             }),
-            tokens: None,
         }),
         CommandObservation::Command(CommandDeliveryRecord {
             boundary: CommandDeliveryBoundary::Raw,
@@ -409,13 +410,13 @@ fn repeated_packed_name_uses_each_opened_source_snapshot_until_its_retirement() 
 
     let opened = |id, bytes: &'static [u8]| {
         CommandObservation::Effect(EffectRecord {
-            kind: "input",
-            detail: "same.tex".into(),
+            kind: ObservationEffectKind::Input,
+            channel: "same.tex".into(),
+            value: ObservationValue::None,
             source: Some(OpenedSourceSnapshot {
                 id: SourceId::new(id),
                 bytes: Arc::from(bytes),
             }),
-            tokens: None,
         })
     };
     let retired = || {
