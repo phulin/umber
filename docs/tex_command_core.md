@@ -2996,7 +2996,7 @@ observer does not apply that projection and compares the definition identity
 exactly. Runtime handles and snapshots remain independent of the detached
 observation value.
 
-The test-only stream adapter translates executor-committed meaning mutations
+The fixture stream adapter translates executor-committed meaning mutations
 using the assigned control-sequence key captured at that seam. It never
 reconstructs the key from a generic mutation category, so `\let` aliases of
 explicit grouping primitives remain comparable while command state stays the
@@ -3181,8 +3181,8 @@ command/operand names, input reason, source-relative location where stable,
 and condition/alignment state. They exclude reference allocation identities.
 
 Schema version 1 is implemented by the dependency-light `tex-oracle` crate.
-It is shared by all three reference harnesses and the future test-only
-`tex-command` observer; it does not depend on either command engine. The
+It is shared by all three reference harnesses and the detached `tex-command`
+observer; it does not depend on either command engine. The
 canonical event union is:
 
 | Event            | Committed semantic boundary                                        |
@@ -3232,7 +3232,7 @@ transcript, or ordinary output. Ordinary builds use the zero-sized
 `DisabledObserver`; build integration may compile calls out entirely. Neither
 transport is allowed to query engine storage.
 
-The new command core owns a test-only observer record surface rather than
+The command core owns its observer record surface rather than
 depending on `tex-oracle`. `CommandObservation` carries command delivery,
 logical input, recovery, scanner-status, macro, condition, typed scanner,
 token-list, alignment, mutation, and effect records. Command deliveries carry
@@ -3242,7 +3242,7 @@ processor-delivery provenance. Raw source
 delivery installs its backing through the aggregate source-map boundary before
 spelling construction; expanded and replayed delivery retain that traced
 origin without fixture-derived locations. All other records retain only command-owned
-typed values and stable identities. The test-only fixture adapter maps those
+typed values and stable identities. The fixture adapter maps those
 owned records to a deterministic replay capture outside the production command
 dependency graph. It validates the locked TeX82 suite, scans the terminal root
 filename through the command processor, opens only that selected root, and
@@ -3257,9 +3257,16 @@ replacement replay. The executor receives only the completed diagnostic
 operation, not a second input path.
 Observers are non-fallible, receive records only after the transition commits,
 and are neither retained in `CommandState` nor captured by snapshots.
-Production builds compile this seam out; explicit instrumentation builds enable
-it with the `tex-command/instrumentation` feature. Optimized span paths
-decompose into the same scalar events when observation is enabled.
+The observation vocabulary and sites compile unconditionally; there is no
+observation Cargo feature. Each site first tests the processor episode's
+runtime predicate, which is true exactly when an external observer is attached,
+and does not construct its record when the predicate is false. Main control
+selects that predicate once for an atomic operation and gives every processor
+episode it creates, including nested episodes, the same operation-local buffer.
+It offers the buffered records to the external observer in order only after the
+operation commits; rollback and resource suspension discard them before retry.
+Optimized span paths decompose into the same scalar events when an observer is
+attached.
 
 ### 31.3 Fixture tiers
 
@@ -3354,7 +3361,7 @@ the relevant canonical parity gate. Examples include:
 
 Promotion requires all of:
 
-1. identical semantic oracle events with observation enabled;
+1. identical semantic oracle events with an external observer attached;
 2. identical diagnostics, effects, DVI, and PDF fixtures;
 3. a retained scalar fallback or a mechanically obvious equivalence boundary;
 4. no new semantic state in a discardable cache;
@@ -3365,8 +3372,10 @@ Promotion requires all of:
    WASM behavior; and
 9. removal of the prototype if the measured ceiling is negligible.
 
-Performance counters and observer hooks do not write to production hot state
-unless their feature is explicitly enabled.
+Performance counters and observer hooks do not write to semantic state.
+Observer hooks retain only a predictable inactive runtime branch and construct
+no records unless an external observer is attached; their vocabulary remains
+compiled in every build.
 
 ## 33. Main-control integration
 
