@@ -1587,12 +1587,11 @@ fn run_diagnostic_case(case: &CorpusCase, show_fixtures: bool, etex: bool) -> St
         String::from_utf8_lossy(&output.stderr)
     );
     let actual_stdout = String::from_utf8(output.stdout).expect("umber run output is utf-8");
-    let actual = if show_fixtures {
+    if show_fixtures {
         normalize::box_dump(&actual_stdout)
     } else {
         normalize::exec_log(&actual_stdout)
-    };
-    actual
+    }
 }
 
 #[test]
