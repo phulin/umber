@@ -166,8 +166,11 @@ mutation.
 ## Access boundary
 
 The node API exposes builders, `NodeList<'a>`/`NodeIter<'a>` read-only views,
-decoded `NodeRef<'a>` accessors, and narrow immutable traits for pure typesetting
-kernels. It never exposes a raw word slice, sidecar slice/index, unchecked
+decoded `NodeRef<'a>` accessors, and a `NodeCursor<'a>` that presents the same
+logical view over owned construction lists and compact epoch or survivor lists.
+`PackedNode` is the shared dimension-bearing projection. Semantic child
+traversal excludes diagnostic-only box children; physical traversal includes
+them. The API never exposes a raw word slice, sidecar slice/index, unchecked
 decoder, raw handle constructor, or mutable storage.
 
 All rewriting is builder-then-freeze. A changed top-level list may retain
@@ -178,11 +181,13 @@ lowers into detached artifacts and cannot retain a live view.
 
 ## Semantic hashing and width scans
 
-Hashing dispatches through `NodeRef` and follows the same logical fields and
-referenced content as the decoded node model. Sidecar indexes, raw handle bits,
-root ids, capacities, recycling order, and addresses are excluded. Tests compare
-hashes across rollback/reappend, promotion, release, different allocation
-orders, and recycled-capacity reuse.
+One private logical schema records every node kind's fields, e-TeX category,
+dimension behavior, and child-traversal shape. Hashing dispatches through
+`NodeRef` and follows the same logical fields and referenced content as the
+decoded node model. Sidecar indexes, raw handle bits, root ids, capacities,
+recycling order, and addresses are excluded. Tests compare hashes across
+rollback/reappend, promotion, release, different allocation orders, and
+recycled-capacity reuse.
 
 Loaded TFM metrics expose a dense byte-character width array. A scan may combine
 a contiguous same-font run of inline character words after validating the font

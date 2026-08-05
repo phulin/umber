@@ -425,6 +425,14 @@ Rollback is possible by retaining the existing visitors while the schema feeds o
 
 **Dependencies and conflicts.** Rank 1 is required. Rank 11’s content graph work must not include node-schema savings, and vice versa. This is deliberately ranked below output and execution convergence because it is the most likely program to add scaffolding if poorly scoped.
 
+**Migration status.** Complete. `tex-state` now has one private logical schema
+and a source-independent `NodeCursor` over owned construction lists and compact
+epoch or survivor lists. `NodeRef` supplies shared packed, semantic-child, and
+physical-child views. Horizontal/vertical packing, line-width accumulation,
+state-hash equivalence, page dimensions, and shipout graph traversal use those
+views; their duplicate owned/compact matches were removed. `NodeArena` and
+`SurvivorArena` remain distinct ownership domains.
+
 ### 14. Separate native acquisition from format-cache policy
 
 Affected crates: `umber-fetch`, `umber`, and `umber-distribution`.
