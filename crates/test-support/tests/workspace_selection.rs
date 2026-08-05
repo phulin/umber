@@ -156,7 +156,6 @@ fn default_members_cover_every_host_testable_crate() {
 #[test]
 fn every_excluded_workspace_directory_names_its_check() {
     const EXCLUDED: &[(&str, &str)] = &[
-        ("tools/corpus-sync", "check-tools.sh"),
         ("tools/fixturegen", "check-tools.sh"),
         ("tools/texlive-wasm-publish", "check-tools.sh"),
     ];

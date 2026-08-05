@@ -2,6 +2,7 @@
 
 mod classic_bibtex;
 mod cohort_transaction;
+mod corpus_sync;
 mod fonts;
 mod layout_migration;
 mod pdf;
@@ -9,10 +10,8 @@ mod pdf_layout_migration;
 
 use std::env;
 use std::fs;
-use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use anyhow::{Context, Result, bail};
 use refexec::{RefTex, RunOpts, RunOutput};
@@ -75,6 +74,8 @@ fn run() -> Result<()> {
         }
         Some("--migrate-pdf-layout") => pdf_layout_migration::run_cli(args.collect()),
         Some("--cohort-transaction") => cohort_transaction::run_cli(args.collect()),
+        Some("--sync-corpus") => sync_corpus(args.collect()),
+        Some("--reference-dvi") => publish_reference_dvi(args.collect()),
         Some("--seal-classic-bibtex-case") => {
             let root = args.next().context("missing classic case directory")?;
             let case = args.next().context("missing classic case ID")?;
@@ -108,9 +109,69 @@ fn run() -> Result<()> {
 
 fn print_usage() {
     eprintln!(
-        "usage: fixturegen --area AREA | --case AREA/CASE | --case AREA CASE | --migrate-layout (--plan|--apply) | --migrate-pdf-layout (--plan|--apply) | --cohort-transaction (--plan|--apply) PLAN.json | --check-pdf-raster\n\
+        "usage: fixturegen --area AREA | --case AREA/CASE | --case AREA CASE | --migrate-layout (--plan|--apply) | --migrate-pdf-layout (--plan|--apply) | --cohort-transaction (--plan|--apply) PLAN.json | --sync-corpus [--manifest PATH] [--dest PATH] [--offline] | --reference-dvi DOCUMENT OUTPUT | --check-pdf-raster\n\
          areas: hello lexer expand lexer_dynamic exec etex_exec typeset tex_exec tex_exec_io pdf fonts"
     );
+}
+
+fn publish_reference_dvi(args: Vec<String>) -> Result<()> {
+    let [document, output] = args.as_slice() else {
+        bail!("--reference-dvi requires DOCUMENT OUTPUT");
+    };
+    let repository = repo_root();
+    let bytes = parity_harness::generate_reference_fixture(
+        &repository,
+        &repository.join("tests/corpus-manifest.txt"),
+        &repository.join("third_party/corpus"),
+        document,
+    )?;
+    let output = PathBuf::from(output);
+    let tree = output
+        .parent()
+        .context("reference DVI output has no parent")?;
+    let file = output
+        .file_name()
+        .map(PathBuf::from)
+        .context("reference DVI output has no file name")?;
+    let changed = layout_migration::publish_file_in_tree(
+        &repository.join("tests/corpus"),
+        tree,
+        &file,
+        bytes,
+    )?;
+    println!(
+        "fixture {}: {}",
+        if changed { "updated" } else { "unchanged" },
+        output.display()
+    );
+    Ok(())
+}
+
+fn sync_corpus(args: Vec<String>) -> Result<()> {
+    let mut options = corpus_sync::SyncOptions::default();
+    let mut args = args.into_iter();
+    while let Some(argument) = args.next() {
+        match argument.as_str() {
+            "--manifest" => {
+                options.manifest_path = args
+                    .next()
+                    .map(PathBuf::from)
+                    .context("missing path after --manifest")?;
+            }
+            "--dest" => {
+                options.destination = args
+                    .next()
+                    .map(PathBuf::from)
+                    .context("missing path after --dest")?;
+            }
+            "--offline" => options.offline = true,
+            _ => bail!("unknown --sync-corpus option: {argument}"),
+        }
+    }
+    for status in corpus_sync::run(&options)? {
+        println!("{status}");
+    }
+    Ok(())
 }
 
 fn ensure_no_extra_args(mut args: impl Iterator<Item = String>) -> Result<()> {
@@ -512,8 +573,6 @@ fn write_text_fixture(area: &str, case: &str, kind: &str, actual: &str) -> Resul
     Ok(())
 }
 
-static STAGING_SEQUENCE: AtomicU64 = AtomicU64::new(0);
-
 fn atomically_replace_case_output(
     area: &str,
     case: &str,
@@ -521,73 +580,24 @@ fn atomically_replace_case_output(
     bytes: &[u8],
 ) -> Result<()> {
     let current = corpus_root().join(area).join(case);
-    let parent = current.parent().context("case directory has no parent")?;
-    let sequence = STAGING_SEQUENCE.fetch_add(1, Ordering::Relaxed);
-    let suffix = format!("{}.{}.{}", std::process::id(), sequence, case);
-    let staged = parent.join(format!(".fixturegen-stage-{suffix}"));
-    let backup = parent.join(format!(".fixturegen-backup-{suffix}"));
-    fs::create_dir(&staged).with_context(|| format!("create {}", staged.display()))?;
-    let result = (|| {
-        for entry in
-            fs::read_dir(&current).with_context(|| format!("read {}", current.display()))?
-        {
-            let entry = entry.context("read case entry")?;
-            let kind = entry.file_type().context("read case entry type")?;
-            if !kind.is_file() || kind.is_symlink() {
-                bail!("case contains non-regular entry {}", entry.path().display());
-            }
-            fs::copy(entry.path(), staged.join(entry.file_name()))
-                .with_context(|| format!("stage {}", entry.path().display()))?;
+    let mut inventory = std::collections::BTreeMap::new();
+    for entry in fs::read_dir(&current).with_context(|| format!("read {}", current.display()))? {
+        let entry = entry.context("read case entry")?;
+        let kind = entry.file_type().context("read case entry type")?;
+        if !kind.is_file() || kind.is_symlink() {
+            bail!("case contains non-regular entry {}", entry.path().display());
         }
-        let output_name = output
+        let name = entry
             .file_name()
-            .context("fixture output has no file name")?;
-        fs::write(staged.join(output_name), bytes)
-            .with_context(|| format!("write staged {}", output.display()))?;
-        install_staged_case(&staged, &current, &backup, |from, to| fs::rename(from, to))
-    })();
-    if result.is_err() {
-        let _ = fs::remove_dir_all(&staged);
+            .into_string()
+            .map_err(|_| anyhow::anyhow!("case contains a non-UTF-8 file name"))?;
+        inventory.insert(name, fs::read(entry.path())?);
     }
-    if result.is_ok() {
-        fs::remove_dir_all(&backup)
-            .with_context(|| format!("remove recoverable backup {}", backup.display()))?;
-    }
-    result
-}
-
-fn install_staged_case(
-    staged: &Path,
-    current: &Path,
-    backup: &Path,
-    mut rename: impl FnMut(&Path, &Path) -> io::Result<()>,
-) -> Result<()> {
-    rename(current, backup).with_context(|| {
-        format!(
-            "move current case to recoverable backup {}",
-            backup.display()
-        )
-    })?;
-    if let Err(install_error) = rename(staged, current) {
-        return match rename(backup, current) {
-            Ok(()) => Err(install_error).with_context(|| {
-                format!(
-                    "install staged case {}; restored original from {}",
-                    staged.display(),
-                    backup.display()
-                )
-            }),
-            Err(rollback_error) => bail!(
-                "install staged case {} failed: {}; rollback {} -> {} also failed: {}",
-                staged.display(),
-                install_error,
-                backup.display(),
-                current.display(),
-                rollback_error
-            ),
-        };
-    }
-    Ok(())
+    let output_name = output
+        .file_name()
+        .context("fixture output has no file name")?;
+    inventory.insert(output_name.to_string_lossy().into_owned(), bytes.to_vec());
+    layout_migration::publish_case_inventory(&corpus_root(), &current, inventory)
 }
 
 fn source_path(area: &str, case: &str) -> PathBuf {
@@ -818,60 +828,4 @@ fn dvi_special_payloads(dvi: &[u8]) -> Vec<Vec<u8>> {
         index += 1;
     }
     payloads
-}
-
-#[cfg(test)]
-mod tests {
-    use std::cell::Cell;
-    use std::fs;
-    use std::io;
-
-    use super::install_staged_case;
-
-    #[test]
-    fn whole_case_swap_leaves_a_recoverable_backup() {
-        let temp = tempfile::tempdir().expect("temporary directory");
-        let current = temp.path().join("case");
-        let staged = temp.path().join("stage");
-        let backup = temp.path().join("backup");
-        fs::create_dir(&current).expect("create current");
-        fs::create_dir(&staged).expect("create staged");
-        fs::write(current.join("expected.log"), b"old").expect("write old");
-        fs::write(staged.join("expected.log"), b"new").expect("write new");
-
-        install_staged_case(&staged, &current, &backup, |from, to| fs::rename(from, to))
-            .expect("install staged case");
-
-        assert_eq!(
-            fs::read(current.join("expected.log")).expect("new output"),
-            b"new"
-        );
-        assert_eq!(
-            fs::read(backup.join("expected.log")).expect("backup output"),
-            b"old"
-        );
-    }
-
-    #[test]
-    fn swap_reports_install_and_rollback_failures_together() {
-        let calls = Cell::new(0);
-        let error = install_staged_case(
-            std::path::Path::new("stage"),
-            std::path::Path::new("case"),
-            std::path::Path::new("backup"),
-            |_, _| {
-                let call = calls.get();
-                calls.set(call + 1);
-                match call {
-                    0 => Ok(()),
-                    1 => Err(io::Error::other("install exploded")),
-                    _ => Err(io::Error::other("rollback exploded")),
-                }
-            },
-        )
-        .expect_err("dual failure");
-        let message = format!("{error:#}");
-        assert!(message.contains("install exploded"), "{message}");
-        assert!(message.contains("rollback exploded"), "{message}");
-    }
 }

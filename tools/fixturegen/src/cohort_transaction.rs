@@ -145,34 +145,39 @@ pub(crate) fn validate_staged_case(
         "staged case is not a directory"
     );
     let inventory_path = root.join("case.inventory");
-    let text = fs::read_to_string(&inventory_path)
-        .with_context(|| format!("read {}", inventory_path.display()))?;
-    let mut lines = text.lines();
-    ensure!(
-        lines.next() == Some(INVENTORY_SCHEMA),
-        "{} must begin with {INVENTORY_SCHEMA}",
-        inventory_path.display()
-    );
-    let mut declared = BTreeSet::new();
-    for name in lines.filter(|line| !line.is_empty()) {
-        let path = Path::new(name);
+    let declared = if inventory_path.is_file() {
+        let text = fs::read_to_string(&inventory_path)
+            .with_context(|| format!("read {}", inventory_path.display()))?;
+        let mut lines = text.lines();
         ensure!(
-            path.components().count() == 1
-                && path
-                    .components()
-                    .all(|part| matches!(part, Component::Normal(_))),
-            "unsafe staged inventory entry {name:?}"
+            lines.next() == Some(INVENTORY_SCHEMA),
+            "{} must begin with {INVENTORY_SCHEMA}",
+            inventory_path.display()
         );
-        ensure!(
-            name != "case.inventory",
-            "case.inventory is metadata, not a payload"
-        );
-        ensure!(
-            declared.insert(name.to_owned()),
-            "duplicate staged inventory entry {name}"
-        );
-    }
-    ensure!(!declared.is_empty(), "staged case inventory is empty");
+        let mut declared = BTreeSet::new();
+        for name in lines.filter(|line| !line.is_empty()) {
+            let path = Path::new(name);
+            ensure!(
+                path.components().count() == 1
+                    && path
+                        .components()
+                        .all(|part| matches!(part, Component::Normal(_))),
+                "unsafe staged inventory entry {name:?}"
+            );
+            ensure!(
+                name != "case.inventory",
+                "case.inventory is metadata, not a payload"
+            );
+            ensure!(
+                declared.insert(name.to_owned()),
+                "duplicate staged inventory entry {name}"
+            );
+        }
+        ensure!(!declared.is_empty(), "staged case inventory is empty");
+        Some(declared)
+    } else {
+        None
+    };
     let mut actual = BTreeSet::new();
     let mut bytes = std::collections::BTreeMap::new();
     for entry in fs::read_dir(root)? {
@@ -189,15 +194,19 @@ pub(crate) fn validate_staged_case(
         actual.insert(name.clone());
         bytes.insert(name, fs::read(entry.path())?);
     }
-    let expected = declared
-        .iter()
-        .cloned()
-        .chain(std::iter::once("case.inventory".to_owned()))
-        .collect();
-    ensure!(
-        actual == expected,
-        "staged closed inventory mismatch: declared={expected:?}, present={actual:?}"
-    );
+    if let Some(declared) = declared {
+        let expected = declared
+            .iter()
+            .cloned()
+            .chain(std::iter::once("case.inventory".to_owned()))
+            .collect();
+        ensure!(
+            actual == expected,
+            "staged closed inventory mismatch: declared={expected:?}, present={actual:?}"
+        );
+    } else {
+        ensure!(!actual.is_empty(), "staged case inventory is empty");
+    }
     Ok(bytes)
 }
 

@@ -21,7 +21,7 @@ source "$repo_root/scripts/optional-check-runner.sh"
 
 OPTIONAL_CHECK_ARGS="$*" optional_check_begin check-tools.sh \
   arxiv-corpus arxiv-census oracle-regeneration \
-  parity-harness corpus-sync fixturegen texlive-wasm-publish \
+  parity-harness fixturegen texlive-wasm-publish \
   clippy-reference-tools clippy-profiling-runner clippy-dvi-tools
 
 optional_check_step_requiring "python3 tar gzip" arxiv-corpus \
@@ -39,15 +39,12 @@ optional_check_step parity-harness \
 
 # The `[workspace] exclude` directories: each is its own workspace with its own
 # lockfile, so `--workspace` cannot reach them and the routine suite
-# requires them to name a gate that does. This is that gate; the 23 tests here
-# ran nowhere at all before umber2-johp.211.
-check_corpus_sync() {
-  cargo test -q --tests --manifest-path tools/corpus-sync/Cargo.toml &&
+# requires them to name a gate that does. This is that gate.
+check_fixturegen() {
+  cargo test -q --tests --manifest-path tools/fixturegen/Cargo.toml &&
     python3 scripts/test-provision.py
 }
-optional_check_step corpus-sync check_corpus_sync
-optional_check_step fixturegen \
-  cargo test -q --tests --manifest-path tools/fixturegen/Cargo.toml
+optional_check_step fixturegen check_fixturegen
 optional_check_step texlive-wasm-publish \
   cargo test -q --tests --manifest-path tools/texlive-wasm-publish/Cargo.toml
 

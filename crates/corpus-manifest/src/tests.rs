@@ -36,11 +36,14 @@ notes another fixture
     ))
     .expect("manifest should parse");
 
-    assert_eq!(manifest.support.len(), 1);
-    assert_eq!(manifest.doc.len(), 2);
-    assert_eq!(manifest.doc[0].name, "story.tex");
-    assert_eq!(manifest.doc[0].notes, "fixture notes may contain spaces");
-    assert_eq!(manifest.doc[1].urls, ["http://example.com/gentle.tex"]);
+    assert_eq!(manifest.entries.len(), 3);
+    assert_eq!(manifest.entries[0].kind, EntryKind::Support);
+    assert_eq!(manifest.entries[1].name, "story.tex");
+    assert_eq!(
+        manifest.entries[1].notes,
+        "fixture notes may contain spaces"
+    );
+    assert_eq!(manifest.entries[2].urls, ["http://example.com/gentle.tex"]);
 }
 
 #[test]
@@ -48,7 +51,7 @@ fn parses_committed_manifest() {
     let manifest = parse_manifest(include_str!("../../../tests/corpus-manifest.txt"))
         .expect("committed manifest should parse");
 
-    assert!(!manifest.doc.is_empty());
+    assert!(manifest.entries.iter().any(Entry::is_document));
 }
 
 #[test]
@@ -95,7 +98,7 @@ notes fixture
     ))
     .expect("multiple URL locators should parse");
     assert_eq!(
-        error.doc[0].urls,
+        error.entries[1].urls,
         [
             "https://example.com/story.tex",
             "https://example.com/other.tex"

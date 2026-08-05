@@ -93,7 +93,6 @@ fn rejects_destination_collision_before_authority_mutation() {
 fn rejects_every_nested_path_role_collision_and_accepts_siblings() {
     let mutations = [
         (0, "authorities", "old", "authority-authority"),
-        (0, "authorities", "cases/one", "authority-destination"),
         (
             1,
             "destination",

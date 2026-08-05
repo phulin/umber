@@ -395,13 +395,9 @@ regen_e2e_case() {
         die "missing third_party/corpus/plain.tex; run python3 scripts/provision.py worktree ."
       [[ -f "${repo_root}/third_party/hyphen/hyphen.tex" ]] || \
         die "missing third_party/hyphen/hyphen.tex; run python3 scripts/provision.py worktree ."
-      build_parity_harness_once
+      build_fixturegen_once
       run_command "Regenerating e2e/${case} reference DVI fixture" \
-        "$parity_harness_bin" \
-        --manifest "${repo_root}/tests/corpus-manifest.txt" \
-        --corpus-dir "${repo_root}/third_party/corpus" \
-        --doc "${case}.tex" \
-        --write-reference-fixture "$fixture"
+        "$fixturegen_bin" --reference-dvi "${case}.tex" "$fixture"
       ;;
     trip)
       regen_trip_pdftex_fixture "$fixture"
@@ -1405,10 +1401,12 @@ regen_command_semantic_area() {
   [[ -f "$allowlist" ]] || die "command-semantic allowlist does not exist: ${allowlist}"
   [[ -x "$command_semantic_channels_bin" ]] ||
     die "command-semantic regeneration tool is not built: ${command_semantic_channels_bin}; run cargo build -p tex-command-stream first"
+  build_fixturegen_once
   run_command "Capturing ${profile} command-semantic oracle channels" \
     "${repo_root}/scripts/run-minifixture-oracle.sh" \
     --profile "$profile" --allowlist "$allowlist"
   run_command 'Deriving command-semantic channel contracts against the pinned oracle' \
+    env UMBER_FIXTUREGEN="$fixturegen_bin" \
     "$command_semantic_channels_bin" --allowlist "$allowlist" \
     --accept-projection-changes
 }

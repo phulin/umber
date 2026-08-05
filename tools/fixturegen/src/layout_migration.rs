@@ -394,6 +394,73 @@ pub fn seal_classic_case(root: &Path, case: &str) -> Result<()> {
     Ok(())
 }
 
+/// Publishes one already-closed case through the same plan and transaction
+/// used by layout, PDF, and externally staged cohort publication.
+pub(crate) fn publish_case_inventory(
+    authority_root: &Path,
+    destination: &Path,
+    inventory: BTreeMap<String, Vec<u8>>,
+) -> Result<()> {
+    ensure!(
+        destination.starts_with(authority_root),
+        "fixture destination is outside its authority root"
+    );
+    let area = destination
+        .parent()
+        .context("fixture destination has no parent")?
+        .to_owned();
+    let case = file_name(destination)?;
+    let display_area = area
+        .strip_prefix(authority_root)
+        .unwrap_or(&area)
+        .to_string_lossy()
+        .into_owned();
+    let authorities = destination
+        .exists()
+        .then(|| vec![destination.to_owned()])
+        .unwrap_or_default();
+    let plan = CasePlan {
+        cases: vec![ArtifactSpec {
+            area,
+            case,
+            display_area,
+            layout: Layout::Flat,
+            inventory,
+            authorities,
+            ownership_staged: None,
+            ownership_authorities: destination
+                .exists()
+                .then(|| vec![destination.to_owned()])
+                .unwrap_or_default(),
+        }],
+    };
+    let digest = plan.transaction_digest();
+    ensure!(
+        retained_transactions(authority_root, &digest)?
+            .committed
+            .is_empty(),
+        "owned committed transaction exists but installed fixture is incomplete"
+    );
+    AtomicCaseTransaction::new(authority_root, plan, digest, &RealFs)?.apply()
+}
+
+pub(crate) fn publish_file_in_tree(
+    authority_root: &Path,
+    tree: &Path,
+    relative: &Path,
+    bytes: Vec<u8>,
+) -> Result<bool> {
+    validate_relative(&relative.to_string_lossy())?;
+    let mut inventory = read_regular_inventory_recursive(tree)?;
+    let name = relative.to_string_lossy().into_owned();
+    if inventory.get(&name) == Some(&bytes) {
+        return Ok(false);
+    }
+    inventory.insert(name, bytes);
+    publish_case_inventory(authority_root, tree, inventory)?;
+    Ok(true)
+}
+
 pub(crate) fn run_staged_cohort(
     repository: &Path,
     cases: &[CohortCase],
@@ -444,7 +511,7 @@ pub(crate) fn run_staged_cohort_with_fs(
         }
         let parent = destination_parent.to_owned();
         let name = file_name(&destination)?;
-        planned.push(PlannedCase {
+        planned.push(ArtifactSpec {
             area: parent,
             case: name,
             display_area: Path::new(&case.destination)
@@ -467,7 +534,7 @@ pub(crate) fn run_staged_cohort_with_fs(
                 .collect(),
         });
     }
-    let plan = MigrationPlan { cases: planned };
+    let plan = CasePlan { cases: planned };
     let report = plan.report();
     if mode == Mode::Apply {
         let digest = plan.transaction_digest();
@@ -491,7 +558,7 @@ pub(crate) fn run_staged_cohort_with_fs(
                 retained.committed.is_empty(),
                 "owned committed transaction exists but installed cohort is incomplete"
             );
-            Transaction::new(repository, plan, digest, io)?.apply()?;
+            AtomicCaseTransaction::new(repository, plan, digest, io)?.apply()?;
         }
     }
     Ok(report)
@@ -539,6 +606,15 @@ fn validate_cohort_path_ownership(cases: &[CohortCase]) -> Result<()> {
     }
     for (index, left) in paths.iter().enumerate() {
         for right in &paths[index + 1..] {
+            if left.case == right.case
+                && left.path == right.path
+                && matches!(
+                    (left.role, right.role),
+                    ("destination", "authority") | ("authority", "destination")
+                )
+            {
+                continue;
+            }
             if left.path.starts_with(&right.path) || right.path.starts_with(&left.path) {
                 bail!(
                     "cohort path ownership collision: case {} {} {} overlaps case {} {} {}",
@@ -561,7 +637,7 @@ fn run_with_fs(
     mode: Mode,
     io: &dyn MigrationFs,
 ) -> Result<String> {
-    let plan = MigrationPlan::build(corpus, specs)?;
+    let plan = CasePlan::build(corpus, specs)?;
     let report = plan.report();
     if mode == Mode::Apply {
         let digest = plan.transaction_digest();
@@ -587,7 +663,7 @@ fn run_with_fs(
                     retained.committed[0].display()
                 );
             }
-            Transaction::new(corpus, plan, digest, io)?.apply()?;
+            AtomicCaseTransaction::new(corpus, plan, digest, io)?.apply()?;
         }
     }
     Ok(report)
@@ -599,7 +675,9 @@ enum Layout {
     Directory,
 }
 
-struct PlannedCase {
+/// One complete destination artifact, including its exact byte inventory and
+/// every old authority consumed when it is installed.
+struct ArtifactSpec {
     area: PathBuf,
     case: String,
     display_area: String,
@@ -610,11 +688,13 @@ struct PlannedCase {
     ownership_authorities: Vec<PathBuf>,
 }
 
-struct MigrationPlan {
-    cases: Vec<PlannedCase>,
+/// The sole fixture publication plan. Every publication path is reduced to
+/// this closed set before the filesystem is mutated.
+struct CasePlan {
+    cases: Vec<ArtifactSpec>,
 }
 
-impl MigrationPlan {
+impl CasePlan {
     fn build(corpus: &Path, specs: &[FamilySpec]) -> Result<Self> {
         let mut planned = Vec::new();
         let mut authority_owner = BTreeMap::<PathBuf, String>::new();
@@ -648,7 +728,7 @@ impl MigrationPlan {
                         }
                     }
                 }
-                planned.push(PlannedCase {
+                planned.push(ArtifactSpec {
                     area: area.clone(),
                     case,
                     display_area: spec.area.to_owned(),
@@ -967,18 +1047,19 @@ fn validate_spec(spec: &FamilySpec) -> Result<()> {
     Ok(())
 }
 
-struct Transaction<'a> {
+/// The sole fixture publication transaction.
+struct AtomicCaseTransaction<'a> {
     corpus: &'a Path,
-    plan: MigrationPlan,
+    plan: CasePlan,
     root: PathBuf,
     digest: String,
     io: &'a dyn MigrationFs,
 }
 
-impl<'a> Transaction<'a> {
+impl<'a> AtomicCaseTransaction<'a> {
     fn new(
         corpus: &'a Path,
-        plan: MigrationPlan,
+        plan: CasePlan,
         digest: String,
         io: &'a dyn MigrationFs,
     ) -> Result<Self> {
@@ -1184,7 +1265,7 @@ impl<'a> Transaction<'a> {
             .collect()
     }
 
-    fn staged_path(&self, case: &PlannedCase) -> Result<PathBuf> {
+    fn staged_path(&self, case: &ArtifactSpec) -> Result<PathBuf> {
         Ok(self
             .root
             .join("staged")

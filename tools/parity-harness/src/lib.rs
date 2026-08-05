@@ -20,7 +20,7 @@ use std::{env, ffi::OsString};
 
 use anyhow::{Context, Result, anyhow, bail};
 #[cfg(any(test, feature = "reference-tools"))]
-use corpus_manifest::Document;
+use corpus_manifest::Entry as Document;
 use corpus_manifest::{Manifest, parse_manifest_file};
 #[cfg(feature = "reference-tools")]
 use refexec::{RefTex, RunOpts};
@@ -108,10 +108,6 @@ pub fn run_cli() -> Result<bool> {
         run_self_test(&options.triage_dir)?;
         return Ok(true);
     }
-    if let Some(path) = &options.write_reference_fixture {
-        write_reference_fixture(&options, path)?;
-        return Ok(true);
-    }
     run_e2e(&options)
 }
 
@@ -129,9 +125,9 @@ pub fn run_named_fixture_document(
     let manifest_path = repo_root.join("tests/corpus-manifest.txt");
     let manifest = read_manifest(&manifest_path)?;
     let doc = manifest
-        .doc
+        .entries
         .iter()
-        .find(|doc| doc.name == document)
+        .find(|doc| doc.is_document() && doc.name == document)
         .ok_or_else(|| {
             anyhow!(
                 "document {document} is not declared in {}",
@@ -187,7 +183,11 @@ pub fn run_named_external_document(
         .with_context(|| format!("failed to resolve repository root {}", repo_root.display()))?;
     let manifest_path = repo_root.join("tests/corpus-manifest.txt");
     let manifest = read_manifest(&manifest_path)?;
-    if !manifest.doc.iter().any(|doc| doc.name == document) {
+    if !manifest
+        .entries
+        .iter()
+        .any(|doc| doc.is_document() && doc.name == document)
+    {
         bail!(
             "document {document} is not declared in {}",
             manifest_path.display()
@@ -208,7 +208,6 @@ pub fn run_named_external_document(
         doc_filter: Some(document.to_string()),
         keep_triage: true,
         self_test: false,
-        write_reference_fixture: None,
         compare_existing_dvi: None,
         comparison_label: "dvi-comparison".to_string(),
         repo_root,
@@ -285,7 +284,6 @@ struct Options {
     doc_filter: Option<String>,
     keep_triage: bool,
     self_test: bool,
-    write_reference_fixture: Option<PathBuf>,
     compare_existing_dvi: Option<(PathBuf, PathBuf)>,
     comparison_label: String,
 }
@@ -302,7 +300,6 @@ impl Options {
             doc_filter: None,
             keep_triage: false,
             self_test: false,
-            write_reference_fixture: None,
             compare_existing_dvi: None,
             comparison_label: "dvi-comparison".to_string(),
         };
@@ -341,10 +338,6 @@ impl Options {
                     options.comparison_label = value.to_string_lossy().into_owned();
                 }
                 Some("--self-test") => options.self_test = true,
-                Some("--write-reference-fixture") => {
-                    options.write_reference_fixture =
-                        Some(next_path(&mut args, "--write-reference-fixture")?);
-                }
                 Some("--help") | Some("-h") => {
                     print_usage();
                     std::process::exit(0);
@@ -358,21 +351,22 @@ impl Options {
 }
 
 #[cfg(feature = "reference-tools")]
-fn write_reference_fixture(options: &Options, path: &Path) -> Result<()> {
-    let document = options
-        .doc_filter
-        .as_deref()
-        .ok_or_else(|| anyhow!("--write-reference-fixture requires --doc NAME"))?;
-    let manifest = read_manifest(&options.manifest_path)?;
+pub fn generate_reference_fixture(
+    repo_root: &Path,
+    manifest_path: &Path,
+    corpus_dir: &Path,
+    document: &str,
+) -> Result<Vec<u8>> {
+    let manifest = read_manifest(manifest_path)?;
     let doc = manifest
-        .doc
+        .entries
         .iter()
-        .find(|doc| doc.name == document)
+        .find(|doc| doc.is_document() && doc.name == document)
         .ok_or_else(|| anyhow!("document {document} is not declared in the manifest"))?;
-    let source_path = options.corpus_dir.join(&doc.name);
-    let format_source_path = options.corpus_dir.join(&doc.format_source);
+    let source_path = corpus_dir.join(&doc.name);
+    let format_source_path = corpus_dir.join(&doc.format_source);
     let reference = run_reference_dvi(
-        &options.repo_root,
+        repo_root,
         &RefTex::locate()?,
         &source_path,
         &format_source_path,
@@ -385,20 +379,7 @@ fn write_reference_fixture(options: &Options, path: &Path) -> Result<()> {
             doc.expected_ref_dvi_sha256
         );
     }
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    if path.is_file() {
-        let existing = fs::read(path)?;
-        if normalized_dvi_for_comparison(&existing)? == reference.normalized {
-            println!("fixture unchanged: {}", path.display());
-            return Ok(());
-        }
-    }
-    fs::write(path, reference.bytes)
-        .with_context(|| format!("failed to write fixed DVI fixture {}", path.display()))?;
-    println!("wrote {}", path.display());
-    Ok(())
+    Ok(reference.bytes)
 }
 
 #[cfg(feature = "reference-tools")]
@@ -482,11 +463,12 @@ fn run_e2e(options: &Options) -> Result<bool> {
 
     let ref_tex = RefTex::locate()?;
     let mut ok = true;
-    for doc in manifest.doc.iter().filter(|doc| {
-        options
-            .doc_filter
-            .as_ref()
-            .is_none_or(|filter| filter == &doc.name)
+    for doc in manifest.entries.iter().filter(|doc| {
+        doc.is_document()
+            && options
+                .doc_filter
+                .as_ref()
+                .is_none_or(|filter| filter == &doc.name)
     }) {
         let old_bundle = options.triage_dir.join(safe_bundle_name(&doc.name));
         if old_bundle.exists() {
@@ -612,7 +594,11 @@ fn run_e2e(options: &Options) -> Result<bool> {
 fn read_manifest(path: &Path) -> Result<Manifest> {
     let manifest =
         parse_manifest_file(path).with_context(|| format!("failed to parse {}", path.display()))?;
-    if manifest.doc.is_empty() {
+    if !manifest
+        .entries
+        .iter()
+        .any(corpus_manifest::Entry::is_document)
+    {
         bail!(
             "manifest {} does not contain any doc entries",
             path.display()
@@ -1090,6 +1076,7 @@ fn run_self_test(triage_dir: &Path) -> Result<PathBuf> {
     };
     let diff = first_diff(&reference.normalized, &umber.normalized);
     let doc = Document {
+        kind: corpus_manifest::EntryKind::Document,
         name: "self-test.tex".to_string(),
         urls: vec!["https://example.invalid/self-test.tex".to_string()],
         sha256: sha256_hex(b"self-test"),
@@ -1191,7 +1178,7 @@ fn synthetic_page(bytes: &mut Vec<u8>, count0: i32, previous: i32, body: &[u8]) 
 #[cfg(feature = "reference-tools")]
 fn print_usage() {
     eprintln!(
-        "usage: parity-harness [--manifest path] [--corpus-dir dir] [--triage-dir dir] [--umber-bin path] [--doc name] [--keep-triage] [--self-test] [--write-reference-fixture path]\n       parity-harness --compare-existing-dvi expected.dvi actual.dvi [--label name] [--triage-dir dir]"
+        "usage: parity-harness [--manifest path] [--corpus-dir dir] [--triage-dir dir] [--umber-bin path] [--doc name] [--keep-triage] [--self-test]\n       parity-harness --compare-existing-dvi expected.dvi actual.dvi [--label name] [--triage-dir dir]"
     );
 }
 

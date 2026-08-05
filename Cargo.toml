@@ -42,7 +42,6 @@ default-members = [
   "tools/tex-command-stream",
 ]
 exclude = [
-  "tools/corpus-sync",
   "tools/fixturegen",
   "tools/texlive-wasm-publish",
 ]

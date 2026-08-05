@@ -8,30 +8,32 @@ use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct Manifest {
-    pub support: Vec<SupportFile>,
-    pub doc: Vec<Document>,
+    pub entries: Vec<Entry>,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
-pub struct SupportFile {
+pub struct Entry {
+    pub kind: EntryKind,
     pub name: String,
     pub urls: Vec<String>,
     pub sha256: String,
     pub license: String,
     pub redistributable: bool,
     pub notes: String,
-}
-
-#[derive(Debug, Clone, Eq, PartialEq)]
-pub struct Document {
-    pub name: String,
-    pub urls: Vec<String>,
-    pub sha256: String,
-    pub license: String,
-    pub redistributable: bool,
     pub format_source: String,
     pub expected_ref_dvi_sha256: String,
-    pub notes: String,
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub enum EntryKind {
+    Support,
+    Document,
+}
+
+impl Entry {
+    pub const fn is_document(&self) -> bool {
+        matches!(self.kind, EntryKind::Document)
+    }
 }
 
 #[derive(Debug)]
@@ -113,8 +115,8 @@ fn split_key_value(line: &str, line_number: usize) -> Result<(&str, &str), Manif
 
 #[derive(Default)]
 struct ManifestBuilder {
-    support: Vec<SupportFile>,
-    documents: Vec<Document>,
+    support: Vec<Entry>,
+    documents: Vec<Entry>,
     current: Option<EntryBuilder>,
 }
 
@@ -190,9 +192,9 @@ impl ManifestBuilder {
                 ));
             }
         }
+        self.support.extend(self.documents);
         Ok(Manifest {
-            support: self.support,
-            doc: self.documents,
+            entries: self.support,
         })
     }
 
@@ -257,14 +259,17 @@ impl SupportBuilder {
         )
     }
 
-    fn finish(self) -> Result<SupportFile, ManifestError> {
-        let file = SupportFile {
+    fn finish(self) -> Result<Entry, ManifestError> {
+        let file = Entry {
+            kind: EntryKind::Support,
             name: self.name,
             urls: required_urls(self.urls, self.start_line)?,
             sha256: required(self.sha256, "sha256", self.start_line)?,
             license: required(self.license, "license", self.start_line)?,
             redistributable: required(self.redistributable, "redistributable", self.start_line)?,
             notes: required(self.notes, "notes", self.start_line)?,
+            format_source: String::new(),
+            expected_ref_dvi_sha256: String::new(),
         };
         validate_file(
             &file.name,
@@ -353,8 +358,9 @@ impl DocumentBuilder {
         Ok(())
     }
 
-    fn finish(self) -> Result<Document, ManifestError> {
-        let doc = Document {
+    fn finish(self) -> Result<Entry, ManifestError> {
+        let doc = Entry {
+            kind: EntryKind::Document,
             name: self.name,
             urls: required_urls(self.urls, self.start_line)?,
             sha256: required(self.sha256, "sha256", self.start_line)?,
@@ -439,7 +445,7 @@ fn set_common_field(
     Ok(())
 }
 
-fn validate_document(doc: &Document, line_number: usize) -> Result<(), ManifestError> {
+fn validate_document(doc: &Entry, line_number: usize) -> Result<(), ManifestError> {
     validate_file(
         &doc.name,
         &doc.urls,
@@ -449,21 +455,20 @@ fn validate_document(doc: &Document, line_number: usize) -> Result<(), ManifestE
         &doc.notes,
         line_number,
     )?;
-    if !safe_file_name(&doc.format_source) {
+    let format_source = doc.format_source.as_str();
+    if !safe_file_name(format_source) {
         return Err(ManifestError::new(
             Some(line_number),
-            format!(
-                "{} has invalid format_source: {}",
-                doc.name, doc.format_source
-            ),
+            format!("{} has invalid format_source: {}", doc.name, format_source),
         ));
     }
-    if !is_sha256(&doc.expected_ref_dvi_sha256) {
+    let expected_ref_dvi_sha256 = doc.expected_ref_dvi_sha256.as_str();
+    if !is_sha256(expected_ref_dvi_sha256) {
         return Err(ManifestError::new(
             Some(line_number),
             format!(
                 "{} has invalid expected_ref_dvi_sha256: {}",
-                doc.name, doc.expected_ref_dvi_sha256
+                doc.name, expected_ref_dvi_sha256
             ),
         ));
     }

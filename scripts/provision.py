@@ -176,14 +176,14 @@ def _generate_primary_assets(repo_root: Path, target_dir: Path, offline: bool) -
             "cargo",
             "build",
             "--manifest-path",
-            "tools/corpus-sync/Cargo.toml",
+            "tools/fixturegen/Cargo.toml",
             "--target-dir",
             str(target_dir),
         ],
         repo_root,
         environment,
     )
-    _run([str(target_dir / "debug/corpus-sync")], repo_root, environment)
+    _run([str(target_dir / "debug/fixturegen"), "--sync-corpus"], repo_root, environment)
     provision_oracles(repo_root, ("pdftex14029",), target_dir, offline)
     pdftex = target_dir / "pdftex14029-oracle/bin/umber-pdftex14029-oracle-instrumented"
     if not pdftex.is_file():

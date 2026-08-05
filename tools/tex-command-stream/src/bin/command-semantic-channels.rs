@@ -67,9 +67,8 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
-use std::io;
 use std::path::{Path, PathBuf};
-use std::process::ExitCode;
+use std::process::{Command, ExitCode};
 
 use tex_command_stream::semantic::{
     CapturedChannels, ChannelMismatch, ChannelPolicy, DeclaredCase, Expectation, STREAM_CHANNELS,
@@ -325,22 +324,32 @@ fn run(allowlist: Option<&Path>, accept_projection_changes: bool) -> Result<Stri
         ));
     }
 
+    let repository = repository_root();
+    let staging_parent = repository.join("target");
+    fs::create_dir_all(&staging_parent).map_err(|error| error.to_string())?;
+    let staging = tempfile::Builder::new()
+        .prefix("command-semantic-publication-")
+        .tempdir_in(&staging_parent)
+        .map_err(|error| error.to_string())?;
+    let mut publication_cases = Vec::new();
     let mut rewritten = 0;
     for (domain, cases_by_id) in &plans {
-        let domain_dir = repository_root()
+        let domain_dir = repository
             .join("tests/corpus/command-semantic")
             .join(domain);
         for (case_id, plan) in cases_by_id {
             let fixture_dir = domain_dir.join(case_id);
-            rewrite_fixture_atomically(
-                &|from, to| fs::rename(from, to),
-                &fixture_dir,
-                plan,
-                cases_by_id,
-            )?;
+            let candidate = staging.path().join(domain).join(case_id);
+            prepare_fixture(&fixture_dir, &candidate, plan, cases_by_id)?;
+            publication_cases.push(serde_json::json!({
+                "staged": candidate.strip_prefix(&repository).map_err(|_| "staging escaped repository")?,
+                "destination": fixture_dir.strip_prefix(&repository).map_err(|_| "fixture escaped repository")?,
+                "authorities": [fixture_dir.strip_prefix(&repository).map_err(|_| "fixture escaped repository")?],
+            }));
             rewritten += 1;
         }
     }
+    publish_candidates(&repository, staging.path(), publication_cases)?;
 
     let mut summary = format!(
         "derived channel contracts for {rewritten} self-contained cases against the pinned pdfTeX 1.40.29 oracle"
@@ -353,6 +362,72 @@ fn run(allowlist: Option<&Path>, accept_projection_changes: bool) -> Result<Stri
         ));
     }
     Ok(summary)
+}
+
+fn prepare_fixture(
+    fixture_dir: &Path,
+    candidate: &Path,
+    plan: &CasePlan,
+    cases: &BTreeMap<String, CasePlan>,
+) -> Result<(), String> {
+    fs::create_dir_all(candidate).map_err(|error| format!("{}: {error}", candidate.display()))?;
+    for entry in
+        fs::read_dir(fixture_dir).map_err(|error| format!("{}: {error}", fixture_dir.display()))?
+    {
+        let entry = entry.map_err(|error| format!("{}: {error}", fixture_dir.display()))?;
+        if !entry
+            .file_type()
+            .map_err(|error| error.to_string())?
+            .is_file()
+        {
+            return Err(format!(
+                "fixture entry {} is not a regular file",
+                entry.path().display()
+            ));
+        }
+        fs::copy(entry.path(), candidate.join(entry.file_name()))
+            .map_err(|error| format!("{}: {error}", entry.path().display()))?;
+    }
+    write_channel_files(candidate, plan)?;
+    rewrite_manifest(&candidate.join("manifest.json"), cases)
+}
+
+fn publish_candidates(
+    repository: &Path,
+    staging: &Path,
+    cases: Vec<serde_json::Value>,
+) -> Result<(), String> {
+    if cases.is_empty() {
+        return Ok(());
+    }
+    let fixturegen = std::env::var_os("UMBER_FIXTUREGEN").ok_or_else(|| {
+        "UMBER_FIXTUREGEN must name fixturegen for atomic command-semantic publication".to_owned()
+    })?;
+    let plan = staging.join("publication.json");
+    let value = serde_json::json!({
+        "schema": "umber-fixture-cohort-plan-v1",
+        "repository": repository,
+        "cases": cases,
+    });
+    fs::write(
+        &plan,
+        serde_json::to_vec(&value).map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| error.to_string())?;
+    for mode in ["--plan", "--apply"] {
+        let output = Command::new(&fixturegen)
+            .args(["--cohort-transaction", mode])
+            .arg(&plan)
+            .output()
+            .map_err(|error| format!("run fixturegen {mode}: {error}"))?;
+        if !output.status.success() {
+            return Err(format!(
+                "fixturegen {mode} failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// One channel's resolved disposition: `Empty` needs no committed file;
@@ -650,81 +725,6 @@ fn write_channel_files(fixture_dir: &Path, plan: &CasePlan) -> Result<(), String
     Ok(())
 }
 
-/// Prepares the complete regenerated fixture beside the live directory, then
-/// swaps it into place. A failed derivation therefore cannot leave a fixture
-/// with new channel bytes and old metadata (or the reverse).
-fn rewrite_fixture_atomically(
-    rename: &impl Fn(&Path, &Path) -> io::Result<()>,
-    fixture_dir: &Path,
-    plan: &CasePlan,
-    cases: &BTreeMap<String, CasePlan>,
-) -> Result<(), String> {
-    let parent = fixture_dir
-        .parent()
-        .ok_or_else(|| format!("{} has no parent", fixture_dir.display()))?;
-    let name = fixture_dir
-        .file_name()
-        .and_then(|value| value.to_str())
-        .ok_or_else(|| format!("non-UTF-8 fixture directory {}", fixture_dir.display()))?;
-    let staging = parent.join(format!(".{name}.regen-staging"));
-    let backup = parent.join(format!(".{name}.regen-backup"));
-    if staging.exists() || backup.exists() {
-        return Err(format!(
-            "refusing to overwrite interrupted regeneration state {} or {}",
-            staging.display(),
-            backup.display()
-        ));
-    }
-    fs::create_dir(&staging).map_err(|error| format!("{}: {error}", staging.display()))?;
-    let prepared = (|| {
-        for entry in fs::read_dir(fixture_dir)
-            .map_err(|error| format!("{}: {error}", fixture_dir.display()))?
-        {
-            let entry = entry.map_err(|error| format!("{}: {error}", fixture_dir.display()))?;
-            let file_type = entry
-                .file_type()
-                .map_err(|error| format!("{}: {error}", entry.path().display()))?;
-            if !file_type.is_file() {
-                return Err(format!(
-                    "fixture entry {} is not a regular file",
-                    entry.path().display()
-                ));
-            }
-            fs::copy(entry.path(), staging.join(entry.file_name()))
-                .map_err(|error| format!("{}: {error}", entry.path().display()))?;
-        }
-        write_channel_files(&staging, plan)?;
-        rewrite_manifest(&staging.join("manifest.json"), cases)
-    })();
-    if let Err(error) = prepared {
-        let _ = fs::remove_dir_all(&staging);
-        return Err(error);
-    }
-
-    rename(fixture_dir, &backup)
-        .map_err(|error| format!("{} -> {}: {error}", fixture_dir.display(), backup.display()))?;
-    if let Err(install_error) = rename(&staging, fixture_dir) {
-        return match rename(&backup, fixture_dir) {
-            Ok(()) => Err(format!(
-                "{} -> {}: {install_error}; restored original fixture from {}",
-                staging.display(),
-                fixture_dir.display(),
-                backup.display()
-            )),
-            Err(restore_error) => Err(format!(
-                "{} -> {}: {install_error}; restoring authoritative backup {} -> {} also failed: \
-                 {restore_error}; original fixture remains recoverable at {}",
-                staging.display(),
-                fixture_dir.display(),
-                backup.display(),
-                fixture_dir.display(),
-                backup.display()
-            )),
-        };
-    }
-    fs::remove_dir_all(&backup).map_err(|error| format!("{}: {error}", backup.display()))
-}
-
 /// Renders a derived `expected` array close to the shape `dprint` produces,
 /// one observation per line, exactly like every hand-authored one already
 /// committed; `dprint fmt` (part of `scripts/regen-fixtures.sh`'s own
@@ -906,7 +906,6 @@ fn net_delimiter_depth(line: &str, open: char, close: char) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::cell::Cell;
 
     #[test]
     fn allowlist_is_exact_and_rejects_empty_input() {
@@ -922,7 +921,7 @@ mod tests {
     }
 
     #[test]
-    fn regeneration_replaces_one_complete_fixture_directory() {
+    fn regeneration_prepares_one_complete_candidate_without_mutating_authority() {
         let temporary = tempfile::tempdir().expect("temporary directory");
         let fixture = temporary.path().join("case-a");
         fs::create_dir(&fixture).expect("fixture directory");
@@ -956,116 +955,23 @@ mod tests {
             },
         };
         let plans = BTreeMap::from([("case-a".to_owned(), plan)]);
-        rewrite_fixture_atomically(
-            &|from, to| fs::rename(from, to),
+        let candidate = temporary.path().join("candidate");
+        prepare_fixture(
             &fixture,
+            &candidate,
             plans.get("case-a").expect("plan"),
             &plans,
         )
-        .expect("atomic rewrite");
+        .expect("prepare candidate");
 
         assert_eq!(
             fs::read(fixture.join("case-a.tex")).expect("preserved source"),
             b"\\end\n"
         );
-        let manifest = fs::read_to_string(fixture.join("manifest.json")).expect("manifest");
+        let authority = fs::read_to_string(fixture.join("manifest.json")).expect("authority");
+        assert!(authority.contains("\"old\""));
+        let manifest = fs::read_to_string(candidate.join("manifest.json")).expect("manifest");
         assert!(manifest.contains("\"new\""));
         assert!(manifest.contains("\"events\": 2"));
-        assert!(!temporary.path().join(".case-a.regen-staging").exists());
-        assert!(!temporary.path().join(".case-a.regen-backup").exists());
-    }
-
-    fn fixture_and_plans(parent: &Path) -> (PathBuf, BTreeMap<String, CasePlan>) {
-        let fixture = parent.join("case-a");
-        fs::create_dir(&fixture).expect("fixture directory");
-        fs::write(fixture.join("case-a.tex"), b"\\end\n").expect("source");
-        fs::write(
-            fixture.join("manifest.json"),
-            concat!(
-                "{\n  \"cases\": [{\n",
-                "    \"id\": \"case-a\",\n",
-                "    \"expectation\": { \"kind\": \"pass\" }\n",
-                "  }]\n}\n",
-            ),
-        )
-        .expect("manifest");
-        let plan = CasePlan {
-            expected: Some(vec!["new".to_owned()]),
-            channels: ChannelsPlan {
-                events: 2,
-                status: "clean".to_owned(),
-                channels: std::array::from_fn(|_| ChannelPlan::Empty),
-            },
-        };
-        (fixture, BTreeMap::from([("case-a".to_owned(), plan)]))
-    }
-
-    #[test]
-    fn install_failure_restores_original_fixture_and_reports_recovery() {
-        let temporary = tempfile::tempdir().expect("temporary directory");
-        let (fixture, plans) = fixture_and_plans(temporary.path());
-        let calls = Cell::new(0);
-        let rename = |from: &Path, to: &Path| {
-            let call = calls.get();
-            calls.set(call + 1);
-            if call == 1 {
-                Err(io::Error::other("injected candidate install failure"))
-            } else {
-                fs::rename(from, to)
-            }
-        };
-
-        let error = rewrite_fixture_atomically(
-            &rename,
-            &fixture,
-            plans.get("case-a").expect("plan"),
-            &plans,
-        )
-        .expect_err("candidate install must fail");
-
-        assert!(error.contains("injected candidate install failure"));
-        assert!(error.contains("restored original fixture"));
-        assert_eq!(
-            fs::read(fixture.join("case-a.tex")).expect("restored source"),
-            b"\\end\n"
-        );
-        assert!(!temporary.path().join(".case-a.regen-backup").exists());
-        assert!(temporary.path().join(".case-a.regen-staging").exists());
-    }
-
-    #[test]
-    fn install_and_restore_failure_preserves_backup_and_reports_both_errors() {
-        let temporary = tempfile::tempdir().expect("temporary directory");
-        let (fixture, plans) = fixture_and_plans(temporary.path());
-        let calls = Cell::new(0);
-        let rename = |from: &Path, to: &Path| {
-            let call = calls.get();
-            calls.set(call + 1);
-            match call {
-                0 => fs::rename(from, to),
-                1 => Err(io::Error::other("injected candidate install failure")),
-                2 => Err(io::Error::other("injected backup restore failure")),
-                _ => unreachable!("unexpected rename call"),
-            }
-        };
-
-        let error = rewrite_fixture_atomically(
-            &rename,
-            &fixture,
-            plans.get("case-a").expect("plan"),
-            &plans,
-        )
-        .expect_err("candidate install and restoration must fail");
-
-        assert!(error.contains("injected candidate install failure"));
-        assert!(error.contains("injected backup restore failure"));
-        assert!(error.contains("original fixture remains recoverable at"));
-        let backup = temporary.path().join(".case-a.regen-backup");
-        assert_eq!(
-            fs::read(backup.join("case-a.tex")).expect("recoverable source"),
-            b"\\end\n"
-        );
-        assert!(!fixture.exists());
-        assert!(temporary.path().join(".case-a.regen-staging").exists());
     }
 }
