@@ -474,7 +474,7 @@ support files, and all local end-to-end DVI oracles with:
 python3 scripts/provision.py worktree .
 ```
 
-Setup builds `tools/corpus-sync`, writes exact fetched support
+Setup builds `tools/fixturegen` and runs `--sync-corpus`, writing exact fetched support
 inputs and documents to gitignored `third_party/corpus/`, verifies the manifest
 SHA-256 values, and fails clearly on cached or fetched hash drift. Manifest
 entries use `key value` lines; repeated `url` fields are ordered locators, and

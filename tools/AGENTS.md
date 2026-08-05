@@ -2,7 +2,7 @@
 
 `tools/refexec` is an opt-in host-side regeneration utility: it runs the machine reference TeX (`pdftex`, falling back to `tex`) in a fresh temporary directory, captures stdout/log/DVI outputs, and leaves repository inputs untouched. By default the tool locates `pdftex` or `tex` on `PATH`; set `UMBER_REF_TEX=/absolute/path/to/pdftex` to point fixture regeneration at a different reference binary, such as a specific TeX Live installation. Exact DVI normalization/comparison is owned by `test-support`; `refexec` re-exports and uses that shared contract for its CLI comparison paths.
 
-`tools/fixturegen` is the script-owned fixture regeneration tool used by `scripts/regen-fixtures.sh` for text/native fixtures, pinned pdfTeX/Poppler PDF parity fixtures, and the explicit live font check. It is intentionally not a root workspace member; build it via `cargo build --manifest-path tools/fixturegen/Cargo.toml`. It may invoke `refexec`, `umber`, `pdftex`, `pdftoppm`, and `tftopl`, but cargo tests must not build or run it.
+`tools/fixturegen` is the sole host-side fixture publication owner used by `scripts/regen-fixtures.sh` and primary-checkout provisioning. Its `CasePlan`, `ArtifactSpec`, and `AtomicCaseTransaction` cover ordinary text/native updates, layout and PDF migration, externally staged cohorts, command-semantic batches, end-to-end reference DVI publication, and corpus acquisition. It is intentionally not a root workspace member; build it via `cargo build --manifest-path tools/fixturegen/Cargo.toml`. It may invoke `refexec`, `umber`, `pdftex`, `pdftoppm`, and `tftopl`, but cargo tests must not build or run it.
 
 `fixturegen --migrate-layout --plan` deterministically inventories the
 single declarative registry of execution/output, lexical/session, and native
@@ -37,15 +37,16 @@ closed cohort without consulting former shared authority.
 reuse that transaction engine for generators that already hold a complete
 multi-case cohort. The versioned JSON plan names the Git checkout, each
 repository-relative staged closed case, its unique repository-relative
-destination, and every tracked authority to consume. Each staged directory
-must carry `closed-case-v1` `case.inventory` metadata, but it need not be
-tracked: staged output is validated as closed local data while old authorities
+destination, and every tracked authority to consume. Each staged directory is inventoried as closed local data; when it carries
+`closed-case-v1` `case.inventory`, the declaration is checked exactly. Staged
+output need not be tracked, while old authorities
 are independently required to belong to the selected Git checkout. The command
 canonically owns the schema, normalized destination, staged-case inventory, and
 normalized authority paths for every case; case and authority ordering do not
-change that ownership digest. Preflight rejects every equal, ancestor, or
-descendant overlap among staged cases, destinations, authorities, and the
-transaction-root namespace before authority inspection or mutation. Commit
+change that ownership digest. Preflight rejects every ancestor or descendant overlap among staged cases,
+destinations, authorities, and the transaction-root namespace before authority
+inspection or mutation. A destination may name itself as its one consumed
+authority for closed replacement. Commit
 revalidates the exact inventory of the full cohort, including cases that were
 already complete when the transaction began. Initial and retry-time
 post-commit cleanup failures both report `committed=true` and the exact owned
@@ -64,7 +65,7 @@ reference/Umber status, BBL, and BLG bytes. Failures are preserved under
 
 `refexec` also wraps `tftopl` for the font metric check owned by `tools/fixturegen`. When running that tier, it locates `tftopl` on `PATH`; set `UMBER_REF_TFTOPL=/absolute/path/to/tftopl` to point regeneration at a specific TeX installation.
 
-`tools/corpus-sync` is the external document acquisition tool run by `python3 scripts/provision.py worktree .` in the primary checkout. It is intentionally not a root workspace member; build it via `cargo build --manifest-path tools/corpus-sync/Cargo.toml`. It reads the line-oriented `tests/corpus-manifest.txt`, fetches exact support inputs and runnable documents into gitignored `third_party/corpus/`, verifies SHA-256, and treats cached hash matches as a no-op. Once setup is complete, conformance tests consume only local inputs and require no network access. Do not normalize line endings or commit fetched corpus files; licensing determinations live in the manifest notes.
+`fixturegen --sync-corpus` is the external document acquisition mode run by `python3 scripts/provision.py worktree .` in the primary checkout. It reads the line-oriented `tests/corpus-manifest.txt`, preserves entry and locator ordering, fetches exact support inputs and runnable documents into gitignored `third_party/corpus/`, verifies SHA-256, and treats a complete cached hash match as a no-op. A changed corpus is installed as one closed atomic tree. Once setup is complete, conformance tests consume only local inputs and require no network access. Do not normalize line endings or commit fetched corpus files; licensing determinations live in the manifest notes.
 
 `tools/texlive-wasm-publish` is a standalone release tool for browser TeX Live assets. It verifies every configured TEXMF root against a pinned tree digest, flattens lookup precedence deterministically, and writes an immutable manifest plus content-addressed objects. Build and test it explicitly with `cargo test --manifest-path tools/texlive-wasm-publish/Cargo.toml`; it must not join the root workspace or make ordinary tests scan a TeX Live installation.
 Its manifest model and canonical serialization come from the workspace
@@ -80,7 +81,7 @@ distribution from selected format closures, runtime TeX/TFM objects, and an
 exact curated WOFF2/mapping/license catalog. It does not mutate or filter the
 schema-3 production snapshot in place.
 
-`tools/parity-harness` is the shared Rust library and opt-in compatibility CLI for end-to-end DVI conformance. Oracle-presence-conditional Story, Gentle, TRIP, and e-TRIP tests use its default library for final artifact comparison against gitignored, locally generated `tests/corpus/e2e` DVI files, without compiling live reference execution. Its fixture path stages manifest inputs and calls an in-process Umber runner supplied by the Cargo test; it never launches the Umber binary. The `reference-tools` feature enables the CLI and live-reference paths used by `scripts/regen-fixtures.sh`; the explicit `--write-reference-fixture` path verifies manifest-pinned reference hashes and writes local oracles. Comparison uses `test-support` to normalize only DVI preamble comments, requires byte-identical final DVI, and writes automatic bundles under `target/conformance-triage/` or the CLI-selected triage directory.
+`tools/parity-harness` is the shared Rust library and opt-in compatibility CLI for end-to-end DVI conformance. Oracle-presence-conditional Story, Gentle, TRIP, and e-TRIP tests use its default library for final artifact comparison against gitignored, locally generated `tests/corpus/e2e` DVI files, without compiling live reference execution. Its fixture path stages manifest inputs and calls an in-process Umber runner supplied by the Cargo test; it never launches the Umber binary. The `reference-tools` feature can execute reference TeX and return manifest-verified DVI bytes, but canonical publication belongs to `fixturegen --reference-dvi`. Comparison uses `test-support` to normalize only DVI preamble comments, requires byte-identical final DVI, and writes automatic bundles under `target/conformance-triage/` or the CLI-selected triage directory.
 
 `tools/parity-harness/src/trip_triage.rs` owns the compact TRIP-specific v1
 artifact. It compares canonical `tex-oracle` event streams before transcript,

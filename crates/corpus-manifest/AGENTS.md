@@ -2,7 +2,7 @@
 
 Read the repository-level `AGENTS.md` before editing here. This crate owns the dependency-free parser and validator for `tests/corpus-manifest.txt`, which is consumed by host-side corpus acquisition and parity tooling.
 
-`src/lib.rs` owns the manifest model/parser and `src/tests.rs` owns its unit tests.
+`src/lib.rs` owns the single validated `Entry` model and parser; support and document records differ only by `EntryKind` and document-only validated fields. `src/tests.rs` owns its unit tests.
 
 ## Boundaries
 
@@ -13,4 +13,4 @@ Read the repository-level `AGENTS.md` before editing here. This crate owns the d
 
 ## Validation
 
-Run `cargo test -p corpus-manifest --tests` after parser or format changes. If consumer behavior changes, also run the affected tool tests for `parity-harness` and `tools/corpus-sync`.
+Run `cargo test -p corpus-manifest --tests` after parser or format changes. If consumer behavior changes, also run the affected tests for `parity-harness` and `tools/fixturegen`.

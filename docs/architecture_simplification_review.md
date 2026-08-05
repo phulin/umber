@@ -248,9 +248,9 @@ Each frontend keeps an adapter to the old loop until its differential suite pass
 
 ### 7. Establish one closed fixture and corpus authority
 
-Affected crates: `tools/fixturegen`, `crates/test-support`, `crates/corpus-manifest`, `tools/corpus-sync`, `tools/parity-harness`, `tex-command-stream`, and `tex-oracle`.
+Affected crates: `tools/fixturegen`, `crates/test-support`, `crates/corpus-manifest`, `tools/parity-harness`, `tex-command-stream`, and `tex-oracle`.
 
-**Current design — observed.** Fixture generation has several transaction protocols. The main generator stages case replacement at [`tools/fixturegen/src/main.rs:515`](/home/phulin/umber/tools/fixturegen/src/main.rs:515), layout migration defines another `Transaction` at [`tools/fixturegen/src/layout_migration.rs:970`](/home/phulin/umber/tools/fixturegen/src/layout_migration.rs:970), and cohort migration adds another adapter. `test-support` defines its own corpus/case authority, while `corpus-manifest` distinguishes `SupportFile` and `Document`. `corpus-sync` has a separate acquisition workflow, and parity tooling scans directories and reconstructs job metadata independently.
+**Implemented design.** `fixturegen` owns the single `CasePlan`, `ArtifactSpec`, and `AtomicCaseTransaction`. Ordinary generation, layout/PDF migration, externally staged cohorts, corpus synchronization, parity reference-DVI publication, and command-semantic batch publication all prepare complete byte inventories before that transaction mutates an authority. `corpus-manifest::Entry` is the one validated support/document record. The standalone `corpus-sync` workspace and the parity/command-stream replacement protocols are gone. `test-support` loads and asserts committed cases without publication ownership.
 
 **End state.** `fixturegen` owns one `CasePlan`, one `ArtifactSpec`, and one `AtomicCaseTransaction`. `corpus-manifest` becomes one validated entry model or a private module consumed by that tool. `corpus-sync` is folded into the host tooling rather than remaining a standalone workspace. `parity-harness` remains an execution/comparison library, not a filesystem mutator. `test-support` retains runtime assertions and case loading but no competing publication authority.
 
@@ -266,7 +266,7 @@ Affected crates: `tools/fixturegen`, `crates/test-support`, `crates/corpus-manif
 4. Migrate parity and command-stream publication.
 5. Delete old transaction and manifest types only after fixture-tree digests are unchanged.
 
-Rollback is command-level: retain old generator subcommands and old corpus-sync binaries until the new tool has produced identical staged trees.
+Rollback remains transaction-level: pre-commit failures restore every authority, incomplete restoration retains named backups, and post-commit cleanup failures retain the complete installed tree plus its owned transaction root for retry.
 
 **Gates and risks.** Compare complete fixture-tree hashes, exact bytes, manifest ordering, atomic failure/recovery behavior, offline locator fallback, lock verification, TRIP/DVI/PDF publication, and shell status output. The major risk is accidental deletion or partial publication in a tool that is normally trusted to modify fixtures.
 
@@ -535,7 +535,7 @@ Output refactors should follow canonical execution so new writers do not acciden
 
 1. Apply rank 13’s node schema/traversal consolidation only after measuring a real deletion.
 2. Apply rank 11’s detached content/memo ownership change last among runtime changes.
-3. Complete rank 7’s deletion of old fixture transactions, corpus-sync boundaries, and redundant publication paths after all output schemas stabilize.
+3. Rank 7’s fixture/corpus authority consolidation is complete; preserve its one-plan transaction boundary as later output schemas evolve.
 
 Every wave should leave the preceding compatibility reader or adapter available until the next wave’s gates pass.
 
@@ -555,7 +555,7 @@ The nine crates over 10,000 Rust lines were reviewed through delegated component
 | `bib-sort`             | Rank 2                                                                                              |
 | `bib-unicode`          | No standalone program; collation remains a lower-layer dependency of rank 2                         |
 | `corpus-manifest`      | Rank 7                                                                                              |
-| `corpus-sync`          | Rank 7; standalone boundary is a deletion candidate                                                 |
+| `corpus-sync`          | Rank 7 complete; the standalone boundary was deleted and acquisition moved into `fixturegen`        |
 | `fixturegen`           | Rank 7                                                                                              |
 | `parity-harness`       | Ranks 5 and 7                                                                                       |
 | `profile-analyzer`     | No independent program survives the high bar                                                        |

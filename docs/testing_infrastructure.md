@@ -144,8 +144,8 @@ about six seconds of incremental link time and roughly 160 seconds on a cold
 tree. `scripts/check-wasm.sh` runs those tests for real with
 `wasm-pack test --headless --firefox crates/umber-wasm`.
 
-The three `[workspace] exclude` directories -- `tools/corpus-sync`,
-`tools/fixturegen`, `tools/texlive-wasm-publish` -- hold 23 tests between them.
+The two `[workspace] exclude` directories -- `tools/fixturegen` and
+`tools/texlive-wasm-publish` -- hold their host-tool tests outside the routine suite.
 They are separate workspaces with separate lockfiles and target directories,
 so `scripts/check-tools.sh` runs each by manifest path, and
 `every_excluded_workspace_directory_names_its_check` fails if a fourth appears
@@ -1008,8 +1008,9 @@ SHA-256, license determination, and redistributability flag. Runnable documents
 also select a format source and pin the reference DVI SHA-256 after DVI preamble
 banner normalization.
 
-`python3 scripts/provision.py worktree .` builds `tools/corpus-sync` to fetch or
-verify those inputs under gitignored `third_party/corpus/`, then acquires the
+`python3 scripts/provision.py worktree .` builds `tools/fixturegen` and runs
+`--sync-corpus` to fetch or verify those inputs under gitignored
+`third_party/corpus/`, then acquires the
 remaining local support files and generates all four end-to-end DVI oracles.
 Cached hash matches are a no-op. Fixture regeneration pins
 `SOURCE_DATE_EPOCH=1783604160` and `FORCE_SOURCE_DATE=1` so date-sensitive
