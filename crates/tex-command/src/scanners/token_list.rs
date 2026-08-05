@@ -25,11 +25,6 @@ pub struct ScannedTokenRegisterAssignment {
     pub tokens: TracedTokenList,
 }
 
-enum TokenListRightHandSide {
-    Collected(TracedTokenList),
-    Internal(TracedTokenList),
-}
-
 impl CommandProcessor<'_> {
     /// Scans the operand sequence of TeX82's `\toks` assignment.
     ///
@@ -44,7 +39,7 @@ impl CommandProcessor<'_> {
     ) -> Result<ScannedTokenRegisterAssignment, CommandError> {
         let index = self.scan_profile_register_index()?;
         let _ = self.scan_optional_equals()?;
-        let tokens = self.scan_token_list_right_hand_side(owner)?.tokens();
+        let tokens = self.scan_token_list_right_hand_side(owner, false)?;
         Ok(ScannedTokenRegisterAssignment { index, tokens })
     }
 
@@ -57,7 +52,7 @@ impl CommandProcessor<'_> {
         owner: Symbol,
     ) -> Result<TracedTokenList, CommandError> {
         let _ = self.scan_optional_equals()?;
-        Ok(self.scan_token_list_right_hand_side(owner)?.tokens())
+        self.scan_token_list_right_hand_side(owner, false)
     }
 
     /// Scans a token-parameter assignment such as `\everypar={...}`.
@@ -81,12 +76,63 @@ impl CommandProcessor<'_> {
         owner: Symbol,
     ) -> Result<TracedTokenList, CommandError> {
         let _ = self.scan_optional_equals()?;
-        let scanned = match self.scan_token_list_right_hand_side(owner)? {
-            TokenListRightHandSide::Collected(tokens) => tokens,
-            TokenListRightHandSide::Internal(tokens) => return Ok(tokens),
+        self.scan_token_list_right_hand_side(owner, parameter == TokParam::OUTPUT)
+    }
+
+    fn scan_token_list_right_hand_side(
+        &mut self,
+        owner: Symbol,
+        enclose_collected: bool,
+    ) -> Result<TracedTokenList, CommandError> {
+        let command = self
+            .next_non_blank_non_relax_x_token()?
+            .ok_or_else(CommandError::input_invariant)?;
+        let collected = match command.meaning() {
+            Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Toks) => {
+                // e-TeX 2.6 [49.1227] widens this RHS enquiry alongside
+                // [49.1226]'s assignment target; both select the same sparse
+                // token-register namespace.
+                let index = self.scan_profile_register_index()?;
+                return Ok(TracedTokenList::synthetic(self.state.toks(index)));
+            }
+            Meaning::ToksRegister(index) => {
+                return Ok(TracedTokenList::synthetic(self.state.toks(index)));
+            }
+            Meaning::TokParam(index) => {
+                return Ok(TracedTokenList::synthetic(
+                    self.state
+                        .tok_param(tex_state::env::banks::TokParam::new(index)),
+                ));
+            }
+            Meaning::CharToken {
+                cat: Catcode::BeginGroup,
+                ..
+            } => {
+                // TeX82 has already delivered the required opening brace to
+                // choose the non-internal branch. Back it up once, then let
+                // `scan_toks` install absorbing status before it redelivers
+                // that exact token. Re-scanning it through `scan_left_brace`
+                // would add a second raw delivery before that transition.
+                let primary = command.origin();
+                self.back_input(command)?;
+                self.scan_toks(ScanToksMode::GeneralAfterOpening {
+                    expanded: false,
+                    primary,
+                    owner: Some(owner),
+                })?
+                .replacement_text
+            }
+            _ => {
+                self.back_input(command)?;
+                self.scan_toks(ScanToksMode::GeneralFor {
+                    expanded: false,
+                    owner,
+                })?
+                .replacement_text
+            }
         };
-        if parameter != TokParam::OUTPUT || self.state.tokens(scanned.token_list()).is_empty() {
-            return Ok(scanned);
+        if !enclose_collected || self.state.tokens(collected.token_list()).is_empty() {
+            return Ok(collected);
         }
         let mut tokens = Vec::new();
         tokens.push(TracedTokenWord::pack(
@@ -98,7 +144,7 @@ impl CommandProcessor<'_> {
         ));
         tokens.extend(
             self.state
-                .tokens(scanned.token_list())
+                .tokens(collected.token_list())
                 .iter()
                 .copied()
                 .map(|token| TracedTokenWord::pack(token, OriginId::UNKNOWN)),
@@ -111,69 +157,6 @@ impl CommandProcessor<'_> {
             OriginId::UNKNOWN,
         ));
         Ok(self.state.finish_traced_token_list(&tokens))
-    }
-
-    fn scan_token_list_right_hand_side(
-        &mut self,
-        owner: Symbol,
-    ) -> Result<TokenListRightHandSide, CommandError> {
-        let command = self
-            .next_non_blank_non_relax_x_token()?
-            .ok_or_else(CommandError::input_invariant)?;
-        let tokens = match command.meaning() {
-            Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Toks) => {
-                // e-TeX 2.6 [49.1227] widens this RHS enquiry alongside
-                // [49.1226]'s assignment target; both select the same sparse
-                // token-register namespace.
-                let index = self.scan_profile_register_index()?;
-                self.state.toks(index)
-            }
-            Meaning::ToksRegister(index) => self.state.toks(index),
-            Meaning::TokParam(index) => self
-                .state
-                .tok_param(tex_state::env::banks::TokParam::new(index)),
-            Meaning::CharToken {
-                cat: Catcode::BeginGroup,
-                ..
-            } => {
-                // TeX82 has already delivered the required opening brace to
-                // choose the non-internal branch. Back it up once, then let
-                // `scan_toks` install absorbing status before it redelivers
-                // that exact token. Re-scanning it through `scan_left_brace`
-                // would add a second raw delivery before that transition.
-                let primary = command.origin();
-                self.back_input(command)?;
-                return Ok(TokenListRightHandSide::Collected(
-                    self.scan_toks(ScanToksMode::GeneralAfterOpening {
-                        expanded: false,
-                        primary,
-                        owner: Some(owner),
-                    })?
-                    .replacement_text,
-                ));
-            }
-            _ => {
-                self.back_input(command)?;
-                return Ok(TokenListRightHandSide::Collected(
-                    self.scan_toks(ScanToksMode::GeneralFor {
-                        expanded: false,
-                        owner,
-                    })?
-                    .replacement_text,
-                ));
-            }
-        };
-        Ok(TokenListRightHandSide::Internal(
-            TracedTokenList::synthetic(tokens),
-        ))
-    }
-}
-
-impl TokenListRightHandSide {
-    fn tokens(self) -> TracedTokenList {
-        match self {
-            Self::Collected(tokens) | Self::Internal(tokens) => tokens,
-        }
     }
 }
 

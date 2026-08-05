@@ -1,7 +1,7 @@
 //! Executor-facing structured scanners owned by the command input machine.
 //!
 //! These wrappers intentionally expose frozen values, provenance, and the
-//! canonical filename termination only.  Input levels, raw tokens, and macro
+//! canonical filename scanning only. Input levels, raw tokens, and macro
 //! argument frames remain private to `tex-command`.
 
 use std::sync::Arc;
@@ -853,15 +853,6 @@ pub enum MathStyleKind {
     ScriptScript,
 }
 
-/// The canonical boundary that stopped an unbraced filename scan.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum FileNameTermination {
-    Group,
-    Space,
-    NonCharacter,
-    EndOfInput,
-}
-
 /// TeX82 §§511–520's three-part current filename.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct FileNameComponents {
@@ -887,7 +878,6 @@ impl FileNameComponents {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ScannedFileName {
     pub components: FileNameComponents,
-    pub termination: FileNameTermination,
     pub provenance: StructuredProvenance,
 }
 
@@ -3747,12 +3737,12 @@ impl CommandProcessor<'_> {
         let mut character_count = 0usize;
         let mut quoted = false;
         let mut next = None;
-        let termination = loop {
+        loop {
             let command = match next.take() {
                 Some(command) => command,
                 None => match self.get_x_token()? {
                     Some(command) => command,
-                    None => break FileNameTermination::EndOfInput,
+                    None => break,
                 },
             };
             match command.meaning() {
@@ -3765,13 +3755,13 @@ impl CommandProcessor<'_> {
                     cat: Catcode::EndGroup,
                     ..
                 } if grouped && !quoted => {
-                    break FileNameTermination::Group;
+                    break;
                 }
                 Meaning::CharToken {
                     cat: Catcode::Space,
                     ..
                 } if !grouped && !quoted => {
-                    break FileNameTermination::Space;
+                    break;
                 }
                 Meaning::CharToken { ch, .. } => {
                     character_count += 1;
@@ -3799,11 +3789,11 @@ impl CommandProcessor<'_> {
                 }
                 _ if !grouped => {
                     self.back_input(command)?;
-                    break FileNameTermination::NonCharacter;
+                    break;
                 }
                 _ => return Err(CommandError::input_invariant()),
             }
-        };
+        }
         // §§516--520's `end_name` reuses the preloaded empty string. It makes
         // the name plus only the nonempty area and extension components.
         self.state.record_string_pool_allocations(
@@ -3813,7 +3803,6 @@ impl CommandProcessor<'_> {
         );
         Ok(ScannedFileName {
             components,
-            termination,
             provenance,
         })
     }

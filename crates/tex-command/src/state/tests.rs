@@ -1,9 +1,4 @@
-use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
-
-use super::{
-    CommandRuntime, CommandState, MeaningCacheEntry, NormalizedLineCacheEntry, TransientState,
-};
+use super::{CommandState, TransientState};
 use crate::conditionals::ConditionStack;
 use crate::input::{FileFramingEvent, InputState};
 use crate::macro_call::ParameterState;
@@ -21,58 +16,6 @@ fn templates() -> AlignmentCellTemplates {
             tex_state::ids::TokenListId::EMPTY,
         ),
     }
-}
-
-fn semantic_hash(state: &CommandState) -> u64 {
-    let mut hasher = DefaultHasher::new();
-    state.hash(&mut hasher);
-    hasher.finish()
-}
-
-#[test]
-fn rebuilding_runtime_does_not_change_semantic_state() {
-    let mut state = CommandState::default();
-    state.input.next_level_identity = 3;
-    state.parameters.activations.reserve(5);
-    state.conditions.next_identity = 7;
-    state.alignment.align_state = 9;
-    state.expansion.cumulative_expansions = 11;
-    state.transient.next_builder_identity = 13;
-    let original = state.clone();
-    let original_hash = semantic_hash(&state);
-    let original_summary = state
-        .publish_summary()
-        .expect("the populated state is quiescent");
-
-    let mut runtime = CommandRuntime::default();
-    runtime.meaning_cache.entries.push(MeaningCacheEntry {
-        identity: 7,
-        generation: 11,
-    });
-    runtime
-        .normalized_lines
-        .entries
-        .push(NormalizedLineCacheEntry {
-            content_identity: 13,
-            normalized: b"normalized".to_vec(),
-        });
-    runtime.transient_pool.buffers.push(Vec::new());
-    runtime.profiling.raw_deliveries = 17;
-    runtime.profiling.cache_hits = 19;
-
-    runtime = CommandRuntime::default();
-
-    assert_eq!(state, original);
-    assert_eq!(semantic_hash(&state), original_hash);
-    assert_eq!(
-        state
-            .publish_summary()
-            .expect("runtime replacement cannot change quiescence"),
-        original_summary
-    );
-    assert!(runtime.meaning_cache.entries.is_empty());
-    assert!(runtime.normalized_lines.entries.is_empty());
-    assert!(runtime.transient_pool.buffers.is_empty());
 }
 
 #[test]

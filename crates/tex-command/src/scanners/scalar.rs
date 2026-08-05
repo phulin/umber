@@ -274,35 +274,6 @@ struct ScannedUnits {
 }
 
 impl CommandProcessor<'_> {
-    /// Scans TeX's optional signs from expanded command-owned input.
-    pub fn scan_optional_sign(&mut self) -> Result<ScannedScalar<bool>, CommandError> {
-        let mut negative = false;
-        let mut provenance = OriginId::UNKNOWN;
-        loop {
-            let Some(command) = self.get_x_token()? else {
-                break;
-            };
-            if provenance == OriginId::UNKNOWN {
-                provenance = command.origin();
-            }
-            match command.meaning() {
-                Meaning::CharToken { ch: ' ', .. } | Meaning::CharToken { ch: '+', .. } => {}
-                Meaning::CharToken { ch: '-', .. } => negative = !negative,
-                _ => {
-                    self.back_input(command)?;
-                    break;
-                }
-            }
-        }
-        Ok(ScannedScalar {
-            value: negative,
-            recovery: ScalarRecovery::None,
-            provenance: ScalarProvenance {
-                primary: provenance,
-            },
-        })
-    }
-
     /// Consumes TeX82 §405's other-category optional equals sign, after spaces.
     pub fn scan_optional_equals(&mut self) -> Result<ScannedScalar<bool>, CommandError> {
         let mut provenance = OriginId::UNKNOWN;

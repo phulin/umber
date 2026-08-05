@@ -1,1 +1,0 @@
-//! pdfTeX deterministic random services.

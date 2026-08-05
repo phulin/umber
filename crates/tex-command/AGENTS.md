@@ -96,7 +96,6 @@ print channel of its own outside the borrowed
 - `src/input/stack.rs`, `src/input/stack/tests.rs`: exact input retirement,
   retained v-template lifecycle, macro-activation cleanup, `param_start`
   parameter replay ownership, and trace-independence tests.
-- `src/input/`: remaining private backup and summary state machines.
 - `src/processor/`: public borrow-only processor facade with private raw
   delivery, expansion, scanner-status, and alignment orchestration.
 - `src/processor/alignment.rs`, `src/processor/alignment/tests.rs`: canonical
@@ -143,8 +142,8 @@ print channel of its own outside the borrowed
   single mechanism: every bounded scan in the crate selects a
   `RestrictedIntegerClass` instead of open-coding a range test, and the
   recover-to-zero belongs to the scan, never to the command consuming it.
-- `src/primitives/`: private static TeX82, e-TeX, LaTeX compatibility, and
-  pdfTeX dispatch families. `registry.rs` owns the TeX82, e-TeX 2.6, Umber
+- `src/primitives/`: private static primitive dispatch. `registry.rs` owns the
+  TeX82, e-TeX 2.6, Umber
   LaTeX compatibility, and pdfTeX 1.40.29 expandable primitive identity tables
   and the fresh-INITEX versus format-restore installation policy.
   `prefixed.rs` owns TeX82 §209's `max_non_prefixed_command` partition -- the
@@ -184,7 +183,6 @@ print channel of its own outside the borrowed
   closing brace. §486 does not balance a runaway `\read` by inventing
   braces; its whole recovery is `align_state:=1000000; limit:=0` plus the
   error, so the stored list keeps exactly the tokens the file supplied.
-- `src/provenance.rs`: private command provenance construction.
 - `src/paragraph.rs`: typed command-owned paragraph input recording, exact
   replay transactions, source coverage, and rollback-coupled transition state.
 - `src/observation/`: private aggregate read observation. `mod.rs` owns the

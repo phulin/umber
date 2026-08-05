@@ -70,22 +70,14 @@ fn scan_text(text: &str) -> ScannedFileName {
 
 #[test]
 fn filename_components_split_area_name_and_extension_canonically() {
-    for (input, area, name, extension, packed, termination) in [
-        (
-            "paper ",
-            "",
-            "paper",
-            "",
-            "paper",
-            FileNameTermination::Space,
-        ),
+    for (input, area, name, extension, packed) in [
+        ("paper ", "", "paper", "", "paper"),
         (
             "area/final.ext ",
             "area/",
             "final",
             ".ext",
             "area/final.ext",
-            FileNameTermination::Space,
         ),
         (
             "area.with.dot/final.part.ext ",
@@ -93,39 +85,16 @@ fn filename_components_split_area_name_and_extension_canonically() {
             "final",
             ".part.ext",
             "area.with.dot/final.part.ext",
-            FileNameTermination::Space,
         ),
-        (
-            "a:b.c.d ",
-            "a:",
-            "b",
-            ".c.d",
-            "a:b.c.d",
-            FileNameTermination::Space,
-        ),
-        (
-            "a>b.c.d ",
-            "",
-            "a>b",
-            ".c.d",
-            "a>b.c.d",
-            FileNameTermination::Space,
-        ),
-        (
-            "b.c.d ",
-            "",
-            "b",
-            ".c.d",
-            "b.c.d",
-            FileNameTermination::Space,
-        ),
+        ("a:b.c.d ", "a:", "b", ".c.d", "a:b.c.d"),
+        ("a>b.c.d ", "", "a>b", ".c.d", "a>b.c.d"),
+        ("b.c.d ", "", "b", ".c.d", "b.c.d"),
         (
             "before.dot/after.ext.more ",
             "before.dot/",
             "after",
             ".ext.more",
             "before.dot/after.ext.more",
-            FileNameTermination::Space,
         ),
         (
             "{area/final.name.ext}",
@@ -133,7 +102,6 @@ fn filename_components_split_area_name_and_extension_canonically() {
             "final",
             ".name.ext",
             "area/final.name.ext",
-            FileNameTermination::Group,
         ),
         (
             "\"area with spaces/final.ext\" ",
@@ -141,7 +109,6 @@ fn filename_components_split_area_name_and_extension_canonically() {
             "final",
             ".ext",
             "area with spaces/final.ext",
-            FileNameTermination::Space,
         ),
     ] {
         let scanned = scan_text(input);
@@ -152,7 +119,6 @@ fn filename_components_split_area_name_and_extension_canonically() {
             "extension for {input:?}"
         );
         assert_eq!(scanned.packed(), packed);
-        assert_eq!(scanned.termination, termination);
     }
 
     let scanned = scan_text("area..with...dots/final..part...ext ");
@@ -177,7 +143,6 @@ fn filename_component_terminators_and_string_overflow_follow_tex82() {
     let long_name = "a".repeat(8_192);
     let scanned = scan_text(&format!("{long_name} "));
     assert_eq!(scanned.packed(), long_name);
-    assert_eq!(scanned.termination, FileNameTermination::Space);
 
     let mut command = CommandState::default();
     let mut runtime = CommandRuntime::default();
@@ -199,11 +164,10 @@ fn filename_component_terminators_and_string_overflow_follow_tex82() {
         (scanned, replayed)
     };
     assert_eq!(scanned.packed(), "plain");
-    assert_eq!(scanned.termination, FileNameTermination::NonCharacter);
     assert_eq!(replayed.meaning(), Meaning::Relax);
 
     let scanned = scan_text("terminal");
-    assert_eq!(scanned.termination, FileNameTermination::EndOfInput);
+    assert_eq!(scanned.packed(), "terminal");
 
     let mut command = CommandState::default();
     push(
@@ -267,8 +231,37 @@ fn filename_scan_expands_characters_and_backs_up_first_noncharacter() {
         (scanned, next)
     };
     assert_eq!(scanned.packed(), "paper.tex");
-    assert_eq!(scanned.termination, FileNameTermination::NonCharacter);
     assert_eq!(next.meaning(), Meaning::Relax);
+}
+
+#[test]
+fn filename_scan_consumes_delimiters_and_preserves_following_tokens() {
+    for input in ["paper tail", "{paper}tail"] {
+        let mut command = CommandState::default();
+        push(&mut command, text_tokens(input));
+        let mut runtime = CommandRuntime::default();
+        let mut universe = Universe::new_with_plain_catcodes();
+        let mut capabilities = CommandHostCapabilities::default();
+        let (scanned, following) = {
+            let mut processor =
+                processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+            let scanned = processor.scan_file_name().expect("filename scans");
+            let following = processor
+                .get_x_token()
+                .expect("following token delivery succeeds")
+                .expect("following token remains");
+            (scanned, following)
+        };
+        assert_eq!(scanned.packed(), "paper", "filename for {input:?}");
+        assert_eq!(
+            following.meaning(),
+            Meaning::CharToken {
+                ch: 't',
+                cat: Catcode::Letter,
+            },
+            "following token for {input:?}"
+        );
+    }
 }
 
 #[test]

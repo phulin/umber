@@ -588,7 +588,7 @@ The intentionally small public surface is expected to include:
 
 `CommandProcessor` owns every scalar operand read required by executor main
 control. Its public `scan_integer`, `scan_dimension`, `scan_glue`,
-`scan_keyword`, `scan_optional_sign`, `scan_optional_equals`, and
+`scan_keyword`, `scan_optional_equals`, and
 `scan_internal_value` operations consume only the command-owned expanded input
 stream. Each returns a typed `ScannedScalar` value carrying the first-token
 provenance and any canonical recovery; callers never receive an input cursor,
@@ -652,9 +652,10 @@ into input nor recursively expanded, and they do not affect the collector's
 brace depth. This remains a special case inside the collector's one-step
 `get_next`/`expand` loop rather than a second ordinary expanded-delivery loop.
 
-`scan_file_name` returns a typed filename and its canonical `Group`, `Space`,
-`NonCharacter`, or `EndOfInput` termination. `open_registered_input` composes
-that scan with the borrow-scoped registered-input capability, then registers
+`scan_file_name` returns a typed filename after consuming a group or space
+terminator, backing up a non-character terminator, or reaching end of input.
+`open_registered_input` composes that scan with the borrow-scoped
+registered-input capability, then registers
 and opens the immutable source through `CommandState`; unavailable backing is
 the typed `CommandError::MissingInput` recovery. Neither API exposes a source
 cursor, input level, raw token, or host filesystem operation. Snapshot rollback
@@ -1004,8 +1005,7 @@ crates/tex-command/src/
         lines.rs
         tokenizer.rs
         levels.rs
-        backup.rs
-        summary.rs
+        stack.rs
 
     processor/
         mod.rs
@@ -1020,25 +1020,20 @@ crates/tex-command/src/
 
     scanners/
         mod.rs
-        helpers.rs
-        integer.rs
-        dimension.rs
-        glue.rs
+        scalar.rs
+        structured.rs
         token_list.rs
         font.rs
+        hyphenation.rs
+        restricted.rs
+        expression.rs
 
     primitives/
         mod.rs
-        tex.rs
-        etex.rs
-        pdftex.rs
-        pdf_strings.rs
-        pdf_files.rs
-        pdf_regex.rs
-        pdf_random.rs
+        registry.rs
+        prefixed.rs
 
-    provenance.rs
-    observation.rs
+    observation/
     snapshot.rs
 
     tests/
@@ -1164,7 +1159,7 @@ The design distinguishes five state classes:
 | Aggregate engine state      | meanings, registers, code tables, fonts, World stream state           | owned and snapshotted by `Universe`                            |
 | Call-local semantic state   | `CurrentCommand`, local scanner accumulator, expansion budget scope   | absent at durable boundaries; replayed from the enclosing step |
 | Diagnostic/provenance state | source map, origins, macro invocation DAG                             | rollback-coupled but excluded from semantic equality           |
-| Discardable acceleration    | meaning cache, normalized-line cache, buffer pool, profiling counters | may be dropped without changing behavior                       |
+| Discardable acceleration    | measured future caches or buffer pools                                | may be dropped without changing behavior                       |
 
 No type may mix fields from these classes merely because they are used by the
 same procedure.
@@ -1301,20 +1296,17 @@ its enclosing call completes or rolls back.
 
 ## 9. Discardable runtime state
 
-Acceleration does not live in `CommandState`:
+Acceleration does not live in `CommandState`. The current runtime capability
+is deliberately zero-sized:
 
 ```rust
-pub struct CommandRuntime {
-    meaning_cache: MeaningCache,
-    normalized_lines: LineNormalizationCache,
-    transient_pool: TokenBufferPool,
-    profiling: CommandProfiling,
-}
+pub struct CommandRuntime;
 ```
 
-Every cache entry is guarded by canonical identity and exact generation or
-content stamps. Dropping `CommandRuntime` and continuing with a fresh default
-must produce identical semantic events, diagnostics, effects, and output.
+Measured optimization work may add discardable acceleration here only with
+canonical identity and exact generation or content guards. Dropping
+`CommandRuntime` and continuing with a fresh default must produce identical
+semantic events, diagnostics, effects, and output.
 
 The input stack does not carry meaning-cache state or expansion-policy bits.
 
@@ -2800,7 +2792,7 @@ tests, not by a parallel compatibility facade:
 | `tex-state <- tex-command`, with no dependency on the retired command crates or `tex-exec`  | `crates/tex-command/tests/it/boundaries.rs` manifest-direction test                 |
 | crate-private state machines and opaque ownership fields                                    | compile-fail fixtures under `crates/tex-command/tests/ui/`                          |
 | one explicitly classified field for each semantic ownership domain                          | exhaustive destructuring in `crates/tex-command/src/state/tests.rs`                 |
-| runtime caches remain discardable and outside semantic equality, hashing, and serialization | runtime replacement test plus the runtime-trait compile-fail fixture                |
+| runtime capability remains outside semantic equality, hashing, and serialization             | runtime-trait compile-fail fixture                                                  |
 | host capabilities and call-local command values cannot enter owned serialized boundaries    | host and ephemeral compile-fail fixtures                                            |
 | snapshots preserve all live semantic fields without runtime or host access                  | nonquiescent snapshot roundtrip in `crates/tex-command/src/snapshot/tests.rs`       |
 | durable summaries reconstruct exact quiescent state and reject every nonquiescent class     | summary roundtrip and rejection tests in `crates/tex-command/src/snapshot/tests.rs` |
@@ -3234,7 +3226,7 @@ Its performance foundations are:
 - no per-scanner generic state facade;
 - cold typed error and resource paths;
 - immutable stored token lists; and
-- discardable generation-guarded caches.
+- a dedicated zero-sized runtime capability for measured future acceleration.
 
 ### 32.1 Optimization promotion
 

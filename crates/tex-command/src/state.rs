@@ -1663,8 +1663,7 @@ impl std::error::Error for UnknownRegisteredSource {}
 
 /// Live temporary data referenced by persistent command state.
 ///
-/// Builder contents and rollback roots are semantic while live. Spare
-/// capacity and reusable empty buffers instead belong to [`CommandRuntime`].
+/// Builder contents and rollback roots are semantic while live.
 #[derive(Clone, Debug, Default, Eq, Hash, PartialEq)]
 pub(crate) struct TransientState {
     pub(crate) builders: Vec<LiveTokenBuilder>,
@@ -1683,59 +1682,14 @@ pub(crate) struct LiveTokenBuilder {
     pub(crate) tokens: Vec<TracedTokenWord>,
 }
 
-/// Discardable command-processing acceleration and measurements.
+/// Discardable command-processing runtime capability.
 ///
-/// Replacing this value with [`CommandRuntime::default`] at any point cannot
-/// change semantic events, diagnostics, effects, output, or `CommandState`.
+/// The capability is currently zero-sized: measured optimization work may add
+/// acceleration here, but only when it remains independent of semantic state.
 /// It intentionally implements neither equality nor hashing, preventing it
 /// from becoming part of semantic state comparisons by convenience.
 #[derive(Debug, Default)]
-#[allow(dead_code)] // caches are populated when command semantics are implemented
-pub struct CommandRuntime {
-    meaning_cache: MeaningCache,
-    normalized_lines: LineNormalizationCache,
-    transient_pool: TokenBufferPool,
-    profiling: CommandProfiling,
-}
-
-#[derive(Debug, Default)]
-#[allow(dead_code)] // ownership shell
-struct MeaningCache {
-    entries: Vec<MeaningCacheEntry>,
-}
-
-#[derive(Debug)]
-#[allow(dead_code)] // ownership shell
-struct MeaningCacheEntry {
-    identity: u64,
-    generation: u64,
-}
-
-#[derive(Debug, Default)]
-#[allow(dead_code)] // ownership shell
-struct LineNormalizationCache {
-    entries: Vec<NormalizedLineCacheEntry>,
-}
-
-#[derive(Debug)]
-#[allow(dead_code)] // ownership shell
-struct NormalizedLineCacheEntry {
-    content_identity: u64,
-    normalized: Vec<u8>,
-}
-
-#[derive(Debug, Default)]
-#[allow(dead_code)] // ownership shell
-struct TokenBufferPool {
-    buffers: Vec<Vec<TracedTokenWord>>,
-}
-
-#[derive(Debug, Default)]
-#[allow(dead_code)] // ownership shell
-struct CommandProfiling {
-    raw_deliveries: u64,
-    cache_hits: u64,
-}
+pub struct CommandRuntime;
 
 #[cfg(test)]
 mod tests;

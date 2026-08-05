@@ -53,15 +53,12 @@ pub use primitives::{
 };
 mod processor;
 mod profile;
-mod provenance;
 mod scan_toks;
 mod scanners;
 mod snapshot;
 mod state;
 mod tracing_nesting;
 
-#[cfg(test)]
-mod fixture_replay;
 #[cfg(test)]
 mod test_harness;
 
@@ -114,17 +111,17 @@ pub use profile::{
 };
 pub use scanners::{
     AlignmentCellOpening, EquationNumberSide, ExpandedWriteText, FileNameComponents,
-    FileNameTermination, FontLoadRequest, FontSizeRecovery, GeneratedFontKind, HyphenationDataKind,
-    ImmediateExtension, InputStreamRequest, InternalValue, MathDelimiterBoundary,
-    MathDelimiterBoundaryKind, MathFamilySize, MathFieldBody, MathFieldEpisode, MathFractionKind,
-    MathLimitKind, MathRequest, MathScriptKind, MathStyleKind, MathTextFieldKind,
-    PdfAnnotationRequest, PdfColorStackActionRequest, PdfDestinationRequest,
-    PdfDocumentFragmentRequest, PdfFormRequest, PdfGraphicsRequest, PdfImagePageBox,
-    PdfImagePageSelection, PdfImageRequest, PdfNavigationRequest, PdfObjectRequest,
-    PdfOutlineRequest, PdfReferenceObjectRequest, PdfStartLinkRequest, PdfThreadRequest,
-    RegisteredInput, RestrictedInteger, RestrictedIntegerClass, ScalarProvenance, ScalarRecovery,
-    ScannedAccent, ScannedAccentBase, ScannedBalancedText, ScannedBoxConstruction, ScannedBoxKind,
-    ScannedBoxRegister, ScannedBoxShift, ScannedBoxShiftPayload, ScannedCharacterDefinition,
+    FontLoadRequest, FontSizeRecovery, GeneratedFontKind, HyphenationDataKind, ImmediateExtension,
+    InputStreamRequest, InternalValue, MathDelimiterBoundary, MathDelimiterBoundaryKind,
+    MathFamilySize, MathFieldBody, MathFieldEpisode, MathFractionKind, MathLimitKind, MathRequest,
+    MathScriptKind, MathStyleKind, MathTextFieldKind, PdfAnnotationRequest,
+    PdfColorStackActionRequest, PdfDestinationRequest, PdfDocumentFragmentRequest, PdfFormRequest,
+    PdfGraphicsRequest, PdfImagePageBox, PdfImagePageSelection, PdfImageRequest,
+    PdfNavigationRequest, PdfObjectRequest, PdfOutlineRequest, PdfReferenceObjectRequest,
+    PdfStartLinkRequest, PdfThreadRequest, RegisteredInput, RestrictedInteger,
+    RestrictedIntegerClass, ScalarProvenance, ScalarRecovery, ScannedAccent, ScannedAccentBase,
+    ScannedBalancedText, ScannedBoxConstruction, ScannedBoxKind, ScannedBoxRegister,
+    ScannedBoxShift, ScannedBoxShiftPayload, ScannedCharacterDefinition,
     ScannedDiscretionaryOpening, ScannedDisplayDiagnostic, ScannedEquationNumber, ScannedFileName,
     ScannedGeneratedFontDefinition, ScannedGlueParameterAssignment, ScannedHyphenationData,
     ScannedInsertConstruction, ScannedLeaderPayload, ScannedLetAssignment, ScannedMacroDefinition,

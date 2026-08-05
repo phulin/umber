@@ -1136,7 +1136,6 @@ dependencies = [
  "serde",
  "test-support",
  "tex-fonts",
- "tex-oracle",
  "tex-state",
 ]
 

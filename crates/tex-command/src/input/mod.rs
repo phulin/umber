@@ -1,11 +1,9 @@
 //! Private input state machines.
 
-mod backup;
 mod levels;
 mod lines;
 mod source;
 mod stack;
-mod summary;
 mod tokenizer;
 
 #[cfg(test)]

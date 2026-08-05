@@ -10,6 +10,5 @@ fn main() {
     let summary = state.publish_summary().unwrap();
     let _ = &summary.input;
 
-    let runtime = CommandRuntime::default();
-    let _ = &runtime.meaning_cache;
+    let _runtime = CommandRuntime::default();
 }

@@ -1,1 +1,0 @@
-//! pdfTeX regular-expression services.

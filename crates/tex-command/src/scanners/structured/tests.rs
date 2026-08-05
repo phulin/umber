@@ -2532,7 +2532,6 @@ fn filename_registered_input_recovery_and_rollback_stay_command_owned() {
             .expect("registered input opens")
     };
     assert_eq!(input.file_name.packed(), "inc.tex");
-    assert_eq!(input.file_name.termination, FileNameTermination::Group);
     command
         .rollback(snapshot)
         .expect("input opening rolls back");

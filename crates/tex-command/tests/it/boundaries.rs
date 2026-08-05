@@ -342,12 +342,7 @@ fn semantic_and_runtime_fields_are_opaque() {
         "command-opaque-state",
         &manifest_dir.join("tests/ui/opaque_state.rs"),
         &dependencies,
-        &[
-            "E0616",
-            "field `input`",
-            "field `state`",
-            "field `meaning_cache`",
-        ],
+        &["E0616", "field `input`", "field `state`"],
     );
 }
 
