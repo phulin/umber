@@ -73,9 +73,9 @@ impl ObservationStream {
                     "schema v1 does not permit geometry events".into(),
                 ));
             }
-            if let Event::Geometry(geometry) = &event.semantic
+            if event.semantic.view().class() == crate::EventClass::Geometry
                 && schema == SchemaVersion::V3
-                && geometry_location(geometry).is_none()
+                && !has_geometry_location(&event.semantic)
             {
                 return Err(ObservationError::InvalidStream(
                     "schema v3 geometry events require source provenance".into(),
@@ -100,12 +100,12 @@ impl ObservationStream {
     }
 }
 
-fn geometry_location(event: &crate::GeometryEvent) -> Option<&crate::GeometryLocation> {
-    match event {
-        crate::GeometryEvent::Hpack { location, .. }
-        | crate::GeometryEvent::Vpack { location, .. }
-        | crate::GeometryEvent::Shipout { location, .. } => location.as_ref(),
-    }
+fn has_geometry_location(event: &Event) -> bool {
+    let mut found = false;
+    event.view().visit_locations(&mut |location| {
+        found |= matches!(location, crate::EventLocation::Geometry(_));
+    });
+    found
 }
 
 #[derive(Debug)]

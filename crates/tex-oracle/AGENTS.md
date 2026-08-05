@@ -19,6 +19,8 @@ Umber observers.
 - `src/fixture_audit.rs`: bidirectional semantic-matrix, citation, source, and
   ordinary-output coverage audit.
 - `src/encoding.rs`: canonical JSON encoding and domain-separated identities.
+- `src/event.rs`: exhaustive borrowed/mutable event views and schema-owned
+  normalization, location, identity-key, classification, and rendering walks.
 - `src/normalize.rs`: deterministic stream normalization.
 - `src/transport.rs`: enabled and compile-away disabled observer boundaries.
 - `src/bundle.rs`: canonical detached semantic/geometry bundle, byte codec,

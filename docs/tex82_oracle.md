@@ -2,6 +2,22 @@
 
 Status: pinned build boundary for command-core conformance.
 
+## Exhaustive event views
+
+`tex-oracle` owns the exhaustive borrowed and mutable views of every `Event`
+carrier. Canonical normalization, nested source and geometry location walks,
+location erasure, event classification, comparison alignment and anchor keys,
+and bounded diagnostic rendering all enter through those schema-owned views.
+Adding a wire event variant must therefore update the central view constructors
+and their exhaustive projections before any consumer compiles. Fixture source
+validation and `tex-command-stream` comparison consume these projections rather
+than maintaining independent event-schema walks.
+
+This is an internal traversal consolidation, not a schema revision. Existing
+schema-v1, schema-v2, and schema-v3 canonical JSON bytes, identities,
+normalization rules, validation precedence, comparison keys, and report text
+remain unchanged.
+
 ## Geometry schema v2 compatibility
 
 Schema v1 is immutable and remains the format of all committed command fixtures. Schema v2 adds a detached `geometry` semantic event with three transitions: `hpack` and `vpack` contain finalized `width_sp`, `height_sp`, and `depth_sp`; `shipout` contains final `page_width_sp` and `page_height_sp`. Every value is a signed TeX scaled point (1/65536 pt). No node, pointer, memory, glue-ratio, selector, or output-driver identity is observable.

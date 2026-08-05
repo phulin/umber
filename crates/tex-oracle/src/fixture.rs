@@ -12,10 +12,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::{
-    CanonicalValue, EngineDialect, Event, Manifest, ObservationError, ObservationStream,
-    OracleToken, SourceLocation,
-};
+use crate::{EngineDialect, EventLocation, Manifest, ObservationError, ObservationStream};
 
 /// Current repository contract for committed semantic fixtures.
 pub const FIXTURE_CONTRACT_VERSION: u32 = 2;
@@ -370,89 +367,29 @@ fn validate_stream_sources(
     sources: &BTreeMap<String, FixtureArtifact>,
 ) -> Result<(), FixtureError> {
     for event in &stream.events {
-        visit_event_locations(&event.semantic, &mut |location| {
+        let mut result = Ok(());
+        event.semantic.view().visit_locations(&mut |location| {
+            let EventLocation::Source(location) = location else {
+                return;
+            };
+            if result.is_err() {
+                return;
+            }
             if !sources.contains_key(&location.source) {
-                return Err(FixtureError::Invalid(format!(
+                result = Err(FixtureError::Invalid(format!(
                     "event {} cites undeclared source {}",
                     event.sequence, location.source
                 )));
+                return;
             }
             if location.line == 0 {
-                return Err(FixtureError::Invalid(format!(
+                result = Err(FixtureError::Invalid(format!(
                     "event {} contains a zero source line",
                     event.sequence
                 )));
             }
-            Ok(())
-        })?;
-    }
-    Ok(())
-}
-
-fn visit_event_locations(
-    event: &Event,
-    visitor: &mut impl FnMut(&SourceLocation) -> Result<(), FixtureError>,
-) -> Result<(), FixtureError> {
-    match event {
-        Event::Command(event) => {
-            if let Some(location) = &event.command.location {
-                visitor(location)?;
-            }
-            visit_value_locations(&event.command.operand, visitor)
-        }
-        Event::Recovery(event) => visit_token_locations(&event.tokens, visitor),
-        Event::Macro(crate::MacroEvent::Argument { tokens, .. })
-        | Event::TokenList(crate::TokenListEvent { tokens, .. }) => {
-            visit_token_locations(tokens, visitor)
-        }
-        Event::Scanner(event) => visit_value_locations(&event.result, visitor),
-        Event::Mutation(event) => {
-            visit_value_locations(&event.key, visitor)?;
-            visit_value_locations(&event.value, visitor)
-        }
-        Event::Diagnostic(event) => {
-            for value in &event.arguments {
-                visit_value_locations(value, visitor)?;
-            }
-            Ok(())
-        }
-        Event::Effect(event) => visit_value_locations(&event.value, visitor),
-        Event::Geometry(_) => Ok(()),
-        Event::Input(_)
-        | Event::ScannerStatus(_)
-        | Event::Macro(crate::MacroEvent::Activation { .. })
-        | Event::Condition(_)
-        | Event::Alignment(_) => Ok(()),
-    }
-}
-
-fn visit_value_locations(
-    value: &CanonicalValue,
-    visitor: &mut impl FnMut(&SourceLocation) -> Result<(), FixtureError>,
-) -> Result<(), FixtureError> {
-    match value {
-        CanonicalValue::Token(token) => visit_token_location(token, visitor),
-        CanonicalValue::Tokens(tokens) => visit_token_locations(tokens, visitor),
-        _ => Ok(()),
-    }
-}
-
-fn visit_token_locations(
-    tokens: &[OracleToken],
-    visitor: &mut impl FnMut(&SourceLocation) -> Result<(), FixtureError>,
-) -> Result<(), FixtureError> {
-    for token in tokens {
-        visit_token_location(token, visitor)?;
-    }
-    Ok(())
-}
-
-fn visit_token_location(
-    token: &OracleToken,
-    visitor: &mut impl FnMut(&SourceLocation) -> Result<(), FixtureError>,
-) -> Result<(), FixtureError> {
-    if let Some(location) = &token.location {
-        visitor(location)?;
+        });
+        result?;
     }
     Ok(())
 }

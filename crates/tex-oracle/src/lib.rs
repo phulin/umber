@@ -7,6 +7,7 @@
 mod bootstrap;
 mod bundle;
 mod encoding;
+mod event;
 mod fixture;
 mod fixture_audit;
 mod minifixture_budget;
@@ -23,6 +24,10 @@ pub use bundle::{
     OracleBundle, canonical_bundle_json_lines, decode_oracle_bundle, encode_oracle_bundle,
 };
 pub use encoding::{EncodingError, ManifestIdentity, StreamIdentity};
+pub use event::{
+    ConciseEvent, EventAlignmentKey, EventAnchorKey, EventClass, EventLocation, EventLocationMut,
+    EventView, EventViewMut,
+};
 pub use fixture::{
     CanonicalCitation, CommittedFixture, FIXTURE_CONTRACT_VERSION, FIXTURE_MANIFEST_NAME,
     FixtureArtifact, FixtureError, FixtureManifest, FixtureProfile, ToolIdentity,

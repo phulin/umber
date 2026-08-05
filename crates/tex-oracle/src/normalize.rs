@@ -1,9 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    CanonicalCommand, CanonicalValue, DiagnosticEvent, EffectEvent, Event, OracleToken,
-    SourceLocation,
-};
+use crate::Event;
 
 /// Event plus its deterministic zero-based position in the stream.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -46,112 +43,5 @@ impl Normalizer {
 }
 
 fn normalize_event(event: &mut Event) {
-    match event {
-        Event::Command(event) => normalize_command(&mut event.command),
-        Event::Input(event) => normalize_string(&mut event.name),
-        Event::Recovery(event) => event.tokens.iter_mut().for_each(normalize_token),
-        Event::ScannerStatus(_) => {}
-        Event::Macro(event) => match event {
-            crate::MacroEvent::Argument { tokens, .. } => {
-                tokens.iter_mut().for_each(normalize_token);
-            }
-            crate::MacroEvent::Activation { .. } => {}
-        },
-        Event::Condition(event) => {
-            normalize_string(&mut event.condition);
-            normalize_string(&mut event.limit);
-            if let Some(branch) = &mut event.branch {
-                normalize_string(branch);
-            }
-        }
-        Event::Scanner(event) => {
-            normalize_string(&mut event.scanner);
-            normalize_value(&mut event.result);
-        }
-        Event::TokenList(event) => {
-            normalize_string(&mut event.purpose);
-            event.tokens.iter_mut().for_each(normalize_token);
-        }
-        Event::Alignment(event) => {
-            if let Some(template) = &mut event.template {
-                normalize_string(template);
-            }
-        }
-        Event::Mutation(event) => {
-            normalize_value(&mut event.key);
-            normalize_value(&mut event.value);
-            normalize_string(&mut event.scope);
-        }
-        Event::Diagnostic(event) => normalize_diagnostic(event),
-        Event::Effect(event) => normalize_effect(event),
-        Event::Geometry(event) => {
-            let location = match event {
-                crate::GeometryEvent::Hpack { location, .. }
-                | crate::GeometryEvent::Vpack { location, .. }
-                | crate::GeometryEvent::Shipout { location, .. } => location,
-            };
-            if let Some(location) = location {
-                normalize_string(&mut location.source);
-            }
-        }
-    }
-}
-
-fn normalize_command(command: &mut CanonicalCommand) {
-    normalize_string(&mut command.command);
-    normalize_value(&mut command.operand);
-    // TeX82 §§48 and 356: a control-sequence spelling is a semantic atom.
-    if let Some(location) = &mut command.location {
-        normalize_location(location);
-    }
-}
-
-fn normalize_token(token: &mut OracleToken) {
-    normalize_string(&mut token.catcode);
-    // TeX82 §§48 and 356: a control-sequence spelling is a semantic atom.
-    if let Some(location) = &mut token.location {
-        normalize_location(location);
-    }
-}
-
-fn normalize_location(location: &mut SourceLocation) {
-    normalize_string(&mut location.source);
-}
-
-fn normalize_value(value: &mut CanonicalValue) {
-    match value {
-        CanonicalValue::Token(token) => normalize_token(token),
-        CanonicalValue::Tokens(tokens) => tokens.iter_mut().for_each(normalize_token),
-        CanonicalValue::Name(name) => normalize_string(name),
-        CanonicalValue::Glue {
-            stretch_order,
-            shrink_order,
-            ..
-        } => {
-            normalize_string(stretch_order);
-            normalize_string(shrink_order);
-        }
-        CanonicalValue::None
-        | CanonicalValue::Bool(_)
-        | CanonicalValue::Integer(_)
-        | CanonicalValue::Character(_)
-        | CanonicalValue::Scaled(_)
-        | CanonicalValue::Bytes(_) => {}
-    }
-}
-
-fn normalize_diagnostic(event: &mut DiagnosticEvent) {
-    normalize_string(&mut event.diagnostic);
-    event.arguments.iter_mut().for_each(normalize_value);
-}
-
-fn normalize_effect(event: &mut EffectEvent) {
-    normalize_string(&mut event.channel);
-    normalize_value(&mut event.value);
-}
-
-fn normalize_string(value: &mut String) {
-    if value.contains('\r') {
-        *value = value.replace("\r\n", "\n").replace('\r', "\n");
-    }
+    event.view_mut().normalize();
 }

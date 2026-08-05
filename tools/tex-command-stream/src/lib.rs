@@ -962,21 +962,8 @@ fn canonical_input_name(source_name: &str) -> Result<String, RunnerError> {
     Ok(source_name.to_owned())
 }
 
-fn bounded_debug(value: &impl fmt::Debug) -> String {
-    let rendered = format!("{value:?}");
-    if rendered.chars().count() <= MAX_DIAGNOSTIC_CHARS {
-        rendered
-    } else {
-        let prefix = rendered
-            .chars()
-            .take(MAX_DIAGNOSTIC_CHARS)
-            .collect::<String>();
-        format!("{prefix}…")
-    }
-}
-
 /// Renders the point where two same-kind events first differ, for the case
-/// [`bounded_debug`] cannot show: a long payload -- a token list, a macro
+/// concise event rendering cannot show: a long payload -- a token list, a macro
 /// body, a mutation value -- whose divergence sits past the truncation point,
 /// so both printed sides are byte-identical and say nothing.
 ///
@@ -984,7 +971,7 @@ fn bounded_debug(value: &impl fmt::Debug) -> String {
 /// kind and every payload field without enumerating them, and a new schema
 /// variant needs no change here. Returns `None` when the renderings are equal
 /// (the divergence is not in the payload text at all) or when they already
-/// differ inside the part `bounded_debug` prints.
+/// differ inside the concise prefix.
 fn hidden_difference_excerpt(expected: &dyn fmt::Debug, actual: &dyn fmt::Debug) -> Option<String> {
     let expected = format!("{expected:?}");
     let actual = format!("{actual:?}");

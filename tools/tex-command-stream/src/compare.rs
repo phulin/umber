@@ -40,12 +40,13 @@
 use std::fmt;
 
 use tex_oracle::{
-    AlignmentTransition, CanonicalCommand, CommandDelivery, CommandEvent, ConditionTransition,
-    DiagnosticSeverity, EffectKind, Event, GeometryEvent, InputReason, InputTransition, MacroEvent,
-    NormalizedEvent, RecoveryKind, StateTarget, TokenListTransition,
+    CanonicalCommand, CommandEvent, Event, EventAlignmentKey, EventAnchorKey, InputReason,
+    InputTransition, NormalizedEvent,
 };
+#[cfg(test)]
+use tex_oracle::{CommandDelivery, GeometryEvent, StateTarget};
 
-use crate::{ObservedEvent, bounded_debug, hidden_difference_excerpt};
+use crate::{ObservedEvent, hidden_difference_excerpt};
 
 #[cfg(test)]
 mod tests;
@@ -169,10 +170,10 @@ impl fmt::Display for ResyncAnchor {
     }
 }
 
-impl From<&AnchorKey<'_>> for ResyncAnchor {
-    fn from(key: &AnchorKey<'_>) -> Self {
+impl From<&EventAnchorKey<'_>> for ResyncAnchor {
+    fn from(key: &EventAnchorKey<'_>) -> Self {
         match key {
-            AnchorKey::Input {
+            EventAnchorKey::Input {
                 transition,
                 reason,
                 name,
@@ -181,7 +182,7 @@ impl From<&AnchorKey<'_>> for ResyncAnchor {
                 reason: *reason,
                 name: (*name).into(),
             },
-            AnchorKey::Line { source, line } => Self::Line {
+            EventAnchorKey::Line { source, line } => Self::Line {
                 source: (*source).into(),
                 line: *line,
             },
@@ -290,8 +291,16 @@ impl fmt::Display for StreamMismatch {
         )?;
         match &self.sides {
             MismatchSides::Both { expected, actual } => {
-                write!(formatter, "\n  expected: {}", bounded_debug(expected))?;
-                write!(formatter, "\n  actual: {}", bounded_debug(&actual.event))?;
+                write!(
+                    formatter,
+                    "\n  expected: {}",
+                    expected.concise(crate::MAX_DIAGNOSTIC_CHARS)
+                )?;
+                write!(
+                    formatter,
+                    "\n  actual: {}",
+                    actual.event.concise(crate::MAX_DIAGNOSTIC_CHARS)
+                )?;
                 if let Some(excerpt) = hidden_difference_excerpt(expected, &actual.event) {
                     formatter.write_str(&excerpt)?;
                 }
@@ -300,12 +309,20 @@ impl fmt::Display for StreamMismatch {
                 }
             }
             MismatchSides::ExpectedOnly(expected) => {
-                write!(formatter, "\n  expected: {}", bounded_debug(expected))?;
+                write!(
+                    formatter,
+                    "\n  expected: {}",
+                    expected.concise(crate::MAX_DIAGNOSTIC_CHARS)
+                )?;
                 formatter.write_str("\n  actual: <end of observer stream>")?;
             }
             MismatchSides::ActualOnly(actual) => {
                 formatter.write_str("\n  expected: <end of committed stream>")?;
-                write!(formatter, "\n  actual: {}", bounded_debug(&actual.event))?;
+                write!(
+                    formatter,
+                    "\n  actual: {}",
+                    actual.event.concise(crate::MAX_DIAGNOSTIC_CHARS)
+                )?;
                 if !actual.context.is_empty() {
                     write!(formatter, "\n  context: {}", actual.context)?;
                 }
@@ -478,159 +495,17 @@ fn macro_call_operand_is_reference(expected: &Event, actual: &Event) -> bool {
 /// like-catcode characters are otherwise indistinguishable by identity alone,
 /// and a shifted stream could confirm a realignment against the wrong
 /// occurrence; the byte position makes those runs unambiguous.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum AlignmentKey<'a> {
-    Command {
-        delivery: CommandDelivery,
-        command: &'a str,
-        control_sequence: Option<&'a str>,
-        location: Option<(&'a str, u32, u32)>,
-    },
-    Input {
-        transition: InputTransition,
-        reason: InputReason,
-        name: &'a str,
-    },
-    Recovery {
-        kind: RecoveryKind,
-    },
-    ScannerStatus,
-    MacroArgument {
-        parameter: u16,
-    },
-    MacroActivation {
-        control_sequence: &'a str,
-        argument_count: u16,
-    },
-    Condition {
-        transition: ConditionTransition,
-        condition: &'a str,
-    },
-    Scanner {
-        scanner: &'a str,
-    },
-    TokenList {
-        transition: TokenListTransition,
-        purpose: &'a str,
-    },
-    Alignment {
-        transition: AlignmentTransition,
-    },
-    Mutation {
-        target: &'a StateTarget,
-    },
-    Diagnostic {
-        severity: DiagnosticSeverity,
-        diagnostic: &'a str,
-    },
-    Effect {
-        kind: EffectKind,
-        channel: &'a str,
-    },
-    Geometry {
-        transition: &'static str,
-        location: Option<(&'a str, u32)>,
-    },
-}
-
-fn alignment_key(event: &Event) -> AlignmentKey<'_> {
-    match event {
-        Event::Command(command) => AlignmentKey::Command {
-            delivery: command.delivery,
-            command: &command.command.command,
-            control_sequence: command.command.control_sequence.as_deref(),
-            location: command
-                .command
-                .location
-                .as_ref()
-                .map(|location| (location.source.as_str(), location.line, location.byte)),
-        },
-        Event::Input(input) => AlignmentKey::Input {
-            transition: input.transition,
-            reason: input.reason,
-            name: &input.name,
-        },
-        Event::Recovery(recovery) => AlignmentKey::Recovery {
-            kind: recovery.kind,
-        },
-        Event::ScannerStatus(_) => AlignmentKey::ScannerStatus,
-        Event::Macro(MacroEvent::Argument { parameter, .. }) => AlignmentKey::MacroArgument {
-            parameter: *parameter,
-        },
-        Event::Macro(MacroEvent::Activation {
-            control_sequence,
-            argument_count,
-        }) => AlignmentKey::MacroActivation {
-            control_sequence,
-            argument_count: *argument_count,
-        },
-        Event::Condition(condition) => AlignmentKey::Condition {
-            transition: condition.transition,
-            condition: &condition.condition,
-        },
-        Event::Scanner(scanner) => AlignmentKey::Scanner {
-            scanner: &scanner.scanner,
-        },
-        Event::TokenList(list) => AlignmentKey::TokenList {
-            transition: list.transition,
-            purpose: &list.purpose,
-        },
-        Event::Alignment(alignment) => AlignmentKey::Alignment {
-            transition: alignment.transition,
-        },
-        Event::Mutation(mutation) => AlignmentKey::Mutation {
-            target: &mutation.target,
-        },
-        Event::Diagnostic(diagnostic) => AlignmentKey::Diagnostic {
-            severity: diagnostic.severity,
-            diagnostic: &diagnostic.diagnostic,
-        },
-        Event::Effect(effect) => AlignmentKey::Effect {
-            kind: effect.kind,
-            channel: &effect.channel,
-        },
-        Event::Geometry(GeometryEvent::Hpack { location, .. }) => AlignmentKey::Geometry {
-            transition: "hpack",
-            location: location
-                .as_ref()
-                .map(|location| (location.source.as_str(), location.line)),
-        },
-        Event::Geometry(GeometryEvent::Vpack { location, .. }) => AlignmentKey::Geometry {
-            transition: "vpack",
-            location: location
-                .as_ref()
-                .map(|location| (location.source.as_str(), location.line)),
-        },
-        Event::Geometry(GeometryEvent::Shipout { location, .. }) => AlignmentKey::Geometry {
-            transition: "shipout",
-            location: location
-                .as_ref()
-                .map(|location| (location.source.as_str(), location.line)),
-        },
-    }
-}
-
-/// A high-salience structural boundary both streams can be rejoined at when the
-/// bounded window search has already failed.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum AnchorKey<'a> {
-    /// An input-stack push, retire, or stop: a real nesting boundary.
-    Input {
-        transition: InputTransition,
-        reason: InputReason,
-        name: &'a str,
-    },
-    /// The first delivery attributed to a new source line.
-    Line { source: &'a str, line: u32 },
+fn alignment_key(event: &Event) -> EventAlignmentKey<'_> {
+    event.view().alignment_key()
 }
 
 /// How much of the document an anchor kind actually identifies.
 ///
 /// The two anchor kinds are not equally identifying, and treating them as if
 /// they were is what lets a rejoin land the streams on different parts of the
-/// document. A [`AnchorKey::Line`] names a physical position in a named source
+/// document. An [`EventAnchorKey::Line`] names a physical position in a named source
 /// file, so a shared one is positive evidence that both streams are at the
-/// *same point in the document*. An [`AnchorKey::Input`] names only the shape
+/// *same point in the document*. An [`EventAnchorKey::Input`] names only the shape
 /// of a nesting boundary: every macro push in the run carries the identical
 /// key `Push/Macro macro`, and so does every backup push, so a shared one is
 /// evidence of nothing beyond "both sides pushed something".
@@ -642,12 +517,10 @@ enum AnchorClass {
     Shape,
 }
 
-impl AnchorKey<'_> {
-    fn class(&self) -> AnchorClass {
-        match self {
-            Self::Line { .. } => AnchorClass::Position,
-            Self::Input { .. } => AnchorClass::Shape,
-        }
+fn anchor_class(key: &EventAnchorKey<'_>) -> AnchorClass {
+    match key {
+        EventAnchorKey::Line { .. } => AnchorClass::Position,
+        EventAnchorKey::Input { .. } => AnchorClass::Shape,
     }
 }
 
@@ -656,8 +529,8 @@ struct Aligner<'a> {
     expected: Vec<&'a Event>,
     actual_events: Vec<&'a Event>,
     actual: &'a [ObservedEvent],
-    expected_keys: Vec<AlignmentKey<'a>>,
-    actual_keys: Vec<AlignmentKey<'a>>,
+    expected_keys: Vec<EventAlignmentKey<'a>>,
+    actual_keys: Vec<EventAlignmentKey<'a>>,
     tuning: AlignmentTuning,
 }
 
@@ -910,8 +783,8 @@ impl<'a> Aligner<'a> {
         &self,
         expected_index: usize,
         actual_index: usize,
-        expected_anchors: &[(usize, AnchorKey<'a>)],
-        actual_anchors: &[(usize, AnchorKey<'a>)],
+        expected_anchors: &[(usize, EventAnchorKey<'a>)],
+        actual_anchors: &[(usize, EventAnchorKey<'a>)],
         class: AnchorClass,
     ) -> Option<(usize, usize, ResyncAnchor)> {
         let mut best: Option<(usize, usize, usize, ResyncAnchor)> = None;
@@ -922,7 +795,7 @@ impl<'a> Aligner<'a> {
             {
                 break;
             }
-            if expected_anchor.class() != class {
+            if anchor_class(expected_anchor) != class {
                 continue;
             }
             for (actual_skip, actual_anchor) in actual_anchors {
@@ -954,38 +827,22 @@ fn collect_anchors<'a>(
     events: &[&'a Event],
     start: usize,
     scan: usize,
-) -> Vec<(usize, AnchorKey<'a>)> {
+) -> Vec<(usize, EventAnchorKey<'a>)> {
     let mut anchors = Vec::new();
     let mut previous_line: Option<(&str, u32)> = None;
     let limit = events.len().min(start.saturating_add(scan));
     for (offset, event) in events[start..limit].iter().enumerate() {
-        match event {
-            Event::Input(input) => anchors.push((
-                offset,
-                AnchorKey::Input {
-                    transition: input.transition,
-                    reason: input.reason,
-                    name: &input.name,
-                },
-            )),
-            Event::Command(command) => {
-                let Some(location) = command.command.location.as_ref() else {
-                    continue;
-                };
-                let position = (location.source.as_str(), location.line);
+        match event.view().anchor_key() {
+            Some(anchor @ EventAnchorKey::Input { .. }) => anchors.push((offset, anchor)),
+            Some(anchor @ EventAnchorKey::Line { source, line }) => {
+                let position = (source, line);
                 if previous_line == Some(position) {
                     continue;
                 }
                 previous_line = Some(position);
-                anchors.push((
-                    offset,
-                    AnchorKey::Line {
-                        source: location.source.as_str(),
-                        line: location.line,
-                    },
-                ));
+                anchors.push((offset, anchor));
             }
-            _ => {}
+            None => {}
         }
     }
     anchors
@@ -1052,34 +909,10 @@ pub(crate) fn classify_mismatch_kind(sides: &MismatchSides) -> &'static str {
         (Event::Command(expected), Event::Command(actual)) => {
             classify_command_mismatch_kind(expected, actual)
         }
-        (Event::Input(_), Event::Input(_)) => "input_transition_mismatch",
-        (Event::Recovery(_), Event::Recovery(_)) => "recovery_mismatch",
-        (Event::ScannerStatus(_), Event::ScannerStatus(_)) => "scanner_status_mismatch",
-        (Event::Macro(_), Event::Macro(_)) => "macro_transition_mismatch",
-        (Event::Condition(_), Event::Condition(_)) => "condition_mismatch",
-        (Event::Scanner(_), Event::Scanner(_)) => "scanner_result_mismatch",
-        (Event::TokenList(_), Event::TokenList(_)) => "token_list_mismatch",
-        (Event::Alignment(_), Event::Alignment(_)) => "alignment_mismatch",
-        (Event::Mutation(_), Event::Mutation(_)) => "mutation_mismatch",
-        (Event::Diagnostic(_), Event::Diagnostic(_)) => "diagnostic_mismatch",
-        (Event::Effect(_), Event::Effect(_)) => "effect_mismatch",
-        (Event::Geometry(_), Event::Geometry(_)) => "geometry_mismatch",
-        (
-            Event::Command(_)
-            | Event::Input(_)
-            | Event::Recovery(_)
-            | Event::ScannerStatus(_)
-            | Event::Macro(_)
-            | Event::Condition(_)
-            | Event::Scanner(_)
-            | Event::TokenList(_)
-            | Event::Alignment(_)
-            | Event::Mutation(_)
-            | Event::Diagnostic(_)
-            | Event::Effect(_)
-            | Event::Geometry(_),
-            _,
-        ) => "event_kind_mismatch",
+        _ if expected.view().class() == actual.view().class() => {
+            expected.view().class().mismatch_kind()
+        }
+        _ => "event_kind_mismatch",
     }
 }
 
