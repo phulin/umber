@@ -58,12 +58,13 @@ enum Workload {
     RenderedTokenInstallation,
     CommandTextRendering,
     TokenListIteration,
+    ShiftCase,
     InlineControlSequenceTokenization,
     SpilledControlSequenceTokenization,
 }
 
 impl Workload {
-    const ALL: [Self; 12] = [
+    const ALL: [Self; 13] = [
         Self::SingleTokenBackup,
         Self::MacroArgumentMatching,
         Self::ScanToksAbsorption,
@@ -74,6 +75,7 @@ impl Workload {
         Self::RenderedTokenInstallation,
         Self::CommandTextRendering,
         Self::TokenListIteration,
+        Self::ShiftCase,
         Self::InlineControlSequenceTokenization,
         Self::SpilledControlSequenceTokenization,
     ];
@@ -90,6 +92,7 @@ impl Workload {
             Self::RenderedTokenInstallation => "rendered_token_installation",
             Self::CommandTextRendering => "command_text_rendering",
             Self::TokenListIteration => "token_list_iteration",
+            Self::ShiftCase => "shift_case",
             Self::InlineControlSequenceTokenization => "inline_control_sequence_tokenization",
             Self::SpilledControlSequenceTokenization => "spilled_control_sequence_tokenization",
         }
@@ -283,6 +286,9 @@ fn run_case(workload: Workload, configuration: Configuration, case: &mut Case, p
                         black_box(command);
                     }
                 }
+                Workload::ShiftCase => {
+                    processor.shift_case(true).expect("case shift completes");
+                }
                 Workload::InlineControlSequenceTokenization
                 | Workload::SpilledControlSequenceTokenization => {
                     black_box(
@@ -315,6 +321,7 @@ fn build_case(workload: Workload, configuration: Configuration) -> Case {
         Workload::TwoTokenOffSaveRecovery => "x",
         Workload::RenderedTokenInstallation => r"\number12345 ",
         Workload::TokenListIteration => "",
+        Workload::ShiftCase => "{abcdefghijklmnop}",
         Workload::InlineControlSequenceTokenization => r"\allocationbaseline ",
         Workload::SpilledControlSequenceTokenization => {
             r"\pathologicalcontrolsequencenameoverinlinebound "

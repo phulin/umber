@@ -3563,29 +3563,34 @@ impl CommandProcessor<'_> {
         // and leaves the `cmd` alone; a zero `\uccode`/`\lccode` entry means
         // "no change".  Multiletter control sequences and frozen tokens are
         // above that bound and are never rewritten.
-        let tokens = self.state.tokens(scanned.token_list()).to_vec();
-        let origins = self.state.origin_list(scanned.origin_list()).to_vec();
-        let shifted = tokens
-            .into_iter()
-            .enumerate()
-            .map(|(index, token)| {
-                let origin = origins.get(index).copied().unwrap_or(OriginId::UNKNOWN);
-                let token = match token {
-                    Token::Char { ch, cat } => {
-                        let code = if uppercase {
-                            self.state.uccode(ch)
-                        } else {
-                            self.state.lccode(ch)
-                        };
-                        char::from_u32(code)
-                            .filter(|_| code != 0)
-                            .map_or(token, |ch| Token::Char { ch, cat })
-                    }
-                    Token::Cs(_) | Token::Param(_) | Token::Frozen(_) => token,
-                };
-                TracedTokenWord::pack(token, origin)
-            })
-            .collect::<Vec<_>>();
+        let token_count = self.state.tokens(scanned.token_list()).len();
+        let mut shifted = Vec::with_capacity(token_count);
+        for index in 0..token_count {
+            // Copy one immutable word at a time so the source interned lists
+            // remain in place while the case-code lookup records its mutable
+            // dependency read. Only the rewritten backup list needs storage.
+            let token = self.state.tokens(scanned.token_list())[index];
+            let origin = self
+                .state
+                .origin_list(scanned.origin_list())
+                .get(index)
+                .copied()
+                .unwrap_or(OriginId::UNKNOWN);
+            let token = match token {
+                Token::Char { ch, cat } => {
+                    let code = if uppercase {
+                        self.state.uccode(ch)
+                    } else {
+                        self.state.lccode(ch)
+                    };
+                    char::from_u32(code)
+                        .filter(|_| code != 0)
+                        .map_or(token, |ch| Token::Char { ch, cat })
+                }
+                Token::Cs(_) | Token::Param(_) | Token::Frozen(_) => token,
+            };
+            shifted.push(TracedTokenWord::pack(token, origin));
+        }
         let level = self.command.push_token_level(
             TokenPayload::transient(shifted),
             TokenBehavior::BackedUp(BackupTreatment::Ordinary),

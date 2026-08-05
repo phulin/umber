@@ -3355,6 +3355,24 @@ fn shift_case_rewrites_characters_and_backs_the_shifted_list_up() {
         ]
     );
     assert!(buffer.get(3).is_none());
+    let shifted_origins = (0..3)
+        .map(|index| {
+            buffer
+                .get(index)
+                .expect("the shifted list retains every origin")
+                .origin()
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        shifted_origins
+            .iter()
+            .all(|origin| *origin != OriginId::UNKNOWN),
+        "case shifting preserves source provenance",
+    );
+    assert!(
+        shifted_origins.windows(2).all(|pair| pair[0] < pair[1]),
+        "case shifting preserves token-to-origin order",
+    );
     assert_eq!(
         cursor.behavior,
         TokenBehavior::BackedUp(crate::input::BackupTreatment::Ordinary)
