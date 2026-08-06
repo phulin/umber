@@ -653,6 +653,35 @@ tree under `MemoryMax=1G`, with one Cargo build job for the quality gate.
 
 **Proof.** Preserve `Uint8Array`, safe integers, omitted fields, unknown-field policy, error codes/messages, worker containment, transfers, cancellation, request order, catalogue duplicate rejection, root/shard bytes and authentication, platform selection, HTML allowlists, offline use, and package API behavior.
 
+**Session-driver implementation and accounting.** `SessionDriver` is the one
+authored JavaScript retry, resource-delivery, progress, cancellation, and
+disposal core for ordinary, project, editor, and worker-realm sessions.
+`WorkerRpcClient` is the one request-correlation, timeout, owner-abort,
+progress, message-error, and teardown core for one-shot and retained workers.
+The public facades and worker messages remain adapters with their existing
+names and shapes; manifest networking, authenticated selection, and persistent
+cache policy remain in JavaScript outside both cores. Worker-realm session
+preparation now has one binding, resolver-composition, and format-selection
+path.
+
+Exact implementation commit `1fd5e1c20` adds 473 and deletes 462 production
+JavaScript lines (11 lines of net growth), adds five proof-test lines, and adds
+four guidance lines. The complete commit is 482 additions and 462 deletions,
+or 20 lines of net growth. It deletes 462 lines of duplicate orchestration but
+does not claim them as a portfolio net reduction because the two explicit
+replacement authorities contain 377 lines. The program-level reduction
+forecast remains shared with the wire, catalogue, binding-migration, and API
+retirement children.
+
+The implementation tree passed the uncapped six-job native, wasm32, package,
+and native-browser-bin builds; 89 authored JavaScript tests and the packaged
+Node WASM project under a 512 MiB cap; the complete native suite and all four
+`scripts/check.sh` gates under a 1 GiB cap with six Cargo jobs. The real Chrome
+package integration reached the independent incremental HTML receiver and
+then exposed its pre-existing assignment to read-only `SVGElement.className`;
+that receiver defect is tracked by `umber2-p8rn`. The Firefox WASM executor is
+unavailable on the validation host.
+
 ## 14. Generate bibliography compatibility cases, then collapse production stages
 
 **Outcome.** One compatibility-case manifest and immutable runner preserve separately named upstream assertions, inputs, outputs, order, and xfails. With that proof layer active, Biber uses one engine-owned editable draft and one freeze; classic retains its explicit-frame VM but removes duplicate lexer/compiler/callable/READ/report authorities; input and output stages lose intermediate models that are converted and discarded.
