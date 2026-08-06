@@ -10,10 +10,10 @@ use tex_state::node::{GlueKind, KernKind, Node};
 use tex_state::scaled::Scaled;
 
 use super::{
-    BoxAxis, FrozenHList, MathBox, MathConversionEvent, MathGlueKind, MathLayout, MathLayoutSink,
-    MathNode, MathPackObservation, MathParams, MathTypesetState, NativeNodeTransaction,
-    SpacingKind, Style, StyleFamily, add, boxed_node, delimiters, fractions,
-    left_right_delimiter_target, operators, radicals, scripts, spacing,
+    BoxAxis, FrozenHList, MathBox, MathConversionEvent, MathGlueKind, MathLayout, MathNode,
+    MathPackObservation, MathParams, MathTypesetState, NativeNodeTransaction, SpacingKind, Style,
+    StyleFamily, add, boxed_node, delimiters, fractions, left_right_delimiter_target, operators,
+    radicals, scripts, spacing,
 };
 
 #[cfg(test)]
@@ -45,19 +45,6 @@ pub fn mlist_to_hlist(
     params: &MathParams,
 ) -> MathLayout {
     build_math_layout(state, input, style, penalties, params)
-}
-
-#[must_use]
-pub fn mlist_to_hlist_with_sink(
-    state: &mut impl MathLayoutSink,
-    input: NodeListId,
-    style: Style,
-    penalties: bool,
-    params: &MathParams,
-) -> MathLayout {
-    let layout = build_math_layout(&*state, input, style, penalties, params);
-    state.commit_math_transaction(&layout);
-    layout
 }
 
 fn build_math_layout(

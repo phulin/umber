@@ -11,9 +11,9 @@ Command operands are scanned by `tex-command` into typed request and result valu
 ## Boundaries
 
 - Do not read raw input directly. All execution consumes `tex-command` delivery.
-- Commit completed Appendix G native-node transactions only at
-  `MathLayoutSink::commit_math_transaction`; do not recreate a parallel math
-  node vocabulary or publish a partially lowered formula.
+- Commit completed Appendix G native-node transactions only at the executor's
+  `commit_math_transaction` seam; do not recreate a parallel math node
+  vocabulary or publish a partially lowered formula.
 - Do not bypass `Universe` or expose raw substores, checkpoint internals, or handle constructors.
 - Keep pure list algorithms in `tex-typeset`, immutable font parsing in `tex-fonts`, artifact serialization in `tex-out`, and file, clock, and random effects behind `World`.
 - Preserve the mode boundary: stomach-side code owns baseline/interline side effects and list contribution, while pure packing and line-breaking routines stay side-effect free.

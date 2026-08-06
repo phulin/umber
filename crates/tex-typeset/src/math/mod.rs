@@ -27,10 +27,10 @@ use tex_state::scaled::Scaled;
 use crate::TypesetState;
 
 pub(crate) use arithmetic::{add, mul, neg, sub};
+pub use convert::mlist_to_hlist;
 pub(crate) use convert::{
     Context, FetchedChar, char_box, clean_box, fetch, make_character_nucleus, source_box_payload,
 };
-pub use convert::{mlist_to_hlist, mlist_to_hlist_with_sink};
 pub use delimiters::left_right_delimiter_target;
 #[cfg(test)]
 pub(crate) use delimiters::test_var_delimiter;
@@ -63,16 +63,6 @@ pub trait MathTypesetState: TypesetState {
     fn math_metrics_source(&self, _font: FontId) -> MathMetricsSource<'_> {
         MathMetricsSource::ClassicTfmExact
     }
-}
-
-/// Destination invoked with a completed formula before conversion returns.
-///
-/// The reader keeps the pure arena representation private while allowing an
-/// execution-side destination to emit its native nodes at the conversion
-/// boundary instead of handing the layout to a separate lowering phase.
-pub trait MathLayoutSink: MathTypesetState {
-    /// Atomically publishes one fully detached native-node transaction.
-    fn commit_math_transaction(&mut self, transaction: &MathLayout);
 }
 
 impl MathTypesetState for Universe {

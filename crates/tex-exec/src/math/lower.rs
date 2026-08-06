@@ -10,8 +10,8 @@ use tex_state::scaled::Scaled;
 use tex_state::{GeometryObservation, Universe};
 use tex_typeset::TypesetState;
 use tex_typeset::math::{
-    FrozenHList, MathBox, MathConversionEvent, MathGlueKind, MathLayout, MathLayoutSink, MathNode,
-    MathParamState, MathParams, MathTypesetState, Style, mlist_to_hlist_with_sink,
+    FrozenHList, MathBox, MathConversionEvent, MathGlueKind, MathLayout, MathNode, MathParamState,
+    MathParams, MathTypesetState, Style, mlist_to_hlist,
 };
 
 /// Detached TeX82 §82 input context for an error raised while converting
@@ -111,7 +111,8 @@ fn convert_math_hlist_with_sink(
     penalties: bool,
     params: &MathParams,
 ) -> Vec<Node> {
-    let _layout = mlist_to_hlist_with_sink(sink, input, style, penalties, params);
+    let transaction = mlist_to_hlist(&*sink, input, style, penalties, params);
+    sink.commit_math_transaction(&transaction);
     sink.take_root_nodes()
 }
 
@@ -308,7 +309,7 @@ impl MathParamState for LoweredMathSink<'_> {
     }
 }
 
-impl MathLayoutSink for LoweredMathSink<'_> {
+impl LoweredMathSink<'_> {
     fn commit_math_transaction(&mut self, layout: &MathLayout) {
         let list = layout.root();
         for event in layout.conversion_events() {

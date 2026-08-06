@@ -444,7 +444,7 @@ values are postorder spans, not recursive owned vectors. Canonical source
 kerns, penalties, rules, and extension nodes cross that transaction unchanged.
 Only selected-glyph records, which retain OpenType glyph identity and metrics,
 and direct glue without a live glue handle remain narrow drafts. Execution
-publishes the complete result through the single `MathLayoutSink` commit seam.
+publishes the complete result through one executor-owned commit seam.
 Post-line-break materialization follows TeX.web §§879--890: a chosen
 discretionary moves its pre-break and post-break lists onto the adjacent
 lines, leading discardables are removed except for font kerns, and each
