@@ -34,9 +34,9 @@ fn compiles_all_top_level_commands() {
         style.commands(),
         &[
             CompiledCommand::Read,
-            CompiledCommand::Execute(FunctionId(0)),
-            CompiledCommand::Iterate(FunctionId(0)),
-            CompiledCommand::Reverse(FunctionId(0)),
+            CompiledCommand::Execute(Callable::Function(FunctionId(0))),
+            CompiledCommand::Iterate(Callable::Function(FunctionId(0))),
+            CompiledCommand::Reverse(Callable::Function(FunctionId(0))),
             CompiledCommand::Sort
         ]
     );
@@ -124,11 +124,16 @@ fn compiles_signed_literals_and_quoted_builtins() {
         b"ENTRY { } { } { }\nFUNCTION { control } { #-1 'skip$ if$ }\nREAD\nEXECUTE { control }\n";
     let result = compile(source, CompileLimits::default());
     let style = result.program().expect("standard BST syntax");
+    assert_eq!(
+        style.functions().len(),
+        1,
+        "quoted builtins are not wrappers"
+    );
     assert!(matches!(
         style.functions()[0].instructions(),
         [
             Instruction::PushInteger(-1),
-            Instruction::PushFunction(_),
+            Instruction::PushCallable(Callable::Builtin(Builtin::Skip)),
             Instruction::Call(Callable::Builtin(Builtin::If))
         ]
     ));

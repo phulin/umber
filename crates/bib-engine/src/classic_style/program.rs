@@ -213,10 +213,9 @@ impl Declarations {
 pub enum Instruction {
     PushInteger(i64),
     PushString(StringId),
-    PushFunction(FunctionId),
+    PushCallable(Callable),
     Call(Callable),
     Read(SymbolId),
-    Assign(SymbolId),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -246,9 +245,9 @@ impl CompiledFunction {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum CompiledCommand {
     Read,
-    Execute(FunctionId),
-    Iterate(FunctionId),
-    Reverse(FunctionId),
+    Execute(Callable),
+    Iterate(Callable),
+    Reverse(Callable),
     Sort,
 }
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]

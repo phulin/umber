@@ -12,7 +12,7 @@ use std::sync::Arc;
 use bib_input::{RawBibDatabase, RawBibEntry, RawBibRecord, RawBibValue, RawBibValuePart};
 use umber_vfs::{FileContentId, VirtualPath};
 
-use super::{ClassicStringPool, CompiledStyle, SymbolId, SymbolKind};
+use super::{ClassicStringPool, CompiledStyle, SymbolKind};
 use crate::{ClassicControl, ClassicDatabaseOptions, ClassicSourceLocation};
 
 /// One raw datasource with its immutable VFS identity.
@@ -35,6 +35,10 @@ impl<'a> ClassicDatabaseSource<'a> {
             content_id,
             database,
         }
+    }
+
+    pub(super) fn identity(&self) -> (VirtualPath, FileContentId, bib_input::BibTexOptions) {
+        (self.path.clone(), self.content_id, self.database.options())
     }
 }
 
@@ -82,7 +86,7 @@ pub enum ClassicDatabaseDiagnosticKind {
 pub struct ClassicDatabaseEntry {
     key: String,
     entry_type: String,
-    fields: BTreeMap<SymbolId, String>,
+    fields: Vec<Option<String>>,
     crossref: Option<String>,
     source: ClassicSourceLocation,
 }
@@ -100,8 +104,8 @@ impl ClassicDatabaseEntry {
 
     /// Returns `None` for a missing field; an empty string remains present.
     #[must_use]
-    pub fn field(&self, symbol: SymbolId) -> Option<&str> {
-        self.fields.get(&symbol).map(String::as_str)
+    pub fn field(&self, index: u32) -> Option<&str> {
+        self.fields.get(index as usize).and_then(Option::as_deref)
     }
 
     #[must_use]
@@ -189,8 +193,11 @@ impl ClassicDatabaseEntry {
             .saturating_add(self.crossref.as_ref().map_or(0, String::capacity))
             .saturating_add(
                 self.fields
-                    .values()
-                    .map(|value| mem::size_of::<(SymbolId, String)>() + value.capacity())
+                    .iter()
+                    .map(|value| {
+                        mem::size_of::<Option<String>>()
+                            + value.as_ref().map_or(0, String::capacity)
+                    })
                     .sum::<usize>(),
             )
             .saturating_add(self.source.path().as_str().len())
@@ -225,94 +232,11 @@ pub fn prepare_classic_database(
     reader.finish()
 }
 
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub(super) struct PreparedKey {
-    sources: Vec<(String, FileContentId, String)>,
-    citations: Vec<String>,
-    schema: Vec<(String, String, String)>,
-    options: String,
-}
-
-impl PreparedKey {
-    pub(super) fn new(
-        control: &ClassicControl,
-        style: &CompiledStyle,
-        sources: &[ClassicDatabaseSource<'_>],
-        options: &ClassicDatabaseOptions,
-    ) -> Self {
-        let schema = style
-            .declarations()
-            .symbols()
-            .iter()
-            .filter_map(|symbol| match symbol.kind() {
-                SymbolKind::EntryField(_) => {
-                    Some(("field".to_owned(), symbol.name().to_owned(), String::new()))
-                }
-                SymbolKind::StringMacro(id) => Some((
-                    "macro".to_owned(),
-                    symbol.name().to_owned(),
-                    style.declarations().strings()[id.0 as usize].clone(),
-                )),
-                _ => None,
-            })
-            .collect();
-        Self {
-            sources: sources
-                .iter()
-                .map(|source| {
-                    (
-                        source.path.as_str().to_owned(),
-                        source.content_id,
-                        format!("{:?}", source.database.options()),
-                    )
-                })
-                .collect(),
-            citations: control.citations().map(str::to_owned).collect(),
-            schema,
-            // Debug is deliberately used as a complete structural fingerprint:
-            // options and every bound are private and included recursively.
-            options: format!("{options:?}"),
-        }
-    }
-
-    pub(super) fn retained_bytes(&self) -> usize {
-        mem::size_of::<Self>()
-            .saturating_add(
-                self.sources
-                    .iter()
-                    .map(|(path, _, options)| {
-                        mem::size_of::<(String, FileContentId, String)>()
-                            .saturating_add(path.capacity())
-                            .saturating_add(options.capacity())
-                    })
-                    .sum::<usize>(),
-            )
-            .saturating_add(
-                self.citations
-                    .iter()
-                    .map(|citation| mem::size_of::<String>() + citation.capacity())
-                    .sum::<usize>(),
-            )
-            .saturating_add(
-                self.schema
-                    .iter()
-                    .map(|(kind, name, value)| {
-                        mem::size_of::<(String, String, String)>()
-                            .saturating_add(kind.capacity())
-                            .saturating_add(name.capacity())
-                            .saturating_add(value.capacity())
-                    })
-                    .sum::<usize>(),
-            )
-            .saturating_add(self.options.capacity())
-    }
-}
-
 #[derive(Clone)]
 struct RawEntry {
     key: String,
     entry_type: String,
-    fields: BTreeMap<String, String>,
+    fields: Vec<Option<String>>,
     crossref: Option<String>,
     source: ClassicSourceLocation,
 }
@@ -422,21 +346,35 @@ impl<'a> Reader<'a> {
             );
             return;
         }
-        let mut fields = BTreeMap::new();
+        let mut fields = vec![None; self.style.declarations().entry_fields().len()];
+        let mut seen_fields = BTreeSet::new();
+        let mut crossref = None;
         for field in entry
             .fields()
             .iter()
             .take(self.options.limits().fields_per_entry)
         {
             let name = field.name().folded().to_owned();
-            if fields.contains_key(&name) {
+            if !seen_fields.insert(name.clone()) {
                 self.diagnostic(
                     ClassicDatabaseDiagnosticKind::DuplicateField,
                     format!("duplicate field `{name}` in `{}`", entry.key().source()),
                 );
                 continue;
             }
-            fields.insert(name, self.expand(field.value()));
+            let value = self.expand(field.value());
+            if name == "crossref" {
+                crossref = Some(value.clone());
+            }
+            if let Some(SymbolKind::EntryField(index)) = self
+                .style
+                .declarations()
+                .lookup(&name)
+                .and_then(|symbol| self.style.declarations().symbol(symbol))
+                .map(|declaration| declaration.kind())
+            {
+                fields[*index as usize] = Some(value);
+            }
         }
         if entry.fields().len() > self.options.limits().fields_per_entry {
             self.diagnostic(
@@ -444,7 +382,6 @@ impl<'a> Reader<'a> {
                 "classic READ field limit exceeded",
             );
         }
-        let crossref = fields.get("crossref").cloned();
         self.source_order.push(folded.clone());
         self.entries.insert(
             folded,
@@ -560,18 +497,6 @@ impl<'a> Reader<'a> {
     }
 
     fn finish(mut self) -> ClassicDatabase {
-        let field_symbols = self
-            .style
-            .declarations()
-            .entry_fields()
-            .iter()
-            .filter_map(|symbol| {
-                self.style
-                    .declarations()
-                    .symbol(*symbol)
-                    .map(|declaration| (declaration.name().to_owned(), *symbol))
-            })
-            .collect::<BTreeMap<_, _>>();
         let selected_raw_entries = self
             .source_order
             .iter()
@@ -584,24 +509,18 @@ impl<'a> Reader<'a> {
                 // before READ starts.
                 self.pool_trace.push(entry.key.clone());
             }
-            for (name, value) in &entry.fields {
-                let retained = name == "crossref"
-                    || self
-                        .style
-                        .declarations()
-                        .lookup(name)
-                        .and_then(|symbol| self.style.declarations().symbol(symbol))
-                        .is_some_and(|symbol| matches!(symbol.kind(), SymbolKind::EntryField(_)));
-                if retained {
-                    self.pool_trace.push(value.clone());
-                }
+            for value in entry.fields.iter().flatten() {
+                self.pool_trace.push(value.clone());
+            }
+            if let Some(value) = &entry.crossref {
+                self.pool_trace.push(value.clone());
             }
         }
         let entries = self
             .source_order
             .clone()
             .into_iter()
-            .filter_map(|key| self.visible_entry(&key, &field_symbols, &mut BTreeSet::new(), 0))
+            .filter_map(|key| self.visible_entry(&key, &mut BTreeSet::new(), 0))
             .collect::<Vec<_>>();
         for entry in &entries {
             if self
@@ -631,7 +550,6 @@ impl<'a> Reader<'a> {
     fn visible_entry(
         &mut self,
         key: &str,
-        fields: &BTreeMap<String, SymbolId>,
         visiting: &mut BTreeSet<String>,
         depth: usize,
     ) -> Option<ClassicDatabaseEntry> {
@@ -651,7 +569,7 @@ impl<'a> Reader<'a> {
                 ClassicDatabaseDiagnosticKind::CrossrefCycle,
                 format!("crossref cycle at `{}`", entry.key),
             );
-            return Some(project(&entry, fields, None, entry.crossref.clone()));
+            return Some(project(&entry, None, entry.crossref.clone()));
         }
         let parent = entry
             .crossref
@@ -659,7 +577,7 @@ impl<'a> Reader<'a> {
             .map(|value| value.to_ascii_lowercase());
         let inherited = parent.as_ref().and_then(|parent| {
             if self.entries.contains_key(parent) {
-                self.visible_entry(parent, fields, visiting, depth + 1)
+                self.visible_entry(parent, visiting, depth + 1)
             } else {
                 self.diagnostic(
                     ClassicDatabaseDiagnosticKind::MissingCrossref,
@@ -678,7 +596,7 @@ impl<'a> Reader<'a> {
             .map(|parent| parent.key.clone())
             .or_else(|| entry.crossref.clone());
         visiting.remove(key);
-        Some(project(&entry, fields, inherited.as_ref(), crossref))
+        Some(project(&entry, inherited.as_ref(), crossref))
     }
 
     fn charge(&mut self) -> bool {
@@ -745,19 +663,17 @@ fn normalize_classic_value(value: &str) -> String {
 
 fn project(
     entry: &RawEntry,
-    symbols: &BTreeMap<String, SymbolId>,
     inherited: Option<&ClassicDatabaseEntry>,
     crossref: Option<String>,
 ) -> ClassicDatabaseEntry {
-    let fields = symbols
+    let fields = entry
+        .fields
         .iter()
-        .filter_map(|(name, symbol)| {
-            entry
-                .fields
-                .get(name)
-                .cloned()
-                .or_else(|| inherited.and_then(|parent| parent.field(*symbol).map(str::to_owned)))
-                .map(|value| (*symbol, value))
+        .enumerate()
+        .map(|(index, value)| {
+            value.clone().or_else(|| {
+                inherited.and_then(|parent| parent.field(index as u32).map(str::to_owned))
+            })
         })
         .collect();
     ClassicDatabaseEntry {

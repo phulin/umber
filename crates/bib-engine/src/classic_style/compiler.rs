@@ -2,13 +2,28 @@
 
 use std::sync::Arc;
 
-use super::lexer::{Token, TokenKind, lex};
 use super::program::{
     Builtin, Callable, CompiledCommand, CompiledFunction, CompiledStyle, Declarations, FunctionId,
     Instruction, ProgramCharge, SpecialSymbol, SymbolId, SymbolKind, Web2cReallocation, builtin,
     fold,
 };
 use super::{CompileLimits, CompileStats, Diagnostic, DiagnosticKind, SourceLocation};
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum TokenKind {
+    Identifier(String),
+    Integer(i64),
+    String(String),
+    Quote,
+    OpenBrace,
+    CloseBrace,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct Token {
+    kind: TokenKind,
+    location: SourceLocation,
+}
 
 #[derive(Clone, Debug)]
 pub struct CompileResult {
@@ -64,15 +79,8 @@ pub fn compile(bytes: &[u8], limits: CompileLimits) -> CompileResult {
             stats: CompileStats::default(),
         };
     }
-    let lexed = lex(bytes, limits);
-    let mut compiler = Compiler::new(
-        lexed.tokens,
-        lexed.diagnostics,
-        limits,
-        bytes.len(),
-        lexed.nesting,
-        lexed.work,
-    );
+    let mut compiler = Compiler::new(limits, bytes.len());
+    compiler.scan(bytes);
     compiler.parse();
     compiler.finish()
 }
@@ -98,14 +106,7 @@ struct Compiler {
     web2c_wiz_capacity: usize,
 }
 impl Compiler {
-    fn new(
-        tokens: Vec<Token>,
-        diagnostics: Vec<Diagnostic>,
-        limits: CompileLimits,
-        source_bytes: usize,
-        nesting: usize,
-        work: usize,
-    ) -> Self {
+    fn new(limits: CompileLimits, source_bytes: usize) -> Self {
         let mut declarations = Declarations::default();
         for (name, builtin) in builtin_names() {
             let _ = declarations.insert(name, SymbolKind::Builtin(builtin));
@@ -119,10 +120,10 @@ impl Compiler {
             let _ = declarations.insert(name, SymbolKind::Special(special));
         }
         Self {
-            tokens,
+            tokens: Vec::new(),
             at: 0,
             limits,
-            diagnostics,
+            diagnostics: Vec::new(),
             declarations,
             functions: Vec::new(),
             commands: Vec::new(),
@@ -130,14 +131,169 @@ impl Compiler {
             entry_seen: false,
             read_seen: false,
             source_bytes,
-            nesting,
-            work,
+            nesting: 0,
+            work: 0,
             pool_trace: Vec::new(),
             anonymous_pool_index: 0,
             web2c_reallocations: Vec::new(),
             web2c_wiz_used: 0,
             web2c_wiz_capacity: WIZ_FUNCTION_SPACE,
         }
+    }
+    fn scan(&mut self, bytes: &[u8]) {
+        let mut cursor = ScanCursor::default();
+        while cursor.at < bytes.len() && self.charge_scan(&cursor) {
+            self.skip_space_and_comments(bytes, &mut cursor);
+            if cursor.at >= bytes.len() {
+                break;
+            }
+            let location = cursor.location();
+            match bytes[cursor.at] {
+                b'{' => {
+                    self.bump(bytes, &mut cursor);
+                    cursor.nesting += 1;
+                    cursor.maximum_nesting = cursor.maximum_nesting.max(cursor.nesting);
+                    self.token(TokenKind::OpenBrace, location);
+                }
+                b'}' => {
+                    self.bump(bytes, &mut cursor);
+                    if cursor.nesting == 0 {
+                        self.error(DiagnosticKind::Syntax, location, "unexpected closing brace");
+                    } else {
+                        cursor.nesting -= 1;
+                    }
+                    self.token(TokenKind::CloseBrace, location);
+                }
+                b'\'' => {
+                    self.bump(bytes, &mut cursor);
+                    self.token(TokenKind::Quote, location);
+                }
+                b'"' => self.scan_string(bytes, &mut cursor, location),
+                b'#' => self.scan_integer(bytes, &mut cursor, location),
+                byte if is_word(byte) => self.scan_word(bytes, &mut cursor, location),
+                _ => {
+                    self.bump(bytes, &mut cursor);
+                    self.error(DiagnosticKind::Syntax, location, "invalid BST byte");
+                }
+            }
+            if self.tokens.len() >= self.limits.tokens {
+                self.error(DiagnosticKind::Limit, location, "BST token limit exceeded");
+                break;
+            }
+            if cursor.maximum_nesting > self.limits.nesting {
+                self.error(
+                    DiagnosticKind::Limit,
+                    location,
+                    "BST nesting limit exceeded",
+                );
+                break;
+            }
+        }
+        self.nesting = cursor.maximum_nesting;
+        if cursor.nesting != 0 {
+            self.error(
+                DiagnosticKind::Syntax,
+                cursor.location(),
+                "unterminated brace group",
+            );
+        }
+    }
+    fn charge_scan(&mut self, cursor: &ScanCursor) -> bool {
+        self.work += 1;
+        if self.work > self.limits.work {
+            self.error(
+                DiagnosticKind::Limit,
+                cursor.location(),
+                "BST lexer work limit exceeded",
+            );
+            false
+        } else {
+            true
+        }
+    }
+    fn bump(&mut self, bytes: &[u8], cursor: &mut ScanCursor) {
+        let byte = bytes[cursor.at];
+        cursor.at += 1;
+        self.work += 1;
+        if byte == b'\n' {
+            cursor.line += 1;
+            cursor.column = 1;
+        } else {
+            cursor.column += 1;
+        }
+    }
+    fn token(&mut self, kind: TokenKind, location: SourceLocation) {
+        self.tokens.push(Token { kind, location });
+    }
+    fn skip_space_and_comments(&mut self, bytes: &[u8], cursor: &mut ScanCursor) {
+        while cursor.at < bytes.len() && self.work <= self.limits.work {
+            match bytes[cursor.at] {
+                b' ' | b'\t' | b'\r' | b'\n' => self.bump(bytes, cursor),
+                b'%' => {
+                    while cursor.at < bytes.len()
+                        && bytes[cursor.at] != b'\n'
+                        && self.work <= self.limits.work
+                    {
+                        self.bump(bytes, cursor);
+                    }
+                }
+                _ => break,
+            }
+        }
+    }
+    fn scan_word(&mut self, bytes: &[u8], cursor: &mut ScanCursor, location: SourceLocation) {
+        let start = cursor.at;
+        while cursor.at < bytes.len() && is_word(bytes[cursor.at]) && self.work <= self.limits.work
+        {
+            self.bump(bytes, cursor);
+        }
+        self.token(
+            TokenKind::Identifier(compatibility_string(&bytes[start..cursor.at])),
+            location,
+        );
+    }
+    fn scan_integer(&mut self, bytes: &[u8], cursor: &mut ScanCursor, location: SourceLocation) {
+        self.bump(bytes, cursor);
+        let start = cursor.at;
+        if cursor.at < bytes.len() && bytes[cursor.at] == b'-' {
+            self.bump(bytes, cursor);
+        }
+        let digits = cursor.at;
+        while cursor.at < bytes.len()
+            && bytes[cursor.at].is_ascii_digit()
+            && self.work <= self.limits.work
+        {
+            self.bump(bytes, cursor);
+        }
+        if digits == cursor.at {
+            self.error(DiagnosticKind::Syntax, location, "expected digits after #");
+            return;
+        }
+        match std::str::from_utf8(&bytes[start..cursor.at])
+            .ok()
+            .and_then(|value| value.parse().ok())
+        {
+            Some(value) => self.token(TokenKind::Integer(value), location),
+            None => self.error(
+                DiagnosticKind::Syntax,
+                location,
+                "BST integer is out of range",
+            ),
+        }
+    }
+    fn scan_string(&mut self, bytes: &[u8], cursor: &mut ScanCursor, location: SourceLocation) {
+        self.bump(bytes, cursor);
+        let start = cursor.at;
+        while cursor.at < bytes.len() && bytes[cursor.at] != b'"' && self.work <= self.limits.work {
+            self.bump(bytes, cursor);
+        }
+        if cursor.at == bytes.len() {
+            self.error(DiagnosticKind::Syntax, location, "unterminated BST string");
+            return;
+        }
+        let text = compatibility_string(&bytes[start..cursor.at]);
+        self.bump(bytes, cursor);
+        self.token(TokenKind::String(text), location);
     }
     fn parse(&mut self) {
         while self.at < self.tokens.len() && !self.at_limit() {
@@ -315,14 +471,14 @@ impl Compiler {
             self.recover();
             return;
         };
-        let Some(id) = self.function_id(&name, location) else {
+        let Some(callable) = self.callable(&name, location) else {
             return;
         };
         self.push_command(
             match kind {
-                Invoke::Execute => CompiledCommand::Execute(id),
-                Invoke::Iterate => CompiledCommand::Iterate(id),
-                Invoke::Reverse => CompiledCommand::Reverse(id),
+                Invoke::Execute => CompiledCommand::Execute(callable),
+                Invoke::Iterate => CompiledCommand::Iterate(callable),
+                Invoke::Reverse => CompiledCommand::Reverse(callable),
             },
             location,
         );
@@ -389,12 +545,10 @@ impl Compiler {
                             .map(|symbol| (id, symbol.kind().clone()))
                     }) {
                         Some((_, SymbolKind::UserFunction(id))) => {
-                            instructions.push(Instruction::PushFunction(id))
+                            instructions.push(Instruction::PushCallable(Callable::Function(id)))
                         }
                         Some((_, SymbolKind::Builtin(builtin))) => {
-                            if let Some(id) = self.builtin_function(builtin, name, token.location) {
-                                instructions.push(Instruction::PushFunction(id));
-                            }
+                            instructions.push(Instruction::PushCallable(Callable::Builtin(builtin)))
                         }
                         Some((
                             id,
@@ -404,9 +558,7 @@ impl Compiler {
                             | SymbolKind::Special(SpecialSymbol::EntryMax)
                             | SymbolKind::Special(SpecialSymbol::GlobalMax),
                         )) => {
-                            if let Some(function) = self.read_function(id, name, token.location) {
-                                instructions.push(Instruction::PushFunction(function));
-                            }
+                            instructions.push(Instruction::PushCallable(Callable::Variable(id)));
                         }
                         Some((
                             id,
@@ -415,7 +567,7 @@ impl Compiler {
                             | SymbolKind::EntryInteger(_)
                             | SymbolKind::EntryString(_)
                             | SymbolKind::Special(SpecialSymbol::SortKey),
-                        )) => instructions.push(Instruction::Assign(id)),
+                        )) => instructions.push(Instruction::PushCallable(Callable::Variable(id))),
                         None => self.error(
                             DiagnosticKind::UnknownSymbol,
                             token.location,
@@ -437,7 +589,7 @@ impl Compiler {
                         break;
                     }
                     let id = self.anonymous(inner, current);
-                    instructions.push(Instruction::PushFunction(id));
+                    instructions.push(Instruction::PushCallable(Callable::Function(id)));
                     at = end.unwrap_or(at);
                 }
                 TokenKind::CloseBrace => self.error(
@@ -650,18 +802,16 @@ impl Compiler {
         self.at += 1;
         Some((name.clone(), token.location))
     }
-    fn function_id(&mut self, name: &str, location: SourceLocation) -> Option<FunctionId> {
+    fn callable(&mut self, name: &str, location: SourceLocation) -> Option<Callable> {
         let symbol = self
             .declarations
             .lookup(name)
             .and_then(|id| self.declarations.symbol(id))
             .map(|symbol| (symbol.name().to_owned(), symbol.kind().clone()));
         match symbol {
-            Some((symbol_name, kind)) => match kind {
-                SymbolKind::UserFunction(id) => Some(id),
-                SymbolKind::Builtin(builtin) => {
-                    self.builtin_function(builtin, &symbol_name, location)
-                }
+            Some((_, kind)) => match kind {
+                SymbolKind::UserFunction(id) => Some(Callable::Function(id)),
+                SymbolKind::Builtin(builtin) => Some(Callable::Builtin(builtin)),
                 _ => {
                     self.error(
                         DiagnosticKind::Syntax,
@@ -680,48 +830,6 @@ impl Compiler {
                 None
             }
         }
-    }
-    fn builtin_function(
-        &mut self,
-        builtin: Builtin,
-        name: &str,
-        location: SourceLocation,
-    ) -> Option<FunctionId> {
-        if self.functions.len() >= self.limits.functions {
-            self.error(
-                DiagnosticKind::Limit,
-                location,
-                "BST function limit exceeded",
-            );
-            return None;
-        }
-        let id = FunctionId(self.functions.len() as u32);
-        self.functions.push(CompiledFunction::new(
-            format!("<builtin:{name}>"),
-            vec![Instruction::Call(Callable::Builtin(builtin))],
-        ));
-        Some(id)
-    }
-    fn read_function(
-        &mut self,
-        symbol: SymbolId,
-        name: &str,
-        location: SourceLocation,
-    ) -> Option<FunctionId> {
-        if self.functions.len() >= self.limits.functions {
-            self.error(
-                DiagnosticKind::Limit,
-                location,
-                "BST function limit exceeded",
-            );
-            return None;
-        }
-        let id = FunctionId(self.functions.len() as u32);
-        self.functions.push(CompiledFunction::new(
-            format!("<read:{name}>"),
-            vec![Instruction::Read(symbol)],
-        ));
-        Some(id)
     }
     fn declare(
         &mut self,
@@ -851,6 +959,35 @@ enum Invoke {
     Iterate,
     Reverse,
 }
+
+#[derive(Default)]
+struct ScanCursor {
+    at: usize,
+    line: usize,
+    column: usize,
+    nesting: usize,
+    maximum_nesting: usize,
+}
+
+impl ScanCursor {
+    fn location(&self) -> SourceLocation {
+        SourceLocation::new(self.at, self.line.max(1), self.column.max(1))
+    }
+}
+
+fn is_word(byte: u8) -> bool {
+    byte >= 0x80
+        || byte.is_ascii_alphanumeric()
+        || matches!(
+            byte,
+            b'$' | b'.' | b':' | b'=' | b'<' | b'>' | b'+' | b'-' | b'*' | b'_'
+        )
+}
+
+fn compatibility_string(bytes: &[u8]) -> String {
+    bytes.iter().map(|&byte| char::from(byte)).collect()
+}
+
 fn nested_body(tokens: &[Token], start: usize) -> (Vec<Token>, Option<usize>) {
     let mut depth = 1;
     let inner_start = start + 1;

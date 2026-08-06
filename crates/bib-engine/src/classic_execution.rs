@@ -509,10 +509,7 @@ fn wiz_defined_locations(style: &CompiledStyle) -> usize {
                 .instructions()
                 .iter()
                 .map(|instruction| {
-                    usize::from(matches!(
-                        instruction,
-                        Instruction::PushFunction(_) | Instruction::Assign(_)
-                    )) + 1
+                    usize::from(matches!(instruction, Instruction::PushCallable(_))) + 1
                 })
                 .sum::<usize>()
         })

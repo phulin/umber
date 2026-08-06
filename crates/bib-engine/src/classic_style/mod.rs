@@ -5,7 +5,6 @@
 
 mod cache;
 mod compiler;
-mod lexer;
 mod pool;
 mod program;
 mod read;

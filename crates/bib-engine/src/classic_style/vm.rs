@@ -12,15 +12,17 @@ use super::{
 
 use super::ClassicDatabase;
 
+use std::fmt;
+use std::ops::Index;
+
 /// Values which can occur on the classic BibTeX operand stack.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum VmValue {
     Integer(i64),
     String(String),
-    Function(FunctionId),
-    /// A quoted mutable symbol. It is an assignment target for `:=` and a
-    /// deferred getter when consumed by a control-flow builtin.
-    Variable(SymbolId),
+    /// A quoted function or variable, interpreted only when invoked or used
+    /// as the assignment target for `:=`.
+    Callable(Callable),
     Missing,
 }
 
@@ -102,11 +104,42 @@ pub(crate) enum ClassicVmLogEvent {
 pub struct ClassicVmResult {
     fatal: bool,
     bbl: String,
-    diagnostics: Vec<ClassicVmDiagnostic>,
     log_events: Vec<ClassicVmLogEvent>,
     #[cfg(test)]
     entry_order: Vec<String>,
     builtin_calls: [usize; BUILTIN_REGISTRY.len()],
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct ClassicVmDiagnostics<'a>(&'a [ClassicVmLogEvent]);
+
+impl<'a> ClassicVmDiagnostics<'a> {
+    pub(crate) fn iter(self) -> impl Iterator<Item = &'a ClassicVmDiagnostic> {
+        self.0.iter().filter_map(|event| match event {
+            ClassicVmLogEvent::Diagnostic(diagnostic) => Some(diagnostic),
+            ClassicVmLogEvent::Stack(_) => None,
+        })
+    }
+
+    pub(crate) fn len(self) -> usize {
+        self.iter().count()
+    }
+}
+
+impl fmt::Debug for ClassicVmDiagnostics<'_> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.debug_list().entries(self.iter()).finish()
+    }
+}
+
+impl Index<usize> for ClassicVmDiagnostics<'_> {
+    type Output = ClassicVmDiagnostic;
+
+    fn index(&self, index: usize) -> &Self::Output {
+        self.iter()
+            .nth(index)
+            .expect("VM diagnostic index in bounds")
+    }
 }
 
 impl ClassicVmResult {
@@ -124,8 +157,8 @@ impl ClassicVmResult {
         &self.bbl
     }
     #[must_use]
-    pub fn diagnostics(&self) -> &[ClassicVmDiagnostic] {
-        &self.diagnostics
+    pub(crate) fn diagnostics(&self) -> ClassicVmDiagnostics<'_> {
+        ClassicVmDiagnostics(&self.log_events)
     }
     pub(crate) fn log_events(&self) -> &[ClassicVmLogEvent] {
         &self.log_events
@@ -198,7 +231,6 @@ struct Vm<'a> {
     current: Option<usize>,
     bbl: String,
     log_bytes: usize,
-    diagnostics: Vec<ClassicVmDiagnostic>,
     log_events: Vec<ClassicVmLogEvent>,
     builtin_calls: [usize; BUILTIN_REGISTRY.len()],
     work: usize,
@@ -233,7 +265,6 @@ impl<'a> Vm<'a> {
             current: None,
             bbl: String::new(),
             log_bytes: 0,
-            diagnostics: Vec::new(),
             log_events: Vec::new(),
             builtin_calls: [0; BUILTIN_REGISTRY.len()],
             work: 0,
@@ -259,7 +290,6 @@ impl<'a> Vm<'a> {
         ClassicVmResult {
             fatal: self.fatal,
             bbl: self.bbl,
-            diagnostics: self.diagnostics,
             log_events: self.log_events,
             #[cfg(test)]
             entry_order,
@@ -290,7 +320,7 @@ impl<'a> Vm<'a> {
         self.current = None;
     }
 
-    fn iterate(&mut self, function: FunctionId, reverse: bool) {
+    fn iterate(&mut self, function: Callable, reverse: bool) {
         let order = self.order.clone();
         let iter: Box<dyn Iterator<Item = usize>> = if reverse {
             Box::new(order.into_iter().rev())
@@ -335,13 +365,11 @@ impl<'a> Vm<'a> {
         }
     }
 
-    fn call(&mut self, function: FunctionId) {
+    fn call(&mut self, function: Callable) {
         if self.fatal {
             return;
         }
-        if !self.push_function(function) {
-            return;
-        }
+        self.call_callable(function);
         while !self.frames.is_empty() {
             if !self.charge() {
                 return;
@@ -437,13 +465,12 @@ impl<'a> Vm<'a> {
                     .cloned()
                     .unwrap_or_default(),
             )),
-            Instruction::PushFunction(function) => self.push(VmValue::Function(function)),
+            Instruction::PushCallable(callable) => self.push(VmValue::Callable(callable)),
             Instruction::Call(callable) => self.call_callable(callable),
             Instruction::Read(symbol) => {
                 let value = self.read(symbol);
                 self.push(value);
             }
-            Instruction::Assign(symbol) => self.push(VmValue::Variable(symbol)),
         }
     }
 
@@ -778,7 +805,8 @@ impl<'a> Vm<'a> {
     fn assign_from_stack(&mut self) {
         let target = self.pop();
         let value = self.pop();
-        let (Some(VmValue::Variable(target)), Some(value)) = (target, value) else {
+        let (Some(VmValue::Callable(Callable::Variable(target))), Some(value)) = (target, value)
+        else {
             self.wrong_type();
             return;
         };
@@ -817,11 +845,11 @@ impl<'a> Vm<'a> {
             return VmValue::Missing;
         };
         match kind {
-            SymbolKind::EntryField(_) => self
+            SymbolKind::EntryField(index) => self
                 .current_entry()
                 .and_then(|entry| {
                     entry
-                        .field(symbol)
+                        .field(index)
                         .map(|value| VmValue::String(value.to_owned()))
                 })
                 .unwrap_or_else(|| {
@@ -949,8 +977,7 @@ impl<'a> Vm<'a> {
     }
     fn pop_callable(&mut self) -> Option<Callable> {
         match self.pop() {
-            Some(VmValue::Function(value)) => Some(Callable::Function(value)),
-            Some(VmValue::Variable(value)) => Some(Callable::Variable(value)),
+            Some(VmValue::Callable(value)) => Some(value),
             Some(_) => {
                 self.wrong_type();
                 None
@@ -1023,7 +1050,12 @@ impl<'a> Vm<'a> {
         self.fatal = true;
     }
     fn report(&mut self, kind: ClassicVmDiagnosticKind, message: &str) {
-        if self.diagnostics.len() < self.limits.diagnostics {
+        let diagnostic_count = self
+            .log_events
+            .iter()
+            .filter(|event| matches!(event, ClassicVmLogEvent::Diagnostic(_)))
+            .count();
+        if diagnostic_count < self.limits.diagnostics {
             let diagnostic = ClassicVmDiagnostic {
                 kind,
                 message: message.to_owned(),
@@ -1031,8 +1063,7 @@ impl<'a> Vm<'a> {
                 entry: self.current_entry().map(|entry| entry.key().to_owned()),
             };
             self.log_events
-                .push(ClassicVmLogEvent::Diagnostic(diagnostic.clone()));
-            self.diagnostics.push(diagnostic);
+                .push(ClassicVmLogEvent::Diagnostic(diagnostic));
         }
     }
 }
@@ -1042,7 +1073,7 @@ impl VmValue {
         match self {
             Self::Integer(value) => value.to_string(),
             Self::String(value) => value.clone(),
-            Self::Function(_) | Self::Variable(_) => "function".to_owned(),
+            Self::Callable(_) => "function".to_owned(),
             Self::Missing => "missing".to_owned(),
         }
     }

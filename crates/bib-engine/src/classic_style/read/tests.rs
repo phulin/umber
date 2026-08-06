@@ -1,5 +1,7 @@
 use crate::classic_style::pool::StringPoolLimits;
-use crate::classic_style::{ClassicStringPool, CompileLimits, compile};
+use crate::classic_style::{
+    ClassicStringPool, CompileLimits, CompiledStyle, SymbolId, SymbolKind, compile,
+};
 use bib_input::{BibTexOptions, parse_raw_bibtex_bytes};
 use umber_vfs::{FileContentId, VirtualPath};
 
@@ -33,6 +35,17 @@ fn prepared(source: &[u8], citations: &[&str]) -> super::ClassicDatabase {
     )
 }
 
+fn field_index(style: &CompiledStyle, symbol: SymbolId) -> u32 {
+    let Some(SymbolKind::EntryField(index)) = style
+        .declarations()
+        .symbol(symbol)
+        .map(|value| value.kind())
+    else {
+        panic!("symbol is an entry field");
+    };
+    *index
+}
+
 #[test]
 fn read_projects_declared_fields_and_preserves_citation_order() {
     let database = prepared(
@@ -52,9 +65,9 @@ fn read_projects_declared_fields_and_preserves_citation_order() {
         entries.iter().map(|entry| entry.key()).collect::<Vec<_>>(),
         ["a", "b"]
     );
-    assert_eq!(entries[0].field(title), Some("A"));
-    assert_eq!(entries[0].field(year), None);
-    assert_eq!(entries[1].field(year), Some("1"));
+    assert_eq!(entries[0].field(field_index(style, title)), Some("A"));
+    assert_eq!(entries[0].field(field_index(style, year)), None);
+    assert_eq!(entries[1].field(field_index(style, year)), Some("1"));
 }
 
 #[test]
@@ -79,7 +92,11 @@ fn style_macros_are_visible_when_expanding_raw_entry_values() {
         &ClassicDatabaseOptions::default(),
     );
     assert_eq!(
-        database.entries().next().expect("entry").field(month),
+        database
+            .entries()
+            .next()
+            .expect("entry")
+            .field(field_index(style, month)),
         Some("Jan.")
     );
 }
@@ -96,14 +113,14 @@ fn read_collapses_literal_whitespace_without_losing_macro_boundaries() {
         b"ENTRY { title year } { } { } READ",
         CompileLimits::default(),
     );
-    let title = compiled
-        .program()
-        .expect("style")
-        .declarations()
-        .lookup("title")
-        .expect("title");
+    let style = compiled.program().expect("style");
+    let title = style.declarations().lookup("title").expect("title");
     assert_eq!(
-        database.entries().next().expect("entry").field(title),
+        database
+            .entries()
+            .next()
+            .expect("entry")
+            .field(field_index(style, title)),
         Some("ACM Symposium on Computing")
     );
 }
@@ -131,7 +148,7 @@ fn wildcard_preamble_duplicates_and_crossref_inheritance_are_vm_visible() {
         entries.iter().map(|entry| entry.key()).collect::<Vec<_>>(),
         ["parent", "one", "two"]
     );
-    assert_eq!(entries[1].field(title), Some("Umber"));
+    assert_eq!(entries[1].field(field_index(style, title)), Some("Umber"));
     assert!(
         database
             .diagnostics()

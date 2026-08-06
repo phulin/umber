@@ -3,7 +3,10 @@
 use std::collections::VecDeque;
 use std::sync::Arc;
 
-use super::read::{PreparedKey, prepare_classic_database};
+use bib_input::BibTexOptions;
+use umber_vfs::{FileContentId, VirtualPath};
+
+use super::read::prepare_classic_database;
 use super::{
     ClassicDatabase, ClassicDatabaseSource, CompileLimits, CompileResult, CompiledStyle, compile,
 };
@@ -17,7 +20,10 @@ enum Entry {
         charge: usize,
     },
     Read {
-        key: PreparedKey,
+        sources: Vec<(VirtualPath, FileContentId, BibTexOptions)>,
+        control: ClassicControl,
+        style: Arc<CompiledStyle>,
+        options: ClassicDatabaseOptions,
         database: Arc<ClassicDatabase>,
         charge: usize,
     },
@@ -89,28 +95,50 @@ impl ClassicRuntimeCache {
     pub(crate) fn prepare(
         &mut self,
         control: &ClassicControl,
-        style: &CompiledStyle,
+        style: &Arc<CompiledStyle>,
         sources: &[ClassicDatabaseSource<'_>],
         options: &ClassicDatabaseOptions,
     ) -> Arc<ClassicDatabase> {
-        let key = PreparedKey::new(control, style, sources, options);
+        let source_identity = sources
+            .iter()
+            .map(ClassicDatabaseSource::identity)
+            .collect::<Vec<_>>();
         if let Some(database) = self.entries.iter().find_map(|entry| match entry {
             Entry::Read {
-                key: cached,
+                sources: cached_sources,
+                control: cached_control,
+                style: cached_style,
+                options: cached_options,
                 database,
                 ..
-            } if cached == &key => Some(Arc::clone(database)),
+            } if cached_sources == &source_identity
+                && cached_control == control
+                && cached_style.as_ref() == style.as_ref()
+                && cached_options == options =>
+            {
+                Some(Arc::clone(database))
+            }
             _ => None,
         }) {
             return database;
         }
 
         let database = Arc::new(prepare_classic_database(control, style, sources, options));
-        let charge = key
-            .retained_bytes()
+        let charge = source_identity
+            .iter()
+            .map(|(path, _, _)| {
+                std::mem::size_of::<(VirtualPath, FileContentId, BibTexOptions)>()
+                    + path.as_str().len()
+            })
+            .sum::<usize>()
+            .saturating_add(control.citations().map(str::len).sum::<usize>())
+            .saturating_add(style.charge().retained_bytes)
             .saturating_add(database.retained_bytes());
         self.insert(Entry::Read {
-            key,
+            sources: source_identity,
+            control: control.clone(),
+            style: Arc::clone(style),
+            options: options.clone(),
             database: Arc::clone(&database),
             charge,
         });
