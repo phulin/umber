@@ -106,7 +106,7 @@ transparency workflow, and emits an aggregate uncommitted build record under
 `target/oracle-regeneration/`.
 
 `tests/corpus/distribution/cross-frontend-v1` is the closed
-authored-JavaScript/Rust manifest and selection case. Its `case.inventory`
+authored-JavaScript/Rust manifest and HTML catalogue case. Its `case.inventory`
 declares every payload; `test_support::git_fixture` requires the declared,
 tracked, and on-disk inventories to agree before Rust reads it, and validates
 every directory ancestor without following symlinks so generated, scratch,
@@ -115,8 +115,8 @@ pair that Git proof with `test_support::closed_case::FixtureCase` so identity,
 roles, source closure, profile, and publication metadata use the shared typed
 contract. The payloads
 are hand-authored contract data, not live-reference outputs, and both
-`umber-distribution` and the authored JavaScript tests consume the exact same
-files.
+`umber-distribution` and the authored JavaScript tests consume their declared
+payloads from this one closed case.
 
 `tests/corpus/bib/invocation` contains exactly three closed native `umber bib`
 invocation cases: BCF success, tool mode, and invalid output-format

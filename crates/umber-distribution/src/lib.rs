@@ -20,7 +20,7 @@ pub use manifest::{
 pub use selection::{
     AcquisitionJob, FeatureSetting, FileKind, FileRequestKey, FontRequestContext, FontRequestKey,
     JobRequirement, LegacyMappingRequestKey, ManifestLogicalKey, ManifestMiss, ManifestRequest,
-    Selection, SelectionError, VariationCoordinate, VariationInstance, WritingDirection, select,
+    Selection, SelectionError, VariationCoordinate, VariationInstance, WritingDirection,
     select_shard, select_shards, shard_index, shard_index_for_key,
 };
 

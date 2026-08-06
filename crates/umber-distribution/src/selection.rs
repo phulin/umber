@@ -2,9 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
 
-use crate::manifest::{
-    Manifest, ManifestParseError, ManifestShard, ObjectEntry, validate_file_key,
-};
+use crate::manifest::{ManifestParseError, ManifestShard, ObjectEntry, validate_file_key};
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum FileKind {
@@ -562,96 +560,16 @@ impl fmt::Display for SelectionError {
 
 impl Error for SelectionError {}
 
-/// Selects required jobs in request order, followed by breadth-first transitive
-/// dependency hints in manifest order. Duplicate requests and hints are omitted.
-#[must_use]
-pub fn select(manifest: &Manifest, requests: &[ManifestRequest]) -> Selection {
-    let mut selection = Selection::default();
-    let mut seen_files = BTreeSet::<String>::new();
-    let mut seen_fonts = BTreeSet::<String>::new();
-    let mut dependency_roots = Vec::<String>::new();
-
-    for request in requests {
-        match request {
-            ManifestRequest::File(key) => {
-                let manifest_key = key.manifest_key();
-                if !seen_files.insert(manifest_key.0.clone()) {
-                    continue;
-                }
-                let Some(entry) = manifest.files.get(manifest_key.as_str()) else {
-                    selection.misses.push(ManifestMiss::File(key.clone()));
-                    continue;
-                };
-                dependency_roots.push(manifest_key.0.clone());
-                selection.jobs.push(AcquisitionJob {
-                    request: request.clone(),
-                    manifest_key,
-                    requirement: JobRequirement::Required,
-                    object: entry.object_entry(),
-                    virtual_path: Some(entry.virtual_path.clone()),
-                });
-            }
-            ManifestRequest::Font(key) => {
-                // Monolithic schema 1 retains its legacy logical-name-only font
-                // vocabulary. Sharded HTML schema 2 uses the complete key.
-                let manifest_key = ManifestLogicalKey(key.logical_name.clone());
-                if !seen_fonts.insert(manifest_key.0.clone()) {
-                    continue;
-                }
-                let Some(entry) = manifest.fonts.get(manifest_key.as_str()) else {
-                    selection.misses.push(ManifestMiss::Font(key.clone()));
-                    continue;
-                };
-                selection.jobs.push(AcquisitionJob {
-                    request: request.clone(),
-                    manifest_key,
-                    requirement: JobRequirement::Required,
-                    object: entry.object_entry(),
-                    virtual_path: None,
-                });
-            }
-            ManifestRequest::LegacyMapping(key) => {
-                selection
-                    .misses
-                    .push(ManifestMiss::LegacyMapping(key.clone()));
-            }
-        }
-    }
-
-    let mut cursor = 0;
-    while cursor < dependency_roots.len() {
-        let parent = &dependency_roots[cursor];
-        cursor += 1;
-        let entry = manifest
-            .files
-            .get(parent)
-            .expect("validated dependency roots exist in the manifest");
-        for dependency in &entry.dependencies {
-            if !seen_files.insert(dependency.clone()) {
-                continue;
-            }
-            let dependency_entry = manifest
-                .files
-                .get(dependency)
-                .expect("manifest parsing validates dependency references");
-            let key = FileRequestKey::from_manifest_key(dependency)
-                .expect("manifest parsing validates file keys");
-            dependency_roots.push(dependency.clone());
-            selection.jobs.push(AcquisitionJob {
-                request: ManifestRequest::File(key),
-                manifest_key: ManifestLogicalKey(dependency.clone()),
-                requirement: JobRequirement::DependencyHint,
-                object: dependency_entry.object_entry(),
-                virtual_path: Some(dependency_entry.virtual_path.clone()),
-            });
-        }
-    }
-    selection
-}
-
 /// Selects typed records from one already-authenticated canonical shard.
 #[must_use]
 pub fn select_shard(shard: &ManifestShard, requests: &[ManifestRequest]) -> Selection {
+    select_from_shards(requests, |_| shard)
+}
+
+fn select_from_shards<'a>(
+    requests: &[ManifestRequest],
+    mut shard_for: impl FnMut(&ManifestLogicalKey) -> &'a ManifestShard,
+) -> Selection {
     let mut selection = Selection::default();
     let mut seen = BTreeSet::new();
     let mut dependencies = Vec::new();
@@ -660,6 +578,7 @@ pub fn select_shard(shard: &ManifestShard, requests: &[ManifestRequest]) -> Sele
         if !seen.insert(key.0.clone()) {
             continue;
         }
+        let shard = shard_for(&key);
         let object = match request {
             ManifestRequest::File(request_key) => shard
                 .files
@@ -719,68 +638,12 @@ pub fn select_shards(
     shard_bits: u8,
     requests: &[ManifestRequest],
 ) -> Selection {
-    let mut selection = Selection::default();
-    let mut seen = BTreeSet::new();
-    let mut dependencies = Vec::new();
-    for request in requests {
-        let key = request.manifest_key();
-        if !seen.insert(key.0.clone()) {
-            continue;
-        }
-        let Ok(index) = shard_index(&key, shard_bits) else {
-            continue;
-        };
-        let shard = shards
+    select_from_shards(requests, |key| {
+        let index = shard_index(key, shard_bits).expect("validated request key has a shard index");
+        shards
             .get(&index)
-            .expect("authenticated batch contains every requested shard");
-        let selected = match request {
-            ManifestRequest::File(request_key) => shard
-                .files
-                .get(key.as_str())
-                .map(|entry| {
-                    dependencies.extend(entry.dependencies.iter().cloned());
-                    (entry.object_entry(), Some(entry.virtual_path.clone()))
-                })
-                .ok_or_else(|| ManifestMiss::File(request_key.clone())),
-            ManifestRequest::Font(request_key) => shard
-                .fonts
-                .get(key.as_str())
-                .map(|entry| (entry.object.clone(), None))
-                .ok_or_else(|| ManifestMiss::Font(request_key.clone())),
-            ManifestRequest::LegacyMapping(request_key) => shard
-                .legacy_mappings
-                .get(key.as_str())
-                .map(|entry| (entry.object.clone(), None))
-                .ok_or_else(|| ManifestMiss::LegacyMapping(request_key.clone())),
-        };
-        match selected {
-            Ok((object, virtual_path)) => selection.jobs.push(AcquisitionJob {
-                request: request.clone(),
-                manifest_key: key,
-                requirement: JobRequirement::Required,
-                object,
-                virtual_path,
-            }),
-            Err(miss) => selection.misses.push(miss),
-        }
-    }
-    for dependency in dependencies {
-        if !seen.insert(dependency.key.clone()) {
-            continue;
-        }
-        let Ok(key) = FileRequestKey::from_manifest_key(&dependency.key) else {
-            continue;
-        };
-        let object = dependency.object_entry();
-        selection.jobs.push(AcquisitionJob {
-            request: ManifestRequest::File(key),
-            manifest_key: ManifestLogicalKey(dependency.key),
-            requirement: JobRequirement::DependencyHint,
-            object,
-            virtual_path: Some(dependency.virtual_path),
-        });
-    }
-    selection
+            .expect("authenticated batch contains every requested shard")
+    })
 }
 
 fn validate_logical_name(value: &str) -> Result<(), SelectionError> {

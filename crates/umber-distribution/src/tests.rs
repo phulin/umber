@@ -8,7 +8,6 @@ const CASE_PATH: &str = "tests/corpus/distribution/cross-frontend-v1";
 
 struct Fixture {
     manifest: String,
-    selection: String,
     html_root: String,
     html_shard_template: String,
 }
@@ -20,7 +19,6 @@ fn fixture() -> &'static Fixture {
             .expect("validate typed distribution fixture case");
         Fixture {
             manifest: case.read_to_string("manifest.json").expect("manifest"),
-            selection: case.read_to_string("selection.case").expect("selection"),
             html_root: case
                 .read_to_string("html-font-root.json")
                 .expect("HTML root"),
@@ -42,72 +40,8 @@ fn html_shard_fixture() -> String {
 }
 
 #[test]
-fn shared_fixture_round_trips_and_selects_expected_jobs_and_misses() {
-    let manifest = Manifest::parse(&fixture().manifest).expect("parse manifest fixture");
-    let encoded = manifest.to_json_pretty();
-    assert_eq!(Manifest::parse(&encoded), Ok(manifest.clone()));
-
-    let mut requests = Vec::new();
-    let mut expected_jobs = Vec::new();
-    let mut expected_misses = Vec::new();
-    for line in fixture()
-        .selection
-        .lines()
-        .filter(|line| !line.is_empty() && !line.starts_with('#'))
-    {
-        let fields = line.split('\t').collect::<Vec<_>>();
-        match fields.as_slice() {
-            ["request", "file", kind, name] => requests.push(ManifestRequest::File(
-                FileRequestKey::new(
-                    FileKind::from_manifest_name(kind).expect("fixture kind"),
-                    *name,
-                )
-                .expect("fixture file request"),
-            )),
-            ["request", "font", name] => requests.push(ManifestRequest::Font(
-                FontRequestKey::new(*name).expect("fixture font request"),
-            )),
-            ["job", requirement, kind, key, digest] => {
-                expected_jobs.push(format!("{requirement}\t{kind}\t{key}\t{digest}"))
-            }
-            ["miss", kind, key] => expected_misses.push(format!("{kind}\t{key}")),
-            _ => panic!("invalid selection fixture line: {line}"),
-        }
-    }
-
-    let selection = select(&manifest, &requests);
-    let jobs = selection
-        .jobs
-        .iter()
-        .map(|job| {
-            let requirement = match job.requirement {
-                JobRequirement::Required => "required",
-                JobRequirement::DependencyHint => "hint",
-            };
-            let kind = match job.request {
-                ManifestRequest::File(_) => "file",
-                ManifestRequest::Font(_) => "font",
-                ManifestRequest::LegacyMapping(_) => "legacy-mapping",
-            };
-            format!(
-                "{requirement}\t{kind}\t{}\t{}",
-                job.manifest_key, job.object.sha256
-            )
-        })
-        .collect::<Vec<_>>();
-    let misses = selection
-        .misses
-        .iter()
-        .map(|miss| match miss {
-            ManifestMiss::File(key) => format!("file\t{}", key.manifest_key()),
-            ManifestMiss::Font(key) => format!("font\t{}", key.logical_name()),
-            ManifestMiss::LegacyMapping(key) => {
-                format!("legacy-mapping\t{}", key.manifest_key())
-            }
-        })
-        .collect::<Vec<_>>();
-    assert_eq!(jobs, expected_jobs);
-    assert_eq!(misses, expected_misses);
+fn shared_fixture_strictly_parses() {
+    Manifest::parse(&fixture().manifest).expect("parse manifest fixture");
 }
 
 #[test]

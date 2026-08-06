@@ -159,17 +159,6 @@ impl DependencyHint {
     }
 }
 
-impl ManifestFont {
-    #[must_use]
-    pub fn object_entry(&self) -> ObjectEntry {
-        ObjectEntry {
-            object: self.object.clone(),
-            sha256: self.sha256.clone(),
-            bytes: self.bytes,
-        }
-    }
-}
-
 impl ManifestFormat {
     #[must_use]
     pub fn object_entry(&self) -> ObjectEntry {
@@ -296,33 +285,6 @@ impl Manifest {
             fonts,
             formats,
         })
-    }
-
-    /// Canonical ordered JSON used by the deterministic publisher.
-    #[must_use]
-    pub fn to_json_pretty(&self) -> String {
-        let mut out = String::new();
-        out.push_str("{\n  \"schema\": ");
-        out.push_str(&self.schema.to_string());
-        out.push_str(",\n  \"distribution\": ");
-        json_string(&mut out, &self.distribution);
-        out.push_str(",\n  \"objectsBaseUrl\": ");
-        json_string(&mut out, &self.objects_base_url);
-        out.push_str(",\n  \"files\": {");
-        write_map(&mut out, &self.files, write_file);
-        out.push_str("\n  }");
-        if !self.fonts.is_empty() {
-            out.push_str(",\n  \"fonts\": {");
-            write_map(&mut out, &self.fonts, write_font);
-            out.push_str("\n  }");
-        }
-        if !self.formats.is_empty() {
-            out.push_str(",\n  \"formats\": {");
-            write_map(&mut out, &self.formats, write_format);
-            out.push_str("\n  }");
-        }
-        out.push_str("\n}\n");
-        out
     }
 }
 
@@ -1150,117 +1112,6 @@ fn digest_array(value: Value, label: &str) -> Result<Vec<String>, ManifestParseE
         validate_digest(digest, label)?;
     }
     Ok(values)
-}
-
-fn write_map<T>(out: &mut String, values: &BTreeMap<String, T>, write: fn(&mut String, &T, usize)) {
-    for (index, (key, value)) in values.iter().enumerate() {
-        out.push_str(if index == 0 { "\n" } else { ",\n" });
-        out.push_str("    ");
-        json_string(out, key);
-        out.push_str(": {");
-        write(out, value, 6);
-        out.push_str("\n    }");
-    }
-}
-
-fn write_file(out: &mut String, entry: &ManifestFile, indent: usize) {
-    field_string(out, "virtualPath", &entry.virtual_path, indent, true);
-    write_object_fields(out, &entry.object_entry(), indent, false);
-    if !entry.dependencies.is_empty() {
-        out.push_str(",\n      \"dependencies\": [");
-        for (index, dependency) in entry.dependencies.iter().enumerate() {
-            if index > 0 {
-                out.push_str(", ");
-            }
-            json_string(out, dependency);
-        }
-        out.push(']');
-    }
-}
-
-fn write_font(out: &mut String, entry: &ManifestFont, indent: usize) {
-    write_object_fields(out, &entry.object_entry(), indent, true);
-    field_string(out, "container", &entry.container, indent, false);
-    if let Some(provenance) = &entry.provenance {
-        field_string(out, "provenance", provenance, indent, false);
-    }
-}
-
-fn write_format(out: &mut String, entry: &ManifestFormat, indent: usize) {
-    write_object_fields(
-        out,
-        &ObjectEntry {
-            object: entry.object.clone(),
-            sha256: entry.sha256.clone(),
-            bytes: entry.bytes,
-        },
-        indent,
-        true,
-    );
-    field_string(out, "engine", &entry.engine, indent, false);
-    field_string(out, "engineVersion", &entry.engine_version, indent, false);
-    field_number(out, "formatSchema", u64::from(entry.format_schema), indent);
-    field_string(
-        out,
-        "sourceDistribution",
-        &entry.source_distribution,
-        indent,
-        false,
-    );
-    field_string(
-        out,
-        "sourceManifestSha256",
-        &entry.source_manifest_sha256,
-        indent,
-        false,
-    );
-    field_number(out, "sourceDateEpoch", entry.source_date_epoch, indent);
-    if let Some(closure) = &entry.input_closure {
-        out.push_str(",\n");
-        out.push_str(&" ".repeat(indent));
-        json_string(out, "inputClosure");
-        out.push_str(": {");
-        out.push('\n');
-        out.push_str(&" ".repeat(indent + 2));
-        json_string(out, "schema");
-        out.push_str(": ");
-        out.push_str(&closure.schema.to_string());
-        out.push_str(",\n");
-        out.push_str(&" ".repeat(indent + 2));
-        json_string(out, "keys");
-        out.push_str(": [");
-        for (index, key) in closure.keys.iter().enumerate() {
-            if index > 0 {
-                out.push_str(", ");
-            }
-            json_string(out, key);
-        }
-        out.push_str("]\n");
-        out.push_str(&" ".repeat(indent));
-        out.push('}');
-    }
-}
-
-fn write_object_fields(out: &mut String, entry: &ObjectEntry, indent: usize, first: bool) {
-    field_string(out, "object", &entry.object, indent, first);
-    field_string(out, "sha256", &entry.sha256, indent, false);
-    field_number(out, "bytes", entry.bytes, indent);
-}
-
-fn field_string(out: &mut String, name: &str, value: &str, indent: usize, first: bool) {
-    out.push_str(if first { "\n" } else { ",\n" });
-    out.push_str(&" ".repeat(indent));
-    json_string(out, name);
-    out.push_str(": ");
-    json_string(out, value);
-}
-
-fn field_number(out: &mut String, name: &str, value: u64, indent: usize) {
-    out.push_str(",\n");
-    out.push_str(&" ".repeat(indent));
-    json_string(out, name);
-    out.push_str(": ");
-    out.push_str(&value.to_string());
 }
 
 pub(crate) fn json_string(out: &mut String, value: &str) {

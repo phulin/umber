@@ -787,6 +787,32 @@ wasm-bindgen/Firefox and browser-package/Chrome execution remained blocked
 because neither browser executable is installed; the browser runner fails at
 its explicit `/usr/bin/google-chrome` prerequisite before executing a case.
 
+**Catalogue forecast reconciliation.** Follow-up `umber2-vgjr.13.5` audited
+every remaining monolithic, publisher, WebAssembly, JavaScript, native, and
+package caller after the DTO migration. It removes the dead public monolithic
+`select` planner and pretty writer, their writer-only helpers, and the stale
+selection fixture. The compatibility decision is intentionally narrower than
+removing schema 1: `Manifest::parse` and its record model remain because the
+documented `texlive-wasm-publish --shard-existing` offline conversion consumes
+them, and the prepared publisher constructs the same model before canonical
+sharding. The publisher's filesystem/readback adapter, native single-shard
+adapter, the three typed WASM catalogue exports, and JavaScript's resource-key
+and response adapters all have live callers and own host/package policy rather
+than catalogue semantics. The two formerly duplicated sharded selection walks
+now share one internal implementation.
+
+The follow-up changes authored Rust by 17 additions and 369 deletions, a
+352-line net reduction. Its retired 12-line selection case and one-line closed-
+case inventory row are declarative evidence and are reported separately;
+documentation and guidance are likewise excluded from authored Rust/JavaScript
+credit. Together with `.13.3`, the catalogue/publication work changes authored
+Rust and JavaScript by 738 additions and 1,436 deletions, a 698-line net
+reduction. The original 800--1,100 baseline therefore overstates the proven
+reduction by 102--402 lines. No generated declaration, moved implementation,
+retained compatibility reader, or `.13.4` wire-schema deletion is credited to
+the catalogue forecast, and no remaining catalogue reduction is carried
+forward.
+
 ## 14. Generate bibliography compatibility cases, then collapse production stages
 
 **Outcome.** One compatibility-case manifest and immutable runner preserve separately named upstream assertions, inputs, outputs, order, and xfails. With that proof layer active, Biber uses one engine-owned editable draft and one freeze; classic retains its explicit-frame VM but removes duplicate lexer/compiler/callable/READ/report authorities; input and output stages lose intermediate models that are converted and discarded.

@@ -416,16 +416,33 @@ fully warm cache without network access.
 
 ## Legacy monolithic API disposition
 
-The public schema-1 `Manifest` parser, `select` function, and associated
-monolithic record types remain a compatibility and publication input surface.
+The public schema-1 `Manifest` parser and associated monolithic record types
+remain a compatibility and publication input surface.
 `texlive-wasm-publish --shard-existing` consumes that parser to convert an
 already verified monolithic staging bundle, and the publisher constructs the
 same records before `umber-distribution` creates the sharded catalogue. They
 are therefore retained until that documented conversion command is retired or
-migrated; deleting them in the WebAssembly binding migration would remove a
-supported offline publication path.
+migrated; deleting them would remove a supported offline publication path.
+
+The monolithic pretty writer and selection planner were retired after the
+schema-1 DTO migration. A repository-wide caller audit found that neither was
+used by `--shard-existing`, publisher assembly, native resolution, WebAssembly,
+authored JavaScript, or the npm package; their only caller was a self-test and
+its now-retired selection fixture. Schema 1 is an accepted publication input,
+not an emitted catalogue or live selection authority. The retained reader
+continues to enforce its complete strict validation contract, while all live
+selection uses authenticated shards.
 
 They are not a second browser wire authority. WebAssembly and authored
 JavaScript expose only schema-1 DTOs for prepared shard batches,
 authenticated selection plans, and named formats. Browser resolution never
 parses or selects from the monolithic model.
+
+The small authored-JavaScript request-key adapter remains intentionally. It
+maps public resource DTO kinds onto the immutable manifest vocabulary, gives
+the provider-composition facade stable request identities, and reconstructs
+typed responses from authenticated plans. It does not parse catalogue JSON,
+choose shards or records, authenticate bytes, or define selection order.
+Moving this package-facing adaptation behind another synchronous WebAssembly
+call would change the injectable `DistributionCatalogBindings` interface and
+would not remove a second catalogue authority.
