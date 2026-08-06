@@ -239,6 +239,10 @@ pub struct MainControl {
     /// operation reports [`MainControlStep::End`] without delivering a
     /// command, and the host reads the cause from [`Self::fatal_error`].
     fatal: Option<FatalError>,
+    /// Whether the terminal fatal crossed a diagnostic-source capture seam.
+    /// Diagnostic session drivers surface these failures to their caller;
+    /// complete-job drivers retain TeX's terminal completion semantics.
+    fatal_was_captured: bool,
     /// tex.web's job-framing state: see [`crate::job`] and
     /// `docs/job_framing.md`.
     job: crate::job::JobFraming,
@@ -2403,6 +2407,8 @@ impl MainControl {
             }
             Err(error) => {
                 if let Some(fatal) = error.as_fatal() {
+                    self.fatal_was_captured = matches!(error, ExecError::Captured { .. })
+                        && fatal != FatalError::TooManyErrors;
                     // §81 `jump_out` commits the partial operation. Publish
                     // its terminal evidence through the same optional sink.
                     self.observe_committed([
@@ -4017,6 +4023,12 @@ impl MainControl {
         self.fatal
     }
 
+    /// Returns whether the fatal crossed a diagnostic source-capture seam.
+    #[must_use]
+    pub const fn fatal_was_captured(&self) -> bool {
+        self.fatal_was_captured
+    }
+
     /// Returns the effect cursor immediately before final-cleanup framing.
     #[must_use]
     pub const fn job_body_effect_end(&self) -> Option<tex_state::EffectPos> {
@@ -4302,7 +4314,7 @@ impl MainControl {
         {
             result = Ok(self.handle_root_end_of_input(stores));
         }
-        if result.is_ok() && observing {
+        if result.is_ok() {
             self.resume_main_control_parking(parking, stores);
         }
         if result.is_ok() {
@@ -4426,6 +4438,7 @@ impl MainControl {
         }
         self.page_output_observations.clear();
         if result.is_ok() {
+            self.finish_shipout_publication(artifact_count, effect_count, stores);
             self.finish_paragraph_boundary(outer_paragraph_was_active, stores);
         }
         result

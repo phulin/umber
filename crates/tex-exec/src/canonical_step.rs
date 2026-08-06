@@ -229,7 +229,14 @@ impl<'a> CanonicalStepRunner<'a> {
         sink: &mut dyn CheckpointSink,
         cancellation: &Cancellation,
     ) -> CanonicalStepResult {
-        self.step_inner(sink, cancellation, None)
+        let result = self.step_inner(sink, cancellation, None);
+        if self.control.fatal_was_captured()
+            && let Some(fatal) = self.control.fatal_error()
+        {
+            CanonicalStepResult::Failed(CanonicalStepFailure::Execution(ExecError::Fatal(fatal)))
+        } else {
+            result
+        }
     }
 
     /// Advances a complete-job session through TeX82 §81's `jump_out`.
