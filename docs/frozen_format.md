@@ -307,13 +307,12 @@ save-stack journaling, grouping, snapshot, and rollback behavior. The retained
 base cells are immutable and shared across environment clones; job mutation
 changes only overlay storage.
 
-The production installation step is separate from the test-only transitional
-DTO restorer. Test instrumentation covers the three prohibited reconstruction
-operations: detached graph-key remapping, node semantic resealing, and raw
-environment assignment replay. The isolated compatibility oracle demonstrates
-that those counters detect its old reconstruction work; an ordinary
-`Universe::from_format` load of the same node/environment classes leaves every
-counter at zero.
+The schema-11 frozen encoder and decoder are the only store format path.
+Store-level round-trip tests call `encode_frozen_format` and
+`decode_frozen_format` directly. Universe-level tests exercise `dump_format`
+and `Universe::from_format`, including malformed-section rejection, immutable
+base and mutable-overlay behavior, rollback, and byte-identical canonical
+redumps. There is no separate DTO restorer or loader-work instrumentation.
 
 ## References and structural validation
 
