@@ -90,10 +90,12 @@ owns:
 
 The crate performs no I/O, has no dependencies, and compiles for
 `wasm32-unknown-unknown`. The publisher consumes its model and canonical JSON
-serialization; the future CLI fetcher will consume the same API. The
-JavaScript implementation remains authored, with fixtures under
-`tests/corpus/distribution` asserting that both sides round-trip the same
-manifest and select the same ordered jobs and typed misses.
+serialization; the CLI fetcher consumes the same API. Authored JavaScript
+retains transport and resource-response adaptation but does not parse or
+select catalogue records. It passes exact root/shard text through the WASM
+boundary, where `umber-distribution` authenticates one batch and returns its
+ordered jobs and typed misses. Shared fixtures and resolver tests preserve the
+same root/shard bytes, request order, hints, and misses.
 
 ### 3. Distribution absence must be a recoverable engine condition
 

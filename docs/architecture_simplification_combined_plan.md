@@ -685,6 +685,52 @@ Plain format (`umber2-em5o`). A provisioned Firefox executed 33 Rust/WASM tests;
 29 passed and four stale binding/fixture expectations are tracked by
 `umber2-3slp` independently of the JavaScript session driver.
 
+**Implemented catalogue authority and accounting.** Commits `b51d23160`,
+`6a7547e86`, and `83f8a6559` complete the catalogue/publication child
+`umber2-vgjr.13.3`. `umber-distribution::NamedFormat` is the sole strict parser
+and canonicalizer for publisher metadata and published format records. The
+same crate partitions canonical root/shard values, computes their exact shard
+digests, rejects duplicate and mispartitioned keys, and authenticates exact raw
+shard bytes before returning one required-before-hint batch plan. The WASM
+boundary exposes only prepared-batch, authenticated-plan, and named-format
+operations. Authored JavaScript retains request/response identity adaptation,
+HTTP, cache, concurrency, cancellation, budgets, and response materialization;
+its JSON scanner, shard hash/partition logic, catalogue record parsers, and
+per-key selection walk are deleted.
+
+`texlive-wasm-publish::PreparedPublication` is the single full/HTML staging
+path. Profile preparation selects the complete full tree or the HTML
+allow-listed runtime/format closure and reviewed font records, after which one
+path writes objects, constructs canonical shared catalogue values, prunes,
+applies the profile inventory, and performs complete read-after-write
+verification. The publisher-owned format DTO, closure canonicalizer, root and
+shard aliases, duplicated staging flows, and 228-line executable HTML MVP
+catalogue are deleted. The committed catalogue remains the reviewed data
+authority and its exact WOFF2/license objects and links are authenticated during
+every HTML publication.
+
+Exact tree accounting from `64a0766be` through `83f8a6559` is 481 additions and
+519 deletions in production Rust, plus 92 additions and 462 deletions in
+production JavaScript and declarations. Proof tests add 72/delete 40 Rust lines
+and add 76/delete 46 JavaScript lines. Authored Rust and JavaScript therefore
+total 721 additions and 1,067 deletions, a 346-line net reduction. Documentation
+and guidance add 31/delete 39 lines, and standalone lock metadata adds one line;
+the complete tracked change adds 753 and deletes 1,106 lines, a 353-line net
+reduction. No generated source, committed catalogue record, fixture, or binary
+asset changed. The result is below the catalogue child's 800--1,100 baseline
+forecast; `umber2-vgjr.13.5` tracks revalidation after the DTO migration rather
+than crediting conditional legacy API deletion here.
+
+The exact code tree passed the 17 distribution and 17 publisher tests under
+`MemoryMax=512M`, the complete native routine suite under `MemoryMax=1G`, the
+wasm32 check, Biome, all 89 authored Node tests, the built-package Node project
+lifecycle, and `npm pack --dry-run` under `MemoryMax=1G`. All four
+`scripts/check.sh` gates passed with six Cargo jobs under the same cap. The cold
+release package build exceeded 1 GiB during compilation; an uncapped six-job
+build completed, after which its Node lifecycle and package inventory passed
+under the cap. Real wasm-bindgen and browser smoke remained blocked by absent
+Firefox and Chrome.
+
 ## 14. Generate bibliography compatibility cases, then collapse production stages
 
 **Outcome.** One compatibility-case manifest and immutable runner preserve separately named upstream assertions, inputs, outputs, order, and xfails. With that proof layer active, Biber uses one engine-owned editable draft and one freeze; classic retains its explicit-frame VM but removes duplicate lexer/compiler/callable/READ/report authorities; input and output stages lose intermediate models that are converted and discarded.
