@@ -4,7 +4,8 @@ Status: shared project-workspace migration complete. Canonical paths, immutable
 files, layered storage, the typed resource ledger, deterministic snapshots,
 generated-file transactions, TeX and bibliography views, shared native/WASM
 resource batching, atomic editor-revision/build acceptance, and legacy-map
-removal and the single generated-transaction lifecycle are implemented.
+removal, the single generated-transaction lifecycle, and private shape-safe
+storage maps are implemented.
 
 This document defines `umber-vfs`, the host-neutral virtual filesystem shared
 by Umber's TeX driver, bibliography processing, native embeddings, and the
@@ -238,6 +239,22 @@ Capturing or cloning a snapshot therefore retains one generation without
 copying its maps or file bytes. A later storage mutation copies only the
 generation header and changed ownership layer; existing snapshots continue to
 observe their exact earlier generation.
+
+The durable generation is private and contains exactly three differently typed
+maps: user, resolved-resource, and accepted-generated. Their narrow mutation
+methods construct the required `VirtualFile` origin themselves and accept only
+the canonical root belonging to that category. The candidate-generated map is
+owned separately by `GeneratedTransaction`, so pending state cannot enter a
+durable workspace generation. The former public `LayerKind`, `FileLayer`, and
+`LayeredFileStorage` construction API is intentionally retired; supported
+callers construct workspaces through `ProjectWorkspace` and read through
+`VfsSnapshot`.
+
+Contraction accounting for the shape-safe-map migration is 782 removed and
+455 added authored source lines, a net deletion of 327. It changes no
+repetitive declarative/generated records and no binary assets. Together with
+the preceding single-transaction change, program 17 removes 884 authored lines
+net (1,676 removed and 792 added).
 
 ## Generated transactions
 

@@ -20,10 +20,7 @@ pub use resource::{
     UserRegistrationError,
 };
 pub use snapshot::{SnapshotError, SnapshotRetention, VfsSnapshot, VirtualRoot};
-pub use storage::{
-    DISTRIBUTION_LAYER_PRECEDENCE, FileLayer, ImmutableBindingError, InsertOutcome,
-    JOB_LAYER_PRECEDENCE, LayerKind, LayeredFileStorage, StorageIdentity,
-};
+pub use storage::StorageIdentity;
 pub use transaction::{AcceptedGenerated, GeneratedTransaction, TransactionError};
 
 /// A canonical absolute path in Umber's virtual namespace.

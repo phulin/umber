@@ -3,7 +3,7 @@ use std::sync::Arc;
 use proptest::prelude::*;
 
 use super::*;
-use crate::{ProjectWorkspace, SnapshotRetention, VirtualRoot};
+use crate::{ProjectWorkspace, SnapshotRetention, VirtualFile, VirtualRoot};
 
 fn workspace_with_accepted(entries: &[(&str, &[u8])]) -> ProjectWorkspace {
     let mut workspace = ProjectWorkspace::new(VfsLimits::default()).expect("limits");

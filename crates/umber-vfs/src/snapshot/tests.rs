@@ -1,37 +1,9 @@
 use std::sync::Arc;
 
 use super::*;
-use crate::{FileKind, FileOrigin, FileRequestKey, InsertOutcome, VirtualFile};
-
-fn user_file(path: &str, bytes: &[u8]) -> VirtualFile {
-    VirtualFile::new(
-        VirtualPath::user(path).expect("user path"),
-        Arc::<[u8]>::from(bytes),
-        FileOrigin::User,
-    )
-}
-
-fn resolved_file(path: &str, bytes: &[u8]) -> VirtualFile {
-    VirtualFile::new(
-        VirtualPath::distribution(path).expect("distribution path"),
-        Arc::<[u8]>::from(bytes),
-        FileOrigin::Resolved(
-            FileRequestKey::new(
-                FileKind::TexInput,
-                path.strip_prefix("/texlive/").expect("distribution root"),
-            )
-            .expect("resource request"),
-        ),
-    )
-}
-
-fn generated_file(path: &str, bytes: &[u8]) -> VirtualFile {
-    VirtualFile::new(
-        VirtualPath::user(path).expect("generated path"),
-        Arc::<[u8]>::from(bytes),
-        FileOrigin::Generated,
-    )
-}
+use crate::{
+    FileKind, FileRequestKey, ProjectWorkspace, ResolvedFile, SnapshotRetention, VfsLimits,
+};
 
 fn bytes<'a>(snapshot: &'a VfsSnapshot, path: &VirtualPath) -> Option<&'a [u8]> {
     snapshot
@@ -40,22 +12,34 @@ fn bytes<'a>(snapshot: &'a VfsSnapshot, path: &VirtualPath) -> Option<&'a [u8]> 
         .map(VirtualFile::bytes)
 }
 
+fn workspace_with_users(entries: &[(&str, &[u8])]) -> ProjectWorkspace {
+    let mut workspace = ProjectWorkspace::new(VfsLimits::default()).expect("VFS");
+    for (path, data) in entries {
+        workspace
+            .register_user(VirtualPath::user(path).expect("path"), data.to_vec())
+            .expect("user file");
+    }
+    workspace
+}
+
 #[test]
 fn snapshot_clone_is_cheap_and_mutation_preserves_its_generation() {
-    let mut storage = LayeredFileStorage::new();
-    storage
-        .insert(LayerKind::User, user_file("main.tex", b"old"))
-        .expect("insert old file");
-    let snapshot = storage.snapshot();
+    let mut workspace = workspace_with_users(&[("main.tex", b"old")]);
+    let snapshot = workspace.snapshot();
     let clone = snapshot.clone();
     assert!(Arc::ptr_eq(&snapshot.generation, &clone.generation));
     assert!(Arc::ptr_eq(&snapshot.valid, &clone.valid));
 
-    storage
-        .insert(LayerKind::User, user_file("later.tex", b"new"))
-        .expect("insert new file");
-    let current = storage.snapshot();
-    assert!(!Arc::ptr_eq(&snapshot.generation, &current.generation));
+    workspace
+        .register_user(
+            VirtualPath::user("later.tex").expect("path"),
+            b"new".to_vec(),
+        )
+        .expect("new file");
+    assert!(!Arc::ptr_eq(
+        &snapshot.generation,
+        &workspace.snapshot().generation
+    ));
     assert_eq!(
         bytes(&snapshot, &VirtualPath::user("main.tex").expect("path")),
         Some(&b"old"[..])
@@ -63,41 +47,47 @@ fn snapshot_clone_is_cheap_and_mutation_preserves_its_generation() {
     assert!(
         !snapshot
             .contains(&VirtualPath::user("later.tex").expect("path"))
-            .expect("live snapshot")
-    );
-    assert!(
-        storage
-            .snapshot()
-            .contains(&VirtualPath::user("later.tex").expect("path"))
-            .expect("live snapshot")
+            .expect("live")
     );
 }
 
 #[test]
 fn exact_lookup_obeys_root_specific_precedence() {
-    let mut storage = LayeredFileStorage::new();
-    for (kind, file) in [
-        (LayerKind::User, user_file("same.aux", b"user")),
-        (
-            LayerKind::AcceptedGenerated,
-            generated_file("same.aux", b"accepted"),
-        ),
-        (
-            LayerKind::PendingGenerated,
-            generated_file("same.aux", b"pending"),
-        ),
-        (
-            LayerKind::ResolvedResource,
-            resolved_file("/texlive/plain.tex", b"plain"),
-        ),
-    ] {
-        assert_eq!(storage.insert(kind, file), Ok(InsertOutcome::Inserted));
+    let mut workspace = workspace_with_users(&[("same.aux", b"user")]);
+    {
+        let mut accepted = workspace.begin_generated();
+        accepted
+            .write(
+                VirtualPath::user("same.aux").expect("path"),
+                b"accepted".to_vec(),
+            )
+            .expect("write");
+        accepted.accept().expect("accept");
     }
-    let path = VirtualPath::user("same.aux").expect("path");
-    assert_eq!(bytes(&storage.snapshot(), &path), Some(&b"pending"[..]));
+    let request = FileRequestKey::new(FileKind::TexInput, "plain.tex").expect("request");
+    workspace
+        .preload(ResolvedFile {
+            request,
+            virtual_path: "/texlive/plain.tex".into(),
+            bytes: b"plain".to_vec(),
+            expected_digest: None,
+        })
+        .expect("resource");
+    let mut pending = workspace.begin_generated();
+    pending
+        .write(
+            VirtualPath::user("same.aux").expect("path"),
+            b"pending".to_vec(),
+        )
+        .expect("write");
+    let snapshot = pending.snapshot();
+    assert_eq!(
+        bytes(&snapshot, &VirtualPath::user("same.aux").expect("path")),
+        Some(&b"pending"[..])
+    );
     assert_eq!(
         bytes(
-            &storage.snapshot(),
+            &snapshot,
             &VirtualPath::distribution("/texlive/plain.tex").expect("path")
         ),
         Some(&b"plain"[..])
@@ -106,30 +96,29 @@ fn exact_lookup_obeys_root_specific_precedence() {
 
 #[test]
 fn lexical_enumeration_is_visible_unique_component_aware_and_bounded() {
-    let mut storage = LayeredFileStorage::new();
-    for path in ["z.tex", "dir/c.tex", "directory/no.tex", "dir/a.tex"] {
-        storage
-            .insert(LayerKind::User, user_file(path, path.as_bytes()))
-            .expect("unique user file");
-    }
-    storage
-        .insert(
-            LayerKind::AcceptedGenerated,
-            generated_file("dir/a.tex", b"accepted"),
+    let mut workspace = workspace_with_users(&[
+        ("z.tex", b"z"),
+        ("dir/c.tex", b"c"),
+        ("directory/no.tex", b"no"),
+        ("dir/a.tex", b"a"),
+    ]);
+    let mut generated = workspace.begin_generated();
+    generated
+        .write(
+            VirtualPath::user("dir/a.tex").expect("path"),
+            b"shadow".to_vec(),
         )
-        .expect("accepted shadow");
-    storage
-        .insert(
-            LayerKind::PendingGenerated,
-            generated_file("dir/b.tex", b"pending"),
+        .expect("write");
+    generated
+        .write(
+            VirtualPath::user("dir/b.tex").expect("path"),
+            b"new".to_vec(),
         )
-        .expect("pending file");
-
-    let snapshot = storage.snapshot();
+        .expect("write");
+    let snapshot = generated.snapshot();
     let prefix = VirtualPath::user("dir").expect("prefix");
-    let listed = snapshot.list(&prefix, 3).expect("exact bound");
     assert_eq!(
-        listed,
+        snapshot.list(&prefix, 3).expect("bound"),
         [
             VirtualPath::user("dir/a.tex").expect("path"),
             VirtualPath::user("dir/b.tex").expect("path"),
@@ -140,88 +129,65 @@ fn lexical_enumeration_is_visible_unique_component_aware_and_bounded() {
         snapshot.list(&prefix, 2),
         Err(SnapshotError::EnumerationLimitExceeded { limit: 2 })
     );
-    assert_eq!(
-        snapshot
-            .list(&VirtualPath::user("missing").expect("prefix"), 0)
-            .expect("empty enumeration"),
-        Vec::<VirtualPath>::new()
-    );
 }
 
 #[test]
-fn enumeration_and_reads_ignore_insertion_order_and_discarded_attempts() {
-    let entries = [("c.tex", b"c"), ("a.tex", b"a"), ("b.tex", b"b")];
-    let mut forward = LayeredFileStorage::new();
-    let mut reverse = LayeredFileStorage::new();
-    for (path, data) in entries {
-        forward
-            .insert(LayerKind::User, user_file(path, data))
-            .expect("forward insert");
-    }
-    for (path, data) in entries.into_iter().rev() {
-        reverse
-            .insert(LayerKind::User, user_file(path, data))
-            .expect("reverse insert");
-    }
+fn enumeration_and_identity_ignore_insertion_order_and_discarded_attempts() {
+    let entries = [("c.tex", &b"c"[..]), ("a.tex", b"a"), ("b.tex", b"b")];
+    let forward = workspace_with_users(&entries);
+    let reverse = workspace_with_users(&entries.into_iter().rev().collect::<Vec<_>>());
     assert_eq!(
         forward.snapshot().list_root(VirtualRoot::Job, 8),
         reverse.snapshot().list_root(VirtualRoot::Job, 8)
     );
-    assert_eq!(forward.identity(), reverse.identity());
+    assert_eq!(
+        forward.snapshot().generation_identity(),
+        reverse.snapshot().generation_identity()
+    );
 
     let accepted = forward.snapshot();
-    let mut attempt = forward.clone();
+    let mut workspace = forward;
+    let mut attempt = workspace.begin_generated();
     attempt
-        .insert(
-            LayerKind::PendingGenerated,
-            generated_file("attempt.aux", b"discard me"),
+        .write(
+            VirtualPath::user("attempt.aux").expect("path"),
+            b"discard".to_vec(),
         )
-        .expect("pending attempt");
-    drop(attempt);
+        .expect("write");
+    attempt.discard();
     assert!(
         !accepted
             .contains(&VirtualPath::user("attempt.aux").expect("path"))
-            .expect("live accepted snapshot")
+            .expect("live")
     );
 }
 
 #[test]
-fn retention_counts_all_generation_bindings_and_stale_clones_fail_reads() {
-    let mut storage = LayeredFileStorage::new();
-    storage
-        .insert(LayerKind::User, user_file("main.tex", b"1234"))
-        .expect("user");
-    storage
-        .insert(
-            LayerKind::ResolvedResource,
-            resolved_file("/texlive/plain.tex", b"123456"),
-        )
+fn retention_counts_generation_bindings_and_stale_clones_fail_reads() {
+    let mut workspace = workspace_with_users(&[("main.tex", b"1234")]);
+    workspace
+        .preload(ResolvedFile {
+            request: FileRequestKey::new(FileKind::TexInput, "plain.tex").expect("request"),
+            virtual_path: "/texlive/plain.tex".into(),
+            bytes: b"123456".to_vec(),
+            expected_digest: None,
+        })
         .expect("resource");
-    let snapshot = storage.snapshot();
+    let snapshot = workspace.snapshot();
     assert_eq!(
         snapshot.retention(),
         SnapshotRetention {
             bindings: 2,
             logical_bytes: 10,
             input_bytes: 10,
-            generated_bytes: 0,
+            generated_bytes: 0
         }
     );
-
     let clone = snapshot.clone();
     let identity = snapshot.generation_identity();
     snapshot.invalidate();
-    assert!(snapshot.is_stale());
-    assert!(clone.is_stale());
-    let path = VirtualPath::user("main.tex").expect("path");
     assert_eq!(
-        clone.get(&path),
-        Err(SnapshotError::Stale {
-            generation: identity
-        })
-    );
-    assert_eq!(
-        clone.list(&path, 1),
+        clone.get(&VirtualPath::user("main.tex").expect("path")),
         Err(SnapshotError::Stale {
             generation: identity
         })

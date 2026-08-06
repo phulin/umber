@@ -1,4 +1,4 @@
-use umber_vfs::{FileOrigin, LayerKind, LayeredFileStorage, VirtualFile, VirtualPath};
+use umber_vfs::{ProjectWorkspace, VfsLimits, VirtualPath};
 
 use super::*;
 
@@ -199,7 +199,7 @@ fn rejects_namespace_version_doctype_and_limits() {
 
 #[test]
 fn expands_vfs_includes_and_rejects_cycles() {
-    let mut storage = LayeredFileStorage::new();
+    let mut storage = ProjectWorkspace::new(VfsLimits::default()).expect("VFS");
     insert(&mut storage, "main.xml", br#"<config xmlns:xi="http://www.w3.org/2001/XInclude"><xi:include href="part.xml"/></config>"#);
     insert(&mut storage, "part.xml", b"<sortlocale>en_GB</sortlocale>");
     let config = parse_config(
@@ -213,7 +213,7 @@ fn expands_vfs_includes_and_rejects_cycles() {
         Some(&ConfigValue::Scalar("en_GB".into()))
     );
 
-    let mut cyclic = LayeredFileStorage::new();
+    let mut cyclic = ProjectWorkspace::new(VfsLimits::default()).expect("VFS");
     insert(&mut cyclic, "a.xml", br#"<config xmlns:xi="http://www.w3.org/2001/XInclude"><xi:include href="b.xml"/></config>"#);
     insert(
         &mut cyclic,
@@ -270,12 +270,7 @@ fn multiple(value: Option<&ControlOptionValue>) -> Vec<&str> {
     }
 }
 
-fn insert(storage: &mut LayeredFileStorage, path: &str, bytes: &[u8]) {
+fn insert(storage: &mut ProjectWorkspace, path: &str, bytes: &[u8]) {
     let path = VirtualPath::user(path).expect("path");
-    storage
-        .insert(
-            LayerKind::User,
-            VirtualFile::new(path, bytes.to_vec(), FileOrigin::User),
-        )
-        .expect("insert");
+    storage.register_user(path, bytes.to_vec()).expect("insert");
 }

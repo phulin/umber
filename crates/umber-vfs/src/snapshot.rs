@@ -2,11 +2,8 @@ use std::fmt;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use crate::storage::StorageGeneration;
-use crate::{
-    DISTRIBUTION_LAYER_PRECEDENCE, JOB_LAYER_PRECEDENCE, LayerKind, LayeredFileStorage,
-    StorageIdentity, VirtualFile, VirtualPath,
-};
+use crate::storage::{GeneratedFiles, StorageGeneration, WorkspaceStorage};
+use crate::{StorageIdentity, VirtualFile, VirtualPath};
 
 /// Logical ownership retained by one immutable storage generation.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -54,21 +51,33 @@ impl std::error::Error for SnapshotError {}
 #[derive(Clone, Debug)]
 pub struct VfsSnapshot {
     generation: Arc<StorageGeneration>,
+    pending_generated: Option<Arc<GeneratedFiles>>,
     valid: Arc<AtomicBool>,
 }
 
-impl LayeredFileStorage {
+impl WorkspaceStorage {
     /// Captures the current generation with no accepted generated invalidations.
     #[must_use]
     pub fn snapshot(&self) -> VfsSnapshot {
-        VfsSnapshot::new(self.shared_generation())
+        VfsSnapshot::new(self.shared_generation(), None)
     }
 }
 
 impl VfsSnapshot {
-    fn new(generation: Arc<StorageGeneration>) -> Self {
+    pub(crate) fn with_pending(
+        generation: Arc<StorageGeneration>,
+        pending_generated: Arc<GeneratedFiles>,
+    ) -> Self {
+        Self::new(generation, Some(pending_generated))
+    }
+
+    fn new(
+        generation: Arc<StorageGeneration>,
+        pending_generated: Option<Arc<GeneratedFiles>>,
+    ) -> Self {
         Self {
             generation,
+            pending_generated,
             valid: Arc::new(AtomicBool::new(true)),
         }
     }
@@ -76,7 +85,7 @@ impl VfsSnapshot {
     /// Returns this snapshot's deterministic storage generation identity.
     #[must_use]
     pub fn generation_identity(&self) -> StorageIdentity {
-        self.generation.identity()
+        self.generation.identity(self.pending_generated.as_deref())
     }
 
     /// Returns logical bindings and bytes owned by the retained generation.
@@ -86,18 +95,26 @@ impl VfsSnapshot {
         let mut logical_bytes = 0usize;
         let mut input_bytes = 0usize;
         let mut generated_bytes = 0usize;
-        for kind in all_layers() {
-            for (_, file) in self.generation.layer(kind).files() {
+        for (files, generated) in [
+            (self.generation.user.files(), false),
+            (self.generation.resolved.files(), false),
+            (self.generation.accepted_generated.files(), true),
+        ] {
+            for (_, file) in files {
                 bindings += 1;
                 logical_bytes += file.bytes().len();
-                match kind {
-                    LayerKind::User | LayerKind::ResolvedResource => {
-                        input_bytes += file.bytes().len();
-                    }
-                    LayerKind::AcceptedGenerated | LayerKind::PendingGenerated => {
-                        generated_bytes += file.bytes().len();
-                    }
+                if generated {
+                    generated_bytes += file.bytes().len();
+                } else {
+                    input_bytes += file.bytes().len();
                 }
+            }
+        }
+        if let Some(pending) = &self.pending_generated {
+            for (_, file) in pending.files() {
+                bindings += 1;
+                logical_bytes += file.bytes().len();
+                generated_bytes += file.bytes().len();
             }
         }
         SnapshotRetention {
@@ -141,12 +158,7 @@ impl VfsSnapshot {
         limit: usize,
     ) -> Result<Vec<VirtualPath>, SnapshotError> {
         self.check_valid()?;
-        let layers: &[LayerKind] = if prefix.as_str().starts_with("/job/") {
-            &JOB_LAYER_PRECEDENCE
-        } else {
-            &DISTRIBUTION_LAYER_PRECEDENCE
-        };
-        self.list_inner(layers, Some(prefix), limit)
+        self.list_inner(prefix.as_str().starts_with("/job/"), Some(prefix), limit)
     }
 
     /// Enumerates every visible path under one namespace root.
@@ -156,23 +168,26 @@ impl VfsSnapshot {
         limit: usize,
     ) -> Result<Vec<VirtualPath>, SnapshotError> {
         self.check_valid()?;
-        let layers: &[LayerKind] = match root {
-            VirtualRoot::Job => &JOB_LAYER_PRECEDENCE,
-            VirtualRoot::Distribution => &DISTRIBUTION_LAYER_PRECEDENCE,
-        };
-        self.list_inner(layers, None, limit)
+        self.list_inner(matches!(root, VirtualRoot::Job), None, limit)
     }
 
     fn list_inner(
         &self,
-        layers: &[LayerKind],
+        job: bool,
         prefix: Option<&VirtualPath>,
         limit: usize,
     ) -> Result<Vec<VirtualPath>, SnapshotError> {
-        let mut iterators: Vec<_> = layers
-            .iter()
-            .map(|kind| self.generation.layer(*kind).files().peekable())
-            .collect();
+        let mut iterators: Vec<_> = if job {
+            let mut maps = Vec::with_capacity(3);
+            if let Some(pending) = &self.pending_generated {
+                maps.push(pending.files().peekable());
+            }
+            maps.push(self.generation.accepted_generated.files().peekable());
+            maps.push(self.generation.user.files().peekable());
+            maps
+        } else {
+            vec![self.generation.resolved.files().peekable()]
+        };
         let mut result = Vec::new();
 
         loop {
@@ -206,7 +221,7 @@ impl VfsSnapshot {
     fn check_valid(&self) -> Result<(), SnapshotError> {
         if self.is_stale() {
             Err(SnapshotError::Stale {
-                generation: self.generation.identity(),
+                generation: self.generation.identity(self.pending_generated.as_deref()),
             })
         } else {
             Ok(())
@@ -214,24 +229,16 @@ impl VfsSnapshot {
     }
 
     fn get_valid(&self, path: &VirtualPath) -> Option<&VirtualFile> {
-        let precedence: &[LayerKind] = if path.as_str().starts_with("/job/") {
-            &JOB_LAYER_PRECEDENCE
+        if path.as_str().starts_with("/job/") {
+            self.pending_generated
+                .as_ref()
+                .and_then(|files| files.get(path))
+                .or_else(|| self.generation.accepted_generated.get(path))
+                .or_else(|| self.generation.user.get(path))
         } else {
-            &DISTRIBUTION_LAYER_PRECEDENCE
-        };
-        precedence
-            .iter()
-            .find_map(|kind| self.generation.layer(*kind).get(path))
+            self.generation.resolved.get(path)
+        }
     }
-}
-
-fn all_layers() -> [LayerKind; 4] {
-    [
-        LayerKind::User,
-        LayerKind::ResolvedResource,
-        LayerKind::AcceptedGenerated,
-        LayerKind::PendingGenerated,
-    ]
 }
 
 fn matches_prefix(path: &VirtualPath, prefix: &VirtualPath) -> bool {

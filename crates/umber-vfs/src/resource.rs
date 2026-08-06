@@ -2,10 +2,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::sync::Arc;
 
+use crate::storage::{DistributionPath, JobPath, WorkspaceStorage};
 use crate::{
-    AdmissionError, FileContentId, FileOrigin, GeneratedTransaction, ImmutableBindingError,
-    LayerKind, LayeredFileStorage, ResourceLifecycle, VfsLimitError, VfsLimitKind, VfsLimits,
-    VfsSnapshot, VirtualFile, VirtualPath,
+    AdmissionError, FileContentId, FileOrigin, GeneratedTransaction, ResourceLifecycle,
+    VfsLimitError, VfsLimitKind, VfsLimits, VfsSnapshot, VirtualFile, VirtualPath,
 };
 
 #[cfg(test)]
@@ -485,7 +485,7 @@ impl ResourceLedger {
 #[derive(Clone, Debug)]
 pub struct ProjectWorkspace {
     limits: VfsLimits,
-    storage: LayeredFileStorage,
+    storage: WorkspaceStorage,
     ledger: ResourceLedger,
 }
 
@@ -493,7 +493,7 @@ impl ProjectWorkspace {
     pub fn new(limits: VfsLimits) -> Result<Self, VfsLimitError> {
         Ok(Self {
             limits: limits.validate()?,
-            storage: LayeredFileStorage::new(),
+            storage: WorkspaceStorage::default(),
             ledger: ResourceLedger::default(),
         })
     }
@@ -510,10 +510,11 @@ impl ProjectWorkspace {
         path: VirtualPath,
         bytes: Vec<u8>,
     ) -> Result<ProvisionOutcome, UserRegistrationError> {
+        let path =
+            JobPath::new(path).map_err(|path| UserRegistrationError::InvalidPath { path })?;
         self.limits.check(VfsLimitKind::OneFileBytes, bytes.len())?;
-        let existing = self.storage.layer(LayerKind::User).get(&path);
-        let next_files =
-            self.storage.layer(LayerKind::User).len() + usize::from(existing.is_none());
+        let existing = self.storage.user().get(path.as_path());
+        let next_files = self.storage.user().len() + usize::from(existing.is_none());
         self.limits.check(VfsLimitKind::UserFiles, next_files)?;
         let replaced = existing.map_or(0, |file| file.bytes().len());
         let next_bytes = self.limits.checked_replacement_total(
@@ -522,13 +523,13 @@ impl ProjectWorkspace {
             replaced,
             bytes.len(),
         )?;
-        let incoming = VirtualFile::new(path, bytes, FileOrigin::User);
-        let outcome = if existing.is_some_and(|file| file == &incoming) {
+        let bytes: Arc<[u8]> = bytes.into();
+        let outcome = if existing.is_some_and(|file| file.bytes() == bytes.as_ref()) {
             ProvisionOutcome::AlreadyPresent
         } else {
             ProvisionOutcome::Inserted
         };
-        self.storage.replace_user(incoming)?;
+        self.storage.replace_user(path, bytes);
         self.ledger.user_bytes = next_bytes;
         Ok(outcome)
     }
@@ -557,12 +558,12 @@ impl ProjectWorkspace {
 
     #[must_use]
     pub fn user_file_count(&self) -> usize {
-        self.storage.layer(LayerKind::User).len()
+        self.storage.user().len()
     }
 
     #[must_use]
     pub fn contains_user(&self, path: &VirtualPath) -> bool {
-        self.storage.layer(LayerKind::User).get(path).is_some()
+        self.storage.user().get(path).is_some()
     }
 
     /// Enumerates application-owned inputs in canonical path order.
@@ -570,10 +571,7 @@ impl ProjectWorkspace {
     /// Session orchestrators use this view to retain the immutable user-input
     /// overlay independently from the separately edited root buffer.
     pub fn user_files(&self) -> impl Iterator<Item = &VirtualFile> {
-        self.storage
-            .layer(LayerKind::User)
-            .files()
-            .map(|(_, file)| file)
+        self.storage.user().files().map(|(_, file)| file)
     }
 
     #[must_use]
@@ -680,7 +678,7 @@ impl ProjectWorkspace {
         if let Some(existing_path) = self.ledger.lifecycle.admitted(&response.request) {
             let existing = self
                 .storage
-                .layer(LayerKind::ResolvedResource)
+                .resolved()
                 .get(existing_path)
                 .expect("provisioned request paths remain registered");
             if existing_path == &path && existing.content_id() == content_id {
@@ -706,52 +704,42 @@ impl ProjectWorkspace {
             VfsLimitKind::ResolvedFiles,
             self.ledger.lifecycle.binding_count().saturating_add(1),
         )?;
-        let shared =
-            if let Some(existing) = self.storage.layer(LayerKind::ResolvedResource).get(&path) {
-                let FileOrigin::Resolved(existing_request) = existing.origin() else {
-                    unreachable!("resolved layer contains only resolved resources")
-                };
-                let existing_id = existing.content_id();
-                if existing_id != content_id {
-                    return Err(ProvisionError::PathConflict {
-                        path: Box::new(path),
-                        existing_request: Box::new(existing_request.clone()),
-                        incoming_request: Box::new(response.request),
-                        existing: existing_id,
-                        incoming: content_id,
-                    });
-                }
-                existing.shared_bytes()
-            } else {
-                let attempted = self
-                    .ledger
-                    .resolved_bytes
-                    .checked_add(response.bytes.len())
-                    .ok_or(VfsLimitError::LimitExceeded {
-                        kind: VfsLimitKind::ResolvedBytes,
-                        limit: self.limits.resolved_bytes,
-                        attempted: usize::MAX,
-                    })?;
-                self.limits.check(VfsLimitKind::ResolvedBytes, attempted)?;
-                self.ledger.resolved_bytes = attempted;
-                Arc::from(response.bytes)
+        let shared = if let Some(existing) = self.storage.resolved().get(&path) {
+            let FileOrigin::Resolved(existing_request) = existing.origin() else {
+                unreachable!("resolved layer contains only resolved resources")
             };
-        if self
-            .storage
-            .layer(LayerKind::ResolvedResource)
-            .get(&path)
-            .is_none()
-        {
-            self.storage
-                .insert(
-                    LayerKind::ResolvedResource,
-                    VirtualFile::new(
-                        path.clone(),
-                        Arc::clone(&shared),
-                        FileOrigin::Resolved(response.request.clone()),
-                    ),
-                )
-                .expect("new resolved paths satisfy layer ownership");
+            let existing_id = existing.content_id();
+            if existing_id != content_id {
+                return Err(ProvisionError::PathConflict {
+                    path: Box::new(path),
+                    existing_request: Box::new(existing_request.clone()),
+                    incoming_request: Box::new(response.request),
+                    existing: existing_id,
+                    incoming: content_id,
+                });
+            }
+            existing.shared_bytes()
+        } else {
+            let attempted = self
+                .ledger
+                .resolved_bytes
+                .checked_add(response.bytes.len())
+                .ok_or(VfsLimitError::LimitExceeded {
+                    kind: VfsLimitKind::ResolvedBytes,
+                    limit: self.limits.resolved_bytes,
+                    attempted: usize::MAX,
+                })?;
+            self.limits.check(VfsLimitKind::ResolvedBytes, attempted)?;
+            self.ledger.resolved_bytes = attempted;
+            Arc::from(response.bytes)
+        };
+        if self.storage.resolved().get(&path).is_none() {
+            self.storage.insert_resolved(
+                DistributionPath::new(path.clone())
+                    .expect("distribution canonicalization fixes the root"),
+                Arc::clone(&shared),
+                response.request.clone(),
+            );
         }
         if require_expected {
             self.ledger
@@ -784,7 +772,7 @@ impl ProjectWorkspace {
     #[must_use]
     pub fn get(&self, key: &FileRequestKey) -> Option<&VirtualFile> {
         let path = self.ledger.lifecycle.admitted(key)?;
-        self.storage.layer(LayerKind::ResolvedResource).get(path)
+        self.storage.resolved().get(path)
     }
 
     #[must_use]
@@ -796,7 +784,7 @@ impl ProjectWorkspace {
         self.ledger.lifecycle.admitted_entries().map(|(key, path)| {
             let file = self
                 .storage
-                .layer(LayerKind::ResolvedResource)
+                .resolved()
                 .get(path)
                 .expect("provisioned request paths remain registered");
             (key, file)
@@ -820,7 +808,7 @@ impl ProjectWorkspace {
 
     pub fn clear(&mut self) {
         self.ledger.lifecycle.clear();
-        self.storage.clear_layer(LayerKind::ResolvedResource);
+        self.storage.clear_resolved();
         self.ledger.resolved_bytes = 0;
         self.ledger.required_at_batch_start = 0;
     }
@@ -835,8 +823,7 @@ impl ProjectWorkspace {
     /// Drops accepted generated files while preserving immutable user and
     /// resolved-resource registrations.
     pub fn clear_generated_outputs(&mut self) {
-        self.storage.clear_layer(LayerKind::AcceptedGenerated);
-        self.storage.clear_layer(LayerKind::PendingGenerated);
+        self.storage.clear_generated();
     }
 
     fn require_expected(&self, request: &FileRequestKey) -> Result<(), ProvisionError> {
@@ -873,14 +860,14 @@ fn map_admission(error: AdmissionError<FileRequestKey>) -> ProvisionError {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum UserRegistrationError {
     Limit(VfsLimitError),
-    Storage(ImmutableBindingError),
+    InvalidPath { path: VirtualPath },
 }
 
 impl fmt::Display for UserRegistrationError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Limit(error) => error.fmt(f),
-            Self::Storage(error) => error.fmt(f),
+            Self::InvalidPath { path } => write!(f, "user path is outside /job: {path}"),
         }
     }
 }
@@ -890,11 +877,5 @@ impl std::error::Error for UserRegistrationError {}
 impl From<VfsLimitError> for UserRegistrationError {
     fn from(value: VfsLimitError) -> Self {
         Self::Limit(value)
-    }
-}
-
-impl From<ImmutableBindingError> for UserRegistrationError {
-    fn from(value: ImmutableBindingError) -> Self {
-        Self::Storage(value)
     }
 }

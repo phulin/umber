@@ -4,205 +4,39 @@ use std::sync::Arc;
 
 use tex_content::{ContentDomain, ContentIdentity};
 
-use crate::{FileContentId, FileOrigin, VirtualFile, VirtualPath};
+use crate::{FileOrigin, FileRequestKey, VirtualFile, VirtualPath};
 
-/// The four ownership layers in a virtual workspace.
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-#[repr(u8)]
-pub enum LayerKind {
-    User = 1,
-    ResolvedResource = 2,
-    AcceptedGenerated = 3,
-    PendingGenerated = 4,
-}
-
-/// Exact `/job` lookup precedence; pending stage ordering is added by transactions.
-pub const JOB_LAYER_PRECEDENCE: [LayerKind; 3] = [
-    LayerKind::PendingGenerated,
-    LayerKind::AcceptedGenerated,
-    LayerKind::User,
-];
-
-/// Exact `/texlive` lookup precedence.
-pub const DISTRIBUTION_LAYER_PRECEDENCE: [LayerKind; 1] = [LayerKind::ResolvedResource];
-
-/// The result of adding an immutable binding to a layer.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum InsertOutcome {
-    Inserted,
-    AlreadyPresent,
-}
-
-/// A deterministic immutable-path registration failure.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum ImmutableBindingError {
-    WrongOrigin {
-        layer: LayerKind,
-        origin: FileOrigin,
-    },
-    WrongRoot {
-        layer: LayerKind,
-        path: VirtualPath,
-    },
-    Conflict {
-        layer: LayerKind,
-        path: VirtualPath,
-        existing: FileContentId,
-        incoming: FileContentId,
-    },
-    OriginConflict {
-        layer: LayerKind,
-        path: VirtualPath,
-        existing: FileOrigin,
-        incoming: FileOrigin,
-    },
-}
-
-impl fmt::Display for ImmutableBindingError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::WrongOrigin { layer, origin } => {
-                write!(f, "origin {origin:?} cannot be stored in {layer:?}")
-            }
-            Self::WrongRoot { layer, path } => {
-                write!(f, "path {path} is outside the root owned by {layer:?}")
-            }
-            Self::Conflict {
-                layer,
-                path,
-                existing,
-                incoming,
-            } => write!(
-                f,
-                "immutable binding conflict in {layer:?} at {path}: {existing} != {incoming}"
-            ),
-            Self::OriginConflict {
-                layer,
-                path,
-                existing,
-                incoming,
-            } => write!(
-                f,
-                "immutable origin conflict in {layer:?} at {path}: {existing:?} != {incoming:?}"
-            ),
-        }
-    }
-}
-
-impl std::error::Error for ImmutableBindingError {}
-
-/// One deterministically ordered immutable ownership layer.
 #[derive(Clone, Debug)]
-pub struct FileLayer {
-    kind: LayerKind,
-    files: BTreeMap<VirtualPath, VirtualFile>,
-}
+pub(crate) struct JobPath(VirtualPath);
 
-impl FileLayer {
-    #[must_use]
-    pub fn new(kind: LayerKind) -> Self {
-        Self {
-            kind,
-            files: BTreeMap::new(),
+impl JobPath {
+    pub(crate) fn new(path: VirtualPath) -> Result<Self, VirtualPath> {
+        if path.as_str().starts_with("/job/") {
+            Ok(Self(path))
+        } else {
+            Err(path)
         }
     }
 
-    #[must_use]
-    pub const fn kind(&self) -> LayerKind {
-        self.kind
-    }
-
-    #[must_use]
-    pub fn len(&self) -> usize {
-        self.files.len()
-    }
-
-    #[must_use]
-    pub fn is_empty(&self) -> bool {
-        self.files.is_empty()
-    }
-
-    pub fn insert(&mut self, file: VirtualFile) -> Result<InsertOutcome, ImmutableBindingError> {
-        validate_ownership(self.kind, &file)?;
-        if let Some(existing) = self.files.get(file.path()) {
-            if existing.content_id() != file.content_id() {
-                return Err(ImmutableBindingError::Conflict {
-                    layer: self.kind,
-                    path: file.path().clone(),
-                    existing: existing.content_id(),
-                    incoming: file.content_id(),
-                });
-            }
-            if existing.origin() != file.origin() {
-                return Err(ImmutableBindingError::OriginConflict {
-                    layer: self.kind,
-                    path: file.path().clone(),
-                    existing: existing.origin().clone(),
-                    incoming: file.origin().clone(),
-                });
-            }
-            return Ok(InsertOutcome::AlreadyPresent);
-        }
-        self.files.insert(file.path().clone(), file);
-        Ok(InsertOutcome::Inserted)
-    }
-
-    pub(crate) fn files(&self) -> impl Iterator<Item = (&VirtualPath, &VirtualFile)> {
-        self.files.iter()
-    }
-
-    pub(crate) fn get(&self, path: &VirtualPath) -> Option<&VirtualFile> {
-        self.files.get(path)
-    }
-
-    pub(crate) fn replace(&mut self, file: VirtualFile) -> Result<(), ImmutableBindingError> {
-        validate_ownership(self.kind, &file)?;
-        self.files.insert(file.path().clone(), file);
-        Ok(())
-    }
-
-    pub(crate) fn reclassified(&self, kind: LayerKind) -> Result<Self, ImmutableBindingError> {
-        let mut layer = Self::new(kind);
-        for file in self.files.values().cloned() {
-            layer.replace(file)?;
-        }
-        Ok(layer)
+    pub(crate) fn as_path(&self) -> &VirtualPath {
+        &self.0
     }
 }
 
-fn validate_ownership(kind: LayerKind, file: &VirtualFile) -> Result<(), ImmutableBindingError> {
-    let origin_matches = matches!(
-        (kind, file.origin()),
-        (LayerKind::User, FileOrigin::User)
-            | (LayerKind::ResolvedResource, FileOrigin::Resolved(_))
-            | (
-                LayerKind::AcceptedGenerated | LayerKind::PendingGenerated,
-                FileOrigin::Generated
-            )
-    );
-    if !origin_matches {
-        return Err(ImmutableBindingError::WrongOrigin {
-            layer: kind,
-            origin: file.origin().clone(),
-        });
-    }
+#[derive(Clone, Debug)]
+pub(crate) struct DistributionPath(VirtualPath);
 
-    let path_matches = match kind {
-        LayerKind::User | LayerKind::AcceptedGenerated | LayerKind::PendingGenerated => {
-            file.path().as_str().starts_with("/job/")
+impl DistributionPath {
+    pub(crate) fn new(path: VirtualPath) -> Result<Self, VirtualPath> {
+        if path.as_str().starts_with("/texlive/") {
+            Ok(Self(path))
+        } else {
+            Err(path)
         }
-        LayerKind::ResolvedResource => file.path().as_str().starts_with("/texlive/"),
-    };
-    if !path_matches {
-        return Err(ImmutableBindingError::WrongRoot {
-            layer: kind,
-            path: file.path().clone(),
-        });
     }
-    Ok(())
 }
 
-/// Stable identity of all file bindings, origins, and layer ownership.
+/// Stable identity of all file bindings, origins, and ownership classes.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct StorageIdentity(ContentIdentity);
 
@@ -214,129 +48,158 @@ impl StorageIdentity {
 }
 
 impl fmt::Display for StorageIdentity {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.0.hex())
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.0.hex())
     }
 }
 
-/// Separate deterministic storage for the four VFS ownership layers.
-#[derive(Clone, Debug)]
-pub(crate) struct StorageGeneration {
-    user: Arc<FileLayer>,
-    resolved_resource: Arc<FileLayer>,
-    accepted_generated: Arc<FileLayer>,
-    pending_generated: Arc<FileLayer>,
-}
+#[derive(Clone, Debug, Default)]
+pub(crate) struct UserFiles(BTreeMap<VirtualPath, VirtualFile>);
 
-impl StorageGeneration {
-    pub(crate) fn layer(&self, kind: LayerKind) -> &FileLayer {
-        match kind {
-            LayerKind::User => &self.user,
-            LayerKind::ResolvedResource => &self.resolved_resource,
-            LayerKind::AcceptedGenerated => &self.accepted_generated,
-            LayerKind::PendingGenerated => &self.pending_generated,
+#[derive(Clone, Debug, Default)]
+pub(crate) struct ResolvedFiles(BTreeMap<VirtualPath, VirtualFile>);
+
+#[derive(Clone, Debug, Default)]
+pub(crate) struct GeneratedFiles(BTreeMap<VirtualPath, VirtualFile>);
+
+macro_rules! file_map_accessors {
+    ($map:ident) => {
+        impl $map {
+            pub(crate) fn len(&self) -> usize {
+                self.0.len()
+            }
+
+            pub(crate) fn get(&self, path: &VirtualPath) -> Option<&VirtualFile> {
+                self.0.get(path)
+            }
+
+            pub(crate) fn files(
+                &self,
+            ) -> std::collections::btree_map::Iter<'_, VirtualPath, VirtualFile> {
+                self.0.iter()
+            }
         }
+    };
+}
+
+file_map_accessors!(UserFiles);
+file_map_accessors!(GeneratedFiles);
+
+impl ResolvedFiles {
+    pub(crate) fn get(&self, path: &VirtualPath) -> Option<&VirtualFile> {
+        self.0.get(path)
+    }
+
+    pub(crate) fn files(&self) -> std::collections::btree_map::Iter<'_, VirtualPath, VirtualFile> {
+        self.0.iter()
     }
 }
 
-/// Mutable handle to copy-on-write deterministic file storage.
+impl UserFiles {
+    pub(crate) fn replace(&mut self, path: JobPath, bytes: Arc<[u8]>) {
+        let path = path.0;
+        self.0.insert(
+            path.clone(),
+            VirtualFile::new(path, bytes, FileOrigin::User),
+        );
+    }
+}
+
+impl ResolvedFiles {
+    pub(crate) fn insert(
+        &mut self,
+        path: DistributionPath,
+        bytes: Arc<[u8]>,
+        request: FileRequestKey,
+    ) {
+        let path = path.0;
+        self.0.insert(
+            path.clone(),
+            VirtualFile::new(path, bytes, FileOrigin::Resolved(request)),
+        );
+    }
+}
+
+impl GeneratedFiles {
+    pub(crate) fn replace(&mut self, path: JobPath, bytes: Arc<[u8]>) {
+        let path = path.0;
+        self.0.insert(
+            path.clone(),
+            VirtualFile::new(path, bytes, FileOrigin::Generated),
+        );
+    }
+}
+
+/// One durable copy-on-write VFS generation.
 ///
-/// Snapshots retain the previous generation, while a mutation copies only the
-/// generation header and the layer being changed.
-#[derive(Clone, Debug)]
-pub struct LayeredFileStorage {
+/// Each field has a distinct map type whose only constructors assign its
+/// required root and origin. A durable generation therefore cannot contain a
+/// pending file or an invalid root/origin combination.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct StorageGeneration {
+    pub(crate) user: Arc<UserFiles>,
+    pub(crate) resolved: Arc<ResolvedFiles>,
+    pub(crate) accepted_generated: Arc<GeneratedFiles>,
+}
+
+/// Private mutable handle for durable copy-on-write storage.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct WorkspaceStorage {
     generation: Arc<StorageGeneration>,
 }
 
-impl LayeredFileStorage {
-    #[must_use]
-    pub fn new() -> Self {
-        Self {
-            generation: Arc::new(StorageGeneration {
-                user: Arc::new(FileLayer::new(LayerKind::User)),
-                resolved_resource: Arc::new(FileLayer::new(LayerKind::ResolvedResource)),
-                accepted_generated: Arc::new(FileLayer::new(LayerKind::AcceptedGenerated)),
-                pending_generated: Arc::new(FileLayer::new(LayerKind::PendingGenerated)),
-            }),
-        }
+impl WorkspaceStorage {
+    pub(crate) fn user(&self) -> &UserFiles {
+        &self.generation.user
     }
 
-    #[must_use]
-    pub fn layer(&self, kind: LayerKind) -> &FileLayer {
-        self.generation.layer(kind)
+    pub(crate) fn resolved(&self) -> &ResolvedFiles {
+        &self.generation.resolved
     }
 
-    pub fn insert(
+    pub(crate) fn replace_user(&mut self, path: JobPath, bytes: Arc<[u8]>) {
+        let generation = Arc::make_mut(&mut self.generation);
+        Arc::make_mut(&mut generation.user).replace(path, bytes);
+    }
+
+    pub(crate) fn insert_resolved(
         &mut self,
-        kind: LayerKind,
-        file: VirtualFile,
-    ) -> Result<InsertOutcome, ImmutableBindingError> {
+        path: DistributionPath,
+        bytes: Arc<[u8]>,
+        request: FileRequestKey,
+    ) {
         let generation = Arc::make_mut(&mut self.generation);
-        let layer = match kind {
-            LayerKind::User => &mut generation.user,
-            LayerKind::ResolvedResource => &mut generation.resolved_resource,
-            LayerKind::AcceptedGenerated => &mut generation.accepted_generated,
-            LayerKind::PendingGenerated => &mut generation.pending_generated,
-        };
-        Arc::make_mut(layer).insert(file)
+        Arc::make_mut(&mut generation.resolved).insert(path, bytes, request);
     }
 
-    /// Replaces one user-layer binding.
-    ///
-    /// Session owners use this only before accepted history exists, or when
-    /// deliberately resetting that history while preserving the latest editor
-    /// root. Ordinary immutable registration continues to use [`Self::insert`].
-    pub(crate) fn replace_user(&mut self, file: VirtualFile) -> Result<(), ImmutableBindingError> {
-        let generation = Arc::make_mut(&mut self.generation);
-        Arc::make_mut(&mut generation.user).replace(file)
+    pub(crate) fn clear_resolved(&mut self) {
+        Arc::make_mut(&mut self.generation).resolved = Arc::default();
     }
 
-    pub(crate) fn clear_layer(&mut self, kind: LayerKind) {
-        self.replace_layer(FileLayer::new(kind));
+    pub(crate) fn publish_generated(&mut self, generated: Arc<GeneratedFiles>) {
+        Arc::make_mut(&mut self.generation).accepted_generated = generated;
     }
 
-    /// Computes storage identity in explicit layer and canonical-path order.
-    #[must_use]
-    pub fn identity(&self) -> StorageIdentity {
-        self.generation.identity()
+    pub(crate) fn clear_generated(&mut self) {
+        Arc::make_mut(&mut self.generation).accepted_generated = Arc::default();
     }
 
     pub(crate) fn shared_generation(&self) -> Arc<StorageGeneration> {
         Arc::clone(&self.generation)
     }
-
-    pub(crate) fn replace_layer(&mut self, layer: FileLayer) {
-        let generation = Arc::make_mut(&mut self.generation);
-        let target = match layer.kind() {
-            LayerKind::User => &mut generation.user,
-            LayerKind::ResolvedResource => &mut generation.resolved_resource,
-            LayerKind::AcceptedGenerated => &mut generation.accepted_generated,
-            LayerKind::PendingGenerated => &mut generation.pending_generated,
-        };
-        *target = Arc::new(layer);
-    }
 }
 
 impl StorageGeneration {
-    pub(crate) fn identity(&self) -> StorageIdentity {
+    pub(crate) fn identity(&self, pending: Option<&GeneratedFiles>) -> StorageIdentity {
         let mut preimage = Vec::new();
-        preimage.push(1); // Layered storage schema version.
-        for kind in [
-            LayerKind::User,
-            LayerKind::ResolvedResource,
-            LayerKind::AcceptedGenerated,
-            LayerKind::PendingGenerated,
-        ] {
-            let layer = self.layer(kind);
-            preimage.push(kind as u8);
-            preimage.extend_from_slice(&(layer.len() as u64).to_le_bytes());
-            for (path, file) in layer.files() {
-                let path_bytes = path.as_str().as_bytes();
-                preimage.extend_from_slice(&(path_bytes.len() as u64).to_le_bytes());
-                preimage.extend_from_slice(path_bytes);
-                preimage.extend_from_slice(&file.content_id().identity().bytes());
-                encode_origin(file.origin(), &mut preimage);
-            }
+        preimage.push(1); // Layered storage schema version retained for compatibility.
+        encode_map(1, &self.user.0, &mut preimage);
+        encode_map(2, &self.resolved.0, &mut preimage);
+        encode_map(3, &self.accepted_generated.0, &mut preimage);
+        if let Some(pending) = pending {
+            encode_map(4, &pending.0, &mut preimage);
+        } else {
+            encode_map(4, &BTreeMap::new(), &mut preimage);
         }
         StorageIdentity(ContentIdentity::for_domain(
             ContentDomain::VirtualFileStorage,
@@ -345,9 +208,15 @@ impl StorageGeneration {
     }
 }
 
-impl Default for LayeredFileStorage {
-    fn default() -> Self {
-        Self::new()
+fn encode_map(tag: u8, files: &BTreeMap<VirtualPath, VirtualFile>, preimage: &mut Vec<u8>) {
+    preimage.push(tag);
+    preimage.extend_from_slice(&(files.len() as u64).to_le_bytes());
+    for (path, file) in files {
+        let path_bytes = path.as_str().as_bytes();
+        preimage.extend_from_slice(&(path_bytes.len() as u64).to_le_bytes());
+        preimage.extend_from_slice(path_bytes);
+        preimage.extend_from_slice(&file.content_id().identity().bytes());
+        encode_origin(file.origin(), preimage);
     }
 }
 
@@ -362,8 +231,6 @@ fn encode_origin(origin: &FileOrigin, bytes: &mut Vec<u8>) {
             bytes.extend_from_slice(&(name.len() as u64).to_le_bytes());
             bytes.extend_from_slice(name);
         }
-        FileOrigin::Generated => {
-            bytes.push(3);
-        }
+        FileOrigin::Generated => bytes.push(3),
     }
 }

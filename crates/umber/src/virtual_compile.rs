@@ -3027,7 +3027,9 @@ fn memory_run_output_bytes(output: &MemoryRunOutput) -> usize {
 fn map_user_registration(error: UserRegistrationError) -> CompileError {
     match error {
         UserRegistrationError::Limit(error) => map_vfs_limit(error),
-        UserRegistrationError::Storage(error) => CompileError::World(error.to_string()),
+        UserRegistrationError::InvalidPath { path } => {
+            CompileError::World(format!("user path is outside /job: {path}"))
+        }
     }
 }
 

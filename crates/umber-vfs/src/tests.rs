@@ -3,36 +3,7 @@ use std::sync::Arc;
 
 use proptest::prelude::*;
 
-use super::{
-    DISTRIBUTION_LAYER_PRECEDENCE, FileKind, FileOrigin, FileRequestKey, ImmutableBindingError,
-    InsertOutcome, JOB_LAYER_PRECEDENCE, LayerKind, LayeredFileStorage, VirtualFile, VirtualPath,
-    VirtualPathError,
-};
-
-fn user_file(path: &str, bytes: &[u8]) -> VirtualFile {
-    VirtualFile::new(
-        VirtualPath::user(path).expect("user path"),
-        Arc::<[u8]>::from(bytes),
-        FileOrigin::User,
-    )
-}
-
-fn resolved_file(path: &str, bytes: &[u8]) -> VirtualFile {
-    let request = FileRequestKey::new(FileKind::TexInput, "plain.tex").expect("request");
-    VirtualFile::new(
-        VirtualPath::distribution(path).expect("distribution path"),
-        Arc::<[u8]>::from(bytes),
-        FileOrigin::Resolved(request),
-    )
-}
-
-fn generated_file(path: &str, bytes: &[u8]) -> VirtualFile {
-    VirtualFile::new(
-        VirtualPath::user(path).expect("generated path"),
-        Arc::<[u8]>::from(bytes),
-        FileOrigin::Generated,
-    )
-}
+use super::{FileOrigin, ProjectWorkspace, VfsLimits, VirtualFile, VirtualPath, VirtualPathError};
 
 fn assert_path(actual: Result<VirtualPath, VirtualPathError>, expected: &str) {
     let actual = actual.expect("valid virtual path");
@@ -206,150 +177,28 @@ fn virtual_files_share_bytes_and_separate_content_from_path_binding_identity() {
 }
 
 #[test]
-fn ownership_layers_and_lookup_precedence_are_explicit() {
-    assert_eq!(
-        JOB_LAYER_PRECEDENCE,
-        [
-            LayerKind::PendingGenerated,
-            LayerKind::AcceptedGenerated,
-            LayerKind::User
-        ]
-    );
-    assert_eq!(DISTRIBUTION_LAYER_PRECEDENCE, [LayerKind::ResolvedResource]);
-
-    let mut storage = LayeredFileStorage::new();
-    assert_eq!(
-        storage.insert(LayerKind::User, user_file("main.tex", b"user")),
-        Ok(InsertOutcome::Inserted)
-    );
-    assert_eq!(
-        storage.insert(
-            LayerKind::ResolvedResource,
-            resolved_file("/texlive/plain.tex", b"resource")
-        ),
-        Ok(InsertOutcome::Inserted)
-    );
-    assert_eq!(
-        storage.insert(
-            LayerKind::AcceptedGenerated,
-            generated_file("main.aux", b"accepted")
-        ),
-        Ok(InsertOutcome::Inserted)
-    );
-    assert_eq!(
-        storage.insert(
-            LayerKind::PendingGenerated,
-            generated_file("main.aux", b"pending")
-        ),
-        Ok(InsertOutcome::Inserted)
-    );
-    for kind in [
-        LayerKind::User,
-        LayerKind::ResolvedResource,
-        LayerKind::AcceptedGenerated,
-        LayerKind::PendingGenerated,
-    ] {
-        assert_eq!(storage.layer(kind).kind(), kind);
-        assert_eq!(storage.layer(kind).len(), 1);
-        assert!(!storage.layer(kind).is_empty());
-    }
-}
-
-#[test]
-fn layers_reject_wrong_roots_and_origins() {
-    let mut storage = LayeredFileStorage::new();
-    let wrong_origin = resolved_file("/texlive/plain.tex", b"plain");
-    assert_eq!(
-        storage.insert(LayerKind::User, wrong_origin),
-        Err(ImmutableBindingError::WrongOrigin {
-            layer: LayerKind::User,
-            origin: FileOrigin::Resolved(
-                FileRequestKey::new(FileKind::TexInput, "plain.tex").expect("request")
-            ),
-        })
-    );
-
-    let wrong_root = VirtualFile::new(
-        VirtualPath::distribution("/texlive/plain.tex").expect("path"),
-        Arc::<[u8]>::from(&b"plain"[..]),
-        FileOrigin::User,
-    );
-    assert_eq!(
-        storage.insert(LayerKind::User, wrong_root),
-        Err(ImmutableBindingError::WrongRoot {
-            layer: LayerKind::User,
-            path: VirtualPath::distribution("/texlive/plain.tex").expect("path"),
-        })
-    );
-}
-
-#[test]
-fn exact_duplicate_is_idempotent_and_every_immutable_conflict_fails() {
-    let mut storage = LayeredFileStorage::new();
-    let exact = user_file("main.tex", b"one");
-    assert_eq!(
-        storage.insert(LayerKind::User, exact.clone()),
-        Ok(InsertOutcome::Inserted)
-    );
-    assert_eq!(
-        storage.insert(LayerKind::User, exact),
-        Ok(InsertOutcome::AlreadyPresent)
-    );
-
-    let different_bytes = user_file("main.tex", b"two");
-    assert!(matches!(
-        storage.insert(LayerKind::User, different_bytes),
-        Err(ImmutableBindingError::Conflict {
-            layer: LayerKind::User,
-            ..
-        })
-    ));
-
-    let different_origin = VirtualFile::new(
-        VirtualPath::user("main.tex").expect("path"),
-        Arc::<[u8]>::from(&b"one"[..]),
-        FileOrigin::Generated,
-    );
-    assert_eq!(
-        storage.insert(LayerKind::User, different_origin),
-        Err(ImmutableBindingError::WrongOrigin {
-            layer: LayerKind::User,
-            origin: FileOrigin::Generated,
-        })
-    );
-
-    let mut generated = LayeredFileStorage::new();
-    generated
-        .insert(
-            LayerKind::AcceptedGenerated,
-            generated_file("main.aux", b"one"),
-        )
-        .expect("first producer");
-    assert_eq!(
-        generated.insert(
-            LayerKind::AcceptedGenerated,
-            generated_file("main.aux", b"one")
-        ),
-        Ok(InsertOutcome::AlreadyPresent)
-    );
-}
-
-#[test]
 fn storage_identity_covers_layers_and_provenance() {
-    let mut user = LayeredFileStorage::new();
-    user.insert(LayerKind::User, user_file("same.tex", b"same"))
-        .expect("insert user");
-
-    let mut pending = LayeredFileStorage::new();
-    pending
-        .insert(
-            LayerKind::PendingGenerated,
-            generated_file("same.tex", b"same"),
+    let mut user = ProjectWorkspace::new(VfsLimits::default()).expect("VFS");
+    user.register_user(
+        VirtualPath::user("same.tex").expect("path"),
+        b"same".to_vec(),
+    )
+    .expect("insert user");
+    let user_identity = user.snapshot().generation_identity();
+    let mut generated = ProjectWorkspace::new(VfsLimits::default()).expect("VFS");
+    let mut transaction = generated.begin_generated();
+    transaction
+        .write(
+            VirtualPath::user("same.tex").expect("path"),
+            b"same".to_vec(),
         )
         .expect("insert generated");
-    assert_ne!(user.identity(), pending.identity());
-
-    assert_eq!(pending.identity(), pending.clone().identity());
+    let generated_identity = transaction.snapshot().generation_identity();
+    assert_ne!(user_identity, generated_identity);
+    assert_eq!(
+        generated_identity,
+        transaction.snapshot().generation_identity()
+    );
 }
 
 proptest! {
@@ -379,15 +228,15 @@ proptest! {
     fn storage_identity_ignores_allocation_and_insertion_order(
         entries in prop::collection::btree_map("[a-z]{1,8}\\.tex", prop::collection::vec(any::<u8>(), 0..64), 0..32)
     ) {
-        let mut forward = LayeredFileStorage::new();
-        let mut reverse = LayeredFileStorage::new();
+        let mut forward = ProjectWorkspace::new(VfsLimits::default()).expect("VFS");
+        let mut reverse = ProjectWorkspace::new(VfsLimits::default()).expect("VFS");
         for (path, bytes) in &entries {
-            forward.insert(LayerKind::User, user_file(path, bytes)).expect("unique insert");
+            forward.register_user(VirtualPath::user(path).expect("path"), bytes.clone()).expect("unique insert");
         }
         for (path, bytes) in entries.iter().rev() {
             let independently_allocated = bytes.clone();
-            reverse.insert(LayerKind::User, user_file(path, &independently_allocated)).expect("unique insert");
+            reverse.register_user(VirtualPath::user(path).expect("path"), independently_allocated).expect("unique insert");
         }
-        prop_assert_eq!(forward.identity(), reverse.identity());
+        prop_assert_eq!(forward.snapshot().generation_identity(), reverse.snapshot().generation_identity());
     }
 }

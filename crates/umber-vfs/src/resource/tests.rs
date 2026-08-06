@@ -78,6 +78,17 @@ fn user_registration_is_atomic_and_snapshots_retain_exact_generations() {
 }
 
 #[test]
+fn user_registration_rejects_distribution_paths_before_storage() {
+    let mut workspace = ProjectWorkspace::new(VfsLimits::default()).expect("VFS");
+    let path = VirtualPath::distribution("/texlive/plain.tex").expect("path");
+    assert_eq!(
+        workspace.register_user(path.clone(), b"plain".to_vec()),
+        Err(UserRegistrationError::InvalidPath { path })
+    );
+    assert_eq!(workspace.user_file_count(), 0);
+}
+
+#[test]
 fn resolved_registration_and_clear_are_reflected_in_vfs_snapshots() {
     let mut registry = ProjectWorkspace::new(VfsLimits::default()).expect("registry");
     let user = VirtualPath::user("main.tex").expect("user path");

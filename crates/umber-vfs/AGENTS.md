@@ -7,7 +7,7 @@ document pipelines.
 ## Crate Role
 
 `umber-vfs` owns canonical `/job` and `/texlive` virtual paths plus immutable
-file identity, deterministic four-layer storage, and generated-file transactions.
+file identity, three shape-safe durable maps, and generated-file transactions.
 Its resource-registration and accounting boundaries are specified in
 `docs/umber_vfs.md`.
 
@@ -31,7 +31,8 @@ Its resource-registration and accounting boundaries are specified in
 - `src/resource/tests.rs`: request, registration, conflict, limit, and retry tests.
 - `src/snapshot.rs`: immutable generation snapshots, exact reads, invalidation, and bounded enumeration.
 - `src/snapshot/tests.rs`: snapshot stability, precedence, retention, staleness, and ordering tests.
-- `src/storage.rs`: deterministic ownership layers and conflict handling.
+- `src/storage.rs`: private shape-safe user, resolved, and accepted-generated
+  copy-on-write maps plus compatible storage identity encoding.
 - `src/transaction.rs`: complete generated-set writes and atomic workspace publication.
 - `src/transaction/tests.rs`: transaction visibility, replacement, rollback, snapshot, and limit tests.
 - `src/tests.rs`: focused identity, storage, canonicalization, and property tests.
