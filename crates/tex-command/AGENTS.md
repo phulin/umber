@@ -151,7 +151,12 @@ print channel of its own outside the borrowed
   `primitive_metadata.rs` own the exhaustive TeX82, e-TeX 2.6, Umber LaTeX
   compatibility, and pdfTeX 1.40.29 enum-backed primitive spelling, meaning,
   profile, and canonical observation identity authority. `registry.rs`
-  consumes it for fresh-INITEX versus format-restore installation.
+  consumes generated profile and installation slices for fresh-INITEX versus
+  format-restore installation. `generated.rs` projects stable operand maps,
+  profile slices, observation identities, prefix policy, and deterministic
+  documentation tables; `parameters.rs` projects parameter cells and semantic
+  defaults, including job-clock and pdfTeX policies. Neither generated view
+  contains execution behavior.
   `catalogue.rs` defines the behavior-free canonical descriptor vocabulary and
   exhaustive structural/uniqueness validation used by the generated catalogue
   migration.

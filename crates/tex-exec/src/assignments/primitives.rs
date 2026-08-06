@@ -347,3 +347,68 @@ const PAGE_INTEGERS: &[(&str, PageInteger)] = &[
     ("deadcycles", PageInteger::DeadCycles),
     ("insertpenalties", PageInteger::InsertPenalties),
 ];
+
+#[cfg(test)]
+mod catalogue_view_tests {
+    use std::collections::HashSet;
+
+    use super::*;
+
+    #[test]
+    fn generated_tex82_parameter_view_matches_registration_inventory_order() {
+        let expected = INT_PARAMS
+            .iter()
+            .map(|(name, index)| (*name, Meaning::IntParam(*index)))
+            .chain(
+                DIMEN_PARAMS
+                    .iter()
+                    .map(|(name, index)| (*name, Meaning::DimenParam(*index))),
+            )
+            .chain(
+                GLUE_PARAMS
+                    .iter()
+                    .map(|(name, index)| (*name, Meaning::GlueParam(*index))),
+            )
+            .chain(
+                MU_GLUE_PARAMS
+                    .iter()
+                    .map(|(name, index)| (*name, Meaning::MuGlueParam(*index))),
+            )
+            .chain(
+                TOK_PARAMS
+                    .iter()
+                    .map(|(name, index)| (*name, Meaning::TokParam(*index))),
+            )
+            .collect::<Vec<_>>();
+        let generated =
+            tex_command::primitive_parameter_views(tex_command::PrimitiveProfile::Tex82)
+                .into_iter()
+                .map(|row| (row.name, row.meaning))
+                .collect::<Vec<_>>();
+        assert_eq!(generated, expected);
+    }
+
+    #[test]
+    fn generated_etex_parameter_view_matches_unique_registration_inventory_order() {
+        let mut seen = HashSet::new();
+        let expected = [("everyeof", Meaning::TokParam(TokParam::EVERY_EOF.raw()))]
+            .into_iter()
+            .chain([(
+                "tracingscantokens",
+                Meaning::IntParam(IntParam::TRACING_SCAN_TOKENS.raw()),
+            )])
+            .chain(
+                ETEX_INT_PARAMS
+                    .iter()
+                    .map(|(name, parameter)| (*name, Meaning::IntParam(parameter.raw()))),
+            )
+            .filter(|(name, _)| seen.insert(*name))
+            .collect::<Vec<_>>();
+        let generated =
+            tex_command::primitive_parameter_views(tex_command::PrimitiveProfile::Etex26)
+                .into_iter()
+                .map(|row| (row.name, row.meaning))
+                .collect::<Vec<_>>();
+        assert_eq!(generated, expected);
+    }
+}

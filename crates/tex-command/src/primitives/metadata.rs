@@ -21,6 +21,17 @@ pub(crate) struct PrimitiveSpelling {
     pub(crate) register_after_format_load: bool,
 }
 
+impl PrimitiveSpelling {
+    pub(crate) const fn installation(self) -> super::InstallationPolicy {
+        match (self.install_in_initex, self.register_after_format_load) {
+            (true, true) => super::InstallationPolicy::BOTH,
+            (true, false) => super::InstallationPolicy::INITEX,
+            (false, true) => super::InstallationPolicy::FORMAT_REGISTRY,
+            (false, false) => super::InstallationPolicy::NONE,
+        }
+    }
+}
+
 #[derive(Clone, Copy)]
 pub(crate) struct PrimitiveMetadata {
     pub(crate) meaning: Meaning,

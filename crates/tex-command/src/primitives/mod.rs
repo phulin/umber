@@ -1,7 +1,9 @@
 //! Private static primitive dispatch families.
 
 mod catalogue;
+mod generated;
 pub(crate) mod metadata;
+mod parameters;
 mod prefixed;
 mod registry;
 
@@ -12,6 +14,12 @@ pub use catalogue::{
     PrimitiveOperandDomain, PrimitiveProfile, PrimitiveProfiles, PrimitiveSpelling, SpellingKind,
     WebIdentity,
 };
+pub use generated::{
+    EnumPrimitiveView, PrimitiveDocumentationRow, PrimitiveRegistration, enum_primitive_views,
+    meaning_for_operand, primitive_documentation_rows, primitive_observation_identity,
+    primitive_registrations, render_primitive_documentation_table,
+};
+pub use parameters::{PrimitiveParameterView, primitive_parameter_views};
 pub(crate) use prefixed::is_prefixed_command;
 pub use prefixed::is_prefixed_command as exceeds_max_non_prefixed_command;
 pub use registry::{

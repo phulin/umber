@@ -2124,6 +2124,56 @@ mod tests {
     }
 
     #[test]
+    fn generated_pdftex_parameter_view_matches_predecessor_tables() {
+        let generated =
+            tex_command::primitive_parameter_views(tex_command::PrimitiveProfile::Pdftex14029);
+        let expected_meanings = PDFTEX_INT_PARAMETER_MEANINGS
+            .iter()
+            .map(|(name, parameter)| (*name, Meaning::IntParam(parameter.raw())))
+            .chain(
+                PDFTEX_DIMEN_PARAMETERS
+                    .iter()
+                    .map(|(name, parameter, _)| (*name, Meaning::DimenParam(parameter.raw()))),
+            )
+            .chain(
+                PDFTEX_TOK_PARAMETERS
+                    .iter()
+                    .map(|(name, parameter)| (*name, Meaning::TokParam(parameter.raw()))),
+            )
+            .collect::<Vec<_>>();
+        assert_eq!(
+            generated
+                .iter()
+                .map(|row| (row.name, row.meaning))
+                .collect::<Vec<_>>(),
+            expected_meanings
+        );
+        for row in generated {
+            match row.default {
+                tex_command::ParameterDefault::Integer(value) => {
+                    let parameter = IntParam::new(row.cell.index);
+                    let expected = PDFTEX_INT_PARAMETER_DEFAULTS
+                        .iter()
+                        .find(|(candidate, _)| *candidate == parameter)
+                        .map(|(_, value)| *value)
+                        .expect("generated integer parameter default");
+                    assert_eq!(value, expected, "{}", row.name);
+                }
+                tex_command::ParameterDefault::Scaled(value) => {
+                    let expected = PDFTEX_DIMEN_PARAMETERS
+                        .iter()
+                        .find(|(name, _, _)| *name == row.name)
+                        .map(|(_, _, value)| *value)
+                        .expect("generated dimension parameter default");
+                    assert_eq!(value, expected, "{}", row.name);
+                }
+                tex_command::ParameterDefault::EmptyTokens => {}
+                other => panic!("unexpected pdfTeX default for {}: {other:?}", row.name),
+            }
+        }
+    }
+
+    #[test]
     fn pdftex_parameter_defaults_are_not_installed_in_other_modes() {
         for prepare in [
             prepare_run_stores as fn(&mut Universe),

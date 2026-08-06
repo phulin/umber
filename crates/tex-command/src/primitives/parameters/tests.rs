@@ -1,0 +1,113 @@
+use std::collections::HashSet;
+
+use super::*;
+
+#[test]
+fn profile_parameter_views_have_exact_counts_and_order() {
+    let tex82 = primitive_parameter_views(PrimitiveProfile::Tex82);
+    assert_eq!(tex82.len(), 103);
+    assert_eq!(tex82.first().map(|row| row.name), Some("pretolerance"));
+    assert_eq!(tex82.get(54).map(|row| row.name), Some("fam"));
+    assert_eq!(tex82.get(55).map(|row| row.name), Some("parindent"));
+    assert_eq!(tex82.last().map(|row| row.name), Some("errhelp"));
+
+    let etex = primitive_parameter_views(PrimitiveProfile::Etex26);
+    assert_eq!(etex.len(), 11);
+    assert_eq!(etex.first().map(|row| row.name), Some("everyeof"));
+    assert_eq!(etex.last().map(|row| row.name), Some("savinghyphcodes"));
+
+    let pdftex = primitive_parameter_views(PrimitiveProfile::Pdftex14029);
+    assert_eq!(pdftex.len(), 56);
+    assert_eq!(pdftex.first().map(|row| row.name), Some("pdfoutput"));
+    assert_eq!(
+        pdftex.get(38).map(|row| row.name),
+        Some("ignoreprimitiveerror")
+    );
+    assert_eq!(pdftex.last().map(|row| row.name), Some("pdfpkmode"));
+}
+
+#[test]
+fn parameter_cells_are_unique_except_the_documented_pdf_minor_alias() {
+    for profile in [PrimitiveProfile::Tex82, PrimitiveProfile::Etex26] {
+        let rows = primitive_parameter_views(profile);
+        assert_eq!(
+            rows.iter()
+                .map(|row| row.cell)
+                .collect::<HashSet<_>>()
+                .len(),
+            rows.len()
+        );
+    }
+    let pdftex = primitive_parameter_views(PrimitiveProfile::Pdftex14029);
+    assert_eq!(
+        pdftex
+            .iter()
+            .map(|row| row.cell)
+            .collect::<HashSet<_>>()
+            .len(),
+        pdftex.len() - 1
+    );
+    let aliases = pdftex
+        .iter()
+        .filter(|row| row.cell.index == IntParam::PDF_MINOR_VERSION.raw())
+        .map(|row| row.name)
+        .collect::<Vec<_>>();
+    assert_eq!(aliases, ["pdfoptionpdfminorversion", "pdfminorversion"]);
+}
+
+#[test]
+fn defaults_preserve_job_clock_and_pdftex_nonzero_values() {
+    let tex82 = primitive_parameter_views(PrimitiveProfile::Tex82);
+    assert_eq!(
+        tex82
+            .iter()
+            .find(|row| row.name == "time")
+            .map(|row| row.default),
+        Some(ParameterDefault::JobClock(
+            JobClockField::MinutesSinceMidnight
+        ))
+    );
+    let pdftex = primitive_parameter_views(PrimitiveProfile::Pdftex14029);
+    for (name, expected) in [
+        ("pdfcompresslevel", ParameterDefault::Integer(9)),
+        ("pdfminorversion", ParameterDefault::Integer(4)),
+        ("pdfhorigin", ParameterDefault::Scaled(4_736_287)),
+        ("pdffirstlineheight", ParameterDefault::Scaled(-65_536_000)),
+        ("pdfpxdimen", ParameterDefault::Scaled(65_782)),
+        ("pdfpagesattr", ParameterDefault::EmptyTokens),
+    ] {
+        assert_eq!(
+            pdftex
+                .iter()
+                .find(|row| row.name == name)
+                .map(|row| row.default),
+            Some(expected),
+            "{name}"
+        );
+    }
+}
+
+#[test]
+fn parameter_meanings_match_cells_and_defaults_match_bank_classes() {
+    for profile in [
+        PrimitiveProfile::Tex82,
+        PrimitiveProfile::Etex26,
+        PrimitiveProfile::Pdftex14029,
+    ] {
+        for row in primitive_parameter_views(profile) {
+            let expected = match row.cell.class {
+                ParameterBankClass::Integer => Meaning::IntParam(row.cell.index),
+                ParameterBankClass::Dimension => Meaning::DimenParam(row.cell.index),
+                ParameterBankClass::Glue => Meaning::GlueParam(row.cell.index),
+                ParameterBankClass::MathGlue => Meaning::MuGlueParam(row.cell.index),
+                ParameterBankClass::Tokens => Meaning::TokParam(row.cell.index),
+            };
+            assert_eq!(row.meaning, expected, "{}", row.name);
+            assert!(row.installation.contains(InstallationPolicy::INITEX));
+            assert!(
+                row.installation
+                    .contains(InstallationPolicy::FORMAT_REGISTRY)
+            );
+        }
+    }
+}

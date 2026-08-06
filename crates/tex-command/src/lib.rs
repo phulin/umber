@@ -42,18 +42,21 @@ mod macro_call;
 mod observation;
 mod primitives;
 pub use primitives::{
-    CatalogueValidationError, DocumentationFamily, ExpansionClass, GlueParameterDefault,
-    InstallationPolicy, JobClockField, ParameterBankClass, ParameterCell, ParameterDefault,
-    PrefixAdmissibility, PrimitiveCatalogue, PrimitiveDescriptor, PrimitiveOperand,
-    PrimitiveOperandDomain, PrimitiveProfile, PrimitiveProfiles, PrimitiveSpelling, SpellingKind,
-    WebIdentity, exceeds_max_non_prefixed_command, install_etex_expandable_primitives,
-    install_etex_unexpandable_primitives, install_latex_expandable_primitives,
-    install_pdftex_expandable_primitives, install_pdftex_unexpandable_primitives,
-    install_tex82_expandable_primitives, install_tex82_unexpandable_primitives,
+    CatalogueValidationError, DocumentationFamily, EnumPrimitiveView, ExpansionClass,
+    GlueParameterDefault, InstallationPolicy, JobClockField, ParameterBankClass, ParameterCell,
+    ParameterDefault, PrefixAdmissibility, PrimitiveCatalogue, PrimitiveDescriptor,
+    PrimitiveDocumentationRow, PrimitiveOperand, PrimitiveOperandDomain, PrimitiveParameterView,
+    PrimitiveProfile, PrimitiveProfiles, PrimitiveRegistration, PrimitiveSpelling, SpellingKind,
+    WebIdentity, enum_primitive_views, exceeds_max_non_prefixed_command,
+    install_etex_expandable_primitives, install_etex_unexpandable_primitives,
+    install_latex_expandable_primitives, install_pdftex_expandable_primitives,
+    install_pdftex_unexpandable_primitives, install_tex82_expandable_primitives,
+    install_tex82_unexpandable_primitives, meaning_for_operand, primitive_documentation_rows,
+    primitive_observation_identity, primitive_parameter_views, primitive_registrations,
     register_etex_expandable_primitives, register_etex_unexpandable_primitives,
     register_latex_expandable_primitives, register_pdftex_expandable_primitives,
     register_pdftex_unexpandable_primitives, register_tex82_expandable_primitives,
-    register_tex82_unexpandable_primitives,
+    register_tex82_unexpandable_primitives, render_primitive_documentation_table,
 };
 mod processor;
 mod profile;
