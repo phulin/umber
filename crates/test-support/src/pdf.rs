@@ -346,7 +346,13 @@ fn canonical_resolved_value(
             } else {
                 format!(
                     "stream {} bytes {} sha256 {}",
-                    canonical_dictionary(&stream.dictionary, pages, &[])?,
+                    canonical_dictionary_inner(
+                        &stream.dictionary,
+                        pages,
+                        &[],
+                        depth + 1,
+                        references,
+                    )?,
                     stream.raw.len(),
                     hex(&sha2::Sha256::digest(&stream.raw))
                 )

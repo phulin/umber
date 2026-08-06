@@ -254,6 +254,53 @@ fn cycles_are_shallow_and_all_budgets_fail_closed() {
 }
 
 #[test]
+fn direct_and_indirect_stream_cycles_obey_object_budgets() {
+    let mut fixture = PdfFixture::new("1.7").expect("valid version");
+    fixture
+        .add_raw_object(1, b"<< /Type /Catalog /Pages 2 0 R >>")
+        .expect("catalog");
+    fixture
+        .add_raw_object(2, b"<< /Type /Pages /Kids [] /Count 0 >>")
+        .expect("page tree");
+    fixture
+        .add_stream(3, Dictionary::new().entry("Loop", b"3 0 R"), [])
+        .expect("direct stream cycle");
+    fixture
+        .add_stream(4, Dictionary::new().entry("Next", b"5 0 R"), [])
+        .expect("first indirect stream cycle");
+    fixture
+        .add_stream(5, Dictionary::new().entry("Next", b"4 0 R"), [])
+        .expect("second indirect stream cycle");
+    fixture.set_trailer_entry("Root", b"1 0 R").expect("root");
+    let bytes = fixture.finish().expect("fixture");
+
+    let one_object = ProbeLimits {
+        max_objects: 1,
+        ..ProbeLimits::default()
+    };
+    PdfProbe::new(bytes.clone(), one_object)
+        .expect("parse fixture")
+        .validate_object(ProbeObjectId::new(3, 0))
+        .expect("active direct back-reference consumes no second object");
+    let error = PdfProbe::new(bytes.clone(), one_object)
+        .expect("parse fixture")
+        .validate_object(ProbeObjectId::new(4, 0))
+        .expect_err("indirect cycle resolves a second object");
+    assert!(error.to_string().contains("object budget"), "{error:#}");
+
+    PdfProbe::new(
+        bytes,
+        ProbeLimits {
+            max_objects: 2,
+            ..ProbeLimits::default()
+        },
+    )
+    .expect("parse fixture")
+    .validate_object(ProbeObjectId::new(4, 0))
+    .expect("active indirect back-reference terminates within two objects");
+}
+
+#[test]
 fn malformed_files_fail_and_lenient_stream_decoding_remains_observable() {
     let error = PdfProbe::new(b"not a PDF", ProbeLimits::default())
         .err()
