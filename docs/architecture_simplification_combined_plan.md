@@ -439,6 +439,45 @@ tree under `MemoryMax=1G`, with one Cargo build job for the quality gate.
 
 **Dependencies.** Generate the compatibility suite first. Never replace it with one mega-test or self-generated expected values.
 
+**Implemented authority and accounting.** The pinned Biber identity remains
+commit `74252e608e5f8115375c532eb25416430a9f52eb`; one typed manifest owns all
+51 modules and 1,275 assertions, including 417 separately selectable generated
+cases. The immutable runner compares cache-enabled and cache-disabled complete
+results before applying committed expectations. `bib-engine::biber` owns the
+single editable `BiberDraft` and sole immutable document freeze. Classic keeps
+one explicit-frame VM while compiler-owned scanner state, indexed `READ`
+projection, typed cache inputs, one callable value, and ordered log events
+replace the deleted lexer transfer, string-keyed projection, debug cache key,
+synthetic callable, and cloned diagnostic models. `bib-input` owns one flat
+include-aware XML projection arena, and `bib-output::OutputRouter` owns one
+closed `OutputPlan` and bounded sink. Public result aliases, serializer entry
+points, format-specific failure aliases, and Unicode values remain as
+compatibility surfaces; none owns a second mutation, freeze, selection, or
+serialization authority.
+
+Exact `--numstat` accounting across implementation commits `1250f6a6a`,
+`91e227ee8`, `4a495ece0`, `4e8faebce`, `8290c9274`, and `8c7c49691` is 1,334
+additions and 1,743 deletions in production Rust (409-line net reduction), plus
+3,017 additions and 7,429 deletions in authored Rust proof tests (4,412-line
+net reduction). Authored Rust therefore totals 4,351 additions and 9,172
+deletions, or 4,821 lines of net deletion. Documentation and repository maps
+add 140 lines and delete 44. No fixture, generated source, binary asset, or
+declarative configuration changed. The complete tracked program change is
+4,491 additions and 9,216 deletions, or 4,725 lines of net deletion. The
+production and test reductions are below their respective forecast floors;
+the remaining opportunity or explicit forecast revision is tracked by
+`umber2-vgjr.24` rather than credited here.
+
+Exact implementation tree `8c7c496916454ed6df47e628d1692e817a20e510`
+passed the focused bibliography suite under `MemoryMax=512M`, the complete
+routine suite under `MemoryMax=1G`, the Node WASM tests and packaged
+TeX--bibliography--TeX lifecycle under `MemoryMax=1G`, and all four
+`scripts/check.sh` gates with `CARGO_BUILD_JOBS=1`. One preceding full-suite
+attempt produced an invalid story DVI despite a byte-correct provisioned
+oracle; the exact test and unchanged full suite then passed. That independent
+flake is tracked by `umber2-dgsn` and is not counted as a successful first
+attempt.
+
 ## 15. Recover dormant tests, then compact repeated test authorities
 
 **Outcome.** Every unreachable `tex-exec` test and every proposed command/typesetting test deletion receives a case-level ledger naming semantic assertions, fixtures, expected diagnostics/events, external citations, active replacement, and disposition. Unique cases become active compact integration/oracle/property tests. Redundant cases and their production scaffolding are deleted. A source audit rejects `cfg(any())` and colocated tests while `[lib] test = false` remains.

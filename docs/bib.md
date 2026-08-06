@@ -308,11 +308,14 @@ native library. Schema and transform data are versioned distribution resources
 or compiled immutable tables with recorded source hashes.
 
 The implemented input boundary uses `quick-xml` only as a token reader and
-builds an owned, order-preserving tree under explicit byte, nesting, node,
-attribute, and text budgets. DTDs and non-built-in entity references are
-rejected. XML includes resolve relative to the including canonical virtual
-path, consume a separate include budget, detect cycles, and read only the
-provided immutable `VfsSnapshot`; they never fall back to a URL or host path.
+builds one flat, order-preserving projection arena under explicit byte,
+nesting, node, attribute, and text budgets. BCF, configuration, and
+BibLaTeXML consumers borrow element views from that arena rather than owning a
+second recursive tree. DTDs and non-built-in entity references are rejected.
+XML includes resolve relative to the including canonical virtual path,
+project directly into the same arena, consume a separate include budget,
+detect cycles, and read only the provided immutable `VfsSnapshot`; they never
+fall back to a URL or host path.
 BCF parsing requires the exact pinned namespace and control version 3.11,
 validates the pinned structural contracts, and constructs ordered option
 scopes, sections, datasource declarations, templates, and data-model values.
