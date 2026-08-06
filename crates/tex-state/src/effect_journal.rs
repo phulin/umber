@@ -19,6 +19,19 @@ pub struct EffectJournal {
     placement_intra_orders: Vec<EffectPlacementIntraOrder>,
 }
 
+/// Transitional decomposition used while `tex-incr` retires its remaining
+/// accepted-session positional columns.
+#[doc(hidden)]
+pub type EffectJournalParts = (
+    Vec<EffectRecord>,
+    Vec<EffectSequence>,
+    Vec<Option<EffectPublicationId>>,
+    Vec<Option<EffectPublicationRecordOrdinal>>,
+    Vec<EffectDomain>,
+    Vec<EffectSemanticRecordOrdinal>,
+    Vec<EffectPlacementIntraOrder>,
+);
+
 #[cfg(test)]
 mod tests;
 
@@ -142,17 +155,7 @@ impl EffectJournal {
     }
 
     #[doc(hidden)]
-    pub fn into_parts(
-        self,
-    ) -> (
-        Vec<EffectRecord>,
-        Vec<EffectSequence>,
-        Vec<Option<EffectPublicationId>>,
-        Vec<Option<EffectPublicationRecordOrdinal>>,
-        Vec<EffectDomain>,
-        Vec<EffectSemanticRecordOrdinal>,
-        Vec<EffectPlacementIntraOrder>,
-    ) {
+    pub fn into_parts(self) -> EffectJournalParts {
         (
             self.records,
             self.sequences,
