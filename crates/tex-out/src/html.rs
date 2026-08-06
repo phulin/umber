@@ -967,8 +967,8 @@ fn validate_font(
             realized.decoded_bytes()
         } else {
             let key = tex_fonts::FontRequestKey::new(
-                "umber-html-validation",
-                0,
+                &font.name,
+                opentype.face_index,
                 tex_fonts::VariationSelection::default(),
                 tex_fonts::FontFeaturePolicy::default(),
             )
@@ -1032,20 +1032,11 @@ fn validate_font(
             limit: options.max_asset_bytes,
         });
     }
-    let face = ttf_parser::Face::parse(&sfnt, 0).map_err(|_| HtmlError::CorruptFontAsset {
-        font: font.name.clone(),
-    })?;
-    for (code, mapping) in web.encoding.iter().enumerate() {
-        for ch in mapping.iter().flat_map(|mapping| mapping.chars()) {
-            if face.glyph_index(ch).is_none() {
-                return Err(HtmlError::MissingFontGlyph {
-                    font: font.name.clone(),
-                    code: code as u8,
-                    ch,
-                });
-            }
-        }
-    }
+    let face_index = realized.map_or_else(
+        || font.opentype.as_ref().map_or(0, |font| font.face_index),
+        |font| font.face_index,
+    );
+    validate_mapped_glyphs(&sfnt, face_index, &web.encoding, &font.name)?;
     let digest_hex = hex(&digest);
     let family_identity = font
         .opentype
@@ -1059,6 +1050,30 @@ fn validate_font(
         family,
         sfnt,
     })
+}
+
+fn validate_mapped_glyphs(
+    sfnt: &[u8],
+    face_index: u32,
+    encoding: &[Option<String>],
+    font_name: &str,
+) -> Result<(), HtmlError> {
+    let face =
+        ttf_parser::Face::parse(sfnt, face_index).map_err(|_| HtmlError::CorruptFontAsset {
+            font: font_name.to_owned(),
+        })?;
+    for (code, mapping) in encoding.iter().enumerate() {
+        for ch in mapping.iter().flat_map(|mapping| mapping.chars()) {
+            if face.glyph_index(ch).is_none() {
+                return Err(HtmlError::MissingFontGlyph {
+                    font: font_name.to_owned(),
+                    code: code as u8,
+                    ch,
+                });
+            }
+        }
+    }
+    Ok(())
 }
 
 #[derive(Default)]

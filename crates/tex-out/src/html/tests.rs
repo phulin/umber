@@ -14,7 +14,8 @@ use super::incremental::{
 };
 use super::{
     AssetMode, HtmlError, HtmlFontAsset, HtmlFontAssets, HtmlFontKey, HtmlOptions,
-    RenderedOutputId, write_html, write_positioned_html, write_render_document,
+    RenderedOutputId, validate_mapped_glyphs, write_html, write_positioned_html,
+    write_render_document,
 };
 
 fn sp(raw: i32) -> Scaled {
@@ -113,6 +114,67 @@ fn parsed_font(name: &str, bytes: &[u8]) -> tex_fonts::OpenTypeFont {
         tex_fonts::FontLimits::default(),
     )
     .expect("validated fixture font")
+}
+
+#[test]
+fn mapping_validation_uses_the_selected_collection_face() {
+    let cmu_woff2 = include_bytes!("../../../umber-wasm/assets/cmu-serif-500-roman.woff2");
+    let cmu =
+        woff2_patched::convert_woff2_to_ttf(&mut cmu_woff2.as_slice()).expect("decode CMU fixture");
+    let stix_woff2 = include_bytes!("../../../tex-fonts/tests/fixtures/stix-two-math.woff2");
+    let stix = woff2_patched::convert_woff2_to_ttf(&mut stix_woff2.as_slice())
+        .expect("decode STIX fixture");
+    let collection = make_ttc([cmu.as_slice(), stix.as_slice()]);
+    let first = ttf_parser::Face::parse(&collection, 0).expect("first collection face");
+    let second = ttf_parser::Face::parse(&collection, 1).expect("second collection face");
+    let scalar = (0..=0x10ffff).find_map(|value| {
+        let scalar = char::from_u32(value)?;
+        (first.glyph_index(scalar).is_none() && second.glyph_index(scalar).is_some())
+            .then_some(scalar)
+    });
+    let scalar = scalar.expect("STIX fixture has a glyph absent from CMU Serif");
+    let mut encoding = vec![None; 256];
+    encoding[usize::from(b'A')] = Some(scalar.to_string());
+
+    validate_mapped_glyphs(&collection, 1, &encoding, "collection")
+        .expect("selected second face supplies the mapped glyph");
+    assert!(matches!(
+        validate_mapped_glyphs(&collection, 0, &encoding, "collection"),
+        Err(HtmlError::MissingFontGlyph {
+            code: b'A',
+            ch,
+            ..
+        }) if ch == scalar
+    ));
+}
+
+fn make_ttc(faces: [&[u8]; 2]) -> Vec<u8> {
+    fn relocate(face: &[u8], base: usize) -> Vec<u8> {
+        let mut face = face.to_vec();
+        let table_count = usize::from(u16::from_be_bytes([face[4], face[5]]));
+        for index in 0..table_count {
+            let offset = 12 + index * 16 + 8;
+            let old = u32::from_be_bytes(face[offset..offset + 4].try_into().expect("offset"));
+            let new = old
+                .checked_add(u32::try_from(base).expect("fixture size"))
+                .expect("offset");
+            face[offset..offset + 4].copy_from_slice(&new.to_be_bytes());
+        }
+        face
+    }
+
+    let first_offset = 20_usize;
+    let second_offset = (first_offset + faces[0].len() + 3) & !3;
+    let mut collection = Vec::with_capacity(second_offset + faces[1].len());
+    collection.extend_from_slice(b"ttcf");
+    collection.extend_from_slice(&0x0001_0000_u32.to_be_bytes());
+    collection.extend_from_slice(&2_u32.to_be_bytes());
+    collection.extend_from_slice(&(first_offset as u32).to_be_bytes());
+    collection.extend_from_slice(&(second_offset as u32).to_be_bytes());
+    collection.extend_from_slice(&relocate(faces[0], first_offset));
+    collection.resize(second_offset, 0);
+    collection.extend_from_slice(&relocate(faces[1], second_offset));
+    collection
 }
 
 struct Resolver {
