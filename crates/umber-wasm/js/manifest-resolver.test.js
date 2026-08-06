@@ -27,9 +27,7 @@ const catalog = {
 		)
 			throw new Error("shardBits or shard table is invalid");
 		const indexes = [
-			...new Set(
-				keys.map((key) => shardIndex(key, root.shardBits)),
-			),
+			...new Set(keys.map((key) => shardIndex(key, root.shardBits))),
 		].sort((left, right) => left - right);
 		return JSON.stringify({
 			root: `${JSON.stringify(root)}\n`,

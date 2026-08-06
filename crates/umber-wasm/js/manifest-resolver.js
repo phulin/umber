@@ -122,11 +122,9 @@ export class HttpManifestResolver {
 	constructor(manifest, options = {}) {
 		this.catalog = options.catalog;
 		if (
-			![
-				"catalogPrepareBatch",
-				"catalogPlanBatch",
-				"catalogSelectFormat",
-			].every((name) => typeof this.catalog?.[name] === "function")
+			!["catalogPrepareBatch", "catalogPlanBatch", "catalogSelectFormat"].every(
+				(name) => typeof this.catalog?.[name] === "function",
+			)
 		) {
 			throw new ManifestResolverError(
 				"invalid-options",
@@ -363,11 +361,10 @@ export class HttpManifestResolver {
 		let pending = this.shardCache.get(descriptor.index);
 		if (pending === undefined) {
 			pending = (async () => {
-				const bytes = await this.#object(
-					descriptor,
-					signal,
-					{ limit: MAX_SHARD_BYTES, code: "shard-length" },
-				);
+				const bytes = await this.#object(descriptor, signal, {
+					limit: MAX_SHARD_BYTES,
+					code: "shard-length",
+				});
 				try {
 					return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
 				} catch (error) {
