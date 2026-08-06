@@ -515,6 +515,32 @@ cache was warmed uncapped. The WASM check, Biome, and 89 Node tests passed
 under 1 GiB at 716,060 KiB; real wasm-bindgen, browser-package, and npm-pack
 steps were blocked because this host lacks `wasm-pack` and Firefox.
 
+Fresh verification after the rebase onto `12e8be260` found that HTML's decoded
+mapping-coverage check still parsed collection face zero, even when the
+artifact or retained realized program selected a different face. Repair commit
+`bfc0f05a8` makes the realized or artifact face authoritative and adds a
+synthetic two-face TTC regression whose second face owns a glyph absent from
+the first. The repair adds 31 and deletes 16 production Rust lines and adds 63
+and deletes one proof-test line. The realized-font issue therefore totals 248
+additions and 146 deletions in production Rust (102 lines of net growth), plus
+63 additions and one deletion in tests. Across all three program children,
+production Rust adds 703 and deletes 844 lines, a 141-line net deletion; linked
+forecast audit `umber2-vgjr.11.4` remains open with this corrected accounting.
+
+Exact repaired tree `bfc0f05a89db0df1f81147d1096938963f1aef24` passed the
+uncapped six-job complete native `--no-run` build. Under `MemoryMax=512M`, 79
+font tests peaked at 91,029,504 bytes, 146 output tests at 278,241,280 bytes,
+729 state unit tests at 97,615,872 bytes, and the complete Umber package at
+415,879,168 bytes, all with zero memory events. The complete routine suite
+passed under `MemoryMax=1G` at 681,955,328 bytes with zero events. The final
+six-job `scripts/check.sh` run passed all four gates under 1 GiB at 150,532,096
+bytes after an uncapped clippy cache warm. The wasm32 check, Biome, all 89 Node
+tests, the built-package Node project consumer, and `npm pack --dry-run` passed;
+wasm-bindgen remained blocked by absent Firefox and the browser smoke by absent
+Chrome. The available cold and warmed release-package runs both exceeded the
+1 GiB cap inside `wasm-opt`; the same package completed uncapped, and no Rust,
+Node, browser, or package-validation failure occurred.
+
 ## 12. Establish one fixture contract while compacting repeated catalogues
 
 **Outcome.** A typed closed-case contract owns identity, tracked inputs, expected outputs, statuses, xfail reasons, profiles, and publication metadata. Command-semantic V2 infers conventional fields and embeds capture policy. The TeX82 catalogue uses an implicit typed default disposition plus explicit overrides. Fixturegen alone mutates and publishes; test-support validates and stages; `corpus-manifest` remains the external-corpus leaf.
