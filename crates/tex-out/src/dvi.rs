@@ -13,7 +13,6 @@ use crate::PageArtifact;
 #[cfg(test)]
 mod tests;
 
-pub mod coordinates;
 pub mod disasm;
 mod fonts;
 mod framing;
@@ -99,6 +98,17 @@ impl From<crate::ParseError> for DviError {
     fn from(value: crate::ParseError) -> Self {
         Self::Artifact {
             message: value.to_string(),
+        }
+    }
+}
+
+impl From<crate::geometry::GeometryError> for DviError {
+    fn from(value: crate::geometry::GeometryError) -> Self {
+        match value {
+            crate::geometry::GeometryError::MissingEffect { effect_index } => {
+                Self::MissingEffect { effect_index }
+            }
+            crate::geometry::GeometryError::PositionOverflow => Self::PositionOverflow,
         }
     }
 }
@@ -210,7 +220,6 @@ struct DviBodyCompiler {
     dvi_f: Option<u32>,
     cur_s: i32,
     font_definition_sites: Option<Vec<plan::FontDefinitionSite>>,
-    coordinate_trace: Option<Vec<coordinates::DviCoordinateEvent>>,
     snap_reference: (Scaled, Scaled),
 }
 
@@ -245,7 +254,6 @@ impl DviBodyCompiler {
             dvi_f: None,
             cur_s: -1,
             font_definition_sites: None,
-            coordinate_trace: None,
             snap_reference: (Scaled::from_raw(0), Scaled::from_raw(0)),
         }
     }

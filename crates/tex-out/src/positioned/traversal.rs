@@ -1,7 +1,9 @@
-use std::collections::BTreeMap;
 use tex_arith::Scaled;
 
 use crate::dvi::glue::adjusted_glue_width;
+use crate::geometry::{
+    LEADER_ROUNDING_COMPENSATION, LeaderMode, NodeOrdinals, leader_start, predict_snap_correction,
+};
 use crate::{BoxNode, GlueKind, KernKind, LeaderPayload, PageArtifact, PageEffect, PageNode};
 
 use super::{
@@ -10,8 +12,6 @@ use super::{
     PositionedPdfGraphics, PositionedPdfThread, PositionedRule, PositionedSourceRef,
     PositionedSpecial, PositionedTextRun, TextUnit,
 };
-
-const LEADER_ROUNDING_COMPENSATION: Scaled = Scaled::from_raw(10);
 
 pub(super) fn lower(
     page: &PageArtifact,
@@ -49,7 +49,7 @@ pub(super) fn lower(
         cur_h: page.job.h_offset,
         cur_v: add(root.height, page.job.v_offset)?,
         current_font_id: None,
-        node_ordinals: index_nodes(&page.root),
+        node_ordinals: NodeOrdinals::new(&page.root),
         next_box_id: 0,
         box_stack: Vec::new(),
         pdf_save_positions: Vec::new(),
@@ -100,7 +100,7 @@ struct Lowerer<'a> {
     cur_h: Scaled,
     cur_v: Scaled,
     current_font_id: Option<u32>,
-    node_ordinals: BTreeMap<usize, u32>,
+    node_ordinals: NodeOrdinals,
     next_box_id: u32,
     box_stack: Vec<u32>,
     pdf_save_positions: Vec<(Scaled, Scaled)>,
@@ -109,9 +109,49 @@ struct Lowerer<'a> {
     snap_reference: (Scaled, Scaled),
 }
 
+struct PositionedFrame<'a> {
+    node: &'a BoxNode,
+    depth: usize,
+    box_id: u32,
+    index: usize,
+    axis: PositionedAxis,
+    continuation: PositionedContinuation,
+}
+
+enum PositionedAxis {
+    Horizontal {
+        base_line: Scaled,
+        left_edge: Scaled,
+        cur_g: Scaled,
+        cur_glue: Scaled,
+        run: RunBuilder,
+    },
+    Vertical {
+        left_edge: Scaled,
+        top_edge: Scaled,
+        cur_g: Scaled,
+        cur_glue: Scaled,
+    },
+}
+
+#[derive(Clone, Copy)]
+enum PositionedContinuation {
+    Root,
+    Horizontal {
+        edge: Scaled,
+        base_line: Scaled,
+        width: Scaled,
+    },
+    Vertical {
+        baseline: Scaled,
+        left_edge: Scaled,
+        depth: Scaled,
+    },
+}
+
 impl Lowerer<'_> {
     fn node_ordinal(&self, node: &PageNode) -> u32 {
-        self.node_ordinals[&(node as *const PageNode as usize)]
+        self.node_ordinals.get(node)
     }
 
     fn push(&mut self, event: PositionedEvent) -> Result<(), PositionedError> {
@@ -135,192 +175,342 @@ impl Lowerer<'_> {
     }
 
     fn hlist(&mut self, this_box: &BoxNode, depth: usize) -> Result<(), PositionedError> {
-        self.check_depth(depth)?;
-        let base_line = self.cur_v;
-        let left_edge = self.cur_h;
-        let box_id = self.box_event(BoxKind::Horizontal, this_box, left_edge, base_line, depth)?;
-        let mut cur_g = Scaled::from_raw(0);
-        let mut cur_glue = Scaled::from_raw(0);
-        let mut run = RunBuilder::default();
-
-        for child in &this_box.children {
-            let node_ordinal = self.node_ordinal(child);
-            match child {
-                PageNode::Char { font_id, ch, width } => {
-                    if run.font_id.is_some_and(|current| current != *font_id) {
-                        run.resolve_pending_space(self.limits)?;
-                        run.flush(self)?;
-                    }
-                    run.character(
-                        *font_id,
-                        CharacterUnit {
-                            source_code: *ch,
-                            physical_code: u8::try_from(*ch).ok(),
-                            source: PositionedSourceRef {
-                                node_ordinal,
-                                source_index: 0,
-                            },
-                        },
-                        self.cur_h,
-                        base_line,
-                        self.limits,
-                    )?;
-                    self.current_font_id = Some(*font_id);
-                    self.cur_h = add(self.cur_h, *width)?;
-                }
-                PageNode::Lig {
-                    font_id,
-                    ch,
-                    source,
-                    width,
-                    ..
-                } => {
-                    if run.font_id.is_some_and(|current| current != *font_id) {
-                        run.resolve_pending_space(self.limits)?;
-                        run.flush(self)?;
-                    }
-                    for (source_index, code) in source.iter().enumerate() {
-                        run.character(
-                            *font_id,
-                            CharacterUnit {
-                                source_code: *code,
-                                physical_code: (source_index == 0)
-                                    .then(|| u8::try_from(*ch).ok())
-                                    .flatten(),
-                                source: PositionedSourceRef {
-                                    node_ordinal,
-                                    source_index: u16::try_from(source_index).map_err(|_| {
-                                        PositionedError::TextRunTooLong {
-                                            limit: self.limits.max_run_units,
-                                        }
-                                    })?,
-                                },
-                            },
-                            self.cur_h,
-                            base_line,
-                            self.limits,
-                        )?;
-                    }
-                    self.current_font_id = Some(*font_id);
-                    self.cur_h = add(self.cur_h, *width)?;
-                }
-                PageNode::Kern { amount, kind } => {
-                    if !matches!(kind, KernKind::Font | KernKind::Auto) {
-                        run.flush(self)?;
-                    }
-                    self.cur_h = add(self.cur_h, *amount)?;
-                }
-                PageNode::MarginKern { amount, .. } => {
-                    run.flush(self)?;
-                    self.cur_h = add(self.cur_h, *amount)?;
-                }
-                PageNode::Glue { spec, kind, leader } => {
-                    let width = glue_width(this_box, *spec, &mut cur_glue, &mut cur_g)?;
-                    if leader.is_none()
-                        && !matches!(
-                            kind,
-                            GlueKind::Leaders | GlueKind::Cleaders | GlueKind::Xleaders
-                        )
-                    {
-                        run.pending_space(self.current_font_id, self.cur_h, base_line);
-                        self.cur_h = add(self.cur_h, width)?;
-                    } else {
-                        run.flush(self)?;
-                        self.hleaders(this_box, *kind, leader, width, left_edge, base_line, depth)?;
-                    }
-                }
-                PageNode::HList(box_node) | PageNode::VList(box_node) => {
-                    run.flush(self)?;
-                    self.box_in_hlist(box_node, matches!(child, PageNode::VList(_)), depth + 1)?;
-                }
-                PageNode::Rule {
-                    width,
-                    height,
-                    depth: rule_depth,
-                } => {
-                    run.flush(self)?;
-                    let rule_height = height.unwrap_or(this_box.height);
-                    let rule_depth = rule_depth.unwrap_or(this_box.depth);
-                    let rule_width = width.unwrap_or(Scaled::from_raw(0));
-                    self.rule_h(rule_height, rule_depth, rule_width, base_line)?;
-                    self.cur_h = add(self.cur_h, rule_width)?;
-                }
-                PageNode::MathOn(width) | PageNode::MathOff(width) => {
-                    run.flush(self)?;
-                    self.cur_h = add(self.cur_h, *width)?;
-                }
-                PageNode::WhatsitAnchor { effect_index } => {
-                    run.flush(self)?;
-                    self.special_h(*effect_index, depth)?;
-                }
-                PageNode::Penalty(_)
-                | PageNode::Disc { .. }
-                | PageNode::Mark { .. }
-                | PageNode::Insert { .. }
-                | PageNode::Adjust(_) => {
-                    run.flush(self)?;
-                }
-            }
-            self.cur_v = base_line;
-        }
-        run.flush(self)?;
-        self.end_box(box_id, depth)
+        self.walk_box(this_box, false, depth)
     }
 
     fn vlist(&mut self, this_box: &BoxNode, depth: usize) -> Result<(), PositionedError> {
+        self.walk_box(this_box, true, depth)
+    }
+
+    fn walk_box(
+        &mut self,
+        root: &BoxNode,
+        vertical: bool,
+        depth: usize,
+    ) -> Result<(), PositionedError> {
+        let mut frames = Vec::new();
+        self.enter_frame(
+            &mut frames,
+            root,
+            vertical,
+            depth,
+            PositionedContinuation::Root,
+        )?;
+        while let Some(mut frame) = frames.pop() {
+            if frame.index == frame.node.children.len() {
+                if let PositionedAxis::Horizontal { run, .. } = &mut frame.axis {
+                    run.flush(self)?;
+                }
+                self.end_box(frame.box_id, frame.depth)?;
+                self.restore_after_frame(frame.continuation)?;
+                continue;
+            }
+
+            let index = frame.index;
+            frame.index += 1;
+            let child = &frame.node.children[index];
+            let mut child_frame = None;
+            match &mut frame.axis {
+                PositionedAxis::Horizontal {
+                    base_line,
+                    left_edge,
+                    cur_g,
+                    cur_glue,
+                    run,
+                } => {
+                    let base_line = *base_line;
+                    let left_edge = *left_edge;
+                    let node_ordinal = self.node_ordinal(child);
+                    match child {
+                        PageNode::Char { font_id, ch, width } => {
+                            if run.font_id.is_some_and(|current| current != *font_id) {
+                                run.resolve_pending_space(self.limits)?;
+                                run.flush(self)?;
+                            }
+                            run.character(
+                                *font_id,
+                                CharacterUnit {
+                                    source_code: *ch,
+                                    physical_code: u8::try_from(*ch).ok(),
+                                    source: PositionedSourceRef {
+                                        node_ordinal,
+                                        source_index: 0,
+                                    },
+                                },
+                                self.cur_h,
+                                base_line,
+                                self.limits,
+                            )?;
+                            self.current_font_id = Some(*font_id);
+                            self.cur_h = add(self.cur_h, *width)?;
+                        }
+                        PageNode::Lig {
+                            font_id,
+                            ch,
+                            source,
+                            width,
+                            ..
+                        } => {
+                            if run.font_id.is_some_and(|current| current != *font_id) {
+                                run.resolve_pending_space(self.limits)?;
+                                run.flush(self)?;
+                            }
+                            for (source_index, code) in source.iter().enumerate() {
+                                run.character(
+                                    *font_id,
+                                    CharacterUnit {
+                                        source_code: *code,
+                                        physical_code: (source_index == 0)
+                                            .then(|| u8::try_from(*ch).ok())
+                                            .flatten(),
+                                        source: PositionedSourceRef {
+                                            node_ordinal,
+                                            source_index: u16::try_from(source_index).map_err(
+                                                |_| PositionedError::TextRunTooLong {
+                                                    limit: self.limits.max_run_units,
+                                                },
+                                            )?,
+                                        },
+                                    },
+                                    self.cur_h,
+                                    base_line,
+                                    self.limits,
+                                )?;
+                            }
+                            self.current_font_id = Some(*font_id);
+                            self.cur_h = add(self.cur_h, *width)?;
+                        }
+                        PageNode::Kern { amount, kind } => {
+                            if !matches!(kind, KernKind::Font | KernKind::Auto) {
+                                run.flush(self)?;
+                            }
+                            self.cur_h = add(self.cur_h, *amount)?;
+                        }
+                        PageNode::MarginKern { amount, .. } => {
+                            run.flush(self)?;
+                            self.cur_h = add(self.cur_h, *amount)?;
+                        }
+                        PageNode::Glue { spec, kind, leader } => {
+                            let width = glue_width(frame.node, *spec, cur_glue, cur_g)?;
+                            if leader.is_none()
+                                && !matches!(
+                                    kind,
+                                    GlueKind::Leaders | GlueKind::Cleaders | GlueKind::Xleaders
+                                )
+                            {
+                                run.pending_space(self.current_font_id, self.cur_h, base_line);
+                                self.cur_h = add(self.cur_h, width)?;
+                            } else {
+                                run.flush(self)?;
+                                self.hleaders(
+                                    frame.node,
+                                    *kind,
+                                    leader,
+                                    width,
+                                    left_edge,
+                                    base_line,
+                                    frame.depth,
+                                )?;
+                            }
+                        }
+                        PageNode::HList(node) | PageNode::VList(node) => {
+                            run.flush(self)?;
+                            if node.children.is_empty() {
+                                self.cur_h = add(self.cur_h, node.width)?;
+                            } else {
+                                let edge = self.cur_h;
+                                self.cur_v = add(base_line, node.shift)?;
+                                child_frame = Some((
+                                    node,
+                                    matches!(child, PageNode::VList(_)),
+                                    PositionedContinuation::Horizontal {
+                                        edge,
+                                        base_line,
+                                        width: node.width,
+                                    },
+                                ));
+                            }
+                        }
+                        PageNode::Rule {
+                            width,
+                            height,
+                            depth,
+                        } => {
+                            run.flush(self)?;
+                            let height = height.unwrap_or(frame.node.height);
+                            let depth = depth.unwrap_or(frame.node.depth);
+                            let width = width.unwrap_or(Scaled::from_raw(0));
+                            self.rule_h(height, depth, width, base_line)?;
+                            self.cur_h = add(self.cur_h, width)?;
+                        }
+                        PageNode::MathOn(width) | PageNode::MathOff(width) => {
+                            run.flush(self)?;
+                            self.cur_h = add(self.cur_h, *width)?;
+                        }
+                        PageNode::WhatsitAnchor { effect_index } => {
+                            run.flush(self)?;
+                            self.special_h(*effect_index, frame.depth)?;
+                        }
+                        PageNode::Penalty(_)
+                        | PageNode::Disc { .. }
+                        | PageNode::Mark { .. }
+                        | PageNode::Insert { .. }
+                        | PageNode::Adjust(_) => run.flush(self)?,
+                    }
+                    if child_frame.is_none() {
+                        self.cur_v = base_line;
+                    }
+                }
+                PositionedAxis::Vertical {
+                    left_edge,
+                    top_edge,
+                    cur_g,
+                    cur_glue,
+                } => {
+                    let left_edge = *left_edge;
+                    match child {
+                        PageNode::HList(node) | PageNode::VList(node) => {
+                            if node.children.is_empty() {
+                                self.cur_v = add(add(self.cur_v, node.height)?, node.depth)?;
+                            } else {
+                                self.cur_v = add(self.cur_v, node.height)?;
+                                let baseline = self.cur_v;
+                                self.cur_h = add(left_edge, node.shift)?;
+                                child_frame = Some((
+                                    node,
+                                    matches!(child, PageNode::VList(_)),
+                                    PositionedContinuation::Vertical {
+                                        baseline,
+                                        left_edge,
+                                        depth: node.depth,
+                                    },
+                                ));
+                            }
+                        }
+                        PageNode::Rule {
+                            width,
+                            height,
+                            depth,
+                        } => {
+                            let height = add(
+                                height.unwrap_or(Scaled::from_raw(0)),
+                                depth.unwrap_or(Scaled::from_raw(0)),
+                            )?;
+                            self.rule_v(height, width.unwrap_or(frame.node.width))?;
+                        }
+                        PageNode::Glue { spec, kind, leader } => {
+                            let height = glue_width(frame.node, *spec, cur_glue, cur_g)?;
+                            self.vleaders(
+                                frame.node,
+                                *kind,
+                                leader,
+                                height,
+                                left_edge,
+                                *top_edge,
+                                frame.depth,
+                            )?;
+                        }
+                        PageNode::Kern { amount, .. } | PageNode::MarginKern { amount, .. } => {
+                            self.cur_v = add(self.cur_v, *amount)?;
+                        }
+                        PageNode::WhatsitAnchor { effect_index } => self.special_v(
+                            *effect_index,
+                            &frame.node.children[index + 1..],
+                            frame.node,
+                            *cur_g,
+                            *cur_glue,
+                            frame.depth,
+                        )?,
+                        PageNode::Char { .. }
+                        | PageNode::Lig { .. }
+                        | PageNode::Penalty(_)
+                        | PageNode::Disc { .. }
+                        | PageNode::Mark { .. }
+                        | PageNode::Insert { .. }
+                        | PageNode::MathOn(_)
+                        | PageNode::MathOff(_)
+                        | PageNode::Adjust(_) => {}
+                    }
+                }
+            }
+            let child_depth = frame.depth + 1;
+            frames.push(frame);
+            if let Some((node, vertical, continuation)) = child_frame {
+                self.enter_frame(&mut frames, node, vertical, child_depth, continuation)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn enter_frame<'a>(
+        &mut self,
+        frames: &mut Vec<PositionedFrame<'a>>,
+        node: &'a BoxNode,
+        vertical: bool,
+        depth: usize,
+        continuation: PositionedContinuation,
+    ) -> Result<(), PositionedError> {
         self.check_depth(depth)?;
         let baseline = self.cur_v;
         let left_edge = self.cur_h;
-        let box_id = self.box_event(BoxKind::Vertical, this_box, left_edge, baseline, depth)?;
-        self.cur_v = sub(self.cur_v, this_box.height)?;
-        let top_edge = self.cur_v;
-        let mut cur_g = Scaled::from_raw(0);
-        let mut cur_glue = Scaled::from_raw(0);
+        let kind = if vertical {
+            BoxKind::Vertical
+        } else {
+            BoxKind::Horizontal
+        };
+        let box_id = self.box_event(kind, node, left_edge, baseline, depth)?;
+        let axis = if vertical {
+            self.cur_v = sub(self.cur_v, node.height)?;
+            PositionedAxis::Vertical {
+                left_edge,
+                top_edge: self.cur_v,
+                cur_g: Scaled::from_raw(0),
+                cur_glue: Scaled::from_raw(0),
+            }
+        } else {
+            PositionedAxis::Horizontal {
+                base_line: baseline,
+                left_edge,
+                cur_g: Scaled::from_raw(0),
+                cur_glue: Scaled::from_raw(0),
+                run: RunBuilder::default(),
+            }
+        };
+        frames.push(PositionedFrame {
+            node,
+            depth,
+            box_id,
+            index: 0,
+            axis,
+            continuation,
+        });
+        Ok(())
+    }
 
-        for (index, child) in this_box.children.iter().enumerate() {
-            match child {
-                PageNode::HList(box_node) | PageNode::VList(box_node) => {
-                    self.box_in_vlist(box_node, matches!(child, PageNode::VList(_)), depth + 1)?;
-                    self.cur_h = left_edge;
-                }
-                PageNode::Rule {
-                    width,
-                    height,
-                    depth,
-                } => {
-                    let rule_height = add(
-                        height.unwrap_or(Scaled::from_raw(0)),
-                        depth.unwrap_or(Scaled::from_raw(0)),
-                    )?;
-                    self.rule_v(rule_height, width.unwrap_or(this_box.width))?;
-                }
-                PageNode::Glue { spec, kind, leader } => {
-                    let height = glue_width(this_box, *spec, &mut cur_glue, &mut cur_g)?;
-                    self.vleaders(this_box, *kind, leader, height, left_edge, top_edge, depth)?;
-                }
-                PageNode::Kern { amount, .. } | PageNode::MarginKern { amount, .. } => {
-                    self.cur_v = add(self.cur_v, *amount)?;
-                }
-                PageNode::WhatsitAnchor { effect_index } => self.special_v(
-                    *effect_index,
-                    &this_box.children[index + 1..],
-                    this_box,
-                    cur_g,
-                    cur_glue,
-                    depth,
-                )?,
-                PageNode::Char { .. }
-                | PageNode::Lig { .. }
-                | PageNode::Penalty(_)
-                | PageNode::Disc { .. }
-                | PageNode::Mark { .. }
-                | PageNode::Insert { .. }
-                | PageNode::MathOn(_)
-                | PageNode::MathOff(_)
-                | PageNode::Adjust(_) => {}
+    fn restore_after_frame(
+        &mut self,
+        continuation: PositionedContinuation,
+    ) -> Result<(), PositionedError> {
+        match continuation {
+            PositionedContinuation::Root => {}
+            PositionedContinuation::Horizontal {
+                edge,
+                base_line,
+                width,
+            } => {
+                self.cur_h = add(edge, width)?;
+                self.cur_v = base_line;
+            }
+            PositionedContinuation::Vertical {
+                baseline,
+                left_edge,
+                depth,
+            } => {
+                self.cur_v = add(baseline, depth)?;
+                self.cur_h = left_edge;
             }
         }
-        self.end_box(box_id, depth)
+        Ok(())
     }
 
     fn box_event(
@@ -363,53 +553,6 @@ impl Lowerer<'_> {
                 limit: self.limits.max_depth,
             })?,
         }))
-    }
-
-    fn box_in_hlist(
-        &mut self,
-        node: &BoxNode,
-        vertical: bool,
-        depth: usize,
-    ) -> Result<(), PositionedError> {
-        if node.children.is_empty() {
-            self.cur_h = add(self.cur_h, node.width)?;
-            return Ok(());
-        }
-        let edge = self.cur_h;
-        let baseline = self.cur_v;
-        self.cur_v = add(baseline, node.shift)?;
-        if vertical {
-            self.vlist(node, depth)?
-        } else {
-            self.hlist(node, depth)?
-        }
-        self.cur_h = add(edge, node.width)?;
-        self.cur_v = baseline;
-        Ok(())
-    }
-
-    fn box_in_vlist(
-        &mut self,
-        node: &BoxNode,
-        vertical: bool,
-        depth: usize,
-    ) -> Result<(), PositionedError> {
-        if node.children.is_empty() {
-            self.cur_v = add(add(self.cur_v, node.height)?, node.depth)?;
-            return Ok(());
-        }
-        self.cur_v = add(self.cur_v, node.height)?;
-        let baseline = self.cur_v;
-        let left = self.cur_h;
-        self.cur_h = add(left, node.shift)?;
-        if vertical {
-            self.vlist(node, depth)?
-        } else {
-            self.hlist(node, depth)?
-        }
-        self.cur_v = add(baseline, node.depth)?;
-        self.cur_h = left;
-        Ok(())
     }
 
     fn rule_h(
@@ -835,39 +978,6 @@ impl RunBuilder {
     }
 }
 
-fn index_nodes(root: &PageNode) -> BTreeMap<usize, u32> {
-    let mut result = BTreeMap::new();
-    let mut stack = vec![root];
-    let mut ordinal = 0_u32;
-    while let Some(node) = stack.pop() {
-        result.insert(node as *const PageNode as usize, ordinal);
-        ordinal = ordinal
-            .checked_add(1)
-            .expect("validated artifact node count fits u32");
-        match node {
-            PageNode::HList(node) | PageNode::VList(node) => {
-                stack.extend(node.children.iter().rev());
-            }
-            PageNode::Glue {
-                leader: Some(LeaderPayload::HList(node) | LeaderPayload::VList(node)),
-                ..
-            } => stack.extend(node.children.iter().rev()),
-            PageNode::Disc {
-                pre, post, replace, ..
-            } => {
-                stack.extend(replace.iter().rev());
-                stack.extend(post.iter().rev());
-                stack.extend(pre.iter().rev());
-            }
-            PageNode::Insert { content, .. } | PageNode::Adjust(content) => {
-                stack.extend(content.iter().rev());
-            }
-            _ => {}
-        }
-    }
-    result
-}
-
 fn glue_width(
     node: &BoxNode,
     spec: crate::GlueSpec,
@@ -885,110 +995,6 @@ fn glue_width(
     .map_err(|_| PositionedError::PositionOverflow)
 }
 
-fn predict_snap_correction(
-    following: &[PageNode],
-    effects: &[PageEffect],
-    this_box: &BoxNode,
-    mut current: Scaled,
-    mut reference: (Scaled, Scaled),
-    mut cur_g: Scaled,
-    mut cur_glue: Scaled,
-) -> Result<Option<Scaled>, PositionedError> {
-    for child in following {
-        match child {
-            PageNode::HList(node) | PageNode::VList(node) => {
-                current = add(current, add(node.height, node.depth)?)?;
-            }
-            PageNode::Rule { height, depth, .. } => {
-                current = add(
-                    current,
-                    add(
-                        height.unwrap_or(Scaled::from_raw(0)),
-                        depth.unwrap_or(Scaled::from_raw(0)),
-                    )?,
-                )?;
-            }
-            PageNode::Glue { spec, .. } => {
-                current = add(
-                    current,
-                    glue_width(this_box, *spec, &mut cur_glue, &mut cur_g)?,
-                )?;
-            }
-            PageNode::Kern { amount, .. } | PageNode::MarginKern { amount, .. } => {
-                current = add(current, *amount)?;
-            }
-            PageNode::WhatsitAnchor { effect_index } => {
-                let effect =
-                    effects
-                        .get(*effect_index as usize)
-                        .ok_or(PositionedError::MissingEffect {
-                            effect_index: *effect_index,
-                        })?;
-                match effect {
-                    PageEffect::PdfSnapRefPoint => reference.1 = current,
-                    PageEffect::PdfSnapY { spec } => {
-                        return Ok(crate::snapping::correction(current, reference.1, *spec));
-                    }
-                    _ => {}
-                }
-            }
-            _ => {}
-        }
-    }
-    Ok(None)
-}
-
-#[derive(Clone, Copy)]
-enum LeaderMode {
-    Aligned,
-    Centered,
-    Expanded,
-}
-
-impl LeaderMode {
-    fn from_glue(kind: GlueKind) -> Option<Self> {
-        match kind {
-            GlueKind::Leaders => Some(Self::Aligned),
-            GlueKind::Cleaders => Some(Self::Centered),
-            GlueKind::Xleaders => Some(Self::Expanded),
-            _ => None,
-        }
-    }
-}
-
-fn leader_start(
-    kind: LeaderMode,
-    cur: Scaled,
-    origin: Scaled,
-    available: Scaled,
-    size: Scaled,
-) -> Result<(Scaled, Scaled), PositionedError> {
-    match kind {
-        LeaderMode::Aligned => {
-            let diff = i64::from(cur.raw()) - i64::from(origin.raw());
-            let quotient = diff / i64::from(size.raw());
-            let mut start = scaled(i64::from(origin.raw()) + i64::from(size.raw()) * quotient)?;
-            if start.raw() < cur.raw() {
-                start = add(start, size)?;
-            }
-            Ok((start, Scaled::from_raw(0)))
-        }
-        LeaderMode::Centered => Ok((
-            add(cur, Scaled::from_raw(available.raw() % size.raw() / 2))?,
-            Scaled::from_raw(0),
-        )),
-        LeaderMode::Expanded => {
-            let q = i64::from(available.raw() / size.raw());
-            let r = i64::from(available.raw() % size.raw());
-            let extra = r / (q + 1);
-            Ok((
-                add(cur, scaled((r - (q - 1) * extra) / 2)?)?,
-                scaled(extra)?,
-            ))
-        }
-    }
-}
-
 fn add(left: Scaled, right: Scaled) -> Result<Scaled, PositionedError> {
     left.checked_add(right)
         .ok_or(PositionedError::PositionOverflow)
@@ -997,10 +1003,4 @@ fn add(left: Scaled, right: Scaled) -> Result<Scaled, PositionedError> {
 fn sub(left: Scaled, right: Scaled) -> Result<Scaled, PositionedError> {
     left.checked_sub(right)
         .ok_or(PositionedError::PositionOverflow)
-}
-
-fn scaled(value: i64) -> Result<Scaled, PositionedError> {
-    i32::try_from(value)
-        .map(Scaled::from_raw)
-        .map_err(|_| PositionedError::PositionOverflow)
 }

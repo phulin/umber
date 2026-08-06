@@ -16,7 +16,6 @@ Use this crate for stable, driver-facing artifact structures and serialization c
 - `src/dvi.rs`: Slice-compatible and incremental output-sink DVI APIs, the private body compiler and file writer, one-page writer state, errors, and submodule wiring.
 - `src/bin/texout-dvitype.rs`: Small host-side DVI disassembly binary for parity triage, enabled by the opt-in `dvi-tools` feature.
 - `src/dvi/disasm.rs`: Bounded backpointer-graph validator and single-pass retained DVI command index/disassembler.
-- `src/dvi/coordinates.rs`: DVI-traversal coordinate oracle and exact positioned-stream comparator.
 - `src/dvi/disasm/tests.rs`: Page-graph corruption, retained-index, disassembly, and command lookup tests.
 - `src/dvi/fonts.rs`: Indexed page/global font selection, cross-page identity checks, first-use definitions, and postamble emission.
 - `src/dvi/framing.rs`: Streaming DVI preamble/postamble, offsets, and one-page byte staging.
@@ -27,6 +26,7 @@ Use this crate for stable, driver-facing artifact structures and serialization c
 - `src/dvi/plan.rs`: The common page-plan currency, owned/scalar/artifact-stream adapters, first-use font-definition relocations, and final file assembly.
 - `src/dvi/tests.rs`: Byte-level DVI writer tests for file structure, traversal, movement optimization, rules, fonts, glue, and specials.
 - `src/dvi/traversal.rs`: The sole explicit-frame DVI body traversal for boxes, rules, specials, glue, leaders, movement synchronization, and coordinate inspection.
+- `src/geometry.rs`: Shared geometry authority for artifact ordinals, snap lookahead, checked coordinates, and exact leader placement.
 - `src/html.rs`: deterministic coordinate-locked standalone HTML serializer over already-retained font assets, asset modes, escaping, and limits.
 - `src/html/incremental.rs`: canonical keyed render revisions, stable cross-revision identity reuse, detached resource inventory, and bounded artifact/positioned-page builders.
 - `src/html/incremental/digest.rs`: versioned canonical render hashing and key derivation.
@@ -43,7 +43,7 @@ Use this crate for stable, driver-facing artifact structures and serialization c
 - `src/pdf/serialize.rs`: deterministic `pdf_writer` adapter, typed errors, version selection, and stream compression policy.
 - `src/pdf/serialize/tests.rs`: exact-byte determinism, independent parsing, compression, and adapter-error tests.
 - `src/positioned.rs`: public driver-neutral positioned-page event model and lowering API.
-- `src/positioned/traversal.rs`: DVI-coordinate-equivalent box, glue, rule, leader, special, and browser-shaped text-run traversal.
+- `src/positioned/traversal.rs`: Explicit-frame positioned sink for DVI-equivalent box, glue, rule, leader, special, and browser-shaped text-run events.
 - `src/positioned/tests.rs`: line-anchor, baseline, box-shift, rule, ligature, and kern-boundary coordinate tests.
 - `src/tests.rs`: Round-trip, deterministic byte/hash, and binary rejection tests for artifact serialization.
 

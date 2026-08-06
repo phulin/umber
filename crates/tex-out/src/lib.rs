@@ -31,6 +31,7 @@
 
 mod binary;
 pub mod dvi;
+mod geometry;
 pub mod html;
 mod model;
 mod node_cursor;

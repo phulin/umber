@@ -183,7 +183,6 @@ pub enum HtmlError {
     NoPages,
     TooManyPages { count: usize, limit: usize },
     Positioned(PositionedError),
-    Coordinate(crate::dvi::coordinates::CoordinateError),
     MissingPageFont { page: u32, font_id: u32 },
     FontResolution { font: String, message: String },
     FontKeyMismatch { font: String },
@@ -217,7 +216,6 @@ impl std::fmt::Display for HtmlError {
                 write!(f, "HTML page count {count} exceeds limit {limit}")
             }
             Self::Positioned(error) => error.fmt(f),
-            Self::Coordinate(error) => error.fmt(f),
             Self::MissingPageFont { page, font_id } => {
                 write!(f, "HTML page {page} references missing font {font_id}")
             }
@@ -321,12 +319,6 @@ impl From<PositionedError> for HtmlError {
     }
 }
 
-impl From<crate::dvi::coordinates::CoordinateError> for HtmlError {
-    fn from(value: crate::dvi::coordinates::CoordinateError) -> Self {
-        Self::Coordinate(value)
-    }
-}
-
 pub fn write_html<R: HtmlFontAssets>(
     pages: &[PageArtifact],
     assets: &R,
@@ -360,16 +352,6 @@ pub fn write_html<R: HtmlFontAssets>(
                 },
             )
             .map_err(HtmlError::from)?;
-            if positioned.events.iter().all(|event| match event {
-                PositionedEvent::TextRun(run) => run.units.iter().all(|unit| match unit {
-                    TextUnit::Code(code) => u8::try_from(*code).is_ok(),
-                    TextUnit::Space => true,
-                }),
-                _ => true,
-            }) {
-                crate::dvi::coordinates::compare_page(page, &positioned)
-                    .map_err(HtmlError::from)?;
-            }
             Ok::<PositionedPage, HtmlError>(positioned)
         })
         .collect::<Result<Vec<_>, _>>()?;

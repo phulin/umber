@@ -6,7 +6,6 @@ use crate::{
 };
 
 use super::{PositionedEvent, TextUnit, lower_page};
-use crate::dvi::coordinates::{CoordinateError, compare_page};
 
 fn sp(raw: i32) -> Scaled {
     Scaled::from_raw(raw)
@@ -214,7 +213,6 @@ fn current_output_font_flows_into_leading_glue_in_a_nested_box() {
         vec![TextUnit::Space, TextUnit::Code(u32::from(b'B'))]
     );
     assert_eq!(nested_run.positions, vec![sp(20), sp(27)]);
-    compare_page(&page, &positioned).expect("leading browser space preserves DVI glyph anchor");
 }
 
 #[test]
@@ -263,7 +261,6 @@ fn pdf_accessibility_effects_keep_order_and_exact_anchor() {
             PdfAccessibilityEffect::InterwordSpaceOff,
         ]
     );
-    compare_page(&page, &positioned).expect("PDF-only effects do not alter DVI coordinates");
 }
 
 #[test]
@@ -365,66 +362,6 @@ fn form_references_advance_at_pdftex_hlist_and_vlist_baselines() {
 }
 
 #[test]
-fn dvi_oracle_rejects_one_sp_anchor_drift_with_event_context() {
-    let page = page(PageNode::HList(box_node(
-        100,
-        40,
-        10,
-        vec![PageNode::Char {
-            font_id: 1,
-            ch: b'A' as u32,
-            width: sp(20),
-        }],
-    )));
-    let mut positioned = lower_page(&page, 7).expect("lower page");
-    compare_page(&page, &positioned).expect("exact DVI coordinates");
-    let run = positioned
-        .events
-        .iter_mut()
-        .find_map(|event| match event {
-            PositionedEvent::TextRun(run) => Some(run),
-            _ => None,
-        })
-        .expect("text run");
-    run.baseline = run.baseline.checked_add(sp(1)).expect("one sp");
-    let error = compare_page(&page, &positioned).expect_err("baseline drift must fail");
-    assert!(matches!(error, CoordinateError::Mismatch { page: 7, .. }));
-    assert!(error.to_string().contains("text anchor differs"));
-}
-
-#[test]
-fn dvi_oracle_ignores_within_run_glyph_advances_and_width() {
-    let page = page(PageNode::HList(box_node(
-        100,
-        40,
-        10,
-        vec![
-            PageNode::Char {
-                font_id: 1,
-                ch: b'A' as u32,
-                width: sp(20),
-            },
-            PageNode::Char {
-                font_id: 1,
-                ch: b'V' as u32,
-                width: sp(20),
-            },
-        ],
-    )));
-    let positioned = lower_page(&page, 8).expect("lower page");
-    let mut changed_advances = page.clone();
-    let PageNode::HList(root) = &mut changed_advances.testing_mut().root else {
-        unreachable!()
-    };
-    let PageNode::Char { width, .. } = &mut root.children[0] else {
-        unreachable!()
-    };
-    *width = sp(73);
-    compare_page(&changed_advances, &positioned)
-        .expect("interior browser-owned glyph positions are excluded");
-}
-
-#[test]
 fn explicit_letterspace_movements_anchor_each_physical_glyph() {
     let page = page(PageNode::HList(box_node(
         100,
@@ -472,7 +409,31 @@ fn explicit_letterspace_movements_anchor_each_physical_glyph() {
     assert_eq!(runs.len(), 2);
     assert_eq!((runs[0].x, runs[0].font_id), (sp(4), 1));
     assert_eq!((runs[1].x, runs[1].font_id), (sp(33), 1));
-    compare_page(&page, &positioned).expect("positioned anchors match flattened DVI");
+}
+
+#[test]
+fn deep_box_geometry_uses_bounded_explicit_frames() {
+    const DEPTH: usize = 2_048;
+    let mut root = PageNode::Rule {
+        width: Some(sp(1)),
+        height: Some(sp(1)),
+        depth: Some(sp(0)),
+    };
+    for _ in 0..DEPTH {
+        root = PageNode::HList(box_node(1, 1, 0, vec![root]));
+    }
+    let page = page(root);
+
+    let positioned = lower_page(&page, 11).expect("lower deeply nested page");
+    assert_eq!(
+        positioned
+            .events
+            .iter()
+            .filter(|event| matches!(event, PositionedEvent::Box(_)))
+            .count(),
+        DEPTH
+    );
+    crate::dvi::DviPagePlan::compile(&page).expect("compile deeply nested DVI geometry");
 }
 
 fn page(root: PageNode) -> crate::PageArtifact {

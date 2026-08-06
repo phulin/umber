@@ -219,6 +219,17 @@ impl std::fmt::Display for PositionedError {
 
 impl std::error::Error for PositionedError {}
 
+impl From<crate::geometry::GeometryError> for PositionedError {
+    fn from(value: crate::geometry::GeometryError) -> Self {
+        match value {
+            crate::geometry::GeometryError::MissingEffect { effect_index } => {
+                Self::MissingEffect { effect_index }
+            }
+            crate::geometry::GeometryError::PositionOverflow => Self::PositionOverflow,
+        }
+    }
+}
+
 /// Lowers one validated committed page without consulting live engine state.
 pub fn lower_page(page: &PageArtifact, page_index: u32) -> Result<PositionedPage, PositionedError> {
     lower_page_with_limits(page, page_index, PositionedLimits::default())

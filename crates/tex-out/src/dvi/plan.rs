@@ -114,44 +114,6 @@ impl DviPagePlanBuilder {
         )
     }
 
-    pub(super) fn trace_page(
-        page: &PageArtifact,
-    ) -> Result<Vec<super::coordinates::DviCoordinateEvent>, DviError> {
-        let (vertical, root) = match &page.root {
-            PageNode::HList(root) => (false, root),
-            PageNode::VList(root) => (true, root),
-            _ => unreachable!("validated page root is a box"),
-        };
-        let mut builder = Self::new(page.job.clone(), page.counts, root, vertical)?;
-        builder.writer.coordinate_trace = Some(Vec::new());
-        builder.writer.snap_reference = crate::snapping::initial_reference(&page.effects);
-        if vertical {
-            builder.writer.cur_v = builder
-                .writer
-                .cur_v
-                .checked_add(root.height)
-                .ok_or(DviError::PositionOverflow)?;
-        }
-        builder.writer.trace_box(vertical, root)?;
-        if vertical {
-            builder.writer.cur_v = builder
-                .writer
-                .cur_v
-                .checked_sub(root.height)
-                .ok_or(DviError::PositionOverflow)?;
-        }
-        builder.add_fonts(&page.fonts)?;
-        builder.push_owned_list(&root.children, &page.effects)?;
-        builder
-            .writer
-            .finish_direct_stream(builder.state.take().expect("unfinished page trace"))?;
-        Ok(builder
-            .writer
-            .coordinate_trace
-            .take()
-            .expect("coordinate tracing enabled"))
-    }
-
     pub fn char(
         &mut self,
         font_id: u32,

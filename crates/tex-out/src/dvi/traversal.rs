@@ -1,10 +1,10 @@
 use tex_arith::Scaled;
 
+use crate::geometry::predict_snap_correction;
 use crate::{BoxNode, PageEffect, PageNode};
 
 use super::{
     DviBodyCompiler, DviError,
-    coordinates::DviCoordinateEvent,
     glue::{add_scaled, adjusted_glue_width, sub_scaled},
     leaders,
     opcodes::{DOWN1, POP, PUSH, PUT_RULE, RIGHT1, SET_RULE, XXX1, XXX4},
@@ -97,7 +97,6 @@ impl DviBodyCompiler {
         vertical: bool,
         continuation: DirectContinuation,
     ) -> Result<(), DviError> {
-        self.trace_box(vertical, fields)?;
         self.enter_box();
         if self.cur_s > 0 {
             self.u8(PUSH);
@@ -428,19 +427,10 @@ impl DviBodyCompiler {
         effects: &[PageEffect],
     ) -> Result<(), DviError> {
         match node {
-            PageNode::Char { font_id, ch, width } => {
-                self.trace_glyph(*font_id, &[*ch])?;
-                self.direct_char(state, *font_id, *ch, *width)
-            }
+            PageNode::Char { font_id, ch, width } => self.direct_char(state, *font_id, *ch, *width),
             PageNode::Lig {
-                font_id,
-                ch,
-                source,
-                width,
-            } => {
-                self.trace_glyph(*font_id, source)?;
-                self.direct_char(state, *font_id, *ch, *width)
-            }
+                font_id, ch, width, ..
+            } => self.direct_char(state, *font_id, *ch, *width),
             PageNode::Kern { amount, .. } | PageNode::MarginKern { amount, .. } => {
                 self.direct_kern(state, *amount)
             }
@@ -486,7 +476,34 @@ impl DviBodyCompiler {
         nodes: &[PageNode],
         effects: &[PageEffect],
     ) -> Result<(), DviError> {
-        for (index, node) in nodes.iter().enumerate() {
+        enum Action<'a> {
+            Node {
+                node: &'a PageNode,
+                following: &'a [PageNode],
+            },
+            EndBox,
+        }
+
+        fn schedule<'a>(pending: &mut Vec<Action<'a>>, nodes: &'a [PageNode]) {
+            pending.extend(
+                nodes
+                    .iter()
+                    .enumerate()
+                    .rev()
+                    .map(|(index, node)| Action::Node {
+                        node,
+                        following: &nodes[index + 1..],
+                    }),
+            );
+        }
+
+        let mut pending = Vec::new();
+        schedule(&mut pending, nodes);
+        while let Some(action) = pending.pop() {
+            let Action::Node { node, following } = action else {
+                self.direct_end_box(state)?;
+                continue;
+            };
             if let PageNode::WhatsitAnchor { effect_index } = node {
                 let frame = state.frames.last().expect("direct stream has a root frame");
                 if let DirectAxis::V {
@@ -496,7 +513,7 @@ impl DviBodyCompiler {
                     self.out_what_v(
                         effects,
                         *effect_index,
-                        &nodes[index + 1..],
+                        following,
                         &frame.fields,
                         cur_g,
                         cur_glue,
@@ -504,7 +521,21 @@ impl DviBodyCompiler {
                     continue;
                 }
             }
-            self.direct_owned_node(state, node, effects)?;
+            match node {
+                PageNode::HList(box_node) | PageNode::VList(box_node) => {
+                    let entered = self.direct_begin_box(
+                        state,
+                        box_node,
+                        matches!(node, PageNode::VList(_)),
+                        box_node.children.is_empty(),
+                    )?;
+                    if entered {
+                        pending.push(Action::EndBox);
+                        schedule(&mut pending, &box_node.children);
+                    }
+                }
+                _ => self.direct_owned_node(state, node, effects)?,
+            }
         }
         Ok(())
     }
@@ -547,14 +578,6 @@ impl DviBodyCompiler {
     ) -> Result<(), DviError> {
         let total = add_scaled(rule_ht, rule_dp)?;
         if total.raw() > 0 && rule_wd.raw() > 0 {
-            if let Some(trace) = &mut self.coordinate_trace {
-                trace.push(DviCoordinateEvent::Rule {
-                    x: self.cur_h,
-                    y: sub_scaled(base_line, rule_ht)?,
-                    width: rule_wd,
-                    height: total,
-                });
-            }
             self.synch_h()?;
             self.cur_v = add_scaled(base_line, rule_dp)?;
             self.synch_v()?;
@@ -572,17 +595,8 @@ impl DviBodyCompiler {
         rule_ht: Scaled,
         rule_wd: Scaled,
     ) -> Result<(), DviError> {
-        let top = self.cur_v;
         self.cur_v = add_scaled(self.cur_v, rule_ht)?;
         if rule_ht.raw() > 0 && rule_wd.raw() > 0 {
-            if let Some(trace) = &mut self.coordinate_trace {
-                trace.push(DviCoordinateEvent::Rule {
-                    x: self.cur_h,
-                    y: top,
-                    width: rule_wd,
-                    height: rule_ht,
-                });
-            }
             self.synch_h()?;
             self.synch_v()?;
             self.u8(PUT_RULE);
@@ -635,13 +649,6 @@ impl DviBodyCompiler {
             .get(usize::try_from(effect_index).expect("u32 fits usize"))
             .ok_or(DviError::MissingEffect { effect_index })?;
         if let PageEffect::Special { payload, .. } = effect {
-            if let Some(trace) = &mut self.coordinate_trace {
-                trace.push(DviCoordinateEvent::Special {
-                    x: self.cur_h,
-                    y: self.cur_v,
-                    payload: payload.clone(),
-                });
-            }
             self.special_out(payload)?;
         }
         Ok(())
@@ -687,42 +694,6 @@ impl DviBodyCompiler {
         Ok(())
     }
 
-    pub(super) fn trace_box(&mut self, vertical: bool, node: &BoxNode) -> Result<(), DviError> {
-        if let Some(trace) = &mut self.coordinate_trace {
-            trace.push(DviCoordinateEvent::Box {
-                vertical,
-                x: self.cur_h,
-                y: sub_scaled(self.cur_v, node.height)?,
-                width: node.width,
-                height: add_scaled(node.height, node.depth)?,
-                baseline: self.cur_v,
-            });
-        }
-        Ok(())
-    }
-
-    pub(super) fn trace_glyph(
-        &mut self,
-        font_id: u32,
-        source_codes: &[u32],
-    ) -> Result<(), DviError> {
-        if let Some(trace) = &mut self.coordinate_trace {
-            let source_codes = source_codes
-                .iter()
-                .map(|code| {
-                    u8::try_from(*code).map_err(|_| DviError::CharacterOutOfRange { ch: *code })
-                })
-                .collect::<Result<Vec<_>, _>>()?;
-            trace.push(DviCoordinateEvent::Glyph {
-                x: self.cur_h,
-                baseline: self.cur_v,
-                font_id,
-                source_codes,
-            });
-        }
-        Ok(())
-    }
-
     fn special_out(&mut self, payload: &[u8]) -> Result<(), DviError> {
         self.synch_h()?;
         self.synch_v()?;
@@ -738,64 +709,4 @@ impl DviBodyCompiler {
         self.raw(payload);
         Ok(())
     }
-}
-
-fn predict_snap_correction(
-    following: &[PageNode],
-    effects: &[PageEffect],
-    this_box: &BoxNode,
-    mut current: Scaled,
-    mut reference: (Scaled, Scaled),
-    mut cur_g: Scaled,
-    mut cur_glue: Scaled,
-) -> Result<Option<Scaled>, DviError> {
-    for child in following {
-        match child {
-            PageNode::HList(node) | PageNode::VList(node) => {
-                current = add_scaled(current, add_scaled(node.height, node.depth)?)?;
-            }
-            PageNode::Rule { height, depth, .. } => {
-                current = add_scaled(
-                    current,
-                    add_scaled(
-                        height.unwrap_or(Scaled::from_raw(0)),
-                        depth.unwrap_or(Scaled::from_raw(0)),
-                    )?,
-                )?;
-            }
-            PageNode::Glue { spec, .. } => {
-                current = add_scaled(
-                    current,
-                    adjusted_glue_width(
-                        *spec,
-                        this_box.glue_sign,
-                        this_box.glue_order,
-                        this_box.glue_set,
-                        &mut cur_glue,
-                        &mut cur_g,
-                    )?,
-                )?;
-            }
-            PageNode::Kern { amount, .. } | PageNode::MarginKern { amount, .. } => {
-                current = add_scaled(current, *amount)?;
-            }
-            PageNode::WhatsitAnchor { effect_index } => {
-                let effect =
-                    effects
-                        .get(*effect_index as usize)
-                        .ok_or(DviError::MissingEffect {
-                            effect_index: *effect_index,
-                        })?;
-                match effect {
-                    PageEffect::PdfSnapRefPoint => reference.1 = current,
-                    PageEffect::PdfSnapY { spec } => {
-                        return Ok(crate::snapping::correction(current, reference.1, *spec));
-                    }
-                    _ => {}
-                }
-            }
-            _ => {}
-        }
-    }
-    Ok(None)
 }

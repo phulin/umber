@@ -6,6 +6,7 @@ use super::{
     DviBodyCompiler, DviError,
     glue::{add_scaled, sub_scaled},
 };
+use crate::geometry::{LEADER_ROUNDING_COMPENSATION, LeaderMode, leader_start};
 
 // TeX82 map: `Move right or output leaders`, `Output leaders in an hlist`,
 // and their vlist counterparts inside `hlist_out`/`vlist_out` in `tex.web`.
@@ -15,8 +16,6 @@ use super::{
 // Recursive leader output also follows TeX's synch/save/traverse/restore
 // order.  As in traversal.rs, Umber's positive-up hlist shift accounts for
 // the subtraction used for horizontal leader boxes; vlist shift adds right.
-
-const LEADER_ROUNDING_COMPENSATION: Scaled = Scaled::from_raw(10);
 
 pub(super) struct HLeaderContext<'a> {
     pub(super) effects: &'a [PageEffect],
@@ -43,7 +42,7 @@ impl DviBodyCompiler {
         &mut self,
         context: HLeaderContext<'_>,
     ) -> Result<(), DviError> {
-        let Some(leader_kind) = leader_kind(context.kind) else {
+        let Some(leader_kind) = LeaderMode::from_glue(context.kind) else {
             self.cur_h = add_scaled(self.cur_h, context.rule_wd)?;
             return Ok(());
         };
@@ -95,7 +94,7 @@ impl DviBodyCompiler {
         &mut self,
         context: VLeaderContext<'_>,
     ) -> Result<(), DviError> {
-        let Some(leader_kind) = leader_kind(context.kind) else {
+        let Some(leader_kind) = LeaderMode::from_glue(context.kind) else {
             self.cur_v = add_scaled(self.cur_v, context.rule_ht)?;
             return Ok(());
         };
@@ -202,73 +201,6 @@ impl DviBodyCompiler {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum LeaderKind {
-    Aligned,
-    Centered,
-    Expanded,
-}
-
-fn leader_kind(kind: GlueKind) -> Option<LeaderKind> {
-    match kind {
-        GlueKind::Leaders => Some(LeaderKind::Aligned),
-        GlueKind::Cleaders => Some(LeaderKind::Centered),
-        GlueKind::Xleaders => Some(LeaderKind::Expanded),
-        GlueKind::Normal
-        | GlueKind::BaselineSkip
-        | GlueKind::LineSkip
-        | GlueKind::LeftSkip
-        | GlueKind::RightSkip
-        | GlueKind::ParFillSkip => None,
-    }
-}
-
-fn leader_start(
-    kind: LeaderKind,
-    cur: Scaled,
-    origin: Scaled,
-    available: Scaled,
-    leader_size: Scaled,
-) -> Result<(Scaled, Scaled), DviError> {
-    debug_assert!(available.raw() > 0);
-    debug_assert!(leader_size.raw() > 0);
-    match kind {
-        LeaderKind::Aligned => {
-            let diff = i64::from(cur.raw()) - i64::from(origin.raw());
-            let quotient = diff / i64::from(leader_size.raw());
-            let start = i64::from(origin.raw()) + i64::from(leader_size.raw()) * quotient;
-            let mut start = scaled_from_i64(start)?;
-            if start.raw() < cur.raw() {
-                start = add_scaled(start, leader_size)?;
-            }
-            Ok((start, Scaled::from_raw(0)))
-        }
-        LeaderKind::Centered => {
-            let remainder = available.raw() % leader_size.raw();
-            Ok((
-                add_scaled(cur, Scaled::from_raw(remainder / 2))?,
-                Scaled::from_raw(0),
-            ))
-        }
-        LeaderKind::Expanded => {
-            let quotient = i64::from(available.raw() / leader_size.raw());
-            let remainder = i64::from(available.raw() % leader_size.raw());
-            let lx = remainder / (quotient + 1);
-            let start_offset = (remainder - (quotient - 1) * lx) / 2;
-            Ok((
-                add_scaled(cur, scaled_from_i64(start_offset)?)?,
-                scaled_from_i64(lx)?,
-            ))
-        }
-    }
-}
-
-fn scaled_from_i64(value: i64) -> Result<Scaled, DviError> {
-    i32::try_from(value)
-        .map(Scaled::from_raw)
-        .map_err(|_| DviError::PositionOverflow)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -280,17 +212,17 @@ mod tests {
     #[test]
     fn aligned_leader_start_uses_first_grid_position_not_less_than_current() {
         assert_eq!(
-            leader_start(LeaderKind::Aligned, sp(23), sp(0), sp(40), sp(10))
+            leader_start(LeaderMode::Aligned, sp(23), sp(0), sp(40), sp(10))
                 .expect("aligned positive leader start"),
             (sp(30), sp(0))
         );
         assert_eq!(
-            leader_start(LeaderKind::Aligned, sp(-11), sp(0), sp(40), sp(10))
+            leader_start(LeaderMode::Aligned, sp(-11), sp(0), sp(40), sp(10))
                 .expect("aligned negative leader start below grid"),
             (sp(-10), sp(0))
         );
         assert_eq!(
-            leader_start(LeaderKind::Aligned, sp(-9), sp(0), sp(40), sp(10))
+            leader_start(LeaderMode::Aligned, sp(-9), sp(0), sp(40), sp(10))
                 .expect("aligned negative leader start above grid"),
             (sp(0), sp(0))
         );
@@ -299,7 +231,7 @@ mod tests {
     #[test]
     fn centered_leader_start_places_half_remainder_at_each_end() {
         assert_eq!(
-            leader_start(LeaderKind::Centered, sp(20), sp(0), sp(37), sp(10))
+            leader_start(LeaderMode::Centered, sp(20), sp(0), sp(37), sp(10))
                 .expect("centered leader start"),
             (sp(23), sp(0))
         );
@@ -308,12 +240,12 @@ mod tests {
     #[test]
     fn expanded_leader_start_matches_tex_web_integer_spacing() {
         assert_eq!(
-            leader_start(LeaderKind::Expanded, sp(20), sp(0), sp(37), sp(10))
+            leader_start(LeaderMode::Expanded, sp(20), sp(0), sp(37), sp(10))
                 .expect("expanded leader start"),
             (sp(22), sp(1))
         );
         assert_eq!(
-            leader_start(LeaderKind::Expanded, sp(20), sp(0), sp(8), sp(10))
+            leader_start(LeaderMode::Expanded, sp(20), sp(0), sp(8), sp(10))
                 .expect("expanded leader start shorter than payload"),
             (sp(28), sp(8))
         );
