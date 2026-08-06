@@ -29,9 +29,10 @@ Run authored tests with `node --test crates/umber-wasm/js/*.test.js`.
 - `manifest-resolver.js`: immutable-manifest HTTP/cache adapter over the
   required `umber-wasm` catalog bindings; it owns transport policy but no
   catalog schema or selection policy.
-- `manifest-schema.js`: request/response wire identity adapters only; catalog
-  parsing, validation, partitioning, serialization, and selection remain in
-  `umber-distribution` behind the WebAssembly boundary.
+- `manifest-schema.js`: request/response wire identity adapters only; catalogue
+  parsing, duplicate rejection, authentication, partitioning, serialization,
+  format lookup, and batch selection remain in `umber-distribution` behind the
+  WebAssembly boundary.
 - `manifest-resolver.d.ts`: public resolver declarations.
 - `manifest-resolver.test.js`: resolver integrity, concurrency, hint, and cache tests.
 - `resource-resolver.js` / `resource-resolver.d.ts`: ordered typed provider

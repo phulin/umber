@@ -107,6 +107,19 @@ pub struct ManifestFormat {
     pub input_closure: Option<FormatInputClosure>,
 }
 
+/// Strict publisher-facing envelope for one named format image.
+///
+/// Published roots omit the producer metadata schema and carry formats in a
+/// name-keyed map.  Format producers use this envelope so the distribution
+/// crate remains the only parser and canonicalization authority for both
+/// shapes.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NamedFormat {
+    pub metadata_schema: u32,
+    pub name: String,
+    pub format: ManifestFormat,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FormatInputClosure {
     pub schema: u32,
@@ -165,6 +178,63 @@ impl ManifestFormat {
             sha256: self.sha256.clone(),
             bytes: self.bytes,
         }
+    }
+}
+
+impl NamedFormat {
+    pub fn parse(text: &str) -> Result<Self, ManifestParseError> {
+        let value =
+            json::parse(text).map_err(|error| ManifestParseError::new(error.to_string()))?;
+        let mut envelope = object(value, "format metadata")?;
+        let metadata_schema = u32_value(
+            take(&mut envelope, "schema", "format metadata")?,
+            "format metadata schema",
+        )?;
+        if !matches!(metadata_schema, 1 | 2) {
+            return Err(ManifestParseError::new(format!(
+                "unsupported format metadata schema {metadata_schema}; expected 1 or 2"
+            )));
+        }
+        let name = string(take(&mut envelope, "name", "format metadata")?, "name")?;
+        validate_format_name(&name)?;
+
+        // Producer metadata historically permitted closure keys in arbitrary
+        // order, then canonicalized them before publication. Preserve that
+        // contract here while rejecting duplicates before the strict root
+        // parser sees the resulting value.
+        if let Some(Value::Object(closure)) = envelope.get_mut("inputClosure")
+            && let Some(Value::Array(keys)) = closure.get_mut("keys")
+        {
+            keys.sort_by(|left, right| match (left, right) {
+                (Value::String(left), Value::String(right)) => left.cmp(right),
+                _ => std::cmp::Ordering::Equal,
+            });
+            if keys.windows(2).any(|pair| pair[0] == pair[1]) {
+                return Err(ManifestParseError::new(format!(
+                    "input closure for format {name} contains duplicate keys"
+                )));
+            }
+        }
+
+        let mut formats = BTreeMap::new();
+        formats.insert(name.clone(), Value::Object(envelope));
+        let mut parsed = parse_formats(Value::Object(formats))?;
+        let format = parsed.remove(&name).expect("inserted named format exists");
+        if metadata_schema == 1 && format.input_closure.is_some() {
+            return Err(ManifestParseError::new(
+                "format metadata schema 1 cannot contain an input closure",
+            ));
+        }
+        if metadata_schema == 2 && format.input_closure.is_none() {
+            return Err(ManifestParseError::new(
+                "format metadata schema 2 requires an input closure",
+            ));
+        }
+        Ok(Self {
+            metadata_schema,
+            name,
+            format,
+        })
     }
 }
 

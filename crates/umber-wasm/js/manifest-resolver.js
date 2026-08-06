@@ -2,10 +2,8 @@ import {
 	decodeKey,
 	encodeRequest,
 	fontRequestIdentity,
-	isFormatName,
 	legacyMappingRequestIdentity,
 	ManifestResolverError,
-	parseManifestJson,
 	resourceDomain,
 } from "./manifest-schema.js";
 import { IndexedDbObjectCache } from "./persistent-cache.js";
@@ -97,17 +95,17 @@ export class HttpManifestResolver {
 				bytes,
 			);
 		} catch {}
-		let manifest;
+		let rootText;
 		try {
-			manifest = parseManifestJson(new TextDecoder().decode(bytes));
+			rootText = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
 		} catch (error) {
 			throw new ManifestResolverError(
 				"invalid-manifest",
-				"root manifest is not valid JSON",
+				"root manifest is not UTF-8",
 				{ cause: error },
 			);
 		}
-		return new HttpManifestResolver(manifest, {
+		return new HttpManifestResolver(rootText, {
 			fetch: fetchImplementation,
 			crypto,
 			concurrency: options.concurrency,
@@ -125,10 +123,9 @@ export class HttpManifestResolver {
 		this.catalog = options.catalog;
 		if (
 			![
-				"catalogValidateRoot",
-				"catalogValidateShard",
-				"catalogShardIndex",
-				"catalogSelectShard",
+				"catalogPrepareBatch",
+				"catalogPlanBatch",
+				"catalogSelectFormat",
 			].every((name) => typeof this.catalog?.[name] === "function")
 		) {
 			throw new ManifestResolverError(
@@ -137,9 +134,14 @@ export class HttpManifestResolver {
 			);
 		}
 		try {
-			this.rootCanonical = this.catalog.catalogValidateRoot(
-				JSON.stringify(manifest),
+			const rootText =
+				typeof manifest === "string"
+					? manifest
+					: `${JSON.stringify(manifest)}\n`;
+			const prepared = JSON.parse(
+				this.catalog.catalogPrepareBatch(rootText, []),
 			);
+			this.rootCanonical = prepared.root;
 			this.manifest = JSON.parse(this.rootCanonical);
 			this.manifest.formats ??= {};
 		} catch (error) {
@@ -180,19 +182,6 @@ export class HttpManifestResolver {
 		}
 		this.objectCache = new Map();
 		this.shardCache = new Map();
-		this.shardCanonical = new Map();
-	}
-
-	async #shardIndex(key) {
-		try {
-			return await this.catalog.catalogShardIndex(key, this.manifest.shardBits);
-		} catch (error) {
-			throw new ManifestResolverError(
-				"invalid-manifest",
-				`invalid canonical catalog key ${key}`,
-				{ cause: error },
-			);
-		}
 	}
 
 	async resolve(requests, options) {
@@ -310,201 +299,89 @@ export class HttpManifestResolver {
 	}
 
 	async #select(requests, signal, blocking) {
-		const selections = [];
-		const seen = new Set();
-		for (const request of requests) {
-			if (request?.type === "font") {
-				const identity = fontRequestIdentity(request);
-				if (!seen.has(identity)) {
-					seen.add(identity);
-					selections.push(
-						this.#typedSelection("font", request, identity, signal, blocking),
-					);
-				}
-				continue;
-			}
-			if (request?.type === "legacy-font-mapping") {
-				const identity = legacyMappingRequestIdentity(request);
-				if (!seen.has(identity)) {
-					seen.add(identity);
-					selections.push(
-						this.#typedSelection(
-							"legacy-font-mapping",
-							request,
-							identity,
-							signal,
-							blocking,
-						),
-					);
-				}
-				continue;
-			}
-			const key = encodeRequest(request);
-			if (seen.has(key)) continue;
-			seen.add(key);
-			selections.push(
-				(async () => {
-					try {
-						const index = await this.#shardIndex(key);
-						const shard = await this.#shard(index, signal);
-						return this.#catalogSelection("file", request, key, shard, index);
-					} catch (error) {
-						if (blocking) throw actionableError(key, error);
-						throw error;
-					}
-				})(),
-			);
-		}
-		const resolved = await Promise.all(selections);
-		const jobs = [];
-		const misses = [];
-		const hintedKeys = new Set();
-		for (const item of resolved) {
-			if (item.plan !== undefined) {
-				if (item.plan.misses.includes(item.key)) {
-					misses.push({
-						type: item.type,
-						request: item.request,
-						manifestKey: item.key,
-					});
-					continue;
-				}
-				for (const planned of item.plan.jobs) {
-					if (planned.requirement === "required") {
-						jobs.push({
-							key: planned.manifestKey,
-							manifestKey: planned.manifestKey,
-							entry: item.entry,
-							request: item.request,
-							requested: true,
-							type: item.type,
-						});
-					} else if (!seen.has(planned.manifestKey)) {
-						seen.add(planned.manifestKey);
-						jobs.push({
-							key: planned.manifestKey,
-							manifestKey: planned.manifestKey,
-							entry: {
-								virtualPath: planned.virtualPath,
-								object: planned.object,
-								sha256: planned.sha256,
-								bytes: planned.bytes,
-							},
-							requested: false,
-							type: "file",
-						});
-					}
-				}
-				continue;
-			}
-			if (item.missing || item.entry === undefined) {
-				misses.push({
-					type: item.type,
-					request: item.request,
-					manifestKey: item.key ?? item.request.logicalName,
-				});
-				continue;
-			}
-			jobs.push({
-				key: item.key,
-				manifestKey: item.key,
-				entry: item.entry,
-				request: item.request,
-				requested: true,
-				type: item.type,
-			});
-			for (const dependency of item.entry.dependencies ?? []) {
-				if (seen.has(dependency.key) || hintedKeys.has(dependency.key))
-					continue;
-				hintedKeys.add(dependency.key);
-				jobs.push({
-					key: dependency.key,
-					manifestKey: dependency.key,
-					entry: dependency,
-					requested: false,
-					type: "file",
-				});
-			}
-		}
-		return { jobs, misses };
-	}
-
-	async #typedSelection(type, request, key, signal, blocking) {
+		const descriptors = requests.map((request) => ({
+			request,
+			type:
+				request?.type === "font"
+					? "font"
+					: request?.type === "legacy-font-mapping"
+						? "legacy-font-mapping"
+						: "file",
+			key:
+				request?.type === "font"
+					? fontRequestIdentity(request)
+					: request?.type === "legacy-font-mapping"
+						? legacyMappingRequestIdentity(request)
+						: encodeRequest(request),
+		}));
 		try {
-			const index = await this.#shardIndex(key);
-			const shard = await this.#shard(index, signal);
-			return this.#catalogSelection(type, request, key, shard, index);
+			const prepared = JSON.parse(
+				this.catalog.catalogPrepareBatch(
+					this.rootCanonical,
+					descriptors.map(({ key }) => key),
+				),
+			);
+			const shards = await Promise.all(
+				prepared.shards.map(async (shard) => ({
+					index: shard.index,
+					text: await this.#shard(shard, signal),
+				})),
+			);
+			const plan = JSON.parse(
+				this.catalog.catalogPlanBatch(
+					this.rootCanonical,
+					JSON.stringify(shards),
+					descriptors.map(({ key }) => key),
+				),
+			);
+			return {
+				jobs: plan.jobs.map((job) => ({
+					key: job.manifestKey,
+					manifestKey: job.manifestKey,
+					entry: job.entry,
+					request:
+						job.requestIndex === null
+							? undefined
+							: descriptors[job.requestIndex].request,
+					requested: job.requirement === "required",
+					type: job.kind,
+				})),
+				misses: plan.misses.map((index) => ({
+					type: descriptors[index].type,
+					request: descriptors[index].request,
+					manifestKey: descriptors[index].key,
+				})),
+			};
 		} catch (error) {
-			if (blocking) throw actionableError(key, error);
+			if (blocking)
+				throw actionableError(descriptors[0]?.key ?? "catalog batch", error);
 			throw error;
 		}
 	}
 
-	#catalogSelection(type, request, key, shard, index) {
-		const entries =
-			type === "font"
-				? shard.fonts
-				: type === "legacy-font-mapping"
-					? shard.legacyMappings
-					: shard.files;
-		try {
-			const plan = JSON.parse(
-				this.catalog.catalogSelectShard(this.shardCanonical.get(index), [key]),
-			);
-			return { type, request, key, entry: entries[key], plan };
-		} catch (error) {
-			throw new ManifestResolverError(
-				"invalid-manifest",
-				`catalog selection failed for ${key}`,
-				{ cause: error },
-			);
-		}
-	}
-
-	async #shard(index, signal) {
-		let pending = this.shardCache.get(index);
+	async #shard(descriptor, signal) {
+		let pending = this.shardCache.get(descriptor.index);
 		if (pending === undefined) {
 			pending = (async () => {
-				const sha256 = this.manifest.shards[index];
 				const bytes = await this.#object(
-					{ object: `sha256-${sha256}`, sha256 },
+					descriptor,
 					signal,
 					{ limit: MAX_SHARD_BYTES, code: "shard-length" },
 				);
-				let parsed;
 				try {
-					parsed = parseManifestJson(new TextDecoder().decode(bytes));
+					return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
 				} catch (error) {
 					throw new ManifestResolverError(
 						"invalid-manifest",
-						`index shard ${index} is not valid JSON`,
+						`index shard ${descriptor.index} is not UTF-8`,
 						{ cause: error },
 					);
 				}
-				let shard;
-				try {
-					const canonical = await this.catalog.catalogValidateShard(
-						this.rootCanonical,
-						JSON.stringify(parsed),
-						index,
-					);
-					this.shardCanonical.set(index, canonical);
-					shard = JSON.parse(canonical);
-					shard.fonts ??= {};
-					shard.legacyMappings ??= {};
-				} catch (error) {
-					throw new ManifestResolverError(
-						"invalid-manifest",
-						`index shard ${index} failed canonical catalog validation: ${error?.message ?? error}`,
-						{ cause: error },
-					);
-				}
-				return shard;
 			})();
-			this.shardCache.set(index, pending);
+			this.shardCache.set(descriptor.index, pending);
 			pending.catch(() => {
-				if (this.shardCache.get(index) === pending)
-					this.shardCache.delete(index);
+				if (this.shardCache.get(descriptor.index) === pending)
+					this.shardCache.delete(descriptor.index);
 			});
 		}
 		return pending;
@@ -539,18 +416,17 @@ export class HttpManifestResolver {
 	}
 
 	formatMetadata(name) {
-		if (!isFormatName(name))
+		try {
+			return JSON.parse(
+				this.catalog.catalogSelectFormat(this.rootCanonical, name),
+			);
+		} catch (error) {
 			throw new ManifestResolverError(
 				"invalid-format",
-				`invalid format name ${String(name)}`,
+				`invalid or missing format ${String(name)}`,
+				{ cause: error },
 			);
-		const entry = this.manifest.formats[name];
-		if (entry === undefined)
-			throw new ManifestResolverError(
-				"missing-format",
-				`manifest has no format named ${name}`,
-			);
-		return entry;
+		}
 	}
 
 	formatPrefetchHints(name) {

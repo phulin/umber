@@ -48,24 +48,13 @@ SHA-256 `42fdceeaecf0e80c072bb69cf3b77f0cb20e755f69110c04124474fadb1cd5fc`.
 The immutable publication receipt and remote audit are recorded in
 [distribution_manifest.md](distribution_manifest.md).
 
-From the repository root, regenerate the canonical catalog with:
-
-```bash
-cargo run -q --manifest-path tools/texlive-wasm-publish/Cargo.toml -- \
-  --write-html-mvp-catalog umber-html-mvp-v1 \
-  tools/texlive-wasm-publish/catalog/html-mvp-v1.json \
-  crates/tex-fonts/tests/fixtures/cm/cmr10.tfm \
-  crates/umber-wasm/assets/cmu-serif-500-roman.woff2 \
-  crates/umber-wasm/assets/CMU-OFL.txt \
-  crates/tex-fonts/tests/fixtures/stix-two-math.woff2 \
-  crates/tex-fonts/tests/fixtures/stix-two-math.LICENSE.txt
-```
-
-The generator rejects any byte or length drift in those five inputs and emits
-canonical shard JSON. Its test requires byte-for-byte equality with the
-committed inventory. The `umber` catalog audit independently decodes the WOFF2
-programs and verifies program identities, cmap totality for every mapped slot,
-MATH availability, object reuse, license digests, and affirmative permissions.
+The committed catalogue itself is the reviewed contract; there is no
+programmatic second copy of its records or OT1 mapping. The HTML publisher
+strictly parses it, requires `objectSources` to cover its exact WOFF2 and
+license digest set, and verifies every declared length and digest before
+staging. The `umber` catalogue audit independently decodes the WOFF2 programs
+and verifies program identities, cmap totality for every mapped slot, MATH
+availability, object reuse, license digests, and affirmative permissions.
 
 Additional Computer Modern faces or sizes, other legacy encodings, virtual
 fonts, Type 1/PK conversion, OS-font discovery, and automatic SFNT conversion

@@ -6,12 +6,16 @@ import {
 	HttpManifestResolver,
 	ManifestResolverError,
 } from "./manifest-resolver.js";
-import { shardIndex } from "./manifest-schema.js";
 import { MemoryObjectCache } from "./persistent-cache.js";
 
 const encoder = new TextEncoder();
+const shardIndex = (key, bits) => {
+	if (bits === 0) return 0;
+	const bytes = createHash("sha256").update(key).digest();
+	return ((bytes[0] << 8) | bytes[1]) >>> (16 - bits);
+};
 const catalog = {
-	catalogValidateRoot(text) {
+	catalogPrepareBatch(text, keys) {
 		const root = JSON.parse(text);
 		if (
 			![2, 3, 4].includes(root.schema) ||
@@ -22,35 +26,51 @@ const catalog = {
 			root.shards?.length !== root.shardCount
 		)
 			throw new Error("shardBits or shard table is invalid");
-		return `${JSON.stringify(root)}\n`;
+		const indexes = [
+			...new Set(
+				keys.map((key) => shardIndex(key, root.shardBits)),
+			),
+		].sort((left, right) => left - right);
+		return JSON.stringify({
+			root: `${JSON.stringify(root)}\n`,
+			shards: indexes.map((index) => ({
+				index,
+				object: `sha256-${root.shards[index]}`,
+				sha256: root.shards[index],
+			})),
+		});
 	},
-	async catalogValidateShard(rootText, shardText, index) {
+	catalogPlanBatch(rootText, shardsText, keys) {
 		const root = JSON.parse(rootText);
-		const shard = JSON.parse(shardText);
-		if (
-			shard.distribution !== root.distribution ||
-			shard.index !== index ||
-			shard.schema !== (root.schema === 4 ? 2 : 1)
-		)
-			throw new Error(`index shard ${index} identity mismatch`);
-		for (const key of [
-			...Object.keys(shard.files ?? {}),
-			...Object.keys(shard.fonts ?? {}),
-			...Object.keys(shard.legacyMappings ?? {}),
-		])
-			if ((await shardIndex(key, root.shardBits, webcrypto, true)) !== index)
-				throw new Error(`lookup key ${key} is not in canonical shard ${index}`);
-		return `${JSON.stringify(shard)}\n`;
-	},
-	catalogShardIndex(key, bits) {
-		return shardIndex(key, bits, webcrypto, true);
-	},
-	catalogSelectShard(shardText, keys) {
-		const shard = JSON.parse(shardText);
+		const shards = new Map();
+		for (const raw of JSON.parse(shardsText)) {
+			if (digest(encoder.encode(raw.text)) !== root.shards[raw.index])
+				throw new Error(`index shard ${raw.index} digest mismatch`);
+			const shard = JSON.parse(raw.text);
+			if (
+				shard.distribution !== root.distribution ||
+				shard.index !== raw.index ||
+				shard.schema !== (root.schema === 4 ? 2 : 1)
+			)
+				throw new Error(`index shard ${raw.index} identity mismatch`);
+			for (const key of [
+				...Object.keys(shard.files ?? {}),
+				...Object.keys(shard.fonts ?? {}),
+				...Object.keys(shard.legacyMappings ?? {}),
+			])
+				if (shardIndex(key, root.shardBits) !== raw.index)
+					throw new Error(`lookup key ${key} is not in canonical shard`);
+			shards.set(raw.index, shard);
+		}
 		const jobs = [];
 		const misses = [];
-		const seen = new Set(keys);
-		for (const key of keys) {
+		const seen = new Set();
+		const hints = [];
+		for (const [requestIndex, key] of keys.entries()) {
+			if (seen.has(key)) continue;
+			seen.add(key);
+			const index = shardIndex(key, root.shardBits);
+			const shard = shards.get(index);
 			const entries = key.startsWith("font:")
 				? (shard.fonts ?? {})
 				: key.startsWith("legacy-mapping:")
@@ -58,25 +78,39 @@ const catalog = {
 					: shard.files;
 			const entry = entries[key];
 			if (entry === undefined) {
-				misses.push(key);
+				misses.push(requestIndex);
 				continue;
 			}
 			jobs.push({
 				manifestKey: key,
 				requirement: "required",
-				...entry,
+				kind: key.startsWith("font:")
+					? "font"
+					: key.startsWith("legacy-mapping:")
+						? "legacy-font-mapping"
+						: "file",
+				requestIndex,
+				entry,
 			});
-			for (const dependency of entry.dependencies ?? []) {
-				if (seen.has(dependency.key)) continue;
-				seen.add(dependency.key);
-				jobs.push({
-					manifestKey: dependency.key,
-					requirement: "hint",
-					...dependency,
-				});
-			}
+			hints.push(...(entry.dependencies ?? []));
+		}
+		for (const dependency of hints) {
+			if (seen.has(dependency.key)) continue;
+			seen.add(dependency.key);
+			jobs.push({
+				manifestKey: dependency.key,
+				requirement: "hint",
+				kind: "file",
+				requestIndex: null,
+				entry: dependency,
+			});
 		}
 		return JSON.stringify({ jobs, misses });
+	},
+	catalogSelectFormat(rootText, name) {
+		const entry = JSON.parse(rootText).formats?.[name];
+		if (entry === undefined) throw new Error(`missing format ${name}`);
+		return JSON.stringify({ name, ...entry });
 	},
 };
 const digest = (bytes) => createHash("sha256").update(bytes).digest("hex");

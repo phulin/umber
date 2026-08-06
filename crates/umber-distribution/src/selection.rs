@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
 
@@ -497,6 +497,16 @@ impl ManifestRequest {
             Self::LegacyMapping(key) => key.manifest_key(),
         }
     }
+
+    pub fn from_manifest_key(value: &str) -> Result<Self, SelectionError> {
+        if value.starts_with("font:") {
+            FontRequestKey::from_manifest_key(value).map(Self::Font)
+        } else if value.starts_with("legacy-mapping:") {
+            LegacyMappingRequestKey::from_manifest_key(value).map(Self::LegacyMapping)
+        } else {
+            FileRequestKey::from_manifest_key(value).map(Self::File)
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -671,6 +681,79 @@ pub fn select_shard(shard: &ManifestShard, requests: &[ManifestRequest]) -> Sele
                 .ok_or_else(|| ManifestMiss::LegacyMapping(request_key.clone())),
         };
         match object {
+            Ok((object, virtual_path)) => selection.jobs.push(AcquisitionJob {
+                request: request.clone(),
+                manifest_key: key,
+                requirement: JobRequirement::Required,
+                object,
+                virtual_path,
+            }),
+            Err(miss) => selection.misses.push(miss),
+        }
+    }
+    for dependency in dependencies {
+        if !seen.insert(dependency.key.clone()) {
+            continue;
+        }
+        let Ok(key) = FileRequestKey::from_manifest_key(&dependency.key) else {
+            continue;
+        };
+        let object = dependency.object_entry();
+        selection.jobs.push(AcquisitionJob {
+            request: ManifestRequest::File(key),
+            manifest_key: ManifestLogicalKey(dependency.key),
+            requirement: JobRequirement::DependencyHint,
+            object,
+            virtual_path: Some(dependency.virtual_path),
+        });
+    }
+    selection
+}
+
+/// Selects one ordered request batch from its authenticated canonical shards.
+/// Required jobs retain first-request order; their inline dependency hints
+/// follow in discovery order after every required job.
+#[must_use]
+pub fn select_shards(
+    shards: &BTreeMap<u32, ManifestShard>,
+    shard_bits: u8,
+    requests: &[ManifestRequest],
+) -> Selection {
+    let mut selection = Selection::default();
+    let mut seen = BTreeSet::new();
+    let mut dependencies = Vec::new();
+    for request in requests {
+        let key = request.manifest_key();
+        if !seen.insert(key.0.clone()) {
+            continue;
+        }
+        let Ok(index) = shard_index(&key, shard_bits) else {
+            continue;
+        };
+        let shard = shards
+            .get(&index)
+            .expect("authenticated batch contains every requested shard");
+        let selected = match request {
+            ManifestRequest::File(request_key) => shard
+                .files
+                .get(key.as_str())
+                .map(|entry| {
+                    dependencies.extend(entry.dependencies.iter().cloned());
+                    (entry.object_entry(), Some(entry.virtual_path.clone()))
+                })
+                .ok_or_else(|| ManifestMiss::File(request_key.clone())),
+            ManifestRequest::Font(request_key) => shard
+                .fonts
+                .get(key.as_str())
+                .map(|entry| (entry.object.clone(), None))
+                .ok_or_else(|| ManifestMiss::Font(request_key.clone())),
+            ManifestRequest::LegacyMapping(request_key) => shard
+                .legacy_mappings
+                .get(key.as_str())
+                .map(|entry| (entry.object.clone(), None))
+                .ok_or_else(|| ManifestMiss::LegacyMapping(request_key.clone())),
+        };
+        match selected {
             Ok((object, virtual_path)) => selection.jobs.push(AcquisitionJob {
                 request: request.clone(),
                 manifest_key: key,

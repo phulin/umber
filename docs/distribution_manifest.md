@@ -189,14 +189,15 @@ selected TFM object. The build rejects VF, AFM, ENC, PDF/dvips maps, PK, Type
 1, TrueType, and OpenType transport inputs even when they exist in a pinned
 source root.
 
-The contract-version-1 production catalog is committed canonically at
+The contract-version-1 production catalogue is committed canonically at
 `tools/texlive-wasm-publish/catalog/html-mvp-v1.json` and inventoried in
-[HTML MVP Font Catalog Inventory](html_font_catalog.md). The publisher's
-`--write-html-mvp-catalog` mode regenerates it only after exact byte and length
-checks for `cmr10.tfm`, both WOFF2 inputs, and both OFL texts. The native audit
-independently validates decoded program identities, the complete 256-entry
-legacy map, cmap coverage, MATH presence, shared CMU object reuse, and
-affirmative license capabilities.
+[HTML MVP Font Catalog Inventory](html_font_catalog.md). It is the reviewed
+data authority rather than the output of an executable shadow catalogue. The
+publisher strictly parses it and verifies the exact digest and length of every
+declared WOFF2 and license object before staging. The native audit independently
+validates decoded program identities, the complete 256-entry legacy map, cmap
+coverage, MATH presence, shared CMU object reuse, and affirmative license
+capabilities.
 
 HTML staging uses independent ceilings for logical files, unique staged
 objects, total staged object bytes, font records, mapping records, and unique
@@ -384,12 +385,12 @@ digest, so a successful resolution supplies identical authenticated bytes to
 the shared compile session and preserves engine-output parity.
 
 The authored JavaScript resolver requires both the root URL and its lowercase
-SHA-256 pin. It verifies the bounded root bytes before passing catalog bytes to
-the synchronous `umber-wasm` adapter over `umber-distribution`, then fetches the
-digest-addressed shard through the same HTTP or IndexedDB verified-object cache
-as content payloads. Rust returns the canonical shard partition and ordered
-required/hint/miss selection plan; JavaScript retains only HTTP, cache,
-concurrency, cancellation, and resource-budget policy. A verified shard miss becomes a typed unavailable answer;
+SHA-256 pin. It verifies the bounded root bytes before passing the exact text to
+the synchronous `umber-wasm` adapter over `umber-distribution`. Rust returns one
+prepared shard batch, reauthenticates every exact fetched shard byte string
+against the root, and returns the canonical required-before-hint/miss plan with
+complete selected records. JavaScript retains only HTTP, cache, concurrency,
+cancellation, resource-budget, and response-materialization policy. A verified shard miss becomes a typed unavailable answer;
 HTTP, CORS, cancellation, size, and integrity failures remain errors.
 
 Dependency hints are consumed directly from their full inline fetch metadata,

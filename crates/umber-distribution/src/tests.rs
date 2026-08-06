@@ -562,3 +562,72 @@ fn rejects_corrupt_duplicate_and_oversized_format_input_closures() {
         .join("\",\"");
     assert!(ShardedManifestRoot::parse(&format!("{prefix}{too_many}\"{suffix}")).is_err());
 }
+
+#[test]
+fn named_format_envelope_canonicalizes_closure_once() {
+    let text = r#"{
+        "schema":2,
+        "name":"latex",
+        "object":"sha256-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "bytes":10,
+        "engine":"umber",
+        "engineVersion":"0.1.0",
+        "formatSchema":11,
+        "sourceDistribution":"test",
+        "sourceManifestSha256":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "sourceDateEpoch":0,
+        "inputClosure":{"schema":1,"keys":["tfm:cmr10.tfm","tex:latex.ltx"]}
+    }"#;
+    let named = NamedFormat::parse(text).expect("publisher format envelope");
+    assert_eq!(named.name, "latex");
+    assert_eq!(
+        named.format.input_closure.expect("closure").keys,
+        ["tex:latex.ltx", "tfm:cmr10.tfm"]
+    );
+    let duplicate = text.replace(
+        r#"["tfm:cmr10.tfm","tex:latex.ltx"]"#,
+        r#"["tex:latex.ltx","tex:latex.ltx"]"#,
+    );
+    assert!(NamedFormat::parse(&duplicate).is_err());
+}
+
+#[test]
+fn authenticated_batch_owns_exact_shards_and_required_before_hint_order() {
+    let manifest = Manifest::parse(&fixture().manifest).expect("monolithic fixture");
+    let catalog = shard_manifest(&manifest, 2).expect("sharded catalogue");
+    let requests = vec![
+        ManifestRequest::File(
+            FileRequestKey::from_manifest_key("tex:article.cls").expect("article request"),
+        ),
+        ManifestRequest::File(
+            FileRequestKey::from_manifest_key("tfm:missing.tfm").expect("missing request"),
+        ),
+    ];
+    let (_, indexes) = prepare_batch(&catalog.root.to_json(), &requests).expect("prepare batch");
+    let raw = indexes
+        .iter()
+        .map(|index| (*index, catalog.shards[*index as usize].to_json()))
+        .collect::<Vec<_>>();
+    let borrowed = raw
+        .iter()
+        .map(|(index, text)| (*index, text.as_str()))
+        .collect::<Vec<_>>();
+    let plan = authenticate_batch(&catalog.root.to_json(), &borrowed, &requests)
+        .expect("authenticated plan");
+    assert_eq!(plan.selection.misses.len(), 1);
+    assert_eq!(plan.selection.jobs[0].requirement, JobRequirement::Required);
+    assert!(
+        plan.selection.jobs[1..]
+            .iter()
+            .all(|job| job.requirement == JobRequirement::DependencyHint)
+    );
+
+    let mut tampered = raw;
+    tampered[0].1.push(' ');
+    let tampered = tampered
+        .iter()
+        .map(|(index, text)| (*index, text.as_str()))
+        .collect::<Vec<_>>();
+    assert!(authenticate_batch(&catalog.root.to_json(), &tampered, &requests).is_err());
+}

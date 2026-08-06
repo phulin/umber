@@ -12,8 +12,6 @@ use umber_distribution::{
 
 pub const ROOT_SCHEMA: u32 = SHARDED_ROOT_SCHEMA;
 
-pub type RootManifest = ShardedManifestRoot;
-pub type IndexShard = ManifestShard;
 type FetchEntry = ObjectEntry;
 
 pub type ShardedPublication = ShardedCatalog;
@@ -65,19 +63,17 @@ pub fn write_html_sharded_manifest(
 }
 
 fn write_publication(
-    mut publication: ShardedPublication,
+    publication: ShardedPublication,
     output: &Path,
 ) -> Result<ShardedPublication> {
     let objects = output.join("objects");
     fs::create_dir_all(&objects)
         .with_context(|| format!("create output directory {}", objects.display()))?;
-    for shard in &publication.shards {
+    for (shard, digest) in publication.shards.iter().zip(&publication.root.shards) {
         let bytes = canonical_shard(shard).into_bytes();
-        let digest = sha256(&bytes);
         let object = format!("sha256-{digest}");
         fs::write(objects.join(&object), &bytes)
             .with_context(|| format!("write index shard {object}"))?;
-        publication.root.shards.push(digest);
     }
     fs::write(
         output.join("manifest.json"),
@@ -90,7 +86,7 @@ fn write_publication(
 pub fn verify_sharded_snapshot(output: &Path) -> Result<ShardedPublication> {
     let root_bytes = fs::read(output.join("manifest.json")).context("read root manifest")?;
     let root_text = std::str::from_utf8(&root_bytes).context("root manifest is not UTF-8")?;
-    let root = RootManifest::parse(root_text).context("parse root manifest")?;
+    let root = ShardedManifestRoot::parse(root_text).context("parse root manifest")?;
     if root.to_json().as_bytes() != root_bytes {
         bail!("root manifest is not canonically serialized");
     }
@@ -149,7 +145,7 @@ fn read_verified_object(output: &Path, entry: &FetchEntry, label: &str) -> Resul
     Ok(bytes)
 }
 
-fn canonical_shard(shard: &IndexShard) -> String {
+fn canonical_shard(shard: &ManifestShard) -> String {
     shard.to_json()
 }
 

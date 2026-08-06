@@ -347,6 +347,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "hayro-syntax",
+ "serde_json",
  "sha2",
  "similar",
  "tempfile",

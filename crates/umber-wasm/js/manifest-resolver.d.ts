@@ -47,14 +47,13 @@ export interface HttpManifestResolverOptions {
 }
 
 export interface DistributionCatalogBindings {
-	catalogValidateRoot(rootJson: string): string;
-	catalogValidateShard(
+	catalogPrepareBatch(rootJson: string, keys: readonly string[]): string;
+	catalogPlanBatch(
 		rootJson: string,
-		shardJson: string,
-		index: number,
-	): string | Promise<string>;
-	catalogShardIndex(key: string, shardBits: number): number | Promise<number>;
-	catalogSelectShard(shardJson: string, keys: readonly string[]): string;
+		shardsJson: string,
+		keys: readonly string[],
+	): string;
+	catalogSelectFormat(rootJson: string, name: string): string;
 }
 
 export interface ManifestFile {

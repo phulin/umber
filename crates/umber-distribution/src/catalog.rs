@@ -4,8 +4,104 @@ use crate::{
     DependencyHint, FontManifestRecord, HTML_INDEX_SHARD_SCHEMA, HTML_SHARDED_ROOT_SCHEMA,
     INDEX_SHARD_SCHEMA, LegacyMappingManifestRecord, Manifest, ManifestFile, ManifestFormat,
     ManifestShard, SHARDED_ROOT_SCHEMA, SelectionError, ShardFile, ShardedManifestRoot,
-    shard_index_for_key,
+    select_shards, shard_index_for_key,
 };
+
+/// A complete browser acquisition plan whose shard bytes were authenticated
+/// against the supplied root before any record became selectable.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AuthenticatedBatchPlan {
+    pub root: ShardedManifestRoot,
+    pub shards: BTreeMap<u32, ManifestShard>,
+    pub selection: crate::Selection,
+}
+
+/// Strictly parses a root and returns the unique shard indexes needed by an
+/// ordered canonical request batch.
+pub fn prepare_batch(
+    root_text: &str,
+    requests: &[crate::ManifestRequest],
+) -> Result<(ShardedManifestRoot, Vec<u32>), SelectionError> {
+    let root = ShardedManifestRoot::parse(root_text).map_err(SelectionError::from_manifest)?;
+    let mut indexes = requests
+        .iter()
+        .map(|request| shard_index_for_key(request.manifest_key().as_str(), root.shard_bits))
+        .collect::<Result<Vec<_>, _>>()?;
+    indexes.sort_unstable();
+    indexes.dedup();
+    Ok((root, indexes))
+}
+
+/// Authenticates the exact selected shard bytes and produces the shared
+/// required-before-hint acquisition plan.
+pub fn authenticate_batch(
+    root_text: &str,
+    raw_shards: &[(u32, &str)],
+    requests: &[crate::ManifestRequest],
+) -> Result<AuthenticatedBatchPlan, SelectionError> {
+    let (root, expected_indexes) = prepare_batch(root_text, requests)?;
+    let mut shards = BTreeMap::new();
+    for &(index, text) in raw_shards {
+        if !expected_indexes.contains(&index) {
+            return Err(SelectionError::new(format!(
+                "unexpected index shard {index} in acquisition batch"
+            )));
+        }
+        let expected_digest = root
+            .shard_digest(index)
+            .ok_or_else(|| SelectionError::new(format!("invalid index shard {index}")))?;
+        if sha256_hex(text.as_bytes()) != expected_digest {
+            return Err(SelectionError::new(format!(
+                "index shard {index} does not match its authenticated root digest"
+            )));
+        }
+        let shard = ManifestShard::parse(text).map_err(SelectionError::from_manifest)?;
+        shard
+            .validate_identity(&root, index)
+            .map_err(SelectionError::from_manifest)?;
+        for key in shard
+            .files
+            .keys()
+            .chain(shard.fonts.keys())
+            .chain(shard.legacy_mappings.keys())
+        {
+            if shard_index_for_key(key, root.shard_bits)? != index {
+                return Err(SelectionError::new(format!(
+                    "lookup key {key} is not in canonical shard {index}"
+                )));
+            }
+        }
+        if shards.insert(index, shard).is_some() {
+            return Err(SelectionError::new(format!(
+                "duplicate index shard {index} in acquisition batch"
+            )));
+        }
+    }
+    if shards.keys().copied().collect::<Vec<_>>() != expected_indexes {
+        return Err(SelectionError::new(
+            "acquisition batch does not contain every required index shard",
+        ));
+    }
+    let selection = select_shards(&shards, root.shard_bits, requests);
+    Ok(AuthenticatedBatchPlan {
+        root,
+        shards,
+        selection,
+    })
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    crate::sha256::digest(bytes)
+        .iter()
+        .flat_map(|byte| {
+            [
+                HEX[(byte >> 4) as usize] as char,
+                HEX[(byte & 15) as usize] as char,
+            ]
+        })
+        .collect()
+}
 
 /// Canonical, I/O-free representation of a complete sharded publication.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -106,6 +202,10 @@ pub fn shard_manifest_with_records(
             fonts,
             legacy_mappings,
         })
+        .collect::<Vec<_>>();
+    let shard_digests = shards
+        .iter()
+        .map(|shard| sha256_hex(shard.to_json().as_bytes()))
         .collect();
     Ok(ShardedCatalog {
         root: ShardedManifestRoot {
@@ -114,7 +214,7 @@ pub fn shard_manifest_with_records(
             objects_base_url: manifest.objects_base_url.clone(),
             shard_bits,
             shard_count: shard_count as u32,
-            shards: Vec::new(),
+            shards: shard_digests,
             formats: manifest.formats.clone(),
         },
         shards,

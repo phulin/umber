@@ -4,10 +4,9 @@ import { HttpManifestResolver } from "/package/manifest-resolver.js";
 import { renderedSourceLocationFromPoint } from "/package/source-map.js";
 import initWasm, {
 	CompilerSession,
-	catalogSelectShard,
-	catalogShardIndex,
-	catalogValidateRoot,
-	catalogValidateShard,
+	catalogPlanBatch,
+	catalogPrepareBatch,
+	catalogSelectFormat,
 	contentHash,
 	formatSchemaVersion,
 } from "/package/umber_wasm.js";
@@ -15,10 +14,9 @@ import { compileInWorker } from "/package/worker-controller.js";
 
 const encode = (value) => new TextEncoder().encode(value);
 const catalog = {
-	catalogSelectShard,
-	catalogShardIndex,
-	catalogValidateRoot,
-	catalogValidateShard,
+	catalogPlanBatch,
+	catalogPrepareBatch,
+	catalogSelectFormat,
 };
 
 function assert(condition, message) {

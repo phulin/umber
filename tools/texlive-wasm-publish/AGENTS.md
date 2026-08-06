@@ -29,7 +29,8 @@ are independent of the full snapshot.
 
 ## File map
 
-- `src/lib.rs`: publication orchestration and public configuration.
+- `src/lib.rs`: one prepared-object publication pipeline plus public configuration;
+  full and HTML profiles differ only while selecting their prepared inputs.
 - `src/sharded.rs`: filesystem writing, object hashing, and staged byte
   verification around canonical `umber-distribution` root/shard/catalog
   values; it owns no parallel wire schema or graph validator.
@@ -37,7 +38,7 @@ are independent of the full snapshot.
 - `src/tlpdb.rs`: TeX Live runfile ownership and bounded package dependency-hint derivation.
 - `src/tests.rs`: fixture publication, collision, path, and precedence tests.
 - `src/main.rs`: small JSON-config command-line entry point.
-- `src/mvp_catalog.rs`: exact-input generator for the two-font, one-mapping
-  contract-version-1 HTML MVP catalog.
-- `catalog/html-mvp-v1.json`: canonical committed catalog generated only from
-  the pinned repository TFM, WOFF2, license, provenance, and policy inputs.
+- `catalog/html-mvp-v1.json`: canonical committed contract for the pinned
+  repository TFM, WOFF2, license, provenance, and policy inputs. Publication
+  strictly parses it and authenticates every referenced object; there is no
+  executable shadow catalogue.

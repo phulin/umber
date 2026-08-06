@@ -15,17 +15,18 @@ pub use manifest::{
     DependencyHint, FORMAT_INPUT_CLOSURE_SCHEMA, FormatInputClosure, INDEX_SHARD_SCHEMA,
     LEGACY_SHARDED_ROOT_SCHEMA, MANIFEST_SCHEMA, MAX_FORMAT_INPUTS, MAX_REQUEST_KEY_BYTES,
     MAX_SHARD_BITS, Manifest, ManifestFile, ManifestFont, ManifestFormat, ManifestParseError,
-    ManifestShard, ObjectEntry, SHARDED_ROOT_SCHEMA, ShardFile, ShardedManifestRoot,
+    ManifestShard, NamedFormat, ObjectEntry, SHARDED_ROOT_SCHEMA, ShardFile, ShardedManifestRoot,
 };
 pub use selection::{
     AcquisitionJob, FeatureSetting, FileKind, FileRequestKey, FontRequestContext, FontRequestKey,
     JobRequirement, LegacyMappingRequestKey, ManifestLogicalKey, ManifestMiss, ManifestRequest,
     Selection, SelectionError, VariationCoordinate, VariationInstance, WritingDirection, select,
-    select_shard, shard_index, shard_index_for_key,
+    select_shard, select_shards, shard_index, shard_index_for_key,
 };
 
 #[cfg(test)]
 mod tests;
 pub use catalog::{
-    ShardedCatalog, assemble_sharded_catalog, shard_manifest, shard_manifest_with_records,
+    AuthenticatedBatchPlan, ShardedCatalog, assemble_sharded_catalog, authenticate_batch,
+    prepare_batch, shard_manifest, shard_manifest_with_records,
 };

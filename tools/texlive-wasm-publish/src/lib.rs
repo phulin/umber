@@ -2,7 +2,6 @@
 
 #![allow(clippy::disallowed_methods)] // Host release tooling intentionally owns filesystem I/O.
 
-mod mvp_catalog;
 mod scan;
 mod sharded;
 mod tlpdb;
@@ -15,17 +14,15 @@ use anyhow::{Context, Result, bail};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use umber_distribution::{
-    FORMAT_INPUT_CLOSURE_SCHEMA, FileRequestKey, FontManifestRecord, FormatInputClosure,
-    HTML_INDEX_SHARD_SCHEMA, HTML_SHARDED_ROOT_SCHEMA, LegacyMappingManifestRecord,
-    MAX_FORMAT_INPUTS, ManifestFile, ManifestFormat, ManifestShard,
+    FileRequestKey, FontManifestRecord, HTML_INDEX_SHARD_SCHEMA, HTML_SHARDED_ROOT_SCHEMA,
+    LegacyMappingManifestRecord, ManifestFile, ManifestFormat, ManifestShard, NamedFormat,
 };
 
 pub use sharded::{
-    IndexShard, RootManifest, ShardedPublication, prune_unreferenced_objects, shard_index,
-    verify_sharded_snapshot, write_html_sharded_manifest, write_sharded_manifest,
+    ShardedPublication, prune_unreferenced_objects, shard_index, verify_sharded_snapshot,
+    write_html_sharded_manifest, write_sharded_manifest,
 };
 
-pub use mvp_catalog::write_html_mvp_catalog;
 pub use scan::tree_sha256;
 use scan::{Candidate, scan_roots};
 use tlpdb::PackageDatabase;
@@ -105,58 +102,57 @@ pub struct FormatConfig {
     pub metadata: PathBuf,
 }
 
-#[derive(Clone, Debug, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct FormatMetadata {
-    schema: u32,
-    name: String,
-    object: String,
-    sha256: String,
-    bytes: u64,
-    engine: String,
-    engine_version: String,
-    format_schema: u32,
-    source_distribution: String,
-    source_manifest_sha256: String,
-    source_date_epoch: u64,
-    #[serde(default)]
-    input_closure: Option<FormatInputClosureMetadata>,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct FormatInputClosureMetadata {
-    schema: u32,
-    keys: Vec<String>,
+struct PreparedPublication {
+    manifest: Manifest,
+    objects: BTreeMap<String, Vec<u8>>,
+    fonts: BTreeMap<String, FontManifestRecord>,
+    legacy_mappings: BTreeMap<String, LegacyMappingManifestRecord>,
 }
 
 pub fn publish(config: &PublishConfig, output: &Path) -> Result<ShardedPublication> {
     validate_config(config)?;
-    if config.profile == PublicationProfile::Html {
-        return publish_html(config, output);
+    let prepared = match config.profile {
+        PublicationProfile::Full => prepare_full(config)?,
+        PublicationProfile::Html => prepare_html(config)?,
+    };
+    let objects = output.join("objects");
+    fs::create_dir_all(&objects)
+        .with_context(|| format!("create output directory {}", objects.display()))?;
+    for (object, bytes) in &prepared.objects {
+        fs::write(objects.join(object), bytes)
+            .with_context(|| format!("write prepared object {object}"))?;
     }
+    let publication = if config.profile == PublicationProfile::Html {
+        write_html_sharded_manifest(
+            &prepared.manifest,
+            config.shard_bits,
+            output,
+            &prepared.fonts,
+            &prepared.legacy_mappings,
+        )?
+    } else {
+        write_sharded_manifest(&prepared.manifest, config.shard_bits, output)?
+    };
+    remove_stale_objects(&objects, &sharded::referenced_objects(&publication))?;
+    if let Some(html) = &config.html {
+        validate_html_inventory(&html.inventory, output, &publication)?;
+    }
+    verify_sharded_snapshot(output).context("verify staged sharded snapshot")
+}
+
+fn prepare_full(config: &PublishConfig) -> Result<PreparedPublication> {
     let candidates = scan_roots(&config.roots)?;
     let winners = flatten_candidates(candidates)?;
     let dependencies = publication_dependencies(config, &winners)?;
     validate_dependencies(&dependencies, &winners)?;
 
-    let objects = output.join("objects");
-    fs::create_dir_all(&objects)
-        .with_context(|| format!("create output directory {}", objects.display()))?;
-
     let mut files = BTreeMap::new();
-    let mut expected_objects = BTreeSet::new();
-    let mut published_bytes = 0_u64;
+    let mut objects = BTreeMap::new();
     for (key, candidate) in winners {
         let bytes = fs::read(&candidate.source)
             .with_context(|| format!("read {}", candidate.source.display()))?;
         let object = format!("sha256-{}", candidate.sha256);
-        let object_path = objects.join(&object);
-        fs::write(&object_path, &bytes)
-            .with_context(|| format!("write {}", object_path.display()))?;
-        if expected_objects.insert(object.clone()) {
-            published_bytes += u64::try_from(bytes.len()).context("file length exceeds u64")?;
-        }
+        objects.entry(object.clone()).or_insert(bytes.clone());
         files.insert(
             key.clone(),
             ManifestFile {
@@ -177,36 +173,28 @@ pub fn publish(config: &PublishConfig, output: &Path) -> Result<ShardedPublicati
         {
             bail!("duplicate published format name {name:?}");
         }
-        fs::write(objects.join(&manifest_format.object), &bytes)
-            .with_context(|| format!("write format object {}", manifest_format.object))?;
-        if expected_objects.insert(manifest_format.object) {
-            published_bytes += u64::try_from(bytes.len()).context("format length exceeds u64")?;
-        }
+        objects.entry(manifest_format.object).or_insert(bytes);
     }
+    let published_bytes = objects.values().try_fold(0_u64, |total, bytes| {
+        total
+            .checked_add(u64::try_from(bytes.len()).context("object length exceeds u64")?)
+            .context("publication byte count overflow")
+    })?;
     validate_inventory(
         config.inventory.as_ref(),
         files.len(),
-        expected_objects.len(),
+        objects.len(),
         published_bytes,
     )?;
-    remove_stale_objects(&objects, &expected_objects)?;
-
-    let manifest = Manifest {
-        schema: umber_distribution::MANIFEST_SCHEMA,
-        distribution: config.distribution.clone(),
-        objects_base_url: config.objects_base_url.clone(),
-        files,
+    Ok(PreparedPublication {
+        manifest: publication_manifest(config, files, formats),
+        objects,
         fonts: BTreeMap::new(),
-        formats,
-    };
-    let encoded = manifest.to_json_pretty();
-    Manifest::parse(&encoded).context("validate publication entries")?;
-    let publication = sharded::write_sharded_manifest(&manifest, config.shard_bits, output)?;
-    remove_stale_objects(&objects, &sharded::referenced_objects(&publication))?;
-    sharded::verify_sharded_snapshot(output).context("verify staged sharded snapshot")
+        legacy_mappings: BTreeMap::new(),
+    })
 }
 
-fn publish_html(config: &PublishConfig, output: &Path) -> Result<ShardedPublication> {
+fn prepare_html(config: &PublishConfig) -> Result<PreparedPublication> {
     let html = config
         .html
         .as_ref()
@@ -215,7 +203,7 @@ fn publish_html(config: &PublishConfig, output: &Path) -> Result<ShardedPublicat
     let mut winners = flatten_candidates(candidates)?;
 
     let mut formats = BTreeMap::new();
-    let mut format_objects = Vec::new();
+    let mut objects = BTreeMap::new();
     let mut selected_keys = html
         .runtime_file_keys
         .iter()
@@ -236,7 +224,7 @@ fn publish_html(config: &PublishConfig, output: &Path) -> Result<ShardedPublicat
         {
             bail!("duplicate published format name {name:?}");
         }
-        format_objects.push((manifest_format.object.clone(), bytes));
+        objects.entry(manifest_format.object.clone()).or_insert(bytes);
     }
     if formats.is_empty() {
         bail!("HTML publication profile requires at least one selected format");
@@ -278,15 +266,12 @@ fn publish_html(config: &PublishConfig, output: &Path) -> Result<ShardedPublicat
     }
     validate_html_catalog(&catalog.fonts, &catalog.legacy_mappings, &selected)?;
 
-    let objects = output.join("objects");
-    fs::create_dir_all(&objects)
-        .with_context(|| format!("create output directory {}", objects.display()))?;
     let mut files = BTreeMap::new();
     for (key, candidate) in selected {
         let bytes = fs::read(&candidate.source)
             .with_context(|| format!("read {}", candidate.source.display()))?;
         let object = format!("sha256-{}", candidate.sha256);
-        fs::write(objects.join(&object), &bytes).context("write HTML runtime object")?;
+        objects.entry(object.clone()).or_insert(bytes.clone());
         files.insert(
             key.clone(),
             ManifestFile {
@@ -298,29 +283,28 @@ fn publish_html(config: &PublishConfig, output: &Path) -> Result<ShardedPublicat
             },
         );
     }
-    for (object, bytes) in format_objects {
-        fs::write(objects.join(object), bytes).context("write HTML format object")?;
-    }
-    stage_html_catalog_objects(html, &catalog, &objects)?;
+    prepare_html_catalog_objects(html, &catalog, &mut objects)?;
+    Ok(PreparedPublication {
+        manifest: publication_manifest(config, files, formats),
+        objects,
+        fonts: catalog.fonts,
+        legacy_mappings: catalog.legacy_mappings,
+    })
+}
 
-    let manifest = Manifest {
+fn publication_manifest(
+    config: &PublishConfig,
+    files: BTreeMap<String, ManifestFile>,
+    formats: BTreeMap<String, ManifestFormat>,
+) -> Manifest {
+    Manifest {
         schema: umber_distribution::MANIFEST_SCHEMA,
         distribution: config.distribution.clone(),
         objects_base_url: config.objects_base_url.clone(),
         files,
         fonts: BTreeMap::new(),
         formats,
-    };
-    let publication = write_html_sharded_manifest(
-        &manifest,
-        config.shard_bits,
-        output,
-        &catalog.fonts,
-        &catalog.legacy_mappings,
-    )?;
-    remove_stale_objects(&objects, &sharded::referenced_objects(&publication))?;
-    validate_html_inventory(&html.inventory, output, &publication)?;
-    verify_sharded_snapshot(output).context("verify staged HTML sharded snapshot")
+    }
 }
 
 fn validate_html_candidate(key: &str, candidate: &Candidate) -> Result<()> {
@@ -361,10 +345,10 @@ fn validate_html_catalog(
     Ok(())
 }
 
-fn stage_html_catalog_objects(
+fn prepare_html_catalog_objects(
     html: &HtmlProfileConfig,
     catalog: &ManifestShard,
-    objects: &Path,
+    objects: &mut BTreeMap<String, Vec<u8>>,
 ) -> Result<()> {
     let expected = catalog
         .fonts
@@ -391,7 +375,7 @@ fn stage_html_catalog_objects(
         {
             bail!("HTML catalog object {digest} does not match its declared digest and length");
         }
-        fs::write(objects.join(&entry.object), bytes).context("write HTML catalog object")?;
+        objects.entry(entry.object).or_insert(bytes);
     }
     Ok(())
 }
@@ -497,38 +481,10 @@ fn validate_inventory(
 }
 
 fn load_format(config: &FormatConfig) -> Result<(String, ManifestFormat, Vec<u8>)> {
-    let metadata_bytes = fs::read(&config.metadata)
+    let metadata_text = fs::read_to_string(&config.metadata)
         .with_context(|| format!("read format metadata {}", config.metadata.display()))?;
-    let metadata: FormatMetadata =
-        serde_json::from_slice(&metadata_bytes).context("parse format metadata")?;
-    if !matches!(metadata.schema, 1 | 2) || metadata.engine != "umber" {
-        bail!("format metadata must describe schema 1 or 2 for engine umber");
-    }
-    if metadata.schema == 1 && metadata.input_closure.is_some() {
-        bail!("format metadata schema 1 cannot contain an input closure");
-    }
-    if metadata.schema == 2 && metadata.input_closure.is_none() {
-        bail!("format metadata schema 2 requires an input closure");
-    }
-    if metadata.engine_version.is_empty()
-        || metadata.format_schema == 0
-        || metadata.source_distribution.is_empty()
-    {
-        bail!("format compatibility metadata is incomplete");
-    }
-    if metadata.name.is_empty()
-        || !metadata
-            .name
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
-    {
-        bail!("invalid published format name {:?}", metadata.name);
-    }
-    validate_sha256(&metadata.sha256, "format sha256")?;
-    validate_sha256(&metadata.source_manifest_sha256, "source manifest sha256")?;
-    if metadata.object != format!("sha256-{}", metadata.sha256) {
-        bail!("format object name does not match its digest");
-    }
+    let named = NamedFormat::parse(&metadata_text).context("parse format metadata")?;
+    let metadata = named.format;
     let bytes = fs::read(&config.path)
         .with_context(|| format!("read format image {}", config.path.display()))?;
     let actual = format!("{:x}", Sha256::digest(&bytes));
@@ -548,66 +504,7 @@ fn load_format(config: &FormatConfig) -> Result<(String, ManifestFormat, Vec<u8>
     if schema != metadata.format_schema {
         bail!("format image schema does not match its metadata");
     }
-    let input_closure = metadata
-        .input_closure
-        .map(|closure| canonicalize_format_input_closure(closure, &metadata.name))
-        .transpose()?;
-    let published = ManifestFormat {
-        object: metadata.object,
-        sha256: metadata.sha256,
-        bytes: metadata.bytes,
-        engine: metadata.engine,
-        engine_version: metadata.engine_version,
-        format_schema: metadata.format_schema,
-        source_distribution: metadata.source_distribution,
-        source_manifest_sha256: metadata.source_manifest_sha256,
-        source_date_epoch: metadata.source_date_epoch,
-        input_closure,
-    };
-    Ok((metadata.name, published, bytes))
-}
-
-fn canonicalize_format_input_closure(
-    mut closure: FormatInputClosureMetadata,
-    format_name: &str,
-) -> Result<FormatInputClosure> {
-    if closure.schema != FORMAT_INPUT_CLOSURE_SCHEMA {
-        bail!(
-            "unsupported input closure schema {} for format {format_name}; expected {FORMAT_INPUT_CLOSURE_SCHEMA}",
-            closure.schema
-        );
-    }
-    if closure.keys.is_empty() || closure.keys.len() > MAX_FORMAT_INPUTS {
-        bail!(
-            "input closure for format {format_name} must contain between 1 and {MAX_FORMAT_INPUTS} keys"
-        );
-    }
-    for key in &closure.keys {
-        FileRequestKey::from_manifest_key(key).with_context(|| {
-            format!("invalid input closure key {key:?} for format {format_name}")
-        })?;
-    }
-    let original_len = closure.keys.len();
-    closure.keys.sort();
-    closure.keys.dedup();
-    if closure.keys.len() != original_len {
-        bail!("input closure for format {format_name} contains duplicate keys");
-    }
-    Ok(FormatInputClosure {
-        schema: closure.schema,
-        keys: closure.keys,
-    })
-}
-
-fn validate_sha256(value: &str, label: &str) -> Result<()> {
-    if value.len() != 64
-        || !value
-            .bytes()
-            .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
-    {
-        bail!("{label} must be 64 lowercase hexadecimal characters");
-    }
-    Ok(())
+    Ok((named.name, metadata, bytes))
 }
 
 fn remove_stale_objects(objects: &Path, expected: &BTreeSet<String>) -> Result<()> {
