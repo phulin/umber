@@ -18,11 +18,12 @@ pub use finalization::{
     PdfAnnotationDimensionsInput, PdfAnnotationInput, PdfCommittedPageInput,
     PdfDestinationIdentityInput, PdfDestinationInput, PdfDocumentInput, PdfDocumentMetadataInput,
     PdfExternalImageInput, PdfFinalizationInput, PdfFinalizationLimits, PdfFontInput,
-    PdfFontMetricsInput, PdfFontProgramInput, PdfFormInput, PdfImageMetadataInput,
-    PdfIndirectActionInput, PdfLinkInput, PdfNavigationInput, PdfObjectAllocationError,
-    PdfObjectAllocator, PdfOutlineInput, PdfPageBoxInput, PdfPageRotationInput,
-    PdfRasterColorSpaceInput, PdfRasterFormatInput, PdfRawObjectInput, PdfRawObjectPayloadInput,
-    PdfReservedDocumentObjects, PdfThreadBeadInput, PdfThreadInput, PdfVirtualFontInput,
+    PdfFontMetricsInput, PdfFontProgramInput, PdfFormInput, PdfImageGammaInput,
+    PdfImageMetadataInput, PdfIndirectActionInput, PdfLinkInput, PdfNavigationInput,
+    PdfObjectAllocationError, PdfObjectAllocator, PdfOutlineInput, PdfPageBoxInput,
+    PdfPageRotationInput, PdfRasterColorSpaceInput, PdfRasterFormatInput, PdfRawObjectInput,
+    PdfRawObjectPayloadInput, PdfReservedDocumentObjects, PdfThreadBeadInput, PdfThreadInput,
+    PdfVirtualFontInput,
 };
 
 use graph::{PdfGraphView, PdfValueCursor, PdfValueEvent};

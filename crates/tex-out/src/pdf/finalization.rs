@@ -51,8 +51,20 @@ pub struct PdfDocumentInput {
     pub inclusion_copy_fonts: bool,
     pub unique_resource_names: bool,
     pub driver_dpi: u32,
+    pub image_gamma: PdfImageGammaInput,
+    pub pages_entries: Vec<u8>,
+    pub form_omit_procset: i32,
     pub suppress_page_group_warning: bool,
     pub metadata: PdfDocumentMetadataInput,
+}
+
+/// Frozen raster conversion policy used by PNG finalization.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PdfImageGammaInput {
+    pub gamma: i32,
+    pub image_gamma: i32,
+    pub high_color: bool,
+    pub apply_gamma: bool,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -114,6 +126,8 @@ pub struct PdfFontInput {
     pub included_codes: BTreeSet<u8>,
     pub descriptor_entries: Vec<u8>,
     pub generate_to_unicode: bool,
+    pub disable_builtin_to_unicode: bool,
+    pub infer_builtin_glyph_unicode: bool,
     pub omit_charset: bool,
     pub glyph_to_unicode: BTreeMap<Vec<u8>, Vec<u32>>,
     pub map_entry: Option<PdfFontMapEntry>,

@@ -9,12 +9,12 @@ use tex_out::pdf::{
     PdfAnnotationInput, PdfCommittedPageInput, PdfDestinationIdentityInput, PdfDestinationInput,
     PdfDocumentInput, PdfDocumentMetadataInput, PdfExternalImageInput, PdfFinalizationInput,
     PdfFinalizationLimits, PdfFontInput, PdfFontMetricsInput, PdfFontProgramInput, PdfFormInput,
-    PdfImageMetadataInput, PdfIndirectActionInput, PdfLinkInput, PdfNavigationInput,
-    PdfOutlineInput, PdfPageBoxInput, PdfPageRotationInput, PdfRasterColorSpaceInput,
-    PdfRasterFormatInput, PdfRawObjectInput, PdfRawObjectPayloadInput, PdfReservedDocumentObjects,
-    PdfThreadBeadInput, PdfThreadInput, PdfVirtualFontInput,
+    PdfImageGammaInput, PdfImageMetadataInput, PdfIndirectActionInput, PdfLinkInput,
+    PdfNavigationInput, PdfOutlineInput, PdfPageBoxInput, PdfPageRotationInput,
+    PdfRasterColorSpaceInput, PdfRasterFormatInput, PdfRawObjectInput, PdfRawObjectPayloadInput,
+    PdfReservedDocumentObjects, PdfThreadBeadInput, PdfThreadInput, PdfVirtualFontInput,
 };
-use tex_state::env::banks::IntParam;
+use tex_state::env::banks::{IntParam, TokParam};
 use tex_state::{
     CommittedArtifact, PdfActionIdentifier, PdfActionRecord, PdfActionSpec, PdfActionTarget,
     PdfActionWindow, PdfAnnotationDimensions, PdfDestinationIdentity, PdfDocumentFragmentKind,
@@ -120,14 +120,17 @@ pub fn pdf_finalization_input(
     let font_configuration = stores.pdf_font_configuration();
     let mut fonts = BTreeMap::new();
     for resource in stores.pdf_font_resources() {
-        let font_id = resource.font();
-        let loaded = stores.font(font_id);
-        let identity = loaded.source_identity();
+        let resource_font = stores.font(resource.font());
+        let identity = resource_font.source_identity();
         let artifact_resource = artifacts_by_font
             .get(&identity)
-            .ok_or_else(|| PdfBuildError::MissingFontResource(loaded.name().to_owned()))?
+            .ok_or_else(|| PdfBuildError::MissingFontResource(resource_font.name().to_owned()))?
             .clone();
-        let map_entry = resolved_map.get(loaded.name().as_bytes()).cloned();
+        let font_id = stores
+            .font_by_source_identity(artifact_resource.semantic_identity)
+            .ok_or_else(|| PdfBuildError::MissingLiveFont(artifact_resource.name.clone()))?;
+        let loaded = stores.font(font_id);
+        let map_entry = resolved_map.get(artifact_resource.name.as_bytes()).cloned();
         let encoding = map_entry
             .as_ref()
             .and_then(|entry| entry.encoding_files.first())
@@ -189,6 +192,8 @@ pub fn pdf_finalization_input(
                     .collect(),
                 descriptor_entries: stores.pdf_font_attribute(font_id).to_vec(),
                 generate_to_unicode: font_configuration.generates_to_unicode(),
+                disable_builtin_to_unicode: stores.pdf_builtin_to_unicode_disabled(font_id),
+                infer_builtin_glyph_unicode: stores.has_pdf_glyph_to_unicode_mappings(),
                 omit_charset: font_configuration.omits_charset(),
                 glyph_to_unicode,
                 map_entry,
@@ -324,6 +329,14 @@ pub fn pdf_finalization_input(
             inclusion_copy_fonts: parameters.inclusion_copy_fonts > 0,
             unique_resource_names: parameters.unique_resource_names > 0,
             driver_dpi: dpi as u32,
+            image_gamma: PdfImageGammaInput {
+                gamma: parameters.gamma,
+                image_gamma: parameters.image_gamma,
+                high_color: parameters.image_hicolor > 0,
+                apply_gamma: parameters.image_apply_gamma > 0,
+            },
+            pages_entries: token_list_bytes(stores, stores.tok_param(TokParam::PDF_PAGES_ATTR)),
+            form_omit_procset: stores.int_param(IntParam::PDF_OMIT_PROCSET),
             suppress_page_group_warning: stores
                 .int_param(IntParam::PDF_SUPPRESS_WARNING_PAGE_GROUP)
                 != 0,

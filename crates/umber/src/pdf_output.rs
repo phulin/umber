@@ -7484,9 +7484,9 @@ mod tests {
 
     #[test]
     fn no_builtin_and_nonpositive_generation_omit_to_unicode() {
-        for control in [
-            "\\pdfgentounicode=-1",
-            "\\pdfgentounicode=1\\pdfnobuiltintounicode\\f",
+        for (control, disabled) in [
+            ("\\pdfgentounicode=-1", false),
+            ("\\pdfgentounicode=1\\pdfnobuiltintounicode\\f", true),
         ] {
             let mut stores = pdftex_recovery_stores();
             prepare_pdftex_run_stores(&mut stores);
@@ -7508,6 +7508,22 @@ mod tests {
                  \\pdfmapline{{=cmr10 CMR10 <<cmr10.pfb}}\\pdfglyphtounicode{{A}}{{0041}}\\shipout\\hbox{{\\f A}}\\end"
             );
             let run_result = run_in(&mut stores, &source);
+            let input = pdf_finalization_input(
+                &mut stores,
+                &run_result.committed_artifacts,
+                DEFAULT_PDF_PK_RESOLUTION,
+                &crate::PdfVirtualFontResources::default(),
+            )
+            .expect("font policy detaches");
+            assert_eq!(input.fonts.len(), 1);
+            assert_eq!(
+                input
+                    .fonts
+                    .values()
+                    .next()
+                    .map(|font| font.disable_builtin_to_unicode),
+                Some(disabled)
+            );
             let pdf = pdf_from_committed_artifacts(&mut stores, &run_result.committed_artifacts)
                 .expect("PDF assembles");
             assert!(
@@ -8930,6 +8946,9 @@ mod tests {
     fn detached_finalization_input_maps_the_legacy_call_graph_losslessly() {
         let source = concat!(
             "\\pdfoutput=1\\pdfcompresslevel=0\\pdfobjcompresslevel=0",
+            "\\pdfgamma=900\\pdfimagegamma=1800",
+            "\\pdfimagehicolor=1\\pdfimageapplygamma=1",
+            "\\pdfpagesattr{/Lang (boundary)}\\pdfomitprocset=-1",
             "\\pdfinfo{/Subject (detached)}\\pdfcatalog{/PageMode /UseNone}",
             "\\setbox0=\\hbox{\\vrule width2pt height1pt}\\immediate\\pdfxform0",
             "\\immediate\\pdfobj{<< /Kind /NavigationFixture >>}",
@@ -8945,6 +8964,7 @@ mod tests {
         );
         let (mut first_stores, first_run) = run(source);
         let (mut second_stores, second_run) = run(source);
+        let (mut legacy_stores, legacy_run) = run(source);
         let resources = crate::PdfVirtualFontResources::default();
 
         let first_input = pdf_finalization_input(
@@ -8969,6 +8989,12 @@ mod tests {
         assert_eq!(first_input.navigation.links.len(), 1);
         assert_eq!(first_input.navigation.outlines.len(), 2);
         assert_eq!(first_input.navigation.threads.len(), 1);
+        assert_eq!(first_input.document.pages_entries, b"/Lang (boundary)");
+        assert_eq!(first_input.document.form_omit_procset, -1);
+        assert_eq!(first_input.document.image_gamma.gamma, 900);
+        assert_eq!(first_input.document.image_gamma.image_gamma, 1800);
+        assert!(first_input.document.image_gamma.high_color);
+        assert!(first_input.document.image_gamma.apply_gamma);
         assert_eq!(
             first_input.pages[0].page_object,
             first_stores.pdf_pages()[0].page_object()
@@ -8984,7 +9010,11 @@ mod tests {
         let second_pdf =
             pdf_from_committed_artifacts(&mut second_stores, &second_run.committed_artifacts)
                 .expect("legacy finalizer accepts duplicate detached fixture");
+        let legacy_pdf =
+            pdf_from_committed_artifacts(&mut legacy_stores, &legacy_run.committed_artifacts)
+                .expect("legacy finalizer accepts untouched fixture");
         assert_eq!(first_pdf, second_pdf);
+        assert_eq!(first_pdf, legacy_pdf);
     }
 
     #[test]
