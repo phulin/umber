@@ -472,6 +472,11 @@ fn deeply_nested_sub_mlists_use_an_explicit_work_stack() {
     let layout = mlist_to_hlist(&universe, nested, Style::TEXT, false, &params);
 
     assert!(!layout.root().is_empty());
+    assert_eq!(
+        layout.pack_observations().len(),
+        40_000,
+        "each nested noad retains its structural and dimensions hpacks exactly once"
+    );
 }
 
 #[test]
@@ -1027,6 +1032,9 @@ fn clean_empty_field_uses_tex82_null_box_without_hpack() {
         converted: Default::default(),
         source_lists: Default::default(),
         conversion_events: Default::default(),
+        capture_replay: false,
+        pack_replays: Default::default(),
+        event_replays: Default::default(),
         recovered: Default::default(),
     };
 
@@ -1054,6 +1062,9 @@ fn clean_math_character_observes_both_tex82_hpack_completions() {
         converted: Default::default(),
         source_lists: Default::default(),
         conversion_events: Default::default(),
+        capture_replay: false,
+        pack_replays: Default::default(),
+        event_replays: Default::default(),
         recovered: Default::default(),
     };
     let boxed = clean_box(&mut ctx, &MathField::MathChar(math_char('a')), Style::TEXT);
@@ -1083,6 +1094,9 @@ fn clean_missing_math_character_observes_both_zero_completions() {
         converted: Default::default(),
         source_lists: Default::default(),
         conversion_events: Default::default(),
+        capture_replay: false,
+        pack_replays: Default::default(),
+        event_replays: Default::default(),
         recovered: Default::default(),
     };
     let missing = MathChar {
@@ -2281,6 +2295,9 @@ fn tex82_clean_box_delimiter_and_mu_helper_matrix() {
         converted: Default::default(),
         source_lists: Default::default(),
         conversion_events: Default::default(),
+        capture_replay: false,
+        pack_replays: Default::default(),
+        event_replays: Default::default(),
         recovered: Default::default(),
     };
 
@@ -2313,6 +2330,9 @@ fn tex82_clean_box_delimiter_and_mu_helper_matrix() {
         converted: Default::default(),
         source_lists: Default::default(),
         conversion_events: Default::default(),
+        capture_replay: false,
+        pack_replays: Default::default(),
+        event_replays: Default::default(),
         recovered: Default::default(),
     };
     let clean = clean_box(&mut ctx, &MathField::SubBox(boxed), Style::TEXT);

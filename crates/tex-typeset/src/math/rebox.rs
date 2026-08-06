@@ -92,6 +92,9 @@ pub(crate) fn test_rebox(
         converted: Default::default(),
         source_lists: Default::default(),
         conversion_events: Default::default(),
+        capture_replay: false,
+        pack_replays: Default::default(),
+        event_replays: Default::default(),
         recovered: Default::default(),
     };
     let list = if empty {
@@ -129,6 +132,9 @@ pub(crate) fn test_rebox_clean_character(
         converted: Default::default(),
         source_lists: Default::default(),
         conversion_events: Default::default(),
+        capture_replay: false,
+        pack_replays: Default::default(),
+        event_replays: Default::default(),
         recovered: Default::default(),
     };
     let list = ctx.layout.hlist([character]);

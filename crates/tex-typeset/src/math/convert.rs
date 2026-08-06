@@ -1,5 +1,6 @@
 use ahash::{AHashMap, AHashSet};
 use std::cell::{Cell, RefCell};
+use std::sync::Arc;
 use tex_arith::x_over_n;
 use tex_fonts::CharMetrics;
 use tex_state::font::NULL_FONT;
@@ -75,6 +76,9 @@ fn build_math_layout(
         converted: AHashMap::new(),
         source_lists: AHashMap::new(),
         conversion_events: RefCell::new(Vec::new()),
+        capture_replay: false,
+        pack_replays: Vec::new(),
+        event_replays: RefCell::new(Vec::new()),
         recovered: Cell::new(false),
     };
     prepare_nested_mlists(&mut ctx, input, style);
@@ -99,23 +103,117 @@ pub(super) fn convert_mlist<S: MathTypesetState>(
     // TeX82 Appendix G recursively converts every sub-mlist occurrence. The
     // iterative planner may share its pure node layout, but §651's completed
     // hpacks are observable effects and must be replayed at every demand.
-    ctx.layout
-        .replay_pack_observations(&converted.pack_observations);
+    if ctx.capture_replay {
+        ctx.pack_replays.push(ReplayMarker {
+            position: ctx.layout.pack_observation_count(),
+            replay: converted.pack_observations.clone(),
+        });
+    } else {
+        converted
+            .pack_observations
+            .for_each_leaf(|events| ctx.layout.replay_pack_observations(events));
+    }
     // TeX82 Appendix G descends into this sub-mlist at this point.  The
     // iterative planner computes its pure layout bottom-up, so replay the
     // diagnostics captured during that computation at the recursive demand
     // site instead of leaking them in planner order.
-    ctx.conversion_events
-        .borrow_mut()
-        .extend_from_slice(&converted.conversion_events);
+    if ctx.capture_replay {
+        let position = ctx.conversion_events.borrow().len();
+        ctx.event_replays.borrow_mut().push(ReplayMarker {
+            position,
+            replay: converted.conversion_events.clone(),
+        });
+    } else {
+        converted.conversion_events.for_each_leaf(|events| {
+            ctx.conversion_events.borrow_mut().extend_from_slice(events);
+        });
+    }
     converted.list
 }
 
 #[derive(Clone)]
 pub(crate) struct ConvertedMlist {
     list: FrozenHList,
-    pack_observations: Vec<MathPackObservation>,
-    conversion_events: Vec<MathConversionEvent>,
+    pack_observations: Replay<MathPackObservation>,
+    conversion_events: Replay<MathConversionEvent>,
+}
+
+#[derive(Clone)]
+pub(crate) struct Replay<T>(Option<Arc<ReplayNode<T>>>);
+
+enum ReplayNode<T> {
+    Leaf(Arc<[T]>),
+    Sequence(Arc<[Replay<T>]>),
+}
+
+impl<T> Default for Replay<T> {
+    fn default() -> Self {
+        Self(None)
+    }
+}
+
+impl<T> Replay<T> {
+    fn leaf(events: &[T]) -> Self
+    where
+        T: Clone,
+    {
+        if events.is_empty() {
+            Self::default()
+        } else {
+            Self(Some(Arc::new(ReplayNode::Leaf(Arc::from(events)))))
+        }
+    }
+
+    fn sequence(parts: Vec<Self>) -> Self {
+        let mut parts = parts
+            .into_iter()
+            .filter(|part| part.0.is_some())
+            .collect::<Vec<_>>();
+        match parts.len() {
+            0 => Self::default(),
+            1 => parts.pop().expect("single replay part exists"),
+            _ => Self(Some(Arc::new(ReplayNode::Sequence(parts.into())))),
+        }
+    }
+
+    fn for_each_leaf(&self, mut visit: impl FnMut(&[T])) {
+        let mut stack = vec![self];
+        while let Some(replay) = stack.pop() {
+            match replay.0.as_deref() {
+                None => {}
+                Some(ReplayNode::Leaf(events)) => visit(events),
+                Some(ReplayNode::Sequence(parts)) => {
+                    stack.extend(parts.iter().rev());
+                }
+            }
+        }
+    }
+}
+
+pub(crate) struct ReplayMarker<T> {
+    position: usize,
+    replay: Replay<T>,
+}
+
+fn captured_replay<T: Clone>(
+    direct: Vec<T>,
+    start: usize,
+    markers: Vec<ReplayMarker<T>>,
+) -> Replay<T> {
+    let mut parts = Vec::with_capacity(markers.len().saturating_mul(2).saturating_add(1));
+    let mut cursor = 0;
+    for marker in markers {
+        let position = marker
+            .position
+            .checked_sub(start)
+            .expect("replay marker follows capture start");
+        assert!(position >= cursor && position <= direct.len());
+        parts.push(Replay::leaf(&direct[cursor..position]));
+        parts.push(marker.replay);
+        cursor = position;
+    }
+    parts.push(Replay::leaf(&direct[cursor..]));
+    Replay::sequence(parts)
 }
 
 fn convert_mlist_uncached<S: MathTypesetState>(
@@ -483,9 +581,23 @@ fn prepare_nested_mlists<S: MathTypesetState>(
     for (list, style) in postorder.into_iter().filter(|key| *key != root) {
         let observation_start = ctx.layout.pack_observation_count();
         let event_start = ctx.conversion_events.borrow().len();
+        ctx.capture_replay = true;
+        debug_assert!(ctx.pack_replays.is_empty());
+        debug_assert!(ctx.event_replays.borrow().is_empty());
         let converted = convert_mlist_uncached(ctx, list, style, false);
-        let pack_observations = ctx.layout.take_pack_observations_since(observation_start);
-        let conversion_events = ctx.conversion_events.borrow_mut().split_off(event_start);
+        ctx.capture_replay = false;
+        let direct_pack_observations = ctx.layout.take_pack_observations_since(observation_start);
+        let pack_observations = captured_replay(
+            direct_pack_observations,
+            observation_start,
+            std::mem::take(&mut ctx.pack_replays),
+        );
+        let direct_conversion_events = ctx.conversion_events.borrow_mut().split_off(event_start);
+        let conversion_events = captured_replay(
+            direct_conversion_events,
+            event_start,
+            std::mem::take(&mut *ctx.event_replays.borrow_mut()),
+        );
         ctx.converted.insert(
             (list, style),
             ConvertedMlist {
@@ -1109,6 +1221,9 @@ pub(crate) struct Context<'a, S> {
     pub(crate) converted: AHashMap<(NodeListId, Style), ConvertedMlist>,
     pub(crate) source_lists: AHashMap<(NodeListId, SourceListRole), FrozenHList>,
     pub(crate) conversion_events: RefCell<Vec<MathConversionEvent>>,
+    pub(crate) capture_replay: bool,
+    pub(crate) pack_replays: Vec<ReplayMarker<MathPackObservation>>,
+    pub(crate) event_replays: RefCell<Vec<ReplayMarker<MathConversionEvent>>>,
     pub(crate) recovered: Cell<bool>,
 }
 

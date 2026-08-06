@@ -192,6 +192,9 @@ pub(crate) fn test_var_delimiter(
         converted: Default::default(),
         source_lists: Default::default(),
         conversion_events: Default::default(),
+        capture_replay: false,
+        pack_replays: Default::default(),
+        event_replays: Default::default(),
         recovered: Default::default(),
     };
     let boxed = var_delimiter(&mut ctx, delimiter, size, target);
