@@ -152,6 +152,9 @@ print channel of its own outside the borrowed
   compatibility, and pdfTeX 1.40.29 enum-backed primitive spelling, meaning,
   profile, and canonical observation identity authority. `registry.rs`
   consumes it for fresh-INITEX versus format-restore installation.
+  `catalogue.rs` defines the behavior-free canonical descriptor vocabulary and
+  exhaustive structural/uniqueness validation used by the generated catalogue
+  migration.
   `prefixed.rs` owns TeX82 §209's `max_non_prefixed_command` partition -- the
   single test §1211's `prefixed_command`, §1270's `do_assignments`, and the
   `\global` prefix all make. It is narrower than "this command assigns

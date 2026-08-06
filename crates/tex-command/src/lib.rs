@@ -42,7 +42,11 @@ mod macro_call;
 mod observation;
 mod primitives;
 pub use primitives::{
-    exceeds_max_non_prefixed_command, install_etex_expandable_primitives,
+    CatalogueValidationError, DocumentationFamily, ExpansionClass, GlueParameterDefault,
+    InstallationPolicy, JobClockField, ParameterBankClass, ParameterCell, ParameterDefault,
+    PrefixAdmissibility, PrimitiveCatalogue, PrimitiveDescriptor, PrimitiveOperand,
+    PrimitiveOperandDomain, PrimitiveProfile, PrimitiveProfiles, PrimitiveSpelling, SpellingKind,
+    WebIdentity, exceeds_max_non_prefixed_command, install_etex_expandable_primitives,
     install_etex_unexpandable_primitives, install_latex_expandable_primitives,
     install_pdftex_expandable_primitives, install_pdftex_unexpandable_primitives,
     install_tex82_expandable_primitives, install_tex82_unexpandable_primitives,

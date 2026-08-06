@@ -1,9 +1,17 @@
 //! Private static primitive dispatch families.
 
+mod catalogue;
 pub(crate) mod metadata;
 mod prefixed;
 mod registry;
 
+pub use catalogue::{
+    CatalogueValidationError, DocumentationFamily, ExpansionClass, GlueParameterDefault,
+    InstallationPolicy, JobClockField, ParameterBankClass, ParameterCell, ParameterDefault,
+    PrefixAdmissibility, PrimitiveCatalogue, PrimitiveDescriptor, PrimitiveOperand,
+    PrimitiveOperandDomain, PrimitiveProfile, PrimitiveProfiles, PrimitiveSpelling, SpellingKind,
+    WebIdentity,
+};
 pub(crate) use prefixed::is_prefixed_command;
 pub use prefixed::is_prefixed_command as exceeds_max_non_prefixed_command;
 pub use registry::{
