@@ -1280,6 +1280,16 @@ mod tests {
         Reflect::set(
             &limits,
             &JsValue::from_str("attempts"),
+            &JsValue::from_f64(MAX_SAFE_INTEGER as f64),
+        )
+        .expect("maximum safe limit");
+        let maximum: SessionLimitsDto =
+            serde_wasm_bindgen::from_value(limits.clone().unchecked_into())
+                .expect("maximum safe integer");
+        assert_eq!(maximum.attempts.get(), MAX_SAFE_INTEGER);
+        Reflect::set(
+            &limits,
+            &JsValue::from_str("attempts"),
             &JsValue::from_f64((MAX_SAFE_INTEGER + 1) as f64),
         )
         .expect("unsafe limit");
