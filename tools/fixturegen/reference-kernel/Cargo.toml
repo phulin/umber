@@ -1,0 +1,21 @@
+[package]
+name = "fixturegen-reference"
+version = "0.1.0"
+edition = "2024"
+
+[workspace]
+
+[dependencies]
+anyhow = "1"
+corpus-manifest = { path = "../../../crates/corpus-manifest" }
+sha2 = "0.10"
+tempfile = "3"
+test-support = { path = "../../../crates/test-support" }
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+dbg_macro = "deny"
+todo = "deny"
+unwrap_used = "deny"

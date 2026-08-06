@@ -11,8 +11,11 @@ bench = false
 
 [dependencies]
 anyhow.workspace = true
-tempfile.workspace = true
+fixturegen-reference = { path = "../fixturegen/reference-kernel" }
 test-support = { path = "../../crates/test-support" }
+
+[dev-dependencies]
+tempfile.workspace = true
 
 [lints]
 workspace = true

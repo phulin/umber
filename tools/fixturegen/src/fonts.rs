@@ -5,7 +5,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
-use refexec::{RefTex, RefTftopl, RunOpts};
+use fixturegen::reference::{RefTex, RefTftopl, RunOpts};
 use tempfile::TempDir;
 use test_support::pl::{
     PlCharacter, PlExtensibleRecipe, PlFont, PlLigCommand, PlLigLabel, PlNumber,

@@ -886,7 +886,8 @@ canonical-divergence regression tests in
 outside `scripts/regen-fixtures.sh`'s DVI-area list, because those two tests
 pin a specific past divergence rather than tracking the reference engine.
 
-DVI regeneration runs the live reference engine through `tools/refexec`,
+DVI-area regeneration runs the supported `tools/refexec` compatibility CLI,
+which delegates its process kernel to fixturegen,
 copies the pinned local CM TFMs and case-local support files, uses INITEX for the math
 corpus, and rewrites raw reference DVI only when the existing
 preamble-comment-only comparison detects a change.
@@ -1036,6 +1037,10 @@ banner normalization.
 `--sync-corpus` to fetch or verify those inputs under gitignored
 `third_party/corpus/`, then acquires the
 remaining local support files and generates all four end-to-end DVI oracles.
+`fixturegen --reference-dvi` directly owns the manifest-bound reference
+staging, deterministic invocation, hash check, and atomic publication. The
+feature-enabled parity command delegates its live reference half to that same
+kernel and retains comparison and triage only.
 Cached hash matches are a no-op. Fixture regeneration pins
 `SOURCE_DATE_EPOCH=1783604160` and `FORCE_SOURCE_DATE=1` so date-sensitive
 documents have stable DVI body bytes. Once setup completes, the conformance

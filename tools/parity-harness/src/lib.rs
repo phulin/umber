@@ -22,7 +22,7 @@ use anyhow::{Context, Result, anyhow, bail};
 use corpus_manifest::Entry as Document;
 use corpus_manifest::{Manifest, parse_manifest_file};
 #[cfg(feature = "reference-tools")]
-use refexec::{RefTex, RunOpts};
+use refexec::{RefTex, run_reference_document};
 use sha2::{Digest, Sha256};
 use similar::TextDiff;
 use test_support::dvi::normalized_dvi_for_comparison;
@@ -356,29 +356,7 @@ pub fn generate_reference_fixture(
     corpus_dir: &Path,
     document: &str,
 ) -> Result<Vec<u8>> {
-    let manifest = read_manifest(manifest_path)?;
-    let doc = manifest
-        .entries
-        .iter()
-        .find(|doc| doc.is_document() && doc.name == document)
-        .ok_or_else(|| anyhow!("document {document} is not declared in the manifest"))?;
-    let source_path = corpus_dir.join(&doc.name);
-    let format_source_path = corpus_dir.join(&doc.format_source);
-    let reference = run_reference_dvi(
-        repo_root,
-        &RefTex::locate()?,
-        &source_path,
-        &format_source_path,
-    )?;
-    let hash = sha256_hex(&reference.normalized);
-    if hash != doc.expected_ref_dvi_sha256 {
-        bail!(
-            "reference DVI hash drift for {}: expected {}, got {hash}",
-            doc.name,
-            doc.expected_ref_dvi_sha256
-        );
-    }
-    Ok(reference.bytes)
+    refexec::generate_reference_fixture(repo_root, manifest_path, corpus_dir, document)
 }
 
 #[cfg(feature = "reference-tools")]
@@ -613,17 +591,8 @@ fn run_reference_dvi(
     source_path: &Path,
     format_source_path: &Path,
 ) -> Result<EngineDvi> {
-    let temp = staged_source_dir(repo_root, source_path, format_source_path, false)?;
-    let output = ref_tex.run_in_dir(
-        temp.path(),
-        Path::new(JOB_NAME),
-        &RunOpts {
-            dvi: true,
-            ini: true,
-            etex: false,
-            extra_inputs: Vec::new(),
-        },
-    )?;
+    let output =
+        run_reference_document(repo_root, ref_tex, source_path, format_source_path, false)?;
     let bytes = output
         .dvi
         .ok_or_else(|| anyhow!("reference TeX did not produce DVI\n{}", output.log))?;
@@ -704,17 +673,7 @@ fn run_reference_trace(
     source_path: &Path,
     format_source_path: &Path,
 ) -> Result<TraceRun> {
-    let temp = staged_source_dir(repo_root, source_path, format_source_path, true)?;
-    let output = ref_tex.run_in_dir(
-        temp.path(),
-        Path::new(JOB_NAME),
-        &RunOpts {
-            dvi: true,
-            ini: true,
-            etex: false,
-            extra_inputs: Vec::new(),
-        },
-    )?;
+    let output = run_reference_document(repo_root, ref_tex, source_path, format_source_path, true)?;
     Ok(TraceRun {
         log: output.log,
         dvi: output.dvi,

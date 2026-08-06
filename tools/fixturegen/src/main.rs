@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
 use anyhow::{Context, Result, bail};
-use refexec::{RefTex, RunOpts, RunOutput};
+use fixturegen::reference::{RefTex, RunOpts, RunOutput, generate_reference_fixture};
 use tempfile::TempDir;
 use test_support::{corpus_cases, corpus_root, fixture_path, normalize};
 use tex_command::{
@@ -119,7 +119,7 @@ fn publish_reference_dvi(args: Vec<String>) -> Result<()> {
         bail!("--reference-dvi requires DOCUMENT OUTPUT");
     };
     let repository = repo_root();
-    let bytes = parity_harness::generate_reference_fixture(
+    let bytes = generate_reference_fixture(
         &repository,
         &repository.join("tests/corpus-manifest.txt"),
         &repository.join("third_party/corpus"),
