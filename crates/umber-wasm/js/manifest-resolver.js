@@ -258,7 +258,7 @@ export class HttpManifestResolver {
 											...(job.entry.programIdentity === undefined
 												? {}
 												: { programIdentity: job.entry.programIdentity }),
-											provenance: job.entry.provenance.identity,
+											provenance: job.entry.provenance,
 										}
 									: {
 											...job.request,
@@ -272,7 +272,7 @@ export class HttpManifestResolver {
 												: { programIdentity: job.entry.programIdentity }),
 											unicodeMap: job.entry.unicodeMap,
 											fallback: job.entry.fallback,
-											provenance: job.entry.provenance.identity,
+											provenance: job.entry.provenance,
 										},
 						);
 					}

@@ -88,7 +88,10 @@ const catalog = {
 						? "legacy-font-mapping"
 						: "file",
 				requestIndex,
-				entry,
+				entry:
+					entry.provenance === undefined
+						? entry
+						: { ...entry, provenance: entry.provenance.identity },
 			});
 			hints.push(...(entry.dependencies ?? []));
 		}
@@ -452,7 +455,9 @@ test("HTML profile resolves exact font and mapping records while preserving auth
 		["font", "legacy-font-mapping"],
 	);
 	assert.deepEqual(resolved[0].bytes, data.fontBytes);
+	assert.equal(resolved[0].provenance, data.fontRequest.provenance.identity);
 	assert.equal(resolved[1].unicodeMap.length, 256);
+	assert.equal(resolved[1].provenance, data.mappingRequest.provenance.identity);
 
 	const absent = { ...fontRequest, logicalName: "missing" };
 	assert.deepEqual(await resolver.resolve([absent]), [
