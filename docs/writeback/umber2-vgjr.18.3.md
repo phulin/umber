@@ -41,7 +41,7 @@ closed-inventory helpers, classic-case sealing, ordinary-regeneration tests,
 and rollback/recovery/garbage-collection tests moved to surviving owners and
 are excluded from deletion credit. No fixture bytes or case membership changed.
 
-The complete tracked change is 399 additions and 1,709 deletions, a 1,310-line
+The complete tracked change is 408 additions and 1,709 deletions, a 1,301-line
 net reduction. Retirement credit is 954 production lines (690 removed while
 extracting the transaction module, 250 from the PDF registry, and 14 net CLI
 dispatch/usage lines) plus 492 migration-only test lines, or 1,446 authored
