@@ -219,25 +219,23 @@ impl NodeArena {
 
     #[cfg(debug_assertions)]
     fn debug_assert_bottom_up(&self, nodes: &[Node], new_start: u32) {
-        let mut children = Vec::new();
         for node in nodes {
-            node.child_lists(&mut children)
-        }
-        for child in children {
-            if let ArenaRef::Epoch = child.arena() {
-                let child = self.span(child).expect("child node-list id is not live");
-                let end = child
-                    .start
-                    .checked_add(child.len)
-                    .expect("child span overflow");
-                debug_assert!(
-                    end <= new_start,
-                    "child node-list span must be frozen below the parent span"
-                );
-                debug_assert!(
-                    end as usize <= self.storage.len(),
-                    "child node-list id is not live"
-                );
+            for child in super::NodeRef::from(node).children() {
+                if let ArenaRef::Epoch = child.arena() {
+                    let child = self.span(child).expect("child node-list id is not live");
+                    let end = child
+                        .start
+                        .checked_add(child.len)
+                        .expect("child span overflow");
+                    debug_assert!(
+                        end <= new_start,
+                        "child node-list span must be frozen below the parent span"
+                    );
+                    debug_assert!(
+                        end as usize <= self.storage.len(),
+                        "child node-list id is not live"
+                    );
+                }
             }
         }
     }

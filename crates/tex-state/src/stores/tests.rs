@@ -86,6 +86,12 @@ fn owned_and_borrowed_semantic_hash_paths_match_every_node_variant() {
             amount: Scaled::from_raw(-6),
             kind: KernKind::Mu,
         },
+        Node::MarginKern {
+            amount: Scaled::from_raw(-7),
+            side: crate::node::MarginKernSide::Right,
+            font: NULL_FONT,
+            ch: b'x',
+        },
         Node::Glue {
             spec: GlueId::ZERO,
             kind: GlueKind::Leaders,
@@ -138,6 +144,7 @@ fn owned_and_borrowed_semantic_hash_paths_match_every_node_variant() {
         }),
         Node::MathOn(Scaled::from_raw(20)),
         Node::MathOff(Scaled::from_raw(21)),
+        Node::Direction(crate::node::Direction::EndR),
         Node::MathNoad(MathNoad::new(
             NoadKind::Normal(NoadClass::Ord),
             MathField::SubMlist(empty),
@@ -2380,9 +2387,7 @@ fn promotion_patches_every_child_bearing_compact_row() {
     )));
     let mut child_count = 0;
     for node in stores.nodes(promoted) {
-        let mut children = Vec::new();
-        node.to_owned().child_lists(&mut children);
-        for child in children {
+        for child in node.children() {
             assert_same_root(promoted, child);
             assert_eq!(
                 stores.nodes(child),

@@ -4,8 +4,6 @@
 //! and rewrites child spans to be relative to the survivor root.
 
 use crate::ids::{ArenaRef, NodeListId, SurvivorRootId};
-#[cfg(debug_assertions)]
-use crate::node::Node;
 use crate::node_arena::{ChildPatch, NodeArena, NodeList, NodeSemanticId, NodeStorage};
 use ahash::AHashMap;
 use std::sync::Arc;
@@ -546,7 +544,12 @@ impl SurvivorArena {
     #[cfg(debug_assertions)]
     fn debug_assert_no_epoch_ids(&self, id: NodeListId) {
         for node in self.get(id) {
-            debug_assert_no_epoch_ids_in_node(&node.to_owned());
+            for child in node.children() {
+                debug_assert!(
+                    matches!(child.arena(), ArenaRef::Survivor(_)),
+                    "promoted survivor root contains epoch node-list id"
+                );
+            }
         }
     }
 
@@ -725,18 +728,6 @@ impl<'a> PromotionCopy<'a> {
             measurement::PENDING_ENTRIES.fetch_add(child_patches as u64, Ordering::Relaxed);
         }
         remapped
-    }
-}
-
-#[cfg(debug_assertions)]
-fn debug_assert_no_epoch_ids_in_node(node: &Node) {
-    let mut children = Vec::new();
-    node.child_lists(&mut children);
-    for child in children {
-        debug_assert!(
-            matches!(child.arena(), ArenaRef::Survivor(_)),
-            "promoted survivor root contains epoch node-list id"
-        );
     }
 }
 

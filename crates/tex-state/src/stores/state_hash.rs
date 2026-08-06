@@ -11,7 +11,6 @@ use crate::meaning::{
 #[cfg(test)]
 use crate::node::{BoxNode, LeaderPayload, Whatsit};
 use crate::node::{GlueKind, KernKind, Node, Sign};
-#[cfg(test)]
 use crate::node_arena::NodeRef;
 use crate::state_hash::{StateHashComponent, StateHashFragment, StateHasher};
 use crate::token::{Catcode, Token};
@@ -456,7 +455,7 @@ impl Stores {
         hasher.tag(0x72);
         hasher.usize(len);
         for node in nodes {
-            self.hash_node_semantic_identity(node, hasher);
+            self.hash_node_semantic_identity(NodeRef::from(node), hasher);
         }
         len
     }

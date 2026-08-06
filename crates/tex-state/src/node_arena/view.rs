@@ -217,45 +217,7 @@ impl<'a> From<&'a Node> for NodeRef<'a> {
 
 impl PartialEq for NodeRef<'_> {
     fn eq(&self, other: &Self) -> bool {
-        match (self, other) {
-            (
-                Self::Char {
-                    font: left_font,
-                    ch: left_ch,
-                    ..
-                },
-                Self::Char {
-                    font: right_font,
-                    ch: right_ch,
-                    ..
-                },
-            ) => left_font == right_font && left_ch == right_ch,
-            (
-                Self::Lig {
-                    font: left_font,
-                    ch: left_ch,
-                    orig: left_orig,
-                    left_hit: left_left_hit,
-                    right_hit: left_right_hit,
-                    ..
-                },
-                Self::Lig {
-                    font: right_font,
-                    ch: right_ch,
-                    orig: right_orig,
-                    left_hit: right_left_hit,
-                    right_hit: right_right_hit,
-                    ..
-                },
-            ) => {
-                left_font == right_font
-                    && left_ch == right_ch
-                    && left_orig == right_orig
-                    && left_left_hit == right_left_hit
-                    && left_right_hit == right_right_hit
-            }
-            _ => self.to_owned() == other.to_owned(),
-        }
+        super::schema::semantic_eq(self, other)
     }
 }
 

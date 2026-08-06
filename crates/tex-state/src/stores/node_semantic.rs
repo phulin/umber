@@ -8,7 +8,7 @@ use super::state_hash::{
 use crate::ids::{FontId, NodeListId};
 use crate::math::MathField;
 use crate::node::{BoxNode, LeaderPayload, Node, Whatsit};
-use crate::node_arena::{NodeSemanticId, NodeSemanticIdBuilder, SidecarNeeds};
+use crate::node_arena::{NodeRef, NodeSemanticId, NodeSemanticIdBuilder, SidecarNeeds};
 use crate::state_hash::StateHasher;
 
 impl Stores {
@@ -21,7 +21,9 @@ impl Stores {
                 self.push_char_run_identity(&mut identity, font, &nodes[index..end]);
                 index = end;
             } else {
-                identity.push(|hasher| self.hash_node_semantic_identity(&nodes[index], hasher));
+                identity.push(|hasher| {
+                    self.hash_node_semantic_identity(NodeRef::from(&nodes[index]), hasher);
+                });
                 index += 1;
             }
         }
@@ -45,7 +47,9 @@ impl Stores {
                 let node = &nodes[index];
                 needs.preflight_and_count(node);
                 self.assert_live_handles_in_node(node);
-                identity.push(|hasher| self.hash_node_semantic_identity(node, hasher));
+                identity.push(|hasher| {
+                    self.hash_node_semantic_identity(NodeRef::from(node), hasher);
+                });
                 index += 1;
             }
         }
@@ -65,7 +69,9 @@ impl Stores {
                 index = end;
             } else {
                 let node = &nodes[index];
-                identity.push(|hasher| self.hash_node_semantic_identity(node, hasher));
+                identity.push(|hasher| {
+                    self.hash_node_semantic_identity(NodeRef::from(node), hasher);
+                });
                 index += 1;
             }
         }
@@ -98,14 +104,14 @@ impl Stores {
         self.nodes.semantic_id(id, &self.survivors)
     }
 
-    pub(super) fn hash_node_semantic_identity(&self, node: &Node, hasher: &mut StateHasher) {
+    pub(super) fn hash_node_semantic_identity(&self, node: NodeRef<'_>, hasher: &mut StateHasher) {
         match node {
-            Node::Char { font, ch, .. } => {
+            NodeRef::Char { font, ch, .. } => {
                 hasher.tag(0);
-                self.hash_font_semantic(*font, hasher);
-                hasher.u32(*ch as u32);
+                self.hash_font_semantic(font, hasher);
+                hasher.u32(ch as u32);
             }
-            Node::Lig {
+            NodeRef::Lig {
                 font,
                 ch,
                 orig,
@@ -114,21 +120,21 @@ impl Stores {
                 ..
             } => {
                 hasher.tag(1);
-                self.hash_font_semantic(*font, hasher);
-                hasher.u32(*ch as u32);
+                self.hash_font_semantic(font, hasher);
+                hasher.u32(ch as u32);
                 hasher.usize(orig.len());
                 for source in orig {
                     hasher.u32(*source as u32);
                 }
-                hasher.bool(*left_hit);
-                hasher.bool(*right_hit);
+                hasher.bool(left_hit);
+                hasher.bool(right_hit);
             }
-            Node::Kern { amount, kind } => {
+            NodeRef::Kern { amount, kind } => {
                 hasher.tag(2);
                 hasher.i32(amount.raw());
-                hash_kern_kind(*kind, hasher);
+                hash_kern_kind(kind, hasher);
             }
-            Node::MarginKern {
+            NodeRef::MarginKern {
                 amount,
                 side,
                 font,
@@ -136,33 +142,33 @@ impl Stores {
             } => {
                 hasher.tag(22);
                 hasher.i32(amount.raw());
-                hasher.u8(*side as u8);
-                self.hash_font_semantic(*font, hasher);
-                hasher.u8(*ch);
+                hasher.u8(side as u8);
+                self.hash_font_semantic(font, hasher);
+                hasher.u8(ch);
             }
-            Node::Glue { spec, kind, leader } => {
+            NodeRef::Glue { spec, kind, leader } => {
                 hasher.tag(3);
-                self.hash_glue_semantic(*spec, hasher);
-                hash_glue_kind(*kind, hasher);
-                self.hash_leader_identity(leader.as_ref(), hasher);
+                self.hash_glue_semantic(spec, hasher);
+                hash_glue_kind(kind, hasher);
+                self.hash_leader_identity(leader, hasher);
             }
-            Node::Penalty(value) => {
+            NodeRef::Penalty(value) => {
                 hasher.tag(4);
-                hasher.i32(*value);
+                hasher.i32(value);
             }
-            Node::Rule {
+            NodeRef::Rule {
                 width,
                 height,
                 depth,
             } => {
                 hasher.tag(5);
-                hash_optional_scaled(*width, hasher);
-                hash_optional_scaled(*height, hasher);
-                hash_optional_scaled(*depth, hasher);
+                hash_optional_scaled(width, hasher);
+                hash_optional_scaled(height, hasher);
+                hash_optional_scaled(depth, hasher);
             }
-            Node::HList(box_node) => self.hash_box_identity(6, box_node, hasher),
-            Node::VList(box_node) => self.hash_box_identity(7, box_node, hasher),
-            Node::Unset(unset) => {
+            NodeRef::HList(box_node) => self.hash_box_identity(6, &box_node, hasher),
+            NodeRef::VList(box_node) => self.hash_box_identity(7, &box_node, hasher),
+            NodeRef::Unset(unset) => {
                 hasher.tag(8);
                 hasher.u8(match unset.kind {
                     crate::node::UnsetKind::HBox => 0,
@@ -178,7 +184,7 @@ impl Stores {
                 hasher.u8(unset.shrink_order as u8);
                 self.hash_child_identity(unset.children, hasher);
             }
-            Node::Disc {
+            NodeRef::Disc {
                 kind,
                 pre,
                 post,
@@ -191,16 +197,16 @@ impl Stores {
                     crate::node::DiscKind::ExplicitHyphen => 1,
                     crate::node::DiscKind::AutomaticHyphen => 2,
                 });
-                self.hash_child_identity(*pre, hasher);
-                self.hash_child_identity(*post, hasher);
-                self.hash_child_identity(*replace, hasher);
+                self.hash_child_identity(pre, hasher);
+                self.hash_child_identity(post, hasher);
+                self.hash_child_identity(replace, hasher);
             }
-            Node::Mark { class, tokens } => {
+            NodeRef::Mark { class, tokens } => {
                 hasher.tag(10);
-                hasher.u16(*class);
-                self.hash_token_list_semantic(*tokens, hasher);
+                hasher.u16(class);
+                self.hash_token_list_semantic(tokens, hasher);
             }
-            Node::Ins {
+            NodeRef::Ins {
                 class,
                 size,
                 split_top_skip,
@@ -209,35 +215,35 @@ impl Stores {
                 content,
             } => {
                 hasher.tag(11);
-                hasher.u16(*class);
+                hasher.u16(class);
                 hasher.i32(size.raw());
-                self.hash_glue_semantic(*split_top_skip, hasher);
+                self.hash_glue_semantic(split_top_skip, hasher);
                 hasher.i32(split_max_depth.raw());
-                hasher.i32(*floating_penalty);
-                self.hash_child_identity(*content, hasher);
+                hasher.i32(floating_penalty);
+                self.hash_child_identity(content, hasher);
             }
-            Node::Whatsit(whatsit) => self.hash_whatsit_identity(whatsit, hasher),
-            Node::MathOn(width) => {
+            NodeRef::Whatsit(whatsit) => self.hash_whatsit_identity(whatsit, hasher),
+            NodeRef::MathOn(width) => {
                 hasher.tag(13);
                 hasher.i32(width.raw());
             }
-            Node::MathOff(width) => {
+            NodeRef::MathOff(width) => {
                 hasher.tag(14);
                 hasher.i32(width.raw());
             }
-            Node::Adjust(adjust) => {
+            NodeRef::Adjust(adjust) => {
                 hasher.tag(15);
                 hasher.bool(adjust.pre);
                 self.hash_child_identity(adjust.content, hasher);
             }
-            Node::MathNoad(noad) => {
+            NodeRef::MathNoad(noad) => {
                 hasher.tag(16);
                 hash_noad_kind(&noad.kind, hasher);
                 self.hash_math_field_identity(&noad.nucleus, hasher);
                 self.hash_math_field_identity(&noad.subscript, hasher);
                 self.hash_math_field_identity(&noad.superscript, hasher);
             }
-            Node::FractionNoad(fraction) => {
+            NodeRef::FractionNoad(fraction) => {
                 hasher.tag(17);
                 self.hash_child_identity(fraction.numerator, hasher);
                 self.hash_child_identity(fraction.denominator, hasher);
@@ -245,7 +251,7 @@ impl Stores {
                 hash_optional_delimiter(fraction.left_delimiter, hasher);
                 hash_optional_delimiter(fraction.right_delimiter, hasher);
             }
-            Node::MathStyle(style) => {
+            NodeRef::MathStyle(style) => {
                 hasher.tag(18);
                 hasher.u8(match style {
                     crate::math::MathStyle::Display => 0,
@@ -254,22 +260,22 @@ impl Stores {
                     crate::math::MathStyle::ScriptScript => 3,
                 });
             }
-            Node::MathChoice(choice) => {
+            NodeRef::MathChoice(choice) => {
                 hasher.tag(19);
                 self.hash_child_identity(choice.display, hasher);
                 self.hash_child_identity(choice.text, hasher);
                 self.hash_child_identity(choice.script, hasher);
                 self.hash_child_identity(choice.script_script, hasher);
             }
-            Node::MathList(list) => {
+            NodeRef::MathList(list) => {
                 hasher.tag(20);
                 hasher.bool(list.display);
                 self.hash_child_identity(list.content, hasher);
             }
-            Node::Nonscript => hasher.tag(21),
-            Node::Direction(direction) => {
+            NodeRef::Nonscript => hasher.tag(21),
+            NodeRef::Direction(direction) => {
                 hasher.tag(22);
-                hasher.u8(*direction as u8);
+                hasher.u8(direction as u8);
             }
         }
     }

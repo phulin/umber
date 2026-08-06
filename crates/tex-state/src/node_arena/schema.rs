@@ -482,6 +482,136 @@ impl NodeRef<'_> {
     }
 }
 
+/// Compares the semantic fields declared by the logical schema. Diagnostic
+/// provenance and physical-only discretionary metadata are intentionally
+/// excluded for both owned and compact views.
+pub(super) fn semantic_eq(left: &NodeRef<'_>, right: &NodeRef<'_>) -> bool {
+    match (left, right) {
+        (NodeRef::Char { font: a, ch: b, .. }, NodeRef::Char { font: c, ch: d, .. }) => {
+            a == c && b == d
+        }
+        (
+            NodeRef::Lig {
+                font: a,
+                ch: b,
+                orig: c,
+                left_hit: d,
+                right_hit: e,
+                ..
+            },
+            NodeRef::Lig {
+                font: f,
+                ch: g,
+                orig: h,
+                left_hit: i,
+                right_hit: j,
+                ..
+            },
+        ) => a == f && b == g && c == h && d == i && e == j,
+        (NodeRef::Kern { amount: a, kind: b }, NodeRef::Kern { amount: c, kind: d }) => {
+            a == c && b == d
+        }
+        (
+            NodeRef::MarginKern {
+                amount: a,
+                side: b,
+                font: c,
+                ch: d,
+            },
+            NodeRef::MarginKern {
+                amount: e,
+                side: f,
+                font: g,
+                ch: h,
+            },
+        ) => a == e && b == f && c == g && d == h,
+        (
+            NodeRef::Glue {
+                spec: a,
+                kind: b,
+                leader: c,
+            },
+            NodeRef::Glue {
+                spec: d,
+                kind: e,
+                leader: f,
+            },
+        ) => a == d && b == e && c == f,
+        (NodeRef::Penalty(a), NodeRef::Penalty(b)) => a == b,
+        (
+            NodeRef::Rule {
+                width: a,
+                height: b,
+                depth: c,
+            },
+            NodeRef::Rule {
+                width: d,
+                height: e,
+                depth: f,
+            },
+        ) => a == d && b == e && c == f,
+        (NodeRef::HList(a), NodeRef::HList(b)) | (NodeRef::VList(a), NodeRef::VList(b)) => a == b,
+        (NodeRef::Unset(a), NodeRef::Unset(b)) => a == b,
+        (
+            NodeRef::Disc {
+                kind: a,
+                pre: b,
+                post: c,
+                replace: d,
+                ..
+            },
+            NodeRef::Disc {
+                kind: e,
+                pre: f,
+                post: g,
+                replace: h,
+                ..
+            },
+        ) => a == e && b == f && c == g && d == h,
+        (
+            NodeRef::Mark {
+                class: a,
+                tokens: b,
+            },
+            NodeRef::Mark {
+                class: c,
+                tokens: d,
+            },
+        ) => a == c && b == d,
+        (
+            NodeRef::Ins {
+                class: a,
+                size: b,
+                split_top_skip: c,
+                split_max_depth: d,
+                floating_penalty: e,
+                content: f,
+            },
+            NodeRef::Ins {
+                class: g,
+                size: h,
+                split_top_skip: i,
+                split_max_depth: j,
+                floating_penalty: k,
+                content: l,
+            },
+        ) => a == g && b == h && c == i && d == j && e == k && f == l,
+        (NodeRef::Whatsit(a), NodeRef::Whatsit(b)) => a == b,
+        (NodeRef::MathOn(a), NodeRef::MathOn(b)) | (NodeRef::MathOff(a), NodeRef::MathOff(b)) => {
+            a == b
+        }
+        (NodeRef::Direction(a), NodeRef::Direction(b)) => a == b,
+        (NodeRef::MathNoad(a), NodeRef::MathNoad(b)) => a == b,
+        (NodeRef::FractionNoad(a), NodeRef::FractionNoad(b)) => a == b,
+        (NodeRef::MathStyle(a), NodeRef::MathStyle(b)) => a == b,
+        (NodeRef::MathChoice(a), NodeRef::MathChoice(b)) => a == b,
+        (NodeRef::MathList(a), NodeRef::MathList(b)) => a == b,
+        (NodeRef::Nonscript, NodeRef::Nonscript) => true,
+        (NodeRef::Adjust(a), NodeRef::Adjust(b)) => a == b,
+        _ => false,
+    }
+}
+
 fn content(visitor: &mut impl NodeSchemaVisitor, role: NodeHandleRole, handle: NodeHandle<'_>) {
     visitor.handle(NodeHandleEvent {
         role,
@@ -765,6 +895,8 @@ mod tests {
         for (index, owned) in nodes.iter().enumerate() {
             let owned_ref = NodeRef::from(owned);
             let compact_ref = list_view(&arena, list, index);
+            assert_eq!(owned_ref, compact_ref);
+            assert_eq!(owned, &compact_ref.to_owned());
             let owned_schema = snapshot(&owned_ref);
             let compact_schema = snapshot(&compact_ref);
             assert_eq!(owned_schema.descriptor, compact_schema.descriptor);

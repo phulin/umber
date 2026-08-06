@@ -5,9 +5,11 @@ use crate::ids::{
 };
 use crate::input::{InputFrameSummary, InputSummary, SourceFrameSummary, TracedTokenList};
 use crate::interner::{Symbol, SymbolId, SymbolReference};
-use crate::math::MathField;
 use crate::meaning::Meaning;
-use crate::node::{LeaderPayload, Node};
+use crate::node::Node;
+use crate::node_arena::{
+    NodeDescriptor, NodeHandle, NodeHandleEvent, NodeHandlePolicy, NodeRef, NodeSchemaVisitor,
+};
 use crate::token::{OriginId, Token};
 use crate::world::World;
 
@@ -412,128 +414,7 @@ impl Stores {
     }
 
     pub(crate) fn assert_live_handles_in_node(&self, node: &Node) {
-        match node {
-            Node::Glue { spec, leader, .. } => {
-                self.assert_live_glue(*spec);
-                if let Some(leader) = leader {
-                    self.assert_live_handles_in_leader_payload(leader);
-                }
-            }
-            Node::Char { font, .. } | Node::Lig { font, .. } | Node::MarginKern { font, .. } => {
-                self.assert_live_font(*font)
-            }
-            Node::HList(box_node) | Node::VList(box_node) => {
-                self.assert_live_child_node_list(box_node.children);
-            }
-            Node::Unset(unset) => {
-                self.assert_live_child_node_list(unset.children);
-            }
-            Node::Disc {
-                pre, post, replace, ..
-            } => {
-                self.assert_live_child_node_list(*pre);
-                self.assert_live_child_node_list(*post);
-                self.assert_live_child_node_list(*replace);
-            }
-            Node::Mark { tokens, .. } => self.assert_live_token_list(*tokens),
-            Node::Ins {
-                split_top_skip,
-                content,
-                ..
-            } => {
-                self.assert_live_glue(*split_top_skip);
-                self.assert_live_child_node_list(*content);
-            }
-            Node::Adjust(adjust) => {
-                self.assert_live_child_node_list(adjust.content);
-            }
-            Node::MathNoad(noad) => {
-                self.assert_live_handles_in_math_field(&noad.nucleus);
-                self.assert_live_handles_in_math_field(&noad.subscript);
-                self.assert_live_handles_in_math_field(&noad.superscript);
-            }
-            Node::FractionNoad(fraction) => {
-                self.assert_live_child_node_list(fraction.numerator);
-                self.assert_live_child_node_list(fraction.denominator);
-            }
-            Node::MathChoice(choice) => {
-                self.assert_live_child_node_list(choice.display);
-                self.assert_live_child_node_list(choice.text);
-                self.assert_live_child_node_list(choice.script);
-                self.assert_live_child_node_list(choice.script_script);
-            }
-            Node::MathList(list) => self.assert_live_child_node_list(list.content),
-            Node::Whatsit(
-                crate::node::Whatsit::DeferredWrite { tokens, .. }
-                | crate::node::Whatsit::DeferredSpecial { tokens, .. }
-                | crate::node::Whatsit::DeferredPdfLiteral { tokens, .. },
-            ) => {
-                self.assert_live_token_list(*tokens);
-            }
-            Node::Whatsit(crate::node::Whatsit::PdfSnapY { glue }) => {
-                self.assert_live_glue(*glue);
-            }
-            Node::Whatsit(crate::node::Whatsit::PdfDestination(destination)) => {
-                if let crate::PdfActionIdentifier::Name(tokens) = destination.identifier {
-                    self.assert_live_token_list(tokens);
-                }
-            }
-            Node::Whatsit(crate::node::Whatsit::PdfThread(thread)) => {
-                if let crate::PdfActionIdentifier::Name(tokens) = thread.identifier {
-                    self.assert_live_token_list(tokens);
-                }
-                self.assert_live_token_list(thread.attributes);
-            }
-            Node::Whatsit(
-                crate::node::Whatsit::OpenOut { .. }
-                | crate::node::Whatsit::CloseOut { .. }
-                | crate::node::Whatsit::Special { .. }
-                | crate::node::Whatsit::PdfReferenceObject { .. }
-                | crate::node::Whatsit::PdfAccessibility(_)
-                | crate::node::Whatsit::PdfAnnotation { .. }
-                | crate::node::Whatsit::PdfLinkStart { .. }
-                | crate::node::Whatsit::PdfLinkEnd { .. }
-                | crate::node::Whatsit::PdfRunningLink(_)
-                | crate::node::Whatsit::PdfLiteral { .. }
-                | crate::node::Whatsit::PdfSetMatrix { .. }
-                | crate::node::Whatsit::PdfSave
-                | crate::node::Whatsit::PdfRestore
-                | crate::node::Whatsit::PdfColorStack { .. }
-                | crate::node::Whatsit::PdfSavePos
-                | crate::node::Whatsit::PdfSnapRefPoint
-                | crate::node::Whatsit::PdfSnapYComp { .. }
-                | crate::node::Whatsit::PdfRefXForm { .. }
-                | crate::node::Whatsit::PdfRefXImage { .. }
-                | crate::node::Whatsit::PdfEndThread
-                | crate::node::Whatsit::Language { .. },
-            ) => {}
-            Node::Kern { .. }
-            | Node::Penalty(_)
-            | Node::Rule { .. }
-            | Node::MathOn(_)
-            | Node::MathOff(_)
-            | Node::Direction(_)
-            | Node::MathStyle(_)
-            | Node::Nonscript => {}
-        }
-    }
-
-    fn assert_live_handles_in_math_field(&self, field: &MathField) {
-        match field {
-            MathField::SubBox(list) | MathField::SubMlist(list) => {
-                self.assert_live_child_node_list(*list);
-            }
-            MathField::Empty | MathField::MathChar(_) | MathField::MathTextChar(_) => {}
-        }
-    }
-
-    fn assert_live_handles_in_leader_payload(&self, payload: &LeaderPayload) {
-        match payload {
-            LeaderPayload::HList(box_node) | LeaderPayload::VList(box_node) => {
-                self.assert_live_child_node_list(box_node.children);
-            }
-            LeaderPayload::Rule { .. } => {}
-        }
+        NodeRef::from(node).visit_schema(&mut LiveHandleValidator(self));
     }
 
     fn assert_live_child_node_list(&self, id: NodeListId) {
@@ -671,6 +552,27 @@ impl Stores {
     pub(super) fn dec_survivor_ref(&mut self, id: NodeListId) {
         if matches!(id.arena(), ArenaRef::Survivor(_)) {
             self.survivors.dec_ref(id);
+        }
+    }
+}
+
+struct LiveHandleValidator<'a>(&'a Stores);
+
+impl NodeSchemaVisitor for LiveHandleValidator<'_> {
+    fn descriptor(&mut self, _descriptor: &'static NodeDescriptor) {}
+
+    fn handle(&mut self, event: NodeHandleEvent<'_>) {
+        if event.policy == NodeHandlePolicy::Diagnostic {
+            return;
+        }
+        match event.handle {
+            NodeHandle::Font(id) => self.0.assert_live_font(id),
+            NodeHandle::Glue(id) => self.0.assert_live_glue(id),
+            NodeHandle::TokenList(id) => self.0.assert_live_token_list(id),
+            NodeHandle::NodeList(id) => self.0.assert_live_child_node_list(id),
+            NodeHandle::Origin(_) | NodeHandle::Origins(_) => {
+                unreachable!("semantic node handles cannot contain origins")
+            }
         }
     }
 }

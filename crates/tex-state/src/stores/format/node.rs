@@ -9,6 +9,7 @@ use crate::node::{
     BoxNode, DiscKind, GlueKind, KernKind, LeaderPayload, MarginKernSide, Node,
     PdfAccessibilityControl, PdfLiteralMode, Sign, UnsetKind, UnsetNode, Whatsit,
 };
+use crate::node_arena::NodeRef;
 use crate::scaled::{GlueSetRatio, Scaled};
 use crate::stores::Stores;
 use crate::world::{PrintSink, StreamSlot};
@@ -343,13 +344,13 @@ impl FormatNode {
 
     pub(super) fn capture_with_origins(
         stores: &Stores,
-        node: Node,
+        node: NodeRef<'_>,
         roots: &mut SurvivorRoots,
         origins: &mut Vec<crate::token::OriginId>,
     ) -> Self {
         match &node {
-            Node::Char { origin, .. } => origins.push(*origin),
-            Node::Lig {
+            NodeRef::Char { origin, .. } => origins.push(*origin),
+            NodeRef::Lig {
                 origins: ligature_origins,
                 ..
             } => origins.extend(ligature_origins.iter().copied()),
@@ -358,13 +359,13 @@ impl FormatNode {
         Self::capture(stores, node, roots)
     }
 
-    pub(super) fn capture(stores: &Stores, node: Node, roots: &mut SurvivorRoots) -> Self {
+    pub(super) fn capture(stores: &Stores, node: NodeRef<'_>, roots: &mut SurvivorRoots) -> Self {
         match node {
-            Node::Char { font, ch, .. } => Self::Char {
+            NodeRef::Char { font, ch, .. } => Self::Char {
                 font: font.raw(),
                 ch,
             },
-            Node::Lig {
+            NodeRef::Lig {
                 font,
                 ch,
                 orig,
@@ -374,12 +375,12 @@ impl FormatNode {
             } => Self::Lig {
                 font: font.raw(),
                 ch,
-                orig,
+                orig: orig.to_vec(),
                 left_hit,
                 right_hit,
             },
-            Node::Kern { amount, kind } => Self::Kern { amount, kind },
-            Node::MarginKern {
+            NodeRef::Kern { amount, kind } => Self::Kern { amount, kind },
+            NodeRef::MarginKern {
                 amount,
                 side,
                 font,
@@ -390,13 +391,15 @@ impl FormatNode {
                 font: font.raw(),
                 ch,
             },
-            Node::Glue { spec, kind, leader } => Self::Glue {
+            NodeRef::Glue { spec, kind, leader } => Self::Glue {
                 spec: spec.raw(),
                 kind,
-                leader: leader.map(|leader| FormatLeaderPayload::capture(stores, leader, roots)),
+                leader: leader
+                    .cloned()
+                    .map(|leader| FormatLeaderPayload::capture(stores, leader, roots)),
             },
-            Node::Penalty(value) => Self::Penalty(value),
-            Node::Rule {
+            NodeRef::Penalty(value) => Self::Penalty(value),
+            NodeRef::Rule {
                 width,
                 height,
                 depth,
@@ -405,10 +408,14 @@ impl FormatNode {
                 height,
                 depth,
             },
-            Node::HList(box_node) => Self::HList(FormatBoxNode::capture(stores, box_node, roots)),
-            Node::VList(box_node) => Self::VList(FormatBoxNode::capture(stores, box_node, roots)),
-            Node::Unset(unset) => Self::Unset(FormatUnsetNode::capture(stores, unset, roots)),
-            Node::Disc {
+            NodeRef::HList(box_node) => {
+                Self::HList(FormatBoxNode::capture(stores, box_node, roots))
+            }
+            NodeRef::VList(box_node) => {
+                Self::VList(FormatBoxNode::capture(stores, box_node, roots))
+            }
+            NodeRef::Unset(unset) => Self::Unset(FormatUnsetNode::capture(stores, unset, roots)),
+            NodeRef::Disc {
                 kind,
                 pre,
                 post,
@@ -421,11 +428,11 @@ impl FormatNode {
                 replace: key(stores, replace, roots),
                 physical_replace_count,
             },
-            Node::Mark { class, tokens } => Self::Mark {
+            NodeRef::Mark { class, tokens } => Self::Mark {
                 class,
                 tokens: tokens.raw(),
             },
-            Node::Ins {
+            NodeRef::Ins {
                 class,
                 size,
                 split_top_skip,
@@ -440,23 +447,23 @@ impl FormatNode {
                 floating_penalty,
                 content: key(stores, content, roots),
             },
-            Node::Whatsit(whatsit) => Self::Whatsit(FormatWhatsit::capture(whatsit)),
-            Node::MathOn(value) => Self::MathOn(value),
-            Node::MathOff(value) => Self::MathOff(value),
-            Node::Direction(direction) => Self::Direction(direction),
-            Node::MathNoad(noad) => Self::MathNoad(FormatMathNoad::capture(stores, noad, roots)),
-            Node::FractionNoad(fraction) => {
-                Self::FractionNoad(FormatMathFraction::capture(stores, fraction, roots))
+            NodeRef::Whatsit(whatsit) => Self::Whatsit(FormatWhatsit::capture(whatsit.clone())),
+            NodeRef::MathOn(value) => Self::MathOn(value),
+            NodeRef::MathOff(value) => Self::MathOff(value),
+            NodeRef::Direction(direction) => Self::Direction(direction),
+            NodeRef::MathNoad(noad) => Self::MathNoad(FormatMathNoad::capture(stores, noad, roots)),
+            NodeRef::FractionNoad(fraction) => {
+                Self::FractionNoad(FormatMathFraction::capture(stores, fraction.clone(), roots))
             }
-            Node::MathStyle(style) => Self::MathStyle(style),
-            Node::MathChoice(choice) => {
-                Self::MathChoice(FormatMathChoice::capture(stores, choice, roots))
+            NodeRef::MathStyle(style) => Self::MathStyle(style),
+            NodeRef::MathChoice(choice) => {
+                Self::MathChoice(FormatMathChoice::capture(stores, choice.clone(), roots))
             }
-            Node::MathList(list) => {
+            NodeRef::MathList(list) => {
                 Self::MathList(FormatMathListNode::capture(stores, list, roots))
             }
-            Node::Nonscript => Self::Nonscript,
-            Node::Adjust(adjust) => Self::Adjust {
+            NodeRef::Nonscript => Self::Nonscript,
+            NodeRef::Adjust(adjust) => Self::Adjust {
                 content: key(stores, adjust.content, roots),
                 pre: adjust.pre,
             },

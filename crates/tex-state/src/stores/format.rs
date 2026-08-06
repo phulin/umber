@@ -2017,8 +2017,7 @@ fn capture_node_list(
                 stack.push(Visit::Exit(id));
                 let nodes = stores.nodes(id);
                 for node in nodes.iter().rev() {
-                    let children = node_child_ids(&node.to_owned());
-                    for child in children.into_iter().rev() {
+                    for child in node.children().rev() {
                         stack.push(Visit::Enter(child));
                     }
                 }
@@ -2032,13 +2031,10 @@ fn capture_node_list(
                     .nodes(id)
                     .iter()
                     .map(|node| match origins.as_deref_mut() {
-                        Some(origins) => FormatNode::capture_with_origins(
-                            stores,
-                            node.to_owned(),
-                            survivor_roots,
-                            origins,
-                        ),
-                        None => FormatNode::capture(stores, node.to_owned(), survivor_roots),
+                        Some(origins) => {
+                            FormatNode::capture_with_origins(stores, node, survivor_roots, origins)
+                        }
+                        None => FormatNode::capture(stores, node, survivor_roots),
                     })
                     .collect();
                 out.push(FormatNodeList {
@@ -2050,50 +2046,6 @@ fn capture_node_list(
         }
     }
     Ok(())
-}
-
-fn node_child_ids(node: &Node) -> Vec<NodeListId> {
-    let mut out = Vec::new();
-    match node {
-        Node::HList(box_node) | Node::VList(box_node) => out.push(box_node.children),
-        Node::Glue {
-            leader:
-                Some(
-                    crate::node::LeaderPayload::HList(box_node)
-                    | crate::node::LeaderPayload::VList(box_node),
-                ),
-            ..
-        } => out.push(box_node.children),
-        Node::Unset(unset) => out.push(unset.children),
-        Node::Disc {
-            pre, post, replace, ..
-        } => out.extend([*pre, *post, *replace]),
-        Node::Ins { content, .. } => out.push(*content),
-        Node::Adjust(adjust) => out.push(adjust.content),
-        Node::MathNoad(noad) => {
-            math_field_child(&noad.nucleus, &mut out);
-            math_field_child(&noad.subscript, &mut out);
-            math_field_child(&noad.superscript, &mut out);
-        }
-        Node::FractionNoad(fraction) => {
-            out.extend([fraction.numerator, fraction.denominator]);
-        }
-        Node::MathChoice(choice) => out.extend([
-            choice.display,
-            choice.text,
-            choice.script,
-            choice.script_script,
-        ]),
-        Node::MathList(list) => out.push(list.content),
-        _ => {}
-    }
-    out
-}
-
-fn math_field_child(field: &crate::math::MathField, out: &mut Vec<NodeListId>) {
-    if let crate::math::MathField::SubBox(id) | crate::math::MathField::SubMlist(id) = field {
-        out.push(*id);
-    }
 }
 
 impl FormatToken {
