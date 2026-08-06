@@ -144,6 +144,15 @@ member, and by making that correctness a test rather than a wrapper script.
   because each is its own workspace with its own lockfile. Pushing a crate out
   of the workspace cannot quietly take its tests out of every gate on the way.
 
+The same test executable owns `workspace_selection/source_audit.rs`, so its
+execution remains protected by the default-member invariant. That audit scans
+tracked production Rust and Cargo's library-target metadata, rejects new
+`#[cfg(any())]` sites and `#[cfg(test)]` modules under a library with
+`test = false`, and rejects stale exact-coordinate migration exceptions. Its
+fixture tests prove both failure diagnostics and the active-library success
+case. The inventoried `tex-exec` exceptions remain migration debt, not active
+test evidence.
+
 `scripts/run-native-tests.py` used to enforce this by wrapping Cargo. Enforcing
 it from inside the suite is strictly better: the invariant now holds under the
 command everyone already runs, rather than under one they have to remember,

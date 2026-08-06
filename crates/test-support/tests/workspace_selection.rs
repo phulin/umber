@@ -28,6 +28,9 @@ use std::process::Command;
 
 use serde_json::Value;
 
+#[path = "workspace_selection/source_audit.rs"]
+mod source_audit;
+
 /// Members deliberately absent from `default-members`, each naming the check
 /// that does run it. This is not permission to leave a crate untested.
 const OMITTED: &[(&str, &str)] = &[(

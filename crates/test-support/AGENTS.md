@@ -29,6 +29,8 @@ Keep reusable test harness code here when multiple crates or integration tests n
 - `src/closed_case.rs`: typed closed-case identity, ordered file roles, status/xfail, profile, source-closure and publication metadata validation, plus non-authoritative local candidate staging.
 - `src/closed_case/tests.rs`: contract, hash, order, closure, traversal, local-edit, and staging compatibility coverage.
 - `tests/tex82_catalogue.rs`: hermetic TeX82 property-catalogue completeness, citation, ownership, and exact test-link gate.
+- `tests/workspace_selection.rs`: routine workspace-selection and release-surface audits.
+- `tests/workspace_selection/source_audit.rs`: routine inactive-test-authority source audit, exact reviewed migration exceptions, and positive/negative audit fixtures.
 - `src/compile_fail.rs`: Shared offline Cargo-check harness that gives each compile-fail fixture an independent temporary crate, points every crate at one reusable target directory, detaches nested Cargo from the outer test jobserver, and checks stable stderr substrings.
 - `src/corpus.rs`: shared committed-corpus discovery and support-file copy helpers.
 - `src/dvi.rs`: shared DVI fixture setup, preamble-comment normalization, exact comparison, and byte-difference context.

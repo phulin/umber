@@ -72,6 +72,20 @@ than being enforced by remembering to invoke a particular script.
 `cargo test -q --tests -p <crate>` remains the right command while iterating on
 one crate.
 
+The routine `workspace_selection` test executable also audits active source
+authority. Production Rust may not use the unconditionally false
+`#[cfg(any())]`, and a library that disables its unit-test target with
+`[lib] test = false` may not colocate `#[cfg(test)]` modules. The temporary
+`tex-exec` migration exceptions are exact source coordinates tied to the
+dormant-test ledger: new, moved, and stale sites all fail. Deliberate positive
+and negative source fixtures keep both rejection paths and their remediation
+diagnostics executable.
+
+Only a test selected and executed by a named routine or explicit gate is active
+evidence. A dormant source file, a disabled test target, a dead conditional, or
+a reviewed migration exception is inventory, not coverage; documentation and
+property catalogues must cite an active test instead.
+
 `umber-wasm` is the one declared exclusion. Its tests are
 `#[wasm_bindgen_test]`, which registers no test on a host target, so selecting
 it would build a cdylib and run exactly zero tests; `scripts/check-wasm.sh`
