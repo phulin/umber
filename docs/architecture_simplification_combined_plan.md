@@ -870,6 +870,38 @@ retained compatibility reader, or `.13.4` wire-schema deletion is credited to
 the catalogue forecast, and no remaining catalogue reduction is carried
 forward.
 
+**Program closeout.** All six children are closed on implementation tree
+`bd75c2cc1c476c25c0d30535d57518266c325f4f`. The final proof repair migrates
+the wasm-bindgen suites to the schema-1 response and optional metric/status DTO
+aliases without changing production code, adding 62 and deleting 32 authored
+Rust test lines. Recomputing the final integrated children also includes the
+12-addition/9-deletion direct/worker diagnostic proof and the
+8-addition/3-deletion catalogue provenance repair omitted from the earlier
+implementation-only receipts. Across the six children, authored Rust,
+JavaScript, and proof tests add 3,880 and delete 3,633 lines, a 247-line net
+increase. The generated
+67-line TypeScript declaration and the 13 deleted declarative fixture/inventory
+lines remain separate; documentation, guidance, moved code, compatibility
+surfaces, catalogues, and binary assets are not credited as authored reduction.
+The final catalogue-only reconciliation is +746/-1,439, a 693-line net
+reduction and 107--407-line shortfall against its retired forecast. No further
+Program 13 reduction is scheduled.
+
+Fresh closeout verification compiled the full native suite, publisher, wasm32
+tests, package, and native browser binary uncapped with six Cargo jobs. Under
+`MemoryMax=512M`, distribution passed 17 tests, the publisher passed 17,
+native catalogue/offline coverage passed 21, `umber-wasm` passed three, and all
+89 authored Node tests passed. Under `MemoryMax=1G`, real
+`wasm-pack test --node` passed its schema golden and two virtual-font tests,
+the packaged TeX--bibliography--TeX lifecycle and 36-file npm dry run passed,
+and the complete native routine suite passed. Chrome stopped precisely at the
+absent `/usr/bin/google-chrome`; Firefox, GeckoDriver, Chromium variants, and
+ChromeDriver were also absent, so no browser execution is reported. The
+standalone publisher lock refresh remains the separately owned `umber2-ss53`
+follow-up and was restored after the passing publisher gate. The exact
+authority, compatibility, accounting, and verification receipt is recorded in
+[the program closeout](writeback/umber2-vgjr.13.md).
+
 ## 14. Generate bibliography compatibility cases, then collapse production stages
 
 **Outcome.** One compatibility-case manifest and immutable runner preserve separately named upstream assertions, inputs, outputs, order, and xfails. With that proof layer active, Biber uses one engine-owned editable draft and one freeze; classic retains its explicit-frame VM but removes duplicate lexer/compiler/callable/READ/report authorities; input and output stages lose intermediate models that are converted and discarded.
