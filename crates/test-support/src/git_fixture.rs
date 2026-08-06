@@ -20,6 +20,7 @@ pub struct ClosedCase {
     has_inventory: bool,
     root: PathBuf,
     payloads: BTreeSet<String>,
+    payload_order: Vec<String>,
 }
 
 impl ClosedCase {
@@ -76,11 +77,15 @@ impl ClosedCase {
         );
 
         let tracked = tracked_regular_files(&repository, &case_relative)?;
-        let (payloads, declared) = if has_inventory {
+        let (payloads, payload_order, declared) = if has_inventory {
             declared_inventory(&root)?
         } else {
             ensure!(!tracked.is_empty(), "closed fixture directory is empty");
-            (tracked.clone(), tracked.clone())
+            (
+                tracked.clone(),
+                tracked.iter().cloned().collect(),
+                tracked.clone(),
+            )
         };
         ensure!(
             tracked == declared,
@@ -98,6 +103,7 @@ impl ClosedCase {
             has_inventory,
             root,
             payloads,
+            payload_order,
         })
     }
 
@@ -128,7 +134,9 @@ impl ClosedCase {
             Self::discover_inner(&self.repository, &self.case_relative, self.has_inventory)
                 .context("revalidate closed fixture before payload access")?;
         ensure!(
-            current.root == self.root && current.payloads == self.payloads,
+            current.root == self.root
+                && current.payloads == self.payloads
+                && current.payload_order == self.payload_order,
             "closed fixture authority changed after discovery"
         );
         let path = current.root.join(path);
@@ -148,6 +156,18 @@ impl ClosedCase {
             .with_context(|| format!("fixture payload is not UTF-8: {name}"))
     }
 
+    /// Returns the normalized repository-relative identity of this case.
+    #[must_use]
+    pub fn repository_relative(&self) -> &Path {
+        &self.case_relative
+    }
+
+    /// Returns payload names in their declared order. Unmanifested tracked
+    /// cases use Git's canonical lexical order.
+    pub fn payload_names(&self) -> impl ExactSizeIterator<Item = &str> {
+        self.payload_order.iter().map(String::as_str)
+    }
+
     /// Returns a validated payload path for consumers that require a host path.
     pub fn path(&self, name: &str) -> Result<PathBuf> {
         ensure!(
@@ -158,7 +178,7 @@ impl ClosedCase {
     }
 }
 
-fn declared_inventory(root: &Path) -> Result<(BTreeSet<String>, BTreeSet<String>)> {
+fn declared_inventory(root: &Path) -> Result<(BTreeSet<String>, Vec<String>, BTreeSet<String>)> {
     let inventory_path = root.join(INVENTORY_NAME);
     let inventory = fs::read_to_string(&inventory_path)
         .with_context(|| format!("read {}", inventory_path.display()))?;
@@ -169,6 +189,7 @@ fn declared_inventory(root: &Path) -> Result<(BTreeSet<String>, BTreeSet<String>
         inventory_path.display()
     );
     let mut payloads = BTreeSet::new();
+    let mut payload_order = Vec::new();
     for name in lines.filter(|line| !line.is_empty()) {
         let path = checked_relative(Path::new(name))
             .with_context(|| format!("invalid inventory entry {name:?}"))?;
@@ -184,6 +205,7 @@ fn declared_inventory(root: &Path) -> Result<(BTreeSet<String>, BTreeSet<String>
             payloads.insert(name.to_owned()),
             "duplicate inventory entry: {name}"
         );
+        payload_order.push(name.to_owned());
     }
     ensure!(!payloads.is_empty(), "closed fixture inventory is empty");
     let declared = payloads
@@ -191,7 +213,7 @@ fn declared_inventory(root: &Path) -> Result<(BTreeSet<String>, BTreeSet<String>
         .cloned()
         .chain(std::iter::once(INVENTORY_NAME.to_owned()))
         .collect();
-    Ok((payloads, declared))
+    Ok((payloads, payload_order, declared))
 }
 
 fn checked_relative(path: &Path) -> Result<PathBuf> {

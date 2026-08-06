@@ -1,5 +1,6 @@
 //! Shared host-side support for parity and fixture tests.
 
+pub mod closed_case;
 mod compile_fail;
 mod corpus;
 pub mod dvi;

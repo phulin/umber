@@ -26,11 +26,14 @@ Keep reusable test harness code here when multiple crates or integration tests n
 
 - `AGENTS.md`: crate-specific guidance, boundaries, validation notes, and this file map.
 - `Cargo.toml`: crate manifest, host-side fixture dependencies, and workspace lint settings.
+- `src/closed_case.rs`: typed closed-case identity, ordered file roles, status/xfail, profile, source-closure and publication metadata validation, plus non-authoritative local candidate staging.
+- `src/closed_case/tests.rs`: contract, hash, order, closure, traversal, local-edit, and staging compatibility coverage.
 - `tests/tex82_catalogue.rs`: hermetic TeX82 property-catalogue completeness, citation, ownership, and exact test-link gate.
 - `src/compile_fail.rs`: Shared offline Cargo-check harness that gives each compile-fail fixture an independent temporary crate, points every crate at one reusable target directory, detaches nested Cargo from the outer test jobserver, and checks stable stderr substrings.
 - `src/corpus.rs`: shared committed-corpus discovery and support-file copy helpers.
 - `src/dvi.rs`: shared DVI fixture setup, preamble-comment normalization, exact comparison, and byte-difference context.
 - `src/lib.rs`: public fixture assertion/read helpers, checked runtime-checkout asset reads, TeX/reference log normalizers that retain canonical error context (including indented continuation lines) while dropping the explicitly delimited PDF-statistics block, and PL font parsing utilities.
+- `src/git_fixture.rs`: selected-checkout Git and filesystem authority validation for closed cases, preserving manifest order and revalidating before payload access.
 - `src/bin/pdf-normalize.rs`: host-only CLI exposing the independent Hayro
   structure projection to live-reference tooling.
 - `src/pdf.rs`: canonical Hayro-probe PDF page/content plus document-object and dictionary structure normalizer.

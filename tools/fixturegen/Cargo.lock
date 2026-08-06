@@ -348,6 +348,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "da7c62ceae207dd37ea5b845da6a0696c799f85e97da1ab5b7910be3c1c80223"
 
 [[package]]
+name = "fdeflate"
+version = "0.3.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1e6853b52649d4ac5c0bd02320cddc5ba956bdb407c4b75a2c6b75bf51500f8c"
+dependencies = [
+ "simd-adler32",
+]
+
+[[package]]
 name = "fearless_simd"
 version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -491,9 +500,11 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "899def5c37c4fd7b2664648c28120ecec138e4d395b459e5ca34f9cce2dd77fd"
 dependencies = [
  "cfg-if",
+ "js-sys",
  "libc",
  "r-efi 5.3.0",
  "wasip2",
+ "wasm-bindgen",
 ]
 
 [[package]]
@@ -901,6 +912,8 @@ dependencies = [
  "tempfile",
  "test-support",
  "tex-command",
+ "tex-command-stream",
+ "tex-observe",
  "tex-oracle",
  "tex-out",
 ]
@@ -933,6 +946,19 @@ name = "pin-project-lite"
 version = "0.2.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
+
+[[package]]
+name = "png"
+version = "0.18.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "60769b8b31b2a9f263dae2776c37b1b28ae246943cf719eb6946a1db05128a61"
+dependencies = [
+ "bitflags",
+ "crc32fast",
+ "fdeflate",
+ "flate2",
+ "miniz_oxide",
+]
 
 [[package]]
 name = "posix-regex"
@@ -1164,6 +1190,7 @@ version = "0.23.43"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0283386ce02abc0151e1761d08802dfe86c173b0b494af5cbc086574e453da06"
 dependencies = [
+ "log",
  "once_cell",
  "ring",
  "rustls-pki-types",
@@ -1501,8 +1528,41 @@ dependencies = [
 ]
 
 [[package]]
+name = "tex-command-stream"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "sha2",
+ "similar",
+ "tempfile",
+ "test-support",
+ "tex-command",
+ "tex-exec",
+ "tex-observe",
+ "tex-oracle",
+ "tex-out",
+ "tex-state",
+ "umber",
+ "umber-fetch",
+]
+
+[[package]]
 name = "tex-content"
 version = "0.1.0"
+
+[[package]]
+name = "tex-exec"
+version = "0.1.0"
+dependencies = [
+ "ahash",
+ "smallvec",
+ "tex-command",
+ "tex-fonts",
+ "tex-out",
+ "tex-state",
+ "tex-typeset",
+]
 
 [[package]]
 name = "tex-fonts"
@@ -1519,6 +1579,27 @@ dependencies = [
  "unicode-bidi",
  "unicode-script",
  "woff2-patched",
+]
+
+[[package]]
+name = "tex-incr"
+version = "0.1.0"
+dependencies = [
+ "getrandom 0.3.4",
+ "tex-command",
+ "tex-exec",
+ "tex-out",
+ "tex-state",
+]
+
+[[package]]
+name = "tex-observe"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "tex-command",
+ "tex-oracle",
+ "tex-state",
 ]
 
 [[package]]
@@ -1560,6 +1641,16 @@ dependencies = [
  "tex-content",
  "tex-fonts",
  "unicode-width",
+]
+
+[[package]]
+name = "tex-typeset"
+version = "0.1.0"
+dependencies = [
+ "ahash",
+ "tex-arith",
+ "tex-fonts",
+ "tex-state",
 ]
 
 [[package]]
@@ -1737,6 +1828,59 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b6f5e870be6c3b371b77fe0ee0bafb859fa4964b4404c27de1d380043c4dda20"
 
 [[package]]
+name = "umber"
+version = "0.1.0"
+dependencies = [
+ "bib-engine",
+ "bincode",
+ "flate2",
+ "getrandom 0.3.4",
+ "hayro-syntax",
+ "md-5",
+ "png",
+ "rustix",
+ "serde",
+ "sha2",
+ "subtle",
+ "tex-arith",
+ "tex-command",
+ "tex-exec",
+ "tex-fonts",
+ "tex-incr",
+ "tex-observe",
+ "tex-oracle",
+ "tex-out",
+ "tex-state",
+ "umber-distribution",
+ "umber-fetch",
+ "umber-interrupt",
+ "umber-vfs",
+ "zeroize",
+]
+
+[[package]]
+name = "umber-distribution"
+version = "0.1.0"
+
+[[package]]
+name = "umber-fetch"
+version = "0.1.0"
+dependencies = [
+ "rustix",
+ "sha2",
+ "umber-distribution",
+ "ureq",
+]
+
+[[package]]
+name = "umber-interrupt"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "umber-vfs"
 version = "0.1.0"
 dependencies = [
@@ -1801,6 +1945,34 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8ecb6da28b8a351d773b68d5825ac39017e680750f980f3a1a85cd8dd28a47c1"
 
 [[package]]
+name = "ureq"
+version = "3.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dea7109cdcd5864d4eeb1b58a1648dc9bf520360d7af16ec26d0a9354bafcfc0"
+dependencies = [
+ "base64",
+ "log",
+ "percent-encoding",
+ "rustls",
+ "rustls-pki-types",
+ "ureq-proto",
+ "utf8-zero",
+ "webpki-roots",
+]
+
+[[package]]
+name = "ureq-proto"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e994ba84b0bd1b1b0cf92878b7ef898a5c1760108fe7b6010327e274917a808c"
+dependencies = [
+ "base64",
+ "http",
+ "httparse",
+ "log",
+]
+
+[[package]]
 name = "url"
 version = "2.5.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1811,6 +1983,12 @@ dependencies = [
  "percent-encoding",
  "serde",
 ]
+
+[[package]]
+name = "utf8-zero"
+version = "0.8.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b8c0a043c9540bae7c578c88f91dda8bd82e59ae27c21baca69c8b191aaf5a6e"
 
 [[package]]
 name = "utf8_iter"
@@ -1921,6 +2099,15 @@ checksum = "5a6580f308b1fad9207618087a65c04e7a10bc77e02c8e84e9b00dd4b12fa0bb"
 dependencies = [
  "js-sys",
  "wasm-bindgen",
+]
+
+[[package]]
+name = "webpki-roots"
+version = "1.0.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7dcd9d09a39985f5344844e66b0c530a33843579125f23e21e9f0f220850f22a"
+dependencies = [
+ "rustls-pki-types",
 ]
 
 [[package]]

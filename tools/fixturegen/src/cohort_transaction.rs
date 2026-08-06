@@ -1,6 +1,6 @@
 use std::collections::BTreeSet;
 use std::fs;
-use std::path::{Component, Path};
+use std::path::Path;
 use std::process::Command;
 
 use anyhow::{Context, Result, bail, ensure};
@@ -9,7 +9,6 @@ use serde::{Deserialize, Serialize};
 use crate::layout_migration::{self, Mode};
 
 const PLAN_SCHEMA: &str = "umber-fixture-cohort-plan-v1";
-const INVENTORY_SCHEMA: &str = "closed-case-v1";
 
 #[derive(Debug, Deserialize)]
 struct CohortPlan {
@@ -138,76 +137,9 @@ pub(crate) fn validate_git_authority(repository: &Path, relative: &str) -> Resul
 pub(crate) fn validate_staged_case(
     root: &Path,
 ) -> Result<std::collections::BTreeMap<String, Vec<u8>>> {
-    let metadata = fs::symlink_metadata(root)
-        .with_context(|| format!("inspect staged case {}", root.display()))?;
-    ensure!(
-        metadata.is_dir() && !metadata.file_type().is_symlink(),
-        "staged case is not a directory"
-    );
-    let inventory_path = root.join("case.inventory");
-    let declared = if inventory_path.is_file() {
-        let text = fs::read_to_string(&inventory_path)
-            .with_context(|| format!("read {}", inventory_path.display()))?;
-        let mut lines = text.lines();
-        ensure!(
-            lines.next() == Some(INVENTORY_SCHEMA),
-            "{} must begin with {INVENTORY_SCHEMA}",
-            inventory_path.display()
-        );
-        let mut declared = BTreeSet::new();
-        for name in lines.filter(|line| !line.is_empty()) {
-            let path = Path::new(name);
-            ensure!(
-                path.components().count() == 1
-                    && path
-                        .components()
-                        .all(|part| matches!(part, Component::Normal(_))),
-                "unsafe staged inventory entry {name:?}"
-            );
-            ensure!(
-                name != "case.inventory",
-                "case.inventory is metadata, not a payload"
-            );
-            ensure!(
-                declared.insert(name.to_owned()),
-                "duplicate staged inventory entry {name}"
-            );
-        }
-        ensure!(!declared.is_empty(), "staged case inventory is empty");
-        Some(declared)
-    } else {
-        None
-    };
-    let mut actual = BTreeSet::new();
-    let mut bytes = std::collections::BTreeMap::new();
-    for entry in fs::read_dir(root)? {
-        let entry = entry?;
-        let kind = entry.file_type()?;
-        ensure!(
-            kind.is_file() && !kind.is_symlink(),
-            "staged case contains a non-regular entry"
-        );
-        let name = entry
-            .file_name()
-            .into_string()
-            .map_err(|_| anyhow::anyhow!("non-UTF-8 staged filename"))?;
-        actual.insert(name.clone());
-        bytes.insert(name, fs::read(entry.path())?);
-    }
-    if let Some(declared) = declared {
-        let expected = declared
-            .iter()
-            .cloned()
-            .chain(std::iter::once("case.inventory".to_owned()))
-            .collect();
-        ensure!(
-            actual == expected,
-            "staged closed inventory mismatch: declared={expected:?}, present={actual:?}"
-        );
-    } else {
-        ensure!(!actual.is_empty(), "staged case inventory is empty");
-    }
-    Ok(bytes)
+    Ok(test_support::closed_case::StagedCase::validate(root)?
+        .inventory()
+        .clone())
 }
 
 #[cfg(test)]
