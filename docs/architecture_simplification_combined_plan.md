@@ -288,6 +288,20 @@ future compatibility-gated retirement is silently credited to this program.
 
 **Proof.** Preserve exact structure where normative, rendered pages, form reuse and cycle rejection, Type 1/TrueType/Type 3/PK behavior, subset identity, object order, resource limits, diagnostics, and incremental artifacts.
 
+**Implemented ownership boundary.** `tex-out::pdf::PdfFinalizationInput` is the
+complete host-neutral handoff. It owns accepted page and form artifact bytes,
+realized font identities/metrics/programs, virtual-font inputs, external-image
+bytes and validated metadata, expanded raw objects and document fragments,
+navigation records, the committed object ledger, and every form/import/VF
+limit that was previously a hidden finalizer constant. The allocation cursor
+is a deterministic monotonic value type. Umber's compatibility adapter is the
+last engine/host-aware step: it expands token lists, reads committed artifacts
+and raw-object files, and copies validated resources before returning the
+detached input. Differential coverage freezes two independent legacy runs,
+compares the complete inputs, and verifies the legacy finalizer still produces
+identical bytes; the next migration step may therefore move lowering without
+introducing `Universe`, `World`, or resolver callbacks into `tex-out`.
+
 ## 7. One canonical HTML producer and JavaScript receiver
 
 **Outcome.** A keyed `RenderDocument` or `RenderRevision` resolves positioned events, fonts, specials, accessibility, and math once. Standalone HTML/assets and incremental patch plans derive from it. JavaScript remains the browser trust and DOM transaction boundary.

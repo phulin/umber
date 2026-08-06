@@ -1,5 +1,9 @@
 //! Detached PDF assembly from checkpointed shipout receipts.
 
+mod finalization_input;
+
+pub use finalization_input::pdf_finalization_input;
+
 use md5::{Digest, Md5};
 use tex_arith::Scaled;
 use tex_out::PageNode;
@@ -8920,6 +8924,67 @@ mod tests {
                 String::from_utf8_lossy(marker)
             );
         }
+    }
+
+    #[test]
+    fn detached_finalization_input_maps_the_legacy_call_graph_losslessly() {
+        let source = concat!(
+            "\\pdfoutput=1\\pdfcompresslevel=0\\pdfobjcompresslevel=0",
+            "\\pdfinfo{/Subject (detached)}\\pdfcatalog{/PageMode /UseNone}",
+            "\\setbox0=\\hbox{\\vrule width2pt height1pt}\\immediate\\pdfxform0",
+            "\\immediate\\pdfobj{<< /Kind /NavigationFixture >>}",
+            "\\pdfoutline goto name{chapter} count 1 {Root (raw)}",
+            "\\pdfoutline user{/S /Named /N /NextPage} {Leaf}",
+            "\\shipout\\vbox{\\hbox{",
+            "\\pdfdest name{chapter} xyz zoom 1250 ",
+            "\\pdfannot width 4pt height 3pt {/Subtype /Text /Contents (note)}",
+            "\\pdfstartlink width 5pt user{/Subtype /Link /A << /S /URI /URI (u) >>}",
+            "\\kern5pt\\pdfendlink\\pdfrefxform1",
+            "\\pdfthread width 6pt height 2pt name{article}",
+            "}}\\end",
+        );
+        let (mut first_stores, first_run) = run(source);
+        let (mut second_stores, second_run) = run(source);
+        let resources = crate::PdfVirtualFontResources::default();
+
+        let first_input = pdf_finalization_input(
+            &mut first_stores,
+            &first_run.committed_artifacts,
+            DEFAULT_PDF_PK_RESOLUTION,
+            &resources,
+        )
+        .expect("legacy state detaches");
+        let second_input = pdf_finalization_input(
+            &mut second_stores,
+            &second_run.committed_artifacts,
+            DEFAULT_PDF_PK_RESOLUTION,
+            &resources,
+        )
+        .expect("identical legacy state detaches");
+        assert_eq!(first_input, second_input);
+        assert_eq!(first_input.pages.len(), 1);
+        assert_eq!(first_input.forms.len(), 1);
+        assert_eq!(first_input.raw_objects.len(), 1);
+        assert_eq!(first_input.navigation.annotations.len(), 1);
+        assert_eq!(first_input.navigation.links.len(), 1);
+        assert_eq!(first_input.navigation.outlines.len(), 2);
+        assert_eq!(first_input.navigation.threads.len(), 1);
+        assert_eq!(
+            first_input.pages[0].page_object,
+            first_stores.pdf_pages()[0].page_object()
+        );
+        assert_eq!(
+            first_input.allocation.next_object,
+            first_stores.pdf_next_object_id()
+        );
+
+        let first_pdf =
+            pdf_from_committed_artifacts(&mut first_stores, &first_run.committed_artifacts)
+                .expect("legacy finalizer accepts detached fixture");
+        let second_pdf =
+            pdf_from_committed_artifacts(&mut second_stores, &second_run.committed_artifacts)
+                .expect("legacy finalizer accepts duplicate detached fixture");
+        assert_eq!(first_pdf, second_pdf);
     }
 
     #[test]
