@@ -11,12 +11,10 @@ come only from the numbered modules of the source pinned by
 
 - `tests/tex82-properties/modules.json` is the generated inventory of all
   1,380 WEB modules.
-- `tests/tex82-properties/dispositions.json` gives every module the generated
-  default `deferred_review` disposition linked to `umber2-johp.218`.
 - `tests/tex82-properties/shards/*.json` contains one domain's reviewed module
   overrides and executable properties.
-- `scripts/generate-tex82-property-inventory.py` regenerates only the inventory
-  and default dispositions from the pinned source.
+- `scripts/generate-tex82-property-inventory.py` regenerates the inventory from
+  the pinned source.
 - `crates/test-support/tests/tex82_catalogue.rs` is the hermetic completeness
   gate in the routine native test tier.
 
@@ -47,9 +45,11 @@ reclassifying §§343–365 without changing the generated base. Independent
 domain branches therefore do not edit the 1,380-entry file or each other's
 shards.
 
-The validator sorts shard paths before merging them. The base first classifies
-all modules as deferred; exactly one shard may replace that default for a
-module. A second shard claim is an error rather than last-writer-wins.
+After validating the exact ordered `1..=1380` inventory, the validator
+initializes every module to one typed `deferred_review` disposition linked to
+`umber2-johp.218`, then sorts shard paths before merging them. Exactly one shard
+may replace that default for a module. A second shard claim is an error rather
+than last-writer-wins.
 Similarly, each canonical section may belong to only one property, each
 property ID to one domain, and the property's semantic owner must equal the
 owner of every claimed module. This makes merge results deterministic and
@@ -85,8 +85,7 @@ live reference execution never belongs in this gate.
 
 The native test rejects:
 
-- inventory count/order/source-pin drift or an unclassified base module;
-- a non-deferred generated base record;
+- inventory count/order/source-pin drift;
 - overlapping shard disposition claims or property section claims;
 - duplicate property IDs or conflicting module/property semantic owners;
 - invalid citations, missing fields, or inconsistent property links;
@@ -94,13 +93,15 @@ The native test rejects:
 - gap or deferred records without a linked bead.
 
 Focused negative tests exercise overlapping disposition ownership, overlapping
-section claims, conflicting property ownership, and an unclassified module.
-The gate proves structural completeness and honest bookkeeping; humans remain
-responsible for reviewing each canonical paraphrase.
+section claims, conflicting property ownership, and an incomplete inventory.
+The gate also pins the ordered resolved-map digest so the implicit default and
+shard merge cannot change any disposition, rationale, gap bead, owner, or
+property citation. It proves structural completeness and honest bookkeeping;
+humans remain responsible for reviewing each canonical paraphrase.
 
 On a successful resolvability check, the gate also prints a computed census of
 reviewed and deferred modules plus covered and gap properties. The routine
 native suite reruns this small gate with output visible and carries that census
 in its final `VERDICT:` line. The values are derived from the committed
-inventory, dispositions, and shards; they are not a claim that all canonical
-modules have been reviewed.
+inventory and shards; they are not a claim that all canonical modules have
+been reviewed.

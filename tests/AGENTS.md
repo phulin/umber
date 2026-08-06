@@ -11,7 +11,7 @@ explicit SHA-256 allowlist that `scripts/provision.py worktree` copies from the
 primary checkout into an isolated linked worktree. Rust tests only consume
 these files; source archives and trees are symlinked from the primary checkout.
 
-`tests/tex82-properties/` contains the generated 1,380-module pinned `tex.web` inventory, generated default deferrals and domain-local reviewed disposition/property shards. The routine `test-support` catalogue gate validates completeness, citations, ownership, status, and exact Rust test links.
+`tests/tex82-properties/` contains the generated 1,380-module pinned `tex.web` inventory and domain-local reviewed disposition/property shards. The routine `test-support` catalogue gate initializes the exact inventory to its typed deferred default, applies the shards, and validates completeness, citations, ownership, status, and exact Rust test links.
 
 `tests/tex82-oracle-manifest.txt` pins the canonical TeX82 WEB source, ordered
 Web2C portability changes, translator inputs, and repository-owned oracle

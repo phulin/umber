@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate the pinned TeX82 module inventory and default dispositions."""
+"""Generate the pinned TeX82 module inventory."""
 
 from __future__ import annotations
 
@@ -36,7 +36,6 @@ def main() -> None:
         fail(f"expected 1380 modules, found {len(starts)}")
 
     inventory = []
-    dispositions = []
     part = 0
     for offset, start in enumerate(starts):
         number = offset + 1
@@ -57,16 +56,6 @@ def main() -> None:
                 "sha256": hashlib.sha256(module_bytes).hexdigest(),
             }
         )
-        dispositions.append(
-            {
-                "module": number,
-                "disposition": "deferred_review",
-                "owner": None,
-                "property_ids": [],
-                "gap_bead": "umber2-johp.218",
-                "rationale": "Explicitly deferred to the full catalogue audit; scope is not inferred.",
-            }
-        )
 
     OUT.mkdir(parents=True, exist_ok=True)
     write_json(
@@ -78,15 +67,6 @@ def main() -> None:
             "module_count": len(inventory),
             "generation_rule": "Each source line beginning @* or @ followed by space starts one WEB module.",
             "modules": inventory,
-        },
-    )
-    write_json(
-        OUT / "dispositions.json",
-        {
-            "schema": 1,
-            "source_sha256": digest,
-            "merge_contract": "Every module defaults to deferred_review; one domain shard may override it.",
-            "dispositions": dispositions,
         },
     )
 

@@ -5,7 +5,7 @@ directories before invoking fixturegen's JSON cohort transaction exactly once.
 Generation failures occur before that authority-mutating handoff; shell moves
 and sequential rollback are not fixture authority.
 
-`scripts/generate-tex82-property-inventory.py` deterministically regenerates the committed 1,380-module TeX82 inventory and default deferred dispositions after verifying the pinned `tex.web` SHA-256. It reads the local source only and never invokes or rewrites the oracle.
+`scripts/generate-tex82-property-inventory.py` deterministically regenerates the committed 1,380-module TeX82 inventory after verifying the pinned `tex.web` SHA-256. The catalogue gate supplies the typed default disposition. The generator reads the local source only and never invokes or rewrites the oracle.
 
 Read the repository-root `AGENTS.md` first. This file adds the directory map for scripts.
 

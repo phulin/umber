@@ -16,7 +16,7 @@ This document does not restate that process.
 
 ## Local Gates And Budgets
 
-The fixture-only, hermetic correctness tier includes the TeX82 property-catalogue gate in `test-support`. It validates the committed 1,380-module inventory, generated default deferrals, deterministically merged domain-local disposition/property shards, canonical citations, ownership, and exact Rust test links without reading or invoking a live reference engine. See [TeX82 Property Catalogue](tex82_property_catalogue.md).
+The fixture-only, hermetic correctness tier includes the TeX82 property-catalogue gate in `test-support`. It validates the committed 1,380-module inventory, initializes its typed default deferrals, deterministically merges domain-local disposition/property shards, and checks canonical citations, ownership, and exact Rust test links without reading or invoking a live reference engine. See [TeX82 Property Catalogue](tex82_property_catalogue.md).
 
 The fixture-only, hermetic correctness tier is:
 

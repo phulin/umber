@@ -5,8 +5,117 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 
 const SOURCE_SHA256: &str = "c62ab513ef167e93f71a23bd34f311e243210afd7c7a0f9b779614b71e398324";
+const MODULE_COUNT: u64 = 1380;
+const DEFAULT_GAP_BEAD: &str = "umber2-johp.218";
+const DEFAULT_RATIONALE: &str =
+    "Explicitly deferred to the full catalogue audit; scope is not inferred.";
+const RESOLVED_DISPOSITIONS_SHA256: &str =
+    "5daa9e3d125be82bf1ae3f07a0d857db59e096d936eb262a540cc57352090eeb";
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum ModuleDisposition {
+    Property {
+        owner: String,
+        property_ids: Vec<String>,
+        gap_bead: Option<String>,
+        rationale: String,
+    },
+    DeferredReview {
+        gap_bead: String,
+        rationale: String,
+    },
+    DefinitionOnly {
+        owner: String,
+        gap_bead: Option<String>,
+        rationale: String,
+    },
+    ContextOnly {
+        owner: String,
+        gap_bead: Option<String>,
+        rationale: String,
+    },
+    OutOfScope {
+        owner: String,
+        gap_bead: Option<String>,
+        rationale: String,
+    },
+}
+
+impl ModuleDisposition {
+    fn deferred_review() -> Self {
+        Self::DeferredReview {
+            gap_bead: DEFAULT_GAP_BEAD.into(),
+            rationale: DEFAULT_RATIONALE.into(),
+        }
+    }
+
+    fn kind(&self) -> &'static str {
+        match self {
+            Self::Property { .. } => "property",
+            Self::DeferredReview { .. } => "deferred_review",
+            Self::DefinitionOnly { .. } => "definition_only",
+            Self::ContextOnly { .. } => "context_only",
+            Self::OutOfScope { .. } => "out_of_scope",
+        }
+    }
+
+    fn owner(&self) -> Option<&str> {
+        match self {
+            Self::Property { owner, .. }
+            | Self::DefinitionOnly { owner, .. }
+            | Self::ContextOnly { owner, .. }
+            | Self::OutOfScope { owner, .. } => Some(owner),
+            Self::DeferredReview { .. } => None,
+        }
+    }
+
+    fn property_ids(&self) -> &[String] {
+        match self {
+            Self::Property { property_ids, .. } => property_ids,
+            _ => &[],
+        }
+    }
+
+    fn gap_bead(&self) -> Option<&str> {
+        match self {
+            Self::DeferredReview { gap_bead, .. } => Some(gap_bead),
+            Self::Property { gap_bead, .. }
+            | Self::DefinitionOnly { gap_bead, .. }
+            | Self::ContextOnly { gap_bead, .. }
+            | Self::OutOfScope { gap_bead, .. } => gap_bead.as_deref(),
+        }
+    }
+
+    fn rationale(&self) -> &str {
+        match self {
+            Self::Property { rationale, .. }
+            | Self::DeferredReview { rationale, .. }
+            | Self::DefinitionOnly { rationale, .. }
+            | Self::ContextOnly { rationale, .. }
+            | Self::OutOfScope { rationale, .. } => rationale,
+        }
+    }
+
+    fn projection(&self, module: u64) -> Value {
+        serde_json::json!([
+            module,
+            self.kind(),
+            self.owner(),
+            self.property_ids(),
+            self.gap_bead(),
+            self.rationale()
+        ])
+    }
+}
+
+#[derive(Debug)]
+struct ValidatedCatalogue {
+    census: CatalogueCensus,
+    resolved: BTreeMap<u64, ModuleDisposition>,
+}
 
 #[derive(Debug, Eq, PartialEq)]
 struct CatalogueCensus {
@@ -41,19 +150,24 @@ fn text<'a>(value: &'a Value, field: &str) -> Result<&'a str, String> {
         .ok_or_else(|| format!("missing non-empty {field}"))
 }
 
-fn validate(repository: &Path) -> Result<CatalogueCensus, String> {
+fn optional_text(value: &Value, field: &str) -> Result<Option<String>, String> {
+    if value[field].is_null() {
+        return Ok(None);
+    }
+    Ok(Some(text(value, field)?.to_owned()))
+}
+
+fn validate(repository: &Path) -> Result<ValidatedCatalogue, String> {
     validate_catalogue(&repository.join("tests/tex82-properties"), repository)
 }
 
-fn validate_catalogue(base: &Path, source_root: &Path) -> Result<CatalogueCensus, String> {
+fn validate_catalogue(base: &Path, source_root: &Path) -> Result<ValidatedCatalogue, String> {
     let inventory = json(&base.join("modules.json"));
-    let dispositions = json(&base.join("dispositions.json"));
-    if inventory["source_sha256"] != SOURCE_SHA256 || dispositions["source_sha256"] != SOURCE_SHA256
-    {
+    if inventory["source_sha256"] != SOURCE_SHA256 {
         return Err("catalogue does not cite pinned tex.web".into());
     }
     let modules = inventory["modules"].as_array().ok_or("missing modules")?;
-    if inventory["module_count"] != 1380 || modules.len() != 1380 {
+    if inventory["module_count"] != MODULE_COUNT || modules.len() != MODULE_COUNT as usize {
         return Err("inventory does not contain exactly 1380 modules".into());
     }
     let mut numbers = BTreeSet::new();
@@ -66,27 +180,10 @@ fn validate_catalogue(base: &Path, source_root: &Path) -> Result<CatalogueCensus
         text(module, "sha256")?;
     }
 
-    let mut resolved = BTreeMap::new();
-    for record in dispositions["dispositions"]
-        .as_array()
-        .ok_or("missing dispositions")?
-    {
-        let number = record["module"]
-            .as_u64()
-            .ok_or("missing disposition module")?;
-        if !numbers.contains(&number) || resolved.insert(number, record.clone()).is_some() {
-            return Err(format!("invalid or duplicate base disposition {number}"));
-        }
-        if text(record, "disposition")? != "deferred_review" {
-            return Err(format!(
-                "base module {number} is not the honest deferred_review default"
-            ));
-        }
-        text(record, "gap_bead")?;
-    }
-    if resolved.len() != 1380 {
-        return Err("at least one module is unclassified in base dispositions".into());
-    }
+    let default_disposition = ModuleDisposition::deferred_review();
+    let mut resolved = (1..=MODULE_COUNT)
+        .map(|number| (number, default_disposition.clone()))
+        .collect::<BTreeMap<_, _>>();
 
     let mut shard_paths = fs::read_dir(base.join("shards"))
         .map_err(|error| error.to_string())?
@@ -120,14 +217,14 @@ fn validate_catalogue(base: &Path, source_root: &Path) -> Result<CatalogueCensus
                     "{shard_name} has invalid module range {first}..={last}"
                 ));
             }
-            validate_disposition(override_record, first)?;
+            let disposition = parse_disposition(override_record, first)?;
             for number in first..=last {
                 if let Some(previous) = override_owner.insert(number, shard_name.clone()) {
                     return Err(format!(
                         "module {number} disposition claimed by both {previous} and {shard_name}"
                     ));
                 }
-                resolved.insert(number, override_record.clone());
+                resolved.insert(number, disposition.clone());
             }
         }
         for property in shard["properties"]
@@ -195,17 +292,12 @@ fn validate_catalogue(base: &Path, source_root: &Path) -> Result<CatalogueCensus
         }
     }
 
-    for (module, record) in &resolved {
-        validate_disposition(record, *module)?;
-        if record["disposition"] != "property" {
+    for (module, disposition) in &resolved {
+        if disposition.kind() != "property" {
             continue;
         }
-        let owner = text(record, "owner")?;
-        for id in record["property_ids"]
-            .as_array()
-            .ok_or_else(|| format!("property module {module} lacks property IDs"))?
-        {
-            let id = id.as_str().ok_or("property ID is not a string")?;
+        let owner = disposition.owner().expect("property has an owner");
+        for id in disposition.property_ids() {
             let (_, property_owner, sections) = properties
                 .get(id)
                 .ok_or_else(|| format!("module {module} links absent property {id}"))?;
@@ -221,13 +313,11 @@ fn validate_catalogue(base: &Path, source_root: &Path) -> Result<CatalogueCensus
     }
     for (id, (_, _, sections)) in &properties {
         for section in sections {
-            let record = resolved
+            let disposition = resolved
                 .get(section)
                 .ok_or_else(|| format!("section {section} is unclassified"))?;
-            if record["disposition"] != "property"
-                || !record["property_ids"]
-                    .as_array()
-                    .is_some_and(|ids| ids.iter().any(|value| value == id))
+            if disposition.kind() != "property"
+                || !disposition.property_ids().iter().any(|value| value == id)
             {
                 return Err(format!(
                     "property {id} cites section {section} without owning its disposition"
@@ -235,17 +325,16 @@ fn validate_catalogue(base: &Path, source_root: &Path) -> Result<CatalogueCensus
             }
         }
     }
-    Ok(catalogue_census(
-        resolved
-            .values()
-            .map(|record| text(record, "disposition").expect("validated disposition")),
+    let census = catalogue_census(
+        resolved.values().map(ModuleDisposition::kind),
         property_statuses.iter().map(String::as_str),
-    ))
+    );
+    Ok(ValidatedCatalogue { census, resolved })
 }
 
-fn catalogue_census<'a>(
+fn catalogue_census<'a, 'b>(
     dispositions: impl IntoIterator<Item = &'a str>,
-    property_statuses: impl IntoIterator<Item = &'a str>,
+    property_statuses: impl IntoIterator<Item = &'b str>,
 ) -> CatalogueCensus {
     let mut census = CatalogueCensus {
         reviewed: 0,
@@ -270,30 +359,66 @@ fn catalogue_census<'a>(
     census
 }
 
-fn validate_disposition(record: &Value, module: u64) -> Result<(), String> {
-    text(record, "rationale")?;
+fn parse_disposition(record: &Value, module: u64) -> Result<ModuleDisposition, String> {
+    let rationale = text(record, "rationale")?.to_owned();
+    let property_ids = record["property_ids"]
+        .as_array()
+        .ok_or_else(|| format!("module {module} lacks property IDs"))?
+        .iter()
+        .map(|id| {
+            id.as_str()
+                .map(str::to_owned)
+                .ok_or_else(|| "property ID is not a string".to_owned())
+        })
+        .collect::<Result<Vec<_>, _>>()?;
     match text(record, "disposition")? {
         "property" => {
-            text(record, "owner")?;
-            if record["property_ids"].as_array().is_none_or(Vec::is_empty) {
+            if property_ids.is_empty() {
                 return Err(format!("property module {module} lacks property IDs"));
             }
+            Ok(ModuleDisposition::Property {
+                owner: text(record, "owner")?.to_owned(),
+                property_ids,
+                gap_bead: optional_text(record, "gap_bead")?,
+                rationale,
+            })
         }
         "deferred_review" => {
-            text(record, "gap_bead")?;
-            if !record["property_ids"].as_array().is_some_and(Vec::is_empty) {
+            if !property_ids.is_empty() {
                 return Err(format!("deferred module {module} links properties"));
             }
+            Ok(ModuleDisposition::DeferredReview {
+                gap_bead: text(record, "gap_bead")?.to_owned(),
+                rationale,
+            })
         }
-        "definition_only" | "context_only" | "out_of_scope" => {
-            text(record, "owner")?;
-            if !record["property_ids"].as_array().is_some_and(Vec::is_empty) {
+        kind @ ("definition_only" | "context_only" | "out_of_scope") => {
+            if !property_ids.is_empty() {
                 return Err(format!("non-property module {module} links properties"));
             }
+            let owner = text(record, "owner")?.to_owned();
+            let gap_bead = optional_text(record, "gap_bead")?;
+            Ok(match kind {
+                "definition_only" => ModuleDisposition::DefinitionOnly {
+                    owner,
+                    gap_bead,
+                    rationale,
+                },
+                "context_only" => ModuleDisposition::ContextOnly {
+                    owner,
+                    gap_bead,
+                    rationale,
+                },
+                "out_of_scope" => ModuleDisposition::OutOfScope {
+                    owner,
+                    gap_bead,
+                    rationale,
+                },
+                _ => unreachable!(),
+            })
         }
-        other => return Err(format!("unknown disposition {other}")),
+        other => Err(format!("unknown disposition {other}")),
     }
-    Ok(())
 }
 
 fn validate_link(repository: &Path, property: &str, link: &Value) -> Result<(), String> {
@@ -322,9 +447,8 @@ fn staged_catalogue() -> tempfile::TempDir {
     let target = temporary.path().join("catalogue");
     fs::create_dir_all(target.join("shards")).expect("create staged shard directory");
     let source = root().join("tests/tex82-properties");
-    for name in ["modules.json", "dispositions.json"] {
-        fs::copy(source.join(name), target.join(name)).expect("copy catalogue base");
-    }
+    fs::copy(source.join("modules.json"), target.join("modules.json"))
+        .expect("copy catalogue inventory");
     fs::copy(
         source.join("shards/input-tokenization.json"),
         target.join("shards/input-tokenization.json"),
@@ -335,8 +459,37 @@ fn staged_catalogue() -> tempfile::TempDir {
 
 #[test]
 fn committed_tex82_property_catalogue_is_complete_and_resolvable() {
-    let census = validate(&root()).unwrap_or_else(|error| panic!("{error}"));
-    println!("tex82-property-catalogue: CENSUS: {}", census.report());
+    let catalogue = validate(&root()).unwrap_or_else(|error| panic!("{error}"));
+    println!(
+        "tex82-property-catalogue: CENSUS: {}",
+        catalogue.census.report()
+    );
+    assert_eq!(
+        catalogue.census,
+        CatalogueCensus {
+            reviewed: 946,
+            deferred: 434,
+            covered: 106,
+            gap: 45,
+        }
+    );
+    let modules = catalogue.resolved.keys().copied().collect::<Vec<_>>();
+    assert_eq!(modules, (1..=MODULE_COUNT).collect::<Vec<_>>());
+    let projection = catalogue
+        .resolved
+        .iter()
+        .map(|(&module, disposition)| disposition.projection(module))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        format!(
+            "{:x}",
+            Sha256::digest(
+                serde_json::to_vec(&projection).expect("serialize resolved disposition projection")
+            )
+        ),
+        RESOLVED_DISPOSITIONS_SHA256,
+        "implicit defaults and shard overrides changed the reviewed resolved map"
+    );
 }
 
 #[test]
@@ -412,20 +565,20 @@ fn shard_merge_rejects_conflicting_property_owner() {
 }
 
 #[test]
-fn base_rejects_an_unclassified_module() {
+fn inventory_rejects_an_incomplete_module_set() {
     let temporary = staged_catalogue();
     let catalogue = temporary.path().join("catalogue");
-    let path = catalogue.join("dispositions.json");
-    let mut dispositions = json(&path);
-    dispositions["dispositions"]
+    let path = catalogue.join("modules.json");
+    let mut inventory = json(&path);
+    inventory["modules"]
         .as_array_mut()
         .expect("staged JSON array")
         .pop();
     fs::write(
         path,
-        serde_json::to_vec(&dispositions).expect("serialize staged dispositions"),
+        serde_json::to_vec(&inventory).expect("serialize staged inventory"),
     )
-    .expect("write staged base");
+    .expect("write staged inventory");
     let error = validate_catalogue(&catalogue, &root()).expect_err("missing module must fail");
-    assert!(error.contains("unclassified"), "{error}");
+    assert!(error.contains("exactly 1380 modules"), "{error}");
 }
