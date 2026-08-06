@@ -14,20 +14,19 @@ fn probe_id(raw: i32) -> ProbeObjectId {
     ProbeObjectId::new(raw, 0)
 }
 
-fn probe_dictionary<'a>(value: &'a ProbeValue, context: &str) -> &'a ProbeDictionary {
+fn probe_dictionary<'a>(value: &ProbeValue<'a>, context: &str) -> ProbeDictionary<'a> {
     value
         .as_dictionary()
         .unwrap_or_else(|| panic!("{context} is a dictionary"))
 }
 
 fn probe_stream<'a>(
-    value: &'a ProbeValue,
+    value: &ProbeValue<'a>,
     context: &str,
-) -> &'a test_support::pdf_probe::ProbeStream {
-    match value.resolved() {
-        ProbeValue::Stream(stream) => stream,
-        _ => panic!("{context} is a stream"),
-    }
+) -> test_support::pdf_probe::ProbeStream<'a> {
+    value
+        .as_stream()
+        .unwrap_or_else(|| panic!("{context} is a stream"))
 }
 
 fn find_bytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
@@ -188,7 +187,7 @@ fn compact_serialization_is_deterministic_and_independently_parseable() {
         .expect("project trailer")
         .expect("classic trailer");
     assert_eq!(
-        trailer.get(b"Root").and_then(ProbeValue::referenced_id),
+        trailer.get(b"Root").and_then(|value| value.referenced_id()),
         Some(probe_id(1))
     );
     let content = parsed.object(probe_id(4)).expect("content object");
@@ -227,17 +226,21 @@ fn document_info_is_registered_in_the_pdf_writer_trailer() {
         .expect("project trailer")
         .expect("classic trailer");
     assert_eq!(
-        trailer.get(b"Info").and_then(ProbeValue::referenced_id),
+        trailer.get(b"Info").and_then(|value| value.referenced_id()),
         Some(probe_id(6))
     );
     let info = parsed.dictionary(probe_id(6)).expect("Info dictionary");
     assert_eq!(
-        info.get(b"Creator").map(ProbeValue::resolved),
-        Some(&ProbeValue::String(b"TeX".to_vec()))
+        info.get(b"Creator")
+            .and_then(|value| value.string())
+            .as_deref(),
+        Some(b"TeX".as_slice())
     );
     assert_eq!(
-        info.get(b"Trapped").map(ProbeValue::resolved),
-        Some(&ProbeValue::Name(b"False".to_vec()))
+        info.get(b"Trapped")
+            .and_then(|value| value.name())
+            .as_deref(),
+        Some(b"False".as_slice())
     );
 }
 
@@ -281,8 +284,11 @@ fn raw_page_entries_are_hashed_validated_and_serialized_verbatim() {
     let pages = parsed.pages().expect("project pages");
     assert_eq!(pages[0].id, probe_id(3));
     assert_eq!(
-        pages[0].dictionary.get(b"Rotate").map(ProbeValue::resolved),
-        Some(&ProbeValue::Number(90.0))
+        pages[0]
+            .dictionary
+            .get(b"Rotate")
+            .and_then(|value| value.number()),
+        Some(90.0)
     );
 
     let mut changed = sample_input(&[1, 2, 3, 4, 5]);
@@ -345,8 +351,12 @@ fn deterministic_flate_streams_are_declared_and_decode_exactly() {
     let content = parsed.object(probe_id(4)).expect("content object");
     let content = probe_stream(&content, "content object");
     assert_eq!(
-        content.dictionary.get(b"Filter").map(ProbeValue::resolved),
-        Some(&ProbeValue::Name(b"FlateDecode".to_vec()))
+        content
+            .dictionary
+            .get(b"Filter")
+            .and_then(|value| value.name())
+            .as_deref(),
+        Some(b"FlateDecode".as_slice())
     );
     assert_ne!(content.raw, content.decoded);
     assert_eq!(content.decoded, b"q\n10 20 30 40 re\nS\nQ\n");
@@ -457,26 +467,26 @@ fn raw_objects_and_trailer_extensions_keep_pdf_writer_framing() {
         .expect("project trailer")
         .expect("classic trailer");
     assert_eq!(
-        trailer.get(b"Custom").map(ProbeValue::resolved),
-        Some(&ProbeValue::Number(7.0))
+        trailer.get(b"Custom").and_then(|value| value.number()),
+        Some(7.0)
     );
     let file_id = trailer
         .get(b"ID")
-        .and_then(ProbeValue::as_array)
+        .and_then(|value| value.array())
         .expect("file ID array");
     assert_eq!(
-        file_id,
-        [
-            ProbeValue::String(vec![1; 16]),
-            ProbeValue::String(vec![2; 16])
-        ]
+        file_id
+            .iter()
+            .map(|value| value.string().expect("string ID").as_bytes().to_vec())
+            .collect::<Vec<_>>(),
+        [vec![1; 16], vec![2; 16]]
     );
     let raw = parsed.object(probe_id(6)).expect("raw object");
     assert_eq!(
         probe_dictionary(&raw, "raw object")
             .get(b"Extension")
-            .map(ProbeValue::resolved),
-        Some(&ProbeValue::Boolean(true))
+            .and_then(|value| value.boolean()),
+        Some(true)
     );
 }
 
@@ -577,18 +587,21 @@ fn adapter_emits_real_object_streams_for_levels_one_through_three() {
         let pages = parsed
             .dictionary(probe_id(2))
             .expect("compressed pages object");
-        assert_eq!(pages.id, Some(probe_id(2)));
+        assert_eq!(pages.id(), Some(probe_id(2)));
         assert_eq!(
-            pages.get(b"Type").map(ProbeValue::resolved),
-            Some(&ProbeValue::Name(b"Pages".to_vec()))
+            pages.get(b"Type").and_then(|value| value.name()).as_deref(),
+            Some(b"Pages".as_slice())
         );
         let trailer = parsed
             .trailer()
             .expect("project xref stream")
             .expect("xref stream dictionary");
         assert_eq!(
-            trailer.get(b"Type").map(ProbeValue::resolved),
-            Some(&ProbeValue::Name(b"XRef".to_vec()))
+            trailer
+                .get(b"Type")
+                .and_then(|value| value.name())
+                .as_deref(),
+            Some(b"XRef".as_slice())
         );
         let content = parsed.object(probe_id(4)).expect("ordinary content stream");
         let content = probe_stream(&content, "ordinary content stream");
@@ -633,18 +646,21 @@ fn pdf_writer_object_streams_parse_deterministically_at_levels_one_through_three
         let pages = document
             .dictionary(probe_id(2))
             .expect("type-2 xref resolves pages");
-        assert_eq!(pages.id, Some(probe_id(2)));
+        assert_eq!(pages.id(), Some(probe_id(2)));
         assert_eq!(
-            pages.get(b"Type").map(ProbeValue::resolved),
-            Some(&ProbeValue::Name(b"Pages".to_vec()))
+            pages.get(b"Type").and_then(|value| value.name()).as_deref(),
+            Some(b"Pages".as_slice())
         );
         let marker = document
             .dictionary(probe_id(3))
             .expect("second compressed object resolves");
-        assert_eq!(marker.id, Some(probe_id(3)));
+        assert_eq!(marker.id(), Some(probe_id(3)));
         assert_eq!(
-            marker.get(b"Marker").map(ProbeValue::resolved),
-            Some(&ProbeValue::String(b"compressed object".to_vec()))
+            marker
+                .get(b"Marker")
+                .and_then(|value| value.string())
+                .as_deref(),
+            Some(b"compressed object".as_slice())
         );
         let ordinary = document
             .object(probe_id(4))

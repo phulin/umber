@@ -5357,71 +5357,68 @@ mod tests {
         PdfProbe::new(bytes, ProbeLimits::default()).expect("parse generated PDF")
     }
 
-    fn object(probe: &PdfProbe, number: i32) -> ProbeValue {
+    fn object<'a>(probe: &'a PdfProbe, number: i32) -> ProbeValue<'a> {
         probe
             .object(ProbeObjectId::new(number, 0))
             .unwrap_or_else(|error| panic!("project PDF object {number}: {error:#}"))
     }
 
-    fn stream(value: &ProbeValue) -> &ProbeStream {
-        match value.resolved() {
-            ProbeValue::Stream(stream) => stream,
-            _ => panic!("projected PDF value is not a stream"),
-        }
+    fn stream<'a>(value: &ProbeValue<'a>) -> ProbeStream<'a> {
+        value
+            .as_stream()
+            .expect("projected PDF value is not a stream")
     }
 
-    fn dictionary(value: &ProbeValue) -> &ProbeDictionary {
+    fn dictionary<'a>(value: &ProbeValue<'a>) -> ProbeDictionary<'a> {
         value.as_dictionary().expect("projected PDF dictionary")
     }
 
-    fn value_name(value: &ProbeValue) -> &[u8] {
-        match value.resolved() {
-            ProbeValue::Name(name) => name,
-            _ => panic!("projected PDF value is not a name"),
-        }
+    fn value_name(value: ProbeValue<'_>) -> Vec<u8> {
+        value
+            .name()
+            .expect("projected PDF value is not a name")
+            .as_ref()
+            .to_vec()
     }
 
-    fn value_number(value: &ProbeValue) -> f64 {
-        match value.resolved() {
-            ProbeValue::Number(number) => *number,
-            _ => panic!("projected PDF value is not numeric"),
-        }
+    fn value_number(value: ProbeValue<'_>) -> f64 {
+        value.number().expect("projected PDF value is not numeric")
     }
 
-    fn value_string(value: &ProbeValue) -> &[u8] {
-        match value.resolved() {
-            ProbeValue::String(bytes) => bytes,
-            _ => panic!("projected PDF value is not a string"),
-        }
+    fn value_string(value: ProbeValue<'_>) -> Vec<u8> {
+        value
+            .string()
+            .expect("projected PDF value is not a string")
+            .as_bytes()
+            .to_vec()
     }
 
-    fn page_resources(page: &test_support::pdf_probe::ProbePage) -> &ProbeDictionary {
+    fn page_resources<'a>(page: &test_support::pdf_probe::ProbePage<'a>) -> ProbeDictionary<'a> {
         page.dictionary
             .get(b"Resources")
-            .and_then(ProbeValue::as_dictionary)
+            .and_then(|value| value.as_dictionary())
             .expect("page resource dictionary")
     }
 
     fn page_font<'a>(
-        page: &'a test_support::pdf_probe::ProbePage,
+        page: &test_support::pdf_probe::ProbePage<'a>,
         key: &[u8],
-    ) -> &'a ProbeDictionary {
+    ) -> ProbeDictionary<'a> {
         page_resources(page)
             .get(b"Font")
-            .and_then(ProbeValue::as_dictionary)
+            .and_then(|value| value.as_dictionary())
             .expect("font resource dictionary")
             .get(key)
-            .and_then(ProbeValue::as_dictionary)
+            .and_then(|value| value.as_dictionary())
             .expect("font dictionary")
     }
 
-    fn info_dictionary(probe: &PdfProbe) -> Option<ProbeDictionary> {
+    fn info_dictionary(probe: &PdfProbe) -> Option<ProbeDictionary<'_>> {
         probe
             .trailer()
             .expect("PDF trailer")?
             .get(b"Info")
-            .and_then(ProbeValue::as_dictionary)
-            .cloned()
+            .and_then(|value| value.as_dictionary())
     }
 
     #[test]
@@ -5888,8 +5885,8 @@ mod tests {
             .and_then(|layers| layers.last())
             .expect("XObject resources");
         let references = xobjects
-            .entries
-            .values()
+            .entries()
+            .map(|(_, value)| value)
             .map(|value| value.referenced_id().expect("image reference"))
             .collect::<BTreeSet<_>>();
         assert_eq!(references.len(), 1, "both resource names share one object");
@@ -5904,7 +5901,7 @@ mod tests {
         let mask_id = image
             .dictionary
             .get(b"SMask")
-            .and_then(ProbeValue::referenced_id)
+            .and_then(|value| value.referenced_id())
             .expect("shared mask reference");
         let mask_object = parsed.object(mask_id).expect("project shared mask");
         assert_eq!(
@@ -5966,12 +5963,11 @@ mod tests {
             .get(b"XObject".as_slice())
             .and_then(|layers| layers.last())
             .expect("normalized XObject resources");
-        assert_eq!(xobjects.entries.len(), 1);
+        assert_eq!(xobjects.entries().count(), 1);
         let image_id = xobjects
-            .entries
-            .values()
+            .entries()
             .next()
-            .and_then(ProbeValue::referenced_id)
+            .and_then(|(_, value)| value.referenced_id())
             .expect("indirect image resource");
         assert_eq!(image_id, ProbeObjectId::new(1, 0));
         let image_object = parsed.object(image_id).expect("owned image object");
@@ -6485,9 +6481,11 @@ mod tests {
             .dictionary
             .get(b"ColorSpace")
             .expect("image color space")
-            .as_array()
-            .expect("ICCBased color space");
-        assert_eq!(value_name(&color_space[0]), b"ICCBased");
+            .array()
+            .expect("ICCBased color space")
+            .iter()
+            .collect::<Vec<_>>();
+        assert_eq!(value_name(color_space[0].clone()), b"ICCBased");
         let profile_id = color_space[1]
             .referenced_id()
             .expect("indirect ICC profile");
@@ -6806,9 +6804,10 @@ mod tests {
                 dictionary
                     .get(b"Rect")
                     .expect("annotation rectangle")
-                    .as_array()
+                    .array()
                     .expect("annotation rectangle array")
-                    .len(),
+                    .iter()
+                    .count(),
                 4
             );
         }
@@ -6965,7 +6964,10 @@ mod tests {
             .operations
             .iter()
             .filter(|operation| operation.operator == b"Tj")
-            .map(|operation| value_string(&operation.operands[0]).to_vec())
+            .map(|operation| match &operation.operands[0] {
+                test_support::pdf_probe::ProbeOperand::String(bytes) => bytes.clone(),
+                _ => panic!("shown-text operand is a string"),
+            })
             .collect()
     }
 
@@ -7060,9 +7062,9 @@ mod tests {
         let page = &parsed.pages().expect("one output page")[0];
         let font_dictionary = page_resources(page)
             .get(b"Font")
-            .and_then(ProbeValue::as_dictionary)
+            .and_then(|value| value.as_dictionary())
             .expect("typed page font dictionary");
-        assert_eq!(font_dictionary.entries.len(), 1);
+        assert_eq!(font_dictionary.entries().count(), 1);
         assert!(font_dictionary.get(b"F1").is_some());
         let content = &page.content.as_ref().expect("decoded page content").decoded;
         assert!(content.windows(9).any(|window| window == b"/F1 9.963"));
@@ -7292,13 +7294,15 @@ mod tests {
         let differences = encoding
             .get(b"Differences")
             .expect("Differences")
-            .as_array()
-            .expect("Differences array");
+            .array()
+            .expect("Differences array")
+            .iter()
+            .collect::<Vec<_>>();
         assert_eq!(differences.len(), 257);
-        assert_eq!(value_name(&differences[66]), b"A");
+        assert_eq!(value_name(differences[66].clone()), b"A");
         let descriptor = font
             .get(b"FontDescriptor")
-            .and_then(ProbeValue::as_dictionary)
+            .and_then(|value| value.as_dictionary())
             .expect("descriptor dictionary");
         assert_eq!(
             value_number(descriptor.get(b"TestAttr").expect("pdffontattr entry")),
@@ -7306,7 +7310,7 @@ mod tests {
         );
         let program = descriptor
             .get(b"FontFile")
-            .map(stream)
+            .map(|value| stream(&value))
             .expect("FontFile is a stream");
         assert_eq!(program.raw, b"abcdef");
         for (key, expected) in [(b"Length1", 3), (b"Length2", 2), (b"Length3", 1)] {
@@ -7403,9 +7407,9 @@ mod tests {
         let font = page_font(&pages[0], b"F1");
         let embedded = font
             .get(b"FontDescriptor")
-            .and_then(ProbeValue::as_dictionary)
+            .and_then(|value| value.as_dictionary())
             .and_then(|descriptor| descriptor.get(b"FontFile"))
-            .map(stream)
+            .map(|value| stream(&value))
             .expect("subset FontFile stream");
         let full = tex_fonts::PdfType1Program::from_pfb(pfb).expect("full PFB decodes");
         assert!(embedded.raw.len() < full.bytes().len());
@@ -7462,7 +7466,7 @@ mod tests {
         let pages = parsed.pages().expect("ToUnicode pages");
         let cmap = page_font(&pages[0], b"F1")
             .get(b"ToUnicode")
-            .map(stream)
+            .map(|value| stream(&value))
             .expect("ToUnicode stream");
         assert!(
             cmap.decoded
@@ -7571,9 +7575,9 @@ mod tests {
         let pages = parsed.pages().expect("TrueType pages");
         let embedded = page_font(&pages[0], b"F1")
             .get(b"FontDescriptor")
-            .and_then(ProbeValue::as_dictionary)
+            .and_then(|value| value.as_dictionary())
             .and_then(|descriptor| descriptor.get(b"FontFile2"))
-            .map(stream)
+            .map(|value| stream(&value))
             .expect("decoded SFNT is embedded");
         assert!(embedded.raw.starts_with(&[0, 1, 0, 0]));
         assert_eq!(
@@ -7621,9 +7625,9 @@ mod tests {
         let pages = parsed.pages().expect("subset TrueType pages");
         let embedded = page_font(&pages[0], b"F1")
             .get(b"FontDescriptor")
-            .and_then(ProbeValue::as_dictionary)
+            .and_then(|value| value.as_dictionary())
             .and_then(|descriptor| descriptor.get(b"FontFile2"))
-            .map(stream)
+            .map(|value| stream(&value))
             .expect("subset SFNT embedded");
         assert!(embedded.raw.starts_with(&[0, 1, 0, 0]));
         assert!(embedded.raw.len() < full_len / 4);
@@ -7769,7 +7773,7 @@ mod tests {
         let root = parsed.root().expect("catalog");
         let pages_root = root
             .get(b"Pages")
-            .and_then(ProbeValue::as_dictionary)
+            .and_then(|value| value.as_dictionary())
             .expect("pages dictionary");
         assert_eq!(
             value_string(pages_root.get(b"Lang").expect("final pages attribute")),
@@ -8066,7 +8070,7 @@ mod tests {
         assert!(
             catalog
                 .get(b"Names")
-                .and_then(ProbeValue::as_dictionary)
+                .and_then(|value| value.as_dictionary())
                 .expect("Names dictionary")
                 .get(b"EmbeddedFiles")
                 .is_some()
@@ -8084,18 +8088,20 @@ mod tests {
             .trailer()
             .expect("trailer projection")
             .expect("trailer");
-        assert!(matches!(
-            trailer.get(b"Custom").expect("Custom").resolved(),
-            ProbeValue::Boolean(true)
-        ));
+        assert_eq!(
+            trailer.get(b"Custom").and_then(|value| value.boolean()),
+            Some(true)
+        );
         let expected_id = Md5::digest(b"custom-id").to_vec();
         let ids = trailer
             .get(b"ID")
             .expect("ID")
-            .as_array()
-            .expect("ID array");
-        assert_eq!(value_string(&ids[0]), expected_id);
-        assert_eq!(value_string(&ids[1]), expected_id);
+            .array()
+            .expect("ID array")
+            .iter()
+            .collect::<Vec<_>>();
+        assert_eq!(value_string(ids[0].clone()), expected_id);
+        assert_eq!(value_string(ids[1].clone()), expected_id);
     }
 
     #[test]
@@ -8136,13 +8142,15 @@ mod tests {
         let destination = action
             .get(b"D")
             .expect("action destination")
-            .as_array()
-            .expect("destination array");
+            .array()
+            .expect("destination array")
+            .iter()
+            .collect::<Vec<_>>();
         assert_eq!(
             destination[0].referenced_id(),
             Some(ProbeObjectId::new(2, 0))
         );
-        assert_eq!(value_name(&destination[1]), b"Fit");
+        assert_eq!(value_name(destination[1].clone()), b"Fit");
     }
 
     #[test]
@@ -8170,7 +8178,7 @@ mod tests {
             let root = parsed.root().expect("catalog");
             let action = root
                 .get(b"OpenAction")
-                .and_then(ProbeValue::as_dictionary)
+                .and_then(|value| value.as_dictionary())
                 .expect("action dictionary");
             assert_eq!(
                 value_name(action.get(b"S").expect("action subtype")),
@@ -9476,8 +9484,10 @@ mod tests {
         let root = document.root().expect("thread catalog");
         let threads = root
             .get(b"Threads")
-            .and_then(ProbeValue::as_array)
-            .expect("thread array");
+            .and_then(|value| value.array())
+            .expect("thread array")
+            .iter()
+            .collect::<Vec<_>>();
         assert_eq!(threads.len(), 2);
         assert!(threads.iter().all(|thread| {
             thread

@@ -1,24 +1,25 @@
-//! Bounded semantic inspection of PDF files for host-side tests.
+//! Bounded, focused inspection of PDF files for host-side tests.
+//!
+//! Hayro's parsed document and borrowed objects are the sole object model. The
+//! wrappers in this module are shallow handles; only stream bytes and decoded
+//! content operations are materialized for callers that explicitly request
+//! them.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use anyhow::{Context, Result, anyhow, bail};
 use hayro_syntax::Pdf;
 use hayro_syntax::content::UntypedIter;
-use hayro_syntax::object::{Dict, MaybeRef, Object, ObjectIdentifier, Stream};
-use hayro_syntax::page::{Resources, Rotation};
+use hayro_syntax::object::{Array, Dict, MaybeRef, Object, ObjectIdentifier, Stream};
+use hayro_syntax::page::{Page, Resources, Rotation};
 use sha2::{Digest, Sha256};
 
-/// Limits applied independently to each public projection operation.
+/// Limits applied independently to each focused query.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ProbeLimits {
-    /// Maximum nesting depth of arrays, dictionaries, streams, and references.
     pub max_depth: usize,
-    /// Maximum number of indirect-object resolutions.
     pub max_objects: usize,
-    /// Maximum number of projected values and content instructions.
     pub max_values: usize,
-    /// Maximum total number of raw and decoded stream bytes materialized.
     pub max_stream_bytes: usize,
 }
 
@@ -59,119 +60,230 @@ impl From<ProbeObjectId> for ObjectIdentifier {
     }
 }
 
-/// An owned, identity-preserving PDF value projection.
+/// A shallow borrowed PDF value. References are resolved at the point of use.
+#[derive(Clone)]
+pub struct ProbeValue<'a> {
+    xref: &'a hayro_syntax::xref::XRef,
+    reference: Option<ProbeObjectId>,
+    object: Option<Object<'a>>,
+}
+
+impl<'a> ProbeValue<'a> {
+    fn from_maybe_ref(xref: &'a hayro_syntax::xref::XRef, value: MaybeRef<Object<'a>>) -> Self {
+        match value {
+            MaybeRef::NotRef(object) => Self {
+                xref,
+                reference: None,
+                object: Some(object),
+            },
+            MaybeRef::Ref(reference) => {
+                let id = ProbeObjectId::new(reference.obj_number, reference.gen_number);
+                Self {
+                    xref,
+                    reference: Some(id),
+                    object: xref.get::<Object<'a>>(id.into()),
+                }
+            }
+        }
+    }
+
+    fn from_object(xref: &'a hayro_syntax::xref::XRef, object: Object<'a>) -> Self {
+        Self {
+            xref,
+            reference: None,
+            object: Some(object),
+        }
+    }
+
+    #[must_use]
+    pub fn referenced_id(&self) -> Option<ProbeObjectId> {
+        self.reference
+    }
+
+    #[must_use]
+    pub fn is_unresolved(&self) -> bool {
+        self.reference.is_some() && self.object.is_none()
+    }
+
+    #[must_use]
+    pub fn boolean(&self) -> Option<bool> {
+        self.object.clone()?.into_bool()
+    }
+
+    #[must_use]
+    pub fn number(&self) -> Option<f64> {
+        Some(self.object.clone()?.into_number()?.as_f64())
+    }
+
+    #[must_use]
+    pub fn string(&self) -> Option<hayro_syntax::object::String<'a>> {
+        self.object.clone()?.into_string()
+    }
+
+    #[must_use]
+    pub fn name(&self) -> Option<hayro_syntax::object::Name<'a>> {
+        self.object.clone()?.into_name()
+    }
+
+    #[must_use]
+    pub fn array(&self) -> Option<ProbeArray<'a>> {
+        Some(ProbeArray {
+            xref: self.xref,
+            array: self.object.clone()?.into_array()?,
+        })
+    }
+
+    #[must_use]
+    pub fn as_dictionary(&self) -> Option<ProbeDictionary<'a>> {
+        match self.object.clone()? {
+            Object::Dict(dictionary) => Some(ProbeDictionary::new(self.xref, dictionary)),
+            Object::Stream(stream) => Some(ProbeDictionary::new(self.xref, stream.dict().clone())),
+            _ => None,
+        }
+    }
+
+    #[must_use]
+    pub fn as_stream(&self) -> Option<ProbeStream<'a>> {
+        self.object
+            .clone()?
+            .into_stream()
+            .map(|stream| ProbeStream::new(self.xref, stream))
+    }
+
+    #[must_use]
+    pub(crate) fn object(&self) -> Option<Object<'a>> {
+        self.object.clone()
+    }
+}
+
+/// A shallow borrowed array.
+#[derive(Clone)]
+pub struct ProbeArray<'a> {
+    xref: &'a hayro_syntax::xref::XRef,
+    array: Array<'a>,
+}
+
+impl<'a> ProbeArray<'a> {
+    pub fn iter(&self) -> impl Iterator<Item = ProbeValue<'a>> + '_ {
+        self.array
+            .raw_iter()
+            .map(|value| ProbeValue::from_maybe_ref(self.xref, value))
+    }
+}
+
+/// A shallow borrowed dictionary with sorted Hayro entry iteration.
+#[derive(Clone)]
+pub struct ProbeDictionary<'a> {
+    xref: &'a hayro_syntax::xref::XRef,
+    dictionary: Dict<'a>,
+}
+
+impl<'a> ProbeDictionary<'a> {
+    fn new(xref: &'a hayro_syntax::xref::XRef, dictionary: Dict<'a>) -> Self {
+        Self { xref, dictionary }
+    }
+
+    #[must_use]
+    pub fn id(&self) -> Option<ProbeObjectId> {
+        self.dictionary.obj_id().map(Into::into)
+    }
+
+    #[must_use]
+    pub fn get(&self, key: impl AsRef<[u8]>) -> Option<ProbeValue<'a>> {
+        self.dictionary
+            .get_raw::<Object<'a>>(key)
+            .map(|value| ProbeValue::from_maybe_ref(self.xref, value))
+    }
+
+    pub fn entries(&self) -> impl Iterator<Item = (Vec<u8>, ProbeValue<'a>)> + '_ {
+        self.dictionary.entries().map(|(key, value)| {
+            (
+                key.as_ref().to_vec(),
+                ProbeValue::from_maybe_ref(self.xref, value),
+            )
+        })
+    }
+
+    #[must_use]
+    pub fn raw_entries_contain(&self, needle: &[u8]) -> bool {
+        self.dictionary
+            .data()
+            .windows(needle.len())
+            .any(|window| window == needle)
+    }
+}
+
+/// Raw and decoded views of one selected stream.
+pub struct ProbeStream<'a> {
+    pub id: ProbeObjectId,
+    pub dictionary: ProbeDictionary<'a>,
+    pub raw: Vec<u8>,
+    pub decoded: Vec<u8>,
+    pub decoded_sha256: [u8; 32],
+    xref: &'a hayro_syntax::xref::XRef,
+}
+
+impl<'a> ProbeStream<'a> {
+    fn new(xref: &'a hayro_syntax::xref::XRef, stream: Stream<'a>) -> Self {
+        let raw = stream.raw_data().into_owned();
+        let decoded = stream
+            .decoded()
+            .map_or_else(|_| Vec::new(), |decoded| decoded.into_owned());
+        Self {
+            id: stream.obj_id().into(),
+            dictionary: ProbeDictionary::new(xref, stream.dict().clone()),
+            raw,
+            decoded_sha256: Sha256::digest(&decoded).into(),
+            decoded,
+            xref,
+        }
+    }
+
+    pub fn operations(&self, limits: ProbeLimits) -> Result<Vec<ProbeOperation>> {
+        let mut budget = QueryBudget::new(limits);
+        budget.add_stream_bytes(self.decoded.len())?;
+        project_operations(self.xref, &self.decoded, &mut budget)
+    }
+}
+
+/// One decoded content-stream instruction.
 #[derive(Clone, Debug, PartialEq)]
-pub enum ProbeValue {
+pub struct ProbeOperation {
+    pub operands: Vec<ProbeOperand>,
+    pub operator: Vec<u8>,
+}
+
+/// An owned projection limited to content-stream operands.
+#[derive(Clone, Debug, PartialEq)]
+pub enum ProbeOperand {
     Null,
     Boolean(bool),
     Number(f64),
     String(Vec<u8>),
     Name(Vec<u8>),
     Array(Vec<Self>),
-    Dictionary(ProbeDictionary),
-    Stream(ProbeStream),
-    /// A resolved indirect edge. The edge identity is retained alongside its target.
-    Reference {
-        id: ProbeObjectId,
-        target: Box<Self>,
-    },
-    /// An edge to an object already active in the current traversal.
-    BackReference(ProbeObjectId),
-    /// A syntactically valid reference absent from the selected xref.
-    UnresolvedReference(ProbeObjectId),
+    Dictionary(BTreeMap<Vec<u8>, Self>),
 }
 
-impl ProbeValue {
-    #[must_use]
-    pub fn referenced_id(&self) -> Option<ProbeObjectId> {
-        match self {
-            Self::Reference { id, .. }
-            | Self::BackReference(id)
-            | Self::UnresolvedReference(id) => Some(*id),
-            _ => None,
-        }
-    }
-
-    #[must_use]
-    pub fn resolved(&self) -> &Self {
-        match self {
-            Self::Reference { target, .. } => target.resolved(),
-            _ => self,
-        }
-    }
-
-    #[must_use]
-    pub fn as_dictionary(&self) -> Option<&ProbeDictionary> {
-        match self.resolved() {
-            Self::Dictionary(dictionary) => Some(dictionary),
-            Self::Stream(stream) => Some(&stream.dictionary),
-            _ => None,
-        }
-    }
-
-    #[must_use]
-    pub fn as_array(&self) -> Option<&[Self]> {
-        match self.resolved() {
-            Self::Array(values) => Some(values),
-            _ => None,
-        }
-    }
+/// A resource category with inheritance layers ordered ancestor to child.
+pub struct ProbeResources<'a> {
+    pub categories: BTreeMap<Vec<u8>, Vec<ProbeDictionary<'a>>>,
 }
 
-/// An owned dictionary whose indirect identity is retained when available.
-#[derive(Clone, Debug, PartialEq)]
-pub struct ProbeDictionary {
-    pub id: Option<ProbeObjectId>,
-    pub entries: BTreeMap<Vec<u8>, ProbeValue>,
-}
-
-impl ProbeDictionary {
-    #[must_use]
-    pub fn get(&self, key: impl AsRef<[u8]>) -> Option<&ProbeValue> {
-        self.entries.get(key.as_ref())
-    }
-}
-
-/// Raw and decoded views of a stream plus a complete-content fingerprint.
-#[derive(Clone, Debug, PartialEq)]
-pub struct ProbeStream {
-    pub id: ProbeObjectId,
-    pub dictionary: ProbeDictionary,
-    pub raw: Vec<u8>,
-    pub decoded: Vec<u8>,
-    pub decoded_sha256: [u8; 32],
-    pub operations: Vec<ProbeOperation>,
-}
-
-/// One decoded content-stream instruction.
-#[derive(Clone, Debug, PartialEq)]
-pub struct ProbeOperation {
-    pub operands: Vec<ProbeValue>,
-    pub operator: Vec<u8>,
-}
-
-/// A resource category with inheritance layers ordered from ancestor to child.
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct ProbeResources {
-    pub categories: BTreeMap<Vec<u8>, Vec<ProbeDictionary>>,
-}
-
-/// One page in document order.
-#[derive(Clone, Debug, PartialEq)]
-pub struct ProbePage {
+/// One page in document order. Its object values remain borrowed from Hayro.
+pub struct ProbePage<'a> {
     pub number: usize,
     pub id: ProbeObjectId,
-    pub dictionary: ProbeDictionary,
+    pub dictionary: ProbeDictionary<'a>,
     pub media_box: [f64; 4],
     pub crop_box: [f64; 4],
     pub rotation_degrees: i32,
-    pub resources: ProbeResources,
-    pub annotations: Vec<ProbeValue>,
+    pub resources: ProbeResources<'a>,
+    pub annotations: Vec<ProbeValue<'a>>,
     pub content: Option<ProbeContent>,
 }
 
-/// Decoded page content and its leniency guard.
-#[derive(Clone, Debug, PartialEq)]
+/// Decoded page content and operations requested as one focused result.
 pub struct ProbeContent {
     pub decoded: Vec<u8>,
     pub decoded_sha256: [u8; 32],
@@ -185,7 +297,6 @@ pub struct PdfProbe {
 }
 
 impl PdfProbe {
-    /// Parse bytes and retain the independent Hayro document for bounded queries.
     pub fn new(bytes: impl AsRef<[u8]>, limits: ProbeLimits) -> Result<Self> {
         if limits.max_depth == 0
             || limits.max_objects == 0
@@ -220,313 +331,193 @@ impl PdfProbe {
         self.pdf.xref().root_id().into()
     }
 
-    /// Project the selected trailer, including xref-stream dictionaries.
-    pub fn trailer(&self) -> Result<Option<ProbeDictionary>> {
-        self.pdf
+    pub fn trailer(&self) -> Result<Option<ProbeDictionary<'_>>> {
+        Ok(self
+            .pdf
             .xref()
             .trailer()
-            .map(|dictionary| self.project_dictionary(dictionary))
-            .transpose()
+            .map(|dictionary| ProbeDictionary::new(self.pdf.xref(), dictionary)))
     }
 
-    pub fn root(&self) -> Result<ProbeDictionary> {
+    pub fn root(&self) -> Result<ProbeDictionary<'_>> {
         self.dictionary(self.root_id())
             .context("PDF root is not a dictionary")
     }
 
-    /// Resolve and project an arbitrary normal or object-stream object.
-    pub fn object(&self, id: ProbeObjectId) -> Result<ProbeValue> {
+    pub fn object(&self, id: ProbeObjectId) -> Result<ProbeValue<'_>> {
         let object = self
             .pdf
             .xref()
             .get::<Object<'_>>(id.into())
             .with_context(|| format!("PDF object {} {} is missing", id.number, id.generation))?;
-        let mut state = ProjectionState::new(self.limits);
-        state.objects = 1;
-        state.active.insert(id);
-        project_object(self.pdf.xref(), object, 0, &mut state)
+        Ok(ProbeValue::from_object(self.pdf.xref(), object))
     }
 
-    pub fn dictionary(&self, id: ProbeObjectId) -> Result<ProbeDictionary> {
-        match self.object(id)?.resolved() {
-            ProbeValue::Dictionary(dictionary) => Ok(dictionary.clone()),
-            ProbeValue::Stream(stream) => Ok(stream.dictionary.clone()),
-            _ => bail!(
+    /// Walk one object without retaining it, enforcing every configured budget.
+    pub fn validate_object(&self, id: ProbeObjectId) -> Result<()> {
+        let object = self
+            .pdf
+            .xref()
+            .get::<Object<'_>>(id.into())
+            .with_context(|| format!("PDF object {} {} is missing", id.number, id.generation))?;
+        let mut budget = QueryBudget::new(self.limits);
+        budget.bump_object()?;
+        validate_object(
+            self.pdf.xref(),
+            object,
+            0,
+            &mut BTreeSet::from([id]),
+            &mut budget,
+        )
+    }
+
+    pub fn dictionary(&self, id: ProbeObjectId) -> Result<ProbeDictionary<'_>> {
+        self.object(id)?.as_dictionary().with_context(|| {
+            format!(
                 "PDF object {} {} is not a dictionary",
-                id.number,
-                id.generation
-            ),
-        }
+                id.number, id.generation
+            )
+        })
     }
 
-    /// Project pages in page-tree order, including inherited page attributes.
-    pub fn pages(&self) -> Result<Vec<ProbePage>> {
-        let mut state = ProjectionState::new(self.limits);
+    pub fn stream(&self, id: ProbeObjectId) -> Result<ProbeStream<'_>> {
+        let stream = self.object(id)?.as_stream().with_context(|| {
+            format!("PDF object {} {} is not a stream", id.number, id.generation)
+        })?;
+        let mut budget = QueryBudget::new(self.limits);
+        budget.bump_object()?;
+        budget.add_stream_bytes(stream.raw.len().saturating_add(stream.decoded.len()))?;
+        Ok(stream)
+    }
+
+    /// Return pages in page-tree order with inherited geometry and resources.
+    pub fn pages(&self) -> Result<Vec<ProbePage<'_>>> {
+        let mut budget = QueryBudget::new(self.limits);
         self.pdf
             .pages()
             .iter()
             .enumerate()
-            .map(|(index, page)| {
-                let id = page
-                    .raw()
-                    .obj_id()
-                    .map(ProbeObjectId::from)
-                    .context("ordered page has no indirect identity")?;
-                state.bump_object()?;
-                state.active.insert(id);
-                let dictionary = project_dict(self.pdf.xref(), page.raw().clone(), 0, &mut state)?;
-                state.active.remove(&id);
-                let annotations = dictionary
-                    .get(b"Annots")
-                    .and_then(ProbeValue::as_array)
-                    .map(<[ProbeValue]>::to_vec)
-                    .unwrap_or_default();
-                let resources = project_resources(self.pdf.xref(), page.resources(), &mut state)?;
-                let content = page
-                    .page_stream()
-                    .map(|decoded| project_content(self.pdf.xref(), decoded, &mut state))
-                    .transpose()?;
-                let media_box = page.media_box();
-                let crop_box = page.crop_box();
-                Ok(ProbePage {
-                    number: index + 1,
-                    id,
-                    dictionary,
-                    media_box: [media_box.x0, media_box.y0, media_box.x1, media_box.y1],
-                    crop_box: [crop_box.x0, crop_box.y0, crop_box.x1, crop_box.y1],
-                    rotation_degrees: rotation_degrees(page.rotation()),
-                    resources,
-                    annotations,
-                    content,
-                })
-            })
+            .map(|(index, page)| project_page(self.pdf.xref(), page, index, &mut budget))
             .collect()
     }
-
-    fn project_dictionary(&self, dictionary: Dict<'_>) -> Result<ProbeDictionary> {
-        let mut state = ProjectionState::new(self.limits);
-        if let Some(id) = dictionary.obj_id().map(ProbeObjectId::from) {
-            state.bump_object()?;
-            state.active.insert(id);
-        }
-        project_dict(self.pdf.xref(), dictionary, 0, &mut state)
-    }
 }
 
-fn rotation_degrees(rotation: Rotation) -> i32 {
-    match rotation {
-        Rotation::None => 0,
-        Rotation::Horizontal => 90,
-        Rotation::Flipped => 180,
-        Rotation::FlippedHorizontal => 270,
-    }
-}
-
-struct ProjectionState {
-    limits: ProbeLimits,
-    objects: usize,
-    values: usize,
-    stream_bytes: usize,
-    active: BTreeSet<ProbeObjectId>,
-}
-
-impl ProjectionState {
-    fn new(limits: ProbeLimits) -> Self {
-        Self {
-            limits,
-            objects: 0,
-            values: 0,
-            stream_bytes: 0,
-            active: BTreeSet::new(),
-        }
-    }
-
-    fn check_depth(&self, depth: usize) -> Result<()> {
-        if depth > self.limits.max_depth {
-            bail!(
-                "PDF probe depth budget exceeded ({})",
-                self.limits.max_depth
-            );
-        }
-        Ok(())
-    }
-
-    fn bump_object(&mut self) -> Result<()> {
-        self.objects = self.objects.saturating_add(1);
-        if self.objects > self.limits.max_objects {
-            bail!(
-                "PDF probe object budget exceeded ({})",
-                self.limits.max_objects
-            );
-        }
-        Ok(())
-    }
-
-    fn bump_value(&mut self) -> Result<()> {
-        self.values = self.values.saturating_add(1);
-        if self.values > self.limits.max_values {
-            bail!(
-                "PDF probe value budget exceeded ({})",
-                self.limits.max_values
-            );
-        }
-        Ok(())
-    }
-
-    fn add_stream_bytes(&mut self, count: usize) -> Result<()> {
-        self.stream_bytes = self.stream_bytes.saturating_add(count);
-        if self.stream_bytes > self.limits.max_stream_bytes {
-            bail!(
-                "PDF probe stream budget exceeded ({})",
-                self.limits.max_stream_bytes
-            );
-        }
-        Ok(())
-    }
-}
-
-fn project_maybe_ref(
+fn validate_maybe_ref(
     xref: &hayro_syntax::xref::XRef,
     value: MaybeRef<Object<'_>>,
     depth: usize,
-    state: &mut ProjectionState,
-) -> Result<ProbeValue> {
-    state.check_depth(depth)?;
+    active: &mut BTreeSet<ProbeObjectId>,
+    budget: &mut QueryBudget,
+) -> Result<()> {
+    budget.check_depth(depth)?;
     match value {
-        MaybeRef::NotRef(object) => project_object(xref, object, depth, state),
+        MaybeRef::NotRef(object) => validate_object(xref, object, depth, active, budget),
         MaybeRef::Ref(reference) => {
-            state.bump_value()?;
+            budget.bump_value()?;
             let id = ProbeObjectId::new(reference.obj_number, reference.gen_number);
-            if state.active.contains(&id) {
-                return Ok(ProbeValue::BackReference(id));
+            if active.contains(&id) {
+                return Ok(());
             }
-            state.bump_object()?;
+            budget.bump_object()?;
             let Some(object) = xref.get::<Object<'_>>(id.into()) else {
-                return Ok(ProbeValue::UnresolvedReference(id));
+                return Ok(());
             };
-            state.active.insert(id);
-            let target = project_object(xref, object, depth + 1, state)?;
-            state.active.remove(&id);
-            Ok(ProbeValue::Reference {
-                id,
-                target: Box::new(target),
-            })
+            active.insert(id);
+            let result = validate_object(xref, object, depth + 1, active, budget);
+            active.remove(&id);
+            result
         }
     }
 }
 
-fn project_object(
+fn validate_object(
     xref: &hayro_syntax::xref::XRef,
     object: Object<'_>,
     depth: usize,
-    state: &mut ProjectionState,
-) -> Result<ProbeValue> {
-    state.check_depth(depth)?;
-    state.bump_value()?;
+    active: &mut BTreeSet<ProbeObjectId>,
+    budget: &mut QueryBudget,
+) -> Result<()> {
+    budget.check_depth(depth)?;
+    budget.bump_value()?;
     match object {
-        Object::Null(_) => Ok(ProbeValue::Null),
-        Object::Boolean(value) => Ok(ProbeValue::Boolean(value)),
-        Object::Number(value) => Ok(ProbeValue::Number(value.as_f64())),
-        Object::String(value) => Ok(ProbeValue::String(value.as_bytes().to_vec())),
-        Object::Name(value) => Ok(ProbeValue::Name(value.as_ref().to_vec())),
-        Object::Array(array) => array
-            .raw_iter()
-            .map(|value| project_maybe_ref(xref, value, depth + 1, state))
-            .collect::<Result<Vec<_>>>()
-            .map(ProbeValue::Array),
+        Object::Array(array) => {
+            for value in array.raw_iter() {
+                validate_maybe_ref(xref, value, depth + 1, active, budget)?;
+            }
+        }
         Object::Dict(dictionary) => {
-            project_dict(xref, dictionary, depth + 1, state).map(ProbeValue::Dictionary)
+            for (_, value) in dictionary.entries() {
+                validate_maybe_ref(xref, value, depth + 1, active, budget)?;
+            }
         }
         Object::Stream(stream) => {
-            project_stream(xref, stream, depth + 1, state).map(ProbeValue::Stream)
+            let raw = stream.raw_data();
+            let decoded = stream.decoded().unwrap_or_default();
+            budget.add_stream_bytes(raw.len().saturating_add(decoded.len()))?;
+            for (_, value) in stream.dict().entries() {
+                validate_maybe_ref(xref, value, depth + 1, active, budget)?;
+            }
+            project_operations(xref, &decoded, budget)?;
         }
+        _ => {}
     }
+    Ok(())
 }
 
-fn project_dict(
-    xref: &hayro_syntax::xref::XRef,
-    dictionary: Dict<'_>,
-    depth: usize,
-    state: &mut ProjectionState,
-) -> Result<ProbeDictionary> {
-    state.check_depth(depth)?;
-    let id = dictionary.obj_id().map(ProbeObjectId::from);
-    let entries = dictionary
-        .entries()
-        .map(|(key, value)| {
-            Ok((
-                key.as_ref().to_vec(),
-                project_maybe_ref(xref, value, depth + 1, state)?,
-            ))
+fn project_page<'a>(
+    xref: &'a hayro_syntax::xref::XRef,
+    page: &'a Page<'a>,
+    index: usize,
+    budget: &mut QueryBudget,
+) -> Result<ProbePage<'a>> {
+    budget.bump_object()?;
+    let id = page
+        .raw()
+        .obj_id()
+        .map(ProbeObjectId::from)
+        .context("ordered page has no indirect identity")?;
+    let dictionary = ProbeDictionary::new(xref, page.raw().clone());
+    let annotations = dictionary
+        .get(b"Annots")
+        .and_then(|value| value.array())
+        .map(|array| array.iter().collect())
+        .unwrap_or_default();
+    let resources = project_resources(xref, page.resources());
+    let content = page
+        .page_stream()
+        .map(|decoded| {
+            budget.add_stream_bytes(decoded.len())?;
+            Ok::<_, anyhow::Error>(ProbeContent {
+                decoded: decoded.to_vec(),
+                decoded_sha256: Sha256::digest(decoded).into(),
+                operations: project_operations(xref, decoded, budget)?,
+            })
         })
-        .collect::<Result<_>>()?;
-    Ok(ProbeDictionary { id, entries })
-}
-
-fn project_stream(
-    xref: &hayro_syntax::xref::XRef,
-    stream: Stream<'_>,
-    depth: usize,
-    state: &mut ProjectionState,
-) -> Result<ProbeStream> {
-    state.check_depth(depth)?;
-    let raw = stream.raw_data().into_owned();
-    // Raw encoded bytes remain the authoritative observation for filters that
-    // Hayro cannot decode. Strict filter validity belongs to the external gate.
-    let decoded = stream
-        .decoded()
-        .map_or_else(|_| Vec::new(), |decoded| decoded.into_owned());
-    state.add_stream_bytes(raw.len().saturating_add(decoded.len()))?;
-    let operations = project_operations(xref, &decoded, state)?;
-    Ok(ProbeStream {
-        id: stream.obj_id().into(),
-        dictionary: project_dict(xref, stream.dict().clone(), depth + 1, state)?,
-        raw,
-        decoded_sha256: Sha256::digest(&decoded).into(),
-        decoded,
-        operations,
+        .transpose()?;
+    let media_box = page.media_box();
+    let crop_box = page.crop_box();
+    Ok(ProbePage {
+        number: index + 1,
+        id,
+        dictionary,
+        media_box: [media_box.x0, media_box.y0, media_box.x1, media_box.y1],
+        crop_box: [crop_box.x0, crop_box.y0, crop_box.x1, crop_box.y1],
+        rotation_degrees: match page.rotation() {
+            Rotation::None => 0,
+            Rotation::Horizontal => 90,
+            Rotation::Flipped => 180,
+            Rotation::FlippedHorizontal => 270,
+        },
+        resources,
+        annotations,
+        content,
     })
 }
 
-fn project_content(
-    xref: &hayro_syntax::xref::XRef,
-    decoded: &[u8],
-    state: &mut ProjectionState,
-) -> Result<ProbeContent> {
-    state.add_stream_bytes(decoded.len())?;
-    Ok(ProbeContent {
-        decoded: decoded.to_vec(),
-        decoded_sha256: Sha256::digest(decoded).into(),
-        operations: project_operations(xref, decoded, state)?,
-    })
-}
-
-fn project_operations(
-    xref: &hayro_syntax::xref::XRef,
-    decoded: &[u8],
-    state: &mut ProjectionState,
-) -> Result<Vec<ProbeOperation>> {
-    let mut iterator = UntypedIter::new(decoded);
-    let mut operations = Vec::new();
-    while let Some(instruction) = iterator.next() {
-        state.bump_value()?;
-        let operands = instruction
-            .operands()
-            .map(|operand| project_object(xref, operand.clone(), 0, state))
-            .collect::<Result<_>>()?;
-        operations.push(ProbeOperation {
-            operands,
-            operator: instruction.operator.as_ref().to_vec(),
-        });
-    }
-    Ok(operations)
-}
-
-fn project_resources(
-    xref: &hayro_syntax::xref::XRef,
-    resources: &Resources<'_>,
-    state: &mut ProjectionState,
-) -> Result<ProbeResources> {
+fn project_resources<'a>(
+    xref: &'a hayro_syntax::xref::XRef,
+    resources: &'a Resources<'a>,
+) -> ProbeResources<'a> {
     let mut chain = Vec::new();
     let mut current = Some(resources);
     while let Some(layer) = current {
@@ -534,8 +525,7 @@ fn project_resources(
         current = layer.parent();
     }
     chain.reverse();
-
-    let mut categories: BTreeMap<Vec<u8>, Vec<ProbeDictionary>> = BTreeMap::new();
+    let mut categories: BTreeMap<Vec<u8>, Vec<ProbeDictionary<'a>>> = BTreeMap::new();
     for layer in chain {
         for (name, dictionary) in [
             (b"ExtGState".as_slice(), &layer.ext_g_states),
@@ -546,15 +536,155 @@ fn project_resources(
             (b"Pattern".as_slice(), &layer.patterns),
             (b"Shading".as_slice(), &layer.shadings),
         ] {
-            if dictionary.keys().next().is_some() {
+            if !dictionary.is_empty() {
                 categories
                     .entry(name.to_vec())
                     .or_default()
-                    .push(project_dict(xref, dictionary.clone(), 0, state)?);
+                    .push(ProbeDictionary::new(xref, dictionary.clone()));
             }
         }
     }
-    Ok(ProbeResources { categories })
+    ProbeResources { categories }
+}
+
+fn project_operations(
+    xref: &hayro_syntax::xref::XRef,
+    decoded: &[u8],
+    budget: &mut QueryBudget,
+) -> Result<Vec<ProbeOperation>> {
+    let mut iterator = UntypedIter::new(decoded);
+    let mut operations = Vec::new();
+    while let Some(instruction) = iterator.next() {
+        budget.bump_value()?;
+        let operands = instruction
+            .operands()
+            .map(|operand| project_operand(xref, operand.clone(), 0, budget))
+            .collect::<Result<_>>()?;
+        operations.push(ProbeOperation {
+            operands,
+            operator: instruction.operator.as_ref().to_vec(),
+        });
+    }
+    Ok(operations)
+}
+
+fn project_operand(
+    xref: &hayro_syntax::xref::XRef,
+    object: Object<'_>,
+    depth: usize,
+    budget: &mut QueryBudget,
+) -> Result<ProbeOperand> {
+    budget.check_depth(depth)?;
+    budget.bump_value()?;
+    Ok(match object {
+        Object::Null(_) => ProbeOperand::Null,
+        Object::Boolean(value) => ProbeOperand::Boolean(value),
+        Object::Number(value) => ProbeOperand::Number(value.as_f64()),
+        Object::String(value) => ProbeOperand::String(value.as_bytes().to_vec()),
+        Object::Name(value) => ProbeOperand::Name(value.as_ref().to_vec()),
+        Object::Array(array) => ProbeOperand::Array(
+            array
+                .raw_iter()
+                .map(|value| match value {
+                    MaybeRef::NotRef(value) => project_operand(xref, value, depth + 1, budget),
+                    MaybeRef::Ref(reference) => {
+                        budget.bump_object()?;
+                        let id = ObjectIdentifier::new(reference.obj_number, reference.gen_number);
+                        let value = xref
+                            .get::<Object<'_>>(id)
+                            .context("unresolved indirect reference in content-stream operand")?;
+                        project_operand(xref, value, depth + 1, budget)
+                    }
+                })
+                .collect::<Result<_>>()?,
+        ),
+        Object::Dict(dictionary) => ProbeOperand::Dictionary(
+            dictionary
+                .entries()
+                .map(|(key, value)| {
+                    let value = match value {
+                        MaybeRef::NotRef(value) => project_operand(xref, value, depth + 1, budget)?,
+                        MaybeRef::Ref(reference) => {
+                            budget.bump_object()?;
+                            let id =
+                                ObjectIdentifier::new(reference.obj_number, reference.gen_number);
+                            project_operand(
+                                xref,
+                                xref.get::<Object<'_>>(id).context(
+                                    "unresolved indirect reference in content-stream operand",
+                                )?,
+                                depth + 1,
+                                budget,
+                            )?
+                        }
+                    };
+                    Ok((key.as_ref().to_vec(), value))
+                })
+                .collect::<Result<_>>()?,
+        ),
+        Object::Stream(_) => bail!("content-stream operand cannot be a stream"),
+    })
+}
+
+pub(crate) struct QueryBudget {
+    limits: ProbeLimits,
+    objects: usize,
+    values: usize,
+    stream_bytes: usize,
+}
+
+impl QueryBudget {
+    pub(crate) fn new(limits: ProbeLimits) -> Self {
+        Self {
+            limits,
+            objects: 0,
+            values: 0,
+            stream_bytes: 0,
+        }
+    }
+
+    pub(crate) fn check_depth(&self, depth: usize) -> Result<()> {
+        if depth > self.limits.max_depth {
+            bail!(
+                "PDF probe depth budget exceeded ({})",
+                self.limits.max_depth
+            );
+        }
+        Ok(())
+    }
+
+    pub(crate) fn bump_object(&mut self) -> Result<()> {
+        self.objects = self.objects.saturating_add(1);
+        if self.objects > self.limits.max_objects {
+            bail!(
+                "PDF probe object budget exceeded ({})",
+                self.limits.max_objects
+            );
+        }
+        Ok(())
+    }
+
+    pub(crate) fn bump_value(&mut self) -> Result<()> {
+        self.values = self.values.saturating_add(1);
+        if self.values > self.limits.max_values {
+            bail!(
+                "PDF probe value budget exceeded ({})",
+                self.limits.max_values
+            );
+        }
+        Ok(())
+    }
+
+    pub(crate) fn add_stream_bytes(&mut self, count: usize) -> Result<()> {
+        self.stream_bytes = self.stream_bytes.saturating_add(count);
+        if self.stream_bytes > self.limits.max_stream_bytes {
+            bail!(
+                "PDF probe stream budget exceeded ({})",
+                self.limits.max_stream_bytes
+            );
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]

@@ -3,17 +3,22 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use anyhow::{Context, Result, bail};
+use hayro_syntax::object::Object;
 use sha2::Digest;
 
 use crate::pdf_probe::{
-    PdfProbe, ProbeDictionary, ProbeLimits, ProbeObjectId, ProbeOperation, ProbeStream, ProbeValue,
+    PdfProbe, ProbeDictionary, ProbeLimits, ProbeObjectId, ProbeOperand, ProbeOperation,
+    ProbeStream, ProbeValue,
 };
 
-/// Parses a PDF and projects catalog, ordered pages, resources, media boxes,
-/// and decoded content operations without preserving object numbers or byte
-/// layout.
+/// Parse a PDF and project its stable semantic structure directly from Hayro's
+/// borrowed objects. Object numbers and byte layout are intentionally omitted.
 pub fn normalize_structure(bytes: &[u8]) -> Result<String> {
-    let probe = PdfProbe::new(bytes, ProbeLimits::default()).context("failed to parse PDF")?;
+    normalize_structure_with_limits(bytes, ProbeLimits::default())
+}
+
+pub(crate) fn normalize_structure_with_limits(bytes: &[u8], limits: ProbeLimits) -> Result<String> {
+    let probe = PdfProbe::new(bytes, limits).context("failed to parse PDF")?;
     let catalog = probe.root().context("PDF has no catalog")?;
     require_name(
         catalog.get(b"Type").context("catalog has no Type")?,
@@ -45,17 +50,14 @@ pub fn normalize_structure(bytes: &[u8]) -> Result<String> {
                 .join(" ")
         ));
         normalized.push_str("resources ");
-        let resources = effective_page_resources(&page.dictionary)?;
-        normalized.push_str(&canonical_value(
-            &ProbeValue::Dictionary(resources),
+        normalized.push_str(&canonical_effective_resources(
+            &page.dictionary,
             &pages_by_id,
-            0,
-            &mut Vec::new(),
         )?);
         normalized.push('\n');
         if let Some(beads) = page.dictionary.get(b"B") {
             normalized.push_str("beads ");
-            normalized.push_str(&canonical_value(beads, &pages_by_id, 0, &mut Vec::new())?);
+            normalized.push_str(&canonical_value(&beads, &pages_by_id, 0, &mut Vec::new())?);
             normalized.push('\n');
         }
         if let Some(content) = &page.content {
@@ -65,12 +67,7 @@ pub fn normalize_structure(bytes: &[u8]) -> Result<String> {
                 && content.operations[1].operator == b"Q"
                 && content.operations[1].operands.is_empty();
             if !omit_noop_wrapper {
-                append_operations(
-                    &mut normalized,
-                    &content.operations,
-                    &pages_by_id,
-                    "content",
-                )?;
+                append_operations(&mut normalized, &content.operations, "content")?;
             }
         }
     }
@@ -78,62 +75,69 @@ pub fn normalize_structure(bytes: &[u8]) -> Result<String> {
     Ok(normalized)
 }
 
-fn effective_page_resources(page: &ProbeDictionary) -> Result<ProbeDictionary> {
+fn canonical_effective_resources(
+    page: &ProbeDictionary<'_>,
+    pages: &BTreeMap<ProbeObjectId, usize>,
+) -> Result<String> {
     let mut layers = Vec::new();
-    collect_page_resource_layers(page, 0, &mut layers)?;
-    let mut effective = ProbeDictionary {
-        id: None,
-        entries: BTreeMap::new(),
-    };
+    collect_page_resource_layers(page.clone(), 0, &mut layers)?;
+    let mut effective: BTreeMap<Vec<u8>, BorrowedDictionaryValue<'_>> = BTreeMap::new();
     for layer in layers {
-        for (key, value) in layer.entries {
-            let merged = effective
-                .entries
-                .get(&key)
-                .and_then(ProbeValue::as_dictionary)
-                .zip(value.as_dictionary())
-                .map(|(parent, child)| {
-                    let mut dictionary = parent.clone();
-                    dictionary.id = child.id;
-                    dictionary.entries.extend(child.entries.clone());
-                    ProbeValue::Dictionary(dictionary)
-                })
-                .unwrap_or(value);
-            effective.entries.insert(key, merged);
+        for (key, value) in layer.entries() {
+            if let Some(child) = value.as_dictionary() {
+                let mut entries = match effective.get(&key) {
+                    Some(BorrowedDictionaryValue::Value(parent)) => parent
+                        .as_dictionary()
+                        .map(|dictionary| dictionary.entries().collect())
+                        .unwrap_or_default(),
+                    Some(BorrowedDictionaryValue::Merged(parent)) => parent.clone(),
+                    None => BTreeMap::new(),
+                };
+                entries.extend(child.entries());
+                effective.insert(key, BorrowedDictionaryValue::Merged(entries));
+            } else {
+                effective.insert(key, BorrowedDictionaryValue::Value(value));
+            }
         }
     }
-    if effective.entries.is_empty() {
+    if effective.is_empty() {
         bail!("page has no Resources");
     }
-    Ok(effective)
+    canonical_dictionary_entries(&effective, pages, &[], 0, &mut Vec::new())
 }
 
-fn collect_page_resource_layers(
-    dictionary: &ProbeDictionary,
+#[derive(Clone)]
+enum BorrowedDictionaryValue<'a> {
+    Value(ProbeValue<'a>),
+    Merged(BTreeMap<Vec<u8>, ProbeValue<'a>>),
+}
+
+fn collect_page_resource_layers<'a>(
+    dictionary: ProbeDictionary<'a>,
     depth: usize,
-    layers: &mut Vec<ProbeDictionary>,
+    layers: &mut Vec<ProbeDictionary<'a>>,
 ) -> Result<()> {
     if depth > 32 {
         bail!("PDF page resource inheritance exceeds 32 levels");
     }
     if let Some(parent) = dictionary
         .get(b"Parent")
-        .and_then(ProbeValue::as_dictionary)
+        .and_then(|value| value.as_dictionary())
     {
         collect_page_resource_layers(parent, depth + 1, layers)?;
     }
     if let Some(resources) = dictionary
         .get(b"Resources")
-        .and_then(ProbeValue::as_dictionary)
+        .and_then(|value| value.as_dictionary())
     {
-        layers.push(resources.clone());
+        layers.push(resources);
     }
     Ok(())
 }
 
 fn append_document_extensions(
     probe: &PdfProbe,
-    catalog: &ProbeDictionary,
+    catalog: &ProbeDictionary<'_>,
     pages: &BTreeMap<ProbeObjectId, usize>,
     normalized: &mut String,
 ) -> Result<()> {
@@ -144,7 +148,7 @@ fn append_document_extensions(
         extensions.push(format!("catalog-extensions {catalog_entries}"));
     }
     if let Some(action) = catalog.get(b"OpenAction") {
-        extensions.push(format!("open-action {}", canonical_action(action, pages)?));
+        extensions.push(format!("open-action {}", canonical_action(&action, pages)?));
     }
     for (key, label) in [
         (b"Names".as_slice(), "names"),
@@ -154,14 +158,14 @@ fn append_document_extensions(
         if let Some(value) = catalog.get(key) {
             extensions.push(format!(
                 "{label} {}",
-                canonical_value(value, pages, 0, &mut Vec::new())?
+                canonical_value(&value, pages, 0, &mut Vec::new())?
             ));
         }
     }
 
     let trailer = probe.trailer()?.context("PDF has no trailer")?;
-    if let Some(info) = trailer.get(b"Info").and_then(ProbeValue::as_dictionary) {
-        let selected = selected_dictionary(info, &[b"Title", b"Subject"], pages)?;
+    if let Some(info) = trailer.get(b"Info").and_then(|value| value.as_dictionary()) {
+        let selected = selected_dictionary(&info, &[b"Title", b"Subject"], pages)?;
         if !selected.is_empty() {
             extensions.push(format!("info {selected}"));
         }
@@ -171,30 +175,33 @@ fn append_document_extensions(
         extensions.push(format!("trailer {selected}"));
     }
 
-    let size = trailer.get(b"Size").map(number).transpose()?.unwrap_or(0.0) as i32;
+    let size = trailer
+        .get(b"Size")
+        .map(|value| number(&value))
+        .transpose()?
+        .unwrap_or(0.0) as i32;
     let mut user_objects = BTreeSet::new();
     for number in 1..size {
         let Ok(value) = probe.object(ProbeObjectId::new(number, 0)) else {
             continue;
         };
-        match value.resolved() {
-            ProbeValue::Dictionary(dictionary) if dictionary.get(b"Kind").is_some() => {
-                user_objects.insert(format!(
-                    "object {}",
-                    canonical_dictionary(dictionary, pages, &[])?
-                ));
-            }
-            ProbeValue::Stream(stream)
-                if stream.dictionary.get(b"Subtype").is_some()
-                    && !is_form_xobject(&stream.dictionary) =>
-            {
-                user_objects.insert(format!(
-                    "stream {} data <{}>",
-                    canonical_dictionary(&stream.dictionary, pages, &[b"Length"])?,
-                    hex(&stream.decoded)
-                ));
-            }
-            _ => {}
+        if let Some(dictionary) = value.as_dictionary()
+            && dictionary.get(b"Kind").is_some()
+        {
+            let id = ProbeObjectId::new(number, 0);
+            user_objects.insert(format!(
+                "object {}",
+                canonical_dictionary_inner(&dictionary, pages, &[], 0, &mut vec![id])?
+            ));
+        } else if let Some(stream) = value.as_stream()
+            && stream.dictionary.get(b"Subtype").is_some()
+            && !is_form_xobject(&stream.dictionary)
+        {
+            user_objects.insert(format!(
+                "stream {} data <{}>",
+                canonical_dictionary(&stream.dictionary, pages, &[b"Length"])?,
+                hex(&stream.decoded)
+            ));
         }
     }
     extensions.extend(user_objects);
@@ -209,7 +216,7 @@ fn append_document_extensions(
 }
 
 fn selected_dictionary(
-    dictionary: &ProbeDictionary,
+    dictionary: &ProbeDictionary<'_>,
     keys: &[&[u8]],
     pages: &BTreeMap<ProbeObjectId, usize>,
 ) -> Result<String> {
@@ -220,7 +227,7 @@ fn selected_dictionary(
             Ok(format!(
                 "/{} {}",
                 String::from_utf8_lossy(key),
-                canonical_value(value, pages, 0, &mut Vec::new())?
+                canonical_value(&value, pages, 0, &mut Vec::new())?
             ))
         })
         .collect::<Result<Vec<_>>>()?;
@@ -231,30 +238,32 @@ fn selected_dictionary(
     })
 }
 
-fn canonical_action(value: &ProbeValue, pages: &BTreeMap<ProbeObjectId, usize>) -> Result<String> {
+fn canonical_action(
+    value: &ProbeValue<'_>,
+    pages: &BTreeMap<ProbeObjectId, usize>,
+) -> Result<String> {
     let dictionary = value
         .as_dictionary()
         .context("OpenAction is not a dictionary")?;
     let entries = dictionary
-        .entries
-        .iter()
+        .entries()
         .map(|(key, value)| {
             let value = if key == b"D" {
-                canonical_action_destination(value, pages)?
+                canonical_action_destination(&value, pages)?
             } else {
-                canonical_value(value, pages, 0, &mut Vec::new())?
+                canonical_value(&value, pages, 0, &mut Vec::new())?
             };
-            Ok(format!("/{} {value}", String::from_utf8_lossy(key)))
+            Ok(format!("/{} {value}", String::from_utf8_lossy(&key)))
         })
         .collect::<Result<Vec<_>>>()?;
     Ok(format!("<<{}>>", entries.join(" ")))
 }
 
 fn canonical_action_destination(
-    value: &ProbeValue,
+    value: &ProbeValue<'_>,
     pages: &BTreeMap<ProbeObjectId, usize>,
 ) -> Result<String> {
-    let Some(values) = value.as_array() else {
+    let Some(values) = value.array() else {
         return canonical_value(value, pages, 0, &mut Vec::new());
     };
     Ok(format!(
@@ -265,7 +274,7 @@ fn canonical_action_destination(
                 if let Some(page) = value.referenced_id().and_then(|id| pages.get(&id)) {
                     Ok(format!("page {page}"))
                 } else {
-                    canonical_value(value, pages, 0, &mut Vec::new())
+                    canonical_value(&value, pages, 0, &mut Vec::new())
                 }
             })
             .collect::<Result<Vec<_>>>()?
@@ -274,7 +283,7 @@ fn canonical_action_destination(
 }
 
 fn canonical_value(
-    value: &ProbeValue,
+    value: &ProbeValue<'_>,
     pages: &BTreeMap<ProbeObjectId, usize>,
     depth: usize,
     references: &mut Vec<ProbeObjectId>,
@@ -282,59 +291,72 @@ fn canonical_value(
     if depth > 32 {
         bail!("PDF fixture object nesting exceeds 32 levels");
     }
-    if let Some(id) = value.referenced_id()
-        && let Some(page) = pages.get(&id)
-    {
-        return Ok(format!("page {page}"));
+    if let Some(id) = value.referenced_id() {
+        if let Some(page) = pages.get(&id) {
+            return Ok(format!("page {page}"));
+        }
+        if value.is_unresolved() {
+            return Ok(format!("{} {} R", id.number, id.generation));
+        }
+        if let Some(index) = references.iter().position(|existing| *existing == id) {
+            return Ok(format!("@{index}"));
+        }
+        references.push(id);
+        let result = canonical_resolved_value(value, pages, depth + 1, references);
+        references.pop();
+        return result;
     }
-    Ok(match value {
-        ProbeValue::Reference { id, target } => {
-            if let Some(index) = references.iter().position(|existing| existing == id) {
-                return Ok(format!("@{index}"));
+    canonical_resolved_value(value, pages, depth, references)
+}
+
+fn canonical_resolved_value(
+    value: &ProbeValue<'_>,
+    pages: &BTreeMap<ProbeObjectId, usize>,
+    depth: usize,
+    references: &mut Vec<ProbeObjectId>,
+) -> Result<String> {
+    Ok(match value.object().context("unresolved PDF object")? {
+        Object::Null(_) => "null".into(),
+        Object::Boolean(value) => value.to_string(),
+        Object::Number(value) => canonical_number(value.as_f64())?,
+        Object::String(value) => format!("<{}>", hex(value.as_bytes())),
+        Object::Name(name) => format!("/{}", String::from_utf8_lossy(name.as_ref())),
+        Object::Array(_) => {
+            let values = value.array().expect("matched PDF array");
+            format!(
+                "[{}]",
+                values
+                    .iter()
+                    .map(|value| canonical_value(&value, pages, depth + 1, references))
+                    .collect::<Result<Vec<_>>>()?
+                    .join(" ")
+            )
+        }
+        Object::Dict(_) => canonical_dictionary_inner(
+            &value.as_dictionary().expect("matched PDF dictionary"),
+            pages,
+            &[],
+            depth + 1,
+            references,
+        )?,
+        Object::Stream(_) => {
+            let stream = value.as_stream().expect("matched PDF stream");
+            if is_form_xobject(&stream.dictionary) {
+                canonical_form_stream(&stream, pages, depth + 1, references)?
+            } else {
+                format!(
+                    "stream {} bytes {} sha256 {}",
+                    canonical_dictionary(&stream.dictionary, pages, &[])?,
+                    stream.raw.len(),
+                    hex(&sha2::Sha256::digest(&stream.raw))
+                )
             }
-            references.push(*id);
-            let result = canonical_value(target, pages, depth + 1, references);
-            references.pop();
-            result?
         }
-        ProbeValue::BackReference(id) => format!(
-            "@{}",
-            references
-                .iter()
-                .position(|existing| existing == id)
-                .unwrap_or(0)
-        ),
-        ProbeValue::UnresolvedReference(id) => format!("{} {} R", id.number, id.generation),
-        ProbeValue::Null => "null".into(),
-        ProbeValue::Boolean(value) => value.to_string(),
-        ProbeValue::Number(value) => canonical_number(*value)?,
-        ProbeValue::String(bytes) => format!("<{}>", hex(bytes)),
-        ProbeValue::Name(name) => format!("/{}", String::from_utf8_lossy(name)),
-        ProbeValue::Array(values) => format!(
-            "[{}]",
-            values
-                .iter()
-                .map(|value| canonical_value(value, pages, depth + 1, references))
-                .collect::<Result<Vec<_>>>()?
-                .join(" ")
-        ),
-        ProbeValue::Dictionary(dictionary) => {
-            canonical_dictionary_inner(dictionary, pages, &[], depth + 1, references)?
-        }
-        ProbeValue::Stream(stream) if is_form_xobject(&stream.dictionary) => {
-            canonical_form_stream(stream, pages, depth + 1, references)?
-        }
-        ProbeValue::Stream(stream) => format!(
-            "stream {} bytes {} sha256 {}",
-            canonical_dictionary(&stream.dictionary, pages, &[])?,
-            stream.raw.len(),
-            hex(&sha2::Sha256::digest(&stream.raw))
-        ),
     })
 }
 
 fn canonical_dictionary(
-    dictionary: &ProbeDictionary,
+    dictionary: &ProbeDictionary<'_>,
     pages: &BTreeMap<ProbeObjectId, usize>,
     omitted: &[&[u8]],
 ) -> Result<String> {
@@ -342,35 +364,69 @@ fn canonical_dictionary(
 }
 
 fn canonical_dictionary_inner(
-    dictionary: &ProbeDictionary,
+    dictionary: &ProbeDictionary<'_>,
     pages: &BTreeMap<ProbeObjectId, usize>,
     omitted: &[&[u8]],
     depth: usize,
     references: &mut Vec<ProbeObjectId>,
 ) -> Result<String> {
     let entries = dictionary
-        .entries
-        .iter()
+        .entries()
         .filter(|(key, _)| !omitted.contains(&key.as_slice()))
         .map(|(key, value)| {
             Ok(format!(
                 "/{} {}",
-                String::from_utf8_lossy(key),
-                canonical_value(value, pages, depth + 1, references)?
+                String::from_utf8_lossy(&key),
+                canonical_value(&value, pages, depth + 1, references)?
             ))
         })
         .collect::<Result<Vec<_>>>()?;
     Ok(format!("<<{}>>", entries.join(" ")))
 }
 
-fn is_form_xobject(dictionary: &ProbeDictionary) -> bool {
+fn canonical_dictionary_entries(
+    entries: &BTreeMap<Vec<u8>, BorrowedDictionaryValue<'_>>,
+    pages: &BTreeMap<ProbeObjectId, usize>,
+    omitted: &[&[u8]],
+    depth: usize,
+    references: &mut Vec<ProbeObjectId>,
+) -> Result<String> {
+    let entries = entries
+        .iter()
+        .filter(|(key, _)| !omitted.contains(&key.as_slice()))
+        .map(|(key, value)| {
+            let value = match value {
+                BorrowedDictionaryValue::Value(value) => {
+                    canonical_value(value, pages, depth + 1, references)?
+                }
+                BorrowedDictionaryValue::Merged(entries) => canonical_dictionary_entries(
+                    &entries
+                        .iter()
+                        .map(|(key, value)| {
+                            (key.clone(), BorrowedDictionaryValue::Value(value.clone()))
+                        })
+                        .collect(),
+                    pages,
+                    &[],
+                    depth + 1,
+                    references,
+                )?,
+            };
+            Ok(format!("/{} {value}", String::from_utf8_lossy(key)))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    Ok(format!("<<{}>>", entries.join(" ")))
+}
+
+fn is_form_xobject(dictionary: &ProbeDictionary<'_>) -> bool {
     dictionary
         .get(b"Subtype")
-        .is_some_and(|value| matches!(value.resolved(), ProbeValue::Name(name) if name == b"Form"))
+        .and_then(|value| value.name())
+        .is_some_and(|name| name.as_ref() == b"Form")
 }
 
 fn canonical_form_stream(
-    stream: &ProbeStream,
+    stream: &ProbeStream<'_>,
     pages: &BTreeMap<ProbeObjectId, usize>,
     depth: usize,
     references: &mut Vec<ProbeObjectId>,
@@ -388,11 +444,11 @@ fn canonical_form_stream(
         references,
     )?;
     let mut normalized = format!("form-stream {dictionary}");
-    for operation in &stream.operations {
+    for operation in stream.operations(ProbeLimits::default())? {
         normalized.push_str(" content");
         for operand in &operation.operands {
             normalized.push(' ');
-            normalized.push_str(&canonical_value(operand, pages, depth + 1, references)?);
+            normalized.push_str(&canonical_operand(operand)?);
         }
         normalized.push(' ');
         normalized.push_str(&String::from_utf8_lossy(&operation.operator));
@@ -406,14 +462,13 @@ fn canonical_form_stream(
 fn append_operations(
     output: &mut String,
     operations: &[ProbeOperation],
-    pages: &BTreeMap<ProbeObjectId, usize>,
     prefix: &str,
 ) -> Result<()> {
     for operation in operations {
         output.push_str(prefix);
         for operand in &operation.operands {
             output.push(' ');
-            output.push_str(&canonical_value(operand, pages, 0, &mut Vec::new())?);
+            output.push_str(&canonical_operand(operand)?);
         }
         output.push(' ');
         output.push_str(&String::from_utf8_lossy(&operation.operator));
@@ -422,23 +477,50 @@ fn append_operations(
     Ok(())
 }
 
-fn require_name(value: &ProbeValue, expected: &[u8]) -> Result<()> {
-    match value.resolved() {
-        ProbeValue::Name(actual) if actual == expected => Ok(()),
-        ProbeValue::Name(actual) => bail!(
+fn canonical_operand(value: &ProbeOperand) -> Result<String> {
+    Ok(match value {
+        ProbeOperand::Null => "null".into(),
+        ProbeOperand::Boolean(value) => value.to_string(),
+        ProbeOperand::Number(value) => canonical_number(*value)?,
+        ProbeOperand::String(bytes) => format!("<{}>", hex(bytes)),
+        ProbeOperand::Name(name) => format!("/{}", String::from_utf8_lossy(name)),
+        ProbeOperand::Array(values) => format!(
+            "[{}]",
+            values
+                .iter()
+                .map(canonical_operand)
+                .collect::<Result<Vec<_>>>()?
+                .join(" ")
+        ),
+        ProbeOperand::Dictionary(entries) => format!(
+            "<<{}>>",
+            entries
+                .iter()
+                .map(|(key, value)| Ok(format!(
+                    "/{} {}",
+                    String::from_utf8_lossy(key),
+                    canonical_operand(value)?
+                )))
+                .collect::<Result<Vec<_>>>()?
+                .join(" ")
+        ),
+    })
+}
+
+fn require_name(value: ProbeValue<'_>, expected: &[u8]) -> Result<()> {
+    match value.name() {
+        Some(actual) if actual.as_ref() == expected => Ok(()),
+        Some(actual) => bail!(
             "expected name /{}, found /{}",
             String::from_utf8_lossy(expected),
-            String::from_utf8_lossy(actual)
+            String::from_utf8_lossy(actual.as_ref())
         ),
-        _ => bail!("object is not a name"),
+        None => bail!("object is not a name"),
     }
 }
 
-fn number(value: &ProbeValue) -> Result<f64> {
-    match value.resolved() {
-        ProbeValue::Number(value) => Ok(*value),
-        _ => bail!("expected PDF number"),
-    }
+fn number(value: &ProbeValue<'_>) -> Result<f64> {
+    value.number().context("expected PDF number")
 }
 
 fn canonical_number(value: f64) -> Result<String> {

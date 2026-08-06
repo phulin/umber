@@ -44,10 +44,10 @@ Keep reusable test harness code here when multiple crates or integration tests n
 - `src/git_fixture.rs`: selected-checkout Git and filesystem authority validation for closed cases, preserving manifest order and revalidating before payload access.
 - `src/bin/pdf-normalize.rs`: host-only CLI exposing the independent Hayro
   structure projection to live-reference tooling.
-- `src/pdf.rs`: canonical Hayro-probe PDF page/content plus document-object and dictionary structure normalizer.
+- `src/pdf.rs`: canonical PDF structure normalizer that walks shallow Hayro-backed values directly.
 - `src/pdf/tests.rs`: inherited-resource merging and stable cycle-notation normalization coverage.
-- `src/pdf_probe.rs`: bounded Hayro-backed semantic PDF object, page, stream, and content-operation probe.
-- `src/pdf_probe/tests.rs`: classic/xref-stream, object-stream, budget, cycle, inheritance, and malformed-input probe coverage.
+- `src/pdf_probe.rs`: bounded Hayro document with shallow borrowed object, dictionary, array, and page handles plus focused owned stream-byte and content-operation queries. The temporary public facade exists for external consumer migration in `umber2-vgjr.16.3`; it must not regain a recursive owned object graph.
+- `src/pdf_probe/tests.rs`: classic/xref-stream, object-stream, budget, cycle, inheritance, raw/decoded-stream, operation-order, and malformed-input query coverage.
 - `src/pdf_probe/fixtures/xref-object-stream.pdf`: committed uncompressed xref-stream/object-stream compatibility fixture.
 - `src/pdf_fixture.rs`: dependency-free deterministic classic-xref PDF input fixture writer.
 - `src/pdf_fixture/tests.rs`: framing, stream, page/group, ICCBased-DCT, cycle, and nesting fixture coverage.

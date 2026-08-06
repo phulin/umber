@@ -41,5 +41,8 @@ fn normalization_merges_inherited_resources_and_marks_cycles_stably() {
     assert!(first.contains("/ParentFont <</BaseFont /Helvetica"));
     assert!(first.contains("/PageFont <</BaseFont /Courier"));
     assert!(first.contains("/ProcSet [/PDF]"));
-    assert!(first.contains("object <</Kind /Cycle /Next @0>>"));
+    assert!(
+        first.contains("object <</Kind /Cycle /Next @0>>"),
+        "{first}"
+    );
 }

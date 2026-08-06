@@ -6,7 +6,7 @@ use test_support::{
     closed_case::FixtureCase,
     corpus_root,
     pdf::normalize_structure,
-    pdf_probe::{PdfProbe, ProbeLimits, ProbeValue},
+    pdf_probe::{PdfProbe, ProbeLimits},
     read_binary_fixture, read_fixture,
 };
 use tex_state::Universe;
@@ -134,34 +134,40 @@ fn annotation_projection(bytes: &[u8]) -> Vec<Vec<AnnotationProjection>> {
                         );
                     }
                     assert_eq!(
-                        match annotation.get(b"Type").expect("annotation type").resolved() {
-                            ProbeValue::Name(name) => name.as_slice(),
-                            _ => panic!("annotation Type is not a name"),
-                        },
+                        annotation
+                            .get(b"Type")
+                            .and_then(|value| value.name())
+                            .expect("annotation Type is a name")
+                            .as_ref(),
                         b"Annot"
                     );
                     let rect = annotation
                         .get(b"Rect")
-                        .and_then(ProbeValue::as_array)
+                        .and_then(|value| value.array())
                         .expect("annotation rectangle")
                         .iter()
-                        .map(|number| match number.resolved() {
-                            ProbeValue::Number(value) => *value,
-                            _ => panic!("annotation rectangle value is numeric"),
+                        .map(|number| {
+                            number
+                                .number()
+                                .expect("annotation rectangle value is numeric")
                         })
                         .collect();
-                    let subtype = annotation.get(b"Subtype").expect("annotation subtype");
-                    let ProbeValue::Name(subtype) = subtype.resolved() else {
-                        panic!("annotation subtype is a name");
-                    };
-                    let subtype = subtype.clone();
+                    let subtype = annotation
+                        .get(b"Subtype")
+                        .and_then(|value| value.name())
+                        .expect("annotation subtype is a name")
+                        .as_ref()
+                        .to_vec();
                     let action_subtype = annotation
                         .get(b"A")
-                        .and_then(ProbeValue::as_dictionary)
+                        .and_then(|value| value.as_dictionary())
                         .and_then(|action| action.get(b"S"))
-                        .map(|value| match value.resolved() {
-                            ProbeValue::Name(name) => name.clone(),
-                            _ => panic!("annotation action subtype is a name"),
+                        .map(|value| {
+                            value
+                                .name()
+                                .expect("annotation action subtype is a name")
+                                .as_ref()
+                                .to_vec()
                         });
                     AnnotationProjection {
                         rectangle: rect,
