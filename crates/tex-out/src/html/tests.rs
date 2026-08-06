@@ -787,6 +787,38 @@ fn shared_render_document_matches_public_bytes_assets_and_incremental_identity()
 }
 
 #[test]
+fn render_resource_limit_counts_content_addressed_objects_once() {
+    let resolver = Resolver { missing_b: false };
+    let options = HtmlOptions::default();
+    let mut second = page();
+    second.testing_mut().fonts[0].name = "second-binding".to_owned();
+    let positioned = [page(), second]
+        .iter()
+        .enumerate()
+        .map(|(index, page)| {
+            crate::positioned::lower_page(page, (index + 1) as u32).expect("positioned page")
+        })
+        .collect::<Vec<_>>();
+    let resource_bytes =
+        include_bytes!("../../../umber-wasm/assets/cmu-serif-500-roman.woff2").len();
+    let document = build_positioned_render_document(
+        &positioned,
+        &resolver,
+        &options,
+        RenderSessionId::from_bytes([0x32; 16]),
+        1,
+        None,
+        RenderLimits {
+            max_resource_bytes: resource_bytes,
+            ..RenderLimits::default()
+        },
+    )
+    .expect("two bindings share one resident resource");
+    assert_eq!(document.fonts.len(), 2);
+    assert_eq!(document.revision.resources.len(), 1);
+}
+
+#[test]
 fn unclosed_special_scope_is_rejected() {
     let mut page = page();
     page.testing_mut().effects[0] = PageEffect::Special {

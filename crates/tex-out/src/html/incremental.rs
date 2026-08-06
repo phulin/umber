@@ -490,15 +490,15 @@ pub fn build_positioned_render_document<R: HtmlFontAssets>(
                     message,
                 })?;
             let checked = validate_font(font, web, options)?;
-            resource_bytes = resource_bytes.saturating_add(checked.web.woff2.len());
-            resources
-                .entry(checked.web.sha256)
-                .or_insert_with(|| RenderResource {
+            resources.entry(checked.web.sha256).or_insert_with(|| {
+                resource_bytes = resource_bytes.saturating_add(checked.web.woff2.len());
+                RenderResource {
                     identity: checked.web.sha256,
                     bytes: checked.web.woff2.clone(),
                     family: checked.family.clone(),
                     provenance: checked.web.provenance.clone(),
-                });
+                }
+            });
             resolved.insert(key, checked);
         }
     }
