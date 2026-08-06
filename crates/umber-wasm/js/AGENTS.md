@@ -9,10 +9,14 @@ Run authored tests with `node --test crates/umber-wasm/js/*.test.js`.
 ## File map
 
 - `compile.js` / `compile.d.ts`: typed file/font `ResourceResolver` facade over `advance`/`provideResources` and public types.
+- `session-driver.js`: shared direct and worker-realm session retry,
+  cancellation, progress, and disposal core.
 - `compile.test.js`: file/font batching, hints, retry, progress, conflict, abort, and JavaScript-side limit tests.
 - `persistent-cache.js` / `persistent-cache.d.ts`: distribution-scoped IndexedDB and in-memory verified-object stores.
 - `persistent-cache.test.js`: key isolation and cache lifecycle tests.
 - `worker-controller.js` / `worker-controller.d.ts`: main-realm timeout/abort controller.
+- `worker-rpc.js`: shared one-shot and retained-worker request correlation,
+  timeout, progress, and teardown core.
 - `worker-controller.test.js`: transfer fidelity and teardown tests.
 - `worker-entry.js`: dedicated module-worker compile entry and transfer response.
 - `html-preview.js` / `html-preview.d.ts`: CSP-validated scriptless iframe installer for canonical generated HTML.

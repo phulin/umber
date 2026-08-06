@@ -1,16 +1,13 @@
 import { validateSessionLimits } from "./compile.js";
+import {
+	WorkerRpcError as WorkerCompileError,
+	WorkerRpcClient,
+} from "./worker-rpc.js";
 
 const DEFAULT_TIMEOUT_MS = 10_000;
 const MAX_TIMEOUT_MS = 60_000;
 
-export class WorkerCompileError extends Error {
-	constructor(code, message, options = {}) {
-		super(message, { cause: options.cause });
-		this.name = "WorkerCompileError";
-		this.code = code;
-		if (options.diagnostic !== undefined) this.diagnostic = options.diagnostic;
-	}
-}
+export { WorkerCompileError };
 
 export async function compileInWorker(
 	options,
@@ -42,93 +39,18 @@ export async function compileInWorker(
 		return Promise.reject(error);
 	}
 
-	return new Promise((resolve, reject) => {
-		let settled = false;
-		const finish = (callback, value) => {
-			if (settled) return;
-			settled = true;
-			clearTimeout(timer);
-			control.signal?.removeEventListener("abort", onAbort);
-			worker.removeEventListener("message", onMessage);
-			worker.removeEventListener("error", onWorkerError);
-			worker.removeEventListener("messageerror", onMessageError);
-			worker.terminate();
-			callback(value);
-		};
-		const onMessage = (event) => {
-			const message = event.data;
-			if (message?.kind === "complete") {
-				finish(resolve, message.output);
-			} else if (message?.kind === "error") {
-				finish(
-					reject,
-					new WorkerCompileError(
-						message.error?.code ?? "worker",
-						message.error?.message ?? "worker compilation failed",
-						{
-							diagnostic: message.error?.diagnostic,
-						},
-					),
-				);
-			} else {
-				finish(
-					reject,
-					new WorkerCompileError(
-						"worker-protocol",
-						"worker returned an invalid message",
-					),
-				);
-			}
-		};
-		const onWorkerError = (event) => {
-			finish(
-				reject,
-				new WorkerCompileError(
-					"worker",
-					event.message ?? "worker execution failed",
-					{
-						cause: event.error,
-					},
-				),
-			);
-		};
-		const onMessageError = () => {
-			finish(
-				reject,
-				new WorkerCompileError(
-					"worker-protocol",
-					"worker response could not be cloned",
-				),
-			);
-		};
-		const onAbort = () => finish(reject, abortReason(control.signal));
-		const timer = setTimeout(
-			() =>
-				finish(
-					reject,
-					new WorkerCompileError("timeout", `worker exceeded ${timeoutMs} ms`),
-				),
-			timeoutMs,
-		);
-
-		worker.addEventListener("message", onMessage);
-		worker.addEventListener("error", onWorkerError);
-		worker.addEventListener("messageerror", onMessageError);
-		control.signal?.addEventListener("abort", onAbort, { once: true });
-		try {
-			worker.postMessage(prepared.message, prepared.transfer);
-		} catch (error) {
-			finish(
-				reject,
-				new WorkerCompileError(
-					"worker-protocol",
-					"compile request could not be cloned",
-					{
-						cause: error,
-					},
-				),
-			);
-		}
+	const rpc = new WorkerRpcClient(worker, {
+		timeoutMs,
+		signal: control.signal,
+	});
+	return rpc.request(prepared.message, {
+		transfer: prepared.transfer,
+		expectedKind: "complete",
+		errorKind: "error",
+		failureMessage: "worker compilation failed",
+		invalidMessage: "worker returned an invalid message",
+		cloneError: "compile request could not be cloned",
+		releaseOnSettle: true,
 	});
 }
 
@@ -171,23 +93,23 @@ export async function createEditorSessionInWorker(
 
 export class EditorWorkerFacade {
 	#worker;
-	#timeoutMs;
-	#signal;
+	#rpc;
 	#nextId = 1;
-	#pending = new Set();
 	#status;
-	#onOwnerAbort;
 
 	constructor(worker, timeoutMs, signal) {
 		this.#worker = worker;
-		this.#timeoutMs = timeoutMs;
-		this.#signal = signal;
-		this.#onOwnerAbort = () => this.terminate();
-		signal?.addEventListener("abort", this.#onOwnerAbort, { once: true });
+		this.#rpc = new WorkerRpcClient(worker, {
+			timeoutMs,
+			signal,
+			workerFailureMessage: "worker failed",
+			disposedMessage: "editor worker has been disposed",
+			pendingMessage: "an editor worker operation is already pending",
+		});
 	}
 
 	get disposed() {
-		return this.#worker === undefined;
+		return this.#rpc.disposed;
 	}
 
 	get status() {
@@ -247,8 +169,7 @@ export class EditorWorkerFacade {
 	}
 
 	terminate() {
-		this.#signal?.removeEventListener("abort", this.#onOwnerAbort);
-		this.#worker?.terminate();
+		this.#rpc.terminate();
 		this.#worker = undefined;
 	}
 
@@ -275,105 +196,25 @@ export class EditorWorkerFacade {
 		return result;
 	}
 
-	#request(
+	async #request(
 		message,
 		transfer = [],
 		expectedKind = "editor-result",
 		onProgress,
 		allowConcurrent = false,
 	) {
-		if (this.#worker === undefined) {
-			return Promise.reject(
-				new WorkerCompileError("disposed", "editor worker has been disposed"),
-			);
-		}
-		if (this.#pending.size > 0 && !allowConcurrent) {
-			return Promise.reject(
-				new WorkerCompileError(
-					"worker-protocol",
-					"an editor worker operation is already pending",
-				),
-			);
-		}
-		return new Promise((resolve, reject) => {
-			const worker = this.#worker;
-			const finish = (callback, value, release = false) => {
-				if (!this.#pending.has(message.id)) return;
-				clearTimeout(timer);
-				this.#signal?.removeEventListener("abort", onAbort);
-				worker.removeEventListener("message", onMessage);
-				worker.removeEventListener("error", onError);
-				worker.removeEventListener("messageerror", onMessageError);
-				this.#pending.delete(message.id);
-				if (release) this.terminate();
-				callback(value);
-			};
-			const onMessage = (event) => {
-				if (event.data?.id !== message.id) return;
-				if (event.data.kind === "editor-progress") {
-					if (event.data.result?.status !== undefined) {
-						this.#status = event.data.result.status;
-					}
-					onProgress?.(event.data.result);
-				} else if (event.data.kind === expectedKind) {
-					finish(resolve, event.data.result);
-				} else if (event.data.kind === "editor-error") {
-					finish(
-						reject,
-						new WorkerCompileError(
-							event.data.error?.code ?? "worker",
-							event.data.error?.message ?? "editor worker failed",
-							{ diagnostic: event.data.error?.diagnostic },
-						),
-					);
-				}
-			};
-			const onError = (event) =>
-				finish(
-					reject,
-					new WorkerCompileError("worker", event.message ?? "worker failed"),
-					true,
-				);
-			const onMessageError = () =>
-				finish(
-					reject,
-					new WorkerCompileError(
-						"worker-protocol",
-						"worker response could not be cloned",
-					),
-					true,
-				);
-			const onAbort = () => finish(reject, abortReason(this.#signal), true);
-			const timer = setTimeout(
-				() =>
-					finish(
-						reject,
-						new WorkerCompileError(
-							"timeout",
-							`worker exceeded ${this.#timeoutMs} ms`,
-						),
-						true,
-					),
-				this.#timeoutMs,
-			);
-			this.#pending.add(message.id);
-			worker.addEventListener("message", onMessage);
-			worker.addEventListener("error", onError);
-			worker.addEventListener("messageerror", onMessageError);
-			this.#signal?.addEventListener("abort", onAbort, { once: true });
-			try {
-				worker.postMessage(message, transfer);
-			} catch (error) {
-				finish(
-					reject,
-					new WorkerCompileError(
-						"worker-protocol",
-						"editor request could not be cloned",
-						{ cause: error },
-					),
-					true,
-				);
-			}
+		return this.#rpc.request(message, {
+			transfer,
+			expectedKind,
+			errorKind: "editor-error",
+			progressKind: "editor-progress",
+			onProgress: (result) => {
+				if (result?.status !== undefined) this.#status = result.status;
+				onProgress?.(result);
+			},
+			allowConcurrent,
+			failureMessage: "editor worker failed",
+			cloneError: "editor request could not be cloned",
 		});
 	}
 }

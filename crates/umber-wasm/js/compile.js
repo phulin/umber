@@ -1,3 +1,8 @@
+import {
+	SessionDriverError as CompileFacadeError,
+	SessionDriver,
+} from "./session-driver.js";
+
 const DEFAULT_LIMITS = Object.freeze({
 	attempts: 32,
 	userFiles: 512,
@@ -28,14 +33,7 @@ const HARD_LIMITS = Object.freeze({
 	effects: 10_000_000,
 });
 
-export class CompileFacadeError extends Error {
-	constructor(code, message, options = {}) {
-		super(message, { cause: options.cause });
-		this.name = "CompileFacadeError";
-		this.code = code;
-		if (options.diagnostic !== undefined) this.diagnostic = options.diagnostic;
-	}
-}
+export { CompileFacadeError };
 
 export async function compile(options, userFiles, resolver, signal, bindings) {
 	validateResolver(resolver);
@@ -47,83 +45,22 @@ export async function compile(options, userFiles, resolver, signal, bindings) {
 	);
 	throwIfAborted(signal);
 	const session = new Session(options);
+	const driver = new SessionDriver(session, resolver);
 	try {
 		addUserFiles(session, userFiles, limits);
-		for (let round = 0; round < limits.attempts; round += 1) {
-			throwIfAborted(signal);
-			const attempt =
-				typeof session.advance === "function"
-					? session.advance()
-					: session.compileAttempt();
-			if (attempt?.kind === "complete") {
-				const ledger = session.acceptedInputObservations;
-				if (ledger !== undefined) {
-					attempt.output.acceptedInputObservations = ledger;
-				}
-				return attempt.output;
-			}
-			if (attempt?.kind === "error") {
-				throw new CompileFacadeError(
-					attempt.diagnostic?.code ?? "compile",
-					attempt.diagnostic?.message ?? "compile failed",
-					{
-						diagnostic: attempt.diagnostic,
-					},
-				);
-			}
-			if (
-				attempt?.kind !== "need-resources" ||
-				!Array.isArray(attempt.required) ||
-				!Array.isArray(attempt.probes) ||
-				!Array.isArray(attempt.prefetchHints)
-			) {
-				throw new CompileFacadeError(
-					"invalid-binding",
-					"compileAttempt returned an invalid result",
-				);
-			}
-			throwIfAborted(signal);
-			let downloads;
-			try {
-				downloads = await resolver.resolve(attempt.required, {
-					signal,
-					probes: attempt.probes,
-					prefetchHints: attempt.prefetchHints,
-				});
-			} catch (error) {
-				if (signal?.aborted) throw abortReason(signal);
-				throw new CompileFacadeError(
-					"resolve",
-					`file resolution failed: ${errorMessage(error)}`,
-					{
-						cause: error,
-					},
-				);
-			}
-			throwIfAborted(signal);
-			if (!downloads || typeof downloads[Symbol.iterator] !== "function") {
-				throw new CompileFacadeError(
-					"invalid-resolver",
-					"resolver must return an iterable",
-				);
-			}
-			const responses = [...downloads];
-			try {
-				session.provideResources(responses);
-			} catch (error) {
-				throw new CompileFacadeError(
-					error?.code ?? "resource",
-					errorMessage(error),
-					{ cause: error },
-				);
-			}
-		}
-		throw new CompileFacadeError(
-			"attempt-limit",
-			`compile attempt limit ${limits.attempts} reached`,
-		);
+		const result = await driver.drive({
+			phase: "compile",
+			attempt: (current) =>
+				typeof current.advance === "function"
+					? current.advance()
+					: current.compileAttempt(),
+			isComplete: (attempt) => attempt?.kind === "complete",
+			signal,
+			attemptLimit: limits.attempts,
+		});
+		return result.output;
 	} finally {
-		session.dispose();
+		driver.dispose();
 	}
 }
 
@@ -159,16 +96,15 @@ export async function createEditorSession(
 
 export class EditorCompileFacade {
 	#session;
-	#resolver;
-	#operation;
+	#driver;
 
 	constructor(session, resolver) {
 		this.#session = session;
-		this.#resolver = resolver;
+		this.#driver = new SessionDriver(session, resolver);
 	}
 
 	get disposed() {
-		return this.#session === undefined;
+		return this.#driver.disposed;
 	}
 
 	get status() {
@@ -211,19 +147,13 @@ export class EditorCompileFacade {
 
 	cancelPendingPatch() {
 		const cancelled = this.#requireSession().cancelPendingPatch();
-		if (cancelled && this.#operation?.phase === "advance") {
-			this.#operation.controller.abort(new EditorOperationCancelled("advance"));
-		}
+		if (cancelled) this.#driver.cancel("advance");
 		return cancelled;
 	}
 
 	cancelStabilization() {
 		const cancelled = this.#requireSession().cancelStabilization();
-		if (cancelled && this.#operation?.phase === "stabilization") {
-			this.#operation.controller.abort(
-				new EditorOperationCancelled("stabilization"),
-			);
-		}
+		if (cancelled) this.#driver.cancel("stabilization");
 		return cancelled;
 	}
 
@@ -237,86 +167,26 @@ export class EditorCompileFacade {
 
 	dispose() {
 		if (this.#session === undefined) return;
-		this.#session.dispose();
+		this.#driver.dispose();
 		this.#session = undefined;
 	}
 
 	async #drive(phase, signal, onProgress) {
-		const session = this.#requireSession();
-		if (this.#operation !== undefined) {
-			throw new CompileFacadeError(
-				"operation-pending",
-				"an editor operation is already pending",
-			);
-		}
-		const controller = new AbortController();
-		const onOwnerAbort = () => controller.abort(abortReason(signal));
-		if (signal?.aborted) onOwnerAbort();
-		else signal?.addEventListener("abort", onOwnerAbort, { once: true });
-		this.#operation = { phase, controller };
-		try {
-			for (;;) {
-				throwIfAborted(signal);
-				const attempt =
-					phase === "advance" ? session.advance() : session.stabilizeAttempt();
-				if (attempt?.kind === "provisional" || attempt?.kind === "stable") {
-					const ledger = session.acceptedInputObservations;
-					if (ledger !== undefined) {
-						attempt.output.acceptedInputObservations = ledger;
-					}
-					return attempt;
-				}
-				if (attempt?.kind === "error") {
-					throw new CompileFacadeError(
-						attempt.diagnostic?.code ?? "compile",
-						attempt.diagnostic?.message ?? `${phase} failed`,
-						{ diagnostic: attempt.diagnostic },
-					);
-				}
-				if (
-					attempt?.kind !== "need-resources" ||
-					attempt.phase !== phase ||
-					!Array.isArray(attempt.required) ||
-					!Array.isArray(attempt.probes) ||
-					!Array.isArray(attempt.prefetchHints)
-				) {
-					throw new CompileFacadeError(
-						"invalid-binding",
-						`${phase} returned an invalid result`,
-					);
-				}
-				onProgress?.(attempt);
-				const responses = await resolveBatch(
-					this.#resolver,
-					attempt,
-					controller.signal,
-				);
-				throwIfAborted(signal);
-				session.provideResources(responses);
-			}
-		} catch (error) {
-			if (signal?.aborted) {
-				this.dispose();
-				throw abortReason(signal);
-			}
-			if (controller.signal.reason instanceof EditorOperationCancelled) {
-				return {
-					kind: "cancelled",
-					phase,
-					cancelled: true,
-					status: session.status,
-				};
-			}
-			throw error;
-		} finally {
-			signal?.removeEventListener("abort", onOwnerAbort);
-			if (this.#operation?.controller === controller)
-				this.#operation = undefined;
-		}
+		this.#requireSession();
+		return this.#driver.drive({
+			phase,
+			attempt: (session) =>
+				phase === "advance" ? session.advance() : session.stabilizeAttempt(),
+			isComplete: (attempt) =>
+				attempt?.kind === "provisional" || attempt?.kind === "stable",
+			signal,
+			onProgress,
+			pendingMessage: "an editor operation is already pending",
+		});
 	}
 
 	#requireSession() {
-		if (this.#session === undefined) {
+		if (this.#driver.disposed) {
 			throw new CompileFacadeError(
 				"disposed",
 				"editor session has been disposed",
@@ -324,37 +194,6 @@ export class EditorCompileFacade {
 		}
 		return this.#session;
 	}
-}
-
-class EditorOperationCancelled extends Error {
-	constructor(phase) {
-		super(`${phase} was cancelled`);
-	}
-}
-
-async function resolveBatch(resolver, attempt, signal) {
-	let downloads;
-	try {
-		downloads = await resolver.resolve(attempt.required, {
-			signal,
-			probes: attempt.probes,
-			prefetchHints: attempt.prefetchHints,
-		});
-	} catch (error) {
-		if (signal?.aborted) throw abortReason(signal);
-		throw new CompileFacadeError(
-			"resolve",
-			`file resolution failed: ${errorMessage(error)}`,
-			{ cause: error },
-		);
-	}
-	if (!downloads || typeof downloads[Symbol.iterator] !== "function") {
-		throw new CompileFacadeError(
-			"invalid-resolver",
-			"resolver must return an iterable",
-		);
-	}
-	return [...downloads];
 }
 
 async function sessionClass(bindings, project) {
@@ -469,8 +308,4 @@ function abortReason(signal) {
 	return (
 		signal.reason ?? new DOMException("The operation was aborted", "AbortError")
 	);
-}
-
-function errorMessage(error) {
-	return error instanceof Error ? error.message : String(error);
 }

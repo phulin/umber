@@ -10,59 +10,10 @@ export async function runCompileMessage(message, dependencies = {}) {
 	if (message?.kind !== "compile" || !Array.isArray(message.userFiles)) {
 		throw new Error("invalid compile worker request");
 	}
-	const bindings = dependencies.bindings ?? (await import("./umber_wasm.js"));
-	if (dependencies.bindings === undefined) {
-		const initialize = bindings.default;
-		await initialize(
-			message.wasmUrl === undefined
-				? undefined
-				: { module_or_path: message.wasmUrl },
-		);
-	}
-	const manifestResolver =
-		dependencies.resolver ??
-		(await (dependencies.createResolver ?? HttpManifestResolver.create)({
-			...message.resolver,
-			catalog: bindings,
-			maxFiles: message.options?.limits?.resolvedFiles,
-			maxBytes: message.options?.limits?.cachedFileBytes,
-		}));
-	const resourceResponses = new Map(
-		(message.resolver.resourceResponses ?? []).map((response) => [
-			resourceResponseIdentity(response),
-			response,
-		]),
+	const { bindings, options, resolver } = await prepareSession(
+		message,
+		dependencies,
 	);
-	const resolver =
-		resourceResponses.size === 0
-			? manifestResolver
-			: new CompositeResourceResolver([
-					{
-						async resolve(requests, options) {
-							return requests.concat(options?.probes ?? []).map(
-								(request) =>
-									resourceResponses.get(resourceRequestIdentity(request)) ?? {
-										...request,
-										type: `${request.type}-unavailable`,
-									},
-							);
-						},
-					},
-					manifestResolver,
-				]);
-	let options = message.options;
-	if (message.resolver.format !== undefined) {
-		const format = await manifestResolver.resolveFormat(
-			message.resolver.format,
-			{
-				engineVersion: bindings.packageVersion(),
-				formatSchema: bindings.formatSchemaVersion(),
-			},
-		);
-		const formatPrefetchHints =
-			manifestResolver.formatPrefetchHints?.(message.resolver.format) ?? [];
-		options = { ...options, format, formatPrefetchHints };
-	}
 	return compile(
 		options,
 		new Map(message.userFiles),
@@ -76,10 +27,23 @@ export async function createEditorFromMessage(message, dependencies = {}) {
 	if (message?.kind !== "editor-create" || !Array.isArray(message.userFiles)) {
 		throw new Error("invalid editor worker request");
 	}
+	const { bindings, options, resolver } = await prepareSession(
+		message,
+		dependencies,
+	);
+	return createEditorSession(
+		options,
+		new Map(message.userFiles),
+		resolver,
+		undefined,
+		bindings,
+	);
+}
+
+async function prepareSession(message, dependencies) {
 	const bindings = dependencies.bindings ?? (await import("./umber_wasm.js"));
 	if (dependencies.bindings === undefined) {
-		const initialize = bindings.default;
-		await initialize(
+		await bindings.default(
 			message.wasmUrl === undefined
 				? undefined
 				: { module_or_path: message.wasmUrl },
@@ -107,13 +71,7 @@ export async function createEditorFromMessage(message, dependencies = {}) {
 			manifestResolver.formatPrefetchHints?.(message.resolver.format) ?? [];
 		options = { ...options, format, formatPrefetchHints };
 	}
-	return createEditorSession(
-		options,
-		new Map(message.userFiles),
-		resolver,
-		undefined,
-		bindings,
-	);
+	return { bindings, options, resolver };
 }
 
 function composeResolver(message, manifestResolver) {

@@ -264,6 +264,11 @@ test("retained worker editor preserves lifecycle and binary output", async () =>
 	assert.equal((await editor.renderResync()).update.kind, "snapshot");
 	await editor.dispose();
 	assert.equal(Worker.instances[0].terminated, 1);
+	await assert.rejects(editor.advance(), {
+		name: "WorkerCompileError",
+		code: "disposed",
+		message: "editor worker has been disposed",
+	});
 });
 
 test("worker stabilization can be cancelled without terminating the session", async () => {
