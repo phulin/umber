@@ -8,6 +8,7 @@ pub mod alignment;
 pub mod expansion;
 pub mod linebreak;
 pub mod math;
+mod metrics;
 mod packing;
 pub mod protrusion;
 mod vertical_break;

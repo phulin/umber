@@ -4,7 +4,7 @@ use tex_state::ids::FontId;
 use tex_state::node::{GlueKind, KernKind, LeaderPayload, Node, Sign};
 use tex_state::scaled::{GlueSetRatio, Scaled};
 
-use super::{add, sub};
+use crate::metrics::{ListMetrics, MetricEvent, MetricOverflow};
 
 #[cfg(test)]
 mod tests;
@@ -468,32 +468,43 @@ impl NativeNodeTransaction {
                         .node_count
                         .checked_add(list.node_count)
                         .expect("math node count exceeds u32");
-                    meas.width = add(meas.width, list.width);
-                    meas.height = meas.height.max(list.height);
-                    meas.depth = meas.depth.max(list.depth);
+                    meas.observe_horizontal(
+                        MetricEvent::Box {
+                            width: list.width,
+                            height: list.height,
+                            depth: list.depth,
+                            shift: Scaled::from_raw(0),
+                        },
+                        MetricOverflow::APPENDIX_G,
+                    );
                 }
                 MathNode::Char { metrics, .. } => {
                     meas.node_count = meas
                         .node_count
                         .checked_add(1)
                         .expect("math node count exceeds u32");
-                    meas.width = add(meas.width, metrics.width);
-                    meas.height = meas.height.max(metrics.height);
-                    meas.depth = meas.depth.max(metrics.depth);
+                    meas.observe_horizontal(
+                        MetricEvent::Glyph {
+                            width: metrics.width,
+                            height: metrics.height,
+                            depth: metrics.depth,
+                        },
+                        MetricOverflow::APPENDIX_G,
+                    );
                 }
                 MathNode::Kern { amount, .. } => {
                     meas.node_count = meas
                         .node_count
                         .checked_add(1)
                         .expect("math node count exceeds u32");
-                    meas.width = add(meas.width, *amount);
+                    meas.observe_horizontal(MetricEvent::Kern(*amount), MetricOverflow::APPENDIX_G);
                 }
                 MathNode::Glue { spec, .. } => {
                     meas.node_count = meas
                         .node_count
                         .checked_add(1)
                         .expect("math node count exceeds u32");
-                    meas.width = add(meas.width, spec.width);
+                    meas.observe_horizontal(MetricEvent::Glue(*spec), MetricOverflow::APPENDIX_G);
                 }
                 MathNode::Penalty(_) => {
                     meas.node_count = meas
@@ -510,18 +521,29 @@ impl NativeNodeTransaction {
                         .node_count
                         .checked_add(1)
                         .expect("math node count exceeds u32");
-                    meas.width = add(meas.width, width.unwrap_or(Scaled::from_raw(0)));
-                    meas.height = meas.height.max(height.unwrap_or(Scaled::from_raw(0)));
-                    meas.depth = meas.depth.max(depth.unwrap_or(Scaled::from_raw(0)));
+                    meas.observe_horizontal(
+                        MetricEvent::Rule {
+                            width: width.unwrap_or(Scaled::from_raw(0)),
+                            height: height.unwrap_or(Scaled::from_raw(0)),
+                            depth: depth.unwrap_or(Scaled::from_raw(0)),
+                        },
+                        MetricOverflow::APPENDIX_G,
+                    );
                 }
                 MathNode::HList(boxed) | MathNode::VList(boxed) => {
                     meas.node_count = meas
                         .node_count
                         .checked_add(1)
                         .expect("math node count exceeds u32");
-                    meas.width = add(meas.width, boxed.width);
-                    meas.height = meas.height.max(sub(boxed.height, boxed.shift));
-                    meas.depth = meas.depth.max(add(boxed.depth, boxed.shift));
+                    meas.observe_horizontal(
+                        MetricEvent::Box {
+                            width: boxed.width,
+                            height: boxed.height,
+                            depth: boxed.depth,
+                            shift: boxed.shift,
+                        },
+                        MetricOverflow::APPENDIX_G,
+                    );
                 }
                 MathNode::Native(node) => {
                     meas.node_count = meas
@@ -545,29 +567,35 @@ impl NativeNodeTransaction {
             match node {
                 MathNode::Sequence(child) => stack.push((*child, 0)),
                 MathNode::HList(boxed) | MathNode::VList(boxed) => {
-                    meas.height = add(add(meas.height, meas.depth), boxed.height);
-                    meas.depth = boxed.depth;
-                    meas.width = meas.width.max(add(boxed.width, boxed.shift));
+                    meas.observe_vertical(
+                        MetricEvent::Box {
+                            width: boxed.width,
+                            height: boxed.height,
+                            depth: boxed.depth,
+                            shift: boxed.shift,
+                        },
+                        MetricOverflow::APPENDIX_G,
+                    );
                 }
                 MathNode::Kern { amount, .. } => {
-                    meas.height = add(meas.height, add(meas.depth, *amount));
-                    meas.depth = Scaled::from_raw(0);
+                    meas.observe_vertical(MetricEvent::Kern(*amount), MetricOverflow::APPENDIX_G);
                 }
                 MathNode::Glue { spec, .. } => {
-                    meas.height = add(meas.height, add(meas.depth, spec.width));
-                    meas.depth = Scaled::from_raw(0);
+                    meas.observe_vertical(MetricEvent::Glue(*spec), MetricOverflow::APPENDIX_G);
                 }
                 MathNode::Rule {
                     width,
                     height,
                     depth,
                 } => {
-                    meas.height = add(
-                        add(meas.height, meas.depth),
-                        height.unwrap_or(Scaled::from_raw(0)),
+                    meas.observe_vertical(
+                        MetricEvent::Rule {
+                            width: width.unwrap_or(Scaled::from_raw(0)),
+                            height: height.unwrap_or(Scaled::from_raw(0)),
+                            depth: depth.unwrap_or(Scaled::from_raw(0)),
+                        },
+                        MetricOverflow::APPENDIX_G,
                     );
-                    meas.depth = depth.unwrap_or(Scaled::from_raw(0));
-                    meas.width = meas.width.max(width.unwrap_or(Scaled::from_raw(0)));
                 }
                 MathNode::Native(node) => measure_native_vnode(node, meas),
                 MathNode::Penalty(_) | MathNode::Char { .. } => {}
@@ -594,66 +622,74 @@ pub(crate) fn node_is_char(node: &MathNode) -> bool {
 }
 
 fn measure_opaque_hnode(node: &Node, meas: &mut Measurement) {
-    match node {
-        Node::Kern { amount, .. } => meas.width = add(meas.width, *amount),
+    let event = match node {
+        Node::Kern { amount, .. } => MetricEvent::Kern(*amount),
         Node::Rule {
             width,
             height,
             depth,
-        } => {
-            meas.width = add(meas.width, width.unwrap_or(Scaled::from_raw(0)));
-            meas.height = meas.height.max(height.unwrap_or(Scaled::from_raw(0)));
-            meas.depth = meas.depth.max(depth.unwrap_or(Scaled::from_raw(0)));
-        }
-        Node::HList(boxed) | Node::VList(boxed) => {
-            meas.width = add(meas.width, boxed.width);
-            meas.height = meas.height.max(sub(boxed.height, boxed.shift));
-            meas.depth = meas.depth.max(add(boxed.depth, boxed.shift));
-        }
-        _ => {}
-    }
+        } => MetricEvent::Rule {
+            width: width.unwrap_or(Scaled::from_raw(0)),
+            height: height.unwrap_or(Scaled::from_raw(0)),
+            depth: depth.unwrap_or(Scaled::from_raw(0)),
+        },
+        Node::HList(boxed) | Node::VList(boxed) => MetricEvent::Box {
+            width: boxed.width,
+            height: boxed.height,
+            depth: boxed.depth,
+            shift: boxed.shift,
+        },
+        _ => MetricEvent::Ignored,
+    };
+    meas.observe_horizontal(event, MetricOverflow::APPENDIX_G);
 }
 
 fn measure_native_vnode(node: &Node, meas: &mut Measurement) {
-    match node {
-        Node::HList(boxed) | Node::VList(boxed) => {
-            meas.height = add(add(meas.height, meas.depth), boxed.height);
-            meas.depth = boxed.depth;
-            meas.width = meas.width.max(add(boxed.width, boxed.shift));
-        }
-        Node::Kern { amount, .. } => {
-            meas.height = add(meas.height, add(meas.depth, *amount));
-            meas.depth = Scaled::from_raw(0);
-        }
+    let event = match node {
+        Node::HList(boxed) | Node::VList(boxed) => MetricEvent::Box {
+            width: boxed.width,
+            height: boxed.height,
+            depth: boxed.depth,
+            shift: boxed.shift,
+        },
+        Node::Kern { amount, .. } => MetricEvent::Kern(*amount),
         Node::Rule {
             width,
             height,
             depth,
-        } => {
-            meas.height = add(
-                add(meas.height, meas.depth),
-                height.unwrap_or(Scaled::from_raw(0)),
-            );
-            meas.depth = depth.unwrap_or(Scaled::from_raw(0));
-            meas.width = meas.width.max(width.unwrap_or(Scaled::from_raw(0)));
-        }
-        _ => {}
-    }
+        } => MetricEvent::Rule {
+            width: width.unwrap_or(Scaled::from_raw(0)),
+            height: height.unwrap_or(Scaled::from_raw(0)),
+            depth: depth.unwrap_or(Scaled::from_raw(0)),
+        },
+        _ => MetricEvent::Ignored,
+    };
+    meas.observe_vertical(event, MetricOverflow::APPENDIX_G);
 }
 
 #[derive(Clone, Copy, Debug)]
 struct Measurement {
     node_count: u32,
-    width: Scaled,
-    height: Scaled,
-    depth: Scaled,
+    metrics: ListMetrics,
 }
 
 impl Measurement {
     const ZERO: Self = Self {
         node_count: 0,
-        width: Scaled::from_raw(0),
-        height: Scaled::from_raw(0),
-        depth: Scaled::from_raw(0),
+        metrics: ListMetrics::ZERO,
     };
+}
+
+impl std::ops::Deref for Measurement {
+    type Target = ListMetrics;
+
+    fn deref(&self) -> &Self::Target {
+        &self.metrics
+    }
+}
+
+impl std::ops::DerefMut for Measurement {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.metrics
+    }
 }

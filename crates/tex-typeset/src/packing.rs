@@ -1,4 +1,4 @@
-use tex_state::glue::{GlueSpec, Order};
+use tex_state::glue::Order;
 use tex_state::ids::NodeListId;
 use tex_state::node::Node;
 use tex_state::node::{BoxNode, BoxNodeFields, LeaderPayload, Sign, UnsetKind};
@@ -9,6 +9,7 @@ use tex_state::scaled::{GlueSetRatio, Scaled};
 
 #[cfg(test)]
 use crate::INF_BAD;
+use crate::metrics::{ListMetrics, MetricEvent, MetricOverflow, MetricsCursor};
 use crate::{OVERFULL_BADNESS, TypesetState, badness};
 
 fn add(left: Scaled, right: Scaled) -> Scaled {
@@ -230,26 +231,7 @@ pub fn readjust_vtop(state: &impl TypesetState, list: NodeListId, packed: &mut P
     packed.node.depth = depth;
 }
 
-#[derive(Clone, Copy, Debug)]
-struct Measurement {
-    width: Scaled,
-    height: Scaled,
-    depth: Scaled,
-    stretch: [Scaled; 4],
-    shrink: [Scaled; 4],
-    has_glue: bool,
-}
-
-impl Measurement {
-    const ZERO: Self = Self {
-        width: Scaled::from_raw(0),
-        height: Scaled::from_raw(0),
-        depth: Scaled::from_raw(0),
-        stretch: [Scaled::from_raw(0); 4],
-        shrink: [Scaled::from_raw(0); 4],
-        has_glue: false,
-    };
-}
+type Measurement = ListMetrics;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct GlueSetting {
@@ -383,9 +365,14 @@ fn measure_hlist(state: &impl TypesetState, nodes: NodeCursor<'_>) -> Measuremen
                     state.font_character_metrics(font, char::from(code))
                 };
                 if let Some(metrics) = metrics {
-                    meas.width = add(meas.width, metrics.width);
-                    meas.height = meas.height.max(metrics.height);
-                    meas.depth = meas.depth.max(metrics.depth);
+                    meas.observe_horizontal(
+                        MetricEvent::Glyph {
+                            width: metrics.width,
+                            height: metrics.height,
+                            depth: metrics.depth,
+                        },
+                        MetricOverflow::PACKING,
+                    );
                 }
                 run_len += 1;
             }
@@ -396,16 +383,24 @@ fn measure_hlist(state: &impl TypesetState, nodes: NodeCursor<'_>) -> Measuremen
         match node.packed() {
             PackedNode::Glyph { font, ch } => {
                 if let Some(metrics) = state.font_character_metrics(font, ch) {
-                    meas.width = add(meas.width, metrics.width);
-                    meas.height = meas.height.max(metrics.height);
-                    meas.depth = meas.depth.max(metrics.depth);
+                    meas.observe_horizontal(
+                        MetricEvent::Glyph {
+                            width: metrics.width,
+                            height: metrics.height,
+                            depth: metrics.depth,
+                        },
+                        MetricOverflow::PACKING,
+                    );
                 }
             }
             PackedNode::Kern { amount, .. } => {
-                meas.width = add(meas.width, amount);
+                meas.observe_horizontal(MetricEvent::Kern(amount), MetricOverflow::PACKING);
             }
             PackedNode::Glue { spec, leader } => {
-                add_glue(&mut meas, state.glue(spec), Axis::Horizontal);
+                meas.observe_horizontal(
+                    MetricEvent::Glue(state.glue(spec)),
+                    MetricOverflow::PACKING,
+                );
                 if let Some(leader) = leader {
                     add_hleader_perpendicular_dimensions(&mut meas, leader);
                 }
@@ -415,44 +410,59 @@ fn measure_hlist(state: &impl TypesetState, nodes: NodeCursor<'_>) -> Measuremen
                 height,
                 depth,
             } => {
-                if let Some(width) = width {
-                    meas.width = add(meas.width, width);
-                }
-                if let Some(height) = height {
-                    meas.height = meas.height.max(height);
-                }
-                if let Some(depth) = depth {
-                    meas.depth = meas.depth.max(depth);
-                }
+                meas.observe_horizontal(
+                    MetricEvent::Rule {
+                        width: width.unwrap_or(Scaled::from_raw(0)),
+                        height: height.unwrap_or(Scaled::from_raw(0)),
+                        depth: depth.unwrap_or(Scaled::from_raw(0)),
+                    },
+                    MetricOverflow::PACKING,
+                );
             }
             PackedNode::Box(box_node) => {
-                meas.width = add(meas.width, box_node.width);
-                meas.height = meas.height.max(sub(box_node.height, box_node.shift));
-                meas.depth = meas.depth.max(add(box_node.depth, box_node.shift));
+                meas.observe_horizontal(
+                    MetricEvent::Box {
+                        width: box_node.width,
+                        height: box_node.height,
+                        depth: box_node.depth,
+                        shift: box_node.shift,
+                    },
+                    MetricOverflow::PACKING,
+                );
             }
             PackedNode::Unset(unset) => {
-                meas.width = add(meas.width, unset.width);
-                meas.height = meas.height.max(unset.height);
-                meas.depth = meas.depth.max(unset.depth);
+                meas.observe_horizontal(
+                    MetricEvent::Box {
+                        width: unset.width,
+                        height: unset.height,
+                        depth: unset.depth,
+                        shift: Scaled::from_raw(0),
+                    },
+                    MetricOverflow::PACKING,
+                );
             }
             PackedNode::Image {
                 width,
                 height,
                 depth,
             } => {
-                meas.width = add(meas.width, width);
-                meas.height = meas.height.max(height);
-                meas.depth = meas.depth.max(depth);
+                meas.observe_horizontal(
+                    MetricEvent::Image {
+                        width,
+                        height,
+                        depth,
+                    },
+                    MetricOverflow::PACKING,
+                );
             }
             PackedNode::Disc(replace) => {
                 let replacement = measure_hlist(state, NodeCursor::compact(state.nodes(replace)));
-                meas.width = add(meas.width, replacement.width);
-                meas.height = meas.height.max(replacement.height);
-                meas.depth = meas.depth.max(replacement.depth);
-                meas.has_glue |= replacement.has_glue;
+                // A discretionary replacement contributes its natural box
+                // dimensions here, but its inner glue is not outer hpack glue.
+                meas.merge_horizontal_dimensions(replacement, MetricOverflow::PACKING);
             }
             PackedNode::Math(width) => {
-                meas.width = add(meas.width, width);
+                meas.observe_horizontal(MetricEvent::Math(width), MetricOverflow::PACKING);
             }
             PackedNode::Ignored => {}
         }
@@ -467,38 +477,51 @@ fn measure_hlist_nodes(state: &impl TypesetState, nodes: &[Node]) -> Measurement
 
 fn measure_vlist(state: &impl TypesetState, nodes: NodeCursor<'_>) -> Measurement {
     let mut meas = Measurement::ZERO;
-    for index in 0..nodes.len() {
+    let indexes = MetricsCursor::new(0..nodes.len());
+    for index in indexes {
         let node = nodes.get(index).expect("index belongs to node source");
         match node.packed() {
             PackedNode::Box(box_node) => {
-                meas.height = add(add(meas.height, meas.depth), box_node.height);
-                meas.depth = box_node.depth;
-                meas.width = meas.width.max(add(box_node.width, box_node.shift));
+                meas.observe_vertical(
+                    MetricEvent::Box {
+                        width: box_node.width,
+                        height: box_node.height,
+                        depth: box_node.depth,
+                        shift: box_node.shift,
+                    },
+                    MetricOverflow::PACKING,
+                );
             }
             PackedNode::Unset(unset) => {
-                meas.height = add(add(meas.height, meas.depth), unset.height);
-                meas.depth = unset.depth;
-                meas.width = meas.width.max(unset.width);
+                meas.observe_vertical(
+                    MetricEvent::Box {
+                        width: unset.width,
+                        height: unset.height,
+                        depth: unset.depth,
+                        shift: Scaled::from_raw(0),
+                    },
+                    MetricOverflow::PACKING,
+                );
             }
             PackedNode::Rule {
                 width,
                 height,
                 depth,
             } => {
-                meas.height = add(
-                    add(meas.height, meas.depth),
-                    height.unwrap_or(Scaled::from_raw(0)),
+                meas.observe_vertical(
+                    MetricEvent::Rule {
+                        width: width.unwrap_or(Scaled::from_raw(0)),
+                        height: height.unwrap_or(Scaled::from_raw(0)),
+                        depth: depth.unwrap_or(Scaled::from_raw(0)),
+                    },
+                    MetricOverflow::PACKING,
                 );
-                meas.depth = depth.unwrap_or(Scaled::from_raw(0));
-                if let Some(width) = width {
-                    meas.width = meas.width.max(width);
-                }
             }
             PackedNode::Kern { amount, .. } => {
-                add_vertical_spacing(&mut meas, amount);
+                meas.observe_vertical(MetricEvent::Kern(amount), MetricOverflow::PACKING);
             }
             PackedNode::Glue { spec, leader } => {
-                add_glue(&mut meas, state.glue(spec), Axis::Vertical);
+                meas.observe_vertical(MetricEvent::Glue(state.glue(spec)), MetricOverflow::PACKING);
                 if let Some(leader) = leader {
                     add_vleader_perpendicular_dimensions(&mut meas, leader);
                 }
@@ -508,9 +531,14 @@ fn measure_vlist(state: &impl TypesetState, nodes: NodeCursor<'_>) -> Measuremen
                 height,
                 depth,
             } => {
-                meas.height = add(add(meas.height, meas.depth), height);
-                meas.depth = depth;
-                meas.width = meas.width.max(width);
+                meas.observe_vertical(
+                    MetricEvent::Image {
+                        width,
+                        height,
+                        depth,
+                    },
+                    MetricOverflow::PACKING,
+                );
             }
             PackedNode::Glyph { .. }
             | PackedNode::Disc(_)
@@ -519,24 +547,6 @@ fn measure_vlist(state: &impl TypesetState, nodes: NodeCursor<'_>) -> Measuremen
         }
     }
     meas
-}
-
-#[derive(Clone, Copy)]
-enum Axis {
-    Horizontal,
-    Vertical,
-}
-
-fn add_glue(meas: &mut Measurement, spec: GlueSpec, axis: Axis) {
-    meas.has_glue = true;
-    match axis {
-        Axis::Horizontal => meas.width = add(meas.width, spec.width),
-        Axis::Vertical => add_vertical_spacing(meas, spec.width),
-    }
-    meas.stretch[spec.stretch_order as usize] =
-        add(meas.stretch[spec.stretch_order as usize], spec.stretch);
-    meas.shrink[spec.shrink_order as usize] =
-        add(meas.shrink[spec.shrink_order as usize], spec.shrink);
 }
 
 fn add_hleader_perpendicular_dimensions(meas: &mut Measurement, leader: &LeaderPayload) {
@@ -567,11 +577,6 @@ fn add_vleader_perpendicular_dimensions(meas: &mut Measurement, leader: &LeaderP
             }
         }
     }
-}
-
-fn add_vertical_spacing(meas: &mut Measurement, amount: Scaled) {
-    meas.height = add(meas.height, add(meas.depth, amount));
-    meas.depth = Scaled::from_raw(0);
 }
 
 fn clamp_depth(meas: &mut Measurement, box_max_depth: Scaled) {

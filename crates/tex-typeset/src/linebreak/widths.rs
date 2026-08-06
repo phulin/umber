@@ -6,12 +6,11 @@ use tex_state::scaled::Scaled;
 
 use crate::TypesetState;
 use crate::expansion::ExpansionCapacity;
+use crate::metrics::{MetricEvent, WideMetricTotals, wide_add_scaled};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) struct Widths {
-    pub(super) natural: WideScaled,
-    stretch: [WideScaled; 4],
-    shrink: [WideScaled; 4],
+    base: WideMetricTotals,
     pub(super) font_stretch: WideScaled,
     pub(super) font_shrink: WideScaled,
 }
@@ -19,20 +18,14 @@ pub(super) struct Widths {
 impl Widths {
     pub(super) fn zero() -> Self {
         Self {
-            natural: WideScaled::ZERO,
-            stretch: [WideScaled::ZERO; 4],
-            shrink: [WideScaled::ZERO; 4],
+            base: WideMetricTotals::ZERO,
             font_stretch: WideScaled::ZERO,
             font_shrink: WideScaled::ZERO,
         }
     }
 
     pub(super) fn add_assign(&mut self, other: Self) {
-        self.natural = wide_add(self.natural, other.natural);
-        for order in 0..4 {
-            self.stretch[order] = wide_add(self.stretch[order], other.stretch[order]);
-            self.shrink[order] = wide_add(self.shrink[order], other.shrink[order]);
-        }
+        self.base.add_assign(other.base);
         self.font_stretch = wide_add(self.font_stretch, other.font_stretch);
         self.font_shrink = wide_add(self.font_shrink, other.font_shrink);
     }
@@ -45,11 +38,7 @@ impl Widths {
 
     pub(super) fn sub(self, other: Self) -> Self {
         let mut out = Self::zero();
-        out.natural = wide_sub(self.natural, other.natural);
-        for order in 0..4 {
-            out.stretch[order] = wide_sub(self.stretch[order], other.stretch[order]);
-            out.shrink[order] = wide_sub(self.shrink[order], other.shrink[order]);
-        }
+        out.base = self.base.sub(other.base);
         out.font_stretch = wide_sub(self.font_stretch, other.font_stretch);
         out.font_shrink = wide_sub(self.font_shrink, other.font_shrink);
         out
@@ -89,6 +78,20 @@ impl Widths {
     }
 }
 
+impl std::ops::Deref for Widths {
+    type Target = WideMetricTotals;
+
+    fn deref(&self) -> &Self::Target {
+        &self.base
+    }
+}
+
+impl std::ops::DerefMut for Widths {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.base
+    }
+}
+
 fn wide_add(left: WideScaled, right: WideScaled) -> WideScaled {
     left.checked_add(right)
         .expect("scaled accumulator exceeds the addressable node-list domain")
@@ -100,7 +103,7 @@ fn wide_sub(left: WideScaled, right: WideScaled) -> WideScaled {
 }
 
 fn add_scaled(total: WideScaled, value: Scaled) -> WideScaled {
-    wide_add(total, WideScaled::from_scaled(value))
+    wide_add_scaled(total, value)
 }
 
 pub(super) fn line_widths_view<S: TypesetState>(
@@ -289,11 +292,7 @@ fn add_nested_list_widths<'a, S: TypesetState>(
 }
 
 fn add_glue(widths: &mut Widths, spec: GlueSpec) {
-    widths.natural = add_scaled(widths.natural, spec.width);
-    widths.stretch[spec.stretch_order as usize] =
-        add_scaled(widths.stretch[spec.stretch_order as usize], spec.stretch);
-    widths.shrink[spec.shrink_order as usize] =
-        add_scaled(widths.shrink[spec.shrink_order as usize], spec.shrink);
+    widths.base.observe(MetricEvent::Glue(spec));
 }
 
 fn add_char_expansion<S: TypesetState>(

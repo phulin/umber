@@ -22,6 +22,7 @@ Use this crate for layout algorithms whose correctness can be tested as pure fun
 - `src/math/operators/tests.rs`: direct TeX82 noad-construction, limits, italic-correction, script, fraction, radical, accent, and rule tests.
 - `src/math/variants.rs`: deterministic OpenType MATH size-variant selection and horizontal/vertical glyph-assembly planning.
 - `src/math/variants/tests.rs`: connector, overlap, extender-repetition, and malformed-construction tests.
+- `src/metrics.rs`: neutral metric-event IR and shared horizontal, vertical, and wide accumulators; domain modules retain glue, breakpoint, font-expansion, and observation policy.
 - `src/math/arithmetic.rs`: shared checked scaled-arithmetic guards for Appendix G.
 - `src/math/rebox.rs`: shared TeX82 §715 exact-width math-box centering and vertical-source packaging.
 - `src/packing.rs`: hpack/vpack/vtop kernels, pack parameters, measurements, glue setting, and diagnostics.

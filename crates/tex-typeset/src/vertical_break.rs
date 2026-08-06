@@ -3,6 +3,7 @@ use tex_state::node::Node;
 use tex_state::page::{AWFUL_BAD, DEPLORABLE, EJECT_PENALTY, INF_PENALTY};
 use tex_state::scaled::Scaled;
 
+use crate::metrics::{ListMetrics, MetricEvent};
 use crate::{INF_BAD, TypesetState, badness};
 
 /// Result of TeX's vertical break search.
@@ -43,15 +44,21 @@ pub fn vert_break(
         match node {
             None => penalty = Some(EJECT_PENALTY),
             Some(Node::HList(box_node)) | Some(Node::VList(box_node)) => {
-                acc.cur_height = add(add(acc.cur_height, acc.prev_depth)?, box_node.height)?;
-                acc.prev_depth = box_node.depth;
+                acc.try_observe_vertical(MetricEvent::Box {
+                    width: box_node.width,
+                    height: box_node.height,
+                    depth: box_node.depth,
+                    shift: box_node.shift,
+                })
+                .ok_or(VerticalBreakError::ArithmeticOverflow)?;
             }
             Some(Node::Rule { height, depth, .. }) => {
-                acc.cur_height = add(
-                    add(acc.cur_height, acc.prev_depth)?,
-                    height.unwrap_or_else(|| Scaled::from_raw(0)),
-                )?;
-                acc.prev_depth = depth.unwrap_or_else(|| Scaled::from_raw(0));
+                acc.try_observe_vertical(MetricEvent::Rule {
+                    width: Scaled::from_raw(0),
+                    height: height.unwrap_or_else(|| Scaled::from_raw(0)),
+                    depth: depth.unwrap_or_else(|| Scaled::from_raw(0)),
+                })
+                .ok_or(VerticalBreakError::ArithmeticOverflow)?;
             }
             Some(Node::Glue { .. }) => {
                 if prev_node.is_some_and(precedes_break) {
@@ -94,7 +101,7 @@ pub fn vert_break(
         if let Some(penalty) = penalty
             && penalty < INF_PENALTY
         {
-            let mut cost = vertical_break_badness(goal, acc.cur_height, acc.stretch, acc.shrink)?;
+            let mut cost = vertical_break_badness(goal, acc.height, acc.stretch, acc.shrink)?;
             if cost < AWFUL_BAD {
                 if penalty <= EJECT_PENALTY {
                     cost = penalty;
@@ -110,7 +117,7 @@ pub fn vert_break(
                 least_cost = cost;
                 best = VerticalBreak {
                     break_index: node.map(|_| index),
-                    best_height_plus_depth: add(acc.cur_height, acc.prev_depth)?,
+                    best_height_plus_depth: add(acc.height, acc.depth)?,
                     infinite_shrink_glue: Vec::new(),
                 };
             }
@@ -123,9 +130,9 @@ pub fn vert_break(
             update_spacing_node(state, node, &mut acc, index)?;
         }
 
-        if acc.prev_depth > max_depth {
-            acc.cur_height = add(acc.cur_height, sub(acc.prev_depth, max_depth)?)?;
-            acc.prev_depth = max_depth;
+        if acc.depth > max_depth {
+            acc.height = add(acc.height, sub(acc.depth, max_depth)?)?;
+            acc.depth = max_depth;
         }
         if let Some(node) = node {
             prev_node = Some(node);
@@ -137,22 +144,34 @@ pub fn vert_break(
 }
 
 struct VerticalBreakAccum {
-    cur_height: Scaled,
+    metrics: ListMetrics,
     stretch: [Scaled; 4],
     shrink: Scaled,
-    prev_depth: Scaled,
     infinite_shrink_glue: Vec<usize>,
 }
 
 impl VerticalBreakAccum {
     fn new() -> Self {
         Self {
-            cur_height: Scaled::from_raw(0),
+            metrics: ListMetrics::ZERO,
             stretch: [Scaled::from_raw(0); 4],
             shrink: Scaled::from_raw(0),
-            prev_depth: Scaled::from_raw(0),
             infinite_shrink_glue: Vec::new(),
         }
+    }
+}
+
+impl std::ops::Deref for VerticalBreakAccum {
+    type Target = ListMetrics;
+
+    fn deref(&self) -> &Self::Target {
+        &self.metrics
+    }
+}
+
+impl std::ops::DerefMut for VerticalBreakAccum {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.metrics
     }
 }
 
@@ -176,8 +195,8 @@ fn update_spacing_node(
         }
         _ => return Ok(()),
     };
-    acc.cur_height = add(add(acc.cur_height, acc.prev_depth)?, width)?;
-    acc.prev_depth = Scaled::from_raw(0);
+    acc.try_observe_vertical(MetricEvent::Kern(width))
+        .ok_or(VerticalBreakError::ArithmeticOverflow)?;
     Ok(())
 }
 
