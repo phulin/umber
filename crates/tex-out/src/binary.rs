@@ -2298,6 +2298,10 @@ impl Reader<'_> {
     }
 
     fn bytes(&mut self) -> Result<Vec<u8>, ParseError> {
+        Ok(self.bytes_ref()?.to_vec())
+    }
+
+    fn bytes_ref(&mut self) -> Result<&[u8], ParseError> {
         let len = self.len()?;
         if len > self.limits.max_collection_len {
             return Err(ParseError::LimitExceeded {
@@ -2306,11 +2310,15 @@ impl Reader<'_> {
                 limit: self.limits.max_collection_len,
             });
         }
-        Ok(self.take(len)?.to_vec())
+        self.take(len)
     }
 
     fn str(&mut self) -> Result<String, ParseError> {
-        String::from_utf8(self.bytes()?).map_err(|_| ParseError::InvalidUtf8)
+        Ok(self.str_ref()?.to_owned())
+    }
+
+    fn str_ref(&mut self) -> Result<&str, ParseError> {
+        std::str::from_utf8(self.bytes_ref()?).map_err(|_| ParseError::InvalidUtf8)
     }
 
     fn hash(&mut self) -> Result<ContentHash, ParseError> {
@@ -2998,7 +3006,11 @@ impl Reader<'_> {
                 });
             }
 
-            let mut completed = match self.node_head()? {
+            let mut completed = match self
+                .node_head(NodeReadMode::Owned)?
+                .parsed
+                .expect("retained node scan always returns a parsed node")
+            {
                 ParsedNode::Complete(node) => node,
                 ParsedNode::Frame(mut frame) => match frame.advance(None, self)? {
                     FrameProgress::NeedChild => {
@@ -3029,7 +3041,9 @@ impl Reader<'_> {
         loop {
             let depth = frames.len() + 1;
             self.begin_node(depth)?;
-            if let Some(frame) = self.skip_node_head()? {
+            if let Some(mut frame) = self.node_head(NodeReadMode::Scan)?.skip
+                && frame.ready(self)?
+            {
                 frames.push(frame);
                 continue;
             }
@@ -3067,125 +3081,10 @@ impl Reader<'_> {
         Ok(())
     }
 
-    fn skip_node_head(&mut self) -> Result<Option<SkipFrame>, ParseError> {
+    fn node_head(&mut self, mode: NodeReadMode) -> Result<ScannedNodeHead, ParseError> {
+        let retain = mode == NodeReadMode::Owned;
         let tag = self.u8()?;
-        let children = match tag {
-            wire::node::CHAR => {
-                self.u32()?;
-                self.u32()?;
-                self.scaled()?;
-                None
-            }
-            wire::node::LIG => {
-                self.u32()?;
-                self.u32()?;
-                self.scaled()?;
-                let count = self.u32()? as usize;
-                if count == 0 || count > 63 {
-                    return Err(ParseError::Validation(
-                        crate::ArtifactValidationError::InvalidLigatureSourceLength { count },
-                    ));
-                }
-                for _ in 0..count {
-                    self.u32()?;
-                }
-                None
-            }
-            wire::node::KERN => {
-                self.scaled()?;
-                parse_kern_kind(self.u8()?)?;
-                None
-            }
-            wire::node::MARGIN_KERN => {
-                self.scaled()?;
-                match self.u8()? {
-                    0 | 1 => {}
-                    tag => {
-                        return Err(ParseError::InvalidTag {
-                            kind: "margin kern side",
-                            tag,
-                        });
-                    }
-                }
-                self.u32()?;
-                self.u8()?;
-                None
-            }
-            wire::node::GLUE => {
-                self.glue_spec()?;
-                parse_glue_kind(self.u8()?)?;
-                match self.u8()? {
-                    wire::leader::NONE => None,
-                    wire::leader::HLIST | wire::leader::VLIST => {
-                        self.box_fields()?;
-                        Some(SkipFrame::List(self.collection_len(5)?))
-                    }
-                    wire::leader::RULE => {
-                        self.optional_scaled()?;
-                        self.optional_scaled()?;
-                        self.optional_scaled()?;
-                        None
-                    }
-                    tag => {
-                        return Err(ParseError::InvalidTag {
-                            kind: "leader payload",
-                            tag,
-                        });
-                    }
-                }
-            }
-            wire::node::PENALTY => {
-                self.i32()?;
-                None
-            }
-            wire::node::RULE => {
-                self.optional_scaled()?;
-                self.optional_scaled()?;
-                self.optional_scaled()?;
-                None
-            }
-            wire::node::HLIST | wire::node::VLIST => {
-                self.box_fields()?;
-                Some(SkipFrame::List(self.collection_len(5)?))
-            }
-            wire::node::WHATSIT_ANCHOR => {
-                self.u32()?;
-                None
-            }
-            wire::node::MATH_ON | wire::node::MATH_OFF => {
-                self.scaled()?;
-                None
-            }
-            wire::node::DISC => {
-                parse_disc_kind(self.u8()?)?;
-                Some(SkipFrame::Disc {
-                    phase: 0,
-                    remaining: self.collection_len(5)?,
-                })
-            }
-            wire::node::MARK => {
-                self.u16()?;
-                self.tokens()?;
-                None
-            }
-            wire::node::INSERT => {
-                self.u16()?;
-                Some(SkipFrame::List(self.collection_len(5)?))
-            }
-            wire::node::ADJUST => Some(SkipFrame::List(self.collection_len(5)?)),
-            tag => return Err(ParseError::InvalidTag { kind: "node", tag }),
-        };
-        if let Some(mut frame) = children
-            && frame.ready(self)?
-        {
-            return Ok(Some(frame));
-        }
-        Ok(None)
-    }
-
-    fn node_head(&mut self) -> Result<ParsedNode, ParseError> {
-        let tag = self.u8()?;
-        match tag {
+        let parsed = match tag {
             wire::node::CHAR => Ok(ParsedNode::Complete(PageNode::Char {
                 font_id: self.u32()?,
                 ch: self.u32()?,
@@ -3243,7 +3142,7 @@ impl Reader<'_> {
                             kind,
                             vertical: tag == wire::leader::VLIST,
                             fields,
-                            children: Vec::with_capacity(remaining),
+                            children: Vec::with_capacity(if retain { remaining } else { 0 }),
                             remaining,
                         }))
                     }
@@ -3274,7 +3173,7 @@ impl Reader<'_> {
                 Ok(ParsedNode::Frame(DecodeFrame::Box {
                     vertical: tag == wire::node::VLIST,
                     fields,
-                    children: Vec::with_capacity(remaining),
+                    children: Vec::with_capacity(if retain { remaining } else { 0 }),
                     remaining,
                 }))
             }
@@ -3289,7 +3188,7 @@ impl Reader<'_> {
                 Ok(ParsedNode::Frame(DecodeFrame::Disc {
                     kind,
                     phase: 0,
-                    pre: Vec::with_capacity(remaining),
+                    pre: Vec::with_capacity(if retain { remaining } else { 0 }),
                     post: Vec::new(),
                     replace: Vec::new(),
                     remaining,
@@ -3297,38 +3196,47 @@ impl Reader<'_> {
             }
             wire::node::MARK => Ok(ParsedNode::Complete(PageNode::Mark {
                 class: self.u16()?,
-                tokens: self.tokens()?,
+                tokens: self.tokens_with_mode(mode)?,
             })),
             wire::node::INSERT => {
                 let class = self.u16()?;
                 let remaining = self.collection_len(5)?;
                 Ok(ParsedNode::Frame(DecodeFrame::Insert {
                     class,
-                    content: Vec::with_capacity(remaining),
+                    content: Vec::with_capacity(if retain { remaining } else { 0 }),
                     remaining,
                 }))
             }
             wire::node::ADJUST => {
                 let remaining = self.collection_len(5)?;
                 Ok(ParsedNode::Frame(DecodeFrame::Adjust {
-                    content: Vec::with_capacity(remaining),
+                    content: Vec::with_capacity(if retain { remaining } else { 0 }),
                     remaining,
                 }))
             }
             tag => Err(ParseError::InvalidTag { kind: "node", tag }),
-        }
+        }?;
+        Ok(ScannedNodeHead::from_parsed(mode, parsed))
     }
 
-    fn tokens(&mut self) -> Result<Vec<PageToken>, ParseError> {
+    fn tokens_with_mode(&mut self, mode: NodeReadMode) -> Result<Vec<PageToken>, ParseError> {
+        let retain = mode == NodeReadMode::Owned;
         let len = self.collection_len(2)?;
-        let mut tokens = Vec::with_capacity(len);
+        let mut tokens = Vec::with_capacity(if retain { len } else { 0 });
         for _ in 0..len {
-            tokens.push(match self.u8()? {
+            let token = match self.u8()? {
                 wire::token::CHAR => PageToken::Char {
                     ch: self.u32()?,
                     cat: parse_token_catcode(self.u8()?)?,
                 },
-                wire::token::CONTROL_SEQUENCE => PageToken::ControlSequence(self.str()?),
+                wire::token::CONTROL_SEQUENCE => {
+                    let name = self.str_ref()?;
+                    PageToken::ControlSequence(if retain {
+                        name.to_owned()
+                    } else {
+                        String::new()
+                    })
+                }
                 wire::token::PARAM => PageToken::Param(self.u8()?),
                 wire::token::ACTIVE_CONTROL_SEQUENCE => {
                     PageToken::ActiveControlSequence(self.u32()?)
@@ -3336,7 +3244,10 @@ impl Reader<'_> {
                 tag => {
                     return Err(ParseError::InvalidTag { kind: "token", tag });
                 }
-            });
+            };
+            if retain {
+                tokens.push(token);
+            }
         }
         Ok(tokens)
     }
@@ -3402,6 +3313,45 @@ impl BoxFields {
             children,
         }
     }
+}
+
+struct ScannedNodeHead {
+    parsed: Option<ParsedNode>,
+    skip: Option<SkipFrame>,
+}
+
+impl ScannedNodeHead {
+    fn from_parsed(mode: NodeReadMode, parsed: ParsedNode) -> Self {
+        if mode != NodeReadMode::Scan {
+            return Self {
+                parsed: Some(parsed),
+                skip: None,
+            };
+        }
+        let skip = match &parsed {
+            ParsedNode::Complete(_) => None,
+            ParsedNode::Frame(
+                DecodeFrame::Box { remaining, .. }
+                | DecodeFrame::LeaderBox { remaining, .. }
+                | DecodeFrame::Insert { remaining, .. }
+                | DecodeFrame::Adjust { remaining, .. },
+            ) => Some(SkipFrame::List(*remaining)),
+            ParsedNode::Frame(DecodeFrame::Disc { remaining, .. }) => Some(SkipFrame::Disc {
+                phase: 0,
+                remaining: *remaining,
+            }),
+        };
+        Self {
+            parsed: Some(parsed),
+            skip,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum NodeReadMode {
+    Owned,
+    Scan,
 }
 
 enum ParsedNode {
