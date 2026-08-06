@@ -1,7 +1,6 @@
 //! Native distribution acquisition over the shared verified blob store.
 
-use crate::fetch::agent;
-use crate::manifest::fetch_manifest_with_agent;
+use crate::manifest::fetch_manifest_with_downloader;
 use crate::{
     BatchFetchError, BlobStore, CacheError, FetchCancellation, FetchClient, FetchClientConfig,
     FetchRequest, FetchedObject, ManifestFetchError,
@@ -42,17 +41,14 @@ impl std::error::Error for DistributionClientError {
 pub struct DistributionClient {
     store: BlobStore,
     fetch: FetchClient,
-    manifest_agent: ureq::Agent,
 }
 
 impl DistributionClient {
     #[must_use]
     pub fn new(store: BlobStore, config: FetchClientConfig) -> Self {
-        let manifest_agent = agent(config.timeout);
         Self {
             store,
             fetch: FetchClient::new(config),
-            manifest_agent,
         }
     }
 
@@ -64,8 +60,7 @@ impl DistributionClient {
     ) -> Self {
         Self {
             store,
-            fetch: FetchClient::with_agent(config, transport.clone()),
-            manifest_agent: transport,
+            fetch: FetchClient::with_agent(config, transport),
         }
     }
 
@@ -112,8 +107,9 @@ impl DistributionClient {
                 cache_hit: true,
             });
         }
-        let bytes = fetch_manifest_with_agent(url, digest, cancellation, &self.manifest_agent)
-            .map_err(DistributionClientError::Manifest)?;
+        let bytes =
+            fetch_manifest_with_downloader(url, digest, cancellation, self.fetch.downloader())
+                .map_err(DistributionClientError::Manifest)?;
         self.store
             .store_manifest(digest, &bytes)
             .map_err(DistributionClientError::Cache)?;

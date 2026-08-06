@@ -2,6 +2,7 @@
 
 mod cache;
 mod distribution_client;
+mod downloader;
 mod fetch;
 mod manifest;
 

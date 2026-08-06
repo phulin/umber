@@ -173,24 +173,7 @@ impl BlobStore {
     }
 
     pub fn load(&self, spec: &VerifiedBlobSpec) -> Result<Option<Vec<u8>>, CacheError> {
-        spec.validate()?;
-        let Some(authority) = self.authority(false)? else {
-            let legacy = self.load_legacy(spec)?;
-            if let Some(bytes) = &legacy {
-                self.store(spec, bytes)?;
-            }
-            return Ok(legacy);
-        };
-        let name = entry_name(spec);
-        let _lock = authority.lock(&name)?;
-        if let Some(bytes) = self.load_locked(&authority, &name, spec)? {
-            return Ok(Some(bytes));
-        }
-        let legacy = self.load_legacy(spec)?;
-        if let Some(bytes) = &legacy {
-            let _ = authority.publish(&name, &encode_entry(spec, bytes))?;
-        }
-        Ok(legacy)
+        self.resolve_entry(spec, false, &|_| Ok(()), || Ok::<_, CacheError>(None))
     }
 
     pub fn store(&self, spec: &VerifiedBlobSpec, bytes: &[u8]) -> Result<(), CacheError> {
@@ -201,23 +184,10 @@ impl BlobStore {
                 source,
             )
         })?;
-        let authority = self
-            .authority(true)?
-            .expect("creating the blob namespace returns an authority");
-        let name = entry_name(spec);
-        let _lock = authority.lock(&name)?;
-        if self.load_locked(&authority, &name, spec)?.is_some() {
-            return Ok(());
-        }
-        let entry = encode_entry(spec, bytes);
-        loop {
-            if authority.publish(&name, &entry)? {
-                return Ok(());
-            }
-            if self.load_locked(&authority, &name, spec)?.is_some() {
-                return Ok(());
-            }
-        }
+        self.resolve_entry(spec, true, &|_| Ok(()), || {
+            Ok::<_, CacheError>(Some(bytes.to_vec()))
+        })?;
+        Ok(())
     }
 
     /// Loads a structurally verified blob and applies caller-owned semantic validation.
@@ -227,33 +197,7 @@ impl BlobStore {
         spec: &VerifiedBlobSpec,
         validate: impl Fn(&[u8]) -> Result<(), String>,
     ) -> Result<Option<Vec<u8>>, CacheError> {
-        spec.validate()?;
-        let Some(authority) = self.authority(false)? else {
-            let legacy = self
-                .load_legacy(spec)?
-                .filter(|bytes| validate(bytes).is_ok());
-            if let Some(bytes) = &legacy {
-                self.store(spec, bytes)?;
-            }
-            return Ok(legacy);
-        };
-        let name = entry_name(spec);
-        let _lock = authority.lock(&name)?;
-        if let Some(bytes) = self.load_locked(&authority, &name, spec)? {
-            if validate(&bytes).is_ok() {
-                return Ok(Some(bytes));
-            }
-            authority.quarantine(&name)?;
-        }
-        let Some(bytes) = self.load_legacy(spec)? else {
-            return Ok(None);
-        };
-        if validate(&bytes).is_err() {
-            return Ok(None);
-        }
-        let encoded = encode_entry(spec, &bytes);
-        let _ = authority.publish(&name, &encoded)?;
-        Ok(Some(bytes))
+        self.resolve_entry(spec, false, &validate, || Ok::<_, CacheError>(None))
     }
 
     /// Returns a validated blob, constructing and publishing at most once per key.
@@ -266,52 +210,92 @@ impl BlobStore {
     where
         E: From<CacheError>,
     {
+        Ok(self
+            .resolve_entry(spec, true, &validate, || construct().map(Some))?
+            .expect("constructing entry resolution cannot remain absent"))
+    }
+
+    /// Runs the complete per-key entry transition while holding the sole key lock.
+    ///
+    /// Current entries, compatibility migration, semantic quarantine,
+    /// construction, verified encoding, and no-clobber publication all pass
+    /// through this state machine. Read-only misses avoid creating cache paths.
+    fn resolve_entry<E>(
+        &self,
+        spec: &VerifiedBlobSpec,
+        create: bool,
+        validate: &impl Fn(&[u8]) -> Result<(), String>,
+        construct: impl FnOnce() -> Result<Option<Vec<u8>>, E>,
+    ) -> Result<Option<Vec<u8>>, E>
+    where
+        E: From<CacheError>,
+    {
         spec.validate().map_err(E::from)?;
-        let authority = self
-            .authority(true)
-            .map_err(E::from)?
-            .expect("creating the blob namespace returns an authority");
+        let mut staged = None;
+        let authority = match self.authority(create).map_err(E::from)? {
+            Some(authority) => authority,
+            None => {
+                staged = self
+                    .load_legacy(spec)
+                    .map_err(E::from)?
+                    .filter(|bytes| validate(bytes).is_ok());
+                if staged.is_none() {
+                    return Ok(None);
+                }
+                self.authority(true)
+                    .map_err(E::from)?
+                    .expect("creating the blob namespace returns an authority")
+            }
+        };
         let name = entry_name(spec);
         let _lock = authority.lock(&name).map_err(E::from)?;
-        if let Some(bytes) = self.load_locked(&authority, &name, spec).map_err(E::from)? {
-            if validate(&bytes).is_ok() {
-                return Ok(bytes);
-            }
-            authority.quarantine(&name).map_err(E::from)?;
-        }
-        if let Some(bytes) = self.load_legacy(spec).map_err(E::from)?
-            && validate(&bytes).is_ok()
-        {
-            let encoded = encode_entry(spec, &bytes);
-            let _ = authority.publish(&name, &encoded).map_err(E::from)?;
-            return Ok(bytes);
-        }
-        let bytes = construct()?;
-        verify_payload(spec, &bytes)
-            .map_err(|source| {
-                CacheError::new("verify constructed blob for", authority.path(&name), source)
-            })
-            .map_err(E::from)?;
-        validate(&bytes)
-            .map_err(|message| {
-                CacheError::new(
-                    "validate constructed blob for",
-                    authority.path(&name),
-                    io::Error::new(io::ErrorKind::InvalidData, message),
-                )
-            })
-            .map_err(E::from)?;
-        let encoded = encode_entry(spec, &bytes);
+        let mut construct = Some(construct);
+
         loop {
-            if authority.publish(&name, &encoded).map_err(E::from)? {
-                return Ok(bytes);
-            }
-            if let Some(winner) = self.load_locked(&authority, &name, spec).map_err(E::from)? {
-                if validate(&winner).is_ok() {
-                    return Ok(winner);
+            if let Some(bytes) = self.load_locked(&authority, &name, spec).map_err(E::from)? {
+                if validate(&bytes).is_ok() {
+                    return Ok(Some(bytes));
                 }
                 authority.quarantine(&name).map_err(E::from)?;
             }
+
+            let legacy = if staged.is_none() {
+                self.load_legacy(spec)
+                    .map_err(E::from)?
+                    .filter(|bytes| validate(bytes).is_ok())
+            } else {
+                None
+            };
+            let candidate = match staged.take().or(legacy) {
+                Some(bytes) => bytes,
+                None if !create => return Ok(None),
+                None => match construct
+                    .take()
+                    .expect("entry construction is attempted at most once")(
+                )? {
+                    Some(bytes) => bytes,
+                    None => return Ok(None),
+                },
+            };
+            verify_payload(spec, &candidate)
+                .map_err(|source| {
+                    CacheError::new("verify candidate blob for", authority.path(&name), source)
+                })
+                .map_err(E::from)?;
+            validate(&candidate)
+                .map_err(|message| {
+                    CacheError::new(
+                        "validate candidate blob for",
+                        authority.path(&name),
+                        io::Error::new(io::ErrorKind::InvalidData, message),
+                    )
+                })
+                .map_err(E::from)?;
+            let encoded = encode_entry(spec, &candidate);
+            if authority.publish(&name, &encoded).map_err(E::from)? {
+                return Ok(Some(candidate));
+            }
+            staged = Some(candidate);
         }
     }
 

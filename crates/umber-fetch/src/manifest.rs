@@ -1,12 +1,9 @@
 use std::error::Error;
 use std::fmt;
-use std::io::Read;
 use std::time::Duration;
 
-use sha2::{Digest, Sha256};
-
 use crate::FetchCancellation;
-use crate::fetch::{agent, parse_transport_url};
+use crate::downloader::{DownloadFailure, DownloadPolicy, LengthPolicy, VerifiedDownloader};
 
 const MAX_MANIFEST_BYTES: u64 = 32 * 1024 * 1024;
 
@@ -54,77 +51,32 @@ pub fn fetch_manifest_cancellable(
     timeout: Duration,
     cancellation: &FetchCancellation,
 ) -> Result<Vec<u8>, ManifestFetchError> {
-    fetch_manifest_with_agent(url, expected_sha256, cancellation, &agent(timeout))
+    fetch_manifest_with_downloader(
+        url,
+        expected_sha256,
+        cancellation,
+        &VerifiedDownloader::new(timeout),
+    )
 }
 
-pub(crate) fn fetch_manifest_with_agent(
+pub(crate) fn fetch_manifest_with_downloader(
     url: &str,
     expected_sha256: &str,
     cancellation: &FetchCancellation,
-    agent: &ureq::Agent,
+    downloader: &VerifiedDownloader,
 ) -> Result<Vec<u8>, ManifestFetchError> {
-    if cancellation.is_cancelled() {
-        return Err(ManifestFetchError::Cancelled);
-    }
-    let url = parse_transport_url(url, "manifests").map_err(ManifestFetchError::InvalidUrl)?;
-    let mut response = agent
-        .get(url)
-        .call()
-        .map_err(|error| ManifestFetchError::Transport(error.to_string()))?;
-    if !response.status().is_success() {
-        return Err(ManifestFetchError::HttpStatus(response.status().as_u16()));
-    }
-    if response
-        .body()
-        .content_length()
-        .is_some_and(|length| length > MAX_MANIFEST_BYTES)
-    {
-        return Err(ManifestFetchError::TooLarge {
-            limit: MAX_MANIFEST_BYTES,
-        });
-    }
-    let mut bytes = Vec::new();
-    let mut body = response.body_mut().as_reader();
-    let mut reader = body.by_ref().take(MAX_MANIFEST_BYTES + 1);
-    let mut chunk = [0_u8; 64 * 1024];
-    loop {
-        if cancellation.is_cancelled() {
-            return Err(ManifestFetchError::Cancelled);
-        }
-        let count = reader
-            .read(&mut chunk)
-            .map_err(|error| ManifestFetchError::Transport(error.to_string()))?;
-        if count == 0 {
-            break;
-        }
-        bytes.extend_from_slice(&chunk[..count]);
-    }
-    if cancellation.is_cancelled() {
-        return Err(ManifestFetchError::Cancelled);
-    }
-    if bytes.len() as u64 > MAX_MANIFEST_BYTES {
-        return Err(ManifestFetchError::TooLarge {
-            limit: MAX_MANIFEST_BYTES,
-        });
-    }
-    let actual = hex_digest(&bytes);
-    if actual != expected_sha256 {
-        return Err(ManifestFetchError::DigestMismatch {
-            expected: expected_sha256.to_owned(),
-            actual,
-        });
-    }
-    Ok(bytes)
-}
-
-fn hex_digest(bytes: &[u8]) -> String {
-    let digest = Sha256::digest(bytes);
-    let mut output = String::with_capacity(64);
-    for byte in digest {
-        use fmt::Write as _;
-        write!(output, "{byte:02x}").expect("writing to a string cannot fail");
-    }
-    output
+    downloader
+        .download(
+            url,
+            &DownloadPolicy {
+                subject: "manifests",
+                length: LengthPolicy::AtMost(MAX_MANIFEST_BYTES),
+                expected_sha256,
+                retries: 0,
+            },
+            cancellation,
+        )
+        .map_err(|failure| map_download_failure(failure, expected_sha256))
 }
 
 #[cfg(test)]
@@ -134,5 +86,28 @@ pub(crate) fn fetch_manifest_with_test_agent(
     cancellation: &FetchCancellation,
     agent: &ureq::Agent,
 ) -> Result<Vec<u8>, ManifestFetchError> {
-    fetch_manifest_with_agent(url, expected_sha256, cancellation, agent)
+    fetch_manifest_with_downloader(
+        url,
+        expected_sha256,
+        cancellation,
+        &VerifiedDownloader::with_agent(agent.clone()),
+    )
+}
+
+fn map_download_failure(failure: DownloadFailure, expected_sha256: &str) -> ManifestFetchError {
+    match failure {
+        DownloadFailure::InvalidUrl(message) => ManifestFetchError::InvalidUrl(message),
+        DownloadFailure::HttpStatus(status) => ManifestFetchError::HttpStatus(status),
+        DownloadFailure::Transport(message) => ManifestFetchError::Transport(message),
+        DownloadFailure::TooLarge { limit } => ManifestFetchError::TooLarge { limit },
+        DownloadFailure::LengthMismatch { expected, actual } => {
+            debug_assert!(actual > expected);
+            ManifestFetchError::TooLarge { limit: expected }
+        }
+        DownloadFailure::DigestMismatch { actual } => ManifestFetchError::DigestMismatch {
+            expected: expected_sha256.to_owned(),
+            actual,
+        },
+        DownloadFailure::Cancelled => ManifestFetchError::Cancelled,
+    }
 }

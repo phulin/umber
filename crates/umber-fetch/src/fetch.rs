@@ -1,6 +1,5 @@
 use std::error::Error;
 use std::fmt;
-use std::io::Read;
 use std::num::NonZeroUsize;
 use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -11,7 +10,9 @@ use umber_distribution::ObjectEntry;
 use ureq::http::Uri;
 use ureq::http::uri::PathAndQuery;
 
-use crate::cache::hex_digest;
+use crate::downloader::{
+    DownloadFailure, DownloadPolicy, LengthPolicy, VerifiedDownloader, parse_transport_url,
+};
 use crate::{CacheError, ObjectCache};
 
 #[derive(Clone, Debug)]
@@ -144,20 +145,25 @@ impl Error for BatchFetchError {}
 
 #[derive(Clone, Debug)]
 pub struct FetchClient {
-    agent: ureq::Agent,
+    downloader: VerifiedDownloader,
     config: FetchClientConfig,
 }
 
 impl FetchClient {
     #[must_use]
     pub fn new(config: FetchClientConfig) -> Self {
-        let agent = agent(config.timeout);
-        Self { agent, config }
+        let downloader = VerifiedDownloader::new(config.timeout);
+        Self { downloader, config }
     }
 
     #[cfg(test)]
     pub(crate) fn with_agent(config: FetchClientConfig, agent: ureq::Agent) -> Self {
-        Self { agent, config }
+        let downloader = VerifiedDownloader::with_agent(agent);
+        Self { downloader, config }
+    }
+
+    pub(crate) fn downloader(&self) -> &VerifiedDownloader {
+        &self.downloader
     }
 
     /// Acquires a complete batch in input order. On any failure no bytes are
@@ -298,90 +304,17 @@ impl FetchClient {
         }
         let url = join_url(base_url, &request.object.object)
             .map_err(|error| diagnostic(request, FetchFailure::InvalidUrl(error.to_string())))?;
-        let mut last_failure = None;
-        for attempt in 0..=self.config.retries {
-            check_cancelled(request, cancellation)?;
-            match self.download(&url, request, cancellation) {
-                Ok(bytes) => {
-                    check_cancelled(request, cancellation)?;
-                    return Ok(fetched(request, bytes, false));
-                }
-                Err(failure) => {
-                    let retry = retryable(&failure) && attempt < self.config.retries;
-                    last_failure = Some(failure);
-                    if !retry {
-                        break;
-                    }
-                }
-            }
-        }
-        Err(diagnostic(
-            request,
-            last_failure.expect("at least one download attempt"),
-        ))
+        let policy = DownloadPolicy {
+            subject: "distribution objects",
+            length: LengthPolicy::Exact(request.object.bytes),
+            expected_sha256: &request.object.sha256,
+            retries: self.config.retries,
+        };
+        self.downloader
+            .download_uri(&url, &policy, cancellation)
+            .map(|bytes| fetched(request, bytes, false))
+            .map_err(|failure| diagnostic(request, map_download_failure(failure)))
     }
-
-    fn download(
-        &self,
-        url: &Uri,
-        request: &FetchRequest,
-        cancellation: &FetchCancellation,
-    ) -> Result<Vec<u8>, FetchFailure> {
-        let response = self
-            .agent
-            .get(url.clone())
-            .call()
-            .map_err(|error| FetchFailure::Transport(error.to_string()))?;
-        let status = response.status();
-        if !status.is_success() {
-            return Err(FetchFailure::HttpStatus(status.as_u16()));
-        }
-        if let Some(length) = response.body().content_length()
-            && (length > request.max_bytes || length > request.object.bytes)
-        {
-            return Err(FetchFailure::LengthMismatch {
-                expected: request.object.bytes,
-                actual: length,
-            });
-        }
-        read_and_verify(response, request, cancellation)
-    }
-}
-
-pub(crate) fn agent(timeout: Duration) -> ureq::Agent {
-    ureq::Agent::new_with_config(agent_config(timeout))
-}
-
-pub(crate) fn agent_config(timeout: Duration) -> ureq::config::Config {
-    ureq::Agent::config_builder()
-        .timeout_connect(Some(timeout))
-        .timeout_global(Some(timeout))
-        .http_status_as_error(false)
-        .build()
-}
-
-pub(crate) fn parse_transport_url(value: &str, subject: &str) -> Result<Uri, String> {
-    let url = Uri::from_str(value).map_err(|error| error.to_string())?;
-    let Some(scheme) = url.scheme_str() else {
-        return Err("URL must be absolute".into());
-    };
-    let Some(host) = url.host() else {
-        return Err("URL must include a host".into());
-    };
-    if scheme == "https" {
-        return Ok(url);
-    }
-    if scheme == "http"
-        && host
-            .parse::<std::net::IpAddr>()
-            .ok()
-            .is_some_and(|address| address.is_loopback())
-    {
-        return Ok(url);
-    }
-    Err(format!(
-        "{subject} must use HTTPS (HTTP is allowed only for loopback tests)"
-    ))
 }
 
 fn join_url(base: &Uri, relative: &str) -> Result<Uri, String> {
@@ -395,54 +328,20 @@ fn join_url(base: &Uri, relative: &str) -> Result<Uri, String> {
     Uri::from_parts(parts).map_err(|error| error.to_string())
 }
 
-fn read_and_verify(
-    mut response: ureq::http::Response<ureq::Body>,
-    request: &FetchRequest,
-    cancellation: &FetchCancellation,
-) -> Result<Vec<u8>, FetchFailure> {
-    let bound = request.object.bytes.saturating_add(1);
-    let mut bytes = Vec::with_capacity(
-        usize::try_from(request.object.bytes.min(1024 * 1024)).unwrap_or(1024 * 1024),
-    );
-    let mut body = response.body_mut().as_reader();
-    let mut reader = body.by_ref().take(bound);
-    let mut chunk = [0_u8; 64 * 1024];
-    loop {
-        if cancellation.is_cancelled() {
-            return Err(FetchFailure::Cancelled);
-        }
-        let count = reader
-            .read(&mut chunk)
-            .map_err(|error| FetchFailure::Transport(error.to_string()))?;
-        if count == 0 {
-            break;
-        }
-        bytes.extend_from_slice(&chunk[..count]);
-    }
-    if cancellation.is_cancelled() {
-        return Err(FetchFailure::Cancelled);
-    }
-    if bytes.len() as u64 != request.object.bytes {
-        return Err(FetchFailure::LengthMismatch {
-            expected: request.object.bytes,
-            actual: bytes.len() as u64,
-        });
-    }
-    let actual = hex_digest(&bytes);
-    if actual != request.object.sha256 {
-        return Err(FetchFailure::DigestMismatch { actual });
-    }
-    Ok(bytes)
-}
-
-fn retryable(failure: &FetchFailure) -> bool {
+fn map_download_failure(failure: DownloadFailure) -> FetchFailure {
     match failure {
-        FetchFailure::Transport(_)
-        | FetchFailure::LengthMismatch { .. }
-        | FetchFailure::DigestMismatch { .. } => true,
-        FetchFailure::HttpStatus(status) => matches!(*status, 408 | 429 | 500..=599),
-        FetchFailure::Cancelled => false,
-        _ => false,
+        DownloadFailure::InvalidUrl(message) => FetchFailure::InvalidUrl(message),
+        DownloadFailure::HttpStatus(status) => FetchFailure::HttpStatus(status),
+        DownloadFailure::Transport(message) => FetchFailure::Transport(message),
+        DownloadFailure::TooLarge { limit } => FetchFailure::Oversized {
+            declared: limit.saturating_add(1),
+            limit,
+        },
+        DownloadFailure::LengthMismatch { expected, actual } => {
+            FetchFailure::LengthMismatch { expected, actual }
+        }
+        DownloadFailure::DigestMismatch { actual } => FetchFailure::DigestMismatch { actual },
+        DownloadFailure::Cancelled => FetchFailure::Cancelled,
     }
 }
 

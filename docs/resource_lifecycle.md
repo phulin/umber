@@ -214,6 +214,15 @@ store entry. Browser JavaScript owns equivalent transport verification before
 crossing into WASM. Rust admission rechecks semantic declarations and domain
 structure; an adapter never bypasses it.
 
+The native implementation has exactly two internal transition authorities.
+One policy-parameterized downloader enforces HTTPS or loopback transport,
+exact or bounded length, SHA-256, retries, and cooperative cancellation for
+both objects and manifests. One per-key locked store-entry state machine owns
+current-entry verification, semantic quarantine, compatibility migration,
+construction, durable no-clobber publication, and winner revalidation for
+objects, manifests, and generated formats. Public compatibility façades select
+policy and translate errors; they do not repeat either workflow.
+
 ## Publication transitions
 
 There are three different publication boundaries:

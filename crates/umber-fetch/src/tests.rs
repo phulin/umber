@@ -140,6 +140,46 @@ fn distribution_client_persists_manifest_through_shared_blob_store() {
 }
 
 #[test]
+fn manifest_policy_does_not_inherit_object_retries() {
+    let bytes = br#"{"schema":1}"#;
+    let server = FixtureServer::new(vec![Reply::ok(bytes)]);
+    let temp = TempDir::new().expect("cache tempdir");
+    let client = DistributionClient::with_agent(
+        BlobStore::new(temp.path()),
+        FetchClientConfig {
+            timeout: Duration::from_secs(1),
+            retries: 3,
+            ..FetchClientConfig::default()
+        },
+        server.agent(Duration::from_secs(1)),
+    );
+
+    let error = client
+        .acquire_manifest(
+            &format!("{}manifest.json", server.base_url),
+            &"0".repeat(64),
+            &FetchCancellation::new(),
+        )
+        .expect_err("a bad manifest trust pin must fail without object retries");
+
+    assert!(matches!(
+        error,
+        DistributionClientError::Manifest(ManifestFetchError::DigestMismatch { .. })
+    ));
+    assert_eq!(server.finish().0, 1);
+}
+
+#[test]
+fn read_only_store_miss_does_not_create_cache_paths() {
+    let temp = TempDir::new().expect("cache tempdir");
+    let store = BlobStore::new(temp.path());
+    let spec = VerifiedBlobSpec::new("formats-v2", "missing", 1024).expect("blob specification");
+
+    assert_eq!(store.load(&spec).expect("read-only miss"), None);
+    assert!(!temp.path().join(BLOB_DIRECTORY).exists());
+}
+
+#[test]
 #[allow(
     clippy::disallowed_methods,
     reason = "the compatibility test writes the previous native cache layout"

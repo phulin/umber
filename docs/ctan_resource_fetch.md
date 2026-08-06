@@ -169,20 +169,23 @@ compiles into the browser package.
 The implemented native boundary is `crates/umber-fetch`. `BlobStore` and
 `VerifiedBlobSpec` own bounded persistence for every native cached blob;
 `DistributionClient` binds manifest and object acquisition to one store.
-Corrupt entries are quarantined as misses, and verified bytes are published
-with anchored same-directory temporary files plus no-clobber atomic persistence.
+One per-key locked entry state machine verifies current entries, quarantines
+semantic or structural corruption, migrates compatibility entries, constructs
+missing formats, and publishes verified bytes with anchored same-directory
+temporary files plus durable no-clobber atomic persistence.
 `umber` exposes this native CLI resource surface and depends on `umber-fetch`
 only outside `wasm32`, so the browser build retains the shared compile-session
 protocol without compiling the blocking native HTTP client.
 `FetchClient` accepts manifest `ObjectEntry` values paired with request keys
 and per-request limits. It enforces HTTPS (with loopback HTTP only for
 hermetic contract tests), rejects oversized declarations before issuing a
-request, bounds response reads, retries transient transport/status/integrity
-failures, observes cooperative cancellation during bounded response reads and
-before cache/session publication, and returns a batch only if every request
-succeeds. Manifest acquisition observes the same cancellation token. Verified peer
-downloads may still warm the cache when a batch fails, but no partial response
-is exposed to the compile session.
+request, and selects exact-length policy on the shared verified downloader.
+Manifest acquisition selects bounded-length and trust-pin policy on that same
+downloader. Policy controls retries independently, while both paths observe
+cooperative cancellation during bounded response reads and before
+cache/session publication. A batch is returned only if every request succeeds.
+Verified peer downloads may still warm the cache when a batch fails, but no
+partial response is exposed to the compile session.
 
 The native resolver treats schema-v2 index shards as digest-keyed manifest
 cache entries. It loads only the canonical shard for each unresolved file key,

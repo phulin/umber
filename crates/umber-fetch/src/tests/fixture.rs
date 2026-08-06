@@ -19,7 +19,7 @@ use ureq::unversioned::transport::{
 use ureq::{Agent, Error};
 
 use crate::FetchCancellation;
-use crate::fetch::agent_config;
+use crate::downloader::agent_config;
 
 #[derive(Clone, Debug)]
 pub(super) struct Reply {
