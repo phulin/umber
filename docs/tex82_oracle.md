@@ -288,6 +288,16 @@ scanner, mutation, diagnostic, or textual-effect payloads. Validate it with
 `tex-oracle-validate --tex82-trip-profile`; that validator checks canonical
 JSONL and only the declared stable observations and final ordering.
 
+Umber captures the engine-owned observation records once and hands them to
+`tex-observe` after execution. Its typed finalizer produces complete or TRIP
+semantic evidence together with located or positionless geometry in one walk,
+with an independent normalizer and sequence space for each channel. The TRIP
+projection, full diagnostic stream, detached format evidence, and focused
+geometry tests therefore share the same source registry and finalization
+boundary; parity owns no second profile or geometry observer. The projection
+uses `tex-oracle`'s exhaustive event views and location erasure, so this
+consolidation does not revise schema-v1/v2/v3 bytes or source coordinates.
+
 Run `scripts/test-tex82-trip-observer.sh` after fetching TRIP inputs to build
 the pinned oracle offline, execute both phases twice, validate deterministic
 profile streams, and compare statuses, terminal transcripts, logs, and final

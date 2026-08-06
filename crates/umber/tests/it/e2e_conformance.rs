@@ -11,8 +11,9 @@ use parity_harness::{
 };
 use sha2::{Digest, Sha256};
 use test_support::dvi::normalized_dvi_for_comparison;
-use tex_command::{CommandObserver, RegisteredSourceKind};
+use tex_command::RegisteredSourceKind;
 use tex_command_stream::{LiveSessionOutcome, LiveSessionTranslator, LiveSource};
+use tex_observe::{GeometryEvidenceProfile, SemanticEvidenceProfile};
 use tex_oracle::{ObservationStream, SchemaVersion};
 use tex_state::provenance::MacroInvocationProvenanceStats;
 use tex_state::provenance::ProvenanceStats;
@@ -61,18 +62,6 @@ enum PhaseCapture {
 
 impl PhaseCapture {
     fn command(&self, fixture_name: &str, phase: &str, oracle: &[u8]) -> Vec<u8> {
-        if fixture_name == "trip"
-            && phase == "format-loaded"
-            && let Self::Live(capture) = self
-        {
-            let mut observer = parity_harness::TripProfileObserver::default();
-            for observation in capture.observations.iter().cloned() {
-                observer.committed(observation);
-            }
-            return observer
-                .canonical_json_lines(oracle)
-                .expect("TRIP profile observations translate");
-        }
         command_stream_for_fixture_phase(fixture_name, phase, self.streams(oracle))
     }
 
@@ -2511,10 +2500,7 @@ fn trip_loaded_final_operator_has_one_zero_before_rebox() {
         Arc::from(format!("{}\n\\end\n", lines[92..440].join("\n")).into_bytes());
     let (_, observer) = run_loaded_trip_source_observed(source);
     let oracle = b"{\"schema\":2,\"manifest\":\"1111111111111111111111111111111111111111111111111111111111111111\"}\n";
-    let geometry = observer
-        .geometry
-        .canonical_json_lines(oracle)
-        .expect("focused geometry stream");
+    let geometry = positionless_geometry(observer, oracle);
     let stream = ObservationStream::from_canonical_json_lines(&geometry).expect("geometry stream");
     let hpacks = stream
         .events
@@ -2559,10 +2545,7 @@ fn trip_loaded_hairy_display_preserves_appendix_g_pack_order() {
         Arc::from(format!("{}\n\\end\n", lines[92..285].join("\n")).into_bytes());
     let (_, observer) = run_loaded_trip_source_observed(source);
     let oracle = b"{\"schema\":2,\"manifest\":\"1111111111111111111111111111111111111111111111111111111111111111\"}\n";
-    let geometry = observer
-        .geometry
-        .canonical_json_lines(oracle)
-        .expect("focused geometry stream");
+    let geometry = positionless_geometry(observer, oracle);
     let stream = ObservationStream::from_canonical_json_lines(&geometry).expect("geometry stream");
     let hpacks = stream
         .events
@@ -2726,10 +2709,7 @@ fn trip_loaded_nested_empty_math_box_does_not_republish_source_hpack() {
         Arc::from(format!("{}\n\\end\n", lines[92..210].join("\n")).into_bytes());
     let (_, observer) = run_loaded_trip_source_observed(source);
     let oracle = b"{\"schema\":2,\"manifest\":\"1111111111111111111111111111111111111111111111111111111111111111\"}\n";
-    let geometry = observer
-        .geometry
-        .canonical_json_lines(oracle)
-        .expect("focused geometry stream");
+    let geometry = positionless_geometry(observer, oracle);
     let stream = ObservationStream::from_canonical_json_lines(&geometry).expect("geometry stream");
     let hpacks = stream
         .events
@@ -2771,10 +2751,7 @@ fn trip_loaded_hairy_display_publishes_both_clean_character_packs() {
         Arc::from(format!("{}\n\\end\n", lines[92..285].join("\n")).into_bytes());
     let (_, observer) = run_loaded_trip_source_observed(source);
     let oracle = b"{\"schema\":2,\"manifest\":\"1111111111111111111111111111111111111111111111111111111111111111\"}\n";
-    let geometry = observer
-        .geometry
-        .canonical_json_lines(oracle)
-        .expect("focused geometry stream");
+    let geometry = positionless_geometry(observer, oracle);
     let stream = ObservationStream::from_canonical_json_lines(&geometry).expect("geometry stream");
     let hpacks = stream
         .events
@@ -2813,10 +2790,7 @@ fn trip_loaded_missing_accent_publishes_clean_nucleus_pack() {
         Arc::from(format!("{}\n\\end\n", lines[92..396].join("\n")).into_bytes());
     let (_, observer) = run_loaded_trip_source_observed(source);
     let oracle = b"{\"schema\":2,\"manifest\":\"1111111111111111111111111111111111111111111111111111111111111111\"}\n";
-    let geometry = observer
-        .geometry
-        .canonical_json_lines(oracle)
-        .expect("focused geometry stream");
+    let geometry = positionless_geometry(observer, oracle);
     let stream = ObservationStream::from_canonical_json_lines(&geometry).expect("geometry stream");
     let hpacks = stream
         .events
@@ -2846,6 +2820,17 @@ fn trip_loaded_missing_accent_publishes_clean_nucleus_pack() {
 
 fn run_loaded_trip_source(source: Arc<[u8]>) -> String {
     run_loaded_trip_source_observed(source).0
+}
+
+fn positionless_geometry(observer: TripObservers, oracle: &[u8]) -> Vec<u8> {
+    let mut translator = LiveSessionTranslator::new("terminal", SchemaVersion::V2);
+    translator.translate_captured(observer.into_captured());
+    let evidence = translator.finalize_profile(
+        SemanticEvidenceProfile::Complete,
+        GeometryEvidenceProfile::Positionless,
+    );
+    tex_oracle::canonical_bundle_json_lines(&evidence.geometry, oracle)
+        .expect("focused geometry stream")
 }
 
 fn run_loaded_trip_source_observed(source: Arc<[u8]>) -> (String, TripObservers) {

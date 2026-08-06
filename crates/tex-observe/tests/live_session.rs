@@ -6,7 +6,10 @@ use tex_command::{
     ObservationEffectKind, ObservationValue, ObservedToken, OpenedSourceSnapshot,
     SourceLocation as CommandSourceLocation,
 };
-use tex_observe::{LiveSessionOutcome, LiveSessionTranslator, LiveSource};
+use tex_observe::{
+    GeometryEvidenceProfile, LiveSessionOutcome, LiveSessionTranslator, LiveSource,
+    SemanticEvidenceProfile,
+};
 use tex_oracle::{
     CanonicalValue, EffectEvent, EffectKind, Event, InputEvent, InputReason, InputTransition,
     Normalizer, ObservationHeader, ObservationStream, SchemaVersion, SourceLocation,
@@ -145,6 +148,54 @@ fn delayed_geometry_uses_its_captured_source_instead_of_the_live_frame() {
     ));
 }
 
+#[test]
+fn typed_finalizer_projects_trip_and_positionless_geometry_once() {
+    let mut translator = LiveSessionTranslator::for_root(
+        SchemaVersion::V2,
+        "terminal",
+        LiveSource {
+            name: "trip.tex".into(),
+            source: SourceId::new(1),
+            bytes: Arc::from(&b"X\n"[..]),
+        },
+    );
+    translator.committed(CommandObservation::Effect(EffectRecord {
+        kind: ObservationEffectKind::Message,
+        channel: "terminal".into(),
+        value: ObservationValue::Bytes(b"not stable".to_vec()),
+        source: None,
+    }));
+    translator.committed(CommandObservation::Effect(EffectRecord {
+        kind: ObservationEffectKind::Shipout,
+        channel: "dvi".into(),
+        value: ObservationValue::Integer(1),
+        source: None,
+    }));
+    translator.committed(CommandObservation::Geometry(GeometryRecord::Hpack {
+        width_sp: 10,
+        height_sp: 20,
+        depth_sp: 3,
+        line: 47,
+        source: None,
+    }));
+    translator.committed(CommandObservation::Effect(EffectRecord {
+        kind: ObservationEffectKind::Terminate,
+        channel: "engine".into(),
+        value: ObservationValue::None,
+        source: None,
+    }));
+
+    let evidence = translator.finalize_profile(
+        SemanticEvidenceProfile::Tex82Trip,
+        GeometryEvidenceProfile::Positionless,
+    );
+    assert_eq!(evidence.semantic.len(), 2);
+    assert!(matches!(
+        &evidence.geometry[0].semantic,
+        Event::Geometry(tex_oracle::GeometryEvent::Hpack { location: None, .. })
+    ));
+}
+
 fn canonical(events: impl IntoIterator<Item = Event>) -> Vec<u8> {
     let mut bytes = serde_json::to_vec(&header()).expect("header");
     bytes.push(b'\n');
@@ -238,6 +289,39 @@ fn normal_stable_projection_is_byte_identical() {
             }),
         ])
     );
+}
+
+#[test]
+fn trip_profile_projects_read_stream_retirement_as_terminal_stop() {
+    let mut translator = translator();
+    translator.translate_captured([
+        CommandObservation::Input(tex_command::InputRecord {
+            transition: tex_command::InputTransition::Retire,
+            reason: tex_command::InputReason::Source,
+            source_name: Some(tex_command::SourceNameClass::ReadStream(3)),
+            source: None,
+            level: 1,
+            position: 0,
+        }),
+        CommandObservation::Effect(EffectRecord {
+            kind: ObservationEffectKind::Terminate,
+            channel: "engine".into(),
+            value: ObservationValue::None,
+            source: None,
+        }),
+    ]);
+    let evidence = translator.finalize_profile(
+        SemanticEvidenceProfile::Tex82Trip,
+        GeometryEvidenceProfile::Located,
+    );
+    assert!(matches!(
+        &evidence.semantic[0].semantic,
+        Event::Input(InputEvent {
+            transition: InputTransition::Stop,
+            reason: InputReason::Source,
+            name,
+        }) if name == "terminal"
+    ));
 }
 
 #[test]

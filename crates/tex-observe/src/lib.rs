@@ -14,10 +14,10 @@ use tex_oracle::OracleBundle;
 use tex_oracle::{
     AlignmentEvent, AlignmentTransition, CanonicalCommand, CanonicalValue, CommandDelivery,
     CommandEvent, ConditionEvent, ConditionTransition, DiagnosticEvent, DiagnosticSeverity,
-    EffectEvent, EffectKind, Event, GeometryEvent, InputEvent, InputReason, MacroEvent,
-    MutationEvent, Normalizer, ObservationHeader, ObservationStream, OracleToken, RecoveryEvent,
-    RecoveryKind, ScannerEvent, ScannerStatus, ScannerStatusEvent, SchemaVersion, SourceLocation,
-    StateTarget, Tex82ObserverProfile, TokenListEvent, TokenListTransition,
+    EffectEvent, EffectKind, Event, EventView, GeometryEvent, InputEvent, InputReason, MacroEvent,
+    MutationEvent, NormalizedEvent, Normalizer, ObservationHeader, ObservationStream, OracleToken,
+    RecoveryEvent, RecoveryKind, ScannerEvent, ScannerStatus, ScannerStatusEvent, SchemaVersion,
+    SourceLocation, StateTarget, Tex82ObserverProfile, TokenListEvent, TokenListTransition,
 };
 use tex_state::SourceId;
 
@@ -72,6 +72,53 @@ pub enum LiveSessionOutcome {
 pub struct LiveSessionStreams {
     pub diagnostic: Vec<u8>,
     pub stable: Vec<u8>,
+}
+
+/// Non-fallible detached capture used when source context is available only
+/// after the engine returns.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct CapturedObservations {
+    observations: Vec<CommandObservation>,
+}
+
+impl CapturedObservations {
+    #[must_use]
+    pub fn into_captured(self) -> Vec<CommandObservation> {
+        self.observations
+    }
+}
+
+impl CommandObserver for CapturedObservations {
+    fn observes_geometry(&self) -> bool {
+        true
+    }
+
+    fn committed(&mut self, observation: CommandObservation) {
+        self.observations.push(observation);
+    }
+}
+
+/// Closed semantic projections produced from one translated observation run.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SemanticEvidenceProfile {
+    /// Every portable non-geometry observation, in committed order.
+    Complete,
+    /// TeX82's bounded full-TRIP stream: shipouts and terminal outcome.
+    Tex82Trip,
+}
+
+/// Closed geometry projections produced beside semantic evidence.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum GeometryEvidenceProfile {
+    /// Retain source/line attribution (schema v3 and detached evidence).
+    Located,
+    /// Erase attribution while retaining geometry values (schema v2 TRIP).
+    Positionless,
+}
+
+struct FinalizedEvidence {
+    bundle: OracleBundle,
+    trip: Vec<NormalizedEvent>,
 }
 
 /// Host-side translation of captured normal-session observations.
@@ -160,30 +207,9 @@ impl LiveSessionTranslator {
             ));
             self.ensure_terminated();
         }
-        let diagnostic =
-            encode_observed_stream(&header, self.events.iter().map(|event| &event.event))?;
-        let stable_events = self.events.iter().filter_map(|event| match &event.event {
-            Event::Effect(effect)
-                if matches!(effect.kind, EffectKind::Shipout | EffectKind::Terminate) =>
-            {
-                Some(&event.event)
-            }
-            Event::Input(input)
-                if input.transition == tex_oracle::InputTransition::Stop
-                    && input.reason == InputReason::Source
-                    && input.name == "terminal" =>
-            {
-                Some(&event.event)
-            }
-            Event::Diagnostic(diagnostic)
-                if diagnostic.severity == DiagnosticSeverity::Fatal
-                    && !event.context.contains("terminal_outcome=failure") =>
-            {
-                Some(&event.event)
-            }
-            _ => None,
-        });
-        let stable = encode_observed_stream(&header, stable_events)?;
+        let finalized = self.finalize_once(true, GeometryEvidenceProfile::Located);
+        let diagnostic = encode_normalized_stream(&header, &finalized.bundle.semantic)?;
+        let stable = encode_normalized_stream(&header, &finalized.trip)?;
         let decoded = ObservationStream::from_canonical_json_lines(&stable)
             .map_err(|error| error.to_string())?;
         Tex82ObserverProfile::Trip.validate(&decoded)?;
@@ -270,18 +296,13 @@ impl LiveSessionTranslator {
     }
 }
 
-fn encode_observed_stream<'a>(
+fn encode_normalized_stream(
     header: &ObservationHeader,
-    events: impl IntoIterator<Item = &'a Event>,
+    events: &[NormalizedEvent],
 ) -> Result<Vec<u8>, String> {
-    let mut normalizer = Normalizer::new();
-    let events = events
-        .into_iter()
-        .map(|event| normalizer.normalize(event.clone()))
-        .collect::<Vec<_>>();
     let mut oracle = serde_json::to_vec(header).map_err(|error| error.to_string())?;
     oracle.push(b'\n');
-    tex_oracle::canonical_bundle_json_lines(&events, &oracle)
+    tex_oracle::canonical_bundle_json_lines(events, &oracle)
 }
 
 fn observation_source(observation: &CommandObservation) -> Option<SourceId> {
@@ -376,18 +397,101 @@ impl LiveSessionTranslator {
     /// Finalizes portable normalized evidence without engine or source identities.
     #[must_use]
     pub fn finalize_detached_evidence(self) -> OracleBundle {
+        self.finalize_once(false, GeometryEvidenceProfile::Located)
+            .bundle
+    }
+
+    /// Finalizes a typed semantic profile and geometry projection in one pass.
+    #[must_use]
+    pub fn finalize_profile(
+        self,
+        semantic: SemanticEvidenceProfile,
+        geometry: GeometryEvidenceProfile,
+    ) -> OracleBundle {
+        let finalized =
+            self.finalize_once(semantic == SemanticEvidenceProfile::Tex82Trip, geometry);
+        if semantic == SemanticEvidenceProfile::Tex82Trip {
+            OracleBundle {
+                semantic: finalized.trip,
+                geometry: finalized.bundle.geometry,
+            }
+        } else {
+            finalized.bundle
+        }
+    }
+
+    fn finalize_once(
+        self,
+        include_trip: bool,
+        geometry_profile: GeometryEvidenceProfile,
+    ) -> FinalizedEvidence {
         let mut semantic_normalizer = Normalizer::new();
         let mut geometry_normalizer = Normalizer::new();
-        let mut evidence = OracleBundle::default();
+        let mut trip_normalizer = Normalizer::new();
+        let mut bundle = OracleBundle::default();
+        let mut trip = Vec::new();
         for observed in self.events {
-            match observed.event {
-                Event::Geometry(event) => evidence
-                    .geometry
-                    .push(geometry_normalizer.normalize(Event::Geometry(event))),
-                event => evidence.semantic.push(semantic_normalizer.normalize(event)),
+            match observed.event.view() {
+                EventView::Geometry(_) => {
+                    let event = match geometry_profile {
+                        GeometryEvidenceProfile::Located => observed.event,
+                        GeometryEvidenceProfile::Positionless => observed.event.without_locations(),
+                    };
+                    bundle.geometry.push(geometry_normalizer.normalize(event));
+                }
+                _ => {
+                    if include_trip && let Some(event) = trip_event(&observed) {
+                        trip.push(trip_normalizer.normalize(event));
+                    }
+                    bundle
+                        .semantic
+                        .push(semantic_normalizer.normalize(observed.event));
+                }
             }
         }
-        evidence
+        FinalizedEvidence { bundle, trip }
+    }
+}
+
+fn trip_event(observed: &ObservedEvent) -> Option<Event> {
+    match observed.event.view() {
+        EventView::Effect(effect)
+            if matches!(effect.kind, EffectKind::Shipout | EffectKind::Terminate) =>
+        {
+            Some(observed.event.clone())
+        }
+        EventView::Input(input)
+            if input.reason == InputReason::Source
+                && ((input.transition == tex_oracle::InputTransition::Stop
+                    && input.name == "terminal")
+                    || (input.transition == tex_oracle::InputTransition::Retire
+                        && matches!(input.name.as_str(), "terminal" | "read_stream"))) =>
+        {
+            Some(Event::Input(InputEvent {
+                transition: tex_oracle::InputTransition::Stop,
+                reason: InputReason::Source,
+                name: "terminal".into(),
+            }))
+        }
+        EventView::Diagnostic(diagnostic)
+            if diagnostic.severity == DiagnosticSeverity::Fatal
+                && !observed.context.contains("terminal_outcome=failure") =>
+        {
+            Some(observed.event.clone())
+        }
+        EventView::Command(_)
+        | EventView::Input(_)
+        | EventView::Recovery(_)
+        | EventView::ScannerStatus(_)
+        | EventView::Macro(_)
+        | EventView::Condition(_)
+        | EventView::Scanner(_)
+        | EventView::TokenList(_)
+        | EventView::Alignment(_)
+        | EventView::Mutation(_)
+        | EventView::Diagnostic(_)
+        | EventView::Effect(_)
+        | EventView::Geometry(_) => None,
     }
 }
 

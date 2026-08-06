@@ -15,9 +15,9 @@ persistent evidence transport.
 
 ## File Map
 
-- `src/lib.rs`: source/session projection into oracle-owned bundles; source
-  identity is resolved directly from engine records rather than a shadow
-  input stack.
+- `src/lib.rs`: raw detached capture and the single typed semantic/geometry
+  finalizer into oracle-owned bundles; source identity is resolved directly
+  from engine records rather than a shadow input stack.
 - `src/translation.rs`: total typed observation-to-oracle event mappings; it
   must not parse engine strings or reconstruct engine state.
 - `src/tests.rs`: focused internal translation tests.
