@@ -182,6 +182,48 @@ contract is [Canonical resource identity and lifecycle](resource_lifecycle.md).
 
 **Dependencies.** Replay retirement fixes the durable revision shape and therefore precedes final revision payload publication. State façade work in program 8 may be staged first.
 
+**Implemented authority and accounting.** The implementation commits are
+`dd261df36`, `c4791384a`, `7ea3520ac`, `c997f8415`, and `bc8230926`; the exact
+integrated implementation tree `bc8230926956e8fafc397c2319712a1a7fe1d4a0`
+passed the uncapped full `cargo test -q --tests --no-run` build, full serial
+execution under `MemoryMax=1G` and a 60-minute timeout, the explicit 1,000-edit
+cold-equivalence tier, and all four `scripts/check.sh` gates. The owner-approved
+performance change is fixed by the before/after workload identities and ratio
+budgets in [Paragraph replay deletion baseline](paragraph_replay_deletion_baseline.md):
+all seven measured workloads remained byte-identical to cold execution, generic
+suffix convergence remained effective, and paragraph transactions, recorders,
+mounted line graphs, endpoints, and their retained-work counters became absent
+or zero.
+
+`tex-state::EffectJournal` is the surviving aligned effect-ledger authority;
+executor-closed `tex_exec::RevisionOutputPatch` is the surviving artifact,
+publication-row, and DVI-plan authority; and `tex_incr::RevisionTransaction`
+with its immutable `RevisionPayload` is the surviving prepare/accept authority.
+Named checkpoints and `exact_future_state_matches` are the only cross-revision
+restart and convergence mechanism. Paragraph boundary/cursor identity helpers,
+accepted paragraph transactions and mounts, `PendingRevision`, `AdvanceSetup`,
+`RevisionRun`, and their positional effect/artifact assemblers were deleted.
+Prefix/patch/suffix convergence now slices and recomposes validated ownership
+units; detached accepted-output views do not retain a second publication owner,
+so no permanent dual replay, revision, effect, or artifact authority remains.
+Recursive output, terminal and `OpenOut` ordering, suspension without partial
+publication, stale-base rejection, rollback, provenance rebasing, pruning, and
+two-phase materialize/accept behavior remained covered.
+
+Exact implementation-commit `--numstat` accounting is 695 additions and 938
+deletions in production Rust (243-line net reduction), plus 117 additions and
+55 deletions in authored Rust proof tests (62-line net growth). Authored Rust
+therefore totals 812 additions and 993 deletions, or 181 lines of net reduction.
+Declarative/generated evidence adds the 12-line workload checksum manifest;
+compatibility-gated retirement and binary-fixture changes are both zero.
+Documentation and repository guidance add 141 lines and delete 13. The total
+tracked implementation change is 965 additions and 1,006 deletions, or 41 lines
+of net reduction. By child boundary, replacement-contract evidence is 118/10,
+approved replay cleanup is 6/253, effect-journal/output-patch work is 514/145,
+and revision-lifecycle consolidation is 327/598 additions/deletions. The
+forecast shortfall is tracked by `umber2-vgjr.21`; no historical deletion or
+future compatibility-gated retirement is silently credited to this program.
+
 ## 5. One artifact codec and geometry traversal authority
 
 **Outcome.** One iterative validated node-event cursor/emitter owns the versioned artifact grammar. Owned decode, zero-copy DVI planning, scan, validation, and production adapt to it. One explicit-frame geometry walker owns boxes, glue, leaders, snapping, ordinals, and sibling lookahead; DVI and positioned sinks retain backend policy. Fresh and memo-hit DVI derive from canonical artifact bytes.
