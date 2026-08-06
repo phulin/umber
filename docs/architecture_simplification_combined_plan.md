@@ -377,6 +377,41 @@ are not credited as deletions.
 
 **Proof.** Preserve TFM error identity and precedence, lig/kern and absent-character rules, `font_info_words`, parameter padding, MATH strictness and budgets, variation/device policy, shaping, fallback precedence, glyph numbering, PDF subset identity, HTML paths, cache identity, and fuzz coverage.
 
+**Implemented TFM authority and accounting.** Commit `991fc7fcf` completes
+the TFM slice (`umber2-vgjr.11.1`) from source snapshot `6618b3441`.
+`tex-fonts::FontMetrics` is the sole retained classic metric representation.
+The binary parser keeps private raw character, lig/kern, kern, and extensible
+records only through structural, reference, chain, and error-precedence
+validation, then constructs `FontMetrics` directly. `TfmFont` retains that
+canonical record plus header, selected size, padded parameters, and
+`font_info_words`; its consuming constructor is the one path used by executor
+and VF loading to create `LoadedFont`. The public raw TFM DTOs and the later
+raw-to-runtime conversion are deleted. This is an intentional public Rust API
+contraction: repository inventory found only parser tests and the live
+reference tool using those DTOs, while formats, output, and wire contracts
+already use canonical metrics. OpenType MATH ownership and realized font
+identity remain assigned to `umber2-vgjr.11.2` and `.11.3` respectively.
+
+The implementation adds 183 and deletes 242 production Rust lines (59-line
+net deletion), adds 73 and deletes 57 Rust test lines, adds 53 and deletes 34
+live-reference tool lines, and changes four documentation lines in each
+direction. By deletion category, the raw public model and conversion boundary
+add 54/delete 187, private validation plus direct projection add 125/delete
+30, runtime caller construction add four/delete 25, and proof migration adds
+126/deletes 91. Total authored change is 313 additions and 337 deletions, a
+24-line net deletion. No fixture, format, wire, generated, lockfile, or binary
+asset changed. The program-level 800--1,200 production-line forecast spans the
+two open sibling slices, so no child-level reduction shortfall is inferred.
+
+On the implementation tree, 80 focused font tests, nine VF tests, 99 selected
+format tests, all 33 fixturegen tests, the live `tftopl` comparison, a built
+TFM fuzz target with a 10,000-input smoke run, the complete native routine
+suite, and all four `scripts/check.sh` gates pass. Focused execution remained
+well below 512 MiB; independent font/VF RSS measurements found no runtime
+growth. The final complete suite passed under `MemoryMax=1G` at a
+631,353,344-byte peak without any memory event. The six-job quality gate also
+passed at a 105,771,008-byte peak without any memory event.
+
 ## 12. Establish one fixture contract while compacting repeated catalogues
 
 **Outcome.** A typed closed-case contract owns identity, tracked inputs, expected outputs, statuses, xfail reasons, profiles, and publication metadata. Command-semantic V2 infers conventional fields and embeds capture policy. The TeX82 catalogue uses an implicit typed default disposition plus explicit overrides. Fixturegen alone mutates and publishes; test-support validates and stages; `corpus-manifest` remains the external-corpus leaf.
