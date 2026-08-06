@@ -589,6 +589,22 @@ forecast for this program. Further deletion would contract a named public or
 serialized boundary and requires a new policy decision rather than being
 silently credited here.
 
+**Program closeout.** All four children are closed and the exact integrated
+tree at `357d997cc3f4e79397233c8651e3a85786b5875a` has no permanent dual font
+authority. The production categories are canonical TFM +183/-242, lazy MATH
++272/-456, realized identity and selected-face repair +248/-146, and shared
+native SFNT storage +11/-11: +714/-855 in total, net -141. The corresponding
+reduction is 659--1,059 lines below the retired forecast; no unimplemented
+reduction is carried forward. Fresh closeout verification rebuilt the focused
+font and complete native suites uncapped with six jobs, then passed all 79
+font tests under 512 MiB and the complete routine suite under 1 GiB. The
+10,000-input TFM fuzz smoke passed under 512 MiB. Under 1 GiB, the wasm32
+check, Biome, all 89 authored Node tests, release package through `wasm-opt`,
+the built-package Node consumer, and `npm pack --dry-run` passed. Firefox and
+Chrome were absent, so their browser-only checks were unavailable and are not
+reported as passes. The final exact-tree repository quality result is recorded
+in [the program closeout](writeback/umber2-vgjr.11.md).
+
 ## 12. Establish one fixture contract while compacting repeated catalogues
 
 **Outcome.** A typed closed-case contract owns identity, tracked inputs, expected outputs, statuses, xfail reasons, profiles, and publication metadata. Command-semantic V2 infers conventional fields and embeds capture policy. The TeX82 catalogue uses an implicit typed default disposition plus explicit overrides. Fixturegen alone mutates and publishes; test-support validates and stages; `corpus-manifest` remains the external-corpus leaf.
