@@ -157,13 +157,13 @@ impl From<XmlError> for ControlError {
 }
 
 pub fn validate_control_bytes(bytes: &[u8], limits: XmlLimits) -> Result<(), ControlError> {
-    let root = parse_xml(bytes, limits)?;
-    validate_control_tree(&root)
+    let projection = parse_xml(bytes, limits)?;
+    validate_control_tree(projection.root())
 }
 
 pub fn parse_control_bytes(bytes: &[u8], limits: XmlLimits) -> Result<ControlFile, ControlError> {
-    let root = parse_xml(bytes, limits)?;
-    control_from_tree(&root)
+    let projection = parse_xml(bytes, limits)?;
+    control_from_tree(projection.root())
 }
 
 pub fn parse_control(
@@ -171,8 +171,8 @@ pub fn parse_control(
     path: &VirtualPath,
     limits: XmlLimits,
 ) -> Result<ControlFile, ControlError> {
-    let root = parse_xml_from_snapshot(snapshot, path, limits)?;
-    control_from_tree(&root)
+    let projection = parse_xml_from_snapshot(snapshot, path, limits)?;
+    control_from_tree(projection.root())
 }
 
 pub fn parse_control_with_paths(
@@ -180,12 +180,12 @@ pub fn parse_control_with_paths(
     path: &VirtualPath,
     limits: XmlLimits,
 ) -> Result<(ControlFile, BTreeSet<VirtualPath>), ControlError> {
-    let (root, paths) = parse_xml_from_snapshot_with_paths(snapshot, path, limits)?;
-    Ok((control_from_tree(&root)?, paths))
+    let (projection, paths) = parse_xml_from_snapshot_with_paths(snapshot, path, limits)?;
+    Ok((control_from_tree(projection.root())?, paths))
 }
 
-fn validate_control_tree(root: &XmlNode) -> Result<(), ControlError> {
-    if root.name != "bcf:controlfile" || root.local_name() != "controlfile" {
+fn validate_control_tree(root: XmlNode<'_>) -> Result<(), ControlError> {
+    if root.name() != "bcf:controlfile" || root.local_name() != "controlfile" {
         return Err(ControlError::Schema(
             "root element must be bcf:controlfile".into(),
         ));
@@ -204,11 +204,7 @@ fn validate_control_tree(root: &XmlNode) -> Result<(), ControlError> {
     if root.attribute("bltxversion").is_none() {
         return Err(ControlError::Schema("missing bltxversion attribute".into()));
     }
-    if root
-        .children
-        .iter()
-        .any(|node| !node.name.starts_with("bcf:"))
-    {
+    if root.children().any(|node| !node.name().starts_with("bcf:")) {
         return Err(ControlError::Schema(
             "all control-file elements must use the bcf namespace".into(),
         ));
@@ -242,15 +238,14 @@ fn validate_control_tree(root: &XmlNode) -> Result<(), ControlError> {
     Ok(())
 }
 
-fn control_from_tree(root: &XmlNode) -> Result<ControlFile, ControlError> {
+fn control_from_tree(root: XmlNode<'_>) -> Result<ControlFile, ControlError> {
     validate_control_tree(root)?;
     let options = root
         .children_named("options")
         .map(parse_option_set)
         .collect::<Result<Vec<_>, _>>()?;
     let templates = root
-        .children
-        .iter()
+        .children()
         .filter(|node| node.local_name().ends_with("template"))
         .map(parse_template)
         .collect();
@@ -294,7 +289,7 @@ fn control_from_tree(root: &XmlNode) -> Result<ControlFile, ControlError> {
     })
 }
 
-fn parse_option_set(node: &XmlNode) -> Result<ControlOptionSet, ControlError> {
+fn parse_option_set(node: XmlNode<'_>) -> Result<ControlOptionSet, ControlError> {
     let component = match node.attribute("component") {
         Some("biber") => OptionComponent::Processor,
         Some("biblatex") => OptionComponent::Biblatex,
@@ -352,7 +347,7 @@ fn parse_option_set(node: &XmlNode) -> Result<ControlOptionSet, ControlError> {
     })
 }
 
-fn parse_template(node: &XmlNode) -> Template {
+fn parse_template(node: XmlNode<'_>) -> Template {
     Template {
         kind: node.local_name().to_owned(),
         name: node
@@ -371,7 +366,7 @@ fn parse_template(node: &XmlNode) -> Template {
     }
 }
 
-fn parse_data_model(node: &XmlNode) -> DataModel {
+fn parse_data_model(node: XmlNode<'_>) -> DataModel {
     let descendants = descendants(node);
     DataModel {
         entry_types: descendants
@@ -386,7 +381,7 @@ fn parse_data_model(node: &XmlNode) -> DataModel {
             .map(|child| DataModelField {
                 name: child.trimmed_text().to_owned(),
                 datatype: child.attribute("datatype").map(str::to_owned),
-                attributes: attributes(child),
+                attributes: attributes(*child),
             })
             .filter(|field| !field.name.is_empty())
             .collect(),
@@ -396,13 +391,13 @@ fn parse_data_model(node: &XmlNode) -> DataModel {
             .map(|child| TemplateElement {
                 name: child.local_name().to_owned(),
                 content: child.trimmed_text().to_owned(),
-                attributes: attributes(child),
+                attributes: attributes(*child),
             })
             .collect(),
     }
 }
 
-fn parse_section(node: &XmlNode) -> Result<ControlSection, ControlError> {
+fn parse_section(node: XmlNode<'_>) -> Result<ControlSection, ControlError> {
     let number = node
         .attribute("number")
         .unwrap_or_default()
@@ -424,19 +419,18 @@ fn parse_section(node: &XmlNode) -> Result<ControlSection, ControlError> {
     })
 }
 
-fn descendants(node: &XmlNode) -> Vec<&XmlNode> {
+fn descendants(node: XmlNode<'_>) -> Vec<XmlNode<'_>> {
     let mut result = Vec::new();
-    let mut stack = node.children.iter().rev().collect::<Vec<_>>();
+    let mut stack = node.children().rev().collect::<Vec<_>>();
     while let Some(child) = stack.pop() {
         result.push(child);
-        stack.extend(child.children.iter().rev());
+        stack.extend(child.children().rev());
     }
     result
 }
 
-fn attributes(node: &XmlNode) -> BTreeMap<String, String> {
-    node.attributes
-        .iter()
-        .map(|attribute| (attribute.name.clone(), attribute.value.clone()))
+fn attributes(node: XmlNode<'_>) -> BTreeMap<String, String> {
+    node.attributes()
+        .map(|(name, value)| (name.to_owned(), value.to_owned()))
         .collect()
 }

@@ -23,7 +23,7 @@ pub use bibtex::{
 pub use config::{
     BooleanInput, BooleanOutput, ConfigError, ConfigValue, ConfigurationFile, ConfigurationLayer,
     MappedBoolean, ResolvedConfiguration, map_boolean, parse_config, parse_config_bytes,
-    parse_config_with_paths, validate_config_bytes,
+    parse_config_with_paths, validate_config_bytes, validate_config_with_paths,
 };
 pub use control::{
     CONTROL_NAMESPACE, CONTROL_VERSION, ControlError, ControlFile, ControlOptionSet,

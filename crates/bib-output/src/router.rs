@@ -1,11 +1,9 @@
-use std::collections::BTreeSet;
 use std::fmt;
 use std::sync::Arc;
 
 use bib_model::{
-    BibDiagnostic, BibDiagnosticCode, BibSeverity, DiagnosticBuilder, Entry, EntryId,
-    GeneratedFile, OutputFormat, OutputNewline, OutputRequest, ProcessedBibliography,
-    ProcessedSection,
+    BibDiagnostic, BibDiagnosticCode, BibSeverity, DiagnosticBuilder, GeneratedFile, OutputFormat,
+    OutputNewline, OutputRequest, ProcessedBibliography,
 };
 use bib_unicode::{EncodingError, UnicodeData, encode_legacy};
 
@@ -85,38 +83,6 @@ impl fmt::Display for OutputFailure {
 
 impl std::error::Error for OutputFailure {}
 
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct PlannedEntry<'a> {
-    id: &'a EntryId,
-    entry: Option<&'a Entry>,
-}
-
-impl<'a> PlannedEntry<'a> {
-    pub(crate) const fn id(self) -> &'a EntryId {
-        self.id
-    }
-
-    pub(crate) const fn entry(self) -> Option<&'a Entry> {
-        self.entry
-    }
-}
-
-#[derive(Clone, Debug)]
-pub(crate) struct PlannedSection<'a> {
-    section: &'a ProcessedSection,
-    first_entries: Vec<PlannedEntry<'a>>,
-}
-
-impl<'a> PlannedSection<'a> {
-    pub(crate) const fn section(&self) -> &'a ProcessedSection {
-        self.section
-    }
-
-    pub(crate) fn first_entries(&self) -> impl ExactSizeIterator<Item = PlannedEntry<'a>> + '_ {
-        self.first_entries.iter().copied()
-    }
-}
-
 /// One closed serialization plan over a frozen document projection.
 #[derive(Clone, Debug)]
 pub struct OutputPlan<'a> {
@@ -124,7 +90,6 @@ pub struct OutputPlan<'a> {
     unicode: &'a UnicodeData,
     request: &'a OutputRequest,
     options: &'a OutputOptions,
-    sections: Vec<PlannedSection<'a>>,
 }
 
 impl<'a> OutputPlan<'a> {
@@ -141,42 +106,11 @@ impl<'a> OutputPlan<'a> {
             return Err(version_failure(format));
         }
 
-        let sections = context
-            .document()
-            .sections()
-            .map(|section| {
-                let mut seen = BTreeSet::new();
-                let first_entries = if section.lists().len() == 0 {
-                    section
-                        .entries()
-                        .map(|entry| PlannedEntry {
-                            id: entry.id(),
-                            entry: Some(entry),
-                        })
-                        .collect()
-                } else {
-                    section
-                        .lists()
-                        .flat_map(|list| list.entries())
-                        .filter(|id| seen.insert((*id).clone()))
-                        .map(|id| PlannedEntry {
-                            id,
-                            entry: section.entry(id),
-                        })
-                        .collect()
-                };
-                PlannedSection {
-                    section,
-                    first_entries,
-                }
-            })
-            .collect();
         Ok(Self {
             document: context.document(),
             unicode: context.unicode(),
             request,
             options,
-            sections,
         })
     }
 
@@ -200,8 +134,10 @@ impl<'a> OutputPlan<'a> {
         self.options
     }
 
-    pub(crate) fn sections(&self) -> impl ExactSizeIterator<Item = &PlannedSection<'a>> {
-        self.sections.iter()
+    pub(crate) fn sections(
+        &self,
+    ) -> impl ExactSizeIterator<Item = &'a bib_model::ProcessedSection> {
+        self.document.sections()
     }
 }
 
@@ -227,14 +163,15 @@ impl OutputRouter {
         request: &OutputRequest,
     ) -> Result<GeneratedFile, OutputFailure> {
         let plan = OutputPlan::new(context, request, &self.options)?;
-        let text = match request.format() {
-            OutputFormat::Bbl => bbl::render(&plan),
-            OutputFormat::Bibtex => bibtex::render(&plan),
-            OutputFormat::BibLatexXml => xml::render_biblatex(&plan),
-            OutputFormat::BblXml => xml::render_bbl(&plan),
-            OutputFormat::Dot => dot::render(&plan),
+        let mut sink = OutputSink::new(request);
+        match request.format() {
+            OutputFormat::Bbl => bbl::render(&plan, &mut sink),
+            OutputFormat::Bibtex => bibtex::render(&plan, &mut sink),
+            OutputFormat::BibLatexXml => xml::render_biblatex(&plan, &mut sink),
+            OutputFormat::BblXml => xml::render_bbl(&plan, &mut sink),
+            OutputFormat::Dot => dot::render(&plan, &mut sink),
         }?;
-        finalize(text, request)
+        sink.finish()
     }
 
     pub(crate) fn serialize_as(
@@ -269,44 +206,106 @@ pub(crate) fn failure(
     }
 }
 
-pub(crate) fn finalize(
-    mut text: String,
-    request: &OutputRequest,
-) -> Result<GeneratedFile, OutputFailure> {
-    if request.newline() == OutputNewline::CrLf {
-        text = text.replace('\n', "\r\n");
+pub(crate) struct OutputSink<'a> {
+    request: &'a OutputRequest,
+    text: String,
+}
+
+impl<'a> OutputSink<'a> {
+    pub(crate) fn new(request: &'a OutputRequest) -> Self {
+        Self {
+            request,
+            text: String::new(),
+        }
     }
+
+    pub(crate) fn push(&mut self, value: &str) -> Result<(), OutputFailure> {
+        let multiplier = match self.request.format() {
+            OutputFormat::Bibtex => 32,
+            OutputFormat::Bbl | OutputFormat::BibLatexXml | OutputFormat::BblXml => 4,
+            OutputFormat::Dot => 1,
+        };
+        let work_limit = self.request.max_bytes().saturating_mul(multiplier);
+        let length = self
+            .text
+            .len()
+            .checked_add(value.len())
+            .ok_or_else(|| output_limit_failure(self.request))?;
+        if length > work_limit {
+            return Err(output_limit_failure(self.request));
+        }
+        self.text.push_str(value);
+        Ok(())
+    }
+
+    pub(crate) fn line(&mut self, value: &str) -> Result<(), OutputFailure> {
+        self.push(value)?;
+        self.push("\n")
+    }
+
+    pub(crate) fn indented_line(
+        &mut self,
+        indent: usize,
+        value: &str,
+    ) -> Result<(), OutputFailure> {
+        for _ in 0..indent {
+            self.push("  ")?;
+        }
+        self.line(value)
+    }
+
+    pub(crate) fn finish(self) -> Result<GeneratedFile, OutputFailure> {
+        let request = self.request;
+        let mut text = self.text;
+        if request.newline() == OutputNewline::CrLf {
+            text = text.replace('\n', "\r\n");
+        }
+        let format = request.format();
+        let bytes = encode_legacy(&text, request.encoding()).map_err(|error| match error {
+            EncodingError::UnmappableCharacter => failure(
+                format,
+                OutputFailureKind::Unrepresentable,
+                encoding_code(format),
+                format!(
+                    "{} output contains a character unavailable in the requested encoding",
+                    format_label(format)
+                ),
+            ),
+            EncodingError::UnknownLabel | EncodingError::MalformedInput => failure(
+                format,
+                OutputFailureKind::MalformedValue,
+                encoding_code(format),
+                format!("the requested {} encoding is invalid", format_label(format)),
+            ),
+        })?;
+        if bytes.len() > request.max_bytes() {
+            return Err(failure(
+                format,
+                OutputFailureKind::Limit,
+                limit_code(format),
+                format!(
+                    "{} output exceeds the {} byte limit",
+                    format_label(format),
+                    request.max_bytes()
+                ),
+            ));
+        }
+        Ok(GeneratedFile::new(request.path().clone(), bytes))
+    }
+}
+
+fn output_limit_failure(request: &OutputRequest) -> OutputFailure {
     let format = request.format();
-    let bytes = encode_legacy(&text, request.encoding()).map_err(|error| match error {
-        EncodingError::UnmappableCharacter => failure(
-            format,
-            OutputFailureKind::Unrepresentable,
-            encoding_code(format),
-            format!(
-                "{} output contains a character unavailable in the requested encoding",
-                format_label(format)
-            ),
+    failure(
+        format,
+        OutputFailureKind::Limit,
+        limit_code(format),
+        format!(
+            "{} output exceeds the {} byte limit",
+            format_label(format),
+            request.max_bytes()
         ),
-        EncodingError::UnknownLabel | EncodingError::MalformedInput => failure(
-            format,
-            OutputFailureKind::MalformedValue,
-            encoding_code(format),
-            format!("the requested {} encoding is invalid", format_label(format)),
-        ),
-    })?;
-    if bytes.len() > request.max_bytes() {
-        return Err(failure(
-            format,
-            OutputFailureKind::Limit,
-            limit_code(format),
-            format!(
-                "{} output exceeds the {} byte limit",
-                format_label(format),
-                request.max_bytes()
-            ),
-        ));
-    }
-    Ok(GeneratedFile::new(request.path().clone(), bytes))
+    )
 }
 
 fn wrong_format(format: OutputFormat) -> OutputFailure {

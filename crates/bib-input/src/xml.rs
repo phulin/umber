@@ -35,47 +35,86 @@ pub struct XmlAttribute {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct XmlNode {
-    pub name: String,
-    pub attributes: Vec<XmlAttribute>,
-    pub children: Vec<XmlNode>,
-    pub text: String,
+struct ProjectedElement {
+    name: String,
+    attributes: Vec<XmlAttribute>,
+    children: Vec<usize>,
+    text: String,
 }
 
-impl XmlNode {
-    #[must_use]
-    pub fn local_name(&self) -> &str {
-        self.name
-            .rsplit_once(':')
-            .map_or(&self.name, |(_, local)| local)
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct XmlProjection {
+    elements: Vec<ProjectedElement>,
+    root: usize,
+}
+
+impl XmlProjection {
+    pub(crate) fn root(&self) -> XmlNode<'_> {
+        XmlNode {
+            projection: self,
+            index: self.root,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct XmlNode<'a> {
+    projection: &'a XmlProjection,
+    index: usize,
+}
+
+impl<'a> XmlNode<'a> {
+    fn element(self) -> &'a ProjectedElement {
+        &self.projection.elements[self.index]
+    }
+
+    pub(crate) fn name(self) -> &'a str {
+        &self.element().name
     }
 
     #[must_use]
-    pub fn attribute(&self, name: &str) -> Option<&str> {
-        self.attributes
+    pub(crate) fn local_name(self) -> &'a str {
+        self.name()
+            .rsplit_once(':')
+            .map_or(self.name(), |(_, local)| local)
+    }
+
+    #[must_use]
+    pub(crate) fn attribute(self, name: &str) -> Option<&'a str> {
+        self.element()
+            .attributes
             .iter()
             .find(|attribute| attribute.name == name)
             .map(|attribute| attribute.value.as_str())
     }
 
-    pub fn child(&self, local_name: &str) -> Option<&Self> {
-        self.children
+    pub(crate) fn attributes(self) -> impl Iterator<Item = (&'a str, &'a str)> + 'a {
+        self.element()
+            .attributes
             .iter()
+            .map(|attribute| (attribute.name.as_str(), attribute.value.as_str()))
+    }
+
+    pub(crate) fn children(self) -> impl ExactSizeIterator<Item = Self> + DoubleEndedIterator + 'a {
+        self.element().children.iter().map(move |&index| Self {
+            projection: self.projection,
+            index,
+        })
+    }
+
+    pub(crate) fn child(self, local_name: &str) -> Option<Self> {
+        self.children()
             .find(|child| child.local_name() == local_name)
     }
 
-    pub fn children_named<'a>(
-        &'a self,
-        local_name: &'a str,
-    ) -> impl Iterator<Item = &'a Self> + 'a {
-        self.children
-            .iter()
+    pub(crate) fn children_named(self, local_name: &'a str) -> impl Iterator<Item = Self> + 'a {
+        self.children()
             .filter(move |child| child.local_name() == local_name)
     }
 
     #[must_use]
-    pub fn trimmed_text(&self) -> &str {
-        self.text.trim()
+    pub(crate) fn trimmed_text(self) -> &'a str {
+        self.element().text.trim()
     }
 }
 
@@ -112,7 +151,7 @@ impl fmt::Display for XmlError {
 
 impl std::error::Error for XmlError {}
 
-pub fn parse_xml(bytes: &[u8], limits: XmlLimits) -> Result<XmlNode, XmlError> {
+pub(crate) fn parse_xml(bytes: &[u8], limits: XmlLimits) -> Result<XmlProjection, XmlError> {
     if bytes.len() > limits.max_bytes {
         return Err(XmlError::Limit {
             kind: "byte",
@@ -129,7 +168,8 @@ pub fn parse_xml(bytes: &[u8], limits: XmlLimits) -> Result<XmlNode, XmlError> {
     let mut reader = Reader::from_reader(bytes);
     reader.config_mut().trim_text(false);
     reader.config_mut().check_end_names = true;
-    let mut stack: Vec<XmlNode> = Vec::new();
+    let mut elements = Vec::new();
+    let mut stack: Vec<usize> = Vec::new();
     let mut root = None;
     let mut nodes = 0usize;
     let mut attributes = 0usize;
@@ -148,19 +188,19 @@ pub fn parse_xml(bytes: &[u8], limits: XmlLimits) -> Result<XmlNode, XmlError> {
                     });
                 }
                 nodes = checked_increment(nodes, limits.max_nodes, "node")?;
-                let node = decode_start(&reader, &start, &mut attributes, limits)?;
-                stack.push(node);
+                let element = decode_start(&reader, &start, &mut attributes, limits)?;
+                let index = append_element(&mut elements, &stack, &mut root, element)?;
+                stack.push(index);
             }
             Event::Empty(start) => {
                 nodes = checked_increment(nodes, limits.max_nodes, "node")?;
-                let node = decode_start(&reader, &start, &mut attributes, limits)?;
-                append_node(&mut stack, &mut root, node)?;
+                let element = decode_start(&reader, &start, &mut attributes, limits)?;
+                append_element(&mut elements, &stack, &mut root, element)?;
             }
             Event::End(_) => {
-                let node = stack
+                stack
                     .pop()
                     .ok_or_else(|| XmlError::Malformed("unexpected end element".into()))?;
-                append_node(&mut stack, &mut root, node)?;
             }
             Event::Text(text) => {
                 let value = text
@@ -176,8 +216,8 @@ pub fn parse_xml(bytes: &[u8], limits: XmlLimits) -> Result<XmlNode, XmlError> {
                         limit: limits.max_text_bytes,
                     });
                 }
-                if let Some(node) = stack.last_mut() {
-                    node.text.push_str(&value);
+                if let Some(&index) = stack.last() {
+                    elements[index].text.push_str(&value);
                 } else if !value.trim().is_empty() {
                     return Err(XmlError::Malformed("text outside root element".into()));
                 }
@@ -197,8 +237,8 @@ pub fn parse_xml(bytes: &[u8], limits: XmlLimits) -> Result<XmlNode, XmlError> {
                         limit: limits.max_text_bytes,
                     });
                 }
-                if let Some(node) = stack.last_mut() {
-                    node.text.push_str(&value);
+                if let Some(&index) = stack.last() {
+                    elements[index].text.push_str(&value);
                 }
             }
             Event::GeneralRef(reference) => {
@@ -224,8 +264,8 @@ pub fn parse_xml(bytes: &[u8], limits: XmlLimits) -> Result<XmlNode, XmlError> {
                         limit: limits.max_text_bytes,
                     });
                 }
-                if let Some(node) = stack.last_mut() {
-                    node.text.push_str(value);
+                if let Some(&index) = stack.last() {
+                    elements[index].text.push_str(value);
                 }
             }
             Event::DocType(_) => return Err(XmlError::ForbiddenDoctype),
@@ -236,14 +276,17 @@ pub fn parse_xml(bytes: &[u8], limits: XmlLimits) -> Result<XmlNode, XmlError> {
     if !stack.is_empty() {
         return Err(XmlError::Malformed("unclosed element".into()));
     }
-    root.ok_or(XmlError::MissingRoot)
+    Ok(XmlProjection {
+        elements,
+        root: root.ok_or(XmlError::MissingRoot)?,
+    })
 }
 
 pub fn parse_xml_from_snapshot(
     snapshot: &VfsSnapshot,
     path: &VirtualPath,
     limits: XmlLimits,
-) -> Result<XmlNode, XmlError> {
+) -> Result<XmlProjection, XmlError> {
     parse_xml_from_snapshot_with_paths(snapshot, path, limits).map(|(node, _)| node)
 }
 
@@ -251,89 +294,113 @@ pub(crate) fn parse_xml_from_snapshot_with_paths(
     snapshot: &VfsSnapshot,
     path: &VirtualPath,
     limits: XmlLimits,
-) -> Result<(XmlNode, BTreeSet<VirtualPath>), XmlError> {
-    let mut stack = Vec::new();
-    let mut includes = 0usize;
-    let mut paths = BTreeSet::new();
-    let node = parse_included(
+) -> Result<(XmlProjection, BTreeSet<VirtualPath>), XmlError> {
+    IncludeProjector {
         snapshot,
-        path,
         limits,
-        &mut stack,
-        &mut includes,
-        &mut paths,
-    )?;
-    Ok((node, paths))
-}
-
-fn parse_included(
-    snapshot: &VfsSnapshot,
-    path: &VirtualPath,
-    limits: XmlLimits,
-    stack: &mut Vec<VirtualPath>,
-    includes: &mut usize,
-    paths: &mut BTreeSet<VirtualPath>,
-) -> Result<XmlNode, XmlError> {
-    if stack.contains(path) {
-        return Err(XmlError::IncludeCycle(path.clone()));
+        stack: Vec::new(),
+        includes: 0,
+        paths: BTreeSet::new(),
     }
-    let file = snapshot
-        .get(path)
-        .map_err(|error| XmlError::Vfs(error.to_string()))?
-        .ok_or_else(|| XmlError::MissingResource(path.clone()))?;
-    paths.insert(path.clone());
-    stack.push(path.clone());
-    let mut root = parse_xml(file.bytes(), limits)?;
-    expand_includes(snapshot, path, limits, stack, includes, paths, &mut root)?;
-    stack.pop();
-    Ok(root)
+    .project(path)
 }
 
-fn expand_includes(
-    snapshot: &VfsSnapshot,
-    current_path: &VirtualPath,
+struct IncludeProjector<'a> {
+    snapshot: &'a VfsSnapshot,
     limits: XmlLimits,
-    stack: &mut Vec<VirtualPath>,
-    includes: &mut usize,
-    paths: &mut BTreeSet<VirtualPath>,
-    node: &mut XmlNode,
-) -> Result<(), XmlError> {
-    let mut expanded = Vec::with_capacity(node.children.len());
-    for mut child in node.children.drain(..) {
-        if child.name == "xi:include" {
-            *includes = checked_increment(*includes, limits.max_includes, "include")?;
-            let href = child
-                .attribute("href")
-                .ok_or_else(|| XmlError::InvalidInclude("missing href".into()))?;
-            if child.attribute("parse").is_some_and(|parse| parse != "xml") {
-                return Err(XmlError::InvalidInclude(
-                    "only parse=xml is supported".into(),
-                ));
-            }
-            let included_path = resolve_include(current_path, href)?;
-            expanded.push(parse_included(
-                snapshot,
-                &included_path,
-                limits,
-                stack,
-                includes,
-                paths,
-            )?);
-        } else {
-            expand_includes(
-                snapshot,
-                current_path,
-                limits,
-                stack,
-                includes,
-                paths,
-                &mut child,
-            )?;
-            expanded.push(child);
+    stack: Vec<VirtualPath>,
+    includes: usize,
+    paths: BTreeSet<VirtualPath>,
+}
+
+impl IncludeProjector<'_> {
+    fn project(
+        mut self,
+        path: &VirtualPath,
+    ) -> Result<(XmlProjection, BTreeSet<VirtualPath>), XmlError> {
+        let projection = self.parse(path)?;
+        Ok((projection, self.paths))
+    }
+
+    fn parse(&mut self, path: &VirtualPath) -> Result<XmlProjection, XmlError> {
+        if self.stack.contains(path) {
+            return Err(XmlError::IncludeCycle(path.clone()));
         }
+        let file = self
+            .snapshot
+            .get(path)
+            .map_err(|error| XmlError::Vfs(error.to_string()))?
+            .ok_or_else(|| XmlError::MissingResource(path.clone()))?;
+        self.paths.insert(path.clone());
+        self.stack.push(path.clone());
+        let mut projection = parse_xml(file.bytes(), self.limits)?;
+        let root = projection.root;
+        self.expand(path, &mut projection, root)?;
+        self.stack.pop();
+        Ok(projection)
     }
-    node.children = expanded;
-    Ok(())
+
+    fn expand(
+        &mut self,
+        current_path: &VirtualPath,
+        projection: &mut XmlProjection,
+        element: usize,
+    ) -> Result<(), XmlError> {
+        let children = std::mem::take(&mut projection.elements[element].children);
+        let mut expanded = Vec::with_capacity(children.len());
+        for child in children {
+            if projection.elements[child].name == "xi:include" {
+                self.includes =
+                    checked_increment(self.includes, self.limits.max_includes, "include")?;
+                let href = projection.elements[child]
+                    .attributes
+                    .iter()
+                    .find(|attribute| attribute.name == "href")
+                    .map(|attribute| attribute.value.as_str())
+                    .ok_or_else(|| XmlError::InvalidInclude("missing href".into()))?;
+                if projection.elements[child]
+                    .attributes
+                    .iter()
+                    .find(|attribute| attribute.name == "parse")
+                    .is_some_and(|attribute| attribute.value != "xml")
+                {
+                    return Err(XmlError::InvalidInclude(
+                        "only parse=xml is supported".into(),
+                    ));
+                }
+                let included_path = resolve_include(current_path, href)?;
+                let included = self.parse(&included_path)?;
+                expanded.push(import_projection(projection, &included, included.root));
+            } else {
+                self.expand(current_path, projection, child)?;
+                expanded.push(child);
+            }
+        }
+        projection.elements[element].children = expanded;
+        Ok(())
+    }
+}
+
+fn import_projection(
+    destination: &mut XmlProjection,
+    source: &XmlProjection,
+    source_index: usize,
+) -> usize {
+    let source_element = &source.elements[source_index];
+    let index = destination.elements.len();
+    destination.elements.push(ProjectedElement {
+        name: source_element.name.clone(),
+        attributes: source_element.attributes.clone(),
+        children: Vec::new(),
+        text: source_element.text.clone(),
+    });
+    let children = source_element
+        .children
+        .iter()
+        .map(|&child| import_projection(destination, source, child))
+        .collect();
+    destination.elements[index].children = children;
+    index
 }
 
 fn resolve_include(current: &VirtualPath, href: &str) -> Result<VirtualPath, XmlError> {
@@ -359,7 +426,7 @@ fn decode_start(
     start: &quick_xml::events::BytesStart<'_>,
     attribute_count: &mut usize,
     limits: XmlLimits,
-) -> Result<XmlNode, XmlError> {
+) -> Result<ProjectedElement, XmlError> {
     let name = reader
         .decoder()
         .decode(start.name().as_ref())
@@ -383,7 +450,7 @@ fn decode_start(
             value,
         });
     }
-    Ok(XmlNode {
+    Ok(ProjectedElement {
         name,
         attributes: decoded,
         children: Vec::new(),
@@ -391,17 +458,20 @@ fn decode_start(
     })
 }
 
-fn append_node(
-    stack: &mut [XmlNode],
-    root: &mut Option<XmlNode>,
-    node: XmlNode,
-) -> Result<(), XmlError> {
-    if let Some(parent) = stack.last_mut() {
-        parent.children.push(node);
-    } else if root.replace(node).is_some() {
+fn append_element(
+    elements: &mut Vec<ProjectedElement>,
+    stack: &[usize],
+    root: &mut Option<usize>,
+    element: ProjectedElement,
+) -> Result<usize, XmlError> {
+    let index = elements.len();
+    elements.push(element);
+    if let Some(&parent) = stack.last() {
+        elements[parent].children.push(index);
+    } else if root.replace(index).is_some() {
         return Err(XmlError::MultipleRoots);
     }
-    Ok(())
+    Ok(index)
 }
 
 fn checked_increment(value: usize, limit: usize, kind: &'static str) -> Result<usize, XmlError> {

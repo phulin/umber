@@ -1,14 +1,9 @@
-use std::fmt::Write as _;
-
 use bib_model::{
     Entry, FieldProvenance, FieldValue, GeneratedFile, OutputFormat, OutputRequest,
     ProcessedSection,
 };
 
-use crate::{
-    DotOutputFailure, DotOutputFailureKind, OutputContext, OutputPlan, OutputRouter,
-    router::failure as output_failure,
-};
+use crate::{DotOutputFailure, OutputContext, OutputPlan, OutputRouter, router::OutputSink};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct DotInclude {
@@ -69,39 +64,33 @@ impl DotSerializer {
 
     fn write_section(
         self,
-        text: &mut String,
+        text: &mut OutputSink<'_>,
         section: &ProcessedSection,
-        max_bytes: usize,
     ) -> Result<(), DotOutputFailure> {
         let section_number = section.id().get();
         if self.options.include.sections {
-            writeln!(text, "  subgraph \"cluster_section{section_number}\" {{")
-                .expect("String writes cannot fail");
-            writeln!(text, "    label=\"Section {section_number}\";")
-                .expect("String writes cannot fail");
-            writeln!(text, "    tooltip=\"Section {section_number}\";")
-                .expect("String writes cannot fail");
-            text.push_str(
-                "    fontsize=\"10\";\n    fontname=serif;\n    fillcolor=\"#fce3fa\";\n\n",
-            );
+            text.line(&format!(
+                "  subgraph \"cluster_section{section_number}\" {{"
+            ))?;
+            text.line(&format!("    label=\"Section {section_number}\";"))?;
+            text.line(&format!("    tooltip=\"Section {section_number}\";"))?;
+            text.push("    fontsize=\"10\";\n    fontname=serif;\n    fillcolor=\"#fce3fa\";\n\n")?;
         }
-        check_limit(text, max_bytes)?;
 
         for entry in section.entries() {
-            self.write_entry(text, section_number, entry, max_bytes)?;
+            self.write_entry(text, section_number, entry)?;
         }
         if self.options.include.sections {
-            text.push_str("  }\n\n");
+            text.push("  }\n\n")?;
         }
-        self.write_edges(text, section, max_bytes)
+        self.write_edges(text, section)
     }
 
     fn write_entry(
         self,
-        text: &mut String,
+        text: &mut OutputSink<'_>,
         section: u32,
         entry: &Entry,
-        max_bytes: usize,
     ) -> Result<(), DotOutputFailure> {
         let id = escape(entry.id().as_str());
         let entry_type = escape(&entry.entry_type().as_str().to_ascii_uppercase());
@@ -110,43 +99,34 @@ impl DotSerializer {
         } else {
             "  "
         };
-        writeln!(
-            text,
+        text.line(&format!(
             "{indent}subgraph \"cluster_section{section}/{id}\" {{"
-        )
-        .expect("String writes cannot fail");
-        writeln!(text, "{indent}  fontsize=\"10\";").expect("String writes cannot fail");
-        writeln!(text, "{indent}  label=\"{id} ({entry_type})\";")
-            .expect("String writes cannot fail");
-        writeln!(text, "{indent}  tooltip=\"{id} ({entry_type})\";")
-            .expect("String writes cannot fail");
+        ))?;
+        text.line(&format!("{indent}  fontsize=\"10\";"))?;
+        text.line(&format!("{indent}  label=\"{id} ({entry_type})\";"))?;
+        text.line(&format!("{indent}  tooltip=\"{id} ({entry_type})\";"))?;
         let fill = if entry.entry_type().as_str().eq_ignore_ascii_case("xdata") {
             "#deefff"
         } else {
             "#a0d0ff"
         };
-        writeln!(text, "{indent}  fillcolor=\"{fill}\";\n").expect("String writes cannot fail");
+        text.line(&format!("{indent}  fillcolor=\"{fill}\";\n"))?;
         if self.options.include.fields {
             for field in entry.fields().iter() {
                 let field_id = escape(field.id().as_str());
                 let label = escape(&field.id().as_str().to_ascii_uppercase());
-                writeln!(
-                    text,
+                text.line(&format!(
                     "{indent}  \"section{section}/{id}/{field_id}\" [ label=\"{label}\" ]"
-                )
-                .expect("String writes cannot fail");
-                check_limit(text, max_bytes)?;
+                ))?;
             }
         }
-        writeln!(text, "{indent}}}\n").expect("String writes cannot fail");
-        check_limit(text, max_bytes)
+        text.line(&format!("{indent}}}\n"))
     }
 
     fn write_edges(
         self,
-        text: &mut String,
+        text: &mut OutputSink<'_>,
         section: &ProcessedSection,
-        max_bytes: usize,
     ) -> Result<(), DotOutputFailure> {
         let section_number = section.id().get();
         for entry in section.entries() {
@@ -169,7 +149,7 @@ impl DotSerializer {
                                 parent.field().as_str().to_ascii_uppercase()
                             ),
                             false,
-                        );
+                        )?;
                     }
                     FieldProvenance::Computed { inputs, .. } => {
                         for input in inputs {
@@ -189,13 +169,12 @@ impl DotSerializer {
                                     input.field().as_str().to_ascii_uppercase()
                                 ),
                                 false,
-                            );
+                            )?;
                         }
                     }
                     _ => {}
                 }
-                self.write_relationship_edges(text, section_number, entry, field);
-                check_limit(text, max_bytes)?;
+                self.write_relationship_edges(text, section_number, entry, field)?;
             }
         }
         Ok(())
@@ -203,11 +182,11 @@ impl DotSerializer {
 
     fn write_relationship_edges(
         self,
-        text: &mut String,
+        text: &mut OutputSink<'_>,
         section: u32,
         entry: &Entry,
         field: &bib_model::Field,
-    ) {
+    ) -> Result<(), DotOutputFailure> {
         let name = field.id().as_str();
         let enabled = match name {
             "xdata" => self.options.include.xdata,
@@ -217,10 +196,10 @@ impl DotSerializer {
             _ => false,
         };
         if !enabled {
-            return;
+            return Ok(());
         }
         let Some(targets) = relationship_targets(field.value()) else {
-            return;
+            return Ok(());
         };
         let color = if name == "related" {
             "#ad1741"
@@ -238,8 +217,9 @@ impl DotSerializer {
                 color,
                 &format!("{} {}S {target}", entry.id(), name.to_ascii_uppercase()),
                 true,
-            );
+            )?;
         }
+        Ok(())
     }
 }
 
@@ -256,22 +236,26 @@ impl DotSerializer {
         )
     }
 
-    fn render(self, plan: &OutputPlan<'_>) -> Result<String, DotOutputFailure> {
-        let mut text = String::from(
+    fn render(
+        self,
+        plan: &OutputPlan<'_>,
+        text: &mut OutputSink<'_>,
+    ) -> Result<(), DotOutputFailure> {
+        text.push(
             "digraph Biberdata {\n  compound = true;\n  edge [ arrowhead=open ];\n  graph [ style=filled, rankdir=LR ];\n  node [\n    fontsize=10,\n    fillcolor=white,\n    style=filled,\n    shape=box ];\n\n",
-        );
-        check_limit(&text, plan.request().max_bytes())?;
+        )?;
         for section in plan.sections() {
-            self.write_section(&mut text, section.section(), plan.request().max_bytes())?;
+            self.write_section(text, section)?;
         }
-        text.push_str("}\n");
-        check_limit(&text, plan.request().max_bytes())?;
-        Ok(text)
+        text.push("}\n")
     }
 }
 
-pub(crate) fn render(plan: &OutputPlan<'_>) -> Result<String, DotOutputFailure> {
-    DotSerializer::new(plan.options().dot()).render(plan)
+pub(crate) fn render(
+    plan: &OutputPlan<'_>,
+    sink: &mut OutputSink<'_>,
+) -> Result<(), DotOutputFailure> {
+    DotSerializer::new(plan.options().dot()).render(plan, sink)
 }
 
 fn relationship_targets(value: &FieldValue) -> Option<Vec<&str>> {
@@ -284,7 +268,7 @@ fn relationship_targets(value: &FieldValue) -> Option<Vec<&str>> {
 
 #[allow(clippy::too_many_arguments)]
 fn write_edge(
-    text: &mut String,
+    text: &mut OutputSink<'_>,
     section: u32,
     from_entry: &str,
     from_field: &str,
@@ -293,18 +277,16 @@ fn write_edge(
     color: &str,
     tooltip: &str,
     dashed: bool,
-) {
+) -> Result<(), DotOutputFailure> {
     let style = if dashed { " style=\"dashed\"," } else { "" };
-    writeln!(
-        text,
+    text.line(&format!(
         "  \"section{section}/{}/{}\" -> \"section{section}/{}/{}\" [{style} penwidth=\"2.0\", color=\"{color}\", tooltip=\"{}\" ]",
         escape(from_entry),
         escape(from_field),
         escape(to_entry),
         escape(to_field),
         escape(tooltip),
-    )
-    .expect("String writes cannot fail");
+    ))
 }
 
 fn escape(value: &str) -> String {
@@ -312,24 +294,4 @@ fn escape(value: &str) -> String {
         .replace('\\', "\\\\")
         .replace('"', "\\\"")
         .replace(['\n', '\r'], " ")
-}
-
-fn check_limit(text: &str, max_bytes: usize) -> Result<(), DotOutputFailure> {
-    if text.len() > max_bytes {
-        Err(limit_failure(max_bytes))
-    } else {
-        Ok(())
-    }
-}
-
-fn limit_failure(max_bytes: usize) -> DotOutputFailure {
-    failure(
-        DotOutputFailureKind::Limit,
-        "BIB_OUTPUT_LIMIT",
-        &format!("DOT output exceeds the configured {max_bytes}-byte limit"),
-    )
-}
-
-fn failure(kind: DotOutputFailureKind, code: &str, message: &str) -> DotOutputFailure {
-    output_failure(OutputFormat::Dot, kind, code, message)
 }

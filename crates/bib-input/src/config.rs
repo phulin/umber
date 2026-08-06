@@ -157,14 +157,16 @@ impl From<XmlError> for ConfigError {
 }
 
 pub fn validate_config_bytes(bytes: &[u8], limits: XmlLimits) -> Result<(), ConfigError> {
-    validate_config_tree(&parse_xml(bytes, limits)?)
+    let projection = parse_xml(bytes, limits)?;
+    validate_config_tree(projection.root())
 }
 
 pub fn parse_config_bytes(
     bytes: &[u8],
     limits: XmlLimits,
 ) -> Result<ConfigurationFile, ConfigError> {
-    config_from_tree(&parse_xml(bytes, limits)?)
+    let projection = parse_xml(bytes, limits)?;
+    config_from_tree(projection.root())
 }
 
 pub fn parse_config(
@@ -172,7 +174,8 @@ pub fn parse_config(
     path: &VirtualPath,
     limits: XmlLimits,
 ) -> Result<ConfigurationFile, ConfigError> {
-    config_from_tree(&parse_xml_from_snapshot(snapshot, path, limits)?)
+    let projection = parse_xml_from_snapshot(snapshot, path, limits)?;
+    config_from_tree(projection.root())
 }
 
 pub fn parse_config_with_paths(
@@ -180,42 +183,52 @@ pub fn parse_config_with_paths(
     path: &VirtualPath,
     limits: XmlLimits,
 ) -> Result<(ConfigurationFile, BTreeSet<VirtualPath>), ConfigError> {
-    let (root, paths) = parse_xml_from_snapshot_with_paths(snapshot, path, limits)?;
-    Ok((config_from_tree(&root)?, paths))
+    let (projection, paths) = parse_xml_from_snapshot_with_paths(snapshot, path, limits)?;
+    Ok((config_from_tree(projection.root())?, paths))
 }
 
-fn validate_config_tree(root: &XmlNode) -> Result<(), ConfigError> {
-    if root.name != "config" {
+pub fn validate_config_with_paths(
+    snapshot: &VfsSnapshot,
+    path: &VirtualPath,
+    limits: XmlLimits,
+) -> Result<BTreeSet<VirtualPath>, ConfigError> {
+    let (projection, paths) = parse_xml_from_snapshot_with_paths(snapshot, path, limits)?;
+    validate_config_tree(projection.root())?;
+    Ok(paths)
+}
+
+fn validate_config_tree(root: XmlNode<'_>) -> Result<(), ConfigError> {
+    if root.name() != "config" {
         return Err(ConfigError::Schema(
             "root element must be config without a namespace".into(),
         ));
     }
-    if root.attribute("xmlns").is_some() || root.name.contains(':') {
+    if root.attribute("xmlns").is_some() || root.name().contains(':') {
         return Err(ConfigError::Schema(
             "configuration namespace is not supported by the pinned schema".into(),
         ));
     }
-    for child in &root.children {
+    for child in root.children() {
         if child.local_name().is_empty() {
             return Err(ConfigError::Schema(
                 "empty configuration element name".into(),
             ));
         }
-        if !child.children.is_empty() && !child.trimmed_text().is_empty() {
+        if child.children().len() != 0 && !child.trimmed_text().is_empty() {
             return Err(ConfigError::Schema(format!(
                 "mixed content is not allowed in {}",
-                child.name
+                child.name()
             )));
         }
     }
     Ok(())
 }
 
-fn config_from_tree(root: &XmlNode) -> Result<ConfigurationFile, ConfigError> {
+fn config_from_tree(root: XmlNode<'_>) -> Result<ConfigurationFile, ConfigError> {
     validate_config_tree(root)?;
     let mut values = BTreeMap::new();
     let mut templates = Vec::new();
-    for child in &root.children {
+    for child in root.children() {
         let key = child.local_name().to_owned();
         if key.ends_with("template") {
             templates.push(Template {
@@ -229,16 +242,11 @@ fn config_from_tree(root: &XmlNode) -> Result<ConfigurationFile, ConfigError> {
             });
             continue;
         }
-        let value = if child.children.is_empty() {
+        let value = if child.children().len() == 0 {
             ConfigValue::Scalar(child.trimmed_text().to_owned())
-        } else if child
-            .children
-            .iter()
-            .all(|node| node.local_name() == "option")
-        {
+        } else if child.children().all(|node| node.local_name() == "option") {
             let list = child
-                .children
-                .iter()
+                .children()
                 .map(|node| StructuredValue {
                     content: node
                         .attribute("value")
@@ -255,8 +263,7 @@ fn config_from_tree(root: &XmlNode) -> Result<ConfigurationFile, ConfigError> {
         } else if matches!(key.as_str(), "noinits" | "nolabels" | "nosort") {
             ConfigValue::List(
                 child
-                    .children
-                    .iter()
+                    .children()
                     .map(|node| StructuredValue {
                         content: node
                             .attribute("value")
@@ -274,23 +281,22 @@ fn config_from_tree(root: &XmlNode) -> Result<ConfigurationFile, ConfigError> {
     Ok(ConfigurationFile { values, templates })
 }
 
-fn flatten_children(node: &XmlNode) -> Vec<TemplateElement> {
+fn flatten_children(node: XmlNode<'_>) -> Vec<TemplateElement> {
     let mut result = Vec::new();
-    let mut stack = node.children.iter().rev().collect::<Vec<_>>();
+    let mut stack = node.children().rev().collect::<Vec<_>>();
     while let Some(child) = stack.pop() {
         result.push(TemplateElement {
             name: child.local_name().to_owned(),
             content: child.trimmed_text().to_owned(),
             attributes: attrs(child),
         });
-        stack.extend(child.children.iter().rev());
+        stack.extend(child.children().rev());
     }
     result
 }
 
-fn attrs(node: &XmlNode) -> BTreeMap<String, String> {
-    node.attributes
-        .iter()
-        .map(|attribute| (attribute.name.clone(), attribute.value.clone()))
+fn attrs(node: XmlNode<'_>) -> BTreeMap<String, String> {
+    node.attributes()
+        .map(|(name, value)| (name.to_owned(), value.to_owned()))
         .collect()
 }

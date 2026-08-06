@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::fmt::Write as _;
 use std::sync::Arc;
 
@@ -9,7 +10,7 @@ use bib_unicode::{RecodeSet, TexRecoder};
 
 use crate::{
     BibtexOutputFailure, BibtexOutputFailureKind, OutputContext, OutputPlan, OutputRouter,
-    router::failure as output_failure,
+    router::{OutputSink, failure as output_failure},
 };
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -289,49 +290,73 @@ impl BibtexSerializer {
             .serialize_as(OutputFormat::Bibtex, context, request)
     }
 
-    fn render(&self, plan: &OutputPlan<'_>) -> Result<String, BibtexOutputFailure> {
-        let mut text = String::new();
+    fn render(
+        &self,
+        plan: &OutputPlan<'_>,
+        sink: &mut OutputSink<'_>,
+    ) -> Result<(), BibtexOutputFailure> {
         for comment in self.options.comments.iter() {
             validate_comment(comment)?;
-            writeln!(text, "% {comment}").expect("writing a String cannot fail");
+            self.emit(sink, &format!("% {comment}\n"))?;
         }
         if !self.options.comments.is_empty() {
-            text.push('\n');
+            sink.push("\n")?;
         }
-        check_work_limit(&text, plan.request().max_bytes())?;
         for value in self.options.macros.iter() {
             validate_identifier(value.name(), "macro name")?;
             validate_value(value.value(), "macro value")?;
-            writeln!(
-                text,
-                "@STRING{{{} = \"{}\"}}\n",
-                self.options.field_case.apply(value.name()),
-                value.value()
-            )
-            .expect("writing a String cannot fail");
-            check_work_limit(&text, plan.request().max_bytes())?;
+            self.emit(
+                sink,
+                &format!(
+                    "@STRING{{{} = \"{}\"}}\n\n",
+                    self.options.field_case.apply(value.name()),
+                    value.value()
+                ),
+            )?;
         }
 
         for section in plan.sections() {
-            for selected in section.first_entries() {
-                let entry = selected.entry().ok_or_else(|| {
+            let mut seen = BTreeSet::new();
+            let selected = section
+                .lists()
+                .flat_map(|list| list.entries())
+                .filter(|id| seen.insert((*id).clone()))
+                .collect::<Vec<_>>();
+            if selected.is_empty() && section.lists().len() == 0 {
+                for entry in section.entries() {
+                    let mut text = String::new();
+                    self.write_entry(&mut text, entry)?;
+                    self.emit(sink, &text)?;
+                }
+                continue;
+            }
+            for id in selected {
+                let entry = section.entry(id).ok_or_else(|| {
                     failure(
                         BibtexOutputFailureKind::MalformedValue,
                         "BIB_BIBTEX_UNKNOWN_ENTRY",
-                        &format!("data list references unknown entry `{}`", selected.id()),
+                        &format!("data list references unknown entry `{id}`"),
                     )
                 })?;
+                let mut text = String::new();
                 self.write_entry(&mut text, entry)?;
-                check_work_limit(&text, plan.request().max_bytes())?;
+                self.emit(sink, &text)?;
             }
         }
 
-        Ok(TexRecoder::new(RecodeSet::Null, self.options.escape).encode(&text))
+        Ok(())
+    }
+
+    fn emit(&self, sink: &mut OutputSink<'_>, text: &str) -> Result<(), BibtexOutputFailure> {
+        sink.push(&TexRecoder::new(RecodeSet::Null, self.options.escape).encode(text))
     }
 }
 
-pub(crate) fn render(plan: &OutputPlan<'_>) -> Result<String, BibtexOutputFailure> {
-    BibtexSerializer::new(plan.options().bibtex().clone()).render(plan)
+pub(crate) fn render(
+    plan: &OutputPlan<'_>,
+    sink: &mut OutputSink<'_>,
+) -> Result<(), BibtexOutputFailure> {
+    BibtexSerializer::new(plan.options().bibtex().clone()).render(plan, sink)
 }
 
 fn field_text(value: &FieldValue) -> Option<&str> {
@@ -340,18 +365,6 @@ fn field_text(value: &FieldValue) -> Option<&str> {
         FieldValue::Verbatim(value) => Some(value.as_str()),
         _ => None,
     }
-}
-
-fn check_work_limit(value: &str, output_limit: usize) -> Result<(), BibtexOutputFailure> {
-    let work_limit = output_limit.saturating_mul(32);
-    if value.len() > work_limit {
-        return Err(failure(
-            BibtexOutputFailureKind::Limit,
-            "BIB_BIBTEX_LIMIT",
-            &format!("BibTeX output exceeds the {output_limit} byte limit"),
-        ));
-    }
-    Ok(())
 }
 
 fn format_range(value: &Range) -> String {

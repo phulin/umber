@@ -4,8 +4,8 @@ use std::sync::Arc;
 
 use bib_input::{
     BibTexOptions, ConfigError, ControlError, ControlFile, RawBibDatabase, XmlError, XmlLimits,
-    parse_bibtex_bytes, parse_config_bytes, parse_config_with_paths, parse_control_bytes,
-    parse_control_with_paths,
+    parse_bibtex_bytes, parse_control_bytes, parse_control_with_paths, validate_config_bytes,
+    validate_config_with_paths,
 };
 use bib_model::{
     BibConfigurationBuilder, BibDiagnostic, BibDiagnosticCode, BibSeverity, DiagnosticBuilder,
@@ -264,16 +264,15 @@ impl BibSession {
                     .windows(b"xi:include".len())
                     .any(|window| window == b"xi:include")
                 {
-                    parse_config_with_paths(snapshot, file.path(), self.options.xml_limits).map(
-                        |(configuration, paths)| {
+                    validate_config_with_paths(snapshot, file.path(), self.options.xml_limits).map(
+                        |paths| {
                             for path in paths {
                                 inputs.insert(path, FileKind::BibConfiguration);
                             }
-                            configuration
                         },
                     )
                 } else {
-                    parse_config_bytes(file.bytes(), self.options.xml_limits)
+                    validate_config_bytes(file.bytes(), self.options.xml_limits)
                 };
                 parsed.map_err(config_failure)?;
             } else {

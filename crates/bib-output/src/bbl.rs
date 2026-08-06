@@ -8,7 +8,7 @@ use bib_unicode::{compatibility_hash, normalise_nfc};
 
 use crate::{
     BblOutputFailure, BblOutputFailureKind, OutputContext, OutputPlan, OutputRouter,
-    router::failure as output_failure,
+    router::{OutputSink, failure as output_failure},
 };
 
 const HEADER: &str = concat!(
@@ -44,11 +44,12 @@ impl BblSerializer {
     }
 }
 
-pub(crate) fn render(plan: &OutputPlan<'_>) -> Result<String, BblOutputFailure> {
-    let mut writer = BoundedWriter::new(plan.request().max_bytes());
+pub(crate) fn render(
+    plan: &OutputPlan<'_>,
+    writer: &mut OutputSink<'_>,
+) -> Result<(), BblOutputFailure> {
     writer.push(HEADER)?;
-    for planned in plan.sections() {
-        let section = planned.section();
+    for section in plan.sections() {
         writer.line(&format!("\\refsection{{{}}}", section.id()))?;
         for list in section.lists() {
             let kind = match list.kind() {
@@ -66,7 +67,7 @@ pub(crate) fn render(plan: &OutputPlan<'_>) -> Result<String, BblOutputFailure> 
                         &format!("data list references unknown entry `{entry_id}`"),
                     )
                 })?;
-                write_entry(&mut writer, entry, item.context_fields())?;
+                write_entry(writer, entry, item.context_fields())?;
             }
             writer.line("  \\enddatalist")?;
         }
@@ -84,11 +85,11 @@ pub(crate) fn render(plan: &OutputPlan<'_>) -> Result<String, BblOutputFailure> 
     writer.line("\\endinput")?;
     writer.push("\n")?;
 
-    Ok(writer.finish())
+    Ok(())
 }
 
 fn write_entry<'a>(
-    writer: &mut BoundedWriter,
+    writer: &mut OutputSink<'_>,
     entry: &Entry,
     context_fields: impl ExactSizeIterator<Item = &'a Field>,
 ) -> Result<(), BblOutputFailure> {
@@ -125,7 +126,7 @@ fn write_entry<'a>(
     writer.line("    \\endentry")
 }
 
-fn write_field(writer: &mut BoundedWriter, field: &Field) -> Result<(), BblOutputFailure> {
+fn write_field(writer: &mut OutputSink<'_>, field: &Field) -> Result<(), BblOutputFailure> {
     let id = field.id().as_str();
     match field.value() {
         FieldValue::Literal(value) => {
@@ -179,7 +180,7 @@ fn write_field(writer: &mut BoundedWriter, field: &Field) -> Result<(), BblOutpu
 }
 
 fn write_names(
-    writer: &mut BoundedWriter,
+    writer: &mut OutputSink<'_>,
     id: &str,
     names: &bib_model::NameList,
 ) -> Result<(), BblOutputFailure> {
@@ -193,7 +194,7 @@ fn write_names(
     writer.line("      }")
 }
 
-fn write_name(writer: &mut BoundedWriter, name: &Name) -> Result<(), BblOutputFailure> {
+fn write_name(writer: &mut OutputSink<'_>, name: &Name) -> Result<(), BblOutputFailure> {
     let hash = name
         .hash_id()
         .map_or_else(|| name_hash(name), compatibility_hash);
@@ -249,7 +250,7 @@ fn write_name(writer: &mut BoundedWriter, name: &Name) -> Result<(), BblOutputFa
 }
 
 fn write_list(
-    writer: &mut BoundedWriter,
+    writer: &mut OutputSink<'_>,
     id: &str,
     values: &[&str],
 ) -> Result<(), BblOutputFailure> {
@@ -264,7 +265,7 @@ fn write_list(
 }
 
 fn write_ranges(
-    writer: &mut BoundedWriter,
+    writer: &mut OutputSink<'_>,
     id: &str,
     values: &[Range],
 ) -> Result<(), BblOutputFailure> {
@@ -354,53 +355,4 @@ fn validate_text(value: &str, kind: &str) -> Result<(), BblOutputFailure> {
 
 fn failure(kind: BblOutputFailureKind, code: &str, message: &str) -> BblOutputFailure {
     output_failure(OutputFormat::Bbl, kind, code, message)
-}
-
-fn limit_failure(limit: usize) -> BblOutputFailure {
-    failure(
-        BblOutputFailureKind::Limit,
-        "BIB_OUTPUT_LIMIT",
-        &format!("BBL output exceeds the configured {limit}-byte limit"),
-    )
-}
-
-struct BoundedWriter {
-    value: String,
-    output_limit: usize,
-    work_limit: usize,
-}
-
-impl BoundedWriter {
-    fn new(output_limit: usize) -> Self {
-        Self {
-            value: String::new(),
-            output_limit,
-            // A legacy encoding can represent a multi-byte UTF-8 scalar in
-            // one byte, while CRLF can expand generated line endings. Keep
-            // construction bounded, then enforce the exact encoded size.
-            work_limit: output_limit.saturating_mul(4),
-        }
-    }
-
-    fn push(&mut self, value: &str) -> Result<(), BblOutputFailure> {
-        let length = self
-            .value
-            .len()
-            .checked_add(value.len())
-            .ok_or_else(|| limit_failure(self.output_limit))?;
-        if length > self.work_limit {
-            return Err(limit_failure(self.output_limit));
-        }
-        self.value.push_str(value);
-        Ok(())
-    }
-
-    fn line(&mut self, value: &str) -> Result<(), BblOutputFailure> {
-        self.push(value)?;
-        self.push("\n")
-    }
-
-    fn finish(self) -> String {
-        self.value
-    }
 }

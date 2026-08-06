@@ -113,15 +113,16 @@ impl From<XmlError> for BibLatexXmlError {
 }
 
 pub fn validate_biblatexml_bytes(bytes: &[u8], limits: XmlLimits) -> Result<(), BibLatexXmlError> {
-    let root = parse_xml(bytes, limits)?;
-    validate_tree(&root)
+    let projection = parse_xml(bytes, limits)?;
+    validate_tree(projection.root())
 }
 
 pub fn parse_biblatexml_bytes(
     bytes: &[u8],
     limits: XmlLimits,
 ) -> Result<BibLatexXmlData, BibLatexXmlError> {
-    from_tree(&parse_xml(bytes, limits)?)
+    let projection = parse_xml(bytes, limits)?;
+    from_tree(projection.root())
 }
 
 pub fn parse_biblatexml(
@@ -129,11 +130,12 @@ pub fn parse_biblatexml(
     path: &VirtualPath,
     limits: XmlLimits,
 ) -> Result<BibLatexXmlData, BibLatexXmlError> {
-    from_tree(&parse_xml_from_snapshot(snapshot, path, limits)?)
+    let projection = parse_xml_from_snapshot(snapshot, path, limits)?;
+    from_tree(projection.root())
 }
 
-fn validate_tree(root: &XmlNode) -> Result<(), BibLatexXmlError> {
-    if root.name != "bltx:entries" {
+fn validate_tree(root: XmlNode<'_>) -> Result<(), BibLatexXmlError> {
+    if root.name() != "bltx:entries" {
         return Err(BibLatexXmlError::Schema(
             "root element must be bltx:entries".into(),
         ));
@@ -143,7 +145,7 @@ fn validate_tree(root: &XmlNode) -> Result<(), BibLatexXmlError> {
         return Err(BibLatexXmlError::Namespace { found: namespace });
     }
     for entry in root.children_named("entry") {
-        if entry.name != "bltx:entry"
+        if entry.name() != "bltx:entry"
             || entry.attribute("id").is_none()
             || entry.attribute("entrytype").is_none()
         {
@@ -151,8 +153,8 @@ fn validate_tree(root: &XmlNode) -> Result<(), BibLatexXmlError> {
                 "entry requires bltx namespace, id, and entrytype".into(),
             ));
         }
-        for child in &entry.children {
-            if !child.name.starts_with("bltx:") {
+        for child in entry.children() {
+            if !child.name().starts_with("bltx:") {
                 return Err(BibLatexXmlError::Schema(
                     "all entry fields must use the bltx namespace".into(),
                 ));
@@ -162,7 +164,7 @@ fn validate_tree(root: &XmlNode) -> Result<(), BibLatexXmlError> {
     Ok(())
 }
 
-fn from_tree(root: &XmlNode) -> Result<BibLatexXmlData, BibLatexXmlError> {
+fn from_tree(root: XmlNode<'_>) -> Result<BibLatexXmlData, BibLatexXmlError> {
     validate_tree(root)?;
     let mut result = BibLatexXmlData::default();
     for node in root.children_named("entry") {
@@ -191,7 +193,7 @@ fn from_tree(root: &XmlNode) -> Result<BibLatexXmlData, BibLatexXmlError> {
     Ok(result)
 }
 
-fn parse_entry(node: &XmlNode) -> Result<BibLatexXmlEntry, BibLatexXmlError> {
+fn parse_entry(node: XmlNode<'_>) -> Result<BibLatexXmlEntry, BibLatexXmlError> {
     let id = node.attribute("id").unwrap_or_default().to_owned();
     let entry_type = node.attribute("entrytype").unwrap_or_default().to_owned();
     let options = node
@@ -207,7 +209,7 @@ fn parse_entry(node: &XmlNode) -> Result<BibLatexXmlEntry, BibLatexXmlError> {
         .map(parse_annotation)
         .collect::<Result<Vec<_>, _>>()?;
     let mut fields = BTreeMap::new();
-    for child in &node.children {
+    for child in node.children() {
         let name = child.local_name();
         if matches!(name, "options" | "ids" | "annotation") {
             continue;
@@ -234,7 +236,7 @@ fn parse_entry(node: &XmlNode) -> Result<BibLatexXmlEntry, BibLatexXmlError> {
             } else {
                 format!("{prefix}date")
             };
-            let raw = if child.children.is_empty() {
+            let raw = if child.children().len() == 0 {
                 child.trimmed_text().to_owned()
             } else {
                 let start = child
@@ -303,7 +305,7 @@ fn parse_entry(node: &XmlNode) -> Result<BibLatexXmlEntry, BibLatexXmlError> {
     })
 }
 
-fn parse_name(node: &XmlNode) -> Result<XmlName, BibLatexXmlError> {
+fn parse_name(node: XmlNode<'_>) -> Result<XmlName, BibLatexXmlError> {
     let mut parts = BTreeMap::new();
     for part in node.children_named("namepart") {
         let kind = part
@@ -336,7 +338,7 @@ fn parse_name(node: &XmlNode) -> Result<XmlName, BibLatexXmlError> {
     })
 }
 
-fn parse_annotation(node: &XmlNode) -> Result<XmlAnnotation, BibLatexXmlError> {
+fn parse_annotation(node: XmlNode<'_>) -> Result<XmlAnnotation, BibLatexXmlError> {
     Ok(XmlAnnotation {
         field: node
             .attribute("field")
@@ -362,9 +364,8 @@ fn parse_options(options: &str) -> BTreeMap<String, String> {
         .collect()
 }
 
-fn attrs(node: &XmlNode) -> BTreeMap<String, String> {
-    node.attributes
-        .iter()
-        .map(|attribute| (attribute.name.clone(), attribute.value.clone()))
+fn attrs(node: XmlNode<'_>) -> BTreeMap<String, String> {
+    node.attributes()
+        .map(|(name, value)| (name.to_owned(), value.to_owned()))
         .collect()
 }
