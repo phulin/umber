@@ -60,3 +60,16 @@ The implementation commits are `d819194fc`, `c29f2f232`, and `b3e141f75`.
 Declarative/generated changes are four added Cargo manifest or lockfile lines;
 compatibility-gated retirement and binary-fixture changes are zero. Program 2
 therefore closes at the measured authored-Rust result without a forecast credit.
+
+## Independent verification
+
+Fresh exact-tree verification of `9b0fedead9c1e0c5fc8cb809f423b7f9c2548a7b`
+confirmed the three sole authorities and found no duplicate production owner.
+Commit numstat independently reproduces production `+1,588/-1,602`, proof
+`+414/-34`, and authored Rust `+2,002/-1,636`; moved, generated, documentation,
+fixture, and historical lines remain excluded. The owner decision is therefore
+evidence-backed, and `group.rs` now correctly identifies schema-owned location
+erasure. With `CARGO_BUILD_JOBS=6`, uncapped focused/full builds passed; focused
+execution passed under `MemoryMax=512M`, the million-event regression and full
+suite passed under `MemoryMax=1G`, and uncapped `scripts/check.sh` passed all
+four gates. Every command had a finite timeout; no `prlimit` was used.
