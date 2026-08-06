@@ -47,8 +47,8 @@ use tex_state::scaled::Scaled;
 use tex_state::token::TracedTokenWord;
 use tex_state::token::{Catcode, Token};
 use tex_state::{
-    ExpansionState, GroupKind, InputOpenState, InputReadState, ParagraphShapeLine,
-    PenaltyArrayKind, PrintSink, StreamSlot, TracedTokenList, Universe,
+    GroupKind, InputOpenState, InputReadState, ParagraphShapeLine, PenaltyArrayKind, PrintSink,
+    StreamSlot, TracedTokenList, Universe,
 };
 use tex_typeset::PackSpec;
 

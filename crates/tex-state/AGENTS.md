@@ -142,19 +142,17 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/token_show.rs`: tex.web §§49/262--294's printable token spellings -- `show_token_list`, `print_cs`, and `\string` rendering over the interner, catcodes, and `\escapechar`.
 - `src/token_store.rs`: Immutable hash-consed token-list storage, builders, lookup, and rollback marks.
 - `src/token_store/tests.rs`: Unit tests for token-list interning, builder reuse, lookup, and rollback.
-- `src/universe.rs`: Top-level TeX state timeline, snapshots, effect commits,
-  and capability-specific context facades. Restoration traces resolve named
-  parameters through the installed primitive registry rather than a state-local
-  spelling table.
+- `src/universe.rs`: Top-level TeX state timeline and sole state API, with
+  snapshots, effect commits, and the input-open capability context. Restoration
+  traces resolve named parameters through the installed primitive registry
+  rather than a state-local spelling table.
 - `src/universe/tests.rs`: Unit tests for `Universe` mutation, snapshots, contexts, effects, and boundary behavior.
 - `src/world.rs`: External-effect boundary for files, atomic downstream file-set publication, streams, clocks, randomness, shell policy, printing, and effect records.
 - `src/world/tests.rs`: Unit tests for world snapshots, file records, streams, printing, randomness, shell escape, and effect replay.
 - `tests/it.rs`: Integration test harness that includes capability-boundary and live-boundary test modules.
-- `tests/it/capability_boundaries.rs`: Compile-fail integration tests asserting restricted expansion and input capabilities fail to compile.
+- `tests/it/capability_boundaries.rs`: Compile-fail integration tests asserting restricted input and transaction capabilities fail to compile.
 - `tests/it/handle_serialization.rs`: Downstream compile-fail probe proving serde and private constructors cannot mint live handles or handle-bearing nodes.
 - `tests/it/live_boundary.rs`: Downstream compile-fail assertion ensuring private stores and raw environment mutation stay inaccessible.
-- `tests/ui/expansion_context_forbidden.rs`: Compile-fail fixture that attempts forbidden privileged calls from `ExpansionContext`.
-- `tests/ui/expansion_state_input_forbidden.rs`: Compile-fail fixture that attempts input opening through generic `ExpansionState`.
 - `tests/ui/input_open_context_forbidden.rs`: Compile-fail fixture that attempts forbidden reads, world access, and mutations from `InputOpenContext`.
 - `tests/ui/arena_transaction_exclusive.rs`: Compile-fail fixture proving suffix-owning transactions exclusively borrow the aggregate timeline.
 - `tests/ui/*-boundary-forbidden.rs`: Independent compile-fail fixtures attempting to bypass private live-state stores, omit paired editor-layout validation, or bypass the `Universe` facade.

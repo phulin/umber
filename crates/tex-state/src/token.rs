@@ -121,11 +121,6 @@ impl Token {
         Self::Frozen(FrozenToken::RELAX)
     }
 
-    #[must_use]
-    pub(crate) const fn expanded_text_boundary() -> Self {
-        Self::Frozen(FrozenToken::EXPANDED_TEXT_BOUNDARY)
-    }
-
     pub(crate) const fn frozen_primitive(index: u16) -> Self {
         Self::Frozen(FrozenToken::primitive(index))
     }
@@ -162,11 +157,6 @@ impl Token {
     #[must_use]
     pub const fn is_undefined_control_sequence(self) -> bool {
         matches!(self, Self::Frozen(FrozenToken::UNDEFINED_CONTROL_SEQUENCE))
-    }
-
-    #[must_use]
-    pub const fn is_expanded_text_boundary(self) -> bool {
-        matches!(self, Self::Frozen(FrozenToken::EXPANDED_TEXT_BOUNDARY))
     }
 }
 

@@ -6,22 +6,22 @@
 //! token -- the value scanners, `\meaning`, and §310's `show_context` -- reads
 //! one implementation.
 
+use crate::Universe;
 use crate::env::banks::IntParam;
 use crate::interner::ControlSequenceKind;
 use crate::meaning::{Meaning, MeaningFlags, UnexpandablePrimitive};
 use crate::token::{Catcode, Token};
-use crate::universe::ExpansionState;
 
 /// Renders the meaning TeX82's `\meaning` and `\show` expose for one token.
 #[must_use]
-pub fn meaning_text(stores: &impl ExpansionState, token: Token) -> String {
+pub fn meaning_text(stores: &Universe, token: Token) -> String {
     match token {
         Token::Char {
             ch,
             cat: Catcode::Active,
         } => stores.active_character_symbol(ch).map_or_else(
             || "undefined".to_owned(),
-            |symbol| meaning_text(stores, Token::Cs(symbol)),
+            |symbol| meaning_text(stores, Token::Cs(symbol.symbol())),
         ),
         Token::Char {
             ch,
@@ -86,7 +86,7 @@ pub fn meaning_text(stores: &impl ExpansionState, token: Token) -> String {
 
 /// TeX82 §252's `show_eqtb` meaning text, bounded like `show_token_list`.
 #[must_use]
-pub fn bounded_meaning_text(stores: &impl ExpansionState, token: Token, breadth: usize) -> String {
+pub fn bounded_meaning_text(stores: &Universe, token: Token, breadth: usize) -> String {
     let Token::Cs(symbol) = token else {
         return meaning_text(stores, token);
     };
@@ -148,11 +148,7 @@ fn macro_prefix(flags: MeaningFlags) -> String {
     text
 }
 
-fn append_token_list(
-    stores: &impl ExpansionState,
-    list: crate::ids::TokenListId,
-    text: &mut String,
-) {
+fn append_token_list(stores: &Universe, list: crate::ids::TokenListId, text: &mut String) {
     let tokens = stores.tokens(list);
     let mut index = 0;
     while index < tokens.len() {
@@ -179,7 +175,7 @@ fn append_token_list(
 /// sequence names with a space. Direct-address single-character names only
 /// receive that space when the character's current catcode is `letter`, and
 /// active characters receive neither an escape nor a trailing space.
-pub fn append_token_show_text(stores: &impl ExpansionState, token: Token, text: &mut String) {
+pub fn append_token_show_text(stores: &Universe, token: Token, text: &mut String) {
     if let Token::Char { ch, cat } = token {
         append_tex_print_char(ch, text);
         if cat == Catcode::Parameter {
@@ -203,7 +199,7 @@ pub fn append_token_show_text(stores: &impl ExpansionState, token: Token, text: 
     }
 }
 
-fn append_non_character_token_text(stores: &impl ExpansionState, token: Token, text: &mut String) {
+fn append_non_character_token_text(stores: &Universe, token: Token, text: &mut String) {
     match token {
         Token::Cs(symbol) => {
             let name = stores.resolve(symbol);
@@ -243,7 +239,7 @@ fn append_non_character_token_text(stores: &impl ExpansionState, token: Token, t
 ///
 /// Unlike ordinary diagnostic display, character tokens remain raw; control
 /// sequence spelling and its separator still follow `show_token_list`.
-pub fn append_token_string_text(stores: &impl ExpansionState, token: Token, text: &mut String) {
+pub fn append_token_string_text(stores: &Universe, token: Token, text: &mut String) {
     if let Token::Char { ch, cat } = token {
         text.push(ch);
         if cat == Catcode::Parameter {
@@ -261,7 +257,7 @@ pub fn append_token_string_text(stores: &impl ExpansionState, token: Token, text
 /// recognizes the live new-line character before expanding any other
 /// non-printable byte to its canonical `^^` spelling.
 pub fn append_token_selector_text(
-    stores: &impl ExpansionState,
+    stores: &Universe,
     token: Token,
     newlinechar: Option<char>,
     text: &mut String,
@@ -301,7 +297,7 @@ pub fn append_tex_print_char(ch: char, text: &mut String) {
 
 /// The characters TeX82 §69's `\string` produces for one token.
 #[must_use]
-pub fn token_text(stores: &impl ExpansionState, token: Token) -> String {
+pub fn token_text(stores: &Universe, token: Token) -> String {
     string_tokens(stores, token)
         .into_iter()
         .filter_map(|token| match token {
@@ -313,7 +309,7 @@ pub fn token_text(stores: &impl ExpansionState, token: Token) -> String {
 
 /// TeX82 §69's `\string` expansion of one token, as `other`/`space` tokens.
 #[must_use]
-pub fn string_tokens(stores: &impl ExpansionState, token: Token) -> Vec<Token> {
+pub fn string_tokens(stores: &Universe, token: Token) -> Vec<Token> {
     match token {
         Token::Char { ch, .. } => vec![rendered_char(ch)],
         Token::Cs(symbol) => {
@@ -379,7 +375,7 @@ fn append_escaped_text(escape: Option<char>, value: &str, out: &mut Vec<Token>) 
     out.extend(value.chars().map(rendered_char));
 }
 
-fn escapechar(stores: &impl ExpansionState) -> Option<char> {
+fn escapechar(stores: &Universe) -> Option<char> {
     u32::try_from(stores.int_param(IntParam::ESCAPE_CHAR))
         .ok()
         .filter(|&value| value < 256)

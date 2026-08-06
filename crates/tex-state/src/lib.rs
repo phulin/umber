@@ -159,11 +159,10 @@ pub use source_fragments::{
 };
 pub use stores::{FontParameterError, GroupFrame, GroupKind, GroupMismatch, PrepareMagDiagnostic};
 pub use universe::{
-    BoxBuildTransaction, BoxDimension, EngineBoundaryHasher, ExpansionContext, ExpansionState,
-    FormatError, GenerationForkError, GenerationSubstrate, GeometryObservation, InputOpenContext,
-    InputOpenState, InputReadState, InteractionMode, MeaningCacheGuard, ParagraphShapeLine,
-    PenaltyArrayKind, PreparedPageSuffix, ReplayProbeTransaction, ShipoutTransaction, Snapshot,
-    TakeUnboxResult, UnboxKind, Universe,
+    BoxBuildTransaction, BoxDimension, EngineBoundaryHasher, FormatError, GenerationForkError,
+    GenerationSubstrate, GeometryObservation, InputOpenContext, InputOpenState, InputReadState,
+    InteractionMode, ParagraphShapeLine, PenaltyArrayKind, PreparedPageSuffix,
+    ReplayProbeTransaction, ShipoutTransaction, Snapshot, TakeUnboxResult, UnboxKind, Universe,
 };
 #[cfg(feature = "profiling")]
 pub use world::ProfilingTimer;

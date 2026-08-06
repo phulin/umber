@@ -1,4 +1,3 @@
-use tex_state::ExpansionState;
 use tex_state::print::{ErrorContextLevel, ErrorContextWidths, render_error_context};
 
 use crate::CommandState;
@@ -228,7 +227,7 @@ fn retained_v_template_pseudoprints_its_current_endtemplate_token() {
     let backup = command.push_token_level(
         TokenPayload::Transient(SharedTokenBuffer::new(std::sync::Arc::from([
             tex_state::token::TracedTokenWord::pack(
-                universe.frozen_end_template_token(),
+                universe.command_context().frozen_end_template_token(),
                 tex_state::token::OriginId::UNKNOWN,
             ),
         ]))),

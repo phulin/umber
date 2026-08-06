@@ -166,7 +166,7 @@ The ranking considers expected net reduction first, then architectural leverage,
 
 ## 6. Remove obsolete `tex-state` façades
 
-**Status:** conditional on workspace-internal API policy or a deprecation/compatibility release.
+**Status:** implemented under the workspace-internal API policy; see [`umber2-vgjr.8.4`](writeback/umber2-vgjr.8.4.md).
 
 **Affected code.** `crates/tex-state/src/universe.rs`, `src/stores.rs`, exports/UI tests, and small command/executor call sites.
 
@@ -181,6 +181,15 @@ The ranking considers expected net reduction first, then architectural leverage,
 **Invariants and risks.** Do not widen `CommandContext` or expose `StoreData` through `Deref`. Preserve dependency observation, owner nonces, survivor accounting, handle liveness, group-invalidated snapshots, transaction borrows, and token rendering.
 
 **Dependencies/order.** Precedes initiatives 9, 11, 12, and 15.
+
+**Outcome.** The workspace audit found no production generic consumer or
+third-party implementation of the exported expansion trait, and no downstream
+access to the private store aggregate. `ExpansionState`, `ExpansionContext`,
+`MeaningCacheGuard`, both forwarding implementations, their dead measurement
+plane, and obsolete capability fixtures were deleted. Token rendering now
+accepts `Universe` directly; `CommandContext` and `InputOpenContext` remain the
+restricted capabilities. The private store aggregate remains implementation
+data, never a compatibility façade or public API.
 
 ## 7. Delete `CommandRuntime`, then compact scanner/delivery tests through a shallow rig
 

@@ -196,15 +196,6 @@ pub struct Stores {
     hyphenation: Arc<HyphenationTable>,
     prepared_mag: Option<i32>,
     last_loaded_font: FontId,
-    /// Runtime-only guard for derived control-sequence meaning caches.
-    /// This never rewinds across group restoration or snapshot rollback.
-    /// Live meanings can change only through the aggregate setters, a
-    /// group-exit path that reports meaning journal activity, or aggregate
-    /// rollback; each such boundary advances this generation. Format
-    /// reconstruction writes raw Env words only while
-    /// constructing a fresh Stores owner, and cloning likewise mints a fresh
-    /// owner identity, so neither can validate a cache owned by the source.
-    meaning_generation: u64,
     semantic_hash_cache: state_hash::SemanticHashCache,
     exact_env_identity: exact_identity::ExactEnvIdentity,
     exact_identity_cache: Arc<std::sync::Mutex<format::ExactIdentityCache>>,
@@ -401,7 +392,6 @@ impl Clone for Stores {
             hyphenation: self.hyphenation.clone(),
             prepared_mag: self.prepared_mag,
             last_loaded_font: self.last_loaded_font,
-            meaning_generation: self.meaning_generation,
             semantic_hash_cache: self.semantic_hash_cache.clone(),
             exact_env_identity: self.exact_env_identity.clone(),
             exact_identity_cache: Arc::clone(&self.exact_identity_cache),
@@ -491,15 +481,6 @@ impl Stores {
         self.source_fragments.root_span_for_source_span(span)
     }
 
-    pub(crate) fn registered_root_span_id(
-        &self,
-        registration: crate::source_map::RegisteredSource,
-        range: std::ops::Range<u64>,
-    ) -> Option<crate::RootSpanId> {
-        self.source_fragments
-            .registered_root_span_id(registration, range)
-    }
-
     pub(crate) fn source_span_for_root(
         &self,
         span: crate::RootSpanId,
@@ -560,7 +541,6 @@ impl Stores {
             hyphenation: Arc::new(HyphenationTable::new()),
             prepared_mag: None,
             last_loaded_font: NULL_FONT,
-            meaning_generation: 1,
             semantic_hash_cache: state_hash::SemanticHashCache::default(),
             exact_env_identity: exact_identity::ExactEnvIdentity::default(),
             exact_identity_cache: Arc::new(std::sync::Mutex::new(
@@ -823,31 +803,12 @@ impl Stores {
         self.env.testing_meaning_level(symbol.symbol())
     }
 
-    /// Returns the nonzero, monotonically increasing meaning-write guard.
-    #[must_use]
-    pub(crate) fn meaning_cache_guard(&self) -> crate::universe::MeaningCacheGuard {
-        let owner = self.owner.snapshot_owner();
-        crate::universe::MeaningCacheGuard::new(owner.address, owner.nonce, self.meaning_generation)
-    }
-
-    fn bump_meaning_generation(&mut self) {
-        self.meaning_generation = self
-            .meaning_generation
-            .checked_add(1)
-            .expect("meaning generation exhausted");
-    }
-
     /// Sets the local meaning for a live control-sequence symbol.
     pub fn set_meaning(&mut self, symbol: impl SymbolReference, meaning: Meaning) {
         let symbol = self.resolve_symbol_reference(symbol);
         self.assert_live_macro_definition_in_meaning(meaning);
         self.assert_live_font_in_meaning(meaning);
         self.env.set_meaning_slot(symbol.raw(), meaning, false);
-        self.bump_meaning_generation();
-        #[cfg(feature = "profiling")]
-        crate::measurement::record_meaning_cache_invalidation(
-            crate::measurement::MeaningCacheInvalidation::LocalWrite,
-        );
     }
 
     /// Interns a control-sequence name and gives a previously undefined name
@@ -866,11 +827,6 @@ impl Stores {
         self.assert_live_macro_definition_in_meaning(meaning);
         self.assert_live_font_in_meaning(meaning);
         self.env.set_meaning_slot(symbol.raw(), meaning, true);
-        self.bump_meaning_generation();
-        #[cfg(feature = "profiling")]
-        crate::measurement::record_meaning_cache_invalidation(
-            crate::measurement::MeaningCacheInvalidation::GlobalWrite,
-        );
     }
 
     /// Interns a frozen macro definition in the owned macro-definition store.
@@ -2364,19 +2320,12 @@ impl Stores {
     pub(crate) fn leave_group_observing_dependencies(&mut self) -> GroupExitObservation {
         let box_trace_texts = self.capture_current_group_box_restore_texts();
         self.account_current_group_box_refs();
-        let (payloads, meaning_changed, changed_cells, mut restores) =
+        let (payloads, _meaning_changed, changed_cells, mut restores) =
             self.env.leave_group_observing_meanings();
         Self::attach_box_restore_texts(&mut restores, &box_trace_texts);
         let code_before = self.code_tables.generations();
         let code_restores = self.code_tables.leave_group();
         let code_after = self.code_tables.generations();
-        if meaning_changed {
-            self.bump_meaning_generation();
-            #[cfg(feature = "profiling")]
-            crate::measurement::record_meaning_cache_invalidation(
-                crate::measurement::MeaningCacheInvalidation::GroupExit,
-            );
-        }
         (
             payloads,
             changed_cells,
@@ -2399,20 +2348,13 @@ impl Stores {
         }
         let box_trace_texts = self.capture_current_group_box_restore_texts();
         self.account_current_group_box_refs();
-        let (payloads, meaning_changed, changed_cells, mut restores) = self
+        let (payloads, _meaning_changed, changed_cells, mut restores) = self
             .env
             .leave_group_with_kind_observing_meanings(expected)?;
         Self::attach_box_restore_texts(&mut restores, &box_trace_texts);
         let code_before = self.code_tables.generations();
         let code_restores = self.code_tables.leave_group();
         let code_after = self.code_tables.generations();
-        if meaning_changed {
-            self.bump_meaning_generation();
-            #[cfg(feature = "profiling")]
-            crate::measurement::record_meaning_cache_invalidation(
-                crate::measurement::MeaningCacheInvalidation::GroupExit,
-            );
-        }
         Ok((
             payloads,
             changed_cells,
@@ -2776,11 +2718,6 @@ impl Stores {
         self.prepared_mag = snapshot.prepared_mag;
         self.last_loaded_font = snapshot.last_loaded_font;
         self.exact_env_identity = snapshot.exact_env_identity.clone();
-        self.bump_meaning_generation();
-        #[cfg(feature = "profiling")]
-        crate::measurement::record_meaning_cache_invalidation(
-            crate::measurement::MeaningCacheInvalidation::Rollback,
-        );
         // The cache is derived from the checkpoint timeline rather than part
         // of semantic state. Rebuild baselines lazily from the restored
         // journal slice instead of adding it to the O(1) snapshot tuple.

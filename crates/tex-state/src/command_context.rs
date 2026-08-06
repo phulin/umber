@@ -5,7 +5,7 @@
 //! they represent typed reads or mutations of [`Universe`] state.
 
 use crate::{
-    ChangedAt, DependencyBank, DependencyCodeTable, DependencyKey, DependencyValue, ExpansionState,
+    ChangedAt, DependencyBank, DependencyCodeTable, DependencyKey, DependencyValue,
     TracedTokenList, Universe,
     env::banks::{GlueParam, IntParam, TokParam},
     glue::GlueSpec,
@@ -348,7 +348,7 @@ impl CommandContext<'_> {
     /// callers cannot intern or otherwise manufacture this token.
     #[must_use]
     pub fn frozen_endv_token(&self) -> Token {
-        self.universe.frozen_endv_token()
+        Token::frozen_endv()
     }
 
     /// Returns TeX82's inaccessible `frozen_end_template` token. Input
@@ -356,7 +356,7 @@ impl CommandContext<'_> {
     /// typed `do_endv` retirement.
     #[must_use]
     pub fn frozen_end_template_token(&self) -> Token {
-        self.universe.frozen_end_template_token()
+        Token::frozen_end_template()
     }
 
     /// Freezes a scanner-owned traced token sequence through the aggregate
