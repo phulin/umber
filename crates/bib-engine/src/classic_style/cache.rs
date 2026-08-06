@@ -23,7 +23,7 @@ enum Entry {
         sources: Vec<(VirtualPath, FileContentId, BibTexOptions)>,
         control: ClassicControl,
         style: Arc<CompiledStyle>,
-        options: ClassicDatabaseOptions,
+        options: Box<ClassicDatabaseOptions>,
         database: Arc<ClassicDatabase>,
         charge: usize,
     },
@@ -114,7 +114,7 @@ impl ClassicRuntimeCache {
             } if cached_sources == &source_identity
                 && cached_control == control
                 && cached_style.as_ref() == style.as_ref()
-                && cached_options == options =>
+                && cached_options.as_ref() == options =>
             {
                 Some(Arc::clone(database))
             }
@@ -132,13 +132,14 @@ impl ClassicRuntimeCache {
             })
             .sum::<usize>()
             .saturating_add(control.citations().map(str::len).sum::<usize>())
+            .saturating_add(std::mem::size_of::<ClassicDatabaseOptions>())
             .saturating_add(style.charge().retained_bytes)
             .saturating_add(database.retained_bytes());
         self.insert(Entry::Read {
             sources: source_identity,
             control: control.clone(),
             style: Arc::clone(style),
-            options: options.clone(),
+            options: Box::new(options.clone()),
             database: Arc::clone(&database),
             charge,
         });
