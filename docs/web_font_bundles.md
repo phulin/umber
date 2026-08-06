@@ -99,11 +99,12 @@ logical model:
 ```rust
 pub struct OpenTypeFont {
     pub identity: FontProgramIdentity,
+    pub object_identity: FontObjectIdentity,
     pub face_index: u32,
     pub cmap: CharacterMap,
     pub metrics: FontMetrics,
     pub shaping: ShapingTables,
-    pub math: Option<MathTables>,
+    has_math: bool,
     pub metadata: FontMetadata,
 }
 ```
@@ -123,16 +124,17 @@ The initial metric projection includes:
 - underline, strikeout, cap-height, and x-height metadata when present;
 - character-to-glyph mappings;
 - GDEF, GSUB, and GPOS data used by the supported shaping policy; and
-- lossless MATH constants and device adjustments, italic corrections, top
-  accent attachments, extended-shape coverage, four-corner math kerns,
-  variants, constructions, and assemblies when present.
+- validated MATH presence backed by the canonical decoded SFNT bytes.
 
-The MATH projection is an immutable font-unit model and does not synthesize
-classic TeX symbol or extension fontdimens. Coverage/record correspondence,
-glyph references, offset graph separation, sorted kern/variant records, and
-resource limits are validated before the font is published. Since the raw
-decoded `MATH` table is already part of canonical program identity, native
-SFNT and equivalent WOFF2 inputs publish identical MATH values and identity.
+MATH does not have a second retained projection. One strict eager walk checks
+coverage/record correspondence, glyph references, offset graph separation,
+sorted kern/variant records, device and variation formats, and resource
+limits before publication. The scaled math facade then lazily borrows the
+dependency's table for constants, italic corrections, top-accent attachments,
+four-corner kerns, variants, constructions, and assemblies. It does not
+synthesize classic TeX symbol or extension fontdimens. Because the decoded
+`MATH` bytes participate in canonical program identity, native SFNT and
+equivalent WOFF2 inputs expose identical lazy values and identity.
 
 The engine applies one documented rounding policy when projecting font units
 into scaled points. The same parser, projection rules, feature selection, and

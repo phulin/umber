@@ -573,6 +573,22 @@ Chrome. The available cold and warmed release-package runs both exceeded the
 1 GiB cap inside `wasm-opt`; the same package completed uncapped, and no Rust,
 Node, browser, or package-validation failure occurred.
 
+**Forecast reconciliation.** Issue `umber2-vgjr.11.4` closes the original
+800--1,200-line production forecast at the measured result rather than
+crediting output DTOs, compatibility aliases, generated source, documentation,
+or binary fixtures. Its complete retained-source inventory and compatibility
+rationale are recorded in [the issue writeback](writeback/umber2-vgjr.11.4.md).
+The only additional independently justified duplicate was native SFNT storage:
+commit `a5df75c73` makes the transport and decoded views share one allocation for
+OTF, TTF, TTC, and OTC containers, while WOFF2 correctly retains distinct
+compressed and decoded allocations. That implementation changes production
+Rust by +11/-11 and proof tests by +8/-0. Program 11 therefore totals +714/-855
+production Rust, still net -141; the original forecast overstates the measured
+reduction by 659--1,059 lines. There is no remaining scheduled production-LOC
+forecast for this program. Further deletion would contract a named public or
+serialized boundary and requires a new policy decision rather than being
+silently credited here.
+
 ## 12. Establish one fixture contract while compacting repeated catalogues
 
 **Outcome.** A typed closed-case contract owns identity, tracked inputs, expected outputs, statuses, xfail reasons, profiles, and publication metadata. Command-semantic V2 infers conventional fields and embeds capture policy. The TeX82 catalogue uses an implicit typed default disposition plus explicit overrides. Fixturegen alone mutates and publishes; test-support validates and stages; `corpus-manifest` remains the external-corpus leaf.
