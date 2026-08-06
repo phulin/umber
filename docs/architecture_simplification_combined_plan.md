@@ -747,6 +747,46 @@ build completed, after which its Node lifecycle and package inventory passed
 under the cap. Real wasm-bindgen and browser smoke remained blocked by absent
 Firefox and Chrome.
 
+**Implemented binding migration and accounting.** Commit `151d15d94`
+completes `umber2-vgjr.13.4`. The schema-1 DTOs in `umber-wasm::wire` are now
+the sole structural authority for session, project, editor, bibliography,
+clock, limit, patch, request, response, attempt, output, diagnostic, metric,
+observation, rendered-source, and catalogue-plan values. Binding adapters
+perform one conversion between those DTOs and private engine values.
+`serde-wasm-bindgen` preserves typed arrays and omitted optional properties.
+The checked-in low-level TypeScript custom section is generated from the DTOs
+and a Rust test requires byte equality with the generator; the handwritten
+declaration block and manual `Object`/`Reflect` conversion tables were deleted.
+
+Catalogue exports now return typed prepared batches, authenticated plans, and
+named formats rather than JSON strings. The authored resolver passes raw shard
+objects and consumes those plans directly, while retaining HTTP, persistent
+cache, concurrency, cancellation, budget, and response-materialization policy.
+The legacy schema-1 monolithic distribution parser and `select` API remain
+only for the documented `texlive-wasm-publish --shard-existing` conversion and
+publisher assembly path. They are not exposed through the browser boundary;
+their compatibility disposition is recorded in `distribution_manifest.md`.
+
+Exact implementation-commit `--numstat` accounting is 1,348 additions and
+1,656 deletions in authored Rust, plus 30 additions and 28 deletions in
+authored JavaScript, TypeScript, and JavaScript proof tests. Authored Rust and
+JavaScript therefore total 1,378 additions and 1,684 deletions, a 306-line net
+reduction. The generated TypeScript declaration adds 67 lines and is reported
+separately. Documentation and guidance add 47 and delete 23 lines. The
+complete tracked commit adds 1,492 and deletes 1,707 lines, or 215 lines of net
+deletion. No fixture, catalogue record, lockfile, or binary asset changed.
+
+The exact implementation tree passed the focused Rust tests, wasm32 check,
+uncapped six-job package and native builds, complete native routine suite under
+`MemoryMax=1G`, all 89 authored Node tests, packaged Node
+TeX--bibliography--TeX lifecycle, and `npm pack --dry-run` under the same cap.
+All four `scripts/check.sh` gates passed with six Cargo jobs under that cap.
+These gates cover malformed messages, offline catalogue reuse, worker startup
+and transfer, package behavior, and native resource replay. Real
+wasm-bindgen/Firefox and browser-package/Chrome execution remained blocked
+because neither browser executable is installed; the browser runner fails at
+its explicit `/usr/bin/google-chrome` prerequisite before executing a case.
+
 ## 14. Generate bibliography compatibility cases, then collapse production stages
 
 **Outcome.** One compatibility-case manifest and immutable runner preserve separately named upstream assertions, inputs, outputs, order, and xfails. With that proof layer active, Biber uses one engine-owned editable draft and one freeze; classic retains its explicit-frame VM but removes duplicate lexer/compiler/callable/READ/report authorities; input and output stages lose intermediate models that are converted and discarded.
