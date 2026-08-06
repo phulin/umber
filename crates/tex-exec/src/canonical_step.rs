@@ -230,10 +230,8 @@ impl<'a> CanonicalStepRunner<'a> {
         cancellation: &Cancellation,
     ) -> CanonicalStepResult {
         let result = self.step_inner(sink, cancellation, None);
-        if self.control.fatal_was_captured()
-            && let Some(fatal) = self.control.fatal_error()
-        {
-            CanonicalStepResult::Failed(CanonicalStepFailure::Execution(ExecError::Fatal(fatal)))
+        if let Some(error) = self.control.captured_fatal_error() {
+            CanonicalStepResult::Failed(CanonicalStepFailure::Execution(error))
         } else {
             result
         }

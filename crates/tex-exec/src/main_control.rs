@@ -239,10 +239,13 @@ pub struct MainControl {
     /// operation reports [`MainControlStep::End`] without delivering a
     /// command, and the host reads the cause from [`Self::fatal_error`].
     fatal: Option<FatalError>,
-    /// Whether the terminal fatal crossed a diagnostic-source capture seam.
-    /// Diagnostic session drivers surface these failures to their caller;
-    /// complete-job drivers retain TeX's terminal completion semantics.
-    fatal_was_captured: bool,
+    /// Source evidence retained when a fatal crossed a diagnostic capture
+    /// seam. Diagnostic session drivers surface this exact location to their
+    /// caller; complete-job drivers retain TeX's terminal completion semantics.
+    captured_fatal_origin: Option<(
+        tex_state::provenance::DiagnosticSite,
+        Option<crate::FrozenDiagnosticOrigin>,
+    )>,
     /// tex.web's job-framing state: see [`crate::job`] and
     /// `docs/job_framing.md`.
     job: crate::job::JobFraming,
@@ -2407,8 +2410,14 @@ impl MainControl {
             }
             Err(error) => {
                 if let Some(fatal) = error.as_fatal() {
-                    self.fatal_was_captured = matches!(error, ExecError::Captured { .. })
-                        && fatal != FatalError::TooManyErrors;
+                    self.captured_fatal_origin = match &error {
+                        ExecError::Captured { site, frozen, .. }
+                            if fatal != FatalError::TooManyErrors =>
+                        {
+                            Some((site.clone(), frozen.clone()))
+                        }
+                        _ => None,
+                    };
                     // §81 `jump_out` commits the partial operation. Publish
                     // its terminal evidence through the same optional sink.
                     self.observe_committed([
@@ -4023,10 +4032,15 @@ impl MainControl {
         self.fatal
     }
 
-    /// Returns whether the fatal crossed a diagnostic source-capture seam.
-    #[must_use]
-    pub const fn fatal_was_captured(&self) -> bool {
-        self.fatal_was_captured
+    /// Reconstructs the source-bearing fatal for a diagnostic session owner.
+    pub(crate) fn captured_fatal_error(&self) -> Option<ExecError> {
+        let fatal = self.fatal?;
+        let (site, frozen) = self.captured_fatal_origin.as_ref()?;
+        Some(ExecError::Captured {
+            error: Box::new(ExecError::Fatal(fatal)),
+            site: site.clone(),
+            frozen: frozen.clone(),
+        })
     }
 
     /// Returns the effect cursor immediately before final-cleanup framing.
