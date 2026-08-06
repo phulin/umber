@@ -27,7 +27,7 @@ Use this crate for stable, driver-facing artifact structures and serialization c
 - `src/dvi/tests.rs`: Byte-level DVI writer tests for file structure, traversal, movement optimization, rules, fonts, glue, and specials.
 - `src/dvi/traversal.rs`: The sole explicit-frame DVI body traversal for boxes, rules, specials, glue, leaders, movement synchronization, and coordinate inspection.
 - `src/geometry.rs`: Shared geometry authority for artifact ordinals, snap lookahead, checked coordinates, and exact leader placement.
-- `src/html.rs`: deterministic coordinate-locked standalone serializer derived from the detached keyed render document, plus retained-font validation, asset modes, escaping, and limits.
+- `src/html.rs`: deterministic coordinate-locked standalone serializer derived from the detached keyed render document, plus retained realized-program reuse, compatibility font validation, asset modes, escaping, and limits.
 - `src/html/incremental.rs`: the canonical detached `RenderDocument`, keyed render revisions, stable cross-revision identity reuse, ordered resources, and bounded artifact/positioned-page builders shared by full and incremental output.
 - `src/html/incremental/digest.rs`: versioned canonical render hashing and key derivation.
 - `src/html/incremental/patch.rs`: deterministic bounded typed diff planning and atomic abstract patch validation/application.

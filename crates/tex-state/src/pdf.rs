@@ -430,8 +430,7 @@ pub struct PdfFontResourceRecord {
     source_identity: tex_fonts::FontSourceIdentity,
     resource_number: u32,
     object_number: u32,
-    tfm_content_hash: [u8; 32],
-    program_identity: Option<[u8; 32]>,
+    identity: tex_fonts::PdfFontResourceIdentity,
 }
 
 impl PdfFontResourceRecord {
@@ -1497,8 +1496,7 @@ impl PdfState {
         &mut self,
         font: FontId,
         source_identity: tex_fonts::FontSourceIdentity,
-        tfm_content_hash: [u8; 32],
-        program_identity: Option<[u8; 32]>,
+        identity: tex_fonts::PdfFontResourceIdentity,
     ) -> Result<PdfFontResourceRecord, PdfObjectCapacityError> {
         if let Some(record) = self
             .font_resources
@@ -1508,10 +1506,12 @@ impl PdfState {
         {
             return Ok(record);
         }
-        if let Some(record) = self.font_resources.iter().copied().find(|record| {
-            record.tfm_content_hash == tfm_content_hash
-                && record.program_identity == program_identity
-        }) {
+        if let Some(record) = self
+            .font_resources
+            .iter()
+            .copied()
+            .find(|record| record.identity == identity)
+        {
             let alias = PdfFontResourceRecord {
                 font,
                 source_identity,
@@ -1529,8 +1529,7 @@ impl PdfState {
             source_identity,
             resource_number: font.raw(),
             object_number: self.next_object,
-            tfm_content_hash,
-            program_identity,
+            identity,
         };
         self.next_object += 1;
         self.font_resources.push(record);
@@ -3109,10 +3108,10 @@ fn append_font_resource_fingerprint(
     hasher.bytes(&record.source_identity.bytes());
     hasher.u32(record.resource_number);
     hasher.u32(record.object_number);
-    hasher.bytes(&record.tfm_content_hash);
-    hasher.bool(record.program_identity.is_some());
-    if let Some(identity) = record.program_identity {
-        hasher.bytes(&identity);
+    hasher.bytes(&record.identity.tfm_content_hash());
+    hasher.bool(record.identity.program_identity().is_some());
+    if let Some(identity) = record.identity.program_identity() {
+        hasher.bytes(&identity.bytes());
     }
     hasher.finish_fragment()
 }
@@ -4037,8 +4036,7 @@ mod tests {
                 .ensure_font_resource(
                     crate::font::NULL_FONT,
                     tex_fonts::FontSourceIdentity::from_bytes([7; 32]),
-                    [11; 32],
-                    None,
+                    tex_fonts::PdfFontResourceIdentity::new([11; 32], None),
                 )
                 .expect("font object");
             let raw = state.reserve_raw_object().expect("raw object");

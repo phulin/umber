@@ -20,7 +20,7 @@ pub use metrics::{
     LigatureCommand, LoadedFont, MAX_LIG_KERN_PROGRAM_LEN, MathKernCorner, MathMetricsSource,
     MathVariantDirection, OPENTYPE_FONTDIMEN_SYNTHESIS_VERSION, OpenTypeFontShaped,
     OpenTypeMathAssembly, OpenTypeMathAssemblyPart, OpenTypeMathConstruction, OpenTypeMathGlyph,
-    OpenTypeMathMetrics, OpenTypeMathVariant,
+    OpenTypeMathMetrics, OpenTypeMathVariant, PdfFontResourceIdentity, RealizedFontIdentity,
 };
 pub use opentype::{
     AcceptedFontContainers, CharacterMap, FONT_FEATURE_POLICY_VERSION, FeatureSetting,

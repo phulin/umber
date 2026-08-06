@@ -347,6 +347,18 @@ identities, immutable decoded programs, mappings, and instances. The engine
 owns loaded-font semantic state. `tex-out` and the PDF finalizer consume only
 committed artifacts plus a read-only retained-resource view.
 
+`RealizedFontIdentity` is the canonical host-neutral digest of selected
+metrics, size, layout and fallback policy, mapping, OpenType program and
+instance, and generated-font ancestry. `FontSourceIdentity` remains a public
+compatibility alias with identical bytes. Format-specific projections do not
+reconstruct that selection: DVI consistency keys include the realized
+identity plus the fields actually emitted by `fnt_def`; PDF font-object reuse
+uses the canonical pdfTeX view of TFM content plus selected OpenType program;
+and HTML receives the retained validated program selected by the same
+realization. Browser transport/cache and distribution catalogs continue to
+key immutable objects independently because equivalent transports may share a
+program but not an object identity.
+
 Classic TFM loading preserves TeX82's compatibility boundaries: the explicit
 `bc=256`, `ec=255` empty interval is accepted, nonessential malformed header
 metadata is ignored, and every dimension-bearing metric word is validated.

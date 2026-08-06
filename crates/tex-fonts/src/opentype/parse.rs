@@ -8,9 +8,9 @@ use tex_arith::{Scaled, font_units_to_scaled};
 use ttf_parser::{Face, GlyphId, OutlineBuilder, RawFace, Tag};
 
 use super::contract::{
-    FONT_PROGRAM_IDENTITY_VERSION, FontContainer, FontLanguage, FontLimits, FontObjectIdentity,
-    FontProgramIdentity, FontRequest, OpenTypeTag, ResolvedFont, VariationSelection,
-    WritingDirection,
+    FONT_PROGRAM_IDENTITY_VERSION, FontContainer, FontInstanceContext, FontInstanceIdentity,
+    FontLanguage, FontLimits, FontObjectIdentity, FontProgramIdentity, FontRequest, OpenTypeTag,
+    ResolvedFont, VariationSelection, WritingDirection,
 };
 use super::math::validate_math;
 use super::variation::VariationModel;
@@ -202,6 +202,30 @@ pub struct OpenTypeFont {
 }
 
 impl OpenTypeFont {
+    /// Canonical instance selected from this validated program at one TeX size.
+    #[must_use]
+    pub fn instance_identity(&self, size: Scaled) -> FontInstanceIdentity {
+        FontInstanceIdentity::new_with_context(
+            self.identity,
+            self.face_index,
+            size.raw(),
+            FontInstanceContext {
+                variation: &self.variation,
+                features: &self.feature_policy,
+                direction: self.direction,
+                script: self.script,
+                language: self.language.as_ref(),
+            },
+        )
+    }
+
+    /// Shares the canonical decoded SFNT retained by this validated program.
+    /// Output adapters use it instead of decoding the transport again.
+    #[must_use]
+    pub fn decoded_bytes(&self) -> Arc<[u8]> {
+        Arc::clone(&self.decoded_bytes)
+    }
+
     pub(crate) fn math_table(&self) -> Option<ttf_parser::math::Table<'_>> {
         let raw = RawFace::parse(&self.decoded_bytes, self.face_index).ok()?;
         raw.table(Tag::from_bytes(b"MATH"))

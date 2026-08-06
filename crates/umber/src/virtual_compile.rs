@@ -2691,59 +2691,46 @@ struct SessionFontResolver<'a> {
     responses: &'a BTreeMap<FontRequestKey, FontResponseFingerprint>,
 }
 
+impl<'a> SessionFontResolver<'a> {
+    fn realized(
+        &'a self,
+        font: &tex_out::FontResource,
+    ) -> Option<(&'a FontRequestKey, &'a OpenTypeFont)> {
+        if let Some(binding) = &font.opentype {
+            return self.resolved.iter().find(|(key, supplied)| {
+                key.logical_name() == font.name
+                    && supplied.identity == binding.program_identity
+                    && supplied.object_identity == binding.object_identity
+                    && supplied.instance_identity(font.at_size) == binding.instance_identity
+            });
+        }
+        self.resolved.iter().find(|(key, _)| {
+            self.responses
+                .get(*key)
+                .and_then(|response| response.legacy_mapping.as_ref())
+                .is_some_and(|mapping| {
+                    key.logical_name() == font.name
+                        && mapping.tfm_sha256 == font.tfm_content_hash.bytes()
+                })
+        })
+    }
+}
+
 impl HtmlFontAssets for SessionFontResolver<'_> {
     fn font_asset(&self, font: &tex_out::FontResource) -> Result<HtmlFontAsset, String> {
         if let Some(binding) = &font.opentype {
-            let (key, supplied) = self
-                .resolved
-                .iter()
-                .find(|(key, supplied)| {
-                    key.logical_name() == font.name
-                        && supplied.identity == binding.program_identity
-                        && supplied.object_identity == binding.object_identity
-                        && tex_fonts::FontInstanceIdentity::new_with_context(
-                            supplied.identity,
-                            supplied.face_index,
-                            font.at_size.raw(),
-                            tex_fonts::FontInstanceContext {
-                                variation: &supplied.variation,
-                                features: &supplied.feature_policy,
-                                direction: supplied.direction,
-                                script: supplied.script,
-                                language: supplied.language.as_ref(),
-                            },
-                        ) == binding.instance_identity
-                })
-                .ok_or_else(|| {
-                    format!(
-                        "retained OpenType resource for artifact font {} is unavailable or mismatched",
-                        font.name
-                    )
-                })?;
+            let (key, supplied) = self.realized(font).ok_or_else(|| {
+                format!(
+                    "retained OpenType resource for artifact font {} is unavailable or mismatched",
+                    font.name
+                )
+            })?;
             if binding.container != tex_fonts::FontContainer::Woff2
                 || supplied.container != tex_fonts::FontContainer::Woff2
             {
                 return Err(format!(
                     "HTML reuse for retained {:?} font {} is not supported",
                     supplied.container, font.name
-                ));
-            }
-            let expected_instance = tex_fonts::FontInstanceIdentity::new_with_context(
-                supplied.identity,
-                supplied.face_index,
-                font.at_size.raw(),
-                tex_fonts::FontInstanceContext {
-                    variation: &supplied.variation,
-                    features: &supplied.feature_policy,
-                    direction: supplied.direction,
-                    script: supplied.script,
-                    language: supplied.language.as_ref(),
-                },
-            );
-            if binding.instance_identity != expected_instance {
-                return Err(format!(
-                    "artifact font instance identity for {} does not match the retained selection",
-                    font.name
                 ));
             }
             let response = self.responses.get(key).ok_or_else(|| {
@@ -2842,6 +2829,10 @@ impl HtmlFontAssets for SessionFontResolver<'_> {
             provenance,
             embeddable: mapping.embeddable,
         })
+    }
+
+    fn realized_opentype(&self, font: &tex_out::FontResource) -> Option<&OpenTypeFont> {
+        self.realized(font).map(|(_, font)| font)
     }
 }
 

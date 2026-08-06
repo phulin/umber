@@ -489,7 +489,7 @@ pub fn build_positioned_render_document<R: HtmlFontAssets>(
                     font: font.name.clone(),
                     message,
                 })?;
-            let checked = validate_font(font, web, options)?;
+            let checked = validate_font(font, web, assets.realized_opentype(font), options)?;
             resources.entry(checked.web.sha256).or_insert_with(|| {
                 resource_bytes = resource_bytes.saturating_add(checked.web.woff2.len());
                 RenderResource {

@@ -1,6 +1,6 @@
 use tex_arith::Scaled;
 
-use crate::{ContentHash, FontResource};
+use crate::FontResource;
 
 use super::{
     DviBodyCompiler, DviError,
@@ -167,12 +167,10 @@ pub(super) struct DefinedFont {
 pub(super) struct FontKey {
     font_id: u32,
     name: String,
-    tfm_content_hash: ContentHash,
     tfm_checksum: u32,
     design_size: Scaled,
     at_size: Scaled,
-    semantic_identity: tex_fonts::FontSourceIdentity,
-    construction: crate::FontResourceConstruction,
+    realized_identity: tex_fonts::RealizedFontIdentity,
 }
 
 impl From<&FontResource> for FontKey {
@@ -180,12 +178,10 @@ impl From<&FontResource> for FontKey {
         Self {
             font_id: font.font_id,
             name: font.name.clone(),
-            tfm_content_hash: font.tfm_content_hash,
             tfm_checksum: font.tfm_checksum,
             design_size: font.design_size,
             at_size: font.at_size,
-            semantic_identity: font.semantic_identity,
-            construction: font.construction.clone(),
+            realized_identity: font.semantic_identity,
         }
     }
 }

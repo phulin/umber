@@ -65,6 +65,14 @@ deduplicated by object digest, not by collapsing the semantic record keys.
 An exact unmapped TFM digest stays a `LegacyMapping` miss and is never retried
 by TeX basename. No new production record version or catalog entry is implied.
 
+After acquisition, the session parses each selected object once into the
+canonical `OpenTypeFont` and retains that program with its authenticated
+catalog response. HTML output consumes the same realized program and decoded
+SFNT allocation; it does not reinterpret the catalog or create a second
+distribution/cache identity. This is an ownership change only: schema-4 keys,
+object digests, program declarations, cold/warm/offline selection, and cache
+invalidation remain byte-for-byte unchanged.
+
 ## Trust root
 
 The deployed release pin names `manifest-v2.json` and its SHA-256 digest. The file is a

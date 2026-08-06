@@ -8,6 +8,7 @@ pub mod incremental;
 use std::collections::BTreeMap;
 use std::fmt;
 use std::fmt::Write as _;
+use std::sync::Arc;
 
 use sha2::{Digest, Sha256};
 use tex_arith::Scaled;
@@ -59,6 +60,13 @@ pub struct HtmlFontAsset {
 pub trait HtmlFontAssets {
     /// Returns an already-retained, already-selected asset; this must not acquire resources.
     fn font_asset(&self, font: &FontResource) -> Result<HtmlFontAsset, String>;
+
+    /// Returns the validated program selected during layout when the output
+    /// closure retains it. The default keeps existing resolver implementations
+    /// source-compatible; their asset is decoded once during validation.
+    fn realized_opentype(&self, _font: &FontResource) -> Option<&tex_fonts::OpenTypeFont> {
+        None
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -887,12 +895,13 @@ struct ResolvedFont {
     web: HtmlFontAsset,
     digest_hex: String,
     family: String,
-    sfnt: Vec<u8>,
+    sfnt: Arc<[u8]>,
 }
 
 fn validate_font(
     font: &FontResource,
     web: HtmlFontAsset,
+    realized: Option<&tex_fonts::OpenTypeFont>,
     options: &HtmlOptions,
 ) -> Result<ResolvedFont, HtmlError> {
     let key = HtmlFontKey::from(font);
@@ -942,38 +951,72 @@ fn validate_font(
             font: font.name.clone(),
         });
     }
-    if let Some(opentype) = &font.opentype {
-        let key = tex_fonts::FontRequestKey::new(
-            "umber-html-validation",
-            0,
-            tex_fonts::VariationSelection::default(),
-            tex_fonts::FontFeaturePolicy::default(),
+    let sfnt = if let Some(opentype) = &font.opentype {
+        if let Some(realized) = realized {
+            if realized.identity != opentype.program_identity
+                || realized.object_identity != opentype.object_identity
+                || realized.container != opentype.container
+                || realized.face_index != opentype.face_index
+                || realized.instance_identity(font.at_size) != opentype.instance_identity
+                || realized.transport_bytes.as_ref() != web.woff2.as_slice()
+            {
+                return Err(HtmlError::CorruptFontAsset {
+                    font: font.name.clone(),
+                });
+            }
+            realized.decoded_bytes()
+        } else {
+            let key = tex_fonts::FontRequestKey::new(
+                "umber-html-validation",
+                0,
+                tex_fonts::VariationSelection::default(),
+                tex_fonts::FontFeaturePolicy::default(),
+            )
+            .map_err(|_| HtmlError::CorruptFontAsset {
+                font: font.name.clone(),
+            })?;
+            let request = tex_fonts::FontRequest {
+                key: key.clone(),
+                accepted_containers: tex_fonts::AcceptedFontContainers::WASM,
+                purposes: tex_fonts::FontPurposes::LAYOUT_AND_HTML,
+            };
+            tex_fonts::OpenTypeFont::parse(
+                &request,
+                tex_fonts::ResolvedFont {
+                    request: key,
+                    container: tex_fonts::FontContainer::Woff2,
+                    bytes: web.woff2.clone(),
+                    declared_object_sha256: Some(opentype.object_identity),
+                    declared_program_identity: Some(opentype.program_identity),
+                    provenance: None,
+                    legacy_mapping: None,
+                },
+                tex_fonts::FontLimits::default(),
+            )
+            .map_err(|_| HtmlError::CorruptFontAsset {
+                font: font.name.clone(),
+            })?
+            .decoded_bytes()
+        }
+    } else if let Some(realized) = realized {
+        if realized.container != tex_fonts::FontContainer::Woff2
+            || realized.object_identity.bytes() != digest
+            || realized.transport_bytes.as_ref() != web.woff2.as_slice()
+        {
+            return Err(HtmlError::CorruptFontAsset {
+                font: font.name.clone(),
+            });
+        }
+        realized.decoded_bytes()
+    } else {
+        Arc::from(
+            woff2_patched::convert_woff2_to_ttf(&mut web.woff2.as_slice()).map_err(|_| {
+                HtmlError::CorruptFontAsset {
+                    font: font.name.clone(),
+                }
+            })?,
         )
-        .map_err(|_| HtmlError::CorruptFontAsset {
-            font: font.name.clone(),
-        })?;
-        let request = tex_fonts::FontRequest {
-            key: key.clone(),
-            accepted_containers: tex_fonts::AcceptedFontContainers::WASM,
-            purposes: tex_fonts::FontPurposes::LAYOUT_AND_HTML,
-        };
-        tex_fonts::OpenTypeFont::parse(
-            &request,
-            tex_fonts::ResolvedFont {
-                request: key,
-                container: tex_fonts::FontContainer::Woff2,
-                bytes: web.woff2.clone(),
-                declared_object_sha256: Some(opentype.object_identity),
-                declared_program_identity: Some(opentype.program_identity),
-                provenance: None,
-                legacy_mapping: None,
-            },
-            tex_fonts::FontLimits::default(),
-        )
-        .map_err(|_| HtmlError::CorruptFontAsset {
-            font: font.name.clone(),
-        })?;
-    }
+    };
     let declared_size = web
         .woff2
         .get(16..20)
@@ -989,11 +1032,6 @@ fn validate_font(
             limit: options.max_asset_bytes,
         });
     }
-    let sfnt = woff2_patched::convert_woff2_to_ttf(&mut web.woff2.as_slice()).map_err(|_| {
-        HtmlError::CorruptFontAsset {
-            font: font.name.clone(),
-        }
-    })?;
     let face = ttf_parser::Face::parse(&sfnt, 0).map_err(|_| HtmlError::CorruptFontAsset {
         font: font.name.clone(),
     })?;

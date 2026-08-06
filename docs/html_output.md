@@ -233,9 +233,15 @@ conflict that reports both identities; it never silently keeps or replaces
 one binding. Missing, corrupt, unlicensed, or incomplete bindings are likewise
 typed failures. The content-derived CSS family uses program identity, while
 manifest paths use exact object identity.
-Before serialization, the driver bounds and fully decodes each WOFF2, parses
-its SFNT tables, and requires a cmap glyph for every scalar in every declared
-code mapping; a matching caller-supplied digest alone is not accepted.
+Before serialization, the driver bounds each WOFF2 and requires a cmap glyph
+for every scalar in every declared code mapping; a matching caller-supplied
+digest alone is not accepted. The production retained-resource view also
+returns the already validated `OpenTypeFont`, so the driver shares its
+canonical decoded SFNT allocation and verifies the complete object, program,
+face, and instance binding instead of decoding the WOFF2 again. The public
+`HtmlFontAssets` compatibility method remains sufficient for external
+resolvers: when they do not expose a realized program, validation decodes the
+asset exactly once and uses that result for cmap and outline work.
 Embedded mode writes WOFF2 as a canonical base64 data URL. Manifest mode writes
 content-addressed asset names and a sorted manifest; it never derives a URL
 from TeX input. Deterministic subsetting is allowed only when the subsetter,

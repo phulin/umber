@@ -150,7 +150,7 @@ pub struct LoadedFont {
     encoding_map: Option<LegacyEncodingMap>,
 }
 
-/// Host-neutral provenance for an immutable font instance.
+/// Host-neutral identity for one fully realized immutable font instance.
 ///
 /// pdfTeX allocates copied and letterspaced fonts as distinct internal fonts,
 /// even when their source bytes and nominal name are otherwise identical.
@@ -158,9 +158,9 @@ pub struct LoadedFont {
 /// and semantic hashing from accidentally folding generated instances back
 /// into an ordinary file load.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct FontSourceIdentity([u8; 32]);
+pub struct RealizedFontIdentity([u8; 32]);
 
-impl FontSourceIdentity {
+impl RealizedFontIdentity {
     #[must_use]
     pub const fn from_bytes(bytes: [u8; 32]) -> Self {
         Self(bytes)
@@ -169,6 +169,47 @@ impl FontSourceIdentity {
     #[must_use]
     pub const fn bytes(self) -> [u8; 32] {
         self.0
+    }
+}
+
+/// Compatibility name for the identity formerly described only as source
+/// provenance. The digest also binds metrics, size, layout/fallback policy,
+/// selected OpenType program/instance, and generated-font ancestry.
+pub type FontSourceIdentity = RealizedFontIdentity;
+
+/// pdfTeX-compatible identity of a font-dictionary/subset resource.
+///
+/// The selected size and generated-font ancestry remain part of
+/// [`RealizedFontIdentity`] but intentionally do not split a PDF font object:
+/// pdfTeX reuses the same dictionary for equal TFM bytes and selected outline
+/// program, applying size in the text state. Type 1, TrueType, PK, and resident
+/// program selection remains a PDF finalization view over this key.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct PdfFontResourceIdentity {
+    tfm_content_hash: FontContentHash,
+    program_identity: Option<FontProgramIdentity>,
+}
+
+impl PdfFontResourceIdentity {
+    #[must_use]
+    pub const fn new(
+        tfm_content_hash: FontContentHash,
+        program_identity: Option<FontProgramIdentity>,
+    ) -> Self {
+        Self {
+            tfm_content_hash,
+            program_identity,
+        }
+    }
+
+    #[must_use]
+    pub const fn tfm_content_hash(self) -> FontContentHash {
+        self.tfm_content_hash
+    }
+
+    #[must_use]
+    pub const fn program_identity(self) -> Option<FontProgramIdentity> {
+        self.program_identity
     }
 }
 
@@ -781,19 +822,7 @@ impl LoadedFont {
     /// Canonical identity for the selected OpenType instance at this TeX size.
     #[must_use]
     pub fn opentype_instance_identity(&self) -> Option<FontInstanceIdentity> {
-        let font = self.opentype()?;
-        Some(FontInstanceIdentity::new_with_context(
-            font.identity,
-            font.face_index,
-            self.size.raw(),
-            crate::FontInstanceContext {
-                variation: &font.variation,
-                features: &font.feature_policy,
-                direction: font.direction,
-                script: font.script,
-                language: font.language.as_ref(),
-            },
-        ))
+        Some(self.opentype()?.instance_identity(self.size))
     }
 
     /// Returns direct OpenType MATH metrics when present, otherwise the
@@ -836,7 +865,7 @@ impl LoadedFont {
 
     /// Deterministic, host-neutral identity for generated-font ancestry.
     #[must_use]
-    pub fn source_identity(&self) -> FontSourceIdentity {
+    pub fn realized_identity(&self) -> RealizedFontIdentity {
         let mut hasher = Sha256::new();
         hasher.update(b"umber-font-source-v2");
         hasher.update((self.name.len() as u64).to_le_bytes());
@@ -896,7 +925,19 @@ impl LoadedFont {
                 hasher.update(ratio.to_le_bytes());
             }
         }
-        FontSourceIdentity(hasher.finalize().into())
+        RealizedFontIdentity(hasher.finalize().into())
+    }
+
+    /// Compatibility spelling retained for existing state and artifact APIs.
+    #[must_use]
+    pub fn source_identity(&self) -> FontSourceIdentity {
+        self.realized_identity()
+    }
+
+    /// Canonical format-specific view used for pdfTeX font-object reuse.
+    #[must_use]
+    pub fn pdf_resource_identity(&self) -> PdfFontResourceIdentity {
+        PdfFontResourceIdentity::new(self.content_hash, self.opentype().map(|font| font.identity))
     }
 
     /// Reattaches validated construction metadata at a detached restore

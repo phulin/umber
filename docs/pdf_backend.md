@@ -230,6 +230,15 @@ ordered `\pdfmapfile`/`\pdfmapline` operation history for every positioned text
 run; finalization cost therefore scales with the map plus document content,
 rather than their product.
 
+The engine ledger keys reusable font dictionaries through
+`PdfFontResourceIdentity`, the single pdfTeX-compatible projection owned by
+the realized font: exact TFM content plus the selected OpenType program when
+one participates in layout. Selected size and generated ancestry remain in
+`RealizedFontIdentity` and committed artifacts but intentionally do not split
+pdfTeX's subset object. Effective Type 1, TrueType, resident, or PK program and
+VF-leaf selection remain finalization inputs and preserve their existing
+typed identities.
+
 When a mapped Type-1 font has no external encoding, finalization resolves used
 character codes through the program's cleartext built-in encoding. The bounded
 PostScript token scan accepts both spaced entries (`dup 10 /name put`) and the

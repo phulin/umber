@@ -3528,11 +3528,10 @@ impl Universe {
         font: FontId,
     ) -> Result<PdfFontResourceRecord, PdfObjectCapacityError> {
         let loaded = self.font(font);
-        let tfm_content_hash = loaded.content_hash();
         let source_identity = loaded.source_identity();
-        let program_identity = loaded.opentype().map(|font| font.identity.bytes());
+        let identity = loaded.pdf_resource_identity();
         self.pdf
-            .ensure_font_resource(font, source_identity, tfm_content_hash, program_identity)
+            .ensure_font_resource(font, source_identity, identity)
     }
 
     #[must_use]
