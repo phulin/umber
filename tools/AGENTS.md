@@ -129,6 +129,15 @@ with no divergence budget. It intentionally compares the portable events as
 captured; a format-loaded caller must still distinguish allocator-only macro
 operands using the phase projection recorded by the TRIP triage report.
 
+`tex-command-stream::policy` is the sole semantic-comparison owner. Its named
+ordinary policy returns bounded aligned divergences and ordered/root-site
+accounting together; both the repository runner and `event-stream-diff`
+consume that result. Its strict TRIP policy parses and validates canonical
+streams, applies phase-aware macro and reference-instrumentation projection,
+and returns the first positional divergence plus complete raw/projected
+accounting from the same walk. Parity renders that result and owns no event
+projection or event-counting pass.
+
 The tool's one Cargo integration binary is `tests/it.rs`; focused external-boundary suites are submodules under `tests/it/`. `tests/it/command_semantic.rs` owns the generic declarative semantic-minifixture runner. It discovers each fixture's singleton versioned `manifest.json` under `tests/corpus/command-semantic/<domain>/<fixture>/`; every fixture directory is a closed unit containing that manifest, its declared TeX source, and each applicable `expected.<channel>` file, with no domain manifest or shared expected-output tree. The runner validates catalogue ownership and exact provenance, drives tiny fixture bytes through instrumented `MainControl`, and enforces short exact pass or strict-xfail projections without adding Rust case registries or integration binaries. Manifests may select filtered canonical observation families and supply bounded in-memory terminal lines or named inputs, so pausing, read, and input-open cases remain hermetic. They may also select committed command, mode, final-box, and prepared-page artifact boundaries for focused execution evidence. While `umber2-alfh.11` owns the terminal-EOF divergence, the two corpus-wide exact-comparison tests run manually with `cargo test -q -p tex-command-stream --test it command_semantic -- --ignored`; schema, inventory, route, and bounded behavioral checks remain routine.
 
 Comparison is a two-tier keyed sequence alignment, not an index-parallel

@@ -24,6 +24,7 @@ use tex_state::{InputOpenState, InputReadState, SourceId, Universe};
 pub mod compare;
 pub mod documents;
 pub mod group;
+pub mod policy;
 pub mod report;
 pub mod semantic;
 
@@ -40,6 +41,11 @@ pub use compare::{
     find_divergences,
 };
 pub use group::{RootSite, group};
+pub use policy::{
+    OrdinaryComparison, OrdinaryComparisonAccounting, OrdinaryComparisonPolicy,
+    StrictTripAccounting, StrictTripChannel, StrictTripComparison, StrictTripComparisonPolicy,
+    StrictTripDivergence, StrictTripError,
+};
 pub use report::{ComparisonReport, EXIT_NOT_RUN, FixtureState, FixtureSummary, RunOutcome};
 
 const FIXTURE_ROOT: &str = "tests/corpus/command/tex82";
@@ -242,22 +248,15 @@ fn collect_geometry_divergences(
         .collect::<Vec<_>>();
     let actual_events = actual.len();
     let identity = format!("{} projection={}", fixture.selector, fixture.identity);
-    let comparison = find_divergences(
-        &identity,
-        &fixture.stream.events,
-        &actual,
-        options.max_divergences,
-        options.alignment,
-    );
+    let comparison = OrdinaryComparisonPolicy {
+        max_divergences: options.max_divergences,
+        alignment: options.alignment,
+    }
+    .compare(&identity, &fixture.stream.events, &actual);
     let first = report.advisories.len();
-    let budgeted = comparison.entries.len();
-    report.advisories.extend(
-        comparison
-            .entries
-            .into_iter()
-            .map(Box::new)
-            .map(Divergence::Mismatch),
-    );
+    let budgeted = comparison.accounting.ordered_divergences;
+    let budget_reached = comparison.accounting.budget_reached;
+    report.advisories.extend(comparison.divergences);
     if let Some(failure) = replay.failure {
         report.advisories.push(Divergence::Failure {
             fixture: identity.clone(),
@@ -273,7 +272,7 @@ fn collect_geometry_divergences(
             divergences: report.advisories.len() - first,
             budgeted,
             first_index: report.advisories.get(first).map(Divergence::index),
-            budget_reached: comparison.budget_reached,
+            budget_reached,
         },
     });
     Ok(())
@@ -348,24 +347,17 @@ fn collect_fixture_divergences(
         "{} manifest={}",
         fixture.manifest.name, fixture.stream.header.manifest
     );
-    let comparison = find_divergences(
-        &identity,
-        &fixture.stream.events,
-        &replay.events,
-        options.max_divergences,
-        options.alignment,
-    );
+    let comparison = OrdinaryComparisonPolicy {
+        max_divergences: options.max_divergences,
+        alignment: options.alignment,
+    }
+    .compare(&identity, &fixture.stream.events, &replay.events);
     let first = report.divergences.len();
     // The budget counts these and only these; the contained failure below is
     // outside it, so the two are recorded separately rather than summed.
-    let budgeted = comparison.entries.len();
-    report.divergences.extend(
-        comparison
-            .entries
-            .into_iter()
-            .map(Box::new)
-            .map(Divergence::Mismatch),
-    );
+    let budgeted = comparison.accounting.ordered_divergences;
+    let budget_reached = comparison.accounting.budget_reached;
+    report.divergences.extend(comparison.divergences);
     // A contained failure is at most one entry per fixture and names a
     // concrete `ExecError` or panic site, so it is reported outside the
     // mismatch budget: the twentieth consecutive mismatch of an
@@ -385,7 +377,7 @@ fn collect_fixture_divergences(
             divergences: report.divergences.len() - first,
             budgeted,
             first_index: report.divergences.get(first).map(Divergence::index),
-            budget_reached: comparison.budget_reached,
+            budget_reached,
         },
     });
     Ok(())

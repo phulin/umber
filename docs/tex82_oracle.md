@@ -13,6 +13,12 @@ and their exhaustive projections before any consumer compiles. Fixture source
 validation and `tex-command-stream` comparison consume these projections rather
 than maintaining independent event-schema walks.
 
+`tex-command-stream` exposes named strict-TRIP and bounded-ordinary policies.
+Each policy returns divergence and accounting together: strict comparison
+performs one parsed positional projection walk, while ordinary comparison
+performs bounded keyed realignment and root-site accounting. The parity
+harness and captured-stream diagnostic only render those owned results.
+
 This is an internal traversal consolidation, not a schema revision. Existing
 schema-v1, schema-v2, and schema-v3 canonical JSON bytes, identities,
 normalization rules, validation precedence, comparison keys, and report text

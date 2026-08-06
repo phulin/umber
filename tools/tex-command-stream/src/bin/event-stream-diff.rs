@@ -8,7 +8,7 @@
 use std::fs;
 use std::process::ExitCode;
 
-use tex_command_stream::{AlignmentTuning, Divergence, ObservedEvent, find_divergences, group};
+use tex_command_stream::{AlignmentTuning, ObservedEvent, OrdinaryComparisonPolicy, group};
 use tex_oracle::ObservationStream;
 
 fn main() -> ExitCode {
@@ -41,25 +41,17 @@ fn run() -> Result<(), String> {
         .into_iter()
         .map(|event| ObservedEvent::new(event.semantic, String::new()))
         .collect::<Vec<_>>();
-    let comparison = find_divergences(
-        "captured-stream",
-        &expected.events,
-        &actual,
-        usize::MAX,
-        AlignmentTuning::default(),
-    );
-    let divergences = comparison
-        .entries
-        .into_iter()
-        .map(Box::new)
-        .map(Divergence::Mismatch)
-        .collect::<Vec<_>>();
-    let sites = group(&divergences);
+    let comparison = OrdinaryComparisonPolicy {
+        max_divergences: usize::MAX,
+        alignment: AlignmentTuning::default(),
+    }
+    .compare("captured-stream", &expected.events, &actual);
+    let sites = group(&comparison.divergences);
     println!(
         "{} ordered divergence(s), {} root site(s), budget_reached={}",
-        divergences.len(),
-        sites.len(),
-        comparison.budget_reached
+        comparison.accounting.ordered_divergences,
+        comparison.accounting.root_sites,
+        comparison.accounting.budget_reached
     );
     for (index, site) in sites.iter().enumerate() {
         println!(

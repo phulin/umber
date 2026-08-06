@@ -5,7 +5,6 @@
 //! Complete TeX82 §638 shipout allocator-accounting records are parsed and
 //! retained as advisory evidence; every other transcript/log byte still gates.
 
-use std::collections::BTreeSet;
 use std::fmt::Write as _;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -13,9 +12,9 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use sha2::{Digest, Sha256};
 use test_support::dvi::normalized_dvi_for_comparison;
-use tex_oracle::{
-    CanonicalCommand, CanonicalValue, CommandDelivery, CommandEvent, Event, MutationEvent,
-    NormalizedEvent, ObservationStream, SchemaVersion, StateTarget,
+use tex_command_stream::{
+    StrictTripAccounting, StrictTripChannel, StrictTripComparison, StrictTripComparisonPolicy,
+    StrictTripDivergence,
 };
 
 const ARTIFACT_NAME: &str = "trip-triage-v1.txt";
@@ -110,16 +109,29 @@ pub fn write_trip_triage_artifact(
         .map(normalized_dvi_for_comparison)
         .transpose()?;
     let text = TextComparisons::new(input);
-    let gating_divergence =
-        first_gating_divergence(input, &text, expected_dvi.as_deref(), actual_dvi.as_deref())?;
+    let command_comparison = event_comparison(
+        StrictTripChannel::Command,
+        input.expected.command_events,
+        input.actual.command_events,
+        input.expected.initialization_events,
+        input.actual.initialization_events,
+    )?;
+    let command_divergence = event_divergence("command_events", &command_comparison);
+    let gating_divergence = first_gating_divergence(
+        &command_divergence,
+        &text,
+        expected_dvi.as_deref(),
+        actual_dvi.as_deref(),
+    );
     let memory_usage_divergence = text.memory_usage_divergence();
-    let geometry_divergence = event_divergence(
-        "geometry_events",
+    let geometry_comparison = event_comparison(
+        StrictTripChannel::Geometry,
         input.expected.geometry_events,
         input.actual.geometry_events,
         None,
         None,
     )?;
+    let geometry_divergence = event_divergence("geometry_events", &geometry_comparison);
     let Some(divergence) = gating_divergence
         .as_ref()
         .or(memory_usage_divergence.as_ref())
@@ -148,6 +160,8 @@ pub fn write_trip_triage_artifact(
             memory_usage: memory_usage_divergence.as_ref(),
             geometry: geometry_divergence.as_ref(),
             gating_mismatch: gating_divergence.is_some(),
+            command_accounting: command_comparison.accounting,
+            geometry_accounting: geometry_comparison.accounting,
         },
     );
     fs::write(&artifact, report)
@@ -161,35 +175,25 @@ pub fn write_trip_triage_artifact(
 }
 
 fn first_gating_divergence(
-    input: TripTriageInput<'_>,
+    command: &Option<Divergence>,
     text: &TextComparisons,
     expected_dvi: Option<&[u8]>,
     actual_dvi: Option<&[u8]>,
-) -> Result<Option<Divergence>> {
-    if let Some(divergence) = event_divergence(
-        "command_events",
-        input.expected.command_events,
-        input.actual.command_events,
-        input.expected.initialization_events,
-        input.actual.initialization_events,
-    )? {
-        return Ok(Some(divergence));
+) -> Option<Divergence> {
+    if let Some(divergence) = command {
+        return Some(divergence.clone());
     }
     if let Some(divergence) = byte_divergence(
         "transcript",
         &text.transcript.expected,
         &text.transcript.actual,
     ) {
-        return Ok(Some(divergence));
+        return Some(divergence);
     }
     if let Some(divergence) = byte_divergence("log", &text.log.expected, &text.log.actual) {
-        return Ok(Some(divergence));
+        return Some(divergence);
     }
-    Ok(optional_byte_divergence(
-        "normalized_dvi",
-        expected_dvi,
-        actual_dvi,
-    ))
+    optional_byte_divergence("normalized_dvi", expected_dvi, actual_dvi)
 }
 
 /// A text channel with only complete TeX82 §638 shipout accounting records
@@ -299,383 +303,42 @@ fn optional_byte_divergence(
     }
 }
 
-fn event_divergence(
-    channel: &'static str,
+fn event_comparison(
+    channel: StrictTripChannel,
     expected: Option<&[u8]>,
     actual: Option<&[u8]>,
     expected_initialization: Option<&[u8]>,
     actual_initialization: Option<&[u8]>,
-) -> Result<Option<Divergence>> {
-    match (expected, actual) {
-        (None, None) => Ok(None),
-        (Some(_), None) | (None, Some(_)) => Ok(Some(Divergence::presence(channel))),
-        (Some(expected), Some(actual)) => {
-            let expected = ObservationStream::from_canonical_json_lines(expected)
-                .context("expected TRIP command-event stream is not canonical schema-v1 JSONL")?;
-            let actual = ObservationStream::from_canonical_json_lines(actual)
-                .context("actual TRIP command-event stream is not canonical schema-v1 JSONL")?;
-            let expected_schema =
-                SchemaVersion::try_from(expected.header.schema).map_err(anyhow::Error::msg)?;
-            let actual_schema =
-                SchemaVersion::try_from(actual.header.schema).map_err(anyhow::Error::msg)?;
-            match channel {
-                "command_events"
-                    if expected_schema != SchemaVersion::V1
-                        || actual_schema != SchemaVersion::V1 =>
-                {
-                    anyhow::bail!("command_events must use canonical schema-v1 on both sides");
-                }
-                "geometry_events"
-                    if expected_schema < SchemaVersion::V2 || actual_schema < SchemaVersion::V2 =>
-                {
-                    anyhow::bail!("geometry_events require a canonical geometry schema");
-                }
-                _ => {}
-            }
-            if expected_schema != actual_schema {
-                anyhow::bail!(
-                    "{channel} schema mismatch: expected v{}, actual v{}",
-                    expected_schema.number(),
-                    actual_schema.number()
-                );
-            }
-            if expected.header != actual.header {
-                return Ok(Some(Divergence::event_header(
-                    channel,
-                    &expected.header.manifest,
-                    &actual.header.manifest,
-                )));
-            }
-            let mut projection = TripProjection::from_initialization(
-                expected_initialization,
-                actual_initialization,
-            )?;
-            let expected_events = projected_events(channel, &expected.events);
-            let actual_events = projected_events(channel, &actual.events);
-            let index = expected_events
-                .iter()
-                .zip(&actual_events)
-                .position(|(left, right)| !projection.events_match(channel, left, right));
-            let index = index.or_else(|| {
-                (expected_events.len() != actual_events.len())
-                    .then_some(expected_events.len().min(actual_events.len()))
-            });
-            Ok(index.map(|index| {
-                Divergence::event(
-                    channel,
-                    index,
-                    expected_events.get(index),
-                    actual_events.get(index),
-                )
-            }))
-        }
+) -> Result<StrictTripComparison> {
+    StrictTripComparisonPolicy {
+        channel,
+        expected_initialization,
+        actual_initialization,
     }
+    .compare(expected, actual)
+    .map_err(anyhow::Error::msg)
 }
 
-fn projected_events(channel: &str, events: &[NormalizedEvent]) -> Vec<NormalizedEvent> {
-    events
-        .iter()
-        .filter(|event| {
-            channel != "command_events"
-                || !matches!(
-                    &event.semantic,
-                    Event::TokenList(token_list)
-                        if token_list.purpose == "protected_delivery_suppression"
-                )
-        })
-        .enumerate()
-        .map(|(sequence, event)| NormalizedEvent {
-            sequence: sequence as u64,
-            semantic: event.semantic.clone(),
-        })
-        .collect()
-}
-
-/// Compares canonical events after removing TeX's allocation-only macro
-/// operand.
-///
-/// TeX82 §382 installs `def_ref` as a macro's `equiv`, so `get_next` exposes
-/// that mutable token-list address as `cur_chr` on a `call`. Umber retains
-/// immutable macro-definition ownership instead and deliberately emits no
-/// allocator identity. The differential tracer applies this same projection;
-/// the integrated two-phase TRIP comparator must not invent a semantic
-/// mismatch from the reference engine's memory address.
-#[derive(Default)]
-struct TripProjection {
-    /// Control sequences whose latest meaning mutation has established the
-    /// same complete macro definition on both sides.
-    matched_macros: BTreeSet<String>,
-    /// Prior proofs saved by explicit `\\begingroup` levels. TeX82 §282's
-    /// `unsave` restores these meanings at the matching `\\endgroup`.
-    explicit_group_macro_scopes: Vec<BTreeSet<String>>,
-}
-
-impl TripProjection {
-    fn from_initialization(expected: Option<&[u8]>, actual: Option<&[u8]>) -> Result<Self> {
-        let mut projection = Self::default();
-        let (Some(expected), Some(actual)) = (expected, actual) else {
-            return Ok(projection);
-        };
-        let expected = ObservationStream::from_canonical_json_lines(expected)
-            .context("expected initialization history is not canonical schema-v1 JSONL")?;
-        let actual = ObservationStream::from_canonical_json_lines(actual)
-            .context("actual initialization history is not canonical schema-v1 JSONL")?;
-        let expected_events = projected_events("command_events", &expected.events);
-        let actual_events = projected_events("command_events", &actual.events);
-        for (expected, actual) in expected_events.iter().zip(&actual_events) {
-            if !projection.events_match("command_events", expected, actual) {
-                return Ok(Self::default());
-            }
+fn event_divergence(
+    channel: &'static str,
+    comparison: &StrictTripComparison,
+) -> Option<Divergence> {
+    match comparison.divergence.as_ref()? {
+        StrictTripDivergence::Presence => Some(Divergence::presence(channel)),
+        StrictTripDivergence::Header { expected, actual } => {
+            Some(Divergence::event_header(channel, expected, actual))
         }
-        // TeX82 §1309 restores a format before the loaded job begins. A
-        // terminal observation missing after the shorter initialization
-        // stream cannot invalidate macro meanings already established by the
-        // common completed history. A one-sided meaning mutation can, so
-        // discard only the affected proof from an otherwise exact prefix.
-        for event in expected_events
-            .iter()
-            .skip(actual_events.len())
-            .chain(actual_events.iter().skip(expected_events.len()))
-        {
-            if let Some((name, _)) = meaning_mutation(&event.semantic) {
-                projection.matched_macros.remove(name);
-            }
-        }
-        Ok(projection)
+        StrictTripDivergence::Event {
+            index,
+            expected,
+            actual,
+        } => Some(Divergence::event(
+            channel,
+            *index,
+            expected.as_deref(),
+            actual.as_deref(),
+        )),
     }
-
-    fn events_match(
-        &mut self,
-        channel: &str,
-        expected: &NormalizedEvent,
-        actual: &NormalizedEvent,
-    ) -> bool {
-        let matches = expected == actual
-            || (channel == "command_events"
-                && expected.sequence == actual.sequence
-                && (macro_call_operand_is_reference(
-                    &expected.semantic,
-                    &actual.semantic,
-                    &self.matched_macros,
-                ) || frozen_endwrite_operand_is_reference(
-                    &expected.semantic,
-                    &actual.semantic,
-                ) || sparse_register_operand_is_reference(
-                    &expected.semantic,
-                    &actual.semantic,
-                )));
-        if channel == "command_events" {
-            self.observe_meaning_mutations(&expected.semantic, &actual.semantic);
-            self.observe_explicit_group_boundary(&expected.semantic, &actual.semantic);
-        }
-        matches
-    }
-
-    fn observe_meaning_mutations(&mut self, expected: &Event, actual: &Event) {
-        let expected = meaning_mutation(expected);
-        let actual = meaning_mutation(actual);
-        for name in expected
-            .map(|(name, _)| name)
-            .into_iter()
-            .chain(actual.map(|(name, _)| name))
-        {
-            self.matched_macros.remove(name);
-        }
-        let (Some((expected_name, expected_mutation)), Some((actual_name, actual_mutation))) =
-            (expected, actual)
-        else {
-            return;
-        };
-        if expected_name == actual_name
-            && expected_mutation == actual_mutation
-            && matches!(expected_mutation.value, CanonicalValue::Tokens(_))
-        {
-            self.matched_macros.insert(expected_name.to_owned());
-        }
-        if expected_name == actual_name
-            && expected_mutation == actual_mutation
-            && expected_mutation.scope == "global"
-        {
-            for scope in &mut self.explicit_group_macro_scopes {
-                scope.remove(expected_name);
-                if matches!(expected_mutation.value, CanonicalValue::Tokens(_)) {
-                    scope.insert(expected_name.to_owned());
-                }
-            }
-        }
-    }
-
-    fn observe_explicit_group_boundary(&mut self, expected: &Event, actual: &Event) {
-        if expected != actual {
-            return;
-        }
-        let Event::Command(CommandEvent {
-            delivery: CommandDelivery::Expanded,
-            command,
-        }) = expected
-        else {
-            return;
-        };
-        match command.command.as_str() {
-            "begin_group" => self
-                .explicit_group_macro_scopes
-                .push(self.matched_macros.clone()),
-            "end_group" => {
-                if let Some(restored) = self.explicit_group_macro_scopes.pop() {
-                    self.matched_macros = restored;
-                }
-            }
-            _ => {}
-        }
-    }
-}
-
-/// e-TeX 2.6 change [49.1224] stores a sparse-array node in `cur_chr` for a
-/// register shorthand above 255. Umber preserves [49.5508--5523]'s semantic
-/// register type and `print_sa_num` index instead of the mutable WEB node
-/// address. Project only that named portable identity: a missing or integer
-/// Umber operand has not preserved the sparse register semantics.
-fn sparse_register_operand_is_reference(expected: &Event, actual: &Event) -> bool {
-    let (
-        Event::Command(CommandEvent {
-            delivery: expected_delivery,
-            command:
-                CanonicalCommand {
-                    command: expected_command,
-                    operand: CanonicalValue::Integer(_),
-                    control_sequence: expected_control_sequence,
-                    location: expected_location,
-                },
-        }),
-        Event::Command(CommandEvent {
-            delivery: actual_delivery,
-            command:
-                CanonicalCommand {
-                    command: actual_command,
-                    operand: actual_operand,
-                    control_sequence: actual_control_sequence,
-                    location: actual_location,
-                },
-        }),
-    ) = (expected, actual)
-    else {
-        return false;
-    };
-
-    matches!(actual_operand, CanonicalValue::Name(_))
-        && matches!(expected_command.as_str(), "register" | "toks_register")
-        && expected_delivery == actual_delivery
-        && expected_command == actual_command
-        && expected_control_sequence == actual_control_sequence
-        && expected_location == actual_location
-}
-
-fn meaning_mutation(event: &Event) -> Option<(&str, &MutationEvent)> {
-    let Event::Mutation(mutation) = event else {
-        return None;
-    };
-    if mutation.target != StateTarget::Meaning {
-        return None;
-    }
-    let CanonicalValue::Name(name) = &mutation.key else {
-        return None;
-    };
-    Some((name, mutation))
-}
-
-fn macro_call_operand_is_reference(
-    expected: &Event,
-    actual: &Event,
-    matched_macros: &BTreeSet<String>,
-) -> bool {
-    let (
-        Event::Command(CommandEvent {
-            delivery: expected_delivery,
-            command:
-                CanonicalCommand {
-                    command: expected_command,
-                    operand: CanonicalValue::Integer(_),
-                    control_sequence: expected_control_sequence,
-                    location: expected_location,
-                },
-        }),
-        Event::Command(CommandEvent {
-            delivery: actual_delivery,
-            command:
-                CanonicalCommand {
-                    command: actual_command,
-                    operand: actual_operand,
-                    control_sequence: actual_control_sequence,
-                    location: actual_location,
-                },
-        }),
-    ) = (expected, actual)
-    else {
-        return false;
-    };
-
-    let Some(expected_control_sequence) = expected_control_sequence.as_deref() else {
-        return false;
-    };
-
-    matches!(
-        actual_operand,
-        CanonicalValue::Integer(_) | CanonicalValue::None
-    ) && matched_macros.contains(expected_control_sequence)
-        && matches!(
-            expected_command.as_str(),
-            "call" | "long_call" | "outer_call" | "long_outer_call"
-        )
-        && expected_delivery == actual_delivery
-        && expected_command == actual_command
-        && Some(expected_control_sequence) == actual_control_sequence.as_deref()
-        && expected_location == actual_location
-}
-
-/// TeX82 §§222/1369 give the inaccessible `\endwrite` stopper an
-/// `outer_call` meaning whose `equiv` is `null`. The observed operand is
-/// therefore TeX's representation of that sentinel value, while Umber owns
-/// the same empty outer macro in its immutable definition store. Neither
-/// integer is semantic identity.
-///
-/// Unlike ordinary macros, this meaning has no mutation event from which the
-/// projection can learn a definition. Its frozen name, command, and lack of
-/// source provenance identify the one allocation-insensitive case.
-fn frozen_endwrite_operand_is_reference(expected: &Event, actual: &Event) -> bool {
-    let (
-        Event::Command(CommandEvent {
-            delivery: expected_delivery,
-            command:
-                CanonicalCommand {
-                    command: expected_command,
-                    operand: CanonicalValue::Integer(_),
-                    control_sequence: expected_control_sequence,
-                    location: None,
-                },
-        }),
-        Event::Command(CommandEvent {
-            delivery: actual_delivery,
-            command:
-                CanonicalCommand {
-                    command: actual_command,
-                    operand: actual_operand,
-                    control_sequence: actual_control_sequence,
-                    location: None,
-                },
-        }),
-    ) = (expected, actual)
-    else {
-        return false;
-    };
-
-    matches!(
-        actual_operand,
-        CanonicalValue::Integer(_) | CanonicalValue::None
-    ) && expected_delivery == actual_delivery
-        && expected_command == "outer_call"
-        && actual_command == expected_command
-        && expected_control_sequence.as_deref() == Some("endwrite")
-        && actual_control_sequence == expected_control_sequence
 }
 
 fn byte_divergence(channel: &'static str, expected: &[u8], actual: &[u8]) -> Option<Divergence> {
@@ -687,7 +350,7 @@ fn byte_divergence(channel: &'static str, expected: &[u8], actual: &[u8]) -> Opt
     Some(Divergence::bytes(channel, index, expected, actual))
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct Divergence {
     channel: &'static str,
     position: String,
@@ -743,6 +406,8 @@ struct ReportAssessment<'a> {
     memory_usage: Option<&'a Divergence>,
     geometry: Option<&'a Divergence>,
     gating_mismatch: bool,
+    command_accounting: StrictTripAccounting,
+    geometry_accounting: StrictTripAccounting,
 }
 
 fn report_text(
@@ -753,20 +418,8 @@ fn report_text(
 ) -> String {
     let (expected_dvi, actual_dvi) = dvi;
     let mut out = String::new();
-    let command_accounting = event_accounting(
-        "command_events",
-        input.expected.command_events,
-        input.actual.command_events,
-        input.expected.initialization_events,
-        input.actual.initialization_events,
-    );
-    let geometry_accounting = event_accounting(
-        "geometry_events",
-        input.expected.geometry_events,
-        input.actual.geometry_events,
-        None,
-        None,
-    );
+    let command_accounting = assessment.command_accounting;
+    let geometry_accounting = assessment.geometry_accounting;
     for (key, value) in [
         ("schema", "umber.trip-triage.v1".to_string()),
         ("label", bounded(input.label, 128)),
@@ -810,19 +463,19 @@ fn report_text(
         ),
         (
             "expected.command_events.count",
-            command_accounting.expected_count,
+            presence_count_text(command_accounting.expected_events),
         ),
         (
             "actual.command_events.count",
-            command_accounting.actual_count,
+            presence_count_text(command_accounting.actual_events),
         ),
         (
             "command_events.projected_equivalent.count",
-            command_accounting.projected_equivalent_count,
+            count_text(command_accounting.projected_equivalent),
         ),
         (
             "command_events.projected_divergence.count",
-            command_accounting.projected_divergence_count,
+            count_text(command_accounting.projected_divergences),
         ),
         (
             "expected.geometry_events.sha256",
@@ -834,15 +487,15 @@ fn report_text(
         ),
         (
             "expected.geometry_events.count",
-            geometry_accounting.expected_count,
+            presence_count_text(geometry_accounting.expected_events),
         ),
         (
             "actual.geometry_events.count",
-            geometry_accounting.actual_count,
+            presence_count_text(geometry_accounting.actual_events),
         ),
         (
             "geometry_events.projected_divergence.count",
-            geometry_accounting.projected_divergence_count,
+            count_text(geometry_accounting.projected_divergences),
         ),
         (
             "geometry_events.advisory_mismatch",
@@ -887,63 +540,12 @@ fn report_text(
     out
 }
 
-struct EventAccounting {
-    expected_count: String,
-    actual_count: String,
-    projected_equivalent_count: String,
-    projected_divergence_count: String,
+fn count_text(count: Option<usize>) -> String {
+    count.map_or_else(|| "unavailable".into(), |count| count.to_string())
 }
 
-fn event_accounting(
-    channel: &str,
-    expected: Option<&[u8]>,
-    actual: Option<&[u8]>,
-    expected_initialization: Option<&[u8]>,
-    actual_initialization: Option<&[u8]>,
-) -> EventAccounting {
-    let (Some(expected), Some(actual)) = (expected, actual) else {
-        return EventAccounting {
-            expected_count: expected.map_or_else(|| "absent".into(), event_count),
-            actual_count: actual.map_or_else(|| "absent".into(), event_count),
-            projected_equivalent_count: "unavailable".into(),
-            projected_divergence_count: "unavailable".into(),
-        };
-    };
-    let expected = ObservationStream::from_canonical_json_lines(expected)
-        .expect("event streams were validated before report rendering");
-    let actual = ObservationStream::from_canonical_json_lines(actual)
-        .expect("event streams were validated before report rendering");
-    let raw_expected_count = expected.events.len();
-    let raw_actual_count = actual.events.len();
-    let expected_events = projected_events(channel, &expected.events);
-    let actual_events = projected_events(channel, &actual.events);
-    let mut projection =
-        TripProjection::from_initialization(expected_initialization, actual_initialization)
-            .expect("initialization streams were validated before report rendering");
-    let mut projected_equivalent_count =
-        raw_expected_count - expected_events.len() + raw_actual_count - actual_events.len();
-    let mut projected_divergence_count = 0;
-    for (left, right) in expected_events.iter().zip(&actual_events) {
-        let matches = projection.events_match(channel, left, right);
-        projected_equivalent_count += usize::from(left != right && matches);
-        projected_divergence_count += usize::from(!matches);
-    }
-    projected_divergence_count += expected_events.len().abs_diff(actual_events.len());
-    EventAccounting {
-        expected_count: raw_expected_count.to_string(),
-        actual_count: raw_actual_count.to_string(),
-        projected_equivalent_count: projected_equivalent_count.to_string(),
-        projected_divergence_count: projected_divergence_count.to_string(),
-    }
-}
-
-fn event_count(bytes: &[u8]) -> String {
-    bytes
-        .split(|byte| *byte == b'\n')
-        .filter(|line| !line.is_empty())
-        .count()
-        .saturating_sub(1)
-        .to_string()
+fn presence_count_text(count: Option<usize>) -> String {
+    count.map_or_else(|| "absent".into(), |count| count.to_string())
 }
 
 fn bounded_line(out: &mut String, key: &str, value: &str) {
@@ -1031,9 +633,9 @@ fn safe_component(name: &str) -> String {
 mod tests {
     use super::*;
     use tex_oracle::{
-        CanonicalValue, EffectEvent, EffectKind, Event, InputEvent, InputReason, InputTransition,
-        MutationEvent, Normalizer, OracleToken, SCHEMA_VERSION, StateTarget, TokenListEvent,
-        TokenListTransition,
+        CanonicalCommand, CanonicalValue, CommandDelivery, CommandEvent, EffectEvent, EffectKind,
+        Event, InputEvent, InputReason, InputTransition, MutationEvent, Normalizer, OracleToken,
+        SCHEMA_VERSION, SchemaVersion, StateTarget, TokenListEvent, TokenListTransition,
     };
 
     fn events(page: i64) -> Vec<u8> {
@@ -1613,94 +1215,6 @@ mod tests {
                 .expect("comparison")
                 .is_none()
         );
-    }
-
-    #[test]
-    fn sparse_register_node_is_not_a_semantic_trip_divergence() {
-        let event = |operand| {
-            Event::Command(CommandEvent {
-                delivery: tex_oracle::CommandDelivery::Raw,
-                command: CanonicalCommand {
-                    command: "register".into(),
-                    operand,
-                    control_sequence: Some("alias".into()),
-                    location: None,
-                },
-            })
-        };
-        assert!(sparse_register_operand_is_reference(
-            &event(CanonicalValue::Integer(1_926)),
-            &event(CanonicalValue::Name("skip:32767".into()))
-        ));
-        for non_semantic_operand in [CanonicalValue::None, CanonicalValue::Integer(32_767)] {
-            assert!(!sparse_register_operand_is_reference(
-                &event(CanonicalValue::Integer(1_926)),
-                &event(non_semantic_operand)
-            ));
-        }
-        assert!(!sparse_register_operand_is_reference(
-            &event(CanonicalValue::Integer(1_926)),
-            &Event::Command(CommandEvent {
-                delivery: tex_oracle::CommandDelivery::Raw,
-                command: CanonicalCommand {
-                    command: "assign_glue".into(),
-                    operand: CanonicalValue::Name("skip:32767".into()),
-                    control_sequence: Some("alias".into()),
-                    location: None,
-                },
-            })
-        ));
-    }
-
-    #[test]
-    fn frozen_endwrite_null_operand_is_not_allocator_identity() {
-        // TeX82 §§222/1369: `end_write` is an inaccessible frozen
-        // `outer_call` whose `equiv` is `null`, not an ordinary definition
-        // established by a meaning mutation.
-        let command = |operand, name: &str, command: &str, location| {
-            Event::Command(CommandEvent {
-                delivery: tex_oracle::CommandDelivery::Raw,
-                command: CanonicalCommand {
-                    command: command.into(),
-                    operand,
-                    control_sequence: Some(name.into()),
-                    location,
-                },
-            })
-        };
-        let expected = command(
-            CanonicalValue::Integer(-268_435_455),
-            "endwrite",
-            "outer_call",
-            None,
-        );
-        for actual_operand in [CanonicalValue::Integer(249_877), CanonicalValue::None] {
-            let actual = command(actual_operand, "endwrite", "outer_call", None);
-            assert!(frozen_endwrite_operand_is_reference(&expected, &actual));
-        }
-
-        let source_location = Some(tex_oracle::SourceLocation {
-            source: "probe.tex".into(),
-            line: 1,
-            byte: 0,
-        });
-        for actual in [
-            command(
-                CanonicalValue::Integer(249_877),
-                "other",
-                "outer_call",
-                None,
-            ),
-            command(CanonicalValue::Integer(249_877), "endwrite", "call", None),
-            command(
-                CanonicalValue::Integer(249_877),
-                "endwrite",
-                "outer_call",
-                source_location,
-            ),
-        ] {
-            assert!(!frozen_endwrite_operand_is_reference(&expected, &actual));
-        }
     }
 
     #[test]
