@@ -1,6 +1,6 @@
 # Typesetting and Browser Assertion Compaction Ledger
 
-Status: evidence ledger for `umber2-vgjr.15.4`
+Status: closed for `umber2-vgjr.15.4`
 
 Scope: active math, packing, line-break, HTML, WASM, authored JavaScript, DOM,
 worker, hostile-input, and browser assertions after architecture programs 7,
@@ -100,7 +100,17 @@ found no further assertion-complete repetition worth deleting:
 This ledger authorizes deletion of exactly one dormant test function and no
 fixture, generated declaration, browser case, or production scaffolding. The
 two unique dormant wire tests are reactivated without moving their assertions.
-Final authored-line accounting is recorded in the issue closeout from the
-implementation commit's exact numstat; generated, declarative, fixture, and
-binary changes are reported separately and may not be credited as test
-reduction.
+Against issue base `0f0c8fcb3`, the implementation commits add three and delete
+41 authored Rust proof-test lines, a net deletion of 38. Documentation is
+reported separately; generated, declarative, fixture, binary, and production
+source are unchanged and receive no deletion credit.
+
+The uncapped six-job focused native and wasm32 test builds passed. Under
+`MemoryMax=512M`, all 145 `tex-typeset` and 172 `tex-out` tests passed. Under
+`MemoryMax=1G`, the complete native suite, all 91 authored Node cases, and the
+packaged Node project lifecycle passed. The optimized WASM package built, npm
+inventory passed, and all four `scripts/check.sh` gates passed. Firefox was not
+installed, so the wasm-bindgen runtime tier was `BLOCKED`; the Chrome package
+fixture built the package and then stopped at the explicit
+`/usr/bin/google-chrome` `ENOENT` preflight. Neither unavailable browser result
+is counted as a pass.
