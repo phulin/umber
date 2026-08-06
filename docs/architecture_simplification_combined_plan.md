@@ -336,9 +336,12 @@ spelling tables, the TeX82 and
 e-TeX executor parameter/page/internal inventories, Umber's pdfTeX name,
 meaning, default, and special-meaning inventories, and their predecessor-parity
 loops. The two foundation commits intentionally added the schema and generated
-views before deletion; accounting for this child records only the obsolete
-consumer authorities actually retired here rather than crediting moved or
-generated declarations as deletion.
+views before deletion: they contain 1,839 authored-Rust additions and 34
+deletions, a net addition of 1,805 lines. Across all four implementation
+commits, authored Rust therefore totals 2,475 additions and 1,272 deletions, a
+net addition of 1,203 lines. The 602-line reduction is the retired-consumer
+category, not a whole-program net reduction; moved or generated declarations
+are not credited as deletions.
 
 ## 10. Replace typesetting shadow arenas and repeated topology with native authorities
 
