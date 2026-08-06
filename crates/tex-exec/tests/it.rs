@@ -5,19 +5,11 @@ use tex_command::{
     CommandObservation, CommandObserver, CommandProfile, MutationTarget, ObservationValue,
     RegisteredSourceKind, SourceRegistration,
 };
-use tex_exec::{MainControl, MainControlStep, ResourceNeed};
+use tex_exec::{MainControl, MainControlStep, ResourceNeed, StepResult};
 use tex_state::{
     EffectRecord, InteractionMode, PrintSink, Universe,
     meaning::{Meaning, UnexpandablePrimitive},
 };
-
-// Compile the temporary crate-private differential foundation at its actual
-// visibility boundary while the library unit-test target remains disabled.
-#[path = "../src/execution_receipt.rs"]
-#[allow(dead_code)]
-mod execution_receipt;
-#[path = "../src/execution_receipt/tests.rs"]
-mod execution_receipt_tests;
 
 fn run_tex82(source: &[u8], tracing_online: bool) -> String {
     let mut stores = Universe::new_with_plain_catcodes();
@@ -94,6 +86,124 @@ fn observed_etex(source: &[u8]) -> (Universe, Vec<CommandObservation>) {
         }
     }
     (stores, observer.0)
+}
+
+fn etex_session(source: &[u8]) -> (MainControl, Universe) {
+    let mut stores = Universe::new_with_plain_catcodes();
+    stores.set_interaction_mode(InteractionMode::Nonstop);
+    tex_command::install_tex82_expandable_primitives(&mut stores);
+    tex_command::install_etex_expandable_primitives(&mut stores);
+    tex_exec::install_unexpandable_primitives(&mut stores);
+    tex_exec::install_etex_unexpandable_primitives(&mut stores);
+    let mut control = MainControl::prepared_initex(CommandProfile::ETEX26);
+    control
+        .register_root_source(SourceRegistration::new(
+            RegisteredSourceKind::Generated,
+            Arc::<[u8]>::from(source),
+        ))
+        .expect("test source registers");
+    (control, stores)
+}
+
+#[test]
+fn unified_operation_preserves_state_output_and_typed_evidence() {
+    let source =
+        br"\count0=7\afterassignment\relax\count1=9\setbox0=\hbox{A}\halign{#\cr B\cr}\end";
+    let (mut ordinary, mut ordinary_stores) = etex_session(source);
+    loop {
+        match ordinary
+            .step(&mut ordinary_stores)
+            .expect("ordinary execution")
+        {
+            MainControlStep::End | MainControlStep::EndOfInput => break,
+            MainControlStep::Continue => {}
+        }
+    }
+
+    let (mut observed, mut observed_stores) = etex_session(source);
+    let mut evidence = ObservationCollector::default();
+    loop {
+        match observed
+            .step_with_observer(&mut observed_stores, &mut evidence)
+            .expect("observed execution")
+        {
+            MainControlStep::End | MainControlStep::EndOfInput => break,
+            MainControlStep::Continue => {}
+        }
+    }
+
+    assert_eq!(
+        ordinary_stores.snapshot().state_hash(),
+        observed_stores.snapshot().state_hash()
+    );
+    assert_eq!(
+        ordinary_stores.world().effect_records(),
+        observed_stores.world().effect_records()
+    );
+    assert_eq!(
+        ordinary_stores.world().artifact_commits(),
+        observed_stores.world().artifact_commits()
+    );
+    assert!(
+        evidence
+            .0
+            .iter()
+            .any(|record| matches!(record, CommandObservation::Alignment(_)))
+    );
+    assert_eq!(register_mutation_keys(&evidence.0), ["count:0", "count:1"]);
+    assert!(observed_stores.box_reg(0).is_some());
+}
+
+#[test]
+fn unified_operation_resource_suspension_is_observation_independent() {
+    let source = br"\input absent-resource";
+    let (mut ordinary, mut ordinary_stores) = etex_session(source);
+    let (mut observed, mut observed_stores) = etex_session(source);
+    let mut evidence = ObservationCollector::default();
+
+    let ordinary_need = loop {
+        if let StepResult::Suspended(need) = ordinary
+            .advance(&mut ordinary_stores)
+            .expect("ordinary operation")
+        {
+            break need;
+        }
+    };
+    let observed_need = loop {
+        if let StepResult::Suspended(need) = observed
+            .advance_with_observer(&mut observed_stores, &mut evidence)
+            .expect("observed operation")
+        {
+            break need;
+        }
+    };
+
+    assert_eq!(ordinary_need, observed_need);
+    assert!(matches!(ordinary_need, ResourceNeed::Input { .. }));
+    assert_eq!(
+        ordinary_stores.snapshot().state_hash(),
+        observed_stores.snapshot().state_hash()
+    );
+    assert!(
+        evidence.0.is_empty(),
+        "rolled-back evidence must not publish"
+    );
+}
+
+#[test]
+fn predecessor_operation_branches_are_absent() {
+    let source = include_str!("../src/main_control.rs");
+    assert!(source.contains("fn execute_operation("));
+    for predecessor in [
+        "fn step_once(",
+        "fn alignment_step_once(",
+        "fn step_with_observer_once(",
+    ] {
+        assert!(
+            !source.contains(predecessor),
+            "retained predecessor: {predecessor}"
+        );
+    }
 }
 
 fn register_mutation_keys(observations: &[CommandObservation]) -> Vec<&str> {

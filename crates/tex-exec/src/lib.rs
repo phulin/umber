@@ -15,9 +15,6 @@ mod dispatch;
 mod effective_tail;
 mod error;
 mod error_report;
-// Temporary foundation for umber2-vgjr.1's operation-path migration. The
-// following children consume the receipt before deleting the shadow types.
-#[allow(dead_code)]
 mod execution_receipt;
 mod font_support;
 mod host_api;

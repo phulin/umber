@@ -54,6 +54,7 @@ use tex_typeset::PackSpec;
 
 use crate::assignments::committer::AssignmentCommitter;
 use crate::assignments::tracing as assignment_tracing;
+use crate::execution_receipt::{ExecutionReceipt, OperationTermination};
 use crate::font_support::{
     FontLoadFailure, GlyphToUnicodeParse, parse_glyph_to_unicode, report_font_capacity,
     report_font_not_loadable_with_context, warn_pdf_destination_duplicate,
@@ -118,7 +119,7 @@ pub struct MainControl {
     /// TeX's inner character loop appends a character and then fetches the
     /// next command from §1038's lookahead, which starts with a bare
     /// `get_next`; only `big_switch` uses `get_x_token`. Umber executes one
-    /// command per `step_once`, so the label it would have jumped to has to
+    /// command per operation, so the label it would have jumped to has to
     /// be carried across steps explicitly.
     main_loop_active: bool,
     /// TeX82's temporary `set_box_allowed:=false` ownership while §1270
@@ -197,7 +198,7 @@ pub struct MainControl {
     /// aggregate step, then TeX82 §§1025/323's `output_text` push. Every step
     /// drains it before the following step can deliver the routine's
     /// scanner-owned opening brace.
-    page_output_observations: Vec<CommandObservation>,
+    page_output_observations: ObservationBuffer,
     /// The commit buffer for the operation in flight, occupied exactly while
     /// an observed operation is running.
     ///
@@ -585,20 +586,92 @@ impl StepSnapshot {
 /// stating which commit buffer it belongs to.
 type ObservationSlot = Option<ObservationBuffer>;
 
+/// The small command-delivery choice at the front of one operation.
+///
+/// Delivery selects only how the next completed command enters main control;
+/// snapshotting, application, publication, rollback, and evidence are shared.
+enum OperationDelivery {
+    Replay(Option<tex_command::CurrentCommand>),
+    Alignment(AlignmentIdentity),
+}
+
+#[derive(Clone, Copy)]
+enum OperationTransaction {
+    Advance,
+    Alignment,
+    Nested,
+}
+
+const MAX_OPERATION_EVIDENCE_RECORDS: usize = 1_000_000;
+
 #[derive(Debug, Default)]
-struct ObservationBuffer(Vec<CommandObservation>);
+struct ObservationBuffer {
+    records: Vec<CommandObservation>,
+    attempted: usize,
+    overflowed: bool,
+    receipt: ExecutionReceipt,
+}
 
 impl ObservationBuffer {
     fn flush_into(self, observer: &mut dyn CommandObserver) {
-        for observation in self.0 {
+        for observation in self.records {
             observer.committed(observation);
         }
+    }
+
+    fn extend(&mut self, records: impl IntoIterator<Item = CommandObservation>) {
+        for record in records {
+            self.committed(record);
+        }
+    }
+
+    fn append(&mut self, other: &mut Self) {
+        let omitted = other.attempted.saturating_sub(other.records.len());
+        self.overflowed |= other.overflowed;
+        for record in other.records.drain(..) {
+            self.committed(record);
+        }
+        self.attempted = self.attempted.saturating_add(omitted);
+        self.overflowed |= self.attempted > MAX_OPERATION_EVIDENCE_RECORDS;
+    }
+
+    fn append_to(&mut self, records: &mut Vec<CommandObservation>) {
+        records.append(&mut self.records);
+        self.attempted = 0;
+        self.overflowed = false;
+        self.receipt = ExecutionReceipt::default();
+    }
+
+    fn clear(&mut self) {
+        self.records.clear();
+        self.attempted = 0;
+        self.overflowed = false;
+        self.receipt = ExecutionReceipt::default();
+    }
+
+    fn is_empty(&self) -> bool {
+        self.records.is_empty()
+    }
+
+    fn limit_error(&self) -> Option<ExecError> {
+        self.overflowed
+            .then_some(ExecError::ResourceBudgetExceeded {
+                resource: "operation evidence records",
+                limit: MAX_OPERATION_EVIDENCE_RECORDS as u64,
+                attempted: self.attempted.try_into().unwrap_or(u64::MAX),
+            })
     }
 }
 
 impl CommandObserver for ObservationBuffer {
     fn committed(&mut self, observation: CommandObservation) {
-        self.0.push(observation);
+        self.attempted = self.attempted.saturating_add(1);
+        if self.records.len() < MAX_OPERATION_EVIDENCE_RECORDS {
+            self.receipt.capture_observation(&observation);
+            self.records.push(observation);
+        } else {
+            self.overflowed = true;
+        }
     }
 }
 
@@ -663,7 +736,7 @@ impl CommandMachine<'_> {
         if let Some(receipts) = self.assignment_receipts.as_mut() {
             receipts.push(record);
         } else if let Some(observations) = self.observations.as_mut() {
-            observations.0.push(CommandObservation::Mutation(record));
+            observations.committed(CommandObservation::Mutation(record));
         }
     }
 }
@@ -1155,8 +1228,8 @@ impl MainControl {
     /// whenever it can -- §362's `)` has to precede the
     /// `check_outer_validity` diagnostic printed a line later inside
     /// `get_next` -- so what reaches here is the residue. Every step driver
-    /// (`step_once`, `alignment_step_once`, `step_with_observer_once`) calls
-    /// this once, immediately after it reports the step's other diagnostics.
+    /// calls this once, immediately after it reports the operation's other
+    /// diagnostics.
     fn drain_file_framing_events(&mut self, stores: &mut Universe) {
         self.command
             .render_file_framing_events(&mut stores.command_context());
@@ -1851,7 +1924,7 @@ impl MainControl {
     /// the prologue's push only on the step that produced it.
     fn enter_main_control(&mut self, stores: &mut Universe) -> bool {
         // Seeds `line` before the first command is delivered; every step
-        // republishes it after delivery (see `step_once`).
+        // republishes it after delivery (see `apply_operation`).
         stores.set_current_input_position(
             i32::try_from(self.command.current_file_line_number()).unwrap_or(i32::MAX),
             self.command.current_file_source_id(),
@@ -1867,7 +1940,7 @@ impl MainControl {
     /// They are published only when the whole operation commits.
     fn observe_committed(&mut self, records: impl IntoIterator<Item = CommandObservation>) {
         if let Some(buffer) = self.operation_observations.as_mut() {
-            buffer.0.extend(records);
+            buffer.extend(records);
         }
     }
 
@@ -1881,144 +1954,16 @@ impl MainControl {
         alignment: AlignmentIdentity,
         stores: &mut Universe,
     ) -> Result<ReplayStep, ExecError> {
-        let snapshot = self.snapshot_step(stores);
-        let result = self.alignment_step_once(alignment, stores);
-        match result {
-            Ok(step) => {
-                self.commit_step(snapshot);
-                Ok(step)
-            }
-            Err(error) => {
-                if error.as_fatal().is_some() {
-                    self.commit_step(snapshot);
-                } else if snapshot.can_rollback(stores) {
-                    self.rollback_step(snapshot, stores);
-                } else {
-                    self.commit_step(snapshot);
-                }
-                Err(error)
-            }
-        }
-    }
-
-    fn alignment_step_once(
-        &mut self,
-        alignment: AlignmentIdentity,
-        stores: &mut Universe,
-    ) -> Result<ReplayStep, ExecError> {
-        self.drain_file_framing_events(stores);
-        let mode = self.modes.current_mode();
-        let innermost_group = stores.innermost_group_kind();
-        let main_loop_active = self.main_loop_active;
-        let job_is_all_over = crate::page_output::job_is_all_over(stores);
-        let mut diagnostics = Vec::new();
-        let scanned = {
-            let mut processor = command_processor(
-                &mut self.command,
-                self.fuel.fuel_mut(),
-                &mut self.capabilities,
-                &mut self.operation_observations,
-                stores,
-            );
-            let scanned = scan_alignment_delivery_step(
-                &mut processor,
-                alignment,
-                &ReplayBoxes::default(),
-                innermost_group,
-                mode,
-                job_is_all_over,
-                main_loop_active,
-                &mut self.shown_mode,
-                &mut diagnostics,
-            )?;
-            diagnostics.extend(
-                processor
-                    .take_semantic_diagnostics()
-                    .into_iter()
-                    .map(PendingDiagnostic::Command),
-            );
-            scanned
-        };
-        // tex.web's `line` is maintained by `get_next` as it moves to a new
-        // input line, so it is already the delivered command's own line by
-        // the time that command is applied. Publish it here, after delivery,
-        // rather than at the step's start: §660/§675's box diagnostics and
-        // §1091's `mode_line` both name the line the command is *on*, and a
-        // command that is the first thing on a line is scanned by a step
-        // that began on the previous one.
-        stores.set_current_input_position(
-            i32::try_from(self.command.current_file_line_number()).unwrap_or(i32::MAX),
-            self.command.current_file_source_id(),
-        );
-        report_pending_diagnostics(stores, diagnostics)?;
-        self.drain_file_framing_events(stores);
-        let scanned = self.resolve_font_resource(scanned)?;
-        let scanned = self.resolve_input_stream_resource(scanned)?;
-        let scanned = self.resolve_pdf_image_resource(scanned, stores)?;
-        let parking = self.suspend_main_control_parking(&scanned);
-        let scanned = match self.apply_host_owned_step(scanned, stores) {
-            ControlFlow::Break(applied) => return applied,
-            ControlFlow::Continue(scanned) => scanned,
-        };
-        let fires_afterassignment = scanned.fires_afterassignment();
-        let dumped_format = self.initex && matches!(scanned, ScannedStep::End { dump: true, .. });
-        let end_tail = match &scanned {
-            ScannedStep::End {
-                dump,
-                incomplete_conditions,
-            } => Some((*dump, incomplete_conditions.clone())),
-            _ => None,
-        };
-        let mut result = apply_scanned_step(
-            scanned,
+        match self.execute_operation(
             stores,
-            &mut self.modes,
-            &mut self.next_alignment_identity,
-            &mut self.active_alignment,
-            &mut CommandMachine {
-                state: &mut self.command,
-                fuel: self.fuel.fuel_mut(),
-                capabilities: &mut self.capabilities,
-                observations: &mut self.operation_observations,
-                assignment_receipts: None,
-                shown_mode: &mut self.shown_mode,
-                initex: self.initex,
-                emit_dvi_override: self.emit_dvi_override,
-            },
-            &mut self.boxes,
-            &self.active_discretionaries,
-            &self.active_math_choices,
-            &self.active_math_left_boundaries,
-            &self.active_math_shifts,
-            &mut self.prepared_dvi_pages,
-            &mut self.end_job_ejection_pending,
-        )?;
-        if dumped_format {
-            self.dumped_format = Some(crate::job::FormatDumpReceipt::new(
-                self.capabilities.job_name().to_owned(),
-                stores.int_param(IntParam::YEAR),
-                stores.int_param(IntParam::MONTH),
-                stores.int_param(IntParam::DAY),
-            ));
+            OperationDelivery::Alignment(alignment),
+            OperationTransaction::Alignment,
+        )? {
+            StepResult::Progress(step) => Ok(step),
+            StepResult::Suspended(_) => Err(ExecError::MissingToken {
+                context: "alignment resource",
+            }),
         }
-        if let (ReplayStep::End, Some((dump, incomplete_conditions))) = (&result, end_tail) {
-            self.end_of_job_final_cleanup(stores, dump, incomplete_conditions);
-        } else if matches!(result, ReplayStep::EndOfInput)
-            && self.root_completion == RootCompletionPolicy::RequireTeXEnd
-        {
-            result = self.handle_root_end_of_input(stores);
-        }
-        self.resume_main_control_parking(parking, stores);
-        if fires_afterassignment {
-            schedule_afterassignment(
-                &mut self.command,
-                self.fuel.fuel_mut(),
-                &mut self.capabilities,
-                &mut self.operation_observations,
-                stores,
-            )?;
-        }
-        Ok(result)
     }
 
     /// Applies the scanned steps `MainControl` owns itself instead of
@@ -2153,7 +2098,7 @@ impl MainControl {
                     .into_iter()
                     .map(CommandObservation::Effect),
                 );
-                records.append(&mut self.page_output_observations);
+                self.page_output_observations.append_to(&mut records);
             }
             self.observe_committed(records);
             self.page_output_observations.clear();
@@ -2404,6 +2349,103 @@ impl MainControl {
         Ok(ReplayStep::Continue)
     }
 
+    /// Executes one main-control operation under the selected delivery and
+    /// transaction policy. This is the sole owner of aggregate savepoints,
+    /// commit/rollback, fatal termination, and resource suspension.
+    fn execute_operation(
+        &mut self,
+        stores: &mut Universe,
+        delivery: OperationDelivery,
+        transaction: OperationTransaction,
+    ) -> Result<StepResult, ExecError> {
+        if matches!(transaction, OperationTransaction::Nested) {
+            let result = self.apply_operation(stores, delivery);
+            if result.is_ok()
+                && let Some(error) = self.operation_evidence_limit_error()
+            {
+                return Err(error);
+            }
+            return result.map(StepResult::Progress);
+        }
+
+        let tracks_telemetry = matches!(transaction, OperationTransaction::Advance);
+        if tracks_telemetry {
+            self.advance_telemetry.attempts += 1;
+            self.advance_telemetry.live_savepoints += 1;
+            self.advance_telemetry.maximum_live_savepoints = self
+                .advance_telemetry
+                .maximum_live_savepoints
+                .max(self.advance_telemetry.live_savepoints);
+        }
+        let snapshot = self.snapshot_step(stores);
+        let mut applied = self.apply_operation(stores, delivery);
+        if applied.is_ok()
+            && let Some(error) = self.operation_evidence_limit_error()
+        {
+            applied = Err(error);
+        }
+        match applied {
+            Ok(step) => {
+                self.commit_step(snapshot);
+                if tracks_telemetry {
+                    self.advance_telemetry.live_savepoints -= 1;
+                    self.advance_telemetry.commits += 1;
+                }
+                Ok(StepResult::Progress(step))
+            }
+            Err(error) if matches!(transaction, OperationTransaction::Alignment) => {
+                if error.as_fatal().is_some() || !snapshot.can_rollback(stores) {
+                    self.commit_step(snapshot);
+                } else {
+                    self.rollback_step(snapshot, stores);
+                }
+                Err(error)
+            }
+            Err(error) => {
+                if let Some(fatal) = error.as_fatal() {
+                    if matches!(error, ExecError::Captured { .. })
+                        && fatal != FatalError::TooManyErrors
+                    {
+                        let rolled_back = snapshot.can_rollback(stores);
+                        let result = self.finish_failed_step(snapshot, stores, error);
+                        self.finish_operation_telemetry(rolled_back);
+                        return result;
+                    }
+                    // §81 `jump_out` commits the partial operation. Publish
+                    // its terminal evidence through the same optional sink.
+                    self.observe_committed([
+                        CommandObservation::Diagnostic(fatal.record()),
+                        CommandObservation::Effect(engine_termination_effect()),
+                    ]);
+                    self.commit_step(snapshot);
+                    self.finish_operation_telemetry(false);
+                    return Ok(StepResult::Progress(self.succumb(fatal)));
+                }
+                let rolled_back =
+                    !matches!(error, ExecError::PdfXFormVoidBox) && snapshot.can_rollback(stores);
+                let result = self.finish_failed_step(snapshot, stores, error);
+                self.finish_operation_telemetry(rolled_back);
+                result
+            }
+        }
+    }
+
+    fn finish_operation_telemetry(&mut self, rolled_back: bool) {
+        self.advance_telemetry.live_savepoints -= 1;
+        if rolled_back {
+            self.advance_telemetry.rollbacks += 1;
+        } else {
+            self.advance_telemetry.commits += 1;
+        }
+    }
+
+    fn operation_evidence_limit_error(&self) -> Option<ExecError> {
+        self.operation_observations
+            .as_ref()
+            .and_then(ObservationBuffer::limit_error)
+            .or_else(|| self.page_output_observations.limit_error())
+    }
+
     /// Attempts one atomic main-control operation.
     ///
     /// Missing retained input rolls back the complete aggregate operation and
@@ -2422,58 +2464,11 @@ impl MainControl {
         if self.fatal.is_some() {
             return Ok(StepResult::Progress(MainControlStep::End));
         }
-        self.advance_telemetry.attempts += 1;
-        self.advance_telemetry.live_savepoints += 1;
-        self.advance_telemetry.maximum_live_savepoints = self
-            .advance_telemetry
-            .maximum_live_savepoints
-            .max(self.advance_telemetry.live_savepoints);
-        let snapshot = self.snapshot_step(stores);
-        match self.step_once(stores, None) {
-            Ok(step) => {
-                self.commit_step(snapshot);
-                self.advance_telemetry.live_savepoints -= 1;
-                self.advance_telemetry.commits += 1;
-                Ok(StepResult::Progress(step))
-            }
-            Err(error) => {
-                if let Some(fatal) = error.as_fatal() {
-                    if matches!(error, ExecError::Captured { .. })
-                        && fatal != FatalError::TooManyErrors
-                    {
-                        let rolled_back = snapshot.can_rollback(stores);
-                        let result = self.finish_failed_step(snapshot, stores, error);
-                        self.advance_telemetry.live_savepoints -= 1;
-                        if rolled_back {
-                            self.advance_telemetry.rollbacks += 1;
-                        } else {
-                            self.advance_telemetry.commits += 1;
-                        }
-                        return result;
-                    }
-                    // §81 `jump_out` cuts across every active frame. A
-                    // diagnostic-site wrapper on §82's hundred-error exit
-                    // preserves provenance; it does not turn that non-local
-                    // fatal exit into an ordinary failed operation that may
-                    // roll back or escape to the host. Other captured fatal
-                    // reports retain the existing host error contract.
-                    self.commit_step(snapshot);
-                    self.advance_telemetry.live_savepoints -= 1;
-                    self.advance_telemetry.commits += 1;
-                    return Ok(StepResult::Progress(self.succumb(fatal)));
-                }
-                let rolled_back =
-                    !matches!(error, ExecError::PdfXFormVoidBox) && snapshot.can_rollback(stores);
-                let result = self.finish_failed_step(snapshot, stores, error);
-                self.advance_telemetry.live_savepoints -= 1;
-                if rolled_back {
-                    self.advance_telemetry.rollbacks += 1;
-                } else {
-                    self.advance_telemetry.commits += 1;
-                }
-                result
-            }
-        }
+        self.execute_operation(
+            stores,
+            OperationDelivery::Replay(None),
+            OperationTransaction::Advance,
+        )
     }
 
     /// Expands one command for an analysis host without entering ordinary
@@ -2503,7 +2498,11 @@ impl MainControl {
                 return Ok(DiagnosticStep::EndOfInput);
             };
             if tex_command::exceeds_max_non_prefixed_command(command.meaning()) {
-                self.step_once(stores, Some(command))?;
+                self.execute_operation(
+                    stores,
+                    OperationDelivery::Replay(Some(command)),
+                    OperationTransaction::Nested,
+                )?;
                 Ok(DiagnosticStep::Assignment)
             } else {
                 Ok(DiagnosticStep::Token {
@@ -2556,204 +2555,6 @@ impl MainControl {
         }
     }
 
-    fn step_once(
-        &mut self,
-        stores: &mut Universe,
-        redispatch: Option<tex_command::CurrentCommand>,
-    ) -> Result<ReplayStep, ExecError> {
-        self.drain_file_framing_events(stores);
-        self.enter_main_control(stores);
-        self.refresh_host_capabilities(stores);
-        let mode = self.modes.current_mode();
-        let outer_paragraph_was_active = mode == Mode::Horizontal && self.modes.depth() == 2;
-        let alignment_preamble = alignment_preamble(self.active_alignment.as_mut());
-        let innermost_group = stores.innermost_group_kind();
-        let job_is_all_over = crate::page_output::job_is_all_over(stores);
-        let mut diagnostics = Vec::new();
-        let scanned = {
-            let mut processor = command_processor(
-                &mut self.command,
-                self.fuel.fuel_mut(),
-                &mut self.capabilities,
-                &mut self.operation_observations,
-                stores,
-            );
-            let display_alignment_tail = redispatch.is_none()
-                && mode == Mode::DisplayMath
-                && self.modes.current_list().has_display_alignment();
-            let scanned = match redispatch {
-                Some(command) => dispatch_main_control_command(
-                    &mut processor,
-                    command,
-                    mode,
-                    &self.boxes,
-                    innermost_group,
-                    job_is_all_over,
-                    self.modes.current_list().display_eq_no().is_some(),
-                    &mut self.shown_mode,
-                    &mut diagnostics,
-                    self.set_box_forbidden_depth == 0,
-                )?,
-                None if display_alignment_tail => {
-                    // TeX82 §1206 runs §1270 `do_assignments` after
-                    // `fin_align`. Its fetch skips blanks and relax commands,
-                    // then dispatches the delivered command in place. If it is
-                    // an assignment, the still-pending display alignment makes
-                    // the next step repeat this branch; the first
-                    // non-assignment (normally `$`) is dispatched by this same
-                    // delivery without backup or a second fetch.
-                    match processor
-                        .next_do_assignments_command()
-                        .map_err(command_error)?
-                    {
-                        Some(command) => match command.meaning() {
-                            Meaning::UnexpandablePrimitive(UnexpandablePrimitive::EqNo) => {
-                                processor.back_input(command).map_err(command_error)?;
-                                ScannedStep::DisplayAlignmentEquationNumber {
-                                    side: tex_command::EquationNumberSide::Right,
-                                }
-                            }
-                            Meaning::UnexpandablePrimitive(UnexpandablePrimitive::LeftEqNo) => {
-                                processor.back_input(command).map_err(command_error)?;
-                                ScannedStep::DisplayAlignmentEquationNumber {
-                                    side: tex_command::EquationNumberSide::Left,
-                                }
-                            }
-                            _ => dispatch_main_control_command(
-                                &mut processor,
-                                command,
-                                mode,
-                                &self.boxes,
-                                innermost_group,
-                                job_is_all_over,
-                                false,
-                                &mut self.shown_mode,
-                                &mut diagnostics,
-                                false,
-                            )?,
-                        },
-                        None => ScannedStep::EndOfInput,
-                    }
-                }
-                None => scan_replay_step(
-                    &mut processor,
-                    mode,
-                    &self.boxes,
-                    alignment_preamble,
-                    innermost_group,
-                    job_is_all_over,
-                    self.modes.current_list().display_eq_no().is_some(),
-                    self.main_loop_active,
-                    &mut self.shown_mode,
-                    &mut diagnostics,
-                )?,
-            };
-            diagnostics.extend(
-                processor
-                    .take_semantic_diagnostics()
-                    .into_iter()
-                    .map(PendingDiagnostic::Command),
-            );
-            scanned
-        };
-        // tex.web's `line` is maintained by `get_next` as it moves to a new
-        // input line, so it is already the delivered command's own line by
-        // the time that command is applied. Publish it here, after delivery,
-        // rather than at the step's start: §660/§675's box diagnostics and
-        // §1091's `mode_line` both name the line the command is *on*, and a
-        // command that is the first thing on a line is scanned by a step
-        // that began on the previous one.
-        stores.set_current_input_position(
-            i32::try_from(self.command.current_file_line_number()).unwrap_or(i32::MAX),
-            self.command.current_file_source_id(),
-        );
-        report_pending_diagnostics(stores, diagnostics)?;
-        self.drain_file_framing_events(stores);
-        let scanned = self.resolve_font_resource(scanned)?;
-        let scanned = self.resolve_input_stream_resource(scanned)?;
-        let scanned = self.resolve_pdf_image_resource(scanned, stores)?;
-        let artifact_count = stores.world().artifact_commits().len();
-        let effect_count = stores.world().effect_records().len();
-        let prepared_page_count = self.prepared_dvi_pages.len();
-        let parking = self.suspend_main_control_parking(&scanned);
-        let scanned = match self.apply_host_owned_step(scanned, stores) {
-            ControlFlow::Break(applied) => {
-                return self.finish_host_owned_step(
-                    applied,
-                    outer_paragraph_was_active,
-                    artifact_count,
-                    effect_count,
-                    prepared_page_count,
-                    stores,
-                );
-            }
-            ControlFlow::Continue(scanned) => scanned,
-        };
-        let fires_afterassignment = scanned.fires_afterassignment();
-        let dumped_format = self.initex && matches!(scanned, ScannedStep::End { dump: true, .. });
-        let end_tail = match &scanned {
-            ScannedStep::End {
-                dump,
-                incomplete_conditions,
-            } => Some((*dump, incomplete_conditions.clone())),
-            _ => None,
-        };
-        let mut result = apply_scanned_step(
-            scanned,
-            stores,
-            &mut self.modes,
-            &mut self.next_alignment_identity,
-            &mut self.active_alignment,
-            &mut CommandMachine {
-                state: &mut self.command,
-                fuel: self.fuel.fuel_mut(),
-                capabilities: &mut self.capabilities,
-                observations: &mut self.operation_observations,
-                assignment_receipts: None,
-                shown_mode: &mut self.shown_mode,
-                initex: self.initex,
-                emit_dvi_override: self.emit_dvi_override,
-            },
-            &mut self.boxes,
-            &self.active_discretionaries,
-            &self.active_math_choices,
-            &self.active_math_left_boundaries,
-            &self.active_math_shifts,
-            &mut self.prepared_dvi_pages,
-            &mut self.end_job_ejection_pending,
-        )?;
-        if dumped_format {
-            self.dumped_format = Some(crate::job::FormatDumpReceipt::new(
-                self.capabilities.job_name().to_owned(),
-                stores.int_param(IntParam::YEAR),
-                stores.int_param(IntParam::MONTH),
-                stores.int_param(IntParam::DAY),
-            ));
-        }
-        if let (ReplayStep::End, Some((dump, incomplete_conditions))) = (&result, end_tail) {
-            self.end_of_job_final_cleanup(stores, dump, incomplete_conditions);
-        } else if matches!(result, ReplayStep::EndOfInput)
-            && self.root_completion == RootCompletionPolicy::RequireTeXEnd
-        {
-            result = self.handle_root_end_of_input(stores);
-        }
-        self.resume_main_control_parking(parking, stores);
-        if fires_afterassignment {
-            schedule_afterassignment(
-                &mut self.command,
-                self.fuel.fuel_mut(),
-                &mut self.capabilities,
-                &mut self.operation_observations,
-                stores,
-            )?;
-        }
-        self.fire_pending_page_output(stores)?;
-        self.page_output_observations.clear();
-        self.finish_shipout_publication(artifact_count, effect_count, stores);
-        self.finish_paragraph_boundary(outer_paragraph_was_active, stores);
-        Ok(result)
-    }
-
     /// Executes one command inside an aggregate host-owned episode.
     ///
     /// TeX82 §1211's `prefixed_command` remains the assignment dispatcher
@@ -2761,15 +2562,19 @@ impl MainControl {
     /// discretionary field. If the enclosing operation is observed, route
     /// the nested command through the same executor-observation seam so its
     /// committed `word_define` is not reduced to command/scanner records.
-    fn nested_step_once(
+    fn execute_nested_operation(
         &mut self,
         stores: &mut Universe,
         redispatch: Option<tex_command::CurrentCommand>,
     ) -> Result<ReplayStep, ExecError> {
-        if self.operation_observations.is_some() {
-            return self.step_with_observer_once(stores, redispatch);
+        match self.execute_operation(
+            stores,
+            OperationDelivery::Replay(redispatch),
+            OperationTransaction::Nested,
+        )? {
+            StepResult::Progress(step) => Ok(step),
+            StepResult::Suspended(_) => unreachable!("nested operations do not own rollback"),
         }
-        self.step_once(stores, redispatch)
     }
 
     /// TeX82 §1123's `make_accent`.
@@ -2874,7 +2679,7 @@ impl MainControl {
                     // `max_non_prefixed_command` to, so this dispatches the
                     // delivered command in place rather than re-fetching it.
                     self.set_box_forbidden_depth += 1;
-                    let step = self.nested_step_once(stores, Some(command));
+                    let step = self.execute_nested_operation(stores, Some(command));
                     self.set_box_forbidden_depth -= 1;
                     match step? {
                         ReplayStep::Continue => {}
@@ -2926,7 +2731,6 @@ impl MainControl {
                         self.operation_observations
                             .as_mut()
                             .expect("observed page-output episode has a buffer")
-                            .0
                             .extend(
                                 self.command
                                     .publish_named_token_list_pushes(&mut stores.command_context())
@@ -2948,10 +2752,10 @@ impl MainControl {
                         .begin_selected_output_routine()
                         .map_err(command_error);
                     if enclosing.is_some() {
-                        let deferred =
+                        let mut deferred =
                             std::mem::replace(&mut self.operation_observations, enclosing)
                                 .unwrap_or_default();
-                        self.page_output_observations.extend(deferred.0);
+                        self.page_output_observations.append(&mut deferred);
                     }
                     opened?;
                     stores.enter_group_with_kind_at_line(
@@ -3004,7 +2808,7 @@ impl MainControl {
         )?;
         self.main_loop_active = false;
         while stores.group_depth() > enclosing_depth {
-            match self.nested_step_once(stores, None)? {
+            match self.execute_nested_operation(stores, None)? {
                 ReplayStep::End | ReplayStep::EndOfInput => {
                     return Err(ExecError::MissingToken {
                         context: "math group closing brace",
@@ -4082,15 +3886,53 @@ impl MainControl {
             stores.enable_geometry_observation();
             stores.geometry_observation_len()
         });
-        let snapshot = self.snapshot_step(stores);
+        let effect_start = stores.world().effect_records().len();
+        let artifact_start = stores.world().artifact_commits().len();
         // Occupying the slot is what makes this operation observed. Every
         // command-processor episode the operation runs, including the nested
         // ones a host-applied step runs, publishes into this one buffer.
         self.operation_observations = Some(ObservationBuffer::default());
-        let stepped = self.step_with_observer_once(stores, None);
+        let stepped = self.execute_operation(
+            stores,
+            OperationDelivery::Replay(None),
+            OperationTransaction::Advance,
+        );
         let mut pending = self.operation_observations.take().unwrap_or_default();
-        if let Some(geometry_start) = geometry_start {
-            pending.0.extend(
+        match &stepped {
+            Ok(StepResult::Progress(step)) => {
+                for effect in &stores.world().effect_records()[effect_start..] {
+                    pending.receipt.record_world_effect(effect.clone());
+                }
+                for artifact in &stores.world().artifact_commits()[artifact_start..] {
+                    pending.receipt.record_artifact(*artifact);
+                }
+                let termination = if let Some(fatal) = self.fatal {
+                    OperationTermination::Fatal(fatal)
+                } else {
+                    match step {
+                        MainControlStep::Continue => OperationTermination::Continue,
+                        MainControlStep::End => OperationTermination::End,
+                        MainControlStep::EndOfInput => OperationTermination::EndOfInput,
+                    }
+                };
+                pending.receipt.set_termination(termination);
+            }
+            Ok(StepResult::Suspended(resource)) => {
+                pending.receipt.record_resource(resource.clone());
+                pending
+                    .receipt
+                    .set_termination(OperationTermination::Suspended);
+            }
+            Err(error) => pending.receipt.set_termination(
+                error
+                    .as_fatal()
+                    .map_or(OperationTermination::Failed, OperationTermination::Fatal),
+            ),
+        }
+        if matches!(stepped, Ok(StepResult::Progress(_)))
+            && let Some(geometry_start) = geometry_start
+        {
+            pending.extend(
                 stores
                     .geometry_observations_since(geometry_start)
                     .iter()
@@ -4098,27 +3940,10 @@ impl MainControl {
                     .map(Self::geometry_observation),
             );
         }
-        match stepped {
-            Ok(step) => {
-                self.commit_step(snapshot);
-                pending.flush_into(observer);
-                Ok(StepResult::Progress(step))
-            }
-            Err(error) => {
-                if let Some(fatal) = error.as_fatal() {
-                    // §81 `jump_out` does not undo anything the job already
-                    // committed, so the partial step stands; the observations
-                    // it published are flushed ahead of the fatal record.
-                    self.commit_step(snapshot);
-                    pending.flush_into(observer);
-                    let step = self.succumb(fatal);
-                    observer.committed(CommandObservation::Diagnostic(fatal.record()));
-                    observer.committed(CommandObservation::Effect(engine_termination_effect()));
-                    return Ok(StepResult::Progress(step));
-                }
-                self.finish_failed_step(snapshot, stores, error)
-            }
+        if matches!(stepped, Ok(StepResult::Progress(_))) {
+            pending.flush_into(observer);
         }
+        stepped
     }
 
     fn geometry_observation(observation: GeometryObservation) -> CommandObservation {
@@ -4194,16 +4019,16 @@ impl MainControl {
         self.job_body_effect_end
     }
 
-    fn step_with_observer_once(
+    fn apply_operation(
         &mut self,
         stores: &mut Universe,
-        redispatch: Option<tex_command::CurrentCommand>,
+        delivery: OperationDelivery,
     ) -> Result<ReplayStep, ExecError> {
         // Observation is an instrumentation boundary, not an alternate
         // execution mode. Keep the command processor's borrowed mode facts
         // identical to an unobserved step (notably for \ifhmode after a
         // paragraph-start transition).
-        if self.enter_main_control(stores) {
+        if matches!(&delivery, OperationDelivery::Replay(_)) && self.enter_main_control(stores) {
             // §1030's prologue precedes `big_switch`, so its push is published
             // ahead of the first command this step delivers rather than with
             // the step's own applied records.
@@ -4231,11 +4056,11 @@ impl MainControl {
                 &mut self.operation_observations,
                 stores,
             );
-            let display_alignment_tail = redispatch.is_none()
+            let display_alignment_tail = matches!(&delivery, OperationDelivery::Replay(None))
                 && mode == Mode::DisplayMath
                 && self.modes.current_list().has_display_alignment();
-            let scanned = match redispatch {
-                Some(command) => dispatch_main_control_command(
+            let scanned = match delivery {
+                OperationDelivery::Replay(Some(command)) => dispatch_main_control_command(
                     &mut processor,
                     command,
                     mode,
@@ -4247,7 +4072,7 @@ impl MainControl {
                     &mut diagnostics,
                     self.set_box_forbidden_depth == 0,
                 )?,
-                None if display_alignment_tail => match processor
+                OperationDelivery::Replay(None) if display_alignment_tail => match processor
                     .next_do_assignments_command()
                     .map_err(command_error)?
                 {
@@ -4279,7 +4104,7 @@ impl MainControl {
                     },
                     None => ScannedStep::EndOfInput,
                 },
-                None => scan_replay_step(
+                OperationDelivery::Replay(None) => scan_replay_step(
                     &mut processor,
                     mode,
                     &self.boxes,
@@ -4287,6 +4112,17 @@ impl MainControl {
                     innermost_group,
                     job_is_all_over,
                     self.modes.current_list().display_eq_no().is_some(),
+                    self.main_loop_active,
+                    &mut self.shown_mode,
+                    &mut diagnostics,
+                )?,
+                OperationDelivery::Alignment(alignment) => scan_alignment_delivery_step(
+                    &mut processor,
+                    alignment,
+                    &ReplayBoxes::default(),
+                    innermost_group,
+                    mode,
+                    job_is_all_over,
                     self.main_loop_active,
                     &mut self.shown_mode,
                     &mut diagnostics,
@@ -4358,7 +4194,8 @@ impl MainControl {
             *redundant = redundant_skip;
             *reassigning = reassigning_skip;
         }
-        let mut assignment_receipts = Vec::new();
+        let observing = self.operation_observations.is_some();
+        let mut assignment_receipts = observing.then(Vec::new);
         let begins_alignment = matches!(&scanned, ScannedStep::BeginAlignment { .. });
         let suspends_alignment = begins_alignment && self.active_alignment.is_some();
         let begins_alignment_cell = matches!(&scanned, ScannedStep::AlignmentPreambleStart { .. });
@@ -4411,7 +4248,7 @@ impl MainControl {
                 fuel: self.fuel.fuel_mut(),
                 capabilities: &mut self.capabilities,
                 observations: &mut self.operation_observations,
-                assignment_receipts: Some(&mut assignment_receipts),
+                assignment_receipts: assignment_receipts.as_mut(),
                 shown_mode: &mut self.shown_mode,
                 initex: self.initex,
                 emit_dvi_override: self.emit_dvi_override,
@@ -4461,7 +4298,7 @@ impl MainControl {
         {
             result = Ok(self.handle_root_end_of_input(stores));
         }
-        if result.is_ok() {
+        if result.is_ok() && observing {
             self.resume_main_control_parking(parking, stores);
         }
         if result.is_ok() {
@@ -4546,7 +4383,8 @@ impl MainControl {
             }
             records.extend(
                 assignment_receipts
-                    .drain(..)
+                    .into_iter()
+                    .flatten()
                     .map(CommandObservation::Mutation),
             );
             // §1378's live-file closes are part of termination and precede
@@ -4567,7 +4405,7 @@ impl MainControl {
             for shipout in committed_shipout_observations(artifact_count, stores) {
                 records.push(CommandObservation::Effect(shipout));
             }
-            records.append(&mut self.page_output_observations);
+            self.page_output_observations.append_to(&mut records);
             self.observe_committed(records);
         }
         // TeX82 §1211 commits the assignment inside its case arm, then
@@ -11190,7 +11028,7 @@ fn shipout_replay_box(
             // after those effects have happened, so publish the committed prefix
             // before its nested command episode contributes observations.
             if let Some(observations) = command.observations.as_mut() {
-                observations.0.extend(
+                observations.extend(
                     stores.world().effect_records()[effect_cursor.get()..]
                         .iter()
                         .filter_map(stream_effect_observation)
@@ -11237,21 +11075,19 @@ fn shipout_replay_box(
                 .expect("shipout write replay preserves the command profile");
             let expanded = expanded?;
             if let Some(observations) = command.observations.as_mut() {
-                observations
-                    .0
-                    .push(CommandObservation::Effect(EffectRecord {
-                        kind: ObservationEffectKind::Write,
-                        channel: write_effect_channel(sink),
-                        value: ObservationValue::Tokens(
-                            stores
-                                .tokens(expanded.tokens.token_list())
-                                .iter()
-                                .copied()
-                                .map(|token| observed_macro_token(token, stores))
-                                .collect(),
-                        ),
-                        source: None,
-                    }));
+                observations.committed(CommandObservation::Effect(EffectRecord {
+                    kind: ObservationEffectKind::Write,
+                    channel: write_effect_channel(sink),
+                    value: ObservationValue::Tokens(
+                        stores
+                            .tokens(expanded.tokens.token_list())
+                            .iter()
+                            .copied()
+                            .map(|token| observed_macro_token(token, stores))
+                            .collect(),
+                    ),
+                    source: None,
+                }));
             }
             if expanded.unbalanced {
                 // TeX82 §1372's `<Recover from an unbalanced write command>`.
@@ -12361,7 +12197,7 @@ fn apply_scanned_step(
             )?;
             Ok(ReplayStep::Continue)
         }
-        // These are intercepted by `MainControl::step_once`, where
+        // These are intercepted by `MainControl::apply_operation`, where
         // the owning opaque episode and mutable replay driver are available.
         ScannedStep::ReplayCompleted(_)
         | ScannedStep::Math(_)
@@ -12398,7 +12234,7 @@ fn apply_scanned_step(
             // orders it first. `incomplete_conditions` is discarded here
             // rather than used, because the caller re-derives it from the
             // `ScannedStep::End` it matched before moving `scanned` into this
-            // call (see `step_once` and its siblings).
+            // call (see `apply_operation`).
             //
             // TeX82 §1335's INITEX tail releases `last_glue` before
             // `store_fmt_file`; e-TeX 2.6's [45.999] change may meanwhile
@@ -15738,7 +15574,7 @@ fn apply_scanned_step(
             }
             Ok(ReplayStep::Continue)
         }
-        // `step_once` consumes the command-owned episodes while its aggregate
+        // `apply_operation` consumes the command-owned episodes while its aggregate
         // snapshot is live. Observed replay is not an alternate production
         // execution path, so reaching these arms is an invariant.
         ScannedStep::DiscretionaryOpening(_) | ScannedStep::DiscretionaryPartEnd => {

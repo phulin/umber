@@ -410,19 +410,18 @@ the same boundary; mutation observation is not classified in a second pass.
 Recursive scanners may use ordinary Rust locals, but only executor-named
 quiescent boundaries are restartable.
 
-During the main-control unification migration, `tex-exec` has one crate-private
-`ExecutionReceipt` vocabulary for the committed result of an aggregate
-operation. It separates typed state mutations, resource requests, semantic and
-live effects, artifact identities, diagnostics, and termination while an
-optional bounded sink retains the complete ordered command evidence. A
-temporary shadow harness compares exact detached state bytes, the whole
-receipt, and the evidence stream for ordinary, observed, nested, and alignment
-entry shapes. State bytes and receipt records enter append-time bounded capture
-objects, and command evidence has its own bounded observer, so the hard step,
-state-byte, receipt-record, and evidence-record ceilings limit retained shadow
-memory instead of checking only after allocation. This is an internal migration
-seam: it neither changes nor extends the `tex-oracle` wire schema, and it is
-deleted when the legacy operation paths are removed.
+`tex-exec::MainControl::execute_operation` is the sole aggregate operation
+authority. Small replay, redispatch, and alignment delivery values select how
+a completed command enters the shared scanner/application tail; ordinary,
+observed, and nested execution do not select separate semantic engines. The
+same function owns the aggregate savepoint, resource suspension, commit,
+rollback, fatal termination, and telemetry. When observation is disabled the
+evidence slot allocates nothing. When enabled it enforces its record ceiling as
+records append and assembles the crate-private `ExecutionReceipt` from those
+same committed mutation, resource, semantic/live-effect, artifact, diagnostic,
+and termination facts. The receipt remains internal and does not extend the
+`tex-oracle` wire schema. The migration selector, shadow runner, and predecessor
+step branches are absent.
 
 Shipout decodes compact node words sequentially and always drives artifact
 encoding without an ordinary-path owned page tree. DVI page-plan construction
