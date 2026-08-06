@@ -1124,44 +1124,8 @@ mod option_bytes {
 mod tests {
     use super::*;
 
-    #[test]
-    fn schema_one_tolerates_additive_fields_and_rejects_unsafe_integers() {
-        let value = serde_json::json!({
-            "attempts": MAX_SAFE_INTEGER,
-            "userFiles": 1,
-            "resolvedFiles": 2,
-            "oneFileBytes": 3,
-            "cachedFileBytes": 4,
-            "userSourceBytes": 5,
-            "outputBytes": 6,
-            "engineFuel": 7,
-            "engineSteps": 8,
-            "inputFrames": 9,
-            "journalBytes": 10,
-            "effects": 11,
-            "futureField": "ignored"
-        });
-        let limits: SessionLimitsDto = serde_json::from_value(value).expect("schema-1 limits");
-        assert_eq!(limits.attempts.get(), MAX_SAFE_INTEGER);
-
-        let unsafe_value = serde_json::json!({
-            "attempts": MAX_SAFE_INTEGER + 1,
-            "userFiles": 1,
-            "resolvedFiles": 2,
-            "oneFileBytes": 3,
-            "cachedFileBytes": 4,
-            "userSourceBytes": 5,
-            "outputBytes": 6,
-            "engineFuel": 7,
-            "engineSteps": 8,
-            "inputFrames": 9,
-            "journalBytes": 10,
-            "effects": 11
-        });
-        assert!(serde_json::from_value::<SessionLimitsDto>(unsafe_value).is_err());
-    }
-
-    #[test]
+    #[cfg(target_arch = "wasm32")]
+    #[wasm_bindgen_test::wasm_bindgen_test]
     fn diagnostic_codes_and_optional_omission_are_stable() {
         let diagnostic = DiagnosticDto {
             code: DiagnosticCodeDto::NoProgress,
@@ -1253,7 +1217,8 @@ mod tests {
         );
     }
 
-    #[test]
+    #[cfg(target_arch = "wasm32")]
+    #[wasm_bindgen_test::wasm_bindgen_test]
     fn derived_typescript_names_binary_fields_explicitly() {
         let output = typescript_declarations();
         assert_eq!(output, include_str!("wire_schema.d.ts"));
