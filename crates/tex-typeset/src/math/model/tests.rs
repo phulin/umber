@@ -7,7 +7,7 @@ use tex_state::node::Node;
 use tex_state::scaled::Scaled;
 use tex_state::token::OriginId;
 
-use super::{BoxAxis, MathLayoutBuilder, MathLayoutReader};
+use super::{BoxAxis, NativeNodeTransaction};
 
 fn math_char(ch: char) -> MathChar {
     MathChar {
@@ -104,7 +104,7 @@ fn tex82_noad_field_layout_initialization_and_release_matrix() {
 
 #[test]
 fn cached_pack_template_preserves_horizontal_and_vertical_completion_order() {
-    let mut layout = MathLayoutBuilder::new();
+    let mut layout = NativeNodeTransaction::new();
     let empty = layout.empty();
 
     let _ = layout.hpack(empty);

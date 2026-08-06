@@ -35,10 +35,10 @@ pub use delimiters::left_right_delimiter_target;
 #[cfg(test)]
 pub(crate) use delimiters::test_var_delimiter;
 pub use model::{
-    BoxAxis, FrozenHList, MathBox, MathConversionEvent, MathGlueKind, MathLayout, MathLayoutReader,
-    MathNode, MathPackObservation,
+    BoxAxis, FrozenHList, MathBox, MathConversionEvent, MathGlueKind, MathLayout, MathNode,
+    MathPackObservation,
 };
-pub(crate) use model::{MathLayoutBuilder, boxed_node, node_is_char};
+pub(crate) use model::{NativeNodeTransaction, boxed_node, node_is_char};
 pub use params::{ExtensionParams, MathParamState, MathParams, SizeParams, SymbolParams};
 pub use spacing::{SpacingKind, inter_noad_spacing, math_glue, math_kern};
 pub use style::{Style, StyleFamily};
@@ -71,7 +71,8 @@ pub trait MathTypesetState: TypesetState {
 /// execution-side destination to emit its native nodes at the conversion
 /// boundary instead of handing the layout to a separate lowering phase.
 pub trait MathLayoutSink: MathTypesetState {
-    fn finish_math_hlist(&mut self, list: FrozenHList, layout: &dyn MathLayoutReader);
+    /// Atomically publishes one fully detached native-node transaction.
+    fn commit_math_transaction(&mut self, transaction: &MathLayout);
 }
 
 impl MathTypesetState for Universe {

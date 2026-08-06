@@ -1,6 +1,6 @@
 use super::*;
 use crate::math::tests::{list_nodes, math_char, noad, root_nodes, sc, setup_universe};
-use crate::math::{MathLayoutReader, MathParams, Style, mlist_to_hlist};
+use crate::math::{MathParams, Style, mlist_to_hlist};
 use tex_state::math::{FractionThickness, MathFontSize, MathFraction};
 
 #[test]

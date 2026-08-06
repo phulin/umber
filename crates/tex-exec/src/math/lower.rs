@@ -9,9 +9,8 @@ use tex_state::node::{BoxNode, BoxNodeFields, GlueKind, Node};
 use tex_state::scaled::Scaled;
 use tex_state::{GeometryObservation, Universe};
 use tex_typeset::TypesetState;
-use tex_typeset::math::MathLayoutReader;
 use tex_typeset::math::{
-    FrozenHList, MathBox, MathConversionEvent, MathGlueKind, MathLayoutSink, MathNode,
+    FrozenHList, MathBox, MathConversionEvent, MathGlueKind, MathLayout, MathLayoutSink, MathNode,
     MathParamState, MathParams, MathTypesetState, Style, mlist_to_hlist_with_sink,
 };
 
@@ -138,12 +137,7 @@ impl<'a> LoweredMathSink<'a> {
         }
     }
 
-    fn append_span(
-        &mut self,
-        list: FrozenHList,
-        layout: &dyn MathLayoutReader,
-        scratch: &mut Vec<Node>,
-    ) {
+    fn append_span(&mut self, list: FrozenHList, layout: &MathLayout, scratch: &mut Vec<Node>) {
         enum Task {
             Span(FrozenHList, usize),
             FinishBox {
@@ -174,7 +168,7 @@ impl<'a> LoweredMathSink<'a> {
                 });
                 continue;
             };
-            let Some(node) = layout.math_nodes(list).get(index) else {
+            let Some(node) = layout.nodes(list).get(index) else {
                 continue;
             };
             tasks.push(Task::Span(list, index + 1));
@@ -226,7 +220,7 @@ impl<'a> LoweredMathSink<'a> {
                     height: *height,
                     depth: *depth,
                 }),
-                MathNode::Opaque(node) => scratch.push(node.as_ref().clone()),
+                MathNode::Native(node) => scratch.push(node.as_ref().clone()),
             }
         }
     }
@@ -315,7 +309,8 @@ impl MathParamState for LoweredMathSink<'_> {
 }
 
 impl MathLayoutSink for LoweredMathSink<'_> {
-    fn finish_math_hlist(&mut self, list: FrozenHList, layout: &dyn MathLayoutReader) {
+    fn commit_math_transaction(&mut self, layout: &MathLayout) {
+        let list = layout.root();
         for event in layout.conversion_events() {
             match *event {
                 MathConversionEvent::MissingCharacter { font, character } => {

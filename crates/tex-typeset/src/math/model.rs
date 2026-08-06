@@ -9,7 +9,11 @@ use super::{add, sub};
 #[cfg(test)]
 mod tests;
 
-/// One converted math layout backed by a contiguous node arena.
+/// One detached native-node transaction produced by Appendix G.
+///
+/// Entries are stored in postorder so every box refers only to an earlier
+/// child span.  The executor can therefore commit the transaction in one
+/// iterative pass without rebuilding a second, recursive node vocabulary.
 #[derive(Clone, Debug, PartialEq)]
 pub struct MathLayout {
     nodes: Vec<MathNode>,
@@ -38,10 +42,20 @@ impl MathLayout {
         &self.conversion_events
     }
 
+    #[must_use]
+    pub fn pack_observations(&self) -> &[MathPackObservation] {
+        &self.pack_observations
+    }
+
     /// Whether Appendix G requested deletion of the whole formula.
     #[must_use]
     pub const fn recovered(&self) -> bool {
         self.recovered
+    }
+
+    #[cfg(test)]
+    pub(crate) fn transaction_entry_count(&self) -> usize {
+        self.nodes.len()
     }
 
     #[cfg(test)]
@@ -64,32 +78,6 @@ impl MathLayout {
                 }
             }
         }
-    }
-}
-
-/// Read-only access to formula-local structural spans during sink lowering.
-pub trait MathLayoutReader {
-    fn math_nodes(&self, list: FrozenHList) -> &[MathNode];
-    fn pack_observations(&self) -> &[MathPackObservation];
-    fn conversion_events(&self) -> &[MathConversionEvent];
-    fn recovered(&self) -> bool;
-}
-
-impl MathLayoutReader for MathLayout {
-    fn math_nodes(&self, list: FrozenHList) -> &[MathNode] {
-        self.nodes(list)
-    }
-
-    fn pack_observations(&self) -> &[MathPackObservation] {
-        &self.pack_observations
-    }
-
-    fn conversion_events(&self) -> &[MathConversionEvent] {
-        &self.conversion_events
-    }
-
-    fn recovered(&self) -> bool {
-        self.recovered
     }
 }
 
@@ -166,7 +154,12 @@ impl FrozenHList {
     }
 }
 
-/// Owned hlist/vlist node used by the pure math kernel.
+/// An entry in the detached math transaction.
+///
+/// Ordinary leaves use the canonical [`Node`] vocabulary.  Only selected
+/// OpenType glyphs (which retain a glyph id and selected metrics until output
+/// grows a glyph-aware native node) and direct glue (which has no live
+/// [`tex_state::ids::GlueId`] yet) remain math-specific drafts.
 #[derive(Clone, Debug, PartialEq)]
 pub enum MathNode {
     Char {
@@ -194,7 +187,8 @@ pub enum MathNode {
     },
     HList(MathBox),
     VList(MathBox),
-    Opaque(Box<Node>),
+    /// A canonical native node carried unchanged to the executor commit.
+    Native(Box<Node>),
     /// Transparent concatenation of an already-built earlier span.
     #[doc(hidden)]
     Sequence(FrozenHList),
@@ -226,12 +220,12 @@ pub enum BoxAxis {
     Vertical,
 }
 
-pub(crate) struct MathLayoutBuilder {
+pub(crate) struct NativeNodeTransaction {
     nodes: Vec<MathNode>,
     pack_observations: Vec<MathPackObservation>,
 }
 
-impl MathLayoutBuilder {
+impl NativeNodeTransaction {
     pub(crate) fn new() -> Self {
         Self {
             nodes: Vec::new(),
@@ -529,7 +523,7 @@ impl MathLayoutBuilder {
                     meas.height = meas.height.max(sub(boxed.height, boxed.shift));
                     meas.depth = meas.depth.max(add(boxed.depth, boxed.shift));
                 }
-                MathNode::Opaque(node) => {
+                MathNode::Native(node) => {
                     meas.node_count = meas
                         .node_count
                         .checked_add(1)
@@ -575,7 +569,8 @@ impl MathLayoutBuilder {
                     meas.depth = depth.unwrap_or(Scaled::from_raw(0));
                     meas.width = meas.width.max(width.unwrap_or(Scaled::from_raw(0)));
                 }
-                MathNode::Penalty(_) | MathNode::Char { .. } | MathNode::Opaque(_) => {}
+                MathNode::Native(node) => measure_native_vnode(node, meas),
+                MathNode::Penalty(_) | MathNode::Char { .. } => {}
             }
         }
     }
@@ -600,10 +595,47 @@ pub(crate) fn node_is_char(node: &MathNode) -> bool {
 
 fn measure_opaque_hnode(node: &Node, meas: &mut Measurement) {
     match node {
+        Node::Kern { amount, .. } => meas.width = add(meas.width, *amount),
+        Node::Rule {
+            width,
+            height,
+            depth,
+        } => {
+            meas.width = add(meas.width, width.unwrap_or(Scaled::from_raw(0)));
+            meas.height = meas.height.max(height.unwrap_or(Scaled::from_raw(0)));
+            meas.depth = meas.depth.max(depth.unwrap_or(Scaled::from_raw(0)));
+        }
         Node::HList(boxed) | Node::VList(boxed) => {
             meas.width = add(meas.width, boxed.width);
             meas.height = meas.height.max(sub(boxed.height, boxed.shift));
             meas.depth = meas.depth.max(add(boxed.depth, boxed.shift));
+        }
+        _ => {}
+    }
+}
+
+fn measure_native_vnode(node: &Node, meas: &mut Measurement) {
+    match node {
+        Node::HList(boxed) | Node::VList(boxed) => {
+            meas.height = add(add(meas.height, meas.depth), boxed.height);
+            meas.depth = boxed.depth;
+            meas.width = meas.width.max(add(boxed.width, boxed.shift));
+        }
+        Node::Kern { amount, .. } => {
+            meas.height = add(meas.height, add(meas.depth, *amount));
+            meas.depth = Scaled::from_raw(0);
+        }
+        Node::Rule {
+            width,
+            height,
+            depth,
+        } => {
+            meas.height = add(
+                add(meas.height, meas.depth),
+                height.unwrap_or(Scaled::from_raw(0)),
+            );
+            meas.depth = depth.unwrap_or(Scaled::from_raw(0));
+            meas.width = meas.width.max(width.unwrap_or(Scaled::from_raw(0)));
         }
         _ => {}
     }

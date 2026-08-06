@@ -409,7 +409,25 @@ fn math_layout_projection(layouts: &[MathLayout]) -> String {
                     span(layout, boxed.list, out);
                 }
                 MathNode::Sequence(child) => span(layout, *child, out),
-                MathNode::Opaque(node) => write!(out, "o{node:?};").expect("write opaque"),
+                MathNode::Native(node) => match node.as_ref() {
+                    Node::Kern { amount, kind } => {
+                        write!(out, "k{}/{kind:?};", amount.raw()).expect("write native kern")
+                    }
+                    Node::Penalty(value) => write!(out, "p{value};").expect("write native penalty"),
+                    Node::Rule {
+                        width,
+                        height,
+                        depth,
+                    } => write!(
+                        out,
+                        "r{:?}/{:?}/{:?};",
+                        width.map(Scaled::raw),
+                        height.map(Scaled::raw),
+                        depth.map(Scaled::raw)
+                    )
+                    .expect("write native rule"),
+                    node => write!(out, "o{node:?};").expect("write native"),
+                },
             }
         }
         out.push(']');
@@ -476,6 +494,30 @@ fn deeply_nested_sub_mlists_use_an_explicit_work_stack() {
         layout.pack_observations().len(),
         40_000,
         "each nested noad retains its structural and dimensions hpacks exactly once"
+    );
+}
+
+#[test]
+fn nested_sub_mlist_transaction_storage_is_linear_in_depth() {
+    fn entry_count(depth: usize) -> usize {
+        let mut universe = Universe::new();
+        let mut nested = universe.freeze_node_list(&[]);
+        for _ in 0..depth {
+            nested = universe.freeze_node_list(&[Node::MathNoad(MathNoad::new(
+                NoadKind::Normal(NoadClass::Ord),
+                MathField::SubMlist(nested),
+            ))]);
+        }
+        let params = MathParams::read(&universe);
+        mlist_to_hlist(&universe, nested, Style::TEXT, false, &params).transaction_entry_count()
+    }
+
+    let shallow = entry_count(1_000);
+    let deep = entry_count(2_000);
+    assert!(shallow > 0);
+    assert!(
+        deep <= shallow.saturating_mul(2).saturating_add(8),
+        "doubling nesting depth must not retain a quadratic expansion: {shallow} -> {deep}"
     );
 }
 
@@ -1028,7 +1070,7 @@ fn clean_empty_field_uses_tex82_null_box_without_hpack() {
         params: &params,
         style: Style::TEXT,
         mu: sc(0),
-        layout: MathLayoutBuilder::new(),
+        layout: NativeNodeTransaction::new(),
         converted: Default::default(),
         source_lists: Default::default(),
         conversion_events: Default::default(),
@@ -1058,7 +1100,7 @@ fn clean_math_character_observes_both_tex82_hpack_completions() {
         params: &params,
         style: Style::TEXT,
         mu: sc(0),
-        layout: MathLayoutBuilder::new(),
+        layout: NativeNodeTransaction::new(),
         converted: Default::default(),
         source_lists: Default::default(),
         conversion_events: Default::default(),
@@ -1090,7 +1132,7 @@ fn clean_missing_math_character_observes_both_zero_completions() {
         params: &params,
         style: Style::TEXT,
         mu: sc(0),
-        layout: MathLayoutBuilder::new(),
+        layout: NativeNodeTransaction::new(),
         converted: Default::default(),
         source_lists: Default::default(),
         conversion_events: Default::default(),
@@ -1163,7 +1205,7 @@ fn clean_box_physically_removes_only_a_trailing_italic_kern_after_packing() {
         "packed width retains the physically removed italic correction"
     );
 
-    let mut builder = MathLayoutBuilder::new();
+    let mut builder = NativeNodeTransaction::new();
     let character = MathNode::Char {
         font: universe.math_family_font(MathFontSize::Text, 0),
         ch: 'a',
@@ -1253,7 +1295,7 @@ fn scripts_observe_noncharacter_nucleus_measurement_hpack() {
                 depth,
             },
             ..
-        ] if (*width, *height, *depth) == (sc(0), sc(0), sc(0))
+        ] if width.raw() == 0 && height.raw() == 0 && depth.raw() == 0
     ));
 }
 
@@ -2291,7 +2333,7 @@ fn tex82_clean_box_delimiter_and_mu_helper_matrix() {
         params: &params,
         style: Style::TEXT,
         mu: sc(60),
-        layout: MathLayoutBuilder::new(),
+        layout: NativeNodeTransaction::new(),
         converted: Default::default(),
         source_lists: Default::default(),
         conversion_events: Default::default(),
@@ -2326,7 +2368,7 @@ fn tex82_clean_box_delimiter_and_mu_helper_matrix() {
         params: &params,
         style: Style::TEXT,
         mu: sc(60),
-        layout: MathLayoutBuilder::new(),
+        layout: NativeNodeTransaction::new(),
         converted: Default::default(),
         source_lists: Default::default(),
         conversion_events: Default::default(),

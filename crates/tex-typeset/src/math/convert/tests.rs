@@ -1,5 +1,4 @@
 use super::*;
-use crate::math::MathLayoutReader;
 use crate::math::tests::{math_char, noad, root_nodes, setup_universe};
 use tex_state::Universe;
 use tex_state::glue::GlueSpec;
@@ -11,7 +10,7 @@ fn context<'a>(state: &'a Universe, params: &'a MathParams, style: Style) -> Con
         params,
         style,
         mu: math_unit(params, style),
-        layout: MathLayoutBuilder::new(),
+        layout: NativeNodeTransaction::new(),
         converted: Default::default(),
         source_lists: Default::default(),
         conversion_events: Default::default(),

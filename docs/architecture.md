@@ -439,9 +439,12 @@ routing and §174 short-list rendering, so tracing adds no output effect to the
 typesetting boundary.
 
 Packing and line breaking preserve TeX.web arithmetic exactly. Appendix G
-math conversion builds one span-backed `MathLayout`; `FrozenHList` values are
-handles into that arena, not recursive owned vectors. Execution lowers the
-completed layout through `MathLayoutSink` into state-owned node lists.
+math conversion builds one detached native-node transaction; `FrozenHList`
+values are postorder spans, not recursive owned vectors. Canonical source
+kerns, penalties, rules, and extension nodes cross that transaction unchanged.
+Only selected-glyph records, which retain OpenType glyph identity and metrics,
+and direct glue without a live glue handle remain narrow drafts. Execution
+publishes the complete result through the single `MathLayoutSink` commit seam.
 Post-line-break materialization follows TeX.web §§879--890: a chosen
 discretionary moves its pre-break and post-break lists onto the adjacent
 lines, leading discardables are removed except for font kerns, and each
@@ -450,13 +453,13 @@ sum.
 The layout also carries typed `MathConversionEvent` values for missing glyphs
 and undefined selected families. Execution renders those detached events as
 TeX diagnostics; an undefined-family event marks formula recovery, so the sink
-deletes the whole converted formula instead of lowering its arena.
+deletes the whole converted formula instead of committing its transaction.
 
 Source boxes crossing into Appendix G retain their authoritative box geometry.
 TeX.web's `clean_box` reuses a sole unshifted hlist or vlist node, and
 `make_vcenter` changes only that vlist node's height and depth; neither routine
-repacks its child payload. The math arena therefore stores source-box children
-as traversal-only spans with node counts but without deriving horizontal
+repacks its child payload. The detached transaction therefore retains
+source-box children as traversal-only spans with node counts but without deriving horizontal
 extents. Only a source list used directly as a horizontal math field is
 measured as an hlist. This keeps lowering iterative while avoiding fictitious
 horizontal sums across the rows of an already-packed vbox.

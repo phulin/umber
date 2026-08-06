@@ -10,8 +10,8 @@ use tex_state::node::{GlueKind, KernKind, Node};
 use tex_state::scaled::Scaled;
 
 use super::{
-    BoxAxis, FrozenHList, MathBox, MathConversionEvent, MathGlueKind, MathLayout,
-    MathLayoutBuilder, MathLayoutSink, MathNode, MathPackObservation, MathParams, MathTypesetState,
+    BoxAxis, FrozenHList, MathBox, MathConversionEvent, MathGlueKind, MathLayout, MathLayoutSink,
+    MathNode, MathPackObservation, MathParams, MathTypesetState, NativeNodeTransaction,
     SpacingKind, Style, StyleFamily, add, boxed_node, delimiters, fractions,
     left_right_delimiter_target, operators, radicals, scripts, spacing,
 };
@@ -56,7 +56,7 @@ pub fn mlist_to_hlist_with_sink(
     params: &MathParams,
 ) -> MathLayout {
     let layout = build_math_layout(&*state, input, style, penalties, params);
-    state.finish_math_hlist(layout.root(), &layout);
+    state.commit_math_transaction(&layout);
     layout
 }
 
@@ -72,7 +72,7 @@ fn build_math_layout(
         params,
         style,
         mu: math_unit(params, style),
-        layout: MathLayoutBuilder::new(),
+        layout: NativeNodeTransaction::new(),
         converted: AHashMap::new(),
         source_lists: AHashMap::new(),
         conversion_events: RefCell::new(Vec::new()),
@@ -457,7 +457,7 @@ fn first_pass<S: MathTypesetState>(
             }
             other => {
                 // AppG rule 1
-                out.push(WorkItem::Node(source_node(ctx, other)));
+                out.push(WorkItem::Node(source_node(ctx, other.clone())));
             }
         }
         index += 1;
@@ -1070,9 +1070,11 @@ fn convert_source_list(
         }
         if expanded {
             visiting.remove(&key);
-            let source = ctx.state.nodes(current).to_vec();
-            let nodes = source
-                .iter()
+            let nodes = ctx
+                .state
+                .nodes(current)
+                .to_vec()
+                .into_iter()
                 .map(|node| source_node(ctx, node))
                 .collect::<Vec<_>>();
             let converted = match current_role {
@@ -1109,44 +1111,38 @@ fn convert_source_list(
         .expect("source-list postorder conversion must produce its root")
 }
 
-pub(crate) fn source_node(ctx: &mut Context<'_, impl MathTypesetState>, node: &Node) -> MathNode {
+pub(crate) fn source_node(ctx: &mut Context<'_, impl MathTypesetState>, node: Node) -> MathNode {
     match node {
         Node::Char { font, ch, origin } => {
-            let code = u8::try_from(u32::from(*ch)).ok();
+            let code = u8::try_from(u32::from(ch)).ok();
             if let Some(metrics) =
-                code.and_then(|code| ctx.state.classic_math_char_metrics(*font, code))
+                code.and_then(|code| ctx.state.classic_math_char_metrics(font, code))
             {
                 MathNode::Char {
-                    font: *font,
-                    ch: *ch,
+                    font,
+                    ch,
                     glyph_id: None,
                     metrics,
-                    origin: *origin,
+                    origin,
                 }
             } else {
-                MathNode::Opaque(Box::new(node.clone()))
+                MathNode::Native(Box::new(Node::Char { font, ch, origin }))
             }
         }
-        Node::Kern { amount, kind } => MathNode::Kern {
-            amount: *amount,
-            kind: *kind,
-        },
+        node @ Node::Kern { .. } | node @ Node::Penalty(_) | node @ Node::Rule { .. } => {
+            MathNode::Native(Box::new(node))
+        }
         Node::Glue { spec, kind, leader } => MathNode::Glue {
-            spec: ctx.state.glue(*spec),
-            kind: *kind,
-            leader: *leader,
+            spec: ctx.state.glue(spec),
+            kind,
+            leader,
         },
-        Node::Penalty(penalty) => MathNode::Penalty(*penalty),
-        Node::Rule {
-            width,
-            height,
-            depth,
-        } => MathNode::Rule {
-            width: *width,
-            height: *height,
-            depth: *depth,
-        },
-        Node::HList(box_node) | Node::VList(box_node) => {
+        node @ (Node::HList(_) | Node::VList(_)) => {
+            let horizontal = matches!(node, Node::HList(_));
+            let box_node = match node {
+                Node::HList(boxed) | Node::VList(boxed) => boxed,
+                _ => unreachable!(),
+            };
             let list = source_box_payload(ctx, box_node.children);
             let boxed = MathBox {
                 width: box_node.width,
@@ -1154,7 +1150,7 @@ pub(crate) fn source_node(ctx: &mut Context<'_, impl MathTypesetState>, node: &N
                 depth: box_node.depth,
                 shift: box_node.shift,
                 list,
-                axis: if matches!(node, Node::HList(_)) {
+                axis: if horizontal {
                     BoxAxis::Horizontal
                 } else {
                     BoxAxis::Vertical
@@ -1164,13 +1160,13 @@ pub(crate) fn source_node(ctx: &mut Context<'_, impl MathTypesetState>, node: &N
                 glue_sign: box_node.glue_sign,
                 glue_order: box_node.glue_order,
             };
-            if matches!(node, Node::HList(_)) {
+            if horizontal {
                 MathNode::HList(boxed)
             } else {
                 MathNode::VList(boxed)
             }
         }
-        _ => MathNode::Opaque(Box::new(node.clone())),
+        node => MathNode::Native(Box::new(node)),
     }
 }
 
@@ -1217,7 +1213,7 @@ pub(crate) struct Context<'a, S> {
     pub(crate) params: &'a MathParams,
     pub(crate) style: Style,
     pub(crate) mu: Scaled,
-    pub(crate) layout: MathLayoutBuilder,
+    pub(crate) layout: NativeNodeTransaction,
     pub(crate) converted: AHashMap<(NodeListId, Style), ConvertedMlist>,
     pub(crate) source_lists: AHashMap<(NodeListId, SourceListRole), FrozenHList>,
     pub(crate) conversion_events: RefCell<Vec<MathConversionEvent>>,

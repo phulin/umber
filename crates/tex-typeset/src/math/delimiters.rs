@@ -188,7 +188,7 @@ pub(crate) fn test_var_delimiter(
         params,
         style: Style::TEXT,
         mu: Scaled::from_raw(0),
-        layout: super::MathLayoutBuilder::new(),
+        layout: super::NativeNodeTransaction::new(),
         converted: Default::default(),
         source_lists: Default::default(),
         conversion_events: Default::default(),
