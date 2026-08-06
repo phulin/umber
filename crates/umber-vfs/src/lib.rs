@@ -11,9 +11,7 @@ mod snapshot;
 mod storage;
 mod transaction;
 
-pub use file::{
-    BuildId, FileContentId, FileOrigin, PathBindingId, ProducerId, StageId, VirtualFile,
-};
+pub use file::{FileContentId, FileOrigin, PathBindingId, VirtualFile};
 pub use lifecycle::{AdmissionError, AdmissionState, RequestIntent, ResourceLifecycle};
 pub use limits::{VfsLimitError, VfsLimitKind, VfsLimits};
 pub use resource::{
@@ -26,10 +24,7 @@ pub use storage::{
     DISTRIBUTION_LAYER_PRECEDENCE, FileLayer, ImmutableBindingError, InsertOutcome,
     JOB_LAYER_PRECEDENCE, LayerKind, LayeredFileStorage, StorageIdentity,
 };
-pub use transaction::{
-    AcceptedBuild, BuildPlan, BuildTransaction, DeclaredReplacement, StageCommit, StageTransaction,
-    TransactionError, VirtualFs,
-};
+pub use transaction::{AcceptedGenerated, GeneratedTransaction, TransactionError};
 
 /// A canonical absolute path in Umber's virtual namespace.
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]

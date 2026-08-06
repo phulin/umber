@@ -32,8 +32,8 @@ Its resource-registration and accounting boundaries are specified in
 - `src/snapshot.rs`: immutable generation snapshots, exact reads, invalidation, and bounded enumeration.
 - `src/snapshot/tests.rs`: snapshot stability, precedence, retention, staleness, and ordering tests.
 - `src/storage.rs`: deterministic ownership layers and conflict handling.
-- `src/transaction.rs`: producer-scoped stage writes and atomic build publication.
-- `src/transaction/tests.rs`: transaction visibility, collision, rollback, and limit tests.
+- `src/transaction.rs`: complete generated-set writes and atomic workspace publication.
+- `src/transaction/tests.rs`: transaction visibility, replacement, rollback, snapshot, and limit tests.
 - `src/tests.rs`: focused identity, storage, canonicalization, and property tests.
 
 ## Validation

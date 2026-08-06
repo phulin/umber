@@ -33,9 +33,8 @@ pub(crate) use resolvers::parse_image;
 use path::user_path_for_key;
 use resolvers::{FontResolutionPolicy, VirtualRunResolvers};
 use umber_vfs::{
-    AdmissionError, BuildId, BuildPlan, FileOrigin, FileRequestBatch, ProducerId, ProjectWorkspace,
-    ProvisionError, ProvisionOutcome, ResourceLifecycle, TransactionError, UserRegistrationError,
-    VirtualRoot,
+    AdmissionError, FileOrigin, FileRequestBatch, ProjectWorkspace, ProvisionError,
+    ProvisionOutcome, ResourceLifecycle, TransactionError, UserRegistrationError, VirtualRoot,
 };
 pub use umber_vfs::{
     FileKind, FileRequest, FileRequestKey, RequestKeyError, ResolvedFile, ResourceDomain,
@@ -1851,12 +1850,9 @@ impl VirtualCompileSession {
         #[cfg(not(target_arch = "wasm32"))]
         let vfs_stage_started = Instant::now();
         let candidate_workspace = pending_workspace.clone();
-        let (resource_ledger, mut build) = pending_workspace
-            .begin_build_with_ledger(BuildPlan::new(BuildId::new(u64::from(self.attempts))));
-        let mut stage = build
-            .begin_stage(ProducerId::new(1))
-            .map_err(map_transaction)?;
-        let snapshot = stage.snapshot();
+        let (resource_ledger, mut generated_transaction) =
+            pending_workspace.begin_generated_with_ledger();
+        let snapshot = generated_transaction.snapshot();
 
         let mut retained = if let Some(candidate) = existing_candidate {
             candidate
@@ -2010,8 +2006,7 @@ impl VirtualCompileSession {
                     ));
                 }
             };
-            stage.discard();
-            build.discard();
+            generated_transaction.discard();
             for request in &font_misses {
                 self.font_requests
                     .entry(request.key.clone())
@@ -2140,8 +2135,7 @@ impl VirtualCompileSession {
             }));
         }
         if let Some(fatal) = fatal {
-            stage.discard();
-            build.discard();
+            generated_transaction.discard();
             return Err(fatal);
         }
         match drive {
@@ -2158,15 +2152,13 @@ impl VirtualCompileSession {
             }
             Ok(tex_incr::RevisionCandidateResult::Complete) => {}
             Ok(tex_incr::RevisionCandidateResult::AwaitingResources(_)) => {
-                stage.discard();
-                build.discard();
+                generated_transaction.discard();
                 return Err(CompileError::NoProgress);
             }
             Err(error) => {
                 let diagnostic =
                     CompileDiagnostic::from_session_error(&error, Some(&retained.execution));
-                stage.discard();
-                build.discard();
+                generated_transaction.discard();
                 return Err(CompileError::Diagnostic(diagnostic));
             }
         }
@@ -2192,8 +2184,7 @@ impl VirtualCompileSession {
                 message,
             })?;
             if !discovery.required.is_empty() || !discovery.probes.is_empty() {
-                stage.discard();
-                build.discard();
+                generated_transaction.discard();
                 let required = discovery.required;
                 let probes = discovery.probes;
                 check_resource_batch_limit(&required, &probes, &[], self.limits.resolved_files)?;
@@ -2255,8 +2246,7 @@ impl VirtualCompileSession {
                 self.accepted_font_containers,
             )?;
             if !required.is_empty() {
-                stage.discard();
-                build.discard();
+                generated_transaction.discard();
                 for request in &required {
                     let ResourceRequest::Font(request) = request else {
                         unreachable!("HTML paint discovery emits only font resources")
@@ -2323,8 +2313,8 @@ impl VirtualCompileSession {
             .memory_log_output()
             .ok_or_else(|| CompileError::Output("accepted output is not memory-backed".to_owned()))?
             .to_vec();
-        let files =
-            publish_auxiliary_outputs(&accepted_world, &mut stage).map_err(map_memory_output)?;
+        let files = publish_auxiliary_outputs(&accepted_world, &mut generated_transaction)
+            .map_err(map_memory_output)?;
         let dvi =
             if !self.outputs.contains(OutputCapability::Dvi) || execution.artifacts().is_empty() {
                 Vec::new()
@@ -2441,8 +2431,7 @@ impl VirtualCompileSession {
                 .collect();
         }
         check_limit("returned output bytes", existing, self.limits.output_bytes)?;
-        stage.finish().map_err(map_transaction)?;
-        build.accept().map_err(map_transaction)?;
+        generated_transaction.accept().map_err(map_transaction)?;
         let previous_generated = generated_fingerprint(&self.workspace)?;
         let next_generated = generated_fingerprint(&pending_workspace)?;
         let reuse = execution.reuse();
@@ -3011,7 +3000,7 @@ fn generated_fingerprint(
             .get(&path)
             .map_err(|error| CompileError::Output(error.to_string()))?
             .expect("a listed VFS path resolves");
-        if matches!(file.origin(), FileOrigin::Generated { .. }) {
+        if matches!(file.origin(), FileOrigin::Generated) {
             generated.push((path, ContentHash::from_bytes(file.bytes())));
         }
     }

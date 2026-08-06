@@ -47,7 +47,7 @@ Use this crate when behavior is about driving the engine, presenting CLI output,
   effect-before-driver finalization, and one-artifact-at-a-time DVI
   construction. Umber has no legacy lexer/gullet session adapter, including in
   tests.
-- `src/memory_output.rs`: exact committed terminal/log/DVI/aux collection for successful memory-backed runs, aggregate output limits, and auxiliary publication into VFS stage transactions.
+- `src/memory_output.rs`: exact committed terminal/log/DVI/aux collection for successful memory-backed runs, aggregate output limits, and auxiliary publication into VFS generated transactions.
 - `src/memory_output/tests.rs`: final-commit idempotence, output accounting, and memory-boundary tests.
 - `src/pdf_import.rs`: lightweight PDF syntax inspection and lossless selected-page resource import through `hayro-syntax`.
 - `src/pdf_import/tests.rs`: synthetic and conditional pinned-corpus PDF import regressions.

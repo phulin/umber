@@ -138,7 +138,7 @@ pub(crate) fn tex_observations(
             let resource_kind = file
                 .and_then(|file| match file.origin() {
                     FileOrigin::Resolved(key) => Some(key.kind()),
-                    FileOrigin::User | FileOrigin::Generated { .. } => None,
+                    FileOrigin::User | FileOrigin::Generated => None,
                 })
                 .unwrap_or_else(|| infer_kind(path.as_path()));
             AcceptedInputObservation {
@@ -236,7 +236,7 @@ pub(crate) fn bibliography_detection_observations(
 fn namespace_from_origin(origin: &FileOrigin) -> InputObservationNamespace {
     match origin {
         FileOrigin::User => InputObservationNamespace::Authored,
-        FileOrigin::Generated { .. } => InputObservationNamespace::Generated,
+        FileOrigin::Generated => InputObservationNamespace::Generated,
         FileOrigin::Resolved(_) => InputObservationNamespace::Distribution,
     }
 }

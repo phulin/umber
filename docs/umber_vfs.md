@@ -4,9 +4,7 @@ Status: shared project-workspace migration complete. Canonical paths, immutable
 files, layered storage, the typed resource ledger, deterministic snapshots,
 generated-file transactions, TeX and bibliography views, shared native/WASM
 resource batching, atomic editor-revision/build acceptance, and legacy-map
-removal are implemented. The single-generated-transaction roadmap below is
-accepted; the current multi-stage types remain implementation history until
-the follow-on migration lands.
+removal and the single generated-transaction lifecycle are implemented.
 
 This document defines `umber-vfs`, the host-neutral virtual filesystem shared
 by Umber's TeX driver, bibliography processing, native embeddings, and the
@@ -31,7 +29,7 @@ The cross-subsystem target vocabulary and migration invariants are fixed by
 [Canonical resource identity and lifecycle](resource_lifecycle.md). This
 document remains authoritative for implemented VFS layers and transactions.
 
-## Generated-publication roadmap
+## Generated publication
 
 TeX--bibliography--TeX continues to publish one complete,
 orchestrator-owned generated set. The VFS will not expose pass scheduling,
@@ -42,9 +40,9 @@ convergence, and offers the VFS only the final set. `TexFixedPointSession` and
 `VirtualCompileSession` use the same publication boundary for their smaller
 coordinators.
 
-This decision follows the production API inventory: every current build has
-exactly one stage; `BuildPlan::invalidate_accepted`, declared cross-producer
-replacement, and multiple stage commits are used only by `umber-vfs` tests.
+This decision followed the production API inventory: every former build had
+exactly one stage; invalidation, declared cross-producer replacement, and
+multiple stage commits were used only by `umber-vfs` tests.
 `BibSession` consumes a `VfsSnapshot` and returns detached `GeneratedFile`
 values, so it neither needs nor receives a mutable VFS transaction. A future
 project pipeline with more phases must continue composing immutable snapshots
@@ -69,12 +67,11 @@ accepted summary and transaction errors. `FileOrigin` retains user, resolved,
 and generated classification plus resolved-request provenance, but generated
 producer/build/stage metadata is not a compatibility commitment.
 
-`VirtualFs`, `BuildPlan`, `BuildTransaction`, `StageTransaction`,
-`DeclaredReplacement`, `StageCommit`, `ProducerId`, `StageId`, the public raw
-layer/storage constructors, and the pending-generated layer are retired in the
-follow-on migration. No deprecated multi-stage shim is retained: repository
-production callers do not use those semantics, and a shim would preserve the
-second scheduling authority this decision removes. Existing public session
+`VirtualFs`, `BuildPlan`, `BuildTransaction`, `StageTransaction`, declared
+replacement, stage commits, and producer/build/stage identities are retired.
+No deprecated multi-stage shim is retained: repository production callers did
+not use those semantics, and a shim would preserve the second scheduling
+authority this decision removes. Existing public session
 adapters (`VirtualCompileSession`, `TexFixedPointSession`,
 `LatexProjectSession`, native bibliography commands, and the WASM compiler,
 editor, and project sessions) retain their current attempt/resource/output
@@ -190,11 +187,7 @@ pub struct VirtualFile {
 pub enum FileOrigin {
     User,
     Resolved(ResourceRequestKey),
-    Generated {
-        producer: ProducerId,
-        build: BuildId,
-        stage: StageId,
-    },
+    Generated,
 }
 ```
 
@@ -218,15 +211,14 @@ A workspace owns four logical layers:
    requests. Each request key is permanently bound to one verified object for
    the relevant session history.
 3. **Accepted generated layer.** Files from the last complete accepted build.
-4. **Pending generated layer.** Files produced by the build currently being
-   attempted.
+4. **Private candidate generated layer.** The complete write set owned only by
+   the active `GeneratedTransaction`.
 
 An executing pending build reads `/job` in this order:
 
 ```text
-latest pending stage output
-    -> earlier pending stage output
-    -> accepted generated file when not invalidated by the build
+candidate generated output
+    -> accepted generated file
     -> user file
 ```
 
@@ -234,11 +226,9 @@ Distribution reads resolve only through verified resources under `/texlive`.
 Domain resolvers may search multiple exact candidates, but the VFS itself
 never guesses a path.
 
-The orchestrator must invalidate generated files whose producer is scheduled
-to rerun. An invalidated old `.bbl`, for example, is not visible to the
-bibliography stage that will replace it, while it may remain visible to an
-initial TeX pass when the multipass policy intentionally uses the last
-accepted bibliography result.
+The orchestrator constructs intermediate pass inputs from its private complete
+generated map. VFS snapshots therefore need no producer-specific invalidation
+policy.
 
 Directory enumeration is explicit, bounded, and lexically ordered by
 canonical path. No semantic algorithm may depend on map iteration order.
@@ -249,51 +239,36 @@ copying its maps or file bytes. A later storage mutation copies only the
 generation header and changed ownership layer; existing snapshots continue to
 observe their exact earlier generation.
 
-## Implemented transactions before the roadmap migration
+## Generated transactions
 
-The current implementation has two transaction scopes:
-
-- a **stage transaction** captures all files written by one TeX or
-  bibliography invocation; and
-- a **build transaction** contains the ordered successful stage commits for
-  one requested document revision.
+The current implementation has one transaction scope: a complete generated
+set owned by one project workspace.
 
 ```rust
-pub struct VirtualFs { /* accepted state and validated VfsLimits */ }
-pub struct BuildTransaction<'a> { /* private build overlay */ }
-pub struct StageTransaction<'stage, 'build> { /* one producer's write set */ }
-
-impl VirtualFs {
-    pub fn begin_build(&mut self, plan: BuildPlan) -> BuildTransaction<'_>;
+impl ProjectWorkspace {
+    pub fn begin_generated(&mut self) -> GeneratedTransaction<'_>;
 }
 
-impl BuildTransaction<'_> {
+impl GeneratedTransaction<'_> {
     pub fn snapshot(&self) -> VfsSnapshot;
-    pub fn begin_stage(&mut self, producer: ProducerId)
-        -> Result<StageTransaction<'_, '_>, TransactionError>;
-    pub fn accept(self) -> Result<AcceptedBuild, TransactionError>;
+    pub fn write(&mut self, path: VirtualPath, bytes: Vec<u8>)
+        -> Result<(), TransactionError>;
+    pub fn accept(self) -> Result<AcceptedGenerated, TransactionError>;
     pub fn discard(self);
 }
 ```
 
-A stage reads one snapshot. Its writes are private until the stage succeeds.
-Committing the stage appends a new overlay generation visible to the next
-stage in the same build. Stage ids are assigned monotonically within the build.
-Failure or a missing-resource suspension discards the stage write set; it does
-not expose truncated files. Snapshots issued by either transaction scope are
-explicitly made stale when that scope ends.
+A transaction starts with an empty candidate set. Each successful write is
+visible to later candidate snapshots but not through the workspace. Earlier
+snapshots remain immutable. Rewriting a path replaces it and updates count and
+byte accounting exactly. A failed write changes nothing. Accept atomically
+replaces the accepted generated layer wholesale; discard, drop, or any caller
+failure leaves accepted state unchanged. Every snapshot issued by the
+transaction becomes stale when its scope ends.
 
-Accepting the build atomically replaces the accepted generated layer and its
-metadata. Discarding it leaves the previous accepted build, editor revision,
-and outputs unchanged.
-
-Stage writes accept complete byte buffers; engine adapters may buffer output
-streams using the semantics required by `World`, but only closed complete
-files enter the stage write set. The VFS stores no incomplete file after the
-stage ends. One producer may rewrite its own path in a later stage. A different
-producer may replace that path only when the build plan declares the exact
-path, prior producer, and replacing producer; an undeclared collision is a
-typed error and publishes none of the colliding stage's writes.
+Writes accept complete byte buffers; engine adapters may buffer output streams
+using the semantics required by `World`, but only closed complete files enter
+the transaction. The VFS stores no incomplete file after the transaction ends.
 
 ## Reads, writes, and stage adapters
 
@@ -310,19 +285,18 @@ impl VfsSnapshot {
         -> Result<Vec<VirtualPath>, SnapshotError>;
 }
 
-impl StageTransaction<'_> {
+impl GeneratedTransaction<'_> {
     pub fn write(&mut self, path: VirtualPath, bytes: Vec<u8>)
-        -> Result<(), VfsError>;
-    pub fn finish(self) -> Result<StageCommit, VfsError>;
+        -> Result<(), TransactionError>;
     pub fn discard(self);
 }
 ```
 
 TeX continues to access bytes through `World` and its resolvers. An adapter
 opens exact VFS files as `InputSource` values and publishes committed memory
-outputs into a stage transaction. The bibliography layer uses its own adapter
-over the same snapshot and transaction types. Neither engine receives mutable
-access to the workspace maps.
+outputs into the generated transaction. Bibliography returns detached files
+for the project orchestrator to merge into its private map. Neither engine
+receives mutable access to the workspace maps.
 
 `list` includes an exact prefix binding and descendants separated by a path
 component boundary; it never treats a byte-prefix sibling as a descendant.
@@ -330,13 +304,11 @@ component boundary; it never treats a byte-prefix sibling as a descendant.
 ordered ownership layers directly, return each visible path once, and fail
 before allocating more than the caller's result limit.
 
-Snapshots may be created with an immutable set of invalidated accepted-output
-paths. Such a path still resolves through pending output or the user layer when
-present. Explicitly invalidating a snapshot makes every clone sharing its
-validity token return `SnapshotError::Stale`; storage mutation itself does not
-make retained snapshots stale. `SnapshotRetention` reports every binding and
-logical file byte kept alive by the retained generation, including hidden
-shadowed bindings.
+Ending a generated transaction explicitly invalidates every candidate snapshot
+and makes every clone sharing its validity token return `SnapshotError::Stale`.
+Storage mutation itself does not make accepted snapshots stale.
+`SnapshotRetention` reports every binding and logical file byte kept alive by
+the retained generation, including hidden shadowed bindings.
 
 ## Resource requests and registration
 
@@ -461,12 +433,12 @@ pub struct VfsLimits {
 }
 ```
 
-Generated-file count and byte limits are enforced independently for a private
-stage write set and for the complete pending build overlay.
+Generated-file count and byte limits are enforced for the complete private
+generated transaction.
 `VirtualCompileSession::SessionLimits` preserves its public compatibility
 fields but delegates user-file and resolved-file hard ceilings, replacement,
 registration, and accounting to `VfsLimits` and `ProjectWorkspace`. Its returned
-output byte limit also bounds each TeX stage and accepted generated layer, in
+output byte limit also bounds each generated transaction and accepted generated layer, in
 addition to the aggregate terminal, log, DVI, HTML, and auxiliary result.
 
 Limits use checked arithmetic and are enforced before allocation where the
@@ -478,7 +450,7 @@ from retained shared allocations.
 The implemented snapshot accounting exposes retained-generation binding and
 logical-byte totals split into immutable input and generated-output charges.
 `VirtualCompileSession` resolves TeX inputs and TFM files
-directly from a stage snapshot, then registers the selected shared bytes with
+directly from a transaction snapshot, then registers the selected shared bytes with
 `World` for input identity and provenance. Transaction and retained-session
 owners aggregate the accepted input generation into `resource_bytes`; accepted
 generated-generation and retained returned-output bytes are included in
@@ -516,11 +488,9 @@ Typed failures include:
 - unrecognized or mismatched request response;
 - content digest mismatch;
 - conflicting immutable registration;
-- undeclared generated-path collision;
-- write after stream or transaction closure;
 - per-file or aggregate limit violation;
 - resource retry without progress;
-- use of a snapshot after its owning stage is invalidated; and
+- use of a snapshot after its owning transaction ends; and
 - accepting a build against a stale root revision.
 
 Errors may expose canonical virtual paths, request keys, content identities,
@@ -550,7 +520,7 @@ or rerun the candidate; both paths must produce identical accepted files.
 ## Testing
 
 Crate-internal tests cover canonicalization, layer precedence, immutable
-registration, transaction visibility, collision policy, limits, snapshots,
+registration, transaction visibility, replacement, limits, snapshots,
 rollback, and deterministic enumeration. Public-boundary tests use one
 integration-test binary and exercise native and WASM representation adapters.
 

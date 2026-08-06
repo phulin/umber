@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use tex_out::dvi::DviPagePlan;
 use tex_state::{CommittedArtifact, ContentHash, Universe, World, WorldError};
-use umber_vfs::{StageTransaction, TransactionError, VirtualPath};
+use umber_vfs::{GeneratedTransaction, TransactionError, VirtualPath};
 
 use crate::{
     DviBuildError, OutputCapabilitySet, dvi_from_artifacts, dvi_from_committed_artifacts,
@@ -32,10 +32,10 @@ pub struct MemoryOutputFile {
 }
 
 /// Copies complete, committed auxiliary files from `World` into one private
-/// VFS stage write set, preserving World's deterministic path order.
+/// VFS generated write set, preserving World's deterministic path order.
 pub(crate) fn publish_auxiliary_outputs(
     world: &World,
-    stage: &mut StageTransaction<'_, '_>,
+    generated: &mut GeneratedTransaction<'_>,
 ) -> Result<Vec<MemoryOutputFile>, MemoryOutputCollectionError> {
     let outputs = world
         .memory_outputs()
@@ -51,7 +51,7 @@ pub(crate) fn publish_auxiliary_outputs(
             MemoryOutputCollectionError::InvalidAuxiliaryPath(output.path().to_owned())
         })?;
         let bytes = output.bytes().to_vec();
-        stage.write(virtual_path, bytes.clone())?;
+        generated.write(virtual_path, bytes.clone())?;
         files.push(MemoryOutputFile {
             path: output.path().to_owned(),
             bytes,

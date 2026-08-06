@@ -177,7 +177,7 @@ fn validate_ownership(kind: LayerKind, file: &VirtualFile) -> Result<(), Immutab
             | (LayerKind::ResolvedResource, FileOrigin::Resolved(_))
             | (
                 LayerKind::AcceptedGenerated | LayerKind::PendingGenerated,
-                FileOrigin::Generated { .. }
+                FileOrigin::Generated
             )
     );
     if !origin_matches {
@@ -362,15 +362,8 @@ fn encode_origin(origin: &FileOrigin, bytes: &mut Vec<u8>) {
             bytes.extend_from_slice(&(name.len() as u64).to_le_bytes());
             bytes.extend_from_slice(name);
         }
-        FileOrigin::Generated {
-            producer,
-            build,
-            stage,
-        } => {
+        FileOrigin::Generated => {
             bytes.push(3);
-            bytes.extend_from_slice(&producer.get().to_le_bytes());
-            bytes.extend_from_slice(&build.get().to_le_bytes());
-            bytes.extend_from_slice(&stage.get().to_le_bytes());
         }
     }
 }

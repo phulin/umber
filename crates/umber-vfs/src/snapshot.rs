@@ -1,4 +1,3 @@
-use std::collections::BTreeSet;
 use std::fmt;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -30,7 +29,6 @@ pub enum VirtualRoot {
 pub enum SnapshotError {
     Stale { generation: StorageIdentity },
     EnumerationLimitExceeded { limit: usize },
-    InvalidationOutsideJob { path: VirtualPath },
 }
 
 impl fmt::Display for SnapshotError {
@@ -41,9 +39,6 @@ impl fmt::Display for SnapshotError {
             }
             Self::EnumerationLimitExceeded { limit } => {
                 write!(f, "VFS enumeration exceeds result limit {limit}")
-            }
-            Self::InvalidationOutsideJob { path } => {
-                write!(f, "accepted generated invalidation is outside /job: {path}")
             }
         }
     }
@@ -59,7 +54,6 @@ impl std::error::Error for SnapshotError {}
 #[derive(Clone, Debug)]
 pub struct VfsSnapshot {
     generation: Arc<StorageGeneration>,
-    invalidated_accepted: Arc<BTreeSet<VirtualPath>>,
     valid: Arc<AtomicBool>,
 }
 
@@ -67,32 +61,14 @@ impl LayeredFileStorage {
     /// Captures the current generation with no accepted generated invalidations.
     #[must_use]
     pub fn snapshot(&self) -> VfsSnapshot {
-        VfsSnapshot::new(self.shared_generation(), BTreeSet::new())
-    }
-
-    /// Captures the current generation while hiding selected accepted outputs.
-    ///
-    /// An invalidated accepted path may still resolve to pending or user data.
-    pub fn snapshot_with_invalidated_accepted(
-        &self,
-        paths: impl IntoIterator<Item = VirtualPath>,
-    ) -> Result<VfsSnapshot, SnapshotError> {
-        let mut invalidated = BTreeSet::new();
-        for path in paths {
-            if !path.as_str().starts_with("/job/") {
-                return Err(SnapshotError::InvalidationOutsideJob { path });
-            }
-            invalidated.insert(path);
-        }
-        Ok(VfsSnapshot::new(self.shared_generation(), invalidated))
+        VfsSnapshot::new(self.shared_generation())
     }
 }
 
 impl VfsSnapshot {
-    fn new(generation: Arc<StorageGeneration>, invalidated: BTreeSet<VirtualPath>) -> Self {
+    fn new(generation: Arc<StorageGeneration>) -> Self {
         Self {
             generation,
-            invalidated_accepted: Arc::new(invalidated),
             valid: Arc::new(AtomicBool::new(true)),
         }
     }
@@ -243,13 +219,9 @@ impl VfsSnapshot {
         } else {
             &DISTRIBUTION_LAYER_PRECEDENCE
         };
-        precedence.iter().find_map(|kind| {
-            if *kind == LayerKind::AcceptedGenerated && self.invalidated_accepted.contains(path) {
-                None
-            } else {
-                self.generation.layer(*kind).get(path)
-            }
-        })
+        precedence
+            .iter()
+            .find_map(|kind| self.generation.layer(*kind).get(path))
     }
 }
 

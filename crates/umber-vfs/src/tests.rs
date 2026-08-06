@@ -4,9 +4,9 @@ use std::sync::Arc;
 use proptest::prelude::*;
 
 use super::{
-    BuildId, DISTRIBUTION_LAYER_PRECEDENCE, FileKind, FileOrigin, FileRequestKey,
-    ImmutableBindingError, InsertOutcome, JOB_LAYER_PRECEDENCE, LayerKind, LayeredFileStorage,
-    ProducerId, StageId, VirtualFile, VirtualPath, VirtualPathError,
+    DISTRIBUTION_LAYER_PRECEDENCE, FileKind, FileOrigin, FileRequestKey, ImmutableBindingError,
+    InsertOutcome, JOB_LAYER_PRECEDENCE, LayerKind, LayeredFileStorage, VirtualFile, VirtualPath,
+    VirtualPathError,
 };
 
 fn user_file(path: &str, bytes: &[u8]) -> VirtualFile {
@@ -26,15 +26,11 @@ fn resolved_file(path: &str, bytes: &[u8]) -> VirtualFile {
     )
 }
 
-fn generated_file(path: &str, bytes: &[u8], producer: u64) -> VirtualFile {
+fn generated_file(path: &str, bytes: &[u8]) -> VirtualFile {
     VirtualFile::new(
         VirtualPath::user(path).expect("generated path"),
         Arc::<[u8]>::from(bytes),
-        FileOrigin::Generated {
-            producer: ProducerId::new(producer),
-            build: BuildId::new(7),
-            stage: StageId::new(2),
-        },
+        FileOrigin::Generated,
     )
 }
 
@@ -236,14 +232,14 @@ fn ownership_layers_and_lookup_precedence_are_explicit() {
     assert_eq!(
         storage.insert(
             LayerKind::AcceptedGenerated,
-            generated_file("main.aux", b"accepted", 1)
+            generated_file("main.aux", b"accepted")
         ),
         Ok(InsertOutcome::Inserted)
     );
     assert_eq!(
         storage.insert(
             LayerKind::PendingGenerated,
-            generated_file("main.aux", b"pending", 2)
+            generated_file("main.aux", b"pending")
         ),
         Ok(InsertOutcome::Inserted)
     );
@@ -312,21 +308,13 @@ fn exact_duplicate_is_idempotent_and_every_immutable_conflict_fails() {
     let different_origin = VirtualFile::new(
         VirtualPath::user("main.tex").expect("path"),
         Arc::<[u8]>::from(&b"one"[..]),
-        FileOrigin::Generated {
-            producer: ProducerId::new(1),
-            build: BuildId::new(1),
-            stage: StageId::new(1),
-        },
+        FileOrigin::Generated,
     );
     assert_eq!(
         storage.insert(LayerKind::User, different_origin),
         Err(ImmutableBindingError::WrongOrigin {
             layer: LayerKind::User,
-            origin: FileOrigin::Generated {
-                producer: ProducerId::new(1),
-                build: BuildId::new(1),
-                stage: StageId::new(1),
-            },
+            origin: FileOrigin::Generated,
         })
     );
 
@@ -334,19 +322,16 @@ fn exact_duplicate_is_idempotent_and_every_immutable_conflict_fails() {
     generated
         .insert(
             LayerKind::AcceptedGenerated,
-            generated_file("main.aux", b"one", 1),
+            generated_file("main.aux", b"one"),
         )
         .expect("first producer");
-    assert!(matches!(
+    assert_eq!(
         generated.insert(
             LayerKind::AcceptedGenerated,
-            generated_file("main.aux", b"one", 2)
+            generated_file("main.aux", b"one")
         ),
-        Err(ImmutableBindingError::OriginConflict {
-            layer: LayerKind::AcceptedGenerated,
-            ..
-        })
-    ));
+        Ok(InsertOutcome::AlreadyPresent)
+    );
 }
 
 #[test]
@@ -359,19 +344,11 @@ fn storage_identity_covers_layers_and_provenance() {
     pending
         .insert(
             LayerKind::PendingGenerated,
-            generated_file("same.tex", b"same", 1),
+            generated_file("same.tex", b"same"),
         )
         .expect("insert generated");
     assert_ne!(user.identity(), pending.identity());
 
-    let mut other_producer = LayeredFileStorage::new();
-    other_producer
-        .insert(
-            LayerKind::PendingGenerated,
-            generated_file("same.tex", b"same", 2),
-        )
-        .expect("insert generated");
-    assert_ne!(pending.identity(), other_producer.identity());
     assert_eq!(pending.identity(), pending.clone().identity());
 }
 

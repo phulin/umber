@@ -65,10 +65,6 @@ impl FixedPointCoordinator {
         Ok(())
     }
 
-    pub(crate) const fn attempts(&self) -> u32 {
-        self.attempts
-    }
-
     pub(crate) fn reset_attempts(&mut self) {
         self.attempts = 0;
     }

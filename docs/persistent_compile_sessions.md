@@ -68,10 +68,10 @@ re-executing TeX. Native and WASM callers observe the same result variants.
 Execution prepares a private `tex-incr` revision before it changes accepted
 history. The driver materializes diagnostics, artifacts, the selected
 DVI/PDF/HTML products, and
-auxiliary files from that candidate while a cloned `umber-vfs` build
-generation owns the candidate root bytes and generated stage writes. Only
-after every fallible output, stage, build-limit, and collision check succeeds
-does the session commit the incremental revision and swap in the VFS
+auxiliary files from that candidate while a cloned workspace and its
+`GeneratedTransaction` own the candidate root bytes and generated writes. Only
+after every fallible output and generated-limit check succeeds does the session
+commit the incremental revision and swap in the VFS
 generation. Dropping either candidate leaves the previously accepted revision,
 root binding, generated files, and output unchanged.
 
@@ -133,7 +133,7 @@ or a resource request leaves the accepted revision unchanged. The prior
 accepted output remains retained while a patch waits for resources. A terminal
 compile or output failure rejects the pending patch and makes that output
 immediately observable again; a resource suspension keeps the private patch
-retryable without publishing its root or stage writes. A host may explicitly
+retryable without publishing its root or generated writes. A host may explicitly
 cancel that pending patch when a newer editor revision supersedes it. This
 clears only candidate/awaiting state and the per-revision attempt count; the
 accepted root, output, incremental checkpoints, and immutable resolved-resource
@@ -197,15 +197,15 @@ search has first refusal; and stale or ignored hints create no unavailable
 binding and do not count as retry progress.
 `ProjectWorkspace` also owns the session's layered user and resolved-resource
 storage plus its accepted generated layer. Each TeX attempt reads inputs and
-TFM files from one immutable stage snapshot; the resolver passes selected
+TFM files from one immutable transaction snapshot; the resolver passes selected
 shared bytes through `World`, whose memory backend retains the selected path
 binding for later checkpoint-input validation, so input identity, provenance,
 and same-run pending-output precedence remain unchanged. Successful committed
-auxiliary files publish through the same stage transaction in deterministic
+auxiliary files publish through the same generated transaction in deterministic
 path order.
 
 Before an edited candidate is constructed, the driver installs its synthetic
-root in a private workspace generation and opens the exact stage snapshot
+root in a private workspace generation and opens the exact transaction snapshot
 that its resolvers will read. It compares every accepted positive and
 authoritative-negative dependency with that snapshot. An exact match permits
 ordinary checkpoint selection; any mismatch creates a private candidate that

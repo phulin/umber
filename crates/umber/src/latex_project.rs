@@ -9,9 +9,7 @@ use bib_engine::{
 };
 use tex_fonts::{FontRequestKey, PdfPkFontRequest, ResolvedFont};
 use tex_state::ContentHash;
-use umber_vfs::{
-    BuildId, BuildPlan, FileRequestBatch, ProducerId, ProjectWorkspace, ResolvedFile, VirtualPath,
-};
+use umber_vfs::{FileRequestBatch, ProjectWorkspace, ResolvedFile, VirtualPath};
 
 use crate::fixed_point::{FixedPointCandidate, FixedPointCoordinator, FixedPointFailure};
 use crate::{
@@ -20,7 +18,6 @@ use crate::{
     VirtualCompileSession,
 };
 
-const PROJECT_PRODUCER: ProducerId = ProducerId::new(3);
 type GeneratedSignature = Vec<(VirtualPath, ContentHash)>;
 type ProjectConvergenceKey = (Option<BibliographyBackend>, GeneratedSignature);
 
@@ -966,21 +963,13 @@ impl LatexProjectSession {
                 root.clone(),
             )
             .map_err(|e| LatexProjectError::Transaction(e.to_string()))?;
-        let mut build = pending.begin_build(BuildPlan::new(BuildId::new(u64::from(
-            self.fixed_point.attempts(),
-        ))));
-        let mut stage = build
-            .begin_stage(PROJECT_PRODUCER)
-            .map_err(|e| LatexProjectError::Transaction(e.to_string()))?;
+        let mut generated_transaction = pending.begin_generated();
         for (path, bytes) in &generated {
-            stage
+            generated_transaction
                 .write(path.clone(), bytes.clone())
                 .map_err(|e| LatexProjectError::Transaction(e.to_string()))?;
         }
-        stage
-            .finish()
-            .map_err(|e| LatexProjectError::Transaction(e.to_string()))?;
-        build
+        generated_transaction
             .accept()
             .map_err(|e| LatexProjectError::Transaction(e.to_string()))?;
         let fingerprint = ProjectConvergenceFingerprint {

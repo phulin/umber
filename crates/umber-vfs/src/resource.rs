@@ -3,7 +3,7 @@ use std::fmt;
 use std::sync::Arc;
 
 use crate::{
-    AdmissionError, BuildPlan, BuildTransaction, FileContentId, FileOrigin, ImmutableBindingError,
+    AdmissionError, FileContentId, FileOrigin, GeneratedTransaction, ImmutableBindingError,
     LayerKind, LayeredFileStorage, ResourceLifecycle, VfsLimitError, VfsLimitKind, VfsLimits,
     VfsSnapshot, VirtualFile, VirtualPath,
 };
@@ -541,21 +541,18 @@ impl ProjectWorkspace {
 
     /// Begins a generated-output build over the same layered storage that
     /// owns this provisioner's immutable inputs.
-    pub fn begin_build(&mut self, plan: BuildPlan) -> BuildTransaction<'_> {
-        BuildTransaction::new(&mut self.storage, self.limits, plan)
+    pub fn begin_generated(&mut self) -> GeneratedTransaction<'_> {
+        GeneratedTransaction::new(&mut self.storage, self.limits)
     }
 
     /// Borrows the resource ledger alongside the disjoint generated overlay.
     ///
     /// Compile resolvers use this narrow view instead of reconstructing
     /// request-to-path and unavailable indexes for every attempt.
-    pub fn begin_build_with_ledger(
-        &mut self,
-        plan: BuildPlan,
-    ) -> (&ResourceLedger, BuildTransaction<'_>) {
+    pub fn begin_generated_with_ledger(&mut self) -> (&ResourceLedger, GeneratedTransaction<'_>) {
         let ledger = &self.ledger;
-        let build = BuildTransaction::new(&mut self.storage, self.limits, plan);
-        (ledger, build)
+        let generated = GeneratedTransaction::new(&mut self.storage, self.limits);
+        (ledger, generated)
     }
 
     #[must_use]

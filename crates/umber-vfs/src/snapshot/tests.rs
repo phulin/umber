@@ -1,9 +1,7 @@
 use std::sync::Arc;
 
 use super::*;
-use crate::{
-    BuildId, FileKind, FileOrigin, FileRequestKey, InsertOutcome, ProducerId, StageId, VirtualFile,
-};
+use crate::{FileKind, FileOrigin, FileRequestKey, InsertOutcome, VirtualFile};
 
 fn user_file(path: &str, bytes: &[u8]) -> VirtualFile {
     VirtualFile::new(
@@ -27,15 +25,11 @@ fn resolved_file(path: &str, bytes: &[u8]) -> VirtualFile {
     )
 }
 
-fn generated_file(path: &str, bytes: &[u8], producer: u64) -> VirtualFile {
+fn generated_file(path: &str, bytes: &[u8]) -> VirtualFile {
     VirtualFile::new(
         VirtualPath::user(path).expect("generated path"),
         Arc::<[u8]>::from(bytes),
-        FileOrigin::Generated {
-            producer: ProducerId::new(producer),
-            build: BuildId::new(3),
-            stage: StageId::new(4),
-        },
+        FileOrigin::Generated,
     )
 }
 
@@ -80,17 +74,17 @@ fn snapshot_clone_is_cheap_and_mutation_preserves_its_generation() {
 }
 
 #[test]
-fn exact_lookup_obeys_root_specific_precedence_and_invalidation() {
+fn exact_lookup_obeys_root_specific_precedence() {
     let mut storage = LayeredFileStorage::new();
     for (kind, file) in [
         (LayerKind::User, user_file("same.aux", b"user")),
         (
             LayerKind::AcceptedGenerated,
-            generated_file("same.aux", b"accepted", 1),
+            generated_file("same.aux", b"accepted"),
         ),
         (
             LayerKind::PendingGenerated,
-            generated_file("same.aux", b"pending", 2),
+            generated_file("same.aux", b"pending"),
         ),
         (
             LayerKind::ResolvedResource,
@@ -103,42 +97,11 @@ fn exact_lookup_obeys_root_specific_precedence_and_invalidation() {
     assert_eq!(bytes(&storage.snapshot(), &path), Some(&b"pending"[..]));
     assert_eq!(
         bytes(
-            &storage
-                .snapshot_with_invalidated_accepted([path.clone()])
-                .expect("job invalidation"),
-            &path
-        ),
-        Some(&b"pending"[..])
-    );
-    assert_eq!(
-        bytes(
             &storage.snapshot(),
             &VirtualPath::distribution("/texlive/plain.tex").expect("path")
         ),
         Some(&b"plain"[..])
     );
-
-    let mut without_pending = LayeredFileStorage::new();
-    without_pending
-        .insert(LayerKind::User, user_file("same.aux", b"user"))
-        .expect("user");
-    without_pending
-        .insert(
-            LayerKind::AcceptedGenerated,
-            generated_file("same.aux", b"accepted", 1),
-        )
-        .expect("accepted");
-    let invalidated = without_pending
-        .snapshot_with_invalidated_accepted([path.clone()])
-        .expect("job invalidation");
-    assert_eq!(bytes(&invalidated, &path), Some(&b"user"[..]));
-    assert!(matches!(
-        without_pending.snapshot_with_invalidated_accepted([
-            VirtualPath::distribution("/texlive/plain.tex").expect("path")
-        ]),
-        Err(SnapshotError::InvalidationOutsideJob { path })
-            if path == VirtualPath::distribution("/texlive/plain.tex").expect("path")
-    ));
 }
 
 #[test]
@@ -152,13 +115,13 @@ fn lexical_enumeration_is_visible_unique_component_aware_and_bounded() {
     storage
         .insert(
             LayerKind::AcceptedGenerated,
-            generated_file("dir/a.tex", b"accepted", 1),
+            generated_file("dir/a.tex", b"accepted"),
         )
         .expect("accepted shadow");
     storage
         .insert(
             LayerKind::PendingGenerated,
-            generated_file("dir/b.tex", b"pending", 2),
+            generated_file("dir/b.tex", b"pending"),
         )
         .expect("pending file");
 
@@ -211,7 +174,7 @@ fn enumeration_and_reads_ignore_insertion_order_and_discarded_attempts() {
     attempt
         .insert(
             LayerKind::PendingGenerated,
-            generated_file("attempt.aux", b"discard me", 1),
+            generated_file("attempt.aux", b"discard me"),
         )
         .expect("pending attempt");
     drop(attempt);

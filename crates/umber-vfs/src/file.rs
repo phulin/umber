@@ -70,41 +70,13 @@ impl fmt::Display for PathBindingId {
     }
 }
 
-macro_rules! numeric_id {
-    ($name:ident, $description:literal) => {
-        #[doc = $description]
-        #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-        pub struct $name(u64);
-
-        impl $name {
-            #[must_use]
-            pub const fn new(value: u64) -> Self {
-                Self(value)
-            }
-
-            #[must_use]
-            pub const fn get(self) -> u64 {
-                self.0
-            }
-        }
-    };
-}
-
-numeric_id!(ProducerId, "Stable identity of a generated-file producer.");
-numeric_id!(BuildId, "Stable identity of a pending or accepted build.");
-numeric_id!(StageId, "Stable identity of one stage within a build.");
-
 /// Provenance retained with immutable file bytes.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum FileOrigin {
     User,
     /// A host-provided resource accepted for this exact typed request.
     Resolved(FileRequestKey),
-    Generated {
-        producer: ProducerId,
-        build: BuildId,
-        stage: StageId,
-    },
+    Generated,
 }
 
 /// A complete immutable virtual file with shared byte ownership.

@@ -40,7 +40,7 @@ pub(super) fn accepted_generated(
             .get(&path)
             .map_err(|error| LatexProjectError::Transaction(error.to_string()))?
             .expect("listed path resolves");
-        if matches!(file.origin(), FileOrigin::Generated { .. }) {
+        if matches!(file.origin(), FileOrigin::Generated) {
             generated.insert(path, file.bytes().to_vec());
         }
     }
@@ -116,19 +116,13 @@ pub(super) fn candidate_snapshot(
     pending
         .register_user(main, root.to_vec())
         .map_err(|error| LatexProjectError::Transaction(error.to_string()))?;
-    let mut build = pending.begin_build(BuildPlan::new(BuildId::new(1)));
-    let mut stage = build
-        .begin_stage(PROJECT_PRODUCER)
-        .map_err(|error| LatexProjectError::Transaction(error.to_string()))?;
+    let mut generated_transaction = pending.begin_generated();
     for (path, bytes) in generated {
-        stage
+        generated_transaction
             .write(path.clone(), bytes.clone())
             .map_err(|error| LatexProjectError::Transaction(error.to_string()))?;
     }
-    stage
-        .finish()
-        .map_err(|error| LatexProjectError::Transaction(error.to_string()))?;
-    build
+    generated_transaction
         .accept()
         .map_err(|error| LatexProjectError::Transaction(error.to_string()))?;
     Ok(pending.snapshot())
