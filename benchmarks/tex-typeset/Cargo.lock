@@ -852,6 +852,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8ed6a63f02c8539c91a8685a86f4099661ba3da017932f6ebbea6de3f0fa7c90"
 
 [[package]]
+name = "stats_alloc"
+version = "0.1.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5c0e04424e733e69714ca1bbb9204c1a57f09f5493439520f9f68c132ad25eec"
+
+[[package]]
 name = "subsetter"
 version = "0.2.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -912,16 +918,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "tex-exec-benchmarks"
-version = "0.1.0"
-dependencies = [
- "criterion",
- "tex-command",
- "tex-exec",
- "tex-state",
-]
-
-[[package]]
 name = "tex-fonts"
 version = "0.1.0"
 dependencies = [
@@ -977,6 +973,18 @@ dependencies = [
  "tex-arith",
  "tex-fonts",
  "tex-state",
+]
+
+[[package]]
+name = "tex-typeset-benchmarks"
+version = "0.1.0"
+dependencies = [
+ "criterion",
+ "stats_alloc",
+ "tex-exec",
+ "tex-fonts",
+ "tex-state",
+ "tex-typeset",
 ]
 
 [[package]]

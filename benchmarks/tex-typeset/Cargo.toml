@@ -1,0 +1,27 @@
+[package]
+name = "tex-typeset-benchmarks"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[dependencies]
+criterion = "0.5"
+stats_alloc = "0.1"
+tex-exec = { path = "../../crates/tex-exec" }
+tex-fonts = { path = "../../crates/tex-fonts" }
+tex-state = { path = "../../crates/tex-state" }
+tex-typeset = { path = "../../crates/tex-typeset" }
+
+[[bin]]
+name = "layout_allocations"
+path = "src/bin/layout_allocations.rs"
+
+[[bench]]
+name = "widths"
+harness = false
+
+[[bench]]
+name = "layout"
+harness = false

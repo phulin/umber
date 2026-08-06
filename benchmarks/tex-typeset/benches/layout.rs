@@ -1,10 +1,10 @@
 use criterion::{Criterion, Throughput, black_box, criterion_group, criterion_main};
 use tex_exec::cached_pretolerance_plan;
-use tex_state::{PureMemoConfig, Universe};
 use tex_state::glue::GlueSpec;
 use tex_state::math::{MathChoice, MathField, MathNoad, NoadClass, NoadKind};
 use tex_state::node::Node;
 use tex_state::scaled::Scaled;
+use tex_state::{PureMemoConfig, Universe};
 use tex_typeset::alignment::{AlignmentWidthRequirement, plan_alignment_widths};
 use tex_typeset::linebreak::{LineBreakParams, LineShape, try_line_break_without_hyphenation};
 use tex_typeset::math::{MathParams, Style, mlist_to_hlist};

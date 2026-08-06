@@ -1,5 +1,5 @@
 [package]
-name = "tex-exec-benchmarks"
+name = "tex-incr-benchmarks"
 version = "0.1.0"
 edition = "2024"
 publish = false
@@ -10,8 +10,9 @@ publish = false
 criterion = "0.5"
 tex-command = { path = "../../crates/tex-command" }
 tex-exec = { path = "../../crates/tex-exec" }
+tex-incr = { path = "../../crates/tex-incr" }
 tex-state = { path = "../../crates/tex-state" }
 
 [[bench]]
-name = "shipout"
+name = "pure_memo_edit"
 harness = false

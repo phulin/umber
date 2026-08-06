@@ -66,8 +66,10 @@ The project also uses bd (beads) for issue tracking; see below for full instruct
 - `benchmarks/`: opt-in standalone benchmark crates kept outside the root workspace.
 - `benchmarks/edit-restart`: paired Plain TeX edit workloads for incremental restart measurement.
 - `benchmarks/tex-command`: bounded generated-source descriptor identity reuse benchmark.
-- `benchmarks/png-import`: host-only comparison of custom, Reader, and bounded
-  StreamingDecoder PNG alpha import paths on a recent-arXiv raster workload.
+- `benchmarks/tex-exec`: focused shipout-lowering diagnostic.
+- `benchmarks/tex-incr`: accepted-edit pure-memo diagnostic.
+- `benchmarks/tex-state`: snapshot/state performance gates and state diagnostics.
+- `benchmarks/tex-typeset`: pure layout, allocation, and compact-width gates.
 - `tests/`: committed fixtures and parity test definitions.
 - `tests/corpus/pdf/`: pinned minimal pdfTeX references, deterministic Umber PDFs, normalized structure, and rendered-page parity fixtures.
 - `docs/`: architecture, phase, and design documents.

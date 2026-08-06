@@ -648,6 +648,23 @@ content-addressed cache before engine use, so attestation does not require a
 second full compilation. `UMBER_ARXIV_LIMIT=1` selects the first row of the
 recent sample.
 
+Pure typesetting has an explicit performance tier owned by the standalone
+`tex-typeset` benchmark crate:
+
+```bash
+cargo bench --manifest-path benchmarks/tex-typeset/Cargo.toml --bench widths
+cargo bench --manifest-path benchmarks/tex-typeset/Cargo.toml --bench layout
+cargo run --release --manifest-path benchmarks/tex-typeset/Cargo.toml \
+  --bin layout_allocations
+scripts/check-node-width-budget.sh
+```
+
+The width script preserves the committed row names, means, and 10% tolerance.
+The allocation binary preserves the alignment, line-breaking, deep-choice,
+deep-sublist, and flat-math ceilings. The incremental pure-memo edit diagnostic
+is separately runnable from its owner with
+`cargo bench --manifest-path benchmarks/tex-incr/Cargo.toml --bench pure_memo_edit`.
+
 Snapshot scaling has a separate explicit performance tier:
 
 ```bash

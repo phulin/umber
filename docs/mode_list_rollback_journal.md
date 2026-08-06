@@ -15,10 +15,15 @@ The `umber2-johp.298` symbolized profile attributed 5.79% self time to that
 copy below `Arc::make_mut`, with 4.24% through ordinary character append and
 1.39% through horizontal-run reconstitution.
 
-The bounded `mode_list_rollback` benchmark isolates the lifetime with 16,384
+The historical `mode_list_rollback` benchmark isolated the lifetime with 16,384
 pre-existing nodes and 1,024 successful appends. Its length-watermark case is
 the lower-level operation an append-aware journal should reach. It deliberately
 does not claim that a watermark alone is a complete rollback representation.
+
+Issue `umber2-vgjr.18.4` retired that synthetic comparison after a fresh
+caller and authority audit. This document, the production inverse-journal
+tests, the mutation-boundary gate, and semantic comparison are the surviving
+authorities; the measured source and invocation remain recoverable from Git.
 
 ## Required representation
 

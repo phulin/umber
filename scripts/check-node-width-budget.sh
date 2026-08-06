@@ -2,9 +2,9 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-manifest="$repo_root/benchmarks/tex-exec/Cargo.toml"
-baseline="$repo_root/benchmarks/tex-exec/node-width-budgets.json"
-target_dir="${CARGO_TARGET_DIR:-$repo_root/benchmarks/tex-exec/target}"
+manifest="$repo_root/benchmarks/tex-typeset/Cargo.toml"
+baseline="$repo_root/benchmarks/tex-typeset/node-width-budgets.json"
+target_dir="${CARGO_TARGET_DIR:-$repo_root/benchmarks/tex-typeset/target}"
 
 cargo bench --manifest-path "$manifest" --bench widths -- --noplot
 

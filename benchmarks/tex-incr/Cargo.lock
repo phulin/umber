@@ -427,9 +427,11 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "899def5c37c4fd7b2664648c28120ecec138e4d395b459e5ca34f9cce2dd77fd"
 dependencies = [
  "cfg-if",
+ "js-sys",
  "libc",
  "r-efi",
  "wasip2",
+ "wasm-bindgen",
 ]
 
 [[package]]
@@ -912,16 +914,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "tex-exec-benchmarks"
-version = "0.1.0"
-dependencies = [
- "criterion",
- "tex-command",
- "tex-exec",
- "tex-state",
-]
-
-[[package]]
 name = "tex-fonts"
 version = "0.1.0"
 dependencies = [
@@ -936,6 +928,28 @@ dependencies = [
  "unicode-bidi",
  "unicode-script",
  "woff2-patched",
+]
+
+[[package]]
+name = "tex-incr"
+version = "0.1.0"
+dependencies = [
+ "getrandom",
+ "tex-command",
+ "tex-exec",
+ "tex-out",
+ "tex-state",
+]
+
+[[package]]
+name = "tex-incr-benchmarks"
+version = "0.1.0"
+dependencies = [
+ "criterion",
+ "tex-command",
+ "tex-exec",
+ "tex-incr",
+ "tex-state",
 ]
 
 [[package]]

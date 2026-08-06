@@ -1085,43 +1085,43 @@ Do not turn every subheading into an issue at once. Open the next dependency wav
 
 ## Coverage of all reviewed packages
 
-| Package                  | Combined disposition                                              |
-| ------------------------ | ----------------------------------------------------------------- |
-| `bib-engine`             | Programs 14 and 15                                                |
-| `bib-input`              | Program 14                                                        |
-| `bib-model`              | Program 14; immutable boundary retained                           |
-| `bib-output`             | Program 14; full-golden deletion remains gated                    |
-| `bib-unicode`            | Program 14; public compatibility API retained by default          |
-| `corpus-manifest`        | Program 12; independent dependency-free package retained          |
-| `fixturegen`             | Programs 12 and 18                                                |
-| `parity-harness`         | Programs 2, 12, and 18                                            |
-| `png-import-prototype`   | Program 18; retirement decision required                          |
-| `profile-analyzer`       | No qualifying reduction; retain specialized reporting             |
-| `refexec`                | Program 18; compatibility gate required                           |
-| `test-support`           | Programs 12 and 16                                                |
-| `tex-arith`              | No qualifying reduction; retain shared exact arithmetic leaf      |
-| `tex-command-benchmarks` | Program 18; active workload retained or rehomed                   |
-| `tex-command-stream`     | Programs 2, 9, 12, and 18                                         |
-| `tex-command`            | Programs 1, 9, and 15                                             |
-| `tex-content`            | No qualifying reduction; retain stable identity leaf              |
-| `tex-exec-benchmarks`    | Program 18; active workloads retained                             |
-| `tex-exec`               | Programs 1, 3-6, 9, and 15                                        |
-| `tex-fonts`              | Programs 6, 7, and 11                                             |
-| `tex-incr`               | Programs 3, 4, and 18                                             |
-| `tex-observe`            | Programs 1 and 2                                                  |
-| `tex-oracle`             | Programs 2 and 12                                                 |
-| `tex-out`                | Programs 5-7 and 16                                               |
-| `tex-state-benchmarks`   | Program 18; maintainer retirement decision required               |
-| `tex-state`              | Programs 3, 4, 8-11, and 15                                       |
-| `tex-typeset`            | Programs 10 and 15                                                |
-| `texlive-wasm-publish`   | Program 13                                                        |
-| `umber-distribution`     | Programs 3 and 13                                                 |
-| `umber-fetch`            | Program 3                                                         |
-| `umber-fuzz`             | No qualifying reduction; retain isolated TFM fuzz target and seed |
-| `umber-interrupt`        | No qualifying reduction; retain unsafe-FFI quarantine             |
-| `umber-vfs`              | Programs 3 and 17                                                 |
-| `umber-wasm`             | Programs 3, 7, and 13                                             |
-| `umber`                  | Programs 3, 4, 6, 7, 13, and 18                                   |
+| Package                  | Combined disposition                                                |
+| ------------------------ | ------------------------------------------------------------------- |
+| `bib-engine`             | Programs 14 and 15                                                  |
+| `bib-input`              | Program 14                                                          |
+| `bib-model`              | Program 14; immutable boundary retained                             |
+| `bib-output`             | Program 14; full-golden deletion remains gated                      |
+| `bib-unicode`            | Program 14; public compatibility API retained by default            |
+| `corpus-manifest`        | Program 12; independent dependency-free package retained            |
+| `fixturegen`             | Programs 12 and 18                                                  |
+| `parity-harness`         | Programs 2, 12, and 18                                              |
+| `png-import-prototype`   | Retired by `umber2-vgjr.18.4` after owner decision and caller audit |
+| `profile-analyzer`       | No qualifying reduction; retain specialized reporting               |
+| `refexec`                | Program 18; compatibility gate required                             |
+| `test-support`           | Programs 12 and 16                                                  |
+| `tex-arith`              | No qualifying reduction; retain shared exact arithmetic leaf        |
+| `tex-command-benchmarks` | Program 18; active workload retained with its measured owner        |
+| `tex-command-stream`     | Programs 2, 9, 12, and 18                                           |
+| `tex-command`            | Programs 1, 9, and 15                                               |
+| `tex-content`            | No qualifying reduction; retain stable identity leaf                |
+| `tex-exec-benchmarks`    | Program 18; shipout retained, mixed-owner rows rehomed              |
+| `tex-exec`               | Programs 1, 3-6, 9, and 15                                          |
+| `tex-fonts`              | Programs 6, 7, and 11                                               |
+| `tex-incr`               | Programs 3, 4, and 18                                               |
+| `tex-observe`            | Programs 1 and 2                                                    |
+| `tex-oracle`             | Programs 2 and 12                                                   |
+| `tex-out`                | Programs 5-7 and 16                                                 |
+| `tex-state-benchmarks`   | Program 18; active gates and diagnostics retained                   |
+| `tex-state`              | Programs 3, 4, 8-11, and 15                                         |
+| `tex-typeset`            | Programs 10 and 15                                                  |
+| `texlive-wasm-publish`   | Program 13                                                          |
+| `umber-distribution`     | Programs 3 and 13                                                   |
+| `umber-fetch`            | Program 3                                                           |
+| `umber-fuzz`             | No qualifying reduction; retain isolated TFM fuzz target and seed   |
+| `umber-interrupt`        | No qualifying reduction; retain unsafe-FFI quarantine               |
+| `umber-vfs`              | Programs 3 and 17                                                   |
+| `umber-wasm`             | Programs 3, 7, and 13                                               |
+| `umber`                  | Programs 3, 4, 6, 7, 13, and 18                                     |
 
 ## Explicit non-goals
 
