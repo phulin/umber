@@ -1,5 +1,5 @@
 use super::*;
-use crate::pdf_fixture::{Dictionary, RawPdfFixture, nested_array};
+use crate::pdf_fixture::{Dictionary, PdfFixture, RawPdfFixture, nested_array};
 
 fn classic_fixture() -> Vec<u8> {
     let mut fixture = RawPdfFixture::new("1.7").expect("valid version");

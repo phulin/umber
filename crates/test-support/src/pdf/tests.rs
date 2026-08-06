@@ -1,4 +1,4 @@
-use crate::pdf_fixture::{Dictionary, RawPdfFixture};
+use crate::pdf_fixture::{Dictionary, PdfFixture, RawPdfFixture};
 
 use super::normalize_structure;
 
