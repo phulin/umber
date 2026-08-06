@@ -57,6 +57,7 @@ impl std::fmt::Display for UnsafeInteger {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "kebab-case")]
+#[ts(rename = "ResourceDomain")]
 pub enum ResourceDomainDto {
     Tex,
     Bibliography,
@@ -65,6 +66,7 @@ pub enum ResourceDomainDto {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "kebab-case")]
+#[ts(rename = "FileKind")]
 pub enum FileKindDto {
     Tex,
     Tfm,
@@ -86,6 +88,7 @@ pub enum FileKindDto {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(rename = "FileRequestKey")]
 pub struct FileRequestKeyDto {
     pub domain: ResourceDomainDto,
     pub kind: FileKindDto,
@@ -94,6 +97,7 @@ pub struct FileRequestKeyDto {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(rename = "FontCoordinate")]
 pub struct FontCoordinateDto {
     pub tag: String,
     pub value: f64,
@@ -101,6 +105,7 @@ pub struct FontCoordinateDto {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, TS)]
 #[serde(untagged, rename_all_fields = "camelCase")]
+#[ts(rename = "VariationInstance")]
 pub enum VariationInstanceDto {
     Name(VariationInstanceNameDto),
     Named { named_name_id: u16 },
@@ -108,6 +113,7 @@ pub enum VariationInstanceDto {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "kebab-case")]
+#[ts(rename = "VariationInstanceName")]
 pub enum VariationInstanceNameDto {
     Default,
     Coordinates,
@@ -115,7 +121,7 @@ pub enum VariationInstanceNameDto {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
-#[ts(optional_fields)]
+#[ts(rename = "FontRequestKey", optional_fields)]
 pub struct FontRequestKeyDto {
     pub logical_name: String,
     pub face_index: u32,
@@ -131,6 +137,7 @@ pub struct FontRequestKeyDto {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "kebab-case")]
+#[ts(rename = "WritingDirection")]
 pub enum WritingDirectionDto {
     Ltr,
     Rtl,
@@ -138,12 +145,14 @@ pub enum WritingDirectionDto {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "kebab-case")]
+#[ts(rename = "FontContainer")]
 pub enum FontContainerDto {
     Woff2,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(rename = "PkFontRequestKey")]
 pub struct PkFontRequestKeyDto {
     #[serde(with = "serde_bytes")]
     #[ts(type = "Uint8Array")]
@@ -160,6 +169,7 @@ pub struct PkFontRequestKeyDto {
     rename_all = "kebab-case",
     rename_all_fields = "camelCase"
 )]
+#[ts(rename = "ResourceRequest")]
 pub enum ResourceRequestDto {
     File {
         #[serde(flatten)]
@@ -179,6 +189,7 @@ pub enum ResourceRequestDto {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(rename = "LegacyFontMapping")]
 pub struct LegacyFontMappingDto {
     pub tfm_sha256: String,
     pub encoding: Vec<Option<String>>,
@@ -191,6 +202,7 @@ pub struct LegacyFontMappingDto {
     rename_all = "kebab-case",
     rename_all_fields = "camelCase"
 )]
+#[ts(rename = "ResourceResponse")]
 pub enum ResourceResponseDto {
     File {
         #[serde(flatten)]
@@ -250,6 +262,7 @@ pub enum ResourceResponseDto {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(rename = "SessionLimits")]
 pub struct SessionLimitsDto {
     #[ts(type = "number")]
     pub attempts: SafeInteger,
@@ -279,36 +292,37 @@ pub struct SessionLimitsDto {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
-#[ts(optional_fields)]
+#[ts(rename = "SessionLimitOverrides", optional_fields)]
 pub struct SessionLimitOverridesDto {
-    #[ts(type = "number")]
+    #[ts(optional, type = "number")]
     pub attempts: Option<SafeInteger>,
-    #[ts(type = "number")]
+    #[ts(optional, type = "number")]
     pub user_files: Option<SafeInteger>,
-    #[ts(type = "number")]
+    #[ts(optional, type = "number")]
     pub resolved_files: Option<SafeInteger>,
-    #[ts(type = "number")]
+    #[ts(optional, type = "number")]
     pub one_file_bytes: Option<SafeInteger>,
-    #[ts(type = "number")]
+    #[ts(optional, type = "number")]
     pub cached_file_bytes: Option<SafeInteger>,
-    #[ts(type = "number")]
+    #[ts(optional, type = "number")]
     pub user_source_bytes: Option<SafeInteger>,
-    #[ts(type = "number")]
+    #[ts(optional, type = "number")]
     pub output_bytes: Option<SafeInteger>,
-    #[ts(type = "number")]
+    #[ts(optional, type = "number")]
     pub engine_fuel: Option<SafeInteger>,
-    #[ts(type = "number")]
+    #[ts(optional, type = "number")]
     pub engine_steps: Option<SafeInteger>,
-    #[ts(type = "number")]
+    #[ts(optional, type = "number")]
     pub input_frames: Option<SafeInteger>,
-    #[ts(type = "number")]
+    #[ts(optional, type = "number")]
     pub journal_bytes: Option<SafeInteger>,
-    #[ts(type = "number")]
+    #[ts(optional, type = "number")]
     pub effects: Option<SafeInteger>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "kebab-case")]
+#[ts(rename = "EngineMode")]
 pub enum EngineModeDto {
     Tex82,
     Etex,
@@ -319,6 +333,7 @@ pub enum EngineModeDto {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "kebab-case")]
+#[ts(rename = "OutputCapability")]
 pub enum OutputCapabilityDto {
     Dvi,
     Pdf,
@@ -327,6 +342,7 @@ pub enum OutputCapabilityDto {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(rename = "JobClock")]
 pub struct JobClockDto {
     pub year: i32,
     pub month: u8,
@@ -336,6 +352,7 @@ pub struct JobClockDto {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "kebab-case")]
+#[ts(rename = "FontLayoutPolicy")]
 pub enum FontLayoutPolicyDto {
     OpentypePreferred,
     ClassicTfmExact,
@@ -343,6 +360,7 @@ pub enum FontLayoutPolicyDto {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "kebab-case")]
+#[ts(rename = "FontMappingFallback")]
 pub enum FontMappingFallbackDto {
     Error,
     ClassicTfmExact,
@@ -350,7 +368,7 @@ pub enum FontMappingFallbackDto {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
-#[ts(optional_fields)]
+#[ts(rename = "SessionOptions", optional_fields)]
 pub struct SessionOptionsDto {
     pub main_path: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -370,6 +388,7 @@ pub struct SessionOptionsDto {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub clock: Option<JobClockDto>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional, type = "Partial<SessionLimits> | undefined")]
     pub limits: Option<SessionLimitOverridesDto>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub font_layout_policy: Option<FontLayoutPolicyDto>,
@@ -379,6 +398,7 @@ pub struct SessionOptionsDto {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "kebab-case")]
+#[ts(rename = "BibliographyOutputFormat")]
 pub enum BibliographyOutputFormatDto {
     Bbl,
     Bibtex,
@@ -389,6 +409,7 @@ pub enum BibliographyOutputFormatDto {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(rename = "BibliographyOutputRequest")]
 pub struct BibliographyOutputRequestDto {
     pub path: String,
     pub format: BibliographyOutputFormatDto,
@@ -396,6 +417,7 @@ pub struct BibliographyOutputRequestDto {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "kebab-case")]
+#[ts(rename = "BibliographyMode")]
 pub enum BibliographyModeDto {
     Biblatex,
     Classic,
@@ -404,10 +426,11 @@ pub enum BibliographyModeDto {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
-#[ts(optional_fields)]
+#[ts(rename = "BibliographyOptions", optional_fields)]
 pub struct BibliographyOptionsDto {
     pub mode: Option<BibliographyModeDto>,
-    pub control_path: String,
+    pub control_path: Option<String>,
+    #[serde(default)]
     pub outputs: Vec<BibliographyOutputRequestDto>,
     pub configuration_path: Option<String>,
     pub schema_paths: Option<Vec<String>>,
@@ -417,7 +440,7 @@ pub struct BibliographyOptionsDto {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
-#[ts(optional_fields)]
+#[ts(rename = "FixedPointLimitOverrides", optional_fields)]
 pub struct FixedPointLimitOverridesDto {
     pub attempts: Option<u32>,
     pub passes: Option<u32>,
@@ -425,6 +448,7 @@ pub struct FixedPointLimitOverridesDto {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(rename = "ProjectSessionOptions")]
 pub struct ProjectSessionOptionsDto {
     #[serde(flatten)]
     #[ts(flatten)]
@@ -437,6 +461,7 @@ pub struct ProjectSessionOptionsDto {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(rename = "EditorSessionOptions")]
 pub struct EditorSessionOptionsDto {
     #[serde(flatten)]
     #[ts(flatten)]
@@ -448,6 +473,7 @@ pub struct EditorSessionOptionsDto {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(rename = "SourcePatch")]
 pub struct SourcePatchDto {
     pub next_revision: u32,
     pub base_revision: u32,
@@ -459,6 +485,7 @@ pub struct SourcePatchDto {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "kebab-case")]
+#[ts(rename = "DiagnosticCode")]
 pub enum DiagnosticCodeDto {
     Compile,
     Limit,
@@ -477,6 +504,7 @@ pub enum DiagnosticCodeDto {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(rename = "CompileSourceLocation")]
 pub struct CompileSourceLocationDto {
     pub file: String,
     pub byte_start: u32,
@@ -487,6 +515,7 @@ pub struct CompileSourceLocationDto {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(rename = "BibliographyDiagnostic")]
 pub struct BibliographyDiagnosticDto {
     pub code: String,
     pub message: String,
@@ -494,7 +523,7 @@ pub struct BibliographyDiagnosticDto {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
-#[ts(optional_fields)]
+#[ts(rename = "Diagnostic", optional_fields)]
 pub struct DiagnosticDto {
     pub code: DiagnosticCodeDto,
     pub message: String,
@@ -506,6 +535,7 @@ pub struct DiagnosticDto {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(rename = "CompileOutputFile")]
 pub struct CompileOutputFileDto {
     pub path: String,
     #[serde(with = "serde_bytes")]
@@ -515,7 +545,7 @@ pub struct CompileOutputFileDto {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
-#[ts(optional_fields)]
+#[ts(rename = "CompileOutput", optional_fields)]
 pub struct CompileOutputDto {
     pub outputs: Vec<OutputCapabilityDto>,
     pub terminal: String,
@@ -540,6 +570,7 @@ pub struct CompileOutputDto {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "kebab-case")]
+#[ts(rename = "BibliographyBackend")]
 pub enum BibliographyBackendDto {
     Biblatex,
     Classic,
@@ -547,6 +578,7 @@ pub enum BibliographyBackendDto {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(rename = "BibliographyResult")]
 pub struct BibliographyResultDto {
     pub backend: BibliographyBackendDto,
     pub files: Vec<CompileOutputFileDto>,
@@ -555,7 +587,7 @@ pub struct BibliographyResultDto {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
-#[ts(optional_fields)]
+#[ts(rename = "ProjectCompileOutput", optional_fields)]
 pub struct ProjectCompileOutputDto {
     pub revision: u32,
     pub content_hash: String,
@@ -570,7 +602,7 @@ pub struct ProjectCompileOutputDto {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
-#[ts(optional_fields)]
+#[ts(rename = "EditorCompileOutput", optional_fields)]
 pub struct EditorCompileOutputDto {
     pub revision: u32,
     pub content_hash: String,
@@ -583,6 +615,7 @@ pub struct EditorCompileOutputDto {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "kebab-case")]
+#[ts(rename = "ObservationNamespace")]
 pub enum ObservationNamespaceDto {
     Authored,
     Generated,
@@ -595,6 +628,7 @@ pub enum ObservationNamespaceDto {
     rename_all = "kebab-case",
     rename_all_fields = "camelCase"
 )]
+#[ts(rename = "ObservationOutcome")]
 pub enum ObservationOutcomeDto {
     Present { content_hash: String },
     Missing,
@@ -602,6 +636,7 @@ pub enum ObservationOutcomeDto {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "kebab-case")]
+#[ts(rename = "ObservationAccess")]
 pub enum ObservationAccessDto {
     RequiredRead,
     AuthoritativeProbe,
@@ -609,6 +644,7 @@ pub enum ObservationAccessDto {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "kebab-case")]
+#[ts(rename = "ObservationPhase")]
 pub enum ObservationPhaseDto {
     Tex,
     BibliographyDetection,
@@ -617,6 +653,7 @@ pub enum ObservationPhaseDto {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "kebab-case")]
+#[ts(rename = "ObservationOwner")]
 pub enum ObservationOwnerDto {
     TexEngine,
     BibliographyDetector,
@@ -626,7 +663,7 @@ pub enum ObservationOwnerDto {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
-#[ts(optional_fields)]
+#[ts(rename = "AcceptedInputObservation", optional_fields)]
 pub struct AcceptedInputObservationDto {
     pub path: String,
     pub namespace: ObservationNamespaceDto,
@@ -644,6 +681,7 @@ pub struct AcceptedInputObservationDto {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(rename = "AcceptedInputObservationLedger")]
 pub struct AcceptedInputObservationLedgerDto {
     pub schema_version: u32,
     pub revision: u32,
@@ -652,6 +690,7 @@ pub struct AcceptedInputObservationLedgerDto {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "kebab-case")]
+#[ts(rename = "SameHistoryStop")]
 pub enum SameHistoryStopDto {
     Matched,
     ScheduleDiverged,
@@ -662,6 +701,7 @@ pub enum SameHistoryStopDto {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(rename = "ReuseMetrics")]
 pub struct ReuseMetricsDto {
     pub pages_reused: u32,
     pub pages_retyped: u32,
@@ -686,6 +726,7 @@ pub struct ReuseMetricsDto {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(rename = "RetentionMetrics")]
 pub struct RetentionMetricsDto {
     #[ts(type = "number")]
     pub checkpoint_root_bytes: SafeInteger,
@@ -705,6 +746,7 @@ pub struct RetentionMetricsDto {
     rename_all = "kebab-case",
     rename_all_fields = "camelCase"
 )]
+#[ts(rename = "RenderedSourceResult")]
 pub enum RenderedSourceResultDto {
     Current {
         path: String,
@@ -726,6 +768,7 @@ pub enum RenderedSourceResultDto {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
 #[serde(untagged)]
+#[ts(rename = "CompileResultOutput")]
 pub enum CompileResultOutputDto {
     Compile(CompileOutputDto),
     Project(ProjectCompileOutputDto),
@@ -737,6 +780,7 @@ pub enum CompileResultOutputDto {
     rename_all = "kebab-case",
     rename_all_fields = "camelCase"
 )]
+#[ts(rename = "AttemptResult")]
 pub enum AttemptResultDto {
     NeedResources {
         required: Vec<ResourceRequestDto>,
@@ -757,6 +801,7 @@ pub enum AttemptResultDto {
     rename_all = "kebab-case",
     rename_all_fields = "camelCase"
 )]
+#[ts(rename = "EditorStatus")]
 pub enum EditorStatusDto {
     Provisional {
         revision: u32,
@@ -780,6 +825,7 @@ pub enum EditorStatusDto {
     rename_all = "kebab-case",
     rename_all_fields = "camelCase"
 )]
+#[ts(rename = "EditorAttemptResult")]
 pub enum EditorAttemptResultDto {
     NeedResources {
         phase: EditorPhaseDto,
@@ -809,6 +855,7 @@ pub enum EditorAttemptResultDto {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "kebab-case")]
+#[ts(rename = "EditorPhase")]
 pub enum EditorPhaseDto {
     Advance,
     Stabilization,
@@ -818,6 +865,7 @@ pub enum EditorPhaseDto {
 /// [`DiagnosticCodeDto`] and bibliography diagnostics retain their own codes.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "kebab-case")]
+#[ts(rename = "HostErrorCode")]
 pub enum HostErrorCodeDto {
     Compile,
     Resolve,
@@ -839,6 +887,119 @@ pub enum HostErrorCodeDto {
     Timeout,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(rename = "CatalogShard")]
+pub struct CatalogShardDto {
+    pub index: u32,
+    pub object: String,
+    pub sha256: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(rename = "CatalogPreparedBatch")]
+pub struct CatalogPreparedBatchDto {
+    pub root: String,
+    pub shards: Vec<CatalogShardDto>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[ts(rename = "CatalogRawShard")]
+pub struct CatalogRawShardDto {
+    pub index: u32,
+    pub text: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "kebab-case")]
+#[ts(rename = "CatalogJobRequirement")]
+pub enum CatalogJobRequirementDto {
+    Required,
+    Hint,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "kebab-case")]
+#[ts(rename = "CatalogJobKind")]
+pub enum CatalogJobKindDto {
+    File,
+    Font,
+    LegacyFontMapping,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(rename = "CatalogJobEntry", optional_fields)]
+pub struct CatalogJobEntryDto {
+    pub object: String,
+    pub sha256: String,
+    #[ts(type = "number")]
+    pub bytes: SafeInteger,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub virtual_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub container: Option<FontContainerDto>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub program_identity: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provenance: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub font_key: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unicode_map: Option<Vec<Option<String>>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fallback: Option<FontMappingFallbackDto>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(rename = "CatalogJob")]
+pub struct CatalogJobDto {
+    pub manifest_key: String,
+    pub requirement: CatalogJobRequirementDto,
+    pub kind: CatalogJobKindDto,
+    pub request_index: Option<u32>,
+    pub entry: CatalogJobEntryDto,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(rename = "CatalogBatchPlan")]
+pub struct CatalogBatchPlanDto {
+    pub jobs: Vec<CatalogJobDto>,
+    pub misses: Vec<u32>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(rename = "FormatInputClosure")]
+pub struct FormatInputClosureDto {
+    pub schema: u32,
+    pub keys: Vec<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(rename = "NamedFormat", optional_fields)]
+pub struct NamedFormatDto {
+    pub name: String,
+    pub object: String,
+    pub sha256: String,
+    #[ts(type = "number")]
+    pub bytes: SafeInteger,
+    pub engine: String,
+    pub engine_version: String,
+    pub format_schema: u32,
+    pub source_distribution: String,
+    pub source_manifest_sha256: String,
+    #[ts(type = "number")]
+    pub source_date_epoch: SafeInteger,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub input_closure: Option<FormatInputClosureDto>,
+}
+
 /// Derives the complete TypeScript schema from the Rust DTO definitions.
 ///
 /// Publication tooling may write this text into the low-level package
@@ -847,7 +1008,7 @@ pub enum HostErrorCodeDto {
 pub fn typescript_declarations() -> String {
     macro_rules! declarations {
         ($($ty:ty),+ $(,)?) => {{
-            let mut output = String::new();
+            let mut output = String::from("// Generated from the schema-1 DTOs in wire.rs.\n");
             $(
                 output.push_str("export ");
                 output.push_str(&<$ty>::decl());
@@ -914,12 +1075,21 @@ pub fn typescript_declarations() -> String {
         EditorAttemptResultDto,
         EditorPhaseDto,
         HostErrorCodeDto,
+        CatalogShardDto,
+        CatalogPreparedBatchDto,
+        CatalogRawShardDto,
+        CatalogJobRequirementDto,
+        CatalogJobKindDto,
+        CatalogJobEntryDto,
+        CatalogJobDto,
+        CatalogBatchPlanDto,
+        FormatInputClosureDto,
+        NamedFormatDto,
     )
 }
 
 /// Serializes a DTO as an ordinary JavaScript object while preserving byte
 /// buffers as `Uint8Array` and omitting `None` properties.
-#[cfg(target_arch = "wasm32")]
 pub fn to_js_value<T: Serialize + ?Sized>(
     value: &T,
 ) -> Result<wasm_bindgen::JsValue, wasm_bindgen::JsValue> {
@@ -1086,11 +1256,12 @@ mod tests {
     #[test]
     fn derived_typescript_names_binary_fields_explicitly() {
         let output = typescript_declarations();
+        assert_eq!(output, include_str!("wire_schema.d.ts"));
         assert!(output.contains("log: Uint8Array"));
         assert!(output.contains("dvi: Uint8Array"));
         assert!(output.contains("html?: Uint8Array | undefined"), "{output}");
         assert!(
-            output.contains("acceptedInputObservations?: AcceptedInputObservationLedgerDto"),
+            output.contains("acceptedInputObservations?: AcceptedInputObservationLedger"),
             "{output}"
         );
         assert!(!output.contains("number[]"));

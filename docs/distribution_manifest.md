@@ -413,3 +413,19 @@ authoritative. It fetches inline dependency records directly, so dependency
 hints never require another index lookup. Root, shard, and ordinary object
 cache entries are all reverified on read; an offline compile succeeds with a
 fully warm cache without network access.
+
+## Legacy monolithic API disposition
+
+The public schema-1 `Manifest` parser, `select` function, and associated
+monolithic record types remain a compatibility and publication input surface.
+`texlive-wasm-publish --shard-existing` consumes that parser to convert an
+already verified monolithic staging bundle, and the publisher constructs the
+same records before `umber-distribution` creates the sharded catalogue. They
+are therefore retained until that documented conversion command is retired or
+migrated; deleting them in the WebAssembly binding migration would remove a
+supported offline publication path.
+
+They are not a second browser wire authority. WebAssembly and authored
+JavaScript expose only schema-1 DTOs for prepared shard batches,
+authenticated selection plans, and named formats. Browser resolution never
+parses or selects from the monolithic model.

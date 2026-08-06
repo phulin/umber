@@ -136,9 +136,7 @@ export class HttpManifestResolver {
 				typeof manifest === "string"
 					? manifest
 					: `${JSON.stringify(manifest)}\n`;
-			const prepared = JSON.parse(
-				this.catalog.catalogPrepareBatch(rootText, []),
-			);
+			const prepared = this.catalog.catalogPrepareBatch(rootText, []);
 			this.rootCanonical = prepared.root;
 			this.manifest = JSON.parse(this.rootCanonical);
 			this.manifest.formats ??= {};
@@ -313,11 +311,9 @@ export class HttpManifestResolver {
 						: encodeRequest(request),
 		}));
 		try {
-			const prepared = JSON.parse(
-				this.catalog.catalogPrepareBatch(
-					this.rootCanonical,
-					descriptors.map(({ key }) => key),
-				),
+			const prepared = this.catalog.catalogPrepareBatch(
+				this.rootCanonical,
+				descriptors.map(({ key }) => key),
 			);
 			const shards = await Promise.all(
 				prepared.shards.map(async (shard) => ({
@@ -325,12 +321,10 @@ export class HttpManifestResolver {
 					text: await this.#shard(shard, signal),
 				})),
 			);
-			const plan = JSON.parse(
-				this.catalog.catalogPlanBatch(
-					this.rootCanonical,
-					JSON.stringify(shards),
-					descriptors.map(({ key }) => key),
-				),
+			const plan = this.catalog.catalogPlanBatch(
+				this.rootCanonical,
+				shards,
+				descriptors.map(({ key }) => key),
 			);
 			return {
 				jobs: plan.jobs.map((job) => ({
@@ -414,9 +408,7 @@ export class HttpManifestResolver {
 
 	formatMetadata(name) {
 		try {
-			return JSON.parse(
-				this.catalog.catalogSelectFormat(this.rootCanonical, name),
-			);
+			return this.catalog.catalogSelectFormat(this.rootCanonical, name);
 		} catch (error) {
 			throw new ManifestResolverError(
 				"invalid-format",

@@ -27,8 +27,8 @@ Run authored tests with `node --test crates/umber-wasm/js/*.test.js`.
 - `html-patch-shared.js`: internal schema constants, bounded values, and adapter utilities.
 - `source-map.js` / `source-map.d.ts`: DOM point to revision-checked rendered-source query helper.
 - `manifest-resolver.js`: immutable-manifest HTTP/cache adapter over the
-  required `umber-wasm` catalog bindings; it owns transport policy but no
-  catalog schema or selection policy.
+  required typed `umber-wasm` catalogue plans; it owns transport policy but no
+  catalogue schema, JSON bridge, or selection policy.
 - `manifest-schema.js`: request/response wire identity adapters only; catalogue
   parsing, duplicate rejection, authentication, partitioning, serialization,
   format lookup, and batch selection remain in `umber-distribution` behind the

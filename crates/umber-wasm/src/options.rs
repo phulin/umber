@@ -1,5 +1,6 @@
 use bib_engine::{BibOptionsBuilder, BibliographyMode, OutputFormat, OutputRequest};
-use js_sys::{Array, Date, Reflect, Uint8Array};
+use js_sys::{Date, Reflect};
+use serde::de::DeserializeOwned;
 use umber::{
     BibliographyProjectOptions, EngineMode, FeatureSetting, FileContentId, FileKind, FileRequest,
     FileRequestKey, FixedPointLimits, FontContainer, FontFeaturePolicy, FontLanguage,
@@ -9,114 +10,206 @@ use umber::{
     ResourceResponse, SessionLimits, SessionOptions, SourcePatch, VariationCoordinate,
     VariationSelection, WritingDirection,
 };
-use wasm_bindgen::{JsCast, JsValue};
+use wasm_bindgen::JsValue;
 
-use crate::js_error;
+use crate::{js_error, wire};
 
 pub(crate) fn parse_options(value: &JsValue) -> Result<SessionOptions, JsValue> {
-    require_object(value, "session options")?;
+    reject_removed_output_options(value)?;
+    session_options(from_js(value.clone())?)
+}
+
+pub(crate) fn parse_project_options(value: &JsValue) -> Result<LatexProjectOptions, JsValue> {
+    reject_removed_output_options(value)?;
+    let dto: wire::ProjectSessionOptionsDto = from_js(value.clone())?;
+    let tex = session_options(dto.session)?;
+    let bibliography = dto.bibliography;
+    let control_path = bibliography
+        .control_path
+        .as_deref()
+        .map(parse_virtual_path)
+        .transpose()?;
+    let mut builder = BibOptionsBuilder::new();
+    let outputs = if matches!(
+        bibliography.mode,
+        Some(wire::BibliographyModeDto::Classic | wire::BibliographyModeDto::Auto)
+    ) {
+        Vec::new()
+    } else {
+        bibliography.outputs
+    };
+    for output in outputs {
+        let format = match output.format {
+            wire::BibliographyOutputFormatDto::Bbl => OutputFormat::Bbl,
+            wire::BibliographyOutputFormatDto::Bibtex => OutputFormat::Bibtex,
+            wire::BibliographyOutputFormatDto::BiblatexXml => OutputFormat::BibLatexXml,
+            wire::BibliographyOutputFormatDto::BblXml => OutputFormat::BblXml,
+            wire::BibliographyOutputFormatDto::Dot => OutputFormat::Dot,
+        };
+        builder
+            .output(OutputRequest::new(
+                parse_virtual_path(&output.path)?,
+                format,
+            ))
+            .map_err(crate::boundary_error)?;
+    }
+    if let Some(path) = bibliography.configuration_path {
+        builder.configuration(parse_virtual_path(&path)?);
+    }
+    for path in bibliography.schema_paths.unwrap_or_default() {
+        builder
+            .schema(parse_virtual_path(&path)?)
+            .map_err(crate::boundary_error)?;
+    }
+    let limits = fixed_point_limits(dto.project_limits, LatexProjectLimits::default());
+    let biblatex = builder.freeze();
+    let bibliography = match bibliography.mode {
+        None => BibliographyProjectOptions::biblatex(
+            control_path.ok_or_else(|| js_error("project bibliography requires controlPath"))?,
+            biblatex,
+        ),
+        Some(wire::BibliographyModeDto::Biblatex) => BibliographyProjectOptions {
+            mode: BibliographyMode::Biblatex {
+                control_path: control_path
+                    .ok_or_else(|| js_error("biblatex bibliography requires controlPath"))?,
+            },
+            biblatex,
+            bib_session: bib_engine::BibSessionOptions::default(),
+            classic: bib_engine::ClassicBibOptions::default(),
+            detector: bib_engine::BibliographyDetectorOptions::default(),
+        },
+        Some(wire::BibliographyModeDto::Classic) => {
+            BibliographyProjectOptions::classic(parse_virtual_path(
+                bibliography
+                    .aux_path
+                    .as_deref()
+                    .ok_or_else(|| js_error("classic bibliography requires auxPath"))?,
+            )?)
+        }
+        Some(wire::BibliographyModeDto::Auto) => {
+            BibliographyProjectOptions::auto(parse_virtual_path(
+                bibliography
+                    .job_path
+                    .as_deref()
+                    .ok_or_else(|| js_error("auto bibliography requires jobPath"))?,
+            )?)
+        }
+    };
+    Ok(LatexProjectOptions {
+        tex,
+        bibliography,
+        limits,
+    })
+}
+
+pub(crate) fn parse_editor_options(
+    value: &JsValue,
+) -> Result<umber::EditorSessionOptions, JsValue> {
+    reject_removed_output_options(value)?;
+    let dto: wire::EditorSessionOptionsDto = from_js(value.clone())?;
+    Ok(umber::EditorSessionOptions {
+        tex: session_options(dto.session)?,
+        stabilization: fixed_point_limits(dto.stabilization_limits, FixedPointLimits::default()),
+    })
+}
+
+fn session_options(dto: wire::SessionOptionsDto) -> Result<SessionOptions, JsValue> {
     let mut options = SessionOptions {
-        main_path: required_string(value, "mainPath")?,
+        main_path: dto.main_path,
+        job_name: dto.job_name,
+        format: dto.format,
         clock: browser_job_clock(),
         ..SessionOptions::default()
     };
-    options.job_name = optional_string(value, "jobName")?;
-    options.format = optional_bytes(value, "format")?;
-    let hints = field(value, "formatPrefetchHints")?;
-    if !absent(&hints) {
-        if !Array::is_array(&hints) {
-            return Err(js_error("formatPrefetchHints must be an array"));
-        }
+    if let Some(hints) = dto.format_prefetch_hints {
         options.initial_prefetch_hints = Some(
-            Array::from(&hints)
-                .iter()
-                .map(|hint| {
-                    require_object(&hint, "format prefetch hint")?;
-                    if required_string(&hint, "type")? != "file" {
-                        return Err(js_error("format prefetch hints must be file requests"));
+            hints
+                .into_iter()
+                .map(|hint| match hint {
+                    wire::ResourceRequestDto::File { key, original_name } => {
+                        Ok(ResourceRequest::File(FileRequest::new(
+                            file_request_key(key)?,
+                            original_name,
+                        )))
                     }
-                    let key = parse_request_key(&hint)?;
-                    let original_name = optional_string(&hint, "originalName")?
-                        .unwrap_or_else(|| key.name().to_owned());
-                    Ok(ResourceRequest::File(FileRequest::new(key, original_name)))
+                    _ => Err(js_error("format prefetch hints must be file requests")),
                 })
-                .collect::<Result<Vec<_>, JsValue>>()?
+                .collect::<Result<Vec<_>, _>>()?
                 .into_boxed_slice(),
         );
     }
-    if let Some(engine) = optional_string(value, "engine")? {
-        options.engine = match engine.as_str() {
-            "tex82" => EngineMode::Tex82,
-            "etex" => EngineMode::ETex,
-            "pdftex" => EngineMode::PdfTex,
-            "latex" => EngineMode::Latex,
-            "pdflatex" => EngineMode::PdfLatex,
-            _ => {
-                return Err(js_error(
-                    "engine must be 'tex82', 'etex', 'pdftex', 'latex', or 'pdflatex'",
-                ));
-            }
+    if let Some(engine) = dto.engine {
+        options.engine = match engine {
+            wire::EngineModeDto::Tex82 => EngineMode::Tex82,
+            wire::EngineModeDto::Etex => EngineMode::ETex,
+            wire::EngineModeDto::Pdftex => EngineMode::PdfTex,
+            wire::EngineModeDto::Latex => EngineMode::Latex,
+            wire::EngineModeDto::Pdflatex => EngineMode::PdfLatex,
         };
     }
-    let requested_outputs = field(value, "outputs")?;
-    if !absent(&requested_outputs) {
-        if !Array::is_array(&requested_outputs) {
-            return Err(js_error("outputs must be a nonempty array"));
-        }
-        let mut outputs = None;
-        for output in Array::from(&requested_outputs).iter() {
-            let capability = match output.as_string().as_deref() {
-                Some("dvi") => OutputCapability::Dvi,
-                Some("pdf") => OutputCapability::Pdf,
-                Some("html") => OutputCapability::Html,
-                _ => return Err(js_error("outputs entries must be 'dvi', 'pdf', or 'html'")),
-            };
-            outputs = Some(outputs.map_or_else(
-                || OutputCapabilitySet::new(capability),
-                |set: OutputCapabilitySet| set.with(capability),
-            ));
-        }
-        options.outputs = outputs.ok_or_else(|| js_error("outputs must be a nonempty array"))?;
-    } else if has_value(value, "dvi")? || has_value(value, "html")? {
-        return Err(js_error(
-            "session options dvi/html were removed; use the nonempty outputs array",
-        ));
-    } else {
-        return Err(js_error(
-            "session options require a nonempty outputs array; outputs are never inferred from engine",
-        ));
+    let mut outputs = dto.outputs.into_iter().map(|output| match output {
+        wire::OutputCapabilityDto::Dvi => OutputCapability::Dvi,
+        wire::OutputCapabilityDto::Pdf => OutputCapability::Pdf,
+        wire::OutputCapabilityDto::Html => OutputCapability::Html,
+    });
+    let first = outputs.next().ok_or_else(|| {
+        js_error("session options require a nonempty outputs array; outputs are never inferred from engine")
+    })?;
+    options.outputs = outputs.fold(OutputCapabilitySet::new(first), OutputCapabilitySet::with);
+    if let Some(clock) = dto.clock {
+        options.clock = tex_state::JobClock {
+            year: clock.year,
+            month: i32::from(clock.month),
+            day: i32::from(clock.day),
+            time: i32::from(clock.minutes),
+            second: 0,
+        };
     }
-    options.font_layout_policy = match optional_string(value, "fontLayoutPolicy")?.as_deref() {
-        None => umber::FontLayoutPolicy::OpenTypePreferred,
-        Some("classic-tfm-exact") => umber::FontLayoutPolicy::ClassicTfmExact,
-        Some("opentype-preferred") => umber::FontLayoutPolicy::OpenTypePreferred,
-        Some(_) => {
-            return Err(js_error(
-                "fontLayoutPolicy must be 'opentype-preferred' or 'classic-tfm-exact'",
-            ));
+    if let Some(limits) = dto.limits {
+        apply_limits(&mut options.limits, limits)?;
+    }
+    options.font_layout_policy = match dto.font_layout_policy {
+        None | Some(wire::FontLayoutPolicyDto::OpentypePreferred) => {
+            umber::FontLayoutPolicy::OpenTypePreferred
+        }
+        Some(wire::FontLayoutPolicyDto::ClassicTfmExact) => {
+            umber::FontLayoutPolicy::ClassicTfmExact
         }
     };
-    options.font_mapping_fallback = match optional_string(value, "fontMappingFallback")?.as_deref()
-    {
-        None | Some("classic-tfm-exact") => umber::FontMappingFallbackPolicy::ClassicTfmExact,
-        Some("error") => umber::FontMappingFallbackPolicy::Error,
-        Some(_) => {
-            return Err(js_error(
-                "fontMappingFallback must be 'error' or 'classic-tfm-exact'",
-            ));
+    options.font_mapping_fallback = match dto.font_mapping_fallback {
+        None | Some(wire::FontMappingFallbackDto::ClassicTfmExact) => {
+            umber::FontMappingFallbackPolicy::ClassicTfmExact
         }
+        Some(wire::FontMappingFallbackDto::Error) => umber::FontMappingFallbackPolicy::Error,
     };
-    if let Some(clock) = optional_object(value, "clock")? {
-        options.clock.year = integer::<i32>(&clock, "year")?;
-        options.clock.month = integer::<i32>(&clock, "month")?;
-        options.clock.day = integer::<i32>(&clock, "day")?;
-        options.clock.time = integer::<i32>(&clock, "minutes")?;
-        options.clock.second = 0;
-    }
-    if let Some(limits) = optional_object(value, "limits")? {
-        options.limits = parse_limits(&limits)?;
-    }
     Ok(options)
+}
+
+fn reject_removed_output_options(value: &JsValue) -> Result<(), JsValue> {
+    for name in ["dvi", "html"] {
+        let field = Reflect::get(value, &JsValue::from_str(name))?;
+        if !field.is_undefined() && !field.is_null() {
+            return Err(js_error(
+                "session options dvi/html were removed; use the nonempty outputs array",
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn fixed_point_limits(
+    overrides: Option<wire::FixedPointLimitOverridesDto>,
+    mut limits: FixedPointLimits,
+) -> FixedPointLimits {
+    if let Some(overrides) = overrides {
+        if let Some(attempts) = overrides.attempts {
+            limits.attempts = attempts;
+        }
+        if let Some(passes) = overrides.passes {
+            limits.passes = passes;
+        }
+    }
+    limits
 }
 
 fn browser_job_clock() -> tex_state::JobClock {
@@ -130,340 +223,191 @@ fn browser_job_clock() -> tex_state::JobClock {
     }
 }
 
-pub(crate) fn parse_project_options(value: &JsValue) -> Result<LatexProjectOptions, JsValue> {
-    let tex = parse_options(value)?;
-    let bibliography = optional_object(value, "bibliography")?
-        .ok_or_else(|| js_error("project options require bibliography"))?;
-    let mode = optional_string(&bibliography, "mode")?;
-    let control_path = optional_string(&bibliography, "controlPath")?
-        .map(|path| parse_virtual_path(&path))
-        .transpose()?;
-    let mut builder = BibOptionsBuilder::new();
-    let outputs = if matches!(mode.as_deref(), Some("classic") | Some("auto")) {
-        Vec::new()
-    } else {
-        parse_array(&bibliography, "outputs")?
-    };
-    for output in outputs {
-        let path = parse_virtual_path(&required_string(&output, "path")?)?;
-        let format = match required_string(&output, "format")?.as_str() {
-            "bbl" => OutputFormat::Bbl,
-            "bibtex" => OutputFormat::Bibtex,
-            "biblatex-xml" => OutputFormat::BibLatexXml,
-            "bbl-xml" => OutputFormat::BblXml,
-            "dot" => OutputFormat::Dot,
-            _ => return Err(js_error("bibliography output format is not recognized")),
-        };
-        builder
-            .output(OutputRequest::new(path, format))
-            .map_err(crate::boundary_error)?;
-    }
-    if let Some(path) = optional_string(&bibliography, "configurationPath")? {
-        builder.configuration(parse_virtual_path(&path)?);
-    }
-    let schemas = field(&bibliography, "schemaPaths")?;
-    if !absent(&schemas) {
-        if !Array::is_array(&schemas) {
-            return Err(js_error("bibliography schemaPaths must be an array"));
-        }
-        for path in Array::from(&schemas).iter() {
-            let path = path
-                .as_string()
-                .ok_or_else(|| js_error("bibliography schema paths must be strings"))?;
-            builder
-                .schema(parse_virtual_path(&path)?)
-                .map_err(crate::boundary_error)?;
-        }
-    }
-    let mut limits = LatexProjectLimits::default();
-    if let Some(value) = optional_object(value, "projectLimits")? {
-        if has_value(&value, "attempts")? {
-            limits.attempts = integer::<u32>(&value, "attempts")?;
-        }
-        if has_value(&value, "passes")? {
-            limits.passes = integer::<u32>(&value, "passes")?;
-        }
-    }
-    let biblatex = builder.freeze();
-    match mode.as_deref() {
-        None => Ok(LatexProjectOptions {
-            tex,
-            bibliography: BibliographyProjectOptions::biblatex(
-                control_path
-                    .ok_or_else(|| js_error("project bibliography requires controlPath"))?,
-                biblatex,
-            ),
-            limits,
-        }),
-        Some("biblatex") => Ok(LatexProjectOptions {
-            tex,
-            bibliography: BibliographyProjectOptions {
-                mode: BibliographyMode::Biblatex {
-                    control_path: control_path
-                        .ok_or_else(|| js_error("biblatex bibliography requires controlPath"))?,
-                },
-                biblatex,
-                bib_session: bib_engine::BibSessionOptions::default(),
-                classic: bib_engine::ClassicBibOptions::default(),
-                detector: bib_engine::BibliographyDetectorOptions::default(),
-            },
-            limits,
-        }),
-        Some("classic") => Ok(LatexProjectOptions {
-            tex,
-            bibliography: BibliographyProjectOptions::classic(parse_virtual_path(
-                &required_string(&bibliography, "auxPath")?,
-            )?),
-            limits,
-        }),
-        Some("auto") => Ok(LatexProjectOptions {
-            tex,
-            bibliography: BibliographyProjectOptions::auto(parse_virtual_path(&required_string(
-                &bibliography,
-                "jobPath",
-            )?)?),
-            limits,
-        }),
-        Some(_) => Err(js_error(
-            "bibliography mode must be 'biblatex', 'classic', or 'auto'",
-        )),
-    }
-}
-
-pub(crate) fn parse_editor_options(
-    value: &JsValue,
-) -> Result<umber::EditorSessionOptions, JsValue> {
-    let tex = parse_options(value)?;
-    let mut stabilization = FixedPointLimits::default();
-    if let Some(limits) = optional_object(value, "stabilizationLimits")? {
-        if has_value(&limits, "attempts")? {
-            stabilization.attempts = integer::<u32>(&limits, "attempts")?;
-        }
-        if has_value(&limits, "passes")? {
-            stabilization.passes = integer::<u32>(&limits, "passes")?;
-        }
-    }
-    Ok(umber::EditorSessionOptions { tex, stabilization })
-}
-
 fn parse_virtual_path(value: &str) -> Result<bib_engine::VirtualPath, JsValue> {
     bib_engine::VirtualPath::user(value).map_err(crate::boundary_error)
 }
 
 pub(crate) fn parse_source_patch(value: &JsValue) -> Result<SourcePatch, JsValue> {
-    require_object(value, "source patch")?;
-    let start = integer::<usize>(value, "start")?;
-    let end = integer::<usize>(value, "end")?;
-    if start > end {
+    let dto: wire::SourcePatchDto = from_js(value.clone())?;
+    if dto.start > dto.end {
         return Err(js_error("source patch start must not exceed end"));
     }
     Ok(SourcePatch {
-        next_revision: umber::RevisionId::new(u64::from(integer::<u32>(value, "nextRevision")?)),
-        base_revision: umber::RevisionId::new(u64::from(integer::<u32>(value, "baseRevision")?)),
-        expected_hash: parse_content_hash(&required_string(value, "expectedHash")?)?,
-        range: start..end,
-        replacement: required_string(value, "replacement")?,
+        next_revision: umber::RevisionId::new(u64::from(dto.next_revision)),
+        base_revision: umber::RevisionId::new(u64::from(dto.base_revision)),
+        expected_hash: parse_content_hash(&dto.expected_hash)?,
+        range: dto.start as usize..dto.end as usize,
+        replacement: dto.replacement,
     })
 }
 
 fn parse_content_hash(value: &str) -> Result<tex_state::ContentHash, JsValue> {
-    if value.len() != 64 {
-        return Err(js_error(
-            "expectedHash must contain 64 lowercase hex digits",
-        ));
-    }
-    let mut bytes = [0_u8; 32];
-    for (index, pair) in value.as_bytes().chunks_exact(2).enumerate() {
-        let digit = |byte: u8| match byte {
-            b'0'..=b'9' => Some(byte - b'0'),
-            b'a'..=b'f' => Some(byte - b'a' + 10),
-            _ => None,
-        };
-        let high = digit(pair[0])
-            .ok_or_else(|| js_error("expectedHash must contain 64 lowercase hex digits"))?;
-        let low = digit(pair[1])
-            .ok_or_else(|| js_error("expectedHash must contain 64 lowercase hex digits"))?;
-        bytes[index] = (high << 4) | low;
-    }
-    Ok(tex_state::ContentHash::new(bytes))
-}
-
-pub(crate) fn parse_request_key(value: &JsValue) -> Result<FileRequestKey, JsValue> {
-    require_object(value, "file request key")?;
-    let kind_name = required_string(value, "kind")?;
-    let kind = FileKind::from_wire_name(&kind_name)
-        .ok_or_else(|| js_error("file request kind is not recognized"))?;
-    let domain = optional_string(value, "domain")?
-        .map(|domain| {
-            ResourceDomain::from_wire_name(&domain)
-                .ok_or_else(|| js_error("file request domain is not recognized"))
-        })
-        .transpose()?
-        .unwrap_or_else(|| kind.domain());
-    FileRequestKey::for_domain(domain, kind, &required_string(value, "name")?)
-        .map_err(crate::boundary_error)
+    parse_digest(value).map(tex_state::ContentHash::new)
 }
 
 pub(crate) fn parse_resource_responses(value: &JsValue) -> Result<Vec<ResourceResponse>, JsValue> {
-    if !Array::is_array(value) {
-        return Err(js_error("resource responses must be an array"));
-    }
-    Array::from(value)
-        .iter()
-        .map(|response| {
-            require_object(&response, "resource response")?;
-            match required_string(&response, "type")?.as_str() {
-                "file" => Ok(ResourceResponse::File(ResolvedFile {
-                    request: parse_request_key(&response)?,
-                    virtual_path: required_string(&response, "virtualPath")?,
-                    bytes: required_bytes(&response, "bytes")?,
-                    expected_digest: optional_string(&response, "expectedContentId")?
-                        .map(|digest| parse_digest(&digest).map(FileContentId::from_identity_bytes))
-                        .transpose()?,
-                })),
-                "file-unavailable" => Ok(ResourceResponse::FileUnavailable(parse_request_key(
-                    &response,
-                )?)),
-                "font" => Ok(ResourceResponse::Font(parse_resolved_font(&response)?)),
-                "font-unavailable" => Ok(ResourceResponse::FontUnavailable(
-                    parse_font_request_key(&response)?,
-                )),
-                "pk-font" => Ok(ResourceResponse::PkFont(ResolvedPkFont {
-                    request: parse_pk_font_request(&response)?,
-                    virtual_path: required_string(&response, "virtualPath")?,
-                    bytes: required_bytes(&response, "bytes")?,
-                    expected_sha256: optional_string(&response, "expectedSha256")?
-                        .map(|digest| parse_digest(&digest))
-                        .transpose()?,
-                })),
-                "pk-font-unavailable" => Ok(ResourceResponse::PkFontUnavailable(
-                    parse_pk_font_request(&response)?,
-                )),
-                _ => Err(js_error("resource response type is not recognized")),
-            }
-        })
-        .collect()
+    let responses: Vec<wire::ResourceResponseDto> = from_js(value.clone())?;
+    responses.into_iter().map(resource_response).collect()
 }
 
-fn parse_pk_font_request(value: &JsValue) -> Result<PdfPkFontRequest, JsValue> {
-    Ok(PdfPkFontRequest::new(
-        required_bytes(value, "texName")?,
-        integer::<u32>(value, "dpi")?,
-        required_bytes(value, "mode")?,
-    ))
-}
-
-fn parse_resolved_font(value: &JsValue) -> Result<ResolvedFont, JsValue> {
-    let request = parse_font_request_key(value)?;
-    let container = match required_string(value, "container")?.as_str() {
-        "woff2" => FontContainer::Woff2,
-        _ => return Err(js_error("WASM font container must be 'woff2'")),
-    };
-    let mapping_value = field(value, "legacyMapping")?;
-    let legacy_mapping = if absent(&mapping_value) {
-        None
-    } else {
-        require_object(&mapping_value, "legacy font mapping")?;
-        let encoding_value = field(&mapping_value, "encoding")?;
-        if !Array::is_array(&encoding_value) || Array::from(&encoding_value).length() != 256 {
-            return Err(js_error(
-                "legacy font mapping encoding must contain 256 entries",
-            ));
+fn resource_response(response: wire::ResourceResponseDto) -> Result<ResourceResponse, JsValue> {
+    match response {
+        wire::ResourceResponseDto::File {
+            key,
+            virtual_path,
+            bytes,
+            expected_content_id,
+        } => Ok(ResourceResponse::File(ResolvedFile {
+            request: file_request_key(key)?,
+            virtual_path,
+            bytes,
+            expected_digest: expected_content_id
+                .map(|digest| parse_digest(&digest).map(FileContentId::from_identity_bytes))
+                .transpose()?,
+        })),
+        wire::ResourceResponseDto::FileUnavailable { key } => {
+            Ok(ResourceResponse::FileUnavailable(file_request_key(key)?))
         }
-        let encoding = Array::from(&encoding_value)
-            .iter()
-            .map(|entry| {
-                if entry.is_null() || entry.is_undefined() {
-                    Ok(None)
-                } else {
-                    entry.as_string().map(Some).ok_or_else(|| {
-                        js_error("legacy font mapping entries must be strings or null")
+        wire::ResourceResponseDto::Font {
+            key,
+            container,
+            bytes,
+            object_sha256,
+            program_identity,
+            provenance,
+            legacy_mapping,
+        } => Ok(ResourceResponse::Font(ResolvedFont {
+            request: font_request_key(key)?,
+            container: match container {
+                wire::FontContainerDto::Woff2 => FontContainer::Woff2,
+            },
+            bytes,
+            declared_object_sha256: object_sha256
+                .map(|digest| parse_digest(&digest).map(FontObjectIdentity::from_bytes))
+                .transpose()?,
+            declared_program_identity: program_identity
+                .map(|digest| parse_digest(&digest).map(FontProgramIdentity::from_bytes))
+                .transpose()?,
+            provenance,
+            legacy_mapping: legacy_mapping
+                .map(|mapping| {
+                    if mapping.encoding.len() != 256 {
+                        return Err(js_error(
+                            "legacy font mapping encoding must contain 256 entries",
+                        ));
+                    }
+                    Ok(LegacyFontMapping {
+                        tfm_sha256: parse_digest(&mapping.tfm_sha256)?,
+                        encoding: mapping.encoding,
+                        embeddable: mapping.embeddable,
                     })
-                }
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        Some(LegacyFontMapping {
-            tfm_sha256: parse_digest(&required_string(&mapping_value, "tfmSha256")?)?,
-            encoding,
-            embeddable: required_bool(&mapping_value, "embeddable")?,
-        })
-    };
-    Ok(ResolvedFont {
-        request,
-        container,
-        bytes: required_bytes(value, "bytes")?,
-        declared_object_sha256: optional_string(value, "objectSha256")?
-            .map(|digest| parse_digest(&digest).map(FontObjectIdentity::from_bytes))
-            .transpose()?,
-        declared_program_identity: optional_string(value, "programIdentity")?
-            .map(|digest| parse_digest(&digest).map(FontProgramIdentity::from_bytes))
-            .transpose()?,
-        provenance: optional_string(value, "provenance")?,
-        legacy_mapping,
-    })
+                })
+                .transpose()?,
+        })),
+        wire::ResourceResponseDto::FontUnavailable { key } => {
+            Ok(ResourceResponse::FontUnavailable(font_request_key(key)?))
+        }
+        wire::ResourceResponseDto::PkFont {
+            key,
+            virtual_path,
+            bytes,
+            expected_sha256,
+        } => Ok(ResourceResponse::PkFont(ResolvedPkFont {
+            request: pk_font_request(key),
+            virtual_path,
+            bytes,
+            expected_sha256: expected_sha256
+                .map(|digest| parse_digest(&digest))
+                .transpose()?,
+        })),
+        wire::ResourceResponseDto::PkFontUnavailable { key } => {
+            Ok(ResourceResponse::PkFontUnavailable(pk_font_request(key)))
+        }
+    }
 }
 
-fn parse_font_request_key(value: &JsValue) -> Result<FontRequestKey, JsValue> {
-    let variation = parse_array(value, "variations")?
+fn file_request_key(key: wire::FileRequestKeyDto) -> Result<FileRequestKey, JsValue> {
+    let domain = match key.domain {
+        wire::ResourceDomainDto::Tex => ResourceDomain::Tex,
+        wire::ResourceDomainDto::Bibliography => ResourceDomain::Bibliography,
+        wire::ResourceDomainDto::Generic => ResourceDomain::Generic,
+    };
+    let kind = match key.kind {
+        wire::FileKindDto::Tex => FileKind::TexInput,
+        wire::FileKindDto::Tfm => FileKind::Tfm,
+        wire::FileKindDto::Format => FileKind::FormatImage,
+        wire::FileKindDto::BibControl => FileKind::BibControl,
+        wire::FileKindDto::BibData => FileKind::BibData,
+        wire::FileKindDto::BibConfiguration => FileKind::BibConfiguration,
+        wire::FileKindDto::XmlSchema => FileKind::XmlSchema,
+        wire::FileKindDto::Asset => FileKind::GenericAsset,
+        wire::FileKindDto::Image => FileKind::Image,
+        wire::FileKindDto::BibAux => FileKind::BibAux,
+        wire::FileKindDto::ClassicBibData => FileKind::ClassicBibData,
+        wire::FileKindDto::BibStyle => FileKind::BibStyle,
+        wire::FileKindDto::Vf => FileKind::VirtualFont,
+        wire::FileKindDto::FontMap => FileKind::PdfFontMap,
+        wire::FileKindDto::FontEncoding => FileKind::PdfEncoding,
+        wire::FileKindDto::FontProgram => FileKind::PdfFontProgram,
+    };
+    FileRequestKey::for_domain(domain, kind, &key.name).map_err(crate::boundary_error)
+}
+
+fn font_request_key(key: wire::FontRequestKeyDto) -> Result<FontRequestKey, JsValue> {
+    let coordinates = key
+        .variations
         .into_iter()
         .map(|coordinate| {
             Ok(VariationCoordinate {
-                tag: parse_tag(&required_string(&coordinate, "tag")?)?,
-                value: signed_integer::<i32>(&coordinate, "value")?,
+                tag: parse_tag(&coordinate.tag)?,
+                value: exact_signed_integer(coordinate.value, "variation value")?,
             })
         })
         .collect::<Result<Vec<_>, JsValue>>()?;
-    let features = parse_array(value, "features")?
-        .into_iter()
-        .map(|feature| {
-            Ok(FeatureSetting {
-                tag: parse_tag(&required_string(&feature, "tag")?)?,
-                value: if has_value(&feature, "value")? {
-                    integer::<u32>(&feature, "value")?
-                } else {
-                    u32::from(required_bool(&feature, "enabled")?)
-                },
-            })
-        })
-        .collect::<Result<Vec<_>, JsValue>>()?;
-    let variation = if has_value(value, "variationInstance")? {
-        let instance = field(value, "variationInstance")?;
-        if instance.as_string().as_deref() == Some("default") {
-            if !variation.is_empty() {
+    let variation = match key.variation_instance {
+        wire::VariationInstanceDto::Name(wire::VariationInstanceNameDto::Default) => {
+            if !coordinates.is_empty() {
                 return Err(js_error(
                     "default variation instance cannot include coordinates",
                 ));
             }
             VariationSelection::default()
-        } else if instance.as_string().as_deref() == Some("coordinates") {
-            VariationSelection::new(variation).map_err(crate::boundary_error)?
-        } else {
-            require_object(&instance, "variationInstance")?;
-            if !variation.is_empty() {
+        }
+        wire::VariationInstanceDto::Name(wire::VariationInstanceNameDto::Coordinates) => {
+            VariationSelection::new(coordinates).map_err(crate::boundary_error)?
+        }
+        wire::VariationInstanceDto::Named { named_name_id } => {
+            if !coordinates.is_empty() {
                 return Err(js_error(
                     "named variation instance cannot include coordinates",
                 ));
             }
-            VariationSelection::named(integer::<u16>(&instance, "namedNameId")?)
+            VariationSelection::named(named_name_id)
         }
-    } else {
-        VariationSelection::new(variation).map_err(crate::boundary_error)?
     };
-    let direction = match optional_string(value, "direction")?.as_deref() {
-        None | Some("ltr") => WritingDirection::LeftToRight,
-        Some("rtl") => WritingDirection::RightToLeft,
-        Some(_) => return Err(js_error("direction must be ltr or rtl")),
+    let features = key
+        .features
+        .into_iter()
+        .map(|feature| {
+            Ok(FeatureSetting {
+                tag: parse_tag(&feature.tag)?,
+                value: exact_unsigned_integer(feature.value, "feature value")?,
+            })
+        })
+        .collect::<Result<Vec<_>, JsValue>>()?;
+    let direction = match key.direction {
+        wire::WritingDirectionDto::Ltr => WritingDirection::LeftToRight,
+        wire::WritingDirectionDto::Rtl => WritingDirection::RightToLeft,
     };
-    let script = optional_string(value, "script")?
-        .map(|script| parse_tag(&script))
-        .transpose()?;
-    let language = optional_string(value, "language")?
+    let script = key.script.as_deref().map(parse_tag).transpose()?;
+    let language = key
+        .language
         .map(FontLanguage::new)
         .transpose()
         .map_err(crate::boundary_error)?;
     FontRequestKey::new(
-        required_string(value, "logicalName")?,
-        integer::<u32>(value, "faceIndex")?,
+        key.logical_name,
+        key.face_index,
         variation,
         FontFeaturePolicy::new(features).map_err(crate::boundary_error)?,
     )
@@ -471,12 +415,8 @@ fn parse_font_request_key(value: &JsValue) -> Result<FontRequestKey, JsValue> {
     .map_err(crate::boundary_error)
 }
 
-fn parse_array(object: &JsValue, name: &str) -> Result<Vec<JsValue>, JsValue> {
-    let value = field(object, name)?;
-    if !Array::is_array(&value) {
-        return Err(js_error(&format!("{name} must be an array")));
-    }
-    Ok(Array::from(&value).iter().collect())
+fn pk_font_request(key: wire::PkFontRequestKeyDto) -> PdfPkFontRequest {
+    PdfPkFontRequest::new(key.tex_name, key.dpi, key.mode)
 }
 
 fn parse_tag(value: &str) -> Result<OpenTypeTag, JsValue> {
@@ -490,87 +430,49 @@ fn parse_tag(value: &str) -> Result<OpenTypeTag, JsValue> {
     Ok(OpenTypeTag::new(bytes))
 }
 
-fn parse_limits(value: &JsValue) -> Result<SessionLimits, JsValue> {
-    let mut limits = SessionLimits::default();
-    if has_value(value, "attempts")? {
-        limits.attempts = integer::<u32>(value, "attempts")?;
+fn apply_limits(
+    limits: &mut SessionLimits,
+    overrides: wire::SessionLimitOverridesDto,
+) -> Result<(), JsValue> {
+    macro_rules! apply {
+        ($field:ident, $target:ty) => {
+            if let Some(value) = overrides.$field {
+                limits.$field = <$target>::try_from(value.get())
+                    .map_err(|_| js_error(concat!(stringify!($field), " is out of range")))?;
+            }
+        };
     }
-    if has_value(value, "userFiles")? {
-        limits.user_files = integer::<usize>(value, "userFiles")?;
-    }
-    if has_value(value, "resolvedFiles")? {
-        limits.resolved_files = integer::<usize>(value, "resolvedFiles")?;
-    }
-    if has_value(value, "oneFileBytes")? {
-        limits.one_file_bytes = integer::<usize>(value, "oneFileBytes")?;
-    }
-    if has_value(value, "cachedFileBytes")? {
-        limits.cached_file_bytes = integer::<usize>(value, "cachedFileBytes")?;
-    }
-    if has_value(value, "userSourceBytes")? {
-        limits.user_source_bytes = integer::<usize>(value, "userSourceBytes")?;
-    }
-    if has_value(value, "outputBytes")? {
-        limits.output_bytes = integer::<usize>(value, "outputBytes")?;
-    }
-    if has_value(value, "engineFuel")? {
-        limits.engine_fuel = integer::<u64>(value, "engineFuel")?;
-    }
-    if has_value(value, "engineSteps")? {
-        limits.engine_steps = integer::<u64>(value, "engineSteps")?;
-    }
-    if has_value(value, "inputFrames")? {
-        limits.input_frames = integer::<u64>(value, "inputFrames")?;
-    }
-    if has_value(value, "journalBytes")? {
-        limits.journal_bytes = integer::<u64>(value, "journalBytes")?;
-    }
-    if has_value(value, "effects")? {
-        limits.effects = integer::<u64>(value, "effects")?;
-    }
-    Ok(limits)
+    apply!(attempts, u32);
+    apply!(user_files, usize);
+    apply!(resolved_files, usize);
+    apply!(one_file_bytes, usize);
+    apply!(cached_file_bytes, usize);
+    apply!(user_source_bytes, usize);
+    apply!(output_bytes, usize);
+    apply!(engine_fuel, u64);
+    apply!(engine_steps, u64);
+    apply!(input_frames, u64);
+    apply!(journal_bytes, u64);
+    apply!(effects, u64);
+    Ok(())
 }
 
-fn required_string(object: &JsValue, name: &str) -> Result<String, JsValue> {
-    field(object, name)?
-        .as_string()
-        .ok_or_else(|| js_error(&format!("{name} must be a string")))
+fn exact_signed_integer(value: f64, name: &str) -> Result<i32, JsValue> {
+    if !value.is_finite()
+        || value.fract() != 0.0
+        || value < f64::from(i32::MIN)
+        || value > f64::from(i32::MAX)
+    {
+        return Err(js_error(&format!("{name} must be an integer")));
+    }
+    Ok(value as i32)
 }
 
-fn optional_string(object: &JsValue, name: &str) -> Result<Option<String>, JsValue> {
-    let value = field(object, name)?;
-    if absent(&value) {
-        return Ok(None);
+fn exact_unsigned_integer(value: f64, name: &str) -> Result<u32, JsValue> {
+    if !value.is_finite() || value.fract() != 0.0 || value < 0.0 || value > f64::from(u32::MAX) {
+        return Err(js_error(&format!("{name} must be a non-negative integer")));
     }
-    value
-        .as_string()
-        .map(Some)
-        .ok_or_else(|| js_error(&format!("{name} must be a string")))
-}
-
-fn optional_bytes(object: &JsValue, name: &str) -> Result<Option<Vec<u8>>, JsValue> {
-    let value = field(object, name)?;
-    if absent(&value) {
-        return Ok(None);
-    }
-    if !value.is_instance_of::<Uint8Array>() {
-        return Err(js_error(&format!("{name} must be a Uint8Array")));
-    }
-    Ok(Some(Uint8Array::new(&value).to_vec()))
-}
-
-fn required_bytes(object: &JsValue, name: &str) -> Result<Vec<u8>, JsValue> {
-    let value = field(object, name)?;
-    if !value.is_instance_of::<Uint8Array>() {
-        return Err(js_error(&format!("{name} must be a Uint8Array")));
-    }
-    Ok(Uint8Array::new(&value).to_vec())
-}
-
-fn required_bool(object: &JsValue, name: &str) -> Result<bool, JsValue> {
-    field(object, name)?
-        .as_bool()
-        .ok_or_else(|| js_error(&format!("{name} must be a boolean")))
+    Ok(value as u32)
 }
 
 fn parse_digest(value: &str) -> Result<[u8; 32], JsValue> {
@@ -589,64 +491,6 @@ fn parse_digest(value: &str) -> Result<[u8; 32], JsValue> {
     Ok(digest)
 }
 
-fn optional_object(object: &JsValue, name: &str) -> Result<Option<JsValue>, JsValue> {
-    let value = field(object, name)?;
-    if absent(&value) {
-        return Ok(None);
-    }
-    require_object(&value, name)?;
-    Ok(Some(value))
-}
-
-fn integer<T>(object: &JsValue, name: &str) -> Result<T, JsValue>
-where
-    T: TryFrom<u64>,
-{
-    let number = field(object, name)?
-        .as_f64()
-        .filter(|number| number.is_finite() && number.fract() == 0.0 && *number >= 0.0)
-        .ok_or_else(|| js_error(&format!("{name} must be a non-negative integer")))?;
-    if number > crate::wire::MAX_SAFE_INTEGER as f64 {
-        return Err(js_error(&format!(
-            "{name} exceeds JavaScript's safe integer range"
-        )));
-    }
-    T::try_from(number as u64).map_err(|_| js_error(&format!("{name} is out of range")))
-}
-
-fn signed_integer<T>(object: &JsValue, name: &str) -> Result<T, JsValue>
-where
-    T: TryFrom<i64>,
-{
-    let number = field(object, name)?
-        .as_f64()
-        .filter(|number| number.is_finite() && number.fract() == 0.0)
-        .ok_or_else(|| js_error(&format!("{name} must be an integer")))?;
-    if number < -(crate::wire::MAX_SAFE_INTEGER as f64)
-        || number > crate::wire::MAX_SAFE_INTEGER as f64
-    {
-        return Err(js_error(&format!(
-            "{name} exceeds JavaScript's safe integer range"
-        )));
-    }
-    T::try_from(number as i64).map_err(|_| js_error(&format!("{name} is out of range")))
-}
-
-fn has_value(object: &JsValue, name: &str) -> Result<bool, JsValue> {
-    Ok(!absent(&field(object, name)?))
-}
-
-fn field(object: &JsValue, name: &str) -> Result<JsValue, JsValue> {
-    Reflect::get(object, &JsValue::from_str(name))
-}
-
-fn require_object(value: &JsValue, name: &str) -> Result<(), JsValue> {
-    if !value.is_object() || value.is_null() {
-        return Err(js_error(&format!("{name} must be an object")));
-    }
-    Ok(())
-}
-
-fn absent(value: &JsValue) -> bool {
-    value.is_undefined() || value.is_null()
+fn from_js<T: DeserializeOwned>(value: JsValue) -> Result<T, JsValue> {
+    serde_wasm_bindgen::from_value(value).map_err(|error| js_error(&error.to_string()))
 }

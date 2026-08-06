@@ -5,7 +5,7 @@ mod options;
 mod result;
 pub mod wire;
 
-use js_sys::{Array, Uint8Array};
+use js_sys::Uint8Array;
 use options::{
     parse_editor_options, parse_options, parse_project_options, parse_resource_responses,
 };
@@ -14,254 +14,7 @@ use umber::{EditorCompileSession, LatexProjectSession, VirtualCompileSession};
 use wasm_bindgen::prelude::*;
 
 #[wasm_bindgen(typescript_custom_section)]
-const TYPESCRIPT_TYPES: &str = r#"
-export type ResourceDomain = "tex" | "bibliography" | "generic";
-export type FileKind = "tex" | "tfm" | "format" | "bib-control" | "bib-data" | "bib-configuration" | "xml-schema" | "asset" | "image" | "bib-aux" | "classic-bib-data" | "bib-style" | "vf" | "font-map" | "font-encoding" | "font-program";
-
-export interface FileRequestKey {
-  domain: ResourceDomain;
-  kind: FileKind;
-  name: string;
-}
-
-export interface FileRequest extends FileRequestKey {
-  type: "file";
-  originalName: string;
-}
-
-export interface FontRequestKey {
-  logicalName: string;
-  faceIndex: number;
-  variationInstance: "default" | "coordinates" | { namedNameId: number };
-  variations: Array<{ tag: string; value: number }>;
-  features: Array<{ tag: string; value: number }>;
-  direction: "ltr" | "rtl";
-  script?: string;
-  language?: string;
-}
-
-export interface FontRequest extends FontRequestKey {
-  type: "font";
-  acceptedContainers: Array<"woff2">;
-}
-
-export interface PkFontRequest {
-  type: "pk-font";
-  texName: Uint8Array;
-  dpi: number;
-  mode: Uint8Array;
-}
-
-export type ResourceRequest = FileRequest | FontRequest | PkFontRequest;
-export type ResourceResponse =
-  | (FileRequestKey & { type: "file"; virtualPath: string; bytes: Uint8Array; expectedContentId?: string })
-  | (FileRequestKey & { type: "file-unavailable" })
-  | (FontRequestKey & {
-      type: "font";
-      container: "woff2";
-      bytes: Uint8Array;
-      objectSha256?: string;
-      programIdentity?: string;
-      provenance?: string;
-      legacyMapping?: {
-        tfmSha256: string;
-        encoding: Array<string | null>;
-        embeddable: boolean;
-      };
-    })
-  | (FontRequestKey & { type: "font-unavailable" })
-  | (PkFontRequest & { virtualPath: string; bytes: Uint8Array; expectedSha256?: string })
-  | (Omit<PkFontRequest, "type"> & { type: "pk-font-unavailable" });
-
-export interface SessionLimits {
-  attempts: number;
-  userFiles: number;
-  resolvedFiles: number;
-  oneFileBytes: number;
-  cachedFileBytes: number;
-  userSourceBytes: number;
-  outputBytes: number;
-  engineFuel: number;
-  engineSteps: number;
-  inputFrames: number;
-  journalBytes: number;
-  effects: number;
-}
-
-export interface SessionOptions {
-  mainPath: string;
-  jobName?: string;
-  format?: Uint8Array;
-  /** Authenticated format-closure requests, consumed as one-shot cache hints. */
-  formatPrefetchHints?: FileRequest[];
-  engine?: "tex82" | "etex" | "pdftex" | "latex" | "pdflatex";
-  /** Explicit downstream products, independent from engine compatibility. */
-  outputs: Array<"dvi" | "pdf" | "html">;
-  /** Local compilation date/time. Defaults to the browser clock at session creation. */
-  clock?: { year: number; month: number; day: number; minutes: number };
-  limits?: Partial<SessionLimits>;
-  fontLayoutPolicy?: "opentype-preferred" | "classic-tfm-exact";
-  fontMappingFallback?: "error" | "classic-tfm-exact";
-}
-
-export type BibliographyOutputFormat = "bbl" | "bibtex" | "biblatex-xml" | "bbl-xml" | "dot";
-
-export interface ProjectSessionOptions extends SessionOptions {
-  bibliography: {
-    /** Omit mode for the original biblatex-only option shape. */
-    mode?: "biblatex" | "classic" | "auto";
-    controlPath: string;
-    outputs: Array<{ path: string; format: BibliographyOutputFormat }>;
-    configurationPath?: string;
-    schemaPaths?: string[];
-    auxPath?: string;
-    jobPath?: string;
-  };
-  projectLimits?: { attempts?: number; passes?: number };
-}
-
-export interface EditorSessionOptions extends SessionOptions {
-  stabilizationLimits?: { attempts?: number; passes?: number };
-}
-
-export interface SourcePatch {
-  nextRevision: number;
-  baseRevision: number;
-  expectedHash: string;
-  start: number;
-  end: number;
-  replacement: string;
-}
-
-export interface ReuseMetrics {
-  pagesReused: number;
-  pagesRetyped: number;
-  reexecutedBytes: number;
-  reexecutedTokens: number;
-  reexecutedCommands: number;
-  reexecutedParagraphs: number;
-  sameHistoryAttempts: number;
-  sameHistoryHashMismatches: number;
-  sameHistoryStop: "matched" | "schedule-diverged" | "hashes-diverged" | "no-comparable-boundary" | "not-attempted";
-  restartForkMicroseconds: number;
-  reexecutionMicroseconds: number;
-  spliceMicroseconds: number;
-}
-
-export interface RetentionMetrics {
-  checkpointRootBytes: number;
-  diagnosticBytes: number;
-  outputBytes: number;
-  resourceBytes: number;
-  protectedOverageBytes: number;
-}
-
-export interface AcceptedInputObservation {
-  path: string;
-  namespace: "authored" | "generated" | "distribution";
-  outcome: { kind: "present"; contentHash: string } | { kind: "missing" };
-  access: "required-read" | "authoritative-probe";
-  resourceKind: FileKind;
-  phase: "tex" | "bibliography-detection" | "bibliography";
-  revision: number;
-  projectPass?: number;
-  requestingSource?: string;
-  owner: "tex-engine" | "bibliography-detector" | "biblatex" | "classic-bibtex";
-}
-
-export interface AcceptedInputObservationLedger {
-  schemaVersion: number;
-  revision: number;
-  observations: AcceptedInputObservation[];
-}
-
-export interface CompileOutputFile {
-  path: string;
-  bytes: Uint8Array;
-}
-
-export interface CompileOutput {
-  outputs: Array<"dvi" | "pdf" | "html">;
-  terminal: string;
-  log: Uint8Array;
-  dvi: Uint8Array;
-  html?: Uint8Array;
-  htmlAssets: CompileOutputFile[];
-  files: CompileOutputFile[];
-  /** Present on the authored facade after an accepted compile. */
-  acceptedInputObservations?: AcceptedInputObservationLedger;
-}
-
-export interface Diagnostic {
-  code: string;
-  message: string;
-  location?: CompileSourceLocation;
-}
-
-export interface CompileSourceLocation {
-  /** Logical authored-source path. */
-  file: string;
-  /** Zero-based half-open offsets into the exact UTF-8 authored bytes. */
-  byteStart: number;
-  byteEnd: number;
-  /** One-based presentation coordinates. */
-  line: number;
-  column: number;
-}
-
-export interface BibliographyDiagnostic {
-  code: string;
-  message: string;
-}
-
-export interface BibliographyResult {
-  backend: "biblatex" | "classic";
-  files: CompileOutputFile[];
-  diagnostics: BibliographyDiagnostic[];
-}
-
-export interface ProjectCompileOutput {
-  revision: number;
-  contentHash: string;
-  passes: number;
-  tex: CompileOutput;
-  bibliography?: BibliographyResult;
-  generatedFiles: CompileOutputFile[];
-  /** Includes every accepted TeX and bibliography project-pass observation. */
-  acceptedInputObservations?: AcceptedInputObservationLedger;
-}
-
-export interface EditorCompileOutput {
-  revision: number;
-  contentHash: string;
-  passes: number;
-  tex: CompileOutput;
-  generatedFiles: CompileOutputFile[];
-  acceptedInputObservations?: AcceptedInputObservationLedger;
-}
-
-export type EditorStatus =
-  | { kind: "provisional"; revision: number; stabilizationRequired: true }
-  | { kind: "stabilizing"; revision: number; completedPasses: number; stabilizationRequired: true }
-  | { kind: "stable"; revision: number; passes: number; stabilizationRequired: false };
-
-export type EditorAttemptResult =
-  | { kind: "need-resources"; phase: "advance" | "stabilization"; required: ResourceRequest[]; probes: ResourceRequest[]; prefetchHints: ResourceRequest[]; status?: EditorStatus }
-  | ({ kind: "provisional"; revision: number; stabilizationRequired: true; output: EditorCompileOutput })
-  | ({ kind: "stable"; revision: number; passes: number; stabilizationRequired: false; output: EditorCompileOutput })
-  | { kind: "error"; phase: "advance" | "stabilization"; diagnostic: Diagnostic };
-
-export type RenderedSourceResult =
-  | { kind: "current"; path: string; start: number; end: number; line: number; column: number }
-  | { kind: "deleted"; mintedRevision: number }
-  | { kind: "stale-revision"; accepted: number }
-  | { kind: "output-mismatch"; acceptedOutput: string };
-
-export type AttemptResult =
-  | { kind: "need-resources"; required: ResourceRequest[]; probes: ResourceRequest[]; prefetchHints: ResourceRequest[] }
-  | { kind: "complete"; output: CompileOutput | ProjectCompileOutput }
-  | { kind: "error"; diagnostic: Diagnostic & { bibliographyDiagnostics?: Array<{ code: string; message: string }> } };
-"#;
+const TYPESCRIPT_TYPES: &str = include_str!("wire_schema.d.ts");
 
 #[wasm_bindgen]
 extern "C" {
@@ -274,9 +27,6 @@ extern "C" {
     #[wasm_bindgen(typescript_type = "EditorSessionOptions")]
     pub type JsEditorSessionOptions;
 
-    #[wasm_bindgen(typescript_type = "FileRequestKey")]
-    pub type JsFileRequestKey;
-
     #[wasm_bindgen(typescript_type = "SourcePatch")]
     pub type JsSourcePatch;
 
@@ -286,14 +36,38 @@ extern "C" {
     #[wasm_bindgen(typescript_type = "EditorAttemptResult")]
     pub type JsEditorAttemptResult;
 
-    #[wasm_bindgen(typescript_type = "ResourceResponse")]
-    pub type JsResourceResponse;
+    #[wasm_bindgen(typescript_type = "ResourceResponse[]")]
+    pub type JsResourceResponses;
 
     #[wasm_bindgen(typescript_type = "RenderedSourceResult")]
     pub type JsRenderedSourceResult;
 
     #[wasm_bindgen(typescript_type = "AcceptedInputObservationLedger")]
     pub type JsAcceptedInputObservationLedger;
+
+    #[wasm_bindgen(typescript_type = "ReuseMetrics")]
+    pub type JsReuseMetrics;
+
+    #[wasm_bindgen(typescript_type = "RetentionMetrics")]
+    pub type JsRetentionMetrics;
+
+    #[wasm_bindgen(typescript_type = "EditorStatus")]
+    pub type JsEditorStatus;
+
+    #[wasm_bindgen(typescript_type = "CatalogPreparedBatch")]
+    pub type JsCatalogPreparedBatch;
+
+    #[wasm_bindgen(typescript_type = "CatalogRawShard[]")]
+    pub type JsCatalogRawShards;
+
+    #[wasm_bindgen(typescript_type = "string[]")]
+    pub type JsCatalogKeys;
+
+    #[wasm_bindgen(typescript_type = "CatalogBatchPlan")]
+    pub type JsCatalogBatchPlan;
+
+    #[wasm_bindgen(typescript_type = "NamedFormat")]
+    pub type JsNamedFormat;
 }
 
 #[wasm_bindgen]
@@ -357,7 +131,7 @@ impl CompilerSession {
     }
 
     #[wasm_bindgen(js_name = provideResources)]
-    pub fn provide_resources(&mut self, responses: &Array) -> Result<(), JsValue> {
+    pub fn provide_resources(&mut self, responses: &JsResourceResponses) -> Result<(), JsValue> {
         let responses = parse_resource_responses(responses.as_ref())
             .map_err(|error| tag_js_error(error, "invalid-resource"))?;
         self.session_mut()?
@@ -487,12 +261,12 @@ impl CompilerSession {
     }
 
     #[wasm_bindgen(getter, js_name = reuseMetrics)]
-    pub fn reuse_metrics(&self) -> Result<JsValue, JsValue> {
+    pub fn reuse_metrics(&self) -> Result<Option<JsReuseMetrics>, JsValue> {
         result::reuse_metrics(self.session_ref()?.reuse_metrics())
     }
 
     #[wasm_bindgen(getter, js_name = retentionMetrics)]
-    pub fn retention_metrics(&self) -> Result<JsValue, JsValue> {
+    pub fn retention_metrics(&self) -> Result<Option<JsRetentionMetrics>, JsValue> {
         result::retention_metrics(self.session_ref()?.retention_metrics())
     }
 
@@ -535,7 +309,7 @@ impl EditorSession {
     }
 
     #[wasm_bindgen(js_name = provideResources)]
-    pub fn provide_resources(&mut self, responses: &Array) -> Result<(), JsValue> {
+    pub fn provide_resources(&mut self, responses: &JsResourceResponses) -> Result<(), JsValue> {
         let responses = parse_resource_responses(responses.as_ref())
             .map_err(|error| tag_js_error(error, "invalid-resource"))?;
         self.session_mut()?
@@ -613,7 +387,7 @@ impl EditorSession {
     }
 
     #[wasm_bindgen(getter)]
-    pub fn status(&self) -> Result<JsValue, JsValue> {
+    pub fn status(&self) -> Result<Option<JsEditorStatus>, JsValue> {
         result::editor_status(self.session_ref()?.status())
     }
 
@@ -662,12 +436,12 @@ impl EditorSession {
     }
 
     #[wasm_bindgen(getter, js_name = reuseMetrics)]
-    pub fn reuse_metrics(&self) -> Result<JsValue, JsValue> {
+    pub fn reuse_metrics(&self) -> Result<Option<JsReuseMetrics>, JsValue> {
         result::reuse_metrics(self.session_ref()?.reuse_metrics())
     }
 
     #[wasm_bindgen(getter, js_name = retentionMetrics)]
-    pub fn retention_metrics(&self) -> Result<JsValue, JsValue> {
+    pub fn retention_metrics(&self) -> Result<Option<JsRetentionMetrics>, JsValue> {
         result::retention_metrics(self.session_ref()?.retention_metrics())
     }
 
@@ -719,7 +493,7 @@ impl ProjectSession {
     }
 
     #[wasm_bindgen(js_name = provideResources)]
-    pub fn provide_resources(&mut self, responses: &Array) -> Result<(), JsValue> {
+    pub fn provide_resources(&mut self, responses: &JsResourceResponses) -> Result<(), JsValue> {
         let responses = parse_resource_responses(responses.as_ref())
             .map_err(|error| tag_js_error(error, "invalid-resource"))?;
         self.session_mut()?

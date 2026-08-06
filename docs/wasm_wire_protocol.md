@@ -1,6 +1,6 @@
 # WebAssembly Wire Protocol
 
-Status: schema 1 authority and migration contract.
+Status: schema 1 authority implemented.
 
 The host-neutral DTOs in `crates/umber-wasm/src/wire.rs` are the structural
 authority for values crossing the Rust--JavaScript boundary. They contain only
@@ -17,23 +17,28 @@ errors.
 
 ## Inventory and ownership
 
-| Family       | Schema-1 values                                                     | Existing adapter during migration           |
-| ------------ | ------------------------------------------------------------------- | ------------------------------------------- |
-| Options      | session, project, editor, bibliography, clock, limits, patches      | `src/options.rs`                            |
-| Resources    | file, font, and PK requests, keys, responses, unavailable variants  | `src/options.rs`, `src/result/resources.rs` |
-| Attempts     | ordinary, project, editor, resource wait, complete, error, status   | `src/result.rs`                             |
-| Results      | TeX, project, editor, bibliography, generated and output files      | `src/result.rs`                             |
-| Diagnostics  | stable boundary code, message, source location, bibliography detail | `src/result.rs`                             |
-| Metrics      | reuse and retained-memory metrics                                   | `src/result/metrics.rs`                     |
-| Observations | accepted-input ledger, identity, access, phase, owner, outcome      | `src/result/metrics.rs`                     |
-| Queries      | rendered-source current, deleted, stale, and mismatched results     | `src/result/metrics.rs`                     |
-| Host errors  | authored facade and worker error codes                              | `js/compile.js`, `js/worker-controller.js`  |
+| Family       | Schema-1 values                                                     | Engine adapter             |
+| ------------ | ------------------------------------------------------------------- | -------------------------- |
+| Options      | session, project, editor, bibliography, clock, limits, patches      | `src/options.rs`           |
+| Resources    | file, font, and PK requests, keys, responses, unavailable variants  | `src/options.rs`           |
+| Attempts     | ordinary, project, editor, resource wait, complete, error, status   | `src/result.rs`            |
+| Results      | TeX, project, editor, bibliography, generated and output files      | `src/result.rs`            |
+| Diagnostics  | stable boundary code, message, source location, bibliography detail | `src/result.rs`            |
+| Metrics      | reuse and retained-memory metrics                                   | `src/result/metrics.rs`    |
+| Observations | accepted-input ledger, identity, access, phase, owner, outcome      | `src/result/metrics.rs`    |
+| Queries      | rendered-source current, deleted, stale, and mismatched results     | `src/result/metrics.rs`    |
+| Catalogues   | prepared shard batches, authenticated jobs and misses, named format | `src/catalog_boundary.rs`  |
+| Host errors  | authored facade and worker error codes                              | JavaScript facade adapters |
 
-The manual adapters and `typescript_custom_section` remain compatibility
-predecessors until `umber2-vgjr.13.4` switches every family together and
-deletes them. The DTO module establishes the replacement authority without
-creating a second engine model. JavaScript session and worker orchestration
-remain separately owned by `umber2-vgjr.13.2`.
+The binding deserializes incoming values into these DTOs, converts them once
+to private engine values, converts outgoing engine values once into DTOs, and
+serializes them with `serde-wasm-bindgen`. The generated
+`src/wire_schema.d.ts` custom section is checked byte-for-byte against
+`typescript_declarations()`. The former handwritten TypeScript section and
+manual `JsValue` object construction and parsing tables have been deleted.
+Catalogue exports likewise return typed DTO objects; JavaScript neither
+stringifies input shard batches nor parses returned plans. JavaScript session
+and worker orchestration remain separately owned by `umber2-vgjr.13.2`.
 
 ## Representation invariants
 

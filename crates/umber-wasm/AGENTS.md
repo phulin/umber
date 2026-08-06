@@ -17,10 +17,13 @@ the manifest's validated content-addressed object name.
 - `src/catalog_boundary.rs`: synchronous WebAssembly exports for canonical
   distribution root/shard validation, request partitioning, and ordered
   selection plans owned by `umber-distribution`.
-- `src/options.rs`: strict conversion of JavaScript options (including engine mode) plus shared-VFS typed resource responses, domain/kind wire values, and request keys.
-- `src/result.rs`: completed-attempt and diagnostic conversion facade.
+- `src/options.rs`: schema-1 DTO conversion into private session options, patches, and shared-VFS resource responses.
+- `src/result.rs`: private engine result conversion into schema-1 attempt, output, diagnostic, and resource DTOs.
 - `src/wire.rs`: schema-versioned host-neutral DTO authority, safe JavaScript
-  integers, binary serializer, and derived TypeScript shapes.
+  integers, binary serializer, and derived TypeScript shapes; its generated
+  `src/wire_schema.d.ts` custom section is checked against the Rust authority.
+- `examples/wire_types.rs`: deterministic schema declaration generator used
+  whenever schema-1 DTOs change.
 - `src/result/`: focused binary-safe resource-request, metrics, and incremental-render conversion modules.
 - `tests/it.rs`: wasm-bindgen boundary, lifecycle, and native fixed-point
   representation/failure parity tests over shared stabilization fixtures.

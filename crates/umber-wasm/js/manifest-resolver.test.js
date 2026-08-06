@@ -29,19 +29,19 @@ const catalog = {
 		const indexes = [
 			...new Set(keys.map((key) => shardIndex(key, root.shardBits))),
 		].sort((left, right) => left - right);
-		return JSON.stringify({
+		return {
 			root: `${JSON.stringify(root)}\n`,
 			shards: indexes.map((index) => ({
 				index,
 				object: `sha256-${root.shards[index]}`,
 				sha256: root.shards[index],
 			})),
-		});
+		};
 	},
-	catalogPlanBatch(rootText, shardsText, keys) {
+	catalogPlanBatch(rootText, rawShards, keys) {
 		const root = JSON.parse(rootText);
 		const shards = new Map();
-		for (const raw of JSON.parse(shardsText)) {
+		for (const raw of rawShards) {
 			if (digest(encoder.encode(raw.text)) !== root.shards[raw.index])
 				throw new Error(`index shard ${raw.index} digest mismatch`);
 			const shard = JSON.parse(raw.text);
@@ -106,12 +106,12 @@ const catalog = {
 				entry: dependency,
 			});
 		}
-		return JSON.stringify({ jobs, misses });
+		return { jobs, misses };
 	},
 	catalogSelectFormat(rootText, name) {
 		const entry = JSON.parse(rootText).formats?.[name];
 		if (entry === undefined) throw new Error(`missing format ${name}`);
-		return JSON.stringify({ name, ...entry });
+		return { name, ...entry };
 	},
 };
 const digest = (bytes) => createHash("sha256").update(bytes).digest("hex");

@@ -1,155 +1,124 @@
-use js_sys::{Array, Object};
-use wasm_bindgen::{JsCast, JsValue};
+use wasm_bindgen::{JsCast as _, JsValue};
 
-use crate::{JsAcceptedInputObservationLedger, JsRenderedSourceResult};
+use crate::{
+    JsAcceptedInputObservationLedger, JsRenderedSourceResult, JsRetentionMetrics, JsReuseMetrics,
+    wire,
+};
 
-use super::set;
+pub(crate) fn reuse_metrics(
+    metrics: Option<umber::ReuseMetrics>,
+) -> Result<Option<JsReuseMetrics>, JsValue> {
+    metrics
+        .map(reuse_metrics_dto)
+        .transpose()?
+        .map(|dto| Ok(wire::to_js_value(&dto)?.unchecked_into()))
+        .transpose()
+}
 
-pub(crate) fn reuse_metrics(metrics: Option<umber::ReuseMetrics>) -> Result<JsValue, JsValue> {
-    let Some(metrics) = metrics else {
-        return Ok(JsValue::UNDEFINED);
-    };
-    let object = Object::new();
-    set(&object, "pagesReused", &usize_value(metrics.pages_reused))?;
-    set(&object, "pagesRetyped", &usize_value(metrics.pages_retyped))?;
-    set(
-        &object,
-        "reexecutedBytes",
-        &usize_value(metrics.reexecuted_bytes),
-    )?;
-    set(
-        &object,
-        "reexecutedTokens",
-        &usize_value(metrics.reexecuted_tokens),
-    )?;
-    set(
-        &object,
-        "reexecutedCommands",
-        &usize_value(metrics.reexecuted_commands),
-    )?;
-    set(
-        &object,
-        "reexecutedParagraphs",
-        &usize_value(metrics.reexecuted_paragraphs),
-    )?;
-    set(
-        &object,
-        "sameHistoryAttempts",
-        &usize_value(metrics.same_history_attempts),
-    )?;
-    set(
-        &object,
-        "sameHistoryHashMismatches",
-        &usize_value(metrics.same_history_hash_mismatches),
-    )?;
-    let stop = match metrics.same_history_stop {
-        umber::SameHistoryStop::Matched => "matched",
-        umber::SameHistoryStop::ScheduleDiverged => "schedule-diverged",
-        umber::SameHistoryStop::HashesDiverged => "hashes-diverged",
-        umber::SameHistoryStop::NoComparableBoundary => "no-comparable-boundary",
-        umber::SameHistoryStop::NotAttempted => "not-attempted",
-    };
-    set(&object, "sameHistoryStop", &JsValue::from_str(stop))?;
-    set(
-        &object,
-        "restartForkMicroseconds",
-        &JsValue::from_f64(metrics.restart_fork_latency.as_micros() as f64),
-    )?;
-    set(
-        &object,
-        "reexecutionMicroseconds",
-        &JsValue::from_f64(metrics.reexecution_latency.as_micros() as f64),
-    )?;
-    set(
-        &object,
-        "spliceMicroseconds",
-        &JsValue::from_f64(metrics.splice_latency.as_micros() as f64),
-    )?;
-    Ok(object.into())
+fn reuse_metrics_dto(metrics: umber::ReuseMetrics) -> Result<wire::ReuseMetricsDto, JsValue> {
+    Ok(wire::ReuseMetricsDto {
+        pages_reused: to_u32(metrics.pages_reused, "pagesReused")?,
+        pages_retyped: to_u32(metrics.pages_retyped, "pagesRetyped")?,
+        reexecuted_bytes: safe(metrics.reexecuted_bytes, "reexecutedBytes")?,
+        reexecuted_tokens: safe(metrics.reexecuted_tokens, "reexecutedTokens")?,
+        reexecuted_commands: safe(metrics.reexecuted_commands, "reexecutedCommands")?,
+        reexecuted_paragraphs: safe(metrics.reexecuted_paragraphs, "reexecutedParagraphs")?,
+        same_history_attempts: to_u32(metrics.same_history_attempts, "sameHistoryAttempts")?,
+        same_history_hash_mismatches: to_u32(
+            metrics.same_history_hash_mismatches,
+            "sameHistoryHashMismatches",
+        )?,
+        same_history_stop: match metrics.same_history_stop {
+            umber::SameHistoryStop::Matched => wire::SameHistoryStopDto::Matched,
+            umber::SameHistoryStop::ScheduleDiverged => wire::SameHistoryStopDto::ScheduleDiverged,
+            umber::SameHistoryStop::HashesDiverged => wire::SameHistoryStopDto::HashesDiverged,
+            umber::SameHistoryStop::NoComparableBoundary => {
+                wire::SameHistoryStopDto::NoComparableBoundary
+            }
+            umber::SameHistoryStop::NotAttempted => wire::SameHistoryStopDto::NotAttempted,
+        },
+        restart_fork_microseconds: wire::SafeInteger::new(
+            metrics
+                .restart_fork_latency
+                .as_micros()
+                .try_into()
+                .map_err(|_| {
+                    crate::js_error(
+                        "restartForkMicroseconds exceeds JavaScript's safe integer range",
+                    )
+                })?,
+        )
+        .map_err(crate::boundary_error)?,
+        reexecution_microseconds: wire::SafeInteger::new(
+            metrics
+                .reexecution_latency
+                .as_micros()
+                .try_into()
+                .map_err(|_| {
+                    crate::js_error(
+                        "reexecutionMicroseconds exceeds JavaScript's safe integer range",
+                    )
+                })?,
+        )
+        .map_err(crate::boundary_error)?,
+        splice_microseconds: wire::SafeInteger::new(
+            metrics.splice_latency.as_micros().try_into().map_err(|_| {
+                crate::js_error("spliceMicroseconds exceeds JavaScript's safe integer range")
+            })?,
+        )
+        .map_err(crate::boundary_error)?,
+    })
 }
 
 pub(crate) fn retention_metrics(
     metrics: Option<umber::RetentionMetrics>,
-) -> Result<JsValue, JsValue> {
-    let Some(metrics) = metrics else {
-        return Ok(JsValue::UNDEFINED);
-    };
-    let object = Object::new();
-    set(
-        &object,
-        "checkpointRootBytes",
-        &usize_value(metrics.checkpoint_root_bytes),
-    )?;
-    set(
-        &object,
-        "diagnosticBytes",
-        &usize_value(metrics.diagnostic_bytes),
-    )?;
-    set(&object, "outputBytes", &usize_value(metrics.output_bytes))?;
-    set(
-        &object,
-        "resourceBytes",
-        &usize_value(metrics.resource_bytes),
-    )?;
-    set(
-        &object,
-        "protectedOverageBytes",
-        &usize_value(metrics.protected_overage_bytes),
-    )?;
-    Ok(object.into())
+) -> Result<Option<JsRetentionMetrics>, JsValue> {
+    metrics
+        .map(|metrics| {
+            Ok::<_, JsValue>(wire::RetentionMetricsDto {
+                checkpoint_root_bytes: safe(metrics.checkpoint_root_bytes, "checkpointRootBytes")?,
+                diagnostic_bytes: safe(metrics.diagnostic_bytes, "diagnosticBytes")?,
+                output_bytes: safe(metrics.output_bytes, "outputBytes")?,
+                resource_bytes: safe(metrics.resource_bytes, "resourceBytes")?,
+                protected_overage_bytes: safe(
+                    metrics.protected_overage_bytes,
+                    "protectedOverageBytes",
+                )?,
+            })
+        })
+        .transpose()?
+        .map(|dto| Ok(wire::to_js_value(&dto)?.unchecked_into()))
+        .transpose()
 }
 
 pub(crate) fn rendered_source_result(
     result: umber::RenderedSourceResult,
 ) -> Result<JsRenderedSourceResult, JsValue> {
-    let object = Object::new();
-    match result {
-        umber::RenderedSourceResult::Current(location) => {
-            set(&object, "kind", &JsValue::from_str("current"))?;
-            set(&object, "path", &JsValue::from_str(&location.path))?;
-            set(&object, "start", &JsValue::from_f64(location.start as f64))?;
-            set(&object, "end", &JsValue::from_f64(location.end as f64))?;
-            set(
-                &object,
-                "line",
-                &JsValue::from_f64(f64::from(location.line)),
-            )?;
-            set(
-                &object,
-                "column",
-                &JsValue::from_f64(f64::from(location.column)),
-            )?;
-        }
+    let dto = match result {
+        umber::RenderedSourceResult::Current(location) => wire::RenderedSourceResultDto::Current {
+            path: location.path,
+            start: to_u32(location.start, "start")?,
+            end: to_u32(location.end, "end")?,
+            line: location.line,
+            column: location.column,
+        },
         umber::RenderedSourceResult::Deleted { minted_revision } => {
-            set(&object, "kind", &JsValue::from_str("deleted"))?;
-            set(
-                &object,
-                "mintedRevision",
-                &JsValue::from_f64(minted_revision as f64),
-            )?;
+            wire::RenderedSourceResultDto::Deleted {
+                minted_revision: to_u32(minted_revision, "mintedRevision")?,
+            }
         }
         umber::RenderedSourceResult::StaleRevision { accepted } => {
-            set(&object, "kind", &JsValue::from_str("stale-revision"))?;
-            set(
-                &object,
-                "accepted",
-                &JsValue::from_f64(accepted.raw() as f64),
-            )?;
+            wire::RenderedSourceResultDto::StaleRevision {
+                accepted: to_u32(accepted.raw(), "accepted")?,
+            }
         }
         umber::RenderedSourceResult::OutputMismatch { accepted } => {
-            set(&object, "kind", &JsValue::from_str("output-mismatch"))?;
-            set(
-                &object,
-                "acceptedOutput",
-                &JsValue::from_str(&accepted.to_string()),
-            )?;
+            wire::RenderedSourceResultDto::OutputMismatch {
+                accepted_output: accepted.to_string(),
+            }
         }
-    }
-    Ok(object.unchecked_into())
-}
-
-fn usize_value(value: usize) -> JsValue {
-    JsValue::from_f64(value as f64)
+    };
+    Ok(wire::to_js_value(&dto)?.unchecked_into())
 }
 
 pub(crate) fn accepted_input_observations(
@@ -158,94 +127,83 @@ pub(crate) fn accepted_input_observations(
     let Some(ledger) = ledger else {
         return Ok(None);
     };
-    let object = Object::new();
-    set(
-        &object,
-        "schemaVersion",
-        &JsValue::from_f64(f64::from(ledger.schema_version())),
-    )?;
-    set(
-        &object,
-        "revision",
-        &JsValue::from_f64(ledger.revision().raw() as f64),
-    )?;
-    let observations = Array::new();
-    for observation in ledger.observations() {
-        let value = Object::new();
-        set(
-            &value,
-            "path",
-            &JsValue::from_str(observation.path().as_str()),
-        )?;
-        set(
-            &value,
-            "namespace",
-            &JsValue::from_str(match observation.namespace() {
-                umber::InputObservationNamespace::Authored => "authored",
-                umber::InputObservationNamespace::Generated => "generated",
-                umber::InputObservationNamespace::Distribution => "distribution",
-            }),
-        )?;
-        let outcome = Object::new();
-        match observation.outcome() {
-            umber::InputObservationOutcome::Present(hash) => {
-                set(&outcome, "kind", &JsValue::from_str("present"))?;
-                set(&outcome, "contentHash", &JsValue::from_str(&hash.hex()))?;
-            }
-            umber::InputObservationOutcome::Missing => {
-                set(&outcome, "kind", &JsValue::from_str("missing"))?;
-            }
-        }
-        set(&value, "outcome", &outcome)?;
-        set(
-            &value,
-            "access",
-            &JsValue::from_str(match observation.access() {
-                umber::InputDependencyAccess::RequiredRead => "required-read",
-                umber::InputDependencyAccess::AuthoritativeProbe => "authoritative-probe",
-            }),
-        )?;
-        set(
-            &value,
-            "resourceKind",
-            &JsValue::from_str(observation.resource_kind().wire_name()),
-        )?;
-        set(
-            &value,
-            "phase",
-            &JsValue::from_str(match observation.phase() {
-                umber::InputObservationPhase::Tex => "tex",
-                umber::InputObservationPhase::BibliographyDetection => "bibliography-detection",
-                umber::InputObservationPhase::Bibliography => "bibliography",
-            }),
-        )?;
-        set(
-            &value,
-            "revision",
-            &JsValue::from_f64(observation.revision().raw() as f64),
-        )?;
-        if let Some(pass) = observation.project_pass() {
-            set(&value, "projectPass", &JsValue::from_f64(f64::from(pass)))?;
-        }
-        if let Some(source) = observation.requesting_source() {
-            set(
-                &value,
-                "requestingSource",
-                &JsValue::from_str(source.as_str()),
-            )?;
-        }
-        set(
-            &value,
-            "owner",
-            &JsValue::from_str(match observation.owner() {
-                umber::InputObservationOwner::TexEngine => "tex-engine",
-                umber::InputObservationOwner::BibliographyDetector => "bibliography-detector",
-                umber::InputObservationOwner::Biblatex => "biblatex",
-                umber::InputObservationOwner::ClassicBibtex => "classic-bibtex",
-            }),
-        )?;
-        observations.push(&value);
-    }
-    set(&object, "observations", &observations)?;
-    Ok(Some(object.unchecked_into()))
+    let observations = ledger
+        .observations()
+        .iter()
+        .map(|observation| {
+            Ok(wire::AcceptedInputObservationDto {
+                path: observation.path().as_str().to_owned(),
+                namespace: match observation.namespace() {
+                    umber::InputObservationNamespace::Authored => {
+                        wire::ObservationNamespaceDto::Authored
+                    }
+                    umber::InputObservationNamespace::Generated => {
+                        wire::ObservationNamespaceDto::Generated
+                    }
+                    umber::InputObservationNamespace::Distribution => {
+                        wire::ObservationNamespaceDto::Distribution
+                    }
+                },
+                outcome: match observation.outcome() {
+                    umber::InputObservationOutcome::Present(hash) => {
+                        wire::ObservationOutcomeDto::Present {
+                            content_hash: hash.hex(),
+                        }
+                    }
+                    umber::InputObservationOutcome::Missing => wire::ObservationOutcomeDto::Missing,
+                },
+                access: match observation.access() {
+                    umber::InputDependencyAccess::RequiredRead => {
+                        wire::ObservationAccessDto::RequiredRead
+                    }
+                    umber::InputDependencyAccess::AuthoritativeProbe => {
+                        wire::ObservationAccessDto::AuthoritativeProbe
+                    }
+                },
+                resource_kind: super::file_kind(observation.resource_kind()),
+                phase: match observation.phase() {
+                    umber::InputObservationPhase::Tex => wire::ObservationPhaseDto::Tex,
+                    umber::InputObservationPhase::BibliographyDetection => {
+                        wire::ObservationPhaseDto::BibliographyDetection
+                    }
+                    umber::InputObservationPhase::Bibliography => {
+                        wire::ObservationPhaseDto::Bibliography
+                    }
+                },
+                revision: to_u32(observation.revision().raw(), "revision")?,
+                project_pass: observation.project_pass(),
+                requesting_source: observation
+                    .requesting_source()
+                    .map(|source| source.as_str().to_owned()),
+                owner: match observation.owner() {
+                    umber::InputObservationOwner::TexEngine => wire::ObservationOwnerDto::TexEngine,
+                    umber::InputObservationOwner::BibliographyDetector => {
+                        wire::ObservationOwnerDto::BibliographyDetector
+                    }
+                    umber::InputObservationOwner::Biblatex => wire::ObservationOwnerDto::Biblatex,
+                    umber::InputObservationOwner::ClassicBibtex => {
+                        wire::ObservationOwnerDto::ClassicBibtex
+                    }
+                },
+            })
+        })
+        .collect::<Result<Vec<_>, JsValue>>()?;
+    let dto = wire::AcceptedInputObservationLedgerDto {
+        schema_version: ledger.schema_version(),
+        revision: to_u32(ledger.revision().raw(), "revision")?,
+        observations,
+    };
+    Ok(Some(wire::to_js_value(&dto)?.unchecked_into()))
+}
+
+fn safe(value: usize, name: &str) -> Result<wire::SafeInteger, JsValue> {
+    wire::SafeInteger::new(value as u64)
+        .map_err(|_| crate::js_error(&format!("{name} exceeds JavaScript's safe integer range")))
+}
+
+fn to_u32<T>(value: T, name: &str) -> Result<u32, JsValue>
+where
+    u32: TryFrom<T>,
+{
+    u32::try_from(value).map_err(|_| crate::js_error(&format!("{name} is out of range")))
 }

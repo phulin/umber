@@ -1,5 +1,12 @@
 import type { PersistentObjectCache } from "./persistent-cache.js";
-import type { ResourceRequest, ResourceResponse } from "./umber_wasm.js";
+import type {
+	CatalogBatchPlan,
+	CatalogPreparedBatch,
+	CatalogRawShard,
+	NamedFormat,
+	ResourceRequest,
+	ResourceResponse,
+} from "./umber_wasm.js";
 
 export const TEXLIVE_2026_MANIFEST_URL: string;
 export const TEXLIVE_2026_MANIFEST_SHA256: string;
@@ -47,13 +54,16 @@ export interface HttpManifestResolverOptions {
 }
 
 export interface DistributionCatalogBindings {
-	catalogPrepareBatch(rootJson: string, keys: readonly string[]): string;
+	catalogPrepareBatch(
+		rootJson: string,
+		keys: readonly string[],
+	): CatalogPreparedBatch;
 	catalogPlanBatch(
 		rootJson: string,
-		shardsJson: string,
+		shards: readonly CatalogRawShard[],
 		keys: readonly string[],
-	): string;
-	catalogSelectFormat(rootJson: string, name: string): string;
+	): CatalogBatchPlan;
+	catalogSelectFormat(rootJson: string, name: string): NamedFormat;
 }
 
 export interface ManifestFile {
