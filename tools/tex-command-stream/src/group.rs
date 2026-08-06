@@ -13,11 +13,10 @@
 //! worklist *prints*.
 //!
 //! Two divergences are the same root site when they are equal after erasing
-//! every source position -- and nothing else. The projection
-//! ([`positionless_event`]) is an exhaustive match over the oracle event
-//! schema, so a new schema variant has to be handled here explicitly rather
-//! than falling into a catch-all that might silently erase something
-//! semantic. Nothing else is normalized away: differing operands, differing
+//! every source position -- and nothing else. The projection delegates to
+//! `tex-oracle`'s exhaustive schema-owned location erasure, so new variants
+//! cannot silently change what merges. Nothing else is normalized away:
+//! differing operands, differing
 //! token payloads, differing repair shapes, and differing macro token-list
 //! addresses all keep two entries apart. Under-merging leaves a longer
 //! worklist; over-merging hides a second defect behind the first, which is far
@@ -228,12 +227,8 @@ fn positionless_repair(repair: &Repair) -> Repair {
 
 /// One oracle event with every reachable [`tex_oracle::SourceLocation`] erased.
 ///
-/// Exhaustive over the event schema on purpose. A catch-all arm would make a
-/// newly added variant carry its positions into the grouping key -- splitting
-/// genuine recurrences, which is merely noisy -- but a catch-all that *cloned
-/// through* an added position-bearing field would be worse, and neither
-/// failure mode announces itself. Adding a schema variant must therefore fail
-/// to compile here.
+/// The schema-owned projection is exhaustive: newly added position-bearing
+/// fields must be handled there before this grouping key can compile.
 fn positionless_event(event: &Event) -> Event {
     event.without_locations()
 }

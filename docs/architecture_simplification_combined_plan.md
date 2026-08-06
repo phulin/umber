@@ -166,8 +166,29 @@ forecast reduction. Declarative/generated changes are four added Cargo manifest
 or lockfile lines; compatibility-gated retirement and binary-fixture changes are
 both zero. Documentation adds 46 lines and deletes three, making the total
 tracked change 2,052 additions and 1,639 deletions, or 413 lines of net growth.
-The reduction shortfall is tracked by `umber2-vgjr.20`; no additional deletion
-is silently credited to this program.
+**Forecast reconciliation.** Follow-up `umber2-vgjr.20` audited every retained
+production traversal, finalization, profile, comparison, accounting, and report
+caller against the three surviving authorities. The original estimate assumed
+1,800--2,400 lines of repeated implementation would be replaced by 800--1,050
+lines of shared code. The implementation instead deleted 1,636 authored Rust
+lines and added 2,002: the required schema-owned operations and strict TRIP
+state machine replaced their predecessors nearly one for one, while 380 net
+new lines are independent proof for exhaustive schema carriers, byte-identical
+profiles, malformed input, report compatibility, and the million-event bound.
+The audit found no second production owner. The few retained direct event
+matches are typed profile validation, observation-to-schema translation, or
+strict comparison semantics owned by their named layer, not alternate generic
+walks or finalizers.
+
+The portfolio owner therefore closes the original 900--1,350-line reduction
+forecast at the measured +366 authored-Rust result and carries no unimplemented
+deletion forward. Production remains net -14 lines; proof tests remain net
++380 lines. No moved code, generated source, fixture bytes, documentation, or
+historical deletion is credited. Further deletion would weaken independent
+schema/report/performance evidence or collapse the deliberately separate
+engine-observation, wire-schema, and host-comparison boundaries, so it requires
+a new contract decision. The retained-source inventory and exact accounting
+are recorded in [the reconciliation writeback](writeback/umber2-vgjr.20.md).
 
 ## 3. One resource identity, admission, acquisition, and publication lifecycle
 
