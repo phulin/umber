@@ -51,7 +51,6 @@ pub struct RevisionOutputPatch {
     effects: tex_state::EffectJournal,
     artifacts: ArtifactLedger,
     dvi_pages: Vec<DviPagePlan>,
-    dvi_publications: Vec<tex_state::ArtifactPublicationRecord>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -83,16 +82,13 @@ impl RevisionOutputPatch {
             }
         }
         let mut dvi_pages = Vec::with_capacity(prepared_dvi_pages.len());
-        let mut dvi_publications = Vec::with_capacity(prepared_dvi_pages.len());
         for prepared in prepared_dvi_pages {
-            dvi_publications.push(prepared.publication);
             dvi_pages.push(prepared.plan);
         }
         Ok(Self {
             effects,
             artifacts,
             dvi_pages,
-            dvi_publications,
         })
     }
 
@@ -113,7 +109,11 @@ impl RevisionOutputPatch {
 
     #[must_use]
     pub fn dvi_publications(&self) -> &[tex_state::ArtifactPublicationRecord] {
-        &self.dvi_publications
+        if self.dvi_pages.is_empty() {
+            &[]
+        } else {
+            self.artifacts.publications()
+        }
     }
 
     pub fn into_parts(self) -> (tex_state::EffectJournal, ArtifactLedger, Vec<DviPagePlan>) {
@@ -137,16 +137,10 @@ impl RevisionOutputPatch {
         if !dvi_pages.is_empty() && dvi_pages.len() != artifacts.artifacts.len() {
             return Err(RevisionOutputPatchError::DviPageCount);
         }
-        let dvi_publications = if dvi_pages.is_empty() {
-            Vec::new()
-        } else {
-            artifacts.publications.clone()
-        };
         Ok(Self {
             effects,
             artifacts,
             dvi_pages,
-            dvi_publications,
         })
     }
 }
