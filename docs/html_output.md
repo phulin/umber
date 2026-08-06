@@ -357,6 +357,12 @@ JavaScript owns asynchronous acquisition, caching, cancellation, and safe DOM
 installation. Rust owns lowering, exact coordinates, font validation, and
 serialization.
 
+For a retained session, Rust performs that lowering and font validation once
+to construct the accepted `RenderDocument`. Standalone bytes and assets are
+serialized from it before publication, and its keyed revision is the only
+input to incremental patch planning. The session does not call the artifact
+standalone entry point after constructing the incremental candidate.
+
 ## Conformance oracle
 
 Every TeX82-DVI-compatible artifact-to-HTML conversion runs an exact comparator

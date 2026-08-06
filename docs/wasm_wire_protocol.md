@@ -27,6 +27,7 @@ errors.
 | Metrics      | reuse and retained-memory metrics                                   | `src/result/metrics.rs`    |
 | Observations | accepted-input ledger, identity, access, phase, owner, outcome      | `src/result/metrics.rs`    |
 | Queries      | rendered-source current, deleted, stale, and mismatched results     | `src/result/metrics.rs`    |
+| HTML render  | canonical snapshot projection and typed patch plan                  | `src/result/render.rs`     |
 | Catalogues   | prepared shard batches, authenticated jobs and misses, named format | `src/catalog_boundary.rs`  |
 | Host errors  | authored facade and worker error codes                              | JavaScript facade adapters |
 
@@ -39,6 +40,13 @@ manual `JsValue` object construction and parsing tables have been deleted.
 Catalogue exports likewise return typed DTO objects; JavaScript neither
 stringifies input shard batches nor parses returned plans. JavaScript session
 and worker orchestration remain separately owned by `umber2-vgjr.13.2`.
+
+Incremental HTML deliberately remains the receiver-migration boundary: the
+adapter projects a retained canonical `RenderDocument` snapshot or a
+`PatchPlan` directly into the existing schema-1 JavaScript shape. It does not
+re-lower artifacts, resolve fonts, or wrap a production patch in the public
+Rust receiver envelope. Moving this projection into derived DTOs is coupled to
+the receiver API decision rather than creating a second render model here.
 
 ## Representation invariants
 

@@ -16,6 +16,14 @@ ordinal assignment, resource identity, and resource ordering happen once.
 Standalone serialization and patch planning are pure consumers of that shared
 model.
 
+The retained compile session constructs one `RenderDocument` for an accepted
+candidate, serializes standalone HTML and assets from that exact value, and
+then retains it as the snapshot and next-patch base. It sends the resulting
+`PatchPlan` directly to the WebAssembly projection; it does not construct a
+Rust receiver envelope that the JavaScript receiver would discard. The public
+Rust envelope validator remains a separate compatibility surface pending its
+own API decision and is not part of production browser delivery.
+
 ## Identity and equality
 
 `RenderSessionId` is an opaque caller-scoped 128-bit value. It prevents a
