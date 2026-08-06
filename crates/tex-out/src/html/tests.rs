@@ -165,6 +165,29 @@ impl HtmlFontAssets for SingleScalarResolver {
     }
 }
 
+struct OrderedResolver;
+
+impl HtmlFontAssets for OrderedResolver {
+    fn font_asset(&self, font: &FontResource) -> Result<HtmlFontAsset, String> {
+        let bytes = if font.name == "second" {
+            include_bytes!("../../../tex-fonts/tests/fixtures/stix-two-math.woff2").to_vec()
+        } else {
+            include_bytes!("../../../umber-wasm/assets/cmu-serif-500-roman.woff2").to_vec()
+        };
+        let mut encoding = vec![None; 256];
+        encoding[usize::from(b'A')] = Some("A".to_owned());
+        encoding[usize::from(b'B')] = Some("B".to_owned());
+        Ok(HtmlFontAsset {
+            key: HtmlFontKey::from(font),
+            sha256: Sha256::digest(&bytes).into(),
+            woff2: bytes,
+            encoding,
+            provenance: font.name.clone(),
+            embeddable: true,
+        })
+    }
+}
+
 struct MathResolver;
 
 impl HtmlFontAssets for MathResolver {
@@ -679,7 +702,7 @@ fn positioned_entry_point_and_embedded_assets_obey_caller_limits() {
 
 #[test]
 fn shared_render_document_matches_public_bytes_assets_and_incremental_identity() {
-    let resolver = Resolver { missing_b: false };
+    let resolver = OrderedResolver;
     let options = HtmlOptions {
         asset_mode: AssetMode::Manifest {
             relative_directory: "fonts".to_owned(),
@@ -688,7 +711,9 @@ fn shared_render_document_matches_public_bytes_assets_and_incremental_identity()
         revision: 7,
         ..HtmlOptions::default()
     };
-    let artifacts = [page(), page()];
+    let mut second = page();
+    second.testing_mut().fonts[0].name = "second".to_owned();
+    let artifacts = [page(), second];
     let positioned = artifacts
         .iter()
         .enumerate()
@@ -758,6 +783,7 @@ fn shared_render_document_matches_public_bytes_assets_and_incremental_identity()
             .map(|resource| resource.identity)
             .collect::<Vec<_>>()
     );
+    assert_eq!(detached.assets.len(), 2);
 }
 
 #[test]
