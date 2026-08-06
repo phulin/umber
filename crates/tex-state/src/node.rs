@@ -37,66 +37,37 @@ pub enum NodeKind {
     Adjust,
 }
 
-#[derive(Clone, Copy)]
-struct NodeSchema {
-    name: &'static str,
-    layout: &'static str,
-    etex_type: i32,
-}
-
-// The logical schema is deliberately data, not generated source. It is the
-// single inventory of categories, fields, dimension behavior, and child
-// traversal for both owned nodes and compact arena views. Layout strings are
-// `fields;dimension;traversal`.
-const fn s(name: &'static str, layout: &'static str, etex_type: i32) -> NodeSchema {
-    NodeSchema {
-        name,
-        layout,
-        etex_type,
-    }
-}
-
-const NODE_SCHEMA: [NodeSchema; 24] = [
-    s("char", "font,ch,origin;glyph;leaf", 0),
-    s("lig", "font,ch,orig,hits,origins;glyph;leaf", 7),
-    s("kern", "amount,kind;horizontal;leaf", 12),
-    s("margin_kern", "amount,side,font,ch;horizontal;leaf", 12),
-    s("glue", "spec,kind,leader;glue;leader", 11),
-    s("penalty", "penalty;none;leaf", 13),
-    s("rule", "width,height,depth;rule;leaf", 3),
-    s("hlist", "box;box;box", 1),
-    s("vlist", "box;box;box", 2),
-    s("unset", "unset;box;one", 14),
-    s("disc", "kind,pre,post,replace,count;replacement;disc", 8),
-    s("mark", "class,tokens;none;leaf", 5),
-    s("ins", "class,size,split,penalty,content;none;one", 4),
-    s("whatsit", "payload;image;leaf", 9),
-    s("math_on", "width;horizontal;leaf", 10),
-    s("math_off", "width;horizontal;leaf", 10),
-    s("direction", "boundary;none;leaf", 10),
-    s("math_noad", "kind,nucleus,sub,sup;none;noad", 15),
-    s("fraction_noad", "fraction;none;fraction", 15),
-    s("math_style", "style;none;leaf", 15),
-    s(
-        "math_choice",
-        "display,text,script,scriptscript;none;choice",
-        15,
-    ),
-    s("math_list", "kind,content;none;one", 15),
-    s("nonscript", ";none;leaf", 11),
-    s("adjust", "content,pre;none;one", 6),
-];
-
 impl NodeKind {
-    const fn schema(self) -> &'static NodeSchema {
-        &NODE_SCHEMA[self as usize]
-    }
+    pub const ALL: [Self; 24] = [
+        Self::Char,
+        Self::Lig,
+        Self::Kern,
+        Self::MarginKern,
+        Self::Glue,
+        Self::Penalty,
+        Self::Rule,
+        Self::HList,
+        Self::VList,
+        Self::Unset,
+        Self::Disc,
+        Self::Mark,
+        Self::Ins,
+        Self::Whatsit,
+        Self::MathOn,
+        Self::MathOff,
+        Self::Direction,
+        Self::MathNoad,
+        Self::FractionNoad,
+        Self::MathStyle,
+        Self::MathChoice,
+        Self::MathList,
+        Self::Nonscript,
+        Self::Adjust,
+    ];
 
     #[must_use]
     pub const fn etex_type(self) -> i32 {
-        let schema = self.schema();
-        let _declarative_metadata = (schema.name, schema.layout);
-        schema.etex_type
+        self.descriptor().etex_type
     }
 }
 
@@ -353,10 +324,9 @@ impl PartialEq for Node {
 mod stats {
     use std::sync::atomic::{AtomicU64, Ordering};
 
-    use super::{NODE_SCHEMA, Node};
+    use super::Node;
 
-    static COUNTS: [AtomicU64; NODE_SCHEMA.len()] =
-        [const { AtomicU64::new(0) }; NODE_SCHEMA.len()];
+    static COUNTS: [AtomicU64; 24] = [const { AtomicU64::new(0) }; 24];
 
     pub fn record(node: &Node) {
         let index = node.kind() as usize;
@@ -364,12 +334,12 @@ mod stats {
     }
 
     pub fn snapshot() -> Vec<(&'static str, u64)> {
-        NODE_SCHEMA
+        super::NodeKind::ALL
             .iter()
             .zip(&COUNTS)
-            .filter_map(|(schema, count)| {
+            .filter_map(|(kind, count)| {
                 let count = count.load(Ordering::Relaxed);
-                (count != 0).then_some((schema.name, count))
+                (count != 0).then_some((kind.descriptor().name, count))
             })
             .collect()
     }
@@ -832,7 +802,7 @@ impl Node {
     /// e-TeX `\lastnodetype` code for this node.
     #[must_use]
     pub fn etex_type(&self) -> i32 {
-        self.kind().schema().etex_type
+        self.kind().etex_type()
     }
     #[cfg(debug_assertions)]
     pub(crate) fn child_lists(&self, out: &mut Vec<NodeListId>) {

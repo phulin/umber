@@ -79,6 +79,7 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/node_arena/measurement.rs`: `profiling-stats` compact-column and peak-storage accounting.
 - `src/node_arena/measurement/tests.rs`: Coherence, divergent-maximum, nested-payload, and concurrent peak-measurement tests.
 - `src/node_arena/mutation.rs`: Private shape-preserving compact-row replacement operations.
+- `src/node_arena/schema.rs`: Exhaustive allocation-free logical node descriptors, typed handle policies, origins, and ordered child traversal.
 - `src/node_arena/semantic.rs`: Versioned, allocation-independent semantic identity for immutable node-list aggregates.
 - `src/node_arena/storage.rs`: Canonical node words, sidecar coordination, encoding, aggregate watermarks, and rollback.
 - `src/node_arena/tables.rs`: Typed structure-of-arrays sidecar tables for boxes, unsets, insertions, and noads.

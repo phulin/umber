@@ -7,6 +7,7 @@ mod arena;
 mod copy;
 mod measurement;
 mod mutation;
+mod schema;
 mod semantic;
 mod storage;
 mod tables;
@@ -16,6 +17,10 @@ pub use arena::{NodeArena, NodeListBuilder};
 pub(crate) use copy::ChildPatch;
 #[cfg(feature = "profiling")]
 pub use measurement::{NodeMemoryColumn, NodeStorageObservation, peak_node_storage_measurement};
+pub use schema::{
+    FieldPolicy, NodeChildRole, NodeDescriptor, NodeField, NodeHandle, NodeHandleEvent,
+    NodeHandleKind, NodeHandlePolicy, NodeHandleRole, NodeSchemaVisitor, NodeTag,
+};
 pub(crate) use semantic::{NodeSemanticId, NodeSemanticIdBuilder};
 pub(crate) use storage::{NodeArenaMark, NodeStorage, SidecarNeeds};
 pub use view::{CharCodes, CharRun, NodeCursor, NodeIter, NodeList, NodeRef, PackedNode};
