@@ -473,6 +473,48 @@ in production Rust (net deletion 184) and 51 additions and 94 deletions in
 tests (net deletion 43). No moved or generated lines and no binary assets are
 credited.
 
+**Implemented realized-font authority and accounting.** Commit `71a8fb54f`
+completes `umber2-vgjr.11.3`. `LoadedFont::realized_identity` is the sole
+host-neutral digest of selected metrics, size, layout and fallback policy,
+mapping, OpenType program and instance, and generated-font ancestry;
+`FontSourceIdentity` remains an exact public compatibility alias.
+`OpenTypeFont::instance_identity` is the one complete instance projection.
+`PdfFontResourceIdentity` owns pdfTeX's intentionally narrower font-object
+reuse view, preserving equal-TFM/program subset reuse across selected sizes.
+The session's retained HTML resource view supplies the same validated
+`OpenTypeFont` selected during layout, and the producer shares its decoded
+SFNT allocation for explicit OpenType and mapped classic painting. External
+`HtmlFontAssets` implementations remain source-compatible through a default
+method and decode their supplied WOFF2 exactly once.
+
+The active HTML path's second WOFF2 decode and parse, three independent
+instance-context projections, the state-owned PDF TFM/program tuple, and
+redundant non-emitted DVI consistency fields were deleted. Fallback
+precedence, glyph IDs, DVI definitions, Type 1/TrueType/PK/VF finalization,
+PDF subset identity, HTML paths and families, format and artifact bytes,
+distribution/resource/cache keys, and cold/warm/offline behavior are
+unchanged. No artifact, format, font-wire, distribution, JavaScript, or cache
+schema changed.
+
+The realized-font commit adds 217 and deletes 130 production Rust lines (87
+lines of net growth) and changes no Rust test source. Guidance and normative
+documentation add 40 and delete five lines, for 257 additions and 135
+deletions overall. Across all three program children, production Rust adds 672
+and deletes 828 lines, a 156-line net deletion; the remaining forecast audit
+is tracked by `umber2-vgjr.11.4` rather than credited to moved or compatibility
+code.
+
+The exact implementation tree passed uncapped six-job focused and complete
+native `--no-run` builds. Under `MemoryMax=512M`, 79 font tests peaked at
+61,752 KiB, 145 output tests at 262,304 KiB, 728 state unit tests at 75,600
+KiB, and the complete Umber package at 322,696 KiB. The full routine suite
+passed under `MemoryMax=1G` at 314,712 KiB after one isolated and nonrepeating
+RSS-guard timing failure. The final six-job `scripts/check.sh` run passed all
+four gates under 1 GiB at 109,856 KiB after the known cold clippy compiler
+cache was warmed uncapped. The WASM check, Biome, and 89 Node tests passed
+under 1 GiB at 716,060 KiB; real wasm-bindgen, browser-package, and npm-pack
+steps were blocked because this host lacks `wasm-pack` and Firefox.
+
 ## 12. Establish one fixture contract while compacting repeated catalogues
 
 **Outcome.** A typed closed-case contract owns identity, tracked inputs, expected outputs, statuses, xfail reasons, profiles, and publication metadata. Command-semantic V2 infers conventional fields and embeds capture policy. The TeX82 catalogue uses an implicit typed default disposition plus explicit overrides. Fixturegen alone mutates and publishes; test-support validates and stages; `corpus-manifest` remains the external-corpus leaf.
