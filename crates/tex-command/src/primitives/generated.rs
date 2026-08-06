@@ -5,7 +5,8 @@
 //! observation, and documentation views. Execution dispatch remains in the
 //! processor and executor.
 
-use tex_state::meaning::{Meaning, UnexpandablePrimitive};
+use tex_state::meaning::{InternalInteger, Meaning, UnexpandablePrimitive};
+use tex_state::page::{PageDimension, PageInteger};
 
 use super::catalogue::{
     DocumentationFamily, ExpansionClass, InstallationPolicy, PrefixAdmissibility, PrimitiveOperand,
@@ -24,6 +25,47 @@ pub struct PrimitiveRegistration {
     pub profile: PrimitiveProfile,
     pub kind: SpellingKind,
     pub installation: InstallationPolicy,
+}
+
+/// One non-enum meaning projected from the canonical catalogue.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SpecialPrimitiveView {
+    pub name: &'static str,
+    /// Store-independent meaning. `None` identifies the frozen `\endwrite`
+    /// macro whose handles must be constructed in the destination store.
+    pub meaning: Option<Meaning>,
+}
+
+/// Returns parameter and exceptional meanings in their canonical installation
+/// order for one profile layer.
+pub fn special_primitive_views(
+    profile: PrimitiveProfile,
+) -> impl Iterator<Item = SpecialPrimitiveView> {
+    let rows: &'static [SpecialPrimitiveView] = match profile {
+        PrimitiveProfile::Tex82 => TEX82_SPECIAL_PRIMITIVES,
+        PrimitiveProfile::Etex26 => ETEX_SPECIAL_PRIMITIVES,
+        PrimitiveProfile::LatexCompatibility => &[],
+        PrimitiveProfile::Pdftex14029 => PDFTEX_SPECIAL_PRIMITIVES,
+    };
+    rows.iter().copied()
+}
+
+/// Returns the exact spelling inventory of one profile layer, derived from
+/// enum, parameter, and exceptional catalogue views.
+#[must_use]
+pub fn primitive_names(profile: PrimitiveProfile) -> Vec<&'static str> {
+    let mut names = primitive_registrations(profile, InstallationPolicy::INITEX)
+        .map(|row| row.name)
+        .chain(
+            super::parameters::primitive_parameter_views(profile)
+                .into_iter()
+                .map(|row| row.name),
+        )
+        .chain(special_primitive_views(profile).map(|row| row.name))
+        .collect::<Vec<_>>();
+    names.sort_unstable();
+    names.dedup();
+    names
 }
 
 /// One documentation row projected from the canonical catalogue.
@@ -212,6 +254,163 @@ const fn documentation_family(set: PrimitiveSet) -> DocumentationFamily {
         PrimitiveSet::Pdftex => DocumentationFamily::Pdftex14029,
     }
 }
+
+const TEX82_SPECIAL_PRIMITIVES: &[SpecialPrimitiveView] = &[
+    SpecialPrimitiveView {
+        name: "relax",
+        meaning: Some(Meaning::Relax),
+    },
+    SpecialPrimitiveView {
+        name: "nullfont",
+        meaning: Some(Meaning::Font(tex_state::font::NULL_FONT)),
+    },
+    SpecialPrimitiveView {
+        name: "pagegoal",
+        meaning: Some(Meaning::PageDimension(PageDimension::Goal)),
+    },
+    SpecialPrimitiveView {
+        name: "pagetotal",
+        meaning: Some(Meaning::PageDimension(PageDimension::Total)),
+    },
+    SpecialPrimitiveView {
+        name: "pagestretch",
+        meaning: Some(Meaning::PageDimension(PageDimension::Stretch)),
+    },
+    SpecialPrimitiveView {
+        name: "pagefilstretch",
+        meaning: Some(Meaning::PageDimension(PageDimension::FilStretch)),
+    },
+    SpecialPrimitiveView {
+        name: "pagefillstretch",
+        meaning: Some(Meaning::PageDimension(PageDimension::FillStretch)),
+    },
+    SpecialPrimitiveView {
+        name: "pagefilllstretch",
+        meaning: Some(Meaning::PageDimension(PageDimension::FilllStretch)),
+    },
+    SpecialPrimitiveView {
+        name: "pageshrink",
+        meaning: Some(Meaning::PageDimension(PageDimension::Shrink)),
+    },
+    SpecialPrimitiveView {
+        name: "pagedepth",
+        meaning: Some(Meaning::PageDimension(PageDimension::Depth)),
+    },
+    SpecialPrimitiveView {
+        name: "deadcycles",
+        meaning: Some(Meaning::PageInteger(PageInteger::DeadCycles)),
+    },
+    SpecialPrimitiveView {
+        name: "insertpenalties",
+        meaning: Some(Meaning::PageInteger(PageInteger::InsertPenalties)),
+    },
+    SpecialPrimitiveView {
+        name: "badness",
+        meaning: Some(Meaning::InternalInteger(InternalInteger::Badness)),
+    },
+    SpecialPrimitiveView {
+        name: "inputlineno",
+        meaning: Some(Meaning::InternalInteger(InternalInteger::InputLineNumber)),
+    },
+    SpecialPrimitiveView {
+        name: "endwrite",
+        meaning: None,
+    },
+];
+
+const ETEX_SPECIAL_PRIMITIVES: &[SpecialPrimitiveView] = &[
+    SpecialPrimitiveView {
+        name: "eTeXversion",
+        meaning: Some(Meaning::InternalInteger(InternalInteger::ETeXVersion)),
+    },
+    SpecialPrimitiveView {
+        name: "currentgrouplevel",
+        meaning: Some(Meaning::InternalInteger(InternalInteger::CurrentGroupLevel)),
+    },
+    SpecialPrimitiveView {
+        name: "currentgrouptype",
+        meaning: Some(Meaning::InternalInteger(InternalInteger::CurrentGroupType)),
+    },
+    SpecialPrimitiveView {
+        name: "currentiflevel",
+        meaning: Some(Meaning::InternalInteger(InternalInteger::CurrentIfLevel)),
+    },
+    SpecialPrimitiveView {
+        name: "currentiftype",
+        meaning: Some(Meaning::InternalInteger(InternalInteger::CurrentIfType)),
+    },
+    SpecialPrimitiveView {
+        name: "currentifbranch",
+        meaning: Some(Meaning::InternalInteger(InternalInteger::CurrentIfBranch)),
+    },
+    SpecialPrimitiveView {
+        name: "lastnodetype",
+        meaning: Some(Meaning::InternalInteger(InternalInteger::LastNodeType)),
+    },
+];
+
+const PDFTEX_SPECIAL_PRIMITIVES: &[SpecialPrimitiveView] = &[
+    SpecialPrimitiveView {
+        name: "pdfelapsedtime",
+        meaning: Some(Meaning::InternalInteger(InternalInteger::PdfElapsedTime)),
+    },
+    SpecialPrimitiveView {
+        name: "pdfrandomseed",
+        meaning: Some(Meaning::InternalInteger(InternalInteger::PdfRandomSeed)),
+    },
+    SpecialPrimitiveView {
+        name: "pdfshellescape",
+        meaning: Some(Meaning::InternalInteger(InternalInteger::PdfShellEscape)),
+    },
+    SpecialPrimitiveView {
+        name: "pdflastannot",
+        meaning: Some(Meaning::InternalInteger(InternalInteger::PdfLastAnnot)),
+    },
+    SpecialPrimitiveView {
+        name: "pdflastlink",
+        meaning: Some(Meaning::InternalInteger(InternalInteger::PdfLastLink)),
+    },
+    SpecialPrimitiveView {
+        name: "pdflastxpos",
+        meaning: Some(Meaning::InternalInteger(InternalInteger::PdfLastXPos)),
+    },
+    SpecialPrimitiveView {
+        name: "pdflastypos",
+        meaning: Some(Meaning::InternalInteger(InternalInteger::PdfLastYPos)),
+    },
+    SpecialPrimitiveView {
+        name: "pdflastxform",
+        meaning: Some(Meaning::InternalInteger(InternalInteger::PdfLastXForm)),
+    },
+    SpecialPrimitiveView {
+        name: "pdflastximage",
+        meaning: Some(Meaning::InternalInteger(InternalInteger::PdfLastXImage)),
+    },
+    SpecialPrimitiveView {
+        name: "pdfretval",
+        meaning: Some(Meaning::InternalInteger(InternalInteger::PdfReturnValue)),
+    },
+    SpecialPrimitiveView {
+        name: "pdflastximagepages",
+        meaning: Some(Meaning::InternalInteger(
+            InternalInteger::PdfLastXImagePages,
+        )),
+    },
+    SpecialPrimitiveView {
+        name: "pdflastximagecolordepth",
+        meaning: Some(Meaning::InternalInteger(
+            InternalInteger::PdfLastXImageColorDepth,
+        )),
+    },
+    SpecialPrimitiveView {
+        name: "pdftexversion",
+        meaning: Some(Meaning::InternalInteger(InternalInteger::PdfTeXVersion)),
+    },
+    SpecialPrimitiveView {
+        name: "pdflastobj",
+        meaning: Some(Meaning::InternalInteger(InternalInteger::PdfLastObject)),
+    },
+];
 
 #[cfg(test)]
 mod tests;

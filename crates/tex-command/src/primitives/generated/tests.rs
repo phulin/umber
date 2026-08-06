@@ -157,3 +157,39 @@ fn enum_from_operand_maps_remain_complete() {
     }
     assert_eq!(unexpandable_count, 262);
 }
+
+#[test]
+fn exceptional_catalogue_covers_frozen_private_and_profile_meanings() {
+    let tex82 = special_primitive_views(PrimitiveProfile::Tex82).collect::<Vec<_>>();
+    assert_eq!(
+        tex82
+            .iter()
+            .find(|row| row.name == "nullfont")
+            .expect("nullfont catalogue row")
+            .meaning,
+        Some(Meaning::Font(tex_state::font::NULL_FONT))
+    );
+    assert_eq!(
+        tex82
+            .iter()
+            .find(|row| row.name == "endwrite")
+            .expect("endwrite catalogue row")
+            .meaning,
+        None
+    );
+    for name in ["relax", "pagegoal", "deadcycles", "badness", "inputlineno"] {
+        assert!(tex82.iter().any(|row| row.name == name), "{name}");
+    }
+
+    let pdftex = primitive_names(PrimitiveProfile::Pdftex14029);
+    assert_eq!(pdftex.len(), 158);
+    for name in [
+        "pdfoptionpdfminorversion",
+        "pdfminorversion",
+        "pdflastxform",
+        "pdftexversion",
+        "pdfpkmode",
+    ] {
+        assert!(pdftex.binary_search(&name).is_ok(), "{name}");
+    }
+}

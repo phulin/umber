@@ -4,387 +4,38 @@ use tex_state::Universe;
 use tex_state::env::banks::{DimenParam, IntParam, TokParam};
 use tex_state::ids::TokenListId;
 #[cfg(test)]
-use tex_state::meaning::UnexpandablePrimitive;
-use tex_state::meaning::{InternalInteger, Meaning};
+use tex_state::meaning::{InternalInteger, Meaning, UnexpandablePrimitive};
 use tex_state::scaled::Scaled;
-
-/// The exact 158-name layer obtained from the pinned `pdftex.web` source.
-pub const PDFTEX_PRIMITIVE_NAMES: &[&str] = &[
-    "efcode",
-    "expanded",
-    "ifincsname",
-    "ifpdfabsdim",
-    "ifpdfabsnum",
-    "ifpdfprimitive",
-    "ignoreprimitiveerror",
-    "knaccode",
-    "knbccode",
-    "knbscode",
-    "leftmarginkern",
-    "letterspacefont",
-    "lpcode",
-    "pdfadjustinterwordglue",
-    "pdfadjustspacing",
-    "pdfannot",
-    "pdfappendkern",
-    "pdfcatalog",
-    "pdfcolorstack",
-    "pdfcolorstackinit",
-    "pdfcompresslevel",
-    "pdfcopyfont",
-    "pdfcreationdate",
-    "pdfdecimaldigits",
-    "pdfdest",
-    "pdfdestmargin",
-    "pdfdraftmode",
-    "pdfeachlinedepth",
-    "pdfeachlineheight",
-    "pdfelapsedtime",
-    "pdfendlink",
-    "pdfendthread",
-    "pdfescapehex",
-    "pdfescapename",
-    "pdfescapestring",
-    "pdffakespace",
-    "pdffiledump",
-    "pdffilemoddate",
-    "pdffilesize",
-    "pdffirstlineheight",
-    "pdffontattr",
-    "pdffontexpand",
-    "pdffontname",
-    "pdffontobjnum",
-    "pdffontsize",
-    "pdfforcepagebox",
-    "pdfgamma",
-    "pdfgentounicode",
-    "pdfglyphtounicode",
-    "pdfhorigin",
-    "pdfignoreddimen",
-    "pdfimageapplygamma",
-    "pdfimagegamma",
-    "pdfimagehicolor",
-    "pdfimageresolution",
-    "pdfincludechars",
-    "pdfinclusioncopyfonts",
-    "pdfinclusionerrorlevel",
-    "pdfinfo",
-    "pdfinfoomitdate",
-    "pdfinsertht",
-    "pdfinterwordspaceoff",
-    "pdfinterwordspaceon",
-    "pdflastannot",
-    "pdflastlinedepth",
-    "pdflastlink",
-    "pdflastmatch",
-    "pdflastobj",
-    "pdflastxform",
-    "pdflastximage",
-    "pdflastximagecolordepth",
-    "pdflastximagepages",
-    "pdflastxpos",
-    "pdflastypos",
-    "pdflinkmargin",
-    "pdfliteral",
-    "pdfmajorversion",
-    "pdfmapfile",
-    "pdfmapline",
-    "pdfmatch",
-    "pdfmdfivesum",
-    "pdfminorversion",
-    "pdfmovechars",
-    "pdfnames",
-    "pdfnobuiltintounicode",
-    "pdfnoligatures",
-    "pdfnormaldeviate",
-    "pdfobj",
-    "pdfobjcompresslevel",
-    "pdfomitcharset",
-    "pdfomitinfodict",
-    "pdfomitprocset",
-    "pdfoptionalwaysusepdfpagebox",
-    "pdfoptionpdfinclusionerrorlevel",
-    "pdfoptionpdfminorversion",
-    "pdfoutline",
-    "pdfoutput",
-    "pdfpageattr",
-    "pdfpagebox",
-    "pdfpageheight",
-    "pdfpageref",
-    "pdfpageresources",
-    "pdfpagesattr",
-    "pdfpagewidth",
-    "pdfpkmode",
-    "pdfpkresolution",
-    "pdfprependkern",
-    "pdfprimitive",
-    "pdfprotrudechars",
-    "pdfptexuseunderscore",
-    "pdfpxdimen",
-    "pdfrandomseed",
-    "pdfrefobj",
-    "pdfrefxform",
-    "pdfrefximage",
-    "pdfresettimer",
-    "pdfrestore",
-    "pdfretval",
-    "pdfrunninglinkoff",
-    "pdfrunninglinkon",
-    "pdfsave",
-    "pdfsavepos",
-    "pdfsetmatrix",
-    "pdfsetrandomseed",
-    "pdfshellescape",
-    "pdfsnaprefpoint",
-    "pdfsnapy",
-    "pdfsnapycomp",
-    "pdfspacefont",
-    "pdfstartlink",
-    "pdfstartthread",
-    "pdfstrcmp",
-    "pdfsuppressptexinfo",
-    "pdfsuppresswarningdupdest",
-    "pdfsuppresswarningdupmap",
-    "pdfsuppresswarningpagegroup",
-    "pdftexbanner",
-    "pdftexrevision",
-    "pdftexversion",
-    "pdfthread",
-    "pdfthreadmargin",
-    "pdftracingfonts",
-    "pdftrailer",
-    "pdftrailerid",
-    "pdfunescapehex",
-    "pdfuniformdeviate",
-    "pdfuniqueresname",
-    "pdfvorigin",
-    "pdfxform",
-    "pdfxformname",
-    "pdfximage",
-    "pdfximagebbox",
-    "quitvmode",
-    "rightmarginkern",
-    "rpcode",
-    "shbscode",
-    "stbscode",
-    "tagcode",
-];
-
-const PDFTEX_INT_PARAMETER_MEANINGS: &[(&str, IntParam)] = &[
-    ("pdfoutput", IntParam::PDF_OUTPUT),
-    ("pdfcompresslevel", IntParam::PDF_COMPRESS_LEVEL),
-    ("pdfobjcompresslevel", IntParam::PDF_OBJ_COMPRESS_LEVEL),
-    ("pdfdecimaldigits", IntParam::PDF_DECIMAL_DIGITS),
-    ("pdfmovechars", IntParam::PDF_MOVE_CHARS),
-    ("pdfimageresolution", IntParam::PDF_IMAGE_RESOLUTION),
-    ("pdfpkresolution", IntParam::PDF_PK_RESOLUTION),
-    ("pdfuniqueresname", IntParam::PDF_UNIQUE_RESNAME),
-    ("pdfoptionpdfminorversion", IntParam::PDF_MINOR_VERSION),
-    (
-        "pdfoptionalwaysusepdfpagebox",
-        IntParam::PDF_OPTION_ALWAYS_USE_PDF_PAGE_BOX,
-    ),
-    (
-        "pdfoptionpdfinclusionerrorlevel",
-        IntParam::PDF_OPTION_INCLUSION_ERROR_LEVEL,
-    ),
-    ("pdfmajorversion", IntParam::PDF_MAJOR_VERSION),
-    ("pdfminorversion", IntParam::PDF_MINOR_VERSION),
-    ("pdfforcepagebox", IntParam::PDF_FORCE_PAGE_BOX),
-    ("pdfpagebox", IntParam::PDF_PAGE_BOX),
-    (
-        "pdfinclusionerrorlevel",
-        IntParam::PDF_INCLUSION_ERROR_LEVEL,
-    ),
-    ("pdfgamma", IntParam::PDF_GAMMA),
-    ("pdfimagegamma", IntParam::PDF_IMAGE_GAMMA),
-    ("pdfimagehicolor", IntParam::PDF_IMAGE_HICOLOR),
-    ("pdfimageapplygamma", IntParam::PDF_IMAGE_APPLY_GAMMA),
-    ("pdfadjustspacing", IntParam::PDF_ADJUST_SPACING),
-    ("pdfprotrudechars", IntParam::PDF_PROTRUDE_CHARS),
-    ("pdftracingfonts", IntParam::PDF_TRACING_FONTS),
-    (
-        "pdfadjustinterwordglue",
-        IntParam::PDF_ADJUST_INTERWORD_GLUE,
-    ),
-    ("pdfprependkern", IntParam::PDF_PREPEND_KERN),
-    ("pdfappendkern", IntParam::PDF_APPEND_KERN),
-    ("pdfgentounicode", IntParam::PDF_GEN_TO_UNICODE),
-    ("pdfdraftmode", IntParam::PDF_DRAFT_MODE),
-    ("pdfinclusioncopyfonts", IntParam::PDF_INCLUSION_COPY_FONTS),
-    (
-        "pdfsuppresswarningdupdest",
-        IntParam::PDF_SUPPRESS_WARNING_DUP_DEST,
-    ),
-    (
-        "pdfsuppresswarningdupmap",
-        IntParam::PDF_SUPPRESS_WARNING_DUP_MAP,
-    ),
-    (
-        "pdfsuppresswarningpagegroup",
-        IntParam::PDF_SUPPRESS_WARNING_PAGE_GROUP,
-    ),
-    ("pdfinfoomitdate", IntParam::PDF_INFO_OMIT_DATE),
-    ("pdfsuppressptexinfo", IntParam::PDF_SUPPRESS_PTEX_INFO),
-    ("pdfomitcharset", IntParam::PDF_OMIT_CHARSET),
-    ("pdfomitinfodict", IntParam::PDF_OMIT_INFO_DICT),
-    ("pdfomitprocset", IntParam::PDF_OMIT_PROCSET),
-    ("pdfptexuseunderscore", IntParam::PDF_PTEX_USE_UNDERSCORE),
-    ("ignoreprimitiveerror", IntParam::IGNORE_PRIMITIVE_ERROR),
-];
-
-const PDFTEX_INT_PARAMETER_DEFAULTS: &[(IntParam, i32)] = &[
-    (IntParam::PDF_OUTPUT, 0),
-    (IntParam::PDF_COMPRESS_LEVEL, 9),
-    (IntParam::PDF_OBJ_COMPRESS_LEVEL, 0),
-    (IntParam::PDF_DECIMAL_DIGITS, 3),
-    (IntParam::PDF_MOVE_CHARS, 0),
-    (IntParam::PDF_IMAGE_RESOLUTION, 72),
-    (IntParam::PDF_PK_RESOLUTION, 0),
-    (IntParam::PDF_UNIQUE_RESNAME, 0),
-    (IntParam::PDF_MINOR_VERSION, 4),
-    (IntParam::PDF_OPTION_ALWAYS_USE_PDF_PAGE_BOX, 0),
-    (IntParam::PDF_FORCE_PAGE_BOX, 0),
-    (IntParam::PDF_PAGE_BOX, 0),
-    (IntParam::PDF_OPTION_INCLUSION_ERROR_LEVEL, 0),
-    (IntParam::PDF_INCLUSION_ERROR_LEVEL, 0),
-    (IntParam::PDF_MAJOR_VERSION, 1),
-    (IntParam::PDF_GAMMA, 1000),
-    (IntParam::PDF_IMAGE_GAMMA, 2200),
-    (IntParam::PDF_IMAGE_HICOLOR, 1),
-    (IntParam::PDF_IMAGE_APPLY_GAMMA, 0),
-    (IntParam::PDF_ADJUST_SPACING, 0),
-    (IntParam::PDF_PROTRUDE_CHARS, 0),
-    (IntParam::PDF_TRACING_FONTS, 0),
-    (IntParam::PDF_ADJUST_INTERWORD_GLUE, 0),
-    (IntParam::PDF_PREPEND_KERN, 0),
-    (IntParam::PDF_APPEND_KERN, 0),
-    (IntParam::PDF_GEN_TO_UNICODE, 0),
-    (IntParam::PDF_DRAFT_MODE, 0),
-    (IntParam::PDF_INCLUSION_COPY_FONTS, 0),
-    (IntParam::PDF_SUPPRESS_WARNING_DUP_DEST, 0),
-    (IntParam::PDF_SUPPRESS_WARNING_DUP_MAP, 0),
-    (IntParam::PDF_SUPPRESS_WARNING_PAGE_GROUP, 0),
-    (IntParam::PDF_INFO_OMIT_DATE, 0),
-    (IntParam::PDF_SUPPRESS_PTEX_INFO, 0),
-    (IntParam::PDF_OMIT_CHARSET, 0),
-    (IntParam::PDF_OMIT_INFO_DICT, 0),
-    (IntParam::PDF_OMIT_PROCSET, 0),
-    (IntParam::PDF_PTEX_USE_UNDERSCORE, 0),
-    (IntParam::IGNORE_PRIMITIVE_ERROR, 0),
-];
-
-const PDFTEX_DIMEN_PARAMETERS: &[(&str, DimenParam, i32)] = &[
-    ("pdfhorigin", DimenParam::PDF_H_ORIGIN, 4_736_287),
-    ("pdfvorigin", DimenParam::PDF_V_ORIGIN, 4_736_287),
-    ("pdfpagewidth", DimenParam::PDF_PAGE_WIDTH, 0),
-    ("pdfpageheight", DimenParam::PDF_PAGE_HEIGHT, 0),
-    ("pdflinkmargin", DimenParam::PDF_LINK_MARGIN, 0),
-    ("pdfdestmargin", DimenParam::PDF_DEST_MARGIN, 0),
-    ("pdfthreadmargin", DimenParam::PDF_THREAD_MARGIN, 0),
-    (
-        "pdffirstlineheight",
-        DimenParam::PDF_FIRST_LINE_HEIGHT,
-        -65_536_000,
-    ),
-    (
-        "pdflastlinedepth",
-        DimenParam::PDF_LAST_LINE_DEPTH,
-        -65_536_000,
-    ),
-    (
-        "pdfeachlineheight",
-        DimenParam::PDF_EACH_LINE_HEIGHT,
-        -65_536_000,
-    ),
-    (
-        "pdfeachlinedepth",
-        DimenParam::PDF_EACH_LINE_DEPTH,
-        -65_536_000,
-    ),
-    (
-        "pdfignoreddimen",
-        DimenParam::PDF_IGNORED_DIMEN,
-        -65_536_000,
-    ),
-    ("pdfpxdimen", DimenParam::PDF_PX_DIMEN, 65_782),
-];
-
-const PDFTEX_TOK_PARAMETERS: &[(&str, TokParam)] = &[
-    ("pdfpagesattr", TokParam::PDF_PAGES_ATTR),
-    ("pdfpageattr", TokParam::PDF_PAGE_ATTR),
-    ("pdfpageresources", TokParam::PDF_PAGE_RESOURCES),
-    ("pdfpkmode", TokParam::PDF_PK_MODE),
-];
 
 pub(crate) fn install_pdftex_layer(stores: &mut Universe) {
     tex_command::install_pdftex_unexpandable_primitives(stores);
-    for &(name, parameter) in PDFTEX_INT_PARAMETER_MEANINGS {
-        let symbol = stores.intern(name);
-        stores.set_meaning(symbol, Meaning::IntParam(parameter.raw()));
-    }
-    for &(name, parameter, _) in PDFTEX_DIMEN_PARAMETERS {
-        let symbol = stores.intern(name);
-        stores.set_meaning(symbol, Meaning::DimenParam(parameter.raw()));
-    }
-    for &(name, parameter) in PDFTEX_TOK_PARAMETERS {
-        let symbol = stores.intern(name);
-        stores.set_meaning(symbol, Meaning::TokParam(parameter.raw()));
-    }
-
-    for (name, integer) in [
-        ("pdfelapsedtime", InternalInteger::PdfElapsedTime),
-        ("pdfrandomseed", InternalInteger::PdfRandomSeed),
-        ("pdfshellescape", InternalInteger::PdfShellEscape),
-        ("pdflastannot", InternalInteger::PdfLastAnnot),
-        ("pdflastlink", InternalInteger::PdfLastLink),
-        ("pdflastxpos", InternalInteger::PdfLastXPos),
-        ("pdflastypos", InternalInteger::PdfLastYPos),
-        ("pdflastxform", InternalInteger::PdfLastXForm),
-        ("pdflastximage", InternalInteger::PdfLastXImage),
-        ("pdfretval", InternalInteger::PdfReturnValue),
-        ("pdflastximagepages", InternalInteger::PdfLastXImagePages),
-        (
-            "pdflastximagecolordepth",
-            InternalInteger::PdfLastXImageColorDepth,
-        ),
-    ] {
-        let symbol = stores.intern(name);
-        stores.set_meaning(symbol, Meaning::InternalInteger(integer));
-    }
-
     tex_command::install_pdftex_expandable_primitives(stores);
-    for &name in PDFTEX_PRIMITIVE_NAMES {
-        let symbol = stores.intern(name);
-        stores.register_primitive_meaning(name, stores.meaning(symbol));
-    }
 }
 
 /// Reconstructs pdfTeX's original primitive table after a format load without
 /// replacing live meanings restored from the format image.
 pub(crate) fn register_pdftex_layer(stores: &mut Universe) {
-    let mut pristine = Universe::default();
-    tex_command::install_etex_expandable_primitives(&mut pristine);
-    install_pdftex_layer(&mut pristine);
-    for &name in PDFTEX_PRIMITIVE_NAMES {
-        stores.register_primitive_meaning(
-            name,
-            pristine
-                .primitive_meaning(name)
-                .expect("the pristine pdfTeX layer registers every inventory name"),
-        );
-    }
+    tex_command::register_pdftex_unexpandable_primitives(stores);
+    tex_command::register_pdftex_expandable_primitives(stores);
 }
 
 pub(crate) fn initialize_pdftex_parameter_defaults(stores: &mut Universe) {
-    for &(parameter, value) in PDFTEX_INT_PARAMETER_DEFAULTS {
-        stores.set_int_param_global(parameter, value);
-    }
-    for &(_, parameter, value) in PDFTEX_DIMEN_PARAMETERS {
-        stores.set_dimen_param_global(parameter, Scaled::from_raw(value));
-    }
-    for &(_, parameter) in PDFTEX_TOK_PARAMETERS {
-        stores.set_tok_param_global(parameter, TokenListId::EMPTY);
+    for row in tex_command::primitive_parameter_views(tex_command::PrimitiveProfile::Pdftex14029) {
+        match row.default {
+            tex_command::ParameterDefault::Integer(value) => {
+                stores.set_int_param_global(IntParam::new(row.cell.index), value);
+            }
+            tex_command::ParameterDefault::Scaled(value) => {
+                stores.set_dimen_param_global(
+                    DimenParam::new(row.cell.index),
+                    Scaled::from_raw(value),
+                );
+            }
+            tex_command::ParameterDefault::EmptyTokens => {
+                stores.set_tok_param_global(TokParam::new(row.cell.index), TokenListId::EMPTY);
+            }
+            default => unreachable!("pdfTeX parameter catalogue default: {default:?}"),
+        }
     }
 }
 
@@ -402,6 +53,14 @@ mod tests {
     use tex_state::{
         FileModificationDate, JobClock, PdfDocumentFragmentKind, ShellEscapePolicy, World,
     };
+
+    fn pdftex_primitive_names() -> Vec<&'static str> {
+        tex_command::primitive_names(tex_command::PrimitiveProfile::Pdftex14029)
+    }
+
+    fn pdftex_parameters() -> Vec<tex_command::PrimitiveParameterView> {
+        tex_command::primitive_parameter_views(tex_command::PrimitiveProfile::Pdftex14029)
+    }
 
     fn run_pdf_memory(source: &str, stores: &mut Universe) -> Result<String, crate::SessionError> {
         // Every pinned oracle consumed by this module was generated with
@@ -480,9 +139,10 @@ mod tests {
         source_names.sort_unstable();
         source_names.dedup();
 
-        assert_eq!(PDFTEX_PRIMITIVE_NAMES.len(), 158);
+        let catalogue_names = pdftex_primitive_names();
+        assert_eq!(catalogue_names.len(), 158);
         assert_eq!(
-            PDFTEX_PRIMITIVE_NAMES
+            catalogue_names
                 .iter()
                 .copied()
                 .collect::<BTreeSet<_>>()
@@ -490,7 +150,7 @@ mod tests {
             158,
             "the registered inventory must not contain duplicates",
         );
-        assert_eq!(PDFTEX_PRIMITIVE_NAMES, source_names);
+        assert_eq!(catalogue_names, source_names);
     }
 
     #[test]
@@ -1699,7 +1359,7 @@ mod tests {
         ] {
             let mut stores = Universe::default();
             prepare(&mut stores);
-            for &name in PDFTEX_PRIMITIVE_NAMES {
+            for name in pdftex_primitive_names() {
                 if intentional_overlaps.contains(&name) {
                     continue;
                 }
@@ -1710,7 +1370,7 @@ mod tests {
 
         let mut stores = Universe::default();
         prepare_pdftex_run_stores(&mut stores);
-        for &name in PDFTEX_PRIMITIVE_NAMES {
+        for name in pdftex_primitive_names() {
             let symbol = stores.intern(name);
             assert_ne!(stores.meaning(symbol), Meaning::Undefined, "{name}");
         }
@@ -2092,22 +1752,30 @@ mod tests {
         let mut stores = Universe::default();
         prepare_pdftex_run_stores(&mut stores);
 
-        assert_eq!(PDFTEX_INT_PARAMETER_MEANINGS.len(), 39);
-        assert_eq!(PDFTEX_INT_PARAMETER_DEFAULTS.len(), 38);
-        assert_eq!(PDFTEX_DIMEN_PARAMETERS.len(), 13);
-        assert_eq!(PDFTEX_TOK_PARAMETERS.len(), 4);
-        for &(parameter, expected) in PDFTEX_INT_PARAMETER_DEFAULTS {
-            assert_eq!(stores.int_param(parameter), expected, "{parameter:?}");
-        }
-        for &(name, parameter, expected) in PDFTEX_DIMEN_PARAMETERS {
-            assert_eq!(
-                stores.dimen_param(parameter).raw(),
-                expected,
-                "{name} default"
-            );
-        }
-        for &(name, parameter) in PDFTEX_TOK_PARAMETERS {
-            assert_eq!(stores.tok_param(parameter), TokenListId::EMPTY, "{name}");
+        let parameters = pdftex_parameters();
+        assert_eq!(parameters.len(), 56);
+        for row in parameters {
+            match row.default {
+                tex_command::ParameterDefault::Integer(expected) => assert_eq!(
+                    stores.int_param(IntParam::new(row.cell.index)),
+                    expected,
+                    "{}",
+                    row.name
+                ),
+                tex_command::ParameterDefault::Scaled(expected) => assert_eq!(
+                    stores.dimen_param(DimenParam::new(row.cell.index)).raw(),
+                    expected,
+                    "{}",
+                    row.name
+                ),
+                tex_command::ParameterDefault::EmptyTokens => assert_eq!(
+                    stores.tok_param(TokParam::new(row.cell.index)),
+                    TokenListId::EMPTY,
+                    "{}",
+                    row.name
+                ),
+                default => panic!("unexpected pdfTeX default: {default:?}"),
+            }
         }
 
         let alias = stores.intern("pdfoptionpdfminorversion");
@@ -2124,56 +1792,6 @@ mod tests {
     }
 
     #[test]
-    fn generated_pdftex_parameter_view_matches_predecessor_tables() {
-        let generated =
-            tex_command::primitive_parameter_views(tex_command::PrimitiveProfile::Pdftex14029);
-        let expected_meanings = PDFTEX_INT_PARAMETER_MEANINGS
-            .iter()
-            .map(|(name, parameter)| (*name, Meaning::IntParam(parameter.raw())))
-            .chain(
-                PDFTEX_DIMEN_PARAMETERS
-                    .iter()
-                    .map(|(name, parameter, _)| (*name, Meaning::DimenParam(parameter.raw()))),
-            )
-            .chain(
-                PDFTEX_TOK_PARAMETERS
-                    .iter()
-                    .map(|(name, parameter)| (*name, Meaning::TokParam(parameter.raw()))),
-            )
-            .collect::<Vec<_>>();
-        assert_eq!(
-            generated
-                .iter()
-                .map(|row| (row.name, row.meaning))
-                .collect::<Vec<_>>(),
-            expected_meanings
-        );
-        for row in generated {
-            match row.default {
-                tex_command::ParameterDefault::Integer(value) => {
-                    let parameter = IntParam::new(row.cell.index);
-                    let expected = PDFTEX_INT_PARAMETER_DEFAULTS
-                        .iter()
-                        .find(|(candidate, _)| *candidate == parameter)
-                        .map(|(_, value)| *value)
-                        .expect("generated integer parameter default");
-                    assert_eq!(value, expected, "{}", row.name);
-                }
-                tex_command::ParameterDefault::Scaled(value) => {
-                    let expected = PDFTEX_DIMEN_PARAMETERS
-                        .iter()
-                        .find(|(name, _, _)| *name == row.name)
-                        .map(|(_, _, value)| *value)
-                        .expect("generated dimension parameter default");
-                    assert_eq!(value, expected, "{}", row.name);
-                }
-                tex_command::ParameterDefault::EmptyTokens => {}
-                other => panic!("unexpected pdfTeX default for {}: {other:?}", row.name),
-            }
-        }
-    }
-
-    #[test]
     fn pdftex_parameter_defaults_are_not_installed_in_other_modes() {
         for prepare in [
             prepare_run_stores as fn(&mut Universe),
@@ -2182,18 +1800,25 @@ mod tests {
         ] {
             let mut stores = Universe::default();
             prepare(&mut stores);
-            for &(parameter, _) in PDFTEX_INT_PARAMETER_DEFAULTS {
-                assert_eq!(stores.int_param(parameter), 0, "{parameter:?}");
-            }
-            for &(_, parameter, _) in PDFTEX_DIMEN_PARAMETERS {
-                assert_eq!(
-                    stores.dimen_param(parameter),
-                    Scaled::from_raw(0),
-                    "{parameter:?}"
-                );
-            }
-            for &(_, parameter) in PDFTEX_TOK_PARAMETERS {
-                assert_eq!(stores.tok_param(parameter), TokenListId::EMPTY);
+            for row in pdftex_parameters() {
+                match row.meaning {
+                    Meaning::IntParam(index) => {
+                        assert_eq!(stores.int_param(IntParam::new(index)), 0, "{}", row.name);
+                    }
+                    Meaning::DimenParam(index) => assert_eq!(
+                        stores.dimen_param(DimenParam::new(index)),
+                        Scaled::from_raw(0),
+                        "{}",
+                        row.name
+                    ),
+                    Meaning::TokParam(index) => assert_eq!(
+                        stores.tok_param(TokParam::new(index)),
+                        TokenListId::EMPTY,
+                        "{}",
+                        row.name
+                    ),
+                    meaning => panic!("unexpected pdfTeX parameter meaning: {meaning:?}"),
+                }
             }
         }
     }
@@ -2628,43 +2253,68 @@ mod tests {
         let mut stores = Universe::default();
         prepare_pdftex_run_stores(&mut stores);
         let mut source = String::new();
-        for &(name, _, _) in PDFTEX_DIMEN_PARAMETERS {
-            source.push_str(&format!("\\{name}=1pt "));
+        let parameters = pdftex_parameters();
+        for row in parameters
+            .iter()
+            .filter(|row| row.cell.class == tex_command::ParameterBankClass::Dimension)
+        {
+            source.push_str(&format!("\\{}=1pt ", row.name));
         }
-        for &(name, _) in PDFTEX_TOK_PARAMETERS {
-            source.push_str(&format!("\\{name}{{outer-{name}}} "));
+        for row in parameters
+            .iter()
+            .filter(|row| row.cell.class == tex_command::ParameterBankClass::Tokens)
+        {
+            source.push_str(&format!("\\{}{{outer-{}}} ", row.name, row.name));
         }
         source.push('{');
-        for &(name, _, _) in PDFTEX_DIMEN_PARAMETERS {
-            source.push_str(&format!("\\{name}=2pt \\message{{L{name}=\\the\\{name}}} "));
-        }
-        for &(name, _) in PDFTEX_TOK_PARAMETERS {
+        for row in parameters
+            .iter()
+            .filter(|row| row.cell.class == tex_command::ParameterBankClass::Dimension)
+        {
             source.push_str(&format!(
-                "\\{name}{{inner-{name}}} \\message{{L{name}=\\the\\{name}}} "
+                "\\{}=2pt \\message{{L{}=\\the\\{}}} ",
+                row.name, row.name, row.name
+            ));
+        }
+        for row in parameters
+            .iter()
+            .filter(|row| row.cell.class == tex_command::ParameterBankClass::Tokens)
+        {
+            source.push_str(&format!(
+                "\\{}{{inner-{}}} \\message{{L{}=\\the\\{}}} ",
+                row.name, row.name, row.name, row.name
             ));
         }
         source.push_str("} \\end");
 
         let output =
             run_pdf_memory(&source, &mut stores).expect("all pdfTeX page parameters assign");
-        for &(name, parameter, _) in PDFTEX_DIMEN_PARAMETERS {
+        for row in parameters
+            .iter()
+            .filter(|row| row.cell.class == tex_command::ParameterBankClass::Dimension)
+        {
             assert!(
-                output.contains(&format!("L{name}=2.0pt")),
-                "{name}: {output}"
+                output.contains(&format!("L{}=2.0pt", row.name)),
+                "{}: {output}",
+                row.name
             );
             assert_eq!(
-                stores.dimen_param(parameter),
+                stores.dimen_param(DimenParam::new(row.cell.index)),
                 Scaled::from_raw(Scaled::UNITY)
             );
         }
-        for &(name, parameter) in PDFTEX_TOK_PARAMETERS {
+        for row in parameters
+            .iter()
+            .filter(|row| row.cell.class == tex_command::ParameterBankClass::Tokens)
+        {
             assert!(
-                output.contains(&format!("L{name}=inner-{name}")),
-                "{name}: {output}"
+                output.contains(&format!("L{}=inner-{}", row.name, row.name)),
+                "{}: {output}",
+                row.name
             );
             assert_eq!(
-                token_list_text(&stores, stores.tok_param(parameter)),
-                format!("outer-{name}")
+                token_list_text(&stores, stores.tok_param(TokParam::new(row.cell.index))),
+                format!("outer-{}", row.name)
             );
         }
     }

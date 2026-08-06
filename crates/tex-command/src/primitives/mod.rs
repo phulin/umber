@@ -15,9 +15,10 @@ pub use catalogue::{
     WebIdentity,
 };
 pub use generated::{
-    EnumPrimitiveView, PrimitiveDocumentationRow, PrimitiveRegistration, enum_primitive_views,
-    meaning_for_operand, primitive_documentation_rows, primitive_observation_identity,
-    primitive_registrations, render_primitive_documentation_table,
+    EnumPrimitiveView, PrimitiveDocumentationRow, PrimitiveRegistration, SpecialPrimitiveView,
+    enum_primitive_views, meaning_for_operand, primitive_documentation_rows, primitive_names,
+    primitive_observation_identity, primitive_registrations, render_primitive_documentation_table,
+    special_primitive_views,
 };
 pub use parameters::{PrimitiveParameterView, primitive_parameter_views};
 pub(crate) use prefixed::is_prefixed_command;

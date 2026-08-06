@@ -83,7 +83,6 @@ pub use pdf_output::{
     PdfBuildError, pdf_from_committed_artifacts, pdf_from_committed_artifacts_at_dpi,
     pdf_from_committed_artifacts_with_virtual_fonts,
 };
-pub use pdftex::PDFTEX_PRIMITIVE_NAMES;
 #[cfg(not(target_arch = "wasm32"))]
 pub use prepared_format::{PreparedFormatJob, PreparedFormatProvider};
 pub use tex_exec::{ResourceFulfillment, ResourceHost, ResourceOutcome, ResourceWorld};
