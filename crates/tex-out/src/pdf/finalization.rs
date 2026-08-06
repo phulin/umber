@@ -440,7 +440,11 @@ pub struct PdfFinalizationLimits {
     pub max_virtual_font_packet_commands: usize,
     pub max_virtual_font_output_operations: usize,
     pub max_virtual_font_special_bytes: usize,
-    pub max_imported_stream_bytes: usize,
+    pub max_imported_image_stream_bytes: usize,
+    pub max_imported_resource_objects: usize,
+    pub max_imported_resource_values: usize,
+    pub max_imported_resource_depth: usize,
+    pub max_imported_resource_stream_bytes: usize,
 }
 
 impl Default for PdfFinalizationLimits {
@@ -454,7 +458,11 @@ impl Default for PdfFinalizationLimits {
             max_virtual_font_packet_commands: 1_000_000,
             max_virtual_font_output_operations: 1_000_000,
             max_virtual_font_special_bytes: 8 * 1024 * 1024,
-            max_imported_stream_bytes: 256 * 1024 * 1024,
+            max_imported_image_stream_bytes: 256 * 1024 * 1024,
+            max_imported_resource_objects: 100_000,
+            max_imported_resource_values: 1_000_000,
+            max_imported_resource_depth: 256,
+            max_imported_resource_stream_bytes: 1 << 30,
         }
     }
 }

@@ -50,7 +50,11 @@ fn limits_preserve_the_legacy_finalizer_budgets() {
             max_virtual_font_packet_commands: 1_000_000,
             max_virtual_font_output_operations: 1_000_000,
             max_virtual_font_special_bytes: 8 * 1024 * 1024,
-            max_imported_stream_bytes: 256 * 1024 * 1024,
+            max_imported_image_stream_bytes: 256 * 1024 * 1024,
+            max_imported_resource_objects: 100_000,
+            max_imported_resource_values: 1_000_000,
+            max_imported_resource_depth: 256,
+            max_imported_resource_stream_bytes: 1 << 30,
         }
     );
 }
