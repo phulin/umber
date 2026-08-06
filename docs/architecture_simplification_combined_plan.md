@@ -310,8 +310,43 @@ tracked implementation change is 965 additions and 1,006 deletions, or 41 lines
 of net reduction. By child boundary, replacement-contract evidence is 118/10,
 approved replay cleanup is 6/253, effect-journal/output-patch work is 514/145,
 and revision-lifecycle consolidation is 327/598 additions/deletions. The
-forecast shortfall is tracked by `umber2-vgjr.21`; no historical deletion or
-future compatibility-gated retirement is silently credited to this program.
+forecast shortfall is reconciled below by `umber2-vgjr.21`; no historical
+deletion or future compatibility-gated retirement is silently credited to
+this program.
+
+**Forecast reconciliation (owner decision, 2026-08-06).** Follow-up
+`umber2-vgjr.21` audited every surviving constructor, owner, caller, host
+adapter, and proof test. It found and removed two genuine remnants in
+`6e1d9b285`: the unused public `EffectJournal` positional decomposition and a
+stored DVI-publication vector that duplicated the executor-validated artifact
+ledger. The accessor now derives those rows from the ledger, preserving its
+public behavior and the executor-closed validation boundary. This adds 6 and
+deletes 39 production Rust lines, so the complete program outcome becomes 701
+additions and 977 deletions in production Rust (276-line net reduction), 117
+additions and 55 deletions in proof tests (62-line net growth), and 818
+additions and 1,032 deletions in authored Rust overall (214-line net
+reduction). Moved, generated, declarative, historical, and compatibility-gated
+lines remain uncredited.
+
+The remaining values are role-separated rather than duplicate authorities.
+`World`'s live effect columns are the mutable recording substrate from which
+`EffectJournal` is closed; `ArtifactLedger` owns artifact/publication
+alignment while DVI plans carry distinct backend work; `RevisionDraft` owns a
+mutable execution attempt, `RevisionPayload` freezes its selected output and
+history, and `RevisionTransaction` is the stale-base-checked acceptance token.
+Accepted-output and virtual-compile values are detached projections or
+state-machine wrappers, not writable ledgers. Removing any of these would
+either move the same behavior elsewhere or weaken executor closure, lifecycle
+validation, two-phase acceptance, named-checkpoint/suffix convergence, cold
+equivalence, or the accepted performance contract.
+
+The owner therefore retires the original 2,400-3,800-line combined forecast
+and accepts the measured 214-line authored-Rust reduction as program 4's final
+portfolio result. The estimate incorrectly treated necessary replacement
+types and proof growth as if they would disappear with the predecessor
+authorities. No further reduction is carried for this program, and its
+completion remains based on sole authority plus preserved behavior rather
+than a line-count target.
 
 ## 5. One artifact codec and geometry traversal authority
 
