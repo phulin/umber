@@ -676,11 +676,14 @@ retirement children.
 The implementation tree passed the uncapped six-job native, wasm32, package,
 and native-browser-bin builds; 89 authored JavaScript tests and the packaged
 Node WASM project under a 512 MiB cap; the complete native suite and all four
-`scripts/check.sh` gates under a 1 GiB cap with six Cargo jobs. The real Chrome
-package integration reached the independent incremental HTML receiver and
-then exposed its pre-existing assignment to read-only `SVGElement.className`;
-that receiver defect is tracked by `umber2-p8rn`. The Firefox WASM executor is
-unavailable on the validation host.
+`scripts/check.sh` gates under a 1 GiB cap with six Cargo jobs; and the complete
+real Chrome package integration under a 1 GiB cap. That integration also
+proved complete schema-1 diagnostic equality across the direct and worker
+facades. Browser closeout exposed and separately repaired a pre-existing
+read-only `SVGElement.className` assignment (`umber2-p8rn`) and stale packaged
+Plain format (`umber2-em5o`). A provisioned Firefox executed 33 Rust/WASM tests;
+29 passed and four stale binding/fixture expectations are tracked by
+`umber2-3slp` independently of the JavaScript session driver.
 
 ## 14. Generate bibliography compatibility cases, then collapse production stages
 
