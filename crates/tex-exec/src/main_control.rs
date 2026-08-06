@@ -27,7 +27,7 @@ use tex_command::{
 use tex_command::{
     CommandObservation, CommandObserver, EffectRecord, GeometryRecord, MutationRecord,
     MutationTarget, ObservationEffectKind, ObservationValue, ObservedToken, ParameterClass,
-    TokenListRecord, canonical_names::glue_order_name, parameter_mutation_key_for_dialect,
+    TokenListRecord, parameter_mutation_key_for_dialect,
 };
 use tex_state::GeometryObservation;
 use tex_state::code_tables::{DelCode, LcCode, MathCode, SfCode, UcCode};
@@ -52,6 +52,7 @@ use tex_state::{
 };
 use tex_typeset::PackSpec;
 
+use crate::assignments::committer::AssignmentCommitter;
 use crate::assignments::tracing as assignment_tracing;
 use crate::font_support::{
     FontLoadFailure, GlyphToUnicodeParse, parse_glyph_to_unicode, report_font_capacity,
@@ -632,6 +633,7 @@ struct CommandMachine<'a> {
     fuel: &'a mut tex_command::CommandFuel,
     capabilities: &'a mut CommandHostCapabilities,
     observations: &'a mut ObservationSlot,
+    assignment_receipts: Option<&'a mut Vec<MutationRecord>>,
     shown_mode: &'a mut Option<Mode>,
     /// tex.web's `init`/`tini` compile-time split, which Umber carries as a
     /// session flag: §1252's `\patterns` and §1335's `\dump` are the two
@@ -649,6 +651,20 @@ impl CommandMachine<'_> {
             self.observations,
             stores,
         )
+    }
+
+    fn retain_assignment_receipt(
+        &mut self,
+        receipt: crate::assignments::committer::MutationReceipt,
+    ) {
+        let Some(record) = receipt.into_record() else {
+            return;
+        };
+        if let Some(receipts) = self.assignment_receipts.as_mut() {
+            receipts.push(record);
+        } else if let Some(observations) = self.observations.as_mut() {
+            observations.0.push(CommandObservation::Mutation(record));
+        }
     }
 }
 
@@ -1521,6 +1537,7 @@ impl MainControl {
             fuel: self.fuel.fuel_mut(),
             capabilities: &mut self.capabilities,
             observations: &mut self.operation_observations,
+            assignment_receipts: None,
             shown_mode: &mut self.shown_mode,
             initex: self.initex,
             emit_dvi_override: self.emit_dvi_override,
@@ -1963,6 +1980,7 @@ impl MainControl {
                 fuel: self.fuel.fuel_mut(),
                 capabilities: &mut self.capabilities,
                 observations: &mut self.operation_observations,
+                assignment_receipts: None,
                 shown_mode: &mut self.shown_mode,
                 initex: self.initex,
                 emit_dvi_override: self.emit_dvi_override,
@@ -2691,6 +2709,7 @@ impl MainControl {
                 fuel: self.fuel.fuel_mut(),
                 capabilities: &mut self.capabilities,
                 observations: &mut self.operation_observations,
+                assignment_receipts: None,
                 shown_mode: &mut self.shown_mode,
                 initex: self.initex,
                 emit_dvi_override: self.emit_dvi_override,
@@ -2889,6 +2908,7 @@ impl MainControl {
                         fuel: self.fuel.fuel_mut(),
                         capabilities: &mut self.capabilities,
                         observations: &mut self.operation_observations,
+                        assignment_receipts: None,
                         shown_mode: &mut self.shown_mode,
                         initex: self.initex,
                         emit_dvi_override: self.emit_dvi_override,
@@ -4338,7 +4358,7 @@ impl MainControl {
             *redundant = redundant_skip;
             *reassigning = reassigning_skip;
         }
-        let mutation = applied_mutation_observation(&scanned, stores, self.command_profile());
+        let mut assignment_receipts = Vec::new();
         let begins_alignment = matches!(&scanned, ScannedStep::BeginAlignment { .. });
         let suspends_alignment = begins_alignment && self.active_alignment.is_some();
         let begins_alignment_cell = matches!(&scanned, ScannedStep::AlignmentPreambleStart { .. });
@@ -4391,6 +4411,7 @@ impl MainControl {
                 fuel: self.fuel.fuel_mut(),
                 capabilities: &mut self.capabilities,
                 observations: &mut self.operation_observations,
+                assignment_receipts: Some(&mut assignment_receipts),
                 shown_mode: &mut self.shown_mode,
                 initex: self.initex,
                 emit_dvi_override: self.emit_dvi_override,
@@ -4523,9 +4544,11 @@ impl MainControl {
             if let Some(protected) = protected_macro_definition_observation(&scanned, stores) {
                 records.push(CommandObservation::TokenList(protected));
             }
-            if let Some(mutation) = mutation {
-                records.push(CommandObservation::Mutation(mutation.resolve(stores)));
-            }
+            records.extend(
+                assignment_receipts
+                    .drain(..)
+                    .map(CommandObservation::Mutation),
+            );
             // §1378's live-file closes are part of termination and precede
             // the replay driver's synthetic terminal marker. Other command
             // effects retain their established command-before-host-delta
@@ -10748,742 +10771,7 @@ fn replay_openout_target(name: String) -> String {
     path.to_string_lossy().into_owned()
 }
 
-/// A committed `eqtb` mutation captured for the command observer, together
-/// with when its observed value becomes readable.
-///
-/// Most assignments know their committed value while they are still a
-/// `ScannedStep`, so the record is captured before structural application and
-/// merely held until that application commits, preserving the observer's
-/// canonical order. TeX82 §1236's `do_register_command` is the exception: it
-/// folds the target's *current* `eqtb` value into the result, so its record
-/// can only be read after the single `word_define`/`define` exit commits.
-enum PendingMutation {
-    Captured(MutationRecord),
-    Arithmetic {
-        target: ArithmeticTarget,
-        global: bool,
-        profile: CommandProfile,
-    },
-}
-
-impl PendingMutation {
-    fn resolve(self, stores: &Universe) -> MutationRecord {
-        match self {
-            Self::Captured(record) => record,
-            Self::Arithmetic {
-                target,
-                global,
-                profile,
-            } => committed_arithmetic_mutation(target, global, stores, profile),
-        }
-    }
-}
-
-fn glue_mutation_value(value: &GlueSpec) -> ObservationValue {
-    ObservationValue::Glue {
-        width: i64::from(value.width.raw()),
-        stretch: i64::from(value.stretch.raw()),
-        stretch_order: glue_order_name(value.stretch_order),
-        shrink: i64::from(value.shrink.raw()),
-        shrink_order: glue_order_name(value.shrink_order),
-    }
-}
-
-/// Reads back the value TeX82 §1236's `do_register_command` committed at its
-/// single exit.
-///
-/// §1236 computes `cur_val` from the target's current value (§1238's
-/// `cur_val+eqtb[l].int`, §1239's glue sum, §1240's `mult_integers`/
-/// `x_over_n`) and then commits it exactly once -- `word_define(l,cur_val)`
-/// for `int_val`/`dimen_val` targets, `define(l,glue_ref,cur_val)` for
-/// `glue_val`/`mu_val` ones. The observed record therefore carries the
-/// *result*, never the scanned operand, and is read after application rather
-/// than before it. An `arith_error` return in §1236 leaves `eqtb` untouched
-/// and is observed as no mutation at all, which falls out of resolving this
-/// only when application succeeded.
-fn committed_arithmetic_mutation(
-    target: ArithmeticTarget,
-    global: bool,
-    stores: &Universe,
-    profile: CommandProfile,
-) -> MutationRecord {
-    match target {
-        ArithmeticTarget::IntegerRegister(index) => MutationRecord {
-            target: MutationTarget::Register,
-            key: ObservationValue::Name(format!("count:{index}")),
-            value: ObservationValue::Integer(i64::from(stores.count(index))),
-            global,
-        },
-        ArithmeticTarget::DimensionRegister(index) => MutationRecord {
-            target: MutationTarget::Register,
-            key: ObservationValue::Name(format!("dimen:{index}")),
-            value: ObservationValue::Scaled(i64::from(stores.dimen(index).raw())),
-            global,
-        },
-        ArithmeticTarget::GlueRegister { index, mu } => MutationRecord {
-            target: MutationTarget::Register,
-            key: ObservationValue::Name(format!("{}:{index}", if mu { "muskip" } else { "skip" })),
-            value: glue_mutation_value(&stores.glue(if mu {
-                stores.muskip(index)
-            } else {
-                stores.skip(index)
-            })),
-            global,
-        },
-        ArithmeticTarget::IntegerParameter(index) => MutationRecord {
-            target: MutationTarget::Parameter,
-            key: ObservationValue::Name(parameter_mutation_key_for_dialect(
-                profile.dialect(),
-                ParameterClass::Integer,
-                index,
-            )),
-            value: ObservationValue::Integer(i64::from(stores.int_param(IntParam::new(index)))),
-            global,
-        },
-        ArithmeticTarget::DimensionParameter(index) => MutationRecord {
-            target: MutationTarget::Parameter,
-            key: ObservationValue::Name(parameter_mutation_key_for_dialect(
-                profile.dialect(),
-                ParameterClass::Dimension,
-                index,
-            )),
-            value: ObservationValue::Scaled(i64::from(
-                stores.dimen_param(DimenParam::new(index)).raw(),
-            )),
-            global,
-        },
-        // TeX82 keeps `\thinmuskip`/`\medmuskip`/`\thickmuskip` in the same
-        // `glue_par` block as the ordinary glue parameters (§224), and the
-        // reference instrumentation names that whole block
-        // `glue_parameter:<n>`; the `mu` flag only selected which scanner
-        // §1236 used for the operand.
-        ArithmeticTarget::GlueParameter { index, .. } => MutationRecord {
-            target: MutationTarget::Parameter,
-            key: ObservationValue::Name(parameter_mutation_key_for_dialect(
-                profile.dialect(),
-                ParameterClass::Glue,
-                index,
-            )),
-            value: glue_mutation_value(&stores.glue(stores.glue_param(GlueParam::new(index)))),
-            global,
-        },
-    }
-}
-
-/// Classifies the committed `eqtb` mutation, if any, that applying a scanned
-/// step performs, for the command observer.
-///
-/// TeX82 §1211's `prefixed_command` is TeX's single assignment dispatcher,
-/// and the reference instrumentation observes exactly the `eq_define`,
-/// `eq_word_define`, `geq_define`, and `geq_word_define` writes (§277-§279)
-/// that run inside it. Its `umber_trace_eq_mutation`/`umber_trace_word_mutation`
-/// classifiers then keep only the `eqtb` regions they can name: control
-/// sequence meanings, the glue/token/integer/dimension parameter blocks, the
-/// `\count`/`\dimen`/`\skip`/`\muskip`/`\toks` registers, and the
-/// `\catcode`/`\lccode`/`\uccode`/`\sfcode`/`\mathcode`/`\delcode` tables.
-///
-/// The match is exhaustive over [`ScannedStep`] deliberately (umber2-johp.124,
-/// the same defect shape removed by umber2-johp.69/.97/.108/.123). This was an
-/// `if let` chain ending in `None`, and a step that fell off its end did not
-/// merely get mislabeled -- it produced *no* event where the oracle produced
-/// one, which desynchronizes every following event in the trace. A newly
-/// added step now has to state which bucket below it belongs to.
-///
-/// # Buckets
-///
-/// - `Some(PendingMutation::Captured(..))`: the assignment's committed value
-///   is already known from the scanned step.
-/// - `Some(PendingMutation::Arithmetic { .. })`: §1236's result is only
-///   readable after application; see [`committed_arithmetic_mutation`].
-/// - `None`: the step writes no `eqtb` location the reference instrumentation
-///   names -- either it is not an `eqtb` write at all, or it lands in a region
-///   `umber_trace_eq_mutation` deliberately declines to serialize. Each arm
-///   cites which.
-/// - `unreachable!()`: [`MainControl::apply_host_owned_step`] applies
-///   the step before this classifier runs, so reaching it means that routing
-///   was removed without updating this classifier.
-fn applied_mutation_observation(
-    scanned: &ScannedStep,
-    stores: &Universe,
-    profile: CommandProfile,
-) -> Option<PendingMutation> {
-    // e-TeX §§277-278 return before changing the save stack when extended
-    // mode locally reassigns an identical eqtb value. Suppress the
-    // corresponding observer record at the same semantic boundary;
-    // otherwise instrumentation reports a mutation the engine did not
-    // canonically perform.
-    if etex_redundant_local_definition_step(stores, scanned) {
-        return None;
-    }
-    let captured = match scanned {
-        // -- Registers: §1226's `toks_register` and §1228's `register` cases,
-        // whose `eqtb` slots the instrumentation names `count:<n>`,
-        // `dimen:<n>`, `skip:<n>`, `muskip:<n>`, and `toks:<n>`.
-        ScannedStep::Count {
-            index,
-            value,
-            global,
-        } => MutationRecord {
-            target: MutationTarget::Register,
-            key: ObservationValue::Name(format!("count:{index}")),
-            value: ObservationValue::Integer(i64::from(*value)),
-            global: *global,
-        },
-        ScannedStep::Dimen {
-            index,
-            value,
-            global,
-        } => MutationRecord {
-            target: MutationTarget::Register,
-            key: ObservationValue::Name(format!("dimen:{index}")),
-            value: ObservationValue::Scaled(i64::from(value.raw())),
-            global: *global,
-        },
-        ScannedStep::Skip {
-            index,
-            value,
-            global,
-            ..
-        } => MutationRecord {
-            target: MutationTarget::Register,
-            key: ObservationValue::Name(format!("skip:{index}")),
-            value: glue_mutation_value(value),
-            global: *global,
-        },
-        ScannedStep::Muskip {
-            index,
-            value,
-            global,
-        } => MutationRecord {
-            target: MutationTarget::Register,
-            key: ObservationValue::Name(format!("muskip:{index}")),
-            value: glue_mutation_value(value),
-            global: *global,
-        },
-        ScannedStep::Toks {
-            index,
-            tokens,
-            global,
-        } => MutationRecord {
-            target: MutationTarget::Register,
-            key: ObservationValue::Name(format!("toks:{index}")),
-            value: ObservationValue::Tokens(
-                stores
-                    .tokens(tokens.token_list())
-                    .iter()
-                    .copied()
-                    .map(|token| observed_macro_token(token, stores))
-                    .collect(),
-            ),
-            global: *global,
-        },
-        // e-TeX 2.6 [17.230] places its four penalty-array eqtb entries
-        // immediately after the 256 dense token registers. [49.1248]
-        // commits each through `define(q,shape_ref,p)`, so the reference
-        // mutation classifier observes the raw eqtb region as token
-        // registers 256..259. The shape node is not a token list; its
-        // canonical token projection is therefore empty.
-        ScannedStep::PenaltyArray { kind, global, .. } => MutationRecord {
-            target: MutationTarget::Register,
-            key: ObservationValue::Name(format!(
-                "toks:{}",
-                match kind {
-                    PenaltyArrayKind::InterLine => 256,
-                    PenaltyArrayKind::Club => 257,
-                    PenaltyArrayKind::Widow => 258,
-                    PenaltyArrayKind::DisplayWidow => 259,
-                }
-            )),
-            value: ObservationValue::Tokens(Vec::new()),
-            global: *global,
-        },
-        // e-TeX 2.6 [47.1070] extends TeX82 §1070's `normal_paragraph` by
-        // locally clearing a non-null `inter_line_penalties_ptr`. Vertical
-        // box construction calls that routine after opening the box group;
-        // [17.230] exposes the affected eqtb slot as token register 256 to
-        // the reference mutation instrumentation.
-        ScannedStep::SetBox {
-            path: ScannedSetBoxPath::Payload(ScannedBoxShiftPayload::Construction(construction)),
-            ..
-        }
-        | ScannedStep::BeginBox(construction)
-        | ScannedStep::BeginLeaderBox { construction, .. }
-        | ScannedStep::BoxShift(ScannedBoxShift {
-            payload: ScannedBoxShiftPayload::Construction(construction),
-            ..
-        }) if construction.kind != ScannedBoxKind::HBox
-            && !stores.penalty_array(PenaltyArrayKind::InterLine).is_empty() =>
-        {
-            MutationRecord {
-                target: MutationTarget::Register,
-                key: ObservationValue::Name("toks:256".into()),
-                value: ObservationValue::Tokens(Vec::new()),
-                global: false,
-            }
-        }
-        // -- Parameters: §1226/§1227's token-list parameters and §1228's
-        // `assign_int`/`assign_dimen`/`assign_glue`/`assign_mu_glue` cases.
-        ScannedStep::IntParam {
-            index,
-            value,
-            global,
-        } => MutationRecord {
-            target: MutationTarget::Parameter,
-            key: ObservationValue::Name(parameter_mutation_key_for_dialect(
-                profile.dialect(),
-                ParameterClass::Integer,
-                *index,
-            )),
-            value: ObservationValue::Integer(i64::from(*value)),
-            global: *global,
-        },
-        ScannedStep::DimenParam {
-            index,
-            value,
-            global,
-        } => MutationRecord {
-            target: MutationTarget::Parameter,
-            key: ObservationValue::Name(parameter_mutation_key_for_dialect(
-                profile.dialect(),
-                ParameterClass::Dimension,
-                *index,
-            )),
-            value: ObservationValue::Scaled(i64::from(value.raw())),
-            global: *global,
-        },
-        ScannedStep::GlueParam {
-            index,
-            value,
-            global,
-        } => MutationRecord {
-            target: MutationTarget::Parameter,
-            key: ObservationValue::Name(parameter_mutation_key_for_dialect(
-                profile.dialect(),
-                ParameterClass::Glue,
-                *index,
-            )),
-            value: glue_mutation_value(value),
-            global: *global,
-        },
-        ScannedStep::TokParam {
-            index,
-            tokens,
-            global,
-        } => MutationRecord {
-            target: MutationTarget::Parameter,
-            key: ObservationValue::Name(parameter_mutation_key_for_dialect(
-                profile.dialect(),
-                ParameterClass::Token,
-                *index,
-            )),
-            value: ObservationValue::Tokens(
-                stores
-                    .tokens(tokens.token_list())
-                    .iter()
-                    .copied()
-                    .map(|token| observed_macro_token(token, stores))
-                    .collect(),
-            ),
-            global: *global,
-        },
-        // -- Code tables: §1230's `def_code` command. tex.web §232 lists
-        // cat_code, lc_code, uc_code, sf_code, math_code, and del_code as the
-        // eqtb code-table regions it writes; every scan arm that produces
-        // `ScannedStep::CodeTable` must have a corresponding arm here.
-        ScannedStep::CodeTable {
-            primitive,
-            character,
-            value,
-            global,
-        } => {
-            let (target, key, value) = match primitive {
-                UnexpandablePrimitive::CatCode => (
-                    MutationTarget::Catcode,
-                    ObservationValue::Character(u32::from(*character)),
-                    ObservationValue::Name(
-                        tex_command::canonical_names::catcode_assignment_name(i64::from(*value))
-                            .expect("the catcode scanner commits a canonical category code")
-                            .into(),
-                    ),
-                ),
-                UnexpandablePrimitive::LcCode => (
-                    MutationTarget::CodeTable,
-                    ObservationValue::Name(format!("lccode:{}", u32::from(*character))),
-                    ObservationValue::Integer(i64::from(*value)),
-                ),
-                UnexpandablePrimitive::UcCode => (
-                    MutationTarget::CodeTable,
-                    ObservationValue::Name(format!("uccode:{}", u32::from(*character))),
-                    ObservationValue::Integer(i64::from(*value)),
-                ),
-                UnexpandablePrimitive::SfCode => (
-                    MutationTarget::CodeTable,
-                    ObservationValue::Name(format!("sfcode:{}", u32::from(*character))),
-                    ObservationValue::Integer(i64::from(*value)),
-                ),
-                UnexpandablePrimitive::MathCode => (
-                    MutationTarget::CodeTable,
-                    ObservationValue::Name(format!("mathcode:{}", u32::from(*character))),
-                    ObservationValue::Integer(i64::from(*value)),
-                ),
-                UnexpandablePrimitive::DelCode => (
-                    MutationTarget::CodeTable,
-                    ObservationValue::Name(format!("delcode:{}", u32::from(*character))),
-                    ObservationValue::Integer(i64::from(*value)),
-                ),
-                _ => unreachable!("only code-table primitives are scanned"),
-            };
-            MutationRecord {
-                target,
-                key,
-                value,
-                global: *global,
-            }
-        }
-        ScannedStep::PdfFontCode {
-            table,
-            font,
-            character,
-            value,
-        } => MutationRecord {
-            target: MutationTarget::Register,
-            key: ObservationValue::Name(format!("{table:?}:{}:{character}", font.raw())),
-            value: ObservationValue::Integer(i64::from(*value)),
-            global: true,
-        },
-        ScannedStep::PdfNoLigatures { font } => MutationRecord {
-            target: MutationTarget::Register,
-            key: ObservationValue::Name("pdf_no_ligatures".into()),
-            value: ObservationValue::Name(font.raw().to_string()),
-            global: true,
-        },
-        // -- Meanings: §1221's `let`, §1224's `shorthand_def`, and §1218's
-        // macro `def`. §1224's provisional `define(p,relax,256)` is committed
-        // and observed by the command-owned scanner that performs it, so only
-        // the final meaning is observed here.
-        // §1221's `let` commits `define(p, eq_type(q), equiv(q))`: the copied
-        // *meaning*, never the source control sequence's spelling. The
-        // observation must therefore name the meaning the same way raw
-        // delivery would, which is what `meaning_mutation_value` does
-        // (`umber2-johp.141`).
-        ScannedStep::Let {
-            target,
-            meaning,
-            global,
-            ..
-        } => MutationRecord {
-            target: MutationTarget::Meaning,
-            key: ObservationValue::Name(stores.resolve(*target).to_owned()),
-            value: meaning_mutation_value(*meaning, stores),
-            global: *global,
-        },
-        ScannedStep::CharacterDefinition {
-            primitive,
-            target,
-            value,
-            global,
-            ..
-        } => {
-            // §1224 defines the meaning from `cur_val` *after* §434/§436's
-            // recovery, so the observed mutation carries the recovered value.
-            let value = match primitive {
-                UnexpandablePrimitive::CharDef => ObservationValue::Character(
-                    u32::try_from(*value)
-                        .expect("the character-definition scanner returns a character code"),
-                ),
-                UnexpandablePrimitive::MathCharDef => ObservationValue::Integer(i64::from(*value)),
-                _ => unreachable!("character-definition step carries only §1224 primitives"),
-            };
-            MutationRecord {
-                target: MutationTarget::Meaning,
-                key: ObservationValue::Name(stores.resolve(*target).to_owned()),
-                value,
-                global: *global,
-            }
-        }
-        ScannedStep::RegisterDefinition {
-            primitive,
-            target,
-            index,
-            global,
-            ..
-        } => {
-            // e-TeX 2.6 change [49.1224] represents shorthands above 255 by
-            // sparse-array nodes and installs `register`/`toks_register`,
-            // rather than TeX82's eqtb-addressed assignment commands.
-            let value = if profile.capabilities().supports_etex() && *index > 255 {
-                match primitive {
-                    UnexpandablePrimitive::ToksDef => "toks_register",
-                    UnexpandablePrimitive::CountDef
-                    | UnexpandablePrimitive::DimenDef
-                    | UnexpandablePrimitive::SkipDef
-                    | UnexpandablePrimitive::MuskipDef => "register",
-                    _ => unreachable!("register-definition step carries only §1224 primitives"),
-                }
-            } else {
-                match primitive {
-                    UnexpandablePrimitive::CountDef => "assign_int",
-                    UnexpandablePrimitive::DimenDef => "assign_dimen",
-                    UnexpandablePrimitive::SkipDef => "assign_glue",
-                    UnexpandablePrimitive::MuskipDef => "assign_mu_glue",
-                    UnexpandablePrimitive::ToksDef => "assign_toks",
-                    _ => unreachable!("register-definition step carries only §1224 primitives"),
-                }
-            };
-            MutationRecord {
-                target: MutationTarget::Meaning,
-                key: ObservationValue::Name(stores.resolve(*target).to_owned()),
-                value: ObservationValue::Name(value.into()),
-                global: *global,
-            }
-        }
-        ScannedStep::MacroDefinition {
-            target,
-            flags,
-            parameter_text,
-            replacement_text,
-            global,
-            ..
-        } => MutationRecord {
-            target: MutationTarget::Meaning,
-            key: ObservationValue::Name(stores.resolve(*target).to_owned()),
-            value: ObservationValue::Tokens(observed_stored_macro_body(
-                *flags,
-                parameter_text.token_list(),
-                replacement_text.token_list(),
-                stores,
-            )),
-            global: *global,
-        },
-        // -- §1236's `do_register_command`, whose committed value is only
-        // readable after application.
-        ScannedStep::Arithmetic { target, global, .. } => {
-            return Some(PendingMutation::Arithmetic {
-                target: *target,
-                global: *global,
-                profile,
-            });
-        }
-        // -- Assignments that do write `eqtb`, into a region the reference
-        // instrumentation deliberately declines to name: §1241's `set_box`
-        // writes `box_base`, §1217's `set_font` writes `cur_font_loc`,
-        // §1234's `def_family` writes `math_font_base`, and §1248's
-        // `set_shape` writes `par_shape_loc`, whose equivalent is a pointer
-        // to a scaled list rather than a serializable value.
-        // `umber_trace_eq_mutation` classifies each of these as family -1 and
-        // returns without an event, so Umber must stay silent for exactly
-        // these four.
-        ScannedStep::SetBox { .. }
-        | ScannedStep::FontSelect { .. }
-        | ScannedStep::MathFamily { .. }
-        | ScannedStep::ParagraphShape { .. } => return None,
-        // -- Assignments whose committed state lives outside `eqtb` entirely,
-        // so no `eq_define`/`eq_word_define` runs and no mutation is observed
-        // on either side: §1247's `alter_box_dimen` (a box node's `mem`
-        // fields), §1243's `alter_aux` and §1244's `alter_prev_graf` (the mode
-        // `nest`), §1245's `alter_page_so_far` and §1246's `alter_integer`
-        // (`page_so_far`, `dead_cycles`, `insert_penalties`), §1253's
-        // `assign_font_dimen`/`assign_font_int` (`font_info`, `hyphen_char`,
-        // `skew_char`), §1252's `hyph_data` (the pattern trie and exception
-        // table), and §1265's `new_interaction` (the `interaction` global).
-        ScannedStep::BoxDimensionAssignment { .. }
-        | ScannedStep::PrevDepth { .. }
-        | ScannedStep::IllegalPrevDepth { .. }
-        | ScannedStep::SpaceFactor { .. }
-        | ScannedStep::IllegalSpaceFactor { .. }
-        | ScannedStep::PrevGraf { .. }
-        | ScannedStep::PageDimension { .. }
-        | ScannedStep::PageInteger { .. }
-        | ScannedStep::FontDimen { .. }
-        | ScannedStep::FontInteger { .. }
-        | ScannedStep::HyphenationData { .. }
-        | ScannedStep::SetInteractionMode(..)
-        | ScannedStep::SetInteractionModeValue { .. } => return None,
-        // -- TeX82 §1257's `new_font` observes only the provisional
-        // `define(u,set_font,null_font)`: its common ending writes the loaded
-        // font number directly with `equiv(u):=f`. e-TeX change [49.1257]
-        // deliberately replaces that direct write with
-        // `define(u,set_font,f)` for e-TeX tracing, and pdfTeX inherits the
-        // same change. The command scanner already observes the provisional
-        // definition; only an e-TeX-capable dialect observes this applied
-        // final definition after all scanner records. Holding the record in
-        // the operation buffer also makes resource suspension discard both
-        // definitions and a fresh retry publish the profile-exact sequence.
-        ScannedStep::FontDefinition {
-            request, global, ..
-        } => {
-            if !profile.capabilities().supports_etex() {
-                return None;
-            }
-            MutationRecord {
-                target: MutationTarget::Meaning,
-                key: ObservationValue::Name(stores.resolve(request.target).to_owned()),
-                value: ObservationValue::Name("set_font".into()),
-                global: *global,
-            }
-        }
-        ScannedStep::GeneratedFontDefinition { definition, global } => MutationRecord {
-            target: MutationTarget::Meaning,
-            key: ObservationValue::Name(stores.resolve(definition.target).to_owned()),
-            value: ObservationValue::Name("set_font".into()),
-            global: *global,
-        },
-        // -- §1225's `read_to_cs` runs `define(p,call,cur_val)` after
-        // `read_toks`. Open/close mutate stream state rather than `eqtb`;
-        // read installs §482's collected list as a parameterless macro.
-        ScannedStep::InputStream {
-            request:
-                InputStreamRequest::Read {
-                    target,
-                    global,
-                    tokens,
-                    ..
-                },
-            ..
-        } => MutationRecord {
-            target: MutationTarget::Meaning,
-            key: ObservationValue::Name(stores.resolve(*target).to_owned()),
-            value: ObservationValue::Tokens(observed_read_body(tokens.token_list(), stores)),
-            global: *global,
-        },
-        ScannedStep::InputStream {
-            request: InputStreamRequest::Open { .. } | InputStreamRequest::Close { .. },
-            ..
-        } => return None,
-        // -- Steps that perform no assignment at all: mode and list building,
-        // box and alignment structure, grouping, diagnostics, recovery, and
-        // the pdfTeX extension requests. None of them reaches §1211's
-        // `prefixed_command`, so the reference engine has
-        // `umber_mutation_command` false throughout and emits nothing.
-        ScannedStep::Continue
-        | ScannedStep::Relax
-        | ScannedStep::AlignPeekRestart { .. }
-        | ScannedStep::AlignmentTemplateEntered
-        | ScannedStep::MissingAlignmentCr
-        | ScannedStep::MissingMathShift
-        | ScannedStep::EndOfInput
-        | ScannedStep::End { .. }
-        | ScannedStep::IllegalStop { .. }
-        | ScannedStep::IllegalMacroParameter { .. }
-        | ScannedStep::ExtraEndCsName
-        | ScannedStep::EjectResidualPage
-        | ScannedStep::HorizontalSkip { .. }
-        | ScannedStep::VerticalSkip { .. }
-        | ScannedStep::Kern { .. }
-        | ScannedStep::Penalty { .. }
-        | ScannedStep::CharacterCode { .. }
-        | ScannedStep::DeleteLast { .. }
-        | ScannedStep::ItalicCorrection
-        | ScannedStep::IllegalItalicCorrection { .. }
-        | ScannedStep::NoBoundary { .. }
-        | ScannedStep::NonScript
-        | ScannedStep::ControlSpace
-        | ScannedStep::FixedHorizontalGlue { .. }
-        | ScannedStep::FixedVerticalGlue { .. }
-        | ScannedStep::ParagraphIndent { .. }
-        | ScannedStep::PdfXImage { .. }
-        | ScannedStep::PdfRefXImage { .. }
-        | ScannedStep::PdfSetRandomSeed { .. }
-        | ScannedStep::PdfResetTimer
-        | ScannedStep::PdfInterwordSpace(..)
-        | ScannedStep::PdfRunningLink(..)
-        | ScannedStep::PdfSpaceFont(..)
-        | ScannedStep::PdfGraphics(..)
-        | ScannedStep::PdfObject(..)
-        | ScannedStep::PdfReferenceObject(..)
-        | ScannedStep::PdfForm(..)
-        | ScannedStep::PdfDocumentFragment(..)
-        | ScannedStep::PdfNavigation(..)
-        | ScannedStep::DeferredOpenOut { .. }
-        | ScannedStep::DeferredCloseOut { .. }
-        | ScannedStep::DeferredWrite { .. }
-        | ScannedStep::DeferredSpecial { .. }
-        | ScannedStep::SetLanguage { .. }
-        | ScannedStep::IllegalSetLanguage { .. }
-        | ScannedStep::AfterGroup(..)
-        | ScannedStep::AfterAssignment(..)
-        | ScannedStep::Rule { .. }
-        | ScannedStep::HRuleHereExceptLeaders
-        | ScannedStep::Message { .. }
-        | ScannedStep::DisplayDiagnostic(..)
-        | ScannedStep::ShowBox { .. }
-        | ScannedStep::ShowLists
-        | ScannedStep::ShowTokens { .. }
-        | ScannedStep::ShowIfs { .. }
-        | ScannedStep::ShowGroups { .. }
-        | ScannedStep::VSplit(..)
-        | ScannedStep::ImmediateExtension(..)
-        | ScannedStep::BoxRegister { .. }
-        | ScannedStep::Unbox { .. }
-        | ScannedStep::SavedVerticalDiscards(..)
-        | ScannedStep::LastBox { .. }
-        | ScannedStep::Leaders { .. }
-        | ScannedStep::LeaderRegister { .. }
-        | ScannedStep::MissingLeaderPayload
-        | ScannedStep::LeadersNotFollowedByGlue
-        | ScannedStep::BeginShipout
-        | ScannedStep::BeginAlignment { .. }
-        | ScannedStep::AlignmentPreambleOpening { .. }
-        | ScannedStep::AlignmentPreambleStart { .. }
-        | ScannedStep::MisplacedAlignmentDelimiter { .. }
-        | ScannedStep::MisplacedAlignmentCommand { .. }
-        | ScannedStep::AlignmentCellOpening { .. }
-        | ScannedStep::AlignmentCellFinish { .. }
-        | ScannedStep::AlignmentFinish { .. }
-        | ScannedStep::BeginNoAlign { .. }
-        | ScannedStep::AlignmentRecovery { .. }
-        | ScannedStep::BeginSimpleGroup
-        | ScannedStep::EndSimpleGroup
-        | ScannedStep::BeginSemiSimpleGroup
-        | ScannedStep::EndSemiSimpleGroup
-        | ScannedStep::ExtraRightBrace { .. }
-        | ScannedStep::OffSave(..)
-        | ScannedStep::OffSaveBottomDrop { .. }
-        | ScannedStep::BeginOrdinaryGroup
-        | ScannedStep::EndOrdinaryGroup
-        | ScannedStep::EndMathGroup(..)
-        | ScannedStep::OutputRoutineOpeningBrace
-        | ScannedStep::EndOutputRoutine
-        | ScannedStep::AlignmentPeekCell { .. }
-        | ScannedStep::NoAlignEndGroup { .. }
-        | ScannedStep::BeginBox(..)
-        | ScannedStep::BeginLeaderBox { .. }
-        | ScannedStep::UndefinedControlSequence
-        | ScannedStep::BoxShift(..)
-        | ScannedStep::IllegalBoxShift { .. }
-        | ScannedStep::BeginInsert(..)
-        | ScannedStep::IllegalInsertOrAdjust { .. }
-        | ScannedStep::IllegalEqNo { .. }
-        | ScannedStep::IllegalHAlign { .. }
-        | ScannedStep::IllegalLastItem { .. }
-        | ScannedStep::InvalidArithmeticTarget { .. }
-        | ScannedStep::BoxEndGroup { .. }
-        | ScannedStep::Mark { .. }
-        | ScannedStep::PdfFontExpand { .. }
-        | ScannedStep::PdfFontAction { .. }
-        | ScannedStep::TextDirection { .. }
-        | ScannedStep::Paragraph
-        | ScannedStep::ParagraphStart
-        | ScannedStep::Character { .. } => return None,
-        // -- Applied by `MainControl::apply_host_owned_step` before
-        // this classifier runs, either because the step is applied through its
-        // own typed request path or because it ends the replay episode
-        // outright.
-        ScannedStep::ReplayCompleted(..)
-        | ScannedStep::Math(..)
-        | ScannedStep::DisplayAlignmentEquationNumber { .. }
-        | ScannedStep::MathDelimiter(..)
-        | ScannedStep::MathShift { .. }
-        | ScannedStep::DiscretionaryOpening(..)
-        | ScannedStep::DiscretionaryPartEnd
-        | ScannedStep::DiscretionaryHyphen { .. }
-        | ScannedStep::Accent(..) => {
-            unreachable!("apply_host_owned_step applies this step before classifying mutations")
-        }
-    };
-    Some(PendingMutation::Captured(captured))
-}
-
+// Mutation classification lives with each authoritative assignment commit.
 /// Captures an executor-owned observable effect before application, then
 /// emits it only after that application commits through the replay seam.
 fn pdf_image_dimensions(
@@ -12094,6 +11382,7 @@ pub(crate) fn test_shipout_replay_box(
         fuel: fuel.fuel_mut(),
         capabilities: &mut CommandHostCapabilities::default(),
         observations: &mut None,
+        assignment_receipts: None,
         shown_mode: &mut shown_mode,
         initex: true,
         emit_dvi_override: None,
@@ -13083,13 +12372,15 @@ fn apply_scanned_step(
             font,
             global,
         } => {
-            assign_math_family_font(
-                stores,
-                MathFontSize::from(family.size),
-                family.family,
-                font,
-                global,
-            )?;
+            AssignmentCommitter::new(stores).try_unscoped(None, |stores| {
+                assign_math_family_font(
+                    stores,
+                    MathFontSize::from(family.size),
+                    family.family,
+                    font,
+                    global,
+                )
+            })?;
             Ok(ReplayStep::Continue)
         }
         ScannedStep::EndOfInput => Ok(ReplayStep::EndOfInput),
@@ -13147,13 +12438,8 @@ fn apply_scanned_step(
             value,
             global,
         } => {
-            let old = stores.count(index);
-            if global {
-                stores.set_count_global(index, value);
-            } else if !etex_redundant_local_word_assignment(stores, old, value) {
-                stores.set_count(index, value);
-            }
-            assignment_tracing::trace_int_register(stores, index, global, old, value);
+            let receipt = AssignmentCommitter::new(stores).count(index, value, global);
+            command.retain_assignment_receipt(receipt);
             Ok(ReplayStep::Continue)
         }
         ScannedStep::Dimen {
@@ -13161,13 +12447,8 @@ fn apply_scanned_step(
             value,
             global,
         } => {
-            let old = stores.dimen(index);
-            if global {
-                stores.set_dimen_global(index, value);
-            } else if !etex_redundant_local_word_assignment(stores, old, value) {
-                stores.set_dimen(index, value);
-            }
-            assignment_tracing::trace_dimen_register(stores, index, global, old, value);
+            let receipt = AssignmentCommitter::new(stores).dimension(index, value, global);
+            command.retain_assignment_receipt(receipt);
             Ok(ReplayStep::Continue)
         }
         ScannedStep::BoxDimensionAssignment {
@@ -13180,11 +12461,13 @@ fn apply_scanned_step(
             // §1055's `alter_box_dimen` mutates the visible box node
             // directly rather than through the save stack, so the assignment
             // prefix does not change which binding level is affected.
-            if global {
-                stores.set_box_dimension_global(index, dimension, value);
-            } else {
-                stores.set_box_dimension(index, dimension, value);
-            }
+            AssignmentCommitter::new(stores).unscoped(None, |stores| {
+                if global {
+                    stores.set_box_dimension_global(index, dimension, value)
+                } else {
+                    stores.set_box_dimension(index, dimension, value)
+                }
+            });
             Ok(ReplayStep::Continue)
         }
         ScannedStep::Skip {
@@ -13195,23 +12478,15 @@ fn apply_scanned_step(
             reassigning,
             ..
         } => {
-            let old = stores.skip(index);
-            let value = stores.intern_glue(value);
-            let reassigning = reassigning
-                || (stores.glue(old) == GlueSpec::ZERO && stores.glue(value) == GlueSpec::ZERO);
-            if global {
-                stores.set_skip_global(index, value);
-            } else if !redundant {
-                stores.set_skip(index, value);
-            }
-            assignment_tracing::trace_glue_register(
-                stores,
+            let receipt = AssignmentCommitter::new(stores).skip(
                 index,
-                global,
-                old,
                 value,
-                !reassigning,
+                global,
+                false,
+                redundant,
+                reassigning,
             );
+            command.retain_assignment_receipt(receipt);
             Ok(ReplayStep::Continue)
         }
         ScannedStep::Muskip {
@@ -13219,21 +12494,9 @@ fn apply_scanned_step(
             value,
             global,
         } => {
-            let old = stores.muskip(index);
-            let value = stores.intern_glue(value);
-            if global {
-                stores.set_muskip_global(index, value);
-            } else if !etex_redundant_local_word_assignment(stores, old, value) {
-                stores.set_muskip(index, value);
-            }
-            assignment_tracing::trace_muglue_register(
-                stores,
-                index,
-                global,
-                old,
-                value,
-                old != value,
-            );
+            let receipt =
+                AssignmentCommitter::new(stores).skip(index, value, global, true, false, false);
+            command.retain_assignment_receipt(receipt);
             Ok(ReplayStep::Continue)
         }
         ScannedStep::HorizontalSkip { value } => {
@@ -13312,8 +12575,10 @@ fn apply_scanned_step(
             // alfh.9`): the terminal's stale column then forces an extra,
             // unwanted newline into the log too, the first time anything
             // prints through the restored `term_and_log` selector.
-            stores.printer().print_ln();
-            stores.set_interaction_mode(mode);
+            AssignmentCommitter::new(stores).unscoped(None, |stores| {
+                stores.printer().print_ln();
+                stores.set_interaction_mode(mode);
+            });
             Ok(ReplayStep::Continue)
         }
         ScannedStep::SetInteractionModeValue { value, context } => {
@@ -13330,8 +12595,10 @@ fn apply_scanned_step(
                 }
             };
             // See the sibling `SetInteractionMode` arm's comment.
-            stores.printer().print_ln();
-            stores.set_interaction_mode(mode);
+            AssignmentCommitter::new(stores).unscoped(None, |stores| {
+                stores.printer().print_ln();
+                stores.set_interaction_mode(mode);
+            });
             Ok(ReplayStep::Continue)
         }
         ScannedStep::ItalicCorrection => {
@@ -13489,7 +12756,9 @@ fn apply_scanned_step(
                 modes.current_mode(),
                 Mode::Vertical | Mode::InternalVertical
             ));
-            modes.current_list_mutation().set_prev_depth(value);
+            AssignmentCommitter::new(stores).unscoped(None, |_| {
+                modes.current_list_mutation().set_prev_depth(value)
+            });
             Ok(ReplayStep::Continue)
         }
         ScannedStep::IllegalPrevDepth { token } => {
@@ -13512,7 +12781,9 @@ fn apply_scanned_step(
             // out-of-range value is diagnosed and left unchanged rather than
             // clamped.
             if (1..=32767).contains(&value) {
-                modes.current_list_mutation().set_space_factor(value);
+                AssignmentCommitter::new(stores).unscoped(None, |_| {
+                    modes.current_list_mutation().set_space_factor(value);
+                });
             } else {
                 // §91's `int_error` appends ` (value)` to the message before
                 // §82 completes the report, so the value is not part of the
@@ -13550,7 +12821,9 @@ fn apply_scanned_step(
                     .context(context);
                 report.int_error(value).jump_out()?;
             } else {
-                modes.set_enclosing_vertical_prev_graf(value);
+                AssignmentCommitter::new(stores).unscoped(None, |_| {
+                    modes.set_enclosing_vertical_prev_graf(value);
+                });
             }
             Ok(ReplayStep::Continue)
         }
@@ -13559,7 +12832,8 @@ fn apply_scanned_step(
             // `page_so_far[c]:=cur_val` store with no mode check, no
             // diagnostic, and no save-stack entry (§1242: "these definitions
             // are always global"). The page builder reads the same slots.
-            stores.set_page_dimension(dimension, value);
+            AssignmentCommitter::new(stores)
+                .unscoped(None, |stores| stores.set_page_dimension(dimension, value));
             Ok(ReplayStep::Continue)
         }
         ScannedStep::PageInteger { integer, value } => {
@@ -13568,7 +12842,8 @@ fn apply_scanned_step(
             // §1024's output-routine loop guard compares against
             // `\maxdeadcycles`, so a wrong value here is only visible once a
             // page ships.
-            stores.set_page_integer(integer, value);
+            AssignmentCommitter::new(stores)
+                .unscoped(None, |stores| stores.set_page_integer(integer, value));
             Ok(ReplayStep::Continue)
         }
         ScannedStep::FixedHorizontalGlue { primitive } => {
@@ -13655,7 +12930,8 @@ fn apply_scanned_step(
             // straight through and silently ignored a nonzero
             // `\globaldefs`; it was missed by both earlier sweeps because
             // `set_shape` belongs to neither definition family.
-            stores.set_paragraph_shape(&lines, global);
+            AssignmentCommitter::new(stores)
+                .unscoped(None, |stores| stores.set_paragraph_shape(&lines, global));
             Ok(ReplayStep::Continue)
         }
         ScannedStep::PenaltyArray {
@@ -13666,9 +12942,26 @@ fn apply_scanned_step(
             // e-TeX 2.6 change [49.1248] commits every selector through
             // `define(q, shape_ref, p)`, so this uses the same save-stack and
             // `\globaldefs`-adjusted scope bit as TeX82 §1214/§1248.
-            let old = stores.penalty_array(kind);
-            stores.set_penalty_array(kind, &values, global);
-            assignment_tracing::trace_penalty_array(stores, kind, global, &old, &values);
+            let record = MutationRecord {
+                target: MutationTarget::Register,
+                key: ObservationValue::Name(format!(
+                    "toks:{}",
+                    match kind {
+                        PenaltyArrayKind::InterLine => 256,
+                        PenaltyArrayKind::Club => 257,
+                        PenaltyArrayKind::Widow => 258,
+                        PenaltyArrayKind::DisplayWidow => 259,
+                    }
+                )),
+                value: ObservationValue::Tokens(Vec::new()),
+                global,
+            };
+            let receipt = AssignmentCommitter::new(stores).unscoped(Some(record), |stores| {
+                let old = stores.penalty_array(kind);
+                stores.set_penalty_array(kind, &values, global);
+                assignment_tracing::trace_penalty_array(stores, kind, global, &old, &values);
+            });
+            command.retain_assignment_receipt(receipt);
             Ok(ReplayStep::Continue)
         }
         ScannedStep::Toks {
@@ -13676,14 +12969,17 @@ fn apply_scanned_step(
             tokens,
             global,
         } => {
-            let old = stores.toks(index);
             let new = tokens.token_list();
-            if global {
-                stores.set_toks_global(index, new);
-            } else if !etex_redundant_local_word_assignment(stores, old, new) {
-                stores.set_toks(index, new);
-            }
-            assignment_tracing::trace_toks_register(stores, index, global, old, new);
+            let observed = ObservationValue::Tokens(
+                stores
+                    .tokens(new)
+                    .iter()
+                    .copied()
+                    .map(|token| observed_macro_token(token, stores))
+                    .collect(),
+            );
+            let receipt = AssignmentCommitter::new(stores).toks(index, new, observed, global);
+            command.retain_assignment_receipt(receipt);
             Ok(ReplayStep::Continue)
         }
         ScannedStep::IntParam {
@@ -13691,15 +12987,13 @@ fn apply_scanned_step(
             value,
             global,
         } => {
-            let parameter = IntParam::new(index);
-            let old = stores.int_param(parameter);
-            let tracing_before = stores.int_param(IntParam::TRACING_ASSIGNS) > 0;
-            if global {
-                stores.set_int_param_global(parameter, value);
-            } else if !etex_redundant_local_word_assignment(stores, old, value) {
-                stores.set_int_param(parameter, value);
-            }
-            assignment_tracing::trace_int_param(stores, index, tracing_before, global, old, value);
+            let key = parameter_mutation_key_for_dialect(
+                command.state.profile().dialect(),
+                ParameterClass::Integer,
+                index,
+            );
+            let receipt = AssignmentCommitter::new(stores).int_parameter(index, value, key, global);
+            command.retain_assignment_receipt(receipt);
             Ok(ReplayStep::Continue)
         }
         ScannedStep::DimenParam {
@@ -13707,14 +13001,14 @@ fn apply_scanned_step(
             value,
             global,
         } => {
-            let parameter = DimenParam::new(index);
-            let old = stores.dimen_param(parameter);
-            if global {
-                stores.set_dimen_param_global(parameter, value);
-            } else if !etex_redundant_local_word_assignment(stores, old, value) {
-                stores.set_dimen_param(parameter, value);
-            }
-            assignment_tracing::trace_dimen_param(stores, index, global, old, value);
+            let key = parameter_mutation_key_for_dialect(
+                command.state.profile().dialect(),
+                ParameterClass::Dimension,
+                index,
+            );
+            let receipt =
+                AssignmentCommitter::new(stores).dimension_parameter(index, value, key, global);
+            command.retain_assignment_receipt(receipt);
             Ok(ReplayStep::Continue)
         }
         ScannedStep::TokParam {
@@ -13722,15 +13016,23 @@ fn apply_scanned_step(
             tokens,
             global,
         } => {
-            let parameter = TokParam::new(index);
-            let old = stores.tok_param(parameter);
             let new = tokens.token_list();
-            if global {
-                stores.set_tok_param_global(parameter, new);
-            } else if !etex_redundant_local_word_assignment(stores, old, new) {
-                stores.set_tok_param(parameter, new);
-            }
-            assignment_tracing::trace_tok_param(stores, index, global, old, new);
+            let observed = ObservationValue::Tokens(
+                stores
+                    .tokens(new)
+                    .iter()
+                    .copied()
+                    .map(|token| observed_macro_token(token, stores))
+                    .collect(),
+            );
+            let key = parameter_mutation_key_for_dialect(
+                command.state.profile().dialect(),
+                ParameterClass::Token,
+                index,
+            );
+            let receipt =
+                AssignmentCommitter::new(stores).token_parameter(index, new, observed, key, global);
+            command.retain_assignment_receipt(receipt);
             Ok(ReplayStep::Continue)
         }
         ScannedStep::GlueParam {
@@ -13738,22 +13040,14 @@ fn apply_scanned_step(
             value,
             global,
         } => {
-            let parameter = GlueParam::new(index);
-            let old = stores.glue_param(parameter);
-            let redundant =
-                !global && etex_redundant_local_zero_glue_assignment(stores, old, &value);
-            let new = if global {
-                let new = stores.intern_glue(value);
-                stores.set_glue_param_global(parameter, new);
-                new
-            } else if !redundant {
-                let new = stores.intern_glue(value);
-                stores.set_glue_param(parameter, new);
-                new
-            } else {
-                old
-            };
-            assignment_tracing::trace_glue_param(stores, index, global, old, new, !redundant);
+            let key = parameter_mutation_key_for_dialect(
+                command.state.profile().dialect(),
+                ParameterClass::Glue,
+                index,
+            );
+            let receipt =
+                AssignmentCommitter::new(stores).glue_parameter(index, value, key, global);
+            command.retain_assignment_receipt(receipt);
             Ok(ReplayStep::Continue)
         }
         ScannedStep::PdfFontCode {
@@ -13762,11 +13056,29 @@ fn apply_scanned_step(
             character,
             value,
         } => {
-            stores.set_pdf_font_code(table, font, character, value);
+            let record = MutationRecord {
+                target: MutationTarget::Register,
+                key: ObservationValue::Name(format!("{table:?}:{}:{character}", font.raw())),
+                value: ObservationValue::Integer(i64::from(value)),
+                global: true,
+            };
+            let receipt = AssignmentCommitter::new(stores).unscoped(Some(record), |stores| {
+                stores.set_pdf_font_code(table, font, character, value)
+            });
+            command.retain_assignment_receipt(receipt);
             Ok(ReplayStep::Continue)
         }
         ScannedStep::PdfNoLigatures { font } => {
-            stores.disable_pdf_font_ligatures(font);
+            let record = MutationRecord {
+                target: MutationTarget::Register,
+                key: ObservationValue::Name("pdf_no_ligatures".into()),
+                value: ObservationValue::Name(font.raw().to_string()),
+                global: true,
+            };
+            let receipt = AssignmentCommitter::new(stores).unscoped(Some(record), |stores| {
+                stores.disable_pdf_font_ligatures(font)
+            });
+            command.retain_assignment_receipt(receipt);
             Ok(ReplayStep::Continue)
         }
         ScannedStep::CodeTable {
@@ -13829,19 +13141,40 @@ fn apply_scanned_step(
                         }
                     };
                     let old = stores.catcode(character);
-                    if global {
-                        stores.set_catcode_global(character, value);
-                    } else if !etex_redundant_local_word_assignment(stores, old, value) {
-                        stores.set_catcode(character, value);
-                    }
-                    assignment_tracing::trace_code(
-                        stores,
-                        "catcode",
-                        character,
+                    let record = MutationRecord {
+                        target: MutationTarget::Catcode,
+                        key: ObservationValue::Character(u32::from(character)),
+                        value: ObservationValue::Name(
+                            tex_command::canonical_names::catcode_assignment_name(value as i64)
+                                .expect("validated category code")
+                                .into(),
+                        ),
                         global,
-                        old as i32,
-                        value as i32,
+                    };
+                    let receipt = AssignmentCommitter::new(stores).scoped_word(
+                        old,
+                        value,
+                        global,
+                        record,
+                        |stores, global| {
+                            if global {
+                                stores.set_catcode_global(character, value)
+                            } else {
+                                stores.set_catcode(character, value)
+                            }
+                        },
+                        |stores, _| {
+                            assignment_tracing::trace_code(
+                                stores,
+                                "catcode",
+                                character,
+                                global,
+                                old as i32,
+                                value as i32,
+                            )
+                        },
                     );
+                    command.retain_assignment_receipt(receipt);
                 }
                 UnexpandablePrimitive::LcCode => {
                     let value = u32::try_from(value).map_err(|_| ExecError::InvalidCode {
@@ -13849,36 +13182,60 @@ fn apply_scanned_step(
                         value,
                     })? as LcCode;
                     let old = stores.lccode(character);
-                    if global {
-                        stores.set_lccode_global(character, value);
-                    } else if !etex_redundant_local_word_assignment(stores, old, value) {
-                        stores.set_lccode(character, value);
-                    }
-                    assignment_tracing::trace_code(
-                        stores,
-                        "lccode",
-                        character,
+                    let record = code_table_mutation("lccode", character, value as i64, global);
+                    let receipt = AssignmentCommitter::new(stores).scoped_word(
+                        old,
+                        value,
                         global,
-                        old as i32,
-                        value as i32,
+                        record,
+                        |stores, global| {
+                            if global {
+                                stores.set_lccode_global(character, value)
+                            } else {
+                                stores.set_lccode(character, value)
+                            }
+                        },
+                        |stores, _| {
+                            assignment_tracing::trace_code(
+                                stores,
+                                "lccode",
+                                character,
+                                global,
+                                old as i32,
+                                value as i32,
+                            )
+                        },
                     );
+                    command.retain_assignment_receipt(receipt);
                 }
                 UnexpandablePrimitive::UcCode => {
                     let value = checked_character_code(value, "\\uccode")? as UcCode;
                     let old = stores.uccode(character);
-                    if global {
-                        stores.set_uccode_global(character, value);
-                    } else if !etex_redundant_local_word_assignment(stores, old, value) {
-                        stores.set_uccode(character, value);
-                    }
-                    assignment_tracing::trace_code(
-                        stores,
-                        "uccode",
-                        character,
+                    let record = code_table_mutation("uccode", character, value as i64, global);
+                    let receipt = AssignmentCommitter::new(stores).scoped_word(
+                        old,
+                        value,
                         global,
-                        old as i32,
-                        value as i32,
+                        record,
+                        |stores, global| {
+                            if global {
+                                stores.set_uccode_global(character, value)
+                            } else {
+                                stores.set_uccode(character, value)
+                            }
+                        },
+                        |stores, _| {
+                            assignment_tracing::trace_code(
+                                stores,
+                                "uccode",
+                                character,
+                                global,
+                                old as i32,
+                                value as i32,
+                            )
+                        },
                     );
+                    command.retain_assignment_receipt(receipt);
                 }
                 UnexpandablePrimitive::SfCode => {
                     let value = u16::try_from(value)
@@ -13889,19 +13246,31 @@ fn apply_scanned_step(
                             value,
                         })? as SfCode;
                     let old = stores.sfcode(character);
-                    if global {
-                        stores.set_sfcode_global(character, value);
-                    } else if !etex_redundant_local_word_assignment(stores, old, value) {
-                        stores.set_sfcode(character, value);
-                    }
-                    assignment_tracing::trace_code(
-                        stores,
-                        "sfcode",
-                        character,
+                    let record = code_table_mutation("sfcode", character, i64::from(value), global);
+                    let receipt = AssignmentCommitter::new(stores).scoped_word(
+                        old,
+                        value,
                         global,
-                        i32::from(old),
-                        i32::from(value),
+                        record,
+                        |stores, global| {
+                            if global {
+                                stores.set_sfcode_global(character, value)
+                            } else {
+                                stores.set_sfcode(character, value)
+                            }
+                        },
+                        |stores, _| {
+                            assignment_tracing::trace_code(
+                                stores,
+                                "sfcode",
+                                character,
+                                global,
+                                i32::from(old),
+                                i32::from(value),
+                            )
+                        },
                     );
+                    command.retain_assignment_receipt(receipt);
                 }
                 UnexpandablePrimitive::MathCode => {
                     let value = u32::try_from(value)
@@ -13912,19 +13281,31 @@ fn apply_scanned_step(
                             value,
                         })? as MathCode;
                     let old = stores.mathcode(character);
-                    if global {
-                        stores.set_mathcode_global(character, value);
-                    } else if !etex_redundant_local_word_assignment(stores, old, value) {
-                        stores.set_mathcode(character, value);
-                    }
-                    assignment_tracing::trace_code(
-                        stores,
-                        "mathcode",
-                        character,
+                    let record = code_table_mutation("mathcode", character, value as i64, global);
+                    let receipt = AssignmentCommitter::new(stores).scoped_word(
+                        old,
+                        value,
                         global,
-                        old as i32,
-                        value as i32,
+                        record,
+                        |stores, global| {
+                            if global {
+                                stores.set_mathcode_global(character, value)
+                            } else {
+                                stores.set_mathcode(character, value)
+                            }
+                        },
+                        |stores, _| {
+                            assignment_tracing::trace_code(
+                                stores,
+                                "mathcode",
+                                character,
+                                global,
+                                old as i32,
+                                value as i32,
+                            )
+                        },
                     );
+                    command.retain_assignment_receipt(receipt);
                 }
                 UnexpandablePrimitive::DelCode => {
                     let value = (-1..=0xFF_FFFF)
@@ -13935,14 +13316,27 @@ fn apply_scanned_step(
                             value,
                         })?;
                     let old = stores.delcode(character);
-                    if global {
-                        stores.set_delcode_global(character, value);
-                    } else if !etex_redundant_local_word_assignment(stores, old, value) {
-                        stores.set_delcode(character, value);
-                    }
-                    assignment_tracing::trace_code(
-                        stores, "delcode", character, global, old, value,
+                    let record =
+                        code_table_mutation("delcode", character, i64::from(value), global);
+                    let receipt = AssignmentCommitter::new(stores).scoped_word(
+                        old,
+                        value,
+                        global,
+                        record,
+                        |stores, global| {
+                            if global {
+                                stores.set_delcode_global(character, value)
+                            } else {
+                                stores.set_delcode(character, value)
+                            }
+                        },
+                        |stores, _| {
+                            assignment_tracing::trace_code(
+                                stores, "delcode", character, global, old, value,
+                            )
+                        },
                     );
+                    command.retain_assignment_receipt(receipt);
                 }
                 _ => unreachable!("only code-table primitives are scanned"),
             }
@@ -13953,17 +13347,19 @@ fn apply_scanned_step(
             selector,
             global,
         } => {
-            if global {
-                if let Some(selector) = selector {
-                    stores.set_current_font_selector_global(selector, font);
+            AssignmentCommitter::new(stores).unscoped(None, |stores| {
+                if global {
+                    if let Some(selector) = selector {
+                        stores.set_current_font_selector_global(selector, font)
+                    } else {
+                        stores.set_current_font_global(font)
+                    }
+                } else if let Some(selector) = selector {
+                    stores.set_current_font_selector(selector, font)
                 } else {
-                    stores.set_current_font_global(font);
+                    stores.set_current_font(font)
                 }
-            } else if let Some(selector) = selector {
-                stores.set_current_font_selector(selector, font);
-            } else {
-                stores.set_current_font(font);
-            }
+            });
             Ok(ReplayStep::Continue)
         }
         ScannedStep::FontDefinition {
@@ -13976,16 +13372,26 @@ fn apply_scanned_step(
             // the synthesized string `FONT<char>` rather than their bare
             // control-sequence text.
             let identifier = font_identifier_for_definition(stores, request.target);
+            let observe_font_definition = command.state.profile().capabilities().supports_etex();
             let bind_null_font = |stores: &mut Universe| {
-                if global {
-                    stores.set_meaning_global(
-                        request.target,
-                        Meaning::Font(tex_state::font::NULL_FONT),
-                    );
-                } else {
-                    stores.set_meaning(request.target, Meaning::Font(tex_state::font::NULL_FONT));
-                }
-                stores.set_font_identifier_symbol(tex_state::font::NULL_FONT, identifier);
+                let record = font_definition_mutation(
+                    stores,
+                    request.target,
+                    global,
+                    observe_font_definition,
+                );
+                AssignmentCommitter::new(stores).unscoped(record, |stores| {
+                    if global {
+                        stores.set_meaning_global(
+                            request.target,
+                            Meaning::Font(tex_state::font::NULL_FONT),
+                        );
+                    } else {
+                        stores
+                            .set_meaning(request.target, Meaning::Font(tex_state::font::NULL_FONT));
+                    }
+                    stores.set_font_identifier_symbol(tex_state::font::NULL_FONT, identifier);
+                })
             };
             // TeX82 §1258/§1259 report an illegal `at`/`scaled` size and
             // continue with the replaced value; §1257 then loads the font
@@ -14017,7 +13423,8 @@ fn apply_scanned_step(
                     },
                     request.error_context.clone(),
                 )?;
-                bind_null_font(stores);
+                let receipt = bind_null_font(stores);
+                command.retain_assignment_receipt(receipt);
                 return Ok(ReplayStep::Continue);
             }
             let loaded = match load_font(&request, resource) {
@@ -14038,7 +13445,8 @@ fn apply_scanned_step(
                         FontLoadFailure::MalformedTfm,
                         request.error_context.clone(),
                     )?;
-                    bind_null_font(stores);
+                    let receipt = bind_null_font(stores);
+                    command.retain_assignment_receipt(receipt);
                     return Ok(ReplayStep::Continue);
                 }
                 Err(error) => return Err(error),
@@ -14059,7 +13467,8 @@ fn apply_scanned_step(
                         &request.name,
                         request.size,
                     )?;
-                    bind_null_font(stores);
+                    let receipt = bind_null_font(stores);
+                    command.retain_assignment_receipt(receipt);
                     return Ok(ReplayStep::Continue);
                 }
                 Err(error) => return Err(error.into()),
@@ -14069,11 +13478,16 @@ fn apply_scanned_step(
             if !font_would_allocate && !request.name.contains('.') {
                 stores.flush_string_pool_allocations(1, request.name.len());
             }
-            if global {
-                stores.set_meaning_global(request.target, Meaning::Font(id));
-            } else {
-                stores.set_meaning(request.target, Meaning::Font(id));
-            }
+            let record =
+                font_definition_mutation(stores, request.target, global, observe_font_definition);
+            let receipt = AssignmentCommitter::new(stores).unscoped(record, |stores| {
+                if global {
+                    stores.set_meaning_global(request.target, Meaning::Font(id))
+                } else {
+                    stores.set_meaning(request.target, Meaning::Font(id))
+                }
+            });
+            command.retain_assignment_receipt(receipt);
             Ok(ReplayStep::Continue)
         }
         ScannedStep::GeneratedFontDefinition { definition, global } => {
@@ -14111,11 +13525,15 @@ fn apply_scanned_step(
                     id
                 }
             };
-            if global {
-                stores.set_meaning_global(definition.target, Meaning::Font(id));
-            } else {
-                stores.set_meaning(definition.target, Meaning::Font(id));
-            }
+            let record = font_definition_mutation(stores, definition.target, global, true);
+            let receipt = AssignmentCommitter::new(stores).unscoped(record, |stores| {
+                if global {
+                    stores.set_meaning_global(definition.target, Meaning::Font(id))
+                } else {
+                    stores.set_meaning(definition.target, Meaning::Font(id))
+                }
+            });
+            command.retain_assignment_receipt(receipt);
             Ok(ReplayStep::Continue)
         }
         ScannedStep::InputStream { request, resource } => {
@@ -14127,22 +13545,26 @@ fn apply_scanned_step(
                     let packed_name = file_name.packed();
                     // §1275 closes any stream already open on `n` before it
                     // tries to open the new file, whichever command this is.
-                    stores.world_mut().close_in(slot);
-                    let Some(resource) = resource else {
-                        return Ok(ReplayStep::Continue);
-                    };
-                    stores
-                        .world_mut()
-                        .set_memory_file(&packed_name, resource.bytes().to_vec())?;
-                    let content = InputReadState::read_input_file(
-                        &mut stores.input_open_context(),
-                        std::path::Path::new(&packed_name),
-                    )?;
-                    stores.world_mut().open_in_content(slot, &content)?;
+                    AssignmentCommitter::new(stores).try_unscoped(None, |stores| {
+                        stores.world_mut().close_in(slot);
+                        let Some(resource) = resource else {
+                            return Ok(());
+                        };
+                        stores
+                            .world_mut()
+                            .set_memory_file(&packed_name, resource.bytes().to_vec())?;
+                        let content = InputReadState::read_input_file(
+                            &mut stores.input_open_context(),
+                            std::path::Path::new(&packed_name),
+                        )?;
+                        stores.world_mut().open_in_content(slot, &content)?;
+                        Ok::<(), ExecError>(())
+                    })?;
                 }
                 InputStreamRequest::Close { stream, .. } => {
                     let slot = replay_stream_slot(stream);
-                    stores.world_mut().close_in(slot);
+                    AssignmentCommitter::new(stores)
+                        .unscoped(None, |stores| stores.world_mut().close_in(slot));
                 }
                 // TeX82 §482 has already collected the list inside the
                 // command core, which also reported §1225's missing-`to`
@@ -14162,19 +13584,31 @@ fn apply_scanned_step(
                     // [17.687-750] traces the same pre/post eqtb write as a
                     // `\def`, immediately after collection and before the
                     // next command is fetched.
-                    assignment_tracing::trace_meaning_write(
-                        stores,
-                        Token::Cs(target),
-                        true,
+                    let observed =
+                        ObservationValue::Tokens(observed_read_body(tokens.token_list(), stores));
+                    let record = MutationRecord {
+                        target: MutationTarget::Meaning,
+                        key: ObservationValue::Name(stores.resolve(target).to_owned()),
+                        value: observed,
                         global,
-                        |stores| {
-                            if global {
-                                stores.set_macro_meaning_global(target, meaning);
-                            } else {
-                                stores.set_macro_meaning(target, meaning);
-                            }
-                        },
-                    );
+                    };
+                    let receipt =
+                        AssignmentCommitter::new(stores).unscoped(Some(record), |stores| {
+                            assignment_tracing::trace_meaning_write(
+                                stores,
+                                Token::Cs(target),
+                                true,
+                                global,
+                                |stores| {
+                                    if global {
+                                        stores.set_macro_meaning_global(target, meaning)
+                                    } else {
+                                        stores.set_macro_meaning(target, meaning)
+                                    }
+                                },
+                            );
+                        });
+                    command.retain_assignment_receipt(receipt);
                 }
             }
             Ok(ReplayStep::Continue)
@@ -14452,8 +13886,10 @@ fn apply_scanned_step(
                 None => {
                     let number = u32::try_from(number)
                         .expect("a writable parameter number is a positive u32");
-                    match stores.set_font_dimen(font, number, value) {
-                        Ok(()) => {}
+                    match AssignmentCommitter::new(stores)
+                        .try_unscoped(None, |stores| stores.set_font_dimen(font, number, value))
+                    {
+                        Ok(_) => {}
                         Err(tex_state::FontParameterError::FontInfoCapacity { capacity }) => {
                             return Err(ExecError::Fatal(tex_command::FatalError::overflow(
                                 "font memory",
@@ -14469,11 +13905,13 @@ fn apply_scanned_step(
             Ok(ReplayStep::Continue)
         }
         ScannedStep::FontInteger { font, skew, value } => {
-            if skew {
-                stores.set_font_skew_char(font, value);
-            } else {
-                stores.set_font_hyphen_char(font, value);
-            }
+            AssignmentCommitter::new(stores).unscoped(None, |stores| {
+                if skew {
+                    stores.set_font_skew_char(font, value)
+                } else {
+                    stores.set_font_hyphen_char(font, value)
+                }
+            });
             Ok(ReplayStep::Continue)
         }
         ScannedStep::DeferredOpenOut { stream, file_name } => {
@@ -14604,7 +14042,14 @@ fn apply_scanned_step(
             // the target keeps its old value and the job continues. Every
             // arm of `apply_arithmetic` computes its value before writing it,
             // so the target is provably unwritten on this path.
-            match apply_arithmetic(primitive, target, operand, global, stores) {
+            match apply_arithmetic(
+                primitive,
+                target,
+                operand,
+                global,
+                command.state.profile(),
+                stores,
+            ) {
                 Err(ExecError::ArithmeticOverflow) => {
                     let context = command.state.output_open_context(&stores.command_context());
                     let mut report = stores.print_err("Arithmetic overflow");
@@ -14615,7 +14060,10 @@ fn apply_scanned_step(
                     report.context(context);
                     report.error().jump_out()?;
                 }
-                other => other?,
+                Ok(receipt) => {
+                    command.retain_assignment_receipt(receipt);
+                }
+                Err(error) => return Err(error),
             }
             Ok(ReplayStep::Continue)
         }
@@ -14664,24 +14112,36 @@ fn apply_scanned_step(
             // assignment; `global` here already folds in `\gdef`/`\xdef`'s
             // own forced-global chr_code (see the scan arm above), and
             // `global` already is the final effective bit.
-            assignment_tracing::trace_meaning_write(
+            let observed = ObservationValue::Tokens(observed_stored_macro_body(
+                flags,
+                parameter_text.token_list(),
+                replacement_text.token_list(),
                 stores,
-                Token::Cs(target),
-                // TeX82's `\def` family always allocates a fresh definition,
-                // so real TeX never reports "reassigning" here even for a
-                // byte-identical redefinition -- see
-                // `assignment_tracing::trace_meaning_write`'s docs.
-                true,
+            ));
+            let record = MutationRecord {
+                target: MutationTarget::Meaning,
+                key: ObservationValue::Name(stores.resolve(target).to_owned()),
+                value: observed,
                 global,
-                |stores| {
-                    if global {
-                        stores
-                            .set_macro_meaning_global_with_provenance(target, meaning, provenance);
-                    } else {
-                        stores.set_macro_meaning_with_provenance(target, meaning, provenance);
-                    }
-                },
-            );
+            };
+            let receipt = AssignmentCommitter::new(stores).unscoped(Some(record), |stores| {
+                assignment_tracing::trace_meaning_write(
+                    stores,
+                    Token::Cs(target),
+                    true,
+                    global,
+                    |stores| {
+                        if global {
+                            stores.set_macro_meaning_global_with_provenance(
+                                target, meaning, provenance,
+                            )
+                        } else {
+                            stores.set_macro_meaning_with_provenance(target, meaning, provenance)
+                        }
+                    },
+                );
+            });
+            command.retain_assignment_receipt(receipt);
             Ok(ReplayStep::Continue)
         }
         ScannedStep::CharacterDefinition {
@@ -14707,21 +14167,26 @@ fn apply_scanned_step(
                 Meaning::Relax,
                 global,
             );
-            let changed =
-                !etex_redundant_local_word_assignment(stores, stores.meaning(target), meaning);
-            assignment_tracing::trace_meaning_write(
-                stores,
+            let observed = match primitive {
+                UnexpandablePrimitive::CharDef => ObservationValue::Character(value as u32),
+                UnexpandablePrimitive::MathCharDef => ObservationValue::Integer(i64::from(value)),
+                _ => unreachable!("character-definition step carries only §1224 primitives"),
+            };
+            let receipt = AssignmentCommitter::new(stores).meaning(
+                target,
                 Token::Cs(target),
-                changed,
+                meaning,
+                observed,
                 global,
                 |stores| {
                     if global {
-                        stores.set_meaning_global(target, meaning);
-                    } else if changed {
-                        stores.set_meaning(target, meaning);
+                        stores.set_meaning_global(target, meaning)
+                    } else {
+                        stores.set_meaning(target, meaning)
                     }
                 },
             );
+            command.retain_assignment_receipt(receipt);
             Ok(ReplayStep::Continue)
         }
         ScannedStep::RegisterDefinition {
@@ -14746,20 +14211,38 @@ fn apply_scanned_step(
                 Meaning::Relax,
                 global,
             );
-            let changed = stores.meaning(target) != meaning;
-            assignment_tracing::trace_meaning_write(
-                stores,
+            let observed_name =
+                if command.state.profile().capabilities().supports_etex() && index > 255 {
+                    if primitive == UnexpandablePrimitive::ToksDef {
+                        "toks_register"
+                    } else {
+                        "register"
+                    }
+                } else {
+                    match primitive {
+                        UnexpandablePrimitive::CountDef => "assign_int",
+                        UnexpandablePrimitive::DimenDef => "assign_dimen",
+                        UnexpandablePrimitive::SkipDef => "assign_glue",
+                        UnexpandablePrimitive::MuskipDef => "assign_mu_glue",
+                        UnexpandablePrimitive::ToksDef => "assign_toks",
+                        _ => unreachable!("register-definition step carries only §1224 primitives"),
+                    }
+                };
+            let receipt = AssignmentCommitter::new(stores).meaning(
+                target,
                 Token::Cs(target),
-                changed,
+                meaning,
+                ObservationValue::Name(observed_name.into()),
                 global,
                 |stores| {
                     if global {
-                        stores.set_meaning_global(target, meaning);
-                    } else if changed {
-                        stores.set_meaning(target, meaning);
+                        stores.set_meaning_global(target, meaning)
+                    } else {
+                        stores.set_meaning(target, meaning)
                     }
                 },
             );
+            command.retain_assignment_receipt(receipt);
             Ok(ReplayStep::Continue)
         }
         ScannedStep::HyphenationData {
@@ -14793,9 +14276,13 @@ fn apply_scanned_step(
             // the live scan, where §82 could still show the character that
             // caused them; installing is all that is left here.
             if patterns {
-                crate::paragraph_end::apply_scanned_patterns(stores, pattern_specs)?;
+                AssignmentCommitter::new(stores).try_unscoped(None, |stores| {
+                    crate::paragraph_end::apply_scanned_patterns(stores, pattern_specs)
+                })?;
             } else {
-                crate::paragraph_end::apply_scanned_hyphenation_exceptions(stores, words);
+                AssignmentCommitter::new(stores).unscoped(None, |stores| {
+                    crate::paragraph_end::apply_scanned_hyphenation_exceptions(stores, words);
+                });
             }
             Ok(ReplayStep::Continue)
         }
@@ -14813,21 +14300,22 @@ fn apply_scanned_step(
             // `\def`/`\edef`/`\gdef`/`\xdef`) canonical apply arm that used
             // the raw `\global` prefix bit directly and silently ignored a
             // nonzero `\globaldefs`.
-            let changed =
-                !etex_redundant_local_word_assignment(stores, stores.meaning(target), meaning);
-            assignment_tracing::trace_meaning_write(
-                stores,
+            let observed = meaning_mutation_value(meaning, stores);
+            let receipt = AssignmentCommitter::new(stores).meaning(
+                target,
                 Token::Cs(target),
-                changed,
+                meaning,
+                observed,
                 global,
                 |stores| {
                     if global {
-                        stores.set_meaning_global(target, meaning);
+                        stores.set_meaning_global(target, meaning)
                     } else {
-                        stores.set_meaning(target, meaning);
+                        stores.set_meaning(target, meaning)
                     }
                 },
             );
+            command.retain_assignment_receipt(receipt);
             Ok(ReplayStep::Continue)
         }
         ScannedStep::AfterGroup(token) => {
@@ -15355,7 +14843,7 @@ fn apply_scanned_step(
                 stores.current_input_line(),
             )?;
             if !kind.horizontal() {
-                crate::paragraph_end::normal_paragraph(modes, stores);
+                commit_box_normal_paragraph(modes, stores, command);
             }
             boxes.active_boxes.push(ActiveReplayBox {
                 target: None,
@@ -15369,9 +14857,7 @@ fn apply_scanned_step(
             schedule_everybox(command.state, stores, kind.horizontal());
             Ok(ReplayStep::Continue)
         }
-        ScannedStep::BoxShift(shift) => {
-            apply_box_shift(shift, command.state, modes, stores, boxes, command.fuel)
-        }
+        ScannedStep::BoxShift(shift) => apply_box_shift(shift, command, modes, stores, boxes),
         ScannedStep::IllegalBoxShift { token } => {
             let context = command.state.output_open_context(&stores.command_context());
             crate::diagnostics::report_illegal_case_with_context(
@@ -16395,169 +15881,39 @@ fn effective_global(global_defs: i32, explicit_global: bool) -> bool {
     }
 }
 
-/// Whether e-TeX §275's local `eq_word_define` returns as a reassignment.
-///
-/// Global definitions always execute, and TeX82 does not have the extended
-/// mode shortcut. Keeping this predicate beside assignment application makes
-/// the save-stack and observation decisions share one canonical condition.
-fn etex_redundant_local_word_assignment<T: Eq>(
-    stores: &Universe,
-    current: T,
-    replacement: T,
-) -> bool {
-    stores.int_param(IntParam::ETEX_EXTENDED_MODE) > 0 && current == replacement
-}
-
-/// Whether e-TeX §§277-278 return before an observed assignment step touches
-/// either the save stack or its `eqtb` location.
-fn etex_redundant_local_definition_step(stores: &Universe, scanned: &ScannedStep) -> bool {
-    match scanned {
-        ScannedStep::Let {
-            target,
-            meaning,
-            global: false,
-            ..
-        } => etex_redundant_local_word_assignment(stores, stores.meaning(*target), *meaning),
-        ScannedStep::Count {
-            index,
-            value,
-            global: false,
-        } if *index <= 255 => {
-            etex_redundant_local_word_assignment(stores, stores.count(*index), *value)
-        }
-        ScannedStep::Dimen {
-            index,
-            value,
-            global: false,
-        } if *index <= 255 => {
-            etex_redundant_local_word_assignment(stores, stores.dimen(*index), *value)
-        }
-        ScannedStep::Toks {
-            index,
-            tokens,
-            global: false,
-        } if *index <= 255 => {
-            etex_redundant_local_word_assignment(stores, stores.toks(*index), tokens.token_list())
-        }
-        ScannedStep::IntParam {
-            index,
-            value,
-            global: false,
-        } => etex_redundant_local_word_assignment(
-            stores,
-            stores.int_param(IntParam::new(*index)),
-            *value,
-        ),
-        ScannedStep::DimenParam {
-            index,
-            value,
-            global: false,
-        } => etex_redundant_local_word_assignment(
-            stores,
-            stores.dimen_param(DimenParam::new(*index)),
-            *value,
-        ),
-        ScannedStep::GlueParam {
-            index,
-            value,
-            global: false,
-        } => etex_redundant_local_zero_glue_assignment(
-            stores,
-            stores.glue_param(GlueParam::new(*index)),
-            value,
-        ),
-        ScannedStep::TokParam {
-            index,
-            tokens,
-            global: false,
-        } => etex_redundant_local_word_assignment(
-            stores,
-            stores.tok_param(TokParam::new(*index)),
-            tokens.token_list(),
-        ),
-        // e-TeX 2.6 [49.1221--1237] routes indices above 255 through
-        // `sa_def`, not §§277-278's `eq_define`. An identical pointer avoids
-        // a state/save-stack rewrite in both paths, but `sa_def` still owns a
-        // committed sparse-mutation boundary; only the dense path returns
-        // before the observer boundary.
-        ScannedStep::Skip {
-            index,
-            redundant: true,
-            ..
-        } => *index <= 255,
-        ScannedStep::CodeTable {
-            primitive,
-            character,
-            value,
-            global: false,
-        } => match primitive {
-            UnexpandablePrimitive::CatCode => match *value {
-                0 => Some(Catcode::Escape),
-                1 => Some(Catcode::BeginGroup),
-                2 => Some(Catcode::EndGroup),
-                3 => Some(Catcode::MathShift),
-                4 => Some(Catcode::AlignmentTab),
-                5 => Some(Catcode::EndLine),
-                6 => Some(Catcode::Parameter),
-                7 => Some(Catcode::Superscript),
-                8 => Some(Catcode::Subscript),
-                9 => Some(Catcode::Ignored),
-                10 => Some(Catcode::Space),
-                11 => Some(Catcode::Letter),
-                12 => Some(Catcode::Other),
-                13 => Some(Catcode::Active),
-                14 => Some(Catcode::Comment),
-                15 => Some(Catcode::Invalid),
-                _ => None,
-            }
-            .is_some_and(|value| {
-                etex_redundant_local_word_assignment(stores, stores.catcode(*character), value)
-            }),
-            UnexpandablePrimitive::LcCode => u32::try_from(*value).is_ok_and(|value| {
-                etex_redundant_local_word_assignment(stores, stores.lccode(*character), value)
-            }),
-            UnexpandablePrimitive::UcCode => u32::try_from(*value).is_ok_and(|value| {
-                etex_redundant_local_word_assignment(stores, stores.uccode(*character), value)
-            }),
-            UnexpandablePrimitive::SfCode => u16::try_from(*value).is_ok_and(|value| {
-                etex_redundant_local_word_assignment(stores, stores.sfcode(*character), value)
-            }),
-            UnexpandablePrimitive::MathCode => u32::try_from(*value).is_ok_and(|value| {
-                etex_redundant_local_word_assignment(stores, stores.mathcode(*character), value)
-            }),
-            UnexpandablePrimitive::DelCode => {
-                etex_redundant_local_word_assignment(stores, stores.delcode(*character), *value)
-            }
-            _ => unreachable!("only code-table primitives are scanned"),
-        },
-        _ => false,
-    }
-}
-
-/// Whether e-TeX §277 sees the same canonical zero-glue pointer on both sides
-/// of a local `eq_define`.
-///
-/// TeX82 §1237's `trap_zero_glue` replaces every all-zero scanned
-/// specification with `zero_glue` before `define`. Equal nonzero glue values
-/// are deliberately not reassignment-identical: separately scanned literals
-/// occupy different glue-spec nodes in TeX even though Umber hash-conses their
-/// immutable contents.
-fn etex_redundant_local_zero_glue_assignment(
-    stores: &Universe,
-    current: GlueId,
-    replacement: &GlueSpec,
-) -> bool {
-    stores.int_param(IntParam::ETEX_EXTENDED_MODE) > 0
-        && current == GlueId::ZERO
-        && *replacement == GlueSpec::ZERO
-}
-
 fn checked_character_code(value: i32, context: &'static str) -> Result<u32, ExecError> {
     u32::try_from(value)
         .ok()
         .and_then(char::from_u32)
         .map(|character| character as u32)
         .ok_or(ExecError::InvalidCode { context, value })
+}
+
+fn code_table_mutation(table: &str, character: char, value: i64, global: bool) -> MutationRecord {
+    MutationRecord {
+        target: MutationTarget::CodeTable,
+        key: ObservationValue::Name(format!("{table}:{}", u32::from(character))),
+        value: ObservationValue::Integer(value),
+        global,
+    }
+}
+
+fn font_definition_mutation(
+    stores: &Universe,
+    target: Symbol,
+    global: bool,
+    observed: bool,
+) -> Option<MutationRecord> {
+    if observed {
+        Some(MutationRecord {
+            target: MutationTarget::Meaning,
+            key: ObservationValue::Name(stores.resolve(target).to_owned()),
+            value: ObservationValue::Name("set_font".into()),
+            global,
+        })
+    } else {
+        None
+    }
 }
 
 fn pdf_font_code_table(primitive: UnexpandablePrimitive) -> tex_state::PdfFontCode {
@@ -16580,113 +15936,59 @@ fn apply_arithmetic(
     target: ArithmeticTarget,
     operand: ArithmeticOperand,
     global: bool,
+    profile: CommandProfile,
     stores: &mut Universe,
-) -> Result<(), ExecError> {
-    match (target, operand) {
+) -> Result<crate::assignments::committer::MutationReceipt, ExecError> {
+    let receipt = match (target, operand) {
         (ArithmeticTarget::IntegerRegister(index), ArithmeticOperand::Integer(rhs)) => {
-            let old = stores.count(index);
-            let value = arithmetic_integer(primitive, old, rhs)?;
-            if global {
-                stores.set_count_global(index, value);
-            } else {
-                stores.set_count(index, value);
-            }
-            assignment_tracing::trace_int_register(stores, index, global, old, value);
+            let value = arithmetic_integer(primitive, stores.count(index), rhs)?;
+            AssignmentCommitter::new(stores).count(index, value, global)
         }
         (ArithmeticTarget::IntegerParameter(index), ArithmeticOperand::Integer(rhs)) => {
-            let parameter = IntParam::new(index);
-            let old = stores.int_param(parameter);
-            let tracing_before = stores.int_param(IntParam::TRACING_ASSIGNS) > 0;
-            let value = arithmetic_integer(primitive, old, rhs)?;
-            if global {
-                stores.set_int_param_global(parameter, value);
-            } else {
-                stores.set_int_param(parameter, value);
-            }
-            assignment_tracing::trace_int_param(stores, index, tracing_before, global, old, value);
+            let value = arithmetic_integer(primitive, stores.int_param(IntParam::new(index)), rhs)?;
+            let key = parameter_mutation_key_for_dialect(
+                profile.dialect(),
+                ParameterClass::Integer,
+                index,
+            );
+            AssignmentCommitter::new(stores).int_parameter(index, value, key, global)
         }
         (ArithmeticTarget::DimensionRegister(index), operand) => {
-            let old = stores.dimen(index);
-            let value = arithmetic_dimension(primitive, old, operand)?;
-            if global {
-                stores.set_dimen_global(index, value);
-            } else {
-                stores.set_dimen(index, value);
-            }
-            assignment_tracing::trace_dimen_register(stores, index, global, old, value);
+            let value = arithmetic_dimension(primitive, stores.dimen(index), operand)?;
+            AssignmentCommitter::new(stores).dimension(index, value, global)
         }
         (ArithmeticTarget::DimensionParameter(index), operand) => {
-            let parameter = DimenParam::new(index);
-            let old = stores.dimen_param(parameter);
-            let value = arithmetic_dimension(primitive, old, operand)?;
-            if global {
-                stores.set_dimen_param_global(parameter, value);
-            } else {
-                stores.set_dimen_param(parameter, value);
-            }
-            assignment_tracing::trace_dimen_param(stores, index, global, old, value);
+            let value = arithmetic_dimension(
+                primitive,
+                stores.dimen_param(DimenParam::new(index)),
+                operand,
+            )?;
+            let key = parameter_mutation_key_for_dialect(
+                profile.dialect(),
+                ParameterClass::Dimension,
+                index,
+            );
+            AssignmentCommitter::new(stores).dimension_parameter(index, value, key, global)
         }
         (ArithmeticTarget::GlueRegister { index, mu }, operand) => {
-            let old_id = if mu {
+            let old = stores.glue(if mu {
                 stores.muskip(index)
             } else {
                 stores.skip(index)
-            };
-            let old = stores.glue(old_id);
-            let value = stores.intern_glue(arithmetic_glue(primitive, old, operand)?);
-            if mu {
-                if global {
-                    stores.set_muskip_global(index, value);
-                } else {
-                    stores.set_muskip(index, value);
-                }
-            } else if global {
-                stores.set_skip_global(index, value);
-            } else {
-                stores.set_skip(index, value);
-            }
-            if mu {
-                assignment_tracing::trace_muglue_register(
-                    stores,
-                    index,
-                    global,
-                    old_id,
-                    value,
-                    old_id != GlueId::ZERO || value != GlueId::ZERO,
-                );
-            } else {
-                assignment_tracing::trace_glue_register(
-                    stores,
-                    index,
-                    global,
-                    old_id,
-                    value,
-                    old_id != GlueId::ZERO || value != GlueId::ZERO,
-                );
-            }
+            });
+            let value = arithmetic_glue(primitive, old, operand)?;
+            AssignmentCommitter::new(stores).skip(index, value, global, mu, false, false)
         }
         (ArithmeticTarget::GlueParameter { index, .. }, operand) => {
-            let parameter = GlueParam::new(index);
-            let old_id = stores.glue_param(parameter);
-            let old = stores.glue(old_id);
-            let value = stores.intern_glue(arithmetic_glue(primitive, old, operand)?);
-            if global {
-                stores.set_glue_param_global(parameter, value);
-            } else {
-                stores.set_glue_param(parameter, value);
-            }
-            assignment_tracing::trace_glue_param(
-                stores,
-                index,
-                global,
-                old_id,
-                value,
-                old_id != GlueId::ZERO || value != GlueId::ZERO,
-            );
+            let old = stores.glue(stores.glue_param(GlueParam::new(index)));
+            let value = arithmetic_glue(primitive, old, operand)?;
+            let key =
+                parameter_mutation_key_for_dialect(profile.dialect(), ParameterClass::Glue, index);
+            AssignmentCommitter::new(stores).glue_parameter(index, value, key, global)
         }
         _ => return Err(ExecError::UnsupportedAssignmentTarget),
-    }
-    Ok(())
+    };
+    Ok(receipt)
 }
 
 fn arithmetic_integer(
@@ -16880,7 +16182,7 @@ fn begin_replay_box(
         stores.current_input_line(),
     )?;
     if !kind.horizontal() {
-        crate::paragraph_end::normal_paragraph(modes, stores);
+        commit_box_normal_paragraph(modes, stores, command);
     }
     boxes.active_boxes.push(ActiveReplayBox {
         target,
@@ -16895,6 +16197,24 @@ fn begin_replay_box(
     Ok(())
 }
 
+fn commit_box_normal_paragraph(
+    modes: &mut ModeNest,
+    stores: &mut Universe,
+    command: &mut CommandMachine<'_>,
+) {
+    let record =
+        (!stores.penalty_array(PenaltyArrayKind::InterLine).is_empty()).then(|| MutationRecord {
+            target: MutationTarget::Register,
+            key: ObservationValue::Name("toks:256".into()),
+            value: ObservationValue::Tokens(Vec::new()),
+            global: false,
+        });
+    let receipt = AssignmentCommitter::new(stores).unscoped(record, |stores| {
+        crate::paragraph_end::normal_paragraph(modes, stores);
+    });
+    command.retain_assignment_receipt(receipt);
+}
+
 /// Applies a scanned TeX82 §1073 box-shift prefix (`\raise`, `\lower`,
 /// `\moveleft`, `\moveright`). `ScannedBoxShiftPayload::Construction` opens
 /// the same `BoxEndGroup` body-closing episode as an
@@ -16905,18 +16225,17 @@ fn begin_replay_box(
 /// shift.
 fn apply_box_shift(
     shift: ScannedBoxShift,
-    command: &mut CommandState,
+    command: &mut CommandMachine<'_>,
     modes: &mut ModeNest,
     stores: &mut Universe,
     boxes: &mut ReplayBoxes,
-    fuel: &mut tex_command::CommandFuel,
 ) -> Result<ReplayStep, ExecError> {
     match shift.payload {
         ScannedBoxShiftPayload::Missing => {
             // `scan_box`'s own "A <box> was supposed to be here" recovery
             // (tex.web §1084); the rejected command has already been backed
             // up by `scan_box_payload` for ordinary replay.
-            report_missing_box(command, stores)?;
+            report_missing_box(command.state, stores)?;
             Ok(ReplayStep::Continue)
         }
         ScannedBoxShiftPayload::BoxRegister { index, copy } => {
@@ -16929,12 +16248,13 @@ fn apply_box_shift(
                 stores.pin_survivor(id);
             }
             let node = crate::box_runtime::first_box_node(stores, id);
-            append_shifted_box(modes, stores, node, shift.delta, fuel)?;
+            append_shifted_box(modes, stores, node, shift.delta, command.fuel)?;
             Ok(ReplayStep::Continue)
         }
         ScannedBoxShiftPayload::LastBox { error_context } => {
-            let node = crate::box_runtime::take_last_box(modes, stores, fuel, error_context)?;
-            append_shifted_box(modes, stores, node, shift.delta, fuel)?;
+            let node =
+                crate::box_runtime::take_last_box(modes, stores, command.fuel, error_context)?;
+            append_shifted_box(modes, stores, node, shift.delta, command.fuel)?;
             Ok(ReplayStep::Continue)
         }
         ScannedBoxShiftPayload::VSplit(split) => {
@@ -16947,7 +16267,7 @@ fn apply_box_shift(
                 split.height,
                 &split.split_context,
             )?;
-            append_shifted_box(modes, stores, node, shift.delta, fuel)?;
+            append_shifted_box(modes, stores, node, shift.delta, command.fuel)?;
             Ok(ReplayStep::Continue)
         }
         ScannedBoxShiftPayload::Construction(construction) => {
@@ -16980,7 +16300,7 @@ fn apply_box_shift(
             } else {
                 kind.group_kind()
             };
-            enter_group(stores, command, group_kind);
+            enter_group(stores, command.state, group_kind);
             modes.push_at_line(
                 if kind.horizontal() {
                     Mode::RestrictedHorizontal
@@ -16990,7 +16310,7 @@ fn apply_box_shift(
                 stores.current_input_line(),
             )?;
             if !kind.horizontal() {
-                crate::paragraph_end::normal_paragraph(modes, stores);
+                commit_box_normal_paragraph(modes, stores, command);
             }
             boxes.active_boxes.push(ActiveReplayBox {
                 target: None,
@@ -17004,7 +16324,7 @@ fn apply_box_shift(
                     axis,
                 }),
             });
-            schedule_everybox(command, stores, kind.horizontal());
+            schedule_everybox(command.state, stores, kind.horizontal());
             Ok(ReplayStep::Continue)
         }
     }
@@ -17110,11 +16430,10 @@ fn commit_set_box_target(
     stores: &mut Universe,
     command: &mut CommandMachine<'_>,
 ) {
-    assignment_tracing::trace_box_write(
-        stores,
+    let receipt = AssignmentCommitter::new(stores).box_register(
         target.index,
-        target.global,
         boxed,
+        target.global,
         |stores| match (target.global, boxed) {
             (false, Some(boxed)) => stores.set_box_reg(target.index, boxed),
             (true, Some(boxed)) => stores.set_box_reg_global(target.index, boxed),
@@ -17122,20 +16441,7 @@ fn commit_set_box_target(
             (true, None) => stores.clear_box_reg_global(target.index),
         },
     );
-    if target.index > 255
-        && let Some(observations) = command.observations.as_mut()
-    {
-        observations
-            .0
-            .push(CommandObservation::Mutation(MutationRecord {
-                target: MutationTarget::Register,
-                key: ObservationValue::Name(format!("box:{}", target.index)),
-                value: ObservationValue::Name(
-                    if boxed.is_some() { "occupied" } else { "void" }.into(),
-                ),
-                global: target.global,
-            }));
-    }
+    command.retain_assignment_receipt(receipt);
 }
 
 /// Applies TeX82 §1073's `shift_amount(cur_box):=box_context` to an already

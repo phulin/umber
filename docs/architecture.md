@@ -401,10 +401,14 @@ explicit body. Packages may initialize per-box alignment state in that hook;
 skipping it can turn a finite column traversal into an unbounded expansion
 loop even though the math-list parser itself continues to make progress.
 
-Assignments use the aggregate state API. Group restoration, global writes,
-register overflow, code-table updates, and effect recording all pass through
-the same barriered ownership boundary. Recursive scanners may use ordinary
-Rust locals, but only executor-named quiescent boundaries are restartable.
+Assignments enter `AssignmentCommitter` after scanning. That borrow-scoped
+authority performs the state write, resolves local versus global barriers and
+e-TeX's redundant-local shortcut, emits assignment tracing, and returns the
+typed mutation receipt from the committed value. Register overflow, code
+tables, meanings, boxes, font state, and non-`eqtb` assignment families use
+the same boundary; mutation observation is not classified in a second pass.
+Recursive scanners may use ordinary Rust locals, but only executor-named
+quiescent boundaries are restartable.
 
 During the main-control unification migration, `tex-exec` has one crate-private
 `ExecutionReceipt` vocabulary for the committed result of an aggregate

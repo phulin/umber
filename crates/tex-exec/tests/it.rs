@@ -1,7 +1,10 @@
 use std::sync::Arc;
 
 use test_support::{CompileFailDependency, assert_compile_fail};
-use tex_command::{RegisteredSourceKind, SourceRegistration};
+use tex_command::{
+    CommandObservation, CommandObserver, CommandProfile, MutationTarget, ObservationValue,
+    RegisteredSourceKind, SourceRegistration,
+};
 use tex_exec::{MainControl, MainControlStep, ResourceNeed};
 use tex_state::{
     EffectRecord, InteractionMode, PrintSink, Universe,
@@ -55,6 +58,83 @@ fn run_tex82(source: &[u8], tracing_online: bool) -> String {
         })
         .collect();
     committed + &pending
+}
+
+#[derive(Default)]
+struct ObservationCollector(Vec<CommandObservation>);
+
+impl CommandObserver for ObservationCollector {
+    fn committed(&mut self, observation: CommandObservation) {
+        self.0.push(observation);
+    }
+}
+
+fn observed_etex(source: &[u8]) -> (Universe, Vec<CommandObservation>) {
+    let mut stores = Universe::new_with_plain_catcodes();
+    stores.set_interaction_mode(InteractionMode::Nonstop);
+    tex_command::install_tex82_expandable_primitives(&mut stores);
+    tex_command::install_etex_expandable_primitives(&mut stores);
+    tex_exec::install_unexpandable_primitives(&mut stores);
+    tex_exec::install_etex_unexpandable_primitives(&mut stores);
+    let mut control = MainControl::prepared_initex(CommandProfile::ETEX26);
+    control
+        .register_root_source(SourceRegistration::new(
+            RegisteredSourceKind::Generated,
+            Arc::<[u8]>::from(source),
+        ))
+        .expect("test source registers");
+    let mut observer = ObservationCollector::default();
+    loop {
+        match control
+            .step_with_observer(&mut stores, &mut observer)
+            .expect("observed e-TeX source executes")
+        {
+            MainControlStep::End | MainControlStep::EndOfInput => break,
+            MainControlStep::Continue => {}
+        }
+    }
+    (stores, observer.0)
+}
+
+fn register_mutation_keys(observations: &[CommandObservation]) -> Vec<&str> {
+    observations
+        .iter()
+        .filter_map(|observation| match observation {
+            CommandObservation::Mutation(record) if record.target == MutationTarget::Register => {
+                match &record.key {
+                    ObservationValue::Name(key) => Some(key.as_str()),
+                    _ => None,
+                }
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn assignment_committer_owns_redundancy_glue_identity_and_afterassignment_order() {
+    let (_, observations) = observed_etex(
+        br"\count0=13{\count0=13\global\count0=13}\skip0=1pt{\skip0=1pt}\skip0=0pt{\skip0=0pt}\def\mark{\count1=7}\afterassignment\mark\count0=3\end",
+    );
+    let keys = register_mutation_keys(&observations);
+    assert_eq!(keys.iter().filter(|key| **key == "count:0").count(), 3);
+    assert_eq!(keys.iter().filter(|key| **key == "skip:0").count(), 3);
+    let final_count = keys.iter().rposition(|key| *key == "count:0").unwrap();
+    let after_count = keys.iter().rposition(|key| *key == "count:1").unwrap();
+    assert!(
+        final_count < after_count,
+        "afterassignment runs after its commit"
+    );
+}
+
+#[test]
+fn assignment_committer_emits_sparse_box_receipt_and_suppresses_overflow_write() {
+    let (stores, observations) =
+        observed_etex(br"\setbox32103=\hbox{}\count0=2147483647\advance\count0 by1\end");
+    assert_eq!(stores.count(0), i32::MAX);
+    let keys = register_mutation_keys(&observations);
+    assert!(keys.contains(&"box:32103"));
+    assert_eq!(keys.iter().filter(|key| **key == "count:0").count(), 1);
 }
 
 #[test]

@@ -130,6 +130,16 @@ bounded. The harness and entry shape selector are migration scaffolding to
 delete with the predecessor paths; they introduce no `tex-oracle` schema or
 other public wire change.
 
+**Assignment authority.** `AssignmentCommitter` owns the write boundary for
+scalar, glue, token, code-table, meaning, box, font, page, mode, and
+hyphenation assignment families. Each commit makes the local/global and e-TeX
+redundant-local decision once, emits `\tracingassigns` from the same pre- and
+post-image, and returns the typed mutation receipt at that point. The former
+pre-application mutation classifier and dormant variable/admissibility write
+wrappers are deleted. Receipts remain operation-local until the existing
+bounded evidence/receipt publication seam commits, so resource retries and
+`\afterassignment` retain their prior atomic ordering without a wire change.
+
 ## 2. One oracle evidence, finalization, and comparison pipeline
 
 **Outcome.** `tex-oracle` owns exhaustive event views for normalization, locations, position erasure, alignment keys, concise rendering, and typed profile projection. `tex-observe` enriches and finalizes once into semantic and geometry evidence. `tex-command-stream` owns named strict and ordinary comparison policies and returns divergence plus accounting in one parsed result. Parity consumes that result.
