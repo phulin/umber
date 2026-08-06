@@ -44,11 +44,14 @@ pub fn vert_break(
         match node {
             None => penalty = Some(EJECT_PENALTY),
             Some(Node::HList(box_node)) | Some(Node::VList(box_node)) => {
+                // Vertical breaking accounts only for the box's vertical
+                // extent. Perpendicular width and shift belong to packing and
+                // must not introduce an otherwise impossible overflow here.
                 acc.try_observe_vertical(MetricEvent::Box {
-                    width: box_node.width,
+                    width: Scaled::from_raw(0),
                     height: box_node.height,
                     depth: box_node.depth,
-                    shift: box_node.shift,
+                    shift: Scaled::from_raw(0),
                 })
                 .ok_or(VerticalBreakError::ArithmeticOverflow)?;
             }
@@ -195,8 +198,11 @@ fn update_spacing_node(
         }
         _ => return Ok(()),
     };
-    acc.try_observe_vertical(MetricEvent::Kern(width))
-        .ok_or(VerticalBreakError::ArithmeticOverflow)?;
+    // Preserve vert_break's checked-arithmetic order: unlike packing's
+    // vertical measurement, this domain adds the saved depth to the running
+    // height before adding the spacing node.
+    acc.height = add(add(acc.height, acc.depth)?, width)?;
+    acc.depth = Scaled::from_raw(0);
     Ok(())
 }
 

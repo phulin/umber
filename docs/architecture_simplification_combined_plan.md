@@ -400,14 +400,16 @@ typed overflow; math still owns transaction topology and occurrence-ordered
 pack observations. The shared seam therefore removes arithmetic/topology
 duplication without turning those policies into flags.
 
-The implementation adds 550 and deletes 201 production Rust lines, a net
-addition of 349. The new event/cursor vocabulary and explicit overflow-policy
+The implementation adds 556 and deletes 201 production Rust lines, a net
+addition of 355. The new event/cursor vocabulary and explicit overflow-policy
 boundary outweigh the removed local accumulators, so none of program 10's
 forecast production reduction is credited. The closed
 `typesetting_assertion_ledger.md` maps every assertion in the three removed
 migration aggregate cases to active case-level owners and retains the unique
-vertical-break tie case. Test Rust adds seven and deletes 165 lines, a net
-deletion of 158; this is the only test reduction credited to this child.
+vertical-break tie case. Test Rust adds 81 and deletes 165 lines, a net deletion
+of 84; this is the only test reduction credited to this child. The additional
+focused tests preserve vertical-break overflow semantics and independently own
+the compacted shifted-vpack and clean-character assertions.
 
 ## 11. Publish one canonical font runtime while preserving format-specific policy
 

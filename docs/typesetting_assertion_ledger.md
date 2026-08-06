@@ -24,10 +24,11 @@ stable evidence identifiers; source line numbers are deliberately not used.
 
 ### `tex82_vpack_depth_and_append_to_vlist_baseline_matrix`
 
-- Shifted vertical child contributes `width + shift`: owned by the vertical
-  half of `packing::tests::leader_glue_participates_in_packing_like_ordinary_glue`
-  for perpendicular width and by `packing::tests::hpack_measures_shifted_child_boxes`
-  for signed child shifts.
+- Shifted vertical child contributes `width + shift`: owned directly by
+  `packing::tests::vpack_measures_shifted_child_width`; the broader
+  perpendicular and signed-shift policies are also covered by
+  `packing::tests::leader_glue_participates_in_packing_like_ordinary_glue` and
+  `packing::tests::hpack_measures_shifted_child_boxes`.
 - Exact vertical target remains the requested height: owned by
   `packing::tests::vpack_records_overfull_badness_when_normal_shrink_is_insufficient`
   and `packing::tests::vtop_preserves_total_size_when_first_box_exceeds_target`.

@@ -626,6 +626,36 @@ fn hpack_measures_shifted_child_boxes() {
 }
 
 #[test]
+fn vpack_measures_shifted_child_width() {
+    let mut universe = Universe::new();
+    let child = universe.freeze_node_list(&[]);
+    let list = universe.freeze_node_list(&[Node::VList(BoxNode::new(BoxNodeFields {
+        width: sp(4),
+        height: sp(9),
+        depth: sp(7),
+        shift: sp(2),
+        box_lr: tex_state::node::BoxLr::Normal,
+        glue_set: GlueSetRatio::ZERO,
+        glue_sign: Sign::Normal,
+        glue_order: Order::Normal,
+        children: child,
+    }))]);
+
+    let packed = vpack(
+        &universe,
+        list,
+        PackSpec::Natural,
+        VpackParams {
+            vbadness: INF_BAD,
+            vfuzz: sp(0),
+            box_max_depth: sp(100),
+        },
+    );
+
+    assert_eq!(packed.node.width, sp(6));
+}
+
+#[test]
 fn pdf_image_reference_contributes_its_declared_box_dimensions() {
     let mut universe = Universe::new();
     let image = Node::Whatsit(Whatsit::PdfRefXImage {

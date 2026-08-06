@@ -1119,6 +1119,7 @@ fn clean_math_character_observes_both_tex82_hpack_completions() {
     };
     let layout = ctx.layout.finish(boxed.list);
 
+    assert_eq!(boxed.width, sc(12));
     assert_eq!(layout.pack_observations(), &[expected, expected]);
 }
 
