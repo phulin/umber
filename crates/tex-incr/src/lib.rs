@@ -353,9 +353,9 @@ pub struct AcceptedUniverseFinalization {
 /// state yet.
 ///
 /// Hosts may materialize and validate its detached output before calling
-/// [`Session::accept_pending`]. Dropping this value rolls the candidate back
+/// [`Session::accept_revision`]. Dropping this value rolls the candidate back
 /// without changing the accepted revision.
-pub struct PendingRevision {
+pub struct RevisionTransaction {
     session_output_id: RenderedOutputId,
     base_revision: RevisionId,
     base_content_hash: ContentHash,
@@ -364,23 +364,19 @@ pub struct PendingRevision {
     fragments: FragmentStore,
     layout: EditorLayout,
     content_hash: ContentHash,
-    effects: Vec<EffectRecord>,
-    effect_sequences: Vec<tex_state::EffectSequence>,
-    effect_publications: Vec<Option<tex_state::EffectPublicationId>>,
-    effect_publication_record_ordinals: Vec<Option<tex_state::EffectPublicationRecordOrdinal>>,
-    effect_domains: Vec<tex_state::EffectDomain>,
-    effect_semantic_record_ordinals: Vec<tex_state::EffectSemanticRecordOrdinal>,
-    effect_placement_intra_orders: Vec<tex_state::EffectPlacementIntraOrder>,
-    artifact_publications: Vec<tex_state::ArtifactPublicationRecord>,
-    artifacts: Vec<CommittedArtifact>,
-    dvi_pages: Vec<DviPagePlan>,
-    history: Vec<BoundaryRecord>,
-    substrate: PendingSubstrate,
+    payload: RevisionPayload,
+    substrate: TransactionSubstrate,
     reuse: ReuseMetrics,
     dumped_format: bool,
     format_dump_receipt: Option<tex_exec::FormatDumpReceipt>,
     expansion_stats: ExpansionStats,
     candidate_memo: Option<tex_state::PureMemoRuntime>,
+}
+
+/// Immutable publication data selected for one completed revision.
+struct RevisionPayload {
+    output: tex_exec::RevisionOutputPatch,
+    history: Vec<BoundaryRecord>,
 }
 
 /// One private revision execution retained across resource suspensions.
@@ -418,10 +414,10 @@ enum RevisionCandidateKind {
         source_len: usize,
     },
     Replacement {
-        setup: Box<AdvanceSetup>,
+        setup: Box<RevisionDraft>,
     },
     Incremental {
-        setup: Box<AdvanceSetup>,
+        setup: Box<RevisionDraft>,
         restart: usize,
         restart_fork_latency: Duration,
     },
@@ -435,22 +431,13 @@ pub enum RevisionCandidateResult {
     Complete,
 }
 
-struct AdvanceSetup {
+struct RevisionDraft {
     execution_path: RevisionExecutionPath,
     replacement_restart_boundary: Option<BoundaryKey>,
     next_revision: RevisionId,
     old_source: String,
     old_history: Vec<BoundaryRecord>,
-    old_effects: Vec<EffectRecord>,
-    old_effect_sequences: Vec<tex_state::EffectSequence>,
-    old_effect_publications: Vec<Option<tex_state::EffectPublicationId>>,
-    old_effect_publication_record_ordinals: Vec<Option<tex_state::EffectPublicationRecordOrdinal>>,
-    old_effect_domains: Vec<tex_state::EffectDomain>,
-    old_effect_semantic_record_ordinals: Vec<tex_state::EffectSemanticRecordOrdinal>,
-    old_effect_placement_intra_orders: Vec<tex_state::EffectPlacementIntraOrder>,
-    old_artifact_publications: Vec<tex_state::ArtifactPublicationRecord>,
-    old_artifacts: Vec<CommittedArtifact>,
-    old_pages: Vec<DviPagePlan>,
+    old_output: tex_exec::RevisionOutputPatch,
     next: String,
     fragments: FragmentStore,
     next_layout: EditorLayout,
@@ -458,7 +445,7 @@ struct AdvanceSetup {
     revision_setup_latency: Duration,
 }
 
-enum PendingSubstrate {
+enum TransactionSubstrate {
     Retained {
         scratch: Universe,
         adopted_origins: Vec<OriginId>,
@@ -469,7 +456,7 @@ enum PendingSubstrate {
     },
 }
 
-impl PendingRevision {
+impl RevisionTransaction {
     #[must_use]
     pub const fn revision(&self) -> RevisionId {
         self.revision
@@ -487,7 +474,7 @@ impl PendingRevision {
 
     #[must_use]
     pub fn artifacts(&self) -> &[CommittedArtifact] {
-        &self.artifacts
+        self.payload.output.artifacts().artifacts()
     }
 
     #[must_use]
@@ -496,7 +483,7 @@ impl PendingRevision {
     }
 
     pub fn dvi_bytes(&self) -> Result<Vec<u8>, DviError> {
-        dvi_bytes(&self.dvi_pages)
+        dvi_bytes(self.payload.output.dvi_pages())
     }
 }
 
@@ -979,16 +966,7 @@ pub struct Session {
     fragments: FragmentStore,
     layout: EditorLayout,
     content_hash: ContentHash,
-    effects: Vec<EffectRecord>,
-    effect_sequences: Vec<tex_state::EffectSequence>,
-    effect_publications: Vec<Option<tex_state::EffectPublicationId>>,
-    effect_publication_record_ordinals: Vec<Option<tex_state::EffectPublicationRecordOrdinal>>,
-    effect_domains: Vec<tex_state::EffectDomain>,
-    effect_semantic_record_ordinals: Vec<tex_state::EffectSemanticRecordOrdinal>,
-    effect_placement_intra_orders: Vec<tex_state::EffectPlacementIntraOrder>,
-    artifact_publications: Vec<tex_state::ArtifactPublicationRecord>,
-    artifacts: Vec<CommittedArtifact>,
-    dvi_pages: Vec<DviPagePlan>,
+    output: tex_exec::RevisionOutputPatch,
     history: Vec<BoundaryRecord>,
     substrate: Option<GenerationSubstrate>,
     checkpoint_budget: usize,
@@ -1140,16 +1118,13 @@ impl Session {
             source,
             fragments,
             layout,
-            effects: Vec::new(),
-            effect_sequences: Vec::new(),
-            effect_publications: Vec::new(),
-            effect_publication_record_ordinals: Vec::new(),
-            effect_domains: Vec::new(),
-            effect_semantic_record_ordinals: Vec::new(),
-            effect_placement_intra_orders: Vec::new(),
-            artifact_publications: Vec::new(),
-            artifacts: Vec::new(),
-            dvi_pages: Vec::new(),
+            output: tex_exec::RevisionOutputPatch::recompose(
+                tex_state::EffectJournal::default(),
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+            )
+            .expect("empty revision output is valid"),
             history: Vec::new(),
             substrate: None,
             checkpoint_budget,
@@ -1387,9 +1362,8 @@ impl Session {
         &mut self,
         candidate: RevisionCandidate,
     ) -> Result<AcceptedOutput, SessionError> {
-        let run = finish_cold_candidate(candidate)?;
-        self.pure_memo = run.memo;
-        self.accept_cold(run.run)
+        let transaction = finish_cold_candidate(self, candidate)?;
+        self.accept_revision(transaction)
     }
 
     /// Creates a private edited-revision candidate while leaving accepted
@@ -1436,22 +1410,13 @@ impl Session {
             self.layout.pieces().to_vec(),
             &fragments,
         )?;
-        let setup = Box::new(AdvanceSetup {
+        let setup = Box::new(RevisionDraft {
             execution_path: RevisionExecutionPath::ExternalInputDelta,
             replacement_restart_boundary: None,
             next_revision: self.revision,
             old_source: self.source.clone(),
             old_history: self.history.clone(),
-            old_effects: self.effects.clone(),
-            old_effect_sequences: self.effect_sequences.clone(),
-            old_effect_publications: self.effect_publications.clone(),
-            old_effect_publication_record_ordinals: self.effect_publication_record_ordinals.clone(),
-            old_effect_domains: self.effect_domains.clone(),
-            old_effect_semantic_record_ordinals: self.effect_semantic_record_ordinals.clone(),
-            old_effect_placement_intra_orders: self.effect_placement_intra_orders.clone(),
-            old_artifact_publications: self.artifact_publications.clone(),
-            old_artifacts: self.artifacts.clone(),
-            old_pages: self.dvi_pages.clone(),
+            old_output: self.output.clone(),
             next: self.source.clone(),
             fragments,
             next_layout,
@@ -1523,7 +1488,7 @@ impl Session {
                 .world()
                 .validate_recorded_inputs()?;
         }
-        let setup = Box::new(AdvanceSetup {
+        let setup = Box::new(RevisionDraft {
             execution_path: if force_job_start {
                 RevisionExecutionPath::ForcedJobStartFallback
             } else {
@@ -1533,16 +1498,7 @@ impl Session {
             next_revision,
             old_source,
             old_history,
-            old_effects: self.effects.clone(),
-            old_effect_sequences: self.effect_sequences.clone(),
-            old_effect_publications: self.effect_publications.clone(),
-            old_effect_publication_record_ordinals: self.effect_publication_record_ordinals.clone(),
-            old_effect_domains: self.effect_domains.clone(),
-            old_effect_semantic_record_ordinals: self.effect_semantic_record_ordinals.clone(),
-            old_effect_placement_intra_orders: self.effect_placement_intra_orders.clone(),
-            old_artifact_publications: self.artifact_publications.clone(),
-            old_artifacts: self.artifacts.clone(),
-            old_pages: self.dvi_pages.clone(),
+            old_output: self.output.clone(),
             next,
             fragments,
             next_layout,
@@ -1574,7 +1530,7 @@ impl Session {
 
     fn start_restored_candidate(
         &self,
-        setup: Box<AdvanceSetup>,
+        setup: Box<RevisionDraft>,
         restart: usize,
         allow_convergence: bool,
     ) -> Result<RevisionCandidate, SessionError> {
@@ -1626,7 +1582,7 @@ impl Session {
 
     fn start_replacement_candidate(
         &self,
-        setup: Box<AdvanceSetup>,
+        setup: Box<RevisionDraft>,
     ) -> Result<RevisionCandidate, SessionError> {
         let mut universe = self.template.clone();
         universe.begin_retained_session()?;
@@ -1662,10 +1618,10 @@ impl Session {
     }
 
     /// Converts a completed edited candidate into a private pending revision.
-    pub fn finish_advance_candidate(
+    pub fn prepare_revision_candidate(
         &mut self,
         candidate: RevisionCandidate,
-    ) -> Result<PendingRevision, SessionError> {
+    ) -> Result<RevisionTransaction, SessionError> {
         match &candidate.kind {
             RevisionCandidateKind::Replacement { .. } => {
                 self.finish_replacement_candidate(candidate)
@@ -1680,7 +1636,7 @@ impl Session {
     fn finish_replacement_candidate(
         &self,
         mut candidate: RevisionCandidate,
-    ) -> Result<PendingRevision, SessionError> {
+    ) -> Result<RevisionTransaction, SessionError> {
         let RevisionCandidateKind::Replacement { setup } = candidate.kind else {
             return Err(SessionError::CandidateKindMismatch);
         };
@@ -1703,23 +1659,13 @@ impl Session {
             delivered_tokens,
             main_control_dispatches,
         } = stats;
-        let (effect_journal, artifact_ledger, dvi_pages) = output_patch.into_parts();
-        let (
-            effects,
-            effect_sequences,
-            effect_publications,
-            effect_publication_record_ordinals,
-            effect_domains,
-            effect_semantic_record_ordinals,
-            effect_placement_intra_orders,
-        ) = effect_journal.into_parts();
-        let (artifacts, artifact_publications) = artifact_ledger.into_parts();
+        let pages_retyped = output_patch.artifacts().artifacts().len();
         let substrate = candidate.universe.freeze_generation();
         let history = retain_restorable_history(sink.records, &substrate)?;
         let reuse = ReuseMetrics {
             execution_path: setup.execution_path,
             restart_boundary: setup.replacement_restart_boundary,
-            pages_retyped: artifacts.len(),
+            pages_retyped,
             reexecuted_bytes: setup.next.len(),
             reexecuted_tokens: delivered_tokens,
             reexecuted_commands: main_control_dispatches,
@@ -1733,7 +1679,7 @@ impl Session {
             ..ReuseMetrics::default()
         };
         let content_hash = ContentHash::from_bytes(setup.next.as_bytes());
-        Ok(PendingRevision {
+        Ok(RevisionTransaction {
             session_output_id: self.output_id,
             base_revision: self.revision,
             base_content_hash: self.content_hash,
@@ -1742,18 +1688,11 @@ impl Session {
             fragments: setup.fragments,
             layout: setup.next_layout,
             content_hash,
-            effects,
-            effect_sequences,
-            effect_publications,
-            effect_publication_record_ordinals,
-            effect_domains,
-            effect_semantic_record_ordinals,
-            effect_placement_intra_orders,
-            artifact_publications,
-            artifacts,
-            dvi_pages,
-            history,
-            substrate: PendingSubstrate::Replaced {
+            payload: RevisionPayload {
+                output: output_patch,
+                history,
+            },
+            substrate: TransactionSubstrate::Replaced {
                 substrate,
                 current_artifact_origins: Vec::new(),
             },
@@ -1768,7 +1707,7 @@ impl Session {
     fn finish_incremental_candidate(
         &self,
         mut candidate: RevisionCandidate,
-    ) -> Result<PendingRevision, SessionError> {
+    ) -> Result<RevisionTransaction, SessionError> {
         let RevisionCandidateKind::Incremental {
             setup,
             restart,
@@ -1792,7 +1731,6 @@ impl Session {
             delivered_tokens,
             main_control_dispatches,
         } = stats;
-        let live_dvi_publications = output_patch.dvi_publications().to_vec();
         let (effect_journal, artifact_ledger, dvi_pages) = output_patch.into_parts();
         let reexecuted_paragraphs = sink
             .records
@@ -1815,17 +1753,6 @@ impl Session {
             SameHistoryStop::NoComparableBoundary
         };
         let expansion_stats = ExpansionStats::default();
-        let (
-            effects,
-            live_effect_sequences,
-            live_effect_publications,
-            live_effect_publication_record_ordinals,
-            live_effect_domains,
-            live_effect_semantic_record_ordinals,
-            live_effect_placement_intra_orders,
-        ) = effect_journal.into_parts();
-        let live_effect_publication_dispositions =
-            candidate.universe.world().effect_publication_dispositions();
         let (artifacts, mut live_artifact_publications) = artifact_ledger.into_parts();
         let artifact_base = candidate
             .universe
@@ -1836,7 +1763,7 @@ impl Session {
             .artifact_prefix
             .max(artifact_base);
         let mut pages_through_stop =
-            dvi_page_prefix(&setup.old_pages, retained_artifact_prefix).to_vec();
+            dvi_page_prefix(setup.old_output.dvi_pages(), retained_artifact_prefix).to_vec();
         pages_through_stop.extend(dvi_pages.iter().cloned());
 
         let roots = tex_exec::RootRehomeContext::new(&setup.old_source, &setup.next);
@@ -1846,8 +1773,7 @@ impl Session {
             .as_ref()
             .ok_or(SessionError::MissingAcceptedSubstrate)?;
         let anchor = &setup.old_history[restart];
-        let mut assembled_effect_sidecars = None;
-        let (effects, artifacts, pages, mut history, pending_substrate, mut reuse) =
+        let (effect_journal, artifacts, pages, mut history, pending_substrate, mut reuse) =
             if let Some(old_index) = sink.convergence_old_index {
                 let old_effect_prefix = setup.old_history[old_index].effect_prefix;
                 let new_effect_prefix = sink
@@ -1856,21 +1782,20 @@ impl Session {
                     .expect("convergence requires a new matching record")
                     .effect_prefix;
                 let scratch_effect_count = new_effect_prefix.saturating_sub(anchor.effect_prefix);
-                let mut joined_effects = setup.old_effects[..anchor.effect_prefix].to_vec();
-                extend_live_effects(&mut joined_effects, &effects, 0..scratch_effect_count);
+                let joined_effect_journal = tex_state::EffectJournal::concat(&[
+                    setup.old_output.effects().slice(0..anchor.effect_prefix),
+                    effect_journal.slice(0..scratch_effect_count),
+                    setup
+                        .old_output
+                        .effects()
+                        .slice(old_effect_prefix.min(new_effect_prefix)..usize::MAX),
+                ]);
                 // A terminal retained checkpoint can include final-cleanup
                 // effects that the stopped scratch run has not executed. The
                 // scratch prefix is an absolute effect position even when its
                 // local record vector starts at a restored nonzero base; own
                 // the retained tail from the earlier absolute prefix so the
                 // cleanup records are neither dropped nor replayed twice.
-                let adopted_effect_prefix = old_effect_prefix.min(new_effect_prefix);
-                extend_adopted_effects(
-                    &mut joined_effects,
-                    &setup.old_effects,
-                    adopted_effect_prefix,
-                );
-
                 let old_prefix = setup.old_history[old_index].artifact_prefix;
                 let new_prefix = sink
                     .records
@@ -1878,24 +1803,26 @@ impl Session {
                     .expect("convergence requires a new matching record")
                     .artifact_prefix;
                 let scratch_artifact_count = new_prefix.saturating_sub(anchor.artifact_prefix);
-                let mut joined_artifacts = setup.old_artifacts[..anchor.artifact_prefix].to_vec();
+                let old_artifacts = setup.old_output.artifacts().artifacts();
+                let old_publications = setup.old_output.artifacts().publications();
+                let mut joined_artifacts = old_artifacts[..anchor.artifact_prefix].to_vec();
                 joined_artifacts.extend_from_slice(&artifacts[..scratch_artifact_count]);
-                joined_artifacts.extend_from_slice(&setup.old_artifacts[old_prefix..]);
+                joined_artifacts.extend_from_slice(&old_artifacts[old_prefix..]);
                 let mut joined_artifact_publications =
-                    setup.old_artifact_publications[..anchor.artifact_prefix].to_vec();
+                    old_publications[..anchor.artifact_prefix].to_vec();
                 joined_artifact_publications
                     .extend_from_slice(&live_artifact_publications[..scratch_artifact_count]);
-                joined_artifact_publications
-                    .extend_from_slice(&setup.old_artifact_publications[old_prefix..]);
+                joined_artifact_publications.extend_from_slice(&old_publications[old_prefix..]);
                 live_artifact_publications = joined_artifact_publications;
                 rebase_and_validate_adopted_artifacts(
                     &mut joined_artifacts[anchor.artifact_prefix + scratch_artifact_count..],
                     old_effect_prefix,
                     new_effect_prefix,
-                    &joined_effects,
+                    joined_effect_journal.records(),
                 )?;
                 let mut joined_pages = pages_through_stop;
-                joined_pages.extend_from_slice(dvi_page_suffix(&setup.old_pages, old_prefix));
+                joined_pages
+                    .extend_from_slice(dvi_page_suffix(setup.old_output.dvi_pages(), old_prefix));
                 let mut history = Vec::with_capacity(
                     restart + 1 + setup.old_history.len().saturating_sub(old_index),
                 );
@@ -1927,11 +1854,11 @@ impl Session {
                     .collect::<Vec<_>>();
                 let convergence_boundary = history.get(restart + 1).map(BoundaryRecord::key);
                 (
-                    joined_effects,
+                    joined_effect_journal,
                     joined_artifacts,
                     joined_pages,
                     history,
-                    PendingSubstrate::Retained {
+                    TransactionSubstrate::Retained {
                         scratch: candidate.universe,
                         adopted_origins,
                     },
@@ -1943,7 +1870,7 @@ impl Session {
                         restart_boundary: Some(anchor.key),
                         convergence_boundary,
                         pages_retained_prefix: anchor.artifact_prefix,
-                        pages_reused: setup.old_artifacts.len().saturating_sub(old_prefix),
+                        pages_reused: old_artifacts.len().saturating_sub(old_prefix),
                         pages_retyped: scratch_artifact_count,
                         reexecuted_bytes: reexecuted_through.saturating_sub(anchor.key.position),
                         reexecuted_tokens: delivered_tokens,
@@ -1954,7 +1881,7 @@ impl Session {
                         same_history_attempts: sink.same_history_attempts,
                         same_history_hash_mismatches: sink.same_history_hash_mismatches,
                         trace_nodes_walked: sink.same_history_attempts,
-                        trace_leaf_hits: setup.old_artifacts.len().saturating_sub(old_prefix),
+                        trace_leaf_hits: old_artifacts.len().saturating_sub(old_prefix),
                         trace_subtree_hits: 1,
                         suffixes_adopted: 1,
                         same_history_stop,
@@ -1965,33 +1892,6 @@ impl Session {
                     },
                 )
             } else {
-                let (
-                    candidate_effects,
-                    _candidate_sequences,
-                    candidate_publications,
-                    _candidate_publication_record_ordinals,
-                    _candidate_domains,
-                    _candidate_semantic_record_ordinals,
-                    _candidate_placement_intra_orders,
-                ) = assemble_effect_ledger(
-                    &setup.old_effects,
-                    &setup.old_effect_sequences,
-                    &setup.old_effect_publications,
-                    &setup.old_effect_publication_record_ordinals,
-                    &setup.old_effect_domains,
-                    &setup.old_effect_semantic_record_ordinals,
-                    &setup.old_effect_placement_intra_orders,
-                    &effects,
-                    &live_effect_sequences,
-                    &live_effect_publications,
-                    &live_effect_publication_record_ordinals,
-                    &live_effect_domains,
-                    &live_effect_semantic_record_ordinals,
-                    &live_effect_placement_intra_orders,
-                    anchor.effect_prefix,
-                    &live_effect_publication_dispositions,
-                    None,
-                );
                 let current_artifact_origins = Vec::new();
                 let target = candidate.universe.freeze_generation();
                 let mut history = Vec::with_capacity(restart + 1 + sink.records.len());
@@ -2005,79 +1905,30 @@ impl Session {
                 }
                 history.extend(sink.records);
                 let pages_retyped = artifacts.len();
-                let (joined_artifacts, joined_artifact_publications, joined_pages) =
-                    assemble_artifact_ledger(
-                        &setup.old_artifacts,
-                        &setup.old_artifact_publications,
-                        &setup.old_pages,
-                        &artifacts,
-                        &live_artifact_publications,
-                        &dvi_pages,
-                        &live_dvi_publications,
-                        retained_artifact_prefix,
-                        &candidate_publications,
-                        &live_effect_publications,
-                        &live_effect_sequences,
-                    );
-                let selected_artifact_effect_publications = setup
-                    .old_artifact_publications
-                    .iter()
-                    .zip(&joined_artifact_publications)
-                    .filter_map(|(accepted, selected)| {
-                        Some((
-                            accepted.effect_publication()?,
-                            selected.effect_publication()?,
-                        ))
-                    })
-                    .collect::<std::collections::BTreeMap<_, _>>();
-                let selected_artifact_effect_publications = (setup.old_artifact_publications.len()
-                    == joined_artifact_publications.len()
-                    && selected_artifact_effect_publications.len()
-                        == joined_artifact_publications.len())
-                .then_some(&selected_artifact_effect_publications);
-                let (
-                    joined_effects,
-                    candidate_sequences,
-                    candidate_publications,
-                    candidate_publication_record_ordinals,
-                    candidate_domains,
-                    candidate_semantic_record_ordinals,
-                    candidate_placement_intra_orders,
-                ) = assemble_effect_ledger(
-                    &setup.old_effects,
-                    &setup.old_effect_sequences,
-                    &setup.old_effect_publications,
-                    &setup.old_effect_publication_record_ordinals,
-                    &setup.old_effect_domains,
-                    &setup.old_effect_semantic_record_ordinals,
-                    &setup.old_effect_placement_intra_orders,
-                    &effects,
-                    &live_effect_sequences,
-                    &live_effect_publications,
-                    &live_effect_publication_record_ordinals,
-                    &live_effect_domains,
-                    &live_effect_semantic_record_ordinals,
-                    &live_effect_placement_intra_orders,
+                let old_artifacts = setup.old_output.artifacts().artifacts();
+                let old_publications = setup.old_output.artifacts().publications();
+                let prefix = retained_artifact_prefix
+                    .min(old_artifacts.len())
+                    .min(old_publications.len());
+                let mut joined_artifacts = old_artifacts[..prefix].to_vec();
+                joined_artifacts.extend_from_slice(&artifacts);
+                let mut joined_artifact_publications = old_publications[..prefix].to_vec();
+                joined_artifact_publications.extend_from_slice(&live_artifact_publications);
+                let mut joined_pages =
+                    dvi_page_prefix(setup.old_output.dvi_pages(), prefix).to_vec();
+                joined_pages.extend_from_slice(&dvi_pages);
+                let joined_effect_journal = tex_state::EffectJournal::splice_prefix(
+                    setup.old_output.effects(),
+                    &effect_journal,
                     anchor.effect_prefix,
-                    &live_effect_publication_dispositions,
-                    selected_artifact_effect_publications,
                 );
-                assembled_effect_sidecars = Some((
-                    candidate_sequences,
-                    candidate_publications.clone(),
-                    candidate_publication_record_ordinals,
-                    candidate_domains,
-                    candidate_semantic_record_ordinals,
-                    candidate_placement_intra_orders,
-                ));
-                let _ = candidate_effects;
                 live_artifact_publications = joined_artifact_publications;
                 (
-                    joined_effects,
+                    joined_effect_journal,
                     joined_artifacts,
                     joined_pages,
                     history,
-                    PendingSubstrate::Replaced {
+                    TransactionSubstrate::Replaced {
                         substrate: target,
                         current_artifact_origins,
                     },
@@ -2107,37 +1958,21 @@ impl Session {
             record.revision = setup.next_revision;
         }
         let retained_substrate = match &pending_substrate {
-            PendingSubstrate::Retained { .. } => substrate,
-            PendingSubstrate::Replaced { substrate, .. } => substrate,
+            TransactionSubstrate::Retained { .. } => substrate,
+            TransactionSubstrate::Replaced { substrate, .. } => substrate,
         };
         let history = retain_restorable_history(history, retained_substrate)?;
         reuse.trace_retained_bytes = std::mem::size_of_val(history.as_slice());
         reuse.splice_latency = splice_started.elapsed();
         reuse.trace_replay_latency = reuse.splice_latency;
-        let (
-            effect_sequences,
-            effect_publications,
-            effect_publication_record_ordinals,
-            effect_domains,
-            effect_semantic_record_ordinals,
-            effect_placement_intra_orders,
-        ) = assembled_effect_sidecars.unwrap_or_else(|| {
-            (
-                (1..=effects.len())
-                    .map(|sequence| tex_state::EffectSequence::new(sequence as u64))
-                    .collect(),
-                vec![None; effects.len()],
-                vec![None; effects.len()],
-                (1..=effects.len())
-                    .map(|domain| tex_state::EffectDomain::World(domain as u64))
-                    .collect(),
-                vec![tex_state::EffectSemanticRecordOrdinal::new(1); effects.len()],
-                (1..=effects.len())
-                    .map(|order| tex_state::EffectPlacementIntraOrder::new(order as u64))
-                    .collect(),
-            )
-        });
-        Ok(PendingRevision {
+        let output = tex_exec::RevisionOutputPatch::recompose(
+            effect_journal,
+            artifacts,
+            live_artifact_publications,
+            pages,
+        )
+        .map_err(|error| SessionError::InvalidRevisionOutputPatch(format!("{error:?}")))?;
+        Ok(RevisionTransaction {
             session_output_id: self.output_id,
             base_revision: self.revision,
             base_content_hash: self.content_hash,
@@ -2146,17 +1981,7 @@ impl Session {
             source: setup.next,
             fragments: setup.fragments,
             layout: setup.next_layout,
-            effects,
-            effect_sequences,
-            effect_publications,
-            effect_publication_record_ordinals,
-            effect_domains,
-            effect_semantic_record_ordinals,
-            effect_placement_intra_orders,
-            artifact_publications: live_artifact_publications,
-            artifacts,
-            dvi_pages: pages,
-            history,
+            payload: RevisionPayload { output, history },
             substrate: pending_substrate,
             reuse,
             dumped_format,
@@ -2184,9 +2009,9 @@ impl Session {
             .as_ref()
             .ok_or(SessionError::MissingAcceptedSubstrate)?;
         Ok(substrate.materialize_detached_outputs(
-            self.effects.clone(),
-            self.artifacts.clone(),
-            self.artifact_publications.clone(),
+            self.output.effects().records().to_vec(),
+            self.output.artifacts().artifacts().to_vec(),
+            self.output.artifacts().publications().to_vec(),
         )?)
     }
 
@@ -2199,9 +2024,9 @@ impl Session {
             .take()
             .ok_or(SessionError::MissingAcceptedSubstrate)?;
         let mut universe = substrate.into_detached_universe(
-            self.effects,
-            self.artifacts,
-            self.artifact_publications,
+            self.output.effects().records().to_vec(),
+            self.output.artifacts().artifacts().to_vec(),
+            self.output.artifacts().publications().to_vec(),
         )?;
         let first_fallible_page =
             universe
@@ -2338,7 +2163,7 @@ impl Session {
         let Some(page_index) = page.checked_sub(1).map(|page| page as usize) else {
             return Ok(None);
         };
-        let Some(artifact) = self.artifacts.get(page_index) else {
+        let Some(artifact) = self.output.artifacts().artifacts().get(page_index) else {
             return Ok(None);
         };
         let mut maps = self.render_maps.borrow_mut();
@@ -2384,9 +2209,9 @@ impl Session {
             .take()
             .ok_or(SessionError::MissingAcceptedSubstrate)?;
         Ok(substrate.export_detached_outputs(
-            self.effects,
-            self.artifacts,
-            self.artifact_publications,
+            self.output.effects().records().to_vec(),
+            self.output.artifacts().artifacts().to_vec(),
+            self.output.artifacts().publications().to_vec(),
         )?)
     }
 
@@ -2405,8 +2230,8 @@ impl Session {
         edit: Edit,
         host: &mut dyn ResourceHost,
     ) -> Result<AcceptedOutput, SessionError> {
-        let pending = self.prepare_advance_with_resolvers(next_revision, edit, host)?;
-        self.accept_pending(pending)
+        let transaction = self.prepare_revision_with_resolvers(next_revision, edit, host)?;
+        self.accept_revision(transaction)
     }
 
     pub fn advance_with_resource_resolvers(
@@ -2415,84 +2240,74 @@ impl Session {
         edit: Edit,
         host: &mut dyn ResourceHost,
     ) -> Result<AcceptedOutput, SessionError> {
-        let pending = self.prepare_advance_with_resource_resolvers(next_revision, edit, host)?;
-        self.accept_pending(pending)
+        let transaction =
+            self.prepare_revision_with_resource_resolvers(next_revision, edit, host)?;
+        self.accept_revision(transaction)
     }
 
     /// Executes an edit into private candidate state without changing the
     /// accepted revision. The caller may validate all downstream output and
     /// either atomically accept the candidate or drop it.
-    pub fn prepare_advance_with_resolvers(
+    pub fn prepare_revision_with_resolvers(
         &mut self,
         next_revision: RevisionId,
         edit: Edit,
         host: &mut dyn ResourceHost,
-    ) -> Result<PendingRevision, SessionError> {
+    ) -> Result<RevisionTransaction, SessionError> {
         // Query caches are revision-attempt ephemera. A failed candidate keeps
         // accepted semantic state but must not keep maps lowered before it.
         self.clear_render_maps();
         let mut candidate = self.start_advance_candidate(next_revision, edit)?;
         drive_synchronous_candidate(&mut candidate, host)?;
-        self.finish_advance_candidate(candidate)
+        self.prepare_revision_candidate(candidate)
     }
 
-    pub fn prepare_advance_with_resource_resolvers(
+    pub fn prepare_revision_with_resource_resolvers(
         &mut self,
         next_revision: RevisionId,
         edit: Edit,
         host: &mut dyn ResourceHost,
-    ) -> Result<PendingRevision, SessionError> {
-        self.prepare_advance_with_resolvers(next_revision, edit, host)
+    ) -> Result<RevisionTransaction, SessionError> {
+        self.prepare_revision_with_resolvers(next_revision, edit, host)
     }
 
     /// Materializes detached effects for a prepared revision without
     /// publishing that revision into the session.
-    pub fn materialize_pending_world(
+    pub fn materialize_prepared_world(
         &self,
-        pending: &PendingRevision,
+        pending: &RevisionTransaction,
     ) -> Result<tex_state::World, SessionError> {
         self.validate_pending(pending)?;
         let substrate = match &pending.substrate {
-            PendingSubstrate::Retained { .. } => self
+            TransactionSubstrate::Retained { .. } => self
                 .substrate
                 .as_ref()
                 .ok_or(SessionError::MissingAcceptedSubstrate)?,
-            PendingSubstrate::Replaced { substrate, .. } => substrate,
+            TransactionSubstrate::Replaced { substrate, .. } => substrate,
         };
         let mut world = substrate.materialize_detached_outputs(
-            pending.effects.clone(),
-            pending.artifacts.clone(),
-            pending.artifact_publications.clone(),
+            pending.payload.output.effects().records().to_vec(),
+            pending.payload.output.artifacts().artifacts().to_vec(),
+            pending.payload.output.artifacts().publications().to_vec(),
         )?;
-        let journal = pending_effect_journal(pending);
-        world.install_effect_journal(&journal);
+        world.install_effect_journal(pending.payload.output.effects());
         Ok(world)
     }
 
     /// Atomically replaces accepted editor state with one prepared revision.
-    pub fn accept_pending(
+    pub fn accept_revision(
         &mut self,
-        pending: PendingRevision,
+        pending: RevisionTransaction,
     ) -> Result<AcceptedOutput, SessionError> {
         let acceptance_started = Timer::start();
         self.validate_pending(&pending)?;
-        let PendingRevision {
+        let RevisionTransaction {
             revision,
             source,
             mut fragments,
             layout,
             content_hash,
-            effects,
-            effect_sequences,
-            effect_publications,
-            effect_publication_record_ordinals,
-            effect_domains,
-            effect_semantic_record_ordinals,
-            effect_placement_intra_orders,
-            artifact_publications,
-            artifacts,
-            dvi_pages,
-            history,
+            payload,
             substrate,
             reuse,
             dumped_format,
@@ -2501,10 +2316,13 @@ impl Session {
             candidate_memo,
             ..
         } = pending;
+        let RevisionPayload { output, history } = payload;
+        let artifacts = output.artifacts().artifacts();
+        let effects = output.effects().records();
 
         let substrate_transition_started = Timer::start();
         match substrate {
-            PendingSubstrate::Retained {
+            TransactionSubstrate::Retained {
                 scratch,
                 adopted_origins,
             } => {
@@ -2529,7 +2347,7 @@ impl Session {
                     &layout,
                 )?;
             }
-            PendingSubstrate::Replaced {
+            TransactionSubstrate::Replaced {
                 mut substrate,
                 current_artifact_origins,
             } => {
@@ -2548,7 +2366,7 @@ impl Session {
             .as_ref()
             .expect("prepared revisions retain an accepted substrate")
             .charged_bytes();
-        let output_bytes = output_bytes(&effects, &artifacts);
+        let output_bytes = output_bytes(effects, artifacts);
         let oldest_revision = oldest_retained_revision(&history, revision);
         fragments.prune_for_layout(&layout, revision.raw(), oldest_revision.raw());
         let diagnostic_bytes = fragments
@@ -2581,16 +2399,7 @@ impl Session {
         self.fragments = fragments;
         self.layout = layout;
         self.content_hash = content_hash;
-        self.effects = effects;
-        self.effect_sequences = effect_sequences;
-        self.effect_publications = effect_publications;
-        self.effect_publication_record_ordinals = effect_publication_record_ordinals;
-        self.effect_domains = effect_domains;
-        self.effect_semantic_record_ordinals = effect_semantic_record_ordinals;
-        self.effect_placement_intra_orders = effect_placement_intra_orders;
-        self.artifact_publications = artifact_publications;
-        self.artifacts = artifacts;
-        self.dvi_pages = dvi_pages;
+        self.output = output;
         self.history = history;
         self.dumped_format = dumped_format;
         self.format_dump_receipt = format_dump_receipt;
@@ -2607,7 +2416,7 @@ impl Session {
         Ok(output)
     }
 
-    fn validate_pending(&self, pending: &PendingRevision) -> Result<(), SessionError> {
+    fn validate_pending(&self, pending: &RevisionTransaction) -> Result<(), SessionError> {
         if pending.session_output_id != self.output_id
             || pending.base_revision != self.revision
             || pending.base_content_hash != self.content_hash
@@ -2647,60 +2456,13 @@ impl Session {
         Ok(())
     }
 
-    fn accept_cold(&mut self, mut run: RevisionRun) -> Result<AcceptedOutput, SessionError> {
-        self.clear_render_maps();
-        for record in &mut run.history {
-            record.revision = self.revision;
-        }
-        run.history = retain_restorable_history(run.history, &run.substrate)?;
-        let substrate_bytes = run.substrate.charged_bytes();
-        let diagnostic_bytes = self.diagnostic_retained_bytes();
-        let (history, mut retention) = prune_history(
-            run.history,
-            self.checkpoint_budget,
-            substrate_bytes,
-            diagnostic_bytes,
-            run.output_bytes,
-        );
-        retention.memo_result_bytes = self.pure_memo.stats().retained_bytes;
-        self.history = history;
-        self.effects = run.effects;
-        self.effect_sequences = run.effect_sequences;
-        self.effect_publications = run.effect_publications;
-        self.effect_publication_record_ordinals = run.effect_publication_record_ordinals;
-        self.effect_domains = run.effect_domains;
-        self.effect_semantic_record_ordinals = run.effect_semantic_record_ordinals;
-        self.effect_placement_intra_orders = run.effect_placement_intra_orders;
-        self.artifact_publications = run.artifact_publications;
-        self.artifacts = run.artifacts;
-        self.dvi_pages = run.dvi_pages;
-        self.dumped_format = run.dumped_format;
-        self.format_dump_receipt = run.format_dump_receipt;
-        self.expansion_stats = run.expansion_stats;
-        self.substrate = Some(run.substrate);
-        self.accepted_retention = Some(retention);
-        Ok(self.output(
-            ReuseMetrics {
-                pages_retyped: self.artifacts.len(),
-                reexecuted_bytes: run.executed_bytes,
-                reexecuted_tokens: run.executed_tokens,
-                reexecuted_commands: run.executed_commands,
-                reexecuted_macro_text_span_tokens: run.executed_macro_text_span_tokens,
-                reexecuted_source_text_span_tokens: run.executed_source_text_span_tokens,
-                reexecuted_paragraphs: run.executed_paragraphs,
-                ..ReuseMetrics::default()
-            },
-            retention,
-        ))
-    }
-
     fn output(&self, reuse: ReuseMetrics, retention: RetentionMetrics) -> AcceptedOutput {
         AcceptedOutput {
             revision: self.revision,
             content_hash: self.content_hash,
-            effects: accepted_effect_journal(self).materialized_records(),
-            artifacts: self.artifacts.clone(),
-            dvi_pages: self.dvi_pages.clone(),
+            effects: self.output.effects().materialized_records(),
+            artifacts: self.output.artifacts().artifacts().to_vec(),
+            dvi_pages: self.output.dvi_pages().to_vec(),
             history: self.history.clone(),
             reuse,
             retention,
@@ -2768,39 +2530,10 @@ fn build_page_render_map(
     })
 }
 
-struct RevisionRun {
-    history: Vec<BoundaryRecord>,
-    effects: Vec<EffectRecord>,
-    effect_sequences: Vec<tex_state::EffectSequence>,
-    effect_publications: Vec<Option<tex_state::EffectPublicationId>>,
-    effect_publication_record_ordinals: Vec<Option<tex_state::EffectPublicationRecordOrdinal>>,
-    effect_domains: Vec<tex_state::EffectDomain>,
-    effect_semantic_record_ordinals: Vec<tex_state::EffectSemanticRecordOrdinal>,
-    effect_placement_intra_orders: Vec<tex_state::EffectPlacementIntraOrder>,
-    artifact_publications: Vec<tex_state::ArtifactPublicationRecord>,
-    artifacts: Vec<CommittedArtifact>,
-    dvi_pages: Vec<DviPagePlan>,
-    output_bytes: usize,
-    substrate: GenerationSubstrate,
-    dumped_format: bool,
-    format_dump_receipt: Option<tex_exec::FormatDumpReceipt>,
-    expansion_stats: ExpansionStats,
-    executed_bytes: usize,
-    executed_tokens: usize,
-    executed_commands: usize,
-    executed_macro_text_span_tokens: usize,
-    executed_source_text_span_tokens: usize,
-    executed_paragraphs: usize,
-}
-
-struct FinishedColdCandidate {
-    run: RevisionRun,
-    memo: tex_state::PureMemoRuntime,
-}
-
 fn finish_cold_candidate(
+    session: &Session,
     mut candidate: RevisionCandidate,
-) -> Result<FinishedColdCandidate, SessionError> {
+) -> Result<RevisionTransaction, SessionError> {
     let RevisionCandidateKind::Initial { source_len } = candidate.kind else {
         return Err(SessionError::CandidateKindMismatch);
     };
@@ -2812,8 +2545,6 @@ fn finish_cold_candidate(
         return Err(SessionError::CandidateKindMismatch);
     };
     let memo = candidate.control.take_pure_memo_runtime();
-    let output_bytes = candidate.universe.retained_output_bytes();
-    let expansion_stats = ExpansionStats::default();
     let executed_paragraphs = sink
         .records
         .iter()
@@ -2826,43 +2557,41 @@ fn finish_cold_candidate(
         delivered_tokens,
         main_control_dispatches,
     } = stats;
-    let (effect_journal, artifact_ledger, dvi_pages) = output_patch.into_parts();
-    let (
-        effects,
-        effect_sequences,
-        effect_publications,
-        effect_publication_record_ordinals,
-        effect_domains,
-        effect_semantic_record_ordinals,
-        effect_placement_intra_orders,
-    ) = effect_journal.into_parts();
-    let (artifacts, artifact_publications) = artifact_ledger.into_parts();
-    Ok(FinishedColdCandidate {
-        run: RevisionRun {
+    let pages_retyped = output_patch.artifacts().artifacts().len();
+    Ok(RevisionTransaction {
+        session_output_id: session.output_id,
+        base_revision: session.revision,
+        base_content_hash: session.content_hash,
+        revision: session.revision,
+        source: session.source.clone(),
+        fragments: session.fragments.clone(),
+        layout: EditorLayout::new(
+            session.layout.path(),
+            session.layout.generation(),
+            session.layout.pieces().to_vec(),
+            &session.fragments,
+        )?,
+        content_hash: session.content_hash,
+        payload: RevisionPayload {
+            output: output_patch,
             history: sink.records,
-            effects,
-            effect_sequences,
-            effect_publications,
-            effect_publication_record_ordinals,
-            effect_domains,
-            effect_semantic_record_ordinals,
-            effect_placement_intra_orders,
-            artifact_publications,
-            artifacts,
-            dvi_pages,
-            output_bytes,
-            substrate: candidate.universe.freeze_generation(),
-            dumped_format,
-            expansion_stats,
-            format_dump_receipt,
-            executed_bytes: source_len,
-            executed_tokens: delivered_tokens,
-            executed_commands: main_control_dispatches,
-            executed_macro_text_span_tokens: 0,
-            executed_source_text_span_tokens: 0,
-            executed_paragraphs,
         },
-        memo,
+        substrate: TransactionSubstrate::Replaced {
+            substrate: candidate.universe.freeze_generation(),
+            current_artifact_origins: Vec::new(),
+        },
+        reuse: ReuseMetrics {
+            pages_retyped,
+            reexecuted_bytes: source_len,
+            reexecuted_tokens: delivered_tokens,
+            reexecuted_commands: main_control_dispatches,
+            reexecuted_paragraphs: executed_paragraphs,
+            ..ReuseMetrics::default()
+        },
+        dumped_format,
+        format_dump_receipt,
+        expansion_stats: ExpansionStats::default(),
+        candidate_memo: Some(memo),
     })
 }
 
@@ -3388,143 +3117,6 @@ fn rebase_and_validate_adopted_artifacts(
         }
     }
     Ok(())
-}
-
-fn extend_adopted_effects(
-    destination: &mut Vec<EffectRecord>,
-    accepted: &[EffectRecord],
-    adopted_start: usize,
-) {
-    destination.extend_from_slice(&accepted[adopted_start.min(accepted.len())..]);
-}
-
-fn pending_effect_journal(pending: &PendingRevision) -> tex_state::EffectJournal {
-    tex_state::EffectJournal::from_parts(
-        pending.effects.clone(),
-        pending.effect_sequences.clone(),
-        pending.effect_publications.clone(),
-        pending.effect_publication_record_ordinals.clone(),
-        pending.effect_domains.clone(),
-        pending.effect_semantic_record_ordinals.clone(),
-        pending.effect_placement_intra_orders.clone(),
-    )
-    .expect("PendingRevision effect columns were closed from a validated journal")
-}
-
-fn accepted_effect_journal(session: &Session) -> tex_state::EffectJournal {
-    tex_state::EffectJournal::from_parts(
-        session.effects.clone(),
-        session.effect_sequences.clone(),
-        session.effect_publications.clone(),
-        session.effect_publication_record_ordinals.clone(),
-        session.effect_domains.clone(),
-        session.effect_semantic_record_ordinals.clone(),
-        session.effect_placement_intra_orders.clone(),
-    )
-    .expect("Session effect columns were accepted from a validated journal")
-}
-
-type AssembledEffectLedger = (
-    Vec<EffectRecord>,
-    Vec<tex_state::EffectSequence>,
-    Vec<Option<tex_state::EffectPublicationId>>,
-    Vec<Option<tex_state::EffectPublicationRecordOrdinal>>,
-    Vec<tex_state::EffectDomain>,
-    Vec<tex_state::EffectSemanticRecordOrdinal>,
-    Vec<tex_state::EffectPlacementIntraOrder>,
-);
-
-#[allow(clippy::too_many_arguments)]
-fn assemble_effect_ledger(
-    accepted: &[EffectRecord],
-    accepted_sequences: &[tex_state::EffectSequence],
-    accepted_publications: &[Option<tex_state::EffectPublicationId>],
-    accepted_publication_record_ordinals: &[Option<tex_state::EffectPublicationRecordOrdinal>],
-    accepted_domains: &[tex_state::EffectDomain],
-    accepted_semantic_record_ordinals: &[tex_state::EffectSemanticRecordOrdinal],
-    accepted_placement_intra_orders: &[tex_state::EffectPlacementIntraOrder],
-    live: &[EffectRecord],
-    live_sequences: &[tex_state::EffectSequence],
-    live_publications: &[Option<tex_state::EffectPublicationId>],
-    live_publication_record_ordinals: &[Option<tex_state::EffectPublicationRecordOrdinal>],
-    live_domains: &[tex_state::EffectDomain],
-    live_semantic_record_ordinals: &[tex_state::EffectSemanticRecordOrdinal],
-    live_placement_intra_orders: &[tex_state::EffectPlacementIntraOrder],
-    accepted_prefix: usize,
-    _effect_dispositions: &[tex_state::EffectPublicationDisposition],
-    _selected_artifact_publications: Option<
-        &std::collections::BTreeMap<tex_state::EffectPublicationId, tex_state::EffectPublicationId>,
-    >,
-) -> AssembledEffectLedger {
-    fn splice<T: Clone>(accepted: &[T], live: &[T], prefix: usize) -> Vec<T> {
-        let prefix = prefix.min(accepted.len());
-        let mut joined = Vec::with_capacity(prefix.saturating_add(live.len()));
-        joined.extend_from_slice(&accepted[..prefix]);
-        joined.extend_from_slice(live);
-        joined
-    }
-
-    (
-        splice(accepted, live, accepted_prefix),
-        splice(accepted_sequences, live_sequences, accepted_prefix),
-        splice(accepted_publications, live_publications, accepted_prefix),
-        splice(
-            accepted_publication_record_ordinals,
-            live_publication_record_ordinals,
-            accepted_prefix,
-        ),
-        splice(accepted_domains, live_domains, accepted_prefix),
-        splice(
-            accepted_semantic_record_ordinals,
-            live_semantic_record_ordinals,
-            accepted_prefix,
-        ),
-        splice(
-            accepted_placement_intra_orders,
-            live_placement_intra_orders,
-            accepted_prefix,
-        ),
-    )
-}
-
-#[allow(clippy::too_many_arguments)]
-fn assemble_artifact_ledger(
-    accepted_artifacts: &[CommittedArtifact],
-    accepted_records: &[tex_state::ArtifactPublicationRecord],
-    accepted_pages: &[DviPagePlan],
-    live_artifacts: &[CommittedArtifact],
-    live_records: &[tex_state::ArtifactPublicationRecord],
-    live_pages: &[DviPagePlan],
-    _live_dvi_records: &[tex_state::ArtifactPublicationRecord],
-    accepted_prefix: usize,
-    _selected_effect_publications: &[Option<tex_state::EffectPublicationId>],
-    _live_effect_publications: &[Option<tex_state::EffectPublicationId>],
-    _live_effect_sequences: &[tex_state::EffectSequence],
-) -> (
-    Vec<CommittedArtifact>,
-    Vec<tex_state::ArtifactPublicationRecord>,
-    Vec<DviPagePlan>,
-) {
-    let prefix = accepted_prefix
-        .min(accepted_artifacts.len())
-        .min(accepted_records.len());
-    let mut artifacts = accepted_artifacts[..prefix].to_vec();
-    artifacts.extend_from_slice(live_artifacts);
-    let mut records = accepted_records[..prefix].to_vec();
-    records.extend_from_slice(live_records);
-    let mut pages = dvi_page_prefix(accepted_pages, prefix).to_vec();
-    pages.extend_from_slice(live_pages);
-    (artifacts, records, pages)
-}
-
-fn extend_live_effects(
-    destination: &mut Vec<EffectRecord>,
-    live: &[EffectRecord],
-    range: std::ops::Range<usize>,
-) {
-    let start = range.start.min(live.len());
-    let end = range.end.min(live.len()).max(start);
-    destination.extend_from_slice(&live[start..end]);
 }
 
 #[derive(Debug)]

@@ -82,6 +82,13 @@ Suspended candidates have no patch. This keeps recursive page output and
 terminal final-cleanup ordering inside the executor while preserving
 prefix/patch/validated-suffix assembly in `tex-incr`.
 
+Candidate completion is explicitly two phase. The mutable `RevisionDraft`
+freezes an immutable `RevisionPayload` and returns a `RevisionTransaction`;
+materializing that transaction is read-only, and only `accept_revision`
+publishes it after checking the accepted revision and content identity.
+Dropping or rejecting the transaction leaves the accepted patch, substrate,
+history, provenance, and memo generation unchanged.
+
 The private revision is an owned `tex_incr::RevisionCandidate`: its canonical
 main control and command state, rollback roots,
 speculative checkpoint sink, command trace, and candidate output remain

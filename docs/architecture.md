@@ -594,6 +594,13 @@ publication ledger, and either zero DVI plans for a DVI-disabled run or one
 plan per artifact. Incremental assembly therefore consumes an ownership unit
 rather than independently sampling positional publication sidecars; resource
 suspension cannot expose a partial patch.
+One `RevisionDraft` owns edit mapping and the accepted output snapshot while
+execution is mutable. Completion freezes one immutable `RevisionPayload`
+inside a `RevisionTransaction`; `prepare_revision_candidate` returns that
+transaction without publication, and `accept_revision` validates its base and
+installs the payload atomically. Prefix, live patch, and converged suffix
+selection operates on whole journals and re-closes one output patch, so the
+session and host adapters retain no parallel effect or artifact ledgers.
 Full canonical-state convergence can reuse the accepted suffix. Otherwise an
 invalidated region restarts from the nearest accepted `CommandSummary` and
 executes ordinary command and paragraph processing. No finished-line or

@@ -787,7 +787,7 @@ enum CandidateExecution {
         session: Box<tex_incr::Session>,
         accepted: Result<Box<tex_incr::AcceptedOutput>, tex_incr::SessionError>,
     },
-    Pending(Result<Box<tex_incr::PendingRevision>, tex_incr::SessionError>),
+    Transaction(Result<Box<tex_incr::RevisionTransaction>, tex_incr::SessionError>),
 }
 
 enum RetainedExecution {
@@ -884,7 +884,7 @@ enum PreparedExecution {
         session: Box<tex_incr::Session>,
         accepted: Box<tex_incr::AcceptedOutput>,
     },
-    Pending(Box<tex_incr::PendingRevision>),
+    Transaction(Box<tex_incr::RevisionTransaction>),
 }
 
 impl CandidateExecution {
@@ -894,7 +894,7 @@ impl CandidateExecution {
                 session,
                 accepted: accepted?,
             }),
-            Self::Pending(pending) => Ok(PreparedExecution::Pending(pending?)),
+            Self::Transaction(transaction) => Ok(PreparedExecution::Transaction(transaction?)),
         }
     }
 }
@@ -903,28 +903,28 @@ impl PreparedExecution {
     fn revision(&self) -> tex_incr::RevisionId {
         match self {
             Self::Initial { accepted, .. } => accepted.revision,
-            Self::Pending(pending) => pending.revision(),
+            Self::Transaction(transaction) => transaction.revision(),
         }
     }
 
     fn reuse(&self) -> tex_incr::ReuseMetrics {
         match self {
             Self::Initial { accepted, .. } => accepted.reuse,
-            Self::Pending(pending) => pending.reuse(),
+            Self::Transaction(transaction) => transaction.reuse(),
         }
     }
 
     fn artifacts(&self) -> &[tex_state::CommittedArtifact] {
         match self {
             Self::Initial { accepted, .. } => &accepted.artifacts,
-            Self::Pending(pending) => pending.artifacts(),
+            Self::Transaction(transaction) => transaction.artifacts(),
         }
     }
 
     fn dvi_bytes(&self) -> Result<Vec<u8>, tex_out::dvi::DviError> {
         match self {
             Self::Initial { accepted, .. } => accepted.dvi_bytes(),
-            Self::Pending(pending) => pending.dvi_bytes(),
+            Self::Transaction(transaction) => transaction.dvi_bytes(),
         }
     }
 }
@@ -2461,11 +2461,11 @@ impl VirtualCompileSession {
                 let accepted = session.accept_cold_candidate(candidate).map(Box::new);
                 CandidateExecution::Initial { session, accepted }
             }
-            RetainedExecution::Pending(candidate) => CandidateExecution::Pending(
+            RetainedExecution::Pending(candidate) => CandidateExecution::Transaction(
                 self.incremental
                     .as_mut()
                     .expect("a pending candidate requires an accepted incremental session")
-                    .finish_advance_candidate(candidate)
+                    .prepare_revision_candidate(candidate)
                     .map(Box::new),
             ),
         }
@@ -2475,11 +2475,11 @@ impl VirtualCompileSession {
         })?;
         let accepted_world = match &execution {
             PreparedExecution::Initial { session, .. } => session.materialize_accepted_world(),
-            PreparedExecution::Pending(pending) => self
+            PreparedExecution::Transaction(transaction) => self
                 .incremental
                 .as_ref()
                 .expect("a prepared patch has an accepted incremental session")
-                .materialize_pending_world(pending),
+                .materialize_prepared_world(transaction),
         }
         .map_err(|error| CompileError::Output(error.to_string()))?;
         let terminal = accepted_world
@@ -2529,7 +2529,7 @@ impl VirtualCompileSession {
         let html = if self.outputs.contains(OutputCapability::Html) {
             let output_id = match &execution {
                 PreparedExecution::Initial { session, .. } => session.output_id(),
-                PreparedExecution::Pending(_) => self
+                PreparedExecution::Transaction(_) => self
                     .incremental
                     .as_ref()
                     .expect("a prepared patch has an accepted incremental session")
@@ -2614,11 +2614,11 @@ impl VirtualCompileSession {
         let reuse = execution.reuse();
         match execution {
             PreparedExecution::Initial { session, .. } => self.incremental = Some(*session),
-            PreparedExecution::Pending(pending) => {
+            PreparedExecution::Transaction(transaction) => {
                 self.incremental
                     .as_mut()
                     .expect("a prepared patch has an accepted incremental session")
-                    .accept_pending(*pending)
+                    .accept_revision(*transaction)
                     .map_err(|error| CompileError::Incremental(error.to_string()))?;
             }
         }

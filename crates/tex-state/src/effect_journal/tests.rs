@@ -75,3 +75,36 @@ fn splice_keeps_columns_aligned_and_materializes_terminal_phases() {
         vec![write("prefix"), write("close"), write("notice")]
     );
 }
+
+#[test]
+fn slice_and_concat_select_prefix_patch_and_suffix_atomically() {
+    fn journal(labels: &[&str], sequence_base: u64) -> EffectJournal {
+        let len = labels.len();
+        EffectJournal::from_parts(
+            labels.iter().map(|label| write(label)).collect(),
+            (sequence_base..sequence_base + len as u64)
+                .map(EffectSequence::new)
+                .collect(),
+            vec![None; len],
+            vec![None; len],
+            (sequence_base..sequence_base + len as u64)
+                .map(EffectDomain::World)
+                .collect(),
+            vec![EffectSemanticRecordOrdinal::new(1); len],
+            (sequence_base..sequence_base + len as u64)
+                .map(EffectPlacementIntraOrder::new)
+                .collect(),
+        )
+        .expect("aligned test journal")
+    }
+
+    let accepted = journal(&["prefix", "replaced", "suffix"], 1);
+    let patch = journal(&["patch"], 10);
+    let selected =
+        EffectJournal::concat(&[accepted.slice(0..1), patch, accepted.slice(2..usize::MAX)]);
+
+    assert_eq!(
+        selected.materialized_records(),
+        vec![write("prefix"), write("patch"), write("suffix")]
+    );
+}

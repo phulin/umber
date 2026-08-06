@@ -1763,7 +1763,13 @@ fn finalize_installs_spliced_accepted_artifacts() {
     assert_ne!(expected[0].hash(), old.artifacts[0].hash());
     // Model the accepted detached sequence after a splice while deliberately
     // retaining the old frozen substrate.
-    session.artifacts = expected.clone();
+    session.output = tex_exec::RevisionOutputPatch::recompose(
+        session.output.effects().clone(),
+        expected.clone(),
+        alternate.output.artifacts().publications().to_vec(),
+        alternate.output.dvi_pages().to_vec(),
+    )
+    .expect("replacement output is aligned");
     let world = session.finalize().expect("session finalizes");
     assert_eq!(world.committed_artifacts(), expected);
     for artifact in expected {

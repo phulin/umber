@@ -119,6 +119,36 @@ impl RevisionOutputPatch {
     pub fn into_parts(self) -> (tex_state::EffectJournal, ArtifactLedger, Vec<DviPagePlan>) {
         (self.effects, self.artifacts, self.dvi_pages)
     }
+
+    /// Re-closes a revision payload assembled from already validated prefix,
+    /// live-patch, and suffix rows.
+    ///
+    /// Incremental execution may select rows from multiple executor-closed
+    /// patches. This constructor keeps the positional validation at the
+    /// executor boundary instead of making the incremental caller mirror the
+    /// ledgers in parallel vectors.
+    pub fn recompose(
+        effects: tex_state::EffectJournal,
+        artifacts: Vec<tex_state::CommittedArtifact>,
+        publications: Vec<tex_state::ArtifactPublicationRecord>,
+        dvi_pages: Vec<DviPagePlan>,
+    ) -> Result<Self, RevisionOutputPatchError> {
+        let artifacts = ArtifactLedger::new(artifacts, publications)?;
+        if !dvi_pages.is_empty() && dvi_pages.len() != artifacts.artifacts.len() {
+            return Err(RevisionOutputPatchError::DviPageCount);
+        }
+        let dvi_publications = if dvi_pages.is_empty() {
+            Vec::new()
+        } else {
+            artifacts.publications.clone()
+        };
+        Ok(Self {
+            effects,
+            artifacts,
+            dvi_pages,
+            dvi_publications,
+        })
+    }
 }
 
 /// Main-control progress counters.

@@ -132,6 +132,60 @@ impl EffectJournal {
         }
     }
 
+    /// Selects one bounded range while preserving every aligned publication
+    /// column as one ownership unit.
+    #[must_use]
+    pub fn slice(&self, range: std::ops::Range<usize>) -> Self {
+        let start = range.start.min(self.len());
+        let end = range.end.min(self.len()).max(start);
+        macro_rules! select {
+            ($field:ident) => {
+                self.$field[start..end].to_vec()
+            };
+        }
+        Self {
+            records: select!(records),
+            sequences: select!(sequences),
+            publications: select!(publications),
+            publication_record_ordinals: select!(publication_record_ordinals),
+            domains: select!(domains),
+            semantic_record_ordinals: select!(semantic_record_ordinals),
+            placement_intra_orders: select!(placement_intra_orders),
+        }
+    }
+
+    /// Concatenates validated journals without exposing their positional
+    /// sidecars.
+    #[must_use]
+    pub fn concat(parts: &[Self]) -> Self {
+        let capacity = parts.iter().map(Self::len).sum();
+        let mut joined = Self {
+            records: Vec::with_capacity(capacity),
+            sequences: Vec::with_capacity(capacity),
+            publications: Vec::with_capacity(capacity),
+            publication_record_ordinals: Vec::with_capacity(capacity),
+            domains: Vec::with_capacity(capacity),
+            semantic_record_ordinals: Vec::with_capacity(capacity),
+            placement_intra_orders: Vec::with_capacity(capacity),
+        };
+        for part in parts {
+            joined.records.extend_from_slice(&part.records);
+            joined.sequences.extend_from_slice(&part.sequences);
+            joined.publications.extend_from_slice(&part.publications);
+            joined
+                .publication_record_ordinals
+                .extend_from_slice(&part.publication_record_ordinals);
+            joined.domains.extend_from_slice(&part.domains);
+            joined
+                .semantic_record_ordinals
+                .extend_from_slice(&part.semantic_record_ordinals);
+            joined
+                .placement_intra_orders
+                .extend_from_slice(&part.placement_intra_orders);
+        }
+        joined
+    }
+
     /// Canonical externally visible record order. Terminal phases are placed
     /// only after their publication transaction has assigned an ordering.
     #[must_use]
