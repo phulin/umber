@@ -126,6 +126,35 @@ Rank reflects architectural leverage, dependency centrality, expected deletion, 
 
 **Proof.** Preserve schema-v1/v2/v3 bytes, independent sequence spaces, source coordinates, geometry provenance, strict TRIP order and macro/group proof, bounded realignment, report precedence, normalization hashes, and million-event bounds.
 
+**Implemented authority and accounting.** The implementation commits are
+`d819194fc`, `c29f2f232`, and `b3e141f75`; the exact integrated implementation
+tree `b3e141f7520c1ce889221b8eeb9b560db8ea0df6` passed the uncapped full
+`cargo test -q --tests --no-run` build, full execution under `MemoryMax=1G` and
+a 30-minute timeout, and all four `scripts/check.sh` gates. `tex-oracle`'s
+exhaustive event views are the surviving schema traversal authority,
+`tex-observe`'s typed single-pass finalizer is the surviving evidence authority,
+and `tex-command-stream::policy` is the surviving strict and ordinary comparison
+and accounting authority. The duplicate normalization, location, alignment,
+grouping, parity TRIP profile/geometry observer, strict projection, second JSONL
+parse, and separate accounting walks were deleted. Schema-v1/v2/v3 canonical
+bytes and validation behavior, detached evidence and source coordinates, strict
+TRIP reports, malformed-input rejection, and the 1,000,000-event bound remained
+covered; parity retains presentation only, so no permanent dual migration
+authority remains. The only observed canonical TRIP mismatch was the separately
+owned TeX Live 2025/2026 transcript banner tracked by `umber2-sfc.4`; command
+evidence, geometry evidence, and normalized DVI were identical.
+
+Exact commit `--numstat` accounting is 1,588 additions and 1,602 deletions in
+production Rust (14-line net reduction), plus 414 additions and 34 deletions in
+authored Rust proof tests (380-line net growth). Authored Rust therefore totals
+2,002 additions and 1,636 deletions, or 366 lines of net growth rather than the
+forecast reduction. Declarative/generated changes are four added Cargo manifest
+or lockfile lines; compatibility-gated retirement and binary-fixture changes are
+both zero. Documentation adds 46 lines and deletes three, making the total
+tracked change 2,052 additions and 1,639 deletions, or 413 lines of net growth.
+The reduction shortfall is tracked by `umber2-vgjr.20`; no additional deletion
+is silently credited to this program.
+
 ## 3. One resource identity, admission, acquisition, and publication lifecycle
 
 **Outcome.** A typed request key and state vocabulary connect VFS admission, native and browser scheduling, verified acquisition, engine suspension, incremental candidate ownership, and bibliography resource closure. `DistributionClient` owns source selection and one verified downloader/store state machine. Domain validation remains with fonts, images, formats, and bibliography.
