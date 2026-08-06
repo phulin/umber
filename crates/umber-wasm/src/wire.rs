@@ -744,7 +744,7 @@ pub enum AttemptResultDto {
         prefetch_hints: Vec<ResourceRequestDto>,
     },
     Complete {
-        output: CompileResultOutputDto,
+        output: Box<CompileResultOutputDto>,
     },
     Error {
         diagnostic: DiagnosticDto,
