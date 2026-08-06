@@ -411,6 +411,38 @@ of 84; this is the only test reduction credited to this child. The additional
 focused tests preserve vertical-break overflow semantics and independently own
 the compacted shifted-vpack and clean-character assertions.
 
+**Program closeout and exact accounting.** The seven program commits are
+`c0b05de33`, `082687614`, `cb2f9fb60`, `12e8be260`, `c93415e2b`,
+`5cf76deb8`, and `56995b38f`; unrelated interleaved font commits are excluded.
+Production Rust adds 1,099 and deletes 494 lines, a net addition of 605. Proof
+and test Rust adds 283 and deletes 184 lines, a net addition of 99. Authored
+Rust therefore adds 1,382 and deletes 678 lines, a net addition of 704.
+Documentation and guidance adds 158 and deletes seven lines; declarative
+property maps add seven and delete three. Across every category the program
+adds 1,547 and deletes 688 lines, a net addition of 859. The only credited test
+reduction is the 165-line assertion-ledger compaction; no forecast production
+deletion is credited.
+
+The surviving math authority is one postorder `MathLayout` native-node
+transaction, published atomically only by the executor's
+`commit_math_transaction`. The retired `MathLayoutReader`, `MathLayoutSink`,
+`MathLayoutBuilder`, source-leaf round trip, and public sink publication API
+remain absent. `ParagraphTape` is the sole paragraph-analysis owner and
+`LineBreakResult` retains no parallel node, physical-node, or boundary fields.
+`MetricEvent`, `MetricsCursor`, `ListMetrics`, and `WideMetricTotals` form the
+shared neutral measurement authority, while packing, line-break,
+vertical-break, and math policy remains explicit in the owning modules.
+
+Active tests own the 20,000-depth math and discretionary bounds, 100,000-node
+linear paragraph storage, paired semantic/physical diagnostic topology,
+source-box geometry, occurrence-ordered math observations, undefined-family
+recovery, wide-prefix overflow, packing differential, and vertical-break
+overflow/order behavior. The closed assertion ledger names the exact owner of
+every removed aggregate assertion and retains the unique artificial-end tie
+case. Because the measured result does not meet either forecast reduction,
+the variance is tracked by `umber2-vgjr.25`; no historical or prospective
+deletion is credited here.
+
 ## 11. Publish one canonical font runtime while preserving format-specific policy
 
 **Outcome.** TFM parsing retains raw tables only through reference and error-precedence validation, then publishes canonical `FontMetrics` through one loaded-font constructor. OpenType MATH uses one strict eager validation walk and lazy borrowed queries through the existing scaled facade. A realized font identity feeds HTML, PDF, incrementality, and distribution boundaries without repeated decoding.
