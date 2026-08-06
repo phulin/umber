@@ -858,6 +858,42 @@ attempt.
 
 **Proof.** Preserve parser independence where it is the test's purpose, object/page order, xref and object streams, deterministic cycle labels, unresolved references, inherited resources, raw versus decoded streams, operation order, budgets, and intentionally malformed inputs.
 
+**Implemented authority and accounting.** Commits `6dbcf5ce7`, `e4ff291a1`,
+`a0ab55cb1`, `593e54150`, and `0982c358b` establish `PdfQuery` and
+`normalize_structure` as the sole Hayro-backed semantic authorities. Query
+values, arrays, dictionaries, pages, and inherited resource layers are shallow
+borrowed handles; only explicitly requested stream bytes and decoded operation
+operands are owned projections. `ValidPdfFixture` delegates ordinary valid PDF
+framing, stream lengths, xrefs, and trailers to `pdf-writer`. The handwritten
+`RawPdfFixture` remains only in canonical cycle/classic-trailer normalization,
+focused malformed/deep/unresolved/classic-xref query coverage, and the importer
+depth-limit rejection. The copied `PdfProbe` graph, its recursive projection
+walks, the `pdf_probe` module and compatibility vocabulary, the old full valid
+writer, and its 217-line self-test suite are deleted. No Rust consumer or
+manifest retains the predecessor names or a `lopdf` dependency.
+
+The final query and normalizer are larger because the accepted replacement
+adds explicit depth/object/value/stream budgets, stable cycle and unresolved
+identity, inherited resources, raw/decoded stream evidence, and ordered decoded
+operations. Against the pre-program tree `d5f1a111d`, the exact scoped program
+diff adds 1,751 and deletes 1,448 authored Rust lines (303-line net growth),
+adds 109 and deletes 38 documentation/guidance lines (71-line net growth), and
+adds two dependency-configuration lines. The complete tracked change therefore
+adds 1,862 and deletes 1,486 lines, a 376-line net growth; an unchanged binary
+xref/object-stream fixture was moved with its module. Within that total, fixture
+writer support falls from 651 to 565 Rust lines (86-line net deletion), while
+the query/normalization authority grows from 1,333 to 1,688 (355-line net
+growth) and migrated consumers grow by 34 net lines. The scheduled 700--1,000
+line reduction was not achieved and is not credited as deletion.
+
+Exact integrated implementation tree `0982c358b72e8e338d94ec2436c85e4f42ccc6e5`
+passed the focused `test-support`, `tex-out`, Umber PDF library, and PDF parity
+tiers under `MemoryMax=512M`, the complete native suite under `MemoryMax=1G`,
+and all four `scripts/check.sh` gates. The local external PDF gate explicitly
+reported qpdf and both Poppler tools unavailable, so it skipped those matrices
+rather than counting them as passes; their pinned CI gate remains
+`scripts/check-pdf-external.sh --ci`.
+
 ## 17. Contract VFS only after the multipass roadmap is fixed
 
 **Outcome.** If the project confirms that TeX -> bibliography -> TeX orchestration continues to publish one orchestrator-owned generated set, replace test-only multi-stage/build-plan machinery with one `GeneratedTransaction` and private shape-safe user/resolved/generated maps. Otherwise retain multi-stage semantics and simplify only internal representation.
