@@ -73,3 +73,15 @@ erasure. With `CARGO_BUILD_JOBS=6`, uncapped focused/full builds passed; focused
 execution passed under `MemoryMax=512M`, the million-event regression and full
 suite passed under `MemoryMax=1G`, and uncapped `scripts/check.sh` passed all
 four gates. Every command had a finite timeout; no `prlimit` was used.
+
+## Rebase verification
+
+After rebasing over the repaired Program 1.1 tree, fresh verification of exact
+HEAD `51f98bfa9383780a64baf123465a133f06a3c205` confirmed both issue commits and
+all three authority boundaries were preserved. The new base changes only the
+`tex-exec` receipt-shadow harness and its documentation; Program 2 accounting
+and exclusions remain unchanged. With `CARGO_BUILD_JOBS=6`, uncapped focused
+and full builds passed, focused execution passed under `MemoryMax=512M`, and
+the dedicated million-event regression plus full suite passed under
+`MemoryMax=1G`. Final uncapped `scripts/check.sh` passed all four gates. Every
+command used a finite timeout; no `prlimit` was used.
