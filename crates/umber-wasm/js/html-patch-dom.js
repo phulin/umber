@@ -105,7 +105,7 @@ function buildNode(document, node, mag) {
 		}
 		case "text": {
 			element = document.createElementNS(SVG_NS, "svg");
-			element.className = "umber-run";
+			element.setAttribute("class", "umber-run");
 			element.setAttribute("role", "text");
 			element.style.position = "absolute";
 			element.style.left = "0";
@@ -114,7 +114,7 @@ function buildNode(document, node, mag) {
 			element.style.height = "0";
 			element.style.overflow = "visible";
 			const baseline = document.createElementNS(SVG_NS, "rect");
-			baseline.className = "umber-baseline";
+			baseline.setAttribute("class", "umber-baseline");
 			baseline.setAttribute("x", cssPx(node.xSp, mag));
 			baseline.setAttribute("y", cssPx(node.baselineSp, mag));
 			baseline.setAttribute("width", "1");
@@ -122,7 +122,7 @@ function buildNode(document, node, mag) {
 			baseline.setAttribute("fill", "transparent");
 			element.append(baseline);
 			const text = document.createElementNS(SVG_NS, "text");
-			text.className = "umber-run-text";
+			text.setAttribute("class", "umber-run-text");
 			text.style.fill = "currentColor";
 			text.style.whiteSpace = "pre";
 			text.textContent = boundedString(node.text, DEFAULT_LIMITS);
@@ -158,23 +158,23 @@ function buildNode(document, node, mag) {
 		}
 		case "math-start":
 			element = document.createElementNS(SVG_NS, "svg");
-			element.className = "umber-math";
+			element.setAttribute("class", "umber-math");
 			element.setAttribute("aria-hidden", "true");
 			zeroSizedSvg(element);
 			break;
 		case "math-glyph": {
 			element = document.createElementNS(SVG_NS, "svg");
-			element.className = "umber-math";
+			element.setAttribute("class", "umber-math");
 			element.setAttribute("aria-hidden", "true");
 			zeroSizedSvg(element);
 			const glyph = document.createElementNS(SVG_NS, "g");
-			glyph.className = "umber-math-glyph";
+			glyph.setAttribute("class", "umber-math-glyph");
 			glyph.setAttribute("data-umber-glyph-id", exactUnsigned(node.glyphId));
 			glyph.setAttribute("data-umber-font-instance", node.fontInstance);
 			glyph.setAttribute("data-umber-ssty", exactUnsigned(node.ssty));
 			if (node.drawing === "text") {
 				const text = document.createElementNS(SVG_NS, "text");
-				text.className = "umber-math-text";
+				text.setAttribute("class", "umber-math-text");
 				text.style.fill = "currentColor";
 				text.textContent = node.text;
 				text.setAttribute("x", cssPx(node.xSp, mag));
@@ -189,7 +189,7 @@ function buildNode(document, node, mag) {
 			} else if (node.drawing === "outline") {
 				if (!/^[MLQCZ0-9.,+\-\s]+$/u.test(node.path)) fail("outline-path");
 				const path = document.createElementNS(SVG_NS, "path");
-				path.className = "umber-math-outline";
+				path.setAttribute("class", "umber-math-outline");
 				path.style.fill = "currentColor";
 				path.setAttribute("d", node.path);
 				const scale = cssScale(node.fontSizeSp, mag, node.unitsPerEm);
@@ -206,11 +206,11 @@ function buildNode(document, node, mag) {
 		}
 		case "math-rule": {
 			element = document.createElementNS(SVG_NS, "svg");
-			element.className = "umber-math";
+			element.setAttribute("class", "umber-math");
 			element.setAttribute("aria-hidden", "true");
 			zeroSizedSvg(element);
 			const rule = document.createElementNS(SVG_NS, "rect");
-			rule.className = "umber-math-rule";
+			rule.setAttribute("class", "umber-math-rule");
 			rule.style.fill = "currentColor";
 			rule.setAttribute("x", cssPx(node.xSp, mag));
 			rule.setAttribute("y", cssPx(node.ySp, mag));

@@ -22,6 +22,17 @@ class FakeNode {
 		this.replaceCount = 0;
 	}
 
+	set className(value) {
+		if (this.namespace.endsWith("/svg")) {
+			throw new TypeError("SVGElement.className is read-only");
+		}
+		this.htmlClassName = value;
+	}
+
+	get className() {
+		return this.htmlClassName ?? "";
+	}
+
 	append(...nodes) {
 		for (const node of nodes) {
 			if (node.name === "#fragment") {
