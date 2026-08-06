@@ -4050,6 +4050,32 @@ impl World {
         self.effects.as_slice()
     }
 
+    /// Closes the live aligned effect columns into one validated revision
+    /// journal. Positional publication sidecars do not cross this boundary.
+    #[must_use]
+    pub fn effect_journal(&self) -> crate::EffectJournal {
+        crate::EffectJournal::from_parts(
+            self.effects.as_ref().clone(),
+            self.effect_sequences.as_ref().clone(),
+            self.effect_publications.as_ref().clone(),
+            self.effect_publication_record_ordinals.as_ref().clone(),
+            self.effect_domains.as_ref().clone(),
+            self.effect_semantic_record_ordinals.as_ref().clone(),
+            self.effect_placement_intra_orders.as_ref().clone(),
+        )
+        .expect("World effect columns are aligned")
+    }
+
+    /// Installs a previously validated detached journal into a retained World.
+    pub fn install_effect_journal(&mut self, journal: &crate::EffectJournal) {
+        self.install_effect_sequences(journal.sequences());
+        self.install_effect_publications(journal.publications());
+        self.install_effect_publication_record_ordinals(journal.publication_record_ordinals());
+        self.install_effect_domains(journal.domains());
+        self.install_effect_semantic_record_ordinals(journal.semantic_record_ordinals());
+        self.install_effect_placement_intra_orders(journal.placement_intra_orders());
+    }
+
     #[doc(hidden)]
     #[must_use]
     pub fn effect_sequences(&self) -> Arc<Vec<EffectSequence>> {

@@ -587,6 +587,13 @@ Checkpoint publication remains executor-controlled.
 root patches. Acceptance is atomic across incremental history, the synthetic
 VFS root, generated files, diagnostics, artifacts, and rendered output: a
 resource miss or failed revision does not replace prior accepted state.
+The state layer closes aligned effect publication metadata behind an
+`EffectJournal`. After a terminal committed executor step, the executor closes
+one validated `RevisionOutputPatch` containing that journal, the artifact
+publication ledger, and either zero DVI plans for a DVI-disabled run or one
+plan per artifact. Incremental assembly therefore consumes an ownership unit
+rather than independently sampling positional publication sidecars; resource
+suspension cannot expose a partial patch.
 Full canonical-state convergence can reuse the accepted suffix. Otherwise an
 invalidated region restarts from the nearest accepted `CommandSummary` and
 executes ordinary command and paragraph processing. No finished-line or

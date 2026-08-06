@@ -75,6 +75,13 @@ does the session commit the incremental revision and swap in the VFS
 generation. Dropping either candidate leaves the previously accepted revision,
 root binding, generated files, and output unchanged.
 
+The executor closes completed candidate output as one validated
+`RevisionOutputPatch`: its `EffectJournal`, artifact-publication ledger, and
+optional DVI page plans are captured at the same terminal commit boundary.
+Suspended candidates have no patch. This keeps recursive page output and
+terminal final-cleanup ordering inside the executor while preserving
+prefix/patch/validated-suffix assembly in `tex-incr`.
+
 The private revision is an owned `tex_incr::RevisionCandidate`: its canonical
 main control and command state, rollback roots,
 speculative checkpoint sink, command trace, and candidate output remain

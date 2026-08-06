@@ -1,6 +1,126 @@
 use tex_out::dvi::DviPagePlan;
 use tex_state::ContentHash;
 
+/// Validated artifact rows closed by the executor at a revision boundary.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ArtifactLedger {
+    artifacts: Vec<tex_state::CommittedArtifact>,
+    publications: Vec<tex_state::ArtifactPublicationRecord>,
+}
+
+impl ArtifactLedger {
+    pub(crate) fn new(
+        artifacts: Vec<tex_state::CommittedArtifact>,
+        publications: Vec<tex_state::ArtifactPublicationRecord>,
+    ) -> Result<Self, RevisionOutputPatchError> {
+        if artifacts.len() != publications.len() {
+            return Err(RevisionOutputPatchError::ArtifactPublicationCount);
+        }
+        Ok(Self {
+            artifacts,
+            publications,
+        })
+    }
+
+    #[must_use]
+    pub fn artifacts(&self) -> &[tex_state::CommittedArtifact] {
+        &self.artifacts
+    }
+
+    #[must_use]
+    pub fn publications(&self) -> &[tex_state::ArtifactPublicationRecord] {
+        &self.publications
+    }
+
+    pub fn into_parts(
+        self,
+    ) -> (
+        Vec<tex_state::CommittedArtifact>,
+        Vec<tex_state::ArtifactPublicationRecord>,
+    ) {
+        (self.artifacts, self.publications)
+    }
+}
+
+/// Executor-closed output delta for one completed revision execution.
+///
+/// The constructor is private: callers receive only ledgers whose aligned
+/// publication rows and optional DVI plan stream were validated together.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RevisionOutputPatch {
+    effects: tex_state::EffectJournal,
+    artifacts: ArtifactLedger,
+    dvi_pages: Vec<DviPagePlan>,
+    dvi_publications: Vec<tex_state::ArtifactPublicationRecord>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RevisionOutputPatchError {
+    ArtifactPublicationCount,
+    DviPageCount,
+    DviPublicationMismatch,
+    DviArtifactMismatch,
+}
+
+impl RevisionOutputPatch {
+    pub(crate) fn close(
+        effects: tex_state::EffectJournal,
+        artifacts: ArtifactLedger,
+        prepared_dvi_pages: Vec<PreparedDviPage>,
+    ) -> Result<Self, RevisionOutputPatchError> {
+        if !prepared_dvi_pages.is_empty() && prepared_dvi_pages.len() != artifacts.artifacts.len() {
+            return Err(RevisionOutputPatchError::DviPageCount);
+        }
+        for (prepared, (artifact, publication)) in prepared_dvi_pages
+            .iter()
+            .zip(artifacts.artifacts.iter().zip(&artifacts.publications))
+        {
+            if prepared.publication != *publication {
+                return Err(RevisionOutputPatchError::DviPublicationMismatch);
+            }
+            if prepared.hash != artifact.hash() {
+                return Err(RevisionOutputPatchError::DviArtifactMismatch);
+            }
+        }
+        let mut dvi_pages = Vec::with_capacity(prepared_dvi_pages.len());
+        let mut dvi_publications = Vec::with_capacity(prepared_dvi_pages.len());
+        for prepared in prepared_dvi_pages {
+            dvi_publications.push(prepared.publication);
+            dvi_pages.push(prepared.plan);
+        }
+        Ok(Self {
+            effects,
+            artifacts,
+            dvi_pages,
+            dvi_publications,
+        })
+    }
+
+    #[must_use]
+    pub const fn effects(&self) -> &tex_state::EffectJournal {
+        &self.effects
+    }
+
+    #[must_use]
+    pub const fn artifacts(&self) -> &ArtifactLedger {
+        &self.artifacts
+    }
+
+    #[must_use]
+    pub fn dvi_pages(&self) -> &[DviPagePlan] {
+        &self.dvi_pages
+    }
+
+    #[must_use]
+    pub fn dvi_publications(&self) -> &[tex_state::ArtifactPublicationRecord] {
+        &self.dvi_publications
+    }
+
+    pub fn into_parts(self) -> (tex_state::EffectJournal, ArtifactLedger, Vec<DviPagePlan>) {
+        (self.effects, self.artifacts, self.dvi_pages)
+    }
+}
+
 /// Main-control progress counters.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct ExecutionStats {

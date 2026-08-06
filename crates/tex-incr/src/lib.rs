@@ -401,7 +401,7 @@ pub struct RevisionCandidate {
 }
 
 struct CandidateCompletion {
-    prepared_dvi_pages: Vec<tex_exec::PreparedDviPage>,
+    output_patch: tex_exec::RevisionOutputPatch,
     dumped_format: bool,
     format_dump_receipt: Option<tex_exec::FormatDumpReceipt>,
     delivered_tokens: usize,
@@ -792,9 +792,12 @@ impl RevisionCandidate {
         // result is terminal here; replaying an exhausted source
         // can only duplicate diagnostics and grow state.
         if stop || matches!(step, MainControlStep::End | MainControlStep::EndOfInput) {
-            let prepared_dvi_pages = self.control.take_prepared_dvi_pages();
+            let output_patch = self
+                .output_ledger
+                .close_revision(&mut self.control, &self.universe)
+                .map_err(|error| SessionError::InvalidRevisionOutputPatch(format!("{error:?}")))?;
             self.completed = Some(CandidateCompletion {
-                prepared_dvi_pages,
+                output_patch,
                 dumped_format: self.control.dumped_format(),
                 format_dump_receipt: self.control.format_dump_receipt().cloned(),
                 delivered_tokens: self.delivered_commands,
@@ -1692,52 +1695,25 @@ impl Session {
         for record in &mut sink.records {
             record.revision = setup.next_revision;
         }
-        let effects = candidate.universe.world().effect_records().to_vec();
-        let effect_sequences = candidate
-            .universe
-            .world()
-            .effect_sequences()
-            .as_ref()
-            .clone();
-        let effect_publications = candidate
-            .universe
-            .world()
-            .effect_publications()
-            .as_ref()
-            .clone();
-        let effect_domains = candidate.universe.world().effect_domains().as_ref().clone();
-        let effect_publication_record_ordinals = candidate
-            .universe
-            .world()
-            .effect_publication_record_ordinals()
-            .as_ref()
-            .clone();
-        let effect_semantic_record_ordinals = candidate
-            .universe
-            .world()
-            .effect_semantic_record_ordinals()
-            .as_ref()
-            .clone();
-        let effect_placement_intra_orders = candidate
-            .universe
-            .world()
-            .effect_placement_intra_orders()
-            .as_ref()
-            .clone();
-        let artifacts = candidate.universe.world().committed_artifacts().to_vec();
-        let artifact_publications = candidate.universe.world().artifact_publications().to_vec();
         let expansion_stats = ExpansionStats::default();
         let CandidateCompletion {
-            prepared_dvi_pages,
+            output_patch,
             dumped_format,
             format_dump_receipt,
             delivered_tokens,
             main_control_dispatches,
         } = stats;
-        let dvi_pages: Vec<DviPagePlan> = prepared_dvi_pages
-            .into_iter()
-            .map(tex_exec::PreparedDviPage::into_plan)
-            .collect();
+        let (effect_journal, artifact_ledger, dvi_pages) = output_patch.into_parts();
+        let (
+            effects,
+            effect_sequences,
+            effect_publications,
+            effect_publication_record_ordinals,
+            effect_domains,
+            effect_semantic_record_ordinals,
+            effect_placement_intra_orders,
+        ) = effect_journal.into_parts();
+        let (artifacts, artifact_publications) = artifact_ledger.into_parts();
         let substrate = candidate.universe.freeze_generation();
         let history = retain_restorable_history(sink.records, &substrate)?;
         let reuse = ReuseMetrics {
@@ -1810,20 +1786,14 @@ impl Session {
         };
         let memo = candidate.control.take_pure_memo_runtime();
         let CandidateCompletion {
-            prepared_dvi_pages,
+            output_patch,
             dumped_format,
             format_dump_receipt: _,
             delivered_tokens,
             main_control_dispatches,
         } = stats;
-        let live_dvi_publications = prepared_dvi_pages
-            .iter()
-            .map(tex_exec::PreparedDviPage::publication)
-            .collect::<Vec<_>>();
-        let dvi_pages: Vec<DviPagePlan> = prepared_dvi_pages
-            .into_iter()
-            .map(tex_exec::PreparedDviPage::into_plan)
-            .collect();
+        let live_dvi_publications = output_patch.dvi_publications().to_vec();
+        let (effect_journal, artifact_ledger, dvi_pages) = output_patch.into_parts();
         let reexecuted_paragraphs = sink
             .records
             .iter()
@@ -1845,23 +1815,18 @@ impl Session {
             SameHistoryStop::NoComparableBoundary
         };
         let expansion_stats = ExpansionStats::default();
-        let effects = candidate.universe.world().effect_records().to_vec();
-        let live_effect_sequences = candidate.universe.world().effect_sequences();
-        let live_effect_publications = candidate.universe.world().effect_publications();
-        let live_effect_publication_record_ordinals = candidate
-            .universe
-            .world()
-            .effect_publication_record_ordinals();
-        let live_effect_domains = candidate.universe.world().effect_domains();
-        let live_effect_semantic_record_ordinals =
-            candidate.universe.world().effect_semantic_record_ordinals();
-        let live_effect_placement_intra_orders =
-            candidate.universe.world().effect_placement_intra_orders();
+        let (
+            effects,
+            live_effect_sequences,
+            live_effect_publications,
+            live_effect_publication_record_ordinals,
+            live_effect_domains,
+            live_effect_semantic_record_ordinals,
+            live_effect_placement_intra_orders,
+        ) = effect_journal.into_parts();
         let live_effect_publication_dispositions =
             candidate.universe.world().effect_publication_dispositions();
-        let artifacts = candidate.universe.world().committed_artifacts().to_vec();
-        let mut live_artifact_publications =
-            candidate.universe.world().artifact_publications().to_vec();
+        let (artifacts, mut live_artifact_publications) = artifact_ledger.into_parts();
         let artifact_base = candidate
             .universe
             .world()
@@ -2499,14 +2464,8 @@ impl Session {
             pending.artifacts.clone(),
             pending.artifact_publications.clone(),
         )?;
-        world.install_effect_sequences(&pending.effect_sequences);
-        world.install_effect_publications(&pending.effect_publications);
-        world.install_effect_publication_record_ordinals(
-            &pending.effect_publication_record_ordinals,
-        );
-        world.install_effect_domains(&pending.effect_domains);
-        world.install_effect_semantic_record_ordinals(&pending.effect_semantic_record_ordinals);
-        world.install_effect_placement_intra_orders(&pending.effect_placement_intra_orders);
+        let journal = pending_effect_journal(pending);
+        world.install_effect_journal(&journal);
         Ok(world)
     }
 
@@ -2739,7 +2698,7 @@ impl Session {
         AcceptedOutput {
             revision: self.revision,
             content_hash: self.content_hash,
-            effects: materialize_effect_view(&self.effects, &self.effect_domains),
+            effects: accepted_effect_journal(self).materialized_records(),
             artifacts: self.artifacts.clone(),
             dvi_pages: self.dvi_pages.clone(),
             history: self.history.clone(),
@@ -2853,40 +2812,6 @@ fn finish_cold_candidate(
         return Err(SessionError::CandidateKindMismatch);
     };
     let memo = candidate.control.take_pure_memo_runtime();
-    let effects = candidate.universe.world().effect_records().to_vec();
-    let effect_sequences = candidate
-        .universe
-        .world()
-        .effect_sequences()
-        .as_ref()
-        .clone();
-    let effect_publications = candidate
-        .universe
-        .world()
-        .effect_publications()
-        .as_ref()
-        .clone();
-    let effect_domains = candidate.universe.world().effect_domains().as_ref().clone();
-    let effect_publication_record_ordinals = candidate
-        .universe
-        .world()
-        .effect_publication_record_ordinals()
-        .as_ref()
-        .clone();
-    let effect_semantic_record_ordinals = candidate
-        .universe
-        .world()
-        .effect_semantic_record_ordinals()
-        .as_ref()
-        .clone();
-    let effect_placement_intra_orders = candidate
-        .universe
-        .world()
-        .effect_placement_intra_orders()
-        .as_ref()
-        .clone();
-    let artifacts = candidate.universe.world().committed_artifacts().to_vec();
-    let artifact_publications = candidate.universe.world().artifact_publications().to_vec();
     let output_bytes = candidate.universe.retained_output_bytes();
     let expansion_stats = ExpansionStats::default();
     let executed_paragraphs = sink
@@ -2895,16 +2820,23 @@ fn finish_cold_candidate(
         .filter(|record| record.key.boundary == EngineBoundary::OuterParagraphEnd)
         .count();
     let CandidateCompletion {
-        prepared_dvi_pages,
+        output_patch,
         dumped_format,
         format_dump_receipt,
         delivered_tokens,
         main_control_dispatches,
     } = stats;
-    let dvi_pages = prepared_dvi_pages
-        .into_iter()
-        .map(tex_exec::PreparedDviPage::into_plan)
-        .collect();
+    let (effect_journal, artifact_ledger, dvi_pages) = output_patch.into_parts();
+    let (
+        effects,
+        effect_sequences,
+        effect_publications,
+        effect_publication_record_ordinals,
+        effect_domains,
+        effect_semantic_record_ordinals,
+        effect_placement_intra_orders,
+    ) = effect_journal.into_parts();
+    let (artifacts, artifact_publications) = artifact_ledger.into_parts();
     Ok(FinishedColdCandidate {
         run: RevisionRun {
             history: sink.records,
@@ -3466,25 +3398,30 @@ fn extend_adopted_effects(
     destination.extend_from_slice(&accepted[adopted_start.min(accepted.len())..]);
 }
 
-fn materialize_effect_view(
-    effects: &[EffectRecord],
-    domains: &[tex_state::EffectDomain],
-) -> Vec<EffectRecord> {
-    let (ordinary, mut terminal): (Vec<_>, Vec<_>) =
-        effects.iter().zip(domains).partition(|(_, domain)| {
-            !matches!(domain, tex_state::EffectDomain::TerminalPublication { .. })
-        });
-    terminal.sort_by_key(|(_, domain)| match domain {
-        tex_state::EffectDomain::TerminalPublication {
-            phase, intra_order, ..
-        } => (*phase, *intra_order),
-        _ => unreachable!(),
-    });
-    ordinary
-        .into_iter()
-        .chain(terminal)
-        .map(|(effect, _)| effect.clone())
-        .collect()
+fn pending_effect_journal(pending: &PendingRevision) -> tex_state::EffectJournal {
+    tex_state::EffectJournal::from_parts(
+        pending.effects.clone(),
+        pending.effect_sequences.clone(),
+        pending.effect_publications.clone(),
+        pending.effect_publication_record_ordinals.clone(),
+        pending.effect_domains.clone(),
+        pending.effect_semantic_record_ordinals.clone(),
+        pending.effect_placement_intra_orders.clone(),
+    )
+    .expect("PendingRevision effect columns were closed from a validated journal")
+}
+
+fn accepted_effect_journal(session: &Session) -> tex_state::EffectJournal {
+    tex_state::EffectJournal::from_parts(
+        session.effects.clone(),
+        session.effect_sequences.clone(),
+        session.effect_publications.clone(),
+        session.effect_publication_record_ordinals.clone(),
+        session.effect_domains.clone(),
+        session.effect_semantic_record_ordinals.clone(),
+        session.effect_placement_intra_orders.clone(),
+    )
+    .expect("Session effect columns were accepted from a validated journal")
 }
 
 type AssembledEffectLedger = (
@@ -3592,6 +3529,7 @@ fn extend_live_effects(
 
 #[derive(Debug)]
 pub enum SessionError {
+    InvalidRevisionOutputPatch(String),
     InvalidArtifactEffectSidecar(String),
     OutputIdentity(getrandom::Error),
     StaleRevision {
@@ -3623,6 +3561,9 @@ pub enum SessionError {
 impl fmt::Display for SessionError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::InvalidRevisionOutputPatch(message) => {
+                write!(f, "invalid executor revision output patch: {message}")
+            }
             Self::InvalidArtifactEffectSidecar(message) => {
                 write!(
                     f,

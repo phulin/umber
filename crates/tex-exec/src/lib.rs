@@ -55,7 +55,10 @@ pub use checkpoint::{
     CheckpointRestoreError, CheckpointSink, ENGINE_CHECKPOINT_SCHEMA_VERSION, EditorRestoreError,
     EngineBoundary, EngineCheckpoint, RootRehomeContext,
 };
-pub use dispatch::{DispatchAction, ExecutionStats, PreparedDviPage};
+pub use dispatch::{
+    ArtifactLedger, DispatchAction, ExecutionStats, PreparedDviPage, RevisionOutputPatch,
+    RevisionOutputPatchError,
+};
 pub use error::{ExecError, FrozenDiagnosticOrigin};
 pub use host_api::{
     FontResolver, FontSource, PdfImagePageBox, PdfImagePageSelection, PdfImageRequest,

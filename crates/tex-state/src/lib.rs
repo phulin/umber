@@ -51,6 +51,7 @@ pub mod code_tables;
 mod command_context;
 pub mod dependency;
 pub mod diagnostic;
+mod effect_journal;
 mod engine_state;
 pub mod env;
 pub mod epoch;
@@ -126,6 +127,7 @@ pub use dependency::{
     DependencyKey, DependencyPageField, DependencyRegion, DependencyRuntime, DependencyTracker,
     DependencyValidation, DependencyValue, DependencyWorldField, ObservedDependency,
 };
+pub use effect_journal::EffectJournal;
 pub use engine_state::{EngineMode, EngineStateSnapshot};
 pub use font::PdfFontCode;
 pub use input::{

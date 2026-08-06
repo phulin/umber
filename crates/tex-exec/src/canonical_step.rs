@@ -88,6 +88,22 @@ impl OutputLedger {
         self.suspension_serial = self.suspension_serial.saturating_add(1);
     }
 
+    /// Closes all executor-owned output ledgers after a terminal committed
+    /// step. Suspension never calls this method and therefore cannot expose a
+    /// partial revision patch.
+    pub fn close_revision(
+        &mut self,
+        control: &mut MainControl,
+        universe: &Universe,
+    ) -> Result<crate::RevisionOutputPatch, crate::RevisionOutputPatchError> {
+        let effects = universe.world().effect_journal();
+        let artifacts = crate::ArtifactLedger::new(
+            universe.world().committed_artifacts().to_vec(),
+            universe.world().artifact_publications().to_vec(),
+        )?;
+        crate::RevisionOutputPatch::close(effects, artifacts, control.take_prepared_dvi_pages())
+    }
+
     pub fn commit_job_start(
         &mut self,
         control: &MainControl,
