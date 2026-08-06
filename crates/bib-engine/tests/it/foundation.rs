@@ -1,12 +1,12 @@
 use std::sync::Arc;
 
 use bib_engine::{
-    BibAttempt, BibConfigurationBuilder, BibExitStatus, BibJob, BibOptionsBuilder,
-    BibResultBuilder, BibSession, BibliographyAttempt, BibliographyBackend, BibliographyDetection,
-    BibliographyDetector, BibliographyDocument, BibliographyFailure, BibliographyHistory,
-    BibliographyJob, BibliographyMode, BibliographyResult, BibliographyResultError,
-    BibliographySession, BibliographyStats, ClassicBibCommand, ClassicBibFailure, ClassicBibJob,
-    ClassicBibOptions, CompatibilityVersion, FileKind, GeneratedFile, OutputFormat, OutputRequest,
+    BibAttempt, BibConfigurationBuilder, BibExitStatus, BibJob, BibOptionsBuilder, BibSession,
+    BibliographyAttempt, BibliographyBackend, BibliographyDetection, BibliographyDetector,
+    BibliographyDocument, BibliographyFailure, BibliographyHistory, BibliographyJob,
+    BibliographyMode, BibliographyResult, BibliographyResultError, BibliographySession,
+    BibliographyStats, ClassicBibCommand, ClassicBibFailure, ClassicBibJob, ClassicBibOptions,
+    CompatibilityVersion, FileKind, GeneratedFile, OutputFormat, OutputRequest,
     ProcessedBibliographyBuilder, ProjectWorkspace, ResolvedFile, VfsLimits, VirtualPath,
 };
 
@@ -32,20 +32,18 @@ fn public_result_is_detached_and_preserves_output_order() {
     let document = Arc::new(ProcessedBibliographyBuilder::new(configuration).freeze());
     let first_path = VirtualPath::user("main.bbl").expect("valid output path");
     let second_path = VirtualPath::user("main.blg").expect("valid output path");
-    let mut result = BibResultBuilder::new(document);
-    result
-        .file(GeneratedFile::new(
-            first_path,
-            Arc::<[u8]>::from(&b"bbl"[..]),
-        ))
-        .expect("unique path");
-    result
-        .file(GeneratedFile::new(
-            second_path,
-            Arc::<[u8]>::from(&b"log"[..]),
-        ))
-        .expect("unique path");
-    let result = result.freeze();
+    let result = BibliographyResult::new(
+        BibliographyHistory::Spotless,
+        BibliographyDocument::Biblatex(document),
+        vec![
+            GeneratedFile::new(first_path, Arc::<[u8]>::from(&b"bbl"[..])),
+            GeneratedFile::new(second_path, Arc::<[u8]>::from(&b"log"[..])),
+        ],
+        [],
+        [],
+        BibliographyStats::Biblatex(Default::default()),
+    )
+    .expect("valid backend-aware result");
     assert_eq!(
         result
             .files()
@@ -53,7 +51,7 @@ fn public_result_is_detached_and_preserves_output_order() {
             .collect::<Vec<_>>(),
         ["/job/main.bbl", "/job/main.blg"]
     );
-    assert_eq!(result.stats().generated_bytes(), 6);
+    assert_eq!(result.backend(), BibliographyBackend::Biblatex);
 }
 
 #[test]

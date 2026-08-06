@@ -1,48 +1,133 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
-use bib_input::ClassicNameOptions;
+use bib_input::{
+    BibTexDiagnostic, BibTexDiagnosticKind, ClassicNameOptions, RawBibDatabase, RawBibRecord,
+    RawBibValue, RawBibValuePart,
+};
 use bib_model::{
     BibSourceLocation, EntryId, EntryType, FieldId, FieldProvenance, FieldValue, FieldValueStage,
     Literal, Range, RangeEndpoint, SourceSpan, Uri, Verbatim,
 };
+use bib_unicode::{RecodeSet, TexRecoder};
 use umber_vfs::VirtualPath;
 
 use super::{ProcessFailure, invalid};
-use crate::biber::EntryEditor;
+use crate::biber::DraftEntry;
 
-pub(super) fn convert_entry(
-    raw: &bib_input::BibTexEntry,
+pub(super) fn lower_database(
+    raw: &RawBibDatabase,
     path: &VirtualPath,
-) -> Result<EntryEditor, ProcessFailure> {
+    seen_entries: &mut BTreeSet<String>,
+) -> Result<(Vec<DraftEntry>, Vec<BibTexDiagnostic>), ProcessFailure> {
     let source = source(path);
-    let id = EntryId::new(raw.key()).map_err(|error| invalid(error.to_string()))?;
-    let entry_type = EntryType::new(raw.entry_type().to_ascii_lowercase())
-        .map_err(|error| invalid(error.to_string()))?;
-    let mut editor = EntryEditor::new(id, entry_type, source.clone());
-    let raw_names = raw
-        .fields()
-        .iter()
-        .map(|field| field.name().to_ascii_lowercase())
-        .collect::<BTreeSet<_>>();
-    let mut names = BTreeSet::new();
-    for raw_field in raw.fields() {
-        let name = raw_field.name().to_ascii_lowercase();
-        if !names.insert(name.clone()) {
-            continue;
-        }
-        let field = FieldId::new(name.clone()).map_err(|error| invalid(error.to_string()))?;
-        let value = typed_field(&name, raw_field.value())?;
-        editor.set_field(
-            field,
-            value,
-            FieldValueStage::Normalized,
-            FieldProvenance::Datasource(source.clone()),
-        );
-        if name == "date" {
-            add_date_parts(&mut editor, raw_field.value(), &source, &raw_names)?;
+    let recoder = TexRecoder::new(raw.options().decode, RecodeSet::Null);
+    let mut macros = month_macros();
+    let mut diagnostics = raw.diagnostics().to_vec();
+    let mut entries = Vec::new();
+    for record in raw.records() {
+        match record {
+            RawBibRecord::String(definition) => {
+                let name = recoder.decode(definition.name().folded());
+                let value = expand(definition.value(), &recoder, &macros, &mut diagnostics);
+                macros.insert(name, value);
+            }
+            RawBibRecord::Preamble(preamble) => {
+                let _ = expand(preamble.value(), &recoder, &macros, &mut diagnostics);
+            }
+            RawBibRecord::Entry(raw_entry) => {
+                let key = recoder.decode(raw_entry.key().source());
+                if !seen_entries.insert(key.to_ascii_lowercase()) {
+                    continue;
+                }
+                let id = EntryId::new(key).map_err(|error| invalid(error.to_string()))?;
+                let entry_type = EntryType::new(recoder.decode(raw_entry.entry_type().folded()))
+                    .map_err(|error| invalid(error.to_string()))?;
+                let mut draft = DraftEntry::new(id, entry_type, source.clone());
+                let mut names = BTreeSet::new();
+                let mut expanded_fields = Vec::new();
+                for raw_field in raw_entry.fields() {
+                    let name = recoder.decode(raw_field.name().folded());
+                    if !names.insert(name.clone()) {
+                        continue;
+                    }
+                    let value = expand(raw_field.value(), &recoder, &macros, &mut diagnostics);
+                    expanded_fields.push((name, value));
+                }
+                let existing = expanded_fields
+                    .iter()
+                    .map(|(name, _)| name.clone())
+                    .collect::<BTreeSet<_>>();
+                let date = expanded_fields
+                    .iter()
+                    .find(|(name, _)| name == "date")
+                    .map(|(_, value)| value.clone());
+                for (name, value) in expanded_fields {
+                    draft.set_field(
+                        FieldId::new(name.clone()).map_err(|error| invalid(error.to_string()))?,
+                        typed_field(&name, &value)?,
+                        FieldValueStage::Normalized,
+                        FieldProvenance::Datasource(source.clone()),
+                    );
+                }
+                if let Some(date) = date {
+                    add_date_parts(&mut draft, &date, &source, &existing)?;
+                }
+                entries.push(draft);
+            }
+            RawBibRecord::Comment(_) | RawBibRecord::Recovery(_) => {}
         }
     }
-    Ok(editor)
+    Ok((entries, diagnostics))
+}
+
+fn expand(
+    value: &RawBibValue,
+    recoder: &TexRecoder,
+    macros: &BTreeMap<String, String>,
+    diagnostics: &mut Vec<BibTexDiagnostic>,
+) -> String {
+    let mut result = String::new();
+    for part in value.parts() {
+        match part {
+            RawBibValuePart::Braced(text)
+            | RawBibValuePart::Quoted(text)
+            | RawBibValuePart::Number(text) => result.push_str(&recoder.decode(text.source())),
+            RawBibValuePart::Macro(name) => {
+                let name = recoder.decode(name.folded());
+                if let Some(value) = macros.get(&name) {
+                    result.push_str(value);
+                } else {
+                    diagnostics.push(BibTexDiagnostic {
+                        kind: BibTexDiagnosticKind::UndefinedMacro,
+                        offset: part.location().byte_start(),
+                        message: format!("undefined string macro `{name}`"),
+                    });
+                    result.push_str(&name);
+                }
+            }
+        }
+    }
+    result
+}
+
+fn month_macros() -> BTreeMap<String, String> {
+    [
+        ("jan", "1"),
+        ("feb", "2"),
+        ("mar", "3"),
+        ("apr", "4"),
+        ("may", "5"),
+        ("jun", "6"),
+        ("jul", "7"),
+        ("aug", "8"),
+        ("sep", "9"),
+        ("oct", "10"),
+        ("nov", "11"),
+        ("dec", "12"),
+    ]
+    .into_iter()
+    .map(|(name, value)| (name.to_owned(), value.to_owned()))
+    .collect()
 }
 
 fn typed_field(name: &str, value: &str) -> Result<FieldValue, ProcessFailure> {
@@ -89,26 +174,27 @@ fn typed_field(name: &str, value: &str) -> Result<FieldValue, ProcessFailure> {
 }
 
 fn add_date_parts(
-    editor: &mut EntryEditor,
+    editor: &mut DraftEntry,
     value: &str,
     source: &BibSourceLocation,
     existing: &BTreeSet<String>,
 ) -> Result<(), ProcessFailure> {
     let mut parts = value.split('-');
-    for (name, part) in [
-        ("year", parts.next()),
-        ("month", parts.next()),
-        ("day", parts.next()),
+    let year = parts.next().filter(|value| value.len() == 4);
+    let month = parts
+        .next()
+        .and_then(|value| value.parse::<i64>().ok())
+        .filter(|value| (1..=12).contains(value));
+    for (name, value) in [
+        ("year", year.and_then(|value| value.parse().ok())),
+        ("month", month),
     ] {
-        if existing.contains(name) {
+        if existing.contains(name) || value.is_none() {
             continue;
         }
-        let Some(Ok(value)) = part.map(str::parse::<i64>) else {
-            continue;
-        };
         editor.set_field(
             FieldId::new(name).expect("fixed field id is valid"),
-            FieldValue::Integer(value),
+            FieldValue::Integer(value.expect("checked above")),
             FieldValueStage::Derived,
             FieldProvenance::Datasource(source.clone()),
         );

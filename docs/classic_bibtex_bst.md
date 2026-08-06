@@ -967,10 +967,10 @@ closure through every host adapter without compiling or executing a style.
 - Preserve Biber conversion parity.
 - Preserve ordered records, unexpanded value parts, macro declarations, brace
   information, and compatibility decoding needed by the later classic `READ`.
-- Add raw parser observation fixtures while retaining the current eager
-  `BibTexSource` as the Biber adapter.
+- Add raw parser observation fixtures while Biber lowers the raw records
+  directly into its engine-owned draft.
 
-Exit: both adapters consume the new raw boundary, all existing Biber parity is
+Exit: both backends consume the new raw boundary, all existing Biber parity is
 unchanged, and no classic-observable syntax required by the census is lost.
 
 ### Phase 4: BST lexer, parser, and compiler

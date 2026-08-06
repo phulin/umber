@@ -1,6 +1,36 @@
-use umber_vfs::{FileOrigin, LayerKind, LayeredFileStorage, VirtualFile};
-
 use super::*;
+
+fn entries(source: &RawBibDatabase) -> Vec<&RawBibEntry> {
+    source
+        .records()
+        .iter()
+        .filter_map(|record| match record {
+            RawBibRecord::Entry(entry) => Some(entry),
+            _ => None,
+        })
+        .collect()
+}
+
+fn entry<'a>(source: &'a RawBibDatabase, key: &str) -> Option<&'a RawBibEntry> {
+    entries(source)
+        .into_iter()
+        .find(|entry| entry.key().folded().eq_ignore_ascii_case(key))
+}
+
+fn field_text<'a>(entry: &'a RawBibEntry, name: &str) -> Option<&'a str> {
+    let field = entry
+        .fields()
+        .iter()
+        .find(|field| field.name().folded() == name)?;
+    match field.value().parts() {
+        [
+            RawBibValuePart::Braced(text)
+            | RawBibValuePart::Quoted(text)
+            | RawBibValuePart::Number(text),
+        ] => Some(text.source()),
+        _ => None,
+    }
+}
 
 #[test]
 fn parses_macros_concatenation_nested_values_names_and_preamble() {
@@ -16,22 +46,10 @@ fn parses_macros_concatenation_nested_values_names_and_preamble() {
         "{:?}",
         source.diagnostics()
     );
-    assert_eq!(source.preambles()[0].value(), "prefix Ada Lovelace");
-    let entry = source.entry("key").expect("parsed entry");
-    assert_eq!(entry.field("month").expect("month").value(), "3");
-    assert_eq!(
-        entry.field("title").expect("title").value(),
-        "A {Nested} Title"
-    );
-    let names = entry
-        .field("author")
-        .expect("author")
-        .raw_names()
-        .expect("raw names");
-    assert_eq!(
-        names.iter().map(RawName::as_str).collect::<Vec<_>>(),
-        ["Ada Lovelace", "{The Team}"]
-    );
+    assert!(matches!(source.records()[1], RawBibRecord::Preamble(_)));
+    let entry = entry(&source, "key").expect("parsed entry");
+    assert_eq!(field_text(entry, "month"), None, "month stays a macro");
+    assert_eq!(field_text(entry, "title"), Some("A {Nested} Title"));
 }
 
 #[test]
@@ -88,12 +106,6 @@ fn raw_database_preserves_record_order_parts_duplicates_and_locations() {
             .any(|diagnostic| diagnostic.kind == BibTexDiagnosticKind::CaseCollision)
     );
 
-    let biber = BibTexSource::from_raw(&raw);
-    assert_eq!(biber.entries().len(), 1);
-    assert_eq!(
-        biber.entries()[0].field("title").expect("title").value(),
-        "A {Nested} \\OE uvre"
-    );
     assert_eq!(raw.classic().records().len(), raw.records().len());
 }
 
@@ -120,8 +132,8 @@ fn diagnoses_collisions_and_recovers_at_the_next_entry() {
             @broken{x title={lost}} @misc{after, note="ok"}"#,
         BibTexOptions::default(),
     );
-    assert_eq!(source.entries().len(), 2);
-    assert_eq!(source.entries()[1].key(), "after");
+    assert_eq!(entries(&source).len(), 3);
+    assert_eq!(entries(&source)[2].key().source(), "after");
     assert!(
         source
             .diagnostics()
@@ -144,15 +156,10 @@ fn ignores_percent_comment_records_and_recovers_at_line_records() {
           @misc{after, note={ok}}",
         BibTexOptions::default(),
     );
-    assert!(source.entry("fake").is_none());
+    assert!(entry(&source, "fake").is_none());
     assert_eq!(
-        source
-            .entry("after")
-            .expect("recovered entry")
-            .field("note")
-            .expect("note")
-            .value(),
-        "ok"
+        field_text(entry(&source, "after").expect("recovered entry"), "note"),
+        Some("ok")
     );
     assert!(
         source
@@ -196,39 +203,6 @@ fn enforces_nesting_and_work_limits() {
 }
 
 #[test]
-fn cache_uses_content_and_semantic_options_not_path() {
-    let bytes = b"@misc{x,title={cached}}".to_vec();
-    let mut storage = LayeredFileStorage::new();
-    for path in ["one.bib", "two.bib"] {
-        let path = VirtualPath::user(path).expect("valid path");
-        storage
-            .insert(
-                LayerKind::User,
-                VirtualFile::new(path, bytes.clone(), FileOrigin::User),
-            )
-            .expect("insert fixture");
-    }
-    let snapshot = storage.snapshot();
-    let mut cache = BibTexCache::default();
-    let first = cache
-        .parse(
-            &snapshot,
-            &VirtualPath::user("one.bib").expect("valid path"),
-            BibTexOptions::default(),
-        )
-        .expect("parse first");
-    let second = cache
-        .parse(
-            &snapshot,
-            &VirtualPath::user("two.bib").expect("valid path"),
-            BibTexOptions::default(),
-        )
-        .expect("parse second");
-    assert!(Arc::ptr_eq(&first, &second));
-    assert_eq!(cache.len(), 1);
-}
-
-#[test]
 fn parses_owned_upstream_datasources() {
     let aliases = parse_bibtex_bytes(
         include_bytes!("../../../../tests/corpus/bib/upstream-2.22/tdata/bibtex-aliases.bib"),
@@ -239,29 +213,19 @@ fn parses_owned_upstream_datasources() {
         "{:?}",
         aliases.diagnostics()
     );
-    assert_eq!(aliases.entries().len(), 8);
+    assert_eq!(entries(&aliases).len(), 8);
     assert_eq!(
-        aliases
-            .entry("alias4")
-            .expect("alias4")
-            .field("participant")
-            .expect("participant")
-            .value(),
-        "Sam Smith"
+        field_text(entry(&aliases, "alias4").expect("alias4"), "participant"),
+        Some("Sam Smith")
     );
 
     let examples = parse_bibtex_bytes(
         include_bytes!("../../../../tests/corpus/bib/upstream-2.22/tdata/examples.bib"),
         BibTexOptions::default(),
     );
-    assert!(examples.entries().len() > 100);
+    assert!(entries(&examples).len() > 100);
     assert_eq!(
-        examples
-            .entry("shore")
-            .expect("shore")
-            .field("month")
-            .expect("month")
-            .value(),
-        "3"
+        field_text(entry(&examples, "shore").expect("shore"), "date"),
+        Some("1991-03")
     );
 }

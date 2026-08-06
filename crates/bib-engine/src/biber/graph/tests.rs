@@ -4,7 +4,7 @@ use bib_model::{
 };
 
 use super::*;
-use crate::biber::EntryEditor;
+use crate::biber::DraftEntry;
 
 #[derive(Default)]
 struct PassFixture {
@@ -16,7 +16,7 @@ struct PassFixture {
 }
 
 struct PassResult {
-    sections: Vec<GraphSection>,
+    sections: Vec<DraftSection>,
     diagnostics: Vec<BibDiagnostic>,
 }
 
@@ -65,7 +65,7 @@ fn keys(values: &[&str]) -> FieldValue {
 fn process(input: PassFixture, options: GraphOptions) -> PassResult {
     let (sections, diagnostics) = RelationshipPass::new(options)
         .process(
-            input.entries.iter().map(EntryEditor::from_entry).collect(),
+            input.entries.iter().map(DraftEntry::from_entry).collect(),
             input.aliases,
             input.sections,
             &input.maps,
@@ -254,7 +254,7 @@ fn graph_work_limits_fail_closed() {
         .process(
             [&entry("a", &[]), &entry("b", &[])]
                 .into_iter()
-                .map(EntryEditor::from_entry)
+                .map(DraftEntry::from_entry)
                 .collect(),
             Vec::new(),
             Vec::new(),

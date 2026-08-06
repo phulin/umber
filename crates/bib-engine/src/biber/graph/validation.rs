@@ -1,6 +1,6 @@
 use bib_model::{EntryType, FieldId, FieldValue};
 
-use crate::biber::EntryEditor;
+use crate::biber::DraftEntry;
 
 #[derive(Clone, Debug, Default)]
 pub struct DataModel {
@@ -29,7 +29,7 @@ pub enum DataConstraint {
 }
 
 impl ValidationRule {
-    pub(crate) fn violation(&self, entry: &EntryEditor) -> Option<String> {
+    pub(crate) fn violation(&self, entry: &DraftEntry) -> Option<String> {
         if self
             .entry_type
             .as_ref()

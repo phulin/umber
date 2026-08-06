@@ -92,7 +92,7 @@ Affected crates: `bib-input`, `bib-model`, `bib-graph`, `bib-sort`, `bib-label`,
 **End state.** The Biber path becomes one engine-private worker:
 
 1. raw parser output;
-2. one typed `EntryEditor` lowering;
+2. one typed engine-draft lowering;
 3. one indexed relationship/inheritance pass;
 4. one sort/label plan;
 5. one frozen document.
@@ -113,7 +113,7 @@ Affected crates: `bib-input`, `bib-model`, `bib-graph`, `bib-sort`, `bib-label`,
 
 Rollback now means reverting the cutover commits; no session selector or old stage transport remains.
 
-**Migration status.** `bib-engine/src/biber` now owns the sole `EntryEditor`, indexed relationship/inheritance pass, label and sort plan, and final document builder. `GraphInput`, `GraphOutput`, all three empty stage contexts, the temporary processed section, and the `bib-graph`, `bib-sort`, and `bib-label` packages have been deleted. The session API and pinned Unicode boundary are unchanged; configuration semantics that were inactive before the migration remain inactive.
+**Migration status.** `bib-engine/src/biber` now owns one `BiberDraft` from direct raw-record lowering through the indexed relationship/inheritance pass, label/list planning, diagnostics, and the sole immutable model freeze. The eager `BibTexSource`, `EntryEditor`, `GraphSection`, legacy result builder, `GraphInput`, `GraphOutput`, all three empty stage contexts, the temporary processed section, and the `bib-graph`, `bib-sort`, and `bib-label` packages have been deleted. Completed BibLaTeX and classic jobs now share the backend-aware result type; the pinned Unicode boundary and previously inactive configuration semantics remain unchanged.
 
 **Gates and risks.** Run the full BibTeX/Biber compatibility corpus, including the 51 upstream modules and 1,275 assertion identifiers, BBL/XML/DOT output, crossref and xdata cases, duplicate entries, malformed values, name handling, labels, and diagnostics. The main risks are external consumers of currently public crates, accidental option activation, Unicode collation changes, and losing provenance during entry editing.
 

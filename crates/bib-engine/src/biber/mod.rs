@@ -1,7 +1,7 @@
 //! Engine-private Biber semantic worker.
 
 use bib_model::{
-    Annotation, BibConfiguration, BibDiagnostic, BibSourceLocation, DataListId, Entry,
+    Annotation, BibConfiguration, BibDiagnostic, BibSourceLocation, DataList, DataListId, Entry,
     EntryBuilder, EntryId, EntryType, Field, FieldId, FieldProvenance, FieldValue, FieldValueStage,
     ProcessedBibliography, ProcessedBibliographyBuilder, ProcessedSectionBuilder, ScopedOptions,
 };
@@ -10,19 +10,26 @@ pub(super) mod graph;
 pub(super) mod label;
 pub(super) mod sort;
 
-use graph::{DataModel, GraphOptions, RelationshipPass, SectionSpec};
+use graph::{DataModel, DraftSection, GraphOptions, RelationshipPass, SectionSpec};
 use label::select_labels;
-use sort::{DataListBuilder, SortComponent, SortField, SortTemplate};
 
 const DEFAULT_LIST: &str = "nty/global//global/global/global";
 
 pub(super) struct BiberWorker {
+    draft: BiberDraft,
+}
+
+/// The single engine-owned mutation root from datasource lowering through publication.
+pub(super) struct BiberDraft {
     configuration: BibConfiguration,
+    entries: Vec<DraftEntry>,
+    section_specs: Vec<SectionSpec>,
+    sections: Vec<DraftSection>,
+    diagnostics: Vec<BibDiagnostic>,
 }
 
 pub(super) enum WorkerError {
     Relationship(String),
-    Sort(String),
     Build(String),
 }
 
@@ -30,14 +37,13 @@ impl WorkerError {
     pub(super) const fn code(&self) -> &'static str {
         match self {
             Self::Relationship(_) => "GRAPH",
-            Self::Sort(_) => "SORT",
             Self::Build(_) => "MODEL_BUILD",
         }
     }
 
     pub(super) fn message(self) -> String {
         match self {
-            Self::Relationship(message) | Self::Sort(message) | Self::Build(message) => message,
+            Self::Relationship(message) | Self::Build(message) => message,
         }
     }
 
@@ -47,45 +53,69 @@ impl WorkerError {
 }
 
 impl BiberWorker {
-    pub(super) const fn new(configuration: BibConfiguration) -> Self {
-        Self { configuration }
+    pub(super) const fn new(draft: BiberDraft) -> Self {
+        Self { draft }
     }
 
     pub(super) fn process(
-        self,
-        entries: Vec<EntryEditor>,
-        sections: Vec<SectionSpec>,
+        mut self,
     ) -> Result<(ProcessedBibliography, Vec<BibDiagnostic>), WorkerError> {
+        self.draft.resolve_relationships()?;
+        for section in &mut self.draft.sections {
+            for entry in &mut section.entries {
+                add_label_sources(entry);
+            }
+        }
+        self.draft.freeze()
+    }
+}
+
+impl BiberDraft {
+    pub(super) fn new(
+        configuration: BibConfiguration,
+        entries: Vec<DraftEntry>,
+        section_specs: Vec<SectionSpec>,
+        diagnostics: Vec<BibDiagnostic>,
+    ) -> Self {
+        Self {
+            configuration,
+            entries,
+            section_specs,
+            sections: Vec::new(),
+            diagnostics,
+        }
+    }
+
+    fn resolve_relationships(&mut self) -> Result<(), WorkerError> {
         // Configuration-owned sourcemaps and data-model semantics remain
         // deliberately inactive until their existing option paths implement
         // them; this refactor must not change compatibility behavior.
         let (sections, diagnostics) = RelationshipPass::new(GraphOptions::default())
-            .process(entries, Vec::new(), sections, &[], &DataModel::default())
-            .map_err(|error| WorkerError::Relationship(format!("{error:?}")))?;
-        let mut document = ProcessedBibliographyBuilder::new(self.configuration);
-        for mut section in sections {
-            for entry in &mut section.entries {
-                add_label_sources(entry);
-            }
-            let entries = section
-                .entries
-                .into_iter()
-                .map(EntryEditor::freeze)
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(WorkerError::Build)?;
-            let template = SortTemplate::new([SortComponent::ascending(SortField::CiteOrder)])
-                .map_err(|error| WorkerError::Sort(error.to_string()))?;
-            let list = DataListBuilder::from_entries(
-                &entries,
-                DataListId::new(DEFAULT_LIST).expect("fixed list id is valid"),
-                template,
+            .process(
+                std::mem::take(&mut self.entries),
+                Vec::new(),
+                std::mem::take(&mut self.section_specs),
+                &[],
+                &DataModel::default(),
             )
-            .build()
-            .map_err(|error| WorkerError::Sort(error.to_string()))?;
+            .map_err(|error| WorkerError::Relationship(format!("{error:?}")))?;
+        self.sections = sections;
+        self.diagnostics.extend(diagnostics);
+        Ok(())
+    }
+
+    fn freeze(self) -> Result<(ProcessedBibliography, Vec<BibDiagnostic>), WorkerError> {
+        let mut document = ProcessedBibliographyBuilder::new(self.configuration);
+        for section in self.sections {
+            let list = DataList::new(
+                DataListId::new(DEFAULT_LIST).expect("fixed list id is valid"),
+                section.entries.iter().map(|entry| entry.id().clone()),
+            )
+            .map_err(|error| WorkerError::Build(error.to_string()))?;
             let mut builder = ProcessedSectionBuilder::new(section.id);
-            for entry in entries {
+            for entry in section.entries {
                 builder
-                    .entry(entry)
+                    .entry(entry.freeze().map_err(WorkerError::Build)?)
                     .map_err(|error| WorkerError::Build(error.to_string()))?;
             }
             builder
@@ -95,11 +125,11 @@ impl BiberWorker {
                 .section(builder.freeze())
                 .map_err(|error| WorkerError::Build(error.to_string()))?;
         }
-        Ok((document.freeze(), diagnostics))
+        Ok((document.freeze(), self.diagnostics))
     }
 }
 
-fn add_label_sources(entry: &mut EntryEditor) {
+fn add_label_sources(entry: &mut DraftEntry) {
     let mut label = label::LabelEntry::default();
     for field in entry.fields() {
         match field.value() {
@@ -142,7 +172,7 @@ fn add_label_sources(entry: &mut EntryEditor) {
 
 /// The sole mutable typed representation used by the Biber semantic pipeline.
 #[derive(Clone)]
-pub(super) struct EntryEditor {
+pub(super) struct DraftEntry {
     id: EntryId,
     kind: EntryType,
     fields: Vec<Field>,
@@ -152,7 +182,7 @@ pub(super) struct EntryEditor {
     clones: Vec<EntryId>,
 }
 
-impl EntryEditor {
+impl DraftEntry {
     pub(super) fn new(id: EntryId, kind: EntryType, source: BibSourceLocation) -> Self {
         Self {
             id,

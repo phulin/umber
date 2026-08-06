@@ -4,9 +4,9 @@ use std::sync::Arc;
 use umber_vfs::{FileKind, FileRequestBatch, VfsSnapshot, VirtualPath};
 
 use crate::{
-    BibAttempt, BibDiagnostic, BibDiagnosticCode, BibFailure, BibJob, BibResult, BibSession,
-    BibSessionOptions, BibSeverity, BibSourceLocation, BibStats, GeneratedFile,
-    ProcessedBibliography,
+    BibAttempt, BibConfiguration, BibDiagnostic, BibDiagnosticCode, BibFailure, BibJob, BibSession,
+    BibSessionOptions, BibSeverity, BibSourceLocation, BibStats, EntryId, FieldId, GeneratedFile,
+    ProcessedBibliography, ProcessedSection, SectionId,
 };
 
 /// Semantic backend selected for a bibliography job.
@@ -266,7 +266,7 @@ pub enum BibliographyAttempt {
 impl From<BibAttempt> for BibliographyAttempt {
     fn from(attempt: BibAttempt) -> Self {
         match attempt {
-            BibAttempt::Complete(result) => Self::Finished(result.into()),
+            BibAttempt::Complete(result) => Self::Finished(result),
             BibAttempt::NeedResources(resources) => Self::NeedResources(resources),
             BibAttempt::Failed(failure) => Self::Failed(BibliographyFailure::Biblatex(failure)),
         }
@@ -316,6 +316,39 @@ impl BibliographyDocument {
             Self::Biblatex(_) => BibliographyBackend::Biblatex,
             Self::Classic(_) => BibliographyBackend::Classic,
         }
+    }
+
+    #[must_use]
+    pub const fn biblatex(&self) -> Option<&Arc<ProcessedBibliography>> {
+        match self {
+            Self::Biblatex(document) => Some(document),
+            Self::Classic(_) => None,
+        }
+    }
+
+    pub fn sections(&self) -> impl Iterator<Item = &ProcessedSection> {
+        self.biblatex()
+            .into_iter()
+            .flat_map(|document| document.sections())
+    }
+
+    #[must_use]
+    pub fn section(&self, id: SectionId) -> Option<&ProcessedSection> {
+        self.biblatex().and_then(|document| document.section(id))
+    }
+
+    #[must_use]
+    pub fn configuration(&self) -> &BibConfiguration {
+        self.biblatex()
+            .expect("classic results do not contain a BibLaTeX configuration")
+            .configuration()
+    }
+}
+
+impl AsRef<ProcessedBibliography> for BibliographyDocument {
+    fn as_ref(&self) -> &ProcessedBibliography {
+        self.biblatex()
+            .expect("classic results do not contain a BibLaTeX document")
     }
 }
 
@@ -496,31 +529,33 @@ impl BibliographyResult {
     }
 }
 
-impl From<BibResult> for BibliographyResult {
-    fn from(result: BibResult) -> Self {
-        let BibResult {
-            document,
-            files,
-            diagnostics,
-            stats,
-        } = result;
-        let history =
-            BibliographyHistory::biblatex(diagnostics.iter().map(BibDiagnostic::severity));
-        let diagnostics = diagnostics
-            .iter()
-            .cloned()
-            .map(BibliographyDiagnostic::from)
-            .collect::<Vec<_>>();
-        Self::new(
-            history,
-            BibliographyDocument::Biblatex(document),
-            files,
-            [],
-            diagnostics,
-            stats.into(),
-        )
-        .expect("a legacy biblatex result always has compatible publishable artifacts")
-    }
+pub(crate) fn biblatex_result(
+    document: Arc<ProcessedBibliography>,
+    files: Vec<GeneratedFile>,
+    diagnostics: Vec<BibDiagnostic>,
+) -> Result<BibliographyResult, BibliographyResultError> {
+    let stats = BibStats {
+        sections: document.sections().len(),
+        entries: document
+            .sections()
+            .map(|section| section.entries().len())
+            .sum(),
+        generated_files: files.len(),
+        generated_bytes: files.iter().map(|file| file.bytes().len()).sum(),
+    };
+    let history = BibliographyHistory::biblatex(diagnostics.iter().map(BibDiagnostic::severity));
+    let diagnostics = diagnostics
+        .into_iter()
+        .map(BibliographyDiagnostic::from)
+        .collect::<Vec<_>>();
+    BibliographyResult::new(
+        history,
+        BibliographyDocument::Biblatex(document),
+        files,
+        [],
+        diagnostics,
+        stats.into(),
+    )
 }
 
 /// A result-construction policy violation.
@@ -548,6 +583,46 @@ impl BibliographyStats {
             Self::Classic(_) => BibliographyBackend::Classic,
         }
     }
+
+    #[must_use]
+    pub const fn biblatex(self) -> Option<BibStats> {
+        match self {
+            Self::Biblatex(stats) => Some(stats),
+            Self::Classic(_) => None,
+        }
+    }
+
+    #[must_use]
+    pub const fn sections(self) -> usize {
+        match self {
+            Self::Biblatex(stats) => stats.sections(),
+            Self::Classic(_) => 0,
+        }
+    }
+
+    #[must_use]
+    pub const fn entries(self) -> usize {
+        match self {
+            Self::Biblatex(stats) => stats.entries(),
+            Self::Classic(_) => 0,
+        }
+    }
+
+    #[must_use]
+    pub const fn generated_files(self) -> usize {
+        match self {
+            Self::Biblatex(stats) => stats.generated_files(),
+            Self::Classic(_) => 0,
+        }
+    }
+
+    #[must_use]
+    pub const fn generated_bytes(self) -> usize {
+        match self {
+            Self::Biblatex(stats) => stats.generated_bytes(),
+            Self::Classic(_) => 0,
+        }
+    }
 }
 
 /// A backend-aware diagnostic retaining its backend-specific stable code.
@@ -558,6 +633,8 @@ pub struct BibliographyDiagnostic {
     code: BibliographyDiagnosticCode,
     message: String,
     source: Option<BibliographySourceLocation>,
+    entry: Option<EntryId>,
+    field: Option<FieldId>,
 }
 
 impl BibliographyDiagnostic {
@@ -574,6 +651,8 @@ impl BibliographyDiagnostic {
             code,
             message: message.into(),
             source,
+            entry: None,
+            field: None,
         }
     }
 
@@ -601,11 +680,21 @@ impl BibliographyDiagnostic {
     pub const fn source(&self) -> Option<&BibliographySourceLocation> {
         self.source.as_ref()
     }
+
+    #[must_use]
+    pub const fn entry(&self) -> Option<&EntryId> {
+        self.entry.as_ref()
+    }
+
+    #[must_use]
+    pub const fn field(&self) -> Option<&FieldId> {
+        self.field.as_ref()
+    }
 }
 
 impl From<BibDiagnostic> for BibliographyDiagnostic {
     fn from(diagnostic: BibDiagnostic) -> Self {
-        Self::new(
+        let mut result = Self::new(
             diagnostic.severity(),
             BibliographyDiagnosticCode::Biblatex(diagnostic.code().clone()),
             diagnostic.message(),
@@ -613,7 +702,10 @@ impl From<BibDiagnostic> for BibliographyDiagnostic {
                 .source()
                 .cloned()
                 .map(BibliographySourceLocation::Biblatex),
-        )
+        );
+        result.entry = diagnostic.entry().cloned();
+        result.field = diagnostic.field().cloned();
+        result
     }
 }
 

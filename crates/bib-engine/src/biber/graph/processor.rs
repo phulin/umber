@@ -7,7 +7,7 @@ use bib_model::{
 
 use super::maps::{MapAction, SourceMap, matches};
 use super::validation::DataModel;
-use crate::biber::EntryEditor;
+use crate::biber::DraftEntry;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct GraphLimits {
@@ -56,9 +56,9 @@ pub struct SectionSpec {
 }
 
 #[derive(Clone)]
-pub(crate) struct GraphSection {
+pub(crate) struct DraftSection {
     pub id: SectionId,
-    pub entries: Vec<EntryEditor>,
+    pub entries: Vec<DraftEntry>,
     pub original_citekeys: Vec<EntryId>,
 }
 
@@ -82,12 +82,12 @@ impl RelationshipPass {
 
     pub fn process(
         &self,
-        entries: Vec<EntryEditor>,
+        entries: Vec<DraftEntry>,
         input_aliases: Vec<(EntryId, EntryId)>,
         input_sections: Vec<SectionSpec>,
         maps: &[SourceMap],
         data_model: &DataModel,
-    ) -> Result<(Vec<GraphSection>, Vec<BibDiagnostic>), GraphError> {
+    ) -> Result<(Vec<DraftSection>, Vec<BibDiagnostic>), GraphError> {
         if entries.len() > self.options.limits.max_entries {
             return Err(GraphError::Limit("entry limit exceeded"));
         }
@@ -131,13 +131,13 @@ impl RelationshipPass {
 
     fn process_section(
         &self,
-        entries: &[EntryEditor],
+        entries: &[DraftEntry],
         index: &BTreeMap<String, usize>,
         aliases: &BTreeMap<String, EntryId>,
         model: &DataModel,
         spec: SectionSpec,
         diagnostics: &mut Vec<BibDiagnostic>,
-    ) -> Result<GraphSection, GraphError> {
+    ) -> Result<DraftSection, GraphError> {
         let original_citekeys = spec.cited.clone();
         let mut selected = BTreeSet::new();
         let mut queue = VecDeque::new();
@@ -243,7 +243,7 @@ impl RelationshipPass {
                 output.push(inherited);
             }
         }
-        Ok(GraphSection {
+        Ok(DraftSection {
             id: spec.id,
             entries: output,
             original_citekeys,
@@ -251,10 +251,10 @@ impl RelationshipPass {
     }
 }
 
-type MappedEntries = (Vec<EntryEditor>, Vec<(EntryId, EntryId)>);
+type MappedEntries = (Vec<DraftEntry>, Vec<(EntryId, EntryId)>);
 
 fn apply_maps(
-    entries: Vec<EntryEditor>,
+    entries: Vec<DraftEntry>,
     maps: &[SourceMap],
     max_entries: usize,
 ) -> Result<MappedEntries, GraphError> {
@@ -290,7 +290,7 @@ fn apply_maps(
     Ok((output, aliases))
 }
 
-impl EntryEditor {
+impl DraftEntry {
     fn apply(
         &mut self,
         action: &MapAction,
@@ -339,18 +339,18 @@ impl EntryEditor {
 }
 
 struct Inheritance<'a> {
-    entries: &'a [EntryEditor],
+    entries: &'a [DraftEntry],
     index: &'a BTreeMap<String, usize>,
     aliases: &'a BTreeMap<String, EntryId>,
     inherit_xref: bool,
     limits: GraphLimits,
-    memo: BTreeMap<usize, EntryEditor>,
+    memo: BTreeMap<usize, DraftEntry>,
     stack: Vec<usize>,
     diagnostics: &'a mut Vec<BibDiagnostic>,
 }
 
 impl Inheritance<'_> {
-    fn resolve(&mut self, position: usize) -> Result<EntryEditor, GraphError> {
+    fn resolve(&mut self, position: usize) -> Result<DraftEntry, GraphError> {
         if let Some(entry) = self.memo.get(&position) {
             return Ok(entry.clone());
         }
@@ -453,7 +453,7 @@ fn resolve(
             .and_then(|target| index.get(&key(target)).copied())
     })
 }
-fn keys<'a>(entry: &'a EntryEditor, name: &str) -> Vec<&'a EntryId> {
+fn keys<'a>(entry: &'a DraftEntry, name: &str) -> Vec<&'a EntryId> {
     let Ok(id) = field(name) else {
         return Vec::new();
     };
@@ -468,7 +468,7 @@ fn is_relationship(id: &FieldId) -> bool {
         "xdata" | "crossref" | "xref" | "related" | "entryset"
     )
 }
-fn provenance_source(field: &Field, parent: &EntryEditor) -> bib_model::BibSourceLocation {
+fn provenance_source(field: &Field, parent: &DraftEntry) -> bib_model::BibSourceLocation {
     match field.provenance() {
         FieldProvenance::Datasource(source)
         | FieldProvenance::Transformed { source, .. }

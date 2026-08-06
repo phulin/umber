@@ -129,16 +129,27 @@ fn exposes_structured_classic_names_from_bibtex_fields() {
         BibTexOptions::default(),
     );
     let author = source
-        .entry("x")
-        .and_then(|entry| entry.field("author"))
+        .records()
+        .iter()
+        .find_map(|record| match record {
+            RawBibRecord::Entry(entry) => entry
+                .fields()
+                .iter()
+                .find(|field| field.name().folded() == "author"),
+            _ => None,
+        })
         .expect("author field");
-    let parsed = author
-        .classic_names(ClassicNameOptions {
+    let [RawBibValuePart::Braced(author)] = author.value().parts() else {
+        panic!("author remains one braced raw value")
+    };
+    let parsed = parse_classic_name_list(
+        author.source(),
+        ClassicNameOptions {
             separators: &["und"],
             others: &["andere"],
             limits: ClassicNameLimits::default(),
-        })
-        .expect("name field");
+        },
+    );
     assert!(parsed.diagnostics.is_empty());
     assert_eq!(parsed.names.len(), 2);
     assert!(parsed.names.has_others());

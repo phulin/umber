@@ -7,7 +7,7 @@ in native and WASM builds without subprocesses or native-filesystem access.
 ## File Map
 
 - `Cargo.toml`: crate graph and test-only manifest verification dependencies.
-- `src/lib.rs`: detached public job, option, result, failure, attempt, one-shot, and serialization contracts.
+- `src/lib.rs`: detached public job, option, failure, attempt, one-shot, and serialization contracts; completed jobs use the backend-aware result in `bibliography.rs`.
 - `src/classic.rs`: backend-neutral protocol detection plus bounded classic AUX closure and typed classic resource discovery.
 - `src/classic_execution.rs`: classic style compilation, raw database preparation, VM execution, detached artifact routing, and cold/cache parity.
 - `src/classic_command.rs`: in-process classic command parsing, status mapping, terminal bytes, and partial-artifact exposure.
@@ -15,8 +15,8 @@ in native and WASM builds without subprocesses or native-filesystem access.
 - `src/command.rs`: pinned in-process command invocation, output naming, status, terminal, and log-byte adapter.
 - `src/command/tests.rs`: exact invocation validation and command-result fixtures.
 - `src/session.rs`: resumable VFS resource loop, bounded caches, accepted-input selection, and detached output routing.
-- `src/session/convert.rs`: raw BibTeX-to-worker lowering and typed value conversion.
-- `src/biber/`: the engine-private typed entry lifecycle, indexed relationship and inheritance pass, sort/label planning, and single frozen-document publication point.
+- `src/session/convert.rs`: direct source-ordered raw BibTeX-to-draft lowering, macro expansion, duplicate policy, and typed value conversion.
+- `src/biber/`: the single engine-private editable draft, indexed relationship and inheritance pass, sort/label planning, and sole frozen-document publication point.
 - `src/session/tests.rs`: retry, no-progress, typed-query, and cold/cache parity tests.
 - `src/tool.rs`: synthetic-section tool mode and in-process alternate-output routing.
 - `tests/it.rs`: the crate's sole Cargo integration-test binary.

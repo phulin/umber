@@ -7,7 +7,7 @@ mod validation;
 
 pub(super) use maps::{MapAction, MapMatch, SourceMap, SourceMapStep};
 pub(crate) use processor::{
-    GraphError, GraphLimits, GraphOptions, GraphSection, RelationshipPass, SectionSpec,
+    DraftSection, GraphError, GraphLimits, GraphOptions, RelationshipPass, SectionSpec,
 };
 pub(super) use validation::{DataConstraint, DataModel, ValidationRule};
 

@@ -2,10 +2,10 @@ use std::fmt;
 use std::sync::Arc;
 
 use crate::{
-    BibAttempt, BibDiagnostic, BibFailureKind, BibJob, BibOptionsBuilder, BibResult, BibSession,
-    BibSeverity, BibtexOptions, DotInclude, DotOptions, LegacyEncoding, OutputFormat,
-    OutputNewline, OutputOptions, OutputRequest, ProjectWorkspace, ResolvedFile, VfsSnapshot,
-    VirtualPath, process_once,
+    BibAttempt, BibFailureKind, BibJob, BibOptionsBuilder, BibResult, BibSession, BibSeverity,
+    BibtexOptions, DotInclude, DotOptions, LegacyEncoding, OutputFormat, OutputNewline,
+    OutputOptions, OutputRequest, ProjectWorkspace, ResolvedFile, VfsSnapshot, VirtualPath,
+    process_once,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -238,7 +238,7 @@ impl BibCommand {
                 )
             }
             BibAttempt::Failed(failure) => {
-                let terminal = render_diagnostics(failure.diagnostics());
+                let terminal = render_bib_diagnostics(failure.diagnostics());
                 let status = if failure.kind() == BibFailureKind::InvalidInvocation {
                     BibExitStatus::InvalidInvocation
                 } else {
@@ -251,7 +251,10 @@ impl BibCommand {
 
     fn complete(&self, result: BibResult) -> BibCommandOutput {
         let mut terminal = render_diagnostics(result.diagnostics());
-        let stats = result.stats();
+        let stats = result
+            .stats()
+            .biblatex()
+            .expect("BibCommand only executes the BibLaTeX backend");
         terminal.extend_from_slice(
             format!(
                 "INFO - Bibliography complete: {} section(s), {} entries, {} file(s)\n",
@@ -461,7 +464,24 @@ fn command_path(value: &str) -> Result<VirtualPath, umber_vfs::VirtualPathError>
     }
 }
 
-fn render_diagnostics<'a>(diagnostics: impl Iterator<Item = &'a BibDiagnostic>) -> Vec<u8> {
+fn render_diagnostics<'a>(
+    diagnostics: impl Iterator<Item = &'a crate::BibliographyDiagnostic>,
+) -> Vec<u8> {
+    let mut rendered = Vec::new();
+    for diagnostic in diagnostics {
+        let severity = match diagnostic.severity() {
+            BibSeverity::Info => "INFO",
+            BibSeverity::Warning => "WARN",
+            BibSeverity::Error => "ERROR",
+        };
+        rendered.extend_from_slice(format!("{severity} - {}\n", diagnostic.message()).as_bytes());
+    }
+    rendered
+}
+
+fn render_bib_diagnostics<'a>(
+    diagnostics: impl Iterator<Item = &'a crate::BibDiagnostic>,
+) -> Vec<u8> {
     let mut rendered = Vec::new();
     for diagnostic in diagnostics {
         let severity = match diagnostic.severity() {

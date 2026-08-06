@@ -14,11 +14,10 @@ pub use biblatexml::{
     validate_biblatexml_bytes,
 };
 pub use bibtex::{
-    BibTexCache, BibTexDiagnostic, BibTexDiagnosticKind, BibTexEntry, BibTexField, BibTexLimits,
-    BibTexOptions, BibTexPreamble, BibTexSource, RawBibClassicSource, RawBibComment,
-    RawBibControlSequence, RawBibDatabase, RawBibEntry, RawBibField, RawBibIdentifier,
-    RawBibLocation, RawBibPreamble, RawBibRecord, RawBibRecovery, RawBibStringMacro, RawBibText,
-    RawBibValue, RawBibValuePart, RawName, parse_bibtex, parse_bibtex_bytes,
+    BibTexDiagnostic, BibTexDiagnosticKind, BibTexLimits, BibTexOptions, RawBibClassicSource,
+    RawBibComment, RawBibControlSequence, RawBibDatabase, RawBibEntry, RawBibField,
+    RawBibIdentifier, RawBibLocation, RawBibPreamble, RawBibRecord, RawBibRecovery,
+    RawBibStringMacro, RawBibText, RawBibValue, RawBibValuePart, parse_bibtex, parse_bibtex_bytes,
     parse_raw_bibtex_bytes,
 };
 pub use config::{

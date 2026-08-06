@@ -18,13 +18,13 @@ mod tool;
 
 pub use bib_input::{BibTexLimits, BibTexOptions, XmlLimits};
 pub use bib_model::{
-    BibConfigurationBuilder, BibDiagnostic, BibDiagnosticCode, BibSeverity, BibSourceLocation,
-    COMPATIBILITY_VERSION, CompatibilityVersion, DataList, DataListId, DataListKind,
-    DiagnosticError, Entry, EntryBuilder, EntryId, EntryType, Field, FieldId, FieldProvenance,
-    FieldValue, FieldValueStage, GeneratedFile, Literal, Name, NameBuilder, NameList,
-    NamePartValue, OptionId, OptionScope, OptionValue, OutputFormat, OutputNewline, OutputRequest,
-    ProcessedBibliography, ProcessedBibliographyBuilder, ProcessedSection, ProcessedSectionBuilder,
-    Range, RangeEndpoint, SectionId, SourceSpan, VirtualPath,
+    BibConfiguration, BibConfigurationBuilder, BibDiagnostic, BibDiagnosticCode, BibSeverity,
+    BibSourceLocation, COMPATIBILITY_VERSION, CompatibilityVersion, DataList, DataListId,
+    DataListKind, DiagnosticError, Entry, EntryBuilder, EntryId, EntryType, Field, FieldId,
+    FieldProvenance, FieldValue, FieldValueStage, GeneratedFile, Literal, Name, NameBuilder,
+    NameList, NamePartValue, OptionId, OptionScope, OptionValue, OutputFormat, OutputNewline,
+    OutputRequest, ProcessedBibliography, ProcessedBibliographyBuilder, ProcessedSection,
+    ProcessedSectionBuilder, Range, RangeEndpoint, SectionId, SourceSpan, VirtualPath,
 };
 pub use bib_output::{
     BblOutputFailure, BblOutputFailureKind, BblSerializer, BibtexCase, BibtexMacro, BibtexOptions,
@@ -203,90 +203,12 @@ impl BibStats {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct BibResult {
-    document: Arc<ProcessedBibliography>,
-    files: Arc<[GeneratedFile]>,
-    diagnostics: Arc<[BibDiagnostic]>,
-    stats: BibStats,
-}
-
-impl BibResult {
-    #[must_use]
-    pub const fn document(&self) -> &Arc<ProcessedBibliography> {
-        &self.document
-    }
-    pub fn files(&self) -> impl ExactSizeIterator<Item = &GeneratedFile> {
-        self.files.iter()
-    }
-    pub fn diagnostics(&self) -> impl ExactSizeIterator<Item = &BibDiagnostic> {
-        self.diagnostics.iter()
-    }
-    #[must_use]
-    pub const fn stats(&self) -> BibStats {
-        self.stats
-    }
-}
-
-#[derive(Clone, Debug)]
-pub struct BibResultBuilder {
-    document: Arc<ProcessedBibliography>,
-    files: Vec<GeneratedFile>,
-    diagnostics: Vec<BibDiagnostic>,
-}
-
-impl BibResultBuilder {
-    #[must_use]
-    pub fn new(document: Arc<ProcessedBibliography>) -> Self {
-        Self {
-            document,
-            files: Vec::new(),
-            diagnostics: Vec::new(),
-        }
-    }
-    pub fn file(&mut self, file: GeneratedFile) -> Result<&mut Self, BibBuildError> {
-        if self
-            .files
-            .iter()
-            .any(|existing| existing.path() == file.path())
-        {
-            return Err(BibBuildError::DuplicateOutputPath(file.path().clone()));
-        }
-        self.files.push(file);
-        Ok(self)
-    }
-    pub fn diagnostic(&mut self, diagnostic: BibDiagnostic) -> &mut Self {
-        self.diagnostics.push(diagnostic);
-        self
-    }
-    #[must_use]
-    pub fn files_len(&self) -> usize {
-        self.files.len()
-    }
-    #[must_use]
-    pub fn freeze(self) -> BibResult {
-        let stats = BibStats {
-            sections: self.document.sections().len(),
-            entries: self
-                .document
-                .sections()
-                .map(|section| section.entries().len())
-                .sum(),
-            generated_files: self.files.len(),
-            generated_bytes: self.files.iter().map(|file| file.bytes().len()).sum(),
-        };
-        BibResult {
-            document: self.document,
-            files: self.files.into(),
-            diagnostics: self.diagnostics.into(),
-            stats,
-        }
-    }
-}
+/// Compatibility name for the unified backend-aware result.
+pub type BibResult = BibliographyResult;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum BibAttempt {
-    Complete(BibResult),
+    Complete(BibliographyResult),
     NeedResources(FileRequestBatch),
     Failed(BibFailure),
 }

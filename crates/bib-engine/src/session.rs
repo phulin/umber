@@ -3,7 +3,7 @@ use std::fmt;
 use std::sync::Arc;
 
 use bib_input::{
-    BibTexOptions, BibTexSource, ConfigError, ControlError, ControlFile, XmlError, XmlLimits,
+    BibTexOptions, ConfigError, ControlError, ControlFile, RawBibDatabase, XmlError, XmlLimits,
     parse_bibtex_bytes, parse_config_bytes, parse_config_with_paths, parse_control_bytes,
     parse_control_with_paths,
 };
@@ -18,12 +18,13 @@ use umber_vfs::{
     SnapshotError, VfsSnapshot, VirtualFile, VirtualPath, VirtualRoot,
 };
 
-use crate::biber::BiberWorker;
 use crate::biber::graph::SectionSpec;
-use crate::{BibAttempt, BibFailure, BibFailureKind, BibJob, BibResultBuilder};
+use crate::biber::{BiberDraft, BiberWorker};
+use crate::bibliography::biblatex_result;
+use crate::{BibAttempt, BibFailure, BibFailureKind, BibJob};
 
 mod convert;
-use convert::convert_entry;
+use convert::lower_database;
 
 /// Bounds and deterministic cache policy retained by one bibliography session.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -138,7 +139,7 @@ pub struct BibSession {
     unicode: UnicodeData,
     controls: BTreeMap<ParsedKey, Arc<ParsedControl>>,
     control_order: VecDeque<ParsedKey>,
-    datasources: BTreeMap<ParsedKey, Arc<BibTexSource>>,
+    datasources: BTreeMap<ParsedKey, Arc<RawBibDatabase>>,
     datasource_order: VecDeque<ParsedKey>,
     previous_need: Option<(BibJob, FileRequestBatch)>,
     accepted_inputs: Vec<crate::BibliographyInput>,
@@ -334,7 +335,9 @@ impl BibSession {
         let mut diagnostics = Vec::new();
         for file in located.values() {
             let source = self.datasource(file);
-            for diagnostic in source.diagnostics() {
+            let (lowered, source_diagnostics) =
+                lower_database(&source, file.path(), &mut seen_entries)?;
+            for diagnostic in source_diagnostics {
                 diagnostics.push(diagnostic_from_parts(
                     "BIBTEX_INPUT",
                     if matches!(diagnostic.kind, bib_input::BibTexDiagnosticKind::Limit) {
@@ -342,14 +345,10 @@ impl BibSession {
                     } else {
                         BibSeverity::Warning
                     },
-                    diagnostic.message.clone(),
+                    diagnostic.message,
                 ));
             }
-            for raw in source.entries() {
-                if seen_entries.insert(raw.key().to_ascii_lowercase()) {
-                    entries.push(convert_entry(raw, file.path())?);
-                }
-            }
+            entries.extend(lowered);
         }
 
         let sections = control
@@ -370,23 +369,27 @@ impl BibSession {
                 })
             })
             .collect::<Result<Vec<_>, ProcessFailure>>()?;
-        let (document, worker_diagnostics) = BiberWorker::new(configuration)
-            .process(entries, sections)
-            .map_err(|error| {
-                let kind = if error.is_build() {
-                    BibFailureKind::InternalInvariant
-                } else {
-                    BibFailureKind::Semantic
-                };
-                terminal(kind, error.code(), error.message())
-            })?;
-        diagnostics.extend(worker_diagnostics);
+        let (document, diagnostics) = BiberWorker::new(BiberDraft::new(
+            configuration,
+            entries,
+            sections,
+            diagnostics,
+        ))
+        .process()
+        .map_err(|error| {
+            let kind = if error.is_build() {
+                BibFailureKind::InternalInvariant
+            } else {
+                BibFailureKind::Semantic
+            };
+            terminal(kind, error.code(), error.message())
+        })?;
         let document = Arc::new(document);
         let router = OutputRouter::new(job.options().output_options().clone());
-        let mut result = BibResultBuilder::new(Arc::clone(&document));
+        let mut files = Vec::new();
         let mut generated_bytes = 0usize;
         for request in job.options().outputs() {
-            if result.files_len() == self.options.maximum_generated_files {
+            if files.len() == self.options.maximum_generated_files {
                 return Err(terminal(
                     BibFailureKind::Limit,
                     "GENERATED_FILE_LIMIT",
@@ -412,12 +415,15 @@ impl BibSession {
                     "generated-byte limit exceeded",
                 ));
             }
-            result.file(file).map_err(build_failure)?;
+            files.push(file);
         }
-        for diagnostic in diagnostics {
-            result.diagnostic(diagnostic);
-        }
-        Ok(result.freeze())
+        biblatex_result(document, files, diagnostics).map_err(|error| {
+            terminal(
+                BibFailureKind::InternalInvariant,
+                "RESULT_BUILD",
+                error.to_string(),
+            )
+        })
     }
 
     pub fn accepted_inputs(&self) -> &[crate::BibliographyInput] {
@@ -471,7 +477,7 @@ impl BibSession {
         Ok(control)
     }
 
-    fn datasource(&mut self, file: &VirtualFile) -> Arc<BibTexSource> {
+    fn datasource(&mut self, file: &VirtualFile) -> Arc<RawBibDatabase> {
         let key = parsed_key(file.content_id());
         if let Some(source) = self.datasources.get(&key) {
             return Arc::clone(source);
@@ -647,14 +653,6 @@ fn snapshot_failure(error: SnapshotError) -> ProcessFailure {
         BibFailureKind::Limit
     };
     terminal(kind, "VFS_SNAPSHOT", error.to_string())
-}
-
-fn build_failure(error: impl fmt::Display) -> ProcessFailure {
-    terminal(
-        BibFailureKind::InternalInvariant,
-        "MODEL_BUILD",
-        error.to_string(),
-    )
 }
 
 fn invalid(message: String) -> ProcessFailure {

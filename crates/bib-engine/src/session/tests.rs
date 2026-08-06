@@ -66,6 +66,8 @@ fn requests_remote_resources_resumes_and_exposes_typed_values() {
     );
     let section = result
         .document()
+        .biblatex()
+        .expect("BibSession result")
         .section(SectionId::new(0))
         .expect("section");
     let entry = section
