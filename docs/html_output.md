@@ -10,6 +10,15 @@ box, rule, leader, special-anchor, and text-container coordinates described
 below. Rustybuzz owns layout shaping and line breaking; the browser rasterizes
 the identical retained font instance inside fixed positioned runs.
 
+`tex-out` lowers committed artifacts into one detached keyed `RenderDocument`.
+That document is the sole HTML producer authority for positioned event
+ordinals, resolved fonts and resource order, typed specials, accessibility
+lines, and validated math glyph drawings. Standalone HTML and its asset list
+serialize this model without consulting artifacts, a font resolver, host I/O,
+or live engine state. Incremental revisions use the same keyed pages, nodes,
+resources, and canonical digests rather than translating the positioned stream
+a second time.
+
 Artifact schema 23 keeps this fixed-page model, makes
 `OpenTypePreferred` the modern font authority, and adds engine-positioned
 OpenType math. It does not delegate formula layout to MathML.

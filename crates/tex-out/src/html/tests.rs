@@ -678,7 +678,7 @@ fn positioned_entry_point_and_embedded_assets_obey_caller_limits() {
 }
 
 #[test]
-fn shared_render_document_matches_legacy_bytes_assets_and_incremental_identity() {
+fn shared_render_document_matches_public_bytes_assets_and_incremental_identity() {
     let resolver = Resolver { missing_b: false };
     let options = HtmlOptions {
         asset_mode: AssetMode::Manifest {
@@ -696,8 +696,8 @@ fn shared_render_document_matches_legacy_bytes_assets_and_incremental_identity()
             crate::positioned::lower_page(page, (index + 1) as u32).expect("positioned page")
         })
         .collect::<Vec<_>>();
-    let legacy = super::write_positioned_html_legacy(&positioned, &resolver, &options)
-        .expect("legacy standalone HTML");
+    let public =
+        write_positioned_html(&positioned, &resolver, &options).expect("public standalone HTML");
     let document = build_positioned_render_document(
         &positioned,
         &resolver,
@@ -709,7 +709,7 @@ fn shared_render_document_matches_legacy_bytes_assets_and_incremental_identity()
     )
     .expect("shared render document");
     let detached = write_render_document(&document, &options).expect("detached standalone HTML");
-    assert_eq!(detached, legacy);
+    assert_eq!(detached, public);
 
     let incremental = build_render_revision(
         &artifacts,

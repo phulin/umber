@@ -8,6 +8,14 @@ output resources. It has no access to `Universe`, engine checkpoints, mutable
 stores, or partially committed execution. Cold artifact replacement and an
 incremental artifact splice enter the same render-revision builder.
 
+The builder publishes a detached `RenderDocument`: its `RenderRevision` is the
+incremental patch currency, while its ordered font inventory is the standalone
+paint currency. Font validation, text mapping, special interpretation,
+accessibility grouping, math glyph selection or outline extraction, event
+ordinal assignment, resource identity, and resource ordering happen once.
+Standalone serialization and patch planning are pure consumers of that shared
+model.
+
 ## Identity and equality
 
 `RenderSessionId` is an opaque caller-scoped 128-bit value. It prevents a

@@ -13,13 +13,9 @@ use sha2::{Digest, Sha256};
 use tex_arith::Scaled;
 
 use crate::positioned::{
-    BoxKind, PositionedError, PositionedEvent, PositionedLimits, PositionedPage, TextUnit,
-    lower_page_with_limits,
+    BoxKind, PositionedError, PositionedLimits, PositionedPage, TextUnit, lower_page_with_limits,
 };
-use crate::{
-    ContentHash, FontResource, MathGlyph, MathGlyphSelection, MathOutputEvent, MathStart,
-    PageArtifact,
-};
+use crate::{ContentHash, FontResource, PageArtifact};
 
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
 pub struct HtmlFontKey {
@@ -372,20 +368,16 @@ pub fn write_positioned_html<R: HtmlFontAssets>(
         None,
         incremental::RenderLimits {
             max_pages: options.max_pages,
-            max_nodes: options.max_positioned_events,
+            max_nodes: usize::MAX,
             max_resources: usize::MAX,
-            max_resource_bytes: options.max_total_asset_bytes,
+            max_resource_bytes: usize::MAX,
         },
     )
     .map_err(|error| match error {
         incremental::RenderBuildError::Html(error) => error,
-        incremental::RenderBuildError::TooManyNodes { limit, .. } => {
-            HtmlError::Positioned(PositionedError::TooManyEvents { limit })
-        }
-        incremental::RenderBuildError::ResourcesTooLarge { bytes, limit } => {
-            HtmlError::AssetsTooLarge { bytes, limit }
-        }
-        incremental::RenderBuildError::TooManyResources { .. }
+        incremental::RenderBuildError::TooManyNodes { .. }
+        | incremental::RenderBuildError::ResourcesTooLarge { .. }
+        | incremental::RenderBuildError::TooManyResources { .. }
         | incremental::RenderBuildError::RevisionNotMonotonic { .. }
         | incremental::RenderBuildError::SessionMismatch => {
             unreachable!("standalone render has no previous revision or resource-count limit")
@@ -394,110 +386,36 @@ pub fn write_positioned_html<R: HtmlFontAssets>(
     write_render_document(&document, options)
 }
 
-#[cfg(test)]
-fn write_positioned_html_legacy<R: HtmlFontAssets>(
-    pages: &[PositionedPage],
-    assets: &R,
-    options: &HtmlOptions,
-) -> Result<HtmlOutput, HtmlError> {
-    if pages.is_empty() {
-        return Err(HtmlError::NoPages);
-    }
-    if pages.len() > options.max_pages {
-        return Err(HtmlError::TooManyPages {
-            count: pages.len(),
-            limit: options.max_pages,
-        });
-    }
-    validate_options(options)?;
-    for page in pages {
-        if page.events.len() > options.max_positioned_events {
-            return Err(HtmlError::Positioned(PositionedError::TooManyEvents {
-                limit: options.max_positioned_events,
-            }));
-        }
-        for event in &page.events {
-            if let PositionedEvent::TextRun(run) = event
-                && run.units.len() > options.max_text_run_units
-            {
-                return Err(HtmlError::Positioned(PositionedError::TextRunTooLong {
-                    limit: options.max_text_run_units,
-                }));
-            }
-        }
-    }
-    let mut resolved = BTreeMap::<HtmlFontKey, ResolvedFont>::new();
-    for page in pages {
-        for font in &page.fonts {
-            let key = HtmlFontKey::from(font);
-            if resolved.contains_key(&key) {
-                continue;
-            }
-            let web = assets
-                .font_asset(font)
-                .map_err(|message| HtmlError::FontResolution {
-                    font: font.name.clone(),
-                    message,
-                })?;
-            let checked = validate_font(font, web, options)?;
-            resolved.insert(key, checked);
-        }
-    }
-    let assets = build_assets(&resolved, options)?;
-    let mut html = String::new();
-    html.push_str("<!doctype html>\n<html lang=\"");
-    escape_attr(&options.language, &mut html);
-    html.push_str("\"><head><meta charset=\"utf-8\"><meta name=\"generator\" content=\"umber-html/1\"><meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; font-src data: 'self'; style-src 'unsafe-inline'; img-src data:\"><title>");
-    escape_text(&options.title, &mut html);
-    html.push_str("</title><style>\n");
-    check_html_size(&html, options)?;
-    write_font_css(&mut html, &resolved, options)?;
-    html.push_str(BASE_CSS);
-    html.push_str("</style></head><body>\n<main class=\"umber-document\">\n");
-    for page in pages {
-        write_page(&mut html, page, &resolved, options)?;
-        check_html_size(&html, options)?;
-    }
-    html.push_str("</main></body></html>\n");
-    if html.len() > options.max_html_bytes {
-        return Err(HtmlError::HtmlTooLarge {
-            bytes: html.len(),
-            limit: options.max_html_bytes,
-        });
-    }
-    Ok(HtmlOutput {
-        html: html.into_bytes(),
-        assets,
-    })
-}
-
 /// Serializes a detached producer model without consulting fonts, artifacts,
 /// engine state, or any host capability.
 pub fn write_render_document(
     document: &incremental::RenderDocument,
     options: &HtmlOptions,
 ) -> Result<HtmlOutput, HtmlError> {
-    validate_options(options)?;
+    let mut options = options.clone();
+    options.revision = document.revision.revision;
+    options.output_id = RenderedOutputId::from_bytes(document.revision.session_id.as_bytes());
+    validate_options(&options)?;
     let resources = document
         .revision
         .resources
         .iter()
         .map(|resource| (resource.identity, resource))
         .collect::<BTreeMap<_, _>>();
-    let assets = build_render_assets(document, &resources, options)?;
+    let assets = build_render_assets(document, &resources, &options)?;
     let mut html = String::new();
     html.push_str("<!doctype html>\n<html lang=\"");
     escape_attr(&document.revision.language, &mut html);
     html.push_str("\"><head><meta charset=\"utf-8\"><meta name=\"generator\" content=\"umber-html/1\"><meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; font-src data: 'self'; style-src 'unsafe-inline'; img-src data:\"><title>");
     escape_text(&document.revision.title, &mut html);
     html.push_str("</title><style>\n");
-    check_html_size(&html, options)?;
-    write_render_font_css(&mut html, document, &resources, options)?;
+    check_html_size(&html, &options)?;
+    write_render_font_css(&mut html, document, &resources, &options)?;
     html.push_str(BASE_CSS);
     html.push_str("</style></head><body>\n<main class=\"umber-document\">\n");
     for page in &document.revision.pages {
-        write_render_page(&mut html, page, options)?;
-        check_html_size(&html, options)?;
+        write_render_page(&mut html, page, &options)?;
+        check_html_size(&html, &options)?;
     }
     html.push_str("</main></body></html>\n");
     if html.len() > options.max_html_bytes {
@@ -1105,354 +1023,6 @@ fn validate_font(
     })
 }
 
-fn build_assets(
-    resolved: &BTreeMap<HtmlFontKey, ResolvedFont>,
-    options: &HtmlOptions,
-) -> Result<Vec<HtmlAsset>, HtmlError> {
-    let mut by_digest = BTreeMap::<String, HtmlAsset>::new();
-    let mut total = 0usize;
-    for font in resolved.values() {
-        if by_digest.contains_key(&font.digest_hex) {
-            continue;
-        }
-        total = total
-            .checked_add(font.web.woff2.len())
-            .ok_or(HtmlError::AssetsTooLarge {
-                bytes: usize::MAX,
-                limit: options.max_total_asset_bytes,
-            })?;
-        if total > options.max_total_asset_bytes {
-            return Err(HtmlError::AssetsTooLarge {
-                bytes: total,
-                limit: options.max_total_asset_bytes,
-            });
-        }
-        if matches!(options.asset_mode, AssetMode::Manifest { .. }) {
-            by_digest.insert(
-                font.digest_hex.clone(),
-                HtmlAsset {
-                    path: format!("sha256-{}.woff2", font.digest_hex),
-                    bytes: font.web.woff2.clone(),
-                    sha256: font.web.sha256,
-                    provenance: font.web.provenance.clone(),
-                },
-            );
-        }
-    }
-    Ok(by_digest.into_values().collect())
-}
-
-fn write_font_css(
-    out: &mut String,
-    fonts: &BTreeMap<HtmlFontKey, ResolvedFont>,
-    options: &HtmlOptions,
-) -> Result<(), HtmlError> {
-    for font in fonts.values() {
-        out.push_str("@font-face{font-family:'");
-        out.push_str(&font.family);
-        out.push_str("';src:url('");
-        match &options.asset_mode {
-            AssetMode::Embedded => {
-                let encoded = font
-                    .web
-                    .woff2
-                    .len()
-                    .checked_add(2)
-                    .and_then(|len| (len / 3).checked_mul(4))
-                    .ok_or(HtmlError::HtmlTooLarge {
-                        bytes: usize::MAX,
-                        limit: options.max_html_bytes,
-                    })?;
-                let projected = out
-                    .len()
-                    .checked_add(encoded)
-                    .ok_or(HtmlError::HtmlTooLarge {
-                        bytes: usize::MAX,
-                        limit: options.max_html_bytes,
-                    })?;
-                if projected > options.max_html_bytes {
-                    return Err(HtmlError::HtmlTooLarge {
-                        bytes: projected,
-                        limit: options.max_html_bytes,
-                    });
-                }
-                out.push_str("data:font/woff2;base64,");
-                base64(&font.web.woff2, out);
-            }
-            AssetMode::Manifest { relative_directory } => {
-                out.push_str(relative_directory);
-                if !relative_directory.ends_with('/') {
-                    out.push('/');
-                }
-                out.push_str("sha256-");
-                out.push_str(&font.digest_hex);
-                out.push_str(".woff2");
-            }
-        }
-        out.push_str("') format('woff2');font-display:block;font-style:normal;font-weight:400}\n");
-        check_html_size(out, options)?;
-    }
-    Ok(())
-}
-
-fn write_page(
-    out: &mut String,
-    page: &PositionedPage,
-    fonts: &BTreeMap<HtmlFontKey, ResolvedFont>,
-    options: &HtmlOptions,
-) -> Result<(), HtmlError> {
-    out.push_str("<section class=\"umber-page\" data-umber-page=\"");
-    out.push_str(&page.page_index.to_string());
-    out.push_str("\" data-umber-revision=\"");
-    out.push_str(&options.revision.to_string());
-    out.push_str("\" data-umber-output=\"");
-    out.push_str(&options.output_id.to_string());
-    out.push('"');
-    attr_sp(out, "width", page.width);
-    attr_sp(out, "height", page.height);
-    attr_sp(out, "origin-x", page.page_origin_x);
-    attr_sp(out, "origin-y", page.page_origin_y);
-    out.push_str(" data-umber-mag=\"");
-    out.push_str(&page.mag.to_string());
-    out.push_str("\" style=\"width:");
-    css_px(out, page.width, page.mag);
-    out.push_str(";height:");
-    css_px(out, page.height, page.mag);
-    out.push_str("\">\n<div class=\"umber-page-content\" style=\"left:");
-    css_px(out, page.page_origin_x, page.mag);
-    out.push_str(";top:");
-    css_px(out, page.page_origin_y, page.mag);
-    out.push_str("\">\n");
-    let page_fonts = page
-        .fonts
-        .iter()
-        .map(|font| (font.font_id, font))
-        .collect::<BTreeMap<_, _>>();
-    let mut accessible = AccessiblePage::default();
-    let mut box_stack = Vec::new();
-    let mut special_state = SpecialState::default();
-    for (ordinal, event) in page.events.iter().enumerate() {
-        match event {
-            PositionedEvent::Box(event) => {
-                box_stack.push((event.id, event.kind));
-                out.push_str("<div class=\"umber-box\" aria-hidden=\"true\" data-umber-event=\"");
-                out.push_str(&ordinal.to_string());
-                out.push_str("\" data-umber-kind=\"");
-                out.push_str(match event.kind {
-                    BoxKind::Horizontal => "hbox",
-                    BoxKind::Vertical => "vbox",
-                });
-                out.push('"');
-                geometry_attrs(out, event.x, event.y, event.width, event.height);
-                attr_sp(out, "baseline", event.baseline);
-                geometry_style(out, event.x, event.y, event.width, event.height, page.mag);
-                out.push_str("\"></div>\n");
-            }
-            PositionedEvent::Rule(event) => {
-                out.push_str("<div class=\"umber-rule\" aria-hidden=\"true\" data-umber-event=\"");
-                out.push_str(&ordinal.to_string());
-                out.push('"');
-                geometry_attrs(out, event.x, event.y, event.width, event.height);
-                geometry_style(out, event.x, event.y, event.width, event.height, page.mag);
-                if let Some(color) = special_state.color() {
-                    out.push_str(";color:");
-                    out.push_str(color);
-                }
-                out.push_str("\"></div>\n");
-            }
-            PositionedEvent::TextRun(event) => {
-                let artifact_font =
-                    page_fonts
-                        .get(&event.font_id)
-                        .ok_or(HtmlError::MissingPageFont {
-                            page: page.page_index,
-                            font_id: event.font_id,
-                        })?;
-                let font = fonts.get(&HtmlFontKey::from(*artifact_font)).ok_or(
-                    HtmlError::MissingPageFont {
-                        page: page.page_index,
-                        font_id: event.font_id,
-                    },
-                )?;
-                let text_budget = options
-                    .max_html_bytes
-                    .checked_sub(out.len())
-                    .and_then(|remaining| remaining.checked_sub(accessible.markup.len()))
-                    .unwrap_or(0)
-                    / 6;
-                let mapped_encoding = artifact_font
-                    .opentype
-                    .as_ref()
-                    .is_none_or(|opentype| opentype.encoding_map_version.is_some());
-                let text = map_text(event.units.as_slice(), font, mapped_encoding, text_budget)?;
-                accessible.push_run(
-                    accessible_line(&box_stack),
-                    &text,
-                    special_state.link.as_deref(),
-                );
-                out.push_str("<svg class=\"umber-run\" aria-hidden=\"true\" data-umber-event=\"");
-                out.push_str(&ordinal.to_string());
-                out.push('"');
-                attr_sp(out, "x", event.x);
-                attr_sp(out, "baseline", event.baseline);
-                out.push_str(" data-umber-font=\"");
-                out.push_str(&event.font_id.to_string());
-                if let Some(opentype) = &artifact_font.opentype {
-                    out.push_str("\" data-umber-face-index=\"");
-                    out.push_str(&opentype.face_index.to_string());
-                    if let Some(script) = opentype.script {
-                        out.push_str("\" data-umber-script=\"");
-                        escape_attr(&script.to_string(), out);
-                    }
-                }
-                out.push_str("\" data-umber-codes=\"");
-                write_codes(out, &event.units);
-                out.push_str("\" data-umber-text-kind=\"");
-                out.push_str(if mapped_encoding {
-                    "encoding"
-                } else {
-                    "unicode"
-                });
-                out.push_str("\" style=\"font-family:'");
-                out.push_str(&font.family);
-                out.push_str("';font-size:");
-                css_px(out, Scaled::from_raw(font.web.key.at_size_raw), page.mag);
-                if let Some(opentype) = &artifact_font.opentype {
-                    out.push_str(";font-feature-settings:");
-                    write_feature_settings(out, &opentype.features);
-                    out.push_str(";font-variation-settings:");
-                    write_variation_settings(out, &opentype.variation);
-                }
-                if let Some(color) = special_state.color() {
-                    out.push_str(";color:");
-                    out.push_str(color);
-                }
-                out.push_str("\">");
-                out.push_str("<rect class=\"umber-baseline\" x=\"");
-                css_px(out, event.x, page.mag);
-                out.push_str("\" y=\"");
-                css_px(out, event.baseline, page.mag);
-                out.push_str("\" width=\"1\" height=\"1\"></rect>");
-                if let Some(link) = &special_state.link {
-                    out.push_str("<a href=\"");
-                    escape_attr(link, out);
-                    out.push_str("\" rel=\"noreferrer noopener\">");
-                }
-                out.push_str("<text class=\"umber-run-text\" direction=\"");
-                let direction =
-                    artifact_font
-                        .opentype
-                        .as_ref()
-                        .map_or("ltr", |font| match font.direction {
-                            tex_fonts::WritingDirection::LeftToRight => "ltr",
-                            tex_fonts::WritingDirection::RightToLeft => "rtl",
-                        });
-                out.push_str(direction);
-                if let Some(language) = artifact_font
-                    .opentype
-                    .as_ref()
-                    .and_then(|font| font.language.as_ref())
-                {
-                    out.push_str("\" lang=\"");
-                    escape_attr(language.as_str(), out);
-                }
-                out.push_str("\" x=\"");
-                let exact_character_positions = event.positions.len() == event.units.len()
-                    && event.units.iter().all(|unit| match unit {
-                        TextUnit::Space => true,
-                        TextUnit::Code(code) if mapped_encoding => usize::try_from(*code)
-                            .ok()
-                            .and_then(|code| font.web.encoding.get(code))
-                            .and_then(Option::as_ref)
-                            .is_some_and(|mapping| mapping.chars().count() == 1),
-                        TextUnit::Code(code) => char::from_u32(*code).is_some(),
-                    });
-                if exact_character_positions {
-                    for (index, position) in event.positions.iter().enumerate() {
-                        if index > 0 {
-                            out.push(' ');
-                        }
-                        css_px(out, *position, page.mag);
-                    }
-                } else {
-                    // A multi-scalar mapping represents one TeX unit. SVG cannot
-                    // skip entries in an x-position list, so retain browser
-                    // shaping for that exceptional run rather than assigning
-                    // later scalars to positions belonging to subsequent units.
-                    css_px(out, event.x, page.mag);
-                }
-                out.push_str("\" y=\"");
-                css_px(out, event.baseline, page.mag);
-                out.push_str("\">");
-                escape_text(&text, out);
-                out.push_str("</text>");
-                if special_state.link.is_some() {
-                    out.push_str("</a>");
-                }
-                out.push_str("</svg>\n");
-            }
-            PositionedEvent::Special(event) => {
-                if event.payload.len() > options.max_special_bytes {
-                    return Err(HtmlError::SpecialTooLarge {
-                        bytes: event.payload.len(),
-                        limit: options.max_special_bytes,
-                    });
-                }
-                let interpreted = interpret_special(event)?;
-                special_state.apply(&interpreted)?;
-                out.push_str(
-                    "<span class=\"umber-special\" aria-hidden=\"true\" data-umber-event=\"",
-                );
-                out.push_str(&ordinal.to_string());
-                out.push('"');
-                attr_sp(out, "x", event.x);
-                attr_sp(out, "y", event.y);
-                out.push_str(" data-umber-special-class=\"");
-                escape_attr(&event.class, out);
-                out.push_str("\" data-umber-special-hex=\"");
-                out.push_str(&hex(&event.payload));
-                match &interpreted {
-                    InterpretedSpecial::Destination(id) => {
-                        out.push_str("\" id=\"");
-                        escape_attr(id, out);
-                    }
-                    InterpretedSpecial::Inert => {
-                        out.push_str("\" data-umber-special-policy=\"inert");
-                    }
-                    _ => out.push_str("\" data-umber-special-policy=\"applied"),
-                }
-                out.push_str("\" style=\"left:");
-                css_px(out, event.x, page.mag);
-                out.push_str(";top:");
-                css_px(out, event.y, page.mag);
-                out.push_str("\"></span>\n");
-            }
-            PositionedEvent::PdfAccessibility(_) => {}
-            PositionedEvent::PdfAnnotation(_)
-            | PositionedEvent::PdfDestination(_)
-            | PositionedEvent::PdfGraphics(_) => {}
-            PositionedEvent::BoxEnd(event) => {
-                debug_assert_eq!(box_stack.pop().map(|(id, _)| id), Some(event.id));
-            }
-            PositionedEvent::PdfThread(_) | PositionedEvent::PdfEndThread { .. } => {}
-        }
-        check_html_size(out, options)?;
-    }
-    if !special_state.colors.is_empty() || special_state.link.is_some() {
-        return Err(HtmlError::InvalidSpecial {
-            message: "unclosed color or link scope at page end".to_owned(),
-        });
-    }
-    write_math(out, page, fonts, options)?;
-    accessible.finish();
-    out.push_str("</div><div class=\"umber-a11y\" role=\"group\" aria-label=\"Page ");
-    out.push_str(&page.page_index.to_string());
-    out.push_str("\">");
-    out.push_str(&accessible.markup);
-    out.push_str("</div></section>\n");
-    Ok(())
-}
-
 #[derive(Default)]
 struct AccessiblePage {
     markup: String,
@@ -1502,195 +1072,6 @@ fn accessible_line(box_stack: &[(u32, BoxKind)]) -> Option<u32> {
                 && (*index == 0 || box_stack[*index - 1].1 == BoxKind::Vertical)
         })
         .map(|(_, (id, _))| *id)
-}
-
-fn write_feature_settings(out: &mut String, policy: &tex_fonts::FontFeaturePolicy) {
-    if policy.settings().is_empty() {
-        out.push_str("normal");
-        return;
-    }
-    for (index, setting) in policy.settings().iter().enumerate() {
-        if index > 0 {
-            out.push(',');
-        }
-        out.push('\'');
-        write_css_tag(out, setting.tag);
-        out.push_str("' ");
-        out.push_str(&setting.value.to_string());
-    }
-}
-
-fn write_variation_settings(out: &mut String, selection: &tex_fonts::VariationSelection) {
-    if selection.coordinates().is_empty() {
-        out.push_str("normal");
-        return;
-    }
-    for (index, coordinate) in selection.coordinates().iter().enumerate() {
-        if index > 0 {
-            out.push(',');
-        }
-        out.push('\'');
-        write_css_tag(out, coordinate.tag);
-        out.push_str("' ");
-        let value = f64::from(coordinate.value) / 65_536.0;
-        out.push_str(&value.to_string());
-    }
-}
-
-fn write_css_tag(out: &mut String, tag: tex_fonts::OpenTypeTag) {
-    for byte in tag.bytes() {
-        match byte {
-            b'\'' => out.push_str("\\27 "),
-            b'\\' => out.push_str("\\5c "),
-            _ => out.push(char::from(byte)),
-        }
-    }
-}
-
-fn write_math(
-    out: &mut String,
-    page: &PositionedPage,
-    fonts: &BTreeMap<HtmlFontKey, ResolvedFont>,
-    options: &HtmlOptions,
-) -> Result<(), HtmlError> {
-    let by_instance = page
-        .fonts
-        .iter()
-        .filter_map(|artifact| {
-            let opentype = artifact.opentype.as_ref()?;
-            fonts
-                .get(&HtmlFontKey::from(artifact))
-                .map(|font| (opentype.instance_identity, (font, opentype)))
-        })
-        .collect::<BTreeMap<_, _>>();
-    let mut active: Option<MathStart> = None;
-    for (ordinal, event) in page.math_events.iter().enumerate() {
-        match event {
-            MathOutputEvent::Start(start) if active.is_none() => {
-                active = Some(*start);
-                out.push_str("<svg class=\"umber-math\" aria-hidden=\"true\" data-umber-math=\"");
-                out.push_str(&start.id.to_string());
-                out.push('"');
-                attr_sp(out, "x", start.x);
-                attr_sp(out, "baseline", start.baseline);
-                attr_sp(out, "width", start.width);
-                attr_sp(out, "height", start.height);
-                attr_sp(out, "depth", start.depth);
-                out.push_str("><rect class=\"umber-math-baseline\" x=\"");
-                css_px(out, start.x, page.mag);
-                out.push_str("\" y=\"");
-                css_px(out, start.baseline, page.mag);
-                out.push_str("\" width=\"1\" height=\"1\"></rect>");
-            }
-            MathOutputEvent::Glyph(glyph) if active.is_some() => {
-                let (font, opentype) = by_instance
-                    .get(&glyph.font_instance)
-                    .copied()
-                    .ok_or(HtmlError::MissingMathFontInstance)?;
-                write_math_glyph(out, glyph, font, opentype, page.mag, ordinal)?;
-            }
-            MathOutputEvent::Rule(rule) if active.is_some() => {
-                out.push_str("<rect class=\"umber-math-rule\" data-umber-math-event=\"");
-                out.push_str(&ordinal.to_string());
-                out.push('"');
-                geometry_attrs(out, rule.x, rule.y, rule.width, rule.height);
-                out.push_str(" x=\"");
-                css_px(out, rule.x, page.mag);
-                out.push_str("\" y=\"");
-                css_px(out, rule.y, page.mag);
-                out.push_str("\" width=\"");
-                css_px(out, rule.width, page.mag);
-                out.push_str("\" height=\"");
-                css_px(out, rule.height, page.mag);
-                out.push_str("\"></rect>");
-            }
-            MathOutputEvent::End if active.take().is_some() => out.push_str("</svg>\n"),
-            _ => return Err(HtmlError::InvalidMathEventSequence),
-        }
-        check_html_size(out, options)?;
-    }
-    if active.is_some() {
-        return Err(HtmlError::InvalidMathEventSequence);
-    }
-    Ok(())
-}
-
-fn write_math_glyph(
-    out: &mut String,
-    glyph: &MathGlyph,
-    font: &ResolvedFont,
-    opentype: &crate::OpenTypeFontResource,
-    mag: i32,
-    ordinal: usize,
-) -> Result<(), HtmlError> {
-    out.push_str("<g class=\"umber-math-glyph\" data-umber-math-event=\"");
-    out.push_str(&ordinal.to_string());
-    out.push_str("\" data-umber-glyph-id=\"");
-    out.push_str(&glyph.glyph_id.to_string());
-    out.push_str("\" data-umber-font-instance=\"");
-    out.push_str(&hex(&glyph.font_instance.bytes()));
-    out.push_str("\" data-umber-ssty=\"");
-    out.push_str(&glyph.ssty.to_string());
-    out.push('"');
-    attr_sp(out, "x", glyph.x);
-    attr_sp(out, "baseline", glyph.baseline);
-    attr_sp(out, "width", glyph.width);
-    attr_sp(out, "height", glyph.height);
-    attr_sp(out, "depth", glyph.depth);
-    out.push('>');
-    match glyph.selection {
-        MathGlyphSelection::Cmap { scalar } => {
-            let ch = char::from_u32(scalar).ok_or(HtmlError::MathGlyphMismatch {
-                glyph_id: glyph.glyph_id,
-            })?;
-            if selected_glyph(font, opentype, ch, glyph.ssty) != Some(glyph.glyph_id) {
-                return Err(HtmlError::MathGlyphMismatch {
-                    glyph_id: glyph.glyph_id,
-                });
-            }
-            out.push_str("<text class=\"umber-math-text\" direction=\"ltr\" x=\"");
-            css_px(out, glyph.x, mag);
-            out.push_str("\" y=\"");
-            css_px(out, glyph.baseline, mag);
-            out.push_str("\" style=\"font-family:'");
-            out.push_str(&font.family);
-            out.push_str("';font-size:");
-            css_px(out, Scaled::from_raw(font.web.key.at_size_raw), mag);
-            out.push_str(";font-feature-settings:'ssty' ");
-            out.push_str(&glyph.ssty.to_string());
-            out.push_str(";font-variation-settings:");
-            write_variation_settings(out, &opentype.variation);
-            out.push_str("\">");
-            escape_text(&ch.to_string(), out);
-            out.push_str("</text>");
-        }
-        MathGlyphSelection::OutlineFallback => {
-            let (path, units_per_em) = outline_path(font, opentype, glyph.glyph_id)?;
-            out.push_str("<path class=\"umber-math-outline\" d=\"");
-            out.push_str(&path);
-            out.push_str("\" transform=\"translate(");
-            css_number(out, glyph.x, mag, 1);
-            out.push(' ');
-            css_number(out, glyph.baseline, mag, 1);
-            out.push_str(") scale(");
-            css_number(
-                out,
-                Scaled::from_raw(font.web.key.at_size_raw),
-                mag,
-                i128::from(units_per_em),
-            );
-            out.push(' ');
-            css_number(
-                out,
-                Scaled::from_raw(-font.web.key.at_size_raw),
-                mag,
-                i128::from(units_per_em),
-            );
-            out.push_str(")\"></path>");
-        }
-    }
-    out.push_str("</g>");
-    Ok(())
 }
 
 fn selected_glyph(
