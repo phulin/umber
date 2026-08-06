@@ -1117,6 +1117,40 @@ lifecycle evidence.
 
 **Proof.** Preserve command compatibility or record retirement, deterministic reference flags/environment/staging, DVI normalization and triage, fixture publication and rollback, all active performance budgets, reproducible investigations, and the Cargo-fuzz boundary.
 
+**Implemented authority and accounting.** `fixturegen::reference` is the sole
+TeX/TFtoPL process, staging, environment, flag, output, status, and
+manifest-hash kernel. `fixturegen --reference-dvi` and
+`fixture_transaction.rs` own reference-fixture and atomic cohort publication;
+`refexec` and parity's live API/CLI remain compatibility/composition layers,
+`test-support` owns generic DVI equality, and `tex-command-stream` owns semantic
+comparison. The completed layout migration commands and registries retired by
+explicit compatibility decision. Layout/width workloads moved to
+`benchmarks/tex-typeset`, pure-memo edit moved to `benchmarks/tex-incr`, and
+shipout remains with `benchmarks/tex-exec`. Every other inventoried benchmark,
+trace, profile, fuzz, fixture, and public API surface remains with its named
+owner.
+
+The cumulative credited authored retirement is 1,980 lines: 46 lines of
+duplicate parity reference recipes, 1,446 one-time fixture-migration production
+and test lines, and 488 historical benchmark/prototype lines. This deliberately
+excludes the relocated 284-line reference implementation, 941 moved transaction
+and ordinary-publication test lines, 583 moved benchmark/baseline lines, and all
+generated lockfile churn. Raw child implementation `--numstat` is 4,025
+additions and 3,132 deletions, but is not used as reduction credit because it
+mixes those moves, generated locks, proof, documentation, and owner scaffolding.
+No fixture or benchmark baseline bytes changed.
+
+**Program closeout.** All four children are closed. The fresh owner/caller audit
+found no undeclared retirement or second reference/publication authority and
+repaired one retained `tex-state` benchmark projection after the engine added
+the canonical internal-control-sequence kind. Reference, publication,
+comparison, affected benchmark, snapshot, scripted-fuzz, full native, and
+quality gates pass under the closeout protocol. The unchanged foreign-host
+width timing baseline and current layout-allocation ceilings remain explicitly
+red and owned by `umber2-9508` and `umber2-dtis`; neither baseline was rewritten.
+The exact command and accounting receipt is recorded in
+[the Program 18 closeout](writeback/umber2-vgjr.18.md).
+
 ## Dependency-aware execution plan
 
 ### Wave 0: decisions, baselines, and ledgers

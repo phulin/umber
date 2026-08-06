@@ -633,6 +633,7 @@ fn encode_token(stores: &Universe, token: Token, mut push: impl FnMut(u64)) {
                 | tex_state::interner::ControlSequenceKind::SingleCharacter
                 | tex_state::interner::ControlSequenceKind::Named => 0,
                 tex_state::interner::ControlSequenceKind::ActiveCharacter => 1,
+                tex_state::interner::ControlSequenceKind::Internal => 2,
             });
             let bytes = stores.resolve(symbol).as_bytes();
             push(bytes.len() as u64);
