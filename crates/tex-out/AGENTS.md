@@ -37,6 +37,7 @@ Use this crate for stable, driver-facing artifact structures and serialization c
 - `src/model.rs`: Detached page artifact, versioned font-layout/classic/OpenType identities, node, glue, kern, and output effect data model.
 - `src/node_cursor.rs`: Canonical explicit-stack artifact node/list event order shared by codec emission and validation.
 - `src/pdf.rs`: validated detached PDF object/page/resource graph, canonical ordering, and semantic identity.
+- `src/pdf/finalization.rs`: complete host-neutral PDF finalization input, including committed pages/forms, realized fonts/programs, images, metadata/navigation, allocation state, and explicit limits.
 - `src/pdf/graph.rs`: private canonical graph-role and nested-value cursor shared by validation, hashing, preflight, and serialization.
 - `src/pdf/paint.rs`: private compact/ordered PDF paint program and shared graphics/text-state interpreter.
 - `src/pdf/tests.rs`: PDF graph validation, canonical identity, and budget tests.
@@ -51,6 +52,9 @@ Use this crate for stable, driver-facing artifact structures and serialization c
 
 - Do not depend on `tex-state` or `Universe`; artifact data must be detached from live stores.
 - Do not add engine mutation, page-builder logic, or file effects here.
+- PDF finalization accepts only `PdfFinalizationInput`; adapters must expand
+  engine token lists, read referenced files/artifacts, and acquire validated
+  font/image resources before crossing into this crate.
 - Keep binary format changes explicit, versioned, and covered by round-trip tests.
 - Use `tex-arith::Scaled` raw values consistently for serialized dimensions.
 

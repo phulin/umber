@@ -8,9 +8,22 @@ use std::num::NonZeroU32;
 
 use sha2::{Digest, Sha256};
 
+mod finalization;
 mod graph;
 mod paint;
 mod serialize;
+
+pub use finalization::{
+    PDF_MAX_OBJECT_ID, PdfActionInput, PdfActionTargetInput, PdfAllocationInput,
+    PdfAnnotationDimensionsInput, PdfAnnotationInput, PdfCommittedPageInput,
+    PdfDestinationIdentityInput, PdfDestinationInput, PdfDocumentInput, PdfDocumentMetadataInput,
+    PdfExternalImageInput, PdfFinalizationInput, PdfFinalizationLimits, PdfFontInput,
+    PdfFontMetricsInput, PdfFontProgramInput, PdfFormInput, PdfImageMetadataInput,
+    PdfIndirectActionInput, PdfLinkInput, PdfNavigationInput, PdfObjectAllocationError,
+    PdfObjectAllocator, PdfOutlineInput, PdfPageBoxInput, PdfPageRotationInput,
+    PdfRasterColorSpaceInput, PdfRasterFormatInput, PdfRawObjectInput, PdfRawObjectPayloadInput,
+    PdfReservedDocumentObjects, PdfThreadBeadInput, PdfThreadInput, PdfVirtualFontInput,
+};
 
 use graph::{PdfGraphView, PdfValueCursor, PdfValueEvent};
 use paint::PdfPaintProgram;
