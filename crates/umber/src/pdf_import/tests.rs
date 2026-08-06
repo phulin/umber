@@ -1,11 +1,11 @@
 use test_support::pdf_fixture::{
-    Dictionary, PdfFixture, RawPdfFixture, array, name, nested_array, reference,
+    Dictionary, RawPdfFixture, ValidPdfFixture, array, name, nested_array, reference,
 };
 
 use super::*;
 
 fn named_destination_pdf(name_tree: bool) -> Vec<u8> {
-    let mut document = PdfFixture::new("1.7").expect("create named-destination PDF");
+    let mut document = ValidPdfFixture::new("1.7").expect("create named-destination PDF");
     let catalog = if name_tree {
         document
             .add_dictionary(

@@ -905,10 +905,12 @@ same format-loaded state, and their committed corpora rely on it.
 minimal primitive-only sources, pinned reference PDFs, deterministic Umber
 PDFs, normalized catalog/page/resource/content
 structure, exact 72-dpi grayscale PGM renders, and renderer/hash attestations.
-Synthetic PDF parser and importer inputs use the dependency-free
-`test_support::pdf_fixture` classic-xref writer. It deterministically checks
-indirect-object offsets and stream lengths while leaving complex object-stream
-syntax to committed externally generated fixtures.
+Synthetic PDF parser and importer inputs use `ValidPdfFixture`, the
+`pdf_writer`-backed adapter in `test_support::pdf_fixture`. The separate
+handwritten `RawPdfFixture` is restricted to tests whose evidence requires
+classic-xref bytes, malformed syntax, cycles, depth limits, or independence
+from `pdf_writer`; complex object-stream syntax remains a committed externally
+generated fixture.
 The `form_xobjects` case additionally canonicalizes decoded Form XObject
 dictionaries and content operations, pins nested h/v/math placement and reuse,
 and drives retained-session artifact/position/snap replay coverage.

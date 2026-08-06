@@ -1,6 +1,6 @@
 //! Small PDF input fixtures for parser and importer tests.
 //!
-//! [`PdfFixture`] is the ordinary valid-input boundary: it accepts focused raw
+//! [`ValidPdfFixture`] is the ordinary valid-input boundary: it accepts focused raw
 //! values but delegates all file framing to `pdf_writer`. [`RawPdfFixture`] is
 //! intentionally separate and handwritten. Use it only when classic-xref
 //! bytes, malformed syntax, cycles, depth limits, or writer independence are
@@ -77,13 +77,13 @@ impl Dictionary {
 }
 
 /// A tiny `pdf_writer` adapter for ordinary valid synthetic inputs.
-pub struct PdfFixture {
+pub struct ValidPdfFixture {
     pdf: Pdf,
     objects: BTreeSet<u32>,
     trailer: Dictionary,
 }
 
-impl PdfFixture {
+impl ValidPdfFixture {
     pub fn new(version: &str) -> Result<Self, FixtureError> {
         if !valid_version(version) {
             return Err(FixtureError::InvalidVersion(version.to_owned()));

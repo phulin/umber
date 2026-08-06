@@ -845,7 +845,7 @@ mod tests {
         ResourceResponse, SessionOptions, VirtualCompileSession,
     };
     use test_support::pdf_fixture::{
-        Dictionary as FixtureDictionary, PdfFixture, array, name, reference,
+        Dictionary as FixtureDictionary, ValidPdfFixture, array, name, reference,
     };
     use tex_exec::{PdfImagePageBox, PdfImageRequest};
     use tex_state::{InputOpenState, PdfExternalImageMetadata, Universe, World};
@@ -963,7 +963,7 @@ mod tests {
 
     #[test]
     fn inherited_quarter_turn_swaps_pdf_page_natural_dimensions() {
-        let mut document = PdfFixture::new("1.5").expect("create rotated PDF");
+        let mut document = ValidPdfFixture::new("1.5").expect("create rotated PDF");
         document
             .add_dictionary(
                 1,

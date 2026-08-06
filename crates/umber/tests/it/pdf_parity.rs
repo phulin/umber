@@ -6,7 +6,7 @@ use test_support::{
     closed_case::FixtureCase,
     corpus_root,
     pdf::normalize_structure,
-    pdf_probe::{PdfProbe, ProbeLimits},
+    pdf_query::{PdfQuery, QueryLimits},
     read_binary_fixture, read_fixture,
 };
 use tex_state::Universe;
@@ -113,7 +113,7 @@ struct AnnotationProjection {
 }
 
 fn annotation_projection(bytes: &[u8]) -> Vec<Vec<AnnotationProjection>> {
-    let document = PdfProbe::new(bytes, ProbeLimits::default()).expect("parse annotation fixture");
+    let document = PdfQuery::new(bytes, QueryLimits::default()).expect("parse annotation fixture");
     let mut owned = std::collections::BTreeSet::new();
     document
         .pages()

@@ -1,4 +1,4 @@
-//! Bounded, focused inspection of PDF files for host-side tests.
+//! Bounded, focused PDF queries for host-side tests.
 //!
 //! Hayro's parsed document and borrowed objects are the sole object model. The
 //! wrappers in this module are shallow handles; only stream bytes and decoded
@@ -16,14 +16,14 @@ use sha2::{Digest, Sha256};
 
 /// Limits applied independently to each focused query.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct ProbeLimits {
+pub struct QueryLimits {
     pub max_depth: usize,
     pub max_objects: usize,
     pub max_values: usize,
     pub max_stream_bytes: usize,
 }
 
-impl Default for ProbeLimits {
+impl Default for QueryLimits {
     fn default() -> Self {
         Self {
             max_depth: 64,
@@ -36,39 +36,39 @@ impl Default for ProbeLimits {
 
 /// A stable PDF indirect-object identity.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub struct ProbeObjectId {
+pub struct QueryObjectId {
     pub number: i32,
     pub generation: i32,
 }
 
-impl ProbeObjectId {
+impl QueryObjectId {
     #[must_use]
     pub const fn new(number: i32, generation: i32) -> Self {
         Self { number, generation }
     }
 }
 
-impl From<ObjectIdentifier> for ProbeObjectId {
+impl From<ObjectIdentifier> for QueryObjectId {
     fn from(value: ObjectIdentifier) -> Self {
         Self::new(value.obj_number, value.gen_number)
     }
 }
 
-impl From<ProbeObjectId> for ObjectIdentifier {
-    fn from(value: ProbeObjectId) -> Self {
+impl From<QueryObjectId> for ObjectIdentifier {
+    fn from(value: QueryObjectId) -> Self {
         Self::new(value.number, value.generation)
     }
 }
 
 /// A shallow borrowed PDF value. References are resolved at the point of use.
 #[derive(Clone)]
-pub struct ProbeValue<'a> {
+pub struct QueryValue<'a> {
     xref: &'a hayro_syntax::xref::XRef,
-    reference: Option<ProbeObjectId>,
+    reference: Option<QueryObjectId>,
     object: Option<Object<'a>>,
 }
 
-impl<'a> ProbeValue<'a> {
+impl<'a> QueryValue<'a> {
     fn from_maybe_ref(xref: &'a hayro_syntax::xref::XRef, value: MaybeRef<Object<'a>>) -> Self {
         match value {
             MaybeRef::NotRef(object) => Self {
@@ -77,7 +77,7 @@ impl<'a> ProbeValue<'a> {
                 object: Some(object),
             },
             MaybeRef::Ref(reference) => {
-                let id = ProbeObjectId::new(reference.obj_number, reference.gen_number);
+                let id = QueryObjectId::new(reference.obj_number, reference.gen_number);
                 Self {
                     xref,
                     reference: Some(id),
@@ -96,7 +96,7 @@ impl<'a> ProbeValue<'a> {
     }
 
     #[must_use]
-    pub fn referenced_id(&self) -> Option<ProbeObjectId> {
+    pub fn referenced_id(&self) -> Option<QueryObjectId> {
         self.reference
     }
 
@@ -126,28 +126,28 @@ impl<'a> ProbeValue<'a> {
     }
 
     #[must_use]
-    pub fn array(&self) -> Option<ProbeArray<'a>> {
-        Some(ProbeArray {
+    pub fn array(&self) -> Option<QueryArray<'a>> {
+        Some(QueryArray {
             xref: self.xref,
             array: self.object.clone()?.into_array()?,
         })
     }
 
     #[must_use]
-    pub fn as_dictionary(&self) -> Option<ProbeDictionary<'a>> {
+    pub fn as_dictionary(&self) -> Option<QueryDictionary<'a>> {
         match self.object.clone()? {
-            Object::Dict(dictionary) => Some(ProbeDictionary::new(self.xref, dictionary)),
-            Object::Stream(stream) => Some(ProbeDictionary::new(self.xref, stream.dict().clone())),
+            Object::Dict(dictionary) => Some(QueryDictionary::new(self.xref, dictionary)),
+            Object::Stream(stream) => Some(QueryDictionary::new(self.xref, stream.dict().clone())),
             _ => None,
         }
     }
 
     #[must_use]
-    pub fn as_stream(&self) -> Option<ProbeStream<'a>> {
+    pub fn as_stream(&self) -> Option<QueryStream<'a>> {
         self.object
             .clone()?
             .into_stream()
-            .map(|stream| ProbeStream::new(self.xref, stream))
+            .map(|stream| QueryStream::new(self.xref, stream))
     }
 
     #[must_use]
@@ -158,48 +158,48 @@ impl<'a> ProbeValue<'a> {
 
 /// A shallow borrowed array.
 #[derive(Clone)]
-pub struct ProbeArray<'a> {
+pub struct QueryArray<'a> {
     xref: &'a hayro_syntax::xref::XRef,
     array: Array<'a>,
 }
 
-impl<'a> ProbeArray<'a> {
-    pub fn iter(&self) -> impl Iterator<Item = ProbeValue<'a>> + '_ {
+impl<'a> QueryArray<'a> {
+    pub fn iter(&self) -> impl Iterator<Item = QueryValue<'a>> + '_ {
         self.array
             .raw_iter()
-            .map(|value| ProbeValue::from_maybe_ref(self.xref, value))
+            .map(|value| QueryValue::from_maybe_ref(self.xref, value))
     }
 }
 
 /// A shallow borrowed dictionary with sorted Hayro entry iteration.
 #[derive(Clone)]
-pub struct ProbeDictionary<'a> {
+pub struct QueryDictionary<'a> {
     xref: &'a hayro_syntax::xref::XRef,
     dictionary: Dict<'a>,
 }
 
-impl<'a> ProbeDictionary<'a> {
+impl<'a> QueryDictionary<'a> {
     fn new(xref: &'a hayro_syntax::xref::XRef, dictionary: Dict<'a>) -> Self {
         Self { xref, dictionary }
     }
 
     #[must_use]
-    pub fn id(&self) -> Option<ProbeObjectId> {
+    pub fn id(&self) -> Option<QueryObjectId> {
         self.dictionary.obj_id().map(Into::into)
     }
 
     #[must_use]
-    pub fn get(&self, key: impl AsRef<[u8]>) -> Option<ProbeValue<'a>> {
+    pub fn get(&self, key: impl AsRef<[u8]>) -> Option<QueryValue<'a>> {
         self.dictionary
             .get_raw::<Object<'a>>(key)
-            .map(|value| ProbeValue::from_maybe_ref(self.xref, value))
+            .map(|value| QueryValue::from_maybe_ref(self.xref, value))
     }
 
-    pub fn entries(&self) -> impl Iterator<Item = (Vec<u8>, ProbeValue<'a>)> + '_ {
+    pub fn entries(&self) -> impl Iterator<Item = (Vec<u8>, QueryValue<'a>)> + '_ {
         self.dictionary.entries().map(|(key, value)| {
             (
                 key.as_ref().to_vec(),
-                ProbeValue::from_maybe_ref(self.xref, value),
+                QueryValue::from_maybe_ref(self.xref, value),
             )
         })
     }
@@ -214,16 +214,16 @@ impl<'a> ProbeDictionary<'a> {
 }
 
 /// Raw and decoded views of one selected stream.
-pub struct ProbeStream<'a> {
-    pub id: ProbeObjectId,
-    pub dictionary: ProbeDictionary<'a>,
+pub struct QueryStream<'a> {
+    pub id: QueryObjectId,
+    pub dictionary: QueryDictionary<'a>,
     pub raw: Vec<u8>,
     pub decoded: Vec<u8>,
     pub decoded_sha256: [u8; 32],
     xref: &'a hayro_syntax::xref::XRef,
 }
 
-impl<'a> ProbeStream<'a> {
+impl<'a> QueryStream<'a> {
     fn new(xref: &'a hayro_syntax::xref::XRef, stream: Stream<'a>) -> Self {
         let raw = stream.raw_data().into_owned();
         let decoded = stream
@@ -231,7 +231,7 @@ impl<'a> ProbeStream<'a> {
             .map_or_else(|_| Vec::new(), |decoded| decoded.into_owned());
         Self {
             id: stream.obj_id().into(),
-            dictionary: ProbeDictionary::new(xref, stream.dict().clone()),
+            dictionary: QueryDictionary::new(xref, stream.dict().clone()),
             raw,
             decoded_sha256: Sha256::digest(&decoded).into(),
             decoded,
@@ -239,7 +239,7 @@ impl<'a> ProbeStream<'a> {
         }
     }
 
-    pub fn operations(&self, limits: ProbeLimits) -> Result<Vec<ProbeOperation>> {
+    pub fn operations(&self, limits: QueryLimits) -> Result<Vec<QueryOperation>> {
         let mut budget = QueryBudget::new(limits);
         budget.add_stream_bytes(self.decoded.len())?;
         project_operations(self.xref, &self.decoded, &mut budget)
@@ -248,14 +248,14 @@ impl<'a> ProbeStream<'a> {
 
 /// One decoded content-stream instruction.
 #[derive(Clone, Debug, PartialEq)]
-pub struct ProbeOperation {
-    pub operands: Vec<ProbeOperand>,
+pub struct QueryOperation {
+    pub operands: Vec<QueryOperand>,
     pub operator: Vec<u8>,
 }
 
 /// An owned projection limited to content-stream operands.
 #[derive(Clone, Debug, PartialEq)]
-pub enum ProbeOperand {
+pub enum QueryOperand {
     Null,
     Boolean(bool),
     Number(f64),
@@ -266,44 +266,44 @@ pub enum ProbeOperand {
 }
 
 /// A resource category with inheritance layers ordered ancestor to child.
-pub struct ProbeResources<'a> {
-    pub categories: BTreeMap<Vec<u8>, Vec<ProbeDictionary<'a>>>,
+pub struct QueryResources<'a> {
+    pub categories: BTreeMap<Vec<u8>, Vec<QueryDictionary<'a>>>,
 }
 
 /// One page in document order. Its object values remain borrowed from Hayro.
-pub struct ProbePage<'a> {
+pub struct QueryPage<'a> {
     pub number: usize,
-    pub id: ProbeObjectId,
-    pub dictionary: ProbeDictionary<'a>,
+    pub id: QueryObjectId,
+    pub dictionary: QueryDictionary<'a>,
     pub media_box: [f64; 4],
     pub crop_box: [f64; 4],
     pub rotation_degrees: i32,
-    pub resources: ProbeResources<'a>,
-    pub annotations: Vec<ProbeValue<'a>>,
-    pub content: Option<ProbeContent>,
+    pub resources: QueryResources<'a>,
+    pub annotations: Vec<QueryValue<'a>>,
+    pub content: Option<QueryContent>,
 }
 
 /// Decoded page content and operations requested as one focused result.
-pub struct ProbeContent {
+pub struct QueryContent {
     pub decoded: Vec<u8>,
     pub decoded_sha256: [u8; 32],
-    pub operations: Vec<ProbeOperation>,
+    pub operations: Vec<QueryOperation>,
 }
 
 /// Hayro-backed semantic access to a parsed PDF.
-pub struct PdfProbe {
+pub struct PdfQuery {
     pdf: Pdf,
-    limits: ProbeLimits,
+    limits: QueryLimits,
 }
 
-impl PdfProbe {
-    pub fn new(bytes: impl AsRef<[u8]>, limits: ProbeLimits) -> Result<Self> {
+impl PdfQuery {
+    pub fn new(bytes: impl AsRef<[u8]>, limits: QueryLimits) -> Result<Self> {
         if limits.max_depth == 0
             || limits.max_objects == 0
             || limits.max_values == 0
             || limits.max_stream_bytes == 0
         {
-            bail!("PDF probe limits must all be nonzero");
+            bail!("PDF query limits must all be nonzero");
         }
         let pdf = Pdf::new(bytes.as_ref().to_vec())
             .map_err(|error| anyhow!("failed to parse PDF: {error:?}"))?;
@@ -327,34 +327,34 @@ impl PdfProbe {
     }
 
     #[must_use]
-    pub fn root_id(&self) -> ProbeObjectId {
+    pub fn root_id(&self) -> QueryObjectId {
         self.pdf.xref().root_id().into()
     }
 
-    pub fn trailer(&self) -> Result<Option<ProbeDictionary<'_>>> {
+    pub fn trailer(&self) -> Result<Option<QueryDictionary<'_>>> {
         Ok(self
             .pdf
             .xref()
             .trailer()
-            .map(|dictionary| ProbeDictionary::new(self.pdf.xref(), dictionary)))
+            .map(|dictionary| QueryDictionary::new(self.pdf.xref(), dictionary)))
     }
 
-    pub fn root(&self) -> Result<ProbeDictionary<'_>> {
+    pub fn root(&self) -> Result<QueryDictionary<'_>> {
         self.dictionary(self.root_id())
             .context("PDF root is not a dictionary")
     }
 
-    pub fn object(&self, id: ProbeObjectId) -> Result<ProbeValue<'_>> {
+    pub fn object(&self, id: QueryObjectId) -> Result<QueryValue<'_>> {
         let object = self
             .pdf
             .xref()
             .get::<Object<'_>>(id.into())
             .with_context(|| format!("PDF object {} {} is missing", id.number, id.generation))?;
-        Ok(ProbeValue::from_object(self.pdf.xref(), object))
+        Ok(QueryValue::from_object(self.pdf.xref(), object))
     }
 
     /// Walk one object without retaining it, enforcing every configured budget.
-    pub fn validate_object(&self, id: ProbeObjectId) -> Result<()> {
+    pub fn validate_object(&self, id: QueryObjectId) -> Result<()> {
         let object = self
             .pdf
             .xref()
@@ -371,7 +371,7 @@ impl PdfProbe {
         )
     }
 
-    pub fn dictionary(&self, id: ProbeObjectId) -> Result<ProbeDictionary<'_>> {
+    pub fn dictionary(&self, id: QueryObjectId) -> Result<QueryDictionary<'_>> {
         self.object(id)?.as_dictionary().with_context(|| {
             format!(
                 "PDF object {} {} is not a dictionary",
@@ -380,7 +380,7 @@ impl PdfProbe {
         })
     }
 
-    pub fn stream(&self, id: ProbeObjectId) -> Result<ProbeStream<'_>> {
+    pub fn stream(&self, id: QueryObjectId) -> Result<QueryStream<'_>> {
         let stream = self.object(id)?.as_stream().with_context(|| {
             format!("PDF object {} {} is not a stream", id.number, id.generation)
         })?;
@@ -391,7 +391,7 @@ impl PdfProbe {
     }
 
     /// Return pages in page-tree order with inherited geometry and resources.
-    pub fn pages(&self) -> Result<Vec<ProbePage<'_>>> {
+    pub fn pages(&self) -> Result<Vec<QueryPage<'_>>> {
         let mut budget = QueryBudget::new(self.limits);
         self.pdf
             .pages()
@@ -406,7 +406,7 @@ fn validate_maybe_ref(
     xref: &hayro_syntax::xref::XRef,
     value: MaybeRef<Object<'_>>,
     depth: usize,
-    active: &mut BTreeSet<ProbeObjectId>,
+    active: &mut BTreeSet<QueryObjectId>,
     budget: &mut QueryBudget,
 ) -> Result<()> {
     budget.check_depth(depth)?;
@@ -414,7 +414,7 @@ fn validate_maybe_ref(
         MaybeRef::NotRef(object) => validate_object(xref, object, depth, active, budget),
         MaybeRef::Ref(reference) => {
             budget.bump_value()?;
-            let id = ProbeObjectId::new(reference.obj_number, reference.gen_number);
+            let id = QueryObjectId::new(reference.obj_number, reference.gen_number);
             if active.contains(&id) {
                 return Ok(());
             }
@@ -434,7 +434,7 @@ fn validate_object(
     xref: &hayro_syntax::xref::XRef,
     object: Object<'_>,
     depth: usize,
-    active: &mut BTreeSet<ProbeObjectId>,
+    active: &mut BTreeSet<QueryObjectId>,
     budget: &mut QueryBudget,
 ) -> Result<()> {
     budget.check_depth(depth)?;
@@ -469,14 +469,14 @@ fn project_page<'a>(
     page: &'a Page<'a>,
     index: usize,
     budget: &mut QueryBudget,
-) -> Result<ProbePage<'a>> {
+) -> Result<QueryPage<'a>> {
     budget.bump_object()?;
     let id = page
         .raw()
         .obj_id()
-        .map(ProbeObjectId::from)
+        .map(QueryObjectId::from)
         .context("ordered page has no indirect identity")?;
-    let dictionary = ProbeDictionary::new(xref, page.raw().clone());
+    let dictionary = QueryDictionary::new(xref, page.raw().clone());
     let annotations = dictionary
         .get(b"Annots")
         .and_then(|value| value.array())
@@ -487,7 +487,7 @@ fn project_page<'a>(
         .page_stream()
         .map(|decoded| {
             budget.add_stream_bytes(decoded.len())?;
-            Ok::<_, anyhow::Error>(ProbeContent {
+            Ok::<_, anyhow::Error>(QueryContent {
                 decoded: decoded.to_vec(),
                 decoded_sha256: Sha256::digest(decoded).into(),
                 operations: project_operations(xref, decoded, budget)?,
@@ -496,7 +496,7 @@ fn project_page<'a>(
         .transpose()?;
     let media_box = page.media_box();
     let crop_box = page.crop_box();
-    Ok(ProbePage {
+    Ok(QueryPage {
         number: index + 1,
         id,
         dictionary,
@@ -517,7 +517,7 @@ fn project_page<'a>(
 fn project_resources<'a>(
     xref: &'a hayro_syntax::xref::XRef,
     resources: &'a Resources<'a>,
-) -> ProbeResources<'a> {
+) -> QueryResources<'a> {
     let mut chain = Vec::new();
     let mut current = Some(resources);
     while let Some(layer) = current {
@@ -525,7 +525,7 @@ fn project_resources<'a>(
         current = layer.parent();
     }
     chain.reverse();
-    let mut categories: BTreeMap<Vec<u8>, Vec<ProbeDictionary<'a>>> = BTreeMap::new();
+    let mut categories: BTreeMap<Vec<u8>, Vec<QueryDictionary<'a>>> = BTreeMap::new();
     for layer in chain {
         for (name, dictionary) in [
             (b"ExtGState".as_slice(), &layer.ext_g_states),
@@ -540,18 +540,18 @@ fn project_resources<'a>(
                 categories
                     .entry(name.to_vec())
                     .or_default()
-                    .push(ProbeDictionary::new(xref, dictionary.clone()));
+                    .push(QueryDictionary::new(xref, dictionary.clone()));
             }
         }
     }
-    ProbeResources { categories }
+    QueryResources { categories }
 }
 
 fn project_operations(
     xref: &hayro_syntax::xref::XRef,
     decoded: &[u8],
     budget: &mut QueryBudget,
-) -> Result<Vec<ProbeOperation>> {
+) -> Result<Vec<QueryOperation>> {
     let mut iterator = UntypedIter::new(decoded);
     let mut operations = Vec::new();
     while let Some(instruction) = iterator.next() {
@@ -560,7 +560,7 @@ fn project_operations(
             .operands()
             .map(|operand| project_operand(xref, operand.clone(), 0, budget))
             .collect::<Result<_>>()?;
-        operations.push(ProbeOperation {
+        operations.push(QueryOperation {
             operands,
             operator: instruction.operator.as_ref().to_vec(),
         });
@@ -573,16 +573,16 @@ fn project_operand(
     object: Object<'_>,
     depth: usize,
     budget: &mut QueryBudget,
-) -> Result<ProbeOperand> {
+) -> Result<QueryOperand> {
     budget.check_depth(depth)?;
     budget.bump_value()?;
     Ok(match object {
-        Object::Null(_) => ProbeOperand::Null,
-        Object::Boolean(value) => ProbeOperand::Boolean(value),
-        Object::Number(value) => ProbeOperand::Number(value.as_f64()),
-        Object::String(value) => ProbeOperand::String(value.as_bytes().to_vec()),
-        Object::Name(value) => ProbeOperand::Name(value.as_ref().to_vec()),
-        Object::Array(array) => ProbeOperand::Array(
+        Object::Null(_) => QueryOperand::Null,
+        Object::Boolean(value) => QueryOperand::Boolean(value),
+        Object::Number(value) => QueryOperand::Number(value.as_f64()),
+        Object::String(value) => QueryOperand::String(value.as_bytes().to_vec()),
+        Object::Name(value) => QueryOperand::Name(value.as_ref().to_vec()),
+        Object::Array(array) => QueryOperand::Array(
             array
                 .raw_iter()
                 .map(|value| match value {
@@ -598,7 +598,7 @@ fn project_operand(
                 })
                 .collect::<Result<_>>()?,
         ),
-        Object::Dict(dictionary) => ProbeOperand::Dictionary(
+        Object::Dict(dictionary) => QueryOperand::Dictionary(
             dictionary
                 .entries()
                 .map(|(key, value)| {
@@ -627,14 +627,14 @@ fn project_operand(
 }
 
 pub(crate) struct QueryBudget {
-    limits: ProbeLimits,
+    limits: QueryLimits,
     objects: usize,
     values: usize,
     stream_bytes: usize,
 }
 
 impl QueryBudget {
-    pub(crate) fn new(limits: ProbeLimits) -> Self {
+    pub(crate) fn new(limits: QueryLimits) -> Self {
         Self {
             limits,
             objects: 0,
@@ -646,7 +646,7 @@ impl QueryBudget {
     pub(crate) fn check_depth(&self, depth: usize) -> Result<()> {
         if depth > self.limits.max_depth {
             bail!(
-                "PDF probe depth budget exceeded ({})",
+                "PDF query depth budget exceeded ({})",
                 self.limits.max_depth
             );
         }
@@ -657,7 +657,7 @@ impl QueryBudget {
         self.objects = self.objects.saturating_add(1);
         if self.objects > self.limits.max_objects {
             bail!(
-                "PDF probe object budget exceeded ({})",
+                "PDF query object budget exceeded ({})",
                 self.limits.max_objects
             );
         }
@@ -668,7 +668,7 @@ impl QueryBudget {
         self.values = self.values.saturating_add(1);
         if self.values > self.limits.max_values {
             bail!(
-                "PDF probe value budget exceeded ({})",
+                "PDF query value budget exceeded ({})",
                 self.limits.max_values
             );
         }
@@ -679,7 +679,7 @@ impl QueryBudget {
         self.stream_bytes = self.stream_bytes.saturating_add(count);
         if self.stream_bytes > self.limits.max_stream_bytes {
             bail!(
-                "PDF probe stream budget exceeded ({})",
+                "PDF query stream budget exceeded ({})",
                 self.limits.max_stream_bytes
             );
         }

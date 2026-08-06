@@ -7,7 +7,7 @@ pub mod dvi;
 pub mod git_fixture;
 pub mod pdf;
 pub mod pdf_fixture;
-pub mod pdf_probe;
+pub mod pdf_query;
 
 #[allow(clippy::disallowed_methods)] // host tool, not engine code
 mod imp {

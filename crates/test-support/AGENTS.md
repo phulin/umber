@@ -46,9 +46,12 @@ Keep reusable test harness code here when multiple crates or integration tests n
   structure projection to live-reference tooling.
 - `src/pdf.rs`: canonical PDF structure normalizer that walks shallow Hayro-backed values directly.
 - `src/pdf/tests.rs`: inherited-resource merging and stable cycle-notation normalization coverage.
-- `src/pdf_probe.rs`: bounded Hayro document with shallow borrowed object, dictionary, array, and page handles plus focused owned stream-byte and content-operation queries. The temporary public facade exists for external consumer migration in `umber2-vgjr.16.3`; it must not regain a recursive owned object graph.
-- `src/pdf_probe/tests.rs`: classic/xref-stream, object-stream, budget, cycle, inheritance, raw/decoded-stream, operation-order, and malformed-input query coverage.
-- `src/pdf_probe/fixtures/xref-object-stream.pdf`: committed uncompressed xref-stream/object-stream compatibility fixture.
+- `src/pdf_query.rs`: bounded Hayro document with shallow borrowed object,
+  dictionary, array, and page handles plus focused owned stream-byte and
+  content-operation queries. This is the semantic assertion boundary for PDF
+  consumers and must not grow a recursive owned object graph.
+- `src/pdf_query/tests.rs`: classic/xref-stream, object-stream, budget, cycle, inheritance, raw/decoded-stream, operation-order, and malformed-input query coverage.
+- `src/pdf_query/fixtures/xref-object-stream.pdf`: committed uncompressed xref-stream/object-stream compatibility fixture.
 - `src/pdf_fixture.rs`: tiny `pdf-writer` adapter for ordinary valid synthetic
   inputs plus an explicitly separate handcrafted classic-xref builder for
   malformed, cyclic, depth-limit, and writer-independent evidence.

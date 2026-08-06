@@ -44,7 +44,7 @@ implementations. G and B provide precise local diagnostics; H and N provide a
 fast portable semantic gate; E catches shared assumptions and file-level
 conformance. No single oracle is treated as sufficient.
 
-The F helper is `test_support::pdf_fixture`. `PdfFixture` gives `pdf-writer`
+The F helper is `test_support::pdf_fixture`. `ValidPdfFixture` gives `pdf-writer`
 explicit object numbers, focused raw PDF values, dictionaries, and raw or
 already filtered stream payloads; `pdf-writer` owns indirect-object framing,
 stream lengths, xrefs, and trailers. `RawPdfFixture` retains the small
@@ -83,24 +83,24 @@ root-only repair fallback. The local probe then reads `/Root`, `/Info`, `/ID`,
 and selected raw extensions through the ordinary `Dict` API. No public page or
 object API change is required.
 
-This boundary is implemented by `test_support::pdf_probe`. `PdfProbe` owns the
-Hayro `Pdf`; `ProbeValue`, `ProbeArray`, and `ProbeDictionary` are shallow
+This boundary is implemented by `test_support::pdf_query`. `PdfQuery` owns the
+Hayro `Pdf`; `QueryValue`, `QueryArray`, and `QueryDictionary` are shallow
 handles whose lifetimes are tied to that document. They retain Hayro objects
 and resolve one reference edge at a time instead of recursively copying a
 second object graph. Pages likewise contain shallow dictionaries and values.
 Only an explicitly selected stream's raw and decoded bytes and a selected
-content stream's operands are owned focused projections. The compatibility
-names remain temporarily so the external `tex-out` and Umber test consumers
-can be classified and simplified by `umber2-vgjr.16.3`; they are not an owned
-DOM and must not become one again. The workspace pins
+content stream's operands are owned focused projections. The former
+`pdf_probe` module and its `PdfProbe`/`Probe*` compatibility names are removed;
+semantic consumers now identify this boundary as a focused query. It is not an
+owned DOM and must not become one again. The workspace pins
 the immutable `phulin/hayro` revision
 `abf6c167f6b877a18a077b9ff76dad36573e271d`, based directly on the 0.7.2
 release commit; its sole compatibility addition retains the selected trailer
 byte range and exposes the accessor above. Once an
 equivalent accessor is released upstream, replace the git pin with that release;
-the probe itself uses no other fork-specific API.
+the query itself uses no other fork-specific API.
 
-Each materializing query starts a fresh `ProbeLimits` accounting scope. The
+Each materializing query starts a fresh `QueryLimits` accounting scope. The
 explicit non-retaining validation query counts nesting, indirect resolutions, values, content
 instructions, and raw plus decoded stream bytes without retaining the walked
 graph. References expose their indirect ID, missing xref targets remain
@@ -263,3 +263,23 @@ The final gates are the focused `tex-out`, `test-support`, and `umber` native
 tests, the default native test suite, `scripts/check.sh`,
 `scripts/check-wasm.sh`, and `scripts/check-pdf-external.sh --ci` where the
 pinned qpdf and Poppler tools are available.
+
+## Consolidation accounting
+
+The handwritten valid-fixture implementation and its self-tests occupied 651
+Rust lines before this consolidation (`pdf_fixture.rs` at 434 lines plus 217
+lines of writer self-tests). The final mixed fixture boundary is 565 lines and
+has no writer self-test module, a measured net deletion of 86 Rust lines. The
+query replacement is larger than the copied probe it retires because the
+accepted design adds explicit query budgets, shallow unresolved/cycle
+identity, inherited-resource layers, and decoded-stream digests; those are
+retained evidence, not duplicate object-model ownership.
+
+Only three call-site families retain `RawPdfFixture`: canonical normalization
+uses handwritten cycles and classic trailers so cycle labels and parser
+independence remain observable; focused query tests use handwritten malformed,
+deep, unresolved, and classic-xref objects; the PDF importer depth-limit test
+must present deliberately over-nested input without a validating writer
+normalizing it. All other synthetic PDF consumers use `ValidPdfFixture`, and
+output validation uses `PdfQuery` or `normalize_structure` rather than either
+fixture writer.

@@ -6,30 +6,30 @@ use anyhow::{Context, Result, bail};
 use hayro_syntax::object::Object;
 use sha2::Digest;
 
-use crate::pdf_probe::{
-    PdfProbe, ProbeDictionary, ProbeLimits, ProbeObjectId, ProbeOperand, ProbeOperation,
-    ProbeStream, ProbeValue,
+use crate::pdf_query::{
+    PdfQuery, QueryDictionary, QueryLimits, QueryObjectId, QueryOperand, QueryOperation,
+    QueryStream, QueryValue,
 };
 
 /// Parse a PDF and project its stable semantic structure directly from Hayro's
 /// borrowed objects. Object numbers and byte layout are intentionally omitted.
 pub fn normalize_structure(bytes: &[u8]) -> Result<String> {
-    normalize_structure_with_limits(bytes, ProbeLimits::default())
+    normalize_structure_with_limits(bytes, QueryLimits::default())
 }
 
-pub(crate) fn normalize_structure_with_limits(bytes: &[u8], limits: ProbeLimits) -> Result<String> {
-    let probe = PdfProbe::new(bytes, limits).context("failed to parse PDF")?;
-    let catalog = probe.root().context("PDF has no catalog")?;
+pub(crate) fn normalize_structure_with_limits(bytes: &[u8], limits: QueryLimits) -> Result<String> {
+    let query = PdfQuery::new(bytes, limits).context("failed to parse PDF")?;
+    let catalog = query.root().context("PDF has no catalog")?;
     require_name(
         catalog.get(b"Type").context("catalog has no Type")?,
         b"Catalog",
     )?;
-    let pages = probe.pages()?;
+    let pages = query.pages()?;
     let pages_by_id = pages
         .iter()
         .map(|page| (page.id, page.number))
         .collect::<BTreeMap<_, _>>();
-    let (major, minor) = probe.version();
+    let (major, minor) = query.version();
     let mut normalized = format!(
         "pdf-structure-v1\nversion {major}.{minor}\ncatalog /Catalog\npages {}\n",
         pages.len()
@@ -71,13 +71,13 @@ pub(crate) fn normalize_structure_with_limits(bytes: &[u8], limits: ProbeLimits)
             }
         }
     }
-    append_document_extensions(&probe, &catalog, &pages_by_id, &mut normalized)?;
+    append_document_extensions(&query, &catalog, &pages_by_id, &mut normalized)?;
     Ok(normalized)
 }
 
 fn canonical_effective_resources(
-    page: &ProbeDictionary<'_>,
-    pages: &BTreeMap<ProbeObjectId, usize>,
+    page: &QueryDictionary<'_>,
+    pages: &BTreeMap<QueryObjectId, usize>,
 ) -> Result<String> {
     let mut layers = Vec::new();
     collect_page_resource_layers(page.clone(), 0, &mut layers)?;
@@ -108,14 +108,14 @@ fn canonical_effective_resources(
 
 #[derive(Clone)]
 enum BorrowedDictionaryValue<'a> {
-    Value(ProbeValue<'a>),
-    Merged(BTreeMap<Vec<u8>, ProbeValue<'a>>),
+    Value(QueryValue<'a>),
+    Merged(BTreeMap<Vec<u8>, QueryValue<'a>>),
 }
 
 fn collect_page_resource_layers<'a>(
-    dictionary: ProbeDictionary<'a>,
+    dictionary: QueryDictionary<'a>,
     depth: usize,
-    layers: &mut Vec<ProbeDictionary<'a>>,
+    layers: &mut Vec<QueryDictionary<'a>>,
 ) -> Result<()> {
     if depth > 32 {
         bail!("PDF page resource inheritance exceeds 32 levels");
@@ -136,9 +136,9 @@ fn collect_page_resource_layers<'a>(
 }
 
 fn append_document_extensions(
-    probe: &PdfProbe,
-    catalog: &ProbeDictionary<'_>,
-    pages: &BTreeMap<ProbeObjectId, usize>,
+    query: &PdfQuery,
+    catalog: &QueryDictionary<'_>,
+    pages: &BTreeMap<QueryObjectId, usize>,
     normalized: &mut String,
 ) -> Result<()> {
     let mut extensions = Vec::new();
@@ -163,7 +163,7 @@ fn append_document_extensions(
         }
     }
 
-    let trailer = probe.trailer()?.context("PDF has no trailer")?;
+    let trailer = query.trailer()?.context("PDF has no trailer")?;
     if let Some(info) = trailer.get(b"Info").and_then(|value| value.as_dictionary()) {
         let selected = selected_dictionary(&info, &[b"Title", b"Subject"], pages)?;
         if !selected.is_empty() {
@@ -182,13 +182,13 @@ fn append_document_extensions(
         .unwrap_or(0.0) as i32;
     let mut user_objects = BTreeSet::new();
     for number in 1..size {
-        let Ok(value) = probe.object(ProbeObjectId::new(number, 0)) else {
+        let Ok(value) = query.object(QueryObjectId::new(number, 0)) else {
             continue;
         };
         if let Some(dictionary) = value.as_dictionary()
             && dictionary.get(b"Kind").is_some()
         {
-            let id = ProbeObjectId::new(number, 0);
+            let id = QueryObjectId::new(number, 0);
             user_objects.insert(format!(
                 "object {}",
                 canonical_dictionary_inner(&dictionary, pages, &[], 0, &mut vec![id])?
@@ -216,9 +216,9 @@ fn append_document_extensions(
 }
 
 fn selected_dictionary(
-    dictionary: &ProbeDictionary<'_>,
+    dictionary: &QueryDictionary<'_>,
     keys: &[&[u8]],
-    pages: &BTreeMap<ProbeObjectId, usize>,
+    pages: &BTreeMap<QueryObjectId, usize>,
 ) -> Result<String> {
     let entries = keys
         .iter()
@@ -239,8 +239,8 @@ fn selected_dictionary(
 }
 
 fn canonical_action(
-    value: &ProbeValue<'_>,
-    pages: &BTreeMap<ProbeObjectId, usize>,
+    value: &QueryValue<'_>,
+    pages: &BTreeMap<QueryObjectId, usize>,
 ) -> Result<String> {
     let dictionary = value
         .as_dictionary()
@@ -260,8 +260,8 @@ fn canonical_action(
 }
 
 fn canonical_action_destination(
-    value: &ProbeValue<'_>,
-    pages: &BTreeMap<ProbeObjectId, usize>,
+    value: &QueryValue<'_>,
+    pages: &BTreeMap<QueryObjectId, usize>,
 ) -> Result<String> {
     let Some(values) = value.array() else {
         return canonical_value(value, pages, 0, &mut Vec::new());
@@ -283,10 +283,10 @@ fn canonical_action_destination(
 }
 
 fn canonical_value(
-    value: &ProbeValue<'_>,
-    pages: &BTreeMap<ProbeObjectId, usize>,
+    value: &QueryValue<'_>,
+    pages: &BTreeMap<QueryObjectId, usize>,
     depth: usize,
-    references: &mut Vec<ProbeObjectId>,
+    references: &mut Vec<QueryObjectId>,
 ) -> Result<String> {
     if depth > 32 {
         bail!("PDF fixture object nesting exceeds 32 levels");
@@ -310,10 +310,10 @@ fn canonical_value(
 }
 
 fn canonical_resolved_value(
-    value: &ProbeValue<'_>,
-    pages: &BTreeMap<ProbeObjectId, usize>,
+    value: &QueryValue<'_>,
+    pages: &BTreeMap<QueryObjectId, usize>,
     depth: usize,
-    references: &mut Vec<ProbeObjectId>,
+    references: &mut Vec<QueryObjectId>,
 ) -> Result<String> {
     Ok(match value.object().context("unresolved PDF object")? {
         Object::Null(_) => "null".into(),
@@ -362,19 +362,19 @@ fn canonical_resolved_value(
 }
 
 fn canonical_dictionary(
-    dictionary: &ProbeDictionary<'_>,
-    pages: &BTreeMap<ProbeObjectId, usize>,
+    dictionary: &QueryDictionary<'_>,
+    pages: &BTreeMap<QueryObjectId, usize>,
     omitted: &[&[u8]],
 ) -> Result<String> {
     canonical_dictionary_inner(dictionary, pages, omitted, 0, &mut Vec::new())
 }
 
 fn canonical_dictionary_inner(
-    dictionary: &ProbeDictionary<'_>,
-    pages: &BTreeMap<ProbeObjectId, usize>,
+    dictionary: &QueryDictionary<'_>,
+    pages: &BTreeMap<QueryObjectId, usize>,
     omitted: &[&[u8]],
     depth: usize,
-    references: &mut Vec<ProbeObjectId>,
+    references: &mut Vec<QueryObjectId>,
 ) -> Result<String> {
     let entries = dictionary
         .entries()
@@ -392,10 +392,10 @@ fn canonical_dictionary_inner(
 
 fn canonical_dictionary_entries(
     entries: &BTreeMap<Vec<u8>, BorrowedDictionaryValue<'_>>,
-    pages: &BTreeMap<ProbeObjectId, usize>,
+    pages: &BTreeMap<QueryObjectId, usize>,
     omitted: &[&[u8]],
     depth: usize,
-    references: &mut Vec<ProbeObjectId>,
+    references: &mut Vec<QueryObjectId>,
 ) -> Result<String> {
     let entries = entries
         .iter()
@@ -424,7 +424,7 @@ fn canonical_dictionary_entries(
     Ok(format!("<<{}>>", entries.join(" ")))
 }
 
-fn is_form_xobject(dictionary: &ProbeDictionary<'_>) -> bool {
+fn is_form_xobject(dictionary: &QueryDictionary<'_>) -> bool {
     dictionary
         .get(b"Subtype")
         .and_then(|value| value.name())
@@ -432,10 +432,10 @@ fn is_form_xobject(dictionary: &ProbeDictionary<'_>) -> bool {
 }
 
 fn canonical_form_stream(
-    stream: &ProbeStream<'_>,
-    pages: &BTreeMap<ProbeObjectId, usize>,
+    stream: &QueryStream<'_>,
+    pages: &BTreeMap<QueryObjectId, usize>,
     depth: usize,
-    references: &mut Vec<ProbeObjectId>,
+    references: &mut Vec<QueryObjectId>,
 ) -> Result<String> {
     let dictionary = canonical_dictionary_inner(
         &stream.dictionary,
@@ -450,7 +450,7 @@ fn canonical_form_stream(
         references,
     )?;
     let mut normalized = format!("form-stream {dictionary}");
-    for operation in stream.operations(ProbeLimits::default())? {
+    for operation in stream.operations(QueryLimits::default())? {
         normalized.push_str(" content");
         for operand in &operation.operands {
             normalized.push(' ');
@@ -467,7 +467,7 @@ fn canonical_form_stream(
 
 fn append_operations(
     output: &mut String,
-    operations: &[ProbeOperation],
+    operations: &[QueryOperation],
     prefix: &str,
 ) -> Result<()> {
     for operation in operations {
@@ -483,14 +483,14 @@ fn append_operations(
     Ok(())
 }
 
-fn canonical_operand(value: &ProbeOperand) -> Result<String> {
+fn canonical_operand(value: &QueryOperand) -> Result<String> {
     Ok(match value {
-        ProbeOperand::Null => "null".into(),
-        ProbeOperand::Boolean(value) => value.to_string(),
-        ProbeOperand::Number(value) => canonical_number(*value)?,
-        ProbeOperand::String(bytes) => format!("<{}>", hex(bytes)),
-        ProbeOperand::Name(name) => format!("/{}", String::from_utf8_lossy(name)),
-        ProbeOperand::Array(values) => format!(
+        QueryOperand::Null => "null".into(),
+        QueryOperand::Boolean(value) => value.to_string(),
+        QueryOperand::Number(value) => canonical_number(*value)?,
+        QueryOperand::String(bytes) => format!("<{}>", hex(bytes)),
+        QueryOperand::Name(name) => format!("/{}", String::from_utf8_lossy(name)),
+        QueryOperand::Array(values) => format!(
             "[{}]",
             values
                 .iter()
@@ -498,7 +498,7 @@ fn canonical_operand(value: &ProbeOperand) -> Result<String> {
                 .collect::<Result<Vec<_>>>()?
                 .join(" ")
         ),
-        ProbeOperand::Dictionary(entries) => format!(
+        QueryOperand::Dictionary(entries) => format!(
             "<<{}>>",
             entries
                 .iter()
@@ -513,7 +513,7 @@ fn canonical_operand(value: &ProbeOperand) -> Result<String> {
     })
 }
 
-fn require_name(value: ProbeValue<'_>, expected: &[u8]) -> Result<()> {
+fn require_name(value: QueryValue<'_>, expected: &[u8]) -> Result<()> {
     match value.name() {
         Some(actual) if actual.as_ref() == expected => Ok(()),
         Some(actual) => bail!(
@@ -525,7 +525,7 @@ fn require_name(value: ProbeValue<'_>, expected: &[u8]) -> Result<()> {
     }
 }
 
-fn number(value: &ProbeValue<'_>) -> Result<f64> {
+fn number(value: &QueryValue<'_>) -> Result<f64> {
     value.number().context("expected PDF number")
 }
 

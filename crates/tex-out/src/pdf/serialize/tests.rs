@@ -4,26 +4,26 @@ use crate::pdf::{
     UnvalidatedPdfDocument,
 };
 use std::collections::BTreeMap;
-use test_support::pdf_probe::{PdfProbe, ProbeDictionary, ProbeLimits, ProbeObjectId, ProbeValue};
+use test_support::pdf_query::{PdfQuery, QueryDictionary, QueryLimits, QueryObjectId, QueryValue};
 
-fn probe(bytes: &[u8]) -> PdfProbe {
-    PdfProbe::new(bytes, ProbeLimits::default()).expect("Hayro probe parses serialized PDF")
+fn query(bytes: &[u8]) -> PdfQuery {
+    PdfQuery::new(bytes, QueryLimits::default()).expect("Hayro query parses serialized PDF")
 }
 
-fn probe_id(raw: i32) -> ProbeObjectId {
-    ProbeObjectId::new(raw, 0)
+fn query_id(raw: i32) -> QueryObjectId {
+    QueryObjectId::new(raw, 0)
 }
 
-fn probe_dictionary<'a>(value: &ProbeValue<'a>, context: &str) -> ProbeDictionary<'a> {
+fn query_dictionary<'a>(value: &QueryValue<'a>, context: &str) -> QueryDictionary<'a> {
     value
         .as_dictionary()
         .unwrap_or_else(|| panic!("{context} is a dictionary"))
 }
 
-fn probe_stream<'a>(
-    value: &ProbeValue<'a>,
+fn query_stream<'a>(
+    value: &QueryValue<'a>,
     context: &str,
-) -> test_support::pdf_probe::ProbeStream<'a> {
+) -> test_support::pdf_query::QueryStream<'a> {
     value
         .as_stream()
         .unwrap_or_else(|| panic!("{context} is a stream"))
@@ -178,21 +178,21 @@ fn compact_serialization_is_deterministic_and_independently_parseable() {
         &[1, 2, 3, 4, 5]
     ));
 
-    let parsed = probe(&first_bytes);
+    let parsed = query(&first_bytes);
     assert_eq!(parsed.version(), (1, 4));
     assert_eq!(parsed.pages().expect("ordered pages").len(), 1);
-    assert_eq!(parsed.root_id(), probe_id(1));
+    assert_eq!(parsed.root_id(), query_id(1));
     let trailer = parsed
         .trailer()
         .expect("project trailer")
         .expect("classic trailer");
     assert_eq!(
         trailer.get(b"Root").and_then(|value| value.referenced_id()),
-        Some(probe_id(1))
+        Some(query_id(1))
     );
-    let content = parsed.object(probe_id(4)).expect("content object");
+    let content = parsed.object(query_id(4)).expect("content object");
     assert_eq!(
-        probe_stream(&content, "content object").raw,
+        query_stream(&content, "content object").raw,
         b"q\n10 20 30 40 re\nS\nQ\n"
     );
 }
@@ -220,16 +220,16 @@ fn document_info_is_registered_in_the_pdf_writer_trailer() {
         PdfObject::Value(PdfValue::Dictionary(_))
     ));
     let bytes = document.to_pdf_bytes().expect("serialize info dictionary");
-    let parsed = probe(&bytes);
+    let parsed = query(&bytes);
     let trailer = parsed
         .trailer()
         .expect("project trailer")
         .expect("classic trailer");
     assert_eq!(
         trailer.get(b"Info").and_then(|value| value.referenced_id()),
-        Some(probe_id(6))
+        Some(query_id(6))
     );
-    let info = parsed.dictionary(probe_id(6)).expect("Info dictionary");
+    let info = parsed.dictionary(query_id(6)).expect("Info dictionary");
     assert_eq!(
         info.get(b"Creator")
             .and_then(|value| value.string())
@@ -280,9 +280,9 @@ fn raw_page_entries_are_hashed_validated_and_serialized_verbatim() {
             .windows(b"/MediaBox [1 2 300 400] /Rotate 90".len())
             .any(|window| window == b"/MediaBox [1 2 300 400] /Rotate 90")
     );
-    let parsed = probe(&bytes);
+    let parsed = query(&bytes);
     let pages = parsed.pages().expect("project pages");
-    assert_eq!(pages[0].id, probe_id(3));
+    assert_eq!(pages[0].id, query_id(3));
     assert_eq!(
         pages[0]
             .dictionary
@@ -347,9 +347,9 @@ fn deterministic_flate_streams_are_declared_and_decode_exactly() {
         .expect("repeat compressed PDF");
     assert_eq!(first, second);
 
-    let parsed = probe(&first);
-    let content = parsed.object(probe_id(4)).expect("content object");
-    let content = probe_stream(&content, "content object");
+    let parsed = query(&first);
+    let content = parsed.object(query_id(4)).expect("content object");
+    let content = query_stream(&content, "content object");
     assert_eq!(
         content
             .dictionary
@@ -461,7 +461,7 @@ fn raw_objects_and_trailer_extensions_keep_pdf_writer_framing() {
         .expect("typed ID entry");
     assert!(custom < id_entry, "raw trailer entries precede the file ID");
     assert!(classic_xref_offsets_match(&bytes, &[1, 2, 3, 4, 5, 6]));
-    let parsed = probe(&bytes);
+    let parsed = query(&bytes);
     let trailer = parsed
         .trailer()
         .expect("project trailer")
@@ -481,9 +481,9 @@ fn raw_objects_and_trailer_extensions_keep_pdf_writer_framing() {
             .collect::<Vec<_>>(),
         [vec![1; 16], vec![2; 16]]
     );
-    let raw = parsed.object(probe_id(6)).expect("raw object");
+    let raw = parsed.object(query_id(6)).expect("raw object");
     assert_eq!(
-        probe_dictionary(&raw, "raw object")
+        query_dictionary(&raw, "raw object")
             .get(b"Extension")
             .and_then(|value| value.boolean()),
         Some(true)
@@ -541,8 +541,8 @@ fn encoded_streams_preserve_their_filter_and_bytes_under_automatic_compression()
             object_compression: PdfObjectCompression::None,
         })
         .expect("encoded stream serializes");
-    let parsed = probe(&bytes);
-    assert_eq!(parsed.root_id(), probe_id(1));
+    let parsed = query(&bytes);
+    assert_eq!(parsed.root_id(), query_id(1));
     assert_eq!(parsed.pages().expect("ordered pages").len(), 1);
     assert!(find_bytes(&bytes, b"/Filter/DCTDecode").is_some());
     let stream_payload = [b"stream\n".as_slice(), encoded.as_slice(), b"\nendstream"].concat();
@@ -582,12 +582,12 @@ fn adapter_emits_real_object_streams_for_levels_one_through_three() {
         assert!(first.windows(12).any(|window| window == b"/Type/ObjStm"));
         assert!(first.windows(10).any(|window| window == b"/Type/XRef"));
 
-        let parsed = probe(&first);
+        let parsed = query(&first);
         assert_eq!(parsed.pages().expect("ordered pages").len(), 1);
         let pages = parsed
-            .dictionary(probe_id(2))
+            .dictionary(query_id(2))
             .expect("compressed pages object");
-        assert_eq!(pages.id(), Some(probe_id(2)));
+        assert_eq!(pages.id(), Some(query_id(2)));
         assert_eq!(
             pages.get(b"Type").and_then(|value| value.name()).as_deref(),
             Some(b"Pages".as_slice())
@@ -603,8 +603,8 @@ fn adapter_emits_real_object_streams_for_levels_one_through_three() {
                 .as_deref(),
             Some(b"XRef".as_slice())
         );
-        let content = parsed.object(probe_id(4)).expect("ordinary content stream");
-        let content = probe_stream(&content, "ordinary content stream");
+        let content = parsed.object(query_id(4)).expect("ordinary content stream");
+        let content = query_stream(&content, "ordinary content stream");
         assert_eq!(content.decoded, b"q\n10 20 30 40 re\nS\nQ\n");
     }
 }
@@ -642,19 +642,19 @@ fn pdf_writer_object_streams_parse_deterministically_at_levels_one_through_three
 
         assert!(first.windows(12).any(|window| window == b"/Type/ObjStm"));
         assert!(first.windows(10).any(|window| window == b"/Type/XRef"));
-        let document = probe(&first);
+        let document = query(&first);
         let pages = document
-            .dictionary(probe_id(2))
+            .dictionary(query_id(2))
             .expect("type-2 xref resolves pages");
-        assert_eq!(pages.id(), Some(probe_id(2)));
+        assert_eq!(pages.id(), Some(query_id(2)));
         assert_eq!(
             pages.get(b"Type").and_then(|value| value.name()).as_deref(),
             Some(b"Pages".as_slice())
         );
         let marker = document
-            .dictionary(probe_id(3))
+            .dictionary(query_id(3))
             .expect("second compressed object resolves");
-        assert_eq!(marker.id(), Some(probe_id(3)));
+        assert_eq!(marker.id(), Some(query_id(3)));
         assert_eq!(
             marker
                 .get(b"Marker")
@@ -663,9 +663,9 @@ fn pdf_writer_object_streams_parse_deterministically_at_levels_one_through_three
             Some(b"compressed object".as_slice())
         );
         let ordinary = document
-            .object(probe_id(4))
+            .object(query_id(4))
             .expect("ordinary stream resolves");
-        let ordinary = probe_stream(&ordinary, "ordinary stream object");
+        let ordinary = query_stream(&ordinary, "ordinary stream object");
         assert_eq!(ordinary.raw, b"ordinary stream");
         assert!(ordinary.dictionary.get(b"Filter").is_none());
     }

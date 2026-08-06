@@ -4868,9 +4868,9 @@ mod tests {
     };
     use std::path::Path;
     use test_support::{
-        pdf_fixture::{Dictionary as FixtureDictionary, PdfFixture, array, name, reference},
-        pdf_probe::{
-            PdfProbe, ProbeDictionary, ProbeLimits, ProbeObjectId, ProbeStream, ProbeValue,
+        pdf_fixture::{Dictionary as FixtureDictionary, ValidPdfFixture, array, name, reference},
+        pdf_query::{
+            PdfQuery, QueryDictionary, QueryLimits, QueryObjectId, QueryStream, QueryValue,
         },
     };
     use tex_state::{JobClock, World};
@@ -5127,7 +5127,7 @@ mod tests {
     }
 
     fn test_pdf_page(has_group: bool) -> Vec<u8> {
-        let mut document = PdfFixture::new("1.5").expect("create PDF-page fixture");
+        let mut document = ValidPdfFixture::new("1.5").expect("create PDF-page fixture");
         let mut page_dictionary = FixtureDictionary::new()
             .entry("Type", name("Page"))
             .entry("Parent", reference(2))
@@ -5171,7 +5171,7 @@ mod tests {
     }
 
     fn test_pdf_page_with_dct_image() -> Vec<u8> {
-        let mut document = PdfFixture::new("1.5").expect("create DCT-image fixture");
+        let mut document = ValidPdfFixture::new("1.5").expect("create DCT-image fixture");
         document
             .add_dictionary(
                 1,
@@ -5258,7 +5258,7 @@ mod tests {
     }
 
     fn test_pdf_page_with_icc_jpeg_source() -> (tex_state::PdfExternalImageSource, Vec<u8>) {
-        let mut document = PdfFixture::new("1.6").expect("create ICC JPEG fixture");
+        let mut document = ValidPdfFixture::new("1.6").expect("create ICC JPEG fixture");
         let icc_bytes = vec![b'I'; 1_024];
         let jpeg = vec![
             0xff, 0xd8, 0xff, 0xe0, b'U', b'm', b'b', b'e', b'r', 0xff, 0xd9,
@@ -5353,27 +5353,27 @@ mod tests {
         )
     }
 
-    fn probe(bytes: &[u8]) -> PdfProbe {
-        PdfProbe::new(bytes, ProbeLimits::default()).expect("parse generated PDF")
+    fn query(bytes: &[u8]) -> PdfQuery {
+        PdfQuery::new(bytes, QueryLimits::default()).expect("parse generated PDF")
     }
 
-    fn object<'a>(probe: &'a PdfProbe, number: i32) -> ProbeValue<'a> {
-        probe
-            .object(ProbeObjectId::new(number, 0))
+    fn object<'a>(query: &'a PdfQuery, number: i32) -> QueryValue<'a> {
+        query
+            .object(QueryObjectId::new(number, 0))
             .unwrap_or_else(|error| panic!("project PDF object {number}: {error:#}"))
     }
 
-    fn stream<'a>(value: &ProbeValue<'a>) -> ProbeStream<'a> {
+    fn stream<'a>(value: &QueryValue<'a>) -> QueryStream<'a> {
         value
             .as_stream()
             .expect("projected PDF value is not a stream")
     }
 
-    fn dictionary<'a>(value: &ProbeValue<'a>) -> ProbeDictionary<'a> {
+    fn dictionary<'a>(value: &QueryValue<'a>) -> QueryDictionary<'a> {
         value.as_dictionary().expect("projected PDF dictionary")
     }
 
-    fn value_name(value: ProbeValue<'_>) -> Vec<u8> {
+    fn value_name(value: QueryValue<'_>) -> Vec<u8> {
         value
             .name()
             .expect("projected PDF value is not a name")
@@ -5381,11 +5381,11 @@ mod tests {
             .to_vec()
     }
 
-    fn value_number(value: ProbeValue<'_>) -> f64 {
+    fn value_number(value: QueryValue<'_>) -> f64 {
         value.number().expect("projected PDF value is not numeric")
     }
 
-    fn value_string(value: ProbeValue<'_>) -> Vec<u8> {
+    fn value_string(value: QueryValue<'_>) -> Vec<u8> {
         value
             .string()
             .expect("projected PDF value is not a string")
@@ -5393,7 +5393,7 @@ mod tests {
             .to_vec()
     }
 
-    fn page_resources<'a>(page: &test_support::pdf_probe::ProbePage<'a>) -> ProbeDictionary<'a> {
+    fn page_resources<'a>(page: &test_support::pdf_query::QueryPage<'a>) -> QueryDictionary<'a> {
         page.dictionary
             .get(b"Resources")
             .and_then(|value| value.as_dictionary())
@@ -5401,9 +5401,9 @@ mod tests {
     }
 
     fn page_font<'a>(
-        page: &test_support::pdf_probe::ProbePage<'a>,
+        page: &test_support::pdf_query::QueryPage<'a>,
         key: &[u8],
-    ) -> ProbeDictionary<'a> {
+    ) -> QueryDictionary<'a> {
         page_resources(page)
             .get(b"Font")
             .and_then(|value| value.as_dictionary())
@@ -5413,8 +5413,8 @@ mod tests {
             .expect("font dictionary")
     }
 
-    fn info_dictionary(probe: &PdfProbe) -> Option<ProbeDictionary<'_>> {
-        probe
+    fn info_dictionary(query: &PdfQuery) -> Option<QueryDictionary<'_>> {
+        query
             .trailer()
             .expect("PDF trailer")?
             .get(b"Info")
@@ -5692,7 +5692,7 @@ mod tests {
         let pdf = pdf_from_committed_artifacts(&mut stores, &result.committed_artifacts)
             .expect("lower raster image");
         export_external_gate_pdf("raster-png", &pdf);
-        let parsed = probe(&pdf);
+        let parsed = query(&pdf);
         let image_object = object(&parsed, 1);
         let image_stream = stream(&image_object);
         assert_eq!(
@@ -5818,7 +5818,7 @@ mod tests {
         let pdf = pdf_from_committed_artifacts(&mut stores, &result.committed_artifacts)
             .expect("lower alpha image");
         export_external_gate_pdf("raster-alpha", &pdf);
-        let parsed = probe(&pdf);
+        let parsed = query(&pdf);
         let image_object = object(&parsed, 1);
         let image = stream(&image_object);
         assert_eq!(
@@ -5827,7 +5827,7 @@ mod tests {
                 .get(b"SMask")
                 .expect("soft-mask reference")
                 .referenced_id(),
-            Some(ProbeObjectId::new(2, 0))
+            Some(QueryObjectId::new(2, 0))
         );
         assert_eq!(image.decoded, vec![255, 0, 0, 0, 0, 255]);
         let mask_object = object(&parsed, 2);
@@ -5876,7 +5876,7 @@ mod tests {
         );
         let pdf = pdf_from_committed_artifacts(&mut stores, &result.committed_artifacts)
             .expect("lower repeated alpha image");
-        let parsed = probe(&pdf);
+        let parsed = query(&pdf);
         let pages = parsed.pages().expect("output pages");
         let xobjects = pages[0]
             .resources
@@ -5955,7 +5955,7 @@ mod tests {
         assert_eq!(stores.pdf_next_object_id(), next_after_first);
         assert_eq!(stores.world().artifact_commits(), commits_before);
 
-        let parsed = probe(&first);
+        let parsed = query(&first);
         let pages = parsed.pages().expect("one image page");
         let xobjects = pages[0]
             .resources
@@ -5969,7 +5969,7 @@ mod tests {
             .next()
             .and_then(|(_, value)| value.referenced_id())
             .expect("indirect image resource");
-        assert_eq!(image_id, ProbeObjectId::new(1, 0));
+        assert_eq!(image_id, QueryObjectId::new(1, 0));
         let image_object = parsed.object(image_id).expect("owned image object");
         let image = stream(&image_object);
         assert_eq!(image.decoded, vec![73]);
@@ -6237,7 +6237,7 @@ mod tests {
             let result = run_with_image(&mut stores, &tex, source.clone());
             let pdf = pdf_from_committed_artifacts(&mut stores, &result.committed_artifacts)
                 .expect("lower gamma-controlled PNG");
-            let parsed = probe(&pdf);
+            let parsed = query(&pdf);
             let image_object = object(&parsed, 1);
             let image = stream(&image_object);
             assert_eq!(image.decoded, expected, "\\pdfimageapplygamma={apply}",);
@@ -6325,7 +6325,7 @@ mod tests {
         );
         let pdf = pdf_from_committed_artifacts(&mut stores, &result.committed_artifacts)
             .expect("lower indexed image");
-        let parsed = probe(&pdf);
+        let parsed = query(&pdf);
         let color_object = object(&parsed, 1);
         assert_eq!(stream(&color_object).decoded, vec![255, 0, 0, 0, 0, 255]);
         let alpha_object = object(&parsed, 2);
@@ -6376,7 +6376,7 @@ mod tests {
         let pdf = pdf_from_committed_artifacts(&mut stores, &result.committed_artifacts)
             .expect("lower JPEG image");
         export_external_gate_pdf("dct-jpeg", &pdf);
-        let parsed = probe(&pdf);
+        let parsed = query(&pdf);
         let jpeg_object = object(&parsed, 1);
         let stream = stream(&jpeg_object);
         assert_eq!(
@@ -6403,7 +6403,7 @@ mod tests {
         );
         let pdf = pdf_from_committed_artifacts(&mut stores, &result.committed_artifacts)
             .expect("lower PDF-page image");
-        let parsed = probe(&pdf);
+        let parsed = query(&pdf);
         let form_object = object(&parsed, 1);
         let form = stream(&form_object);
         assert_eq!(
@@ -6447,7 +6447,7 @@ mod tests {
         );
         let pdf = pdf_from_committed_artifacts(&mut stores, &result.committed_artifacts)
             .expect("lower ICC JPEG PDF-page image");
-        let parsed = probe(&pdf);
+        let parsed = query(&pdf);
         let form_object = object(&parsed, 1);
         let form = stream(&form_object);
         let resources = form
@@ -6524,7 +6524,7 @@ mod tests {
                         if text.contains(tex_state::PdfPageGroupWarning::MULTIPLE_GROUPS_ON_ONE_PAGE)
                 )
             });
-            let parsed = probe(&pdf);
+            let parsed = query(&pdf);
             let first_object = object(&parsed, 1);
             let first = stream(&first_object);
             let second_object = object(&parsed, 2);
@@ -6762,7 +6762,7 @@ mod tests {
         ));
         let bytes = pdf_from_committed_artifacts(&mut stores, &result.committed_artifacts)
             .expect("running-link policy serializes");
-        let document = probe(&bytes);
+        let document = query(&bytes);
         let pages = document.pages().expect("generated pages");
         assert_eq!(pages.len(), 3);
         assert_eq!(
@@ -6789,7 +6789,7 @@ mod tests {
         ));
         let bytes = pdf_from_committed_artifacts(&mut stores, &result.committed_artifacts)
             .expect("typed annotations serialize");
-        let document = probe(&bytes);
+        let document = query(&bytes);
         let pages = document.pages().expect("generated pages");
         let annotations = &pages[0].annotations;
         assert_eq!(annotations.len(), 2);
@@ -6956,7 +6956,7 @@ mod tests {
             .expect("provide tagged-spacing encoding");
     }
 
-    fn shown_text_operands(document: &PdfProbe, page_number: usize) -> Vec<Vec<u8>> {
+    fn shown_text_operands(document: &PdfQuery, page_number: usize) -> Vec<Vec<u8>> {
         document.pages().expect("pages")[page_number - 1]
             .content
             .as_ref()
@@ -6965,7 +6965,7 @@ mod tests {
             .iter()
             .filter(|operation| operation.operator == b"Tj")
             .map(|operation| match &operation.operands[0] {
-                test_support::pdf_probe::ProbeOperand::String(bytes) => bytes.clone(),
+                test_support::pdf_query::QueryOperand::String(bytes) => bytes.clone(),
                 _ => panic!("shown-text operand is a string"),
             })
             .collect()
@@ -7058,7 +7058,7 @@ mod tests {
             .expect("font-size PDF replay assembles");
         assert_eq!(first, second);
 
-        let parsed = probe(&first);
+        let parsed = query(&first);
         let page = &parsed.pages().expect("one output page")[0];
         let font_dictionary = page_resources(page)
             .get(b"Font")
@@ -7148,7 +7148,7 @@ mod tests {
         );
         let pdf = pdf_from_committed_artifacts(&mut stores, &run.committed_artifacts)
             .expect("tagged PDF assembles");
-        let parsed = probe(&pdf);
+        let parsed = query(&pdf);
         assert_eq!(
             shown_text_operands(&parsed, 1),
             vec![b"A".to_vec(), b" ".to_vec(), b"B".to_vec(), b"C".to_vec()]
@@ -7180,7 +7180,7 @@ mod tests {
         );
         let pdf = pdf_from_committed_artifacts(&mut stores, &run.committed_artifacts)
             .expect("fallback-space PDF assembles");
-        let parsed = probe(&pdf);
+        let parsed = query(&pdf);
         assert_eq!(
             shown_text_operands(&parsed, 1),
             vec![b"A".to_vec(), b" ".to_vec(), b"B".to_vec()]
@@ -7273,10 +7273,10 @@ mod tests {
         let replay = pdf_from_committed_artifacts(&mut stores, &run_result.committed_artifacts)
             .expect("text PDF replay assembles");
         assert_eq!(pdf, replay);
-        let parsed = probe(&pdf);
+        let parsed = query(&pdf);
         let allocator = object(&parsed, 1);
         assert_eq!(
-            value_name(dictionary(&allocator).get(b"Kind").expect("probe Kind")),
+            value_name(dictionary(&allocator).get(b"Kind").expect("query Kind")),
             b"AllocatorProbe"
         );
         let pages = parsed.pages().expect("output pages");
@@ -7402,7 +7402,7 @@ mod tests {
             pdf.windows(b"/CharSet(/A/C)".len())
                 .any(|window| { window == b"/CharSet(/A/C)" })
         );
-        let parsed = probe(&pdf);
+        let parsed = query(&pdf);
         let pages = parsed.pages().expect("subset pages");
         let font = page_font(&pages[0], b"F1");
         let embedded = font
@@ -7462,7 +7462,7 @@ mod tests {
             pdf.windows(b"<43> <D83DDE00>".len())
                 .any(|window| { window == b"<43> <D83DDE00>" })
         );
-        let parsed = probe(&pdf);
+        let parsed = query(&pdf);
         let pages = parsed.pages().expect("ToUnicode pages");
         let cmap = page_font(&pages[0], b"F1")
             .get(b"ToUnicode")
@@ -7571,7 +7571,7 @@ mod tests {
                 .any(|w| w == b"/Subtype/TrueType")
         );
         assert!(pdf.windows(b"/FontFile2".len()).any(|w| w == b"/FontFile2"));
-        let parsed = probe(&pdf);
+        let parsed = query(&pdf);
         let pages = parsed.pages().expect("TrueType pages");
         let embedded = page_font(&pages[0], b"F1")
             .get(b"FontDescriptor")
@@ -7621,7 +7621,7 @@ mod tests {
         );
         let pdf = pdf_from_committed_artifacts(&mut stores, &run_result.committed_artifacts)
             .expect("subset TrueType PDF assembles");
-        let parsed = probe(&pdf);
+        let parsed = query(&pdf);
         let pages = parsed.pages().expect("subset TrueType pages");
         let embedded = page_font(&pages[0], b"F1")
             .get(b"FontDescriptor")
@@ -7661,7 +7661,7 @@ mod tests {
         );
         let pdf = pdf_from_committed_artifacts(&mut stores, &run_result.committed_artifacts)
             .expect("PDF assembles");
-        let parsed = probe(&pdf);
+        let parsed = query(&pdf);
         let info = info_dictionary(&parsed).expect("default Info dictionary");
         for (key, expected) in [
             (b"Producer".as_slice(), b"pdfTeX-1.40.29".as_slice()),
@@ -7691,7 +7691,7 @@ mod tests {
         let (mut stores, run_result) = run(source);
         let pdf = pdf_from_committed_artifacts(&mut stores, &run_result.committed_artifacts)
             .expect("PDF assembles");
-        let parsed = probe(&pdf);
+        let parsed = query(&pdf);
         let info = info_dictionary(&parsed).expect("Info dictionary");
         assert!(info.get(b"CreationDate").is_none());
         assert!(info.get(b"ModDate").is_none());
@@ -7704,7 +7704,7 @@ mod tests {
         ));
         let pdf = pdf_from_committed_artifacts(&mut stores, &run_result.committed_artifacts)
             .expect("PDF assembles");
-        let parsed = probe(&pdf);
+        let parsed = query(&pdf);
         let info = info_dictionary(&parsed).expect("Info dictionary");
         assert!(info.get(b"PTEX_Fullbanner").is_some());
         assert!(info.get(b"PTEX.Fullbanner").is_none());
@@ -7716,7 +7716,7 @@ mod tests {
         ));
         let pdf = pdf_from_committed_artifacts(&mut stores, &run_result.committed_artifacts)
             .expect("PDF assembles");
-        let parsed = probe(&pdf);
+        let parsed = query(&pdf);
         assert!(info_dictionary(&parsed).is_none());
     }
 
@@ -7730,7 +7730,7 @@ mod tests {
         ));
         let pdf = pdf_from_committed_artifacts(&mut stores, &run_result.committed_artifacts)
             .expect("PDF assembles");
-        let parsed = probe(&pdf);
+        let parsed = query(&pdf);
         let pages = parsed.pages().expect("output pages");
         for (page, expected) in pages.iter().zip([false, true, true]) {
             assert_eq!(page_resources(page).get(b"ProcSet").is_some(), expected);
@@ -7742,7 +7742,7 @@ mod tests {
         ));
         let pdf = pdf_from_committed_artifacts(&mut stores, &run_result.committed_artifacts)
             .expect("PDF assembles");
-        let parsed = probe(&pdf);
+        let parsed = query(&pdf);
         let pages = parsed.pages().expect("output pages");
         assert!(page_resources(&pages[0]).get(b"ProcSet").is_none());
     }
@@ -7766,7 +7766,7 @@ mod tests {
         ));
         let pdf = pdf_from_committed_artifacts(&mut stores, &run_result.committed_artifacts)
             .expect("PDF assembles");
-        let parsed = probe(&pdf);
+        let parsed = query(&pdf);
         let pages = parsed.pages().expect("output pages");
         assert_eq!(pages.len(), 2);
 
@@ -7838,7 +7838,7 @@ mod tests {
                 .count(),
             1
         );
-        let parsed = probe(&pdf);
+        let parsed = query(&pdf);
         assert_eq!(
             parsed.pages().expect("output pages")[0].media_box,
             [1.0, 2.0, 3.0, 4.0]
@@ -7889,7 +7889,7 @@ mod tests {
         ));
         let pdf = pdf_from_committed_artifacts(&mut stores, &run_result.committed_artifacts)
             .expect("PDF assembles");
-        let parsed = probe(&pdf);
+        let parsed = query(&pdf);
         let actual = parsed.pages().expect("output pages")[0].media_box;
         for (actual, expected) in actual.iter().zip([0.0, 0.0, 21.0, 42.0]) {
             assert!((*actual - expected).abs() < 0.002, "{actual} != {expected}");
@@ -7947,10 +7947,10 @@ mod tests {
 
         assert!(bytes.starts_with(b"%PDF-1.5"));
         assert!(bytes.windows(12).any(|window| window == b"/Type/ObjStm"));
-        let parsed = probe(&bytes);
+        let parsed = query(&bytes);
         assert_eq!(parsed.pages().expect("output pages").len(), 2);
         let contents = parsed
-            .object(ProbeObjectId::new(
+            .object(QueryObjectId::new(
                 first_contents.try_into().expect("object number fits i32"),
                 0,
             ))
@@ -7995,11 +7995,11 @@ mod tests {
             assert!(first.windows(12).any(|window| window == b"/Type/ObjStm"));
             assert!(first.windows(10).any(|window| window == b"/Type/XRef"));
 
-            let parsed = probe(&first);
+            let parsed = query(&first);
             assert_eq!(parsed.pages().expect("output pages").len(), 1);
             let contents_id = stores.pdf_pages()[0].contents_object();
             let contents_object = parsed
-                .object(ProbeObjectId::new(
+                .object(QueryObjectId::new(
                     contents_id.try_into().expect("object number fits i32"),
                     0,
                 ))
@@ -8038,7 +8038,7 @@ mod tests {
         );
         let pdf = pdf_from_committed_artifacts(&mut stores, &run_result.committed_artifacts)
             .expect("raw PDF extensions assemble");
-        let parsed = probe(&pdf);
+        let parsed = query(&pdf);
 
         let ordinary_object = object(&parsed, 1);
         let ordinary = dictionary(&ordinary_object);
@@ -8066,7 +8066,7 @@ mod tests {
             .expect("Names")
             .referenced_id()
             .expect("Names reference");
-        assert_eq!(names_id, ProbeObjectId::new(8, 0));
+        assert_eq!(names_id, QueryObjectId::new(8, 0));
         assert!(
             catalog
                 .get(b"Names")
@@ -8124,14 +8124,14 @@ mod tests {
 
         let pdf = pdf_from_committed_artifacts(&mut stores, &run_result.committed_artifacts)
             .expect("open action PDF assembles");
-        let parsed = probe(&pdf);
+        let parsed = query(&pdf);
         let catalog = parsed.root().expect("catalog");
         assert_eq!(
             catalog
                 .get(b"OpenAction")
                 .expect("OpenAction")
                 .referenced_id(),
-            Some(ProbeObjectId::new(1, 0))
+            Some(QueryObjectId::new(1, 0))
         );
         let action_object = object(&parsed, 1);
         let action = dictionary(&action_object);
@@ -8148,7 +8148,7 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(
             destination[0].referenced_id(),
-            Some(ProbeObjectId::new(2, 0))
+            Some(QueryObjectId::new(2, 0))
         );
         assert_eq!(value_name(destination[1].clone()), b"Fit");
     }
@@ -8174,7 +8174,7 @@ mod tests {
             ));
             let pdf = pdf_from_committed_artifacts(&mut stores, &run_result.committed_artifacts)
                 .expect("action PDF assembles");
-            let parsed = probe(&pdf);
+            let parsed = query(&pdf);
             let root = parsed.root().expect("catalog");
             let action = root
                 .get(b"OpenAction")
@@ -8234,7 +8234,7 @@ mod tests {
         assert!(pdf.windows(b"/XObject".len()).any(|w| w == b"/XObject"));
         assert!(pdf.windows(b"/Fm1 Do".len()).any(|w| w == b"/Fm1 Do"));
         assert!(pdf.windows(b"/BBox[0 0".len()).any(|w| w == b"/BBox[0 0"));
-        let parsed = probe(&pdf);
+        let parsed = query(&pdf);
         let form_object = object(&parsed, 1);
         assert!(
             stream(&form_object)
@@ -8558,7 +8558,7 @@ mod tests {
 
         let pdf = pdf_from_committed_artifacts(&mut stores, &run.committed_artifacts)
             .expect("the later referenced form finalizes");
-        let parsed = probe(&pdf);
+        let parsed = query(&pdf);
         let form_object = object(&parsed, 3);
         let decoded = &stream(&form_object).decoded;
         assert!(decoded.windows(2).any(|window| window == b"re"));
@@ -8796,7 +8796,7 @@ mod tests {
         ));
         let pdf = pdf_from_committed_artifacts(&mut stores, &run.committed_artifacts)
             .expect("destination PDF assembles");
-        let parsed = probe(&pdf);
+        let parsed = query(&pdf);
         assert_eq!(parsed.pages().expect("destination pages").len(), 1);
         for marker in [
             b"/Dests".as_slice(),
@@ -8835,7 +8835,7 @@ mod tests {
         );
         let pdf = pdf_from_committed_artifacts(&mut stores, &run.committed_artifacts)
             .expect("outline PDF assembles");
-        let parsed = probe(&pdf);
+        let parsed = query(&pdf);
         assert!(
             parsed
                 .root()
@@ -8910,7 +8910,7 @@ mod tests {
             );
         }
 
-        let parsed = probe(&first);
+        let parsed = query(&first);
         let mut annotation_owners = BTreeSet::new();
         for page in parsed.pages().expect("navigation pages") {
             for entry in page.annotations {
@@ -9480,7 +9480,7 @@ mod tests {
             .expect("thread PDF assembles");
         let text = String::from_utf8_lossy(&pdf);
         assert!(text.contains("/Threads"));
-        let document = probe(&pdf);
+        let document = query(&pdf);
         let root = document.root().expect("thread catalog");
         let threads = root
             .get(b"Threads")

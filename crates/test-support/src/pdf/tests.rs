@@ -1,4 +1,4 @@
-use crate::pdf_fixture::{Dictionary, PdfFixture, RawPdfFixture};
+use crate::pdf_fixture::{Dictionary, RawPdfFixture, ValidPdfFixture};
 
 use super::normalize_structure;
 
@@ -49,7 +49,7 @@ fn normalization_merges_inherited_resources_and_marks_cycles_stably() {
 
 #[test]
 fn normalization_marks_direct_and_indirect_stream_cycles_stably() {
-    let mut fixture = PdfFixture::new("1.7").expect("valid PDF version");
+    let mut fixture = ValidPdfFixture::new("1.7").expect("valid PDF version");
     fixture
         .add_raw_object(
             1,
