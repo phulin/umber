@@ -5,8 +5,8 @@ use super::set;
 
 pub(crate) fn render_update(update: &umber::RenderUpdate) -> Result<JsValue, JsValue> {
     match update {
-        umber::RenderUpdate::Snapshot(revision) => render_snapshot(revision),
-        umber::RenderUpdate::Patch(envelope) => render_patch(envelope),
+        umber::RenderUpdate::Snapshot(document) => render_snapshot(&document.revision),
+        umber::RenderUpdate::Patch(patch) => render_patch(patch),
     }
 }
 
@@ -41,8 +41,7 @@ fn render_snapshot(revision: &umber::RenderRevision) -> Result<JsValue, JsValue>
     Ok(object.into())
 }
 
-fn render_patch(envelope: &umber::PatchEnvelope) -> Result<JsValue, JsValue> {
-    let patch = &envelope.patch;
+fn render_patch(patch: &umber::PatchPlan) -> Result<JsValue, JsValue> {
     let object = Object::new();
     set(&object, "kind", &JsValue::from_str("patch"))?;
     set(&object, "schemaVersion", &JsValue::from_f64(1.0))?;

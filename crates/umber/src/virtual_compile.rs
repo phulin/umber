@@ -11,8 +11,8 @@ use tex_fonts::{
     FontRequest, FontRequestKey, OpenTypeFont, PdfPkFontRequest, ResolvedFont,
 };
 use tex_out::html::incremental::{
-    PatchEnvelope, PatchLimits, RenderDigest, RenderLimits, RenderRevision, RenderSessionId,
-    build_render_revision, plan_patch,
+    PatchLimits, PatchPlan, RenderDigest, RenderDocument, RenderLimits, RenderSessionId,
+    build_render_document, plan_patch,
 };
 use tex_out::html::{HtmlFontAsset, HtmlFontAssets, HtmlFontKey};
 use tex_state::{ContentHash, JobClock, Universe, World};
@@ -737,7 +737,7 @@ pub struct VirtualCompileSession {
     html_asset_mode: tex_out::html::AssetMode,
     incremental: Option<tex_incr::Session>,
     accepted_output: Option<MemoryRunOutput>,
-    accepted_render_revision: Option<RenderRevision>,
+    accepted_render_document: Option<RenderDocument>,
     pending_render_update: Option<RenderUpdate>,
     pending_patch: Option<(tex_incr::RevisionId, tex_incr::Edit)>,
     candidate: Option<RetainedCandidate>,
@@ -758,24 +758,24 @@ pub struct VirtualCompileSession {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum RenderUpdate {
-    Snapshot(RenderRevision),
-    Patch(PatchEnvelope),
+    Snapshot(RenderDocument),
+    Patch(PatchPlan),
 }
 
 impl RenderUpdate {
     #[must_use]
     pub fn target_revision(&self) -> u64 {
         match self {
-            Self::Snapshot(revision) => revision.revision,
-            Self::Patch(envelope) => envelope.patch.target_revision,
+            Self::Snapshot(document) => document.revision.revision,
+            Self::Patch(patch) => patch.target_revision,
         }
     }
 
     #[must_use]
     pub fn target_digest(&self) -> RenderDigest {
         match self {
-            Self::Snapshot(revision) => revision.digest,
-            Self::Patch(envelope) => envelope.patch.after_digest,
+            Self::Snapshot(document) => document.revision.digest,
+            Self::Patch(patch) => patch.after_digest,
         }
     }
 }
@@ -1008,7 +1008,7 @@ impl VirtualCompileSession {
             html_asset_mode: options.html_asset_mode,
             incremental: None,
             accepted_output: None,
-            accepted_render_revision: None,
+            accepted_render_document: None,
             pending_render_update: None,
             pending_patch: None,
             candidate: None,
@@ -1204,7 +1204,7 @@ impl VirtualCompileSession {
     /// Returns a bounded full snapshot for explicit protocol recovery.
     #[must_use]
     pub fn render_resync(&self) -> Option<RenderUpdate> {
-        self.accepted_render_revision
+        self.accepted_render_document
             .as_ref()
             .cloned()
             .map(RenderUpdate::Snapshot)
@@ -2348,7 +2348,7 @@ impl VirtualCompileSession {
                     .sum::<usize>(),
             );
         let remaining = self.limits.output_bytes.saturating_sub(existing);
-        let mut next_render_revision = None;
+        let mut next_render_document = None;
         let html = if self.outputs.contains(OutputCapability::Html) {
             let output_id = match &execution {
                 PreparedExecution::Initial { session, .. } => session.output_id(),
@@ -2381,34 +2381,33 @@ impl VirtualCompileSession {
                     capability: OutputCapability::Html,
                     message: error.to_string(),
                 })?;
-            next_render_revision = Some(
-                build_render_revision(
-                    &pages,
-                    &assets,
-                    &html_options,
-                    RenderSessionId::from_bytes(output_id.as_bytes()),
-                    execution.revision().raw(),
-                    self.accepted_render_revision.as_ref(),
-                    RenderLimits {
-                        max_pages: html_options.max_pages,
-                        max_nodes: html_options.max_positioned_events,
-                        max_resources: 65_536,
-                        max_resource_bytes: remaining,
-                    },
-                )
+            let render_document = build_render_document(
+                &pages,
+                &assets,
+                &html_options,
+                RenderSessionId::from_bytes(output_id.as_bytes()),
+                execution.revision().raw(),
+                self.accepted_render_document
+                    .as_ref()
+                    .map(|document| &document.revision),
+                RenderLimits {
+                    max_pages: html_options.max_pages,
+                    max_nodes: html_options.max_positioned_events,
+                    max_resources: 65_536,
+                    max_resource_bytes: remaining,
+                },
+            )
+            .map_err(|error| CompileError::OutputCapability {
+                capability: OutputCapability::Html,
+                message: error.to_string(),
+            })?;
+            let html = tex_out::html::write_render_document(&render_document, &html_options)
                 .map_err(|error| CompileError::OutputCapability {
                     capability: OutputCapability::Html,
                     message: error.to_string(),
-                })?,
-            );
-            Some(
-                tex_out::html::write_html(&pages, &assets, &html_options).map_err(|error| {
-                    CompileError::OutputCapability {
-                        capability: OutputCapability::Html,
-                        message: error.to_string(),
-                    }
-                })?,
-            )
+                })?;
+            next_render_document = Some(render_document);
+            Some(html)
         } else {
             None
         };
@@ -2450,23 +2449,22 @@ impl VirtualCompileSession {
         self.last_reuse = Some(reuse);
         self.last_stabilization_required = previous_generated != next_generated;
         self.accepted_output = Some(output.clone());
-        if let Some(target) = next_render_revision {
+        if let Some(target) = next_render_document {
             let update = if self.pending_render_update.is_some() {
                 // The consumer missed an acknowledgement. Coalesce to the
                 // newest accepted target through the explicit snapshot path.
                 RenderUpdate::Snapshot(target.clone())
-            } else if let Some(base) = &self.accepted_render_revision {
-                let patch = plan_patch(base, &target, PatchLimits::default()).map_err(|error| {
-                    CompileError::OutputCapability {
+            } else if let Some(base) = &self.accepted_render_document {
+                let patch = plan_patch(&base.revision, &target.revision, PatchLimits::default())
+                    .map_err(|error| CompileError::OutputCapability {
                         capability: OutputCapability::Html,
                         message: error.to_string(),
-                    }
-                })?;
-                RenderUpdate::Patch(PatchEnvelope::new(patch))
+                    })?;
+                RenderUpdate::Patch(patch)
             } else {
                 RenderUpdate::Snapshot(target.clone())
             };
-            self.accepted_render_revision = Some(target);
+            self.accepted_render_document = Some(target);
             self.pending_render_update = Some(update);
         }
         Ok(CompileAttemptResult::Complete(output))

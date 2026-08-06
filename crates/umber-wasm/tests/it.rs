@@ -1468,6 +1468,20 @@ fn retained_html_updates_cross_the_wasm_boundary_as_typed_snapshots_and_patches(
     let mut session = initial_rendered_query_session(original);
     let snapshot = session.render_update().expect("initial render update");
     assert_eq!(string_field(&snapshot, "kind"), "snapshot");
+    assert_eq!(
+        object_keys(&snapshot),
+        [
+            "kind",
+            "schemaVersion",
+            "sessionId",
+            "revision",
+            "digest",
+            "title",
+            "language",
+            "resources",
+            "pages",
+        ]
+    );
     assert_eq!(field(&snapshot, "revision").as_f64(), Some(1.0));
     let digest = string_field(&snapshot, "digest");
     let pages = Array::from(&field(&snapshot, "pages"));
@@ -1498,8 +1512,30 @@ fn retained_html_updates_cross_the_wasm_boundary_as_typed_snapshots_and_patches(
     );
     let update = session.render_update().expect("patch render update");
     assert_eq!(string_field(&update, "kind"), "patch");
+    assert_eq!(
+        object_keys(&update),
+        [
+            "kind",
+            "schemaVersion",
+            "sessionId",
+            "baseRevision",
+            "targetRevision",
+            "beforeDigest",
+            "afterDigest",
+            "resourceAdditions",
+            "resourceReleases",
+            "operations",
+        ]
+    );
     assert_eq!(field(&update, "baseRevision").as_f64(), Some(1.0));
     assert_eq!(field(&update, "targetRevision").as_f64(), Some(2.0));
+}
+
+fn object_keys(value: &JsValue) -> Vec<String> {
+    Object::keys(value.unchecked_ref::<Object>())
+        .iter()
+        .map(|key| key.as_string().expect("object key is a string"))
+        .collect()
 }
 
 struct RenderedQueryFixture {

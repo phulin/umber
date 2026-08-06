@@ -1,3 +1,5 @@
+use std::cell::Cell;
+
 use sha2::{Digest, Sha256};
 use tex_arith::Scaled;
 
@@ -10,7 +12,7 @@ use crate::{
 use super::incremental::{
     PATCH_SCHEMA_VERSION, PatchApplyError, PatchDelivery, PatchEnvelope, PatchLimits, PatchOp,
     PatchProtocolError, ProtocolLimits, RenderKey, RenderLimits, RenderSessionId, apply_patch,
-    build_positioned_render_document, build_render_revision, plan_patch, validate_delivery,
+    build_positioned_render_document, build_render_document, plan_patch, validate_delivery,
 };
 use super::{
     AssetMode, HtmlError, HtmlFontAsset, HtmlFontAssets, HtmlFontKey, HtmlOptions,
@@ -247,6 +249,17 @@ impl HtmlFontAssets for OrderedResolver {
             provenance: font.name.clone(),
             embeddable: true,
         })
+    }
+}
+
+struct CountingResolver {
+    calls: Cell<usize>,
+}
+
+impl HtmlFontAssets for CountingResolver {
+    fn font_asset(&self, font: &FontResource) -> Result<HtmlFontAsset, String> {
+        self.calls.set(self.calls.get() + 1);
+        OrderedResolver.font_asset(font)
     }
 }
 
@@ -807,7 +820,7 @@ fn shared_render_document_matches_public_bytes_assets_and_incremental_identity()
     let detached = write_render_document(&document, &options).expect("detached standalone HTML");
     assert_eq!(detached, public);
 
-    let incremental = build_render_revision(
+    let incremental = build_render_document(
         &artifacts,
         &resolver,
         &options,
@@ -816,7 +829,8 @@ fn shared_render_document_matches_public_bytes_assets_and_incremental_identity()
         None,
         RenderLimits::default(),
     )
-    .expect("incremental render revision");
+    .expect("incremental render document")
+    .revision;
     assert_eq!(document.revision, incremental);
     for (positioned, rendered) in positioned.iter().zip(&document.revision.pages) {
         let expected = positioned
@@ -855,6 +869,41 @@ fn shared_render_document_matches_public_bytes_assets_and_incremental_identity()
             .collect::<Vec<_>>()
     );
     assert_eq!(detached.assets.len(), 2);
+}
+
+#[test]
+fn detached_serialization_does_not_resolve_fonts_again() {
+    let resolver = CountingResolver {
+        calls: Cell::new(0),
+    };
+    let options = HtmlOptions::default();
+    let document = build_render_document(
+        &[page()],
+        &resolver,
+        &options,
+        RenderSessionId::from_bytes(options.output_id.as_bytes()),
+        options.revision,
+        None,
+        RenderLimits::default(),
+    )
+    .expect("render document");
+    assert_eq!(resolver.calls.get(), 1);
+
+    write_render_document(&document, &options).expect("standalone serialization");
+    assert_eq!(resolver.calls.get(), 1);
+    let target = build_render_document(
+        &[page()],
+        &resolver,
+        &options,
+        document.revision.session_id,
+        document.revision.revision + 1,
+        Some(&document.revision),
+        RenderLimits::default(),
+    )
+    .expect("next render document");
+    assert_eq!(resolver.calls.get(), 2);
+    plan_patch(&document.revision, &target.revision, PatchLimits::default()).expect("patch plan");
+    assert_eq!(resolver.calls.get(), 2);
 }
 
 #[test]
@@ -908,7 +957,7 @@ fn canonical_render_revision_is_deterministic_and_reuses_unchanged_keys() {
     let resolver = Resolver { missing_b: false };
     let options = HtmlOptions::default();
     let session = RenderSessionId::from_bytes([9; 16]);
-    let first = build_render_revision(
+    let first = build_render_document(
         &[page()],
         &resolver,
         &options,
@@ -917,8 +966,9 @@ fn canonical_render_revision_is_deterministic_and_reuses_unchanged_keys() {
         None,
         RenderLimits::default(),
     )
-    .expect("first render revision");
-    let repeated = build_render_revision(
+    .expect("first render document")
+    .revision;
+    let repeated = build_render_document(
         &[page()],
         &resolver,
         &options,
@@ -927,7 +977,8 @@ fn canonical_render_revision_is_deterministic_and_reuses_unchanged_keys() {
         Some(&first),
         RenderLimits::default(),
     )
-    .expect("repeated render revision");
+    .expect("repeated render document")
+    .revision;
 
     assert_eq!(first.pages[0].key, repeated.pages[0].key);
     assert_eq!(first.pages[0].nodes, repeated.pages[0].nodes);
@@ -949,7 +1000,7 @@ fn prefix_page_insertion_retains_suffix_page_and_node_identity() {
         unreachable!()
     };
     *ch = b'B' as u32;
-    let first = build_render_revision(
+    let first = build_render_document(
         &[first_page.clone(), second_page.clone()],
         &resolver,
         &options,
@@ -958,14 +1009,15 @@ fn prefix_page_insertion_retains_suffix_page_and_node_identity() {
         None,
         RenderLimits::default(),
     )
-    .expect("first render revision");
+    .expect("first render document")
+    .revision;
     let mut inserted = page();
     inserted.testing_mut().counts[0] = 99;
     let PageNode::HList(root) = &mut inserted.testing_mut().root else {
         unreachable!()
     };
     root.width = sp(333);
-    let next = build_render_revision(
+    let next = build_render_document(
         &[inserted, first_page, second_page],
         &resolver,
         &options,
@@ -974,7 +1026,8 @@ fn prefix_page_insertion_retains_suffix_page_and_node_identity() {
         Some(&first),
         RenderLimits::default(),
     )
-    .expect("prefixed render revision");
+    .expect("prefixed render document")
+    .revision;
 
     for (old, new) in first.pages.iter().zip(&next.pages[1..]) {
         assert_eq!(old.key, new.key);
@@ -991,7 +1044,7 @@ fn deterministic_patch_application_equals_fresh_target() {
     let options = HtmlOptions::default();
     let session = RenderSessionId::from_bytes([11; 16]);
     let base_page = page();
-    let base = build_render_revision(
+    let base = build_render_document(
         std::slice::from_ref(&base_page),
         &resolver,
         &options,
@@ -1000,7 +1053,8 @@ fn deterministic_patch_application_equals_fresh_target() {
         None,
         RenderLimits::default(),
     )
-    .expect("base render revision");
+    .expect("base render document")
+    .revision;
     let mut changed = base_page;
     changed.testing_mut().counts[0] = 7;
     let PageNode::HList(root) = &mut changed.testing_mut().root else {
@@ -1010,7 +1064,7 @@ fn deterministic_patch_application_equals_fresh_target() {
         unreachable!()
     };
     *ch = b'B' as u32;
-    let target = build_render_revision(
+    let target = build_render_document(
         &[changed],
         &resolver,
         &options,
@@ -1019,7 +1073,8 @@ fn deterministic_patch_application_equals_fresh_target() {
         Some(&base),
         RenderLimits::default(),
     )
-    .expect("target render revision");
+    .expect("target render document")
+    .revision;
     let first = plan_patch(&base, &target, PatchLimits::default()).expect("patch plan");
     let second = plan_patch(&base, &target, PatchLimits::default()).expect("repeat patch plan");
 
@@ -1041,7 +1096,7 @@ fn no_op_patch_is_empty_and_invalid_operation_is_atomic() {
     let resolver = Resolver { missing_b: false };
     let options = HtmlOptions::default();
     let session = RenderSessionId::from_bytes([12; 16]);
-    let base = build_render_revision(
+    let base = build_render_document(
         &[page()],
         &resolver,
         &options,
@@ -1050,8 +1105,9 @@ fn no_op_patch_is_empty_and_invalid_operation_is_atomic() {
         None,
         RenderLimits::default(),
     )
-    .expect("base render revision");
-    let target = build_render_revision(
+    .expect("base render document")
+    .revision;
+    let target = build_render_document(
         &[page()],
         &resolver,
         &options,
@@ -1060,7 +1116,8 @@ fn no_op_patch_is_empty_and_invalid_operation_is_atomic() {
         Some(&base),
         RenderLimits::default(),
     )
-    .expect("target render revision");
+    .expect("target render document")
+    .revision;
     let empty = plan_patch(&base, &target, PatchLimits::default()).expect("empty patch");
     assert!(empty.operations.is_empty());
     assert!(empty.resource_additions.is_empty());
@@ -1082,7 +1139,7 @@ fn patch_envelope_preflights_counts_hashes_versions_and_duplicate_delivery() {
     let resolver = Resolver { missing_b: false };
     let options = HtmlOptions::default();
     let session = RenderSessionId::from_bytes([13; 16]);
-    let base = build_render_revision(
+    let base = build_render_document(
         &[page()],
         &resolver,
         &options,
@@ -1091,10 +1148,11 @@ fn patch_envelope_preflights_counts_hashes_versions_and_duplicate_delivery() {
         None,
         RenderLimits::default(),
     )
-    .expect("base render revision");
+    .expect("base render document")
+    .revision;
     let mut changed = page();
     changed.testing_mut().counts[0] = 8;
-    let target = build_render_revision(
+    let target = build_render_document(
         &[changed],
         &resolver,
         &options,
@@ -1103,7 +1161,8 @@ fn patch_envelope_preflights_counts_hashes_versions_and_duplicate_delivery() {
         Some(&base),
         RenderLimits::default(),
     )
-    .expect("target render revision");
+    .expect("target render document")
+    .revision;
     let plan = plan_patch(&base, &target, PatchLimits::default()).expect("patch plan");
     let envelope = PatchEnvelope::new(plan);
     assert_eq!(envelope.schema_version, PATCH_SCHEMA_VERSION);
@@ -1168,7 +1227,7 @@ fn generated_artifact_edit_sequences_equal_fresh_canonical_renders() {
     let options = HtmlOptions::default();
     let session = RenderSessionId::from_bytes([14; 16]);
     let mut source_pages = vec![generated_page(1), generated_page(2), generated_page(3)];
-    let mut mounted = build_render_revision(
+    let mut mounted = build_render_document(
         &source_pages,
         &resolver,
         &options,
@@ -1177,7 +1236,8 @@ fn generated_artifact_edit_sequences_equal_fresh_canonical_renders() {
         None,
         RenderLimits::default(),
     )
-    .expect("initial generated revision");
+    .expect("initial generated document")
+    .revision;
     let mut random = 0x4d59_5df4_d0f3_3173_u64;
 
     for revision in 2..=41 {
@@ -1211,7 +1271,7 @@ fn generated_artifact_edit_sequences_equal_fresh_canonical_renders() {
             _ => source_pages.rotate_left(1),
         }
 
-        let target = build_render_revision(
+        let target = build_render_document(
             &source_pages,
             &resolver,
             &options,
@@ -1220,8 +1280,9 @@ fn generated_artifact_edit_sequences_equal_fresh_canonical_renders() {
             Some(&mounted),
             RenderLimits::default(),
         )
-        .expect("generated target revision");
-        let fresh = build_render_revision(
+        .expect("generated target document")
+        .revision;
+        let fresh = build_render_document(
             &source_pages,
             &resolver,
             &options,
@@ -1230,7 +1291,8 @@ fn generated_artifact_edit_sequences_equal_fresh_canonical_renders() {
             None,
             RenderLimits::default(),
         )
-        .expect("fresh generated revision");
+        .expect("fresh generated document")
+        .revision;
         assert_render_semantics(&target, &fresh, revision);
 
         let patch =

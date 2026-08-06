@@ -357,21 +357,6 @@ impl From<HtmlError> for RenderBuildError {
     }
 }
 
-pub fn build_render_revision<R: HtmlFontAssets>(
-    artifacts: &[PageArtifact],
-    assets: &R,
-    options: &HtmlOptions,
-    session_id: RenderSessionId,
-    revision: u64,
-    previous: Option<&RenderRevision>,
-    limits: RenderLimits,
-) -> Result<RenderRevision, RenderBuildError> {
-    Ok(build_render_document(
-        artifacts, assets, options, session_id, revision, previous, limits,
-    )?
-    .revision)
-}
-
 pub fn build_render_document<R: HtmlFontAssets>(
     artifacts: &[PageArtifact],
     assets: &R,
@@ -404,21 +389,6 @@ pub fn build_render_document<R: HtmlFontAssets>(
     build_positioned_render_document(
         &pages, assets, options, session_id, revision, previous, limits,
     )
-}
-
-pub fn build_positioned_render_revision<R: HtmlFontAssets>(
-    pages: &[PositionedPage],
-    assets: &R,
-    options: &HtmlOptions,
-    session_id: RenderSessionId,
-    revision: u64,
-    previous: Option<&RenderRevision>,
-    limits: RenderLimits,
-) -> Result<RenderRevision, RenderBuildError> {
-    Ok(build_positioned_render_document(
-        pages, assets, options, session_id, revision, previous, limits,
-    )?
-    .revision)
 }
 
 pub fn build_positioned_render_document<R: HtmlFontAssets>(

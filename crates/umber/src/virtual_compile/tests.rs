@@ -2024,14 +2024,19 @@ fn accepted_html_revisions_publish_snapshot_then_acknowledged_patch_and_resync()
     session
         .add_user_file("main.tex", source.as_bytes().to_vec())
         .expect("source");
-    let CompileAttemptResult::Complete(_) = session.compile_attempt() else {
+    let CompileAttemptResult::Complete(output) = session.compile_attempt() else {
         panic!("initial HTML revision should complete");
     };
     let RenderUpdate::Snapshot(snapshot) = session.render_update().expect("initial snapshot")
     else {
         panic!("initial update must be a snapshot");
     };
-    let first_digest = snapshot.digest;
+    let serialized =
+        tex_out::html::write_render_document(snapshot, &tex_out::html::HtmlOptions::default())
+            .expect("retained render document serializes");
+    assert_eq!(output.html.as_deref(), Some(serialized.html.as_slice()));
+    assert_eq!(output.html_assets.len(), serialized.assets.len());
+    let first_digest = snapshot.revision.digest;
     session
         .acknowledge_render_update(1, first_digest)
         .expect("snapshot acknowledgement");
@@ -2039,27 +2044,27 @@ fn accepted_html_revisions_publish_snapshot_then_acknowledged_patch_and_resync()
     let Some(RenderUpdate::Snapshot(resync)) = session.render_resync() else {
         panic!("explicit resync should return the accepted snapshot");
     };
-    assert_eq!(resync.revision, 1);
-    assert_eq!(resync.digest, first_digest);
+    assert_eq!(resync.revision.revision, 1);
+    assert_eq!(resync.revision.digest, first_digest);
 
     let _next_source = apply_text_replacement(&mut session, 2, source, "1pt", "2pt");
     let CompileAttemptResult::Complete(_) = session.compile_attempt() else {
         panic!("edited HTML revision should complete");
     };
-    let RenderUpdate::Patch(envelope) = session.render_update().expect("incremental patch") else {
+    let RenderUpdate::Patch(patch) = session.render_update().expect("incremental patch") else {
         panic!("acknowledged base should produce a patch");
     };
-    assert_eq!(envelope.patch.base_revision, 1);
-    assert_eq!(envelope.patch.target_revision, 2);
-    let second_digest = envelope.patch.after_digest;
+    assert_eq!(patch.base_revision, 1);
+    assert_eq!(patch.target_revision, 2);
+    let second_digest = patch.after_digest;
     session
         .acknowledge_render_update(2, second_digest)
         .expect("patch acknowledgement");
     let Some(RenderUpdate::Snapshot(resync)) = session.render_resync() else {
         panic!("resync after patch should return the latest accepted snapshot");
     };
-    assert_eq!(resync.revision, 2);
-    assert_eq!(resync.digest, second_digest);
+    assert_eq!(resync.revision.revision, 2);
+    assert_eq!(resync.revision.digest, second_digest);
 }
 
 #[test]
