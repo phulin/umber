@@ -6,7 +6,7 @@ use std::process::Command;
 use anyhow::{Context, Result, bail, ensure};
 use serde::{Deserialize, Serialize};
 
-use crate::layout_migration::{self, Mode};
+use crate::fixture_transaction::{self, Mode};
 
 const PLAN_SCHEMA: &str = "umber-fixture-cohort-plan-v1";
 
@@ -49,7 +49,7 @@ pub(crate) fn run_cli(args: Vec<String>) -> Result<()> {
         .canonicalize()
         .context("canonicalize cohort repository")?;
     validate_repository(&repository)?;
-    let report = layout_migration::run_staged_cohort(&repository, &plan.cases, mode)?;
+    let report = fixture_transaction::run_staged_cohort(&repository, &plan.cases, mode)?;
     println!(
         "{}",
         serde_json::to_string(&CliResult {

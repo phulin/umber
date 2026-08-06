@@ -8,7 +8,7 @@ use anyhow::{Context, Result, bail};
 use corpus_manifest::{Entry, parse_manifest_file};
 use sha2::{Digest, Sha256};
 
-use crate::layout_migration::publish_case_inventory;
+use crate::fixture_transaction::publish_case_inventory;
 
 #[derive(Debug, Clone)]
 pub(crate) struct SyncOptions {

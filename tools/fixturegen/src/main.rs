@@ -3,10 +3,9 @@
 mod classic_bibtex;
 mod cohort_transaction;
 mod corpus_sync;
+mod fixture_transaction;
 mod fonts;
-mod layout_migration;
 mod pdf;
-mod pdf_layout_migration;
 
 use std::env;
 use std::fs;
@@ -60,19 +59,6 @@ fn run() -> Result<()> {
             ensure_no_extra_args(args)?;
             regenerate_area(&area)
         }
-        Some("--migrate-layout") => {
-            let mode = match args.next().as_deref() {
-                Some("--plan") => layout_migration::Mode::Plan,
-                Some("--apply") => layout_migration::Mode::Apply,
-                _ => bail!("--migrate-layout requires --plan or --apply"),
-            };
-            ensure_no_extra_args(args)?;
-            let report =
-                layout_migration::run(&corpus_root(), layout_migration::ALL_FAMILIES, mode)?;
-            print!("{report}");
-            Ok(())
-        }
-        Some("--migrate-pdf-layout") => pdf_layout_migration::run_cli(args.collect()),
         Some("--cohort-transaction") => cohort_transaction::run_cli(args.collect()),
         Some("--sync-corpus") => sync_corpus(args.collect()),
         Some("--reference-dvi") => publish_reference_dvi(args.collect()),
@@ -80,7 +66,7 @@ fn run() -> Result<()> {
             let root = args.next().context("missing classic case directory")?;
             let case = args.next().context("missing classic case ID")?;
             ensure_no_extra_args(args)?;
-            layout_migration::seal_classic_case(Path::new(&root), &case)
+            fixture_transaction::seal_classic_case(Path::new(&root), &case)
         }
         Some("--case") => {
             let first = args.next().context("missing case after --case")?;
@@ -109,7 +95,7 @@ fn run() -> Result<()> {
 
 fn print_usage() {
     eprintln!(
-        "usage: fixturegen --area AREA | --case AREA/CASE | --case AREA CASE | --migrate-layout (--plan|--apply) | --migrate-pdf-layout (--plan|--apply) | --cohort-transaction (--plan|--apply) PLAN.json | --sync-corpus [--manifest PATH] [--dest PATH] [--offline] | --reference-dvi DOCUMENT OUTPUT | --check-pdf-raster\n\
+        "usage: fixturegen --area AREA | --case AREA/CASE | --case AREA CASE | --cohort-transaction (--plan|--apply) PLAN.json | --sync-corpus [--manifest PATH] [--dest PATH] [--offline] | --reference-dvi DOCUMENT OUTPUT | --check-pdf-raster\n\
          areas: hello lexer expand lexer_dynamic exec etex_exec typeset tex_exec tex_exec_io pdf fonts"
     );
 }
@@ -133,7 +119,7 @@ fn publish_reference_dvi(args: Vec<String>) -> Result<()> {
         .file_name()
         .map(PathBuf::from)
         .context("reference DVI output has no file name")?;
-    let changed = layout_migration::publish_file_in_tree(
+    let changed = fixture_transaction::publish_file_in_tree(
         &repository.join("tests/corpus"),
         tree,
         &file,
@@ -665,7 +651,7 @@ fn atomically_replace_case_output(
     let inventory = test_support::closed_case::StagedCase::validate(&candidate)?
         .inventory()
         .clone();
-    layout_migration::publish_case_inventory(&corpus_root(), &current, inventory)
+    fixture_transaction::publish_case_inventory(&corpus_root(), &current, inventory)
 }
 
 fn source_path(area: &str, case: &str) -> PathBuf {

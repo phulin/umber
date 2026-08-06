@@ -10,7 +10,7 @@ use test_support::{closed_case::FixtureCase, corpus_cases, corpus_root, pdf::nor
 
 use super::umber_bin;
 use crate::cohort_transaction::CohortCase;
-use crate::layout_migration::{Mode, run_staged_cohort};
+use crate::fixture_transaction::{Mode, run_staged_cohort};
 
 const PDFTEX_VERSION: &str = "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)";
 const RENDERER_VERSION: &str = "pdftoppm version 25.08.0";

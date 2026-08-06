@@ -405,7 +405,10 @@ fn compare_character_tag(
         }
         (CharTag::Extensible(index), None, Some(expected)) => {
             assert_eq!(
-                font.metrics().extensible_recipes().get(usize::from(index)).copied(),
+                font.metrics()
+                    .extensible_recipes()
+                    .get(usize::from(index))
+                    .copied(),
                 Some(pl_recipe_to_tfm(expected)),
                 "{name} {variant} char {} extensible recipe",
                 code

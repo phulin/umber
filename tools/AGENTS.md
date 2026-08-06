@@ -25,34 +25,21 @@ Their staged sources resolve repository-owned Computer Modern requests to the
 owning worktree's absolute TFM paths, so regeneration never substitutes an
 ambient TeX installation's font metrics.
 
-`fixturegen --migrate-layout --plan` deterministically inventories the
-single declarative registry of execution/output, lexical/session, and native
-bibliography-invocation specifications in `layout_migration.rs`, reports each
-case's file/byte census and domain-separated SHA-256, and performs no writes.
-`--apply` stages and byte-verifies the entire requested plan before any
-authority mutation. Its commit renames every old authority into a named
-transaction backup and installs the staged cases; a failure reverses every
-completed rename, reports every restoration failure, and retains recoverable
-backups when restoration is incomplete. Transaction roots are atomically
-allocated unique siblings and carry a strict schema/version/plan-digest
-ownership marker. Commit occurs only after every installed directory is
-byte-revalidated. Transaction removal after that point is garbage collection:
-failure keeps the complete new authority, reports committed status and the
-exact owned retained root, and a matching retry finishes cleanup. Unknown or
-mismatched transaction roots are preserved and refused. A completed apply and
-a successfully rolled-back apply are both safe to repeat. The reusable specification declares
-case discovery, relative sources and destinations, roles, local metadata,
-shared-input copies, and output mappings without assuming `.tex` or
-`expected.<channel>` names. Family areas may be normalized nested paths, and a
-shared authority may target either every discovered case or an explicit
-nonempty subset; the latter keeps overlapping scenario groups declarative
-without introducing duplicate flat authorities.
+The completed `fixturegen --migrate-layout` and `--migrate-pdf-layout`
+compatibility commands retired under `umber2-vgjr.18.3`. Their source-tree
+caller audit, final current-tree report identities, and explicit compatibility
+decision are preserved in [the retirement writeback](../docs/writeback/umber2-vgjr.18.3.md).
+The closed fixture directories are now the only layout authority; do not add a
+second one-time registry for an already completed migration.
 
-`fixturegen --migrate-pdf-layout --plan` inventories the fixed 15-case bounded
-PDF cohort, including derived TrueType bytes and exact font, encoding, PK, and
-included-PDF inputs. `--apply` stages and seals every complete candidate before
-one reusable cohort Plan/Apply handoff; repeating apply validates the installed
-closed cohort without consulting former shared authority.
+`fixture_transaction.rs` owns the shared atomic publication transaction used
+by ordinary single-case regeneration, PDF cohorts, corpus sync, reference-DVI
+publication, and externally staged cohorts. It preserves the established
+transaction-root schema and plan digest so an interrupted publication remains
+recoverable across the refactor. Commit renames old authorities into named
+backups, installs and byte-revalidates every case, rolls back all completed
+renames on a pre-commit failure, and treats post-commit removal as resumable
+garbage collection. Unknown or mismatched retained roots are refused.
 
 `fixturegen --cohort-transaction --plan PLAN.json` and `--apply PLAN.json`
 reuse that transaction engine for generators that already hold a complete

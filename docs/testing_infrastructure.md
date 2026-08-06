@@ -41,25 +41,19 @@ and lexical/session corpora under
 `tests/corpus/{hello,lexer,lexer_dynamic,stabilization,canonical-dvi}`
 use one closed Git directory per case. Each directory owns its named `.tex`
 source, every exact local support input, and each applicable
-`expected.<channel>` output. `tools/fixturegen --migrate-layout --plan` is the
-read-only deterministic migration inventory. `--apply` stages and byte-checks
-the whole requested plan before mutation, then commits through recoverable
-authority backups and case-directory swaps. The pre-commit phase includes
-every authority move, case install, and final installed-layout byte
-revalidation; any failure there reverses all completed swaps and reports every
-restoration failure. Only then is the new layout committed as the sole complete
-authority. Backup/root removal is post-commit garbage collection, so even a
-partial recursive-deletion failure never rolls back from damaged backups: it
-keeps the complete installed layout and reports committed status plus the exact
-owned retained root. Transaction roots are uniquely allocated beside the
-corpus and carry a strict schema/version/plan-digest ownership marker. A
-matching committed retry safely finishes garbage collection; unknown or
-mismatched roots are refused and preserved. Incomplete pre-commit restoration
-retains named backups and reports the original and restoration failures
-together. The declarative mapping schema
-does not assume TeX extensions or conventional output names. Repeating either
-mode after success or successful rollback returns the same case/byte/SHA-256
-report. The routine `test-support` gate uses the shared `ClosedCase` validator
+`expected.<channel>` output. The one-time layout commands retired after the
+closed tree became authoritative; their final plan/digest receipt is preserved
+in [the retirement writeback](writeback/umber2-vgjr.18.3.md). Ordinary fixture
+publication still commits through recoverable authority backups and
+case-directory swaps. The pre-commit phase includes every authority move, case
+install, and final installed-layout byte revalidation; any failure there
+reverses all completed swaps and reports every restoration failure. Backup/root
+removal is post-commit garbage collection, so a partial deletion failure keeps
+the complete installed layout and reports committed status plus the exact
+owned retained root. Transaction roots retain their strict schema/version/plan-
+digest marker; a matching committed retry finishes garbage collection, while
+unknown or mismatched roots are refused and preserved. The routine
+`test-support` gate uses the shared `ClosedCase` validator
 to equate each directory with Git's regular tracked-file inventory,
 so ignored, untracked, symlinked, nonlocal, target-backed, missing, and extra
 authorities fail rather than escaping discovery.

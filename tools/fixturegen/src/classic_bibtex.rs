@@ -12,8 +12,8 @@ use std::process::Command;
 use anyhow::{Context, Result, bail};
 use bib_engine::{
     BibExitStatus, BibliographyAttempt, BibliographyHistory, BibliographyJob, BibliographySession,
-    ClassicBibJob, ClassicBibOptions, FileKind, ProjectWorkspace, ResolvedFile,
-    VfsLimits, VirtualPath,
+    ClassicBibJob, ClassicBibOptions, FileKind, ProjectWorkspace, ResolvedFile, VfsLimits,
+    VirtualPath,
 };
 use tempfile::TempDir;
 
@@ -60,33 +60,81 @@ const BUILTINS: &[(&str, &str, BuiltinContext)] = &[
     ("-", "#3 #1 - pop$", BuiltinContext::Entry),
     ("*", "\"a\" \"b\" * pop$", BuiltinContext::Entry),
     (":=", "#7 'n :=", BuiltinContext::Entry),
-    ("add.period$", "\"word\" add.period$ pop$", BuiltinContext::Entry),
+    (
+        "add.period$",
+        "\"word\" add.period$ pop$",
+        BuiltinContext::Entry,
+    ),
     ("call.type$", "call.type$", BuiltinContext::Entry),
-    ("change.case$", "\"ABC\" \"l\" change.case$ pop$", BuiltinContext::Entry),
-    ("chr.to.int$", "\"A\" chr.to.int$ pop$", BuiltinContext::Entry),
+    (
+        "change.case$",
+        "\"ABC\" \"l\" change.case$ pop$",
+        BuiltinContext::Entry,
+    ),
+    (
+        "chr.to.int$",
+        "\"A\" chr.to.int$ pop$",
+        BuiltinContext::Entry,
+    ),
     ("cite$", "cite$ pop$", BuiltinContext::Entry),
-    ("duplicate$", "#1 duplicate$ pop$ pop$", BuiltinContext::Entry),
+    (
+        "duplicate$",
+        "#1 duplicate$ pop$ pop$",
+        BuiltinContext::Entry,
+    ),
     ("empty$", "\"\" empty$ pop$", BuiltinContext::Entry),
-    ("format.name$", "\"Doe, Jane\" #1 \"{ff}\" format.name$ pop$", BuiltinContext::Entry),
+    (
+        "format.name$",
+        "\"Doe, Jane\" #1 \"{ff}\" format.name$ pop$",
+        BuiltinContext::Entry,
+    ),
     ("if$", "#1 { skip$ } { skip$ } if$", BuiltinContext::Entry),
     ("int.to.chr$", "#65 int.to.chr$ pop$", BuiltinContext::Entry),
     ("int.to.str$", "#42 int.to.str$ pop$", BuiltinContext::Entry),
-    ("missing$", "missingfield missing$ pop$", BuiltinContext::Entry),
+    (
+        "missing$",
+        "missingfield missing$ pop$",
+        BuiltinContext::Entry,
+    ),
     ("newline$", "newline$", BuiltinContext::Entry),
-    ("num.names$", "\"Doe, Jane and Smith, John\" num.names$ pop$", BuiltinContext::Entry),
+    (
+        "num.names$",
+        "\"Doe, Jane and Smith, John\" num.names$ pop$",
+        BuiltinContext::Entry,
+    ),
     ("pop$", "#1 pop$", BuiltinContext::Entry),
     ("preamble$", "preamble$ pop$", BuiltinContext::Entry),
-    ("purify$", "\"{A} -- B\" purify$ pop$", BuiltinContext::Entry),
+    (
+        "purify$",
+        "\"{A} -- B\" purify$ pop$",
+        BuiltinContext::Entry,
+    ),
     ("quote$", "quote$ pop$", BuiltinContext::Entry),
     ("skip$", "skip$", BuiltinContext::Entry),
     ("stack$", "#1 stack$ pop$", BuiltinContext::Entry),
-    ("substring$", "\"abcd\" #2 #2 substring$ pop$", BuiltinContext::Entry),
+    (
+        "substring$",
+        "\"abcd\" #2 #2 substring$ pop$",
+        BuiltinContext::Entry,
+    ),
     ("swap$", "#1 #2 swap$ pop$ pop$", BuiltinContext::Entry),
-    ("text.length$", "\"{A}B\" text.length$ pop$", BuiltinContext::Entry),
-    ("text.prefix$", "\"{A}BC\" #2 text.prefix$ pop$", BuiltinContext::Entry),
+    (
+        "text.length$",
+        "\"{A}B\" text.length$ pop$",
+        BuiltinContext::Entry,
+    ),
+    (
+        "text.prefix$",
+        "\"{A}BC\" #2 text.prefix$ pop$",
+        BuiltinContext::Entry,
+    ),
     ("top$", "#1 top$ pop$", BuiltinContext::Entry),
     ("type$", "type$ pop$", BuiltinContext::Entry),
-    ("warning$", "\"generated warning\" warning$", BuiltinContext::Entry),
+    (
+        "warning$",
+        "\"generated warning\" warning$",
+        BuiltinContext::Entry,
+    ),
     ("while$", "{ #0 } { skip$ } while$", BuiltinContext::Entry),
     ("width$", "\"ABC\" width$ pop$", BuiltinContext::Entry),
     ("write$", "\"builtin-write\" write$", BuiltinContext::Entry),
@@ -115,19 +163,11 @@ struct Coverage {
 
 impl Coverage {
     fn record(&mut self, case: &GeneratedCase) {
-        self.branches.extend(
-            COMMAND_BRANCHES
-                .iter()
-                .copied()
-                .map(str::to_owned),
-        );
+        self.branches
+            .extend(COMMAND_BRANCHES.iter().copied().map(str::to_owned));
         self.branches.insert(case.branch.clone());
-        self.transitions.extend(
-            STATE_TRANSITIONS
-                .iter()
-                .copied()
-                .map(str::to_owned),
-        );
+        self.transitions
+            .extend(STATE_TRANSITIONS.iter().copied().map(str::to_owned));
     }
 
     fn verify(&self) -> Result<()> {
@@ -140,7 +180,10 @@ impl Coverage {
             .filter(|branch| !self.branches.contains(branch))
             .collect::<Vec<_>>();
         if !missing.is_empty() {
-            bail!("merged-reference branch coverage is incomplete: {}", missing.join(", "));
+            bail!(
+                "merged-reference branch coverage is incomplete: {}",
+                missing.join(", ")
+            );
         }
         let missing = STATE_TRANSITIONS
             .iter()
@@ -200,7 +243,9 @@ impl Options {
                     seed = parse_seed(&raw)?;
                 }
                 "--help" | "-h" => {
-                    bail!("usage: fixturegen --classic-bibtex-differential --reference PATH --texmfcnf PATH [--seed N]")
+                    bail!(
+                        "usage: fixturegen --classic-bibtex-differential --reference PATH --texmfcnf PATH [--seed N]"
+                    )
                 }
                 _ => bail!("unknown classic BST differential option: {argument}"),
             }
@@ -220,13 +265,22 @@ impl Options {
 }
 
 fn next(values: &mut impl Iterator<Item = String>, flag: &str) -> Result<String> {
-    values.next().with_context(|| format!("missing value after {flag}"))
+    values
+        .next()
+        .with_context(|| format!("missing value after {flag}"))
 }
 
 fn parse_seed(raw: &str) -> Result<u64> {
     let raw = raw.strip_prefix("0x").unwrap_or(raw);
-    u64::from_str_radix(raw, if raw.chars().any(|character| character.is_ascii_alphabetic()) { 16 } else { 10 })
-        .with_context(|| format!("invalid differential seed {raw}"))
+    u64::from_str_radix(
+        raw,
+        if raw.chars().any(|character| character.is_ascii_alphabetic()) {
+            16
+        } else {
+            10
+        },
+    )
+    .with_context(|| format!("invalid differential seed {raw}"))
 }
 
 fn generate(master_seed: u64) -> Result<Vec<GeneratedCase>> {
@@ -257,7 +311,8 @@ fn generate(master_seed: u64) -> Result<Vec<GeneratedCase>> {
                  ITERATE {{ article }}\n",
                 builtin_branch(builtin),
             );
-            let aux = format!("\\citation{{alpha,beta}}\n\\bibdata{{{name}}}\n\\bibstyle{{{name}}}\n");
+            let aux =
+                format!("\\citation{{alpha,beta}}\n\\bibdata{{{name}}}\n\\bibstyle{{{name}}}\n");
             let database = format!(
                 "@preamble{{\"preamble\"}}\n\
                  @misc{{alpha, author = {{Doe, Jane}}, title = {{{title}}}, year = {{2024}}}}\n\
@@ -274,7 +329,10 @@ fn generate(master_seed: u64) -> Result<Vec<GeneratedCase>> {
         })
         .collect::<Vec<_>>();
     if cases.len() != MAX_CASES {
-        bail!("generator produced {} cases, bound is {MAX_CASES}", cases.len());
+        bail!(
+            "generator produced {} cases, bound is {MAX_CASES}",
+            cases.len()
+        );
     }
     for case in &cases {
         if case.aux.len() > MAX_AUX_BYTES
@@ -308,7 +366,15 @@ fn run_case(repo_root: &Path, options: &Options, case: &GeneratedCase) -> Result
     let reference = run_reference(reference_dir.path(), options, &case.name)?;
     let umber = run_umber(case)?;
     if reference != umber {
-        preserve_failure(repo_root, options, case, reference_dir.path(), umber_dir.path(), &reference, &umber)?;
+        preserve_failure(
+            repo_root,
+            options,
+            case,
+            reference_dir.path(),
+            umber_dir.path(),
+            &reference,
+            &umber,
+        )?;
         bail!(
             "classic BST differential mismatch for {} (seed {:#018x}); preserved target/bst-differential/failures/{}",
             case.name,
@@ -428,15 +494,24 @@ fn preserve_failure(
     reference: &Output,
     umber: &Output,
 ) -> Result<()> {
-    let directory = repo_root.join("target/bst-differential/failures").join(&case.name);
+    let directory = repo_root
+        .join("target/bst-differential/failures")
+        .join(&case.name);
     if directory.exists() {
-        fs::remove_dir_all(&directory).with_context(|| format!("replace {}", directory.display()))?;
+        fs::remove_dir_all(&directory)
+            .with_context(|| format!("replace {}", directory.display()))?;
     }
     fs::create_dir_all(&directory)?;
     copy_case(reference_dir, &directory.join("reference"), &case.name)?;
     copy_case(umber_dir, &directory.join("umber"), &case.name)?;
-    fs::write(directory.join("reference.status"), format!("{}\n", reference.status))?;
-    fs::write(directory.join("umber.status"), format!("{}\n", umber.status))?;
+    fs::write(
+        directory.join("reference.status"),
+        format!("{}\n", reference.status),
+    )?;
+    fs::write(
+        directory.join("umber.status"),
+        format!("{}\n", umber.status),
+    )?;
     fs::write(directory.join("reference.bbl"), &reference.bbl)?;
     fs::write(directory.join("umber.bbl"), &umber.bbl)?;
     fs::write(directory.join("reference.blg"), &reference.blg)?;
@@ -445,7 +520,10 @@ fn preserve_failure(
         directory.join("repro.sh"),
         format!(
             "#!/usr/bin/env bash\nset -euo pipefail\ncd {}\nscripts/regen-fixtures.sh --area bibtex\n# deterministic master seed: {:#018x}; failing generated case: {} ({:#018x})\n",
-            shell_quote(repo_root), options.seed, case.name, case.seed
+            shell_quote(repo_root),
+            options.seed,
+            case.name,
+            case.seed
         ),
     )?;
     Ok(())
@@ -463,7 +541,10 @@ fn copy_case(source: &Path, destination: &Path, name: &str) -> Result<()> {
 }
 
 fn shell_quote(path: &Path) -> String {
-    format!("'{}'", path.display().to_string().replace('\'', "'\\\"'\\\"'"))
+    format!(
+        "'{}'",
+        path.display().to_string().replace('\'', "'\\\"'\\\"'")
+    )
 }
 
 #[cfg(test)]
@@ -489,8 +570,13 @@ mod tests {
         for case in &first {
             coverage.record(case);
         }
-        coverage.verify().expect("all declared coverage is generated");
-        assert_eq!(coverage.branches.len(), COMMAND_BRANCHES.len() + BUILTINS.len());
+        coverage
+            .verify()
+            .expect("all declared coverage is generated");
+        assert_eq!(
+            coverage.branches.len(),
+            COMMAND_BRANCHES.len() + BUILTINS.len()
+        );
         assert_eq!(coverage.transitions.len(), STATE_TRANSITIONS.len());
     }
 }

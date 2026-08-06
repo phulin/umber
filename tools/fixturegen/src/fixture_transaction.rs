@@ -8,373 +8,15 @@ use sha2::{Digest, Sha256};
 
 use crate::cohort_transaction::CohortCase;
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[allow(dead_code)] // Metadata is part of the reusable schema; this cohort has none.
-pub enum FileRole {
-    Source,
-    Input,
-    Metadata,
-    Output,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct CaseFile {
-    pub source_suffix: &'static str,
-    pub destination_suffix: &'static str,
-    pub destination_keeps_case: bool,
-    pub captures_tail: bool,
-    pub role: FileRole,
-    pub required: bool,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct CaseOwnedFile {
-    pub case: &'static str,
-    pub source: &'static str,
-    pub destination: &'static str,
-    pub role: FileRole,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct SharedFile {
-    pub source: &'static str,
-    pub destination: &'static str,
-    pub role: FileRole,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct SelectedSharedFile {
-    pub cases: &'static [&'static str],
-    pub source: &'static str,
-    pub destination: &'static str,
-    pub role: FileRole,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct FamilySpec {
-    pub area: &'static str,
-    /// Repository-corpus-relative base for shared authorities.
-    pub shared_area: &'static str,
-    /// The suffix of the authority file that discovers and names a flat case.
-    pub case_discovery_suffix: &'static str,
-    /// Per-case mappings. `source_suffix` and `destination_suffix` are appended
-    /// to the discovered case name; an empty destination is allowed.
-    pub case_files: &'static [CaseFile],
-    pub case_owned_files: &'static [CaseOwnedFile],
-    /// Shared authorities are copied into every case, then consumed once.
-    pub shared_files: &'static [SharedFile],
-    /// Shared authorities copied only into the named cases, then consumed once.
-    pub selected_shared_files: &'static [SelectedSharedFile],
-    /// Rebuild an existing legacy case directory so shared inputs and closed
-    /// metadata become part of the case's own authority.
-    pub close_existing_directories: bool,
-}
-
-#[allow(dead_code)] // Retain the completed execution cohort as an auditable reusable specification.
-const EXECUTION_CASE_FILES: &[CaseFile] = &[
-    CaseFile {
-        source_suffix: ".tex",
-        destination_suffix: ".tex",
-        destination_keeps_case: true,
-        captures_tail: false,
-        role: FileRole::Source,
-        required: true,
-    },
-    CaseFile {
-        source_suffix: ".expected.",
-        destination_suffix: "expected.",
-        destination_keeps_case: false,
-        captures_tail: true,
-        role: FileRole::Output,
-        required: false,
-    },
-];
-const NO_OWNED: &[CaseOwnedFile] = &[];
-const NO_SHARED: &[SharedFile] = &[];
-const NO_SELECTED_SHARED: &[SelectedSharedFile] = &[];
 const TRANSACTION_PREFIX: &str = ".fixture-layout-transaction-";
 const OWNER_MARKER: &str = "owner";
 const COMMITTED_MARKER: &str = "committed";
 const TRANSACTION_SCHEMA: &str = "umber-fixture-layout-transaction-v1";
 
-#[allow(dead_code)] // Retain the completed execution cohort as an auditable reusable specification.
-pub const EXECUTION_FAMILIES: &[FamilySpec] = &[
-    execution_family("align", NO_OWNED, NO_SHARED),
-    execution_family(
-        "etex_exec",
-        &[CaseOwnedFile {
-            case: "expansion_virtual_input",
-            source: "expansion_virtual_input.txt",
-            destination: "expansion_virtual_input.txt",
-            role: FileRole::Input,
-        }],
-        NO_SHARED,
-    ),
-    execution_family("exec", NO_OWNED, NO_SHARED),
-    execution_family(
-        "expand",
-        &[CaseOwnedFile {
-            case: "input_main",
-            source: "input_secondary.inc",
-            destination: "input_secondary.inc",
-            role: FileRole::Input,
-        }],
-        NO_SHARED,
-    ),
-    execution_family(
-        "math",
-        NO_OWNED,
-        &[SharedFile {
-            source: "math_preamble.inc",
-            destination: "math_preamble.inc",
-            role: FileRole::Input,
-        }],
-    ),
-    execution_family("tex_exec", NO_OWNED, NO_SHARED),
-    execution_family("tex_exec_io", NO_OWNED, NO_SHARED),
-    execution_family("typeset", NO_OWNED, NO_SHARED),
-];
-
-const SOURCE_TEX: CaseFile = CaseFile {
-    source_suffix: ".tex",
-    destination_suffix: "source.tex",
-    destination_keeps_case: false,
-    captures_tail: false,
-    role: FileRole::Source,
-    required: true,
-};
-const EXPECTED_TOKENS: CaseFile = CaseFile {
-    source_suffix: ".expected.tokens",
-    destination_suffix: "expected.tokens",
-    destination_keeps_case: false,
-    captures_tail: false,
-    role: FileRole::Output,
-    required: true,
-};
-const EXPECTED_LOG: CaseFile = CaseFile {
-    source_suffix: ".expected.log",
-    destination_suffix: "expected.log",
-    destination_keeps_case: false,
-    captures_tail: false,
-    role: FileRole::Output,
-    required: true,
-};
-const EXPECTED_DVI: CaseFile = CaseFile {
-    source_suffix: ".expected.dvi",
-    destination_suffix: "expected.dvi",
-    destination_keeps_case: false,
-    captures_tail: false,
-    role: FileRole::Output,
-    required: true,
-};
-
-pub const LEXICAL_SESSION_FAMILIES: &[FamilySpec] = &[
-    FamilySpec {
-        area: "canonical-dvi",
-        shared_area: "canonical-dvi",
-        case_discovery_suffix: ".tex",
-        case_files: &[SOURCE_TEX, EXPECTED_DVI],
-        case_owned_files: NO_OWNED,
-        shared_files: NO_SHARED,
-        selected_shared_files: NO_SELECTED_SHARED,
-        close_existing_directories: false,
-    },
-    FamilySpec {
-        area: "hello",
-        shared_area: "hello",
-        case_discovery_suffix: ".tex",
-        case_files: &[SOURCE_TEX, EXPECTED_LOG],
-        case_owned_files: NO_OWNED,
-        shared_files: NO_SHARED,
-        selected_shared_files: NO_SELECTED_SHARED,
-        close_existing_directories: false,
-    },
-    FamilySpec {
-        area: "lexer",
-        shared_area: "lexer",
-        case_discovery_suffix: ".tex",
-        case_files: &[SOURCE_TEX, EXPECTED_TOKENS],
-        case_owned_files: NO_OWNED,
-        shared_files: NO_SHARED,
-        selected_shared_files: NO_SELECTED_SHARED,
-        close_existing_directories: false,
-    },
-    FamilySpec {
-        area: "lexer_dynamic",
-        shared_area: "lexer_dynamic",
-        case_discovery_suffix: ".tex",
-        case_files: &[SOURCE_TEX, EXPECTED_TOKENS],
-        case_owned_files: NO_OWNED,
-        shared_files: NO_SHARED,
-        selected_shared_files: NO_SELECTED_SHARED,
-        close_existing_directories: false,
-    },
-    FamilySpec {
-        area: "stabilization",
-        shared_area: "stabilization",
-        case_discovery_suffix: ".tex",
-        case_files: &[SOURCE_TEX],
-        case_owned_files: NO_OWNED,
-        shared_files: NO_SHARED,
-        selected_shared_files: NO_SELECTED_SHARED,
-        close_existing_directories: false,
-    },
-];
-
-const BIB_INVOCATION_CASE_FILES: &[CaseFile] = &[
-    CaseFile {
-        source_suffix: ".invocation",
-        destination_suffix: "invocation.case",
-        destination_keeps_case: false,
-        captures_tail: false,
-        role: FileRole::Metadata,
-        required: true,
-    },
-    CaseFile {
-        source_suffix: ".inventory",
-        destination_suffix: "case.inventory",
-        destination_keeps_case: false,
-        captures_tail: false,
-        role: FileRole::Metadata,
-        required: true,
-    },
-];
-
-const BIB_INVOCATION_OWNED: &[CaseOwnedFile] = &[
-    CaseOwnedFile {
-        case: "bcf-success",
-        source: "basic.expected.bbl",
-        destination: "expected.bbl",
-        role: FileRole::Output,
-    },
-    CaseOwnedFile {
-        case: "invalid-output-format",
-        source: "invalid.expected.stderr",
-        destination: "expected.stderr",
-        role: FileRole::Output,
-    },
-    CaseOwnedFile {
-        case: "tool-mode",
-        source: "tool.expected.bib",
-        destination: "expected.bib",
-        role: FileRole::Output,
-    },
-];
-
-const BIB_INVOCATION_SHARED: &[SelectedSharedFile] = &[
-    SelectedSharedFile {
-        cases: &["bcf-success", "invalid-output-format"],
-        source: "basic.bcf",
-        destination: "basic.bcf",
-        role: FileRole::Input,
-    },
-    SelectedSharedFile {
-        cases: &["bcf-success", "tool-mode"],
-        source: "basic.bib",
-        destination: "basic.bib",
-        role: FileRole::Input,
-    },
-    SelectedSharedFile {
-        cases: &["bcf-success", "tool-mode"],
-        source: "basic.expected.stdout",
-        destination: "expected.stdout",
-        role: FileRole::Output,
-    },
-];
-
-pub const ALL_FAMILIES: &[FamilySpec] = &[
-    EXECUTION_FAMILIES[0],
-    EXECUTION_FAMILIES[1],
-    EXECUTION_FAMILIES[2],
-    EXECUTION_FAMILIES[3],
-    EXECUTION_FAMILIES[4],
-    EXECUTION_FAMILIES[5],
-    EXECUTION_FAMILIES[6],
-    EXECUTION_FAMILIES[7],
-    LEXICAL_SESSION_FAMILIES[0],
-    LEXICAL_SESSION_FAMILIES[1],
-    LEXICAL_SESSION_FAMILIES[2],
-    LEXICAL_SESSION_FAMILIES[3],
-    LEXICAL_SESSION_FAMILIES[4],
-    FamilySpec {
-        area: "bib/invocation",
-        shared_area: "bib/invocation",
-        case_discovery_suffix: ".invocation",
-        case_files: BIB_INVOCATION_CASE_FILES,
-        case_owned_files: BIB_INVOCATION_OWNED,
-        shared_files: NO_SHARED,
-        selected_shared_files: BIB_INVOCATION_SHARED,
-        close_existing_directories: false,
-    },
-    FamilySpec {
-        area: "bibtex/cases",
-        shared_area: "bibtex/styles",
-        case_discovery_suffix: ".aux",
-        case_files: &[],
-        case_owned_files: NO_OWNED,
-        shared_files: NO_SHARED,
-        selected_shared_files: CLASSIC_BIBTEX_STYLES,
-        close_existing_directories: true,
-    },
-];
-
-const CLASSIC_BIBTEX_STYLES: &[SelectedSharedFile] = &[
-    SelectedSharedFile {
-        cases: &["plain"],
-        source: "plain.bst",
-        destination: "plain.bst",
-        role: FileRole::Input,
-    },
-    SelectedSharedFile {
-        cases: &["apalike", "xampl"],
-        source: "apalike.bst",
-        destination: "apalike.bst",
-        role: FileRole::Input,
-    },
-    SelectedSharedFile {
-        cases: &[
-            "elsarticle-article",
-            "elsarticle-book",
-            "elsarticle-month",
-            "elsarticle-names",
-        ],
-        source: "elsarticle-num.bst",
-        destination: "elsarticle-num.bst",
-        role: FileRole::Input,
-    },
-    SelectedSharedFile {
-        cases: &["ieeetran"],
-        source: "IEEEtran.bst",
-        destination: "IEEEtran.bst",
-        role: FileRole::Input,
-    },
-];
-
-const fn execution_family(
-    area: &'static str,
-    case_owned_files: &'static [CaseOwnedFile],
-    shared_files: &'static [SharedFile],
-) -> FamilySpec {
-    FamilySpec {
-        area,
-        shared_area: area,
-        case_discovery_suffix: ".tex",
-        case_files: EXECUTION_CASE_FILES,
-        case_owned_files,
-        shared_files,
-        selected_shared_files: NO_SELECTED_SHARED,
-        close_existing_directories: false,
-    }
-}
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Mode {
     Plan,
     Apply,
-}
-
-pub fn run(corpus: &Path, specs: &[FamilySpec], mode: Mode) -> Result<String> {
-    run_with_fs(corpus, specs, mode, &RealFs)
 }
 
 pub fn seal_classic_case(root: &Path, case: &str) -> Result<()> {
@@ -471,7 +113,7 @@ pub(crate) fn run_staged_cohort_with_fs(
     repository: &Path,
     cases: &[CohortCase],
     mode: Mode,
-    io: &dyn MigrationFs,
+    io: &dyn TransactionFs,
 ) -> Result<String> {
     validate_cohort_path_ownership(cases)?;
     let mut planned = Vec::new();
@@ -629,44 +271,6 @@ fn validate_cohort_path_ownership(cases: &[CohortCase]) -> Result<()> {
     Ok(())
 }
 
-fn run_with_fs(
-    corpus: &Path,
-    specs: &[FamilySpec],
-    mode: Mode,
-    io: &dyn MigrationFs,
-) -> Result<String> {
-    let plan = CasePlan::build(corpus, specs)?;
-    let report = plan.report();
-    if mode == Mode::Apply {
-        let digest = plan.transaction_digest();
-        let retained = retained_transactions(corpus, &digest)?;
-        let complete = plan
-            .cases
-            .iter()
-            .all(|case| case.layout == Layout::Directory);
-        if complete {
-            for root in retained.committed {
-                garbage_collect(io, &root).with_context(|| {
-                    format!(
-                        "committed fixture layout is complete; garbage collection failed; \
-                         committed=true; retained owned transaction={}",
-                        root.display()
-                    )
-                })?;
-            }
-        } else {
-            if !retained.committed.is_empty() {
-                bail!(
-                    "owned committed transaction exists but installed fixture layout is incomplete: {}",
-                    retained.committed[0].display()
-                );
-            }
-            AtomicCaseTransaction::new(corpus, plan, digest, io)?.apply()?;
-        }
-    }
-    Ok(report)
-}
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Layout {
     Flat,
@@ -693,54 +297,6 @@ struct CasePlan {
 }
 
 impl CasePlan {
-    fn build(corpus: &Path, specs: &[FamilySpec]) -> Result<Self> {
-        let mut planned = Vec::new();
-        let mut authority_owner = BTreeMap::<PathBuf, String>::new();
-        for spec in specs {
-            validate_spec(spec)?;
-            let area = corpus.join(spec.area);
-            let cases = discover_cases(&area, spec.case_discovery_suffix)?;
-            if cases.is_empty() {
-                bail!("{} has no flat or directory cases", area.display());
-            }
-            for (case, mut layout) in cases {
-                validate_component(&case)?;
-                let needs_closing = layout == Layout::Directory
-                    && spec.close_existing_directories
-                    && !area.join(&case).join("case.inventory").is_file();
-                let (inventory, authorities) =
-                    inventory_for_case(corpus, &area, spec, &case, layout)?;
-                if needs_closing {
-                    layout = Layout::Flat;
-                }
-                for authority in &authorities {
-                    if let Some(owner) =
-                        authority_owner.insert(authority.clone(), format!("{}/{case}", spec.area))
-                    {
-                        if !is_shared_authority(spec, &area, authority) {
-                            bail!(
-                                "authority {} is owned by both {owner} and {}/{case}",
-                                authority.display(),
-                                spec.area
-                            );
-                        }
-                    }
-                }
-                planned.push(ArtifactSpec {
-                    area: area.clone(),
-                    case,
-                    display_area: spec.area.to_owned(),
-                    layout,
-                    inventory,
-                    ownership_staged: None,
-                    ownership_authorities: authorities.clone(),
-                    authorities,
-                });
-            }
-        }
-        Ok(Self { cases: planned })
-    }
-
     fn report(&self) -> String {
         let mut report = String::new();
         for case in &self.cases {
@@ -788,128 +344,6 @@ fn digest_path(digest: &mut Sha256, path: &Path) {
     digest.update(value.as_bytes());
 }
 
-fn discover_cases(area: &Path, discovery_suffix: &str) -> Result<BTreeMap<String, Layout>> {
-    let mut cases = BTreeMap::new();
-    for entry in fs::read_dir(area).with_context(|| format!("read {}", area.display()))? {
-        let entry = entry.context("read area entry")?;
-        let path = entry.path();
-        let kind = entry.file_type().context("read area entry type")?;
-        if kind.is_symlink() {
-            bail!("symlink is forbidden: {}", path.display());
-        }
-        let name = file_name(&path)?;
-        if name.starts_with(TRANSACTION_PREFIX) {
-            continue;
-        }
-        let discovered = if kind.is_dir() {
-            Some((name, Layout::Directory))
-        } else if kind.is_file() {
-            name.strip_suffix(discovery_suffix)
-                .filter(|case| !case.is_empty())
-                .map(|case| (case.to_owned(), Layout::Flat))
-        } else {
-            None
-        };
-        if let Some((case, layout)) = discovered {
-            if cases.insert(case.clone(), layout).is_some() {
-                bail!("flat/directory collision for case {case}");
-            }
-        }
-    }
-    Ok(cases)
-}
-
-fn inventory_for_case(
-    corpus: &Path,
-    area: &Path,
-    spec: &FamilySpec,
-    case: &str,
-    layout: Layout,
-) -> Result<(BTreeMap<String, Vec<u8>>, Vec<PathBuf>)> {
-    if layout == Layout::Directory
-        && (!spec.close_existing_directories || area.join(case).join("case.inventory").is_file())
-    {
-        return Ok((
-            read_regular_inventory_recursive(&area.join(case))?,
-            Vec::new(),
-        ));
-    }
-    let mut inventory = BTreeMap::new();
-    let mut authorities = Vec::new();
-    if layout == Layout::Directory {
-        inventory = read_regular_inventory_recursive(&area.join(case))?;
-        authorities.push(area.join(case));
-    }
-    for mapping in spec.case_files {
-        let source_prefix = format!("{case}{}", mapping.source_suffix);
-        let matches = matching_files(
-            area,
-            &source_prefix,
-            mapping.required,
-            mapping.captures_tail,
-        )?;
-        for (source_name, tail) in matches {
-            let destination = format!(
-                "{}{}{}",
-                if mapping.destination_keeps_case {
-                    case
-                } else {
-                    ""
-                },
-                mapping.destination_suffix,
-                tail
-            );
-            add_mapping(
-                &mut inventory,
-                &mut authorities,
-                destination,
-                area.join(source_name),
-            )?;
-        }
-    }
-    for mapping in spec
-        .case_owned_files
-        .iter()
-        .filter(|mapping| mapping.case == case)
-    {
-        add_mapping(
-            &mut inventory,
-            &mut authorities,
-            mapping.destination.to_owned(),
-            area.join(mapping.source),
-        )?;
-    }
-    for mapping in spec.shared_files {
-        add_mapping(
-            &mut inventory,
-            &mut authorities,
-            mapping.destination.to_owned(),
-            corpus.join(spec.shared_area).join(mapping.source),
-        )?;
-    }
-    for mapping in spec
-        .selected_shared_files
-        .iter()
-        .filter(|mapping| mapping.cases.contains(&case))
-    {
-        add_mapping(
-            &mut inventory,
-            &mut authorities,
-            mapping.destination.to_owned(),
-            corpus.join(spec.shared_area).join(mapping.source),
-        )?;
-    }
-    if spec.close_existing_directories {
-        let metadata = classic_case_metadata(case, &inventory)?;
-        inventory.insert("case.json".to_owned(), metadata);
-        let closed = test_support::closed_case::candidate_inventory_bytes(
-            inventory.keys().map(String::as_str),
-        )?;
-        inventory.insert("case.inventory".to_owned(), closed);
-    }
-    Ok((inventory, authorities))
-}
-
 fn classic_case_metadata(case: &str, inventory: &BTreeMap<String, Vec<u8>>) -> Result<Vec<u8>> {
     let mut files = Vec::new();
     for (name, bytes) in inventory {
@@ -936,118 +370,13 @@ fn classic_case_metadata(case: &str, inventory: &BTreeMap<String, Vec<u8>>) -> R
     Ok(bytes)
 }
 
-fn is_shared_authority(spec: &FamilySpec, area: &Path, authority: &Path) -> bool {
-    let corpus = area
-        .ancestors()
-        .nth(Path::new(spec.area).components().count())
-        .expect("validated family area has a corpus ancestor");
-    spec.shared_files
-        .iter()
-        .any(|file| corpus.join(spec.shared_area).join(file.source) == authority)
-        || spec
-            .selected_shared_files
-            .iter()
-            .any(|file| corpus.join(spec.shared_area).join(file.source) == authority)
-}
-
-fn matching_files(
-    area: &Path,
-    prefix: &str,
-    required: bool,
-    captures_tail: bool,
-) -> Result<Vec<(String, String)>> {
-    let mut matches = Vec::new();
-    for entry in fs::read_dir(area)? {
-        let entry = entry?;
-        if !entry.file_type()?.is_file() {
-            continue;
-        }
-        let name = file_name(&entry.path())?;
-        if let Some(tail) = name
-            .strip_prefix(prefix)
-            .filter(|tail| captures_tail || tail.is_empty())
-        {
-            let tail = tail.to_owned();
-            matches.push((name, tail));
-        }
-    }
-    if required && matches.is_empty() {
-        bail!(
-            "required authority matching {prefix:?} is absent in {}",
-            area.display()
-        );
-    }
-    Ok(matches)
-}
-
-fn add_mapping(
-    inventory: &mut BTreeMap<String, Vec<u8>>,
-    authorities: &mut Vec<PathBuf>,
-    destination: String,
-    source: PathBuf,
-) -> Result<()> {
-    validate_relative(&destination)?;
-    let bytes = fs::read(&source).with_context(|| format!("read {}", source.display()))?;
-    if inventory.insert(destination.clone(), bytes).is_some() {
-        bail!("duplicate destination {destination}");
-    }
-    authorities.push(source);
-    Ok(())
-}
-
-fn validate_spec(spec: &FamilySpec) -> Result<()> {
-    validate_relative(spec.area)?;
-    validate_relative(spec.shared_area)?;
-    if spec.case_discovery_suffix.is_empty() {
-        bail!("{} has an empty case discovery suffix", spec.area);
-    }
-    for mapping in spec.case_files {
-        if mapping.source_suffix.is_empty() {
-            bail!("{} has an empty case-file source suffix", spec.area);
-        }
-        validate_template_suffix(mapping.destination_suffix)?;
-    }
-    for mapping in spec.case_owned_files {
-        validate_component(mapping.case)?;
-        validate_relative(mapping.source)?;
-        validate_relative(mapping.destination)?;
-    }
-    for mapping in spec.shared_files {
-        validate_relative(mapping.source)?;
-        validate_relative(mapping.destination)?;
-    }
-    let mut selected = BTreeSet::new();
-    for mapping in spec.selected_shared_files {
-        validate_relative(mapping.source)?;
-        validate_relative(mapping.destination)?;
-        ensure!(
-            !mapping.cases.is_empty(),
-            "{} selected shared file {} has no cases",
-            spec.area,
-            mapping.source
-        );
-        selected.clear();
-        for case in mapping.cases {
-            validate_component(case)?;
-            ensure!(
-                selected.insert(*case),
-                "{} selected shared file {} repeats case {}",
-                spec.area,
-                mapping.source,
-                case
-            );
-        }
-    }
-    Ok(())
-}
-
 /// The sole fixture publication transaction.
 struct AtomicCaseTransaction<'a> {
     corpus: &'a Path,
     plan: CasePlan,
     root: PathBuf,
     digest: String,
-    io: &'a dyn MigrationFs,
+    io: &'a dyn TransactionFs,
 }
 
 impl<'a> AtomicCaseTransaction<'a> {
@@ -1055,7 +384,7 @@ impl<'a> AtomicCaseTransaction<'a> {
         corpus: &'a Path,
         plan: CasePlan,
         digest: String,
-        io: &'a dyn MigrationFs,
+        io: &'a dyn TransactionFs,
     ) -> Result<Self> {
         static NEXT_TRANSACTION: AtomicU64 = AtomicU64::new(0);
         let sequence = NEXT_TRANSACTION.fetch_add(1, Ordering::Relaxed);
@@ -1125,7 +454,7 @@ impl<'a> AtomicCaseTransaction<'a> {
         })();
         if let Err(original) = commit {
             return Err(self.rollback_error(
-                "migration commit failed",
+                "fixture publication commit failed",
                 original,
                 &installed,
                 &backed_up,
@@ -1133,7 +462,7 @@ impl<'a> AtomicCaseTransaction<'a> {
         }
         if let Err(cleanup) = garbage_collect(self.io, &self.root) {
             bail!(
-                "fixture layout committed and revalidated; garbage collection failed: \
+                "fixture publication committed and revalidated; garbage collection failed: \
                  {cleanup:#}; committed=true; retained owned transaction={}",
                 self.root.display()
             );
@@ -1192,7 +521,7 @@ impl<'a> AtomicCaseTransaction<'a> {
             return match self.io.remove_dir_all(&self.root) {
                 Ok(()) => Err(original),
                 Err(cleanup) => bail!(
-                    "migration staging failed: {original:#}; transaction cleanup failed: {cleanup:#}; recoverable transaction retained at {}",
+                    "fixture publication staging failed: {original:#}; transaction cleanup failed: {cleanup:#}; recoverable transaction retained at {}",
                     self.root.display()
                 ),
             };
@@ -1275,7 +604,7 @@ impl<'a> AtomicCaseTransaction<'a> {
     }
 }
 
-fn garbage_collect(io: &dyn MigrationFs, root: &Path) -> Result<()> {
+fn garbage_collect(io: &dyn TransactionFs, root: &Path) -> Result<()> {
     // Keep the ownership and commit markers until all recursively removed
     // subtrees are gone. A partial recursive failure therefore remains
     // authenticated and resumable.
@@ -1341,7 +670,7 @@ fn committed_marker(digest: &str) -> String {
     format!("{TRANSACTION_SCHEMA}\nplan-sha256={digest}\nstate=committed\n")
 }
 
-pub(crate) trait MigrationFs {
+pub(crate) trait TransactionFs {
     fn create_dir(&self, path: &Path) -> Result<()>;
     fn create_dir_all(&self, path: &Path) -> Result<()>;
     fn write(&self, path: &Path, bytes: &[u8]) -> Result<()>;
@@ -1353,7 +682,7 @@ pub(crate) trait MigrationFs {
 
 pub(crate) struct RealFs;
 
-impl MigrationFs for RealFs {
+impl TransactionFs for RealFs {
     fn create_dir(&self, path: &Path) -> Result<()> {
         fs::create_dir(path).with_context(|| format!("create unique {}", path.display()))
     }
@@ -1428,13 +757,6 @@ fn inventory_digest(inventory: &BTreeMap<String, Vec<u8>>) -> String {
     format!("{:x}", digest.finalize())
 }
 
-fn validate_template_suffix(value: &str) -> Result<()> {
-    if value.is_empty() {
-        return Ok(());
-    }
-    validate_relative(value.trim_start_matches('/'))
-}
-
 fn validate_relative(value: &str) -> Result<()> {
     let path = Path::new(value);
     if value.is_empty()
@@ -1462,6 +784,3 @@ fn file_name(path: &Path) -> Result<String> {
         .map(str::to_owned)
         .ok_or_else(|| anyhow!("invalid UTF-8 file name {}", path.display()))
 }
-
-#[cfg(test)]
-mod tests;
