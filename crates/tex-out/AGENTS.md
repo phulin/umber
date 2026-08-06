@@ -35,6 +35,7 @@ Use this crate for stable, driver-facing artifact structures and serialization c
 - `src/html/tests.rs`: deterministic-byte, exact-metadata, mapping-failure, and injection regression tests.
 - `src/lib.rs`: Crate documentation, module wiring, tests module registration, and public re-exports.
 - `src/model.rs`: Detached page artifact, versioned font-layout/classic/OpenType identities, node, glue, kern, and output effect data model.
+- `src/node_cursor.rs`: Canonical explicit-stack artifact node/list event order shared by codec emission and validation.
 - `src/pdf.rs`: validated detached PDF object/page/resource graph, canonical ordering, and semantic identity.
 - `src/pdf/graph.rs`: private canonical graph-role and nested-value cursor shared by validation, hashing, preflight, and serialization.
 - `src/pdf/paint.rs`: private compact/ordered PDF paint program and shared graphics/text-state interpreter.

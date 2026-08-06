@@ -1,12 +1,12 @@
 use tex_command::DimensionDiagnostic;
 use tex_out::dvi::{DviPagePlan, DviPagePlanBuilder};
 use tex_out::{
-    BoxNode as PageBoxNode, ContentHash as PageContentHash, DEFAULT_BANNER,
-    DiscKind as PageDiscKind, EffectSink, FontResource, FontResourceConstruction,
-    GlueKind as PageGlueKind, GlueOrder as PageGlueOrder, GlueSign, GlueSpec as PageGlueSpec,
-    JobInfo, KernKind as PageKernKind, LeaderPayload as PageLeaderPayload,
-    MarginKernSide as PageMarginKernSide, PageEffect, PageNode, PageToken, TokenCatcode,
-    V10ArtifactBuilder, V10NodeListWriter,
+    ArtifactEmitter, ArtifactNodeListEmitter, BoxNode as PageBoxNode,
+    ContentHash as PageContentHash, DEFAULT_BANNER, DiscKind as PageDiscKind, EffectSink,
+    FontResource, FontResourceConstruction, GlueKind as PageGlueKind, GlueOrder as PageGlueOrder,
+    GlueSign, GlueSpec as PageGlueSpec, JobInfo, KernKind as PageKernKind,
+    LeaderPayload as PageLeaderPayload, MarginKernSide as PageMarginKernSide, PageEffect, PageNode,
+    PageToken, TokenCatcode,
 };
 use tex_state::env::banks::{DimenParam, IntParam};
 use tex_state::glue::Order;
@@ -100,7 +100,7 @@ fn stage_form_inner(
         page_width: tex_state::scaled::Scaled::from_raw(0),
         page_height: tex_state::scaled::Scaled::from_raw(0),
     };
-    let mut encoder = V10ArtifactBuilder::new(job, [0; 10], &root, vertical);
+    let mut encoder = ArtifactEmitter::new(job, [0; 10], &root, vertical);
     let mut emission = EmissionState {
         fonts: Vec::new(),
         live_fonts: Vec::new(),
@@ -242,7 +242,7 @@ pub(crate) fn stage_shipout(
 
     // Phase B holds only an immutable state view. One compact-list walk feeds
     // the canonical writer and DVI state machine together.
-    let mut encoder = V10ArtifactBuilder::new(job.clone(), counts, &root, vertical);
+    let mut encoder = ArtifactEmitter::new(job.clone(), counts, &root, vertical);
     let mut dvi = emit_dvi
         .then(|| DviPagePlanBuilder::new(job, counts, &root, vertical))
         .transpose()
@@ -504,7 +504,7 @@ fn emit_node_list(
     stores: &Universe,
     overlay: &PageOverlay,
     list: NodeListId,
-    output: &mut V10NodeListWriter<'_>,
+    output: &mut ArtifactNodeListEmitter<'_>,
     mut dvi: Option<&mut DviPagePlanBuilder>,
     emission: &mut EmissionState,
     suppress_deferred_streams: bool,
@@ -555,7 +555,7 @@ fn emit_node_list(
 fn emit_char_run(
     stores: &Universe,
     run: tex_state::node_arena::CharRun<'_>,
-    output: &mut V10NodeListWriter<'_>,
+    output: &mut ArtifactNodeListEmitter<'_>,
     mut dvi: Option<&mut DviPagePlanBuilder>,
     emission: &mut EmissionState,
 ) -> Result<(), ExecError> {
@@ -613,7 +613,7 @@ fn emit_index(
     overlay: &PageOverlay,
     list: NodeListId,
     index: usize,
-    output: &mut V10NodeListWriter<'_>,
+    output: &mut ArtifactNodeListEmitter<'_>,
     mut dvi: Option<&mut DviPagePlanBuilder>,
     emission: &mut EmissionState,
     suppress_deferred_streams: bool,
@@ -866,7 +866,7 @@ fn emit_index(
 fn emit_box(
     stores: &Universe,
     overlay: &PageOverlay,
-    output: &mut V10NodeListWriter<'_>,
+    output: &mut ArtifactNodeListEmitter<'_>,
     mut dvi: Option<&mut DviPagePlanBuilder>,
     emission: &mut EmissionState,
     box_node: StateBoxNode,
@@ -913,7 +913,7 @@ fn emit_box(
 fn emit_glue(
     stores: &Universe,
     overlay: &PageOverlay,
-    output: &mut V10NodeListWriter<'_>,
+    output: &mut ArtifactNodeListEmitter<'_>,
     mut dvi: Option<&mut DviPagePlanBuilder>,
     emission: &mut EmissionState,
     spec: PageGlueSpec,
@@ -1145,7 +1145,7 @@ fn emit_glyph(
     ch: u32,
     logical_width: tex_state::scaled::Scaled,
     origins: impl IntoIterator<Item = OriginId>,
-    output: &mut V10NodeListWriter<'_>,
+    output: &mut ArtifactNodeListEmitter<'_>,
     mut dvi: Option<&mut DviPagePlanBuilder>,
     emission: &mut EmissionState,
 ) -> Result<(), ExecError> {
@@ -1169,7 +1169,7 @@ fn emit_ligature(
     source: &[char],
     logical_width: tex_state::scaled::Scaled,
     origins: impl IntoIterator<Item = OriginId>,
-    output: &mut V10NodeListWriter<'_>,
+    output: &mut ArtifactNodeListEmitter<'_>,
     mut dvi: Option<&mut DviPagePlanBuilder>,
     emission: &mut EmissionState,
 ) -> Result<(), ExecError> {
@@ -1192,7 +1192,7 @@ fn emit_ligature(
 
 fn emit_projection_kern(
     amount: tex_state::scaled::Scaled,
-    output: &mut V10NodeListWriter<'_>,
+    output: &mut ArtifactNodeListEmitter<'_>,
     dvi: Option<&mut DviPagePlanBuilder>,
     emission: &mut EmissionState,
 ) -> Result<(), ExecError> {

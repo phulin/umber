@@ -793,9 +793,11 @@ fn validate_artifact(
         }
     }
 
-    let mut stack = vec![(&artifact.root, 1usize)];
     let mut count = 0usize;
-    while let Some((node, depth)) = stack.pop() {
+    for event in crate::node_cursor::ArtifactNodeCursor::for_validation(&artifact.root) {
+        let crate::node_cursor::ArtifactNodeEvent::Node { node, depth } = event else {
+            continue;
+        };
         count = count
             .checked_add(1)
             .expect("an addressable artifact cannot contain usize::MAX nodes");
@@ -835,23 +837,8 @@ fn validate_artifact(
             PageNode::MarginKern { font_id, ch, .. } => {
                 validate_font_and_char(&font_ids, *font_id, u32::from(*ch))?;
             }
-            PageNode::HList(box_node) | PageNode::VList(box_node) => {
-                push_nodes(&mut stack, &box_node.children, depth + 1);
-            }
-            PageNode::Disc {
-                pre, post, replace, ..
-            } => {
-                push_nodes(&mut stack, pre, depth + 1);
-                push_nodes(&mut stack, post, depth + 1);
-                push_nodes(&mut stack, replace, depth + 1);
-            }
-            PageNode::Insert { content, .. } | PageNode::Adjust(content) => {
-                push_nodes(&mut stack, content, depth + 1);
-            }
-            PageNode::Glue {
-                leader: Some(LeaderPayload::HList(box_node) | LeaderPayload::VList(box_node)),
-                ..
-            } => push_nodes(&mut stack, &box_node.children, depth + 1),
+            PageNode::HList(_) | PageNode::VList(_) | PageNode::Disc { .. } => {}
+            PageNode::Insert { .. } | PageNode::Adjust(_) => {}
             PageNode::WhatsitAnchor { effect_index } => {
                 let index = usize::try_from(*effect_index).unwrap_or(usize::MAX);
                 if index >= artifact.effects.len() {
@@ -973,8 +960,4 @@ fn validate_character(ch: u32, allows_unicode: bool) -> Result<(), ArtifactValid
         return Err(ArtifactValidationError::CharacterOutOfRange { ch });
     }
     Ok(())
-}
-
-fn push_nodes<'a>(stack: &mut Vec<(&'a PageNode, usize)>, nodes: &'a [PageNode], depth: usize) {
-    stack.extend(nodes.iter().rev().map(|node| (node, depth)));
 }

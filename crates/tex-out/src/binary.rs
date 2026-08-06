@@ -394,7 +394,7 @@ pub(crate) struct V10PageDecoder<'a> {
     pub(crate) root_vertical: bool,
     reader: Reader<'a>,
     remaining: usize,
-    font_ids: std::collections::BTreeSet<u32>,
+    font_ids: std::collections::BTreeMap<u32, bool>,
     validated_nodes: usize,
 }
 
@@ -1001,7 +1001,11 @@ impl<'a> V10PageDecoder<'a> {
             math_events,
         }
         .validate()?;
-        let font_ids = page.fonts.iter().map(|font| font.font_id).collect();
+        let font_ids = page
+            .fonts
+            .iter()
+            .map(|font| (font.font_id, font.opentype.is_some()))
+            .collect();
         Ok(Self {
             page,
             root_vertical,
@@ -1030,7 +1034,7 @@ pub(crate) struct V10NodeListReader<'r, 'a> {
     reader: &'r mut Reader<'a>,
     remaining: usize,
     depth: usize,
-    font_ids: &'r std::collections::BTreeSet<u32>,
+    font_ids: &'r std::collections::BTreeMap<u32, bool>,
     effects_len: usize,
     validated_nodes: &'r mut usize,
     validate: bool,
@@ -1083,7 +1087,7 @@ pub(crate) struct V10NodeListSlice<'r, 'a> {
     count: usize,
     depth: usize,
     limits: ArtifactCodecLimits,
-    font_ids: &'r std::collections::BTreeSet<u32>,
+    font_ids: &'r std::collections::BTreeMap<u32, bool>,
     effects_len: usize,
 }
 
@@ -1167,7 +1171,7 @@ impl<'r, 'a> V10NodeListReader<'r, 'a> {
                 for _ in 0..count {
                     let source = self.reader.u32()?;
                     if self.validate {
-                        validate_streamed_scalar(source)?;
+                        validate_streamed_char(self.font_ids, font_id, source)?;
                     }
                 }
                 V10StreamNode::Char { font_id, ch, width }
@@ -1179,9 +1183,20 @@ impl<'r, 'a> V10NodeListReader<'r, 'a> {
             }
             wire::node::MARGIN_KERN => {
                 let amount = self.reader.scaled()?;
-                let _side = self.reader.u8()?;
-                let _font_id = self.reader.u32()?;
-                let _ch = self.reader.u8()?;
+                match self.reader.u8()? {
+                    0 | 1 => {}
+                    tag => {
+                        return Err(ParseError::InvalidTag {
+                            kind: "margin kern side",
+                            tag,
+                        });
+                    }
+                }
+                let font_id = self.reader.u32()?;
+                let ch = self.reader.u8()?;
+                if self.validate {
+                    validate_streamed_char(self.font_ids, font_id, u32::from(ch))?;
+                }
                 V10StreamNode::Kern(amount)
             }
             wire::node::GLUE => {
@@ -1879,26 +1894,22 @@ impl Writer {
     }
 
     fn node(&mut self, node: &PageNode) {
-        let mut tasks = Vec::new();
-        self.write_node(node, 1, &mut tasks);
-        while let Some(task) = tasks.pop() {
+        for event in crate::node_cursor::ArtifactNodeCursor::new(node) {
             if self.error.is_some() {
                 return;
             }
-            match task {
-                WriteTask::Node(node, depth) => self.write_node(node, depth, &mut tasks),
-                WriteTask::NodeList(nodes, depth) => {
+            match event {
+                crate::node_cursor::ArtifactNodeEvent::Node { node, depth } => {
+                    self.write_node(node, depth);
+                }
+                crate::node_cursor::ArtifactNodeEvent::List { nodes } => {
                     self.collection_len(nodes.len());
-                    if self.error.is_some() {
-                        continue;
-                    }
-                    tasks.extend(nodes.iter().rev().map(|node| WriteTask::Node(node, depth)));
                 }
             }
         }
     }
 
-    fn write_node<'a>(&mut self, node: &'a PageNode, depth: usize, tasks: &mut Vec<WriteTask<'a>>) {
+    fn write_node(&mut self, node: &PageNode, depth: usize) {
         if self.error.is_some() {
             return;
         }
@@ -1919,10 +1930,12 @@ impl Writer {
             });
             return;
         }
-        self.node_head(node, depth, tasks);
+        self.node_head(node);
     }
 
-    fn node_head<'a>(&mut self, node: &'a PageNode, depth: usize, tasks: &mut Vec<WriteTask<'a>>) {
+    /// Emits only the scalar/header portion of a node. Nested collection
+    /// lengths and children are supplied by `ArtifactNodeCursor` events.
+    fn node_head(&mut self, node: &PageNode) {
         match node {
             PageNode::Char { font_id, ch, width } => {
                 let mut bytes = [0; 13];
@@ -1977,12 +1990,10 @@ impl Writer {
                     Some(LeaderPayload::HList(box_node)) => {
                         self.u8(wire::leader::HLIST);
                         self.box_fields(box_node);
-                        tasks.push(WriteTask::NodeList(&box_node.children, depth + 1));
                     }
                     Some(LeaderPayload::VList(box_node)) => {
                         self.u8(wire::leader::VLIST);
                         self.box_fields(box_node);
-                        tasks.push(WriteTask::NodeList(&box_node.children, depth + 1));
                     }
                     Some(LeaderPayload::Rule {
                         width,
@@ -2012,34 +2023,23 @@ impl Writer {
             PageNode::HList(box_node) => {
                 self.u8(wire::node::HLIST);
                 self.box_fields(box_node);
-                tasks.push(WriteTask::NodeList(&box_node.children, depth + 1));
             }
             PageNode::VList(box_node) => {
                 self.u8(wire::node::VLIST);
                 self.box_fields(box_node);
-                tasks.push(WriteTask::NodeList(&box_node.children, depth + 1));
             }
-            PageNode::Disc {
-                kind,
-                pre,
-                post,
-                replace,
-            } => {
+            PageNode::Disc { kind, .. } => {
                 self.u8(wire::node::DISC);
                 self.u8(disc_kind_tag(*kind));
-                tasks.push(WriteTask::NodeList(replace, depth + 1));
-                tasks.push(WriteTask::NodeList(post, depth + 1));
-                tasks.push(WriteTask::NodeList(pre, depth + 1));
             }
             PageNode::Mark { class, tokens } => {
                 self.u8(wire::node::MARK);
                 self.u16(*class);
                 self.tokens(tokens);
             }
-            PageNode::Insert { class, content } => {
+            PageNode::Insert { class, .. } => {
                 self.u8(wire::node::INSERT);
                 self.u16(*class);
-                tasks.push(WriteTask::NodeList(content, depth + 1));
             }
             PageNode::WhatsitAnchor { effect_index } => {
                 self.tagged_u32(wire::node::WHATSIT_ANCHOR, *effect_index);
@@ -2050,9 +2050,8 @@ impl Writer {
             PageNode::MathOff(width) => {
                 self.tagged_i32(wire::node::MATH_OFF, width.raw());
             }
-            PageNode::Adjust(content) => {
+            PageNode::Adjust(_) => {
                 self.u8(wire::node::ADJUST);
-                tasks.push(WriteTask::NodeList(content, depth + 1));
             }
         }
     }
@@ -2117,11 +2116,6 @@ impl Writer {
         self.scaled(spec.shrink);
         self.u8(glue_order_tag(spec.shrink_order));
     }
-}
-
-enum WriteTask<'a> {
-    Node(&'a PageNode, usize),
-    NodeList(&'a [PageNode], usize),
 }
 
 struct Reader<'a> {
@@ -3102,6 +3096,21 @@ impl Reader<'_> {
                 parse_kern_kind(self.u8()?)?;
                 None
             }
+            wire::node::MARGIN_KERN => {
+                self.scaled()?;
+                match self.u8()? {
+                    0 | 1 => {}
+                    tag => {
+                        return Err(ParseError::InvalidTag {
+                            kind: "margin kern side",
+                            tag,
+                        });
+                    }
+                }
+                self.u32()?;
+                self.u8()?;
+                None
+            }
             wire::node::GLUE => {
                 self.glue_spec()?;
                 parse_glue_kind(self.u8()?)?;
@@ -3607,20 +3616,16 @@ impl DecodeFrame {
 }
 
 fn validate_streamed_char(
-    fonts: &std::collections::BTreeSet<u32>,
+    fonts: &std::collections::BTreeMap<u32, bool>,
     font_id: u32,
     ch: u32,
 ) -> Result<(), ParseError> {
-    if !fonts.contains(&font_id) {
+    let Some(allows_unicode) = fonts.get(&font_id).copied() else {
         return Err(ParseError::Validation(
             crate::ArtifactValidationError::MissingFont { font_id },
         ));
-    }
-    validate_streamed_scalar(ch)
-}
-
-fn validate_streamed_scalar(ch: u32) -> Result<(), ParseError> {
-    if ch > u32::from(u8::MAX) {
+    };
+    if (!allows_unicode && ch > u32::from(u8::MAX)) || char::from_u32(ch).is_none() {
         return Err(ParseError::Validation(
             crate::ArtifactValidationError::CharacterOutOfRange { ch },
         ));

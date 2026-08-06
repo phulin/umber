@@ -275,6 +275,155 @@ fn pdftex_kern_kinds_round_trip() {
         PageArtifact::from_bytes(&bytes).expect("artifact parses"),
         artifact
     );
+    assert_eq!(
+        crate::dvi::DviPagePlan::compile_v10(&bytes).expect("streamed margin kern plan"),
+        crate::dvi::DviPagePlan::compile(&artifact).expect("owned margin kern plan")
+    );
+}
+
+#[test]
+fn every_artifact_node_variant_round_trips_through_canonical_events() {
+    let mut page = sample_artifact();
+    let empty = || empty_box(Vec::new());
+    let glue = GlueSpec {
+        width: Scaled::from_raw(1),
+        stretch: Scaled::from_raw(2),
+        stretch_order: GlueOrder::Fill,
+        shrink: Scaled::from_raw(3),
+        shrink_order: GlueOrder::Filll,
+    };
+    let PageNode::VList(root) = &mut page.testing_mut().root else {
+        unreachable!("sample root is a vlist");
+    };
+    root.children = vec![
+        PageNode::Char {
+            font_id: 1,
+            ch: 'A' as u32,
+            width: Scaled::from_raw(4),
+        },
+        PageNode::Lig {
+            font_id: 1,
+            ch: 'f' as u32,
+            source: vec!['f' as u32, 'i' as u32],
+            width: Scaled::from_raw(5),
+        },
+        PageNode::Kern {
+            amount: Scaled::from_raw(6),
+            kind: KernKind::Auto,
+        },
+        PageNode::MarginKern {
+            amount: Scaled::from_raw(7),
+            side: MarginKernSide::Right,
+            font_id: 1,
+            ch: b'.',
+        },
+        PageNode::Glue {
+            spec: glue,
+            kind: GlueKind::Cleaders,
+            leader: None,
+        },
+        PageNode::Glue {
+            spec: glue,
+            kind: GlueKind::Xleaders,
+            leader: Some(LeaderPayload::HList(empty())),
+        },
+        PageNode::Glue {
+            spec: glue,
+            kind: GlueKind::Leaders,
+            leader: Some(LeaderPayload::VList(empty())),
+        },
+        PageNode::Glue {
+            spec: glue,
+            kind: GlueKind::Leaders,
+            leader: Some(LeaderPayload::Rule {
+                width: Some(Scaled::from_raw(8)),
+                height: None,
+                depth: Some(Scaled::from_raw(9)),
+            }),
+        },
+        PageNode::Penalty(-10),
+        PageNode::Rule {
+            width: None,
+            height: Some(Scaled::from_raw(11)),
+            depth: None,
+        },
+        PageNode::HList(empty()),
+        PageNode::VList(empty()),
+        PageNode::Disc {
+            kind: DiscKind::AutomaticHyphen,
+            pre: vec![PageNode::Penalty(12)],
+            post: vec![PageNode::Penalty(13)],
+            replace: vec![PageNode::Penalty(14)],
+        },
+        PageNode::Mark {
+            class: 15,
+            tokens: vec![
+                PageToken::Char {
+                    ch: 'a' as u32,
+                    cat: TokenCatcode::Other,
+                },
+                PageToken::ControlSequence("cs".to_owned()),
+                PageToken::Param(9),
+                PageToken::ActiveControlSequence('~' as u32),
+            ],
+        },
+        PageNode::Insert {
+            class: 16,
+            content: vec![PageNode::Penalty(17)],
+        },
+        PageNode::WhatsitAnchor { effect_index: 0 },
+        PageNode::MathOn(Scaled::from_raw(18)),
+        PageNode::MathOff(Scaled::from_raw(19)),
+        PageNode::Adjust(vec![PageNode::Penalty(20)]),
+    ];
+
+    let bytes = page.to_bytes().expect("all node variants serialize");
+    assert_eq!(
+        PageArtifact::from_bytes(&bytes).expect("all node variants parse"),
+        page
+    );
+    assert_eq!(
+        crate::dvi::DviPagePlan::compile_v10(&bytes).expect("all variants stream"),
+        crate::dvi::DviPagePlan::compile(&page).expect("all variants compile owned")
+    );
+}
+
+#[test]
+fn owned_and_streaming_cursors_reject_malformed_margin_kern_identically() {
+    let mut page = sample_artifact();
+    let PageNode::VList(root) = &mut page.testing_mut().root else {
+        unreachable!("sample root is a vlist");
+    };
+    root.children = vec![PageNode::MarginKern {
+        amount: Scaled::from_raw(0x1234_5678),
+        side: MarginKernSide::Left,
+        font_id: 1,
+        ch: b'A',
+    }];
+    let mut bytes = page.to_bytes().expect("margin kern serializes");
+    let needle = [
+        [16].as_slice(),
+        &0x1234_5678_i32.to_le_bytes(),
+        &[0],
+        &1_u32.to_le_bytes(),
+        b"A",
+    ]
+    .concat();
+    let offset = bytes
+        .windows(needle.len())
+        .position(|window| window == needle)
+        .expect("unique margin kern bytes");
+    bytes[offset + 5] = 2;
+    let expected = ParseError::InvalidTag {
+        kind: "margin kern side",
+        tag: 2,
+    };
+
+    assert_eq!(PageArtifact::from_bytes(&bytes), Err(expected.clone()));
+    assert!(matches!(
+        crate::binary::V10PageDecoder::new(&bytes, ArtifactCodecLimits::default()),
+        Err(error) if error == expected
+    ));
 }
 
 #[test]
