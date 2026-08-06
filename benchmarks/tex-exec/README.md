@@ -11,6 +11,7 @@ cargo bench --manifest-path benchmarks/tex-exec/Cargo.toml --bench widths
 cargo bench --manifest-path benchmarks/tex-exec/Cargo.toml --bench layout
 cargo bench --manifest-path benchmarks/tex-exec/Cargo.toml --bench dvi_page_snapshot
 cargo bench --manifest-path benchmarks/tex-exec/Cargo.toml --bench mode_list_rollback
+cargo bench --manifest-path benchmarks/tex-exec/Cargo.toml --bench pure_memo_edit
 cargo run --release --manifest-path benchmarks/tex-exec/Cargo.toml --bin layout_allocations
 ```
 
@@ -25,10 +26,15 @@ then times execution and artifact commit.
 canonical aggregate-operation rollback. It does not use a document trace.
 
 `mode_list_rollback` isolates 1,024 successful appends to a synthetic
-16,384-node list. It compares the current retained-COW-root lifetime with the
-length watermark that an append-aware inverse journal could use. The benchmark
-proves the opportunity and bounds its workload; it is not a correctness model
+16,384-node list. It compares the former retained-COW-root lifetime with the
+length watermark used by the adopted append-aware inverse journal. The
+benchmark records the completed design choice; it is not a correctness model
 for destructive list edits or nested savepoints.
+
+`pure_memo_edit` compares an accepted edit with the bounded pretolerance,
+page-breaking, and shipout memo runtime disabled and enabled. It uses a real
+incremental session and verifies the initial cold run before timing the edit.
+It measures the retained pure caches, not the deleted paragraph replay design.
 
 `widths` measures exact hpack width accumulation for 64- and 4,096-character
 same-font runs and a 4,096-node mixed-font/interrupted list. It uses fixed

@@ -25,6 +25,11 @@ before adding a feature to any manifest.
 fixtures, corpora, and harnesses; update it when those implementation facts
 change.
 
+`tooling_surface_inventory.md` records the owner-approved disposition of
+reference/parity commands, one-time fixture migrations, benchmark and trace
+rows, prototypes, fuzz tiers, and their scripts for `umber2-vgjr.18`; absence
+from routine CI is never deletion evidence.
+
 `typesetting_assertion_ledger.md` maps every aggregate typesetting assertion
 removed by `umber2-vgjr.10.3` to an active case-level owner and records retained
 unique evidence.
