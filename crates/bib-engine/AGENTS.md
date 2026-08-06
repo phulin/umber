@@ -26,6 +26,8 @@ in native and WASM builds without subprocesses or native-filesystem access.
 - `tests/it/foundation.rs`: public foundation-boundary tests.
 - `tests/it/scaffold.rs`: fixture-manifest, translated-suite census, and
   compatibility-allowance audit.
+- `tests/it/upstream/compatibility.rs`: typed Biber case manifest, immutable
+  fixture runner, cache-purity replay, and generated-case completeness gate.
 - `tests/it/upstream/`: direct, assertion-isolated translations of the pinned
   upstream compatibility suite. Each module contains native Rust assertions
   with identical inputs and expectations; upstream Perl source and Perl

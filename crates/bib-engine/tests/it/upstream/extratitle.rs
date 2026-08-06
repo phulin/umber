@@ -1,407 +1,126 @@
 // Native Rust translation of the corresponding upstream Biber test at commit 74252e6.
 
-use bib_engine::{
-    BibAttempt, BibJob, BibOptionsBuilder, BibSession, EntryId, FieldId, FieldValue, OutputFormat,
-    OutputRequest, ProcessedBibliography, ProjectWorkspace, ResolvedFile, SectionId, VfsLimits,
-    VirtualPath,
-};
+use super::compatibility::{OutputExpectation, compatibility_cases};
 
-#[allow(dead_code)]
-struct FixtureResult {
-    document: ProcessedBibliography,
-    bbl: String,
-}
-
-fn override_scalar_option(control: &mut String, key: &str, value: &str) {
-    let key_tag = format!("<bcf:key>{key}</bcf:key>");
-    let key_at = control
-        .find(&key_tag)
-        .expect("option exists in committed BCF");
-    let value_start = control[key_at..]
-        .find("<bcf:value>")
-        .map(|offset| key_at + offset + "<bcf:value>".len())
-        .expect("option has a value");
-    let value_end = control[value_start..]
-        .find("</bcf:value>")
-        .map(|offset| value_start + offset)
-        .expect("option value is terminated");
-    control.replace_range(value_start..value_end, value);
-}
-
-fn process_fixture(control_name: &str, option_overrides: &[(&str, &str)]) -> FixtureResult {
-    let fixture_dir = test_support::repository_root().join("tests/corpus/bib/upstream-2.22/tdata");
-    let control = VirtualPath::user(control_name).expect("valid control path");
-    let mut control_bytes =
-        String::from_utf8(crate::fixtures::read(fixture_dir.join(control_name)))
-            .expect("BCF is UTF-8");
-    for &(key, value) in option_overrides {
-        override_scalar_option(&mut control_bytes, key, value);
+compatibility_cases! {
+    module "extratitle";
+    #[ignore = "xfail: extra-title metadata differs from the Biber 2.22 expectation"]
+    1 assertion_001_same_name_same_title_1 {
+        control: r#####"extratitle.bcf"#####,
+        options: &[
+                (r#####"maxcitenames"#####, r#####"1"#####),
+                (r#####"maxbibnames"#####, r#####"1"#####)
+            ],
+        output: OutputExpectation::Field { entry: r#####"L1"#####, field: r#####"extratitle"#####, expected: Some(r#####"1"#####) },
     }
-    let mut provisioner = ProjectWorkspace::new(VfsLimits::default()).expect("valid VFS limits");
-    provisioner
-        .register_user(control.clone(), control_bytes.into_bytes())
-        .expect("unique control file");
-    let output_path = VirtualPath::user("native.bbl").expect("valid output path");
-    let mut options = BibOptionsBuilder::new();
-    options
-        .output(OutputRequest::new(output_path, OutputFormat::Bbl))
-        .expect("unique output");
-    let job = BibJob::new(control, options.freeze());
-    let mut session = BibSession::default();
-    loop {
-        match session.process(&job, &provisioner.snapshot()) {
-            BibAttempt::Complete(result) => {
-                let bbl = result
-                    .files()
-                    .find(|file| file.path().as_str().ends_with("native.bbl"))
-                    .map(|file| String::from_utf8_lossy(file.bytes()).into_owned())
-                    .unwrap_or_default();
-                return FixtureResult {
-                    document: result.document().as_ref().clone(),
-                    bbl,
-                };
-            }
-            BibAttempt::NeedResources(requests) => {
-                provisioner.expect(&requests);
-                for request in requests
-                    .required
-                    .iter()
-                    .chain(requests.prefetch_hints.iter())
-                {
-                    let path = fixture_dir.join(request.key().name());
-                    if !path.is_file() {
-                        continue;
-                    }
-                    provisioner
-                        .provision(ResolvedFile {
-                            request: request.key().clone(),
-                            virtual_path: format!("/texlive/bib/{}", request.key().name()),
-                            bytes: crate::fixtures::read(path),
-                            expected_digest: None,
-                        })
-                        .expect("requested fixture is valid");
-                }
-            }
-            BibAttempt::Failed(failure) => panic!("fixture processing failed: {failure:?}"),
-        }
+    #[ignore = "xfail: extra-title metadata differs from the Biber 2.22 expectation"]
+    2 assertion_002_same_name_same_title_2 {
+        control: r#####"extratitle.bcf"#####,
+        options: &[
+                (r#####"maxcitenames"#####, r#####"1"#####),
+                (r#####"maxbibnames"#####, r#####"1"#####)
+            ],
+        output: OutputExpectation::Field { entry: r#####"L2"#####, field: r#####"extratitle"#####, expected: Some(r#####"2"#####) },
     }
-}
-
-fn field_text(
-    control: &str,
-    option_overrides: &[(&str, &str)],
-    entry_key: &str,
-    field_name: &str,
-) -> Option<String> {
-    let fixture = process_fixture(control, option_overrides);
-    let entry = fixture
-        .document
-        .section(SectionId::new(0))?
-        .entry(&EntryId::new(entry_key).expect("valid entry key"))?;
-    match entry
-        .fields()
-        .get(&FieldId::new(field_name).expect("valid field name"))?
-    {
-        FieldValue::Literal(value) => Some(value.as_str().to_owned()),
-        FieldValue::Verbatim(value) => Some(value.as_str().to_owned()),
-        FieldValue::Integer(value) => Some(value.to_string()),
-        FieldValue::Boolean(value) => Some(if *value { "1" } else { "0" }.to_owned()),
-        _ => None,
+    #[ignore = "xfail: extra-title metadata differs from the Biber 2.22 expectation"]
+    3 assertion_003_no_name_same_title_1 {
+        control: r#####"extratitle.bcf"#####,
+        options: &[
+                (r#####"maxcitenames"#####, r#####"1"#####),
+                (r#####"maxbibnames"#####, r#####"1"#####)
+            ],
+        output: OutputExpectation::Field { entry: r#####"L3"#####, field: r#####"extratitle"#####, expected: Some(r#####"1"#####) },
     }
-}
-
-#[allow(dead_code)]
-fn name_assignment(
-    control: &str,
-    option_overrides: &[(&str, &str)],
-    entry_key: &str,
-    name_index: usize,
-    assignment_key: &str,
-) -> Option<String> {
-    let fixture = process_fixture(control, option_overrides);
-    let entry = fixture
-        .document
-        .section(SectionId::new(0))?
-        .entry(&EntryId::new(entry_key).expect("valid entry key"))?;
-    let source = match entry
-        .fields()
-        .get(&FieldId::new("labelnamesource").expect("valid field name"))?
-    {
-        FieldValue::Literal(value) => value.as_str(),
-        _ => return None,
-    };
-    let names = match entry
-        .fields()
-        .get(&FieldId::new(source).expect("valid name-list field"))?
-    {
-        FieldValue::NameList(names) => names,
-        _ => return None,
-    };
-    names
-        .iter()
-        .nth(name_index.checked_sub(1)?)?
-        .assignments()
-        .find(|assignment| assignment.key() == assignment_key)
-        .map(|assignment| assignment.value().to_owned())
-}
-
-#[allow(dead_code)]
-fn output_entry(control: &str, option_overrides: &[(&str, &str)], entry_key: &str) -> String {
-    let fixture = process_fixture(control, option_overrides);
-    let marker = format!("\\\\entry{{{entry_key}}}");
-    let marker_at = fixture
-        .bbl
-        .find(&marker)
-        .expect("entry is present in generated BBL");
-    let start = fixture.bbl[..marker_at].rfind("    ").unwrap_or(marker_at);
-    let end = fixture.bbl[marker_at..]
-        .find("\\\\endentry")
-        .map(|offset| marker_at + offset + "\\\\endentry".len())
-        .expect("entry is terminated");
-    fixture.bbl[start..end].to_owned()
-}
-
-#[test]
-#[ignore = "xfail: extra-title metadata differs from the Biber 2.22 expectation"]
-fn assertion_001_same_name_same_title_1() {
-    assert_eq!(
-        field_text(
-            r#####"extratitle.bcf"#####,
-            &[
+    #[ignore = "xfail: extra-title metadata differs from the Biber 2.22 expectation"]
+    4 assertion_004_no_name_same_title_2 {
+        control: r#####"extratitle.bcf"#####,
+        options: &[
                 (r#####"maxcitenames"#####, r#####"1"#####),
                 (r#####"maxbibnames"#####, r#####"1"#####)
             ],
-            r#####"L1"#####,
-            r#####"extratitle"#####
-        )
-        .as_deref(),
-        Some(r#####"1"#####)
-    );
-}
-
-#[test]
-#[ignore = "xfail: extra-title metadata differs from the Biber 2.22 expectation"]
-fn assertion_002_same_name_same_title_2() {
-    assert_eq!(
-        field_text(
-            r#####"extratitle.bcf"#####,
-            &[
+        output: OutputExpectation::Field { entry: r#####"L4"#####, field: r#####"extratitle"#####, expected: Some(r#####"2"#####) },
+    }
+    5 assertion_005_no_name_same_title_as_with_name_1 {
+        control: r#####"extratitle.bcf"#####,
+        options: &[
                 (r#####"maxcitenames"#####, r#####"1"#####),
                 (r#####"maxbibnames"#####, r#####"1"#####)
             ],
-            r#####"L2"#####,
-            r#####"extratitle"#####
-        )
-        .as_deref(),
-        Some(r#####"2"#####)
-    );
-}
-
-#[test]
-#[ignore = "xfail: extra-title metadata differs from the Biber 2.22 expectation"]
-fn assertion_003_no_name_same_title_1() {
-    assert_eq!(
-        field_text(
-            r#####"extratitle.bcf"#####,
-            &[
+        output: OutputExpectation::Field { entry: r#####"L5"#####, field: r#####"extratitle"#####, expected: None },
+    }
+    #[ignore = "xfail: extra-title metadata differs from the Biber 2.22 expectation"]
+    6 assertion_006_no_name_same_shorttitle_title_1 {
+        control: r#####"extratitle.bcf"#####,
+        options: &[
                 (r#####"maxcitenames"#####, r#####"1"#####),
                 (r#####"maxbibnames"#####, r#####"1"#####)
             ],
-            r#####"L3"#####,
-            r#####"extratitle"#####
-        )
-        .as_deref(),
-        Some(r#####"1"#####)
-    );
-}
-
-#[test]
-#[ignore = "xfail: extra-title metadata differs from the Biber 2.22 expectation"]
-fn assertion_004_no_name_same_title_2() {
-    assert_eq!(
-        field_text(
-            r#####"extratitle.bcf"#####,
-            &[
+        output: OutputExpectation::Field { entry: r#####"L6"#####, field: r#####"extratitle"#####, expected: Some(r#####"1"#####) },
+    }
+    #[ignore = "xfail: extra-title metadata differs from the Biber 2.22 expectation"]
+    7 assertion_007_no_name_same_shorttitle_title_2 {
+        control: r#####"extratitle.bcf"#####,
+        options: &[
                 (r#####"maxcitenames"#####, r#####"1"#####),
                 (r#####"maxbibnames"#####, r#####"1"#####)
             ],
-            r#####"L4"#####,
-            r#####"extratitle"#####
-        )
-        .as_deref(),
-        Some(r#####"2"#####)
-    );
-}
-
-#[test]
-fn assertion_005_no_name_same_title_as_with_name_1() {
-    assert_eq!(
-        field_text(
-            r#####"extratitle.bcf"#####,
-            &[
+        output: OutputExpectation::Field { entry: r#####"L7"#####, field: r#####"extratitle"#####, expected: Some(r#####"2"#####) },
+    }
+    8 assertion_008_singletitle_test_1 {
+        control: r#####"extratitle.bcf"#####,
+        options: &[
                 (r#####"maxcitenames"#####, r#####"1"#####),
                 (r#####"maxbibnames"#####, r#####"1"#####)
             ],
-            r#####"L5"#####,
-            r#####"extratitle"#####
-        )
-        .as_deref(),
-        None
-    );
-}
-
-#[test]
-#[ignore = "xfail: extra-title metadata differs from the Biber 2.22 expectation"]
-fn assertion_006_no_name_same_shorttitle_title_1() {
-    assert_eq!(
-        field_text(
-            r#####"extratitle.bcf"#####,
-            &[
+        output: OutputExpectation::Field { entry: r#####"L8"#####, field: r#####"singletitle"#####, expected: None },
+    }
+    9 assertion_009_singletitle_test_2 {
+        control: r#####"extratitle.bcf"#####,
+        options: &[
                 (r#####"maxcitenames"#####, r#####"1"#####),
                 (r#####"maxbibnames"#####, r#####"1"#####)
             ],
-            r#####"L6"#####,
-            r#####"extratitle"#####
-        )
-        .as_deref(),
-        Some(r#####"1"#####)
-    );
-}
-
-#[test]
-#[ignore = "xfail: extra-title metadata differs from the Biber 2.22 expectation"]
-fn assertion_007_no_name_same_shorttitle_title_2() {
-    assert_eq!(
-        field_text(
-            r#####"extratitle.bcf"#####,
-            &[
+        output: OutputExpectation::Field { entry: r#####"L9"#####, field: r#####"singletitle"#####, expected: None },
+    }
+    #[ignore = "xfail: extra-title metadata differs from the Biber 2.22 expectation"]
+    10 assertion_010_singletitle_test_3 {
+        control: r#####"extratitle.bcf"#####,
+        options: &[
                 (r#####"maxcitenames"#####, r#####"1"#####),
                 (r#####"maxbibnames"#####, r#####"1"#####)
             ],
-            r#####"L7"#####,
-            r#####"extratitle"#####
-        )
-        .as_deref(),
-        Some(r#####"2"#####)
-    );
-}
-
-#[test]
-fn assertion_008_singletitle_test_1() {
-    assert_eq!(
-        field_text(
-            r#####"extratitle.bcf"#####,
-            &[
+        output: OutputExpectation::Field { entry: r#####"L10"#####, field: r#####"singletitle"#####, expected: Some(r#####"1"#####) },
+    }
+    11 assertion_011_singletitle_test_4 {
+        control: r#####"extratitle.bcf"#####,
+        options: &[
                 (r#####"maxcitenames"#####, r#####"1"#####),
                 (r#####"maxbibnames"#####, r#####"1"#####)
             ],
-            r#####"L8"#####,
-            r#####"singletitle"#####
-        )
-        .as_deref(),
-        None
-    );
-}
-
-#[test]
-fn assertion_009_singletitle_test_2() {
-    assert_eq!(
-        field_text(
-            r#####"extratitle.bcf"#####,
-            &[
+        output: OutputExpectation::Field { entry: r#####"L11"#####, field: r#####"singletitle"#####, expected: None },
+    }
+    12 assertion_012_singletitle_test_5 {
+        control: r#####"extratitle.bcf"#####,
+        options: &[
                 (r#####"maxcitenames"#####, r#####"1"#####),
                 (r#####"maxbibnames"#####, r#####"1"#####)
             ],
-            r#####"L9"#####,
-            r#####"singletitle"#####
-        )
-        .as_deref(),
-        None
-    );
-}
-
-#[test]
-#[ignore = "xfail: extra-title metadata differs from the Biber 2.22 expectation"]
-fn assertion_010_singletitle_test_3() {
-    assert_eq!(
-        field_text(
-            r#####"extratitle.bcf"#####,
-            &[
+        output: OutputExpectation::Field { entry: r#####"L12"#####, field: r#####"singletitle"#####, expected: None },
+    }
+    13 assertion_013_singletitle_test_6 {
+        control: r#####"extratitle.bcf"#####,
+        options: &[
                 (r#####"maxcitenames"#####, r#####"1"#####),
                 (r#####"maxbibnames"#####, r#####"1"#####)
             ],
-            r#####"L10"#####,
-            r#####"singletitle"#####
-        )
-        .as_deref(),
-        Some(r#####"1"#####)
-    );
-}
-
-#[test]
-fn assertion_011_singletitle_test_4() {
-    assert_eq!(
-        field_text(
-            r#####"extratitle.bcf"#####,
-            &[
+        output: OutputExpectation::Field { entry: r#####"L1"#####, field: r#####"singletitle"#####, expected: None },
+    }
+    14 assertion_014_singletitle_test_7 {
+        control: r#####"extratitle.bcf"#####,
+        options: &[
                 (r#####"maxcitenames"#####, r#####"1"#####),
                 (r#####"maxbibnames"#####, r#####"1"#####)
             ],
-            r#####"L11"#####,
-            r#####"singletitle"#####
-        )
-        .as_deref(),
-        None
-    );
-}
-
-#[test]
-fn assertion_012_singletitle_test_5() {
-    assert_eq!(
-        field_text(
-            r#####"extratitle.bcf"#####,
-            &[
-                (r#####"maxcitenames"#####, r#####"1"#####),
-                (r#####"maxbibnames"#####, r#####"1"#####)
-            ],
-            r#####"L12"#####,
-            r#####"singletitle"#####
-        )
-        .as_deref(),
-        None
-    );
-}
-
-#[test]
-fn assertion_013_singletitle_test_6() {
-    assert_eq!(
-        field_text(
-            r#####"extratitle.bcf"#####,
-            &[
-                (r#####"maxcitenames"#####, r#####"1"#####),
-                (r#####"maxbibnames"#####, r#####"1"#####)
-            ],
-            r#####"L1"#####,
-            r#####"singletitle"#####
-        )
-        .as_deref(),
-        None
-    );
-}
-
-#[test]
-fn assertion_014_singletitle_test_7() {
-    assert_eq!(
-        field_text(
-            r#####"extratitle.bcf"#####,
-            &[
-                (r#####"maxcitenames"#####, r#####"1"#####),
-                (r#####"maxbibnames"#####, r#####"1"#####)
-            ],
-            r#####"L5"#####,
-            r#####"singletitle"#####
-        )
-        .as_deref(),
-        None
-    );
+        output: OutputExpectation::Field { entry: r#####"L5"#####, field: r#####"singletitle"#####, expected: None },
+    }
 }

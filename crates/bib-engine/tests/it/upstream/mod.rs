@@ -4,6 +4,7 @@ mod bcfvalidation;
 mod biblatexml;
 mod bibtex_aliases;
 mod bibtex_output;
+pub(crate) mod compatibility;
 mod configfile;
 mod crossrefs;
 mod datalists;

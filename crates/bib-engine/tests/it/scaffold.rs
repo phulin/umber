@@ -10,8 +10,6 @@ use sha2::{Digest, Sha256};
 
 const PINNED_COMMIT: &str = "74252e608e5f8115375c532eb25416430a9f52eb";
 const IMPORTED_FILE_COUNT: usize = 113;
-const UPSTREAM_MODULE_COUNT: usize = 51;
-const UPSTREAM_ASSERTION_COUNT: usize = 1_275;
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -608,37 +606,24 @@ fn classic_fixture_manifest_and_inventory_are_complete_and_pinned() {
 }
 
 #[test]
-fn translated_suite_has_explicit_compatibility_status() {
+fn translated_suite_manifest_is_complete_and_allowances_are_explicit() {
+    crate::upstream::compatibility::assert_manifest_complete();
     let upstream = test_support::repository_root()
         .join("crates/bib-engine")
         .join("tests/it/upstream");
-    let mut modules = 0;
-    let mut assertions = 0;
     for entry in fs::read_dir(&upstream)
         .unwrap_or_else(|error| panic!("failed to enumerate {}: {error}", upstream.display()))
     {
         let path = entry.expect("valid upstream directory entry").path();
         if path.extension().is_none_or(|extension| extension != "rs")
-            || path.file_name().is_some_and(|name| name == "mod.rs")
+            || path
+                .file_name()
+                .is_some_and(|name| name == "mod.rs" || name == "compatibility.rs")
         {
             continue;
         }
-        modules += 1;
         let source = fs::read_to_string(&path)
             .unwrap_or_else(|error| panic!("failed to read {}: {error}", path.display()));
-        let assertion_identifiers = source
-            .split(|character: char| !(character.is_ascii_alphanumeric() || character == '_'))
-            .filter(|token| {
-                token.strip_prefix("assertion_").is_some_and(|suffix| {
-                    suffix
-                        .as_bytes()
-                        .get(..3)
-                        .is_some_and(|digits| digits.iter().all(u8::is_ascii_digit))
-                        && suffix.as_bytes().get(3) == Some(&b'_')
-                })
-            })
-            .collect::<BTreeSet<_>>();
-        assertions += assertion_identifiers.len();
         let unexpected_pass_marker = ["X", "PASS"].concat();
         let ignored_test_marker = ["#[", "ignore", "]"].concat();
         let expected_panic_marker = ["#[", "should_panic", "]"].concat();
@@ -684,8 +669,6 @@ fn translated_suite_has_explicit_compatibility_status() {
             );
         }
     }
-    assert_eq!(modules, UPSTREAM_MODULE_COUNT);
-    assert_eq!(assertions, UPSTREAM_ASSERTION_COUNT);
 }
 
 fn fixture_root() -> PathBuf {
