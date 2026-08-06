@@ -4,7 +4,9 @@ Status: shared project-workspace migration complete. Canonical paths, immutable
 files, layered storage, the typed resource ledger, deterministic snapshots,
 generated-file transactions, TeX and bibliography views, shared native/WASM
 resource batching, atomic editor-revision/build acceptance, and legacy-map
-removal are implemented.
+removal are implemented. The single-generated-transaction roadmap below is
+accepted; the current multi-stage types remain implementation history until
+the follow-on migration lands.
 
 This document defines `umber-vfs`, the host-neutral virtual filesystem shared
 by Umber's TeX driver, bibliography processing, native embeddings, and the
@@ -28,6 +30,55 @@ distribution selection.
 The cross-subsystem target vocabulary and migration invariants are fixed by
 [Canonical resource identity and lifecycle](resource_lifecycle.md). This
 document remains authoritative for implemented VFS layers and transactions.
+
+## Generated-publication roadmap
+
+TeX--bibliography--TeX continues to publish one complete,
+orchestrator-owned generated set. The VFS will not expose pass scheduling,
+producer ordering, declared replacement, or public `BuildPlan` semantics.
+`LatexProjectSession` owns the pass graph, merges TeX auxiliary output and
+detached bibliography output into its private canonical-path map, decides
+convergence, and offers the VFS only the final set. `TexFixedPointSession` and
+`VirtualCompileSession` use the same publication boundary for their smaller
+coordinators.
+
+This decision follows the production API inventory: every current build has
+exactly one stage; `BuildPlan::invalidate_accepted`, declared cross-producer
+replacement, and multiple stage commits are used only by `umber-vfs` tests.
+`BibSession` consumes a `VfsSnapshot` and returns detached `GeneratedFile`
+values, so it neither needs nor receives a mutable VFS transaction. A future
+project pipeline with more phases must continue composing immutable snapshots
+and detached results above the VFS unless it demonstrates a need for partial
+publication independently of scheduling.
+
+The replacement API is one `GeneratedTransaction` created by
+`ProjectWorkspace`. It owns a private complete write set, exposes an immutable
+candidate snapshot, applies per-file and whole-set limits, and atomically
+replaces the accepted generated set on `accept`; drop or explicit `discard`
+publishes nothing. The ledger-adjacent constructor remains a narrow disjoint
+borrow for compile resolvers. Rewriting a path inside the transaction is
+ordinary last-write replacement by its single orchestrator owner, not a
+producer collision.
+
+The retained public VFS adapters are `VirtualPath`; immutable `VirtualFile`
+reads and content/binding identities; `VfsSnapshot`, `VirtualRoot`, snapshot
+errors, retention, exact lookup, and bounded enumeration; `ProjectWorkspace`,
+`ResourceLedger`, request/response/admission values, and provisioning methods;
+`VfsLimits` and its typed errors; and the new `GeneratedTransaction` with its
+accepted summary and transaction errors. `FileOrigin` retains user, resolved,
+and generated classification plus resolved-request provenance, but generated
+producer/build/stage metadata is not a compatibility commitment.
+
+`VirtualFs`, `BuildPlan`, `BuildTransaction`, `StageTransaction`,
+`DeclaredReplacement`, `StageCommit`, `ProducerId`, `StageId`, the public raw
+layer/storage constructors, and the pending-generated layer are retired in the
+follow-on migration. No deprecated multi-stage shim is retained: repository
+production callers do not use those semantics, and a shim would preserve the
+second scheduling authority this decision removes. Existing public session
+adapters (`VirtualCompileSession`, `TexFixedPointSession`,
+`LatexProjectSession`, native bibliography commands, and the WASM compiler,
+editor, and project sessions) retain their current attempt/resource/output
+contracts.
 
 ## Goals
 
@@ -198,9 +249,9 @@ copying its maps or file bytes. A later storage mutation copies only the
 generation header and changed ownership layer; existing snapshots continue to
 observe their exact earlier generation.
 
-## Transactions and build atomicity
+## Implemented transactions before the roadmap migration
 
-There are two transaction scopes:
+The current implementation has two transaction scopes:
 
 - a **stage transaction** captures all files written by one TeX or
   bibliography invocation; and
@@ -477,22 +528,24 @@ and limits. They do not expose host URLs or treat file bytes as trusted markup.
 
 ## Integration with project compilation
 
-The project orchestrator uses one build transaction for an entire converging
-LaTeX job:
+The project orchestrator owns an entire converging LaTeX job and publishes one
+complete generated transaction after convergence:
 
 ```text
 pending root and last accepted generated inputs
-    -> TeX stage writes .aux/.bcf/etc.
-    -> bibliography stage reads .bcf and data, writes .bbl/.blg
-    -> TeX stage reads .bbl and writes the next auxiliary generation
+    -> TeX pass returns detached .aux/.bcf/etc.
+    -> bibliography pass reads a candidate snapshot and returns .bbl/.blg
+    -> orchestrator merges the next private generated set
+    -> TeX pass reads an immutable snapshot of that set
     -> repeat until the selected convergence set is stable
+    -> write one GeneratedTransaction
     -> atomically accept root revision, generated files, and rendered output
 ```
 
-A resource miss at any stage returns the accumulated deterministic request
-batch. Provisioned immutable resources are retained, while the failed stage's
-writes are discarded. The orchestrator may restart from a retained safe stage
-boundary or rerun the build; both paths must produce identical accepted files.
+A resource miss in any pass returns the accumulated deterministic request
+batch. Provisioned immutable resources are retained, while the private
+candidate set remains unpublished. The orchestrator may resume retained work
+or rerun the candidate; both paths must produce identical accepted files.
 
 ## Testing
 

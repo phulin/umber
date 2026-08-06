@@ -338,6 +338,33 @@ method succeeds after disposal.
 
 ## Multipass project sessions
 
+### VFS publication boundary
+
+The public project-session roadmap keeps multipass policy in `umber`, not in
+`umber-vfs`. `LatexProjectSession` is the sole owner of TeX--bibliography--TeX
+ordering, pass identity, convergence and oscillation detection, and the
+private canonical-path map representing the next complete generated set.
+`BibSession` remains an immutable-snapshot-to-detached-result adapter; its
+files are merged by the project coordinator and never committed directly.
+
+After convergence, the coordinator writes that complete map through one
+`umber_vfs::GeneratedTransaction`. Acceptance of the transaction is composed
+with root revision, final TeX output, bibliography result and diagnostics,
+observations, and rendered-source session publication. A resource wait,
+cancellation, or terminal failure drops the transaction and cannot expose a
+pass-local generation. Intermediate immutable snapshots are coordinator-owned
+views constructed from private candidate sets; they do not require VFS
+`BuildPlan`, stage, producer, invalidation, or collision policy.
+
+The retained Rust session adapters are `VirtualCompileSession`,
+`TexFixedPointSession`, `EditorCompileSession`, and `LatexProjectSession`, with
+their existing options, attempts, resource responses, cancellation, accepted
+outputs, and observation ledgers. The retained WASM adapters are
+`CompilerSession`, `EditorSession`, and `ProjectSession`, with no new pass-plan
+wire type. The native `umber bib` and host-neutral `BibCommand`, `BibSession`,
+and `BibliographySession` continue returning detached generated files. No
+public session accepts a VFS `BuildPlan` today, and none will gain one.
+
 `umber::LatexProjectSession` is the opt-in layer above the single-pass session.
 It reruns TeX over the candidate generated generation, processes a produced
 BCF through an in-process retained `BibSession`, publishes detached BBL/BLG
@@ -357,7 +384,7 @@ own protocol: while either waits, the already completed TeX pass is retained
 and is not mistaken for a cold resource retry.
 
 Immutable responses and bibliography parse caches survive a suspended
-candidate, and the candidate owns its private generated stage until acceptance
+candidate, and the candidate owns its private generated set until acceptance
 or rejection. Acceptance installs the root
 revision, complete generated VFS generation, bibliography diagnostics, final
 TeX output, and retained rendered-source session together. A resource miss or
