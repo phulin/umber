@@ -2802,3 +2802,119 @@ fn post_line_break_omits_only_zero_leftskip() {
         ] if *left == nonzero && *right == zero
     ));
 }
+
+#[test]
+fn paragraph_tape_bounds_analysis_storage_for_large_paragraphs() {
+    let mut universe = Universe::new();
+    let glue = universe.intern_glue(GlueSpec::ZERO);
+    let mut nodes = Vec::with_capacity(100_000);
+    for _ in 0..50_000 {
+        nodes.push(rule(1));
+        nodes.push(Node::Glue {
+            spec: glue,
+            kind: GlueKind::Normal,
+            leader: None,
+        });
+    }
+    let parameters = params(100);
+    let tape = ParagraphTape::analyze(
+        &universe,
+        tex_state::node_sequence::NodeSequence::mirrored(nodes),
+        &parameters,
+    );
+
+    assert_eq!(tape.materialization.len(), tape.nodes().len());
+    assert_eq!(tape.break_sites.len(), tape.trace_spans.len());
+    assert!(tape.break_sites.len() <= tape.nodes().len() + 1);
+    assert_eq!(std::mem::size_of::<MaterializationAction>(), 1);
+}
+
+#[test]
+fn paragraph_tape_analyzes_twenty_thousand_nested_replacements_iteratively() {
+    let mut universe = Universe::new();
+    let empty = universe.freeze_node_list(&[]);
+    let mut replacement = universe.freeze_node_list(&[rule(1)]);
+    for _ in 0..20_000 {
+        replacement = universe.freeze_node_list(&[Node::Disc {
+            kind: DiscKind::Discretionary,
+            pre: empty,
+            post: empty,
+            replace: replacement,
+            physical_replace_count: 0,
+        }]);
+    }
+    let nodes = vec![
+        Node::Disc {
+            kind: DiscKind::Discretionary,
+            pre: empty,
+            post: empty,
+            replace: replacement,
+            physical_replace_count: 0,
+        },
+        Node::Penalty(-10_000),
+    ];
+    let parameters = params(100);
+    let tape = ParagraphTape::analyze(
+        &universe,
+        tex_state::node_sequence::NodeSequence::mirrored(nodes),
+        &parameters,
+    );
+
+    assert_eq!(tape.break_sites.len(), 2);
+    assert_eq!(tape.break_sites[1].line_width.natural.raw(), 1);
+}
+
+#[test]
+fn paired_materialization_cursor_preserves_physical_diagnostic_topology() {
+    let mut universe = Universe::new();
+    let zero = universe.intern_glue(GlueSpec::ZERO);
+    let empty = universe.freeze_node_list(&[]);
+    let parameters = params(100);
+    let tape = ParagraphTape::analyze(
+        &universe,
+        tex_state::node_sequence::NodeSequence::from_projection(
+            vec![Node::Penalty(1), Node::Penalty(2)],
+            vec![Node::Penalty(10), Node::Penalty(11), Node::Penalty(12)],
+            vec![0, 2, 3],
+        ),
+        &parameters,
+    );
+    let breaks = vec![
+        BreakDecision {
+            position: 1,
+            penalty: 1,
+            hyphenated: false,
+        },
+        BreakDecision {
+            position: 2,
+            penalty: -10_000,
+            hyphenated: false,
+        },
+    ];
+    let mut materializer = LineMaterializer::new(
+        tape,
+        breaks,
+        PostLineBreakParams {
+            empty_list: empty,
+            left_skip: zero,
+            right_skip: zero,
+            interline_penalty: 0,
+            club_penalty: 0,
+            widow_penalties: ordinary_widow_penalties(0, Vec::new()),
+            broken_penalty: 0,
+            prev_graf: 0,
+            interline_penalties: Vec::new(),
+            club_penalties: Vec::new(),
+            shape: LineShape::natural(sp(100)),
+        },
+    );
+    let first = materializer
+        .materialize_next(&universe, Vec::new())
+        .expect("first planned line materializes");
+
+    assert_eq!(first.nodes[0], Node::Penalty(1));
+    assert_eq!(
+        first.physical_nodes[0..2],
+        [Node::Penalty(10), Node::Penalty(11)]
+    );
+}

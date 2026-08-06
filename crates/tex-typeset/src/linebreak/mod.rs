@@ -2,6 +2,7 @@ use tex_arith::WideScaled;
 use tex_state::glue::GlueSpec;
 use tex_state::ids::{GlueId, NodeListId};
 use tex_state::node::{KernKind, Node};
+use tex_state::node_sequence::NodeSequence;
 use tex_state::scaled::Scaled;
 
 use crate::{INF_BAD, TypesetState};
@@ -175,10 +176,96 @@ pub use tex_state::{PureBreakDecision as BreakDecision, PureBreakPlan as BreakPl
 pub struct LineBreakResult {
     pub breaks: Vec<BreakDecision>,
     pub demerits: i32,
-    pub nodes: Vec<Node>,
-    pub physical_nodes: Vec<Node>,
-    pub physical_boundaries: Vec<usize>,
+    pub tape: ParagraphTape,
     pub last_line_fill: Option<GlueSpec>,
+}
+
+/// One paragraph's immutable topology and line-breaking analysis.
+///
+/// The tape is deliberately replay-independent: it contains only native node
+/// channels and values derived from them.  Break searches, diagnostics, and
+/// post-line-break materialization all consume this same analysis.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ParagraphTape {
+    sequence: NodeSequence,
+    break_sites: Vec<Breakpoint>,
+    trace_spans: Vec<TraceSpan>,
+    materialization: Vec<MaterializationAction>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct TraceSpan {
+    display_end: usize,
+    next_start: usize,
+    display_suffix: Option<NodeListId>,
+    breakpoint: TraceBreakpoint,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum MaterializationAction {
+    Copy,
+    Discretionary,
+    BreakDiscardable,
+    BreakMath,
+}
+
+impl ParagraphTape {
+    #[must_use]
+    pub fn analyze<S: TypesetState>(
+        state: &S,
+        sequence: NodeSequence,
+        params: &LineBreakParams,
+    ) -> Self {
+        let nodes = sequence.semantic();
+        let mut analyzer = LegalBreakpoints::new(state, nodes, params);
+        let break_sites: Vec<_> = analyzer.by_ref().collect();
+        let materialization = analyzer.materialization;
+        let trace_spans = break_sites
+            .iter()
+            .copied()
+            .map(|site| {
+                let display_end = trace_display_end(state, nodes, site);
+                TraceSpan {
+                    display_end,
+                    next_start: trace_display_next_start(state, nodes, site, display_end),
+                    display_suffix: trace_display_suffix(nodes, site),
+                    breakpoint: trace_breakpoint(nodes, site),
+                }
+            })
+            .collect();
+        Self {
+            sequence,
+            break_sites,
+            trace_spans,
+            materialization,
+        }
+    }
+
+    #[must_use]
+    pub fn nodes(&self) -> &[Node] {
+        self.sequence.semantic()
+    }
+
+    pub fn replace_last_par_fill(&mut self, spec: GlueId) {
+        let (mut semantic, physical, boundaries) = std::mem::take(&mut self.sequence).into_parts();
+        if let Some(Node::Glue { spec: par_fill, .. }) = semantic.iter_mut().rev().find(|node| {
+            matches!(
+                node,
+                Node::Glue {
+                    kind: tex_state::node::GlueKind::ParFillSkip,
+                    ..
+                }
+            )
+        }) {
+            *par_fill = spec;
+        }
+        self.sequence = NodeSequence::from_projection(semantic, physical, boundaries);
+    }
+
+    #[must_use]
+    pub fn into_semantic_nodes(self) -> Vec<Node> {
+        self.sequence.take().0
+    }
 }
 
 /// Detached TeX82 `\tracingparagraphs` evidence produced by the pure breaker.
@@ -254,26 +341,22 @@ where
     S: TypesetState,
     H: HyphenationHook<S>,
 {
-    if let Some(plan) = try_line_break_without_hyphenation(state, nodes, &params) {
-        return plan_with_nodes(plan, nodes.to_vec());
+    let tape = ParagraphTape::analyze(state, NodeSequence::mirrored(nodes.to_vec()), &params);
+    if let Some(plan) = try_tape_without_hyphenation(state, &tape, &params) {
+        return plan_with_tape(plan, tape);
     }
 
     let hyphenated = hyphenation.hyphenate(nodes);
-    plan_with_nodes(
-        line_break_hyphenated(state, &hyphenated, &params),
-        hyphenated,
-    )
+    let tape = ParagraphTape::analyze(state, NodeSequence::mirrored(hyphenated), &params);
+    let plan = break_hyphenated_tape(state, &tape, &params);
+    plan_with_tape(plan, tape)
 }
 
-pub fn plan_with_nodes(plan: BreakPlan, nodes: Vec<Node>) -> LineBreakResult {
-    let physical_boundaries = (0..=nodes.len()).collect();
-    let physical_nodes = nodes.clone();
+pub fn plan_with_tape(plan: BreakPlan, tape: ParagraphTape) -> LineBreakResult {
     LineBreakResult {
         breaks: plan.breaks,
         demerits: plan.demerits,
-        nodes,
-        physical_nodes,
-        physical_boundaries,
+        tape,
         last_line_fill: plan.last_line_fill,
     }
 }
@@ -287,24 +370,32 @@ pub fn try_line_break_without_hyphenation<S: TypesetState>(
     nodes: &[Node],
     params: &LineBreakParams,
 ) -> Option<BreakPlan> {
+    let tape = ParagraphTape::analyze(state, NodeSequence::mirrored(nodes.to_vec()), params);
+    try_tape_without_hyphenation(state, &tape, params)
+}
+
+pub fn try_tape_without_hyphenation<S: TypesetState>(
+    state: &S,
+    tape: &ParagraphTape,
+    params: &LineBreakParams,
+) -> Option<BreakPlan> {
     (params.pretolerance >= 0)
-        .then(|| {
-            run_pass(
-                state,
-                nodes,
-                params,
-                params.pretolerance,
-                false,
-                false,
-                None,
-            )
-        })
+        .then(|| run_pass(state, tape, params, params.pretolerance, false, false, None))
         .flatten()
 }
 
 pub fn try_line_break_without_hyphenation_traced<S: TypesetState>(
     state: &S,
     nodes: &[Node],
+    params: &LineBreakParams,
+) -> (Option<BreakPlan>, Vec<LineBreakTrace>) {
+    let tape = ParagraphTape::analyze(state, NodeSequence::mirrored(nodes.to_vec()), params);
+    try_tape_without_hyphenation_traced(state, &tape, params)
+}
+
+pub fn try_tape_without_hyphenation_traced<S: TypesetState>(
+    state: &S,
+    tape: &ParagraphTape,
     params: &LineBreakParams,
 ) -> (Option<BreakPlan>, Vec<LineBreakTrace>) {
     let mut trace = Vec::new();
@@ -316,22 +407,14 @@ pub fn try_line_break_without_hyphenation_traced<S: TypesetState>(
             trace.push(LineBreakTrace::Pass(LineBreakPass::First));
             let _ = run_pass(
                 state,
-                nodes,
+                tape,
                 params,
                 params.pretolerance,
                 false,
                 false,
                 Some(&mut trace),
             );
-            run_pass(
-                state,
-                nodes,
-                params,
-                params.pretolerance,
-                false,
-                false,
-                None,
-            )
+            run_pass(state, tape, params, params.pretolerance, false, false, None)
         })
         .flatten();
     (plan, trace)
@@ -343,9 +426,18 @@ pub fn line_break_hyphenated<S: TypesetState>(
     nodes: &[Node],
     params: &LineBreakParams,
 ) -> BreakPlan {
+    let tape = ParagraphTape::analyze(state, NodeSequence::mirrored(nodes.to_vec()), params);
+    break_hyphenated_tape(state, &tape, params)
+}
+
+pub fn break_hyphenated_tape<S: TypesetState>(
+    state: &S,
+    tape: &ParagraphTape,
+    params: &LineBreakParams,
+) -> BreakPlan {
     let second = run_pass(
         state,
-        nodes,
+        tape,
         params,
         params.tolerance,
         false,
@@ -356,13 +448,23 @@ pub fn line_break_hyphenated<S: TypesetState>(
         return result;
     }
 
-    run_pass(state, nodes, params, params.tolerance, true, true, None)
+    run_pass(state, tape, params, params.tolerance, true, true, None)
         .expect("final line-breaking pass always permits an artificial demerits path")
 }
 
 pub fn line_break_hyphenated_traced<S: TypesetState>(
     state: &S,
     nodes: &[Node],
+    params: &LineBreakParams,
+    trace: Vec<LineBreakTrace>,
+) -> (BreakPlan, Vec<LineBreakTrace>) {
+    let tape = ParagraphTape::analyze(state, NodeSequence::mirrored(nodes.to_vec()), params);
+    break_hyphenated_tape_traced(state, &tape, params, trace)
+}
+
+pub fn break_hyphenated_tape_traced<S: TypesetState>(
+    state: &S,
+    tape: &ParagraphTape,
     params: &LineBreakParams,
     mut trace: Vec<LineBreakTrace>,
 ) -> (BreakPlan, Vec<LineBreakTrace>) {
@@ -376,7 +478,7 @@ pub fn line_break_hyphenated_traced<S: TypesetState>(
     }
     let _ = run_pass(
         state,
-        nodes,
+        tape,
         params,
         params.tolerance,
         false,
@@ -385,7 +487,7 @@ pub fn line_break_hyphenated_traced<S: TypesetState>(
     );
     let second = run_pass(
         state,
-        nodes,
+        tape,
         params,
         params.tolerance,
         false,
@@ -398,14 +500,14 @@ pub fn line_break_hyphenated_traced<S: TypesetState>(
     trace.push(LineBreakTrace::Pass(LineBreakPass::Emergency));
     let _ = run_pass(
         state,
-        nodes,
+        tape,
         params,
         params.tolerance,
         true,
         true,
         Some(&mut trace),
     );
-    let result = run_pass(state, nodes, params, params.tolerance, true, true, None)
+    let result = run_pass(state, tape, params, params.tolerance, true, true, None)
         .expect("final line-breaking pass always permits an artificial demerits path");
     (result, trace)
 }
@@ -520,7 +622,7 @@ struct PassiveRoute {
     serial: usize,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct Breakpoint {
     position: usize,
     penalty: i32,
@@ -533,13 +635,14 @@ struct Breakpoint {
 
 fn run_pass<S: TypesetState>(
     state: &S,
-    nodes: &[Node],
+    tape: &ParagraphTape,
     params: &LineBreakParams,
     tolerance: i32,
     emergency: bool,
     final_pass: bool,
     mut trace: Option<&mut Vec<LineBreakTrace>>,
 ) -> Option<BreakPlan> {
+    let nodes = tape.nodes();
     let canonical_trace_admission = trace.is_some();
     let mut background = Widths::from_glue(params.left_skip);
     background.add_assign(Widths::from_glue(params.right_skip));
@@ -568,7 +671,8 @@ fn run_pass<S: TypesetState>(
         .flatten();
     let mut displayed_through = 0;
 
-    for bp in LegalBreakpoints::new(state, nodes, params) {
+    for (site_index, &bp) in tape.break_sites.iter().enumerate() {
+        let trace_span = tape.trace_spans[site_index];
         // Background and discretionary material depend only on this
         // breakpoint. Combine them once instead of once per active route.
         let mut breakpoint_width = bp.line_width;
@@ -683,7 +787,6 @@ fn run_pass<S: TypesetState>(
                 };
                 if trace.is_some() {
                     traced_feasible = true;
-                    let display_end = trace_display_end(state, nodes, bp);
                     feasible_traces.push((
                         line_number_class(candidate.line, easy_line),
                         LineBreakTrace::Feasible {
@@ -693,9 +796,9 @@ fn run_pass<S: TypesetState>(
                             // visible for glue (a trailing space) and
                             // discretionaries (their pre/post lists), even though
                             // width accounting stops before those nodes.
-                            display: displayed_through..display_end,
-                            display_suffix: trace_display_suffix(nodes, bp),
-                            breakpoint: trace_breakpoint(nodes, bp),
+                            display: displayed_through..trace_span.display_end,
+                            display_suffix: trace_span.display_suffix,
+                            breakpoint: trace_span.breakpoint,
                             via: active_candidate.passive.map_or(0, |id| passive[id].serial),
                             badness: (b <= INF_BAD).then_some(b),
                             penalty: bp.penalty,
@@ -723,7 +826,7 @@ fn run_pass<S: TypesetState>(
                     // `printed_node=cur_p` and therefore prints no fragment.
                     // The detached cursor for the next breakpoint is restored
                     // after this active-list traversal finishes.
-                    displayed_through = display_end;
+                    displayed_through = trace_span.display_end;
                 }
                 if !canonical_trace_admission {
                     next_serial += 1;
@@ -811,7 +914,7 @@ fn run_pass<S: TypesetState>(
             events.extend(active_traces.map(|(_, event)| event));
         }
         if traced_feasible {
-            displayed_through = trace_display_next_start(state, nodes, bp, displayed_through);
+            displayed_through = trace_span.next_start;
         }
         merge_active_candidates(
             &mut active,
@@ -1362,6 +1465,7 @@ struct LegalBreakpoints<'a, S> {
     last_position: Option<usize>,
     terminal_emitted: bool,
     include_font_expansion: bool,
+    materialization: Vec<MaterializationAction>,
 }
 
 impl<'a, S: TypesetState> LegalBreakpoints<'a, S> {
@@ -1376,6 +1480,7 @@ impl<'a, S: TypesetState> LegalBreakpoints<'a, S> {
             last_position: None,
             terminal_emitted: false,
             include_font_expansion: params.pdf_adjust_spacing > 1,
+            materialization: Vec::with_capacity(nodes.len()),
         }
     }
 
@@ -1505,6 +1610,14 @@ impl<S: TypesetState> Iterator for LegalBreakpoints<'_, S> {
                 }
                 _ => None,
             };
+            self.materialization.push(match self.nodes[i] {
+                Node::Disc { .. } => MaterializationAction::Discretionary,
+                Node::Glue { .. } if definition.is_some() => {
+                    MaterializationAction::BreakDiscardable
+                }
+                Node::MathOff(_) if definition.is_some() => MaterializationAction::BreakMath,
+                _ => MaterializationAction::Copy,
+            });
             if let Some((position, width_position, penalty, hyphenated, add_width, line_width)) =
                 definition
             {

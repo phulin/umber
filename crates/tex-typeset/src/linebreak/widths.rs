@@ -7,7 +7,7 @@ use tex_state::scaled::Scaled;
 use crate::TypesetState;
 use crate::expansion::ExpansionCapacity;
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) struct Widths {
     pub(super) natural: WideScaled,
     stretch: [WideScaled; 4],
@@ -220,19 +220,71 @@ fn add_node_width_cursor<S: TypesetState>(
             widths.natural = add_scaled(widths.natural, unset.width);
         }
         PackedNode::Disc(replace) => {
-            let list = state.nodes(replace);
-            widths.add_assign(line_widths_view(
-                state,
-                list,
-                0,
-                list.len(),
-                include_font_expansion,
-            ));
+            add_nested_list_widths(widths, state, state.nodes(replace), include_font_expansion);
         }
         PackedNode::Image { width, .. } => {
             widths.natural = add_scaled(widths.natural, width);
         }
         PackedNode::Ignored => {}
+    }
+}
+
+/// Adds discretionary replacement lists without using the native call stack.
+/// TeX node lists may be tens of thousands of levels deep, while the explicit
+/// cursor stack remains proportional to depth and has a small fixed frame.
+fn add_nested_list_widths<'a, S: TypesetState>(
+    widths: &mut Widths,
+    state: &'a S,
+    nodes: NodeList<'a>,
+    include_font_expansion: bool,
+) {
+    let mut stack = vec![(NodeCursor::compact(nodes), 0usize)];
+    while let Some((cursor, index)) = stack.last_mut() {
+        if *index >= cursor.len() {
+            let _ = stack.pop();
+            continue;
+        }
+        let current = *index;
+        *index += 1;
+        let node = cursor
+            .get(current)
+            .expect("nested width cursor position is in bounds");
+        match node.packed() {
+            PackedNode::Glyph { font, ch } => {
+                if let Some(metrics) = state.font_character_metrics(font, ch) {
+                    widths.natural = add_scaled(widths.natural, metrics.width);
+                    if include_font_expansion && let Ok(code) = u8::try_from(ch as u32) {
+                        add_char_expansion(state, widths, font, code, metrics.width);
+                    }
+                }
+            }
+            PackedNode::Kern { amount, kind } => {
+                widths.natural = add_scaled(widths.natural, amount);
+                if include_font_expansion && kind == Some(tex_state::node::KernKind::Font) {
+                    add_font_kern_expansion(state, widths, cursor, current, amount);
+                }
+            }
+            PackedNode::Math(width) => widths.natural = add_scaled(widths.natural, width),
+            PackedNode::Glue { spec, .. } => add_glue(widths, state.glue(spec)),
+            PackedNode::Rule { width, .. } => {
+                if let Some(width) = width {
+                    widths.natural = add_scaled(widths.natural, width);
+                }
+            }
+            PackedNode::Box(box_node) => {
+                widths.natural = add_scaled(widths.natural, box_node.width);
+            }
+            PackedNode::Unset(unset) => {
+                widths.natural = add_scaled(widths.natural, unset.width);
+            }
+            PackedNode::Disc(replace) => {
+                stack.push((NodeCursor::compact(state.nodes(replace)), 0));
+            }
+            PackedNode::Image { width, .. } => {
+                widths.natural = add_scaled(widths.natural, width);
+            }
+            PackedNode::Ignored => {}
+        }
     }
 }
 

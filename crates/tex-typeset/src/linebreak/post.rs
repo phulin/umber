@@ -3,7 +3,7 @@ use tex_state::node::{Direction, GlueKind, KernKind, Node};
 
 use crate::TypesetState;
 
-use super::{BreakDecision, BrokenLine, PostLineBreakParams};
+use super::{BreakDecision, BrokenLine, MaterializationAction, ParagraphTape, PostLineBreakParams};
 
 pub fn post_line_break<S: TypesetState>(
     state: &S,
@@ -20,24 +20,35 @@ pub fn post_line_break<S: TypesetState>(
 /// clears it, and fills it with the next line. Callers that consume one line
 /// before requesting another therefore pay for line storage only once.
 pub struct LineMaterializer {
+    semantic: ChannelCursor,
+    physical: ChannelCursor,
+    physical_breaks: Vec<BreakDecision>,
+    actions: Vec<MaterializationAction>,
+    breaks: Vec<BreakDecision>,
+    line_no: usize,
+    params: PostLineBreakParams,
+}
+
+struct ChannelCursor {
     nodes: std::vec::IntoIter<Node>,
     position: usize,
     node_count: usize,
-    breaks: Vec<BreakDecision>,
-    line_no: usize,
     pending_post: Vec<Node>,
     active_directions: Vec<Direction>,
-    params: PostLineBreakParams,
-    physical: Option<Box<LineMaterializer>>,
 }
 
 impl LineMaterializer {
     #[must_use]
     pub fn new(
-        sequence: tex_state::node_sequence::NodeSequence,
+        tape: ParagraphTape,
         breaks: Vec<BreakDecision>,
         params: PostLineBreakParams,
     ) -> Self {
+        let ParagraphTape {
+            sequence,
+            materialization,
+            ..
+        } = tape;
         let (semantic, physical, boundaries) = sequence.into_parts();
         let physical_breaks = breaks
             .iter()
@@ -46,13 +57,15 @@ impl LineMaterializer {
                 ..*decision
             })
             .collect();
-        let mut materializer = Self::from_nodes(semantic, breaks, params.clone());
-        materializer.physical = Some(Box::new(Self::from_nodes(
-            physical,
+        Self {
+            semantic: ChannelCursor::new(semantic),
+            physical: ChannelCursor::new(physical),
             physical_breaks,
+            actions: materialization,
+            breaks,
+            line_no: 0,
             params,
-        )));
-        materializer
+        }
     }
 
     pub fn from_nodes(
@@ -60,17 +73,37 @@ impl LineMaterializer {
         breaks: Vec<BreakDecision>,
         params: PostLineBreakParams,
     ) -> Self {
-        let node_count = nodes.len();
+        let mut actions: Vec<_> = nodes
+            .iter()
+            .map(|node| match node {
+                Node::Disc { .. } => MaterializationAction::Discretionary,
+                _ => MaterializationAction::Copy,
+            })
+            .collect();
+        for decision in &breaks {
+            if decision.position >= nodes.len() {
+                continue;
+            }
+            if let Some((node, action)) = decision
+                .position
+                .checked_sub(1)
+                .and_then(|index| nodes.get(index).zip(actions.get_mut(index)))
+            {
+                *action = match node {
+                    Node::Glue { .. } => MaterializationAction::BreakDiscardable,
+                    Node::MathOff(_) => MaterializationAction::BreakMath,
+                    _ => *action,
+                };
+            }
+        }
         Self {
-            nodes: nodes.into_iter(),
-            position: 0,
-            node_count,
+            physical: ChannelCursor::new(nodes.clone()),
+            semantic: ChannelCursor::new(nodes),
+            physical_breaks: breaks.clone(),
+            actions,
             breaks,
             line_no: 0,
-            pending_post: Vec::new(),
-            active_directions: Vec::new(),
             params,
-            physical: None,
         }
     }
 
@@ -80,48 +113,24 @@ impl LineMaterializer {
         mut line: Vec<Node>,
     ) -> Option<BrokenLine> {
         let decision = *self.breaks.get(self.line_no)?;
-        let end = decision.position.min(self.node_count);
-        let start = self.position.min(end);
-        let required = end
-            .checked_sub(start)
-            .and_then(|len| len.checked_add(self.pending_post.len()))
-            .and_then(|len| len.checked_add(2))
-            .expect("materialized line capacity fits usize");
-        line.clear();
-        line.reserve(required);
-
         let dimensions = self.params.shape.dimensions(self.line_no + 1);
-        if state.glue(self.params.left_skip) != GlueSpec::ZERO {
-            line.push(Node::Glue {
-                spec: self.params.left_skip,
-                kind: GlueKind::LeftSkip,
-                leader: None,
-            });
-        }
-        line.extend(self.active_directions.iter().copied().map(Node::Direction));
-        let directional_start = line.len();
-        line.append(&mut self.pending_post);
-        self.pending_post = push_owned_line_segment(
+        materialize_channel(
             state,
-            (&mut self.nodes, &mut self.position, self.node_count),
-            end,
+            &mut self.semantic,
             &decision,
-            self.params.empty_list,
+            &self.params,
+            Some(&self.actions),
             &mut line,
         );
-        update_active_directions(&line[directional_start..], &mut self.active_directions);
-        line.extend(
-            self.active_directions
-                .iter()
-                .rev()
-                .copied()
-                .map(|direction| Node::Direction(matching_end(direction))),
+        let mut physical_nodes = Vec::new();
+        materialize_channel(
+            state,
+            &mut self.physical,
+            &self.physical_breaks[self.line_no],
+            &self.params,
+            None,
+            &mut physical_nodes,
         );
-        line.push(Node::Glue {
-            spec: self.params.right_skip,
-            kind: GlueKind::RightSkip,
-            leader: None,
-        });
 
         let penalty_after = line_penalty_after(
             self.line_no,
@@ -130,15 +139,6 @@ impl LineMaterializer {
             &self.params,
         );
         self.line_no += 1;
-        while self.nodes.as_slice().first().is_some_and(is_discardable) {
-            let _ = self.nodes.next();
-            self.position += 1;
-        }
-        let physical_nodes = self
-            .physical
-            .as_mut()
-            .and_then(|physical| physical.materialize_next(state, Vec::new()))
-            .map_or_else(|| line.clone(), |physical| physical.nodes);
         Some(BrokenLine {
             physical_nodes,
             nodes: line,
@@ -146,6 +146,81 @@ impl LineMaterializer {
             hyphenated: decision.hyphenated,
             dimensions,
         })
+    }
+}
+
+impl ChannelCursor {
+    fn new(nodes: Vec<Node>) -> Self {
+        let node_count = nodes.len();
+        Self {
+            nodes: nodes.into_iter(),
+            position: 0,
+            node_count,
+            pending_post: Vec::new(),
+            active_directions: Vec::new(),
+        }
+    }
+}
+
+fn materialize_channel<S: TypesetState>(
+    state: &S,
+    cursor: &mut ChannelCursor,
+    decision: &BreakDecision,
+    params: &PostLineBreakParams,
+    actions: Option<&[MaterializationAction]>,
+    line: &mut Vec<Node>,
+) {
+    let end = decision.position.min(cursor.node_count);
+    let start = cursor.position.min(end);
+    let required = end
+        .checked_sub(start)
+        .and_then(|len| len.checked_add(cursor.pending_post.len()))
+        .and_then(|len| len.checked_add(2))
+        .expect("materialized line capacity fits usize");
+    line.clear();
+    line.reserve(required);
+    if state.glue(params.left_skip) != GlueSpec::ZERO {
+        line.push(Node::Glue {
+            spec: params.left_skip,
+            kind: GlueKind::LeftSkip,
+            leader: None,
+        });
+    }
+    line.extend(
+        cursor
+            .active_directions
+            .iter()
+            .copied()
+            .map(Node::Direction),
+    );
+    let directional_start = line.len();
+    line.append(&mut cursor.pending_post);
+    cursor.pending_post = push_owned_line_segment(
+        state,
+        (&mut cursor.nodes, &mut cursor.position, cursor.node_count),
+        end,
+        decision,
+        params.empty_list,
+        actions,
+        line,
+    );
+    update_active_directions(&line[directional_start..], &mut cursor.active_directions);
+    line.extend(
+        cursor
+            .active_directions
+            .iter()
+            .rev()
+            .copied()
+            .map(|direction| Node::Direction(matching_end(direction))),
+    );
+    line.push(Node::Glue {
+        spec: params.right_skip,
+        kind: GlueKind::RightSkip,
+        leader: None,
+    });
+    while cursor.nodes.as_slice().first().is_some_and(is_discardable) {
+        let _ = cursor.nodes.next();
+        cursor.position += 1;
     }
 }
 
@@ -200,6 +275,7 @@ fn push_owned_line_segment<S: TypesetState>(
     end: usize,
     decision: &BreakDecision,
     empty_list: tex_state::ids::NodeListId,
+    actions: Option<&[MaterializationAction]>,
     out: &mut Vec<Node>,
 ) -> Vec<Node> {
     let (nodes, position, node_count) = source;
@@ -208,6 +284,7 @@ fn push_owned_line_segment<S: TypesetState>(
         let absolute = *position;
         let node = nodes.next().expect("paragraph break position is in bounds");
         *position += 1;
+        let action = actions.and_then(|actions| actions.get(absolute)).copied();
         match node {
             Node::Disc {
                 kind,
@@ -249,8 +326,17 @@ fn push_owned_line_segment<S: TypesetState>(
                 });
                 out.extend(state.nodes(replace).into_iter().map(|node| node.to_owned()));
             }
-            Node::Glue { .. } if absolute + 1 == end && end < node_count => {}
-            Node::MathOff(_) if absolute + 1 == end && end < node_count => {
+            Node::Glue { .. }
+                if absolute + 1 == end
+                    && end < node_count
+                    && action
+                        .is_none_or(|action| action == MaterializationAction::BreakDiscardable) => {
+            }
+            Node::MathOff(_)
+                if absolute + 1 == end
+                    && end < node_count
+                    && action.is_none_or(|action| action == MaterializationAction::BreakMath) =>
+            {
                 out.push(Node::MathOff(tex_state::scaled::Scaled::from_raw(0)));
             }
             node => out.push(node),

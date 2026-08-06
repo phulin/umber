@@ -83,7 +83,7 @@ pub(crate) fn break_current_paragraph(
     let (mut decisions, trace, missing_hyphens) =
         break_hlist_with_trace(stores, hlist, line_params, fuel, tracing)?;
     if tracing {
-        report_line_break_trace(stores, &decisions.nodes, &trace, &missing_hyphens);
+        report_line_break_trace(stores, decisions.tape.nodes(), &trace, &missing_hyphens);
     } else {
         for warning in missing_hyphens {
             crate::diagnostics::report_missing_character_warning(
@@ -96,19 +96,7 @@ pub(crate) fn break_current_paragraph(
     }
     if let Some(spec) = decisions.last_line_fill {
         let spec = stores.intern_glue(spec);
-        if let Some(Node::Glue { spec: par_fill, .. }) =
-            decisions.nodes.iter_mut().rev().find(|node| {
-                matches!(
-                    node,
-                    Node::Glue {
-                        kind: GlueKind::ParFillSkip,
-                        ..
-                    }
-                )
-            })
-        {
-            *par_fill = spec;
-        }
+        decisions.tape.replace_last_par_fill(spec);
     }
     let empty_list = stores.freeze_node_list(&[]);
     let post_params = post_line_break_params(&params, widow_penalty_selector, empty_list);
@@ -124,15 +112,7 @@ pub(crate) fn break_current_paragraph(
     let restore_pack_begin_line = stores.pack_begin_line();
     let paragraph_start_line = stores.pop_paragraph_start_line().unwrap_or(0);
     stores.set_pack_begin_line(paragraph_start_line);
-    let mut materializer = LineMaterializer::new(
-        tex_state::node_sequence::NodeSequence::from_projection(
-            decisions.nodes,
-            decisions.physical_nodes,
-            decisions.physical_boundaries,
-        ),
-        decisions.breaks,
-        post_params,
-    );
+    let mut materializer = LineMaterializer::new(decisions.tape, decisions.breaks, post_params);
     let mut line_nodes = Vec::new();
     let mut migrated = Vec::new();
     let mut pre_migrated = Vec::new();
@@ -529,55 +509,50 @@ fn break_hlist_with_trace(
     if line_params.pretolerance < 0 {
         stores.close_hyphenation_patterns();
     }
+    let tape = ParagraphTape::analyze(
+        stores,
+        tex_state::node_sequence::NodeSequence::mirrored(hlist),
+        &line_params,
+    );
     let (first, trace) = if tracing {
-        try_line_break_without_hyphenation_traced(stores, &hlist, &line_params)
+        try_tape_without_hyphenation_traced(stores, &tape, &line_params)
     } else {
         (
-            cached_pretolerance_plan(stores, &hlist, &line_params),
+            cached_pretolerance_plan(stores, tape.nodes(), &line_params),
             Vec::new(),
         )
     };
     if let Some(first) = first {
         Ok((
-            tex_typeset::linebreak::plan_with_nodes(first, hlist),
+            tex_typeset::linebreak::plan_with_tape(first, tape),
             trace,
             Vec::new(),
         ))
     } else {
+        let hlist = tape.into_semantic_nodes();
         let (sequence, missing_hyphens) =
             super::hyphenation::hyphenated_hlist_sequence_with_fuel(stores, hlist, fuel)?;
         let (mut hyphenated, physical_nodes) = sequence.take();
         crate::box_runtime::hmode::reshape_open_type_runs(stores, &mut hyphenated);
+        let tape = ParagraphTape::analyze(
+            stores,
+            tex_state::node_sequence::NodeSequence::from_compacted_semantic(
+                hyphenated,
+                physical_nodes,
+            ),
+            &line_params,
+        );
         let (plan, trace) = if tracing {
-            line_break_hyphenated_traced(stores, &hyphenated, &line_params, trace)
+            break_hyphenated_tape_traced(stores, &tape, &line_params, trace)
         } else {
-            (
-                line_break_hyphenated(stores, &hyphenated, &line_params),
-                trace,
-            )
+            (break_hyphenated_tape(stores, &tape, &line_params), trace)
         };
-        let mut result = tex_typeset::linebreak::plan_with_nodes(plan, hyphenated);
-        result.physical_boundaries = physical_boundaries(&result.nodes, physical_nodes.len());
-        result.physical_nodes = physical_nodes;
-        Ok((result, trace, missing_hyphens))
+        Ok((
+            tex_typeset::linebreak::plan_with_tape(plan, tape),
+            trace,
+            missing_hyphens,
+        ))
     }
-}
-
-fn physical_boundaries(nodes: &[Node], physical_len: usize) -> Vec<usize> {
-    let mut boundary = 0usize;
-    let mut boundaries = Vec::with_capacity(nodes.len() + 1);
-    boundaries.push(0);
-    for node in nodes {
-        boundary = boundary.saturating_add(match node {
-            Node::Lig { orig, .. } => orig.len().max(1),
-            _ => 1,
-        });
-        boundaries.push(boundary.min(physical_len));
-    }
-    if let Some(last) = boundaries.last_mut() {
-        *last = physical_len;
-    }
-    boundaries
 }
 
 fn report_line_break_trace(
@@ -1165,8 +1140,9 @@ use tex_typeset::PackSpec;
 use tex_typeset::linebreak::{
     LineBreakParams, LineBreakPass, LineBreakResult, LineBreakTrace, LineDimensions,
     LineMaterializer, LineShape, LineShapeEntry, ParagraphShape as TypesetParagraphShape,
-    PostLineBreakParams, TraceBreakpoint, line_break_hyphenated, line_break_hyphenated_traced,
-    try_line_break_without_hyphenation, try_line_break_without_hyphenation_traced,
+    ParagraphTape, PostLineBreakParams, TraceBreakpoint, break_hyphenated_tape,
+    break_hyphenated_tape_traced, try_line_break_without_hyphenation,
+    try_tape_without_hyphenation_traced,
 };
 
 use crate::box_runtime::{

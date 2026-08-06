@@ -67,6 +67,27 @@ impl NodeSequence {
         }
     }
 
+    /// Builds the diagnostic boundary projection after semantic character
+    /// runs have been compacted while the physical channel remains in TeX's
+    /// one-node-per-character topology.
+    #[must_use]
+    pub fn from_compacted_semantic(semantic: Vec<Node>, physical: Vec<Node>) -> Self {
+        let mut boundary = 0usize;
+        let mut physical_boundaries = Vec::with_capacity(semantic.len() + 1);
+        physical_boundaries.push(0);
+        for node in &semantic {
+            boundary = boundary.saturating_add(match node {
+                Node::Lig { orig, .. } => orig.len().max(1),
+                _ => 1,
+            });
+            physical_boundaries.push(boundary.min(physical.len()));
+        }
+        if let Some(last) = physical_boundaries.last_mut() {
+            *last = physical.len();
+        }
+        Self::from_projection(semantic, physical, physical_boundaries)
+    }
+
     #[must_use]
     pub fn semantic(&self) -> &[Node] {
         &self.semantic
@@ -170,5 +191,31 @@ mod tests {
         assert_eq!(sequence.physical_boundary(0), Some(0));
         assert_eq!(sequence.physical_boundary(1), Some(2));
         assert_eq!(sequence.physical_boundary(2), Some(3));
+    }
+
+    #[test]
+    fn compacted_semantic_constructor_counts_ligature_origins() {
+        let sequence = NodeSequence::from_compacted_semantic(
+            vec![
+                Node::Lig {
+                    font: crate::font::NULL_FONT,
+                    ch: 'x',
+                    orig: vec!['a', 'b', 'c'],
+                    left_hit: false,
+                    right_hit: false,
+                    origins: vec![crate::token::OriginId::UNKNOWN; 3],
+                },
+                Node::Penalty(0),
+            ],
+            vec![
+                Node::Penalty(1),
+                Node::Penalty(2),
+                Node::Penalty(3),
+                Node::Penalty(4),
+            ],
+        );
+        assert_eq!(sequence.physical_boundary(0), Some(0));
+        assert_eq!(sequence.physical_boundary(1), Some(3));
+        assert_eq!(sequence.physical_boundary(2), Some(4));
     }
 }

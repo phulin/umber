@@ -438,6 +438,17 @@ ranges and scalar breakpoint evidence; `tex-exec` owns §245 diagnostic
 routing and §174 short-list rendering, so tracing adds no output effect to the
 typesetting boundary.
 
+Each paragraph is analyzed once into a `ParagraphTape`. The tape owns its
+paired semantic and TeX-physical `NodeSequence`, legal break sites with wide
+prefix metrics, trace-display spans, and compact materialization actions.
+Every tolerance and tracing pass consumes those saved sites instead of walking
+paragraph topology again. Post-line-break processing moves both channels with
+paired cursors: the semantic channel supplies boxes and output, while the
+physical channel preserves discretionary and ligature topology solely for
+diagnostics. Nested discretionary replacement metrics use an explicit cursor
+stack, so analysis remains stack-safe at TeX's deep-list limits and storage is
+linear in paragraph nodes and legal break sites.
+
 Packing and line breaking preserve TeX.web arithmetic exactly. Appendix G
 math conversion builds one detached native-node transaction; `FrozenHList`
 values are postorder spans, not recursive owned vectors. Canonical source
