@@ -6,6 +6,7 @@ use wasm_bindgen::{JsCast, JsValue};
 use wasm_bindgen_test::wasm_bindgen_test;
 
 const CMR10: &[u8] = include_bytes!("../../tex-fonts/tests/fixtures/cm/cmr10.tfm");
+const CMR10_PK_600: &[u8] = include_bytes!("../../../tests/corpus/pdf/pk_bitmap_600/cmr10.600pk");
 const CMSY10: &[u8] = include_bytes!("../../tex-fonts/tests/fixtures/cm/cmsy10.tfm");
 
 #[wasm_bindgen_test]
@@ -130,11 +131,7 @@ fn pdf_pk_fallback_keeps_complete_key_over_the_client_vfs_protocol() {
         "virtualPath",
         &JsValue::from_str("/texlive/fonts/pk/ljfour/public/cm/cmr10.600pk"),
     );
-    set(
-        &response,
-        "bytes",
-        bytes(include_bytes!("../../../tests/corpus/pdf/cmr10.600pk")).as_ref(),
-    );
+    set(&response, "bytes", bytes(CMR10_PK_600).as_ref());
     session
         .provide_resources(&Array::of1(&response))
         .expect("typed PK response");
