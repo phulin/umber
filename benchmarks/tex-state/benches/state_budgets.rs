@@ -43,6 +43,11 @@ const ALLOCATION_GRAPH_DEPTH: usize = 128;
 const ALLOCATION_LIST_LEN: usize = 1_024;
 const PAGE_QUEUE_LEN: usize = 65_536;
 const TOKEN_PROJECTION_SIZES: [usize; 3] = [64, 1_024, 16_384];
+const TOKEN_PROJECTION_WORKLOADS: [&str; 3] = [
+    "characters",
+    "control_sequences",
+    "internal_control_sequences",
+];
 const EDIT_STABLE_PIECE_COUNTS: [usize; 5] = [64, 256, 1_024, 4_096, 16_384];
 const DEPENDENCY_READS: usize = 4_096;
 
@@ -512,7 +517,7 @@ fn checkpoint_state_hash(c: &mut Criterion) {
 }
 
 fn token_semantic_projection(c: &mut Criterion) {
-    for workload in ["characters", "control_sequences"] {
+    for workload in TOKEN_PROJECTION_WORKLOADS {
         let mut group = c.benchmark_group(format!("token_semantic_projection/{workload}"));
         for size in TOKEN_PROJECTION_SIZES {
             let (stores, tokens) = token_projection_case(workload, size);
@@ -548,7 +553,7 @@ fn token_semantic_projection(c: &mut Criterion) {
 }
 
 fn token_projection_freeze_cost(c: &mut Criterion) {
-    for workload in ["characters", "control_sequences"] {
+    for workload in TOKEN_PROJECTION_WORKLOADS {
         let mut group = c.benchmark_group(format!("token_projection_freeze/{workload}"));
         for size in TOKEN_PROJECTION_SIZES {
             group.throughput(Throughput::Elements(size as u64));
@@ -591,6 +596,18 @@ fn token_projection_case(workload: &str, size: usize) -> (Universe, Vec<Token>) 
         "control_sequences" => {
             let symbols = (0..64)
                 .map(|index| stores.intern(&format!("projection-control-sequence-{index}")))
+                .collect::<Vec<_>>();
+            (0..size)
+                .map(|index| Token::Cs(symbols[index % symbols.len()].symbol()))
+                .collect()
+        }
+        "internal_control_sequences" => {
+            let symbols = (0..64)
+                .map(|index| {
+                    stores.intern_internal_control_sequence(&format!(
+                        "projection-internal-control-sequence-{index}"
+                    ))
+                })
                 .collect::<Vec<_>>();
             (0..size)
                 .map(|index| Token::Cs(symbols[index % symbols.len()].symbol()))

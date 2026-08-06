@@ -50,17 +50,19 @@ The relocated 284-line reference implementation, 786-line transaction owner,
 and receive no deletion credit. Generated root and standalone lockfile churn is
 also excluded. Raw child implementation `--numstat` is +4,025/-3,132, but that
 mixed tracked count is not authored retirement accounting. The closeout's
-one-line exhaustive-match repair is likewise not retirement credit.
+exhaustive-match and focused coverage repair is likewise not retirement credit.
 
 ## Fresh verification
 
 The audit found one post-child integration defect: `state_budgets` did not
 handle `ControlSequenceKind::Internal`. It now uses canonical tag `2`, matching
-production state hashing. Every standalone benchmark package then compiled
-uncapped with six Cargo jobs. Under 512 MiB, all command allocation rows,
-source-descriptor rows, shipout rows, pure-memo rows, every layout row, the
-control-sequence projection rows, accepted-edit scaling, the assertion-bearing
-provenance row, and the snapshot enforcement gate passed. The retained
+production state hashing, and a separate internal-control-sequence projection
+workload executes that branch without changing the retained ordinary workload.
+Every standalone benchmark package then compiled uncapped with six Cargo jobs.
+Under 512 MiB, all command allocation rows, source-descriptor rows, shipout rows,
+pure-memo rows, every layout row, the ordinary and internal control-sequence
+projection rows, accepted-edit scaling, the assertion-bearing provenance row,
+and the snapshot enforcement gate passed. The retained
 dependency and format-cache diagnostics passed under the 1 GiB tooling cap.
 
 Refexec passed 3 tests, parity's `reference-tools` resolution passed 21,
