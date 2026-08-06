@@ -329,6 +329,46 @@ deletes 994 lines, a 629-line net reduction inside the conditional 550--700
 forecast. Documentation and guidance are accounted separately; generated
 declarations, fixtures, lockfiles, and binary assets are unchanged.
 
+**Program closeout and cumulative accounting.** Commits `8ecf0cc74`,
+`e32fb7219`, `391039b43`, `f8ccf3d6e`, `ec0edc3ae`, `b3a8ccaa5`, and
+`f62894ec8` complete the program. One detached `RenderDocument` is the sole
+producer authority: it resolves positioned values and original event
+ordinals, font bindings and content-addressed resource order, typed specials,
+accessibility grouping, validated math drawings, stable keys, and canonical
+digests. Standalone serialization consumes that exact document without a
+resolver or artifact pass. The retained compile session keeps it for snapshot
+or resynchronization and as the next patch base, and sends the resulting
+`PatchPlan` directly through the WebAssembly projection. The duplicate
+standalone translator, second artifact lowering and font-resolution pass,
+revision-only producer wrappers and state, production receiver envelope, and
+the complete unused Rust validator and abstract applier are absent.
+
+Exact cumulative accounting is 879 additions and 1,573 deletions in production
+Rust, JavaScript, and TypeScript, a 694-line net reduction. Authored proof tests
+add 529 and delete 210 lines, so all authored source adds 1,408 and deletes
+1,783 lines, a 375-line net reduction. Documentation and guidance add 127 and
+delete 35 lines. The complete tracked program therefore adds 1,535 and deletes
+1,818 lines, a 283-line net reduction. Generated and declarative source,
+fixtures, lockfiles, and binary assets are unchanged. The receiver retirement
+meets its conditional forecast, but the two producer children together add ten
+net production lines rather than deleting the scheduled 300--500; the
+remaining opportunity or explicit forecast revision is tracked by
+`umber2-vgjr.26` and is not credited from gross predecessor deletion.
+
+Exact code tree `f62894ec802ebe4a5db6487c3670d250621c335d` passed fresh
+uncapped six-job focused, full native, and wasm32 test compilation. Focused
+`tex-out` and Umber execution passed under `MemoryMax=512M`, and the complete
+native suite passed under `MemoryMax=1G`. The wasm32 check, Biome, all 91
+authored Node tests, optimized package build, packaged Node project lifecycle,
+npm inventory, and all four `scripts/check.sh` gates passed. The environment
+had no Firefox executable, and the Chrome fixture stopped before execution at
+`/usr/bin/google-chrome` `ENOENT`; neither result is a browser pass. The
+committed browser fixture still owns real DOM identity, mutation isolation,
+200-patch latency, and disposal, while `umber2-5zie` retains the environment
+blocker. Under the explicit opt-in test policy, that precise environmental
+`BLOCKED` result plus the retained runnable gate is sufficient for this
+architecture closeout; it does not replace future browser execution.
+
 ## 8. Make state and node schemas executable and singular
 
 **Outcome.** A `NodeRef`-centered exhaustive schema owns tags, semantic fields, handles, ordered children, remapping, equality, validation, hashing, copy, and format projection while compact storage remains specialized. Production frozen-format decode is the only restoration authority. Internally, `Universe` becomes the sole state façade and private `Stores` becomes field-oriented data.

@@ -236,3 +236,13 @@ release, rollback after cancellation and font failure, cumulative-churn
 rejection, and zero entries after disposal. Global reflow or protocol recovery
 is observable as an explicit page operation or snapshot; it is never reported
 as an ordinary local update.
+
+This real-browser tier follows the repository's explicit optional-check
+policy. An unavailable Firefox or Chrome prerequisite is reported as
+`BLOCKED`, never as a pass. Architecture closeout may retain that precise
+environmental result only when the wasm32 boundary compiles, the injectable
+Node receiver and packaged Node lifecycle pass, the browser fixture remains
+runnable and unchanged in authority, and a durable environment issue owns the
+missing execution. Node evidence does not become browser evidence: the next
+environment with the prerequisite must still execute the DOM identity,
+mutation-isolation, latency, font, and disposal assertions.
