@@ -3,14 +3,14 @@ use tex_arith::{
     tfm_slant_fix_word_to_scaled_ratio,
 };
 
-use crate::metrics::{MAX_LIG_KERN_PROGRAM_LEN, MIN_TEX_FONT_PARAMETERS};
+use crate::metrics::{
+    CharMetrics, CharTag as MetricCharTag, ExtensibleRecipe as MetricExtensibleRecipe, FontMetrics,
+    LigKernCommand, LigKernInstruction, LigatureCommand, MAX_LIG_KERN_PROGRAM_LEN,
+    MIN_TEX_FONT_PARAMETERS,
+};
 
 use super::error::ParseError;
-use super::types::{
-    Character, CharacterBounds, CharacterTag, ExtensibleRecipe, FontParameter, FontParameterKind,
-    FontParameters, Header, Kern, LigKernAction, LigKernStep, Ligature, LigatureDeletes, TfmFont,
-    TfmTable,
-};
+use super::types::{FontParameter, FontParameterKind, FontParameters, Header, TfmFont, TfmTable};
 
 const PREAMBLE_WORDS: usize = 6;
 const PREAMBLE_BYTES: usize = PREAMBLE_WORDS * 4;
@@ -20,6 +20,65 @@ const HEADER_WORDS_FOR_FACE: usize = 18;
 const CHARACTER_SLOTS: usize = 256;
 const STOP_FLAG: u8 = 128;
 const KERN_FLAG: u8 = 128;
+
+#[derive(Clone, Copy, Debug)]
+struct CharacterBounds {
+    bc: u8,
+    ec: u8,
+}
+
+impl CharacterBounds {
+    const fn contains(self, code: u8) -> bool {
+        code >= self.bc && code <= self.ec
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct Character {
+    width: Scaled,
+    height: Scaled,
+    depth: Scaled,
+    italic_correction: Scaled,
+    tag: CharacterTag,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum CharacterTag {
+    None,
+    LigKern { program_index: u8, start_index: u16 },
+    NextLarger(u8),
+    Extensible(u8),
+}
+
+#[derive(Clone, Copy, Debug)]
+struct LigKernStep {
+    skip_byte: u8,
+    next_char: u8,
+    restart_index: Option<u16>,
+    action: Option<LigKernAction>,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum LigKernAction {
+    Ligature(Ligature),
+    Kern(Scaled),
+}
+
+#[derive(Clone, Copy, Debug)]
+struct Ligature {
+    replacement: u8,
+    delete_current: bool,
+    delete_next: bool,
+    pass_over: u8,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct ExtensibleRecipe {
+    top: Option<u8>,
+    middle: Option<u8>,
+    bottom: Option<u8>,
+    repeated: u8,
+}
 
 pub(super) fn parse_tfm(bytes: &[u8], size_spec: FontSizeSpec) -> Result<TfmFont, ParseError> {
     if bytes.len() < PREAMBLE_BYTES {
@@ -96,23 +155,69 @@ pub(super) fn parse_tfm(bytes: &[u8], size_spec: FontSizeSpec) -> Result<TfmFont
     validate_next_larger_chains(bounds, char_info_words)?;
     let extensible_recipes = parse_extensible_recipes(extensible_words, bounds, &characters)?;
 
-    Ok(TfmFont {
-        header,
-        bounds,
-        font_size,
+    let characters = characters
+        .into_iter()
+        .map(|character| {
+            character.map(|character| CharMetrics {
+                width: character.width,
+                height: character.height,
+                depth: character.depth,
+                italic_correction: character.italic_correction,
+                tag: match character.tag {
+                    CharacterTag::None => MetricCharTag::None,
+                    CharacterTag::LigKern {
+                        program_index,
+                        start_index,
+                    } => MetricCharTag::LigKern {
+                        program_index,
+                        start_index,
+                    },
+                    CharacterTag::NextLarger(code) => MetricCharTag::NextLarger(code),
+                    CharacterTag::Extensible(index) => MetricCharTag::Extensible(index),
+                },
+            })
+        })
+        .collect();
+    let lig_kern_program = lig_kern_program
+        .into_iter()
+        .map(|step| LigKernInstruction {
+            skip_byte: step.skip_byte,
+            next_char: step.next_char,
+            command: step.action.map(|action| match action {
+                LigKernAction::Ligature(ligature) => LigKernCommand::Ligature(LigatureCommand {
+                    replacement: ligature.replacement,
+                    delete_current: ligature.delete_current,
+                    delete_next: ligature.delete_next,
+                    pass_over: ligature.pass_over,
+                }),
+                LigKernAction::Kern(amount) => LigKernCommand::Kern(amount),
+            }),
+        })
+        .collect();
+    let extensible_recipes = extensible_recipes
+        .into_iter()
+        .map(|recipe| MetricExtensibleRecipe {
+            top: recipe.top,
+            middle: recipe.middle,
+            bottom: recipe.bottom,
+            repeated: recipe.repeated,
+        })
+        .collect();
+    let metrics = FontMetrics::new(
         characters,
-        widths,
-        heights,
-        depths,
-        italic_corrections,
         lig_kern_program,
         right_boundary_char,
         left_boundary_program,
-        kerns,
         extensible_recipes,
+    );
+
+    Ok(TfmFont::from_parsed(
+        header,
+        font_size,
         parameters,
-        font_info_words: usize::from(counts.lf) - PREAMBLE_WORDS - counts.lh,
-    })
+        metrics,
+        usize::from(counts.lf) - PREAMBLE_WORDS - counts.lh,
+    ))
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -411,11 +516,6 @@ fn parse_characters(
             continue;
         }
         characters[usize::from(code)] = Some(Character {
-            code,
-            width_index,
-            height_index,
-            depth_index,
-            italic_index,
             width,
             height,
             depth,
@@ -498,16 +598,13 @@ fn parse_lig_kern_program(
                         len: kerns.len(),
                     },
                 )?;
-                Some(LigKernAction::Kern(Kern { kern_index, amount }))
+                Some(LigKernAction::Kern(amount))
             } else {
                 require_lig_kern_character(index, "replacement", remainder, bounds, characters)?;
-                let deletes = LigatureDeletes {
-                    current: op_byte & 0b10 == 0,
-                    next: op_byte & 0b01 == 0,
-                };
                 Some(LigKernAction::Ligature(Ligature {
                     replacement: remainder,
-                    deletes,
+                    delete_current: op_byte & 0b10 == 0,
+                    delete_next: op_byte & 0b01 == 0,
                     pass_over: op_byte >> 2,
                 }))
             };
@@ -515,8 +612,6 @@ fn parse_lig_kern_program(
             Ok(LigKernStep {
                 skip_byte,
                 next_char,
-                op_byte,
-                remainder,
                 restart_index,
                 action,
             })

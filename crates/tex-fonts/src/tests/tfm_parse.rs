@@ -1,7 +1,7 @@
 use crate as tex_fonts;
 use tex_arith::{Scaled, TfmConversionError};
-use tex_fonts::{CharacterTag, FontParameterKind, LigKernAction, ParseError, TfmFont, TfmTable};
-use tex_fonts::{LigKernChar, LigKernCommand};
+use tex_fonts::metrics::{CharMetrics, CharTag};
+use tex_fonts::{FontParameterKind, LigKernChar, LigKernCommand, ParseError, TfmFont, TfmTable};
 
 const CMR10: &[u8] = include_bytes!("../../tests/fixtures/cm/cmr10.tfm");
 const CMMI10: &[u8] = include_bytes!("../../tests/fixtures/cm/cmmi10.tfm");
@@ -35,37 +35,39 @@ fn parses_required_computer_modern_corpus() {
             Some(FontParameterKind::Dimension)
         );
         assert_eq!(
-            !font.extensible_recipes.is_empty(),
+            !font.metrics().extensible_recipes().is_empty(),
             has_extensible,
             "{name} extensible recipe presence"
         );
-        assert!(font.characters.iter().flatten().count() > 50, "{name}");
-        assert_eq!(font.widths[0].raw(), 0, "{name}");
-        assert_eq!(font.heights[0].raw(), 0, "{name}");
-        assert_eq!(font.depths[0].raw(), 0, "{name}");
-        assert_eq!(font.italic_corrections[0].raw(), 0, "{name}");
+        assert!(
+            font.metrics().characters().iter().flatten().count() > 50,
+            "{name}"
+        );
     }
 
     let cmr = parse(CMR10);
     let f = char_metric(&cmr, b'f');
-    assert!(matches!(f.tag, CharacterTag::LigKern { .. }));
+    assert!(matches!(f.tag, CharTag::LigKern { .. }));
     assert!(
-        cmr.lig_kern_program
+        cmr.metrics()
+            .lig_kern_program()
             .iter()
-            .any(|step| matches!(step.action, Some(LigKernAction::Ligature(_))))
+            .any(|step| matches!(step.command, Some(LigKernCommand::Ligature(_))))
     );
     assert!(
-        cmr.lig_kern_program
+        cmr.metrics()
+            .lig_kern_program()
             .iter()
-            .any(|step| matches!(step.action, Some(LigKernAction::Kern(_))))
+            .any(|step| matches!(step.command, Some(LigKernCommand::Kern(_))))
     );
 
     let cmex = parse(CMEX10);
     assert!(
-        cmex.characters
+        cmex.metrics()
+            .characters()
             .iter()
             .flatten()
-            .any(|ch| matches!(ch.tag, CharacterTag::Extensible(_)))
+            .any(|ch| matches!(ch.tag, CharTag::Extensible(_)))
     );
     assert!(!cmex.parameters.math_parameters().is_empty());
 
@@ -76,20 +78,21 @@ fn parses_required_computer_modern_corpus() {
 #[test]
 fn parses_real_boundary_char_and_long_jump_encodings() {
     let boundary = parse(BOUNDARY_CHAR);
-    assert_eq!(boundary.right_boundary_char, Some(b' '));
+    assert_eq!(boundary.metrics().right_boundary_char(), Some(b' '));
     assert_eq!(boundary.header.seven_bit_safe, Some(true));
 
     let long_jump = parse(LONG_JUMP);
     assert!(
         long_jump
-            .lig_kern_program
+            .metrics()
+            .lig_kern_program()
             .iter()
-            .any(|step| step.skip_byte > 128 && step.restart_index.is_some())
+            .any(|step| step.skip_byte > 128 && step.command.is_none())
     );
-    assert!(long_jump.characters.iter().flatten().any(|ch| {
+    assert!(long_jump.metrics().characters().iter().flatten().any(|ch| {
         matches!(
             ch.tag,
-            CharacterTag::LigKern {
+            CharTag::LigKern {
                 program_index,
                 start_index
             } if start_index > u16::from(program_index)
@@ -100,7 +103,7 @@ fn parses_real_boundary_char_and_long_jump_encodings() {
 #[test]
 fn kernel_metrics_api_exposes_chars_lig_kerns_boundaries_and_recipes() {
     let cmr = parse(CMR10);
-    let metrics = cmr.font_metrics();
+    let metrics = cmr.metrics();
     let f = metrics.character(b'f').expect("f metric");
     assert_eq!(f.width.raw(), char_metric(&cmr, b'f').width.raw());
     assert!(metrics.char_exists(b'A'));
@@ -118,22 +121,26 @@ fn kernel_metrics_api_exposes_chars_lig_kerns_boundaries_and_recipes() {
     ));
 
     let cmex = parse(CMEX10);
-    let cmex_metrics = cmex.font_metrics();
-    let extensible = cmex
-        .characters
+    let cmex_metrics = cmex.metrics();
+    let (extensible_code, extensible) = cmex_metrics
+        .characters()
         .iter()
-        .flatten()
-        .find(|character| matches!(character.tag, CharacterTag::Extensible(_)))
+        .enumerate()
+        .find_map(|(code, character)| {
+            character
+                .filter(|character| matches!(character.tag, CharTag::Extensible(_)))
+                .map(|character| (code as u8, character))
+        })
         .expect("cmex extensible character");
-    let CharacterTag::Extensible(recipe_index) = extensible.tag else {
+    let CharTag::Extensible(recipe_index) = extensible.tag else {
         unreachable!("find restricts tag");
     };
     let recipe = cmex_metrics
-        .extensible_recipe(extensible.code)
+        .extensible_recipe(extensible_code)
         .expect("extensible recipe");
     assert_eq!(
         recipe.repeated,
-        cmex.extensible_recipes[usize::from(recipe_index)].repeated
+        cmex_metrics.extensible_recipes()[usize::from(recipe_index)].repeated
     );
 
     let boundary = parse(&tfm_with_sections(Sections {
@@ -149,7 +156,7 @@ fn kernel_metrics_api_exposes_chars_lig_kerns_boundaries_and_recipes() {
         extensibles: Vec::new(),
         params: Vec::new(),
     }));
-    let boundary_metrics = boundary.font_metrics();
+    let boundary_metrics = boundary.metrics();
     assert!(matches!(
         boundary_metrics.lig_kern_command(LigKernChar::Char(b'A'), LigKernChar::Boundary),
         Some(LigKernCommand::Ligature(ligature)) if ligature.replacement == b'B'
@@ -164,7 +171,7 @@ fn kernel_metrics_api_exposes_chars_lig_kerns_boundaries_and_recipes() {
 fn direct_lig_kern_lookup_matches_the_diagnostic_iterator() {
     for fixture in [CMR10, CMMI10, CMSY10, CMEX10, CMTT10] {
         let font = parse(fixture);
-        let metrics = font.font_metrics();
+        let metrics = font.metrics();
         let chars = (0_u8..=u8::MAX)
             .map(LigKernChar::Char)
             .chain(std::iter::once(LigKernChar::Boundary));
@@ -297,7 +304,7 @@ fn size_fields_are_fifteen_bit_and_trailing_words_are_ignored() {
     let mut with_trailing_words = minimal_tfm();
     with_trailing_words.extend_from_slice(&[0xde, 0xad, 0xbe, 0xef]);
     let font = parse(&with_trailing_words);
-    assert!(font.character(b'A').is_some());
+    assert!(font.metrics().character(b'A').is_some());
 }
 
 #[test]
@@ -327,8 +334,8 @@ fn missing_width_characters_may_carry_structurally_valid_tags() {
             extensibles,
             params: Vec::new(),
         }));
-        assert!(font.character(b'A').is_none(), "{name}");
-        assert!(font.character(b'B').is_some(), "{name}");
+        assert!(font.metrics().character(b'A').is_none(), "{name}");
+        assert!(font.metrics().character(b'B').is_some(), "{name}");
     }
 }
 
@@ -349,9 +356,9 @@ fn next_larger_uses_declared_range_not_character_existence() {
     }));
     assert!(matches!(
         char_metric(&font, b'A').tag,
-        CharacterTag::NextLarger(b'B')
+        CharTag::NextLarger(b'B')
     ));
-    assert!(font.character(b'B').is_none());
+    assert!(font.metrics().character(b'B').is_none());
 
     let cycle = tfm_with_sections(Sections {
         bc: u16::from(b'A'),
@@ -538,9 +545,7 @@ fn empty_font_bounds_are_accepted_and_normalized() {
         extensibles: Vec::new(),
         params: Vec::new(),
     }));
-    assert_eq!(font.bounds.bc, 1);
-    assert_eq!(font.bounds.ec, 0);
-    assert_eq!(font.characters.iter().flatten().count(), 0);
+    assert!(font.metrics().characters().iter().all(Option::is_none));
 }
 
 /// TeX.web §540 represents an empty character interval as bc=256, ec=255.
@@ -559,8 +564,7 @@ fn tfm_accepts_explicit_256_255_empty_bounds() {
         extensibles: Vec::new(),
         params: Vec::new(),
     }));
-    assert_eq!((font.bounds.bc, font.bounds.ec), (1, 0));
-    assert!(font.characters.iter().all(Option::is_none));
+    assert!(font.metrics().characters().iter().all(Option::is_none));
 }
 
 /// TeX.web §§542 and 568 read only the essential header words while loading.
@@ -582,7 +586,7 @@ fn tfm_ignores_malformed_extra_header_metadata() {
     assert_eq!(font.header.design_size.raw(), 10 * Scaled::UNITY);
     assert_eq!(font.header.coding_scheme, None);
     assert_eq!(font.header.family, None);
-    assert!(font.character(b'A').is_some());
+    assert!(font.metrics().character(b'A').is_some());
 }
 
 /// TeX.web §571 checks the zero sentinels and signed fix_word high byte in
@@ -643,8 +647,29 @@ fn font_info_words_exclude_tfm_preamble_and_header() {
     assert_eq!(font.font_info_words(), bytes.len() / 4 - 6 - 2);
 }
 
-fn char_metric(font: &TfmFont, code: u8) -> &tex_fonts::tfm::Character {
-    match font.character(code) {
+#[test]
+fn parsed_tfm_constructs_the_canonical_loaded_font() {
+    let font = parse(CMR10);
+    let expected_metrics = font.metrics().clone();
+    let expected_parameters: Vec<_> = font
+        .parameters
+        .values
+        .iter()
+        .map(|parameter| parameter.value)
+        .collect();
+    let expected_font_info_words = font.font_info_words();
+    let loaded = font.into_loaded_font("cmr10", "fonts/cmr10.tfm", [7; 32]);
+
+    assert_eq!(loaded.name(), "cmr10");
+    assert_eq!(loaded.path(), std::path::Path::new("fonts/cmr10.tfm"));
+    assert_eq!(loaded.content_hash(), [7; 32]);
+    assert_eq!(loaded.metrics(), &expected_metrics);
+    assert_eq!(loaded.parameters(), expected_parameters);
+    assert_eq!(loaded.font_info_words(), expected_font_info_words);
+}
+
+fn char_metric(font: &TfmFont, code: u8) -> CharMetrics {
+    match font.metrics().character(code) {
         Some(character) => character,
         None => panic!("missing character {code}"),
     }

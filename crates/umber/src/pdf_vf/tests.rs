@@ -1,6 +1,6 @@
 use super::*;
 use crate::{CachedLocalTfm, CachedVirtualFont};
-use tex_fonts::TfmFont;
+use tex_fonts::{LoadedFont, TfmFont};
 use tex_out::positioned::PositionedTextRun;
 use umber_vfs::FileContentId;
 
@@ -33,19 +33,10 @@ fn vf(local: &[u8], commands: &[u8]) -> Vec<u8> {
 
 fn loaded(name: &str, bytes: &[u8]) -> LoadedFont {
     let tfm = TfmFont::parse(bytes).expect("fixture TFM");
-    LoadedFont::new(
+    tfm.into_loaded_font(
         name,
         format!("{name}.tfm"),
         FileContentId::for_bytes(bytes).bytes(),
-        tfm.header.checksum,
-        tfm.header.design_size,
-        tfm.font_size,
-        tfm.parameters
-            .values
-            .iter()
-            .map(|parameter| parameter.value)
-            .collect(),
-        tfm.font_metrics(),
     )
 }
 

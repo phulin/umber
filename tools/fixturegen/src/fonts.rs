@@ -11,9 +11,10 @@ use test_support::pl::{
     PlCharacter, PlExtensibleRecipe, PlFont, PlLigCommand, PlLigLabel, PlNumber,
 };
 use tex_arith::{FontSizeSpec, Scaled, tfm_fix_word_to_scaled, tfm_slant_fix_word_to_scaled_ratio};
-use tex_fonts::metrics::MIN_TEX_FONT_PARAMETERS;
-use tex_fonts::tfm::Character;
-use tex_fonts::{CharacterTag, FontParameterKind, LigKernAction, TfmFont};
+use tex_fonts::metrics::{
+    CharMetrics, CharTag, ExtensibleRecipe, LigKernCommand, MIN_TEX_FONT_PARAMETERS,
+};
+use tex_fonts::{FontParameterKind, TfmFont};
 
 const CORPUS_FONTS: &[&str] = &["cmr10", "cmmi10", "cmsy10", "cmex10", "cmtt10"];
 const VARIANTS: &[(&str, FontSizeSpec)] = &[
@@ -316,7 +317,7 @@ fn compare_font(name: &str, variant: &str, font: &TfmFont, pl: &PlFont) -> Resul
             context()
         );
         assert_eq!(
-            font.right_boundary_char,
+            font.metrics().right_boundary_char(),
             pl.boundary_char,
             "{} boundary char",
             context()
@@ -331,43 +332,55 @@ fn compare_font(name: &str, variant: &str, font: &TfmFont, pl: &PlFont) -> Resul
 }
 
 fn compare_characters(name: &str, variant: &str, font: &TfmFont, pl: &PlFont) -> Result<()> {
-    let actual_codes: Vec<u8> = font.characters.iter().flatten().map(|ch| ch.code).collect();
+    let actual_codes: Vec<u8> = font
+        .metrics()
+        .characters()
+        .iter()
+        .enumerate()
+        .filter_map(|(code, character)| character.map(|_| code as u8))
+        .collect();
     let expected_codes: Vec<u8> = pl.characters.keys().copied().collect();
     assert_eq!(
         actual_codes, expected_codes,
         "{name} {variant} character set"
     );
 
-    for character in font.characters.iter().flatten() {
+    for (code, character) in font
+        .metrics()
+        .characters()
+        .iter()
+        .enumerate()
+        .filter_map(|(code, character)| character.map(|character| (code as u8, character)))
+    {
         let pl_character = pl
             .characters
-            .get(&character.code)
-            .with_context(|| format!("{name} {variant} missing PL character {}", character.code))?;
+            .get(&code)
+            .with_context(|| format!("{name} {variant} missing PL character {code}"))?;
         assert_eq!(
             character.width.raw(),
             pl_metric(pl_character.width.as_ref(), font.font_size)?,
             "{name} {variant} char {} width",
-            character.code
+            code
         );
         assert_eq!(
             character.height.raw(),
             pl_metric(pl_character.height.as_ref(), font.font_size)?,
             "{name} {variant} char {} height",
-            character.code
+            code
         );
         assert_eq!(
             character.depth.raw(),
             pl_metric(pl_character.depth.as_ref(), font.font_size)?,
             "{name} {variant} char {} depth",
-            character.code
+            code
         );
         assert_eq!(
             character.italic_correction.raw(),
             pl_metric(pl_character.italic_correction.as_ref(), font.font_size)?,
             "{name} {variant} char {} italic",
-            character.code
+            code
         );
-        compare_character_tag(name, variant, font, character, pl_character)?;
+        compare_character_tag(name, variant, font, code, character, pl_character)?;
     }
 
     Ok(())
@@ -377,7 +390,8 @@ fn compare_character_tag(
     name: &str,
     variant: &str,
     font: &TfmFont,
-    character: &Character,
+    code: u8,
+    character: CharMetrics,
     pl_character: &PlCharacter,
 ) -> Result<()> {
     match (
@@ -385,21 +399,21 @@ fn compare_character_tag(
         pl_character.next_larger,
         pl_character.extensible_recipe,
     ) {
-        (CharacterTag::None | CharacterTag::LigKern { .. }, None, None) => {}
-        (CharacterTag::NextLarger(actual), Some(expected), None) => {
+        (CharTag::None | CharTag::LigKern { .. }, None, None) => {}
+        (CharTag::NextLarger(actual), Some(expected), None) => {
             assert_eq!(actual, expected, "{name} {variant} next larger");
         }
-        (CharacterTag::Extensible(index), None, Some(expected)) => {
+        (CharTag::Extensible(index), None, Some(expected)) => {
             assert_eq!(
-                font.extensible_recipes.get(usize::from(index)).copied(),
+                font.metrics().extensible_recipes().get(usize::from(index)).copied(),
                 Some(pl_recipe_to_tfm(expected)),
                 "{name} {variant} char {} extensible recipe",
-                character.code
+                code
             );
         }
         _ => bail!(
             "{name} {variant} char {} tag mismatch: {:?} vs PL next={:?} recipe={:?}",
-            character.code,
+            code,
             character.tag,
             pl_character.next_larger,
             pl_character.extensible_recipe
@@ -455,18 +469,22 @@ fn compare_parameters(name: &str, variant: &str, font: &TfmFont, pl: &PlFont) ->
 fn actual_lig_tables(font: &TfmFont) -> Result<BTreeMap<PlLigLabel, Vec<ExpectedLigCommand>>> {
     let mut tables = BTreeMap::new();
 
-    if let Some(start) = font.left_boundary_program {
+    if let Some(start) = font.metrics().left_boundary_program() {
         tables.insert(
             PlLigLabel::Boundary,
             actual_lig_commands(font, usize::from(start))?,
         );
     }
 
-    for character in font.characters.iter().flatten() {
-        if let CharacterTag::LigKern { start_index, .. } = character.tag {
+    for (code, character) in font.metrics().characters().iter().enumerate() {
+        if let Some(CharMetrics {
+            tag: CharTag::LigKern { start_index, .. },
+            ..
+        }) = character
+        {
             tables.insert(
-                PlLigLabel::Character(character.code),
-                actual_lig_commands(font, usize::from(start_index))?,
+                PlLigLabel::Character(code as u8),
+                actual_lig_commands(font, usize::from(*start_index))?,
             );
         }
     }
@@ -478,23 +496,24 @@ fn actual_lig_commands(font: &TfmFont, mut index: usize) -> Result<Vec<ExpectedL
     let mut commands = Vec::new();
     loop {
         let step = font
-            .lig_kern_program
+            .metrics()
+            .lig_kern_program()
             .get(index)
             .with_context(|| format!("lig/kern start {index} is out of bounds"))?;
-        match step.action {
-            Some(LigKernAction::Ligature(ligature)) => {
+        match step.command {
+            Some(LigKernCommand::Ligature(ligature)) => {
                 commands.push(ExpectedLigCommand::Ligature {
                     right: step.next_char,
                     replacement: ligature.replacement,
-                    delete_current: ligature.deletes.current,
-                    delete_next: ligature.deletes.next,
+                    delete_current: ligature.delete_current,
+                    delete_next: ligature.delete_next,
                     pass_over: ligature.pass_over,
                 });
             }
-            Some(LigKernAction::Kern(kern)) => {
+            Some(LigKernCommand::Kern(kern)) => {
                 commands.push(ExpectedLigCommand::Kern {
                     right: step.next_char,
-                    amount: kern.amount.raw(),
+                    amount: kern.raw(),
                 });
             }
             None => {}
@@ -574,8 +593,8 @@ fn corpus_font_paths(root: &Path) -> std::result::Result<Vec<(String, PathBuf)>,
     }
 }
 
-fn pl_recipe_to_tfm(value: PlExtensibleRecipe) -> tex_fonts::ExtensibleRecipe {
-    tex_fonts::ExtensibleRecipe {
+fn pl_recipe_to_tfm(value: PlExtensibleRecipe) -> ExtensibleRecipe {
+    ExtensibleRecipe {
         top: value.top,
         middle: value.middle,
         bottom: value.bottom,

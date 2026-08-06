@@ -4,7 +4,7 @@ Read the repository-level `AGENTS.md` before editing here. This crate owns immut
 
 ## Crate Role
 
-`tex-fonts` parses classic TeX TFM and modern OpenType resources and exposes backend-neutral, immutable font records used by state, execution, typesetting, and output code. It owns TFM table structures, lig/kern programs, extensible recipes, font parameters, content hashes, validated OpenType programs and instances, shaping contexts and operations, and conversions from font units into scaled metrics.
+`tex-fonts` parses classic TeX TFM and modern OpenType resources and exposes backend-neutral, immutable font records used by state, execution, typesetting, and output code. Raw TFM tables exist only during structural and reference validation; successful parsing publishes the canonical `FontMetrics` representation and the metadata needed to construct `LoadedFont`. The crate also owns font parameters, content hashes, validated OpenType programs and instances, shaping contexts and operations, and conversions from font units into scaled metrics.
 
 Use this crate for font-domain parsing, metric representation, and pure caller-delimited shaping that does not require live engine state. Keep the validated data reusable by output backends and layout code.
 
@@ -37,11 +37,11 @@ Use this crate for font-domain parsing, metric representation, and pure caller-d
 - `src/opentype/math/tests.rs`: synthetic complete-table and malformed MATH validation tests.
 - `src/tests.rs`: crate-internal test module declarations for TFM parsing and cross-checks.
 - `src/tests/metrics_validation.rs`: Detached metric capacity/reference validation and runtime lig/kern cursor boundary tests.
-- `src/tests/tfm_parse.rs`: unit tests and helpers for parsing fixtures, metrics conversion, and malformed TFM validation.
+- `src/tests/tfm_parse.rs`: unit tests and helpers for direct canonical TFM metric construction, loaded-font construction, fixtures, and malformed TFM validation.
 - `src/tfm/error.rs`: structured TFM parse error variants and display messages.
 - `src/tfm/mod.rs`: TFM module boundary and public re-exports.
-- `src/tfm/parse.rs`: binary TFM parser, table decoding, scaling, and validation logic.
-- `src/tfm/types.rs`: parsed TFM data structures and conversions into backend-neutral metrics.
+- `src/tfm/parse.rs`: binary TFM parser, temporary raw-table decoding, scaling, reference validation, and direct canonical metric construction.
+- `src/tfm/types.rs`: retained TFM metadata, parameters, canonical metrics, and the single parsed-TFM-to-loaded-font constructor.
 - `src/type1.rs`: bounded PFB segment decoding into identity-keyed PDF-ready Type-1 program bytes.
 - `tests/fixtures/cm/cmex10.tfm`: Computer Modern extension font fixture with extensible recipes.
 - `tests/fixtures/cm/cmmi10.tfm`: Computer Modern math italic font fixture.

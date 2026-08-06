@@ -17347,23 +17347,11 @@ fn load_font(
                     mapped: Option<(tex_fonts::OpenTypeFont, tex_fonts::LegacyEncodingMap)>|
      -> Result<tex_fonts::LoadedFont, ExecError> {
         let tfm = tex_fonts::TfmFont::parse_with_size(metrics.bytes(), request.size)?;
-        let parameters = tfm
-            .parameters
-            .values
-            .iter()
-            .map(|parameter| parameter.value)
-            .collect();
-        let mut font = tex_fonts::LoadedFont::new(
+        let mut font = tfm.into_loaded_font(
             display_name,
             metrics.path().to_owned(),
             metrics.hash().bytes(),
-            tfm.header.checksum,
-            tfm.header.design_size,
-            tfm.font_size,
-            parameters,
-            tfm.font_metrics(),
-        )
-        .with_font_info_words(tfm.font_info_words());
+        );
         if let Some((selection, encoding_map)) = mapped {
             font = font.with_mapped_opentype(selection, encoding_map);
         } else if let Some(selection) = opentype {

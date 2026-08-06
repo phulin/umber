@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use tex_arith::{FontSizeSpec, Scaled, tfm_fix_word_to_scaled};
-use tex_fonts::{LoadedFont, PDFTEX_VF_MAX_RECURSION, VfCommand};
+use tex_fonts::{PDFTEX_VF_MAX_RECURSION, VfCommand};
 use tex_out::positioned::{
     PositionedEvent, PositionedPage, PositionedPdfGraphics, PositionedRule, PositionedTextRun,
     TextUnit,
@@ -463,19 +463,10 @@ impl Lowerer<'_> {
                 font: name.clone(),
                 message: format!("{error:?}"),
             })?;
-        let loaded = LoadedFont::new(
+        let loaded = tfm.into_loaded_font(
             name.clone(),
             PathBuf::from(format!("{name}.tfm")),
             cached.content_id.bytes(),
-            tfm.header.checksum,
-            tfm.header.design_size,
-            tfm.font_size,
-            tfm.parameters
-                .values
-                .iter()
-                .map(|parameter| parameter.value)
-                .collect(),
-            tfm.font_metrics(),
         );
         let font = self.stores.try_intern_font(loaded).map_err(|error| {
             PdfBuildError::InvalidVirtualLocalTfm {

@@ -50,8 +50,7 @@ pub use shaping::{
     Script, ShapedGlyph, ShapedRun, ShapingRequest, character_script, run_script, text_direction,
 };
 pub use tfm::{
-    CharacterTag, ExtensibleRecipe, FontParameter, FontParameterKind, FontParameters, Header,
-    LigKernAction, LigKernStep, Ligature, LigatureDeletes, ParseError, TfmFont, TfmTable,
+    FontParameter, FontParameterKind, FontParameters, Header, ParseError, TfmFont, TfmTable,
 };
 pub use type1::{
     PdfType1Program, PdfType1ProgramError, PdfType1ProgramIdentity, PdfType1SubsetError,
