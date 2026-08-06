@@ -221,14 +221,6 @@ impl GlueStore {
         self.index_dirty = true;
     }
 
-    #[cfg(any(test, feature = "testing", feature = "shadow"))]
-    #[must_use]
-    pub(crate) fn testing_state_hash(&self) -> u64 {
-        let mut hasher = AHasher::default();
-        self.specs.hash(&mut hasher);
-        hasher.finish()
-    }
-
     fn rebuild_index(&mut self) {
         self.index.clear();
         for raw in self.frozen_len as usize..self.specs.len() {

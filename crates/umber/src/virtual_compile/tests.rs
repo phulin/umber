@@ -181,7 +181,7 @@ fn tex_etex_pdftex_fresh_and_twice_loaded_format_matrix() {
             fresh.set_dimen_param(DimenParam::PDF_PAGE_WIDTH, Scaled::from_raw(12_345));
         }
 
-        let fresh_hash = fresh.testing_state_hash();
+        let fresh_hash = fresh.snapshot().state_hash();
         profile_hashes.push((mode, fresh_hash));
         let first_bytes = fresh.dump_format().expect("fresh profile dumps");
         let mut once = load_profile_format(mode, &first_bytes);

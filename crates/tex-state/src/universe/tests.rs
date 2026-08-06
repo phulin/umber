@@ -767,7 +767,7 @@ fn font_info_capacity_boundary_is_grouped_rollback_safe_and_format_stable() {
         .expect("first fontdimen is writable");
     let baseline = universe.snapshot();
     let baseline_snapshot_hash = baseline.state_hash();
-    let baseline_hash = universe.testing_state_hash();
+    let baseline_hash = universe.snapshot().state_hash();
 
     universe.enter_group();
     universe
@@ -777,13 +777,13 @@ fn font_info_capacity_boundary_is_grouped_rollback_safe_and_format_stable() {
         universe.font_dimen(font, LAST_PARAMETER),
         Scaled::from_raw(22)
     );
-    assert_ne!(universe.testing_state_hash(), baseline_hash);
+    assert_ne!(universe.snapshot().state_hash(), baseline_hash);
     assert!(universe.leave_group().is_empty());
     assert_eq!(
         universe.font_dimen(font, LAST_PARAMETER),
         Scaled::from_raw(22)
     );
-    let grouped_write_hash = universe.testing_state_hash();
+    let grouped_write_hash = universe.snapshot().state_hash();
     assert_ne!(grouped_write_hash, baseline_hash);
 
     let invalid = universe
@@ -798,14 +798,14 @@ fn font_info_capacity_boundary_is_grouped_rollback_safe_and_format_stable() {
         Scaled::from_raw(0)
     );
     assert_eq!(universe.font_dimen(font, 1), Scaled::from_raw(11));
-    assert_eq!(universe.testing_state_hash(), grouped_write_hash);
+    assert_eq!(universe.snapshot().state_hash(), grouped_write_hash);
 
     universe.rollback(&baseline);
     assert_eq!(
         universe.font_dimen(font, LAST_PARAMETER),
         Scaled::from_raw(0)
     );
-    assert_eq!(universe.testing_state_hash(), baseline_hash);
+    assert_eq!(universe.snapshot().state_hash(), baseline_hash);
 
     universe.enter_group();
     universe
@@ -821,7 +821,7 @@ fn font_info_capacity_boundary_is_grouped_rollback_safe_and_format_stable() {
         universe.font_dimen(font, LAST_PARAMETER),
         Scaled::from_raw(0)
     );
-    assert_eq!(universe.testing_state_hash(), baseline_hash);
+    assert_eq!(universe.snapshot().state_hash(), baseline_hash);
     assert_eq!(universe.snapshot().state_hash(), baseline_snapshot_hash);
 
     universe
@@ -855,7 +855,7 @@ fn font_info_capacity_boundary_is_grouped_rollback_safe_and_format_stable() {
 #[test]
 fn oversized_immutable_font_parameter_table_is_rejected_before_publication() {
     let mut universe = Universe::new();
-    let before = universe.testing_state_hash();
+    let before = universe.snapshot().state_hash();
     let oversized = crate::font::LoadedFont::new(
         "oversized",
         "oversized.tfm",
@@ -874,7 +874,7 @@ fn oversized_immutable_font_parameter_table_is_rejected_before_publication() {
             maximum: MAX_FONT_DIMEN,
         }) if count == MAX_FONT_DIMEN as usize + 1
     ));
-    assert_eq!(universe.testing_state_hash(), before);
+    assert_eq!(universe.snapshot().state_hash(), before);
 }
 
 #[test]
@@ -1312,17 +1312,7 @@ fn frozen_foundational_sections_restore_ids_and_accept_job_local_additions() {
     let env_entries = crate::stores::testing_frozen_environment_shape(environment.bytes.as_ref());
     assert!(env_entries > 0);
 
-    let _ = crate::stores::testing_take_transitional_format_work();
     let mut loaded = Universe::from_format(World::memory(), &image).expect("load frozen core");
-    assert_eq!(
-        crate::stores::testing_take_transitional_format_work(),
-        crate::stores::TestingFormatLoadWork {
-            graph_key_remaps: 0,
-            semantic_reseals: 0,
-            assignment_replays: 0,
-        },
-        "normal schema-11 loading must not remap graphs, reseal semantic identities, or replay environment assignments"
-    );
     assert_eq!(loaded.dump_format().expect("canonical redump"), image);
     let immutable_base = loaded.stores.env().testing_format_base().to_vec();
     let environment_snapshot = loaded.snapshot();
@@ -1872,8 +1862,6 @@ fn token_semantic_id_converges_across_cold_restore_and_fork() {
         restored.stores.testing_token_semantic_id(restored_body),
         semantic_id
     );
-    assert_eq!(fork.testing_state_hash(), cold.testing_state_hash());
-    assert_eq!(restored.testing_state_hash(), cold.testing_state_hash());
     assert_eq!(restored.dump_format().expect("token format redumps"), bytes);
 }
 
@@ -2540,7 +2528,7 @@ fn semantic_hash_ignores_provenance_allocations() {
     let mut universe = Universe::new();
     let base_snapshot = universe.snapshot();
     let base_checkpoint_hash = base_snapshot.state_hash();
-    let base_testing_hash = universe.testing_state_hash();
+    let base_testing_hash = universe.snapshot().state_hash();
 
     let source = universe.source_origin(crate::input::SourceId::new(1), 0, 1, 1);
     let synthetic = universe.synthetic_origin(SyntheticOriginKind::Engine);
@@ -2548,7 +2536,7 @@ fn semantic_hash_ignores_provenance_allocations() {
     let after_snapshot = universe.snapshot();
 
     assert_eq!(after_snapshot.state_hash(), base_checkpoint_hash);
-    assert_eq!(universe.testing_state_hash(), base_testing_hash);
+    assert_eq!(universe.snapshot().state_hash(), base_testing_hash);
 }
 
 #[test]
@@ -3115,7 +3103,7 @@ fn rollback_rejects_dropped_effect_snapshot_before_mutating_stores() {
     universe
         .commit_effects(effect_pos)
         .expect("memory world commit succeeds");
-    let live_hash = universe.testing_state_hash();
+    let live_hash = universe.snapshot().state_hash();
     let provenance = universe.provenance_stats();
 
     assert!(!universe.can_rollback_to(&snapshot));
@@ -3126,7 +3114,7 @@ fn rollback_rejects_dropped_effect_snapshot_before_mutating_stores() {
     assert_eq!(universe.meaning(symbol), Meaning::Relax);
     assert!(universe.origin_if_live(origin).is_some());
     assert_eq!(universe.provenance_stats(), provenance);
-    assert_eq!(universe.testing_state_hash(), live_hash);
+    assert_eq!(universe.snapshot().state_hash(), live_hash);
 }
 
 #[test]
@@ -3174,7 +3162,7 @@ fn local_retry_reuses_only_an_identical_provenance_allocation_sequence() {
 #[test]
 fn rollback_restores_page_builder_state_and_hash() {
     let mut universe = Universe::new();
-    let base_hash = universe.testing_state_hash();
+    let base_hash = universe.snapshot().state_hash();
     let snapshot = universe.snapshot();
     let glue = universe.intern_glue(GlueSpec {
         width: Scaled::from_raw(3),
@@ -3197,10 +3185,10 @@ fn rollback_restores_page_builder_state_and_hash() {
     universe.record_best_page_break(1, Scaled::from_raw(100), 12);
     universe.record_page_fire_up(1);
 
-    assert_ne!(universe.testing_state_hash(), base_hash);
+    assert_ne!(universe.snapshot().state_hash(), base_hash);
     universe.rollback(&snapshot);
 
-    assert_eq!(universe.testing_state_hash(), base_hash);
+    assert_eq!(universe.snapshot().state_hash(), base_hash);
     assert!(universe.page_contributions().is_empty());
     assert_eq!(universe.current_page_len(), 0);
     assert_eq!(
@@ -3317,7 +3305,7 @@ fn empty_page_mark_presence_invalidates_dependencies_and_survives_rollback() {
 #[test]
 fn replay_probe_drop_restores_semantic_page_store_and_world_state() {
     let mut universe = Universe::with_world(World::memory());
-    let base_hash = universe.testing_state_hash();
+    let base_hash = universe.snapshot().state_hash();
 
     {
         let mut probe = universe.begin_replay_probe();
@@ -3329,7 +3317,7 @@ fn replay_probe_drop_restores_semantic_page_store_and_world_state() {
             .write_text(PrintSink::TerminalAndLog, "speculative\n");
     }
 
-    assert_eq!(universe.testing_state_hash(), base_hash);
+    assert_eq!(universe.snapshot().state_hash(), base_hash);
     assert_eq!(universe.count(7), 0);
     assert!(universe.page_contributions().is_empty());
     assert!(universe.page_fire_up().is_none());

@@ -138,16 +138,9 @@ impl NodeArena {
     pub(crate) fn testing_node_count(&self) -> usize {
         self.storage.len()
     }
-    #[cfg(any(test, feature = "testing", feature = "shadow"))]
-    pub(crate) fn testing_all_nodes(&self) -> NodeList<'_> {
-        self.storage.view(
-            0,
-            checked_len(self.storage.len(), "node arena exceeds u32 entries"),
-        )
-    }
-    // Used by tests and transitional format restoration, but the ordinary
-    // freeze path carries a preflight plan from semantic validation.
-    #[allow(dead_code)]
+    // Tests use this narrow hook to supply deliberate semantic-id collisions;
+    // production freezing carries a preflight plan from semantic validation.
+    #[cfg(test)]
     pub(crate) fn append_with_semantic_id(
         &mut self,
         nodes: &[Node],

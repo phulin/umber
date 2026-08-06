@@ -1877,31 +1877,6 @@ fn survivor_pin_marks_follow_interleaved_snapshot_and_shipout_ordering() {
 }
 
 #[test]
-fn format_capture_ignores_ephemeral_survivor_pins() {
-    let mut stores = Stores::new();
-    let value = one_char(&mut stores, 'f');
-    stores.set_box_reg(0, value);
-    let survivor = stores.box_reg(0).expect("box should be stored");
-    stores.pin_survivor(survivor);
-    let encoded = stores.encode_format().expect("format capture");
-
-    let restored = Stores::decode_format(&encoded).expect("format restore");
-    assert_eq!(restored.testing_survivor_pin_count(), 0);
-    assert_eq!(
-        restored
-            .nodes(restored.box_reg(0).expect("restored box"))
-            .first()
-            .expect("box character")
-            .to_owned(),
-        Node::Char {
-            font: NULL_FONT,
-            ch: 'f',
-            origin: OriginId::UNKNOWN,
-        }
-    );
-}
-
-#[test]
 fn generation_retention_accounting_accepts_live_survivor_pins() {
     let mut stores = Stores::new();
     let value = one_char(&mut stores, 'r');

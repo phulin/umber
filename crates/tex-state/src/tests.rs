@@ -463,7 +463,7 @@ fn frozen_primitive_tokens_have_distinct_semantic_hashes_and_round_trip() {
         restored.tokens(restored.toks(0)),
         &[Token::frozen_primitive(8)]
     );
-    assert_eq!(restored.testing_state_hash(), universe.testing_state_hash());
+    assert_eq!(restored.dump_format().expect("format redumps"), bytes);
 }
 
 #[test]
@@ -500,5 +500,5 @@ fn frozen_relax_has_distinct_semantic_identity_and_format_round_trips() {
     let bytes = universe.dump_format().expect("frozen relax format");
     let restored = Universe::from_format(World::memory(), &bytes).expect("restore frozen relax");
     assert_eq!(restored.tokens(restored.toks(0)), &[Token::frozen_relax()]);
-    assert_eq!(restored.testing_state_hash(), universe.testing_state_hash());
+    assert_eq!(restored.dump_format().expect("format redumps"), bytes);
 }

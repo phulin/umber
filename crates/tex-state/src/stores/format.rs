@@ -27,43 +27,6 @@ pub(crate) use frozen_non_node::{
 };
 
 #[cfg(test)]
-std::thread_local! {
-    static TRANSITIONAL_FORMAT_WORK: std::cell::Cell<TestingFormatLoadWork> =
-        const { std::cell::Cell::new(TestingFormatLoadWork::ZERO) };
-}
-
-#[cfg(test)]
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct TestingFormatLoadWork {
-    pub(crate) graph_key_remaps: usize,
-    pub(crate) semantic_reseals: usize,
-    pub(crate) assignment_replays: usize,
-}
-
-#[cfg(test)]
-impl TestingFormatLoadWork {
-    const ZERO: Self = Self {
-        graph_key_remaps: 0,
-        semantic_reseals: 0,
-        assignment_replays: 0,
-    };
-}
-
-#[cfg(test)]
-fn record_transitional_format_work(update: impl FnOnce(&mut TestingFormatLoadWork)) {
-    TRANSITIONAL_FORMAT_WORK.with(|work| {
-        let mut current = work.get();
-        update(&mut current);
-        work.set(current);
-    });
-}
-
-#[cfg(test)]
-pub(crate) fn testing_take_transitional_format_work() -> TestingFormatLoadWork {
-    TRANSITIONAL_FORMAT_WORK.with(|work| work.replace(TestingFormatLoadWork::ZERO))
-}
-
-#[cfg(test)]
 pub(crate) fn testing_frozen_environment_shape(payload: &[u8]) -> usize {
     frozen_env::decode(payload)
         .expect("test frozen environment payload")
@@ -153,7 +116,7 @@ pub(crate) enum StoreFormatError {
     },
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug)]
 struct StoreFormat {
     names: Vec<FormatName>,
     token_lists: Vec<Vec<FormatToken>>,
@@ -590,19 +553,6 @@ fn restore_current_font_word(stores: &Stores, word: u64) -> Result<u64, StoreFor
 }
 
 impl Stores {
-    #[cfg(test)]
-    pub(crate) fn encode_format(&self) -> Result<Vec<u8>, StoreFormatError> {
-        if self.env.group_depth() != 0 {
-            return Err(StoreFormatError::OpenGroups(self.env.group_depth()));
-        }
-        // Survivor pins are allocation-lifetime bookkeeping, not TeX state.
-        // A format captures the reachable box graph below and deliberately
-        // drops transient mode/page material, just as TeX's `store_fmt_file`
-        // does not serialize the current nest or contribution list.
-        let format = StoreFormat::capture(self)?;
-        bincode::serialize(&format).map_err(|error| StoreFormatError::Codec(error.to_string()))
-    }
-
     /// Canonical semantic store root for checkpoint verification. Survivor
     /// pins are retention metadata, so unlike a restorable format dump they
     /// neither prevent nor participate in this identity.
@@ -715,13 +665,6 @@ impl Stores {
             .lock()
             .expect("exact store identity cache is not poisoned")
             .immutable_leaves
-    }
-
-    #[cfg(test)]
-    pub(crate) fn decode_format(bytes: &[u8]) -> Result<Self, StoreFormatError> {
-        let format: StoreFormat = bincode::deserialize(bytes)
-            .map_err(|error| StoreFormatError::Codec(error.to_string()))?;
-        format.restore()
     }
 
     pub(crate) fn encode_frozen_format(&self) -> Result<EncodedStoreFormat, StoreFormatError> {
@@ -1450,214 +1393,9 @@ impl MutableStoreIdentity {
     }
 }
 
-impl StoreFormat {
-    #[cfg(test)]
-    fn restore(self) -> Result<Stores, StoreFormatError> {
-        self.validate_references()?;
-        self.validate_font_state()?;
-        self.restore_with_core(None, None)
-    }
-
-    #[cfg(test)]
-    fn restore_with_core(
-        self,
-        frozen: Option<frozen_core::DecodedFrozenCore>,
-        non_node: Option<frozen_non_node::DecodedFrozenNonNode>,
-    ) -> Result<Stores, StoreFormatError> {
-        let mut stores = Stores::new();
-        let has_frozen_core = frozen.is_some();
-        if let Some(frozen) = frozen {
-            stores.interner = frozen.interner;
-            stores.tokens = frozen.tokens;
-            stores.macros = frozen.macros;
-            stores.glue = frozen.glue;
-        }
-        let symbol_ids = if has_frozen_core {
-            (0..self.names.len())
-                .map(|raw| {
-                    stores
-                        .interner
-                        .symbol_at_slot(raw as u32)
-                        .map(|symbol| symbol.symbol())
-                        .ok_or(StoreFormatError::Invalid("frozen symbol mapping"))
-                })
-                .collect::<Result<Vec<_>, _>>()?
-        } else {
-            let mut symbol_ids = Vec::with_capacity(self.names.len());
-            for (raw, name) in self.names.into_iter().enumerate() {
-                let symbol = if name.active {
-                    let mut chars = name.text.chars();
-                    let ch = chars
-                        .next()
-                        .ok_or(StoreFormatError::Invalid("empty active name"))?;
-                    if chars.next().is_some() {
-                        return Err(StoreFormatError::Invalid("multi-character active name"));
-                    }
-                    stores.interner.intern_active(ch)
-                } else {
-                    stores.interner.intern(&name.text)
-                }
-                .map_err(|_| StoreFormatError::Invalid("symbol capacity"))?;
-                if symbol.raw() as usize != raw {
-                    return Err(StoreFormatError::Invalid("non-canonical symbol order"));
-                }
-                symbol_ids.push(symbol.symbol());
-            }
-            symbol_ids
-        };
-        let token_ids = if has_frozen_core {
-            (0..self.token_lists.len())
-                .map(|raw| stores.resolve_stored_token_list(TokenListId::new(raw as u32)))
-                .collect::<Vec<_>>()
-        } else {
-            let mut token_ids = vec![TokenListId::EMPTY];
-            for (raw, tokens) in self.token_lists.into_iter().enumerate().skip(1) {
-                let tokens = tokens
-                    .into_iter()
-                    .map(|token| token.restore_mapped(&symbol_ids))
-                    .collect::<Result<Vec<_>, _>>()?;
-                let id = stores.intern_token_list(&tokens);
-                if id.raw() as usize != raw {
-                    return Err(StoreFormatError::Invalid("non-canonical token-list order"));
-                }
-                token_ids.push(id);
-            }
-            token_ids
-        };
-        if !has_frozen_core {
-            for (raw, definition) in self.macros.into_iter().enumerate() {
-                let meaning = MacroMeaning::new(
-                    crate::meaning::MeaningFlags::from_bits(definition.flags),
-                    stores.resolve_stored_token_list(TokenListId::new(definition.parameter_text)),
-                    stores.resolve_stored_token_list(TokenListId::new(definition.replacement_text)),
-                );
-                if stores.intern_macro(meaning).raw() as usize != raw {
-                    return Err(StoreFormatError::Invalid("macro order"));
-                }
-            }
-        }
-        let glue_ids = if has_frozen_core {
-            (0..self.glue.len())
-                .map(|raw| stores.resolve_stored_glue(GlueId::new(raw as u32)))
-                .collect::<Vec<_>>()
-        } else {
-            let mut glue_ids = vec![GlueId::ZERO];
-            for (raw, glue) in self.glue.into_iter().enumerate().skip(1) {
-                let id = stores.glue.intern(glue.restore()?);
-                if id.raw() as usize != raw {
-                    return Err(StoreFormatError::Invalid("non-canonical glue order"));
-                }
-                glue_ids.push(id);
-            }
-            glue_ids
-        };
-        let has_frozen_non_node = non_node.is_some();
-        let font_ids = if let Some(non_node) = non_node {
-            stores.fonts = non_node.fonts;
-            stores.code_tables = non_node.code_tables;
-            stores.hyphenation = non_node.hyphenation.into();
-            stores.prepared_mag = non_node.prepared_mag;
-            stores.last_loaded_font = non_node.last_loaded_font;
-            (0..self.fonts.len())
-                .map(|raw| stores.resolve_stored_font(FontId::new(raw as u32)))
-                .collect::<Vec<_>>()
-        } else {
-            let mut font_ids = Vec::with_capacity(self.fonts.len());
-            for (raw, font) in self.fonts.into_iter().enumerate() {
-                let identifier = font.identifier;
-                let expansion = font.expansion;
-                let id = if raw == 0 {
-                    NULL_FONT
-                } else {
-                    let id = stores.fonts.intern(font.restore()).map_err(|_| {
-                        StoreFormatError::Invalid("font count exceeds bank capacity")
-                    })?;
-                    if id.raw() as usize != raw {
-                        return Err(StoreFormatError::Invalid("non-canonical font order"));
-                    }
-                    id
-                };
-                if let Some(symbol) = identifier {
-                    let symbol = symbol_ids
-                        .get(symbol as usize)
-                        .copied()
-                        .and_then(|symbol| stores.interner.resolve_stored(symbol))
-                        .ok_or(StoreFormatError::Invalid("font identifier symbol"))?;
-                    stores.set_resolved_font_identifier(id, symbol);
-                }
-                if let Some(expansion) = expansion {
-                    stores
-                        .fonts
-                        .set_expansion(id, expansion)
-                        .map_err(|_| StoreFormatError::Invalid("font expansion configuration"))?;
-                }
-                font_ids.push(id);
-            }
-            font_ids
-        };
-        let content_ids = FormatContentIds {
-            fonts: &font_ids,
-            glue: &glue_ids,
-            token_lists: &token_ids,
-        };
-        let mut node_ids = std::collections::BTreeMap::new();
-        for list in self.node_lists {
-            let nodes = list
-                .nodes
-                .into_iter()
-                .map(|node| node.restore(&content_ids, &node_ids))
-                .collect::<Result<Vec<_>, _>>()?;
-            let semantic_id = stores.compute_and_seal_node_semantic_id(&nodes);
-            record_transitional_format_work(|work| work.semantic_reseals += 1);
-            let id = stores.nodes.append_with_semantic_id(&nodes, semantic_id);
-            node_ids.insert(list.key, id);
-        }
-        if !has_frozen_non_node {
-            for entry in self.code_tables {
-                entry.restore(&mut stores.code_tables)?;
-            }
-            stores.hyphenation = self.hyphenation.into();
-            stores.prepared_mag = self.prepared_mag;
-            stores.last_loaded_font =
-                stores.resolve_stored_font(FontId::new(self.last_loaded_font));
-        }
-        for entry in self.env {
-            let dto_cell = crate::cell::CellId::from_raw(entry.cell)
-                .ok_or(StoreFormatError::Invalid("unknown environment cell"))?;
-            let bank = dto_cell.bank();
-            let dto_index = dto_cell.index();
-            let cell = crate::cell::CellId::new(bank, dto_index);
-            let word = match (cell.bank(), entry.value) {
-                (crate::cell::BankTag::Box, FormatEnvValue::Box(key)) => {
-                    let id = node_ids
-                        .get(&key)
-                        .copied()
-                        .ok_or(StoreFormatError::Invalid("missing box node list"))?;
-                    NodeListId::encode_box_word(Some(stores.prepare_box_value(id)))
-                }
-                (crate::cell::BankTag::Box, FormatEnvValue::Raw(_)) => {
-                    return Err(StoreFormatError::Invalid("raw box environment value"));
-                }
-                (crate::cell::BankTag::CurrentFont, FormatEnvValue::Raw(word)) => {
-                    restore_current_font_word(&stores, word)?
-                }
-                (_, FormatEnvValue::Raw(word)) => word,
-                (_, FormatEnvValue::Box(_)) => {
-                    return Err(StoreFormatError::Invalid("box value in non-box bank"));
-                }
-            };
-            record_transitional_format_work(|work| work.assignment_replays += 1);
-            stores.env.restore_raw(cell, word);
-        }
-        stores.initialize_exact_env_identity();
-        Ok(stores)
-    }
-}
-
 /// Publishes the already decoded and cross-section-validated schema-11 bases.
 ///
-/// This is deliberately separate from the test-only transitional DTO restore
-/// above. The production loader installs one frozen node root and one immutable
+/// The production loader installs one frozen node root and one immutable
 /// environment base; it never re-enters ordinary node sealing or Env writes.
 fn install_frozen_sections(
     format: StoreFormat,
@@ -1943,8 +1681,6 @@ fn canonicalize_node_list_keys(node_lists: &mut [FormatNodeList], env: &mut [For
     for list in node_lists {
         for node in &mut list.nodes {
             node.remap_list_keys(&keys);
-            #[cfg(test)]
-            record_transitional_format_work(|work| work.graph_key_remaps += 1);
         }
         list.key = keys[&list.key];
     }
@@ -2201,20 +1937,6 @@ impl FormatFont {
             self.left_boundary_program,
             self.extensible_recipes.clone(),
         )
-    }
-}
-
-impl FormatCodeTables {
-    #[cfg(test)]
-    fn restore(self, tables: &mut CodeTables) -> Result<(), StoreFormatError> {
-        let ch = char::from_u32(self.code).ok_or(StoreFormatError::Invalid("codepoint"))?;
-        tables.set_catcode(ch, catcode(self.catcode)?);
-        tables.set_lccode(ch, self.lccode);
-        tables.set_uccode(ch, self.uccode);
-        tables.set_sfcode(ch, self.sfcode);
-        tables.set_mathcode(ch, self.mathcode);
-        tables.set_delcode(ch, self.delcode);
-        Ok(())
     }
 }
 

@@ -183,7 +183,7 @@ fn fixed_effectful_program_does_not_leak_before_commit() {
 
 fn assert_effectful_replay_identity(program: &Program) {
     let mut universe = setup_universe();
-    let before = universe.testing_state_hash();
+    let before = universe.snapshot().state_hash();
     let checkpoint = universe.snapshot();
 
     run_steps(&mut universe, &program.steps);
@@ -191,7 +191,7 @@ fn assert_effectful_replay_identity(program: &Program) {
     assert_no_committed_outputs(&universe, program);
     universe.rollback(&checkpoint);
     assert_eq!(
-        universe.testing_state_hash(),
+        universe.snapshot().state_hash(),
         before,
         "effectful rollback hash diverged after program:\n{}",
         program.render()

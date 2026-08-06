@@ -192,7 +192,7 @@ fn run_replay_identity(ops: &[Op]) {
     let mut checkpoints = Vec::new();
     let mut depth = 0_u8;
 
-    let hash = stores.testing_state_hash();
+    let hash = stores.snapshot().state_hash();
     checkpoints.push(Checkpoint {
         snapshot: stores.snapshot(),
         hash,
@@ -293,7 +293,7 @@ fn run_replay_identity(ops: &[Op]) {
                 oracle.assert_matches(&stores, &cells);
                 box_oracle.assert_matches(&stores, &mut tree_cache);
                 verify_shadow(&stores);
-                let hash = stores.testing_state_hash();
+                let hash = stores.snapshot().state_hash();
                 checkpoints.push(Checkpoint {
                     snapshot: stores.snapshot(),
                     hash,
@@ -308,7 +308,7 @@ fn run_replay_identity(ops: &[Op]) {
     for checkpoint in checkpoints.into_iter().rev() {
         stores.rollback(&checkpoint.snapshot.clone());
         assert_eq!(
-            stores.testing_state_hash(),
+            stores.snapshot().state_hash(),
             checkpoint.hash,
             "rollback to {:?}",
             checkpoint.snapshot

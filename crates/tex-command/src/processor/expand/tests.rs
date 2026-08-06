@@ -1189,7 +1189,7 @@ fn pdf_ximage_bbox_reads_typed_metadata_without_allocating() {
         )
         .expect("register detached metadata");
     let initial_object = universe.pdf_next_object_id();
-    let initial_hash = universe.testing_state_hash();
+    let initial_hash = universe.snapshot().state_hash();
     let mut input = vec![traced(Token::Cs(bbox))];
     input.extend("7 3".chars().map(|ch| {
         traced(Token::Char {
@@ -1214,7 +1214,7 @@ fn pdf_ximage_bbox_reads_typed_metadata_without_allocating() {
         assert_eq!(rendered(&mut processor), "0.00015pt");
     }
     assert_eq!(universe.pdf_next_object_id(), initial_object);
-    assert_eq!(universe.testing_state_hash(), initial_hash);
+    assert_eq!(universe.snapshot().state_hash(), initial_hash);
 }
 
 fn diagnostic_text(universe: &Universe) -> String {

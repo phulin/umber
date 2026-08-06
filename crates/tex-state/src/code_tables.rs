@@ -10,7 +10,7 @@
 use crate::token::Catcode;
 use core::array;
 use std::collections::HashSet;
-#[cfg(any(test, feature = "testing", feature = "shadow"))]
+#[cfg(test)]
 use std::hash::{Hash, Hasher};
 use std::sync::{Arc, OnceLock};
 
@@ -616,7 +616,7 @@ impl CodeTables {
         }
     }
 
-    #[cfg(any(test, feature = "testing", feature = "shadow"))]
+    #[cfg(test)]
     pub(crate) fn testing_hash_content(&self, hasher: &mut impl Hasher) {
         self.catcodes.hash_content(hasher);
         self.lccodes.hash_content(hasher);
@@ -813,7 +813,7 @@ where
         self.generation = snapshot.generation;
     }
 
-    #[cfg(any(test, feature = "testing", feature = "shadow"))]
+    #[cfg(test)]
     fn hash_content(&self, hasher: &mut impl Hasher)
     where
         T: Hash,

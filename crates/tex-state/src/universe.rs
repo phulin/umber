@@ -71,8 +71,6 @@ use crate::world::{
     WorldError, WorldSnapshot, WorldStateHashCursor, install_job_clock_params,
 };
 use std::collections::HashMap;
-#[cfg(any(test, feature = "testing", feature = "shadow"))]
-use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
@@ -7244,26 +7242,6 @@ impl Universe {
     #[cfg(feature = "shadow")]
     pub fn verify_shadow(&self) {
         self.stores.verify_shadow();
-    }
-
-    #[cfg(any(test, feature = "testing", feature = "shadow"))]
-    #[must_use]
-    pub fn testing_state_hash(&self) -> u64 {
-        let mut hasher = ahash::AHasher::default();
-        self.stores.testing_state_hash().hash(&mut hasher);
-        self.world.testing_state_hash().hash(&mut hasher);
-        self.input_summary.hash(&mut hasher);
-        self.interaction_mode.hash(&mut hasher);
-        self.hash_page_state(&mut PageHashCache::default())
-            .fingerprint()
-            .hash(&mut hasher);
-        self.pdf.cursor().hash(&mut hasher);
-        hasher.finish()
-    }
-
-    #[cfg(any(test, feature = "testing", feature = "shadow"))]
-    pub fn testing_hash_node_list_content(&self, id: NodeListId, hasher: &mut impl Hasher) {
-        self.stores.testing_hash_node_list_content(id, hasher);
     }
 
     #[cfg(any(test, feature = "testing"))]

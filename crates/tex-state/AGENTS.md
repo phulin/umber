@@ -125,7 +125,7 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/stores/format/frozen_node.rs`: Schema-11 fixed-record reachable node-graph codec, semantic-identity validation, and frozen arena installation metadata.
 - `src/stores/format/frozen_env.rs`: Schema-11 fixed-record environment-cell codec and validated immutable-base installation input.
 - `src/stores/format/node.rs`: Handle-free serialized node/math DTO graph and validated conversion to and from live nodes.
-- `src/stores/format/tests.rs`: Malformed format DTO validation tests that reject references before live-store publication.
+- `src/stores/format/tests.rs`: Focused schema-11 frozen-store round-trip tests for nodes, registers, e-TeX reset behavior, and control-sequence namespaces.
 - `src/stores/format/font_validation.rs`: Pre-publication validation of detached font metrics, identifiers, and serialized Env font banks, plus test-only corruption fixtures.
 - `src/stores/state_hash.rs`: Store snapshot cursor and semantic hashing implementation for changed cells and store-owned slices.
 - `src/stores/tests.rs`: Unit tests for aggregate store rollback, builders, handle validation, parameters, boxes, and state hashes.

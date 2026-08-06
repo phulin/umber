@@ -604,7 +604,7 @@ mod tests {
         let snapshot = stores.snapshot();
         let source = "\\pdfoutput=1\\setbox0=\\hbox{}\\pdfxform0\\end";
         run_pdf_memory(source, &mut stores).expect("first form run");
-        let first_hash = stores.testing_state_hash();
+        let first_hash = stores.snapshot().state_hash();
         assert_eq!(stores.pdf_last_form(), 1);
         stores.rollback(&snapshot);
         assert_eq!(stores.pdf_last_form(), 0);
@@ -616,7 +616,7 @@ mod tests {
         );
         run_pdf_memory(source, &mut stores).expect("replayed form run");
         assert_eq!(stores.pdf_last_form(), 1);
-        assert_eq!(stores.testing_state_hash(), first_hash);
+        assert_eq!(stores.snapshot().state_hash(), first_hash);
     }
 
     #[test]
@@ -1409,7 +1409,7 @@ mod tests {
             )
             .expect("allocate raster image");
         let raster_snapshot = stores.snapshot();
-        let raster_hash = stores.testing_state_hash();
+        let raster_hash = stores.snapshot().state_hash();
         let raster_output = run_pdf_memory(
             concat!(
                 "\\message{raster=\\the\\pdflastximagepages/",
@@ -1462,7 +1462,7 @@ mod tests {
         assert!(pdf_output.contains("pdf=3/0"), "{pdf_output}");
 
         stores.rollback(&raster_snapshot);
-        assert_eq!(stores.testing_state_hash(), raster_hash);
+        assert_eq!(stores.snapshot().state_hash(), raster_hash);
         assert_eq!(stores.pdf_last_ximage(), raster.id().raw());
         assert_eq!(stores.pdf_last_ximage_pages(), 1);
         assert_eq!(stores.pdf_last_ximage_color_depth(), 16);
@@ -1650,13 +1650,13 @@ mod tests {
                 .count(),
             0
         );
-        let completed_hash = stores.testing_state_hash();
+        let completed_hash = stores.snapshot().state_hash();
 
         stores.rollback(&baseline);
         let replay = run_pdf_memory(source, &mut stores)
             .expect("checkpoint replay consumes the same ignored actions");
         assert_eq!(complete_memory_terminal(&replay, &stores), output);
-        assert_eq!(stores.testing_state_hash(), completed_hash);
+        assert_eq!(stores.snapshot().state_hash(), completed_hash);
         assert_eq!(stores.pdf_next_object_id(), 1);
     }
 

@@ -56,28 +56,6 @@ impl Stores {
         (identity.finish(), needs)
     }
 
-    // Used by transitional format restoration, which is not reached in the
-    // ordinary native test configuration.
-    #[allow(dead_code)]
-    pub(super) fn compute_and_seal_node_semantic_id(&mut self, nodes: &[Node]) -> NodeSemanticId {
-        let mut identity = NodeSemanticIdBuilder::new();
-        let mut index = 0;
-        while index < nodes.len() {
-            if let Node::Char { font, .. } = nodes[index] {
-                let end = same_font_char_run_end(nodes, index, font);
-                self.push_char_run_identity(&mut identity, font, &nodes[index..end]);
-                index = end;
-            } else {
-                let node = &nodes[index];
-                identity.push(|hasher| {
-                    self.hash_node_semantic_identity(NodeRef::from(node), hasher);
-                });
-                index += 1;
-            }
-        }
-        identity.finish()
-    }
-
     fn push_char_run_identity(
         &self,
         identity: &mut NodeSemanticIdBuilder,

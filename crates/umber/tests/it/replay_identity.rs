@@ -261,7 +261,7 @@ fn assert_replay_identity(source: &str) {
     // the subject here is replay identity, so the job runs `\nonstopmode`.
     stores.set_interaction_mode(tex_state::InteractionMode::Nonstop);
     umber::prepare_run_stores(&mut stores);
-    let before = stores.testing_state_hash();
+    let before = stores.snapshot().state_hash();
     let checkpoint = stores.snapshot();
 
     let log = match umber::run_memory_with_stores(source, &mut stores) {
@@ -272,7 +272,7 @@ fn assert_replay_identity(source: &str) {
 
     stores.rollback(&checkpoint);
     assert_eq!(
-        stores.testing_state_hash(),
+        stores.snapshot().state_hash(),
         before,
         "rollback hash diverged after program:\n{source}\nlog:\n{log}"
     );

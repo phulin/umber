@@ -545,34 +545,6 @@ impl FontStore {
             self.complete_hash_fragments.len(),
         )
     }
-
-    #[cfg(any(test, feature = "testing", feature = "shadow"))]
-    pub(crate) fn testing_state_hash(&self, hasher: &mut impl std::hash::Hasher) {
-        use std::hash::Hash as _;
-
-        for ((font, identifier), expansion) in self
-            .fonts
-            .iter()
-            .zip(&self.identifiers)
-            .zip(&self.expansion_specs)
-        {
-            font.name().hash(hasher);
-            font.content_hash().hash(hasher);
-            font.checksum().hash(hasher);
-            font.design_size().raw().hash(hasher);
-            font.size().raw().hash(hasher);
-            font.construction().hash(hasher);
-            for parameter in font.parameters() {
-                parameter.raw().hash(hasher);
-            }
-            for parameter in font.source_parameters() {
-                parameter.raw().hash(hasher);
-            }
-            font.metrics_source().hash(hasher);
-            identifier.hash(hasher);
-            expansion.hash(hasher);
-        }
-    }
 }
 
 impl From<&LoadedFont> for FontHashFragmentKey {

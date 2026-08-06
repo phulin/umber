@@ -10,8 +10,6 @@ use crate::env::banks::{
 };
 use crate::epoch::Epoch;
 use crate::ids::NodeListId;
-#[cfg(any(test, feature = "testing", feature = "shadow"))]
-use std::hash::{Hash as _, Hasher};
 
 impl Env {
     /// Restore-only raw write primitive for journal rollback and group walks.
@@ -194,25 +192,6 @@ impl Env {
         }
     }
 
-    /// Returns a content-only hash of environment semantic state.
-    ///
-    /// The hash intentionally excludes allocation lengths, capacities, and
-    /// epoch stamps; replay identity is about semantic state.
-    #[cfg(any(test, feature = "testing", feature = "shadow"))]
-    #[must_use]
-    pub fn testing_state_hash(&self) -> u64 {
-        let mut hasher = ahash::AHasher::default();
-        self.for_each_semantic_non_default_word(|cell, word| {
-            cell.hash(&mut hasher);
-            word.hash(&mut hasher);
-        });
-        for spelling in &self.aftergroup {
-            spelling.semantic_token().hash(&mut hasher);
-        }
-        self.afterassignment.hash(&mut hasher);
-        hasher.finish()
-    }
-
     pub(crate) fn for_each_semantic_non_default_word(&self, mut f: impl FnMut(CellId, u64)) {
         for (segment_index, segment) in self.meaning_cells.iter().enumerate() {
             let Some(segment) = segment else {
@@ -273,16 +252,6 @@ impl Env {
         if self.current_font.word != 0 {
             f(CellId::new(BankTag::CurrentFont, 0), self.current_font.word);
         }
-    }
-
-    #[cfg(any(test, feature = "testing", feature = "shadow"))]
-    pub(crate) fn testing_aftergroup_payloads(&self) -> &[crate::token::TracedTokenWord] {
-        &self.aftergroup
-    }
-
-    #[cfg(any(test, feature = "testing", feature = "shadow"))]
-    pub(crate) const fn testing_afterassignment(&self) -> Option<crate::token::Token> {
-        self.afterassignment
     }
 
     pub(super) fn meaning_value(&self, index: u32) -> Option<crate::meaning::Meaning> {

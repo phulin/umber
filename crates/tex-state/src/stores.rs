@@ -75,8 +75,6 @@ use crate::token::{Catcode, OriginId, Token, TracedTokenWord};
 use crate::token_store::{
     TokenListBuilder, TokenSemanticId, TokenSemanticIdBuilder, TokenStore, TokenStoreMark,
 };
-#[cfg(any(test, feature = "testing", feature = "shadow"))]
-use std::hash::{Hash, Hasher};
 use std::mem;
 use std::sync::Arc;
 
@@ -95,17 +93,13 @@ pub(crate) use format::{
 };
 #[cfg(test)]
 pub(crate) use format::{
-    TestingFontFormatCorruption, TestingFormatLoadWork, testing_corrupt_environment_box_reference,
+    TestingFontFormatCorruption, testing_corrupt_environment_box_reference,
     testing_corrupt_environment_global_cell, testing_corrupt_environment_macro_reference,
     testing_corrupt_font_format, testing_frozen_environment_shape,
-    testing_take_transitional_format_work,
 };
 
 pub use crate::env::group::{GroupFrame, GroupKind, GroupMismatch};
 pub(crate) use state_hash::StoreStateHashCursor;
-
-#[cfg(any(test, feature = "testing", feature = "shadow"))]
-const TESTING_NODE_HASH_MAX_DEPTH: usize = 4096;
 
 /// A rollback snapshot for all currently implemented state stores.
 #[derive(Clone, Debug)]
@@ -2863,104 +2857,6 @@ impl Stores {
         self.env.verify_shadow();
     }
 
-    /// Returns a content-only hash of all semantic state currently in Stores.
-    #[cfg(any(test, feature = "testing", feature = "shadow"))]
-    #[must_use]
-    pub fn testing_state_hash(&self) -> u64 {
-        let mut hasher = ahash::AHasher::default();
-        self.testing_hash_env_by_content(&mut hasher);
-        self.interner.len().hash(&mut hasher);
-        for raw in 0..self.interner.len() {
-            let symbol = self
-                .interner
-                .symbol_at_slot(raw as u32)
-                .expect("live interner slot should have a compact key");
-            self.interner.kind(symbol).hash(&mut hasher);
-            self.interner.resolve(symbol).hash(&mut hasher);
-        }
-        let token_mark = self.tokens.watermark();
-        token_mark.spans.hash(&mut hasher);
-        for raw in 0..token_mark.spans {
-            let id = self.resolve_stored_token_list(TokenListId::new(raw));
-            let tokens = self.tokens.get(id);
-            tokens.len().hash(&mut hasher);
-            for &token in tokens {
-                self.testing_hash_token(token, &mut hasher);
-            }
-        }
-        self.glue.testing_state_hash().hash(&mut hasher);
-        self.fonts.testing_state_hash(&mut hasher);
-        self.testing_hash_all_epoch_nodes(&mut hasher);
-        self.code_tables.testing_hash_content(&mut hasher);
-        self.prepared_mag.hash(&mut hasher);
-        self.last_loaded_font.hash(&mut hasher);
-        hasher.finish()
-    }
-
-    #[cfg(any(test, feature = "testing", feature = "shadow"))]
-    fn testing_hash_env_by_content(&self, hasher: &mut impl Hasher) {
-        self.env.for_each_semantic_non_default_word(|cell, word| {
-            cell.bank().hash(hasher);
-            match cell.bank() {
-                BankTag::Meaning => {
-                    let symbol = self
-                        .interner
-                        .symbol_at_slot(cell.index())
-                        .and_then(|symbol| self.interner.resolve_stored(symbol))
-                        .expect("meaning slot should name a live symbol");
-                    self.interner.kind_id(symbol).hash(hasher);
-                    self.interner.resolve_id(symbol).hash(hasher);
-                    word.hash(hasher);
-                }
-                BankTag::Box => self.testing_hash_box_word(word, hasher),
-                BankTag::CurrentFont => {
-                    (word as u32).hash(hasher);
-                    match self.env.current_font_symbol() {
-                        Some(symbol) => {
-                            1_u8.hash(hasher);
-                            let symbol = self.resolve_stored_symbol(symbol);
-                            self.interner.kind_id(symbol).hash(hasher);
-                            self.interner.resolve_id(symbol).hash(hasher);
-                        }
-                        None => 0_u8.hash(hasher),
-                    }
-                }
-                _ => {
-                    cell.index().hash(hasher);
-                    word.hash(hasher);
-                }
-            }
-        });
-        for &token in self.env.testing_aftergroup_payloads() {
-            self.testing_hash_token(token.semantic_token(), hasher);
-        }
-        match self.env.testing_afterassignment() {
-            Some(token) => {
-                1_u8.hash(hasher);
-                self.testing_hash_token(token, hasher);
-            }
-            None => 0_u8.hash(hasher),
-        }
-    }
-
-    #[cfg(any(test, feature = "testing", feature = "shadow"))]
-    fn testing_hash_token(&self, token: Token, hasher: &mut impl Hasher) {
-        core::mem::discriminant(&token).hash(hasher);
-        match token {
-            Token::Char { ch, cat } => {
-                ch.hash(hasher);
-                cat.hash(hasher);
-            }
-            Token::Cs(symbol) => {
-                let symbol = self.resolve_stored_symbol(symbol);
-                self.interner.kind_id(symbol).hash(hasher);
-                self.interner.resolve_id(symbol).hash(hasher);
-            }
-            Token::Param(slot) => slot.hash(hasher),
-            Token::Frozen(kind) => kind.hash(hasher),
-        }
-    }
-
     fn assert_valid_snapshot(&self, snapshot: &StoreSnapshot) {
         assert_eq!(
             snapshot.owner,
@@ -3002,117 +2898,6 @@ impl Stores {
                 .pop()
                 .expect("timeline node pin length was checked");
             self.survivors.dec_ref(id);
-        }
-    }
-
-    #[cfg(any(test, feature = "testing", feature = "shadow"))]
-    fn testing_hash_box_word(&self, word: u64, hasher: &mut impl Hasher) {
-        match NodeListId::decode_box_word(word) {
-            Some(id) => self.testing_hash_node_list_content_bounded(id, hasher, 0),
-            None => 0_u8.hash(hasher),
-        }
-    }
-
-    #[cfg(any(test, feature = "testing", feature = "shadow"))]
-    fn testing_hash_all_epoch_nodes(&self, hasher: &mut impl Hasher) {
-        for node in self.nodes.testing_all_nodes() {
-            self.testing_hash_node_content_bounded(&node.to_owned(), hasher, 0);
-        }
-    }
-
-    #[cfg(any(test, feature = "testing", feature = "shadow"))]
-    pub fn testing_hash_node_list_content(&self, id: NodeListId, hasher: &mut impl Hasher) {
-        self.testing_hash_node_list_content_bounded(id, hasher, 0);
-    }
-
-    #[cfg(any(test, feature = "testing", feature = "shadow"))]
-    fn testing_hash_node_list_content_bounded(
-        &self,
-        id: NodeListId,
-        hasher: &mut impl Hasher,
-        depth: usize,
-    ) {
-        assert!(
-            depth <= TESTING_NODE_HASH_MAX_DEPTH,
-            "testing node hash exceeded maximum node-list nesting depth"
-        );
-        1_u8.hash(hasher);
-        for node in self.nodes(id) {
-            self.testing_hash_node_content_bounded(&node.to_owned(), hasher, depth);
-        }
-    }
-
-    #[cfg(any(test, feature = "testing", feature = "shadow"))]
-    fn testing_hash_node_content_bounded(
-        &self,
-        node: &Node,
-        hasher: &mut impl Hasher,
-        depth: usize,
-    ) {
-        std::mem::discriminant(node).hash(hasher);
-        match node {
-            Node::Char { font, ch, .. } => {
-                font.raw().hash(hasher);
-                ch.hash(hasher);
-            }
-            Node::Kern { amount, kind } => {
-                amount.raw().hash(hasher);
-                kind.hash(hasher);
-            }
-            Node::MarginKern {
-                amount,
-                side,
-                font,
-                ch,
-            } => {
-                amount.raw().hash(hasher);
-                side.hash(hasher);
-                font.raw().hash(hasher);
-                ch.hash(hasher);
-            }
-            Node::Glue { spec, kind, leader } => {
-                self.glue(*spec).hash(hasher);
-                kind.hash(hasher);
-                match leader {
-                    Some(leader) => format!("{leader:?}").hash(hasher),
-                    None => 0_u8.hash(hasher),
-                }
-            }
-            Node::Penalty(value) => value.hash(hasher),
-            Node::HList(box_node) | Node::VList(box_node) => {
-                box_node.width.raw().hash(hasher);
-                box_node.height.raw().hash(hasher);
-                box_node.depth.raw().hash(hasher);
-                box_node.shift.raw().hash(hasher);
-                box_node.glue_set.numerator().hash(hasher);
-                box_node.glue_set.denominator().hash(hasher);
-                box_node.glue_sign.hash(hasher);
-                box_node.glue_order.hash(hasher);
-                self.testing_hash_node_list_content_bounded(box_node.children, hasher, depth + 1);
-            }
-            Node::MathOn(_)
-            | Node::MathOff(_)
-            | Node::Direction(_)
-            | Node::MathNoad(_)
-            | Node::FractionNoad(_)
-            | Node::MathStyle(_)
-            | Node::MathChoice(_)
-            | Node::MathList(_)
-            | Node::Nonscript
-            | Node::Lig { .. }
-            | Node::Rule { .. }
-            | Node::Unset(_)
-            | Node::Disc { .. }
-            | Node::Mark { .. }
-            | Node::Ins { .. }
-            | Node::Whatsit(_)
-            | Node::Adjust(_) => {
-                // TODO(M3): replace this test/shadow fallback before using
-                // node content hashes for convergence. Debug formatting
-                // includes child NodeListId spans for some variants, which is
-                // deterministic under replay but not semantic content.
-                format!("{node:?}").hash(hasher);
-            }
         }
     }
 
@@ -3183,5 +2968,3 @@ impl Default for Stores {
 
 #[cfg(test)]
 mod tests;
-#[cfg(any(test, feature = "testing", feature = "shadow"))]
-use crate::cell::BankTag;

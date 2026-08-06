@@ -4595,29 +4595,6 @@ impl World {
         effects.saturating_add(artifacts)
     }
 
-    #[cfg(any(test, feature = "testing", feature = "shadow"))]
-    #[must_use]
-    pub(crate) fn testing_state_hash(&self) -> u64 {
-        use ahash::AHasher;
-        use std::hash::{Hash, Hasher};
-
-        let mut hasher = AHasher::default();
-        self.effect_base.hash(&mut hasher);
-        self.effects.hash(&mut hasher);
-        self.stream_bufs.hash(&mut hasher);
-        self.committed_write_streams.hash(&mut hasher);
-        self.committed_output_paths.hash(&mut hasher);
-        self.rng.hash(&mut hasher);
-        self.pdf_rng.hash(&mut hasher);
-        self.pdf_time_micros.hash(&mut hasher);
-        self.pdf_timer_origin_micros.hash(&mut hasher);
-        self.job_clock.hash(&mut hasher);
-        self.shell_escape_policy.hash(&mut hasher);
-        self.inputs.hash(&mut hasher);
-        self.shell_escapes.hash(&mut hasher);
-        hasher.finish()
-    }
-
     #[must_use]
     pub(crate) fn state_hash_cursor(&self) -> WorldStateHashCursor {
         WorldStateHashCursor {

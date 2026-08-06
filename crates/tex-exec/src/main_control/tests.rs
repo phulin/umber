@@ -1953,7 +1953,7 @@ fn etex_raw_font_character_enquiry_loaded_format_checkpoint_retry_is_atomic() {
             .expect("raw font enquiry recovers"),
         MainControlStep::Continue
     );
-    let first_hash = stores.testing_state_hash();
+    let first_hash = stores.snapshot().state_hash();
     let first_output = terminal_text(&stores);
     assert!(first_output.contains("You can't use `\\fontcharwd' in vertical mode"));
 
@@ -1966,7 +1966,7 @@ fn etex_raw_font_character_enquiry_loaded_format_checkpoint_retry_is_atomic() {
             .expect("raw font enquiry retry recovers"),
         MainControlStep::Continue
     );
-    assert_eq!(stores.testing_state_hash(), first_hash);
+    assert_eq!(stores.snapshot().state_hash(), first_hash);
     assert_eq!(terminal_text(&stores), first_output);
 }
 
@@ -2032,7 +2032,7 @@ fn etex_parshape_enquiry_loaded_format_checkpoint_retry_is_atomic() {
             .expect("raw parshape enquiry recovers"),
         MainControlStep::Continue
     );
-    let first_hash = stores.testing_state_hash();
+    let first_hash = stores.snapshot().state_hash();
     let first_output = terminal_text(&stores);
     assert!(first_output.contains("You can't use `\\parshapelength' in vertical mode"));
 
@@ -2045,7 +2045,7 @@ fn etex_parshape_enquiry_loaded_format_checkpoint_retry_is_atomic() {
             .expect("raw parshape enquiry retry recovers"),
         MainControlStep::Continue
     );
-    assert_eq!(stores.testing_state_hash(), first_hash);
+    assert_eq!(stores.snapshot().state_hash(), first_hash);
     assert_eq!(terminal_text(&stores), first_output);
 }
 
@@ -3004,7 +3004,7 @@ fn incompatible_unbox_commands_preserve_registers_and_replay_state() {
     run_to_end(&mut control, &mut stores);
     assert_eq!(stores.box_reg(0), vbox);
     assert_eq!(stores.box_reg(1), hbox);
-    let first_hash = stores.testing_state_hash();
+    let first_hash = stores.snapshot().state_hash();
 
     control
         .restore_checkpoint(&checkpoint, &mut stores)
@@ -3012,7 +3012,7 @@ fn incompatible_unbox_commands_preserve_registers_and_replay_state() {
     run_to_end(&mut control, &mut stores);
     assert_eq!(stores.box_reg(0), vbox);
     assert_eq!(stores.box_reg(1), hbox);
-    assert_eq!(stores.testing_state_hash(), first_hash);
+    assert_eq!(stores.snapshot().state_hash(), first_hash);
 }
 
 #[test]
@@ -3588,13 +3588,13 @@ fn pdf_graphics_reject_dvi_before_operands_and_retry_in_source_order() {
         let mut stores = Universe::new_with_plain_catcodes();
         let mut control = pdftex_graphics_control(&mut stores);
         register_source(&mut control, source);
-        let state_before = stores.testing_state_hash();
+        let state_before = stores.snapshot().state_hash();
 
         assert!(matches!(
             control.step(&mut stores),
             Err(ExecError::PdfExtensionInDviMode(name)) if name == primitive
         ));
-        assert_eq!(stores.testing_state_hash(), state_before);
+        assert_eq!(stores.snapshot().state_hash(), state_before);
         assert!(control.modes.current_list().nodes().is_empty());
 
         stores.set_int_param_global(IntParam::PDF_OUTPUT, 1);
@@ -3983,13 +3983,13 @@ fn pdf_reference_object_rejects_dvi_before_scan_validation_or_list_mutation() {
     assert_eq!(object.raw(), 1);
     let mut control = pdftex_object_control(&mut stores);
     register_source(&mut control, br"\pdfrefobj 1");
-    let state_before = stores.testing_state_hash();
+    let state_before = stores.snapshot().state_hash();
 
     assert!(matches!(
         control.step(&mut stores),
         Err(ExecError::PdfExtensionInDviMode("pdfrefobj"))
     ));
-    assert_eq!(stores.testing_state_hash(), state_before);
+    assert_eq!(stores.snapshot().state_hash(), state_before);
     assert_eq!(stores.pdf_raw_objects().len(), 1);
     assert!(control.modes.current_list().nodes().is_empty());
 
@@ -4015,13 +4015,13 @@ fn pdf_reference_object_dvi_error_precedes_invalid_object_validation() {
     let mut stores = Universe::new_with_plain_catcodes();
     let mut control = pdftex_object_control(&mut stores);
     register_source(&mut control, br"\pdfrefobj 99");
-    let state_before = stores.testing_state_hash();
+    let state_before = stores.snapshot().state_hash();
 
     assert!(matches!(
         control.step(&mut stores),
         Err(ExecError::PdfExtensionInDviMode("pdfrefobj"))
     ));
-    assert_eq!(stores.testing_state_hash(), state_before);
+    assert_eq!(stores.snapshot().state_hash(), state_before);
     assert!(stores.pdf_raw_objects().is_empty());
     assert!(control.modes.current_list().nodes().is_empty());
 
@@ -4047,13 +4047,13 @@ fn pdf_form_family_rejects_dvi_before_operands_allocation_and_list_mutation() {
         &mut create,
         br"\pdfxform attr{/Subtype /Form} resources{/ProcSet [/PDF]} 7",
     );
-    let state_before = create_stores.testing_state_hash();
+    let state_before = create_stores.snapshot().state_hash();
 
     assert!(matches!(
         create.step(&mut create_stores),
         Err(ExecError::PdfExtensionInDviMode("pdfxform"))
     ));
-    assert_eq!(create_stores.testing_state_hash(), state_before);
+    assert_eq!(create_stores.snapshot().state_hash(), state_before);
     assert!(create_stores.box_reg(7).is_some());
     assert!(create_stores.pdf_forms().next().is_none());
     assert_eq!(create_stores.pdf_last_form(), 0);
@@ -4091,13 +4091,13 @@ fn pdf_form_family_rejects_dvi_before_operands_allocation_and_list_mutation() {
     let mut reference = pdftex_form_control(&mut reference_stores);
     reference.modes.push(Mode::Math).expect("test mode push");
     register_source(&mut reference, br"\pdfrefxform 1");
-    let state_before = reference_stores.testing_state_hash();
+    let state_before = reference_stores.snapshot().state_hash();
 
     assert!(matches!(
         reference.step(&mut reference_stores),
         Err(ExecError::PdfExtensionInDviMode("pdfrefxform"))
     ));
-    assert_eq!(reference_stores.testing_state_hash(), state_before);
+    assert_eq!(reference_stores.snapshot().state_hash(), state_before);
     assert!(reference.modes.current_list().nodes().is_empty());
 
     reference_stores.set_int_param_global(IntParam::PDF_OUTPUT, 1);
@@ -4124,13 +4124,13 @@ fn immediate_pdf_form_rejects_dvi_before_options_or_allocation() {
         &mut control,
         br"\immediate\pdfxform attr{/A 1} resources{/R 2} 9",
     );
-    let state_before = stores.testing_state_hash();
+    let state_before = stores.snapshot().state_hash();
 
     assert!(matches!(
         control.step(&mut stores),
         Err(ExecError::PdfExtensionInDviMode("pdfxform"))
     ));
-    assert_eq!(stores.testing_state_hash(), state_before);
+    assert_eq!(stores.snapshot().state_hash(), state_before);
     assert!(stores.box_reg(9).is_some());
     assert!(stores.pdf_forms().next().is_none());
 
@@ -4156,13 +4156,16 @@ fn pdf_form_dvi_error_precedes_invalid_register_void_box_and_missing_object() {
     let mut invalid_register_stores = crate::test_harness::universe_with_plain_catcodes();
     let mut invalid_register = pdftex_form_control(&mut invalid_register_stores);
     register_source(&mut invalid_register, br"\pdfxform 40000");
-    let state_before = invalid_register_stores.testing_state_hash();
+    let state_before = invalid_register_stores.snapshot().state_hash();
 
     assert!(matches!(
         invalid_register.step(&mut invalid_register_stores),
         Err(ExecError::PdfExtensionInDviMode("pdfxform"))
     ));
-    assert_eq!(invalid_register_stores.testing_state_hash(), state_before);
+    assert_eq!(
+        invalid_register_stores.snapshot().state_hash(),
+        state_before
+    );
     assert!(terminal_text(&invalid_register_stores).is_empty());
     assert!(invalid_register_stores.pdf_forms().next().is_none());
 
@@ -4218,20 +4221,20 @@ fn pdf_image_create_rejects_dvi_before_operands_allocation_or_resource_lookup() 
         &mut control,
         br"\pdfximage width 10pt height 20pt depth 3pt attr{/Interpolate true} page 2 mediabox {image.pdf}",
     );
-    let state_before = stores.testing_state_hash();
+    let state_before = stores.snapshot().state_hash();
 
     assert!(matches!(
         control.advance(&mut stores),
         Err(ExecError::Captured { error, .. })
             if matches!(*error, ExecError::PdfExtensionInDviMode("pdfximage"))
     ));
-    assert_eq!(stores.testing_state_hash(), state_before);
+    assert_eq!(stores.snapshot().state_hash(), state_before);
     assert!(stores.pdf_external_images().is_empty());
     assert_eq!(stores.pdf_last_external_image(), None);
     assert!(control.modes.current_list().nodes().is_empty());
 
     stores.set_int_param_global(IntParam::PDF_OUTPUT, 1);
-    let pdf_state_before = stores.testing_state_hash();
+    let pdf_state_before = stores.snapshot().state_hash();
     let request = match control
         .advance(&mut stores)
         .expect("PDF image request suspends")
@@ -4239,7 +4242,7 @@ fn pdf_image_create_rejects_dvi_before_operands_allocation_or_resource_lookup() 
         StepResult::Suspended(ResourceNeed::PdfImage { request }) => request,
         other => panic!("expected image suspension, got {other:?}"),
     };
-    assert_eq!(stores.testing_state_hash(), pdf_state_before);
+    assert_eq!(stores.snapshot().state_hash(), pdf_state_before);
     assert!(stores.pdf_external_images().is_empty());
     assert_eq!(request.name, "image.pdf");
     assert_eq!(request.width, Some(Scaled::from_raw(10 * Scaled::UNITY)));
@@ -4290,18 +4293,18 @@ fn immediate_pdf_image_uses_the_same_preflight_and_transactional_retry() {
         &mut control,
         br"\immediate\pdfximage width 7pt height 8pt depth 2pt attr{/Intent /RelativeColorimetric} page 3 cropbox {immediate.pdf}",
     );
-    let state_before = stores.testing_state_hash();
+    let state_before = stores.snapshot().state_hash();
 
     assert!(matches!(
         control.advance(&mut stores),
         Err(ExecError::PdfExtensionInDviMode("pdfximage"))
     ));
-    assert_eq!(stores.testing_state_hash(), state_before);
+    assert_eq!(stores.snapshot().state_hash(), state_before);
     assert!(stores.pdf_external_images().is_empty());
     assert!(control.modes.current_list().nodes().is_empty());
 
     stores.set_int_param_global(IntParam::PDF_OUTPUT, 1);
-    let pdf_state_before = stores.testing_state_hash();
+    let pdf_state_before = stores.snapshot().state_hash();
     let request = match control
         .advance(&mut stores)
         .expect("immediate image suspends")
@@ -4309,7 +4312,7 @@ fn immediate_pdf_image_uses_the_same_preflight_and_transactional_retry() {
         StepResult::Suspended(ResourceNeed::PdfImage { request }) => request,
         other => panic!("expected immediate image suspension, got {other:?}"),
     };
-    assert_eq!(stores.testing_state_hash(), pdf_state_before);
+    assert_eq!(stores.snapshot().state_hash(), pdf_state_before);
     assert_eq!(request.name, "immediate.pdf");
     assert_eq!(request.width, Some(Scaled::from_raw(7 * Scaled::UNITY)));
     assert_eq!(request.height, Some(Scaled::from_raw(8 * Scaled::UNITY)));
@@ -4351,7 +4354,7 @@ fn pdf_image_reference_preflights_all_modes_before_scan_lookup_or_list_mutation(
             control.modes.push(mode).expect("test mode push");
         }
         register_source(&mut control, br"\pdfrefximage 99");
-        let state_before = stores.testing_state_hash();
+        let state_before = stores.snapshot().state_hash();
 
         assert!(
             matches!(
@@ -4361,7 +4364,11 @@ fn pdf_image_reference_preflights_all_modes_before_scan_lookup_or_list_mutation(
             ),
             "mode {mode:?}"
         );
-        assert_eq!(stores.testing_state_hash(), state_before, "mode {mode:?}");
+        assert_eq!(
+            stores.snapshot().state_hash(),
+            state_before,
+            "mode {mode:?}"
+        );
         assert!(control.modes.current_list().nodes().is_empty());
         assert!(terminal_text(&stores).is_empty());
     }
@@ -4383,14 +4390,14 @@ fn pdf_image_reference_preflights_all_modes_before_scan_lookup_or_list_mutation(
     let mut control = pdftex_image_control(&mut stores);
     control.modes.push(Mode::Math).expect("test mode push");
     register_source(&mut control, br"\pdfrefximage 1");
-    let state_before = stores.testing_state_hash();
+    let state_before = stores.snapshot().state_hash();
 
     assert!(matches!(
         control.advance(&mut stores),
         Err(ExecError::Captured { error, .. })
             if matches!(*error, ExecError::PdfExtensionInDviMode("pdfrefximage"))
     ));
-    assert_eq!(stores.testing_state_hash(), state_before);
+    assert_eq!(stores.snapshot().state_hash(), state_before);
     assert!(control.modes.current_list().nodes().is_empty());
 
     stores.set_int_param_global(IntParam::PDF_OUTPUT, 1);
@@ -4501,7 +4508,7 @@ fn pdf_link_vertical_mode_rejects_before_operand_scan_without_mutation() {
         &mut control,
         br"\pdfstartlink width 5pt definitely-not-an-action\relax",
     );
-    let state_before = stores.testing_state_hash();
+    let state_before = stores.snapshot().state_hash();
 
     let error = control
         .step(&mut stores)
@@ -4514,7 +4521,7 @@ fn pdf_link_vertical_mode_rejects_before_operand_scan_without_mutation() {
         error.to_string(),
         "pdfTeX error (ext1): \\pdfstartlink cannot be used in vertical mode"
     );
-    assert_eq!(stores.testing_state_hash(), state_before);
+    assert_eq!(stores.snapshot().state_hash(), state_before);
     assert!(control.modes.current_list().nodes().is_empty());
 
     control
@@ -4527,7 +4534,7 @@ fn pdf_link_vertical_mode_rejects_before_operand_scan_without_mutation() {
             "pdfTeX error (ext1): action type missing"
         ))
     ));
-    assert_eq!(stores.testing_state_hash(), state_before);
+    assert_eq!(stores.snapshot().state_hash(), state_before);
     assert!(control.modes.current_list().nodes().is_empty());
 }
 
@@ -4745,7 +4752,7 @@ fn pdf_destination_grouping_and_checkpoint_restore_preserve_node_ownership() {
         );
     }
     assert_eq!(stores.group_depth(), 0);
-    let first_hash = stores.testing_state_hash();
+    let first_hash = stores.snapshot().state_hash();
     assert!(matches!(
         control.modes.current_list().nodes(),
         [Node::Whatsit(Whatsit::PdfDestination(destination))]
@@ -4769,7 +4776,7 @@ fn pdf_destination_grouping_and_checkpoint_restore_preserve_node_ownership() {
             MainControlStep::Continue
         );
     }
-    assert_eq!(stores.testing_state_hash(), first_hash);
+    assert_eq!(stores.snapshot().state_hash(), first_hash);
     assert!(matches!(
         control.modes.current_list().nodes(),
         [Node::Whatsit(Whatsit::PdfDestination(destination))]
@@ -4905,7 +4912,7 @@ fn pdf_outline_checkpoint_restore_replays_identical_ledger_state() {
         control.step(&mut stores).expect("outline command"),
         MainControlStep::Continue
     );
-    let first_hash = stores.testing_state_hash();
+    let first_hash = stores.snapshot().state_hash();
     let first_objects = {
         let first = stores.pdf_outlines()[0];
         (
@@ -4933,7 +4940,7 @@ fn pdf_outline_checkpoint_restore_replays_identical_ledger_state() {
         ),
         first_objects
     );
-    assert_eq!(stores.testing_state_hash(), first_hash);
+    assert_eq!(stores.snapshot().state_hash(), first_hash);
 }
 
 #[test]
@@ -6497,7 +6504,7 @@ fn etex_penalty_array_assignment_restores_checkpoint_and_retries_atomically() {
         MainControlStep::Continue
     );
     assert_eq!(stores.penalty_array(PenaltyArrayKind::Club), vec![7, 5]);
-    let assigned_hash = stores.testing_state_hash();
+    let assigned_hash = stores.snapshot().state_hash();
 
     control
         .restore_checkpoint(&checkpoint, &mut stores)
@@ -6509,7 +6516,7 @@ fn etex_penalty_array_assignment_restores_checkpoint_and_retries_atomically() {
         control.step(&mut stores).expect("retried assignment"),
         MainControlStep::Continue
     );
-    assert_eq!(stores.testing_state_hash(), assigned_hash);
+    assert_eq!(stores.snapshot().state_hash(), assigned_hash);
     assert_eq!(stores.penalty_array(PenaltyArrayKind::Club), vec![7, 5]);
     assert_eq!(
         control.step(&mut stores).expect("following assignment"),
@@ -6683,7 +6690,7 @@ fn unavailable_input_diagnostic_site_survives_failed_step_retry() {
         .capabilities_mut()
         .mark_input_unavailable("absent.tex");
     register_source(&mut control, br"\input absent");
-    let state_before = stores.testing_state_hash();
+    let state_before = stores.snapshot().state_hash();
     let provenance_before = stores.provenance_stats();
 
     let first = control
@@ -6695,7 +6702,7 @@ fn unavailable_input_diagnostic_site_survives_failed_step_retry() {
         .expect("triggering input command has an origin");
     assert!(first.as_fatal().is_some());
     assert!(first.frozen_diagnostic_origin().is_some());
-    assert_eq!(stores.testing_state_hash(), state_before);
+    assert_eq!(stores.snapshot().state_hash(), state_before);
     assert_eq!(stores.provenance_stats(), provenance_before);
 
     let second = control
@@ -6706,7 +6713,7 @@ fn unavailable_input_diagnostic_site_survives_failed_step_retry() {
         Some(first_origin)
     );
     assert!(second.frozen_diagnostic_origin().is_some());
-    assert_eq!(stores.testing_state_hash(), state_before);
+    assert_eq!(stores.snapshot().state_hash(), state_before);
     assert_eq!(stores.provenance_stats(), provenance_before);
 }
 
@@ -7501,7 +7508,7 @@ fn etex_showbox_invalid_register_loaded_format_checkpoint_retry_recovers_to_zero
         MainControlStep::Continue
     );
     assert_eq!(stores.count(0), 0, "following assignment remains unread");
-    let first_hash = stores.testing_state_hash();
+    let first_hash = stores.snapshot().state_hash();
     let first_output = terminal_text(&stores);
     assert!(
         first_output.contains("Bad register code (-1)"),
@@ -7518,7 +7525,7 @@ fn etex_showbox_invalid_register_loaded_format_checkpoint_retry_recovers_to_zero
             .expect("invalid showbox register retries identically"),
         MainControlStep::Continue
     );
-    assert_eq!(stores.testing_state_hash(), first_hash);
+    assert_eq!(stores.snapshot().state_hash(), first_hash);
     assert_eq!(terminal_text(&stores), first_output);
 
     run_to_end(&mut control, &mut stores);
@@ -8282,7 +8289,7 @@ fn opentype_only_math_family_rejection_precedes_state_mutation() {
         selection,
     ));
     let family_before = stores.math_family_font(MathFontSize::Text, 0);
-    let state_before = stores.testing_state_hash();
+    let state_before = stores.snapshot().state_hash();
 
     let error = assign_math_family_font(&mut stores, MathFontSize::Text, 0, unsupported, true)
         .expect_err("OpenType-only font cannot enter a classic math family");
@@ -8292,7 +8299,7 @@ fn opentype_only_math_family_rejection_precedes_state_mutation() {
         stores.math_family_font(MathFontSize::Text, 0),
         family_before
     );
-    assert_eq!(stores.testing_state_hash(), state_before);
+    assert_eq!(stores.snapshot().state_hash(), state_before);
     assign_math_family_font(
         &mut stores,
         MathFontSize::Text,
@@ -8420,7 +8427,7 @@ fn frozen_page_scalar_rejection_is_checkpoint_atomic() {
         .expect("frozen page checkpoint captures");
 
     run_to_end(&mut control, &mut stores);
-    let first_hash = stores.testing_state_hash();
+    let first_hash = stores.snapshot().state_hash();
     let first_output = terminal_text(&stores);
     assert_eq!(
         stores.page_dimension(PageDimension::Goal).raw(),
@@ -8432,7 +8439,7 @@ fn frozen_page_scalar_rejection_is_checkpoint_atomic() {
         .restore_checkpoint(&checkpoint, &mut stores)
         .expect("frozen page checkpoint restores");
     run_to_end(&mut control, &mut stores);
-    assert_eq!(stores.testing_state_hash(), first_hash);
+    assert_eq!(stores.snapshot().state_hash(), first_hash);
     assert_eq!(terminal_text(&stores), first_output);
 }
 
