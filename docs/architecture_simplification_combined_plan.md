@@ -168,6 +168,50 @@ contract is [Canonical resource identity and lifecycle](resource_lifecycle.md).
 
 **Proof.** Preserve request identity and ordering, required-versus-probe promotion, local/cache/remote precedence, offline behavior, exact-versus-bounded length, hash validation, retries, bounded workers, cancellation publication barriers, VFS isolation, revision rollback, and WASM asynchronous delivery.
 
+**Implemented authority and accounting.** `umber_vfs::ResourceLifecycle` is the
+sole ordered admission-transition authority used by file, OpenType, and PK
+callers. `umber_fetch::VerifiedDownloader` is the sole native bounded transport,
+retry, cancellation, length, and digest authority; `BlobStore::resolve_entry`
+is the sole per-key verification, quarantine, migration, construction, and
+publication transition; and `DistributionClient` remains the native
+source-selection facade over them. Native scheduling stays in `umber`, browser
+scheduling stays in authored JavaScript, domain validation stays with its
+domain owner, and revision publication stays in `tex-incr`. The generic
+lifecycle and downloader remain small independent state machines rather than a
+resolver that absorbs those owners.
+
+The duplicate object and manifest download/read/verify loops, four parallel
+font/PK positive and negative admission maps, and the non-driving exported Rust
+`OutputResourcePlan` and `CompositeResourceResolver` families were deleted.
+The API decision was to provide no deprecated Rust adapter because neither
+family had a production Rust caller. The authored JavaScript composite resolver
+remains because it drives the live asynchronous browser protocol; it is not a
+second Rust or engine-state authority.
+
+Exact `--numstat` accounting across implementation commits `fbdaaa997`,
+`cb8cd4a96`, `c576d4fb9`, `8e5af7538`, `3923f4167`, and `d5f896aa8` is 1,005
+additions and 1,307 deletions in production Rust (302-line net reduction), plus
+74 additions and 440 deletions in authored Rust proof tests (366-line net
+reduction). Authored Rust therefore totals 1,079 additions and 1,747 deletions,
+or 668 lines of net deletion. Declarative configuration adds four lines;
+documentation and repository maps add 421 and delete 43. The implementation
+change totals 1,504 additions and 1,790 deletions, or 286 lines of net deletion.
+The linked missing-review repair `db0473664` adds 561 documentation lines, so
+all five children together total 2,065 additions and 1,790 deletions, or 275
+lines of net growth. No generated source or binary asset changed. The authored
+reduction is below the 1,200-line forecast floor; the remaining opportunity or
+explicit forecast revision is tracked by `umber2-vgjr.22` rather than credited
+here.
+
+Exact implementation tree `d5f896aa82e51d39f11b9112917b69060d480c74`
+passed uncapped focused, full-workspace, and wasm32 `--no-run` builds; the full
+native suite under a 1 GiB hard cap; the two real Node WASM lifecycle tests and
+89 JavaScript unit tests under a 1 GiB hard cap; and all four `scripts/check.sh`
+gates. The tests cover offline/cache/remote acquisition, retry and cancellation,
+atomic batch admission, revision rollback, bibliography pass isolation, and
+WASM delivery. Documentation repair tree `db0473664` additionally passed the
+repository-wide local-Markdown-target audit and all four check gates.
+
 **Dependencies.** The contract precedes program 13's browser orchestration and program 17's VFS contraction. Do not wait for API retirement to begin the canonical internal lifecycle.
 
 ## 4. Retire paragraph replay, then establish one revision transaction and effect log
