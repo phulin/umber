@@ -152,6 +152,10 @@ fn native_wire_names_round_trip_every_wasm_value() {
         FileKind::BibAux,
         FileKind::ClassicBibData,
         FileKind::BibStyle,
+        FileKind::VirtualFont,
+        FileKind::PdfFontMap,
+        FileKind::PdfEncoding,
+        FileKind::PdfFontProgram,
     ] {
         assert_eq!(FileKind::from_wire_name(kind.wire_name()), Some(kind));
     }

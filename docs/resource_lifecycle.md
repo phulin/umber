@@ -1,9 +1,11 @@
 # Canonical resource identity and lifecycle
 
-Status: normative target contract for Beads epic `umber2-vgjr.3`. Existing
-file, font, PK-font, distribution, native, and WebAssembly identities are
-compatibility inputs. Follow-on issues migrate their owners; this contract does
-not create a second resolver or scheduler.
+Status: normative contract for Beads epic `umber2-vgjr.3`. The shared ordered
+admission state machine and file, OpenType-font, and PK-font production callers
+are implemented. Domain validation remains at the typed compile-session
+boundary. Existing distribution, native, and WebAssembly identities are
+compatibility inputs. This contract does not create a second resolver or
+scheduler.
 
 This document defines the typed lifecycle connecting engine resource needs,
 VFS admission, verified acquisition, incremental candidates, bibliography
@@ -126,6 +128,15 @@ pub enum AdmissionState {
 authorization, not a published binding. `Admitted` and `Unavailable` are
 immutable session-history bindings that survive retries and revisions and
 cannot transition into each other.
+
+`umber_vfs::ResourceLifecycle` is the shared implementation of these
+transitions. `ProjectWorkspace` specializes it with `FileRequestKey` and
+canonical resolved paths. Compile and project sessions specialize it with the
+typed OpenType and PK identities plus their validated receipts. Direct
+compilation, retained retries, multipass TeX and bibliography closure, and
+WebAssembly-delivered responses therefore use the same transition authority.
+Starting a pass or retry batch cancels only the previous outstanding
+authorizations; immutable bindings remain available to later passes.
 
 | From        | Event                                                   | To          |
 | ----------- | ------------------------------------------------------- | ----------- |

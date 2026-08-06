@@ -4,6 +4,7 @@ use std::fmt;
 use std::path::Path;
 
 mod file;
+mod lifecycle;
 mod limits;
 mod resource;
 mod snapshot;
@@ -13,6 +14,7 @@ mod transaction;
 pub use file::{
     BuildId, FileContentId, FileOrigin, PathBindingId, ProducerId, StageId, VirtualFile,
 };
+pub use lifecycle::{AdmissionError, AdmissionState, RequestIntent, ResourceLifecycle};
 pub use limits::{VfsLimitError, VfsLimitKind, VfsLimits};
 pub use resource::{
     FileKind, FileRequest, FileRequestBatch, FileRequestKey, ProjectWorkspace, ProvisionError,

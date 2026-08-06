@@ -3,9 +3,9 @@ use std::fmt;
 use std::sync::Arc;
 
 use crate::{
-    BuildPlan, BuildTransaction, FileContentId, FileOrigin, ImmutableBindingError, LayerKind,
-    LayeredFileStorage, VfsLimitError, VfsLimitKind, VfsLimits, VfsSnapshot, VirtualFile,
-    VirtualPath,
+    AdmissionError, BuildPlan, BuildTransaction, FileContentId, FileOrigin, ImmutableBindingError,
+    LayerKind, LayeredFileStorage, ResourceLifecycle, VfsLimitError, VfsLimitKind, VfsLimits,
+    VfsSnapshot, VirtualFile, VirtualPath,
 };
 
 #[cfg(test)]
@@ -321,23 +321,6 @@ impl FileRequestBatch {
             prefetch_hints,
         }
     }
-
-    fn blocking_keys(&self) -> BTreeSet<FileRequestKey> {
-        self.required
-            .iter()
-            .chain(&self.probes)
-            .map(|request| request.key.clone())
-            .collect()
-    }
-
-    fn all_keys(&self) -> BTreeSet<FileRequestKey> {
-        self.required
-            .iter()
-            .chain(&self.probes)
-            .chain(&self.prefetch_hints)
-            .map(|request| request.key.clone())
-            .collect()
-    }
 }
 
 fn canonical_requests(requests: impl IntoIterator<Item = FileRequest>) -> Vec<FileRequest> {
@@ -475,12 +458,9 @@ impl std::error::Error for RetryError {}
 /// Immutable typed resource bindings and their deterministic accounting.
 #[derive(Clone, Debug, Default)]
 pub struct ResourceLedger {
-    files: BTreeMap<FileRequestKey, VirtualPath>,
-    unavailable: BTreeSet<FileRequestKey>,
+    lifecycle: ResourceLifecycle<FileRequestKey, VirtualPath>,
     user_bytes: usize,
     resolved_bytes: usize,
-    expected: BTreeSet<FileRequestKey>,
-    required: BTreeSet<FileRequestKey>,
     required_at_batch_start: usize,
 }
 
@@ -488,13 +468,13 @@ impl ResourceLedger {
     /// Returns the canonical path immutably selected for a typed request.
     #[must_use]
     pub fn resolved_path(&self, request: &FileRequestKey) -> Option<&VirtualPath> {
-        self.files.get(request)
+        self.lifecycle.admitted(request)
     }
 
     /// Reports an authoritative immutable negative binding.
     #[must_use]
     pub fn is_unavailable(&self, request: &FileRequestKey) -> bool {
-        self.unavailable.contains(request)
+        self.lifecycle.is_unavailable(request)
     }
 }
 
@@ -605,14 +585,19 @@ impl ProjectWorkspace {
     }
 
     pub fn expect(&mut self, batch: &FileRequestBatch) {
-        self.ledger.expected = batch.all_keys();
-        self.ledger.required = batch.blocking_keys();
+        self.ledger.lifecycle.begin_batch(
+            batch.required.iter().map(|request| request.key.clone()),
+            batch.probes.iter().map(|request| request.key.clone()),
+            batch
+                .prefetch_hints
+                .iter()
+                .map(|request| request.key.clone()),
+        );
         self.ledger.required_at_batch_start = self
             .ledger
-            .required
-            .iter()
-            .filter(|key| !self.ledger.files.contains_key(*key))
-            .filter(|key| !self.ledger.unavailable.contains(*key))
+            .lifecycle
+            .outstanding()
+            .filter(|(_, intent)| intent.is_blocking())
             .count();
     }
 
@@ -629,25 +614,27 @@ impl ProjectWorkspace {
         &mut self,
         request: FileRequestKey,
     ) -> Result<ProvisionOutcome, ProvisionError> {
-        if self.ledger.unavailable.contains(&request) {
+        if self.ledger.lifecycle.is_unavailable(&request) {
             return Ok(ProvisionOutcome::AlreadyPresent);
         }
-        if self.ledger.files.contains_key(&request) {
+        if self.ledger.lifecycle.admitted(&request).is_some() {
             return Err(ProvisionError::AvailabilityConflict { request });
-        }
-        if !self.ledger.required.contains(&request) {
-            return Err(ProvisionError::UnexpectedRequest(request));
         }
         self.limits.check(
             VfsLimitKind::ResolvedFiles,
-            self.ledger
-                .files
-                .len()
-                .saturating_add(self.ledger.unavailable.len())
-                .saturating_add(1),
+            self.ledger.lifecycle.binding_count().saturating_add(1),
         )?;
-        self.ledger.unavailable.insert(request);
-        Ok(ProvisionOutcome::Inserted)
+        self.ledger
+            .lifecycle
+            .admit_unavailable(request)
+            .map(|inserted| {
+                if inserted {
+                    ProvisionOutcome::Inserted
+                } else {
+                    ProvisionOutcome::AlreadyPresent
+                }
+            })
+            .map_err(map_admission)
     }
 
     /// Preserves the explicit native preload API while applying all generic checks.
@@ -693,7 +680,7 @@ impl ProjectWorkspace {
                 actual: content_id,
             });
         }
-        if let Some(existing_path) = self.ledger.files.get(&response.request) {
+        if let Some(existing_path) = self.ledger.lifecycle.admitted(&response.request) {
             let existing = self
                 .storage
                 .layer(LayerKind::ResolvedResource)
@@ -710,7 +697,7 @@ impl ProjectWorkspace {
                 incoming: content_id,
             });
         }
-        if self.ledger.unavailable.contains(&response.request) {
+        if self.ledger.lifecycle.is_unavailable(&response.request) {
             return Err(ProvisionError::AvailabilityConflict {
                 request: response.request,
             });
@@ -720,11 +707,7 @@ impl ProjectWorkspace {
         }
         self.limits.check(
             VfsLimitKind::ResolvedFiles,
-            self.ledger
-                .files
-                .len()
-                .saturating_add(self.ledger.unavailable.len())
-                .saturating_add(1),
+            self.ledger.lifecycle.binding_count().saturating_add(1),
         )?;
         let shared =
             if let Some(existing) = self.storage.layer(LayerKind::ResolvedResource).get(&path) {
@@ -773,17 +756,26 @@ impl ProjectWorkspace {
                 )
                 .expect("new resolved paths satisfy layer ownership");
         }
-        self.ledger.files.insert(response.request, path);
+        if require_expected {
+            self.ledger
+                .lifecycle
+                .admit(response.request, path)
+                .map_err(map_admission)?;
+        } else {
+            self.ledger
+                .lifecycle
+                .restore(response.request, path)
+                .map_err(map_admission)?;
+        }
         Ok(ProvisionOutcome::Inserted)
     }
 
     pub fn retry(&mut self) -> Result<(), RetryError> {
         let remaining = self
             .ledger
-            .required
-            .iter()
-            .filter(|key| !self.ledger.files.contains_key(*key))
-            .filter(|key| !self.ledger.unavailable.contains(*key))
+            .lifecycle
+            .outstanding()
+            .filter(|(_, intent)| intent.is_blocking())
             .count();
         if remaining == self.ledger.required_at_batch_start && remaining != 0 {
             return Err(RetryError::NoProgress);
@@ -794,17 +786,17 @@ impl ProjectWorkspace {
 
     #[must_use]
     pub fn get(&self, key: &FileRequestKey) -> Option<&VirtualFile> {
-        let path = self.ledger.files.get(key)?;
+        let path = self.ledger.lifecycle.admitted(key)?;
         self.storage.layer(LayerKind::ResolvedResource).get(path)
     }
 
     #[must_use]
     pub fn is_unavailable(&self, key: &FileRequestKey) -> bool {
-        self.ledger.unavailable.contains(key)
+        self.ledger.lifecycle.is_unavailable(key)
     }
 
     pub fn files(&self) -> impl Iterator<Item = (&FileRequestKey, &VirtualFile)> {
-        self.ledger.files.iter().map(|(key, path)| {
+        self.ledger.lifecycle.admitted_entries().map(|(key, path)| {
             let file = self
                 .storage
                 .layer(LayerKind::ResolvedResource)
@@ -816,12 +808,12 @@ impl ProjectWorkspace {
 
     #[must_use]
     pub fn len(&self) -> usize {
-        self.ledger.files.len() + self.ledger.unavailable.len()
+        self.ledger.lifecycle.binding_count()
     }
 
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.ledger.files.is_empty() && self.ledger.unavailable.is_empty()
+        self.ledger.lifecycle.binding_count() == 0
     }
 
     #[must_use]
@@ -830,12 +822,16 @@ impl ProjectWorkspace {
     }
 
     pub fn clear(&mut self) {
-        self.ledger.files.clear();
-        self.ledger.unavailable.clear();
+        self.ledger.lifecycle.clear();
         self.storage.clear_layer(LayerKind::ResolvedResource);
         self.ledger.resolved_bytes = 0;
-        self.ledger.expected.clear();
-        self.ledger.required.clear();
+        self.ledger.required_at_batch_start = 0;
+    }
+
+    /// Cancels candidate-local response authorizations without changing
+    /// immutable positive or negative session bindings.
+    pub fn cancel_outstanding_resources(&mut self) {
+        self.ledger.lifecycle.cancel_outstanding();
         self.ledger.required_at_batch_start = 0;
     }
 
@@ -847,10 +843,10 @@ impl ProjectWorkspace {
     }
 
     fn require_expected(&self, request: &FileRequestKey) -> Result<(), ProvisionError> {
-        if self.ledger.expected.contains(request) {
+        if self.ledger.lifecycle.is_outstanding(request) {
             return Ok(());
         }
-        if let Some(expected) = self.ledger.expected.iter().find(|expected| {
+        if let Some((expected, _)) = self.ledger.lifecycle.outstanding().find(|(expected, _)| {
             expected.domain == request.domain && expected.normalized_name == request.normalized_name
         }) {
             return Err(ProvisionError::KindMismatch {
@@ -859,6 +855,20 @@ impl ProjectWorkspace {
             });
         }
         Err(ProvisionError::UnexpectedRequest(request.clone()))
+    }
+}
+
+fn map_admission(error: AdmissionError<FileRequestKey>) -> ProvisionError {
+    match error {
+        AdmissionError::Unexpected(request) | AdmissionError::NegativeHint(request) => {
+            ProvisionError::UnexpectedRequest(request)
+        }
+        AdmissionError::AvailabilityConflict(request) => {
+            ProvisionError::AvailabilityConflict { request }
+        }
+        AdmissionError::BindingConflict(_) => {
+            unreachable!("file rebinding conflicts are diagnosed before lifecycle admission")
+        }
     }
 }
 
