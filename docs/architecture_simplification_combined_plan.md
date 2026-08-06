@@ -510,6 +510,47 @@ attempt.
 
 **Dependencies.** Program 3's request/admission lifecycle must land first. The roadmap decision belongs in the governing VFS and persistent-session documents.
 
+**Implemented authority and accounting.** The roadmap decision in
+`c0af1fa22` keeps TeX--bibliography--TeX pass scheduling, convergence, and
+private complete-set assembly in `LatexProjectSession`; the VFS receives only
+the final set. Commits `78706f0e5` and `b2b404fc3` implement one
+`ProjectWorkspace`-owned `GeneratedTransaction`. Its private candidate map is
+the sole pending-publication authority, while the durable copy-on-write
+generation has exactly three private, differently typed maps for user,
+resolved-resource, and accepted-generated files. Their narrow constructors
+enforce root and origin shape. No second scheduling, pending-map, or generic
+storage authority remains.
+
+The retired predecessor comprises `VirtualFs`, `BuildPlan`,
+`BuildTransaction`, `StageTransaction`, declared replacement and
+invalidation, producer/build/stage identities, public `LayerKind`,
+`FileLayer`, and `LayeredFileStorage`, and their test-only multistage and
+generic-construction fixtures. Repository caller inventory proved every
+production VFS build had one stage before deletion. Retained Rust and WASM
+session adapters keep their attempt, resource, output, and retry contracts;
+there is no deprecated multistage shim or pass-plan wire type.
+
+The two implementation commits add 385 and delete 949 production Rust lines
+(564-line net deletion), add 321 and delete 629 Rust test lines (308-line net
+deletion), and add 86 and delete 98 documentation/guidance lines (12-line net
+deletion). They therefore add 792 and delete 1,676 authored lines, an 884-line
+net deletion inside the forecast range. Including the decision commit, the
+complete program adds 706 and deletes 1,578 Rust lines (872-line net deletion)
+and adds 179 and deletes 111 documentation/guidance lines (68-line net
+growth), for 885 additions, 1,689 deletions, and 804 lines of total net
+deletion. Declarative/generated records and binary assets are unchanged.
+
+Exact combined implementation tree
+`b2b404fc32b04c0926e99750eab5c30dbff21b45` passed focused VFS and production
+caller tests after an uncapped `--no-run` build and under `MemoryMax=512M`.
+The complete native workspace passed after its uncapped `--no-run` build and
+under `MemoryMax=1G`. The wasm32 target, all 89 authored Node tests, and the
+optimized packaged Node TeX--bibliography--TeX lifecycle passed under
+`MemoryMax=1G`; all four `scripts/check.sh` gates passed with one Cargo build
+job under the same cap. The unavailable browser-driver environment remains
+tracked separately by `umber2-5zie` and does not replace the passing Node
+lifecycle evidence.
+
 ## 18. Retire package, migration, benchmark, and prototype surfaces only by decision
 
 **Outcome.** After programs 2 and 12 settle ownership, fixturegen contains the minimal reference kernel, parity is comparison-only, and `refexec` may become a compatibility command or retire. Completed fixture-layout migration commands may retire only after their documented compatibility is dropped. Benchmarks and traces are classified as active gate, diagnostic, or historical; only historical surfaces are deleted.

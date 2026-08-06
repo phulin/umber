@@ -545,7 +545,7 @@ Required property tests include:
 
 - arbitrary invalid paths never escape the two public roots;
 - response permutation and chunking do not alter the accepted workspace;
-- a discarded stage or build cannot change accepted reads;
+- a discarded generated transaction cannot change accepted reads;
 - accepting then snapshotting is equivalent to constructing the same layers
   directly;
 - content identity is independent of registration and allocation order;
@@ -557,10 +557,11 @@ The end-to-end gate compares cold and retained multi-pass builds and requires
 byte-identical generated files and DVI.
 
 The implemented VFS/TeX exit gate runs `cargo test --tests -p umber-vfs -p
-umber -p umber-wasm`, `scripts/test-incremental-fuzz.sh`,
+bib-input -p umber`, `cargo check -p umber-wasm --target
+wasm32-unknown-unknown`, `scripts/test-incremental-fuzz.sh`,
 `scripts/check-and-test.sh`, and `scripts/check-wasm.sh`. Together these cover
 arbitrary canonical paths, arbitrary response permutations and chunk sizes,
-atomic invalid and conflicting batches, stage/build discard and limit failure,
+atomic invalid and conflicting batches, transaction discard and limit failure,
 accepted-root and generated-output rollback, stale revision rejection, retained
 input and generated-generation accounting, direct Rust/WASM wire conversion,
 persistent native and browser revisions, cancellation before provisioning, and
