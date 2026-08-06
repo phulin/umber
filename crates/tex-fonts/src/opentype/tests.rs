@@ -66,6 +66,14 @@ fn woff2_and_decoded_ttf_have_one_program_identity_and_projection() {
     assert_eq!(web.cmap, native.cmap);
     assert_eq!(web.metrics, native.metrics);
     assert_eq!(web.shaping, native.shaping);
+    assert!(!std::sync::Arc::ptr_eq(
+        &web.decoded_bytes(),
+        &web.transport_bytes
+    ));
+    assert!(std::sync::Arc::ptr_eq(
+        &native.decoded_bytes(),
+        &native.transport_bytes
+    ));
 
     let (scalar, glyph) = web
         .cmap

@@ -306,16 +306,20 @@ impl OpenTypeFont {
                 && shared.container == response.container
                 && shared.transport_bytes.as_ref() == response.bytes.as_slice()
         });
+        let transport_bytes = shared.map_or_else(
+            || Arc::from(response.bytes),
+            |shared| Arc::clone(&shared.transport_bytes),
+        );
         let decoded: Arc<[u8]> = if let Some(shared) = shared {
             Arc::clone(&shared.decoded_bytes)
         } else {
-            Arc::from(match response.container {
-                FontContainer::Woff2 => {
-                    woff2_patched::convert_woff2_to_ttf(&mut response.bytes.as_slice())
-                        .map_err(|_| FontParseError::InvalidWoff2)?
-                }
-                _ => response.bytes.clone(),
-            })
+            match response.container {
+                FontContainer::Woff2 => Arc::from(
+                    woff2_patched::convert_woff2_to_ttf(&mut transport_bytes.as_ref())
+                        .map_err(|_| FontParseError::InvalidWoff2)?,
+                ),
+                _ => Arc::clone(&transport_bytes),
+            }
         };
         if decoded.len() > limits.max_decoded_bytes {
             return Err(FontParseError::LimitExceeded {
@@ -400,10 +404,6 @@ impl OpenTypeFont {
             request.key.face_index,
             &variation,
         )?);
-        let transport_bytes = shared.map_or_else(
-            || Arc::from(response.bytes),
-            |shared| Arc::clone(&shared.transport_bytes),
-        );
         Ok(Self {
             identity,
             object_identity,
