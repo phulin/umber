@@ -312,6 +312,23 @@ introducing `Universe`, `World`, or resolver callbacks into `tex-out`.
 
 **Proof.** Preserve exact standalone bytes, event ordinals, resource order and identity, accessibility, math glyphs, stable DOM identity, focus/selection/scroll, atomic rollback, leases, validation limits, CSP, and large-patch performance.
 
+**Receiver disposition and accounting.** The 2026-08-06 public-use audit found
+no production or external caller, tag, release, package, fork, crates.io
+publication, or npm publication for the three-day-old Rust receiver API.
+Production had always projected `PatchPlan` directly into the JavaScript
+receiver. The compatibility gate therefore closed without an adapter: the
+Rust envelope, protocol validator, abstract applier, re-exports, and
+receiver-only tests were deleted. `HtmlPatchMount` is the sole hostile-input,
+bounded simulation, detached DOM, resource-lifetime, atomic-publication, and
+resynchronization authority.
+
+The receiver retirement adds 127 and deletes 831 production Rust, JavaScript,
+and TypeScript lines, a 704-line net production reduction. Replacement proof
+tests add 238 and delete 163 lines, so total authored source adds 365 and
+deletes 994 lines, a 629-line net reduction inside the conditional 550--700
+forecast. Documentation and guidance are accounted separately; generated
+declarations, fixtures, lockfiles, and binary assets are unchanged.
+
 ## 8. Make state and node schemas executable and singular
 
 **Outcome.** A `NodeRef`-centered exhaustive schema owns tags, semantic fields, handles, ordered children, remapping, equality, validation, hashing, copy, and format projection while compact storage remains specialized. Production frozen-format decode is the only restoration authority. Internally, `Universe` becomes the sole state façade and private `Stores` becomes field-oriented data.

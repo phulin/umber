@@ -45,8 +45,10 @@ Incremental HTML deliberately remains the receiver-migration boundary: the
 adapter projects a retained canonical `RenderDocument` snapshot or a
 `PatchPlan` directly into the existing schema-1 JavaScript shape. It does not
 re-lower artifacts, resolve fonts, or wrap a production patch in the public
-Rust receiver envelope. Moving this projection into derived DTOs is coupled to
-the receiver API decision rather than creating a second render model here.
+Rust receiver envelope. The compatibility audit closed with no released or
+external Rust consumer, so that unused envelope and applier were deleted.
+JavaScript remains the sole hostile-input, resource-lifetime, and DOM receiver;
+moving this projection into derived DTOs must not recreate a second receiver.
 
 ## Representation invariants
 

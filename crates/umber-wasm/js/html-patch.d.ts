@@ -151,7 +151,10 @@ export interface HtmlPatchMountOptions {
 		maxPages: number;
 		maxNodes: number;
 		maxOperations: number;
+		maxResources: number;
+		maxStrings: number;
 		maxStringBytes: number;
+		maxTotalStringBytes: number;
 		maxResourceBytes: number;
 	}>;
 	resources?: HtmlResourceRegistry;

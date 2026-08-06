@@ -157,6 +157,22 @@ function snapshot() {
 	};
 }
 
+function renderPatch(overrides = {}) {
+	return {
+		kind: "patch",
+		schemaVersion: 1,
+		sessionId: key("a"),
+		baseRevision: 1,
+		targetRevision: 2,
+		beforeDigest: digest("b"),
+		afterDigest: digest("c"),
+		resourceAdditions: [],
+		resourceReleases: [],
+		operations: [],
+		...overrides,
+	};
+}
+
 test("valid patch preserves untouched DOM identity, focus, scroll, and mounted root", async () => {
 	const document = new FakeDocument();
 	const root = new FakeNode(document, "main");
@@ -323,65 +339,212 @@ test("forward page moves use post-removal target indexes", async () => {
 });
 
 test("invalid and hostile patches perform no mutation and request recovery", async () => {
+	const changed = { ...snapshot().pages[0].nodes[0], text: "changed" };
+	const unsafe = { ...changed, key: key("5"), link: "javascript:alert(1)" };
+	const cases = [
+		["patch-schema", renderPatch({ schemaVersion: 2 })],
+		["session-mismatch", renderPatch({ sessionId: key("f") })],
+		["stale-base", renderPatch({ baseRevision: 0 })],
+		["stale-base", renderPatch({ beforeDigest: digest("f") })],
+		["target", renderPatch({ targetRevision: 3 })],
+		["operation-budget", renderPatch({ operations: null })],
+		["resources", renderPatch({ resourceAdditions: null })],
+		[
+			"unknown-operation",
+			renderPatch({ operations: [{ kind: "execute-script" }] }),
+		],
+		[
+			"missing-key",
+			renderPatch({ operations: [{ kind: "remove-page", key: key("f") }] }),
+		],
+		[
+			"index",
+			renderPatch({
+				operations: [
+					{ kind: "move-page", key: key("1"), index: Number.MAX_SAFE_INTEGER },
+				],
+			}),
+		],
+		[
+			"duplicate-key",
+			renderPatch({
+				operations: [
+					{
+						kind: "insert-node",
+						page: key("1"),
+						index: 1,
+						node: changed,
+					},
+				],
+			}),
+		],
+		[
+			"node-kind-change",
+			renderPatch({
+				operations: [
+					{
+						kind: "update-node",
+						page: key("1"),
+						node: { key: key("2"), kind: "math-end" },
+					},
+				],
+			}),
+		],
+		[
+			"unsafe-link",
+			renderPatch({
+				operations: [
+					{
+						kind: "insert-node",
+						page: key("1"),
+						index: 1,
+						node: unsafe,
+					},
+				],
+			}),
+		],
+		["string-nul", renderPatch({ title: "bad\0title" })],
+		["resource-release", renderPatch({ resourceReleases: ["bad"] })],
+		["unknown-resource", renderPatch({ resourceReleases: [digest("e")] })],
+		[
+			"duplicate-resource",
+			renderPatch({
+				resourceAdditions: [
+					{
+						identity: digest("e"),
+						kind: "font",
+						family: "umber-test",
+						bytes: new Uint8Array(),
+					},
+					{
+						identity: digest("e"),
+						kind: "font",
+						family: "umber-test",
+						bytes: new Uint8Array(),
+					},
+				],
+			}),
+		],
+		[
+			"special-payload",
+			renderPatch({
+				operations: [
+					{
+						kind: "insert-node",
+						page: key("1"),
+						index: 1,
+						node: {
+							key: key("5"),
+							kind: "special",
+							xSp: 0,
+							ySp: 0,
+							class: "literal",
+							payloadHex: "<script>",
+							action: "inert",
+						},
+					},
+				],
+			}),
+		],
+	];
+
+	for (const [code, patch] of cases) {
+		const document = new FakeDocument();
+		const root = new FakeNode(document, "main");
+		const mount = new HtmlPatchMount(root, { document });
+		await mount.mountSnapshot(snapshot());
+		const identity = mount.nodeForKey(key("2"));
+		await assert.rejects(
+			mount.applyPatch(patch),
+			(error) => error instanceof HtmlPatchError && error.code === code,
+			code,
+		);
+		assert.equal(mount.revision, 1, code);
+		assert.equal(mount.nodeForKey(key("2")), identity, code);
+		assert.equal(root.replaceCount, 1, code);
+		assert.equal(mount.needsResync, true, code);
+	}
+});
+
+test("host limits can only tighten browser validation budgets", () => {
 	const document = new FakeDocument();
 	const root = new FakeNode(document, "main");
-	const mount = new HtmlPatchMount(root, { document });
-	await mount.mountSnapshot(snapshot());
-	const identity = mount.nodeForKey(key("2"));
-	const invalid = {
-		kind: "patch",
-		schemaVersion: 1,
-		sessionId: key("a"),
-		baseRevision: 1,
-		targetRevision: 2,
-		beforeDigest: digest("b"),
-		afterDigest: digest("c"),
-		resourceAdditions: [],
-		resourceReleases: [],
-		operations: [
-			{
-				kind: "insert-node",
-				page: key("1"),
-				index: 1,
-				node: {
-					key: key("5"),
-					kind: "text",
-					text: "x",
-					family: `umber-font-${"a".repeat(24)}`,
-					fontSizeSp: 655_360,
-					positionsSp: [0],
-					features: [],
-					variations: [],
-					direction: "ltr",
-					link: "javascript:alert(1)",
+	assert.throws(
+		() =>
+			new HtmlPatchMount(root, {
+				document,
+				limits: { maxOperations: Number.POSITIVE_INFINITY },
+			}),
+		RangeError,
+	);
+});
+
+test("browser validation enforces structural and aggregate string budgets", async () => {
+	const applyWithLimits = async (limits, patch, code) => {
+		const document = new FakeDocument();
+		const root = new FakeNode(document, "main");
+		const mount = new HtmlPatchMount(root, { document, limits });
+		await mount.mountSnapshot(snapshot());
+		await assert.rejects(
+			mount.applyPatch(patch),
+			(error) => error instanceof HtmlPatchError && error.code === code,
+		);
+		assert.equal(root.replaceCount, 1);
+		assert.equal(mount.needsResync, true);
+	};
+	const changed = { ...snapshot().pages[0].nodes[0], text: "changed" };
+	await applyWithLimits(
+		{ maxOperations: 0 },
+		renderPatch({
+			operations: [{ kind: "update-node", page: key("1"), node: changed }],
+		}),
+		"operation-budget",
+	);
+	await applyWithLimits(
+		{ maxResources: 0 },
+		renderPatch({
+			resourceAdditions: [
+				{
+					identity: digest("e"),
+					kind: "asset",
+					bytes: new Uint8Array(),
 				},
-			},
-		],
-	};
+			],
+		}),
+		"resources",
+	);
+	await applyWithLimits(
+		{ maxStringBytes: 40 },
+		renderPatch({ title: "x".repeat(41) }),
+		"string-budget",
+	);
+	await applyWithLimits(
+		{ maxTotalStringBytes: 90 },
+		renderPatch({
+			operations: [
+				{
+					kind: "update-node",
+					page: key("1"),
+					node: { ...changed, text: "x".repeat(20) },
+				},
+			],
+		}),
+		"string-total-budget",
+	);
 
-	await assert.rejects(
-		mount.applyPatch(invalid),
-		(error) => error instanceof HtmlPatchError && error.code === "unsafe-link",
-	);
-	assert.equal(mount.revision, 1);
-	assert.equal(mount.nodeForKey(key("2")), identity);
-	assert.equal(root.replaceCount, 1);
-
-	const unknownRelease = {
-		...invalid,
-		operations: [],
-		resourceReleases: [digest("e")],
-	};
-	await assert.rejects(
-		mount.applyPatch(unknownRelease),
-		(error) =>
-			error instanceof HtmlPatchError && error.code === "unknown-resource",
-	);
-	assert.equal(
-		root.replaceCount,
-		1,
-		"release failure occurred before publication",
-	);
+	for (const [limits, code] of [
+		[{ maxPages: 1 }, "page-budget"],
+		[{ maxNodes: 1 }, "node-budget"],
+	]) {
+		const document = new FakeDocument();
+		const root = new FakeNode(document, "main");
+		const mount = new HtmlPatchMount(root, { document, limits });
+		await assert.rejects(
+			mount.mountSnapshot(snapshot()),
+			(error) => error instanceof HtmlPatchError && error.code === code,
+		);
+		assert.equal(root.replaceCount, 0);
+	}
 });
 
 test("publication exceptions restore the validated base tree before resync", async () => {
@@ -482,6 +645,11 @@ test("resource cancellation, font failure, lifetime checks, and churn budgets fa
 	const accepted = await registry.stage([secondResource]);
 	await accepted.commit([], [secondResource.identity]);
 	assert.deepEqual(registry.metrics, { count: 1, bytes: 2, churnBytes: 5 });
+	await assert.rejects(
+		registry.stage([], [secondResource.identity, secondResource.identity], []),
+		(error) =>
+			error instanceof HtmlPatchError && error.code === "duplicate-release",
+	);
 	const release = await registry.stage([]);
 	await assert.rejects(
 		release.commit([secondResource.identity], [secondResource.identity]),
@@ -512,4 +680,16 @@ test("resource cancellation, font failure, lifetime checks, and churn budgets fa
 	});
 	await assert.rejects(failing.stage([firstResource]), /font rejected/);
 	assert.equal(failing.metrics.count, 0);
+
+	const corrupt = new HtmlResourceRegistry({
+		document,
+		verify: async () => false,
+		FontFace: null,
+	});
+	await assert.rejects(
+		corrupt.stage([firstResource]),
+		(error) =>
+			error instanceof HtmlPatchError && error.code === "resource-digest",
+	);
+	assert.equal(corrupt.metrics.count, 0);
 });

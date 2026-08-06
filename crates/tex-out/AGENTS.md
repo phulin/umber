@@ -30,8 +30,7 @@ Use this crate for stable, driver-facing artifact structures and serialization c
 - `src/html.rs`: deterministic coordinate-locked standalone serializer derived from the detached keyed render document, plus retained realized-program reuse, compatibility font validation, asset modes, escaping, and limits.
 - `src/html/incremental.rs`: the canonical detached `RenderDocument`, keyed render revisions, stable cross-revision identity reuse, ordered resources, and bounded artifact/positioned-page builders shared by full and incremental output.
 - `src/html/incremental/digest.rs`: versioned canonical render hashing and key derivation.
-- `src/html/incremental/patch.rs`: deterministic bounded typed diff planning and atomic abstract patch validation/application.
-- `src/html/incremental/protocol.rs`: versioned structured-clone envelope preflight, capability/limit validation, duplicate delivery, and typed resynchronization.
+- `src/html/incremental/patch.rs`: deterministic bounded typed diff planning from one canonical render revision to its successor.
 - `src/html/tests.rs`: deterministic-byte, exact-metadata, mapping-failure, and injection regression tests.
 - `src/lib.rs`: Crate documentation, module wiring, tests module registration, and public re-exports.
 - `src/model.rs`: Detached page artifact, versioned font-layout/classic/OpenType identities, node, glue, kern, and output effect data model.

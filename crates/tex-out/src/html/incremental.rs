@@ -10,17 +10,9 @@ use tex_arith::Scaled;
 
 mod digest;
 mod patch;
-mod protocol;
 
 use digest::{derive_key, node_value_digest, page_digest, page_match_digest, revision_digest};
-pub use patch::{
-    PatchApplyError, PatchLimits, PatchOp, PatchPlan, PatchPlanError, RenderPageHeader,
-    apply_patch, plan_patch,
-};
-pub use protocol::{
-    PATCH_CAP_TYPED_DOM, PATCH_SCHEMA_VERSION, PatchCounts, PatchDelivery, PatchEnvelope,
-    PatchProtocolError, ProtocolLimits, validate_delivery,
-};
+pub use patch::{PatchLimits, PatchOp, PatchPlan, PatchPlanError, RenderPageHeader, plan_patch};
 
 use super::{
     HtmlError, HtmlFontAssets, HtmlFontKey, HtmlOptions, InterpretedSpecial, ResolvedFont,

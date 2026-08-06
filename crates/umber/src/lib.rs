@@ -98,9 +98,9 @@ pub use tex_fonts::{
 };
 pub use tex_incr::{RenderedOutputId, ReuseMetrics, RevisionId, SameHistoryStop};
 pub use tex_out::html::incremental::{
-    PatchEnvelope, PatchOp, PatchPlan, RenderBox, RenderDigest, RenderDirection, RenderDocument,
-    RenderKey, RenderMathDrawing, RenderMathGlyph, RenderNode, RenderNodeValue, RenderPage,
-    RenderPageHeader, RenderResource, RenderRevision, RenderRule, RenderSessionId, RenderSpecial,
+    PatchOp, PatchPlan, RenderBox, RenderDigest, RenderDirection, RenderDocument, RenderKey,
+    RenderMathDrawing, RenderMathGlyph, RenderNode, RenderNodeValue, RenderPage, RenderPageHeader,
+    RenderResource, RenderRevision, RenderRule, RenderSessionId, RenderSpecial,
     RenderSpecialAction, RenderText,
 };
 pub use tex_out::positioned::BoxKind;

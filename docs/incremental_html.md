@@ -19,10 +19,29 @@ model.
 The retained compile session constructs one `RenderDocument` for an accepted
 candidate, serializes standalone HTML and assets from that exact value, and
 then retains it as the snapshot and next-patch base. It sends the resulting
-`PatchPlan` directly to the WebAssembly projection; it does not construct a
-Rust receiver envelope that the JavaScript receiver would discard. The public
-Rust envelope validator remains a separate compatibility surface pending its
-own API decision and is not part of production browser delivery.
+`PatchPlan` directly to the WebAssembly projection. JavaScript is the sole
+receiver and pre-publication validation authority; no Rust receiver envelope
+or abstract Rust applier remains.
+
+## Public receiver API disposition
+
+The Rust receiver API was retired without a deprecation adapter. The
+compatibility audit on 2026-08-06 found no workspace production caller, no
+exact-symbol caller outside repository tests and re-exports, no Git tag,
+release, package, or fork, and no published `tex-out` or `umber` crate. The npm
+manifest is private and `@umber/umber-wasm` is absent from the npm registry.
+The API was introduced on 2026-08-03, never entered production delivery, and
+had no released compatibility window to preserve. A deprecated adapter would
+therefore create a second semantic authority rather than protect a consumer.
+
+The surviving public producer values are `RenderDocument`, `RenderRevision`,
+`PatchPlan`, and their typed contents. The public browser receiver remains
+`HtmlPatchMount` from `@umber/umber-wasm/html-patch`. Applications must treat
+render updates as compiler-session output, not as an authenticated network
+format. Canonical render digests are producer-issued continuity and
+acknowledgement tokens: JavaScript validates their shape and the mounted
+before-token but cannot reconstruct Rust-only canonical fields omitted from
+the DOM projection. DOM safety never depends on trusting a digest.
 
 ## Identity and equality
 
@@ -65,12 +84,11 @@ the exact target canonical value and target digest.
 
 ## Patch operations
 
-Patch schema 1 contains typed data only. A patch header binds:
+Patch schema 1 contains typed data only. The JavaScript patch shape binds:
 
-- schema version and required capability bits;
+- schema version;
 - session id, base revision, and target revision;
 - canonical before and after digests;
-- declared operation, node, string, resource, depth, and byte counts; and
 - deterministic resource additions and releases.
 
 Operations are `Insert`, `Remove`, `Move`, and typed `Update`. Insert carries a
@@ -83,10 +101,11 @@ document root, and unchanged subtrees emit no operation.
 
 Operations are ordered as resource additions, deepest removals, parent-before-
 child inserts, moves, leaf updates, metadata updates, and deferred resource
-releases. The abstract applier validates the entire plan against an isolated
-index before publication. It checks unique keys, parent existence, kind and
-field compatibility, sibling membership, dependency order, declared limits,
-the base digest, and the recomputed target digest. Planning returns a typed
+releases. The JavaScript receiver simulates the entire plan against a cloned
+model before publication. It checks unique keys, parent existence, kind and
+field compatibility, sibling membership, operation ordering, actual
+structural and string counts, resource hashes and budgets, and mounted base
+identity. Planning returns a typed
 `ResyncRequired` result if the configured comparison, operation, depth, or byte
 budget cannot represent a safe patch. It never silently emits a full snapshot.
 
@@ -99,14 +118,14 @@ receives an acknowledgement naming the target revision and digest.
 
 A duplicate of the currently mounted target with the same digest is
 idempotently acknowledged. A stale base, future base, missing base, wrong
-session, unsupported schema/capability, unknown operation, truncation, corrupt
-digest, or limit violation performs no mutation and returns a typed resync
-request. A stale acknowledgement is ignored only when it exactly names an
+session, unsupported schema, unknown operation, malformed digest, unsafe typed
+value, resource-integrity failure, or limit violation performs no mutation and
+marks the mount as requiring resynchronization. A stale acknowledgement is ignored only when it exactly names an
 already retired revision; conflicting acknowledgements fail the session.
 
 Patch application is atomic at the protocol boundary. The browser first
-decodes and prevalidates every value, builds new nodes in a detached fragment,
-loads added fonts and assets, and simulates index changes. Only then may it
+decodes and prevalidates every value, simulates index changes, and builds new
+nodes in a detached fragment before it loads added fonts and assets. Only then may it
 mutate the mounted tree. JavaScript exceptions during publication mark the
 mount as requiring resynchronization and never acknowledge the target. The
 next accepted value is a full snapshot; mixed-revision DOM is not presented as
@@ -152,11 +171,12 @@ are installed once. An addition is hash-verified and ready before dependent
 nodes publish. A release is effective only after target acknowledgement and
 the last mounted, in-flight, and staged reference disappears.
 
-Unknown release, identity drift, conflicting bytes, failed font load, stale
-acknowledgement, and budget exhaustion are typed failures. They never cause
-platform-font fallback. Defaults bound pages, nodes, depth, operations,
-strings, individual and aggregate resources, wire bytes, retained revisions,
-in-flight work, and cumulative churn. Hosts may lower but not disable these
+Unknown or duplicate release, identity drift, conflicting bytes, failed font
+load, stale acknowledgement, and budget exhaustion are typed failures. Host
+limit overrides may only tighten the schema defaults. These failures never
+cause platform-font fallback. Defaults bound pages, nodes, operations, strings,
+individual and aggregate resources, retained revisions, in-flight work, and
+cumulative churn. Hosts may lower but not disable these
 limits. Soak tests must demonstrate a resident-memory plateau for alternating
 bounded edits and complete reclamation after disposal.
 
@@ -187,6 +207,10 @@ mount or native planner options, but cannot turn validation off.
 | Pages in a mounted snapshot                     |                      16,384 |
 | Canonical nodes in a mounted snapshot           |                   1,000,000 |
 | Operations in one patch                         |                     250,000 |
+| Resources in one validated candidate            |                      65,536 |
+| Strings in one validated candidate              |                   1,000,000 |
+| One UTF-8 string                                |                      16 MiB |
+| Aggregate UTF-8 strings in one candidate        |                      64 MiB |
 | Aggregate resident resource bytes               |                     256 MiB |
 | One font resource                               |                      64 MiB |
 | Cumulative resource churn per registry          |                       1 GiB |
@@ -194,12 +218,13 @@ mount or native planner options, but cannot turn validation off.
 | Coalesced complete candidate behind that patch  |                           1 |
 | Chromium application of 200 single-node patches |              under 1,000 ms |
 
-The fast canonical gate performs 5,000 deterministic insert, delete, move,
-replace, duplicate-content, and node-count transitions. Every transition must
-apply to the exact freshly constructed target. The artifact-level gate also
-rebuilds representative page artifacts from scratch, which catches drift in
-lowering and identity assignment rather than only exercising the abstract
-model.
+The fast producer gate performs deterministic insert, delete, move, replace,
+duplicate-content, and node-count transitions and rebuilds representative page
+artifacts from scratch, which catches drift in lowering and identity
+assignment. The Node receiver gate owns hostile schema, identity, revision,
+operation, key, index, kind, coordinate, string, URL, typed-DOM, resource,
+budget, rollback, and resynchronization cases. Package browser coverage owns
+actual DOM identity, mutation isolation, and patch responsiveness.
 
 The browser package gate applies 200 ordinary updates to one page in the same
 mounted document. It requires exactly one operation and one replaced node per

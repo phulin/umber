@@ -9,12 +9,12 @@ import {
 import { simulatePatch, validateSnapshot } from "./html-patch-model.js";
 import { HtmlResourceRegistry } from "./html-patch-resources.js";
 import {
-	DEFAULT_LIMITS,
 	freshMetrics,
 	HtmlPatchError,
 	modelPage,
 	now,
 	required,
+	resolveLimits,
 } from "./html-patch-shared.js";
 
 export { HtmlResourceRegistry } from "./html-patch-resources.js";
@@ -43,7 +43,7 @@ export class HtmlPatchMount {
 		if (!this.#document?.createElement || !this.#document?.createElementNS) {
 			throw new TypeError("HTML patch mount requires DOM constructors");
 		}
-		this.#limits = { ...DEFAULT_LIMITS, ...options.limits };
+		this.#limits = resolveLimits(options.limits);
 		this.#resources =
 			options.resources ??
 			new HtmlResourceRegistry({
@@ -86,19 +86,19 @@ export class HtmlPatchMount {
 		const retainedIdentities = state.resources.map(
 			(resource) => resource.identity,
 		);
+		const nodes = new Map();
+		const pageContent = new Map();
+		const fragment = this.#document.createDocumentFragment();
+		for (const page of state.pages) {
+			const built = buildPage(this.#document, page, nodes, pageContent);
+			fragment.append(built);
+		}
 		const lease = await this.#resources.stage(
 			state.resources,
 			releases,
 			retainedIdentities,
 		);
-		const nodes = new Map();
-		const pageContent = new Map();
-		const fragment = this.#document.createDocumentFragment();
 		try {
-			for (const page of state.pages) {
-				const built = buildPage(this.#document, page, nodes, pageContent);
-				fragment.append(built);
-			}
 			this.#root.replaceChildren(fragment);
 			await lease.commit(releases, retainedIdentities);
 		} catch (error) {
@@ -138,32 +138,32 @@ export class HtmlPatchMount {
 			return this.acknowledgement();
 		}
 		let candidate;
+		let staged;
+		let lease;
 		try {
 			candidate = simulatePatch(this.#state, patch, this.#limits);
+			const retainedIdentities = candidate.resources.map(
+				(resource) => resource.identity,
+			);
+			staged = stageInsertions(
+				this.#document,
+				patch.operations,
+				candidate.pages,
+			);
+			lease = await this.#resources.stage(
+				patch.resourceAdditions,
+				patch.resourceReleases,
+				retainedIdentities,
+			);
 		} catch (error) {
+			this.#needsResync = true;
 			this.#metrics.resyncs += 1;
 			throw error;
 		}
 		const retainedIdentities = candidate.resources.map(
 			(resource) => resource.identity,
 		);
-		const releases = patch.resourceReleases ?? [];
-		const lease = await this.#resources.stage(
-			patch.resourceAdditions ?? [],
-			releases,
-			retainedIdentities,
-		);
-		let staged;
-		try {
-			staged = stageInsertions(
-				this.#document,
-				patch.operations,
-				candidate.pages,
-			);
-		} catch (error) {
-			await lease.rollback();
-			throw error;
-		}
+		const releases = patch.resourceReleases;
 		const preserved = captureUserState(this.#document, this.#root, this.#nodes);
 		const started = now();
 		try {

@@ -10,9 +10,8 @@ use crate::{
 };
 
 use super::incremental::{
-    PATCH_SCHEMA_VERSION, PatchApplyError, PatchDelivery, PatchEnvelope, PatchLimits, PatchOp,
-    PatchProtocolError, ProtocolLimits, RenderKey, RenderLimits, RenderSessionId, apply_patch,
-    build_positioned_render_document, build_render_document, plan_patch, validate_delivery,
+    PatchLimits, PatchOp, RenderLimits, RenderSessionId, build_positioned_render_document,
+    build_render_document, plan_patch,
 };
 use super::{
     AssetMode, HtmlError, HtmlFontAsset, HtmlFontAssets, HtmlFontKey, HtmlOptions,
@@ -1039,7 +1038,7 @@ fn prefix_page_insertion_retains_suffix_page_and_node_identity() {
 }
 
 #[test]
-fn deterministic_patch_application_equals_fresh_target() {
+fn deterministic_patch_plan_identifies_changed_node() {
     let resolver = Resolver { missing_b: false };
     let options = HtmlOptions::default();
     let session = RenderSessionId::from_bytes([11; 16]);
@@ -1085,14 +1084,10 @@ fn deterministic_patch_application_equals_fresh_target() {
             .iter()
             .any(|operation| matches!(operation, PatchOp::UpdateNode { .. }))
     );
-    assert_eq!(
-        apply_patch(&base, &first, PatchLimits::default()).expect("applied patch"),
-        target
-    );
 }
 
 #[test]
-fn no_op_patch_is_empty_and_invalid_operation_is_atomic() {
+fn no_op_patch_is_empty() {
     let resolver = Resolver { missing_b: false };
     let options = HtmlOptions::default();
     let session = RenderSessionId::from_bytes([12; 16]);
@@ -1122,103 +1117,6 @@ fn no_op_patch_is_empty_and_invalid_operation_is_atomic() {
     assert!(empty.operations.is_empty());
     assert!(empty.resource_additions.is_empty());
     assert!(empty.resource_releases.is_empty());
-
-    let mut corrupt = empty;
-    corrupt.operations.push(PatchOp::RemovePage {
-        key: RenderKey::ROOT,
-    });
-    assert_eq!(
-        apply_patch(&base, &corrupt, PatchLimits::default()),
-        Err(PatchApplyError::InvalidOperation)
-    );
-    assert_eq!(base.revision, 1);
-}
-
-#[test]
-fn patch_envelope_preflights_counts_hashes_versions_and_duplicate_delivery() {
-    let resolver = Resolver { missing_b: false };
-    let options = HtmlOptions::default();
-    let session = RenderSessionId::from_bytes([13; 16]);
-    let base = build_render_document(
-        &[page()],
-        &resolver,
-        &options,
-        session,
-        1,
-        None,
-        RenderLimits::default(),
-    )
-    .expect("base render document")
-    .revision;
-    let mut changed = page();
-    changed.testing_mut().counts[0] = 8;
-    let target = build_render_document(
-        &[changed],
-        &resolver,
-        &options,
-        session,
-        2,
-        Some(&base),
-        RenderLimits::default(),
-    )
-    .expect("target render document")
-    .revision;
-    let plan = plan_patch(&base, &target, PatchLimits::default()).expect("patch plan");
-    let envelope = PatchEnvelope::new(plan);
-    assert_eq!(envelope.schema_version, PATCH_SCHEMA_VERSION);
-    assert_eq!(
-        envelope.canonical_fingerprint(),
-        envelope.clone().canonical_fingerprint()
-    );
-    let mut metadata_change = envelope.patch.clone();
-    metadata_change.title = Some("changed title".to_owned());
-    assert_ne!(
-        envelope.canonical_fingerprint(),
-        PatchEnvelope::new(metadata_change).canonical_fingerprint()
-    );
-    assert_eq!(
-        validate_delivery(&base, &envelope, ProtocolLimits::default()),
-        PatchDelivery::Applied(target.clone())
-    );
-    assert_eq!(
-        validate_delivery(&target, &envelope, ProtocolLimits::default()),
-        PatchDelivery::Duplicate
-    );
-
-    let mut wrong_counts = envelope.clone();
-    wrong_counts.counts.nodes += 1;
-    assert_eq!(
-        validate_delivery(&base, &wrong_counts, ProtocolLimits::default()),
-        PatchDelivery::ResyncRequired(PatchProtocolError::DeclaredCountsMismatch)
-    );
-    let mut wrong_version = envelope.clone();
-    wrong_version.schema_version += 1;
-    assert_eq!(
-        validate_delivery(&base, &wrong_version, ProtocolLimits::default()),
-        PatchDelivery::ResyncRequired(PatchProtocolError::UnsupportedSchema(
-            PATCH_SCHEMA_VERSION + 1
-        ))
-    );
-
-    let mut dropped = PatchEnvelope::new(envelope.patch.clone());
-    dropped.patch.operations.clear();
-    dropped = PatchEnvelope::new(dropped.patch);
-    assert!(matches!(
-        validate_delivery(&base, &dropped, ProtocolLimits::default()),
-        PatchDelivery::ResyncRequired(PatchProtocolError::Apply(
-            PatchApplyError::TargetDigestMismatch
-        ))
-    ));
-
-    let mut corrupted = envelope.patch;
-    corrupted.after_digest = base.digest;
-    let corrupted = PatchEnvelope::new(corrupted);
-    assert!(matches!(
-        validate_delivery(&base, &corrupted, ProtocolLimits::default()),
-        PatchDelivery::ResyncRequired(PatchProtocolError::Apply(
-            PatchApplyError::TargetDigestMismatch
-        ))
-    ));
 }
 
 #[test]
@@ -1295,11 +1193,8 @@ fn generated_artifact_edit_sequences_equal_fresh_canonical_renders() {
         .revision;
         assert_render_semantics(&target, &fresh, revision);
 
-        let patch =
-            plan_patch(&mounted, &target, PatchLimits::default()).expect("generated patch plan");
-        mounted = apply_patch(&mounted, &patch, PatchLimits::default())
-            .unwrap_or_else(|error| panic!("revision {revision}: {error:?}; patch {patch:#?}"));
-        assert_eq!(mounted, target, "revision {revision}");
+        plan_patch(&mounted, &target, PatchLimits::default()).expect("generated patch plan");
+        mounted = target;
     }
 }
 

@@ -8,9 +8,25 @@ export const DEFAULT_LIMITS = Object.freeze({
 	maxPages: 16_384,
 	maxNodes: 1_000_000,
 	maxOperations: 250_000,
+	maxResources: 65_536,
+	maxStrings: 1_000_000,
 	maxStringBytes: 16 * 1024 * 1024,
+	maxTotalStringBytes: 64 * 1024 * 1024,
 	maxResourceBytes: 256 * 1024 * 1024,
 });
+
+export function resolveLimits(overrides = {}) {
+	const limits = { ...DEFAULT_LIMITS, ...overrides };
+	for (const [name, ceiling] of Object.entries(DEFAULT_LIMITS)) {
+		const value = limits[name];
+		if (!Number.isSafeInteger(value) || value < 0 || value > ceiling) {
+			throw new RangeError(
+				`${name} must be a nonnegative safe integer no greater than ${ceiling}`,
+			);
+		}
+	}
+	return Object.freeze(limits);
+}
 
 export class HtmlPatchError extends Error {
 	constructor(code, message, options) {

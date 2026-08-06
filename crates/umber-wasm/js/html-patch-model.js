@@ -21,13 +21,26 @@ export function validateSnapshot(snapshot, limits) {
 	if (snapshot?.kind !== "snapshot" || snapshot.schemaVersion !== 1)
 		fail("snapshot-schema");
 	validateIdentity(snapshot);
+	const strings = stringBudget(limits);
+	strings.add(snapshot.title);
+	strings.add(snapshot.language);
 	if (!Array.isArray(snapshot.pages) || snapshot.pages.length > limits.maxPages)
 		fail("page-budget");
-	if (!Array.isArray(snapshot.resources)) fail("resources");
+	if (
+		!Array.isArray(snapshot.resources) ||
+		snapshot.resources.length > limits.maxResources
+	)
+		fail("resources");
+	const resourceIdentities = new Set();
+	for (const resource of snapshot.resources) {
+		validateResource(resource, strings);
+		if (resourceIdentities.has(resource.identity)) fail("duplicate-resource");
+		resourceIdentities.add(resource.identity);
+	}
 	let nodes = 0;
 	const keys = new Set();
 	for (const page of snapshot.pages) {
-		validatePage(page, keys, limits);
+		validatePage(page, keys, limits, strings);
 		nodes += page.nodes.length;
 	}
 	if (nodes > limits.maxNodes) fail("node-budget");
@@ -54,6 +67,14 @@ export function simulatePatch(base, patch, limits) {
 	) {
 		fail("operation-budget");
 	}
+	if (
+		!Array.isArray(patch.resourceAdditions) ||
+		!Array.isArray(patch.resourceReleases) ||
+		patch.resourceAdditions.length > limits.maxResources ||
+		patch.resourceReleases.length > limits.maxResources
+	)
+		fail("resources");
+	const strings = stringBudget(limits);
 	const candidate = cloneState(base);
 	candidate.revision = patch.targetRevision;
 	candidate.digest = patch.afterDigest;
@@ -62,12 +83,17 @@ export function simulatePatch(base, patch, limits) {
 	if (patch.language !== undefined)
 		candidate.language = boundedString(patch.language, limits);
 	candidate.resources = updateResources(base.resources, patch);
+	if (candidate.resources.length > limits.maxResources) fail("resources");
+	strings.add(candidate.title);
+	strings.add(candidate.language);
+	for (const resource of candidate.resources)
+		validateResource(resource, strings);
 	for (const operation of patch.operations)
 		simulateOperation(candidate.pages, operation, limits);
 	const keys = new Set();
 	let nodes = 0;
 	for (const page of candidate.pages) {
-		validatePage(page, keys, limits);
+		validatePage(page, keys, limits, strings);
 		nodes += page.nodes.length;
 	}
 	if (candidate.pages.length > limits.maxPages || nodes > limits.maxNodes)
@@ -131,7 +157,7 @@ function validateIdentity(value) {
 		fail("revision");
 }
 
-function validatePage(page, keys, limits) {
+function validatePage(page, keys, limits, strings) {
 	if (!KEY.test(page?.key) || keys.has(page.key)) fail("duplicate-key");
 	keys.add(page.key);
 	for (const value of [
@@ -163,14 +189,34 @@ function validatePage(page, keys, limits) {
 		) {
 			fail("node-kind");
 		}
-		for (const value of [node.text, node.link, node.color, node.class]) {
-			if (value !== undefined && value !== null) boundedString(value, limits);
+		for (const value of [
+			node.text,
+			node.link,
+			node.color,
+			node.class,
+			node.family,
+			node.language,
+			node.script,
+			node.path,
+			node.payloadHex,
+			node.actionValue,
+		]) {
+			if (value !== undefined && value !== null) strings.add(value);
 		}
 		if (node.kind === "text") {
 			if (!/^umber-font-[0-9a-f]{24}$/u.test(node.family)) fail("font-family");
 			exactInteger(node.fontSizeSp);
-			if (!Array.isArray(node.positionsSp)) fail("positions");
+			if (
+				!Array.isArray(node.positionsSp) ||
+				node.positionsSp.length > limits.maxStrings
+			)
+				fail("positions");
 			for (const position of node.positionsSp) exactInteger(position);
+			if (
+				node.features?.length > limits.maxStrings ||
+				node.variations?.length > limits.maxStrings
+			)
+				fail("font-settings");
 			settingStyle(node.features, false);
 			settingStyle(node.variations, true);
 		}
@@ -184,10 +230,14 @@ function updateResources(base, patch) {
 	const resources = new Map(
 		base.map((resource) => [resource.identity, resource]),
 	);
-	for (const identity of patch.resourceReleases ?? []) {
+	const releases = new Set();
+	for (const identity of patch.resourceReleases) {
+		if (!DIGEST.test(identity)) fail("resource-release");
+		if (releases.has(identity)) fail("duplicate-release");
+		releases.add(identity);
 		if (!resources.delete(identity)) fail("unknown-resource");
 	}
-	for (const resource of patch.resourceAdditions ?? []) {
+	for (const resource of patch.resourceAdditions) {
 		validateResource(resource);
 		if (resources.has(resource.identity)) fail("duplicate-resource");
 		resources.set(resource.identity, structuredCloneValue(resource));
@@ -197,7 +247,7 @@ function updateResources(base, patch) {
 	);
 }
 
-export function validateResource(resource) {
+export function validateResource(resource, strings) {
 	if (
 		!DIGEST.test(resource?.identity) ||
 		!(resource.bytes instanceof Uint8Array)
@@ -207,4 +257,23 @@ export function validateResource(resource) {
 		fail("resource-kind");
 	if (resource.kind === "font" && typeof resource.family !== "string")
 		fail("font-family");
+	if (strings) {
+		if (resource.family !== undefined) strings.add(resource.family);
+		if (resource.provenance !== undefined) strings.add(resource.provenance);
+	}
+}
+
+function stringBudget(limits) {
+	let count = 0;
+	let bytes = 0;
+	return {
+		add(value) {
+			boundedString(value, limits);
+			count += 1;
+			bytes += new TextEncoder().encode(value).byteLength;
+			if (count > limits.maxStrings) fail("string-count-budget");
+			if (bytes > limits.maxTotalStringBytes) fail("string-total-budget");
+			return value;
+		},
+	};
 }

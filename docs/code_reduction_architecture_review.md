@@ -409,7 +409,7 @@ data, never a compatibility façade or public API.
 
 ## 19. Use one HTML producer model and keep JavaScript as the receiver
 
-**Status:** producer consolidation is baseline; Rust receiver API retirement is conditional.
+**Status:** implemented; producer consolidation and Rust receiver API retirement are complete.
 
 **Affected code.** `tex-out/src/html.rs`, `src/html/incremental*`, `umber::virtual_compile`, `umber-wasm/src/result/render.rs`, and authored JS validation/DOM code.
 
@@ -424,6 +424,16 @@ data, never a compatibility façade or public API.
 **Invariants and risks.** Preserve exact standalone bytes, event ordinals, resource names/order/identity, accessibility, specials, math glyph selection, DOM identity, focus/selection/scroll, atomic rollback, resource leases, validation limits, CSP, and large-patch performance.
 
 **Dependencies/order.** Browser DTOs in initiative 4 precede render serialization. This choice is incompatible with a Rust/WASM receiver and intentionally rejects it.
+
+**Outcome.** The external-use gate closed on 2026-08-06: the repository had no
+tags, releases, packages, or forks; neither Rust crate was published; the npm
+package was private and unpublished; and exact-symbol plus workspace searches
+found only receiver tests and re-exports. Production had always projected
+`PatchPlan` directly. The Rust envelope, protocol validator, abstract applier,
+re-exports, and receiver-only tests were deleted without a compatibility shim.
+`HtmlPatchMount` now exclusively owns hostile structured input, bounded model
+simulation, detached DOM construction, resource verification and lifetime,
+atomic publication, and resynchronization.
 
 ## 20. Collapse VFS to one generated transaction and private shape-safe maps
 
