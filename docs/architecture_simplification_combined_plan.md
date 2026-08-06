@@ -318,6 +318,27 @@ future compatibility-gated retirement is silently credited to this program.
 
 **Proof.** Preserve numeric operands, profile layout, install order, format-load rebuilding, aliases, frozen/private meanings, `nullfont`, `endwrite`, punctuation/control space, parameter slots, observation bytes, and documentation completeness.
 
+**Implemented authority and accounting.** Commits `dcfa38478`, `748ce7604`,
+and `9ee00dd5a` establish the schema, generated views, and final consumer
+migration. `tex-command::primitives` is the surviving behaviour-free catalogue
+authority. `tex-state` supplies typed cells and meanings but no primitive name
+inventory; `tex-exec` retains handwritten dispatch and thin compatibility
+wrappers; Umber applies catalogue-projected pdfTeX defaults and owns no second
+158-name or parameter table. Fresh INITEX and format restoration share the
+same installation views, including aliases, punctuation/control space,
+`nullfont`, frozen `endwrite`, page/internal quantities, and exact profile
+names. Observation identities continue to project from the enum rows; no
+execution callback or dispatch body moved into the catalogue.
+
+The final migration commit contains 488 additions and 1,029 deletions in
+authored Rust, a measured net deletion of 541 lines. It removes the TeX82 and
+e-TeX executor parameter/page/internal inventories, Umber's pdfTeX name,
+meaning, default, and special-meaning inventories, and their predecessor-parity
+loops. The two foundation commits intentionally added the schema and generated
+views before deletion; accounting for this child records only the obsolete
+consumer authorities actually retired here rather than crediting moved or
+generated declarations as deletion.
+
 ## 10. Replace typesetting shadow arenas and repeated topology with native authorities
 
 **Outcome.** A detached native-node transaction replaces the second math arena. `ParagraphTape` owns `NodeSequence`, analyzed break sites, prefix metrics, trace ranges, and materialization actions. A shared metrics cursor supplies packing, line breaking, vertical contributions, and math without erasing domain-specific policy.

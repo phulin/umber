@@ -147,19 +147,17 @@ print channel of its own outside the borrowed
   single mechanism: every bounded scan in the crate selects a
   `RestrictedIntegerClass` instead of open-coding a range test, and the
   recover-to-zero belongs to the scan, never to the command consuming it.
-- `src/primitives/`: private static primitive dispatch. `metadata.rs` and
-  `primitive_metadata.rs` own the exhaustive TeX82, e-TeX 2.6, Umber LaTeX
-  compatibility, and pdfTeX 1.40.29 enum-backed primitive spelling, meaning,
-  profile, and canonical observation identity authority. `registry.rs`
-  consumes generated profile and installation slices for fresh-INITEX versus
-  format-restore installation. `generated.rs` projects stable operand maps,
-  profile slices, observation identities, prefix policy, and deterministic
-  documentation tables; `parameters.rs` projects parameter cells and semantic
-  defaults, including job-clock and pdfTeX policies. Neither generated view
-  contains execution behavior.
-  `catalogue.rs` defines the behavior-free canonical descriptor vocabulary and
-  exhaustive structural/uniqueness validation used by the generated catalogue
-  migration.
+- `src/primitives/`: private static primitive dispatch. The integrated
+  catalogue spans `primitive_metadata.rs`'s exhaustive enum rows,
+  `parameters.rs`'s parameter cells/defaults, and `generated.rs`'s exceptional
+  meanings (`nullfont`, frozen `endwrite`, page quantities, and extension
+  internals). `generated.rs` is the sole projection seam for stable operands,
+  exact profile name sets, installation slices, observation identities,
+  prefix policy, and deterministic documentation tables. `registry.rs`
+  consumes those views for fresh INITEX and format restoration; it contains
+  only store-local installation mechanics. `catalogue.rs` defines the
+  behavior-free descriptor vocabulary and exhaustive validation. Execution
+  dispatch remains handwritten.
   `prefixed.rs` owns TeX82 §209's `max_non_prefixed_command` partition -- the
   single test §1211's `prefixed_command`, §1270's `do_assignments`, and the
   `\global` prefix all make. It is narrower than "this command assigns

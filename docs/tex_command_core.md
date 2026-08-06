@@ -1050,8 +1050,11 @@ crates/tex-command/src/
 
     primitives/
         mod.rs
+        catalogue.rs
         metadata.rs
         primitive_metadata.rs
+        generated.rs
+        parameters.rs
         registry.rs
         prefixed.rs
 
@@ -1064,11 +1067,14 @@ crates/tex-command/src/
 Files should remain organized around canonical state machines. Mechanical
 splitting is not a substitute for ownership separation.
 
-The primitive metadata declaration is the exhaustive authority for each
-enum-backed primitive's spelling, meaning, profile availability, aliases, and
-canonical observation command/operand. Fresh INITEX installation and
-format-load registry reconstruction consume the same declaration; restoration
-registers frozen meanings without replacing format-shadowed live meanings.
+The integrated primitive catalogue is the exhaustive authority for enum-backed
+commands, parameter cells and defaults, profile availability, aliases,
+canonical observation identities, page/internal quantities, `nullfont`, and
+the store-local frozen `endwrite` meaning. Fresh INITEX installation,
+format-load registry reconstruction, tracing names, pdfTeX setup, exact profile
+name sets, and documentation consume its generated views. Restoration registers
+frozen meanings without replacing format-shadowed live meanings. Handwritten
+dispatch remains the behavioral authority.
 
 ## 6. Engine and character profiles
 

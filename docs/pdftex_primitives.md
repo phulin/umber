@@ -31,7 +31,8 @@ aliases that a manual organized by user-facing features can omit.
 The prerequisite count is nominal control-sequence coverage; its behavioral
 gates remain the TeX and e-TeX corpora. `umber run --pdftex` and the native or
 WASM session option `engine: "pdftex"` select this layer and its truthful
-1.40.29 identity. All 158 names are registered in that mode; names whose
+1.40.29 identity. The exact 158-name set is projected from `tex-command`'s
+integrated catalogue rather than retained as an Umber table. All names are registered in that mode; names whose
 semantics were implemented by the dependency-ordered checklist have no
 unsupported-placeholder meanings.
 
@@ -43,7 +44,8 @@ The supported LaTeX-DVI compatibility layer intentionally keeps `\expanded`.
 Plain e-TeX 2.6 defines neither `\expanded` nor `\ifincsname`; both are
 installed at their source-derived pdfTeX 1.40.29 command and operand in
 pdfTeX mode. The source-set gate therefore requires all 158 names in pdfTeX
-mode and isolates the other 157 from earlier modes.
+mode and isolates the other 157 from earlier modes. The source-set test compares
+this catalogue projection directly with the pinned checklist below.
 Umber also exposes the engine-neutral names `\creationdate`, `\filesize`,
 `\shellescape`, and `\strcmp`; these are implementation reuse candidates for
 the corresponding `\pdf...` aliases, not exact-name coverage.

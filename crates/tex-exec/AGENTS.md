@@ -22,9 +22,10 @@ Command operands are scanned by `tex-command` into typed request and result valu
 - `src/lib.rs`: public surface and module wiring. Do not add a second command front or a crate-wide dead-code allowance.
 - `src/main_control.rs`: sole production command delivery and execution driver, including complete-job versus fragment root completion, bounded terminal-input continuation, loaded-profile versus canonical engine-binary semantic selection, typed committed mutation/effect observations, and the execution-owned memo capability.
 - `src/canonical_step.rs`: shared bounded-step result protocol and output ledger for checkpoint publication, resource fulfillment, suspension accounting, and cancellation.
-- `src/assignments/`: named-parameter registration, assignment identity,
-  tracing, and typed state writes. Enum-backed unexpandable registration is
-  delegated to `tex-command`'s shared primitive metadata.
+- `src/assignments/`: assignment identity, tracing, and typed state writes.
+  Primitive registration and parameter-name inventory are delegated to
+  `tex-command`'s integrated catalogue; only compatibility wrappers and
+  handwritten assignment behavior remain here.
 - `src/box_runtime/`: source-free box-register, material, packing, migration, horizontal contribution, shaping, spacing, indentation, whatsit, leader, and list-commit operations.
 - `src/paragraph_end.rs` and `src/paragraph_end/`: typed paragraph completion, hyphenation, line materialization, packing, migration, contribution, diagnostics, and pretolerance memoization.
 - `src/output_provenance.rs`: stable diagnostic provenance recipes for detached shipout artifacts.
