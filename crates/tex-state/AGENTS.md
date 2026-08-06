@@ -33,7 +33,9 @@ All production mutation of live TeX state should pass through `Universe` or simi
   values shared by command expansion and execution-side presentation.
 - `src/expansion_recovery.rs`: Detached main-control recovery vocabulary that
   keeps execution independent of the command expansion error tree.
-- `src/env/banks.rs`: Dense fixed-size bank codecs, parameter ids, and typed bank access helpers.
+- `src/env/banks.rs`: Dense fixed-size bank codecs, parameter ids, and typed
+  bank access helpers. Primitive spellings are owned by `tex-command`'s
+  catalogue, not repeated here.
 - `src/env/box_bank.rs`: Dense-and-paged box slots combining semantic values with journal-owned assignment and coalescing state.
 - `src/env/group.rs`: Group stack, aftergroup/afterassignment handling, group mismatch types, and environment snapshot logic.
 - `src/env/overflow.rs`: Sparse e-TeX overflow register banks for high register numbers.
@@ -140,7 +142,10 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/token_show.rs`: tex.web §§49/262--294's printable token spellings -- `show_token_list`, `print_cs`, and `\string` rendering over the interner, catcodes, and `\escapechar`.
 - `src/token_store.rs`: Immutable hash-consed token-list storage, builders, lookup, and rollback marks.
 - `src/token_store/tests.rs`: Unit tests for token-list interning, builder reuse, lookup, and rollback.
-- `src/universe.rs`: Top-level TeX state timeline, snapshots, effect commits, and capability-specific context facades.
+- `src/universe.rs`: Top-level TeX state timeline, snapshots, effect commits,
+  and capability-specific context facades. Restoration traces resolve named
+  parameters through the installed primitive registry rather than a state-local
+  spelling table.
 - `src/universe/tests.rs`: Unit tests for `Universe` mutation, snapshots, contexts, effects, and boundary behavior.
 - `src/world.rs`: External-effect boundary for files, atomic downstream file-set publication, streams, clocks, randomness, shell policy, printing, and effect records.
 - `src/world/tests.rs`: Unit tests for world snapshots, file records, streams, printing, randomness, shell escape, and effect replay.
