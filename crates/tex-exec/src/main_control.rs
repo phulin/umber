@@ -2403,14 +2403,6 @@ impl MainControl {
             }
             Err(error) => {
                 if let Some(fatal) = error.as_fatal() {
-                    if matches!(error, ExecError::Captured { .. })
-                        && fatal != FatalError::TooManyErrors
-                    {
-                        let rolled_back = snapshot.can_rollback(stores);
-                        let result = self.finish_failed_step(snapshot, stores, error);
-                        self.finish_operation_telemetry(rolled_back);
-                        return result;
-                    }
                     // §81 `jump_out` commits the partial operation. Publish
                     // its terminal evidence through the same optional sink.
                     self.observe_committed([
@@ -3886,7 +3878,7 @@ impl MainControl {
             stores.enable_geometry_observation();
             stores.geometry_observation_len()
         });
-        let effect_start = stores.world().effect_records().len();
+        let effect_start = stores.world().effect_pos();
         let artifact_start = stores.world().artifact_commits().len();
         // Occupying the slot is what makes this operation observed. Every
         // command-processor episode the operation runs, including the nested
@@ -3900,7 +3892,19 @@ impl MainControl {
         let mut pending = self.operation_observations.take().unwrap_or_default();
         match &stepped {
             Ok(StepResult::Progress(step)) => {
-                for effect in &stores.world().effect_records()[effect_start..] {
+                let live_effects = stores.world().effect_records();
+                let effect_base = stores
+                    .world()
+                    .effect_pos()
+                    .raw()
+                    .saturating_sub(live_effects.len().try_into().unwrap_or(u64::MAX));
+                let effect_start = effect_start
+                    .raw()
+                    .saturating_sub(effect_base)
+                    .try_into()
+                    .unwrap_or(usize::MAX)
+                    .min(live_effects.len());
+                for effect in &live_effects[effect_start..] {
                     pending.receipt.record_world_effect(effect.clone());
                 }
                 for artifact in &stores.world().artifact_commits()[artifact_start..] {
