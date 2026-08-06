@@ -1,4 +1,6 @@
-use test_support::pdf_fixture::{Dictionary, PdfFixture, array, name, nested_array, reference};
+use test_support::pdf_fixture::{
+    Dictionary, PdfFixture, RawPdfFixture, array, name, nested_array, reference,
+};
 
 use super::*;
 
@@ -83,7 +85,7 @@ fn missing_named_destination_is_not_treated_as_page_zero() {
 
 #[test]
 fn deeply_nested_resource_values_are_rejected() {
-    let mut document = PdfFixture::new("1.7").expect("create nested PDF fixture");
+    let mut document = RawPdfFixture::new("1.7").expect("create nested PDF fixture");
     let resources = Dictionary::new().entry(
         "Properties",
         Dictionary::new()

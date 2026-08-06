@@ -17,12 +17,12 @@ No replacement is a second general-purpose PDF implementation.
   the engine ledger before serialization. This is strongest for allocation,
   ownership, references, dictionaries, and policy, but is not independent of
   Umber's producer.
-- **F — raw fixture generation:** a dependency-free test helper writes only
-  explicit indirect objects, dictionaries, raw or filtered streams, a classic
-  xref table, and a trailer. It checks its calculated offsets and `/Length`
-  values. Object streams and other complex syntax remain committed,
-  externally generated fixtures. This helper is input construction, never an
-  output validator.
+- **F — fixture generation:** a tiny test-only adapter delegates ordinary valid
+  synthetic inputs to `pdf-writer`. A visibly separate handwritten builder is
+  retained only where malformed syntax, classic-xref bytes, cycles, depth
+  limits, or independence from Umber's writer are part of the evidence. Object
+  streams and other complex syntax remain committed, externally generated
+  fixtures. These helpers construct inputs; neither is an output validator.
 - **H — Hayro probe:** one bounded host-test abstraction over `hayro-syntax`
   parses independently emitted bytes, retains indirect identities while
   traversing, decodes streams, and projects content operations. It owns depth,
@@ -44,14 +44,14 @@ implementations. G and B provide precise local diagnostics; H and N provide a
 fast portable semantic gate; E catches shared assumptions and file-level
 conformance. No single oracle is treated as sufficient.
 
-The F helper is `test_support::pdf_fixture`. Callers provide explicit object
-numbers and raw PDF value syntax through insertion-ordered dictionaries. The
-writer owns `/Length`, `/Size`, classic generation-zero xref entries, and
-`startxref`, and verifies the resulting offsets and payload spans before
-returning bytes. Filtered-stream input is already encoded by the caller; the
-helper only declares its filter. Raw object bodies and `nested_array` preserve
-focused malformed, cycle, and depth-limit cases without adding a general PDF
-value model or encoder.
+The F helper is `test_support::pdf_fixture`. `PdfFixture` gives `pdf-writer`
+explicit object numbers, focused raw PDF values, dictionaries, and raw or
+already filtered stream payloads; `pdf-writer` owns indirect-object framing,
+stream lengths, xrefs, and trailers. `RawPdfFixture` retains the small
+handwritten classic-xref path for tests that deliberately inspect or violate
+those boundaries. Raw object bodies and `nested_array` preserve focused
+malformed, cycle, and depth-limit cases without adding a general PDF value
+model or encoder.
 
 ## Required Hayro boundary
 

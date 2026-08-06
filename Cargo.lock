@@ -1217,6 +1217,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "hayro-syntax",
+ "pdf-writer",
  "serde_json",
  "sha2",
  "similar",

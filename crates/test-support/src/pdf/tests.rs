@@ -1,10 +1,10 @@
-use crate::pdf_fixture::{Dictionary, PdfFixture};
+use crate::pdf_fixture::{Dictionary, RawPdfFixture};
 
 use super::normalize_structure;
 
 #[test]
 fn normalization_merges_inherited_resources_and_marks_cycles_stably() {
-    let mut fixture = PdfFixture::new("1.7").expect("valid PDF version");
+    let mut fixture = RawPdfFixture::new("1.7").expect("valid PDF version");
     fixture
         .add_raw_object(1, b"<< /Type /Catalog /Pages 2 0 R >>")
         .expect("catalog");

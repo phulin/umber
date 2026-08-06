@@ -1,15 +1,16 @@
-//! Small deterministic PDF input fixtures for parser and importer tests.
+//! Small PDF input fixtures for parser and importer tests.
 //!
-//! This deliberately accepts raw PDF value syntax instead of modeling the PDF
-//! object system. It owns only the framing that is easy to get subtly wrong:
-//! indirect objects, stream lengths, classic xref offsets, and the trailer.
+//! [`PdfFixture`] is the ordinary valid-input boundary: it accepts focused raw
+//! values but delegates all file framing to `pdf_writer`. [`RawPdfFixture`] is
+//! intentionally separate and handwritten. Use it only when classic-xref
+//! bytes, malformed syntax, cycles, depth limits, or writer independence are
+//! part of the evidence.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
 
-#[cfg(test)]
-mod tests;
+use pdf_writer::{Dict, Finish, Name, Pdf, Raw, Ref};
 
 const MAX_CLASSIC_XREF_OFFSET: u64 = 9_999_999_999;
 
@@ -61,6 +62,119 @@ impl Dictionary {
         }
         output.extend_from_slice(b">>");
     }
+
+    fn write_with_pdf_writer(&self, output: &mut Dict<'_>) {
+        for (key, value) in &self.entries {
+            output.pair(Name(key.as_bytes()), Raw(value));
+        }
+    }
+
+    fn write_entries(&self, output: &mut Vec<u8>) {
+        for (key, value) in &self.entries {
+            write_entry(output, key, value);
+        }
+    }
+}
+
+/// A tiny `pdf_writer` adapter for ordinary valid synthetic inputs.
+pub struct PdfFixture {
+    pdf: Pdf,
+    objects: BTreeSet<u32>,
+    trailer: Dictionary,
+}
+
+impl PdfFixture {
+    pub fn new(version: &str) -> Result<Self, FixtureError> {
+        if !valid_version(version) {
+            return Err(FixtureError::InvalidVersion(version.to_owned()));
+        }
+        let bytes = version.as_bytes();
+        let mut pdf = Pdf::new();
+        pdf.set_version(bytes[0] - b'0', bytes[2] - b'0');
+        Ok(Self {
+            pdf,
+            objects: BTreeSet::new(),
+            trailer: Dictionary::new(),
+        })
+    }
+
+    pub fn add_raw_object(
+        &mut self,
+        object_number: u32,
+        body: impl AsRef<[u8]>,
+    ) -> Result<(), FixtureError> {
+        let reference = self.register_object(object_number)?;
+        self.pdf.indirect(reference).primitive(Raw(body.as_ref()));
+        Ok(())
+    }
+
+    pub fn add_dictionary(
+        &mut self,
+        object_number: u32,
+        dictionary: Dictionary,
+    ) -> Result<(), FixtureError> {
+        let reference = self.register_object(object_number)?;
+        let mut output = self.pdf.indirect(reference).dict();
+        dictionary.write_with_pdf_writer(&mut output);
+        output.finish();
+        Ok(())
+    }
+
+    pub fn add_stream(
+        &mut self,
+        object_number: u32,
+        dictionary: Dictionary,
+        data: impl AsRef<[u8]>,
+    ) -> Result<(), FixtureError> {
+        if dictionary.contains("Length") {
+            return Err(FixtureError::ReservedStreamKey("Length"));
+        }
+        let reference = self.register_object(object_number)?;
+        let mut output = self.pdf.stream(reference, data.as_ref());
+        dictionary.write_with_pdf_writer(&mut output);
+        output.finish();
+        Ok(())
+    }
+
+    pub fn add_filtered_stream(
+        &mut self,
+        object_number: u32,
+        dictionary: Dictionary,
+        filter: &str,
+        encoded_data: impl AsRef<[u8]>,
+    ) -> Result<(), FixtureError> {
+        if dictionary.contains("Filter") {
+            return Err(FixtureError::ReservedStreamKey("Filter"));
+        }
+        self.add_stream(
+            object_number,
+            dictionary.entry("Filter", name(filter)),
+            encoded_data,
+        )
+    }
+
+    pub fn set_trailer_entry(
+        &mut self,
+        key: &str,
+        value: impl AsRef<[u8]>,
+    ) -> Result<(), FixtureError> {
+        set_trailer_entry(&mut self.trailer, key, value)
+    }
+
+    pub fn finish(mut self) -> Result<Vec<u8>, FixtureError> {
+        let mut entries = Vec::new();
+        self.trailer.write_entries(&mut entries);
+        self.pdf.set_trailer_raw_entries(entries);
+        Ok(self.pdf.finish())
+    }
+
+    fn register_object(&mut self, object_number: u32) -> Result<Ref, FixtureError> {
+        let reference = object_reference(object_number)?;
+        if !self.objects.insert(object_number) {
+            return Err(FixtureError::DuplicateObject(object_number));
+        }
+        Ok(reference)
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -75,13 +189,13 @@ enum ObjectBody {
 
 /// A deterministic classic-xref PDF fixture assembled from explicit objects.
 #[derive(Clone, Debug)]
-pub struct PdfFixture {
+pub struct RawPdfFixture {
     version: String,
     objects: BTreeMap<u32, ObjectBody>,
     trailer: Dictionary,
 }
 
-impl PdfFixture {
+impl RawPdfFixture {
     pub fn new(version: &str) -> Result<Self, FixtureError> {
         if !valid_version(version) {
             return Err(FixtureError::InvalidVersion(version.to_owned()));
@@ -154,17 +268,7 @@ impl PdfFixture {
         key: &str,
         value: impl AsRef<[u8]>,
     ) -> Result<(), FixtureError> {
-        assert_simple_name(key);
-        if key == "Size" {
-            return Err(FixtureError::ReservedTrailerKey("Size"));
-        }
-        if self.trailer.contains(key) {
-            return Err(FixtureError::DuplicateTrailerKey(key.to_owned()));
-        }
-        self.trailer
-            .entries
-            .push((key.to_owned(), value.as_ref().to_vec()));
-        Ok(())
+        set_trailer_entry(&mut self.trailer, key, value)
     }
 
     /// Serialize and internally verify every xref offset and stream length.
@@ -254,6 +358,33 @@ impl PdfFixture {
         self.objects.insert(object_number, body);
         Ok(())
     }
+}
+
+fn set_trailer_entry(
+    trailer: &mut Dictionary,
+    key: &str,
+    value: impl AsRef<[u8]>,
+) -> Result<(), FixtureError> {
+    assert_simple_name(key);
+    if key == "Size" {
+        return Err(FixtureError::ReservedTrailerKey("Size"));
+    }
+    if trailer.contains(key) {
+        return Err(FixtureError::DuplicateTrailerKey(key.to_owned()));
+    }
+    trailer
+        .entries
+        .push((key.to_owned(), value.as_ref().to_vec()));
+    Ok(())
+}
+
+fn object_reference(object_number: u32) -> Result<Ref, FixtureError> {
+    if object_number == 0 {
+        return Err(FixtureError::ZeroObjectNumber);
+    }
+    let number = i32::try_from(object_number)
+        .map_err(|_| FixtureError::ObjectNumberTooLarge(object_number))?;
+    Ok(Ref::new(number))
 }
 
 #[derive(Clone, Debug)]
