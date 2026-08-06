@@ -312,18 +312,21 @@ async function integration() {
 		() => direct.resolve([{ kind: "tex", name: "corrupt.tex" }]),
 		"object-digest",
 	);
-	const missingInputError = await rejected(
-		() =>
-			compileInWorker(
-				{ mainPath: "main.tex", outputs: ["dvi"] },
-				new Map([["main.tex", encode("\\input absent \\end")]]),
-				resolver,
-			),
+	const missingInputOptions = { mainPath: "main.tex", outputs: ["dvi"] };
+	const missingInputFiles = () =>
+		new Map([["main.tex", encode("\\input absent \\end")]]);
+	const directMissingInputError = await rejected(
+		() => compile(missingInputOptions, missingInputFiles(), direct),
+		"compile",
+	);
+	const workerMissingInputError = await rejected(
+		() => compileInWorker(missingInputOptions, missingInputFiles(), resolver),
 		"compile",
 	);
 	assert(
-		missingInputError.diagnostic?.message.includes("absent"),
-		"missing input did not preserve its compile diagnostic",
+		JSON.stringify(workerMissingInputError.diagnostic) ===
+			JSON.stringify(directMissingInputError.diagnostic),
+		"worker did not preserve the schema-1 compile diagnostic",
 	);
 	await rejected(
 		() =>
