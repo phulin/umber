@@ -320,7 +320,7 @@ fn run(profile: Option<SessionProfile>, accept_projection_changes: bool) -> Resu
         for (case_id, plan) in cases_by_id {
             let fixture_dir = domain_dir.join(case_id);
             let candidate = staging.path().join(domain).join(case_id);
-            prepare_fixture(&fixture_dir, &candidate, plan)?;
+            prepare_fixture(&repository, &fixture_dir, &candidate, case_id, plan)?;
             publication_cases.push(serde_json::json!({
                 "staged": candidate.strip_prefix(&repository).map_err(|_| "staging escaped repository")?,
                 "destination": fixture_dir.strip_prefix(&repository).map_err(|_| "fixture escaped repository")?,
@@ -344,27 +344,29 @@ fn run(profile: Option<SessionProfile>, accept_projection_changes: bool) -> Resu
     Ok(summary)
 }
 
-fn prepare_fixture(fixture_dir: &Path, candidate: &Path, plan: &CasePlan) -> Result<(), String> {
-    fs::create_dir_all(candidate).map_err(|error| format!("{}: {error}", candidate.display()))?;
-    for entry in
-        fs::read_dir(fixture_dir).map_err(|error| format!("{}: {error}", fixture_dir.display()))?
-    {
-        let entry = entry.map_err(|error| format!("{}: {error}", fixture_dir.display()))?;
-        if !entry
-            .file_type()
-            .map_err(|error| error.to_string())?
-            .is_file()
-        {
-            return Err(format!(
-                "fixture entry {} is not a regular file",
-                entry.path().display()
-            ));
-        }
-        fs::copy(entry.path(), candidate.join(entry.file_name()))
-            .map_err(|error| format!("{}: {error}", entry.path().display()))?;
-    }
+fn prepare_fixture(
+    repository: &Path,
+    fixture_dir: &Path,
+    candidate: &Path,
+    case_id: &str,
+    plan: &CasePlan,
+) -> Result<(), String> {
+    let relative = fixture_dir
+        .strip_prefix(repository)
+        .map_err(|_| "command-semantic fixture escaped repository".to_owned())?;
+    test_support::closed_case::FixtureCase::discover_tracked_at(
+        repository,
+        relative,
+        format!("{case_id}.tex"),
+        "command-semantic-v2",
+    )
+    .and_then(|case| case.stage_into(candidate))
+    .map_err(|error| format!("{}: {error:#}", fixture_dir.display()))?;
     write_channel_files(candidate, plan)?;
-    rewrite_manifest(&candidate.join("manifest.json"), plan)
+    rewrite_manifest(&candidate.join("manifest.json"), plan)?;
+    test_support::closed_case::StagedCase::validate(candidate)
+        .map_err(|error| format!("{}: {error:#}", candidate.display()))?;
+    Ok(())
 }
 
 fn publish_candidates(
@@ -764,8 +766,10 @@ mod tests {
     #[test]
     fn regeneration_prepares_one_complete_candidate_without_mutating_authority() {
         let temporary = tempfile::tempdir().expect("temporary directory");
-        let fixture = temporary.path().join("case-a");
-        fs::create_dir(&fixture).expect("fixture directory");
+        let fixture = temporary
+            .path()
+            .join("tests/corpus/command-semantic/example/case-a");
+        fs::create_dir_all(&fixture).expect("fixture directory");
         fs::write(fixture.join("case-a.tex"), b"\\end\n").expect("source");
         fs::write(
             fixture.join("manifest.json"),
@@ -787,6 +791,16 @@ mod tests {
             ),
         )
         .expect("manifest");
+        Command::new("git")
+            .current_dir(temporary.path())
+            .args(["init", "-q"])
+            .status()
+            .expect("initialize Git fixture");
+        Command::new("git")
+            .current_dir(temporary.path())
+            .args(["add", "."])
+            .status()
+            .expect("track fixture");
         let plan = CasePlan {
             expected: Some(vec!["new".to_owned()]),
             channels: ChannelsPlan {
@@ -796,7 +810,8 @@ mod tests {
             },
         };
         let candidate = temporary.path().join("candidate");
-        prepare_fixture(&fixture, &candidate, &plan).expect("prepare candidate");
+        prepare_fixture(temporary.path(), &fixture, &candidate, "case-a", &plan)
+            .expect("prepare candidate");
 
         assert_eq!(
             fs::read(fixture.join("case-a.tex")).expect("preserved source"),

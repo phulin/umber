@@ -4,6 +4,9 @@
 
 `tools/fixturegen` is the sole host-side fixture publication owner used by `scripts/regen-fixtures.sh` and primary-checkout provisioning. Its `CasePlan`, `ArtifactSpec`, and `AtomicCaseTransaction` cover ordinary text/native updates, layout and PDF migration, externally staged cohorts, command-semantic batches, end-to-end reference DVI publication, and corpus acquisition. It is intentionally not a root workspace member; build it via `cargo build --manifest-path tools/fixturegen/Cargo.toml`. It may invoke `refexec`, `umber`, `pdftex`, `pdftoppm`, and `tftopl`, but cargo tests must not build or run it.
 Candidate closed-directory validation and non-authoritative staging are shared from `test-support::closed_case`; only fixturegen may turn a validated candidate into repository authority.
+Single-case and whole-area PDF regeneration both stage typed cases and use the
+same fixturegen cohort transaction; no PDF generator writes committed fixture
+authority directly.
 
 `tex-command-stream`'s `command-semantic-schema` binary prints the structural JSON Schema generated from the V2 Rust manifest type; the committed corpus schema must match it exactly.
 

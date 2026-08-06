@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
 use std::fs;
 
-use test_support::git_fixture::ClosedCase;
+use test_support::closed_case::FixtureCase;
 
 const CASES: &[&str] = &[
     "annotations_running",
@@ -38,9 +38,13 @@ fn bounded_pdf_minifixtures_are_exact_closed_tracked_directories() {
         CASES.iter().map(|case| (*case).to_owned()).collect()
     );
     for case in CASES {
-        let closed =
-            ClosedCase::discover_tracked_at(&repository, format!("tests/corpus/pdf/{case}"))
-                .unwrap_or_else(|error| panic!("pdf/{case} is not closed: {error:#}"));
+        let closed = FixtureCase::discover_at(
+            &repository,
+            format!("tests/corpus/pdf/{case}"),
+            "source.tex",
+            "pdf",
+        )
+        .unwrap_or_else(|error| panic!("pdf/{case} is not closed: {error:#}"));
         closed.read("source.tex").expect("closed source");
         closed.read("expected.ref.pdf").expect("reference PDF");
         closed.read("expected.umber.pdf").expect("Umber PDF");

@@ -6,7 +6,7 @@ mod imp {
 
     use anyhow::{Context, Result};
 
-    use crate::{corpus_root, git_fixture::ClosedCase};
+    use crate::{closed_case::FixtureCase, corpus_root};
 
     #[derive(Clone, Debug, Eq, PartialEq)]
     pub struct CorpusCase {
@@ -61,10 +61,15 @@ mod imp {
                     .and_then(OsStr::to_str)
                     .with_context(|| format!("corpus case has invalid name: {}", path.display()))?
                     .to_owned();
-                let closed =
-                    ClosedCase::discover_tracked(Path::new("tests/corpus").join(area).join(&name))
-                        .with_context(|| format!("{area}/{name} is not a closed fixture case"))?;
-                let source = closed.path(&case_source_name(area, &name))?;
+                let source_name = case_source_name(area, &name);
+                let relative = Path::new("tests/corpus").join(area).join(&name);
+                let closed = if area == "pdf" {
+                    FixtureCase::discover(&relative, &source_name, area)
+                } else {
+                    FixtureCase::discover_tracked(&relative, &source_name, area)
+                }
+                .with_context(|| format!("{area}/{name} is not a typed closed fixture case"))?;
+                let source = closed.path(&source_name)?;
                 (name, source)
             } else {
                 if path.extension().and_then(OsStr::to_str) != Some("tex") {
@@ -97,12 +102,29 @@ mod imp {
         case: &str,
         destination: &Path,
     ) -> Result<Vec<PathBuf>> {
-        let area_path = if is_directory_case_area(area) {
-            corpus_area(area).join(case)
-        } else {
-            corpus_area(area)
-        };
         let mut copied = Vec::new();
+        if is_directory_case_area(area) {
+            let source_name = case_source_name(area, case);
+            let relative = Path::new("tests/corpus").join(area).join(case);
+            let closed = if area == "pdf" {
+                FixtureCase::discover(&relative, &source_name, area)
+            } else {
+                FixtureCase::discover_tracked(&relative, &source_name, area)
+            }?;
+            for file in &closed.contract().files {
+                let name = file.name.as_str();
+                let path = closed.path(name)?;
+                if name == source_name || !is_support_file(&path) {
+                    continue;
+                }
+                let copied_path = destination.join(name);
+                fs::copy(&path, &copied_path)?;
+                copied.push(copied_path);
+            }
+            copied.sort();
+            return Ok(copied);
+        }
+        let area_path = corpus_area(area);
         for entry in fs::read_dir(&area_path)
             .with_context(|| format!("failed to read corpus area {}", area_path.display()))?
         {

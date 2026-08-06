@@ -3,10 +3,10 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use anyhow::{Context, Result, bail, ensure};
+use anyhow::{Context, Result, bail};
 use sha2::{Digest, Sha256};
 use tempfile::TempDir;
-use test_support::{corpus_cases, corpus_root, pdf::normalize_structure};
+use test_support::{closed_case::FixtureCase, corpus_cases, corpus_root, pdf::normalize_structure};
 
 use super::umber_bin;
 use crate::cohort_transaction::CohortCase;
@@ -28,12 +28,12 @@ pub(super) fn regenerate_area() -> Result<()> {
     let mut plan = Vec::new();
     for case in cases {
         let candidate = candidates.path().join(case.name());
-        copy_case(
-            case.source_path()
-                .parent()
-                .context("PDF source has no case root")?,
-            &candidate,
-        )?;
+        FixtureCase::discover(
+            format!("tests/corpus/pdf/{}", case.name()),
+            "source.tex",
+            "pdf",
+        )?
+        .stage_into(&candidate)?;
         regenerate_case_into(case.name(), &candidate)?;
         plan.push(CohortCase {
             staged: candidate
@@ -91,8 +91,25 @@ pub(super) fn check_raster_attestations() -> Result<()> {
 }
 
 pub(super) fn regenerate_case(case: &str) -> Result<()> {
-    let case_root = corpus_root().join("pdf").join(case);
-    regenerate_case_into(case, &case_root)
+    let repository = test_support::repository_root();
+    let candidates =
+        TempDir::new_in(&repository).context("create repository-local PDF candidate")?;
+    let candidate = candidates.path().join(case);
+    FixtureCase::discover(format!("tests/corpus/pdf/{case}"), "source.tex", "pdf")?
+        .stage_into(&candidate)?;
+    regenerate_case_into(case, &candidate)?;
+    let plan = [CohortCase {
+        staged: candidate
+            .strip_prefix(&repository)
+            .context("PDF candidate escaped repository")?
+            .to_string_lossy()
+            .into_owned(),
+        destination: format!("tests/corpus/pdf/{case}"),
+        authorities: vec![format!("tests/corpus/pdf/{case}")],
+    }];
+    run_staged_cohort(&repository, &plan, Mode::Plan)?;
+    run_staged_cohort(&repository, &plan, Mode::Apply)?;
+    Ok(())
 }
 
 fn regenerate_case_into(case: &str, output_root: &Path) -> Result<()> {
@@ -112,7 +129,7 @@ fn regenerate_case_into(case: &str, output_root: &Path) -> Result<()> {
     let source_name = format!("{case}.tex");
     fs::copy(&source, temp.path().join(&source_name))
         .context("failed to stage PDF fixture source")?;
-    stage_case_resources(&case_root, temp.path())?;
+    stage_case_resources(case, temp.path())?;
 
     let reference_pdf = temp.path().join(format!("{case}.pdf"));
     let reference = Command::new(&pdftex)
@@ -199,35 +216,14 @@ fn regenerate_case_into(case: &str, output_root: &Path) -> Result<()> {
     write_fixture(output_root, "render", attestation.as_bytes())
 }
 
-fn copy_case(source: &Path, destination: &Path) -> Result<()> {
-    fs::create_dir(destination)?;
-    for entry in fs::read_dir(source)? {
-        let entry = entry?;
-        ensure!(
-            entry.file_type()?.is_file(),
-            "PDF case contains non-file {}",
-            entry.path().display()
-        );
-        fs::copy(entry.path(), destination.join(entry.file_name()))?;
-    }
-    Ok(())
-}
-
-fn stage_case_resources(case_root: &Path, directory: &Path) -> Result<()> {
-    for entry in fs::read_dir(case_root)? {
-        let entry = entry?;
-        let name = entry.file_name();
-        let name = name.to_string_lossy();
-        if name == "source.tex" || name == "case.inventory" || name.starts_with("expected.") {
+fn stage_case_resources(case: &str, directory: &Path) -> Result<()> {
+    let fixture = FixtureCase::discover(format!("tests/corpus/pdf/{case}"), "source.tex", "pdf")?;
+    for file in &fixture.contract().files {
+        let name = file.name.as_str();
+        if file.role != test_support::closed_case::FileRole::Input || name == "source.tex" {
             continue;
         }
-        if !entry.file_type()?.is_file() {
-            bail!(
-                "PDF closed case contains non-file resource {}",
-                entry.path().display()
-            );
-        }
-        fs::copy(entry.path(), directory.join(name.as_ref()))
+        fs::copy(fixture.path(name)?, directory.join(name))
             .with_context(|| format!("stage closed-case PDF resource {name}"))?;
     }
     Ok(())

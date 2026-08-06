@@ -110,7 +110,10 @@ authored-JavaScript/Rust manifest and selection case. Its `case.inventory`
 declares every payload; `test_support::git_fixture` requires the declared,
 tracked, and on-disk inventories to agree before Rust reads it, and validates
 every directory ancestor without following symlinks so generated, scratch,
-`target`, or alternate-checkout bytes cannot provide authority. The payloads
+`target`, or alternate-checkout bytes cannot provide authority. Rust consumers
+pair that Git proof with `test_support::closed_case::FixtureCase` so identity,
+roles, source closure, profile, and publication metadata use the shared typed
+contract. The payloads
 are hand-authored contract data, not live-reference outputs, and both
 `umber-distribution` and the authored JavaScript tests consume the exact same
 files.
@@ -118,7 +121,7 @@ files.
 `tests/corpus/bib/invocation` contains exactly three closed native `umber bib`
 invocation cases: BCF success, tool mode, and invalid output-format
 validation. Each directory's `case.inventory` closes its local metadata,
-inputs, and exact outputs through `test_support::git_fixture::ClosedCase`.
+inputs, and exact outputs through `test_support::closed_case::FixtureCase`.
 `invocation.case` schema `bib-invocation-v2` pins ordered typed literal,
 declared-input, and harness-owned-output arguments, expected status,
 stdout/stderr authorities, and the generated BBL/transformed-BibTeX artifact

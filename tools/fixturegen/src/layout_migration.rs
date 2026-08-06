@@ -384,13 +384,11 @@ pub fn seal_classic_case(root: &Path, case: &str) -> Result<()> {
     inventory.remove("case.json");
     let metadata = classic_case_metadata(case, &inventory)?;
     inventory.insert("case.json".to_owned(), metadata.clone());
-    let mut closed = String::from("closed-case-v1\n");
-    for name in inventory.keys() {
-        closed.push_str(name);
-        closed.push('\n');
-    }
     fs::write(root.join("case.json"), metadata)?;
-    fs::write(root.join("case.inventory"), closed)?;
+    test_support::closed_case::seal_candidate_inventory(
+        root,
+        inventory.keys().map(String::as_str),
+    )?;
     Ok(())
 }
 
@@ -904,14 +902,10 @@ fn inventory_for_case(
     if spec.close_existing_directories {
         let metadata = classic_case_metadata(case, &inventory)?;
         inventory.insert("case.json".to_owned(), metadata);
-        let mut names = inventory.keys().cloned().collect::<Vec<_>>();
-        names.sort();
-        let mut closed = String::from("closed-case-v1\n");
-        for name in names {
-            closed.push_str(&name);
-            closed.push('\n');
-        }
-        inventory.insert("case.inventory".to_owned(), closed.into_bytes());
+        let closed = test_support::closed_case::candidate_inventory_bytes(
+            inventory.keys().map(String::as_str),
+        )?;
+        inventory.insert("case.inventory".to_owned(), closed);
     }
     Ok((inventory, authorities))
 }

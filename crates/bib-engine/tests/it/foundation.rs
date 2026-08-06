@@ -12,7 +12,7 @@ use bib_engine::{
 
 macro_rules! classic_bytes {
     ($case:literal, $name:literal) => {{
-        let case = test_support::git_fixture::ClosedCase::discover(concat!(
+        let case = test_support::closed_case::FixtureCase::discover_classic_bibtex(concat!(
             "tests/corpus/bibtex/cases/",
             $case
         ))

@@ -196,3 +196,43 @@ fn staged_inventory_preserves_old_unmanifested_and_closed_membership_rules() {
         .contains("staged closed inventory mismatch")
     );
 }
+
+#[test]
+fn family_entry_point_preserves_manifested_and_git_owned_staging_shapes() {
+    let (temp, _) = fixture();
+    let manifested = FixtureCase::discover_at(
+        temp.path(),
+        "tests/corpus/example/only",
+        "source.tex",
+        "example",
+    )
+    .expect("manifested typed fixture");
+    let manifested_root = temp.path().join("manifested-candidate");
+    manifested
+        .stage_into(&manifested_root)
+        .expect("manifested candidate");
+    assert!(manifested_root.join("case.inventory").is_file());
+
+    let tracked_root = temp.path().join("tests/corpus/tracked/only");
+    fs::create_dir_all(&tracked_root).expect("tracked root");
+    fs::write(tracked_root.join("source.tex"), b"source\n").expect("tracked source");
+    fs::write(tracked_root.join("expected.log"), b"expected\n").expect("tracked output");
+    git(temp.path(), &["add", "tests/corpus/tracked/only"]);
+    let tracked = FixtureCase::discover_tracked_at(
+        temp.path(),
+        "tests/corpus/tracked/only",
+        "source.tex",
+        "example",
+    )
+    .expect("Git-owned typed fixture");
+    let candidate = temp.path().join("tracked-candidate");
+    tracked.stage_into(&candidate).expect("tracked candidate");
+    assert!(!candidate.join("case.inventory").exists());
+    assert_eq!(
+        StagedCase::validate(&candidate)
+            .expect("candidate")
+            .inventory()
+            .len(),
+        2
+    );
+}

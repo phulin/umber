@@ -47,6 +47,10 @@ compatibility tests exercise only `bib-engine` APIs.
 Pinned upstream bytes live in `tests/corpus/bib/upstream-2.22/`. Ordinary
 tests verify and consume those committed bytes hermetically. Regenerate them
 only with `scripts/regen-fixtures.sh --area bib`.
+Classic BibTeX tests consume each `case.json` through
+`test_support::closed_case::FixtureCase`; that shared contract owns the case
+identity, input/output roles, profile, hashes, closed inventory, and safe
+payload access.
 
 Run `cargo test -q --tests -p bib-engine` after changes, followed by the
 repository format and clippy gate.

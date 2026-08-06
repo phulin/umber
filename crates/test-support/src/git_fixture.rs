@@ -168,6 +168,11 @@ impl ClosedCase {
         self.payload_order.iter().map(String::as_str)
     }
 
+    #[must_use]
+    pub(crate) fn has_inventory(&self) -> bool {
+        self.has_inventory
+    }
+
     /// Returns a validated payload path for consumers that require a host path.
     pub fn path(&self, name: &str) -> Result<PathBuf> {
         ensure!(

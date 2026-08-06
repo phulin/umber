@@ -3,8 +3,8 @@ use std::process::Command;
 
 use sha2::{Digest, Sha256};
 use test_support::{
+    closed_case::FixtureCase,
     corpus_root,
-    git_fixture::ClosedCase,
     pdf::normalize_structure,
     pdf_probe::{PdfProbe, ProbeLimits, ProbeValue},
     read_binary_fixture, read_fixture,
@@ -259,9 +259,9 @@ fn assert_committed_case(declaration: PdfParityCase) -> PdfParityCaseSummary {
     }
 }
 
-fn closed_pdf_case(case: &str) -> ClosedCase {
-    ClosedCase::discover(format!("tests/corpus/pdf/{case}"))
-        .unwrap_or_else(|error| panic!("pdf/{case} is not a closed fixture case: {error:#}"))
+fn closed_pdf_case(case: &str) -> FixtureCase {
+    FixtureCase::discover(format!("tests/corpus/pdf/{case}"), "source.tex", "pdf")
+        .unwrap_or_else(|error| panic!("pdf/{case} is not a typed closed fixture case: {error:#}"))
 }
 
 #[test]

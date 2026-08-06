@@ -15,6 +15,12 @@ Metadata roles resolve through
 payloads and revalidates the no-follow ancestry, selected-checkout identity,
 tracked/declared/filesystem inventories, and selected entry's regular-file
 type before every access.
+`closed_case::FixtureCase` is the common consumer boundary for both
+`case.inventory` and Git-inventoried families. It pairs that authority with
+typed identity, ordered roles, source closure, profile, status, and publication
+metadata; classic BibTeX additionally imports its declared roles and hashes.
+Its candidate staging preserves each family's manifested or unmanifested
+shape, and its canonical inventory serializer is shared by fixturegen.
 
 ## Crate Role
 
@@ -26,7 +32,7 @@ Keep reusable test harness code here when multiple crates or integration tests n
 
 - `AGENTS.md`: crate-specific guidance, boundaries, validation notes, and this file map.
 - `Cargo.toml`: crate manifest, host-side fixture dependencies, and workspace lint settings.
-- `src/closed_case.rs`: typed closed-case identity, ordered file roles, status/xfail, profile, source-closure and publication metadata validation, plus non-authoritative local candidate staging.
+- `src/closed_case.rs`: typed closed-case identity, conventional and classic-BibTeX consumer adapters, ordered file roles, status/xfail, profile, source-closure and publication metadata validation, canonical inventory serialization, plus non-authoritative local candidate staging.
 - `src/closed_case/tests.rs`: contract, hash, order, closure, traversal, local-edit, and staging compatibility coverage.
 - `tests/tex82_catalogue.rs`: hermetic TeX82 property-catalogue completeness, citation, ownership, and exact test-link gate.
 - `tests/workspace_selection.rs`: routine workspace-selection and release-surface audits.

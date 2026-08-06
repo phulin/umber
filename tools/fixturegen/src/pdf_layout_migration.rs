@@ -167,12 +167,9 @@ fn inventories(repository: &Path) -> Result<BTreeMap<String, BTreeMap<String, Ve
             }
             _ => {}
         }
-        let mut inventory = String::from("closed-case-v1\n");
-        for name in files.keys() {
-            inventory.push_str(name);
-            inventory.push('\n');
-        }
-        files.insert("case.inventory".to_owned(), inventory.into_bytes());
+        let inventory =
+            test_support::closed_case::candidate_inventory_bytes(files.keys().map(String::as_str))?;
+        files.insert("case.inventory".to_owned(), inventory);
         result.insert((*case).to_owned(), files);
     }
     Ok(result)

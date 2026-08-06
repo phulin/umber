@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
 use std::fs;
 
-use test_support::git_fixture::ClosedCase;
+use test_support::closed_case::FixtureCase;
 
 const FAMILIES: &[(&str, usize, usize, usize)] = &[
     ("canonical-dvi", 2, 4, 706),
@@ -38,9 +38,13 @@ fn lexical_session_minifixtures_are_closed_tracked_directories() {
                 identities.insert(format!("{area}/{case}")),
                 "duplicate case {area}/{case}"
             );
-            let closed =
-                ClosedCase::discover_tracked_at(&repository, format!("tests/corpus/{area}/{case}"))
-                    .unwrap_or_else(|error| panic!("{area}/{case} is not closed: {error:#}"));
+            let closed = FixtureCase::discover_tracked_at(
+                &repository,
+                format!("tests/corpus/{area}/{case}"),
+                "source.tex",
+                (*area).to_owned(),
+            )
+            .unwrap_or_else(|error| panic!("{area}/{case} is not closed: {error:#}"));
             closed
                 .read("source.tex")
                 .unwrap_or_else(|error| panic!("{area}/{case} lacks source.tex: {error:#}"));

@@ -154,6 +154,227 @@ pub struct Contract {
     pub publication: PublicationMetadata,
 }
 
+/// A Git-validated fixture paired with its typed, conventional contract.
+///
+/// This is the common host-facing entry point for established fixture
+/// families. It derives ordered roles from their stable naming convention:
+/// `expected.*` payloads are outputs, `case.json` is metadata, and all other
+/// payloads form the exact source closure. Families with richer declarative
+/// metadata may construct [`Contract`] directly.
+#[derive(Debug)]
+pub struct FixtureCase {
+    contract: Contract,
+    case: ClosedCase,
+}
+
+impl FixtureCase {
+    /// Discovers a `case.inventory`-backed fixture.
+    pub fn discover(
+        case_relative: impl AsRef<Path>,
+        primary: impl Into<String>,
+        profile: impl Into<String>,
+    ) -> Result<Self> {
+        let case_relative = case_relative.as_ref();
+        let case = ClosedCase::discover(case_relative)?;
+        Self::from_case(case_relative, primary.into(), profile.into(), case)
+    }
+
+    /// Explicit-checkout variant for an inventory-backed fixture.
+    pub fn discover_at(
+        repository: &Path,
+        case_relative: impl AsRef<Path>,
+        primary: impl Into<String>,
+        profile: impl Into<String>,
+    ) -> Result<Self> {
+        let case_relative = case_relative.as_ref();
+        let case = ClosedCase::discover_at(repository, case_relative)?;
+        Self::from_case(case_relative, primary.into(), profile.into(), case)
+    }
+
+    /// Discovers a fixture whose exact inventory is owned directly by Git.
+    pub fn discover_tracked(
+        case_relative: impl AsRef<Path>,
+        primary: impl Into<String>,
+        profile: impl Into<String>,
+    ) -> Result<Self> {
+        let case_relative = case_relative.as_ref();
+        let case = ClosedCase::discover_tracked(case_relative)?;
+        Self::from_case(case_relative, primary.into(), profile.into(), case)
+    }
+
+    /// Explicit-checkout variant used by adversarial inventory tests.
+    pub fn discover_tracked_at(
+        repository: &Path,
+        case_relative: impl AsRef<Path>,
+        primary: impl Into<String>,
+        profile: impl Into<String>,
+    ) -> Result<Self> {
+        let case_relative = case_relative.as_ref();
+        let case = ClosedCase::discover_tracked_at(repository, case_relative)?;
+        Self::from_case(case_relative, primary.into(), profile.into(), case)
+    }
+
+    /// Discovers the declarative classic-BibTeX case schema without a second
+    /// inventory or digest validator in bibliography tests.
+    pub fn discover_classic_bibtex(case_relative: impl AsRef<Path>) -> Result<Self> {
+        let case_relative = case_relative.as_ref();
+        let case = ClosedCase::discover(case_relative)?;
+        let metadata: serde_json::Value = serde_json::from_slice(&case.read("case.json")?)?;
+        ensure!(
+            metadata["schema"] == "classic-bibtex-closed-case-v1",
+            "unsupported classic BibTeX case schema"
+        );
+        let id = case_relative
+            .file_name()
+            .and_then(|name| name.to_str())
+            .context("classic BibTeX case ID is not UTF-8")?;
+        ensure!(metadata["case"] == id, "classic BibTeX case identity drift");
+        let profile = metadata["compatibility"]
+            .as_str()
+            .context("classic BibTeX compatibility profile is missing")?;
+        let declarations = metadata["files"]
+            .as_array()
+            .context("classic BibTeX files must be an array")?;
+        let mut aux_inputs = declarations.iter().filter_map(|declaration| {
+            (declaration["role"] == "input")
+                .then(|| declaration["path"].as_str())
+                .flatten()
+                .filter(|name| name.ends_with(".aux"))
+        });
+        let primary = aux_inputs
+            .next()
+            .context("classic BibTeX case has no AUX input")?;
+        ensure!(
+            aux_inputs.next().is_none(),
+            "classic BibTeX case has multiple AUX inputs"
+        );
+        let mut fixture =
+            Self::from_case(case_relative, primary.to_owned(), profile.to_owned(), case)?;
+        let mut declared = BTreeMap::new();
+        for declaration in declarations {
+            let name = declaration["path"]
+                .as_str()
+                .context("classic BibTeX file path is missing")?;
+            let role = match declaration["role"].as_str() {
+                Some("input") => FileRole::Input,
+                Some("output") => FileRole::ExpectedOutput,
+                _ => bail!("invalid classic BibTeX role for {name}"),
+            };
+            let digest = declaration["sha256"]
+                .as_str()
+                .context("classic BibTeX file digest is missing")?
+                .to_owned();
+            ensure!(
+                declared.insert(name.to_owned(), (role, digest)).is_none(),
+                "duplicate classic BibTeX file declaration: {name}"
+            );
+        }
+        let mut inputs = Vec::new();
+        for file in &mut fixture.contract.files {
+            if file.name.as_str() == "case.json" {
+                file.role = FileRole::Metadata;
+                continue;
+            }
+            let (role, digest) = declared
+                .remove(file.name.as_str())
+                .with_context(|| format!("undeclared classic BibTeX payload: {}", file.name))?;
+            file.role = role;
+            file.sha256 = Some(digest);
+            if role == FileRole::Input && file.name != fixture.contract.source_closure.primary {
+                inputs.push(file.name.clone());
+            }
+        }
+        ensure!(
+            declared.is_empty(),
+            "classic BibTeX metadata names absent payloads: {declared:?}"
+        );
+        fixture.contract.source_closure.inputs = inputs;
+        fixture.contract.validate(&fixture.case)?;
+        Ok(fixture)
+    }
+
+    fn from_case(
+        case_relative: &Path,
+        primary: String,
+        profile: String,
+        case: ClosedCase,
+    ) -> Result<Self> {
+        let family = case_relative
+            .parent()
+            .context("closed-case identity has no family")?;
+        let id = case_relative
+            .file_name()
+            .and_then(|name| name.to_str())
+            .context("closed-case identity is not UTF-8")?;
+        let primary = PayloadName::new(primary)?;
+        let mut inputs = Vec::new();
+        let files = case
+            .payload_names()
+            .map(|name| {
+                let role = if name.starts_with("expected.") {
+                    FileRole::ExpectedOutput
+                } else if name == "case.json" {
+                    FileRole::Metadata
+                } else {
+                    FileRole::Input
+                };
+                let name = PayloadName::new(name)?;
+                if role == FileRole::Input && name != primary {
+                    inputs.push(name.clone());
+                }
+                Ok(TrackedFile {
+                    name,
+                    role,
+                    sha256: None,
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let destination = RepositoryPath::new(case_relative)?;
+        let contract = Contract {
+            identity: CaseIdentity::new(family, id)?,
+            files,
+            status: CaseStatus::Pass,
+            profile: CaseProfile(profile),
+            source_closure: SourceClosure { primary, inputs },
+            publication: PublicationMetadata {
+                destination: destination.clone(),
+                authorities: vec![destination],
+            },
+        };
+        contract.validate(&case)?;
+        Ok(Self { contract, case })
+    }
+
+    fn validated(&self) -> Result<ValidatedCase<'_>> {
+        self.contract.validate(&self.case)
+    }
+
+    pub fn read(&self, name: &str) -> Result<Vec<u8>> {
+        self.validated()?.read(name)
+    }
+
+    pub fn read_to_string(&self, name: &str) -> Result<String> {
+        self.validated()?.read_to_string(name)
+    }
+
+    pub fn path(&self, name: &str) -> Result<PathBuf> {
+        self.validated()?.path(name)
+    }
+
+    pub fn payload_path(&self, name: &str) -> Result<PathBuf> {
+        self.path(name)
+    }
+
+    pub fn stage_into(&self, destination: &Path) -> Result<StagedCase> {
+        self.validated()?.stage_into(destination)
+    }
+
+    #[must_use]
+    pub fn contract(&self) -> &Contract {
+        &self.contract
+    }
+}
+
 impl Contract {
     /// Validates identity, exact ordered membership, roles, hashes, source
     /// closure, and publication metadata against an already Git-validated case.
@@ -269,6 +490,18 @@ pub struct ValidatedCase<'a> {
 }
 
 impl ValidatedCase<'_> {
+    pub fn read(&self, name: &str) -> Result<Vec<u8>> {
+        self.case.read(name)
+    }
+
+    pub fn read_to_string(&self, name: &str) -> Result<String> {
+        self.case.read_to_string(name)
+    }
+
+    pub fn path(&self, name: &str) -> Result<PathBuf> {
+        self.case.payload_path(name)
+    }
+
     /// Stages a byte-exact candidate directory without publishing it.
     pub fn stage_into(&self, destination: &Path) -> Result<StagedCase> {
         ensure!(
@@ -279,15 +512,16 @@ impl ValidatedCase<'_> {
         fs::create_dir(destination)
             .with_context(|| format!("create staged case {}", destination.display()))?;
         let staged = (|| {
-            let mut inventory = String::from(INVENTORY_SCHEMA);
-            inventory.push('\n');
             for file in &self.contract.files {
                 let bytes = self.case.read(file.name.as_str())?;
                 fs::write(destination.join(file.name.as_str()), bytes)?;
-                inventory.push_str(file.name.as_str());
-                inventory.push('\n');
             }
-            fs::write(destination.join(INVENTORY_NAME), inventory)?;
+            if self.case.has_inventory() {
+                seal_candidate_inventory(
+                    destination,
+                    self.contract.files.iter().map(|file| file.name.as_str()),
+                )?;
+            }
             StagedCase::validate(destination)
         })();
         if staged.is_err() {
@@ -295,6 +529,34 @@ impl ValidatedCase<'_> {
         }
         staged
     }
+}
+
+/// Writes the canonical inventory for a non-authoritative candidate directory.
+/// Publication remains fixturegen's responsibility.
+pub fn seal_candidate_inventory<'a>(
+    root: &Path,
+    names: impl IntoIterator<Item = &'a str>,
+) -> Result<()> {
+    fs::write(root.join(INVENTORY_NAME), candidate_inventory_bytes(names)?)?;
+    Ok(())
+}
+
+/// Serializes the one canonical candidate inventory representation.
+pub fn candidate_inventory_bytes<'a>(names: impl IntoIterator<Item = &'a str>) -> Result<Vec<u8>> {
+    let mut inventory = String::from(INVENTORY_SCHEMA);
+    inventory.push('\n');
+    let mut seen = BTreeSet::new();
+    for name in names {
+        let name = PayloadName::new(name)?;
+        ensure!(
+            seen.insert(name.as_str().to_owned()),
+            "duplicate staged inventory entry {name}"
+        );
+        inventory.push_str(name.as_str());
+        inventory.push('\n');
+    }
+    ensure!(!seen.is_empty(), "staged case inventory is empty");
+    Ok(inventory.into_bytes())
 }
 
 /// A closed local candidate. It is safe to hand to fixturegen, but does not

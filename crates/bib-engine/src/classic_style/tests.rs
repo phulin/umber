@@ -20,10 +20,12 @@ SORT
 "#;
 
 fn classic_payload(case: &str, name: &str) -> Vec<u8> {
-    test_support::git_fixture::ClosedCase::discover(format!("tests/corpus/bibtex/cases/{case}"))
-        .expect("closed classic BibTeX case")
-        .read(name)
-        .expect("closed classic BibTeX payload")
+    test_support::closed_case::FixtureCase::discover_classic_bibtex(format!(
+        "tests/corpus/bibtex/cases/{case}"
+    ))
+    .expect("closed classic BibTeX case")
+    .read(name)
+    .expect("closed classic BibTeX payload")
 }
 
 #[test]

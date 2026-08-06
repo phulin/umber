@@ -6,10 +6,12 @@ use bib_engine::{
 };
 
 fn plain_payload(name: &str) -> Vec<u8> {
-    test_support::git_fixture::ClosedCase::discover("tests/corpus/bibtex/cases/plain")
-        .expect("closed plain case")
-        .read(name)
-        .expect("plain payload")
+    test_support::closed_case::FixtureCase::discover_classic_bibtex(
+        "tests/corpus/bibtex/cases/plain",
+    )
+    .expect("closed plain case")
+    .read(name)
+    .expect("plain payload")
 }
 
 #[test]

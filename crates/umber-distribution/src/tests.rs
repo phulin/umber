@@ -2,7 +2,7 @@ use super::*;
 use std::collections::BTreeSet;
 use std::sync::OnceLock;
 
-use test_support::git_fixture::ClosedCase;
+use test_support::closed_case::FixtureCase;
 
 const CASE_PATH: &str = "tests/corpus/distribution/cross-frontend-v1";
 
@@ -16,7 +16,8 @@ struct Fixture {
 fn fixture() -> &'static Fixture {
     static FIXTURE: OnceLock<Fixture> = OnceLock::new();
     FIXTURE.get_or_init(|| {
-        let case = ClosedCase::discover(CASE_PATH).expect("validate distribution fixture case");
+        let case = FixtureCase::discover(CASE_PATH, "manifest.json", "cross-frontend-v1")
+            .expect("validate typed distribution fixture case");
         Fixture {
             manifest: case.read_to_string("manifest.json").expect("manifest"),
             selection: case.read_to_string("selection.case").expect("selection"),

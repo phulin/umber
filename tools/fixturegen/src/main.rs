@@ -648,24 +648,23 @@ fn atomically_replace_case_output(
     output: &Path,
     bytes: &[u8],
 ) -> Result<()> {
+    let repository = repo_root();
     let current = corpus_root().join(area).join(case);
-    let mut inventory = std::collections::BTreeMap::new();
-    for entry in fs::read_dir(&current).with_context(|| format!("read {}", current.display()))? {
-        let entry = entry.context("read case entry")?;
-        let kind = entry.file_type().context("read case entry type")?;
-        if !kind.is_file() || kind.is_symlink() {
-            bail!("case contains non-regular entry {}", entry.path().display());
-        }
-        let name = entry
-            .file_name()
-            .into_string()
-            .map_err(|_| anyhow::anyhow!("case contains a non-UTF-8 file name"))?;
-        inventory.insert(name, fs::read(entry.path())?);
-    }
+    let staging = TempDir::new_in(&repository).context("create repository-local candidate")?;
+    let candidate = staging.path().join(case);
+    test_support::closed_case::FixtureCase::discover_tracked(
+        Path::new("tests/corpus").join(area).join(case),
+        test_support::case_source_name(area, case),
+        area,
+    )?
+    .stage_into(&candidate)?;
     let output_name = output
         .file_name()
         .context("fixture output has no file name")?;
-    inventory.insert(output_name.to_string_lossy().into_owned(), bytes.to_vec());
+    fs::write(candidate.join(output_name), bytes)?;
+    let inventory = test_support::closed_case::StagedCase::validate(&candidate)?
+        .inventory()
+        .clone();
     layout_migration::publish_case_inventory(&corpus_root(), &current, inventory)
 }
 

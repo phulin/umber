@@ -83,9 +83,19 @@ mod imp {
 
     pub fn fixture_path(area: &str, case: &str, kind: &str) -> PathBuf {
         if crate::is_directory_case_area(area) {
-            crate::git_fixture::ClosedCase::discover_tracked(
-                Path::new("tests/corpus").join(area).join(case),
-            )
+            (if area == "pdf" {
+                crate::closed_case::FixtureCase::discover(
+                    Path::new("tests/corpus").join(area).join(case),
+                    crate::case_source_name(area, case),
+                    area,
+                )
+            } else {
+                crate::closed_case::FixtureCase::discover_tracked(
+                    Path::new("tests/corpus").join(area).join(case),
+                    crate::case_source_name(area, case),
+                    area,
+                )
+            })
             .and_then(|closed| closed.path(&format!("expected.{kind}")))
             .unwrap_or_else(|error| panic!("{area}/{case} is not a closed fixture case: {error:#}"))
         } else {

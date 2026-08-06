@@ -103,7 +103,7 @@ mod imp {
 
     use super::{DviComparison, compare_dvi_bytes};
     use crate::{
-        case_source_name, copy_case_support_files, corpus_root, git_fixture::ClosedCase,
+        case_source_name, closed_case::FixtureCase, copy_case_support_files, corpus_root,
         is_directory_case_area,
     };
 
@@ -125,8 +125,12 @@ mod imp {
             let temp_dir = tempfile::tempdir().context("failed to create DVI fixture temp dir")?;
             let area_root = corpus_root().join(area);
             let source = if is_directory_case_area(area) {
-                ClosedCase::discover_tracked(Path::new("tests/corpus").join(area).join(case))?
-                    .path(&case_source_name(area, case))?
+                FixtureCase::discover_tracked(
+                    Path::new("tests/corpus").join(area).join(case),
+                    case_source_name(area, case),
+                    format!("{area}-dvi"),
+                )?
+                .path(&case_source_name(area, case))?
             } else {
                 area_root.join(format!("{case}.tex"))
             };

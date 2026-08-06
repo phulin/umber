@@ -7,7 +7,7 @@ use std::{
 
 use sha2::{Digest, Sha256};
 use test_support::{
-    CorpusCase, assert_matches_fixture, corpus_cases, dvi, git_fixture::ClosedCase, normalize,
+    CorpusCase, assert_matches_fixture, closed_case::FixtureCase, corpus_cases, dvi, normalize,
     read_binary_fixture,
 };
 use tex_state::Universe;
@@ -166,7 +166,8 @@ fn bib_command_has_exact_native_invocation_outputs_and_statuses() {
 
     for name in names {
         let case_relative = area_relative.join(&name);
-        let case = ClosedCase::discover(&case_relative).expect("closed bibliography case");
+        let case = FixtureCase::discover(&case_relative, "invocation.case", "bib-invocation-v2")
+            .expect("typed closed bibliography case");
         let invocation =
             BibInvocationCase::parse(&case.read_to_string("invocation.case").expect("metadata"))
                 .expect("valid invocation metadata");
@@ -196,7 +197,7 @@ fn bib_command_has_exact_native_invocation_outputs_and_statuses() {
                 "{name} artifact"
             );
         }
-        ClosedCase::discover(&case_relative)
+        FixtureCase::discover(&case_relative, "invocation.case", "bib-invocation-v2")
             .expect("invocation must not publish ambient case outputs");
     }
 }
@@ -383,7 +384,7 @@ impl BibInvocationCase {
         })
     }
 
-    fn expected_channel(&self, case: &ClosedCase, authority: &str) -> Vec<u8> {
+    fn expected_channel(&self, case: &FixtureCase, authority: &str) -> Vec<u8> {
         if authority == "empty" {
             Vec::new()
         } else {
@@ -394,7 +395,7 @@ impl BibInvocationCase {
     #[allow(clippy::disallowed_methods)] // Host-only hermetic fixture staging.
     fn resolve(
         &self,
-        case: &ClosedCase,
+        case: &FixtureCase,
         workspace: &Path,
     ) -> Result<ResolvedBibInvocation, String> {
         let input_bytes = self
@@ -612,8 +613,12 @@ fn bibliography_typed_roles_have_one_global_namespace_and_exact_cardinality() {
 #[test]
 #[allow(clippy::disallowed_methods)] // Host-only isolated staging assertion.
 fn bibliography_typed_arguments_materialize_literals_and_declared_roles() {
-    let case = ClosedCase::discover("tests/corpus/bib/invocation/bcf-success")
-        .expect("closed bibliography case");
+    let case = FixtureCase::discover(
+        "tests/corpus/bib/invocation/bcf-success",
+        "invocation.case",
+        "bib-invocation-v2",
+    )
+    .expect("typed closed bibliography case");
     let invocation = BibInvocationCase::parse(
         "bib-invocation-v2\n\
          arg=literal:ordinary\n\

@@ -492,24 +492,11 @@ fn classic_fixture_manifest_and_inventory_are_complete_and_pinned() {
         .collect::<BTreeSet<_>>();
     assert_eq!(present, case_names.into_iter().map(str::to_owned).collect());
     for name in case_names {
-        let closed = test_support::git_fixture::ClosedCase::discover(format!(
+        let closed = test_support::closed_case::FixtureCase::discover_classic_bibtex(format!(
             "tests/corpus/bibtex/cases/{name}"
         ))
         .expect("closed classic case");
-        let metadata: Value =
-            serde_json::from_slice(&closed.read("case.json").expect("case metadata"))
-                .expect("valid case metadata");
-        assert_eq!(metadata["schema"], "classic-bibtex-closed-case-v1");
-        assert_eq!(metadata["case"], name);
-        for file in metadata["files"].as_array().expect("case files") {
-            assert_file_identity(
-                &closed
-                    .payload_path(file["path"].as_str().expect("payload path"))
-                    .expect("validated payload"),
-                file["bytes"].as_u64().expect("payload bytes"),
-                file["sha256"].as_str().expect("payload hash"),
-            );
-        }
+        assert_eq!(closed.contract().identity.id, name);
     }
 
     let inventory: Value = read_json(&root.join("inventory.json"));
@@ -695,7 +682,7 @@ fn assert_file_identity(path: &Path, expected_bytes: u64, expected_sha256: &str)
         .file_name()
         .and_then(|value| value.to_str())
         .expect("classic fixture filename is UTF-8");
-    let closed = test_support::git_fixture::ClosedCase::discover(parent)
+    let closed = test_support::closed_case::FixtureCase::discover_classic_bibtex(parent)
         .unwrap_or_else(|error| panic!("invalid closed case {}: {error:#}", parent.display()));
     let bytes = closed
         .read(name)
