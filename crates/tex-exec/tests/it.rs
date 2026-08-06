@@ -119,8 +119,14 @@ fn assignment_committer_owns_redundancy_glue_identity_and_afterassignment_order(
     let keys = register_mutation_keys(&observations);
     assert_eq!(keys.iter().filter(|key| **key == "count:0").count(), 3);
     assert_eq!(keys.iter().filter(|key| **key == "skip:0").count(), 3);
-    let final_count = keys.iter().rposition(|key| *key == "count:0").unwrap();
-    let after_count = keys.iter().rposition(|key| *key == "count:1").unwrap();
+    let final_count = keys
+        .iter()
+        .rposition(|key| *key == "count:0")
+        .expect("the assigned count register has a receipt");
+    let after_count = keys
+        .iter()
+        .rposition(|key| *key == "count:1")
+        .expect("the afterassignment body has a receipt");
     assert!(
         final_count < after_count,
         "afterassignment runs after its commit"
