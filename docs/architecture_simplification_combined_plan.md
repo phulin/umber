@@ -367,6 +367,29 @@ are not credited as deletions.
 
 **Proof.** Preserve 20,000-depth stack safety, occurrence-ordered observations, selected OpenType glyphs, source-box geometry, semantic versus physical paragraph channels, discretionary topology, overflow behavior, trace routes, glue policy, and hot-path performance.
 
+**Paragraph-tape authority and accounting.** Commit `d338ff3cb` implements the
+paragraph slice (`umber2-vgjr.10.2`). `tex_typeset::linebreak::ParagraphTape`
+is the surviving owner of the paired native `NodeSequence`, analyzed legal
+break sites and wide prefix metrics, trace spans, and compact materialization
+actions. Every tolerance and diagnostic pass reads those saved sites.
+Post-line-break processing advances semantic and physical cursors together;
+the executor no longer carries separate node, physical-node, and boundary
+fields or reconstructs the projection. Nested discretionary width traversal
+is iterative and is covered at depth 20,000; a 100,000-node paragraph proves
+linear analysis storage, and a projected-channel test proves physical
+diagnostic topology.
+
+This slice adds 427 and deletes 179 production Rust lines, a net addition of
+248. Proof tests and the exact dormant-source ledger add 148 and delete six
+Rust lines, a net addition of 142. Documentation adds 11 lines. The complete
+change therefore adds 586 and deletes 185 tracked lines, a net addition of
+401. The deleted production category includes the three parallel
+`LineBreakResult` topology fields, executor-side boundary reconstruction,
+per-pass breakpoint/prefix walks, and the recursively nested physical
+materializer. New tape records, paired-cursor machinery, iterative deep-list
+measurement, and their invariants outweigh those deletions; none of program
+10's forecast reduction is credited to this child.
+
 ## 11. Publish one canonical font runtime while preserving format-specific policy
 
 **Outcome.** TFM parsing retains raw tables only through reference and error-precedence validation, then publishes canonical `FontMetrics` through one loaded-font constructor. OpenType MATH uses one strict eager validation walk and lazy borrowed queries through the existing scaled facade. A realized font identity feeds HTML, PDF, incrementality, and distribution boundaries without repeated decoding.
