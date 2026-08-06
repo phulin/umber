@@ -1,46 +1,30 @@
 {
-  "schema": 1,
-  "domain": "main-control",
-  "property_domain": "main-control-groups-assignments",
-  "cases": [
-    {
-      "id": "globaldefs-scope-override",
-      "property_id": "tex82.assignment.prefix-collection",
-      "profile": "raw-tex82-loaded",
-      "source": "globaldefs-scope-override.tex",
-      "provenance": {
-        "authority": "tex.web",
-        "manifest": "tests/tex82-oracle-manifest.txt",
-        "sections": [
-          1208,
-          1209,
-          1210,
-          1211,
-          1212,
-          1213,
-          1214
-        ]
-      },
-      "projection": {
-        "kind": "terminal-checks",
-        "terminal_checks": [
-          "g=1,3,4,0"
-        ]
-      },
-      "expected": [
-        "terminal-check:g=1,3,4,0=true"
-      ],
-      "channels": {
-        "events": 242,
-        "status": "clean",
-        "terminal": { "kind": "file" },
-        "log": { "kind": "file" },
-        "dvi": { "kind": "empty" },
-        "effects": { "kind": "empty" }
-      },
-      "expectation": {
-        "kind": "pass"
-      }
-    }
-  ]
+  "schema": 2,
+  "property_id": "tex82.assignment.prefix-collection",
+  "profile": "raw-tex82-loaded",
+  "provenance": {
+    "authority": "tex.web",
+    "manifest": "tests/tex82-oracle-manifest.txt",
+    "sections": [
+      1208,
+      1209,
+      1210,
+      1211,
+      1212,
+      1213,
+      1214
+    ]
+  },
+  "projection": {
+    "kind": "terminal-checks",
+    "terminal_checks": [
+      "g=1,3,4,0"
+    ]
+  },
+  "expected": [
+    "terminal-check:g=1,3,4,0=true"
+  ],
+  "channels": {
+    "events": 242
+  }
 }

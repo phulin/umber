@@ -1,50 +1,34 @@
 {
-  "schema": 1,
-  "domain": "main-control",
-  "property_domain": "main-control-groups-assignments",
-  "cases": [
-    {
-      "id": "italic-correction",
-      "property_id": "tex82.main-control.mode-dispatch",
-      "profile": "raw-tex82-loaded",
-      "source": "italic-correction.tex",
-      "provenance": {
-        "authority": "tex.web",
-        "manifest": "tests/tex82-oracle-manifest.txt",
-        "sections": [
-          1111,
-          1112,
-          1113
-        ]
-      },
-      "projection": {
-        "kind": "observations",
-        "kinds": [
-          "command"
-        ],
-        "commands": [
-          "ital_corr"
-        ]
-      },
-      "expected": [
-        "command:raw:cs:/:ital_corr:0",
-        "command:expanded:cs:/:ital_corr:0",
-        "command:raw:cs:/:ital_corr:0",
-        "command:expanded:cs:/:ital_corr:0",
-        "command:raw:cs:/:ital_corr:0",
-        "command:expanded:cs:/:ital_corr:0"
-      ],
-      "channels": {
-        "events": 135,
-        "status": "clean",
-        "terminal": { "kind": "file" },
-        "log": { "kind": "file" },
-        "dvi": { "kind": "empty" },
-        "effects": { "kind": "empty" }
-      },
-      "expectation": {
-        "kind": "pass"
-      }
-    }
-  ]
+  "schema": 2,
+  "property_id": "tex82.main-control.mode-dispatch",
+  "profile": "raw-tex82-loaded",
+  "provenance": {
+    "authority": "tex.web",
+    "manifest": "tests/tex82-oracle-manifest.txt",
+    "sections": [
+      1111,
+      1112,
+      1113
+    ]
+  },
+  "projection": {
+    "kind": "observations",
+    "kinds": [
+      "command"
+    ],
+    "commands": [
+      "ital_corr"
+    ]
+  },
+  "expected": [
+    "command:raw:cs:/:ital_corr:0",
+    "command:expanded:cs:/:ital_corr:0",
+    "command:raw:cs:/:ital_corr:0",
+    "command:expanded:cs:/:ital_corr:0",
+    "command:raw:cs:/:ital_corr:0",
+    "command:expanded:cs:/:ital_corr:0"
+  ],
+  "channels": {
+    "events": 135
+  }
 }

@@ -1,63 +1,47 @@
 {
-  "schema": 1,
-  "domain": "etex-diagnostics",
-  "property_domain": "main-control-groups-assignments",
-  "cases": [
-    {
-      "id": "etex-int-parameter-profile",
-      "property_id": "tex82.assignment.parameters-registers-arithmetic",
-      "profile": "etex-initex",
-      "source": "etex-int-parameter-profile.tex",
-      "provenance": {
-        "authority": "etex.ch",
-        "manifest": "tests/etex26-oracle-manifest.txt",
-        "sections": [
-          236
-        ]
-      },
-      "projection": {
-        "kind": "observations",
-        "kinds": [
-          "command"
-        ],
-        "commands": [
-          "assign_int"
-        ],
-        "count_registers": []
-      },
-      "expected": [
-        "command:raw:cs:tracingscantokens:assign_int:27237",
-        "command:expanded:cs:tracingscantokens:assign_int:27237",
-        "command:raw:cs:TeXXeTstate:assign_int:27243",
-        "command:expanded:cs:TeXXeTstate:assign_int:27243",
-        "command:raw:cs:predisplaydirection:assign_int:27239",
-        "command:expanded:cs:predisplaydirection:assign_int:27239",
-        "command:raw:cs:tracingassigns:assign_int:27234",
-        "command:expanded:cs:tracingassigns:assign_int:27234",
-        "command:raw:cs:tracinggroups:assign_int:27235",
-        "command:expanded:cs:tracinggroups:assign_int:27235",
-        "command:raw:cs:tracingifs:assign_int:27236",
-        "command:expanded:cs:tracingifs:assign_int:27236",
-        "command:raw:cs:tracingnesting:assign_int:27238",
-        "command:expanded:cs:tracingnesting:assign_int:27238",
-        "command:raw:cs:savingvdiscards:assign_int:27241",
-        "command:expanded:cs:savingvdiscards:assign_int:27241",
-        "command:raw:cs:lastlinefit:assign_int:27240",
-        "command:expanded:cs:lastlinefit:assign_int:27240",
-        "command:raw:cs:savinghyphcodes:assign_int:27242",
-        "command:expanded:cs:savinghyphcodes:assign_int:27242"
-      ],
-      "channels": {
-        "events": 95,
-        "status": "clean",
-        "terminal": { "kind": "file" },
-        "log": { "kind": "file" },
-        "dvi": { "kind": "empty" },
-        "effects": { "kind": "empty" }
-      },
-      "expectation": {
-        "kind": "pass"
-      }
-    }
-  ]
+  "schema": 2,
+  "property_id": "tex82.assignment.parameters-registers-arithmetic",
+  "profile": "etex-initex",
+  "provenance": {
+    "authority": "etex.ch",
+    "manifest": "tests/etex26-oracle-manifest.txt",
+    "sections": [
+      236
+    ]
+  },
+  "projection": {
+    "kind": "observations",
+    "kinds": [
+      "command"
+    ],
+    "commands": [
+      "assign_int"
+    ],
+    "count_registers": []
+  },
+  "expected": [
+    "command:raw:cs:tracingscantokens:assign_int:27237",
+    "command:expanded:cs:tracingscantokens:assign_int:27237",
+    "command:raw:cs:TeXXeTstate:assign_int:27243",
+    "command:expanded:cs:TeXXeTstate:assign_int:27243",
+    "command:raw:cs:predisplaydirection:assign_int:27239",
+    "command:expanded:cs:predisplaydirection:assign_int:27239",
+    "command:raw:cs:tracingassigns:assign_int:27234",
+    "command:expanded:cs:tracingassigns:assign_int:27234",
+    "command:raw:cs:tracinggroups:assign_int:27235",
+    "command:expanded:cs:tracinggroups:assign_int:27235",
+    "command:raw:cs:tracingifs:assign_int:27236",
+    "command:expanded:cs:tracingifs:assign_int:27236",
+    "command:raw:cs:tracingnesting:assign_int:27238",
+    "command:expanded:cs:tracingnesting:assign_int:27238",
+    "command:raw:cs:savingvdiscards:assign_int:27241",
+    "command:expanded:cs:savingvdiscards:assign_int:27241",
+    "command:raw:cs:lastlinefit:assign_int:27240",
+    "command:expanded:cs:lastlinefit:assign_int:27240",
+    "command:raw:cs:savinghyphcodes:assign_int:27242",
+    "command:expanded:cs:savinghyphcodes:assign_int:27242"
+  ],
+  "channels": {
+    "events": 95
+  }
 }

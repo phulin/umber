@@ -1,55 +1,39 @@
 {
-  "schema": 1,
-  "domain": "scanners-internal-quantities",
-  "property_domain": "scanners-internal-quantities",
-  "cases": [
-    {
-      "id": "infinite-glue-case",
-      "property_id": "tex82.scanner.dimension-internal-relative-infinite-units",
-      "profile": "raw-tex82-loaded",
-      "source": "infinite-glue-case.tex",
-      "provenance": {
-        "authority": "tex.web",
-        "manifest": "tests/tex82-oracle-manifest.txt",
-        "sections": [
-          407,
-          454
-        ]
-      },
-      "projection": {
-        "kind": "observations",
-        "kinds": [
-          "scanner"
-        ],
-        "commands": []
-      },
-      "expected": [
-        "scanner:integer:0:-",
-        "scanner:integer:0:-",
-        "scanner:dimension:0:-",
-        "scanner:integer:1:-",
-        "scanner:dimension:65536:-",
-        "scanner:glue:width=0;stretch=65536;stretch_order=filll;shrink=0;shrink_order=normal:-",
-        "scanner:integer:1:-",
-        "scanner:integer:0:-",
-        "scanner:dimension:0:-",
-        "scanner:integer:1:-",
-        "scanner:dimension:65536:-",
-        "scanner:glue:width=0;stretch=65536;stretch_order=filll;shrink=0;shrink_order=normal:-",
-        "scanner:integer:0:-",
-        "scanner:integer:7:-"
-      ],
-      "channels": {
-        "events": 252,
-        "status": "clean",
-        "terminal": { "kind": "file" },
-        "log": { "kind": "file" },
-        "dvi": { "kind": "empty" },
-        "effects": { "kind": "empty" }
-      },
-      "expectation": {
-        "kind": "pass"
-      }
-    }
-  ]
+  "schema": 2,
+  "property_id": "tex82.scanner.dimension-internal-relative-infinite-units",
+  "profile": "raw-tex82-loaded",
+  "provenance": {
+    "authority": "tex.web",
+    "manifest": "tests/tex82-oracle-manifest.txt",
+    "sections": [
+      407,
+      454
+    ]
+  },
+  "projection": {
+    "kind": "observations",
+    "kinds": [
+      "scanner"
+    ],
+    "commands": []
+  },
+  "expected": [
+    "scanner:integer:0:-",
+    "scanner:integer:0:-",
+    "scanner:dimension:0:-",
+    "scanner:integer:1:-",
+    "scanner:dimension:65536:-",
+    "scanner:glue:width=0;stretch=65536;stretch_order=filll;shrink=0;shrink_order=normal:-",
+    "scanner:integer:1:-",
+    "scanner:integer:0:-",
+    "scanner:dimension:0:-",
+    "scanner:integer:1:-",
+    "scanner:dimension:65536:-",
+    "scanner:glue:width=0;stretch=65536;stretch_order=filll;shrink=0;shrink_order=normal:-",
+    "scanner:integer:0:-",
+    "scanner:integer:7:-"
+  ],
+  "channels": {
+    "events": 252
+  }
 }

@@ -65,14 +65,14 @@
     reason = "this host-only regeneration entry point reads its oracle capture and rewrites its committed corpus"
 )]
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
 use tex_command_stream::semantic::{
     CapturedChannels, ChannelMismatch, ChannelPolicy, DeclaredCase, Expectation, STREAM_CHANNELS,
-    StreamChannel, StreamDisposition, channel_file, classify_divergence, execute,
+    SessionProfile, StreamChannel, StreamDisposition, channel_file, classify_divergence, execute,
     first_line_difference, first_line_difference_in, load_suite_with, normalize_channel, project,
     reclassify_no_error_channel, repository_root, split_channel_lines, strip_diagnostic_reports,
 };
@@ -97,19 +97,19 @@ fn main() -> ExitCode {
             let selector = arguments.next().unwrap_or_default();
             diff(&selector, StreamChannel::Log)
         }
-        Some("--allowlist") => {
-            let path = arguments.next().unwrap_or_default();
+        Some("--profile") => {
+            let profile = arguments.next().unwrap_or_default();
             if arguments.next().as_deref() != Some("--accept-projection-changes")
                 || arguments.next().is_some()
             {
                 Err(
-                    "--allowlist requires exactly PATH --accept-projection-changes; the explicit \
+                    "--profile requires exactly PROFILE --accept-projection-changes; the explicit \
                      loaded-profile regeneration route is the only batch allowed to update \
                      reviewed projections"
                         .to_owned(),
                 )
             } else {
-                run(Some(Path::new(&path)), true)
+                parse_profile(&profile).and_then(|profile| run(Some(profile), true))
             }
         }
         Some(other) => Err(format!(
@@ -225,44 +225,24 @@ fn print_side_by_side(oracle: &[u8], umber: &[u8]) {
     }
 }
 
-fn read_allowlist(path: &Path) -> Result<BTreeSet<String>, String> {
-    let text = fs::read_to_string(path).map_err(|error| format!("{}: {error}", path.display()))?;
-    let selected: BTreeSet<_> = text
-        .lines()
-        .map(|line| line.split('#').next().unwrap_or_default().trim())
-        .filter(|line| !line.is_empty())
-        .map(str::to_owned)
-        .collect();
-    if selected.is_empty() {
-        return Err(format!("{} selects no cases", path.display()));
-    }
-    Ok(selected)
+fn parse_profile(value: &str) -> Result<SessionProfile, String> {
+    serde_json::from_value(serde_json::Value::String(value.to_owned()))
+        .map_err(|_| format!("unknown command-semantic profile {value:?}"))
 }
 
-fn run(allowlist: Option<&Path>, accept_projection_changes: bool) -> Result<String, String> {
+fn run(profile: Option<SessionProfile>, accept_projection_changes: bool) -> Result<String, String> {
     let oracle_root = oracle_root();
     let all_cases = load_suite_with(ChannelPolicy::Deriving)?;
-    let selected = allowlist.map(read_allowlist).transpose()?;
     let cases: Vec<_> = all_cases
         .into_iter()
         .filter(|declared| {
-            selected.as_ref().is_none_or(|selected| {
-                selected.contains(&format!("{}/{}", declared.domain, declared.case.id))
+            profile.is_none_or(|profile| {
+                declared.case.profile == profile && declared.case.capture.selected()
             })
         })
         .collect();
-    if let Some(selected) = &selected {
-        let found: BTreeSet<_> = cases
-            .iter()
-            .map(|declared| format!("{}/{}", declared.domain, declared.case.id))
-            .collect();
-        if found != *selected {
-            let missing: Vec<_> = selected.difference(&found).cloned().collect();
-            return Err(format!(
-                "allowlist names unknown case(s): {}",
-                missing.join(", ")
-            ));
-        }
+    if cases.is_empty() {
+        return Err("capture policy selects no cases".to_owned());
     }
 
     let mut plans: BTreeMap<String, BTreeMap<String, CasePlan>> = BTreeMap::new();
@@ -316,9 +296,9 @@ fn run(allowlist: Option<&Path>, accept_projection_changes: bool) -> Result<Stri
             errors.join("\n  ")
         ));
     }
-    if selected.is_some() && !unrunnable.is_empty() {
+    if profile.is_some() && !unrunnable.is_empty() {
         return Err(format!(
-            "{} allowlisted case(s) did not run; refusing a partial rewrite:\n  {}",
+            "{} selected case(s) did not run; refusing a partial rewrite:\n  {}",
             unrunnable.len(),
             unrunnable.join("\n  ")
         ));
@@ -340,7 +320,7 @@ fn run(allowlist: Option<&Path>, accept_projection_changes: bool) -> Result<Stri
         for (case_id, plan) in cases_by_id {
             let fixture_dir = domain_dir.join(case_id);
             let candidate = staging.path().join(domain).join(case_id);
-            prepare_fixture(&fixture_dir, &candidate, plan, cases_by_id)?;
+            prepare_fixture(&fixture_dir, &candidate, plan)?;
             publication_cases.push(serde_json::json!({
                 "staged": candidate.strip_prefix(&repository).map_err(|_| "staging escaped repository")?,
                 "destination": fixture_dir.strip_prefix(&repository).map_err(|_| "fixture escaped repository")?,
@@ -364,12 +344,7 @@ fn run(allowlist: Option<&Path>, accept_projection_changes: bool) -> Result<Stri
     Ok(summary)
 }
 
-fn prepare_fixture(
-    fixture_dir: &Path,
-    candidate: &Path,
-    plan: &CasePlan,
-    cases: &BTreeMap<String, CasePlan>,
-) -> Result<(), String> {
+fn prepare_fixture(fixture_dir: &Path, candidate: &Path, plan: &CasePlan) -> Result<(), String> {
     fs::create_dir_all(candidate).map_err(|error| format!("{}: {error}", candidate.display()))?;
     for entry in
         fs::read_dir(fixture_dir).map_err(|error| format!("{}: {error}", fixture_dir.display()))?
@@ -389,7 +364,7 @@ fn prepare_fixture(
             .map_err(|error| format!("{}: {error}", entry.path().display()))?;
     }
     write_channel_files(candidate, plan)?;
-    rewrite_manifest(&candidate.join("manifest.json"), cases)
+    rewrite_manifest(&candidate.join("manifest.json"), plan)
 }
 
 fn publish_candidates(
@@ -725,182 +700,52 @@ fn write_channel_files(fixture_dir: &Path, plan: &CasePlan) -> Result<(), String
     Ok(())
 }
 
-/// Renders a derived `expected` array close to the shape `dprint` produces,
-/// one observation per line, exactly like every hand-authored one already
-/// committed; `dprint fmt` (part of `scripts/regen-fixtures.sh`'s own
-/// workflow) settles any remaining wrapping.
-fn expected_json(expected: &[String], indent: &str) -> String {
-    let inner = format!("{indent}  ");
-    let items: Vec<String> = expected
-        .iter()
-        .map(|observation| format!("{inner}{}", json_string(observation)))
-        .collect();
-    format!("[\n{}\n{indent}]", items.join(",\n"))
-}
-
 impl ChannelsPlan {
-    /// Renders the block close to the shape `dprint` produces so a
-    /// regeneration run leaves it little to do; an explicit `dprint fmt`
-    /// pass (part of `scripts/regen-fixtures.sh`'s own workflow) settles any
-    /// remaining wrapping rather than this function trying to replicate
-    /// dprint's line-width heuristics exactly.
-    fn json(&self, indent: &str) -> String {
-        let inner = format!("{indent}  ");
-        let mut fields = vec![
-            format!("{inner}\"events\": {}", self.events),
-            format!("{inner}\"status\": {}", json_string(&self.status)),
-        ];
+    fn value(&self) -> serde_json::Value {
+        let mut fields = serde_json::Map::new();
+        fields.insert("events".to_owned(), self.events.into());
+        if self.status != "clean" {
+            fields.insert("status".to_owned(), self.status.clone().into());
+        }
         for (index, channel) in STREAM_CHANNELS.into_iter().enumerate() {
             let disposition = match &self.channels[index] {
-                ChannelPlan::Empty => "{ \"kind\": \"empty\" }".to_owned(),
-                ChannelPlan::File { .. } => "{ \"kind\": \"file\" }".to_owned(),
-                ChannelPlan::Xfail { bug, mismatch, .. } => format!(
-                    "{{ \"kind\": \"xfail\", \"bug\": {}, \"mismatch\": {{ \"line\": {}, \
-                     \"expected\": {}, \"actual\": {} }} }}",
-                    json_string(bug),
-                    mismatch.line,
-                    json_string(&mismatch.expected),
-                    json_string(&mismatch.actual),
-                ),
-                ChannelPlan::XfailDiagnostics { bug, .. } => format!(
-                    "{{ \"kind\": \"xfail-diagnostics\", \"bug\": {} }}",
-                    json_string(bug),
-                ),
+                ChannelPlan::Empty | ChannelPlan::File { .. } => continue,
+                ChannelPlan::Xfail { bug, mismatch, .. } => serde_json::json!({
+                    "kind": "xfail",
+                    "bug": bug,
+                    "mismatch": {
+                        "line": mismatch.line,
+                        "expected": mismatch.expected,
+                        "actual": mismatch.actual,
+                    },
+                }),
+                ChannelPlan::XfailDiagnostics { bug, .. } => serde_json::json!({
+                    "kind": "xfail-diagnostics", "bug": bug,
+                }),
             };
-            fields.push(format!("{inner}\"{}\": {disposition}", channel.name()));
+            fields.insert(channel.name().to_owned(), disposition);
         }
-        format!("{{\n{}\n{indent}}}", fields.join(",\n"))
+        fields.into()
     }
 }
 
-/// Inserts each case's derived `expected` array (when derived at all -- an
-/// `xfail` case's is left untouched) and `channels` block into the manifest
-/// immediately *before* its `expectation` key, preserving every other byte
-/// of the file.
-///
-/// A structural rewrite through `serde_json` would reorder keys and drop the
-/// hand-authored formatting the corpus is reviewed in, so the edit is textual.
-/// It anchors before `expectation` rather than after because an `xfail`
-/// expectation spans several lines: inserting before a key needs no knowledge
-/// of where its value ends, while inserting after would have to parse it.
-fn rewrite_manifest(path: &Path, cases: &BTreeMap<String, CasePlan>) -> Result<(), String> {
-    let text = fs::read_to_string(path).map_err(|error| format!("{}: {error}", path.display()))?;
-    let mut output = String::with_capacity(text.len());
-    let mut current: Option<&CasePlan> = None;
-    let mut applied = 0;
-
-    let mut skipping_expected = 0i32;
-    let mut skipping_channels = 0i32;
-    for line in text.lines() {
-        let trimmed = line.trim_start();
-
-        // Drop any previously derived block, which the formatter may have
-        // expanded across several lines. Counting delimiters rather than
-        // matching one line is what makes the tool re-runnable on its own
-        // output.
-        if skipping_expected > 0 {
-            skipping_expected += brackets(line);
-            continue;
-        }
-        if skipping_channels > 0 {
-            skipping_channels += braces(line);
-            continue;
-        }
-
-        if let Some(id) = trimmed
-            .strip_prefix("\"id\": \"")
-            .and_then(|rest| rest.split('"').next())
-        {
-            current = cases.get(id);
-        }
-        // Only a case whose `expected` was actually derived (a `pass` case)
-        // has its existing array stripped here; an `xfail` case's committed
-        // `expected` passes through this loop untouched, exactly like every
-        // other field this tool does not derive.
-        if current.is_some_and(|plan| plan.expected.is_some())
-            && trimmed.starts_with("\"expected\":")
-        {
-            skipping_expected = brackets(line);
-            continue;
-        }
-        if trimmed.starts_with("\"channels\":") {
-            skipping_channels = braces(line);
-            continue;
-        }
-
-        if let Some(plan) = current
-            && trimmed.starts_with("\"expectation\":")
-        {
-            let indent = &line[..line.len() - trimmed.len()];
-            if let Some(expected) = &plan.expected {
-                output.push_str(&format!(
-                    "{indent}\"expected\": {},\n",
-                    expected_json(expected, indent)
-                ));
-            }
-            output.push_str(&format!(
-                "{indent}\"channels\": {},\n",
-                plan.channels.json(indent)
-            ));
-            applied += 1;
-            current = None;
-        }
-        output.push_str(line);
-        output.push('\n');
+/// Replaces only generated projections and resolved channel exceptions in a
+/// V2 manifest. Meaningful xfail projections remain untouched.
+fn rewrite_manifest(path: &Path, plan: &CasePlan) -> Result<(), String> {
+    let mut manifest: serde_json::Value = serde_json::from_slice(
+        &fs::read(path).map_err(|error| format!("{}: {error}", path.display()))?,
+    )
+    .map_err(|error| format!("{}: {error}", path.display()))?;
+    let object = manifest
+        .as_object_mut()
+        .ok_or_else(|| format!("{} is not a manifest object", path.display()))?;
+    if let Some(expected) = &plan.expected {
+        object.insert("expected".to_owned(), serde_json::json!(expected));
     }
-    if skipping_expected != 0 {
-        return Err(format!(
-            "{}: an existing \"expected\" array does not close",
-            path.display()
-        ));
-    }
-    if skipping_channels != 0 {
-        return Err(format!(
-            "{}: an existing \"channels\" block does not close",
-            path.display()
-        ));
-    }
-
-    if applied != 1 {
-        return Err(format!(
-            "{}: rewrote {applied} cases, expected exactly one local fixture case with an \
-             \"expectation\" anchor",
-            path.display()
-        ));
-    }
-    fs::write(path, output).map_err(|error| format!("{}: {error}", path.display()))
-}
-
-fn json_string(value: &str) -> String {
-    serde_json::to_string(value).unwrap_or_else(|_| "\"\"".to_owned())
-}
-
-/// Net `{`/`}` depth a line contributes, ignoring braces inside JSON strings.
-fn braces(line: &str) -> i32 {
-    net_delimiter_depth(line, '{', '}')
-}
-
-/// Net `[`/`]` depth a line contributes, ignoring brackets inside JSON
-/// strings.
-fn brackets(line: &str) -> i32 {
-    net_delimiter_depth(line, '[', ']')
-}
-
-fn net_delimiter_depth(line: &str, open: char, close: char) -> i32 {
-    let mut depth = 0;
-    let mut in_string = false;
-    let mut escaped = false;
-    for character in line.chars() {
-        match character {
-            _ if escaped => escaped = false,
-            '\\' if in_string => escaped = true,
-            '"' => in_string = !in_string,
-            character if !in_string && character == open => depth += 1,
-            character if !in_string && character == close => depth -= 1,
-            _ => {}
-        }
-    }
-    depth
+    object.insert("channels".to_owned(), plan.channels.value());
+    let mut bytes = serde_json::to_vec_pretty(&manifest).map_err(|error| error.to_string())?;
+    bytes.push(b'\n');
+    fs::write(path, bytes).map_err(|error| format!("{}: {error}", path.display()))
 }
 
 #[cfg(test)]
@@ -908,16 +753,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn allowlist_is_exact_and_rejects_empty_input() {
-        let temporary = tempfile::tempdir().expect("temporary directory");
-        let allowlist = temporary.path().join("cases");
-        fs::write(&allowlist, "# comment\nb/two\n\na/one # note\nb/two\n").expect("allowlist");
+    fn capture_profiles_are_typed() {
         assert_eq!(
-            read_allowlist(&allowlist).expect("valid allowlist"),
-            BTreeSet::from(["a/one".to_owned(), "b/two".to_owned()])
+            parse_profile("raw-tex82-loaded"),
+            Ok(SessionProfile::RawTex82Loaded)
         );
-        fs::write(&allowlist, "# only comments\n").expect("empty allowlist");
-        assert!(read_allowlist(&allowlist).is_err());
+        assert!(parse_profile("unknown").is_err());
     }
 
     #[test]
@@ -954,15 +795,8 @@ mod tests {
                 channels: std::array::from_fn(|_| ChannelPlan::Empty),
             },
         };
-        let plans = BTreeMap::from([("case-a".to_owned(), plan)]);
         let candidate = temporary.path().join("candidate");
-        prepare_fixture(
-            &fixture,
-            &candidate,
-            plans.get("case-a").expect("plan"),
-            &plans,
-        )
-        .expect("prepare candidate");
+        prepare_fixture(&fixture, &candidate, &plan).expect("prepare candidate");
 
         assert_eq!(
             fs::read(fixture.join("case-a.tex")).expect("preserved source"),

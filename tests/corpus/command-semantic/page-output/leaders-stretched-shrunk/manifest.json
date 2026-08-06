@@ -1,50 +1,34 @@
 {
-  "schema": 1,
-  "domain": "page-output",
-  "property_domain": "page-builder-output-whatsits-io-shipout",
-  "cases": [
-    {
-      "id": "leaders-stretched-shrunk",
-      "profile": "raw-tex82-loaded",
-      "property_id": "tex82.shipout.hlist-traversal",
-      "source": "leaders-stretched-shrunk.tex",
-      "provenance": {
-        "authority": "tex.web",
-        "manifest": "tests/tex82-oracle-manifest.txt",
-        "sections": [
-          626,
-          627,
-          634,
-          635
-        ]
-      },
-      "projection": {
-        "kind": "execution-boundaries",
-        "command_names": [
-          "leader_ship"
-        ],
-        "include_artifact_hashes": true
-      },
-      "expected": [
-        "command:leader_ship:99",
-        "command:leader_ship:100",
-        "command:leader_ship:101",
-        "command:leader_ship:102",
-        "command:leader_ship:100",
-        "command:leader_ship:102",
-        "artifact:1a8e5a8684ab6aad03a638ad897155b8c955f54d811ef325c86ffe8c7cc98ab8"
-      ],
-      "channels": {
-        "events": 2324,
-        "status": "clean",
-        "terminal": { "kind": "file" },
-        "log": { "kind": "file" },
-        "dvi": { "kind": "file" },
-        "effects": { "kind": "empty" }
-      },
-      "expectation": {
-        "kind": "pass"
-      }
-    }
-  ]
+  "schema": 2,
+  "property_id": "tex82.shipout.hlist-traversal",
+  "profile": "raw-tex82-loaded",
+  "provenance": {
+    "authority": "tex.web",
+    "manifest": "tests/tex82-oracle-manifest.txt",
+    "sections": [
+      626,
+      627,
+      634,
+      635
+    ]
+  },
+  "projection": {
+    "kind": "execution-boundaries",
+    "command_names": [
+      "leader_ship"
+    ],
+    "include_artifact_hashes": true
+  },
+  "expected": [
+    "command:leader_ship:99",
+    "command:leader_ship:100",
+    "command:leader_ship:101",
+    "command:leader_ship:102",
+    "command:leader_ship:100",
+    "command:leader_ship:102",
+    "artifact:1a8e5a8684ab6aad03a638ad897155b8c955f54d811ef325c86ffe8c7cc98ab8"
+  ],
+  "channels": {
+    "events": 2324
+  }
 }

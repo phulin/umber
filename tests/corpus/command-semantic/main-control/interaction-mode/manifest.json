@@ -1,54 +1,41 @@
 {
-  "schema": 1,
-  "domain": "main-control",
-  "property_domain": "main-control-groups-assignments",
-  "cases": [
-    {
-      "id": "interaction-mode",
-      "property_id": "tex82.assignment.interaction-mode",
-      "profile": "raw-tex82-loaded",
-      "source": "interaction-mode.tex",
-      "provenance": {
-        "authority": "tex.web",
-        "manifest": "tests/tex82-oracle-manifest.txt",
-        "sections": [
-          1262,
-          1263,
-          1264,
-          1265
-        ]
-      },
-      "projection": {
-        "kind": "terminal-checks",
-        "terminal_checks": [
-          "x"
-        ],
-        "count_registers": [
-          0
-        ]
-      },
-      "expected": [
-        "terminal-check:x=false",
-        "count:0=1"
-      ],
-      "channels": {
-        "events": 80,
-        "status": "clean",
-        "terminal": { "kind": "file" },
-        "log": { "kind": "file" },
-        "dvi": { "kind": "empty" },
-        "effects": { "kind": "empty" }
-      },
-      "expectation": {
-        "kind": "xfail",
-        "bug": "umber2-mp0d",
-        "mismatch": {
-          "index": 0,
-          "kind": "observation",
-          "expected": "terminal-check:x=false",
-          "actual": "terminal-check:x=true"
-        }
-      }
+  "schema": 2,
+  "property_id": "tex82.assignment.interaction-mode",
+  "profile": "raw-tex82-loaded",
+  "provenance": {
+    "authority": "tex.web",
+    "manifest": "tests/tex82-oracle-manifest.txt",
+    "sections": [
+      1262,
+      1263,
+      1264,
+      1265
+    ]
+  },
+  "projection": {
+    "kind": "terminal-checks",
+    "terminal_checks": [
+      "x"
+    ],
+    "count_registers": [
+      0
+    ]
+  },
+  "expected": [
+    "terminal-check:x=false",
+    "count:0=1"
+  ],
+  "expectation": {
+    "kind": "xfail",
+    "bug": "umber2-mp0d",
+    "mismatch": {
+      "index": 0,
+      "kind": "observation",
+      "expected": "terminal-check:x=false",
+      "actual": "terminal-check:x=true"
     }
-  ]
+  },
+  "channels": {
+    "events": 80
+  }
 }

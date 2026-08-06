@@ -1,51 +1,46 @@
 {
-  "schema": 1,
-  "domain": "main-control",
-  "property_domain": "main-control-groups-assignments",
-  "cases": [
-    {
-      "id": "empty-token-register",
-      "property_id": "tex82.assignment.parameters-registers-arithmetic",
-      "profile": "raw-tex82-loaded",
-      "source": "empty-token-register.tex",
-      "provenance": {
-        "authority": "tex.web",
-        "manifest": "tests/tex82-oracle-manifest.txt",
-        "sections": [
-          1226,
-          1227,
-          1228
-        ]
-      },
-      "projection": {
-        "kind": "state",
-        "count_registers": [
-          0
-        ]
-      },
-      "expected": [
-        "execution:error:emergency-stop(End of file on the terminal!)",
-        "count:0=0"
-      ],
-      "channels": {
-        "events": 38,
-        "status": "fatal:emergency-stop(End of file on the terminal!)",
-        "terminal": {
-          "kind": "xfail",
-          "bug": "umber2-alfh.11",
-          "mismatch": { "line": 14, "expected": "<*> empty-token-register.tex", "actual": "? " }
-        },
-        "log": {
-          "kind": "xfail",
-          "bug": "umber2-alfh.11",
-          "mismatch": { "line": 16, "expected": "<*> empty-token-register.tex", "actual": "? " }
-        },
-        "dvi": { "kind": "empty" },
-        "effects": { "kind": "empty" }
-      },
-      "expectation": {
-        "kind": "pass"
+  "schema": 2,
+  "property_id": "tex82.assignment.parameters-registers-arithmetic",
+  "profile": "raw-tex82-loaded",
+  "provenance": {
+    "authority": "tex.web",
+    "manifest": "tests/tex82-oracle-manifest.txt",
+    "sections": [
+      1226,
+      1227,
+      1228
+    ]
+  },
+  "projection": {
+    "kind": "state",
+    "count_registers": [
+      0
+    ]
+  },
+  "expected": [
+    "execution:error:emergency-stop(End of file on the terminal!)",
+    "count:0=0"
+  ],
+  "channels": {
+    "events": 38,
+    "status": "fatal:emergency-stop(End of file on the terminal!)",
+    "terminal": {
+      "kind": "xfail",
+      "bug": "umber2-alfh.11",
+      "mismatch": {
+        "line": 14,
+        "expected": "<*> empty-token-register.tex",
+        "actual": "? "
+      }
+    },
+    "log": {
+      "kind": "xfail",
+      "bug": "umber2-alfh.11",
+      "mismatch": {
+        "line": 16,
+        "expected": "<*> empty-token-register.tex",
+        "actual": "? "
       }
     }
-  ]
+  }
 }

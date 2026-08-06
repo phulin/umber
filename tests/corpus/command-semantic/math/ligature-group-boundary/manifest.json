@@ -1,68 +1,52 @@
 {
-  "schema": 1,
-  "domain": "math",
-  "property_domain": "math-box-list-and-mode-semantics",
-  "cases": [
-    {
-      "id": "ligature-group-boundary",
-      "property_id": "tex82.lists.text-material",
-      "profile": "raw-tex82-loaded",
-      "source": "ligature-group-boundary.tex",
-      "font_inputs": {
-        "cmr10.tfm": "crates/tex-fonts/tests/fixtures/cm/cmr10.tfm"
-      },
-      "provenance": {
-        "authority": "tex.web",
-        "manifest": "tests/tex82-oracle-manifest.txt",
-        "sections": [
-          1037,
-          1038,
-          1040
-        ]
-      },
-      "projection": {
-        "kind": "execution-boundaries",
-        "command_names": [
-          "leader_ship"
-        ],
-        "box_registers": [
-          0
-        ],
-        "node_depth": 2,
-        "include_artifact_hashes": true
-      },
-      "expected": [
-        "command:leader_ship:99",
-        "box:0/0:hlist",
-        "box:0/0/0:ligature",
-        "box:0/0/1:char",
-        "box:0/0/2:char",
-        "box:0/0/3:char",
-        "box:0/0/4:glue",
-        "box:0/0/5:char",
-        "box:0/0/6:char",
-        "box:0/0/7:char",
-        "box:0/0/8:char",
-        "box:0/0/9:char",
-        "box:0/0/10:glue",
-        "box:0/0/11:char",
-        "box:0/0/12:char",
-        "box:0/0/13:char",
-        "box:0/0/14:char",
-        "box:0/0/15:char",
-        "artifact:b3edecca19d0df6e641fa4383a76e9c3729c161d911381d91b86f5d3d04e7540"
-      ],
-      "channels": {
-        "events": 176,
-        "status": "clean",
-        "terminal": { "kind": "file" },
-        "log": { "kind": "file" },
-        "dvi": { "kind": "file" },
-        "effects": { "kind": "empty" }
-      },
-      "expectation": {
-        "kind": "pass"
-      }
-    }
-  ]
+  "schema": 2,
+  "property_id": "tex82.lists.text-material",
+  "profile": "raw-tex82-loaded",
+  "font_inputs": {
+    "cmr10.tfm": "crates/tex-fonts/tests/fixtures/cm/cmr10.tfm"
+  },
+  "provenance": {
+    "authority": "tex.web",
+    "manifest": "tests/tex82-oracle-manifest.txt",
+    "sections": [
+      1037,
+      1038,
+      1040
+    ]
+  },
+  "projection": {
+    "kind": "execution-boundaries",
+    "command_names": [
+      "leader_ship"
+    ],
+    "box_registers": [
+      0
+    ],
+    "node_depth": 2,
+    "include_artifact_hashes": true
+  },
+  "expected": [
+    "command:leader_ship:99",
+    "box:0/0:hlist",
+    "box:0/0/0:ligature",
+    "box:0/0/1:char",
+    "box:0/0/2:char",
+    "box:0/0/3:char",
+    "box:0/0/4:glue",
+    "box:0/0/5:char",
+    "box:0/0/6:char",
+    "box:0/0/7:char",
+    "box:0/0/8:char",
+    "box:0/0/9:char",
+    "box:0/0/10:glue",
+    "box:0/0/11:char",
+    "box:0/0/12:char",
+    "box:0/0/13:char",
+    "box:0/0/14:char",
+    "box:0/0/15:char",
+    "artifact:b3edecca19d0df6e641fa4383a76e9c3729c161d911381d91b86f5d3d04e7540"
+  ],
+  "channels": {
+    "events": 176
+  }
 }

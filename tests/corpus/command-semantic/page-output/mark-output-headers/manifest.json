@@ -1,53 +1,37 @@
 {
-  "schema": 1,
-  "domain": "page-output",
-  "property_domain": "page-builder-output-whatsits-io-shipout",
-  "cases": [
-    {
-      "id": "mark-output-headers",
-      "profile": "raw-tex82-loaded",
-      "property_id": "tex82.output.fire-up-packaging",
-      "source": "mark-output-headers.tex",
-      "font_inputs": {
-        "cmr10.tfm": "crates/tex-fonts/tests/fixtures/cm/cmr10.tfm"
-      },
-      "provenance": {
-        "authority": "tex.web",
-        "manifest": "tests/tex82-oracle-manifest.txt",
-        "sections": [
-          1014,
-          1016
-        ]
-      },
-      "projection": {
-        "kind": "execution-boundaries",
-        "command_names": [
-          "leader_ship"
-        ],
-        "include_artifact_hashes": true
-      },
-      "expected": [
-        "command:leader_ship:99",
-        "command:leader_ship:99",
-        "command:leader_ship:99",
-        "command:leader_ship:99",
-        "command:leader_ship:99",
-        "command:leader_ship:99",
-        "artifact:124214966a0c3a3d56bf1a17f696e32aff0b517894109739406ef9e2759cf5cf",
-        "artifact:5f7da4be6b8c383978affcc478906538eee58895adab74cdba4f6c6f0b58218a",
-        "artifact:a379896e7eb1efb788be4272ce0950d7c02c6193690fe14548fbd751bc4dc4db"
-      ],
-      "channels": {
-        "events": 900,
-        "status": "clean",
-        "terminal": { "kind": "file" },
-        "log": { "kind": "file" },
-        "dvi": { "kind": "file" },
-        "effects": { "kind": "empty" }
-      },
-      "expectation": {
-        "kind": "pass"
-      }
-    }
-  ]
+  "schema": 2,
+  "property_id": "tex82.output.fire-up-packaging",
+  "profile": "raw-tex82-loaded",
+  "font_inputs": {
+    "cmr10.tfm": "crates/tex-fonts/tests/fixtures/cm/cmr10.tfm"
+  },
+  "provenance": {
+    "authority": "tex.web",
+    "manifest": "tests/tex82-oracle-manifest.txt",
+    "sections": [
+      1014,
+      1016
+    ]
+  },
+  "projection": {
+    "kind": "execution-boundaries",
+    "command_names": [
+      "leader_ship"
+    ],
+    "include_artifact_hashes": true
+  },
+  "expected": [
+    "command:leader_ship:99",
+    "command:leader_ship:99",
+    "command:leader_ship:99",
+    "command:leader_ship:99",
+    "command:leader_ship:99",
+    "command:leader_ship:99",
+    "artifact:124214966a0c3a3d56bf1a17f696e32aff0b517894109739406ef9e2759cf5cf",
+    "artifact:5f7da4be6b8c383978affcc478906538eee58895adab74cdba4f6c6f0b58218a",
+    "artifact:a379896e7eb1efb788be4272ce0950d7c02c6193690fe14548fbd751bc4dc4db"
+  ],
+  "channels": {
+    "events": 900
+  }
 }

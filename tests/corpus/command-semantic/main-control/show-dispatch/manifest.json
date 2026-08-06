@@ -1,47 +1,31 @@
 {
-  "schema": 1,
-  "domain": "main-control",
-  "property_domain": "main-control-groups-assignments",
-  "cases": [
-    {
-      "id": "show-dispatch",
-      "property_id": "tex82.main-control.show-dispatch",
-      "profile": "raw-tex82-loaded",
-      "source": "show-dispatch.tex",
-      "provenance": {
-        "authority": "tex.web",
-        "manifest": "tests/tex82-oracle-manifest.txt",
-        "sections": [
-          1290,
-          1291,
-          1292,
-          1293
-        ]
-      },
-      "projection": {
-        "kind": "observations",
-        "kinds": [
-          "effect"
-        ],
-        "count_registers": [
-          0
-        ]
-      },
-      "expected": [
-        "effect:terminate:engine\u0000",
-        "count:0=1"
-      ],
-      "channels": {
-        "events": 28,
-        "status": "clean",
-        "terminal": { "kind": "file" },
-        "log": { "kind": "file" },
-        "dvi": { "kind": "empty" },
-        "effects": { "kind": "empty" }
-      },
-      "expectation": {
-        "kind": "pass"
-      }
-    }
-  ]
+  "schema": 2,
+  "property_id": "tex82.main-control.show-dispatch",
+  "profile": "raw-tex82-loaded",
+  "provenance": {
+    "authority": "tex.web",
+    "manifest": "tests/tex82-oracle-manifest.txt",
+    "sections": [
+      1290,
+      1291,
+      1292,
+      1293
+    ]
+  },
+  "projection": {
+    "kind": "observations",
+    "kinds": [
+      "effect"
+    ],
+    "count_registers": [
+      0
+    ]
+  },
+  "expected": [
+    "effect:terminate:engine\u0000",
+    "count:0=1"
+  ],
+  "channels": {
+    "events": 28
+  }
 }

@@ -1,46 +1,30 @@
 {
-  "schema": 1,
-  "domain": "main-control",
-  "property_domain": "main-control-groups-assignments",
-  "cases": [
-    {
-      "id": "afterassignment-no-token",
-      "property_id": "tex82.assignment.afterassignment",
-      "profile": "raw-tex82-loaded",
-      "source": "afterassignment-no-token.tex",
-      "provenance": {
-        "authority": "tex.web",
-        "manifest": "tests/tex82-oracle-manifest.txt",
-        "sections": [
-          325,
-          1269
-        ]
-      },
-      "projection": {
-        "kind": "observations",
-        "kinds": [
-          "input",
-          "recovery"
-        ]
-      },
-      "expected": [
-        "input:backup:backup",
-        "recovery:backup:char:other_char:61",
-        "input:retire:backup",
-        "input:retire:file",
-        "input:stop:terminal"
-      ],
-      "channels": {
-        "events": 23,
-        "status": "clean",
-        "terminal": { "kind": "file" },
-        "log": { "kind": "file" },
-        "dvi": { "kind": "empty" },
-        "effects": { "kind": "empty" }
-      },
-      "expectation": {
-        "kind": "pass"
-      }
-    }
-  ]
+  "schema": 2,
+  "property_id": "tex82.assignment.afterassignment",
+  "profile": "raw-tex82-loaded",
+  "provenance": {
+    "authority": "tex.web",
+    "manifest": "tests/tex82-oracle-manifest.txt",
+    "sections": [
+      325,
+      1269
+    ]
+  },
+  "projection": {
+    "kind": "observations",
+    "kinds": [
+      "input",
+      "recovery"
+    ]
+  },
+  "expected": [
+    "input:backup:backup",
+    "recovery:backup:char:other_char:61",
+    "input:retire:backup",
+    "input:retire:file",
+    "input:stop:terminal"
+  ],
+  "channels": {
+    "events": 23
+  }
 }

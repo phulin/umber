@@ -1,49 +1,33 @@
 {
-  "schema": 1,
-  "domain": "etex-diagnostics",
-  "property_domain": "main-control-groups-assignments",
-  "cases": [
-    {
-      "id": "etex-font-character-dimensions",
-      "property_id": "tex82.assignment.parameters-registers-arithmetic",
-      "profile": "etex-initex",
-      "source": "etex-font-character-dimensions.tex",
-      "provenance": {
-        "authority": "etex.ch",
-        "manifest": "tests/etex26-oracle-manifest.txt",
-        "sections": [
-          3413,
-          3417,
-          3423,
-          3439,
-          3442,
-          3453
-        ]
-      },
-      "projection": {
-        "kind": "observations",
-        "kinds": [
-          "effect"
-        ],
-        "count_registers": [
-          0
-        ]
-      },
-      "expected": [
-        "effect:terminate:engine\u0000",
-        "count:0=15"
-      ],
-      "channels": {
-        "events": 352,
-        "status": "clean",
-        "terminal": { "kind": "file" },
-        "log": { "kind": "file" },
-        "dvi": { "kind": "empty" },
-        "effects": { "kind": "empty" }
-      },
-      "expectation": {
-        "kind": "pass"
-      }
-    }
-  ]
+  "schema": 2,
+  "property_id": "tex82.assignment.parameters-registers-arithmetic",
+  "profile": "etex-initex",
+  "provenance": {
+    "authority": "etex.ch",
+    "manifest": "tests/etex26-oracle-manifest.txt",
+    "sections": [
+      3413,
+      3417,
+      3423,
+      3439,
+      3442,
+      3453
+    ]
+  },
+  "projection": {
+    "kind": "observations",
+    "kinds": [
+      "effect"
+    ],
+    "count_registers": [
+      0
+    ]
+  },
+  "expected": [
+    "effect:terminate:engine\u0000",
+    "count:0=15"
+  ],
+  "channels": {
+    "events": 352
+  }
 }

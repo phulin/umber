@@ -1,47 +1,31 @@
 {
-  "schema": 1,
-  "domain": "page-output",
-  "property_domain": "page-builder-output-whatsits-io-shipout",
-  "cases": [
-    {
-      "id": "page-state-freeze-single-box",
-      "profile": "raw-tex82-loaded",
-      "property_id": "tex82.page.state-and-freeze",
-      "source": "page-state-freeze-single-box.tex",
-      "font_inputs": {
-        "cmr10.tfm": "crates/tex-fonts/tests/fixtures/cm/cmr10.tfm"
-      },
-      "provenance": {
-        "authority": "tex.web",
-        "manifest": "tests/tex82-oracle-manifest.txt",
-        "sections": [
-          980,
-          987,
-          989
-        ]
-      },
-      "projection": {
-        "kind": "execution-boundaries",
-        "command_names": [
-          "leader_ship"
-        ],
-        "include_artifact_hashes": true
-      },
-      "expected": [
-        "command:leader_ship:99",
-        "artifact:178b018051ab19874b7f3ae5638f8943f216c32fdd90216625f74fd8434ba809"
-      ],
-      "channels": {
-        "events": 397,
-        "status": "clean",
-        "terminal": { "kind": "file" },
-        "log": { "kind": "file" },
-        "dvi": { "kind": "file" },
-        "effects": { "kind": "empty" }
-      },
-      "expectation": {
-        "kind": "pass"
-      }
-    }
-  ]
+  "schema": 2,
+  "property_id": "tex82.page.state-and-freeze",
+  "profile": "raw-tex82-loaded",
+  "font_inputs": {
+    "cmr10.tfm": "crates/tex-fonts/tests/fixtures/cm/cmr10.tfm"
+  },
+  "provenance": {
+    "authority": "tex.web",
+    "manifest": "tests/tex82-oracle-manifest.txt",
+    "sections": [
+      980,
+      987,
+      989
+    ]
+  },
+  "projection": {
+    "kind": "execution-boundaries",
+    "command_names": [
+      "leader_ship"
+    ],
+    "include_artifact_hashes": true
+  },
+  "expected": [
+    "command:leader_ship:99",
+    "artifact:178b018051ab19874b7f3ae5638f8943f216c32fdd90216625f74fd8434ba809"
+  ],
+  "channels": {
+    "events": 397
+  }
 }

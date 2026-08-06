@@ -1,48 +1,32 @@
 {
-  "schema": 1,
-  "domain": "main-control",
-  "property_domain": "main-control-groups-assignments",
-  "cases": [
-    {
-      "id": "shorthand-definitions",
-      "property_id": "tex82.assignment.shorthand-definitions",
-      "profile": "raw-tex82-loaded",
-      "source": "shorthand-definitions.tex",
-      "provenance": {
-        "authority": "tex.web",
-        "manifest": "tests/tex82-oracle-manifest.txt",
-        "sections": [
-          1222,
-          1223,
-          1224
-        ]
-      },
-      "projection": {
-        "kind": "state",
-        "count_registers": [
-          0,
-          1,
-          2,
-          7
-        ]
-      },
-      "expected": [
-        "count:0=65",
-        "count:1=66",
-        "count:2=1",
-        "count:7=3"
-      ],
-      "channels": {
-        "events": 382,
-        "status": "clean",
-        "terminal": { "kind": "file" },
-        "log": { "kind": "file" },
-        "dvi": { "kind": "empty" },
-        "effects": { "kind": "empty" }
-      },
-      "expectation": {
-        "kind": "pass"
-      }
-    }
-  ]
+  "schema": 2,
+  "property_id": "tex82.assignment.shorthand-definitions",
+  "profile": "raw-tex82-loaded",
+  "provenance": {
+    "authority": "tex.web",
+    "manifest": "tests/tex82-oracle-manifest.txt",
+    "sections": [
+      1222,
+      1223,
+      1224
+    ]
+  },
+  "projection": {
+    "kind": "state",
+    "count_registers": [
+      0,
+      1,
+      2,
+      7
+    ]
+  },
+  "expected": [
+    "count:0=65",
+    "count:1=66",
+    "count:2=1",
+    "count:7=3"
+  ],
+  "channels": {
+    "events": 382
+  }
 }

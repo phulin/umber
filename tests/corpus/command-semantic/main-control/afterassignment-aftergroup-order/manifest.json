@@ -1,44 +1,28 @@
 {
-  "schema": 1,
-  "domain": "main-control",
-  "property_domain": "main-control-groups-assignments",
-  "cases": [
-    {
-      "id": "afterassignment-aftergroup-order",
-      "property_id": "tex82.assignment.afterassignment",
-      "profile": "raw-tex82-loaded",
-      "source": "afterassignment-aftergroup-order.tex",
-      "provenance": {
-        "authority": "tex.web",
-        "manifest": "tests/tex82-oracle-manifest.txt",
-        "sections": [
-          280,
-          1266,
-          1267,
-          1268,
-          1269
-        ]
-      },
-      "projection": {
-        "kind": "terminal-checks",
-        "terminal_checks": [
-          "A B C"
-        ]
-      },
-      "expected": [
-        "terminal-check:A B C=true"
-      ],
-      "channels": {
-        "events": 158,
-        "status": "clean",
-        "terminal": { "kind": "file" },
-        "log": { "kind": "file" },
-        "dvi": { "kind": "empty" },
-        "effects": { "kind": "empty" }
-      },
-      "expectation": {
-        "kind": "pass"
-      }
-    }
-  ]
+  "schema": 2,
+  "property_id": "tex82.assignment.afterassignment",
+  "profile": "raw-tex82-loaded",
+  "provenance": {
+    "authority": "tex.web",
+    "manifest": "tests/tex82-oracle-manifest.txt",
+    "sections": [
+      280,
+      1266,
+      1267,
+      1268,
+      1269
+    ]
+  },
+  "projection": {
+    "kind": "terminal-checks",
+    "terminal_checks": [
+      "A B C"
+    ]
+  },
+  "expected": [
+    "terminal-check:A B C=true"
+  ],
+  "channels": {
+    "events": 158
+  }
 }

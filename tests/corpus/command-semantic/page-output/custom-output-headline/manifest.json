@@ -1,50 +1,34 @@
 {
-  "schema": 1,
-  "domain": "page-output",
-  "property_domain": "page-builder-output-whatsits-io-shipout",
-  "cases": [
-    {
-      "id": "custom-output-headline",
-      "profile": "raw-tex82-loaded",
-      "property_id": "tex82.output.selection-and-default",
-      "source": "custom-output-headline.tex",
-      "font_inputs": {
-        "cmr10.tfm": "crates/tex-fonts/tests/fixtures/cm/cmr10.tfm"
-      },
-      "provenance": {
-        "authority": "tex.web",
-        "manifest": "tests/tex82-oracle-manifest.txt",
-        "sections": [
-          1024,
-          1025
-        ]
-      },
-      "projection": {
-        "kind": "execution-boundaries",
-        "command_names": [
-          "leader_ship"
-        ],
-        "include_artifact_hashes": true
-      },
-      "expected": [
-        "command:leader_ship:99",
-        "command:leader_ship:99",
-        "command:leader_ship:99",
-        "command:leader_ship:99",
-        "artifact:feb5aed145b7e0af97da9b985ceaf0d51244647aaa7c50826c151c470c0cfb17",
-        "artifact:135e18ff351e374676ca21dc7ca83dfe03050fd417eef2c810dd4eafabe892e7"
-      ],
-      "channels": {
-        "events": 723,
-        "status": "clean",
-        "terminal": { "kind": "file" },
-        "log": { "kind": "file" },
-        "dvi": { "kind": "file" },
-        "effects": { "kind": "empty" }
-      },
-      "expectation": {
-        "kind": "pass"
-      }
-    }
-  ]
+  "schema": 2,
+  "property_id": "tex82.output.selection-and-default",
+  "profile": "raw-tex82-loaded",
+  "font_inputs": {
+    "cmr10.tfm": "crates/tex-fonts/tests/fixtures/cm/cmr10.tfm"
+  },
+  "provenance": {
+    "authority": "tex.web",
+    "manifest": "tests/tex82-oracle-manifest.txt",
+    "sections": [
+      1024,
+      1025
+    ]
+  },
+  "projection": {
+    "kind": "execution-boundaries",
+    "command_names": [
+      "leader_ship"
+    ],
+    "include_artifact_hashes": true
+  },
+  "expected": [
+    "command:leader_ship:99",
+    "command:leader_ship:99",
+    "command:leader_ship:99",
+    "command:leader_ship:99",
+    "artifact:feb5aed145b7e0af97da9b985ceaf0d51244647aaa7c50826c151c470c0cfb17",
+    "artifact:135e18ff351e374676ca21dc7ca83dfe03050fd417eef2c810dd4eafabe892e7"
+  ],
+  "channels": {
+    "events": 723
+  }
 }

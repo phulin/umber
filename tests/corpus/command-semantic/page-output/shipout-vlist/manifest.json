@@ -1,45 +1,29 @@
 {
-  "schema": 1,
-  "domain": "page-output",
-  "property_domain": "page-builder-output-whatsits-io-shipout",
-  "cases": [
-    {
-      "id": "shipout-vlist",
-      "profile": "raw-tex82-loaded",
-      "property_id": "tex82.shipout.vlist-traversal",
-      "source": "shipout-vlist.tex",
-      "provenance": {
-        "authority": "tex.web",
-        "manifest": "tests/tex82-oracle-manifest.txt",
-        "sections": [
-          629,
-          630,
-          640,
-          1071
-        ]
-      },
-      "projection": {
-        "kind": "execution-boundaries",
-        "command_names": [
-          "leader_ship"
-        ],
-        "include_artifact_hashes": true
-      },
-      "expected": [
-        "command:leader_ship:99",
-        "artifact:301ddadff53b106f05d35266aa5b4bcba5c1ccba4624d112da5a5318cef4e288"
-      ],
-      "channels": {
-        "events": 141,
-        "status": "clean",
-        "terminal": { "kind": "file" },
-        "log": { "kind": "file" },
-        "dvi": { "kind": "file" },
-        "effects": { "kind": "empty" }
-      },
-      "expectation": {
-        "kind": "pass"
-      }
-    }
-  ]
+  "schema": 2,
+  "property_id": "tex82.shipout.vlist-traversal",
+  "profile": "raw-tex82-loaded",
+  "provenance": {
+    "authority": "tex.web",
+    "manifest": "tests/tex82-oracle-manifest.txt",
+    "sections": [
+      629,
+      630,
+      640,
+      1071
+    ]
+  },
+  "projection": {
+    "kind": "execution-boundaries",
+    "command_names": [
+      "leader_ship"
+    ],
+    "include_artifact_hashes": true
+  },
+  "expected": [
+    "command:leader_ship:99",
+    "artifact:301ddadff53b106f05d35266aa5b4bcba5c1ccba4624d112da5a5318cef4e288"
+  ],
+  "channels": {
+    "events": 141
+  }
 }

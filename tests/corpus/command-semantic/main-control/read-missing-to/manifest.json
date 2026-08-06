@@ -1,44 +1,28 @@
 {
-  "schema": 1,
-  "domain": "main-control",
-  "property_domain": "main-control-groups-assignments",
-  "cases": [
-    {
-      "id": "read-missing-to",
-      "property_id": "tex82.assignment.read-to-definition",
-      "profile": "raw-tex82-loaded",
-      "source": "read-missing-to.tex",
-      "provenance": {
-        "authority": "tex.web",
-        "manifest": "tests/tex82-oracle-manifest.txt",
-        "sections": [
-          360,
-          1225
-        ]
-      },
-      "projection": {
-        "kind": "state",
-        "count_registers": [
-          0
-        ]
-      },
-      "expected": [
-        "count:0=1"
-      ],
-      "channels": {
-        "events": 58,
-        "status": "clean",
-        "terminal": { "kind": "file" },
-        "log": { "kind": "file" },
-        "dvi": { "kind": "empty" },
-        "effects": { "kind": "empty" }
-      },
-      "expectation": {
-        "kind": "pass"
-      },
-      "terminal_lines": [
-        "alpha"
-      ]
-    }
+  "schema": 2,
+  "property_id": "tex82.assignment.read-to-definition",
+  "profile": "raw-tex82-loaded",
+  "provenance": {
+    "authority": "tex.web",
+    "manifest": "tests/tex82-oracle-manifest.txt",
+    "sections": [
+      360,
+      1225
+    ]
+  },
+  "projection": {
+    "kind": "state",
+    "count_registers": [
+      0
+    ]
+  },
+  "expected": [
+    "count:0=1"
+  ],
+  "channels": {
+    "events": 58
+  },
+  "terminal_lines": [
+    "alpha"
   ]
 }

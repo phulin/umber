@@ -1,66 +1,51 @@
 {
-  "schema": 1,
-  "domain": "conditionals",
-  "cases": [
-    {
-      "id": "predicate-dispatch",
-      "property_id": "tex82.conditionals.predicate-dispatch",
-      "profile": "raw-tex82-loaded",
-      "source": "predicate-dispatch.tex",
-      "provenance": {
-        "authority": "tex.web",
-        "manifest": "tests/tex82-oracle-manifest.txt",
-        "sections": [
-          501
-        ]
-      },
-      "projection": {
-        "kind": "predicate-outcomes",
-        "count_registers": [
-          0,
-          1,
-          2,
-          3,
-          4,
-          5,
-          6,
-          7,
-          8
-        ]
-      },
-      "expected": [
-        "predicate:ifvmode:-:true",
-        "predicate:ifhmode:-:false",
-        "predicate:ifmmode:-:false",
-        "predicate:ifinner:-:false",
-        "predicate:ifhmode:-:true",
-        "predicate:ifinner:-:true",
-        "predicate:ifmmode:-:true",
-        "predicate:ifinner:-:true",
-        "predicate:ifeof:integer=0:true",
-        "predicate:iftrue:-:true",
-        "predicate:iffalse:-:false",
-        "count:0=1",
-        "count:1=1",
-        "count:2=1",
-        "count:3=1",
-        "count:4=0",
-        "count:5=0",
-        "count:6=1",
-        "count:7=1",
-        "count:8=1"
-      ],
-      "channels": {
-        "events": 428,
-        "status": "clean",
-        "terminal": { "kind": "file" },
-        "log": { "kind": "file" },
-        "dvi": { "kind": "empty" },
-        "effects": { "kind": "empty" }
-      },
-      "expectation": {
-        "kind": "pass"
-      }
-    }
-  ]
+  "schema": 2,
+  "property_id": "tex82.conditionals.predicate-dispatch",
+  "profile": "raw-tex82-loaded",
+  "provenance": {
+    "authority": "tex.web",
+    "manifest": "tests/tex82-oracle-manifest.txt",
+    "sections": [
+      501
+    ]
+  },
+  "projection": {
+    "kind": "predicate-outcomes",
+    "count_registers": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+    ]
+  },
+  "expected": [
+    "predicate:ifvmode:-:true",
+    "predicate:ifhmode:-:false",
+    "predicate:ifmmode:-:false",
+    "predicate:ifinner:-:false",
+    "predicate:ifhmode:-:true",
+    "predicate:ifinner:-:true",
+    "predicate:ifmmode:-:true",
+    "predicate:ifinner:-:true",
+    "predicate:ifeof:integer=0:true",
+    "predicate:iftrue:-:true",
+    "predicate:iffalse:-:false",
+    "count:0=1",
+    "count:1=1",
+    "count:2=1",
+    "count:3=1",
+    "count:4=0",
+    "count:5=0",
+    "count:6=1",
+    "count:7=1",
+    "count:8=1"
+  ],
+  "channels": {
+    "events": 428
+  }
 }

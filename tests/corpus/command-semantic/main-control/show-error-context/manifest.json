@@ -1,51 +1,35 @@
 {
-  "schema": 1,
-  "domain": "main-control",
-  "property_domain": "main-control-groups-assignments",
-  "cases": [
-    {
-      "id": "show-error-context",
-      "property_id": "tex82.main-control.show-completion",
-      "profile": "raw-tex82-loaded",
-      "source": "show-error-context.tex",
-      "provenance": {
-        "authority": "tex.web",
-        "manifest": "tests/tex82-oracle-manifest.txt",
-        "sections": [
-          82,
-          1293,
-          1294
-        ]
-      },
-      "projection": {
-        "kind": "terminal-checks",
-        "terminal_checks": [
-          "l.2 \\show\\errorstopmode",
-          "                       \\count0=23"
-        ],
-        "count_registers": [
-          0
-        ]
-      },
-      "expected": [
-        "terminal-check:l.2 \\show\\errorstopmode=true",
-        "terminal-check:                       \\count0=23=true",
-        "count:0=23"
-      ],
-      "channels": {
-        "events": 30,
-        "status": "clean",
-        "terminal": { "kind": "file" },
-        "log": { "kind": "file" },
-        "dvi": { "kind": "empty" },
-        "effects": { "kind": "empty" }
-      },
-      "expectation": {
-        "kind": "pass"
-      },
-      "terminal_lines": [
-        "s"
-      ]
-    }
+  "schema": 2,
+  "property_id": "tex82.main-control.show-completion",
+  "profile": "raw-tex82-loaded",
+  "provenance": {
+    "authority": "tex.web",
+    "manifest": "tests/tex82-oracle-manifest.txt",
+    "sections": [
+      82,
+      1293,
+      1294
+    ]
+  },
+  "projection": {
+    "kind": "terminal-checks",
+    "terminal_checks": [
+      "l.2 \\show\\errorstopmode",
+      "                       \\count0=23"
+    ],
+    "count_registers": [
+      0
+    ]
+  },
+  "expected": [
+    "terminal-check:l.2 \\show\\errorstopmode=true",
+    "terminal-check:                       \\count0=23=true",
+    "count:0=23"
+  ],
+  "channels": {
+    "events": 30
+  },
+  "terminal_lines": [
+    "s"
   ]
 }

@@ -1,56 +1,40 @@
 {
-  "schema": 1,
-  "domain": "main-control",
-  "property_domain": "main-control-groups-assignments",
-  "cases": [
-    {
-      "id": "show-selector-transitions",
-      "property_id": "tex82.main-control.show-meaning",
-      "profile": "raw-tex82-loaded",
-      "source": "show-selector-transitions.tex",
-      "provenance": {
-        "authority": "tex.web",
-        "manifest": "tests/tex82-oracle-manifest.txt",
-        "sections": [
-          62,
-          75,
-          82,
-          90,
-          1293,
-          1294
-        ]
-      },
-      "projection": {
-        "kind": "terminal-checks",
-        "terminal_checks": [
-          "> \\errorstopmode=\\errorstopmode.",
-          "> \\scrollmode=\\scrollmode.",
-          "! Undefined control sequence."
-        ],
-        "count_registers": [
-          0
-        ]
-      },
-      "expected": [
-        "terminal-check:> \\errorstopmode=\\errorstopmode.=true",
-        "terminal-check:> \\scrollmode=\\scrollmode.=true",
-        "terminal-check:! Undefined control sequence.=true",
-        "count:0=1"
-      ],
-      "channels": {
-        "events": 46,
-        "status": "clean",
-        "terminal": { "kind": "file" },
-        "log": { "kind": "file" },
-        "dvi": { "kind": "empty" },
-        "effects": { "kind": "empty" }
-      },
-      "expectation": {
-        "kind": "pass"
-      },
-      "terminal_lines": [
-        "s"
-      ]
-    }
+  "schema": 2,
+  "property_id": "tex82.main-control.show-meaning",
+  "profile": "raw-tex82-loaded",
+  "provenance": {
+    "authority": "tex.web",
+    "manifest": "tests/tex82-oracle-manifest.txt",
+    "sections": [
+      62,
+      75,
+      82,
+      90,
+      1293,
+      1294
+    ]
+  },
+  "projection": {
+    "kind": "terminal-checks",
+    "terminal_checks": [
+      "> \\errorstopmode=\\errorstopmode.",
+      "> \\scrollmode=\\scrollmode.",
+      "! Undefined control sequence."
+    ],
+    "count_registers": [
+      0
+    ]
+  },
+  "expected": [
+    "terminal-check:> \\errorstopmode=\\errorstopmode.=true",
+    "terminal-check:> \\scrollmode=\\scrollmode.=true",
+    "terminal-check:! Undefined control sequence.=true",
+    "count:0=1"
+  ],
+  "channels": {
+    "events": 46
+  },
+  "terminal_lines": [
+    "s"
   ]
 }

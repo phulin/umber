@@ -1,49 +1,34 @@
 {
-  "schema": 1,
-  "domain": "conditionals",
-  "cases": [
-    {
-      "id": "etex-loaded-iffontchar",
-      "property_id": "tex82.conditionals.predicate-dispatch",
-      "profile": "etex-loaded",
-      "source": "etex-loaded-iffontchar.tex",
-      "font_inputs": {
-        "cmr10.tfm": "crates/tex-fonts/tests/fixtures/cm/cmr10.tfm"
-      },
-      "provenance": {
-        "authority": "etex.ch",
-        "manifest": "tests/etex26-oracle-manifest.txt",
-        "sections": [
-          4712,
-          4717,
-          4726,
-          4797,
-          4805
-        ]
-      },
-      "projection": {
-        "kind": "predicate-outcomes",
-        "count_registers": [
-          0
-        ]
-      },
-      "expected": [
-        "predicate:iffontchar:integer=65:true",
-        "predicate:iffontchar:integer=0:false",
-        "predicate:iffontchar:integer=255:false",
-        "count:0=3"
-      ],
-      "channels": {
-        "events": 199,
-        "status": "clean",
-        "terminal": { "kind": "file" },
-        "log": { "kind": "file" },
-        "dvi": { "kind": "empty" },
-        "effects": { "kind": "empty" }
-      },
-      "expectation": {
-        "kind": "pass"
-      }
-    }
-  ]
+  "schema": 2,
+  "property_id": "tex82.conditionals.predicate-dispatch",
+  "profile": "etex-loaded",
+  "font_inputs": {
+    "cmr10.tfm": "crates/tex-fonts/tests/fixtures/cm/cmr10.tfm"
+  },
+  "provenance": {
+    "authority": "etex.ch",
+    "manifest": "tests/etex26-oracle-manifest.txt",
+    "sections": [
+      4712,
+      4717,
+      4726,
+      4797,
+      4805
+    ]
+  },
+  "projection": {
+    "kind": "predicate-outcomes",
+    "count_registers": [
+      0
+    ]
+  },
+  "expected": [
+    "predicate:iffontchar:integer=65:true",
+    "predicate:iffontchar:integer=0:false",
+    "predicate:iffontchar:integer=255:false",
+    "count:0=3"
+  ],
+  "channels": {
+    "events": 199
+  }
 }

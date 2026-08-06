@@ -1,56 +1,40 @@
 {
-  "schema": 1,
-  "domain": "page-output",
-  "property_domain": "page-builder-output-whatsits-io-shipout",
-  "cases": [
-    {
-      "id": "mark-output-headers-multi-page",
-      "profile": "raw-tex82-loaded",
-      "property_id": "tex82.output.fire-up-packaging",
-      "source": "mark-output-headers-multi-page.tex",
-      "font_inputs": {
-        "cmr10.tfm": "crates/tex-fonts/tests/fixtures/cm/cmr10.tfm"
-      },
-      "provenance": {
-        "authority": "tex.web",
-        "manifest": "tests/tex82-oracle-manifest.txt",
-        "sections": [
-          1014,
-          1016
-        ]
-      },
-      "projection": {
-        "kind": "execution-boundaries",
-        "command_names": [
-          "leader_ship"
-        ],
-        "include_artifact_hashes": true
-      },
-      "expected": [
-        "command:leader_ship:99",
-        "command:leader_ship:99",
-        "command:leader_ship:99",
-        "command:leader_ship:99",
-        "command:leader_ship:99",
-        "command:leader_ship:99",
-        "command:leader_ship:99",
-        "command:leader_ship:99",
-        "artifact:f89addee5fef68f2eececb71c9b9f7fb9f540806d88107402e3fcc592129159a",
-        "artifact:e63e7a54392204a20844134389a294bd839de948eba6b0d6dce13d3a424cccc1",
-        "artifact:ca8d411f2d11cb66c1458c44110fdf428fd72936b91bc3aaac4656e20dd4f531",
-        "artifact:8f97837919f40802dc07997105b96f9a3dd9da031ef708e5492883ef4c4f60ee"
-      ],
-      "channels": {
-        "events": 1084,
-        "status": "clean",
-        "terminal": { "kind": "file" },
-        "log": { "kind": "file" },
-        "dvi": { "kind": "file" },
-        "effects": { "kind": "empty" }
-      },
-      "expectation": {
-        "kind": "pass"
-      }
-    }
-  ]
+  "schema": 2,
+  "property_id": "tex82.output.fire-up-packaging",
+  "profile": "raw-tex82-loaded",
+  "font_inputs": {
+    "cmr10.tfm": "crates/tex-fonts/tests/fixtures/cm/cmr10.tfm"
+  },
+  "provenance": {
+    "authority": "tex.web",
+    "manifest": "tests/tex82-oracle-manifest.txt",
+    "sections": [
+      1014,
+      1016
+    ]
+  },
+  "projection": {
+    "kind": "execution-boundaries",
+    "command_names": [
+      "leader_ship"
+    ],
+    "include_artifact_hashes": true
+  },
+  "expected": [
+    "command:leader_ship:99",
+    "command:leader_ship:99",
+    "command:leader_ship:99",
+    "command:leader_ship:99",
+    "command:leader_ship:99",
+    "command:leader_ship:99",
+    "command:leader_ship:99",
+    "command:leader_ship:99",
+    "artifact:f89addee5fef68f2eececb71c9b9f7fb9f540806d88107402e3fcc592129159a",
+    "artifact:e63e7a54392204a20844134389a294bd839de948eba6b0d6dce13d3a424cccc1",
+    "artifact:ca8d411f2d11cb66c1458c44110fdf428fd72936b91bc3aaac4656e20dd4f531",
+    "artifact:8f97837919f40802dc07997105b96f9a3dd9da031ef708e5492883ef4c4f60ee"
+  ],
+  "channels": {
+    "events": 1084
+  }
 }

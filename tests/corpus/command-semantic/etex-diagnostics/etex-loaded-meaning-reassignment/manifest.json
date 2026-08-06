@@ -1,46 +1,30 @@
 {
-  "schema": 1,
-  "domain": "etex-diagnostics",
-  "property_domain": "main-control-groups-assignments",
-  "cases": [
-    {
-      "id": "etex-loaded-meaning-reassignment",
-      "property_id": "tex82.assignment.macro-definitions",
-      "profile": "etex-loaded",
-      "source": "etex-loaded-meaning-reassignment.tex",
-      "provenance": {
-        "authority": "etex.ch",
-        "manifest": "tests/etex26-oracle-manifest.txt",
-        "sections": [
-          277,
-          1221
-        ]
-      },
-      "projection": {
-        "kind": "observations",
-        "kinds": [
-          "mutation"
-        ],
-        "count_registers": [
-          0
-        ]
-      },
-      "expected": [
-        "mutation:catcode:-:123=1:local",
-        "mutation:meaning:bgroup:left_brace:local",
-        "count:0=0"
-      ],
-      "channels": {
-        "events": 42,
-        "status": "clean",
-        "terminal": { "kind": "file" },
-        "log": { "kind": "file" },
-        "dvi": { "kind": "empty" },
-        "effects": { "kind": "empty" }
-      },
-      "expectation": {
-        "kind": "pass"
-      }
-    }
-  ]
+  "schema": 2,
+  "property_id": "tex82.assignment.macro-definitions",
+  "profile": "etex-loaded",
+  "provenance": {
+    "authority": "etex.ch",
+    "manifest": "tests/etex26-oracle-manifest.txt",
+    "sections": [
+      277,
+      1221
+    ]
+  },
+  "projection": {
+    "kind": "observations",
+    "kinds": [
+      "mutation"
+    ],
+    "count_registers": [
+      0
+    ]
+  },
+  "expected": [
+    "mutation:catcode:-:123=1:local",
+    "mutation:meaning:bgroup:left_brace:local",
+    "count:0=0"
+  ],
+  "channels": {
+    "events": 42
+  }
 }

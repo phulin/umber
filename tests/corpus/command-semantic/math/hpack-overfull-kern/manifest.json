@@ -1,48 +1,32 @@
 {
-  "schema": 1,
-  "domain": "math",
-  "property_domain": "math-box-list-and-mode-semantics",
-  "cases": [
-    {
-      "id": "hpack-overfull-kern",
-      "property_id": "tex82.boxes.hpack",
-      "profile": "raw-tex82-loaded",
-      "source": "hpack-overfull-kern.tex",
-      "font_inputs": {
-        "cmr10.tfm": "crates/tex-fonts/tests/fixtures/cm/cmr10.tfm"
-      },
-      "provenance": {
-        "authority": "tex.web",
-        "manifest": "tests/tex82-oracle-manifest.txt",
-        "sections": [
-          644,
-          649,
-          657,
-          666
-        ]
-      },
-      "projection": {
-        "kind": "execution-boundaries",
-        "command_names": [
-          "leader_ship"
-        ],
-        "include_artifact_hashes": true
-      },
-      "expected": [
-        "command:leader_ship:99",
-        "artifact:4292d23b1d7aee1707dde59d24f0ce7935e600ad19ad04d3c496665ad21912e5"
-      ],
-      "channels": {
-        "events": 226,
-        "status": "clean",
-        "terminal": { "kind": "file" },
-        "log": { "kind": "file" },
-        "dvi": { "kind": "file" },
-        "effects": { "kind": "empty" }
-      },
-      "expectation": {
-        "kind": "pass"
-      }
-    }
-  ]
+  "schema": 2,
+  "property_id": "tex82.boxes.hpack",
+  "profile": "raw-tex82-loaded",
+  "font_inputs": {
+    "cmr10.tfm": "crates/tex-fonts/tests/fixtures/cm/cmr10.tfm"
+  },
+  "provenance": {
+    "authority": "tex.web",
+    "manifest": "tests/tex82-oracle-manifest.txt",
+    "sections": [
+      644,
+      649,
+      657,
+      666
+    ]
+  },
+  "projection": {
+    "kind": "execution-boundaries",
+    "command_names": [
+      "leader_ship"
+    ],
+    "include_artifact_hashes": true
+  },
+  "expected": [
+    "command:leader_ship:99",
+    "artifact:4292d23b1d7aee1707dde59d24f0ce7935e600ad19ad04d3c496665ad21912e5"
+  ],
+  "channels": {
+    "events": 226
+  }
 }

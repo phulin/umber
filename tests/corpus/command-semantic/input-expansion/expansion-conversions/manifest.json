@@ -1,55 +1,39 @@
 {
-  "schema": 1,
-  "domain": "input-expansion",
-  "property_domain": "input-tokenization-control-sequences-expansion",
-  "cases": [
-    {
-      "id": "expansion-conversions",
-      "property_id": "tex82.expansion.converted-token-lists",
-      "profile": "raw-tex82-loaded",
-      "source": "expansion-conversions.tex",
-      "provenance": {
-        "authority": "tex.web",
-        "manifest": "tests/tex82-oracle-manifest.txt",
-        "sections": [
-          464,
-          465,
-          466,
-          467,
-          468,
-          469,
-          470,
-          471,
-          472
-        ]
-      },
-      "projection": {
-        "kind": "observations",
-        "kinds": [
-          "input"
-        ]
-      },
-      "expected": [
-        "input:backup:backup",
-        "input:recovery:recovery",
-        "input:backup:backup",
-        "input:retire:backup",
-        "input:retire:recovery",
-        "input:retire:backup",
-        "input:retire:file",
-        "input:stop:terminal"
-      ],
-      "channels": {
-        "events": 37,
-        "status": "clean",
-        "terminal": { "kind": "file" },
-        "log": { "kind": "file" },
-        "dvi": { "kind": "empty" },
-        "effects": { "kind": "empty" }
-      },
-      "expectation": {
-        "kind": "pass"
-      }
-    }
-  ]
+  "schema": 2,
+  "property_id": "tex82.expansion.converted-token-lists",
+  "profile": "raw-tex82-loaded",
+  "provenance": {
+    "authority": "tex.web",
+    "manifest": "tests/tex82-oracle-manifest.txt",
+    "sections": [
+      464,
+      465,
+      466,
+      467,
+      468,
+      469,
+      470,
+      471,
+      472
+    ]
+  },
+  "projection": {
+    "kind": "observations",
+    "kinds": [
+      "input"
+    ]
+  },
+  "expected": [
+    "input:backup:backup",
+    "input:recovery:recovery",
+    "input:backup:backup",
+    "input:retire:backup",
+    "input:retire:recovery",
+    "input:retire:backup",
+    "input:retire:file",
+    "input:stop:terminal"
+  ],
+  "channels": {
+    "events": 37
+  }
 }

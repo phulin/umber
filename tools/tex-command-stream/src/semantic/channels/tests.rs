@@ -345,58 +345,9 @@ fn the_committed_schema_requires_exactly_the_contract_fields() {
     let path =
         super::super::repository_root().join("tests/corpus/command-semantic/manifest.schema.json");
     let text = std::fs::read_to_string(&path).expect("committed schema is readable");
-    let schema: serde_json::Value =
+    let committed: serde_json::Value =
         serde_json::from_str(&text).expect("committed schema is valid JSON");
-    let required = schema["$defs"]["channels"]["required"]
-        .as_array()
-        .expect("the schema declares required channel keys");
-    let mut declared: Vec<&str> = required
-        .iter()
-        .map(|value| value.as_str().expect("required keys are strings"))
-        .collect();
-    declared.sort_unstable();
-
-    let mut expected = vec!["events", "status"];
-    expected.extend(STREAM_CHANNELS.iter().map(|channel| channel.name()));
-    expected.sort_unstable();
-
-    assert_eq!(declared, expected);
-
-    // The `xfail` branch of `streamDisposition` must require exactly the
-    // fields `StreamDisposition::Xfail` carries: a bug id and a mismatch pin.
-    // Missing `mismatch` here is exactly the drift this test exists to catch
-    // -- a schema that still allowed an `xfail` with no pin would document a
-    // contract Rust no longer accepts.
-    let one_of = schema["$defs"]["streamDisposition"]["oneOf"]
-        .as_array()
-        .expect("streamDisposition is a oneOf");
-    let xfail_required = one_of
-        .iter()
-        .find(|branch| branch["properties"]["kind"]["const"] == "xfail")
-        .expect("streamDisposition declares an xfail branch")["required"]
-        .as_array()
-        .expect("the xfail branch declares required keys");
-    let mut xfail_declared: Vec<&str> = xfail_required
-        .iter()
-        .map(|value| value.as_str().expect("required keys are strings"))
-        .collect();
-    xfail_declared.sort_unstable();
-    let mut xfail_expected = vec!["kind", "bug", "mismatch"];
-    xfail_expected.sort_unstable();
-    assert_eq!(xfail_declared, xfail_expected);
-
-    // `channelMismatch` must require exactly `ChannelMismatch`'s own fields.
-    let mismatch_required = schema["$defs"]["channelMismatch"]["required"]
-        .as_array()
-        .expect("channelMismatch declares required keys");
-    let mut mismatch_declared: Vec<&str> = mismatch_required
-        .iter()
-        .map(|value| value.as_str().expect("required keys are strings"))
-        .collect();
-    mismatch_declared.sort_unstable();
-    let mut mismatch_expected = vec!["line", "expected", "actual"];
-    mismatch_expected.sort_unstable();
-    assert_eq!(mismatch_declared, mismatch_expected);
+    assert_eq!(committed, super::super::manifest_schema());
 }
 
 /// A minimal DVI preamble: `pre`, version, num/den/mag, comment length, then

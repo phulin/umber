@@ -1,48 +1,32 @@
 {
-  "schema": 1,
-  "domain": "etex-diagnostics",
-  "property_domain": "main-control-groups-assignments",
-  "cases": [
-    {
-      "id": "etex-glue-component-enquiries",
-      "property_id": "tex82.assignment.parameters-registers-arithmetic",
-      "profile": "etex-initex",
-      "source": "etex-glue-component-enquiries.tex",
-      "provenance": {
-        "authority": "etex.ch",
-        "manifest": "tests/etex26-oracle-manifest.txt",
-        "sections": [
-          5363,
-          5367,
-          5373,
-          5389,
-          5397,
-          5404
-        ]
-      },
-      "projection": {
-        "kind": "observations",
-        "kinds": [
-          "effect"
-        ],
-        "count_registers": [
-          0
-        ]
-      },
-      "expected": [
-        "count:0=8191"
-      ],
-      "channels": {
-        "events": 1170,
-        "status": "clean",
-        "terminal": { "kind": "file" },
-        "log": { "kind": "file" },
-        "dvi": { "kind": "empty" },
-        "effects": { "kind": "empty" }
-      },
-      "expectation": {
-        "kind": "pass"
-      }
-    }
-  ]
+  "schema": 2,
+  "property_id": "tex82.assignment.parameters-registers-arithmetic",
+  "profile": "etex-initex",
+  "provenance": {
+    "authority": "etex.ch",
+    "manifest": "tests/etex26-oracle-manifest.txt",
+    "sections": [
+      5363,
+      5367,
+      5373,
+      5389,
+      5397,
+      5404
+    ]
+  },
+  "projection": {
+    "kind": "observations",
+    "kinds": [
+      "effect"
+    ],
+    "count_registers": [
+      0
+    ]
+  },
+  "expected": [
+    "count:0=8191"
+  ],
+  "channels": {
+    "events": 1170
+  }
 }

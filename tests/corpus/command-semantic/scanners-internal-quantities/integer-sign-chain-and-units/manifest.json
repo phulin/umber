@@ -1,44 +1,28 @@
 {
-  "schema": 1,
-  "domain": "scanners-internal-quantities",
-  "property_domain": "scanners-internal-quantities",
-  "cases": [
-    {
-      "id": "integer-sign-chain-and-units",
-      "property_id": "tex82.scanner.integer",
-      "profile": "raw-tex82-loaded",
-      "source": "integer-sign-chain-and-units.tex",
-      "provenance": {
-        "authority": "tex.web",
-        "manifest": "tests/tex82-oracle-manifest.txt",
-        "sections": [
-          438,
-          442,
-          444,
-          445,
-          454
-        ]
-      },
-      "projection": {
-        "kind": "terminal-checks",
-        "terminal_checks": [
-          "scan=127|0.5pt|0.00194pt|1.0pt plus 2.0fil minus 3.0fill"
-        ]
-      },
-      "expected": [
-        "terminal-check:scan=127|0.5pt|0.00194pt|1.0pt plus 2.0fil minus 3.0fill=true"
-      ],
-      "channels": {
-        "events": 446,
-        "status": "clean",
-        "terminal": { "kind": "file" },
-        "log": { "kind": "file" },
-        "dvi": { "kind": "empty" },
-        "effects": { "kind": "empty" }
-      },
-      "expectation": {
-        "kind": "pass"
-      }
-    }
-  ]
+  "schema": 2,
+  "property_id": "tex82.scanner.integer",
+  "profile": "raw-tex82-loaded",
+  "provenance": {
+    "authority": "tex.web",
+    "manifest": "tests/tex82-oracle-manifest.txt",
+    "sections": [
+      438,
+      442,
+      444,
+      445,
+      454
+    ]
+  },
+  "projection": {
+    "kind": "terminal-checks",
+    "terminal_checks": [
+      "scan=127|0.5pt|0.00194pt|1.0pt plus 2.0fil minus 3.0fill"
+    ]
+  },
+  "expected": [
+    "terminal-check:scan=127|0.5pt|0.00194pt|1.0pt plus 2.0fil minus 3.0fill=true"
+  ],
+  "channels": {
+    "events": 446
+  }
 }

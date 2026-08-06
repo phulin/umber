@@ -1,40 +1,24 @@
 {
-  "schema": 1,
-  "domain": "alignments",
-  "property_domain": "alignment-preambles-templates-and-lifecycle",
-  "cases": [
-    {
-      "id": "finish-orchestration",
-      "profile": "raw-tex82-loaded",
-      "property_id": "tex82.align.finish-orchestration",
-      "source": "finish-orchestration.tex",
-      "provenance": {
-        "authority": "tex.web",
-        "manifest": "tests/tex82-oracle-manifest.txt",
-        "sections": [
-          800
-        ]
-      },
-      "projection": {
-        "kind": "state",
-        "count_registers": [
-          0
-        ]
-      },
-      "expected": [
-        "count:0=0"
-      ],
-      "channels": {
-        "events": 182,
-        "status": "clean",
-        "terminal": { "kind": "file" },
-        "log": { "kind": "file" },
-        "dvi": { "kind": "file" },
-        "effects": { "kind": "empty" }
-      },
-      "expectation": {
-        "kind": "pass"
-      }
-    }
-  ]
+  "schema": 2,
+  "property_id": "tex82.align.finish-orchestration",
+  "profile": "raw-tex82-loaded",
+  "provenance": {
+    "authority": "tex.web",
+    "manifest": "tests/tex82-oracle-manifest.txt",
+    "sections": [
+      800
+    ]
+  },
+  "projection": {
+    "kind": "state",
+    "count_registers": [
+      0
+    ]
+  },
+  "expected": [
+    "count:0=0"
+  ],
+  "channels": {
+    "events": 182
+  }
 }

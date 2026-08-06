@@ -1,67 +1,51 @@
 {
-  "schema": 1,
-  "domain": "main-control",
-  "property_domain": "main-control-groups-assignments",
-  "cases": [
-    {
-      "id": "hyphenation-errors",
-      "property_id": "tex82.assignment.hyphenation-data",
-      "profile": "initex",
-      "source": "hyphenation-errors.tex",
-      "provenance": {
-        "authority": "tex.web",
-        "manifest": "tests/tex82-oracle-manifest.txt",
-        "sections": [
-          934,
-          935,
-          936,
-          937,
-          960,
-          961,
-          962,
-          963
-        ]
-      },
-      "projection": {
-        "kind": "terminal-checks",
-        "terminal_checks": [
-          "Improper \\hyphenation will be flushed",
-          "Not a letter",
-          "Bad \\patterns",
-          "l.5 \\patterns{a\\relax",
-          "Nonletter",
-          "l.5 \\patterns{a\\relax b a!",
-          "Duplicate pattern",
-          "l.5 \\patterns{a\\relax b a!b a1b a2b}",
-          "(See Appendix H.)"
-        ],
-        "count_registers": [
-          0
-        ]
-      },
-      "expected": [
-        "terminal-check:Improper \\hyphenation will be flushed=true",
-        "terminal-check:Not a letter=true",
-        "terminal-check:Bad \\patterns=true",
-        "terminal-check:l.5 \\patterns{a\\relax=true",
-        "terminal-check:Nonletter=true",
-        "terminal-check:l.5 \\patterns{a\\relax b a!=true",
-        "terminal-check:Duplicate pattern=true",
-        "terminal-check:l.5 \\patterns{a\\relax b a!b a1b a2b}=true",
-        "terminal-check:(See Appendix H.)=true",
-        "count:0=1"
-      ],
-      "channels": {
-        "events": 154,
-        "status": "clean",
-        "terminal": { "kind": "file" },
-        "log": { "kind": "file" },
-        "dvi": { "kind": "empty" },
-        "effects": { "kind": "empty" }
-      },
-      "expectation": {
-        "kind": "pass"
-      }
-    }
-  ]
+  "schema": 2,
+  "property_id": "tex82.assignment.hyphenation-data",
+  "profile": "initex",
+  "provenance": {
+    "authority": "tex.web",
+    "manifest": "tests/tex82-oracle-manifest.txt",
+    "sections": [
+      934,
+      935,
+      936,
+      937,
+      960,
+      961,
+      962,
+      963
+    ]
+  },
+  "projection": {
+    "kind": "terminal-checks",
+    "terminal_checks": [
+      "Improper \\hyphenation will be flushed",
+      "Not a letter",
+      "Bad \\patterns",
+      "l.5 \\patterns{a\\relax",
+      "Nonletter",
+      "l.5 \\patterns{a\\relax b a!",
+      "Duplicate pattern",
+      "l.5 \\patterns{a\\relax b a!b a1b a2b}",
+      "(See Appendix H.)"
+    ],
+    "count_registers": [
+      0
+    ]
+  },
+  "expected": [
+    "terminal-check:Improper \\hyphenation will be flushed=true",
+    "terminal-check:Not a letter=true",
+    "terminal-check:Bad \\patterns=true",
+    "terminal-check:l.5 \\patterns{a\\relax=true",
+    "terminal-check:Nonletter=true",
+    "terminal-check:l.5 \\patterns{a\\relax b a!=true",
+    "terminal-check:Duplicate pattern=true",
+    "terminal-check:l.5 \\patterns{a\\relax b a!b a1b a2b}=true",
+    "terminal-check:(See Appendix H.)=true",
+    "count:0=1"
+  ],
+  "channels": {
+    "events": 154
+  }
 }

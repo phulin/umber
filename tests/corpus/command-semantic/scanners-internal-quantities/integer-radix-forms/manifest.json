@@ -1,49 +1,33 @@
 {
-  "schema": 1,
-  "domain": "scanners-internal-quantities",
-  "property_domain": "scanners-internal-quantities",
-  "cases": [
-    {
-      "id": "integer-radix-forms",
-      "property_id": "tex82.scanner.integer",
-      "profile": "raw-tex82-loaded",
-      "source": "integer-radix-forms.tex",
-      "provenance": {
-        "authority": "tex.web",
-        "manifest": "tests/tex82-oracle-manifest.txt",
-        "sections": [
-          438,
-          442,
-          444,
-          445
-        ]
-      },
-      "projection": {
-        "kind": "state",
-        "count_registers": [
-          20,
-          21,
-          22,
-          23
-        ]
-      },
-      "expected": [
-        "count:20=65",
-        "count:21=255",
-        "count:22=63",
-        "count:23=-65"
-      ],
-      "channels": {
-        "events": 100,
-        "status": "clean",
-        "terminal": { "kind": "file" },
-        "log": { "kind": "file" },
-        "dvi": { "kind": "empty" },
-        "effects": { "kind": "empty" }
-      },
-      "expectation": {
-        "kind": "pass"
-      }
-    }
-  ]
+  "schema": 2,
+  "property_id": "tex82.scanner.integer",
+  "profile": "raw-tex82-loaded",
+  "provenance": {
+    "authority": "tex.web",
+    "manifest": "tests/tex82-oracle-manifest.txt",
+    "sections": [
+      438,
+      442,
+      444,
+      445
+    ]
+  },
+  "projection": {
+    "kind": "state",
+    "count_registers": [
+      20,
+      21,
+      22,
+      23
+    ]
+  },
+  "expected": [
+    "count:20=65",
+    "count:21=255",
+    "count:22=63",
+    "count:23=-65"
+  ],
+  "channels": {
+    "events": 100
+  }
 }

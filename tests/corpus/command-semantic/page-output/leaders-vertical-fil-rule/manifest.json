@@ -1,49 +1,33 @@
 {
-  "schema": 1,
-  "domain": "page-output",
-  "property_domain": "page-builder-output-whatsits-io-shipout",
-  "cases": [
-    {
-      "id": "leaders-vertical-fil-rule",
-      "profile": "raw-tex82-loaded",
-      "property_id": "tex82.shipout.vlist-traversal",
-      "source": "leaders-vertical-fil-rule.tex",
-      "provenance": {
-        "authority": "tex.web",
-        "manifest": "tests/tex82-oracle-manifest.txt",
-        "sections": [
-          629,
-          634,
-          635
-        ]
-      },
-      "projection": {
-        "kind": "execution-boundaries",
-        "command_names": [
-          "leader_ship"
-        ],
-        "include_artifact_hashes": true
-      },
-      "expected": [
-        "command:leader_ship:99",
-        "command:leader_ship:100",
-        "command:leader_ship:101",
-        "command:leader_ship:102",
-        "command:leader_ship:100",
-        "command:leader_ship:100",
-        "artifact:a68026def0008819719d8a5440a410372bfdefddbf1d9c0baa36e35c64ae580d"
-      ],
-      "channels": {
-        "events": 1371,
-        "status": "clean",
-        "terminal": { "kind": "file" },
-        "log": { "kind": "file" },
-        "dvi": { "kind": "file" },
-        "effects": { "kind": "empty" }
-      },
-      "expectation": {
-        "kind": "pass"
-      }
-    }
-  ]
+  "schema": 2,
+  "property_id": "tex82.shipout.vlist-traversal",
+  "profile": "raw-tex82-loaded",
+  "provenance": {
+    "authority": "tex.web",
+    "manifest": "tests/tex82-oracle-manifest.txt",
+    "sections": [
+      629,
+      634,
+      635
+    ]
+  },
+  "projection": {
+    "kind": "execution-boundaries",
+    "command_names": [
+      "leader_ship"
+    ],
+    "include_artifact_hashes": true
+  },
+  "expected": [
+    "command:leader_ship:99",
+    "command:leader_ship:100",
+    "command:leader_ship:101",
+    "command:leader_ship:102",
+    "command:leader_ship:100",
+    "command:leader_ship:100",
+    "artifact:a68026def0008819719d8a5440a410372bfdefddbf1d9c0baa36e35c64ae580d"
+  ],
+  "channels": {
+    "events": 1371
+  }
 }

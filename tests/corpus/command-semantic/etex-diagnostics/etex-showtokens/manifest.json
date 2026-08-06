@@ -1,53 +1,37 @@
 {
-  "schema": 1,
-  "domain": "etex-diagnostics",
-  "property_domain": "main-control-groups-assignments",
-  "cases": [
-    {
-      "id": "etex-showtokens",
-      "property_id": "tex82.main-control.show-value",
-      "profile": "etex-initex",
-      "source": "etex-showtokens.tex",
-      "provenance": {
-        "authority": "etex.ch",
-        "manifest": "tests/etex26-oracle-manifest.txt",
-        "sections": [
-          3623,
-          3630,
-          3635,
-          3662,
-          3664,
-          3667,
-          3671
-        ]
-      },
-      "projection": {
-        "kind": "observations",
-        "kinds": [
-          "effect"
-        ],
-        "count_registers": [
-          0,
-          7
-        ]
-      },
-      "expected": [
-        "effect:showtokens:A {B} \\boom #### x",
-        "effect:terminate:engine\u0000",
-        "count:0=1",
-        "count:7=0"
-      ],
-      "channels": {
-        "events": 128,
-        "status": "clean",
-        "terminal": { "kind": "file" },
-        "log": { "kind": "file" },
-        "dvi": { "kind": "empty" },
-        "effects": { "kind": "empty" }
-      },
-      "expectation": {
-        "kind": "pass"
-      }
-    }
-  ]
+  "schema": 2,
+  "property_id": "tex82.main-control.show-value",
+  "profile": "etex-initex",
+  "provenance": {
+    "authority": "etex.ch",
+    "manifest": "tests/etex26-oracle-manifest.txt",
+    "sections": [
+      3623,
+      3630,
+      3635,
+      3662,
+      3664,
+      3667,
+      3671
+    ]
+  },
+  "projection": {
+    "kind": "observations",
+    "kinds": [
+      "effect"
+    ],
+    "count_registers": [
+      0,
+      7
+    ]
+  },
+  "expected": [
+    "effect:showtokens:A {B} \\boom #### x",
+    "effect:terminate:engine\u0000",
+    "count:0=1",
+    "count:7=0"
+  ],
+  "channels": {
+    "events": 128
+  }
 }

@@ -1,40 +1,24 @@
 {
-  "schema": 1,
-  "domain": "main-control",
-  "property_domain": "main-control-groups-assignments",
-  "cases": [
-    {
-      "id": "macro-definitions",
-      "property_id": "tex82.assignment.macro-definitions",
-      "profile": "raw-tex82-loaded",
-      "source": "macro-definitions.tex",
-      "provenance": {
-        "authority": "tex.web",
-        "manifest": "tests/tex82-oracle-manifest.txt",
-        "sections": [
-          1218
-        ]
-      },
-      "projection": {
-        "kind": "state",
-        "count_registers": [
-          0
-        ]
-      },
-      "expected": [
-        "count:0=15"
-      ],
-      "channels": {
-        "events": 213,
-        "status": "clean",
-        "terminal": { "kind": "file" },
-        "log": { "kind": "file" },
-        "dvi": { "kind": "empty" },
-        "effects": { "kind": "empty" }
-      },
-      "expectation": {
-        "kind": "pass"
-      }
-    }
-  ]
+  "schema": 2,
+  "property_id": "tex82.assignment.macro-definitions",
+  "profile": "raw-tex82-loaded",
+  "provenance": {
+    "authority": "tex.web",
+    "manifest": "tests/tex82-oracle-manifest.txt",
+    "sections": [
+      1218
+    ]
+  },
+  "projection": {
+    "kind": "state",
+    "count_registers": [
+      0
+    ]
+  },
+  "expected": [
+    "count:0=15"
+  ],
+  "channels": {
+    "events": 213
+  }
 }

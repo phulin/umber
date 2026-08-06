@@ -1,46 +1,30 @@
 {
-  "schema": 1,
-  "domain": "main-control",
-  "property_domain": "main-control-groups-assignments",
-  "cases": [
-    {
-      "id": "error-and-stop",
-      "property_id": "tex82.main-control.error-and-stop",
-      "profile": "raw-tex82-loaded",
-      "source": "error-and-stop.tex",
-      "provenance": {
-        "authority": "tex.web",
-        "manifest": "tests/tex82-oracle-manifest.txt",
-        "sections": [
-          1048,
-          1049,
-          1050,
-          1051,
-          1052,
-          1053,
-          1054
-        ]
-      },
-      "projection": {
-        "kind": "state",
-        "count_registers": [
-          0
-        ]
-      },
-      "expected": [
-        "count:0=1"
-      ],
-      "channels": {
-        "events": 92,
-        "status": "clean",
-        "terminal": { "kind": "file" },
-        "log": { "kind": "file" },
-        "dvi": { "kind": "file" },
-        "effects": { "kind": "empty" }
-      },
-      "expectation": {
-        "kind": "pass"
-      }
-    }
-  ]
+  "schema": 2,
+  "property_id": "tex82.main-control.error-and-stop",
+  "profile": "raw-tex82-loaded",
+  "provenance": {
+    "authority": "tex.web",
+    "manifest": "tests/tex82-oracle-manifest.txt",
+    "sections": [
+      1048,
+      1049,
+      1050,
+      1051,
+      1052,
+      1053,
+      1054
+    ]
+  },
+  "projection": {
+    "kind": "state",
+    "count_registers": [
+      0
+    ]
+  },
+  "expected": [
+    "count:0=1"
+  ],
+  "channels": {
+    "events": 92
+  }
 }

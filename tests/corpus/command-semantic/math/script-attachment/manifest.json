@@ -1,48 +1,32 @@
 {
-  "schema": 1,
-  "domain": "math",
-  "property_domain": "math-box-list-and-mode-semantics",
-  "cases": [
-    {
-      "id": "script-attachment",
-      "property_id": "tex82.math.script-attachment",
-      "profile": "raw-tex82-loaded",
-      "source": "script-attachment.tex",
-      "provenance": {
-        "authority": "tex.web",
-        "manifest": "tests/tex82-oracle-manifest.txt",
-        "sections": [
-          1175,
-          1176,
-          1177
-        ]
-      },
-      "projection": {
-        "kind": "execution-boundaries",
-        "include_artifact_hashes": true,
-        "command_names": [
-          "mkern"
-        ]
-      },
-      "expected": [
-        "command:mkern:99",
-        "command:mkern:99",
-        "command:mkern:99",
-        "command:mkern:99",
-        "command:mkern:99",
-        "artifact:e77d675e24417405905617ebe83d568edc8f3f701debf63557cbfb9f84725153"
-      ],
-      "channels": {
-        "events": 216,
-        "status": "clean",
-        "terminal": { "kind": "file" },
-        "log": { "kind": "file" },
-        "dvi": { "kind": "file" },
-        "effects": { "kind": "empty" }
-      },
-      "expectation": {
-        "kind": "pass"
-      }
-    }
-  ]
+  "schema": 2,
+  "property_id": "tex82.math.script-attachment",
+  "profile": "raw-tex82-loaded",
+  "provenance": {
+    "authority": "tex.web",
+    "manifest": "tests/tex82-oracle-manifest.txt",
+    "sections": [
+      1175,
+      1176,
+      1177
+    ]
+  },
+  "projection": {
+    "kind": "execution-boundaries",
+    "include_artifact_hashes": true,
+    "command_names": [
+      "mkern"
+    ]
+  },
+  "expected": [
+    "command:mkern:99",
+    "command:mkern:99",
+    "command:mkern:99",
+    "command:mkern:99",
+    "command:mkern:99",
+    "artifact:e77d675e24417405905617ebe83d568edc8f3f701debf63557cbfb9f84725153"
+  ],
+  "channels": {
+    "events": 216
+  }
 }

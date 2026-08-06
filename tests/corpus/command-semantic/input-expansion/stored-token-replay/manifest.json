@@ -1,46 +1,30 @@
 {
-  "schema": 1,
-  "domain": "input-expansion",
-  "property_domain": "input-tokenization-control-sequences-expansion",
-  "cases": [
-    {
-      "id": "stored-token-replay",
-      "property_id": "tex82.input.stored-token-representation",
-      "profile": "raw-tex82-loaded",
-      "source": "stored-token-replay.tex",
-      "provenance": {
-        "authority": "tex.web",
-        "manifest": "tests/tex82-oracle-manifest.txt",
-        "sections": [
-          289,
-          290,
-          291
-        ]
-      },
-      "projection": {
-        "kind": "observations",
-        "kinds": [
-          "macro"
-        ],
-        "count_registers": [
-          0
-        ]
-      },
-      "expected": [
-        "macro:activate:b:0:",
-        "count:0=1"
-      ],
-      "channels": {
-        "events": 94,
-        "status": "clean",
-        "terminal": { "kind": "file" },
-        "log": { "kind": "file" },
-        "dvi": { "kind": "empty" },
-        "effects": { "kind": "empty" }
-      },
-      "expectation": {
-        "kind": "pass"
-      }
-    }
-  ]
+  "schema": 2,
+  "property_id": "tex82.input.stored-token-representation",
+  "profile": "raw-tex82-loaded",
+  "provenance": {
+    "authority": "tex.web",
+    "manifest": "tests/tex82-oracle-manifest.txt",
+    "sections": [
+      289,
+      290,
+      291
+    ]
+  },
+  "projection": {
+    "kind": "observations",
+    "kinds": [
+      "macro"
+    ],
+    "count_registers": [
+      0
+    ]
+  },
+  "expected": [
+    "macro:activate:b:0:",
+    "count:0=1"
+  ],
+  "channels": {
+    "events": 94
+  }
 }

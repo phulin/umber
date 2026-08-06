@@ -4,6 +4,9 @@
 
 `tools/fixturegen` is the sole host-side fixture publication owner used by `scripts/regen-fixtures.sh` and primary-checkout provisioning. Its `CasePlan`, `ArtifactSpec`, and `AtomicCaseTransaction` cover ordinary text/native updates, layout and PDF migration, externally staged cohorts, command-semantic batches, end-to-end reference DVI publication, and corpus acquisition. It is intentionally not a root workspace member; build it via `cargo build --manifest-path tools/fixturegen/Cargo.toml`. It may invoke `refexec`, `umber`, `pdftex`, `pdftoppm`, and `tftopl`, but cargo tests must not build or run it.
 Candidate closed-directory validation and non-authoritative staging are shared from `test-support::closed_case`; only fixturegen may turn a validated candidate into repository authority.
+
+`tex-command-stream`'s `command-semantic-schema` binary prints the structural JSON Schema generated from the V2 Rust manifest type; the committed corpus schema must match it exactly.
+
 The `exec`, `typeset`, and `etex_exec` log generators run the reference in
 INITEX mode (extended for `etex_exec`) and stage the seven printable catcode
 assignments that `umber run` installs without loading a format. This matches

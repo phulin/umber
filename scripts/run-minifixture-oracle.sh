@@ -32,7 +32,7 @@ source_date_epoch="${SOURCE_DATE_EPOCH:-1783604160}"
 usage() {
   cat <<'EOF'
 usage: scripts/run-minifixture-oracle.sh (--case DOMAIN/CASE-ID)... | --all
-       scripts/run-minifixture-oracle.sh --profile PROFILE --allowlist FILE
+       scripts/run-minifixture-oracle.sh --profile PROFILE
 
 Run one or more tests/corpus/command-semantic minifixture sources through the
 pinned, already-built INSTRUMENTED pdfTeX 1.40.29 oracle
@@ -51,9 +51,9 @@ Each selected case is staged and run under:
 
 Options:
   --case DOMAIN/CASE-ID   Run one case. May be repeated.
-  --all                   Run all 202 singleton fixture-local manifests.
+  --all                   Run all 203 fixture-local manifests.
   --profile PROFILE       Require every selected case to declare PROFILE.
-  --allowlist FILE        Run exactly the non-comment selectors in FILE.
+  --profile PROFILE       Run cases whose typed capture policy selects PROFILE.
   --help, -h              Show this message.
 
 Environment:
@@ -74,7 +74,6 @@ warn() {
 selected_cases=()
 run_all=0
 required_profile=""
-allowlist=""
 
 while [[ "$#" -gt 0 ]]; do
   case "$1" in
@@ -89,42 +88,26 @@ while [[ "$#" -gt 0 ]]; do
       required_profile="$2"
       shift 2
       ;;
-    --allowlist)
-      [[ -n "${2:-}" ]] || fail "--allowlist expects a file"
-      allowlist="$2"
-      shift 2
-      ;;
     --help|-h) usage; exit 0 ;;
     *) printf 'run-minifixture-oracle: unknown option: %s\n' "$1" >&2; usage >&2; exit 2 ;;
   esac
 done
 
-[[ -z "$allowlist" || -f "$allowlist" ]] || fail "allowlist does not exist: $allowlist"
-[[ -z "$allowlist" || -n "$required_profile" ]] ||
-  fail "--allowlist requires --profile"
-[[ -n "$allowlist" || -z "$required_profile" ]] ||
-  fail "--profile requires --allowlist"
-if [[ -n "$allowlist" ]]; then
-  declare -A seen_selectors=()
-  while IFS= read -r selector; do
-    selector="${selector%%#*}"
-    selector="${selector#"${selector%%[![:space:]]*}"}"
-    selector="${selector%"${selector##*[![:space:]]}"}"
-    if [[ -n "$selector" ]]; then
-      [[ -z "${seen_selectors[$selector]:-}" ]] ||
-        fail "allowlist repeats case: $selector"
-      seen_selectors[$selector]=1
-      selected_cases+=("$selector")
-    fi
-  done <"$allowlist"
-  [[ "${#selected_cases[@]}" -gt 0 ]] || fail "allowlist selects no cases: $allowlist"
-fi
-[[ "$run_all" -eq 1 || "${#selected_cases[@]}" -gt 0 ]] ||
+[[ "$run_all" -eq 1 || "${#selected_cases[@]}" -gt 0 || -n "$required_profile" ]] ||
   { usage >&2; exit 2; }
 [[ "$run_all" -eq 0 || "${#selected_cases[@]}" -eq 0 ]] ||
   fail "--all and --case are mutually exclusive"
 
 command -v jq >/dev/null || fail "jq is required"
+if [[ -n "$required_profile" ]]; then
+  while IFS= read -r manifest; do
+    [[ "$(jq -r '.profile // "initex"' "$manifest")" == "$required_profile" ]] || continue
+    [[ "$(jq -r '.capture.kind // "profile"' "$manifest")" == profile ]] || continue
+    relative="${manifest#"${corpus_root}/"}"
+    selected_cases+=("${relative%/manifest.json}")
+  done < <(LC_ALL=C find "$corpus_root" -mindepth 3 -maxdepth 3 -name manifest.json -type f | LC_ALL=C sort)
+  [[ "${#selected_cases[@]}" -gt 0 ]] || fail "profile selects no cases: $required_profile"
+fi
 [[ -x "$executable" ]] ||
   fail "instrumented oracle not built: $executable (run python3 scripts/provision.py oracle pdftex14029)"
 [[ -f "${texmfcnf_dir}/texmf.cnf" ]] ||
@@ -550,8 +533,8 @@ else
 fi
 
 warn "ran $ran case(s), skipped $skipped case(s)"
-if [[ -n "$allowlist" && "$ran" -ne "${#selected_cases[@]}" ]]; then
-  fail "allowlist selected ${#selected_cases[@]} case(s), but $ran ran"
+if [[ -n "$required_profile" && "$ran" -ne "${#selected_cases[@]}" ]]; then
+  fail "profile selected ${#selected_cases[@]} case(s), but $ran ran"
 fi
 # A skipped case captured nothing, so exiting 0 would report a run that did no
 # work as a clean one -- and it did exactly that once: a priming job that

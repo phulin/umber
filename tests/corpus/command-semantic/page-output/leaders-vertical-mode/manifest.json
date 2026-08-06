@@ -1,46 +1,30 @@
 {
-  "schema": 1,
-  "domain": "page-output",
-  "property_domain": "page-builder-output-whatsits-io-shipout",
-  "cases": [
-    {
-      "id": "leaders-vertical-mode",
-      "profile": "raw-tex82-loaded",
-      "property_id": "tex82.shipout.vlist-traversal",
-      "source": "leaders-vertical-mode.tex",
-      "provenance": {
-        "authority": "tex.web",
-        "manifest": "tests/tex82-oracle-manifest.txt",
-        "sections": [
-          634,
-          635
-        ]
-      },
-      "projection": {
-        "kind": "execution-boundaries",
-        "command_names": [
-          "leader_ship"
-        ],
-        "include_artifact_hashes": true
-      },
-      "expected": [
-        "command:leader_ship:100",
-        "command:leader_ship:101",
-        "command:leader_ship:102",
-        "command:leader_ship:99",
-        "artifact:ded3f52dec2681dcd6c777c5997fa674232844e35fcb2b6b39d1ed5737b41283"
-      ],
-      "channels": {
-        "events": 1175,
-        "status": "clean",
-        "terminal": { "kind": "file" },
-        "log": { "kind": "file" },
-        "dvi": { "kind": "file" },
-        "effects": { "kind": "empty" }
-      },
-      "expectation": {
-        "kind": "pass"
-      }
-    }
-  ]
+  "schema": 2,
+  "property_id": "tex82.shipout.vlist-traversal",
+  "profile": "raw-tex82-loaded",
+  "provenance": {
+    "authority": "tex.web",
+    "manifest": "tests/tex82-oracle-manifest.txt",
+    "sections": [
+      634,
+      635
+    ]
+  },
+  "projection": {
+    "kind": "execution-boundaries",
+    "command_names": [
+      "leader_ship"
+    ],
+    "include_artifact_hashes": true
+  },
+  "expected": [
+    "command:leader_ship:100",
+    "command:leader_ship:101",
+    "command:leader_ship:102",
+    "command:leader_ship:99",
+    "artifact:ded3f52dec2681dcd6c777c5997fa674232844e35fcb2b6b39d1ed5737b41283"
+  ],
+  "channels": {
+    "events": 1175
+  }
 }

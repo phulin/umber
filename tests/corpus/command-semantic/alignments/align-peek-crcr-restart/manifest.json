@@ -1,55 +1,39 @@
 {
-  "schema": 1,
-  "domain": "alignments",
-  "property_domain": "alignment-preambles-templates-and-lifecycle",
-  "cases": [
-    {
-      "id": "align-peek-crcr-restart",
-      "profile": "raw-tex82-loaded",
-      "property_id": "tex82.align.row-lookahead-noalign-finish",
-      "source": "align-peek-crcr-restart.tex",
-      "provenance": {
-        "authority": "tex.web",
-        "manifest": "tests/tex82-oracle-manifest.txt",
-        "sections": [
-          309,
-          325,
-          777,
-          785,
-          800
-        ]
-      },
-      "projection": {
-        "kind": "observations",
-        "kinds": [
-          "alignment"
-        ],
-        "alignment_transitions": [
-          "state_change"
-        ]
-      },
-      "expected": [
-        "alignment:state_change:-999999",
-        "alignment:state_change:-999999",
-        "alignment:state_change:-999999",
-        "alignment:state_change:1000000",
-        "alignment:state_change:1000000",
-        "alignment:state_change:0",
-        "alignment:state_change:1000000",
-        "alignment:state_change:1000000",
-        "alignment:state_change:999999"
-      ],
-      "channels": {
-        "events": 144,
-        "status": "clean",
-        "terminal": { "kind": "file" },
-        "log": { "kind": "file" },
-        "dvi": { "kind": "file" },
-        "effects": { "kind": "empty" }
-      },
-      "expectation": {
-        "kind": "pass"
-      }
-    }
-  ]
+  "schema": 2,
+  "property_id": "tex82.align.row-lookahead-noalign-finish",
+  "profile": "raw-tex82-loaded",
+  "provenance": {
+    "authority": "tex.web",
+    "manifest": "tests/tex82-oracle-manifest.txt",
+    "sections": [
+      309,
+      325,
+      777,
+      785,
+      800
+    ]
+  },
+  "projection": {
+    "kind": "observations",
+    "kinds": [
+      "alignment"
+    ],
+    "alignment_transitions": [
+      "state_change"
+    ]
+  },
+  "expected": [
+    "alignment:state_change:-999999",
+    "alignment:state_change:-999999",
+    "alignment:state_change:-999999",
+    "alignment:state_change:1000000",
+    "alignment:state_change:1000000",
+    "alignment:state_change:0",
+    "alignment:state_change:1000000",
+    "alignment:state_change:1000000",
+    "alignment:state_change:999999"
+  ],
+  "channels": {
+    "events": 144
+  }
 }

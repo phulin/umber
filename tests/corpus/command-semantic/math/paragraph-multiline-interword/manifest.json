@@ -1,46 +1,30 @@
 {
-  "schema": 1,
-  "domain": "math",
-  "property_domain": "math-box-list-and-mode-semantics",
-  "cases": [
-    {
-      "id": "paragraph-multiline-interword",
-      "property_id": "tex82.paragraphs.boundaries",
-      "profile": "raw-tex82-loaded",
-      "source": "paragraph-multiline-interword.tex",
-      "font_inputs": {
-        "cmr10.tfm": "crates/tex-fonts/tests/fixtures/cm/cmr10.tfm"
-      },
-      "provenance": {
-        "authority": "tex.web",
-        "manifest": "tests/tex82-oracle-manifest.txt",
-        "sections": [
-          1088,
-          1094
-        ]
-      },
-      "projection": {
-        "kind": "execution-boundaries",
-        "command_names": [
-          "leader_ship"
-        ],
-        "include_artifact_hashes": true
-      },
-      "expected": [
-        "command:leader_ship:99",
-        "artifact:483d11ed294d735d443b0d464f01a2bca81ecdc315f0b2af698e75717769dc56"
-      ],
-      "channels": {
-        "events": 654,
-        "status": "clean",
-        "terminal": { "kind": "file" },
-        "log": { "kind": "file" },
-        "dvi": { "kind": "file" },
-        "effects": { "kind": "empty" }
-      },
-      "expectation": {
-        "kind": "pass"
-      }
-    }
-  ]
+  "schema": 2,
+  "property_id": "tex82.paragraphs.boundaries",
+  "profile": "raw-tex82-loaded",
+  "font_inputs": {
+    "cmr10.tfm": "crates/tex-fonts/tests/fixtures/cm/cmr10.tfm"
+  },
+  "provenance": {
+    "authority": "tex.web",
+    "manifest": "tests/tex82-oracle-manifest.txt",
+    "sections": [
+      1088,
+      1094
+    ]
+  },
+  "projection": {
+    "kind": "execution-boundaries",
+    "command_names": [
+      "leader_ship"
+    ],
+    "include_artifact_hashes": true
+  },
+  "expected": [
+    "command:leader_ship:99",
+    "artifact:483d11ed294d735d443b0d464f01a2bca81ecdc315f0b2af698e75717769dc56"
+  ],
+  "channels": {
+    "events": 654
+  }
 }

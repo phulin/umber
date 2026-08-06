@@ -1,45 +1,29 @@
 {
-  "schema": 1,
-  "domain": "etex-diagnostics",
-  "property_domain": "main-control-groups-assignments",
-  "cases": [
-    {
-      "id": "etex-loaded-code-reassignment",
-      "property_id": "tex82.assignment.parameters-registers-arithmetic",
-      "profile": "etex-loaded",
-      "source": "etex-loaded-code-reassignment.tex",
-      "provenance": {
-        "authority": "etex.ch",
-        "manifest": "tests/etex26-oracle-manifest.txt",
-        "sections": [
-          277,
-          278,
-          1337
-        ]
-      },
-      "projection": {
-        "kind": "observations",
-        "kinds": [
-          "mutation"
-        ],
-        "count_registers": [
-          0
-        ]
-      },
-      "expected": [
-        "count:0=0"
-      ],
-      "channels": {
-        "events": 26,
-        "status": "clean",
-        "terminal": { "kind": "file" },
-        "log": { "kind": "file" },
-        "dvi": { "kind": "empty" },
-        "effects": { "kind": "empty" }
-      },
-      "expectation": {
-        "kind": "pass"
-      }
-    }
-  ]
+  "schema": 2,
+  "property_id": "tex82.assignment.parameters-registers-arithmetic",
+  "profile": "etex-loaded",
+  "provenance": {
+    "authority": "etex.ch",
+    "manifest": "tests/etex26-oracle-manifest.txt",
+    "sections": [
+      277,
+      278,
+      1337
+    ]
+  },
+  "projection": {
+    "kind": "observations",
+    "kinds": [
+      "mutation"
+    ],
+    "count_registers": [
+      0
+    ]
+  },
+  "expected": [
+    "count:0=0"
+  ],
+  "channels": {
+    "events": 26
+  }
 }

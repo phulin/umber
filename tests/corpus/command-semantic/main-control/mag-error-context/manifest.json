@@ -1,54 +1,38 @@
 {
-  "schema": 1,
-  "domain": "main-control",
-  "property_domain": "main-control-groups-assignments",
-  "cases": [
-    {
-      "id": "mag-error-context",
-      "property_id": "tex82.assignment.mag-freeze",
-      "profile": "raw-tex82-loaded",
-      "source": "mag-error-context.tex",
-      "font_inputs": {
-        "cmr10.tfm": "crates/tex-fonts/tests/fixtures/cm/cmr10.tfm"
-      },
-      "provenance": {
-        "authority": "tex.web",
-        "manifest": "tests/tex82-oracle-manifest.txt",
-        "sections": [
-          82,
-          91,
-          325,
-          1258
-        ]
-      },
-      "projection": {
-        "kind": "terminal-checks",
-        "terminal_checks": [
-          "Illegal magnification has been changed to 1000 (32769).",
-          "<to be read again> ",
-          "="
-        ],
-        "count_registers": [
-          0
-        ]
-      },
-      "expected": [
-        "terminal-check:Illegal magnification has been changed to 1000 (32769).=true",
-        "terminal-check:<to be read again> =true",
-        "terminal-check:==true",
-        "count:0=1000"
-      ],
-      "channels": {
-        "events": 105,
-        "status": "clean",
-        "terminal": { "kind": "file" },
-        "log": { "kind": "file" },
-        "dvi": { "kind": "file" },
-        "effects": { "kind": "empty" }
-      },
-      "expectation": {
-        "kind": "pass"
-      }
-    }
-  ]
+  "schema": 2,
+  "property_id": "tex82.assignment.mag-freeze",
+  "profile": "raw-tex82-loaded",
+  "font_inputs": {
+    "cmr10.tfm": "crates/tex-fonts/tests/fixtures/cm/cmr10.tfm"
+  },
+  "provenance": {
+    "authority": "tex.web",
+    "manifest": "tests/tex82-oracle-manifest.txt",
+    "sections": [
+      82,
+      91,
+      325,
+      1258
+    ]
+  },
+  "projection": {
+    "kind": "terminal-checks",
+    "terminal_checks": [
+      "Illegal magnification has been changed to 1000 (32769).",
+      "<to be read again> ",
+      "="
+    ],
+    "count_registers": [
+      0
+    ]
+  },
+  "expected": [
+    "terminal-check:Illegal magnification has been changed to 1000 (32769).=true",
+    "terminal-check:<to be read again> =true",
+    "terminal-check:==true",
+    "count:0=1000"
+  ],
+  "channels": {
+    "events": 105
+  }
 }

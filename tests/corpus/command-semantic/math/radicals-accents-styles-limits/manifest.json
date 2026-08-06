@@ -1,60 +1,44 @@
 {
-  "schema": 1,
-  "domain": "math",
-  "property_domain": "math-box-list-and-mode-semantics",
-  "cases": [
-    {
-      "id": "radicals-accents-styles-limits",
-      "property_id": "tex82.math.radicals-accents-styles-limits",
-      "profile": "raw-tex82-loaded",
-      "source": "radicals-accents-styles-limits.tex",
-      "provenance": {
-        "authority": "tex.web",
-        "manifest": "tests/tex82-oracle-manifest.txt",
-        "sections": [
-          1162,
-          1163,
-          1164,
-          1165,
-          1166,
-          1167,
-          1168,
-          1169,
-          1170,
-          1171
-        ]
-      },
-      "projection": {
-        "kind": "execution-boundaries",
-        "include_artifact_hashes": true,
-        "command_names": [
-          "limit_switch",
-          "math_accent",
-          "math_comp",
-          "math_style",
-          "radical"
-        ]
-      },
-      "expected": [
-        "command:radical:0",
-        "command:radical:0",
-        "command:math_accent:0",
-        "command:math_style:4",
-        "command:math_comp:17",
-        "command:limit_switch:1",
-        "artifact:63228c82bb3e594405e2892b08bb290a64be6af7dd40f1364c0c04ee40d00c31"
-      ],
-      "channels": {
-        "events": 110,
-        "status": "clean",
-        "terminal": { "kind": "file" },
-        "log": { "kind": "file" },
-        "dvi": { "kind": "file" },
-        "effects": { "kind": "empty" }
-      },
-      "expectation": {
-        "kind": "pass"
-      }
-    }
-  ]
+  "schema": 2,
+  "property_id": "tex82.math.radicals-accents-styles-limits",
+  "profile": "raw-tex82-loaded",
+  "provenance": {
+    "authority": "tex.web",
+    "manifest": "tests/tex82-oracle-manifest.txt",
+    "sections": [
+      1162,
+      1163,
+      1164,
+      1165,
+      1166,
+      1167,
+      1168,
+      1169,
+      1170,
+      1171
+    ]
+  },
+  "projection": {
+    "kind": "execution-boundaries",
+    "include_artifact_hashes": true,
+    "command_names": [
+      "limit_switch",
+      "math_accent",
+      "math_comp",
+      "math_style",
+      "radical"
+    ]
+  },
+  "expected": [
+    "command:radical:0",
+    "command:radical:0",
+    "command:math_accent:0",
+    "command:math_style:4",
+    "command:math_comp:17",
+    "command:limit_switch:1",
+    "artifact:63228c82bb3e594405e2892b08bb290a64be6af7dd40f1364c0c04ee40d00c31"
+  ],
+  "channels": {
+    "events": 110
+  }
 }

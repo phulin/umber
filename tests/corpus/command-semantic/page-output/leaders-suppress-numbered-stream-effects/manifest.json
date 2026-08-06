@@ -1,42 +1,26 @@
 {
-  "schema": 1,
-  "domain": "page-output",
-  "property_domain": "page-builder-output-whatsits-io-shipout",
-  "cases": [
-    {
-      "id": "leaders-suppress-numbered-stream-effects",
-      "profile": "raw-tex82-loaded",
-      "property_id": "tex82.effects.open-write-close-dispatch",
-      "source": "leaders-suppress-numbered-stream-effects.tex",
-      "provenance": {
-        "authority": "tex.web",
-        "manifest": "tests/tex82-oracle-manifest.txt",
-        "sections": [
-          1373,
-          1374
-        ]
-      },
-      "projection": {
-        "kind": "observations",
-        "kinds": [
-          "effect"
-        ]
-      },
-      "expected": [
-        "effect:shipout:dvi\u00001",
-        "effect:terminate:engine\u0000"
-      ],
-      "channels": {
-        "events": 453,
-        "status": "clean",
-        "terminal": { "kind": "file" },
-        "log": { "kind": "file" },
-        "dvi": { "kind": "file" },
-        "effects": { "kind": "empty" }
-      },
-      "expectation": {
-        "kind": "pass"
-      }
-    }
-  ]
+  "schema": 2,
+  "property_id": "tex82.effects.open-write-close-dispatch",
+  "profile": "raw-tex82-loaded",
+  "provenance": {
+    "authority": "tex.web",
+    "manifest": "tests/tex82-oracle-manifest.txt",
+    "sections": [
+      1373,
+      1374
+    ]
+  },
+  "projection": {
+    "kind": "observations",
+    "kinds": [
+      "effect"
+    ]
+  },
+  "expected": [
+    "effect:shipout:dvi\u00001",
+    "effect:terminate:engine\u0000"
+  ],
+  "channels": {
+    "events": 453
+  }
 }

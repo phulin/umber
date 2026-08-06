@@ -1,50 +1,38 @@
 {
-  "schema": 1,
-  "domain": "main-control",
-  "property_domain": "main-control-groups-assignments",
-  "cases": [
-    {
-      "id": "hyphenation-data",
-      "property_id": "tex82.assignment.hyphenation-data",
-      "profile": "raw-tex82-loaded",
-      "source": "hyphenation-data.tex",
-      "provenance": {
-        "authority": "tex.web",
-        "manifest": "tests/tex82-oracle-manifest.txt",
-        "sections": [
-          1250,
-          1251,
-          1252
-        ]
-      },
-      "projection": {
-        "kind": "terminal-checks",
-        "terminal_checks": [
-          "Patterns can be loaded only by INITEX",
-          "Too late for \\patterns",
-          "All patterns must be given before typesetting begins."
-        ],
-        "count_registers": [
-          0
-        ]
-      },
-      "expected": [
-        "terminal-check:Patterns can be loaded only by INITEX=true",
-        "terminal-check:Too late for \\patterns=false",
-        "terminal-check:All patterns must be given before typesetting begins.=false",
-        "count:0=1"
-      ],
-      "channels": {
-        "events": 77,
-        "status": "clean",
-        "terminal": { "kind": "file" },
-        "log": { "kind": "file" },
-        "dvi": { "kind": "empty" },
-        "effects": { "kind": "empty" }
-      },
-      "expectation": {
-        "kind": "pass"
-      }
-    }
-  ]
+  "schema": 2,
+  "property_id": "tex82.assignment.hyphenation-data",
+  "profile": "raw-tex82-loaded",
+  "capture": {
+    "kind": "exclude",
+    "reason": "captured separately as the loaded-format state witness"
+  },
+  "provenance": {
+    "authority": "tex.web",
+    "manifest": "tests/tex82-oracle-manifest.txt",
+    "sections": [
+      1250,
+      1251,
+      1252
+    ]
+  },
+  "projection": {
+    "kind": "terminal-checks",
+    "terminal_checks": [
+      "Patterns can be loaded only by INITEX",
+      "Too late for \\patterns",
+      "All patterns must be given before typesetting begins."
+    ],
+    "count_registers": [
+      0
+    ]
+  },
+  "expected": [
+    "terminal-check:Patterns can be loaded only by INITEX=true",
+    "terminal-check:Too late for \\patterns=false",
+    "terminal-check:All patterns must be given before typesetting begins.=false",
+    "count:0=1"
+  ],
+  "channels": {
+    "events": 77
+  }
 }

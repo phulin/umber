@@ -1,50 +1,34 @@
 {
-  "schema": 1,
-  "domain": "etex-diagnostics",
-  "property_domain": "main-control-groups-assignments",
-  "cases": [
-    {
-      "id": "etex-register-selector-profile",
-      "property_id": "tex82.assignment.parameters-registers-arithmetic",
-      "profile": "etex-initex",
-      "source": "etex-register-selector-profile.tex",
-      "provenance": {
-        "authority": "etex.ch + synctex-e-mem.ch1",
-        "manifest": "tests/etex26-oracle-manifest.txt",
-        "sections": [
-          230,
-          236,
-          1224
-        ]
-      },
-      "projection": {
-        "kind": "observations",
-        "kinds": [
-          "command"
-        ],
-        "commands": [
-          "assign_dimen",
-          "assign_int"
-        ],
-        "count_registers": []
-      },
-      "expected": [
-        "command:raw:cs:ctmp:assign_int:27500",
-        "command:expanded:cs:ctmp:assign_int:27500",
-        "command:raw:cs:dtmp:assign_dimen:28033",
-        "command:expanded:cs:dtmp:assign_dimen:28033"
-      ],
-      "channels": {
-        "events": 90,
-        "status": "clean",
-        "terminal": { "kind": "file" },
-        "log": { "kind": "file" },
-        "dvi": { "kind": "empty" },
-        "effects": { "kind": "empty" }
-      },
-      "expectation": {
-        "kind": "pass"
-      }
-    }
-  ]
+  "schema": 2,
+  "property_id": "tex82.assignment.parameters-registers-arithmetic",
+  "profile": "etex-initex",
+  "provenance": {
+    "authority": "etex.ch + synctex-e-mem.ch1",
+    "manifest": "tests/etex26-oracle-manifest.txt",
+    "sections": [
+      230,
+      236,
+      1224
+    ]
+  },
+  "projection": {
+    "kind": "observations",
+    "kinds": [
+      "command"
+    ],
+    "commands": [
+      "assign_dimen",
+      "assign_int"
+    ],
+    "count_registers": []
+  },
+  "expected": [
+    "command:raw:cs:ctmp:assign_int:27500",
+    "command:expanded:cs:ctmp:assign_int:27500",
+    "command:raw:cs:dtmp:assign_dimen:28033",
+    "command:expanded:cs:dtmp:assign_dimen:28033"
+  ],
+  "channels": {
+    "events": 90
+  }
 }

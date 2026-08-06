@@ -1,44 +1,28 @@
 {
-  "schema": 1,
-  "domain": "main-control",
-  "property_domain": "main-control-groups-assignments",
-  "cases": [
-    {
-      "id": "box-group-save-level",
-      "property_id": "tex82.group.save-level-lifecycle",
-      "profile": "raw-tex82-loaded",
-      "source": "box-group-save-level.tex",
-      "provenance": {
-        "authority": "tex.web",
-        "manifest": "tests/tex82-oracle-manifest.txt",
-        "sections": [
-          269,
-          270,
-          271
-        ]
-      },
-      "projection": {
-        "kind": "terminal-checks",
-        "terminal_checks": [
-          "regs=1,1.0pt,7",
-          "more=1,1.0pt,4.0pt,8"
-        ]
-      },
-      "expected": [
-        "terminal-check:regs=1,1.0pt,7=true",
-        "terminal-check:more=1,1.0pt,4.0pt,8=true"
-      ],
-      "channels": {
-        "events": 666,
-        "status": "clean",
-        "terminal": { "kind": "file" },
-        "log": { "kind": "file" },
-        "dvi": { "kind": "empty" },
-        "effects": { "kind": "empty" }
-      },
-      "expectation": {
-        "kind": "pass"
-      }
-    }
-  ]
+  "schema": 2,
+  "property_id": "tex82.group.save-level-lifecycle",
+  "profile": "raw-tex82-loaded",
+  "provenance": {
+    "authority": "tex.web",
+    "manifest": "tests/tex82-oracle-manifest.txt",
+    "sections": [
+      269,
+      270,
+      271
+    ]
+  },
+  "projection": {
+    "kind": "terminal-checks",
+    "terminal_checks": [
+      "regs=1,1.0pt,7",
+      "more=1,1.0pt,4.0pt,8"
+    ]
+  },
+  "expected": [
+    "terminal-check:regs=1,1.0pt,7=true",
+    "terminal-check:more=1,1.0pt,4.0pt,8=true"
+  ],
+  "channels": {
+    "events": 666
+  }
 }

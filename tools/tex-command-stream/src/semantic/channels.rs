@@ -16,6 +16,7 @@
 
 use std::fmt::Write as _;
 
+use schemars::JsonSchema;
 use serde::Deserialize;
 use tex_state::{EffectRecord, PrintSink};
 
@@ -209,7 +210,7 @@ fn rendered(text: &str) -> String {
 /// second source (an unadjudicated implementation-observed baseline, this
 /// corpus's own prior authority value until `umber2-alfh.1`) is now
 /// impossible to declare rather than merely unused.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, JsonSchema, PartialEq)]
 #[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
 pub enum StreamDisposition {
     /// The channel must produce nothing at all.
@@ -306,7 +307,7 @@ fn is_runaway_heading(line: &[u8]) -> bool {
 /// `expected` and `actual` are the two sides' rendering of that one line,
 /// using the literal `<end of channel>` for a side that ran out first --
 /// exactly as a `file` channel's own line-difference report does.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, JsonSchema, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct ChannelMismatch {
     /// 1-based line number of the first divergence.

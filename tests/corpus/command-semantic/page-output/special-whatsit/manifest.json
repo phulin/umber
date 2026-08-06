@@ -1,47 +1,31 @@
 {
-  "schema": 1,
-  "domain": "page-output",
-  "property_domain": "page-builder-output-whatsits-io-shipout",
-  "cases": [
-    {
-      "id": "special-whatsit",
-      "profile": "raw-tex82-loaded",
-      "property_id": "tex82.effects.special-output",
-      "source": "special-whatsit.tex",
-      "provenance": {
-        "authority": "tex.web",
-        "manifest": "tests/tex82-oracle-manifest.txt",
-        "sections": [
-          1344,
-          1368
-        ]
-      },
-      "projection": {
-        "kind": "execution-boundaries",
-        "command_names": [
-          "extension"
-        ],
-        "box_registers": [
-          0
-        ],
-        "node_depth": 1
-      },
-      "expected": [
-        "command:extension:3",
-        "box:0/0:hlist",
-        "box:0/0/0:whatsit"
-      ],
-      "channels": {
-        "events": 90,
-        "status": "clean",
-        "terminal": { "kind": "file" },
-        "log": { "kind": "file" },
-        "dvi": { "kind": "empty" },
-        "effects": { "kind": "empty" }
-      },
-      "expectation": {
-        "kind": "pass"
-      }
-    }
-  ]
+  "schema": 2,
+  "property_id": "tex82.effects.special-output",
+  "profile": "raw-tex82-loaded",
+  "provenance": {
+    "authority": "tex.web",
+    "manifest": "tests/tex82-oracle-manifest.txt",
+    "sections": [
+      1344,
+      1368
+    ]
+  },
+  "projection": {
+    "kind": "execution-boundaries",
+    "command_names": [
+      "extension"
+    ],
+    "box_registers": [
+      0
+    ],
+    "node_depth": 1
+  },
+  "expected": [
+    "command:extension:3",
+    "box:0/0:hlist",
+    "box:0/0/0:whatsit"
+  ],
+  "channels": {
+    "events": 90
+  }
 }

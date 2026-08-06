@@ -1,50 +1,44 @@
 {
-  "schema": 1,
-  "domain": "alignments",
-  "property_domain": "alignment-preambles-templates-and-lifecycle",
-  "cases": [
-    {
-      "id": "span-width-record",
-      "profile": "raw-tex82-loaded",
-      "property_id": "tex82.align.record-span-width",
-      "source": "span-width-record.tex",
-      "provenance": {
-        "authority": "tex.web",
-        "manifest": "tests/tex82-oracle-manifest.txt",
-        "sections": [
-          93,
-          95,
-          110,
-          796,
-          797,
-          798
-        ]
-      },
-      "projection": {
-        "kind": "state",
-        "count_registers": [
-          0
-        ]
-      },
-      "expected": [
-        "execution:error:confusion(256 spans)",
-        "count:0=0"
-      ],
-      "channels": {
-        "events": 7164,
-        "status": "fatal:confusion(256 spans)",
-        "terminal": {
-          "kind": "xfail",
-          "bug": "umber2-alfh.13",
-          "mismatch": { "line": 3, "expected": "! This can't happen (256 spans).", "actual": "No pages of output." }
-        },
-        "log": { "kind": "xfail-diagnostics", "bug": "umber2-alfh.13" },
-        "dvi": { "kind": "empty" },
-        "effects": { "kind": "empty" }
-      },
-      "expectation": {
-        "kind": "pass"
+  "schema": 2,
+  "property_id": "tex82.align.record-span-width",
+  "profile": "raw-tex82-loaded",
+  "provenance": {
+    "authority": "tex.web",
+    "manifest": "tests/tex82-oracle-manifest.txt",
+    "sections": [
+      93,
+      95,
+      110,
+      796,
+      797,
+      798
+    ]
+  },
+  "projection": {
+    "kind": "state",
+    "count_registers": [
+      0
+    ]
+  },
+  "expected": [
+    "execution:error:confusion(256 spans)",
+    "count:0=0"
+  ],
+  "channels": {
+    "events": 7164,
+    "status": "fatal:confusion(256 spans)",
+    "terminal": {
+      "kind": "xfail",
+      "bug": "umber2-alfh.13",
+      "mismatch": {
+        "line": 3,
+        "expected": "! This can't happen (256 spans).",
+        "actual": "No pages of output."
       }
+    },
+    "log": {
+      "kind": "xfail-diagnostics",
+      "bug": "umber2-alfh.13"
     }
-  ]
+  }
 }

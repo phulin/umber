@@ -1,70 +1,54 @@
 {
-  "schema": 1,
-  "domain": "input-expansion",
-  "property_domain": "input-tokenization-control-sequences-expansion",
-  "cases": [
-    {
-      "id": "input-level-lifecycle",
-      "property_id": "tex82.input.level-lifecycle",
-      "profile": "raw-tex82-loaded",
-      "source": "input-level-lifecycle.tex",
-      "provenance": {
-        "authority": "tex.web",
-        "manifest": "tests/tex82-oracle-manifest.txt",
-        "sections": [
-          300,
-          301,
-          302,
-          303,
-          304,
-          305,
-          306,
-          307,
-          308,
-          309,
-          310,
-          321,
-          323,
-          325,
-          326,
-          327,
-          328,
-          330,
-          331
-        ]
-      },
-      "projection": {
-        "kind": "observations",
-        "kinds": [
-          "effect",
-          "input"
-        ]
-      },
-      "expected": [
-        "input:backup:backup",
-        "input:retire:backup",
-        "effect:input:child.tex",
-        "input:backup:backup",
-        "input:retire:backup",
-        "input:retire:file",
-        "input:retire:file",
-        "input:stop:terminal",
-        "effect:terminate:engine\u0000"
-      ],
-      "channels": {
-        "events": 40,
-        "status": "clean",
-        "terminal": { "kind": "file" },
-        "log": { "kind": "file" },
-        "dvi": { "kind": "empty" },
-        "effects": { "kind": "empty" }
-      },
-      "expectation": {
-        "kind": "pass"
-      },
-      "inputs": {
-        "child.tex": "C"
-      }
-    }
-  ]
+  "schema": 2,
+  "property_id": "tex82.input.level-lifecycle",
+  "profile": "raw-tex82-loaded",
+  "provenance": {
+    "authority": "tex.web",
+    "manifest": "tests/tex82-oracle-manifest.txt",
+    "sections": [
+      300,
+      301,
+      302,
+      303,
+      304,
+      305,
+      306,
+      307,
+      308,
+      309,
+      310,
+      321,
+      323,
+      325,
+      326,
+      327,
+      328,
+      330,
+      331
+    ]
+  },
+  "projection": {
+    "kind": "observations",
+    "kinds": [
+      "effect",
+      "input"
+    ]
+  },
+  "expected": [
+    "input:backup:backup",
+    "input:retire:backup",
+    "effect:input:child.tex",
+    "input:backup:backup",
+    "input:retire:backup",
+    "input:retire:file",
+    "input:retire:file",
+    "input:stop:terminal",
+    "effect:terminate:engine\u0000"
+  ],
+  "channels": {
+    "events": 40
+  },
+  "inputs": {
+    "child.tex": "C"
+  }
 }

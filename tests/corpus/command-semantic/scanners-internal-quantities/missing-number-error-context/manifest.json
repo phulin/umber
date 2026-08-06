@@ -1,50 +1,34 @@
 {
-  "schema": 1,
-  "domain": "scanners-internal-quantities",
-  "property_domain": "scanners-internal-quantities",
-  "cases": [
-    {
-      "id": "missing-number-error-context",
-      "property_id": "tex82.scanner.integer",
-      "profile": "raw-tex82-loaded",
-      "source": "missing-number-error-context.tex",
-      "provenance": {
-        "authority": "tex.web",
-        "manifest": "tests/tex82-oracle-manifest.txt",
-        "sections": [
-          82,
-          325,
-          415
-        ]
-      },
-      "projection": {
-        "kind": "terminal-checks",
-        "terminal_checks": [
-          "Missing number, treated as zero.",
-          "<to be read again> ",
-          "x"
-        ],
-        "count_registers": [
-          0
-        ]
-      },
-      "expected": [
-        "terminal-check:Missing number, treated as zero.=true",
-        "terminal-check:<to be read again> =true",
-        "terminal-check:x=true",
-        "count:0=0"
-      ],
-      "channels": {
-        "events": 49,
-        "status": "clean",
-        "terminal": { "kind": "file" },
-        "log": { "kind": "file" },
-        "dvi": { "kind": "file" },
-        "effects": { "kind": "empty" }
-      },
-      "expectation": {
-        "kind": "pass"
-      }
-    }
-  ]
+  "schema": 2,
+  "property_id": "tex82.scanner.integer",
+  "profile": "raw-tex82-loaded",
+  "provenance": {
+    "authority": "tex.web",
+    "manifest": "tests/tex82-oracle-manifest.txt",
+    "sections": [
+      82,
+      325,
+      415
+    ]
+  },
+  "projection": {
+    "kind": "terminal-checks",
+    "terminal_checks": [
+      "Missing number, treated as zero.",
+      "<to be read again> ",
+      "x"
+    ],
+    "count_registers": [
+      0
+    ]
+  },
+  "expected": [
+    "terminal-check:Missing number, treated as zero.=true",
+    "terminal-check:<to be read again> =true",
+    "terminal-check:x=true",
+    "count:0=0"
+  ],
+  "channels": {
+    "events": 49
+  }
 }

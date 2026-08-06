@@ -1,61 +1,45 @@
 {
-  "schema": 1,
-  "domain": "math",
-  "property_domain": "math-box-list-and-mode-semantics",
-  "cases": [
-    {
-      "id": "exit-and-display",
-      "property_id": "tex82.math.exit-and-display",
-      "profile": "raw-tex82-loaded",
-      "source": "exit-and-display.tex",
-      "provenance": {
-        "authority": "tex.web",
-        "manifest": "tests/tex82-oracle-manifest.txt",
-        "sections": [
-          1193,
-          1194,
-          1195,
-          1196,
-          1197,
-          1198,
-          1199,
-          1200,
-          1201,
-          1202,
-          1203,
-          1204,
-          1205
-        ]
-      },
-      "projection": {
-        "kind": "execution-boundaries",
-        "include_mode_transitions": true,
-        "include_artifact_hashes": true,
-        "command_names": [
-          "mkern"
-        ]
-      },
-      "expected": [
-        "command:mkern:99",
-        "command:mkern:99",
-        "mode:vertical",
-        "mode:horizontal",
-        "mode:math",
-        "mode:horizontal",
-        "mode:vertical",
-        "artifact:5b386bdf7ab57cef6921e219147eb9e77b8f1a45464f64fe4e9fd31d77238272"
-      ],
-      "channels": {
-        "events": 88,
-        "status": "clean",
-        "terminal": { "kind": "file" },
-        "log": { "kind": "file" },
-        "dvi": { "kind": "file" },
-        "effects": { "kind": "empty" }
-      },
-      "expectation": {
-        "kind": "pass"
-      }
-    }
-  ]
+  "schema": 2,
+  "property_id": "tex82.math.exit-and-display",
+  "profile": "raw-tex82-loaded",
+  "provenance": {
+    "authority": "tex.web",
+    "manifest": "tests/tex82-oracle-manifest.txt",
+    "sections": [
+      1193,
+      1194,
+      1195,
+      1196,
+      1197,
+      1198,
+      1199,
+      1200,
+      1201,
+      1202,
+      1203,
+      1204,
+      1205
+    ]
+  },
+  "projection": {
+    "kind": "execution-boundaries",
+    "include_mode_transitions": true,
+    "include_artifact_hashes": true,
+    "command_names": [
+      "mkern"
+    ]
+  },
+  "expected": [
+    "command:mkern:99",
+    "command:mkern:99",
+    "mode:vertical",
+    "mode:horizontal",
+    "mode:math",
+    "mode:horizontal",
+    "mode:vertical",
+    "artifact:5b386bdf7ab57cef6921e219147eb9e77b8f1a45464f64fe4e9fd31d77238272"
+  ],
+  "channels": {
+    "events": 88
+  }
 }

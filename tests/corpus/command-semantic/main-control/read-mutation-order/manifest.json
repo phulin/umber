@@ -1,47 +1,31 @@
 {
-  "schema": 1,
-  "domain": "main-control",
-  "property_domain": "main-control-groups-assignments",
-  "cases": [
-    {
-      "id": "read-mutation-order",
-      "property_id": "tex82.assignment.read-to-definition",
-      "profile": "raw-tex82-loaded",
-      "source": "read-mutation-order.tex",
-      "provenance": {
-        "authority": "tex.web",
-        "manifest": "tests/tex82-oracle-manifest.txt",
-        "sections": [
-          360,
-          1214,
-          1225,
-          1269
-        ]
-      },
-      "projection": {
-        "kind": "observations",
-        "kinds": [
-          "mutation"
-        ],
-        "commands": []
-      },
-      "expected": [
-        "mutation:meaning:relax:macro definition:global"
-      ],
-      "channels": {
-        "events": 41,
-        "status": "clean",
-        "terminal": { "kind": "file" },
-        "log": { "kind": "file" },
-        "dvi": { "kind": "empty" },
-        "effects": { "kind": "empty" }
-      },
-      "expectation": {
-        "kind": "pass"
-      },
-      "terminal_lines": [
-        "alpha"
-      ]
-    }
+  "schema": 2,
+  "property_id": "tex82.assignment.read-to-definition",
+  "profile": "raw-tex82-loaded",
+  "provenance": {
+    "authority": "tex.web",
+    "manifest": "tests/tex82-oracle-manifest.txt",
+    "sections": [
+      360,
+      1214,
+      1225,
+      1269
+    ]
+  },
+  "projection": {
+    "kind": "observations",
+    "kinds": [
+      "mutation"
+    ],
+    "commands": []
+  },
+  "expected": [
+    "mutation:meaning:relax:macro definition:global"
+  ],
+  "channels": {
+    "events": 41
+  },
+  "terminal_lines": [
+    "alpha"
   ]
 }

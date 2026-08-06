@@ -1,62 +1,46 @@
 {
-  "schema": 1,
-  "domain": "main-control",
-  "property_domain": "main-control-groups-assignments",
-  "cases": [
-    {
-      "id": "show-meaning",
-      "property_id": "tex82.main-control.show-meaning",
-      "profile": "raw-tex82-loaded",
-      "source": "show-meaning.tex",
-      "provenance": {
-        "authority": "tex.web",
-        "manifest": "tests/tex82-oracle-manifest.txt",
-        "sections": [
-          294,
-          295,
-          296,
-          297,
-          298,
-          1294,
-          1295
-        ]
-      },
-      "projection": {
-        "kind": "terminal-checks",
-        "terminal_checks": [
-          "meaning-skip=\\skip3",
-          "meaning-count=\\count4",
-          "meaning-letter=the letter Q",
-          "> \\aliasskip=\\skip3.",
-          "SkipRegister(",
-          "CountRegister("
-        ],
-        "count_registers": [
-          0,
-          9
-        ]
-      },
-      "expected": [
-        "terminal-check:meaning-skip=\\skip3=true",
-        "terminal-check:meaning-count=\\count4=true",
-        "terminal-check:meaning-letter=the letter Q=true",
-        "terminal-check:> \\aliasskip=\\skip3.=true",
-        "terminal-check:SkipRegister(=false",
-        "terminal-check:CountRegister(=false",
-        "count:0=1",
-        "count:9=0"
-      ],
-      "channels": {
-        "events": 301,
-        "status": "clean",
-        "terminal": { "kind": "file" },
-        "log": { "kind": "file" },
-        "dvi": { "kind": "empty" },
-        "effects": { "kind": "empty" }
-      },
-      "expectation": {
-        "kind": "pass"
-      }
-    }
-  ]
+  "schema": 2,
+  "property_id": "tex82.main-control.show-meaning",
+  "profile": "raw-tex82-loaded",
+  "provenance": {
+    "authority": "tex.web",
+    "manifest": "tests/tex82-oracle-manifest.txt",
+    "sections": [
+      294,
+      295,
+      296,
+      297,
+      298,
+      1294,
+      1295
+    ]
+  },
+  "projection": {
+    "kind": "terminal-checks",
+    "terminal_checks": [
+      "meaning-skip=\\skip3",
+      "meaning-count=\\count4",
+      "meaning-letter=the letter Q",
+      "> \\aliasskip=\\skip3.",
+      "SkipRegister(",
+      "CountRegister("
+    ],
+    "count_registers": [
+      0,
+      9
+    ]
+  },
+  "expected": [
+    "terminal-check:meaning-skip=\\skip3=true",
+    "terminal-check:meaning-count=\\count4=true",
+    "terminal-check:meaning-letter=the letter Q=true",
+    "terminal-check:> \\aliasskip=\\skip3.=true",
+    "terminal-check:SkipRegister(=false",
+    "terminal-check:CountRegister(=false",
+    "count:0=1",
+    "count:9=0"
+  ],
+  "channels": {
+    "events": 301
+  }
 }

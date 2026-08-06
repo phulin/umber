@@ -1,48 +1,32 @@
 {
-  "schema": 1,
-  "domain": "etex-diagnostics",
-  "property_domain": "main-control-groups-assignments",
-  "cases": [
-    {
-      "id": "etex-showgroups",
-      "property_id": "tex82.main-control.show-value",
-      "profile": "etex-initex",
-      "source": "etex-showgroups.tex",
-      "provenance": {
-        "authority": "etex.ch",
-        "manifest": "tests/etex26-oracle-manifest.txt",
-        "sections": [
-          1292,
-          1293
-        ]
-      },
-      "projection": {
-        "kind": "observations",
-        "kinds": [
-          "effect"
-        ],
-        "count_registers": [
-          0
-        ]
-      },
-      "expected": [
-        "effect:showgroups:\n\n### bottom level",
-        "effect:showgroups:\n\n### semi simple group (level 1) entered at line 3 (\\begingroup)\n### bottom level",
-        "effect:showgroups:\n\n### bottom level",
-        "effect:terminate:engine\u0000",
-        "count:0=7"
-      ],
-      "channels": {
-        "events": 45,
-        "status": "clean",
-        "terminal": { "kind": "file" },
-        "log": { "kind": "file" },
-        "dvi": { "kind": "empty" },
-        "effects": { "kind": "empty" }
-      },
-      "expectation": {
-        "kind": "pass"
-      }
-    }
-  ]
+  "schema": 2,
+  "property_id": "tex82.main-control.show-value",
+  "profile": "etex-initex",
+  "provenance": {
+    "authority": "etex.ch",
+    "manifest": "tests/etex26-oracle-manifest.txt",
+    "sections": [
+      1292,
+      1293
+    ]
+  },
+  "projection": {
+    "kind": "observations",
+    "kinds": [
+      "effect"
+    ],
+    "count_registers": [
+      0
+    ]
+  },
+  "expected": [
+    "effect:showgroups:\n\n### bottom level",
+    "effect:showgroups:\n\n### semi simple group (level 1) entered at line 3 (\\begingroup)\n### bottom level",
+    "effect:showgroups:\n\n### bottom level",
+    "effect:terminate:engine\u0000",
+    "count:0=7"
+  ],
+  "channels": {
+    "events": 45
+  }
 }

@@ -1,42 +1,26 @@
 {
-  "schema": 1,
-  "domain": "main-control",
-  "property_domain": "main-control-groups-assignments",
-  "cases": [
-    {
-      "id": "show-value",
-      "property_id": "tex82.main-control.show-value",
-      "profile": "raw-tex82-loaded",
-      "source": "show-value.tex",
-      "provenance": {
-        "authority": "tex.web",
-        "manifest": "tests/tex82-oracle-manifest.txt",
-        "sections": [
-          1297
-        ]
-      },
-      "projection": {
-        "kind": "state",
-        "count_registers": [
-          0,
-          1
-        ]
-      },
-      "expected": [
-        "count:0=17",
-        "count:1=1"
-      ],
-      "channels": {
-        "events": 59,
-        "status": "clean",
-        "terminal": { "kind": "file" },
-        "log": { "kind": "file" },
-        "dvi": { "kind": "empty" },
-        "effects": { "kind": "empty" }
-      },
-      "expectation": {
-        "kind": "pass"
-      }
-    }
-  ]
+  "schema": 2,
+  "property_id": "tex82.main-control.show-value",
+  "profile": "raw-tex82-loaded",
+  "provenance": {
+    "authority": "tex.web",
+    "manifest": "tests/tex82-oracle-manifest.txt",
+    "sections": [
+      1297
+    ]
+  },
+  "projection": {
+    "kind": "state",
+    "count_registers": [
+      0,
+      1
+    ]
+  },
+  "expected": [
+    "count:0=17",
+    "count:1=1"
+  ],
+  "channels": {
+    "events": 59
+  }
 }

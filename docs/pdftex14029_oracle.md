@@ -174,13 +174,12 @@ scripts/run-minifixture-oracle.sh --case main-control/eqtb-regions
 scripts/run-minifixture-oracle.sh --all
 ```
 
-The loaded raw-TeX82 batch uses the blessed regeneration entry point with an
-explicit profile and reviewed exact-case allowlist:
+The loaded raw-TeX82 batch uses the blessed regeneration entry point with the
+typed capture policy embedded in each V2 case:
 
 ```bash
 scripts/regen-fixtures.sh --area command-semantic \
-  --profile raw-tex82-loaded \
-  --allowlist tests/command-semantic-oracle-profiles/raw-tex82-loaded.cases
+  --profile raw-tex82-loaded
 ```
 
 That route removes any prior cached raw TeX82 image, constructs one
@@ -192,7 +191,7 @@ dump or load is a hard failure; there is no INITEX fallback. The priming
 transcript and log are construction evidence only and are never copied into a
 case channel.
 
-The allowlist contains exactly 172 loaded jobs: the original 35 scanner,
+The capture policy selects exactly 172 loaded jobs: the original 35 scanner,
 input-expansion, and conditional cases, 55 main-control cases, all 18
 alignment cases, all 34 math cases, and all 30 page-output cases. The
 main-control cohort is every

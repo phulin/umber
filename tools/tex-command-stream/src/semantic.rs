@@ -15,6 +15,7 @@ use std::fs;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 
+use schemars::{JsonSchema, schema_for};
 use serde::Deserialize;
 use tex_command::{
     CommandDeliveryBoundary, CommandObservation, CommandObserver, CommandProfile,
@@ -39,7 +40,7 @@ pub use channels::{
 };
 pub use classify::{DivergenceClass, classify_divergence, reclassify_no_error_channel};
 
-pub const SCHEMA: u32 = 1;
+pub const SCHEMA: u32 = 2;
 // A command-semantic minifixture must be truly minimal: short, self-contained,
 // and exercising only the one engine behavior its case is about. The observed
 // maximum across the committed corpus is 1,240 bytes
@@ -57,14 +58,31 @@ pub const MAX_STEPS: usize = 2_048;
 pub const COUNT_SLOTS: usize = 256;
 pub const BUG_PREFIX: &str = "umber2-";
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub struct DomainManifest {
+pub struct CaseManifestV2 {
     pub schema: u32,
-    pub domain: String,
+    pub property_id: String,
     #[serde(default)]
-    pub property_domain: Option<String>,
-    pub cases: Vec<Case>,
+    pub profile: SessionProfile,
+    #[serde(default)]
+    pub capture: CapturePolicy,
+    #[serde(default)]
+    pub font_inputs: BTreeMap<String, String>,
+    pub provenance: Provenance,
+    pub projection: Projection,
+    pub expected: Vec<String>,
+    #[serde(default)]
+    pub expectation: Expectation,
+    pub channels: ChannelContractV2,
+    #[serde(default)]
+    pub terminal_lines: Vec<String>,
+    #[serde(default)]
+    pub inputs: BTreeMap<String, String>,
+    #[serde(default)]
+    pub interaction_mode: CaseInteractionMode,
+    #[serde(default)]
+    pub interaction_mode_note: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -125,9 +143,11 @@ pub struct Case {
     /// instead of a standard `scrollmode` oracle capture.
     #[serde(default)]
     pub interaction_mode_note: Option<String>,
+    #[serde(default)]
+    pub capture: CapturePolicy,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Provenance {
     pub authority: String,
@@ -135,7 +155,7 @@ pub struct Provenance {
     pub sections: Vec<u32>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Projection {
     pub kind: ProjectionKind,
@@ -162,7 +182,7 @@ pub struct Projection {
     pub terminal_checks: Vec<String>,
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, JsonSchema, PartialEq)]
 #[serde(rename_all = "kebab-case")]
 pub enum ProjectionKind {
     Classification,
@@ -176,7 +196,7 @@ pub enum ProjectionKind {
     TerminalChecks,
 }
 
-#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, JsonSchema, PartialEq)]
 #[serde(rename_all = "kebab-case")]
 pub enum SessionProfile {
     #[default]
@@ -185,6 +205,23 @@ pub enum SessionProfile {
     EtexLoaded,
     Production,
     RawTex82Loaded,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Eq, JsonSchema, PartialEq)]
+#[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
+pub enum CapturePolicy {
+    #[default]
+    Profile,
+    Exclude {
+        reason: String,
+    },
+}
+
+impl CapturePolicy {
+    #[must_use]
+    pub const fn selected(&self) -> bool {
+        matches!(self, Self::Profile)
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -210,7 +247,7 @@ impl SessionProfile {
 /// tex.web's four `-interaction` modes, spelled exactly as pdfTeX's own flag
 /// does (`-interaction=scrollmode`, ...) so a case's declared value can be
 /// handed straight to the oracle runner's command line.
-#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, JsonSchema, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum CaseInteractionMode {
     #[default]
@@ -232,7 +269,7 @@ impl CaseInteractionMode {
         }
     }
 }
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, JsonSchema, PartialEq)]
 #[serde(rename_all = "kebab-case")]
 pub enum ObservationKind {
     Command,
@@ -248,9 +285,10 @@ pub enum ObservationKind {
     Effect,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Default, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "lowercase", deny_unknown_fields)]
 pub enum Expectation {
+    #[default]
     Pass,
     Xfail {
         bug: String,
@@ -258,13 +296,85 @@ pub enum Expectation {
     },
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, JsonSchema, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct MismatchFingerprint {
     pub index: usize,
     pub kind: String,
     pub expected: String,
     pub actual: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ChannelContractV2 {
+    pub events: usize,
+    #[serde(default)]
+    pub status: Option<String>,
+    #[serde(default)]
+    pub terminal: Option<StreamDisposition>,
+    #[serde(default)]
+    pub log: Option<StreamDisposition>,
+    #[serde(default)]
+    pub dvi: Option<StreamDisposition>,
+    #[serde(default)]
+    pub effects: Option<StreamDisposition>,
+}
+
+impl CaseManifestV2 {
+    fn resolve(self, fixture_dir: &Path, id: String) -> Case {
+        let disposition = |channel| {
+            if channel_file(fixture_dir, channel).is_file() {
+                StreamDisposition::File
+            } else {
+                StreamDisposition::Empty
+            }
+        };
+        let channels = ChannelContract {
+            events: self.channels.events,
+            status: self.channels.status.unwrap_or_else(|| "clean".to_owned()),
+            terminal: self
+                .channels
+                .terminal
+                .unwrap_or_else(|| disposition(StreamChannel::Terminal)),
+            log: self
+                .channels
+                .log
+                .unwrap_or_else(|| disposition(StreamChannel::Log)),
+            dvi: self
+                .channels
+                .dvi
+                .unwrap_or_else(|| disposition(StreamChannel::Dvi)),
+            effects: self
+                .channels
+                .effects
+                .unwrap_or_else(|| disposition(StreamChannel::Effects)),
+        };
+        Case {
+            source: format!("{id}.tex"),
+            id,
+            property_id: self.property_id,
+            profile: self.profile,
+            font_inputs: self.font_inputs,
+            provenance: self.provenance,
+            projection: self.projection,
+            expected: self.expected,
+            expectation: self.expectation,
+            channels: Some(channels),
+            terminal_lines: self.terminal_lines,
+            inputs: self.inputs,
+            interaction_mode: self.interaction_mode,
+            interaction_mode_note: self.interaction_mode_note,
+            capture: self.capture,
+        }
+    }
+}
+
+/// Structural JSON Schema generated from the V2 Rust manifest contract.
+#[must_use]
+pub fn manifest_schema() -> serde_json::Value {
+    serde_json::to_value(schema_for!(CaseManifestV2))
+        .expect("a generated JSON Schema always serializes")
 }
 
 #[derive(Debug, Deserialize)]
@@ -872,6 +982,12 @@ pub fn validate_case(
             case.id
         ));
     }
+    if matches!(&case.capture, CapturePolicy::Exclude { reason } if reason.trim().is_empty()) {
+        return Err(format!(
+            "case {} has an empty capture exclusion reason",
+            case.id
+        ));
+    }
     // A case that declares a non-default interaction mode is declaring that
     // its channels are not comparable to `scripts/run-minifixture-oracle.sh`'s
     // standard scrollmode sweep the way every other case's are, and that fact
@@ -987,7 +1103,7 @@ pub fn load_suite_with(policy: ChannelPolicy) -> Result<Vec<DeclaredCase>, Strin
                 .and_then(|value| value.to_str())
                 .ok_or_else(|| format!("non-UTF-8 fixture directory {}", fixture_dir.display()))?;
             let manifest_path = fixture_dir.join("manifest.json");
-            let manifest: DomainManifest = read_json(&manifest_path)?;
+            let manifest: CaseManifestV2 = read_json(&manifest_path)?;
             if manifest.schema != SCHEMA {
                 return Err(format!(
                     "{} has schema {}, expected {SCHEMA}",
@@ -995,52 +1111,37 @@ pub fn load_suite_with(policy: ChannelPolicy) -> Result<Vec<DeclaredCase>, Strin
                     manifest.schema
                 ));
             }
-            if manifest.domain != directory_name || !valid_slug(&manifest.domain) {
+            if !valid_slug(directory_name) {
                 return Err(format!(
-                    "{} domain {:?} does not own directory {directory_name}",
+                    "{} has invalid domain directory {directory_name:?}",
                     manifest_path.display(),
-                    manifest.domain
                 ));
             }
-            let property_domain = manifest
-                .property_domain
-                .as_deref()
-                .unwrap_or(&manifest.domain);
-            if !valid_slug(property_domain) {
-                return Err(format!(
-                    "{} property domain {:?} is not a lower-kebab slug",
-                    manifest_path.display(),
-                    property_domain
-                ));
-            }
-            if manifest.cases.len() != 1 {
-                return Err(format!(
-                    "{} must declare exactly one case, found {}",
-                    manifest_path.display(),
-                    manifest.cases.len()
-                ));
-            }
-            let case = manifest.cases.into_iter().next().expect("length checked");
-            if case.id != fixture_name {
-                return Err(format!(
-                    "{} case {:?} does not own fixture directory {fixture_name}",
-                    manifest_path.display(),
-                    case.id
-                ));
-            }
-            validate_case(&case, property_domain, &fixture_dir, &root, &owners, policy)?;
+            let property_domain = owners
+                .get(&manifest.property_id)
+                .cloned()
+                .unwrap_or_else(|| directory_name.to_owned());
+            let case = manifest.resolve(&fixture_dir, fixture_name.to_owned());
+            validate_case(
+                &case,
+                &property_domain,
+                &fixture_dir,
+                &root,
+                &owners,
+                policy,
+            )?;
             validate_fixture_entries(&case, &fixture_dir)?;
             claim_case_identity(
                 &mut case_ids,
                 &mut sources,
                 &mut declared_sources,
-                &manifest.domain,
+                directory_name,
                 &case.id,
                 &case.source,
             )?;
             declared.push(DeclaredCase {
                 fixture_dir,
-                domain: manifest.domain.clone(),
+                domain: directory_name.to_owned(),
                 case,
             });
         }

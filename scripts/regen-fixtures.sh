@@ -39,7 +39,7 @@ usage:
   scripts/regen-fixtures.sh --incremental
   scripts/regen-fixtures.sh --all
   scripts/regen-fixtures.sh --area AREA
-  scripts/regen-fixtures.sh --area command-semantic --profile PROFILE --allowlist FILE
+  scripts/regen-fixtures.sh --area command-semantic --profile PROFILE
   scripts/regen-fixtures.sh --case AREA/CASE
   scripts/regen-fixtures.sh --case AREA CASE
   scripts/regen-fixtures.sh --oracle ENGINE --profile PROFILE [--fixture FIXTURE] [--offline]
@@ -52,7 +52,7 @@ Fixture areas:
   text/native: hello lexer expand lexer_dynamic exec etex_exec typeset tex_exec tex_exec_io
   DVI:         dvi page math align
   PDF:         pdf  (pinned pdfTeX structure plus exact Poppler grayscale pixels)
-  minifixtures: command-semantic  (explicit profile/allowlist captures and contracts)
+  minifixtures: command-semantic  (typed profile captures and contracts)
   bibliography: bib  (verbatim pinned upstream test data and SHA-256 manifest)
   classic BibTeX: bibtex  (pinned merged WEB2C program, inventory, BBL, and BLG)
   end-to-end:  e2e  (story, gentle, trip, and e-trip local DVI oracles)
@@ -1393,21 +1393,19 @@ regen_bibtex_area() {
 # stale capture.
 regen_command_semantic_area() {
   local profile="${1:-}"
-  local allowlist="${2:-}"
-  [[ -n "$profile" && -n "$allowlist" ]] ||
-    die 'command-semantic regeneration requires --profile PROFILE --allowlist FILE'
+  [[ -n "$profile" ]] ||
+    die 'command-semantic regeneration requires --profile PROFILE'
   [[ "$profile" == raw-tex82-loaded ]] ||
     die "unsupported command-semantic oracle profile: ${profile}"
-  [[ -f "$allowlist" ]] || die "command-semantic allowlist does not exist: ${allowlist}"
   [[ -x "$command_semantic_channels_bin" ]] ||
     die "command-semantic regeneration tool is not built: ${command_semantic_channels_bin}; run cargo build -p tex-command-stream first"
   build_fixturegen_once
   run_command "Capturing ${profile} command-semantic oracle channels" \
     "${repo_root}/scripts/run-minifixture-oracle.sh" \
-    --profile "$profile" --allowlist "$allowlist"
+    --profile "$profile"
   run_command 'Deriving command-semantic channel contracts against the pinned oracle' \
     env UMBER_FIXTUREGEN="$fixturegen_bin" \
-    "$command_semantic_channels_bin" --allowlist "$allowlist" \
+    "$command_semantic_channels_bin" --profile "$profile" \
     --accept-projection-changes
 }
 
@@ -1427,7 +1425,7 @@ regen_area() {
   elif [[ "$area" == "$bibtex_area" ]]; then
     regen_bibtex_area
   elif [[ "$area" == "$command_semantic_area" ]]; then
-    regen_command_semantic_area "$command_semantic_profile" "$command_semantic_allowlist"
+    regen_command_semantic_area "$command_semantic_profile"
   elif [[ "$area" == "$tex82_oracle_area" || \
           "$area" == "$etex26_oracle_area" || \
           "$area" == "$pdftex14029_oracle_area" ]]; then
@@ -1579,7 +1577,6 @@ oracle_validate_only=0
 oracle_fixture=""
 oracle_bootstrap_fixture=0
 command_semantic_profile=""
-command_semantic_allowlist=""
 
 if [[ "$#" -eq 0 ]]; then
   usage
@@ -1640,13 +1637,6 @@ while [[ "$#" -gt 0 ]]; do
       else
         die "--profile requires --oracle or --area command-semantic"
       fi
-      shift 2
-      ;;
-    --allowlist)
-      [[ "$mode" == area && "$area_arg" == "$command_semantic_area" ]] ||
-        die "--allowlist requires --area command-semantic"
-      [[ "$#" -ge 2 ]] || die "missing file after --allowlist"
-      command_semantic_allowlist="$2"
       shift 2
       ;;
     --offline)

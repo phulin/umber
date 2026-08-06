@@ -1,51 +1,35 @@
 {
-  "schema": 1,
-  "domain": "math",
-  "property_domain": "math-box-list-and-mode-semantics",
-  "cases": [
-    {
-      "id": "mlist-second-pass",
-      "property_id": "tex82.math.mlist-second-pass",
-      "profile": "raw-tex82-loaded",
-      "source": "mlist-second-pass.tex",
-      "provenance": {
-        "authority": "tex.web",
-        "manifest": "tests/tex82-oracle-manifest.txt",
-        "sections": [
-          761,
-          762,
-          763,
-          764,
-          765,
-          766,
-          767
-        ]
-      },
-      "projection": {
-        "kind": "execution-boundaries",
-        "include_artifact_hashes": true,
-        "command_names": [
-          "math_comp"
-        ]
-      },
-      "expected": [
-        "command:math_comp:20",
-        "command:math_comp:20",
-        "command:math_comp:23",
-        "command:math_comp:21",
-        "artifact:a6124f6199a181a670ddd37f9efd41de2b5dce0be536d7a787f659432b4ee94f"
-      ],
-      "channels": {
-        "events": 86,
-        "status": "clean",
-        "terminal": { "kind": "file" },
-        "log": { "kind": "file" },
-        "dvi": { "kind": "file" },
-        "effects": { "kind": "empty" }
-      },
-      "expectation": {
-        "kind": "pass"
-      }
-    }
-  ]
+  "schema": 2,
+  "property_id": "tex82.math.mlist-second-pass",
+  "profile": "raw-tex82-loaded",
+  "provenance": {
+    "authority": "tex.web",
+    "manifest": "tests/tex82-oracle-manifest.txt",
+    "sections": [
+      761,
+      762,
+      763,
+      764,
+      765,
+      766,
+      767
+    ]
+  },
+  "projection": {
+    "kind": "execution-boundaries",
+    "include_artifact_hashes": true,
+    "command_names": [
+      "math_comp"
+    ]
+  },
+  "expected": [
+    "command:math_comp:20",
+    "command:math_comp:20",
+    "command:math_comp:23",
+    "command:math_comp:21",
+    "artifact:a6124f6199a181a670ddd37f9efd41de2b5dce0be536d7a787f659432b4ee94f"
+  ],
+  "channels": {
+    "events": 86
+  }
 }

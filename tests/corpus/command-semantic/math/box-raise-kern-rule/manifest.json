@@ -1,57 +1,41 @@
 {
-  "schema": 1,
-  "domain": "math",
-  "property_domain": "math-box-list-and-mode-semantics",
-  "cases": [
-    {
-      "id": "box-raise-kern-rule",
-      "property_id": "tex82.boxes.requests-and-lifecycle",
-      "profile": "raw-tex82-loaded",
-      "source": "box-raise-kern-rule.tex",
-      "font_inputs": {
-        "cmr10.tfm": "crates/tex-fonts/tests/fixtures/cm/cmr10.tfm"
-      },
-      "provenance": {
-        "authority": "tex.web",
-        "manifest": "tests/tex82-oracle-manifest.txt",
-        "sections": [
-          1073,
-          1075,
-          1076
-        ]
-      },
-      "projection": {
-        "kind": "execution-boundaries",
-        "command_names": [
-          "leader_ship"
-        ],
-        "box_registers": [
-          0
-        ],
-        "node_depth": 3,
-        "include_artifact_hashes": true
-      },
-      "expected": [
-        "command:leader_ship:99",
-        "box:0/0:hlist",
-        "box:0/0/0:char",
-        "box:0/0/1:kern",
-        "box:0/0/2:hlist",
-        "box:0/0/2/0:char",
-        "box:0/0/3:rule",
-        "artifact:40758fc4142805c5ce956758c3f4b629f70199b73f67438cc23476f9bb3491a9"
-      ],
-      "channels": {
-        "events": 435,
-        "status": "clean",
-        "terminal": { "kind": "file" },
-        "log": { "kind": "file" },
-        "dvi": { "kind": "file" },
-        "effects": { "kind": "empty" }
-      },
-      "expectation": {
-        "kind": "pass"
-      }
-    }
-  ]
+  "schema": 2,
+  "property_id": "tex82.boxes.requests-and-lifecycle",
+  "profile": "raw-tex82-loaded",
+  "font_inputs": {
+    "cmr10.tfm": "crates/tex-fonts/tests/fixtures/cm/cmr10.tfm"
+  },
+  "provenance": {
+    "authority": "tex.web",
+    "manifest": "tests/tex82-oracle-manifest.txt",
+    "sections": [
+      1073,
+      1075,
+      1076
+    ]
+  },
+  "projection": {
+    "kind": "execution-boundaries",
+    "command_names": [
+      "leader_ship"
+    ],
+    "box_registers": [
+      0
+    ],
+    "node_depth": 3,
+    "include_artifact_hashes": true
+  },
+  "expected": [
+    "command:leader_ship:99",
+    "box:0/0:hlist",
+    "box:0/0/0:char",
+    "box:0/0/1:kern",
+    "box:0/0/2:hlist",
+    "box:0/0/2/0:char",
+    "box:0/0/3:rule",
+    "artifact:40758fc4142805c5ce956758c3f4b629f70199b73f67438cc23476f9bb3491a9"
+  ],
+  "channels": {
+    "events": 435
+  }
 }

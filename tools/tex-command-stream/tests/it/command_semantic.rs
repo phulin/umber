@@ -323,471 +323,59 @@ fn loaded_projection_distinguishes_explicit_end_from_nested_source_exhaustion() 
 }
 
 #[test]
-fn ordinary_raw_tex82_batch_declares_exact_loaded_route_and_job_contracts() {
-    const PRIOR_EXPECTED: &[&str] = &[
-        "conditionals/box-register-selector-recovery",
-        "conditionals/branch-delimiters",
-        "conditionals/classification",
-        "conditionals/odd-integer",
-        "conditionals/ordered-relations",
-        "conditionals/predicate-dispatch",
-        "conditionals/skipped-text",
-        "conditionals/stack-lifecycle",
-        "conditionals/token-predicates",
-        "input-expansion/command-code-boundaries",
-        "input-expansion/edef-noexpand-the-interaction",
-        "input-expansion/expansion-conversions",
-        "input-expansion/expansion-delivery",
-        "input-expansion/input-control-sequences",
-        "input-expansion/input-level-lifecycle",
-        "input-expansion/input-outer-recovery",
-        "input-expansion/input-raw-delivery",
-        "input-expansion/input-read-toks",
-        "input-expansion/input-start-file",
-        "input-expansion/input-tokenization-lifecycle",
-        "input-expansion/mode-activities",
-        "input-expansion/stored-token-replay",
-        "scanners-internal-quantities/coercion-ownership",
-        "scanners-internal-quantities/dimension-fraction",
-        "scanners-internal-quantities/infinite-glue-case",
-        "scanners-internal-quantities/input-stream-four-bit-recovery",
-        "scanners-internal-quantities/integer-radix-forms",
-        "scanners-internal-quantities/integer-sign-chain-and-units",
-        "scanners-internal-quantities/internal-unit-probe",
-        "scanners-internal-quantities/missing-left-brace-recovery",
-        "scanners-internal-quantities/missing-number-error-context",
-        "scanners-internal-quantities/numeric-token-categories",
-        "scanners-internal-quantities/register-sources",
-        "scanners-internal-quantities/scaled-division",
-        "scanners-internal-quantities/vacuous-dimension-units",
-    ];
-    const ETEX_LOADED: &[&str] = &[
-        "conditionals/etex-loaded-ifcsname",
-        "conditionals/etex-loaded-ifdefined",
-        "conditionals/etex-loaded-iffontchar",
-        "conditionals/etex-loaded-unless-frame",
-        "etex-diagnostics/etex-loaded-code-reassignment",
-        "etex-diagnostics/etex-loaded-glue-component-enquiries",
-        "etex-diagnostics/etex-loaded-macro-call",
-        "etex-diagnostics/etex-loaded-meaning-reassignment",
-        "etex-diagnostics/etex-loaded-state-reset",
-    ];
-    const PRODUCTION_LOADED: &[&str] = &["main-control/final-cleanup-end-or-dump"];
-    const EXCLUDED: &[(&str, SessionProfile)] = &[
-        (
-            "input-expansion/etex-noexpand-undefined",
-            SessionProfile::EtexInitex,
-        ),
-        (
-            "input-expansion/etex-outer-validity-eof",
-            SessionProfile::EtexInitex,
-        ),
-        (
-            "input-expansion/etex-readline-terminal",
-            SessionProfile::EtexInitex,
-        ),
-        (
-            "input-expansion/etex-unexpanded-delivery",
-            SessionProfile::EtexInitex,
-        ),
-    ];
-    const MAIN_CONTROL_EXCLUDED: &[(&str, SessionProfile)] = &[
-        (
-            "main-control/hyphenation-data",
-            SessionProfile::RawTex82Loaded,
-        ),
-        ("main-control/hyphenation-errors", SessionProfile::Initex),
-    ];
-
+fn v2_identity_capture_policy_and_resolved_channels_match_the_migrated_corpus() {
     let cases = load_suite().expect("valid command-semantic corpus");
-    let by_name: BTreeMap<_, _> = cases
-        .iter()
-        .map(|declared| {
-            (
-                format!("{}/{}", declared.domain, declared.case.id),
-                &declared.case,
-            )
-        })
-        .collect();
-    let prior_loaded: BTreeSet<_> = by_name
-        .iter()
-        .filter_map(|(name, case)| {
-            (case.profile.execution_route() == ExecutionRoute::RawTex82Loaded)
-                .then_some(name.as_str())
-        })
-        .filter(|name| {
-            name.starts_with("conditionals/")
-                || name.starts_with("input-expansion/")
-                || name.starts_with("scanners-internal-quantities/")
-        })
-        .collect();
-    assert_eq!(prior_loaded, PRIOR_EXPECTED.iter().copied().collect());
-    let main_control_excluded: BTreeSet<_> = MAIN_CONTROL_EXCLUDED
-        .iter()
-        .map(|(name, _)| *name)
-        .collect();
-    let main_control: BTreeSet<_> = by_name
-        .iter()
-        .filter_map(|(name, case)| {
-            (name.starts_with("main-control/")
-                && !main_control_excluded.contains(name.as_str())
-                && case.profile.execution_route() == ExecutionRoute::RawTex82Loaded)
-                .then_some(name.as_str())
-        })
-        .collect();
-    assert_eq!(main_control.len(), 55);
-    let alignments: BTreeSet<_> = by_name
-        .iter()
-        .filter_map(|(name, case)| {
-            (name.starts_with("alignments/")
-                && case.profile.execution_route() == ExecutionRoute::RawTex82Loaded)
-                .then_some(name.as_str())
-        })
-        .collect();
-    assert_eq!(alignments.len(), 18);
-    let math: BTreeSet<_> = by_name
-        .iter()
-        .filter_map(|(name, case)| {
-            (name.starts_with("math/")
-                && case.profile.execution_route() == ExecutionRoute::RawTex82Loaded)
-                .then_some(name.as_str())
-        })
-        .collect();
-    assert_eq!(math.len(), 34);
-    let page_output: BTreeSet<_> = by_name
-        .iter()
-        .filter_map(|(name, case)| {
-            (name.starts_with("page-output/")
-                && case.profile.execution_route() == ExecutionRoute::RawTex82Loaded)
-                .then_some(name.as_str())
-        })
-        .collect();
-    assert_eq!(page_output.len(), 30);
-    let allowlist = std::fs::read_to_string(
-        repository_root().join("tests/command-semantic-oracle-profiles/raw-tex82-loaded.cases"),
-    )
-    .expect("loaded oracle allowlist");
-    let allowlisted: BTreeSet<_> = allowlist
-        .lines()
-        .map(|line| line.split('#').next().unwrap_or_default().trim())
-        .filter(|line| !line.is_empty())
-        .collect();
-    let expected_allowlist: BTreeSet<_> = prior_loaded
-        .iter()
-        .copied()
-        .chain(main_control.iter().copied())
-        .chain(alignments.iter().copied())
-        .chain(math.iter().copied())
-        .chain(page_output.iter().copied())
-        .collect();
-    assert_eq!(allowlisted, expected_allowlist);
-    assert_eq!(allowlisted.len(), 172);
-    let etex_loaded: BTreeSet<_> = by_name
-        .iter()
-        .filter_map(|(name, case)| {
-            (case.profile.execution_route() == ExecutionRoute::RawEtex26Loaded)
-                .then_some(name.as_str())
-        })
-        .collect();
-    assert_eq!(etex_loaded, ETEX_LOADED.iter().copied().collect());
-    let production_loaded: BTreeSet<_> = by_name
-        .iter()
-        .filter_map(|(name, case)| {
-            (case.profile.execution_route() == ExecutionRoute::ProductionPdftex14029Loaded)
-                .then_some(name.as_str())
-        })
-        .collect();
+    assert_eq!(cases.len(), 203);
     assert_eq!(
-        production_loaded,
-        PRODUCTION_LOADED.iter().copied().collect()
-    );
-    let etex_loaded_cases: Vec<_> = etex_loaded.iter().map(|name| by_name[*name]).collect();
-    assert_eq!(
-        etex_loaded_cases
+        cases
             .iter()
-            .map(|case| case.font_inputs.len())
+            .map(|declared| declared.case.expected.len())
             .sum::<usize>(),
-        1
+        1_233
     );
-    assert_eq!(
-        by_name["conditionals/etex-loaded-iffontchar"]
-            .font_inputs
-            .keys()
-            .map(String::as_str)
-            .collect::<Vec<_>>(),
-        ["cmr10.tfm"]
-    );
-    assert!(etex_loaded_cases.iter().all(|case| {
-        matches!(
-            case.channels.as_ref().expect("validated channels").dvi,
-            StreamDisposition::Empty
-        )
-    }));
-    for (name, profile) in EXCLUDED {
-        assert_eq!(by_name[*name].profile, *profile, "{name}");
+
+    let selected_raw: Vec<_> = cases
+        .iter()
+        .filter(|declared| {
+            declared.case.profile == SessionProfile::RawTex82Loaded
+                && declared.case.capture.selected()
+        })
+        .collect();
+    assert_eq!(selected_raw.len(), 172);
+    let excluded: Vec<_> = cases
+        .iter()
+        .filter(|declared| !declared.case.capture.selected())
+        .map(|declared| format!("{}/{}", declared.domain, declared.case.id))
+        .collect();
+    assert_eq!(excluded, ["main-control/hyphenation-data"]);
+
+    // One compact identity replaces the former 467-line census while pinning
+    // every resolved field, including routes, projections, xfails, channels,
+    // statuses, host inputs, and interaction policy for all 203 cases.
+    let mut digest = Sha256::new();
+    for declared in &cases {
         assert_eq!(
-            by_name[*name].profile.execution_route(),
-            ExecutionRoute::Fresh,
-            "{name}"
+            declared
+                .fixture_dir
+                .file_name()
+                .and_then(|name| name.to_str()),
+            Some(declared.case.id.as_str())
         );
+        assert_eq!(declared.case.source, format!("{}.tex", declared.case.id));
+        assert!(matches!(
+            declared
+                .case
+                .channels
+                .as_ref()
+                .expect("resolved channels")
+                .effects,
+            StreamDisposition::Empty
+        ));
+        digest.update(format!("{}:{:?}\n", declared.domain, declared.case).as_bytes());
     }
-    for (name, profile) in MAIN_CONTROL_EXCLUDED {
-        assert_eq!(by_name[*name].profile, *profile, "{name}");
-        assert!(!allowlisted.contains(name), "{name}");
-    }
-
-    let selected: Vec<_> = PRIOR_EXPECTED.iter().map(|name| by_name[*name]).collect();
     assert_eq!(
-        selected.iter().map(|case| case.inputs.len()).sum::<usize>(),
-        3
-    );
-    assert_eq!(
-        selected
-            .iter()
-            .filter(|case| !case.terminal_lines.is_empty())
-            .count(),
-        3
-    );
-    assert_eq!(
-        selected
-            .iter()
-            .filter(|case| matches!(
-                case.channels.as_ref().expect("validated channels").dvi,
-                StreamDisposition::File
-            ))
-            .count(),
-        5
-    );
-    assert_eq!(
-        selected
-            .iter()
-            .filter(|case| matches!(
-                case.channels.as_ref().expect("validated channels").dvi,
-                StreamDisposition::Empty
-            ))
-            .count(),
-        30
-    );
-
-    let main_control_selected: Vec<_> = main_control.iter().map(|name| by_name[*name]).collect();
-    assert_eq!(
-        main_control_selected
-            .iter()
-            .map(|case| case.inputs.len())
-            .sum::<usize>(),
-        1
-    );
-    assert_eq!(
-        main_control_selected
-            .iter()
-            .map(|case| case.font_inputs.len())
-            .sum::<usize>(),
-        3
-    );
-    assert_eq!(
-        main_control_selected
-            .iter()
-            .filter(|case| !case.terminal_lines.is_empty())
-            .count(),
-        6
-    );
-    assert_eq!(
-        main_control_selected
-            .iter()
-            .filter(|case| {
-                matches!(
-                    case.channels.as_ref().expect("validated channels").dvi,
-                    StreamDisposition::File
-                )
-            })
-            .count(),
-        4
-    );
-    assert_eq!(
-        main_control_selected
-            .iter()
-            .filter(|case| {
-                matches!(
-                    case.channels.as_ref().expect("validated channels").dvi,
-                    StreamDisposition::Empty
-                )
-            })
-            .count(),
-        51
-    );
-
-    let alignment_selected: Vec<_> = alignments.iter().map(|name| by_name[*name]).collect();
-    assert_eq!(
-        alignment_selected
-            .iter()
-            .map(|case| case.inputs.len())
-            .sum::<usize>(),
-        0
-    );
-    assert_eq!(
-        alignment_selected
-            .iter()
-            .map(|case| case.font_inputs.len())
-            .sum::<usize>(),
-        2
-    );
-    assert_eq!(
-        alignment_selected
-            .iter()
-            .filter(|case| {
-                matches!(
-                    case.channels.as_ref().expect("validated channels").dvi,
-                    StreamDisposition::File
-                )
-            })
-            .count(),
-        8
-    );
-    assert_eq!(
-        alignment_selected
-            .iter()
-            .filter(|case| {
-                matches!(
-                    case.channels.as_ref().expect("validated channels").dvi,
-                    StreamDisposition::Empty
-                )
-            })
-            .count(),
-        10
-    );
-    assert_eq!(
-        alignment_selected
-            .iter()
-            .filter(|case| {
-                case.channels.as_ref().expect("validated channels").status
-                    == "fatal:confusion(256 spans)"
-            })
-            .count(),
-        1
-    );
-    assert_eq!(
-        alignment_selected
-            .iter()
-            .filter(|case| {
-                case.channels.as_ref().expect("validated channels").status == "clean"
-            })
-            .count(),
-        17
-    );
-
-    let math_selected: Vec<_> = math.iter().map(|name| by_name[*name]).collect();
-    assert_eq!(
-        math_selected
-            .iter()
-            .map(|case| case.inputs.len())
-            .sum::<usize>(),
-        0
-    );
-    assert_eq!(
-        math_selected
-            .iter()
-            .map(|case| case.font_inputs.len())
-            .sum::<usize>(),
-        17
-    );
-    assert_eq!(
-        math_selected
-            .iter()
-            .filter(|case| !case.terminal_lines.is_empty())
-            .count(),
-        1
-    );
-    assert_eq!(
-        math_selected
-            .iter()
-            .filter(|case| {
-                matches!(
-                    case.channels.as_ref().expect("validated channels").dvi,
-                    StreamDisposition::File
-                )
-            })
-            .count(),
-        22
-    );
-    assert_eq!(
-        math_selected
-            .iter()
-            .filter(|case| {
-                matches!(
-                    case.channels.as_ref().expect("validated channels").dvi,
-                    StreamDisposition::Empty
-                )
-            })
-            .count(),
-        12
-    );
-    assert!(
-        math_selected
-            .iter()
-            .all(|case| { case.channels.as_ref().expect("validated channels").status == "clean" })
-    );
-
-    let page_output_selected: Vec<_> = page_output.iter().map(|name| by_name[*name]).collect();
-    assert_eq!(
-        page_output_selected
-            .iter()
-            .map(|case| case.inputs.len())
-            .sum::<usize>(),
-        0
-    );
-    assert_eq!(
-        page_output_selected
-            .iter()
-            .map(|case| case.font_inputs.len())
-            .sum::<usize>(),
-        13
-    );
-    assert_eq!(
-        page_output_selected
-            .iter()
-            .filter(|case| {
-                matches!(
-                    case.channels.as_ref().expect("validated channels").dvi,
-                    StreamDisposition::File
-                )
-            })
-            .count(),
-        27
-    );
-    assert_eq!(
-        page_output_selected
-            .iter()
-            .filter(|case| {
-                matches!(
-                    case.channels.as_ref().expect("validated channels").dvi,
-                    StreamDisposition::Empty
-                )
-            })
-            .count(),
-        3
-    );
-    let dvi_xfails: Vec<_> = page_output
-        .iter()
-        .filter(|name| {
-            matches!(
-                by_name[**name]
-                    .channels
-                    .as_ref()
-                    .expect("validated channels")
-                    .dvi,
-                StreamDisposition::Xfail { .. }
-            )
-        })
-        .copied()
-        .collect();
-    assert!(
-        dvi_xfails.is_empty(),
-        "unexpected dvi xfails: {dvi_xfails:?}"
-    );
-    assert!(
-        page_output_selected
-            .iter()
-            .all(|case| { case.channels.as_ref().expect("validated channels").status == "clean" })
+        format!("{:x}", digest.finalize()),
+        "0a13b6f67ea356f30638515c17d68fbc1af313fd16435c97b04a401a1f5464d0"
     );
 }
 

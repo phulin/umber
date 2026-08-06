@@ -1,62 +1,46 @@
 {
-  "schema": 1,
-  "domain": "etex-diagnostics",
-  "property_domain": "main-control-groups-assignments",
-  "cases": [
-    {
-      "id": "etex-expressions",
-      "property_id": "tex82.assignment.parameters-registers-arithmetic",
-      "profile": "etex-initex",
-      "source": "etex-expressions.tex",
-      "provenance": {
-        "authority": "etex.ch",
-        "manifest": "tests/etex26-oracle-manifest.txt",
-        "sections": [
-          4945,
-          5002,
-          5065,
-          5138,
-          5173,
-          5185,
-          5194,
-          5212,
-          5227,
-          5242,
-          5250,
-          5404
-        ]
-      },
-      "projection": {
-        "kind": "observations",
-        "kinds": [
-          "effect"
-        ],
-        "count_registers": [
-          0,
-          1,
-          2,
-          3,
-          4
-        ]
-      },
-      "expected": [
-        "count:0=14",
-        "count:1=20",
-        "count:2=8191",
-        "count:3=16",
-        "count:4=7"
-      ],
-      "channels": {
-        "events": 2407,
-        "status": "clean",
-        "terminal": { "kind": "file" },
-        "log": { "kind": "file" },
-        "dvi": { "kind": "empty" },
-        "effects": { "kind": "empty" }
-      },
-      "expectation": {
-        "kind": "pass"
-      }
-    }
-  ]
+  "schema": 2,
+  "property_id": "tex82.assignment.parameters-registers-arithmetic",
+  "profile": "etex-initex",
+  "provenance": {
+    "authority": "etex.ch",
+    "manifest": "tests/etex26-oracle-manifest.txt",
+    "sections": [
+      4945,
+      5002,
+      5065,
+      5138,
+      5173,
+      5185,
+      5194,
+      5212,
+      5227,
+      5242,
+      5250,
+      5404
+    ]
+  },
+  "projection": {
+    "kind": "observations",
+    "kinds": [
+      "effect"
+    ],
+    "count_registers": [
+      0,
+      1,
+      2,
+      3,
+      4
+    ]
+  },
+  "expected": [
+    "count:0=14",
+    "count:1=20",
+    "count:2=8191",
+    "count:3=16",
+    "count:4=7"
+  ],
+  "channels": {
+    "events": 2407
+  }
 }
