@@ -116,6 +116,18 @@ Rank reflects architectural leverage, dependency centrality, expected deletion, 
 
 **Dependencies.** Primitive descriptors in program 9 should stabilize before the final assignment migration. The evidence views in program 2 may proceed in parallel.
 
+**Receipt and differential foundation.** The crate-private
+`tex-exec::execution_receipt` boundary defines one typed aggregate-operation
+receipt across state mutations, typed resource requests, semantic and live
+effects, artifact identities, diagnostics, and termination. Its optional
+evidence sink is allocation-free when disabled and record-bounded when active.
+While the four predecessor entry shapes coexist, a temporary harness compares
+exact detached state preimages, complete receipts, and ordered command evidence
+for ordinary, observed, nested, and alignment operations under hard step,
+state-byte, receipt-record, and evidence-record ceilings. The harness and entry
+shape selector are migration scaffolding to delete with the predecessor paths;
+they introduce no `tex-oracle` schema or other public wire change.
+
 ## 2. One oracle evidence, finalization, and comparison pipeline
 
 **Outcome.** `tex-oracle` owns exhaustive event views for normalization, locations, position erasure, alignment keys, concise rendering, and typed profile projection. `tex-observe` enriches and finalizes once into semantic and geometry evidence. `tex-command-stream` owns named strict and ordinary comparison policies and returns divergence plus accounting in one parsed result. Parity consumes that result.

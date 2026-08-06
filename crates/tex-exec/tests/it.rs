@@ -2,11 +2,17 @@ use std::sync::Arc;
 
 use test_support::{CompileFailDependency, assert_compile_fail};
 use tex_command::{RegisteredSourceKind, SourceRegistration};
-use tex_exec::{MainControl, MainControlStep};
+use tex_exec::{MainControl, MainControlStep, ResourceNeed};
 use tex_state::{
     EffectRecord, InteractionMode, PrintSink, Universe,
     meaning::{Meaning, UnexpandablePrimitive},
 };
+
+// Compile the temporary crate-private differential foundation at its actual
+// visibility boundary while the library unit-test target remains disabled.
+#[path = "../src/execution_receipt.rs"]
+#[allow(dead_code)]
+mod execution_receipt;
 
 fn run_tex82(source: &[u8], tracing_online: bool) -> String {
     let mut stores = Universe::new_with_plain_catcodes();

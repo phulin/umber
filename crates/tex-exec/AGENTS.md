@@ -40,6 +40,9 @@ Command operands are scanned by `tex-command` into typed request and result valu
 - `src/math/`: source-free math validation, mlist lowering, and display packaging.
 - `src/checkpoint.rs`: command-only named boundaries, editor forks, aggregate checkpoint restore, budgets, and rooted mode summaries.
 - `src/dispatch.rs`: dispatch result, execution statistics, and prepared-page contract.
+- `src/execution_receipt.rs`: crate-private typed operation receipts, optional
+  bounded evidence sinks, and the temporary exact old-versus-new migration
+  harness for ordinary, observed, nested, and alignment operations.
 - `src/mode.rs` and `src/mode/`: mode nest, list metadata, pending horizontal characters, summaries, and rollback journal. Alignment brace depth belongs only to `tex-command`.
 - `src/job.rs` and `src/job_output.rs`: TeX job framing, terminal continuation, final cleanup, and lazy DVI/transcript output. See `docs/job_framing.md`.
 - `src/page_builder.rs`, `src/splitting.rs`, `src/vertical.rs`, `src/packing_params.rs`, and `src/pack_report.rs`: page accounting, vertical splitting/contribution, packing snapshots, and box diagnostics.

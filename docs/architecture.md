@@ -406,6 +406,18 @@ register overflow, code-table updates, and effect recording all pass through
 the same barriered ownership boundary. Recursive scanners may use ordinary
 Rust locals, but only executor-named quiescent boundaries are restartable.
 
+During the main-control unification migration, `tex-exec` has one crate-private
+`ExecutionReceipt` vocabulary for the committed result of an aggregate
+operation. It separates typed state mutations, resource requests, semantic and
+live effects, artifact identities, diagnostics, and termination while an
+optional bounded sink retains the complete ordered command evidence. A
+temporary shadow harness compares exact detached state bytes, the whole
+receipt, and the evidence stream for ordinary, observed, nested, and alignment
+entry shapes under hard step, state-byte, receipt-record, and evidence-record
+ceilings. This is an internal migration seam: it neither changes nor extends
+the `tex-oracle` wire schema, and it is deleted when the legacy operation paths
+are removed.
+
 Shipout decodes compact node words sequentially and always drives artifact
 encoding without an ordinary-path owned page tree. DVI page-plan construction
 is a session-selected capability: classic/default sessions fuse it into the
