@@ -373,6 +373,50 @@ are not credited as deletions.
 
 **Proof.** Preserve Git authority, normalized paths, exact case membership/order, source closure, xfail reasons, schema compatibility, missing/extra rejection, traversal protection, command capture selection, TeX82 module census and ownership, atomic publication, and local fixture-edit workflow.
 
+**Implemented authority and accounting.** Commits `5675a359f`, `fbcaa9616`,
+`0634d2800`, `5a012b9e7`, and `1aceb8ae8` establish the contract and complete
+consumer migration. `test-support::closed_case::FixtureCase` is the surviving
+typed identity, Git inventory, path, role, source-closure, status, xfail,
+profile, and publication-metadata boundary. `test-support` alone validates and
+stages candidates and owns the canonical `case.inventory` serializer, but has
+no authority-mutating operation. Fixturegen's cohort transaction is the sole
+atomic publication authority; command-semantic, PDF, classic BibTeX, and
+ordinary text regeneration all hand it complete staged candidates.
+`tex-command-stream`'s V2 manifest is the sole command-semantic schema,
+capture-policy, route, channel, and xfail authority. The TeX82 catalogue gate
+initializes the exact ordered 1..=1380 inventory from one typed deferred
+disposition and applies sorted shard overrides. `corpus-manifest` remains a
+zero-dependency external-corpus leaf.
+
+The detached 173-line capture list, 467-line duplicate command-semantic census,
+10,448-line V1 manifests, 11,047-line TeX82 disposition catalogue and its
+generator branch, repeated consumer validators, candidate inventory
+serializers, and direct PDF/text mutation paths were deleted. Exact migrated
+projections pin all 203 command-semantic cases, 1,233 meaningful expected
+strings, selected capture routes, statuses, xfails, channels, and interaction
+policy. The TeX82 resolved-map digest and 946 reviewed / 434 deferred module,
+106 covered / 45 gap property census preserve the predecessor result exactly.
+Missing, extra, reordered, unsafe, traversal, source-closure, hash, schema,
+local-edit, rollback, retry, and partial-publication cases remain executable.
+
+Exact `--numstat` accounting is 1,676 additions and 1,173 deletions in authored
+source and configuration (503-line net growth), plus 136 additions and 33
+deletions in documentation (103-line net growth). Declarative fixtures add
+6,834 and delete 21,244 lines (14,410-line net reduction); generated structural
+schema evidence adds 443 and deletes 199 (244-line net growth); generated
+lockfiles add 333 and delete eight (325-line net growth). The complete program
+therefore adds 9,422 and deletes 22,657 lines, a 13,235-line net reduction. No
+binary fixture changed. The declarative reduction exceeds its forecast, but the
+authored category misses its 500-900-line reduction forecast; that separate
+shortfall is tracked by `umber2-vgjr.23` rather than credited to repetitive
+fixture deletion.
+
+Exact implementation tree `1aceb8ae8e5bd6b3f8fbf2a9a3a8fd2b961d128a`
+passed the combined fixture-consumer selection and all 33 fixturegen tests
+after uncapped `--no-run` builds and under `MemoryMax=512M`. The complete native
+workspace suite and all four `scripts/check.sh` gates passed on the closeout
+tree under `MemoryMax=1G`, with one Cargo build job for the quality gate.
+
 ## 13. Use one WASM wire schema, catalogue boundary, and session driver
 
 **Outcome.** Explicit host-neutral DTOs own options, requests, responses, attempts, outputs, diagnostics, metrics, and stable error codes. TypeScript derives from those DTOs with explicit `Uint8Array` handling. One JS `SessionDriver` and `WorkerRpcClient` serve one-shot, editor, worker, and asynchronous resource sessions. `umber-distribution` validates raw catalogues and returns authenticated typed transport plans; JS performs fetch/cache/abort.
