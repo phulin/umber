@@ -317,7 +317,7 @@ this program.
 **Forecast reconciliation (owner decision, 2026-08-06).** Follow-up
 `umber2-vgjr.21` audited every surviving constructor, owner, caller, host
 adapter, and proof test. It found and removed two genuine remnants in
-`6e1d9b285`: the unused public `EffectJournal` positional decomposition and a
+`77994b6e6`: the unused public `EffectJournal` positional decomposition and a
 stored DVI-publication vector that duplicated the executor-validated artifact
 ledger. The accessor now derives those rows from the ledger, preserving its
 public behavior and the executor-closed validation boundary. This adds 6 and
