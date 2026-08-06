@@ -363,6 +363,43 @@ pub fn write_positioned_html<R: HtmlFontAssets>(
     assets: &R,
     options: &HtmlOptions,
 ) -> Result<HtmlOutput, HtmlError> {
+    let document = incremental::build_positioned_render_document(
+        pages,
+        assets,
+        options,
+        incremental::RenderSessionId::from_bytes(options.output_id.as_bytes()),
+        options.revision,
+        None,
+        incremental::RenderLimits {
+            max_pages: options.max_pages,
+            max_nodes: options.max_positioned_events,
+            max_resources: usize::MAX,
+            max_resource_bytes: options.max_total_asset_bytes,
+        },
+    )
+    .map_err(|error| match error {
+        incremental::RenderBuildError::Html(error) => error,
+        incremental::RenderBuildError::TooManyNodes { limit, .. } => {
+            HtmlError::Positioned(PositionedError::TooManyEvents { limit })
+        }
+        incremental::RenderBuildError::ResourcesTooLarge { bytes, limit } => {
+            HtmlError::AssetsTooLarge { bytes, limit }
+        }
+        incremental::RenderBuildError::TooManyResources { .. }
+        | incremental::RenderBuildError::RevisionNotMonotonic { .. }
+        | incremental::RenderBuildError::SessionMismatch => {
+            unreachable!("standalone render has no previous revision or resource-count limit")
+        }
+    })?;
+    write_render_document(&document, options)
+}
+
+#[cfg(test)]
+fn write_positioned_html_legacy<R: HtmlFontAssets>(
+    pages: &[PositionedPage],
+    assets: &R,
+    options: &HtmlOptions,
+) -> Result<HtmlOutput, HtmlError> {
     if pages.is_empty() {
         return Err(HtmlError::NoPages);
     }
@@ -432,6 +469,481 @@ pub fn write_positioned_html<R: HtmlFontAssets>(
         html: html.into_bytes(),
         assets,
     })
+}
+
+/// Serializes a detached producer model without consulting fonts, artifacts,
+/// engine state, or any host capability.
+pub fn write_render_document(
+    document: &incremental::RenderDocument,
+    options: &HtmlOptions,
+) -> Result<HtmlOutput, HtmlError> {
+    validate_options(options)?;
+    let resources = document
+        .revision
+        .resources
+        .iter()
+        .map(|resource| (resource.identity, resource))
+        .collect::<BTreeMap<_, _>>();
+    let assets = build_render_assets(document, &resources, options)?;
+    let mut html = String::new();
+    html.push_str("<!doctype html>\n<html lang=\"");
+    escape_attr(&document.revision.language, &mut html);
+    html.push_str("\"><head><meta charset=\"utf-8\"><meta name=\"generator\" content=\"umber-html/1\"><meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; font-src data: 'self'; style-src 'unsafe-inline'; img-src data:\"><title>");
+    escape_text(&document.revision.title, &mut html);
+    html.push_str("</title><style>\n");
+    check_html_size(&html, options)?;
+    write_render_font_css(&mut html, document, &resources, options)?;
+    html.push_str(BASE_CSS);
+    html.push_str("</style></head><body>\n<main class=\"umber-document\">\n");
+    for page in &document.revision.pages {
+        write_render_page(&mut html, page, options)?;
+        check_html_size(&html, options)?;
+    }
+    html.push_str("</main></body></html>\n");
+    if html.len() > options.max_html_bytes {
+        return Err(HtmlError::HtmlTooLarge {
+            bytes: html.len(),
+            limit: options.max_html_bytes,
+        });
+    }
+    Ok(HtmlOutput {
+        html: html.into_bytes(),
+        assets,
+    })
+}
+
+fn build_render_assets(
+    document: &incremental::RenderDocument,
+    resources: &BTreeMap<[u8; 32], &incremental::RenderResource>,
+    options: &HtmlOptions,
+) -> Result<Vec<HtmlAsset>, HtmlError> {
+    let mut by_digest = BTreeMap::new();
+    let mut total = 0usize;
+    for font in &document.fonts {
+        if by_digest.contains_key(&font.digest_hex) {
+            continue;
+        }
+        let resource = resources
+            .get(&font.identity)
+            .expect("render font resource validated during construction");
+        total = total
+            .checked_add(resource.bytes.len())
+            .ok_or(HtmlError::AssetsTooLarge {
+                bytes: usize::MAX,
+                limit: options.max_total_asset_bytes,
+            })?;
+        if total > options.max_total_asset_bytes {
+            return Err(HtmlError::AssetsTooLarge {
+                bytes: total,
+                limit: options.max_total_asset_bytes,
+            });
+        }
+        if matches!(options.asset_mode, AssetMode::Manifest { .. }) {
+            by_digest.insert(
+                font.digest_hex.clone(),
+                HtmlAsset {
+                    path: format!("sha256-{}.woff2", font.digest_hex),
+                    bytes: resource.bytes.clone(),
+                    sha256: resource.identity,
+                    provenance: resource.provenance.clone(),
+                },
+            );
+        }
+    }
+    Ok(by_digest.into_values().collect())
+}
+
+fn write_render_font_css(
+    out: &mut String,
+    document: &incremental::RenderDocument,
+    resources: &BTreeMap<[u8; 32], &incremental::RenderResource>,
+    options: &HtmlOptions,
+) -> Result<(), HtmlError> {
+    for font in &document.fonts {
+        let resource = resources
+            .get(&font.identity)
+            .expect("render font resource validated during construction");
+        out.push_str("@font-face{font-family:'");
+        out.push_str(&font.family);
+        out.push_str("';src:url('");
+        match &options.asset_mode {
+            AssetMode::Embedded => {
+                let encoded = resource
+                    .bytes
+                    .len()
+                    .checked_add(2)
+                    .and_then(|len| (len / 3).checked_mul(4))
+                    .ok_or(HtmlError::HtmlTooLarge {
+                        bytes: usize::MAX,
+                        limit: options.max_html_bytes,
+                    })?;
+                let projected = out
+                    .len()
+                    .checked_add(encoded)
+                    .ok_or(HtmlError::HtmlTooLarge {
+                        bytes: usize::MAX,
+                        limit: options.max_html_bytes,
+                    })?;
+                if projected > options.max_html_bytes {
+                    return Err(HtmlError::HtmlTooLarge {
+                        bytes: projected,
+                        limit: options.max_html_bytes,
+                    });
+                }
+                out.push_str("data:font/woff2;base64,");
+                base64(&resource.bytes, out);
+            }
+            AssetMode::Manifest { relative_directory } => {
+                out.push_str(relative_directory);
+                if !relative_directory.ends_with('/') {
+                    out.push('/');
+                }
+                out.push_str("sha256-");
+                out.push_str(&font.digest_hex);
+                out.push_str(".woff2");
+            }
+        }
+        out.push_str("') format('woff2');font-display:block;font-style:normal;font-weight:400}\n");
+        check_html_size(out, options)?;
+    }
+    Ok(())
+}
+
+fn write_render_page(
+    out: &mut String,
+    page: &incremental::RenderPage,
+    options: &HtmlOptions,
+) -> Result<(), HtmlError> {
+    out.push_str("<section class=\"umber-page\" data-umber-page=\"");
+    out.push_str(&page.ordinal.to_string());
+    out.push_str("\" data-umber-revision=\"");
+    out.push_str(&options.revision.to_string());
+    out.push_str("\" data-umber-output=\"");
+    out.push_str(&options.output_id.to_string());
+    out.push('"');
+    attr_sp(out, "width", page.width);
+    attr_sp(out, "height", page.height);
+    attr_sp(out, "origin-x", page.origin_x);
+    attr_sp(out, "origin-y", page.origin_y);
+    out.push_str(" data-umber-mag=\"");
+    out.push_str(&page.mag.to_string());
+    out.push_str("\" style=\"width:");
+    css_px(out, page.width, page.mag);
+    out.push_str(";height:");
+    css_px(out, page.height, page.mag);
+    out.push_str("\">\n<div class=\"umber-page-content\" style=\"left:");
+    css_px(out, page.origin_x, page.mag);
+    out.push_str(";top:");
+    css_px(out, page.origin_y, page.mag);
+    out.push_str("\">\n");
+    let mut accessible = AccessiblePage::default();
+    let mut math_open = false;
+    for node in &page.nodes {
+        match &node.value {
+            incremental::RenderNodeValue::Box(value) => {
+                out.push_str("<div class=\"umber-box\" aria-hidden=\"true\" data-umber-event=\"");
+                out.push_str(&node.event_ordinal.to_string());
+                out.push_str("\" data-umber-kind=\"");
+                out.push_str(match value.kind {
+                    BoxKind::Horizontal => "hbox",
+                    BoxKind::Vertical => "vbox",
+                });
+                out.push('"');
+                geometry_attrs(out, value.x, value.y, value.width, value.height);
+                attr_sp(out, "baseline", value.baseline);
+                geometry_style(out, value.x, value.y, value.width, value.height, page.mag);
+                out.push_str("\"></div>\n");
+            }
+            incremental::RenderNodeValue::Rule(value) => {
+                out.push_str("<div class=\"umber-rule\" aria-hidden=\"true\" data-umber-event=\"");
+                out.push_str(&node.event_ordinal.to_string());
+                out.push('"');
+                geometry_attrs(out, value.x, value.y, value.width, value.height);
+                geometry_style(out, value.x, value.y, value.width, value.height, page.mag);
+                if let Some(color) = &value.color {
+                    out.push_str(";color:");
+                    out.push_str(color);
+                }
+                out.push_str("\"></div>\n");
+            }
+            incremental::RenderNodeValue::Text(value) => {
+                accessible.push_run(value.accessibility_line, &value.text, value.link.as_deref());
+                write_render_text(out, value, node.event_ordinal, page.mag);
+            }
+            incremental::RenderNodeValue::Special(value) => {
+                out.push_str(
+                    "<span class=\"umber-special\" aria-hidden=\"true\" data-umber-event=\"",
+                );
+                out.push_str(&node.event_ordinal.to_string());
+                out.push('"');
+                attr_sp(out, "x", value.x);
+                attr_sp(out, "y", value.y);
+                out.push_str(" data-umber-special-class=\"");
+                escape_attr(&value.class, out);
+                out.push_str("\" data-umber-special-hex=\"");
+                out.push_str(&hex(&value.payload));
+                match &value.action {
+                    incremental::RenderSpecialAction::Destination(id) => {
+                        out.push_str("\" id=\"");
+                        escape_attr(id, out);
+                    }
+                    incremental::RenderSpecialAction::Inert => {
+                        out.push_str("\" data-umber-special-policy=\"inert");
+                    }
+                    _ => out.push_str("\" data-umber-special-policy=\"applied"),
+                }
+                out.push_str("\" style=\"left:");
+                css_px(out, value.x, page.mag);
+                out.push_str(";top:");
+                css_px(out, value.y, page.mag);
+                out.push_str("\"></span>\n");
+            }
+            incremental::RenderNodeValue::MathStart(value) => {
+                math_open = true;
+                out.push_str("<svg class=\"umber-math\" aria-hidden=\"true\" data-umber-math=\"");
+                out.push_str(&value.id.to_string());
+                out.push('"');
+                attr_sp(out, "x", value.x);
+                attr_sp(out, "baseline", value.baseline);
+                attr_sp(out, "width", value.width);
+                attr_sp(out, "height", value.height);
+                attr_sp(out, "depth", value.depth);
+                out.push_str("><rect class=\"umber-math-baseline\" x=\"");
+                css_px(out, value.x, page.mag);
+                out.push_str("\" y=\"");
+                css_px(out, value.baseline, page.mag);
+                out.push_str("\" width=\"1\" height=\"1\"></rect>");
+            }
+            incremental::RenderNodeValue::MathGlyph(value) => {
+                write_render_math_glyph(out, value, node.event_ordinal, page.mag);
+            }
+            incremental::RenderNodeValue::MathRule(value) => {
+                out.push_str("<rect class=\"umber-math-rule\" data-umber-math-event=\"");
+                out.push_str(&node.event_ordinal.to_string());
+                out.push('"');
+                geometry_attrs(out, value.x, value.y, value.width, value.height);
+                out.push_str(" x=\"");
+                css_px(out, value.x, page.mag);
+                out.push_str("\" y=\"");
+                css_px(out, value.y, page.mag);
+                out.push_str("\" width=\"");
+                css_px(out, value.width, page.mag);
+                out.push_str("\" height=\"");
+                css_px(out, value.height, page.mag);
+                out.push_str("\"></rect>");
+            }
+            incremental::RenderNodeValue::MathEnd => {
+                math_open = false;
+                out.push_str("</svg>\n");
+            }
+        }
+        check_html_size(out, options)?;
+    }
+    debug_assert!(!math_open);
+    accessible.finish();
+    out.push_str("</div><div class=\"umber-a11y\" role=\"group\" aria-label=\"Page ");
+    out.push_str(&page.ordinal.to_string());
+    out.push_str("\">");
+    out.push_str(&accessible.markup);
+    out.push_str("</div></section>\n");
+    Ok(())
+}
+
+fn write_render_text(out: &mut String, value: &incremental::RenderText, ordinal: u32, mag: i32) {
+    out.push_str("<svg class=\"umber-run\" aria-hidden=\"true\" data-umber-event=\"");
+    out.push_str(&ordinal.to_string());
+    out.push('"');
+    attr_sp(out, "x", value.x);
+    attr_sp(out, "baseline", value.baseline);
+    out.push_str(" data-umber-font=\"");
+    out.push_str(&value.font_id.to_string());
+    if let Some(face_index) = value.face_index {
+        out.push_str("\" data-umber-face-index=\"");
+        out.push_str(&face_index.to_string());
+        if let Some(script) = value.script {
+            out.push_str("\" data-umber-script=\"");
+            escape_attr(&String::from_utf8_lossy(&script), out);
+        }
+    }
+    out.push_str("\" data-umber-codes=\"");
+    write_codes(out, &value.units);
+    out.push_str("\" data-umber-text-kind=\"");
+    out.push_str(if value.mapped_encoding {
+        "encoding"
+    } else {
+        "unicode"
+    });
+    out.push_str("\" style=\"font-family:'");
+    out.push_str(&value.family);
+    out.push_str("';font-size:");
+    css_px(out, Scaled::from_raw(value.font.at_size_raw), mag);
+    if value.face_index.is_some() {
+        out.push_str(";font-feature-settings:");
+        write_render_feature_settings(out, &value.features);
+        out.push_str(";font-variation-settings:");
+        write_render_variation_settings(out, &value.variations);
+    }
+    if let Some(color) = &value.color {
+        out.push_str(";color:");
+        out.push_str(color);
+    }
+    out.push_str("\"><rect class=\"umber-baseline\" x=\"");
+    css_px(out, value.x, mag);
+    out.push_str("\" y=\"");
+    css_px(out, value.baseline, mag);
+    out.push_str("\" width=\"1\" height=\"1\"></rect>");
+    if let Some(link) = &value.link {
+        out.push_str("<a href=\"");
+        escape_attr(link, out);
+        out.push_str("\" rel=\"noreferrer noopener\">");
+    }
+    out.push_str("<text class=\"umber-run-text\" direction=\"");
+    out.push_str(match value.direction {
+        incremental::RenderDirection::LeftToRight => "ltr",
+        incremental::RenderDirection::RightToLeft => "rtl",
+    });
+    if let Some(language) = &value.language {
+        out.push_str("\" lang=\"");
+        escape_attr(language, out);
+    }
+    out.push_str("\" x=\"");
+    if value.exact_character_positions {
+        for (index, position) in value.positions.iter().enumerate() {
+            if index > 0 {
+                out.push(' ');
+            }
+            css_px(out, *position, mag);
+        }
+    } else {
+        css_px(out, value.x, mag);
+    }
+    out.push_str("\" y=\"");
+    css_px(out, value.baseline, mag);
+    out.push_str("\">");
+    escape_text(&value.text, out);
+    out.push_str("</text>");
+    if value.link.is_some() {
+        out.push_str("</a>");
+    }
+    out.push_str("</svg>\n");
+}
+
+fn write_render_math_glyph(
+    out: &mut String,
+    value: &incremental::RenderMathGlyph,
+    ordinal: u32,
+    mag: i32,
+) {
+    let glyph = value.glyph;
+    out.push_str("<g class=\"umber-math-glyph\" data-umber-math-event=\"");
+    out.push_str(&ordinal.to_string());
+    out.push_str("\" data-umber-glyph-id=\"");
+    out.push_str(&glyph.glyph_id.to_string());
+    out.push_str("\" data-umber-font-instance=\"");
+    out.push_str(&hex(&glyph.font_instance.bytes()));
+    out.push_str("\" data-umber-ssty=\"");
+    out.push_str(&glyph.ssty.to_string());
+    out.push('"');
+    attr_sp(out, "x", glyph.x);
+    attr_sp(out, "baseline", glyph.baseline);
+    attr_sp(out, "width", glyph.width);
+    attr_sp(out, "height", glyph.height);
+    attr_sp(out, "depth", glyph.depth);
+    out.push('>');
+    match &value.drawing {
+        incremental::RenderMathDrawing::Text {
+            scalar,
+            family,
+            font_size_raw,
+            variations,
+        } => {
+            out.push_str("<text class=\"umber-math-text\" direction=\"ltr\" x=\"");
+            css_px(out, glyph.x, mag);
+            out.push_str("\" y=\"");
+            css_px(out, glyph.baseline, mag);
+            out.push_str("\" style=\"font-family:'");
+            out.push_str(family);
+            out.push_str("';font-size:");
+            css_px(out, Scaled::from_raw(*font_size_raw), mag);
+            out.push_str(";font-feature-settings:'ssty' ");
+            out.push_str(&glyph.ssty.to_string());
+            out.push_str(";font-variation-settings:");
+            write_render_variation_settings(out, variations);
+            out.push_str("\">");
+            escape_text(&scalar.to_string(), out);
+            out.push_str("</text>");
+        }
+        incremental::RenderMathDrawing::Outline {
+            path,
+            units_per_em,
+            font_size_raw,
+        } => {
+            out.push_str("<path class=\"umber-math-outline\" d=\"");
+            out.push_str(path);
+            out.push_str("\" transform=\"translate(");
+            css_number(out, glyph.x, mag, 1);
+            out.push(' ');
+            css_number(out, glyph.baseline, mag, 1);
+            out.push_str(") scale(");
+            css_number(
+                out,
+                Scaled::from_raw(*font_size_raw),
+                mag,
+                i128::from(*units_per_em),
+            );
+            out.push(' ');
+            css_number(
+                out,
+                Scaled::from_raw(-*font_size_raw),
+                mag,
+                i128::from(*units_per_em),
+            );
+            out.push_str(")\"></path>");
+        }
+    }
+    out.push_str("</g>");
+}
+
+fn write_render_feature_settings(out: &mut String, settings: &[([u8; 4], u32)]) {
+    if settings.is_empty() {
+        out.push_str("normal");
+        return;
+    }
+    for (index, (tag, value)) in settings.iter().enumerate() {
+        if index > 0 {
+            out.push(',');
+        }
+        out.push('\'');
+        write_render_css_tag(out, *tag);
+        out.push_str("' ");
+        out.push_str(&value.to_string());
+    }
+}
+
+fn write_render_variation_settings(out: &mut String, settings: &[([u8; 4], i32)]) {
+    if settings.is_empty() {
+        out.push_str("normal");
+        return;
+    }
+    for (index, (tag, value)) in settings.iter().enumerate() {
+        if index > 0 {
+            out.push(',');
+        }
+        out.push('\'');
+        write_render_css_tag(out, *tag);
+        out.push_str("' ");
+        out.push_str(&(f64::from(*value) / 65_536.0).to_string());
+    }
+}
+
+fn write_render_css_tag(out: &mut String, tag: [u8; 4]) {
+    for byte in tag {
+        match byte {
+            b'\'' => out.push_str("\\27 "),
+            b'\\' => out.push_str("\\5c "),
+            _ => out.push(char::from(byte)),
+        }
+    }
 }
 
 const BASE_CSS: &str = concat!(

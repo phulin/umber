@@ -25,7 +25,7 @@ pub use protocol::{
 use super::{
     HtmlError, HtmlFontAssets, HtmlFontKey, HtmlOptions, InterpretedSpecial, ResolvedFont,
     SpecialState, accessible_line, interpret_special, map_text, outline_path, selected_glyph,
-    validate_font, write_positioned_html,
+    validate_font, validate_options,
 };
 use crate::positioned::{
     BoxKind, PositionedEvent, PositionedLimits, PositionedPage, TextUnit, lower_page_with_limits,
@@ -154,6 +154,25 @@ pub struct RenderRevision {
     pub digest: RenderDigest,
 }
 
+/// One detached, fully resolved HTML producer model.
+///
+/// The keyed revision is the incremental currency. `fonts` is the ordered
+/// paint inventory needed by standalone serialization; it contains no host
+/// resolver or live engine state.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RenderDocument {
+    pub revision: RenderRevision,
+    pub fonts: Vec<RenderFont>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RenderFont {
+    pub key: HtmlFontKey,
+    pub identity: [u8; 32],
+    pub digest_hex: String,
+    pub family: String,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RenderPage {
     pub key: RenderKey,
@@ -174,6 +193,10 @@ pub struct RenderNode {
     pub key: RenderKey,
     pub digest: RenderDigest,
     pub match_digest: RenderDigest,
+    /// Ordinal in the positioned or math event stream. This is deliberately
+    /// excluded from canonical identity: an ignored PDF-only event may move an
+    /// HTML event without changing its semantic value.
+    pub event_ordinal: u32,
     pub value: RenderNodeValue,
 }
 
@@ -211,6 +234,10 @@ pub struct RenderRule {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RenderText {
+    pub font_id: u32,
+    pub face_index: Option<u32>,
+    pub mapped_encoding: bool,
+    pub exact_character_positions: bool,
     pub x: Scaled,
     pub baseline: Scaled,
     pub positions: Vec<Scaled>,
@@ -339,6 +366,21 @@ pub fn build_render_revision<R: HtmlFontAssets>(
     previous: Option<&RenderRevision>,
     limits: RenderLimits,
 ) -> Result<RenderRevision, RenderBuildError> {
+    Ok(build_render_document(
+        artifacts, assets, options, session_id, revision, previous, limits,
+    )?
+    .revision)
+}
+
+pub fn build_render_document<R: HtmlFontAssets>(
+    artifacts: &[PageArtifact],
+    assets: &R,
+    options: &HtmlOptions,
+    session_id: RenderSessionId,
+    revision: u64,
+    previous: Option<&RenderRevision>,
+    limits: RenderLimits,
+) -> Result<RenderDocument, RenderBuildError> {
     let pages = artifacts
         .iter()
         .enumerate()
@@ -359,7 +401,7 @@ pub fn build_render_revision<R: HtmlFontAssets>(
             .map_err(HtmlError::from)
         })
         .collect::<Result<Vec<_>, _>>()?;
-    build_positioned_render_revision(
+    build_positioned_render_document(
         &pages, assets, options, session_id, revision, previous, limits,
     )
 }
@@ -373,8 +415,54 @@ pub fn build_positioned_render_revision<R: HtmlFontAssets>(
     previous: Option<&RenderRevision>,
     limits: RenderLimits,
 ) -> Result<RenderRevision, RenderBuildError> {
-    // Keep the canonical model and standalone serializer on one validation path.
-    let _ = write_positioned_html(pages, assets, options)?;
+    Ok(build_positioned_render_document(
+        pages, assets, options, session_id, revision, previous, limits,
+    )?
+    .revision)
+}
+
+pub fn build_positioned_render_document<R: HtmlFontAssets>(
+    pages: &[PositionedPage],
+    assets: &R,
+    options: &HtmlOptions,
+    session_id: RenderSessionId,
+    revision: u64,
+    previous: Option<&RenderRevision>,
+    limits: RenderLimits,
+) -> Result<RenderDocument, RenderBuildError> {
+    if pages.is_empty() {
+        return Err(HtmlError::NoPages.into());
+    }
+    if pages.len() > options.max_pages || pages.len() > limits.max_pages {
+        return Err(HtmlError::TooManyPages {
+            count: pages.len(),
+            limit: options.max_pages.min(limits.max_pages),
+        }
+        .into());
+    }
+    validate_options(options)?;
+    for page in pages {
+        if page.events.len() > options.max_positioned_events {
+            return Err(
+                HtmlError::Positioned(crate::positioned::PositionedError::TooManyEvents {
+                    limit: options.max_positioned_events,
+                })
+                .into(),
+            );
+        }
+        for event in &page.events {
+            if let PositionedEvent::TextRun(run) = event
+                && run.units.len() > options.max_text_run_units
+            {
+                return Err(HtmlError::Positioned(
+                    crate::positioned::PositionedError::TextRunTooLong {
+                        limit: options.max_text_run_units,
+                    },
+                )
+                .into());
+            }
+        }
+    }
     if let Some(previous) = previous {
         if previous.session_id != session_id {
             return Err(RenderBuildError::SessionMismatch);
@@ -429,7 +517,7 @@ pub fn build_positioned_render_revision<R: HtmlFontAssets>(
     let mut built = Vec::with_capacity(pages.len());
     let mut node_count = 0usize;
     for page in pages {
-        let rendered = render_page(page, &resolved, revision)?;
+        let rendered = render_page(page, &resolved, options, revision)?;
         node_count = node_count.saturating_add(rendered.nodes.len());
         if node_count > limits.max_nodes {
             return Err(RenderBuildError::TooManyNodes {
@@ -453,23 +541,36 @@ pub fn build_positioned_render_revision<R: HtmlFontAssets>(
         reuse_node_keys(old.map(|page| page.nodes.as_slice()), &mut page.nodes);
         page.digest = page_digest(page);
     }
+    let fonts = resolved
+        .iter()
+        .map(|(key, font)| RenderFont {
+            key: key.clone(),
+            identity: font.web.sha256,
+            digest_hex: font.digest_hex.clone(),
+            family: font.family.clone(),
+        })
+        .collect();
     let resources = resources.into_values().collect::<Vec<_>>();
     let digest = revision_digest(&options.title, &options.language, &built, &resources);
-    Ok(RenderRevision {
-        schema_version: RENDER_SCHEMA_VERSION,
-        session_id,
-        revision,
-        title: options.title.clone(),
-        language: options.language.clone(),
-        pages: built,
-        resources,
-        digest,
+    Ok(RenderDocument {
+        revision: RenderRevision {
+            schema_version: RENDER_SCHEMA_VERSION,
+            session_id,
+            revision,
+            title: options.title.clone(),
+            language: options.language.clone(),
+            pages: built,
+            resources,
+            digest,
+        },
+        fonts,
     })
 }
 
 fn render_page(
     page: &PositionedPage,
     fonts: &BTreeMap<HtmlFontKey, ResolvedFont>,
+    options: &HtmlOptions,
     revision: u64,
 ) -> Result<RenderPage, HtmlError> {
     let page_fonts = page
@@ -480,7 +581,7 @@ fn render_page(
     let mut values = Vec::new();
     let mut special_state = SpecialState::default();
     let mut box_stack = Vec::new();
-    for event in &page.events {
+    for (event_ordinal, event) in page.events.iter().enumerate() {
         let value = match event {
             PositionedEvent::Box(value) => {
                 box_stack.push((value.id, value.kind));
@@ -525,7 +626,23 @@ fn render_page(
                     .is_none_or(|font| font.encoding_map_version.is_some());
                 let text = map_text(&value.units, font, mapped, usize::MAX)?;
                 let opentype = artifact_font.opentype.as_ref();
+                let mapped_encoding =
+                    opentype.is_none_or(|font| font.encoding_map_version.is_some());
+                let exact_character_positions = value.positions.len() == value.units.len()
+                    && value.units.iter().all(|unit| match unit {
+                        TextUnit::Space => true,
+                        TextUnit::Code(code) if mapped_encoding => usize::try_from(*code)
+                            .ok()
+                            .and_then(|code| font.web.encoding.get(code))
+                            .and_then(Option::as_ref)
+                            .is_some_and(|mapping| mapping.chars().count() == 1),
+                        TextUnit::Code(code) => char::from_u32(*code).is_some(),
+                    });
                 Some(RenderNodeValue::Text(Box::new(RenderText {
+                    font_id: value.font_id,
+                    face_index: opentype.map(|font| font.face_index),
+                    mapped_encoding,
+                    exact_character_positions,
                     x: value.x,
                     baseline: value.baseline,
                     positions: value.positions.clone(),
@@ -565,6 +682,12 @@ fn render_page(
                 })))
             }
             PositionedEvent::Special(value) => {
+                if value.payload.len() > options.max_special_bytes {
+                    return Err(HtmlError::SpecialTooLarge {
+                        bytes: value.payload.len(),
+                        limit: options.max_special_bytes,
+                    });
+                }
                 let interpreted = interpret_special(value)?;
                 let action = match &interpreted {
                     InterpretedSpecial::ColorPush(value) => {
@@ -597,8 +720,13 @@ fn render_page(
             | PositionedEvent::PdfEndThread { .. } => None,
         };
         if let Some(value) = value {
-            values.push(value);
+            values.push((event_ordinal, value));
         }
+    }
+    if !special_state.colors.is_empty() || special_state.link.is_some() {
+        return Err(HtmlError::InvalidSpecial {
+            message: "unclosed color or link scope at page end".to_owned(),
+        });
     }
     let math_fonts = page
         .fonts
@@ -610,8 +738,23 @@ fn render_page(
                 .map(|font| (opentype.instance_identity, (font, opentype)))
         })
         .collect::<BTreeMap<_, _>>();
-    for event in &page.math_events {
-        values.push(match event {
+    let mut active_math = false;
+    for (event_ordinal, event) in page.math_events.iter().enumerate() {
+        match event {
+            MathOutputEvent::Start(_) if active_math => {
+                return Err(HtmlError::InvalidMathEventSequence);
+            }
+            MathOutputEvent::Start(_) => active_math = true,
+            MathOutputEvent::Glyph(_) | MathOutputEvent::Rule(_) if !active_math => {
+                return Err(HtmlError::InvalidMathEventSequence);
+            }
+            MathOutputEvent::End if !active_math => {
+                return Err(HtmlError::InvalidMathEventSequence);
+            }
+            MathOutputEvent::End => active_math = false,
+            _ => {}
+        };
+        let value = match event {
             MathOutputEvent::Start(value) => RenderNodeValue::MathStart(*value),
             MathOutputEvent::Glyph(value) => {
                 let (font, opentype) = math_fonts
@@ -659,18 +802,23 @@ fn render_page(
             }
             MathOutputEvent::Rule(value) => RenderNodeValue::MathRule(*value),
             MathOutputEvent::End => RenderNodeValue::MathEnd,
-        });
+        };
+        values.push((event_ordinal, value));
+    }
+    if active_math {
+        return Err(HtmlError::InvalidMathEventSequence);
     }
     let nodes = values
         .into_iter()
         .enumerate()
-        .map(|(index, value)| {
+        .map(|(index, (event_ordinal, value))| {
             let digest = node_value_digest(&value, false);
             let match_digest = node_value_digest(&value, true);
             RenderNode {
                 key: derive_key(RenderKey::ROOT, digest, index as u64, revision),
                 digest,
                 match_digest,
+                event_ordinal: u32::try_from(event_ordinal).unwrap_or(u32::MAX),
                 value,
             }
         })

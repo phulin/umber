@@ -10,11 +10,11 @@ use crate::{
 use super::incremental::{
     PATCH_SCHEMA_VERSION, PatchApplyError, PatchDelivery, PatchEnvelope, PatchLimits, PatchOp,
     PatchProtocolError, ProtocolLimits, RenderKey, RenderLimits, RenderSessionId, apply_patch,
-    build_render_revision, plan_patch, validate_delivery,
+    build_positioned_render_document, build_render_revision, plan_patch, validate_delivery,
 };
 use super::{
     AssetMode, HtmlError, HtmlFontAsset, HtmlFontAssets, HtmlFontKey, HtmlOptions,
-    RenderedOutputId, write_html, write_positioned_html,
+    RenderedOutputId, write_html, write_positioned_html, write_render_document,
 };
 
 fn sp(raw: i32) -> Scaled {
@@ -675,6 +675,89 @@ fn positioned_entry_point_and_embedded_assets_obey_caller_limits() {
         write_positioned_html(&[positioned], &resolver, &options),
         Err(HtmlError::HtmlTooLarge { .. })
     ));
+}
+
+#[test]
+fn shared_render_document_matches_legacy_bytes_assets_and_incremental_identity() {
+    let resolver = Resolver { missing_b: false };
+    let options = HtmlOptions {
+        asset_mode: AssetMode::Manifest {
+            relative_directory: "fonts".to_owned(),
+        },
+        output_id: RenderedOutputId::from_bytes([0x31; 16]),
+        revision: 7,
+        ..HtmlOptions::default()
+    };
+    let artifacts = [page(), page()];
+    let positioned = artifacts
+        .iter()
+        .enumerate()
+        .map(|(index, page)| {
+            crate::positioned::lower_page(page, (index + 1) as u32).expect("positioned page")
+        })
+        .collect::<Vec<_>>();
+    let legacy = super::write_positioned_html_legacy(&positioned, &resolver, &options)
+        .expect("legacy standalone HTML");
+    let document = build_positioned_render_document(
+        &positioned,
+        &resolver,
+        &options,
+        RenderSessionId::from_bytes(options.output_id.as_bytes()),
+        options.revision,
+        None,
+        RenderLimits::default(),
+    )
+    .expect("shared render document");
+    let detached = write_render_document(&document, &options).expect("detached standalone HTML");
+    assert_eq!(detached, legacy);
+
+    let incremental = build_render_revision(
+        &artifacts,
+        &resolver,
+        &options,
+        RenderSessionId::from_bytes(options.output_id.as_bytes()),
+        options.revision,
+        None,
+        RenderLimits::default(),
+    )
+    .expect("incremental render revision");
+    assert_eq!(document.revision, incremental);
+    for (positioned, rendered) in positioned.iter().zip(&document.revision.pages) {
+        let expected = positioned
+            .events
+            .iter()
+            .enumerate()
+            .filter_map(|(ordinal, event)| match event {
+                crate::positioned::PositionedEvent::Box(_)
+                | crate::positioned::PositionedEvent::Rule(_)
+                | crate::positioned::PositionedEvent::TextRun(_)
+                | crate::positioned::PositionedEvent::Special(_) => Some(ordinal as u32),
+                _ => None,
+            })
+            .chain((0..positioned.math_events.len()).map(|ordinal| ordinal as u32))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            rendered
+                .nodes
+                .iter()
+                .map(|node| node.event_ordinal)
+                .collect::<Vec<_>>(),
+            expected
+        );
+    }
+    assert_eq!(
+        detached
+            .assets
+            .iter()
+            .map(|asset| asset.sha256)
+            .collect::<Vec<_>>(),
+        document
+            .revision
+            .resources
+            .iter()
+            .map(|resource| resource.identity)
+            .collect::<Vec<_>>()
+    );
 }
 
 #[test]

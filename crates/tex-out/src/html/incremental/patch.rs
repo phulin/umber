@@ -635,6 +635,7 @@ mod tests {
                     key: key(id, slot as u32 + 1),
                     digest: node_value_digest(&value, false),
                     match_digest: node_value_digest(&value, true),
+                    event_ordinal: slot as u32,
                     value,
                 }
             })
