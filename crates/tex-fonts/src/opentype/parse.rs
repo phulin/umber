@@ -12,7 +12,7 @@ use super::contract::{
     FontProgramIdentity, FontRequest, OpenTypeTag, ResolvedFont, VariationSelection,
     WritingDirection,
 };
-use super::math::{MathTables, parse_math};
+use super::math::validate_math;
 use super::variation::VariationModel;
 
 type RustybuzzFace<'a> = rustybuzz::Face<'a>;
@@ -193,7 +193,7 @@ pub struct OpenTypeFont {
     pub cmap: CharacterMap,
     pub metrics: OpenTypeMetrics,
     pub shaping: ShapingTables,
-    pub math: Option<MathTables>,
+    has_math: bool,
     pub metadata: FontMetadata,
     shaping_face: Arc<ShapingFace>,
     decoded_bytes: Arc<[u8]>,
@@ -202,6 +202,18 @@ pub struct OpenTypeFont {
 }
 
 impl OpenTypeFont {
+    pub(crate) fn math_table(&self) -> Option<ttf_parser::math::Table<'_>> {
+        let raw = RawFace::parse(&self.decoded_bytes, self.face_index).ok()?;
+        raw.table(Tag::from_bytes(b"MATH"))
+            .and_then(ttf_parser::math::Table::parse)
+    }
+
+    /// Reports whether strict eager validation accepted an OpenType `MATH` table.
+    #[must_use]
+    pub const fn has_math(&self) -> bool {
+        self.has_math
+    }
+
     /// Borrows the cached rustybuzz face built after SFNT validation.
     pub(crate) fn with_shaping_face<T>(&self, shape: impl FnOnce(&rustybuzz::Face<'_>) -> T) -> T {
         self.shaping_face.with_face(shape)
@@ -340,17 +352,17 @@ impl OpenTypeFont {
             gsub: table_arc(&raw, *b"GSUB"),
             gpos: table_arc(&raw, *b"GPOS"),
         };
-        let math = raw
-            .table(Tag::from_bytes(b"MATH"))
-            .map(|data| {
-                parse_math(
-                    data,
-                    glyph_count,
-                    limits.max_math_records,
-                    limits.max_math_assembly_parts,
-                )
-            })
-            .transpose()?;
+        let has_math = if let Some(data) = raw.table(Tag::from_bytes(b"MATH")) {
+            validate_math(
+                data,
+                glyph_count,
+                limits.max_math_records,
+                limits.max_math_assembly_parts,
+            )?;
+            true
+        } else {
+            false
+        };
         let metadata = FontMetadata {
             glyph_count,
             is_variable: face.is_variable(),
@@ -380,7 +392,7 @@ impl OpenTypeFont {
             cmap,
             metrics,
             shaping,
-            math,
+            has_math,
             metadata,
             shaping_face,
             decoded_bytes: decoded,

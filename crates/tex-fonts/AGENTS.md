@@ -31,10 +31,10 @@ Use this crate for font-domain parsing, metric representation, and pure caller-d
 - `src/pdf_vf/tests.rs`: hermetic VF grammar, command, malformed-input, and configured-bound tests.
 - `src/shaping.rs`: private rustybuzz adapter and public typed single-run shaping values and operation.
 - `src/shaping/tests.rs`: deterministic fixture-based shaping tests.
-- `src/opentype/`: validated OpenType resource contracts, canonical identities, bounded SFNT/WOFF2 decoding, immutable metric/cmap/table projections, and cached rustybuzz faces.
+- `src/opentype/`: validated OpenType resource contracts, canonical identities, bounded SFNT/WOFF2 decoding, immutable metric/cmap projections, strict eager MATH validation, lazy borrowed MATH queries, and cached rustybuzz faces.
 - `src/opentype/variation.rs`: bounded `fvar` axis/named-instance parsing and canonical instance resolution.
-- `src/opentype/math.rs`: strict bounded OpenType MATH parsing and immutable constants, glyph-info, kern, variant, construction, and assembly records.
-- `src/opentype/math/tests.rs`: synthetic complete-table and malformed MATH validation tests.
+- `src/opentype/math.rs`: strict bounded OpenType MATH validation plus the public constant selector used by the scaled metrics facade; `ttf-parser` remains the sole query-time graph.
+- `src/opentype/math/tests.rs`: synthetic malformed-graph and budget validation tests.
 - `src/tests.rs`: crate-internal test module declarations for TFM parsing and cross-checks.
 - `src/tests/metrics_validation.rs`: Detached metric capacity/reference validation and runtime lig/kern cursor boundary tests.
 - `src/tests/tfm_parse.rs`: unit tests and helpers for direct canonical TFM metric construction, loaded-font construction, fixtures, and malformed TFM validation.

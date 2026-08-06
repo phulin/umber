@@ -27,9 +27,7 @@ pub use opentype::{
     FontContainer, FontFeaturePolicy, FontInstanceContext, FontInstanceIdentity, FontLanguage,
     FontLimits, FontMetadata, FontObjectIdentity, FontParseError, FontProgramIdentity,
     FontPurposes, FontRequest, FontRequestKey, FontSelectionError, FontWireError,
-    LegacyFontMapping, MathAdjustment, MathConstant, MathConstants, MathGlyphAssembly,
-    MathGlyphConstruction, MathGlyphInfo, MathGlyphPart, MathGlyphVariant, MathKern, MathKernInfo,
-    MathTables, MathValue, MathVariants, NamedVariationInstance, OpenTypeFont, OpenTypeMetrics,
+    LegacyFontMapping, MathConstant, NamedVariationInstance, OpenTypeFont, OpenTypeMetrics,
     OpenTypeTag, ResolvedFont, ShapingTables, VariationAxis, VariationCoordinate,
     VariationInstance, VariationModel, VariationSelection, WritingDirection,
 };

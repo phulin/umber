@@ -131,45 +131,11 @@ fn complete_table() -> Vec<u8> {
 }
 
 #[test]
-fn parses_every_math_subtable_losslessly() {
-    let table = parse_math(&complete_table(), 16, 1_000, 100).expect("complete MATH table");
-    assert_eq!(table.constants.script_percent_scale_down, 80);
-    assert_eq!(table.constants.value(MathConstant::MathLeading).value, 12);
-    assert_eq!(
-        table.constants.value(MathConstant::MathLeading).adjustment,
-        Some(MathAdjustment::Device {
-            start_size: 10,
-            end_size: 11,
-            delta_format: 1,
-            deltas: vec![1, -1],
-        })
-    );
-    let info = table.glyph_info.expect("glyph info");
-    assert_eq!(info.italic_corrections[&1].value, 41);
-    assert_eq!(info.top_accent_attachments[&2].value, 222);
-    assert!(info.extended_shapes.contains(&3));
-    let kern = info.kern_info[&4].top_right.as_ref().expect("kern");
-    assert_eq!(kern.correction_heights[0].value, 100);
-    assert_eq!(kern.kern_values.len(), 2);
-    let variants = table.variants.expect("variants");
-    assert_eq!(variants.min_connector_overlap, 20);
-    assert_eq!(variants.vertical[&5].variants[0].glyph_id, 7);
-    let part = variants.vertical[&5]
-        .assembly
-        .as_ref()
-        .expect("assembly")
-        .parts[0];
-    assert_eq!(part.glyph_id, 8);
-    assert!(part.extender);
-    assert_eq!(variants.horizontal[&6].variants[0].glyph_id, 9);
-}
-
-#[test]
 fn rejects_malformed_offsets_and_mismatched_coverage() {
     let mut bad_offset = complete_table();
     bad_offset[4..6].copy_from_slice(&u16::MAX.to_be_bytes());
     assert!(matches!(
-        parse_math(&bad_offset, 16, 1_000, 100),
+        validate_math(&bad_offset, 16, 1_000, 100),
         Err(FontParseError::InvalidMath(_))
     ));
 
@@ -184,7 +150,7 @@ fn rejects_malformed_offsets_and_mismatched_coverage() {
         italic + usize::from(u16::from_be_bytes([mismatch[italic], mismatch[italic + 1]]));
     mismatch[coverage + 2..coverage + 4].copy_from_slice(&0_u16.to_be_bytes());
     assert_eq!(
-        parse_math(&mismatch, 16, 1_000, 100),
+        validate_math(&mismatch, 16, 1_000, 100),
         Err(FontParseError::InvalidMath(
             "MATH coverage/record count mismatch"
         ))
@@ -202,7 +168,7 @@ fn rejects_construction_cycles() {
         ]));
     cyclic[vertical..vertical + 2].copy_from_slice(&2_u16.to_be_bytes());
     assert_eq!(
-        parse_math(&cyclic, 16, 1_000, 100),
+        validate_math(&cyclic, 16, 1_000, 100),
         Err(FontParseError::InvalidMath(
             "cyclic or overlapping MATH offset graph"
         ))
@@ -212,14 +178,14 @@ fn rejects_construction_cycles() {
 #[test]
 fn enforces_math_record_and_assembly_limits() {
     assert!(matches!(
-        parse_math(&complete_table(), 16, 50, 100),
+        validate_math(&complete_table(), 16, 50, 100),
         Err(FontParseError::LimitExceeded {
             resource: "MATH records",
             ..
         })
     ));
     assert!(matches!(
-        parse_math(&complete_table(), 16, 1_000, 0),
+        validate_math(&complete_table(), 16, 1_000, 0),
         Err(FontParseError::LimitExceeded {
             resource: "MATH assembly parts",
             ..

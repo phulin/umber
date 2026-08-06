@@ -1,181 +1,88 @@
-//! Strict, owned projection of the OpenType `MATH` table.
-
-use std::collections::{BTreeMap, BTreeSet};
+//! Strict eager validation for the lazily queried OpenType `MATH` table.
 
 use super::FontParseError;
 
-/// The 51 `MathValueRecord` constants, in OpenType wire order.
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-#[repr(u8)]
-pub enum MathConstant {
-    MathLeading,
-    AxisHeight,
-    AccentBaseHeight,
-    FlattenedAccentBaseHeight,
-    SubscriptShiftDown,
-    SubscriptTopMax,
-    SubscriptBaselineDropMin,
-    SuperscriptShiftUp,
-    SuperscriptShiftUpCramped,
-    SuperscriptBottomMin,
-    SuperscriptBaselineDropMax,
-    SubSuperscriptGapMin,
-    SuperscriptBottomMaxWithSubscript,
-    SpaceAfterScript,
-    UpperLimitGapMin,
-    UpperLimitBaselineRiseMin,
-    LowerLimitGapMin,
-    LowerLimitBaselineDropMin,
-    StackTopShiftUp,
-    StackTopDisplayStyleShiftUp,
-    StackBottomShiftDown,
-    StackBottomDisplayStyleShiftDown,
-    StackGapMin,
-    StackDisplayStyleGapMin,
-    StretchStackTopShiftUp,
-    StretchStackBottomShiftDown,
-    StretchStackGapAboveMin,
-    StretchStackGapBelowMin,
-    FractionNumeratorShiftUp,
-    FractionNumeratorDisplayStyleShiftUp,
-    FractionDenominatorShiftDown,
-    FractionDenominatorDisplayStyleShiftDown,
-    FractionNumeratorGapMin,
-    FractionNumeratorDisplayStyleGapMin,
-    FractionRuleThickness,
-    FractionDenominatorGapMin,
-    FractionDenominatorDisplayStyleGapMin,
-    SkewedFractionHorizontalGap,
-    SkewedFractionVerticalGap,
-    OverbarVerticalGap,
-    OverbarRuleThickness,
-    OverbarExtraAscender,
-    UnderbarVerticalGap,
-    UnderbarRuleThickness,
-    UnderbarExtraDescender,
-    RadicalVerticalGap,
-    RadicalDisplayStyleVerticalGap,
-    RadicalRuleThickness,
-    RadicalExtraAscender,
-    RadicalKernBeforeDegree,
-    RadicalKernAfterDegree,
+macro_rules! math_constants {
+    ($($variant:ident => $query:ident),+ $(,)?) => {
+        /// The 51 `MathValueRecord` constants, in OpenType wire order.
+        #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+        pub enum MathConstant {
+            $($variant),+
+        }
+
+        impl MathConstant {
+            pub(crate) fn query<'a>(
+                self,
+                constants: ttf_parser::math::Constants<'a>,
+            ) -> ttf_parser::math::MathValue<'a> {
+                match self {
+                    $(Self::$variant => constants.$query()),+
+                }
+            }
+        }
+    };
 }
 
-/// A decoded OpenType device table or variation-index adjustment.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum MathAdjustment {
-    Device {
-        start_size: u16,
-        end_size: u16,
-        delta_format: u16,
-        deltas: Vec<i8>,
-    },
-    VariationIndex {
-        outer_index: u16,
-        inner_index: u16,
-    },
+math_constants! {
+    MathLeading => math_leading,
+    AxisHeight => axis_height,
+    AccentBaseHeight => accent_base_height,
+    FlattenedAccentBaseHeight => flattened_accent_base_height,
+    SubscriptShiftDown => subscript_shift_down,
+    SubscriptTopMax => subscript_top_max,
+    SubscriptBaselineDropMin => subscript_baseline_drop_min,
+    SuperscriptShiftUp => superscript_shift_up,
+    SuperscriptShiftUpCramped => superscript_shift_up_cramped,
+    SuperscriptBottomMin => superscript_bottom_min,
+    SuperscriptBaselineDropMax => superscript_baseline_drop_max,
+    SubSuperscriptGapMin => sub_superscript_gap_min,
+    SuperscriptBottomMaxWithSubscript => superscript_bottom_max_with_subscript,
+    SpaceAfterScript => space_after_script,
+    UpperLimitGapMin => upper_limit_gap_min,
+    UpperLimitBaselineRiseMin => upper_limit_baseline_rise_min,
+    LowerLimitGapMin => lower_limit_gap_min,
+    LowerLimitBaselineDropMin => lower_limit_baseline_drop_min,
+    StackTopShiftUp => stack_top_shift_up,
+    StackTopDisplayStyleShiftUp => stack_top_display_style_shift_up,
+    StackBottomShiftDown => stack_bottom_shift_down,
+    StackBottomDisplayStyleShiftDown => stack_bottom_display_style_shift_down,
+    StackGapMin => stack_gap_min,
+    StackDisplayStyleGapMin => stack_display_style_gap_min,
+    StretchStackTopShiftUp => stretch_stack_top_shift_up,
+    StretchStackBottomShiftDown => stretch_stack_bottom_shift_down,
+    StretchStackGapAboveMin => stretch_stack_gap_above_min,
+    StretchStackGapBelowMin => stretch_stack_gap_below_min,
+    FractionNumeratorShiftUp => fraction_numerator_shift_up,
+    FractionNumeratorDisplayStyleShiftUp => fraction_numerator_display_style_shift_up,
+    FractionDenominatorShiftDown => fraction_denominator_shift_down,
+    FractionDenominatorDisplayStyleShiftDown => fraction_denominator_display_style_shift_down,
+    FractionNumeratorGapMin => fraction_numerator_gap_min,
+    FractionNumeratorDisplayStyleGapMin => fraction_num_display_style_gap_min,
+    FractionRuleThickness => fraction_rule_thickness,
+    FractionDenominatorGapMin => fraction_denominator_gap_min,
+    FractionDenominatorDisplayStyleGapMin => fraction_denom_display_style_gap_min,
+    SkewedFractionHorizontalGap => skewed_fraction_horizontal_gap,
+    SkewedFractionVerticalGap => skewed_fraction_vertical_gap,
+    OverbarVerticalGap => overbar_vertical_gap,
+    OverbarRuleThickness => overbar_rule_thickness,
+    OverbarExtraAscender => overbar_extra_ascender,
+    UnderbarVerticalGap => underbar_vertical_gap,
+    UnderbarRuleThickness => underbar_rule_thickness,
+    UnderbarExtraDescender => underbar_extra_descender,
+    RadicalVerticalGap => radical_vertical_gap,
+    RadicalDisplayStyleVerticalGap => radical_display_style_vertical_gap,
+    RadicalRuleThickness => radical_rule_thickness,
+    RadicalExtraAscender => radical_extra_ascender,
+    RadicalKernBeforeDegree => radical_kern_before_degree,
+    RadicalKernAfterDegree => radical_kern_after_degree,
 }
 
-/// An OpenType MathValueRecord, in font design units.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct MathValue {
-    pub value: i16,
-    pub adjustment: Option<MathAdjustment>,
-}
-
-/// Complete MathConstants data without a TeX-fontdimen projection.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct MathConstants {
-    pub script_percent_scale_down: i16,
-    pub script_script_percent_scale_down: i16,
-    pub delimited_sub_formula_min_height: u16,
-    pub display_operator_min_height: u16,
-    values: [MathValue; 51],
-    pub radical_degree_bottom_raise_percent: i16,
-}
-
-impl MathConstants {
-    #[must_use]
-    pub fn value(&self, constant: MathConstant) -> &MathValue {
-        &self.values[constant as usize]
-    }
-
-    #[must_use]
-    pub fn values(&self) -> &[MathValue; 51] {
-        &self.values
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct MathKern {
-    pub correction_heights: Vec<MathValue>,
-    pub kern_values: Vec<MathValue>,
-}
-
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct MathKernInfo {
-    pub top_right: Option<MathKern>,
-    pub top_left: Option<MathKern>,
-    pub bottom_right: Option<MathKern>,
-    pub bottom_left: Option<MathKern>,
-}
-
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct MathGlyphInfo {
-    pub italic_corrections: BTreeMap<u16, MathValue>,
-    pub top_accent_attachments: BTreeMap<u16, MathValue>,
-    pub extended_shapes: BTreeSet<u16>,
-    pub kern_info: BTreeMap<u16, MathKernInfo>,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct MathGlyphVariant {
-    pub glyph_id: u16,
-    pub advance_measurement: u16,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct MathGlyphPart {
-    pub glyph_id: u16,
-    pub start_connector_length: u16,
-    pub end_connector_length: u16,
-    pub full_advance: u16,
-    pub extender: bool,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct MathGlyphAssembly {
-    pub italic_correction: MathValue,
-    pub parts: Vec<MathGlyphPart>,
-}
-
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct MathGlyphConstruction {
-    pub assembly: Option<MathGlyphAssembly>,
-    pub variants: Vec<MathGlyphVariant>,
-}
-
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct MathVariants {
-    pub min_connector_overlap: u16,
-    pub vertical: BTreeMap<u16, MathGlyphConstruction>,
-    pub horizontal: BTreeMap<u16, MathGlyphConstruction>,
-}
-
-/// Immutable, validated OpenType MATH semantics.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct MathTables {
-    pub constants: MathConstants,
-    pub glyph_info: Option<MathGlyphInfo>,
-    pub variants: Option<MathVariants>,
-}
-
-pub(super) fn parse_math(
+pub(super) fn validate_math(
     data: &[u8],
     glyph_count: u16,
     record_limit: usize,
     part_limit: usize,
-) -> Result<MathTables, FontParseError> {
+) -> Result<(), FontParseError> {
     if read_u32(data, 0)? != 0x0001_0000 {
         return Err(invalid("unsupported MATH version"));
     }
@@ -190,18 +97,15 @@ pub(super) fn parse_math(
         require_separate_subtable(offset, 10)?;
     }
     let mut budget = Budget::new(record_limit, part_limit);
-    let constants = parse_constants(data, constants_offset, &mut budget)?;
-    let glyph_info = glyph_info_offset
-        .map(|offset| parse_glyph_info(data, offset, glyph_count, &mut budget))
-        .transpose()?;
-    let variants = variants_offset
-        .map(|offset| parse_variants(data, offset, glyph_count, &mut budget))
-        .transpose()?;
-    Ok(MathTables {
-        constants,
-        glyph_info,
-        variants,
-    })
+    validate_constants(data, constants_offset, &mut budget)?;
+    if let Some(offset) = glyph_info_offset {
+        validate_glyph_info(data, offset, glyph_count, &mut budget)?;
+    }
+    if let Some(offset) = variants_offset {
+        validate_variants(data, offset, glyph_count, &mut budget)?;
+    }
+    ttf_parser::math::Table::parse(data).ok_or_else(|| invalid("invalid MATH table"))?;
+    Ok(())
 }
 
 struct Budget {
@@ -252,35 +156,21 @@ impl Budget {
     }
 }
 
-fn parse_constants(
-    data: &[u8],
-    base: usize,
-    budget: &mut Budget,
-) -> Result<MathConstants, FontParseError> {
+fn validate_constants(data: &[u8], base: usize, budget: &mut Budget) -> Result<(), FontParseError> {
     checked_range(data, base, 214)?;
     budget.records(51)?;
-    let mut values = Vec::with_capacity(51);
     for index in 0..51 {
-        values.push(parse_value(data, base, 8 + index * 4, base + 214)?);
+        validate_value(data, base, 8 + index * 4, base + 214)?;
     }
-    Ok(MathConstants {
-        script_percent_scale_down: read_i16(data, base)?,
-        script_script_percent_scale_down: read_i16(data, base + 2)?,
-        delimited_sub_formula_min_height: read_u16(data, base + 4)?,
-        display_operator_min_height: read_u16(data, base + 6)?,
-        values: values
-            .try_into()
-            .map_err(|_| invalid("MathConstants length"))?,
-        radical_degree_bottom_raise_percent: read_i16(data, base + 212)?,
-    })
+    Ok(())
 }
 
-fn parse_glyph_info(
+fn validate_glyph_info(
     data: &[u8],
     base: usize,
     glyph_count: u16,
     budget: &mut Budget,
-) -> Result<MathGlyphInfo, FontParseError> {
+) -> Result<(), FontParseError> {
     checked_range(data, base, 8)?;
     let child = |field| -> Result<Option<usize>, FontParseError> {
         let offset = optional_relative(data, base, field, data.len())?;
@@ -289,38 +179,27 @@ fn parse_glyph_info(
         }
         Ok(offset)
     };
-    let italic = child(base)?
-        .map(|offset| parse_math_values(data, offset, glyph_count, budget))
-        .transpose()?
-        .unwrap_or_default();
-    let accent = child(base + 2)?
-        .map(|offset| parse_math_values(data, offset, glyph_count, budget))
-        .transpose()?
-        .unwrap_or_default();
-    let extended = child(base + 4)?
-        .map(|offset| parse_coverage(data, offset, glyph_count, budget))
-        .transpose()?
-        .unwrap_or_default()
-        .into_iter()
-        .collect();
-    let kern_info = child(base + 6)?
-        .map(|offset| parse_kern_infos(data, offset, glyph_count, budget))
-        .transpose()?
-        .unwrap_or_default();
-    Ok(MathGlyphInfo {
-        italic_corrections: italic,
-        top_accent_attachments: accent,
-        extended_shapes: extended,
-        kern_info,
-    })
+    if let Some(offset) = child(base)? {
+        validate_math_values(data, offset, glyph_count, budget)?;
+    }
+    if let Some(offset) = child(base + 2)? {
+        validate_math_values(data, offset, glyph_count, budget)?;
+    }
+    if let Some(offset) = child(base + 4)? {
+        validate_coverage(data, offset, glyph_count, budget)?;
+    }
+    if let Some(offset) = child(base + 6)? {
+        validate_kern_infos(data, offset, glyph_count, budget)?;
+    }
+    Ok(())
 }
 
-fn parse_math_values(
+fn validate_math_values(
     data: &[u8],
     base: usize,
     glyph_count: u16,
     budget: &mut Budget,
-) -> Result<BTreeMap<u16, MathValue>, FontParseError> {
+) -> Result<(), FontParseError> {
     checked_range(data, base, 4)?;
     let coverage_offset = required_relative(data, base, base, data.len(), "MATH value coverage")?;
     let count = usize::from(read_u16(data, base + 2)?);
@@ -328,21 +207,20 @@ fn parse_math_values(
     checked_range(data, base + 4, checked_mul(count, 4)?)?;
     let records_end = base + 4 + count * 4;
     require_separate_subtable(coverage_offset, records_end)?;
-    let coverage = parse_coverage(data, coverage_offset, glyph_count, budget)?;
+    let coverage = validate_coverage(data, coverage_offset, glyph_count, budget)?;
     correspondence(coverage.len(), count)?;
-    coverage
-        .into_iter()
-        .enumerate()
-        .map(|(index, glyph)| Ok((glyph, parse_value(data, base, 4 + index * 4, records_end)?)))
-        .collect()
+    for index in 0..count {
+        validate_value(data, base, 4 + index * 4, records_end)?;
+    }
+    Ok(())
 }
 
-fn parse_kern_infos(
+fn validate_kern_infos(
     data: &[u8],
     base: usize,
     glyph_count: u16,
     budget: &mut Budget,
-) -> Result<BTreeMap<u16, MathKernInfo>, FontParseError> {
+) -> Result<(), FontParseError> {
     checked_range(data, base, 4)?;
     let coverage_offset = required_relative(data, base, base, data.len(), "MathKernInfo coverage")?;
     let count = usize::from(read_u16(data, base + 2)?);
@@ -350,33 +228,21 @@ fn parse_kern_infos(
     checked_range(data, base + 4, checked_mul(count, 8)?)?;
     let records_end = base + 4 + count * 8;
     require_separate_subtable(coverage_offset, records_end)?;
-    let coverage = parse_coverage(data, coverage_offset, glyph_count, budget)?;
+    let coverage = validate_coverage(data, coverage_offset, glyph_count, budget)?;
     correspondence(coverage.len(), count)?;
-    let mut result = BTreeMap::new();
-    for (index, glyph) in coverage.into_iter().enumerate() {
+    for index in 0..count {
         let record = base + 4 + index * 8;
-        let mut parse_corner = |field| {
-            optional_relative(data, base, field, data.len())?
-                .map(|offset| {
-                    require_separate_subtable(offset, records_end)?;
-                    parse_kern(data, offset, budget)
-                })
-                .transpose()
-        };
-        result.insert(
-            glyph,
-            MathKernInfo {
-                top_right: parse_corner(record)?,
-                top_left: parse_corner(record + 2)?,
-                bottom_right: parse_corner(record + 4)?,
-                bottom_left: parse_corner(record + 6)?,
-            },
-        );
+        for field in [record, record + 2, record + 4, record + 6] {
+            if let Some(offset) = optional_relative(data, base, field, data.len())? {
+                require_separate_subtable(offset, records_end)?;
+                validate_kern(data, offset, budget)?;
+            }
+        }
     }
-    Ok(result)
+    Ok(())
 }
 
-fn parse_kern(data: &[u8], base: usize, budget: &mut Budget) -> Result<MathKern, FontParseError> {
+fn validate_kern(data: &[u8], base: usize, budget: &mut Budget) -> Result<(), FontParseError> {
     let count = usize::from(read_u16(data, base)?);
     budget.records(
         count
@@ -386,33 +252,29 @@ fn parse_kern(data: &[u8], base: usize, budget: &mut Budget) -> Result<MathKern,
     )?;
     checked_range(data, base + 2, checked_mul(count * 2 + 1, 4)?)?;
     let records_end = base + 2 + (count * 2 + 1) * 4;
-    let mut heights = Vec::with_capacity(count);
-    let mut kerns = Vec::with_capacity(count + 1);
+    let mut previous_height = None;
     for index in 0..count {
-        heights.push(parse_value(data, base, 2 + index * 4, records_end)?);
-    }
-    if heights
-        .windows(2)
-        .any(|pair| pair[0].value >= pair[1].value)
-    {
-        return Err(invalid("MathKern heights are not increasing"));
+        let at = base + 2 + index * 4;
+        let height = read_i16(data, at)?;
+        validate_value(data, base, 2 + index * 4, records_end)?;
+        if previous_height.is_some_and(|previous| previous >= height) {
+            return Err(invalid("MathKern heights are not increasing"));
+        }
+        previous_height = Some(height);
     }
     let kern_base = 2 + count * 4;
     for index in 0..=count {
-        kerns.push(parse_value(data, base, kern_base + index * 4, records_end)?);
+        validate_value(data, base, kern_base + index * 4, records_end)?;
     }
-    Ok(MathKern {
-        correction_heights: heights,
-        kern_values: kerns,
-    })
+    Ok(())
 }
 
-fn parse_variants(
+fn validate_variants(
     data: &[u8],
     base: usize,
     glyph_count: u16,
     budget: &mut Budget,
-) -> Result<MathVariants, FontParseError> {
+) -> Result<(), FontParseError> {
     checked_range(data, base, 10)?;
     let vertical_coverage = optional_relative(data, base, base + 2, data.len())?;
     let horizontal_coverage = optional_relative(data, base, base + 4, data.len())?;
@@ -431,7 +293,7 @@ fn parse_variants(
     if let Some(offset) = horizontal_coverage {
         require_separate_subtable(offset, records_end)?;
     }
-    let vertical = parse_constructions(
+    validate_constructions(
         data,
         base,
         ConstructionGroup {
@@ -443,7 +305,7 @@ fn parse_variants(
         glyph_count,
         budget,
     )?;
-    let horizontal = parse_constructions(
+    validate_constructions(
         data,
         base,
         ConstructionGroup {
@@ -455,11 +317,7 @@ fn parse_variants(
         glyph_count,
         budget,
     )?;
-    Ok(MathVariants {
-        min_connector_overlap: read_u16(data, base)?,
-        vertical,
-        horizontal,
-    })
+    Ok(())
 }
 
 struct ConstructionGroup {
@@ -469,13 +327,13 @@ struct ConstructionGroup {
     coverage_offset: Option<usize>,
 }
 
-fn parse_constructions(
+fn validate_constructions(
     data: &[u8],
     variants_base: usize,
     group: ConstructionGroup,
     glyph_count: u16,
     budget: &mut Budget,
-) -> Result<BTreeMap<u16, MathGlyphConstruction>, FontParseError> {
+) -> Result<(), FontParseError> {
     let ConstructionGroup {
         offsets_base,
         subtables_min,
@@ -486,18 +344,17 @@ fn parse_constructions(
         return Err(invalid("construction coverage/count mismatch"));
     }
     if count == 0 {
-        return Ok(BTreeMap::new());
+        return Ok(());
     }
     budget.records(count)?;
-    let coverage = parse_coverage(
+    let coverage = validate_coverage(
         data,
         coverage_offset.ok_or_else(|| invalid("missing construction coverage"))?,
         glyph_count,
         budget,
     )?;
     correspondence(coverage.len(), count)?;
-    let mut result = BTreeMap::new();
-    for (index, glyph) in coverage.into_iter().enumerate() {
+    for index in 0..count {
         let offset = required_relative(
             data,
             variants_base,
@@ -506,58 +363,49 @@ fn parse_constructions(
             "MathGlyphConstruction",
         )?;
         require_separate_subtable(offset, subtables_min)?;
-        result.insert(
-            glyph,
-            parse_construction(data, offset, glyph_count, budget)?,
-        );
+        validate_construction(data, offset, glyph_count, budget)?;
     }
-    Ok(result)
+    Ok(())
 }
 
-fn parse_construction(
+fn validate_construction(
     data: &[u8],
     base: usize,
     glyph_count: u16,
     budget: &mut Budget,
-) -> Result<MathGlyphConstruction, FontParseError> {
+) -> Result<(), FontParseError> {
     checked_range(data, base, 4)?;
     let count = usize::from(read_u16(data, base + 2)?);
     budget.records(count)?;
     checked_range(data, base + 4, checked_mul(count, 4)?)?;
     let records_end = base + 4 + count * 4;
-    let assembly = optional_relative(data, base, base, data.len())?
-        .map(|offset| {
-            require_separate_subtable(offset, records_end)?;
-            parse_assembly(data, offset, glyph_count, budget)
-        })
-        .transpose()?;
-    let mut variants = Vec::with_capacity(count);
+    let assembly = optional_relative(data, base, base, data.len())?;
+    if let Some(offset) = assembly {
+        require_separate_subtable(offset, records_end)?;
+        validate_assembly(data, offset, glyph_count, budget)?;
+    }
+    let mut previous_advance = None;
     for index in 0..count {
         let at = base + 4 + index * 4;
-        let glyph_id = checked_glyph(read_u16(data, at)?, glyph_count)?;
-        variants.push(MathGlyphVariant {
-            glyph_id,
-            advance_measurement: read_u16(data, at + 2)?,
-        });
+        checked_glyph(read_u16(data, at)?, glyph_count)?;
+        let advance = read_u16(data, at + 2)?;
+        if previous_advance.is_some_and(|previous| previous >= advance) {
+            return Err(invalid("variant advances are not increasing"));
+        }
+        previous_advance = Some(advance);
     }
-    if variants
-        .windows(2)
-        .any(|pair| pair[0].advance_measurement >= pair[1].advance_measurement)
-    {
-        return Err(invalid("variant advances are not increasing"));
-    }
-    if assembly.is_none() && variants.is_empty() {
+    if assembly.is_none() && count == 0 {
         return Err(invalid("empty MathGlyphConstruction"));
     }
-    Ok(MathGlyphConstruction { assembly, variants })
+    Ok(())
 }
 
-fn parse_assembly(
+fn validate_assembly(
     data: &[u8],
     base: usize,
     glyph_count: u16,
     budget: &mut Budget,
-) -> Result<MathGlyphAssembly, FontParseError> {
+) -> Result<(), FontParseError> {
     checked_range(data, base, 6)?;
     let count = usize::from(read_u16(data, base + 4)?);
     if count == 0 {
@@ -566,58 +414,42 @@ fn parse_assembly(
     budget.parts(count)?;
     checked_range(data, base + 6, checked_mul(count, 10)?)?;
     let records_end = base + 6 + count * 10;
-    let italic_correction = parse_value(data, base, 0, records_end)?;
-    let mut parts = Vec::with_capacity(count);
+    validate_value(data, base, 0, records_end)?;
     for index in 0..count {
         let at = base + 6 + index * 10;
         let flags = read_u16(data, at + 8)?;
         if flags & !1 != 0 {
             return Err(invalid("reserved GlyphPart flags"));
         }
-        let part = MathGlyphPart {
-            glyph_id: checked_glyph(read_u16(data, at)?, glyph_count)?,
-            start_connector_length: read_u16(data, at + 2)?,
-            end_connector_length: read_u16(data, at + 4)?,
-            full_advance: read_u16(data, at + 6)?,
-            extender: flags == 1,
-        };
-        parts.push(part);
+        checked_glyph(read_u16(data, at)?, glyph_count)?;
     }
-    Ok(MathGlyphAssembly {
-        italic_correction,
-        parts,
-    })
+    Ok(())
 }
 
-fn parse_value(
+fn validate_value(
     data: &[u8],
     parent: usize,
     relative: usize,
     child_min: usize,
-) -> Result<MathValue, FontParseError> {
+) -> Result<(), FontParseError> {
     let at = parent
         .checked_add(relative)
         .ok_or(FontParseError::ArithmeticOverflow)?;
-    let value = read_i16(data, at)?;
-    let adjustment = optional_relative(data, parent, at + 2, data.len())?
-        .map(|offset| {
-            require_separate_subtable(offset, child_min)?;
-            parse_adjustment(data, offset)
-        })
-        .transpose()?;
-    Ok(MathValue { value, adjustment })
+    read_i16(data, at)?;
+    if let Some(offset) = optional_relative(data, parent, at + 2, data.len())? {
+        require_separate_subtable(offset, child_min)?;
+        validate_adjustment(data, offset)?;
+    }
+    Ok(())
 }
 
-fn parse_adjustment(data: &[u8], base: usize) -> Result<MathAdjustment, FontParseError> {
+fn validate_adjustment(data: &[u8], base: usize) -> Result<(), FontParseError> {
     checked_range(data, base, 6)?;
     let first = read_u16(data, base)?;
     let second = read_u16(data, base + 2)?;
     let format = read_u16(data, base + 4)?;
     if format == 0x8000 {
-        return Ok(MathAdjustment::VariationIndex {
-            outer_index: first,
-            inner_index: second,
-        });
+        return Ok(());
     }
     let bits = match format {
         1 => 2,
@@ -632,28 +464,10 @@ fn parse_adjustment(data: &[u8], base: usize) -> Result<MathAdjustment, FontPars
     let per_word = 16 / bits;
     let words = count.div_ceil(per_word);
     checked_range(data, base + 6, checked_mul(words, 2)?)?;
-    let mut deltas = Vec::with_capacity(count);
-    let mask = (1_u16 << bits) - 1;
-    for index in 0..count {
-        let word = read_u16(data, base + 6 + (index / per_word) * 2)?;
-        let shift = 16 - bits * ((index % per_word) + 1);
-        let raw = ((word >> shift) & mask) as i16;
-        let signed = if raw & (1 << (bits - 1)) != 0 {
-            raw - (1 << bits)
-        } else {
-            raw
-        };
-        deltas.push(signed as i8);
-    }
-    Ok(MathAdjustment::Device {
-        start_size: first,
-        end_size: second,
-        delta_format: format,
-        deltas,
-    })
+    Ok(())
 }
 
-fn parse_coverage(
+fn validate_coverage(
     data: &[u8],
     base: usize,
     glyph_count: u16,

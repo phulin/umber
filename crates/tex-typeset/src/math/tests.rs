@@ -157,7 +157,8 @@ fn pinned_opentype_math_fixture_drives_basic_formula_layout_deterministically() 
     let native = parse_stix_math(FontContainer::TrueType, ttf);
     assert_eq!(web.identity, native.identity);
     assert_ne!(web.object_identity, native.object_identity);
-    assert_eq!(web.math, native.math);
+    assert!(web.has_math());
+    assert!(native.has_math());
 
     let web_layouts = positioned_math_fixture_layouts(web);
     let native_layouts = positioned_math_fixture_layouts(native);

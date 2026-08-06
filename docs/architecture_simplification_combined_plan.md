@@ -389,8 +389,8 @@ and VF loading to create `LoadedFont`. The public raw TFM DTOs and the later
 raw-to-runtime conversion are deleted. This is an intentional public Rust API
 contraction: repository inventory found only parser tests and the live
 reference tool using those DTOs, while formats, output, and wire contracts
-already use canonical metrics. OpenType MATH ownership and realized font
-identity remain assigned to `umber2-vgjr.11.2` and `.11.3` respectively.
+already use canonical metrics. The following MATH entry records the completed
+`umber2-vgjr.11.2` sibling; realized font identity remains assigned to `.11.3`.
 
 The implementation adds 183 and deletes 242 production Rust lines (59-line
 net deletion), adds 73 and deletes 57 Rust test lines, adds 53 and deletes 34
@@ -411,6 +411,23 @@ well below 512 MiB; independent font/VF RSS measurements found no runtime
 growth. The final complete suite passed under `MemoryMax=1G` at a
 631,353,344-byte peak without any memory event. The six-job quality gate also
 passed at a 105,771,008-byte peak without any memory event.
+**Implemented MATH authority and accounting.** `ttf-parser::math::Table` is the
+sole MATH graph. `OpenTypeFont` retains canonical decoded SFNT bytes and only a
+validated-presence bit; `OpenTypeMathMetrics` reparses a borrowed table and
+performs lazy constant, glyph-info, kern, variant, construction, and assembly
+queries at the selected size. The independent eager validator still walks all
+offsets and records before publication and enforces the prior version, range,
+coverage-correspondence, ordering, glyph-bound, device/variation-format,
+record-budget, and assembly-part-budget invariants. The public owned types
+`MathAdjustment`, `MathConstants`, `MathGlyphAssembly`,
+`MathGlyphConstruction`, `MathGlyphInfo`, `MathGlyphPart`, `MathGlyphVariant`,
+`MathKern`, `MathKernInfo`, `MathTables`, `MathValue`, and `MathVariants` are
+deleted; `MathConstant`, `MathMetricsSource`, and `OpenTypeMathMetrics` remain
+the consumer boundary, with `OpenTypeFont::has_math` as the capability query.
+Before documentation, the MATH change contains 272 additions and 456 deletions
+in production Rust (net deletion 184) and 51 additions and 94 deletions in
+tests (net deletion 43). No moved or generated lines and no binary assets are
+credited.
 
 ## 12. Establish one fixture contract while compacting repeated catalogues
 

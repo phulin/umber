@@ -75,7 +75,7 @@ fn html_mvp_catalog_binds_exact_programs_mapping_and_licenses() {
             .as_deref()
             .expect("STIX program identity")
     );
-    assert!(stix.math.is_some());
+    assert!(stix.has_math());
 
     for record in catalog.fonts.values() {
         let license: &[u8] = if record.request.logical_name() == "cmu-serif-roman" {

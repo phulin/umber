@@ -1,8 +1,6 @@
 //! Immutable loaded font records and backend-neutral metric queries.
 
-use crate::opentype::{
-    FontInstanceIdentity, FontProgramIdentity, MathConstant, MathKern, MathValue, OpenTypeFont,
-};
+use crate::opentype::{FontInstanceIdentity, FontProgramIdentity, MathConstant, OpenTypeFont};
 use sha2::{Digest, Sha256};
 use std::hash::Hash;
 use std::path::PathBuf;
@@ -405,45 +403,40 @@ impl OpenTypeMathMetrics<'_> {
 
     #[must_use]
     pub fn constant(self, constant: MathConstant) -> Scaled {
-        self.project_value(
-            self.font
-                .math
-                .as_ref()
-                .expect("MATH source")
-                .constants
-                .value(constant),
-        )
+        let constants = self
+            .font
+            .math_table()
+            .and_then(|table| table.constants)
+            .expect("validated MATH constants");
+        self.project_value(constant.query(constants))
     }
 
     #[must_use]
     pub fn script_percent_scale_down(self) -> i16 {
         self.font
-            .math
-            .as_ref()
-            .expect("MATH source")
-            .constants
-            .script_percent_scale_down
+            .math_table()
+            .and_then(|table| table.constants)
+            .expect("validated MATH constants")
+            .script_percent_scale_down()
     }
 
     #[must_use]
     pub fn script_script_percent_scale_down(self) -> i16 {
         self.font
-            .math
-            .as_ref()
-            .expect("MATH source")
-            .constants
-            .script_script_percent_scale_down
+            .math_table()
+            .and_then(|table| table.constants)
+            .expect("validated MATH constants")
+            .script_script_percent_scale_down()
     }
 
     #[must_use]
     pub fn delimited_sub_formula_min_height(self) -> Scaled {
         self.project_units(i32::from(
             self.font
-                .math
-                .as_ref()
-                .expect("MATH source")
-                .constants
-                .delimited_sub_formula_min_height,
+                .math_table()
+                .and_then(|table| table.constants)
+                .expect("validated MATH constants")
+                .delimited_sub_formula_min_height(),
         ))
     }
 
@@ -451,11 +444,10 @@ impl OpenTypeMathMetrics<'_> {
     pub fn display_operator_min_height(self) -> Scaled {
         self.project_units(i32::from(
             self.font
-                .math
-                .as_ref()
-                .expect("MATH source")
-                .constants
-                .display_operator_min_height,
+                .math_table()
+                .and_then(|table| table.constants)
+                .expect("validated MATH constants")
+                .display_operator_min_height(),
         ))
     }
 
@@ -506,12 +498,14 @@ impl OpenTypeMathMetrics<'_> {
                 )
             },
         );
-        let info = self.font.math.as_ref()?.glyph_info.as_ref();
+        let info = self.font.math_table()?.glyph_info;
         let italic_correction = info
-            .and_then(|info| info.italic_corrections.get(&glyph_id))
+            .and_then(|info| info.italic_corrections)
+            .and_then(|values| values.get(ttf_parser::GlyphId(glyph_id)))
             .map_or(ink_italic, |value| self.project_value(value));
         let top_accent_attachment = info
-            .and_then(|info| info.top_accent_attachments.get(&glyph_id))
+            .and_then(|info| info.top_accent_attachments)
+            .and_then(|values| values.get(ttf_parser::GlyphId(glyph_id)))
             .map(|value| self.project_value(value));
         Some(OpenTypeMathGlyph {
             glyph_id,
@@ -534,37 +528,39 @@ impl OpenTypeMathMetrics<'_> {
         glyph_id: u16,
         direction: MathVariantDirection,
     ) -> Option<OpenTypeMathConstruction> {
-        let variants = self.font.math.as_ref()?.variants.as_ref()?;
+        let variants = self.font.math_table()?.variants?;
         let construction = match direction {
-            MathVariantDirection::Horizontal => variants.horizontal.get(&glyph_id),
-            MathVariantDirection::Vertical => variants.vertical.get(&glyph_id),
+            MathVariantDirection::Horizontal => variants
+                .horizontal_constructions
+                .get(ttf_parser::GlyphId(glyph_id)),
+            MathVariantDirection::Vertical => variants
+                .vertical_constructions
+                .get(ttf_parser::GlyphId(glyph_id)),
         }?;
-        let projected_variants = construction
-            .variants
-            .iter()
+        let projected_variants = (0..construction.variants.len())
+            .filter_map(|index| construction.variants.get(index))
             .filter_map(|variant| {
                 Some(OpenTypeMathVariant {
-                    glyph: self.glyph_by_id(variant.glyph_id)?,
+                    glyph: self.glyph_by_id(variant.variant_glyph.0)?,
                     advance: self.project_units(i32::from(variant.advance_measurement)),
                 })
             })
             .collect();
-        let assembly = construction.assembly.as_ref().and_then(|assembly| {
+        let assembly = construction.assembly.and_then(|assembly| {
             Some(OpenTypeMathAssembly {
-                italic_correction: self.project_value(&assembly.italic_correction),
+                italic_correction: self.project_value(assembly.italics_correction),
                 min_connector_overlap: self
                     .project_units(i32::from(variants.min_connector_overlap)),
-                parts: assembly
-                    .parts
-                    .iter()
+                parts: (0..assembly.parts.len())
+                    .filter_map(|index| assembly.parts.get(index))
                     .map(|part| {
                         Some(OpenTypeMathAssemblyPart {
-                            glyph: self.glyph_by_id(part.glyph_id)?,
+                            glyph: self.glyph_by_id(part.glyph_id.0)?,
                             start_connector: self
                                 .project_units(i32::from(part.start_connector_length)),
                             end_connector: self.project_units(i32::from(part.end_connector_length)),
                             full_advance: self.project_units(i32::from(part.full_advance)),
-                            extender: part.extender,
+                            extender: part.part_flags.extender(),
                         })
                     })
                     .collect::<Option<Vec<_>>>()?,
@@ -580,37 +576,37 @@ impl OpenTypeMathMetrics<'_> {
     pub fn kern(self, glyph_id: u16, corner: MathKernCorner, height: Scaled) -> Scaled {
         let Some(kerns) = self
             .font
-            .math
-            .as_ref()
-            .and_then(|math| math.glyph_info.as_ref())
-            .and_then(|info| info.kern_info.get(&glyph_id))
+            .math_table()
+            .and_then(|math| math.glyph_info)
+            .and_then(|info| info.kern_infos)
+            .and_then(|kerns| kerns.get(ttf_parser::GlyphId(glyph_id)))
         else {
             return Scaled::from_raw(0);
         };
         let table = match corner {
-            MathKernCorner::TopRight => kerns.top_right.as_ref(),
-            MathKernCorner::TopLeft => kerns.top_left.as_ref(),
-            MathKernCorner::BottomRight => kerns.bottom_right.as_ref(),
-            MathKernCorner::BottomLeft => kerns.bottom_left.as_ref(),
+            MathKernCorner::TopRight => kerns.top_right,
+            MathKernCorner::TopLeft => kerns.top_left,
+            MathKernCorner::BottomRight => kerns.bottom_right,
+            MathKernCorner::BottomLeft => kerns.bottom_left,
         };
         table.map_or(Scaled::from_raw(0), |table| {
-            self.kern_at_height(table, height)
+            self.kern_at_height(&table, height)
         })
     }
 
-    fn kern_at_height(self, kern: &MathKern, height: Scaled) -> Scaled {
-        let index = kern
-            .correction_heights
-            .iter()
-            .position(|value| height < self.project_value(value))
-            .unwrap_or(kern.correction_heights.len());
-        kern.kern_values
-            .get(index)
+    fn kern_at_height(self, kern: &ttf_parser::math::Kern<'_>, height: Scaled) -> Scaled {
+        let index = (0..kern.count())
+            .find(|index| {
+                kern.height(*index)
+                    .is_some_and(|value| height < self.project_value(value))
+            })
+            .unwrap_or(kern.count());
+        kern.kern(index)
             .map_or(Scaled::from_raw(0), |value| self.project_value(value))
     }
 
-    fn project_value(self, value: &MathValue) -> Scaled {
-        // Device/variation adjustments are retained in the immutable model;
+    fn project_value(self, value: ttf_parser::math::MathValue<'_>) -> Scaled {
+        // Device/variation adjustments stay in ttf-parser's borrowed model;
         // applying them requires a resolved ppem/variation instance.
         self.project_units(i32::from(value.value))
     }
@@ -808,7 +804,7 @@ impl LoadedFont {
             return MathMetricsSource::ClassicTfmExact;
         }
         match &self.metrics {
-            FontMetricsSource::OpenType(font) if font.font.math.is_some() => {
+            FontMetricsSource::OpenType(font) if font.font.has_math() => {
                 MathMetricsSource::OpenType(OpenTypeMathMetrics {
                     font: &font.font,
                     size: self.size,

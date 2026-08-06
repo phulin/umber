@@ -233,28 +233,37 @@ fn positioned_math_uses_ssty_text_rules_and_validated_outline_paths() {
     });
     let scalar = 'A';
     let text_glyph = selected_fixture_glyph(bytes, scalar, 2);
-    let outline_glyph = parsed
-        .math
-        .as_ref()
-        .and_then(|math| math.variants.as_ref())
-        .and_then(|variants| {
-            variants
-                .vertical
-                .values()
-                .chain(variants.horizontal.values())
-                .find_map(|construction| {
-                    construction
-                        .assembly
-                        .as_ref()
-                        .and_then(|assembly| assembly.parts.first())
-                        .map(|part| part.glyph_id)
-                        .or_else(|| {
-                            construction
-                                .variants
-                                .first()
-                                .map(|variant| variant.glyph_id)
-                        })
-                })
+    let glyph_count = parsed.metadata.glyph_count;
+    let size = Scaled::from_raw(10 * Scaled::UNITY);
+    let loaded = tex_fonts::LoadedFont::new_opentype(
+        "stix-two-math",
+        "stix-two-math.woff2",
+        size,
+        size,
+        parsed.clone(),
+    );
+    let tex_fonts::MathMetricsSource::OpenType(math) = loaded.math_metrics_source() else {
+        panic!("STIX MATH metrics")
+    };
+    let outline_glyph = (0..glyph_count)
+        .find_map(|glyph| {
+            [
+                tex_fonts::MathVariantDirection::Vertical,
+                tex_fonts::MathVariantDirection::Horizontal,
+            ]
+            .into_iter()
+            .find_map(|direction| math.construction(glyph, direction))
+            .and_then(|construction| {
+                construction
+                    .assembly
+                    .and_then(|assembly| assembly.parts.first().map(|part| part.glyph.glyph_id))
+                    .or_else(|| {
+                        construction
+                            .variants
+                            .first()
+                            .map(|variant| variant.glyph.glyph_id)
+                    })
+            })
         })
         .expect("STIX has a variant or assembly outline");
     page.testing_mut().math_events = vec![

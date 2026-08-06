@@ -12,11 +12,7 @@ pub use contract::{
     FontSelectionError, FontWireError, LegacyFontMapping, OpenTypeTag, ResolvedFont,
     VariationCoordinate, VariationInstance, VariationSelection, WritingDirection,
 };
-pub use math::{
-    MathAdjustment, MathConstant, MathConstants, MathGlyphAssembly, MathGlyphConstruction,
-    MathGlyphInfo, MathGlyphPart, MathGlyphVariant, MathKern, MathKernInfo, MathTables, MathValue,
-    MathVariants,
-};
+pub use math::MathConstant;
 pub use parse::{
     CharacterMap, FontMetadata, FontParseError, OpenTypeFont, OpenTypeMetrics, ShapingTables,
 };

@@ -14,8 +14,12 @@ future concern and is not part of the linear HTML epic.
 
 `docs/web_font_bundles.md` (Beads epic `umber2-y2ei`) already defines font
 _acquisition_: `FontRequest`/`ResolvedFont`, content-addressed identity, and a
-validated `OpenTypeFont { cmap, metrics, shaping: ShapingTables, math,
-metadata }` produced by `crates/tex-fonts/src/opentype/`. That work is done.
+validated `OpenTypeFont` containing projected cmap/metrics, shaping tables,
+metadata, and canonical decoded program bytes produced by
+`crates/tex-fonts/src/opentype/`. That work is done. MATH is deliberately not
+projected into a second owned graph: parsing performs one strict bounded walk,
+and the scaled facade lazily borrows `ttf-parser` queries from those decoded
+bytes.
 `tex-fonts` applies its validated immutable font/instance context through a
 private rustybuzz adapter, and the shape/break/reshape pipeline consumes the
 typed operation's cluster advances. The former `tex-shape` package and its
@@ -27,7 +31,7 @@ model while making its selected identities consistent across every requested
 driver and limiting only the hosted HTML catalog, not local/client PDF or DVI.
 
 OpenType math uses a separate direct path. `LoadedFont::math_metrics_source`
-returns validated, size-bound MATH data when present and the explicit
+returns validated, size-bound lazy MATH queries when present and the explicit
 `ClassicTfmExact` fallback otherwise. The math converter consumes native MATH
 constants and glyph records (including `ssty`, italic correction, four-corner
 math kern, and top-accent attachment) without synthesizing TeX's 22 math
