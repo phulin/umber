@@ -66,6 +66,33 @@ const CMR10: &[u8] = include_bytes!("../../../tex-fonts/tests/fixtures/cm/cmr10.
 const CMSY10: &[u8] = include_bytes!("../../../tex-fonts/tests/fixtures/cm/cmsy10.tfm");
 const CMEX10: &[u8] = include_bytes!("../../../tex-fonts/tests/fixtures/cm/cmex10.tfm");
 
+#[test]
+fn resource_batch_ceiling_deduplicates_without_reordering_protocol_vectors() {
+    let first = ResourceRequest::File(FileRequest::new(
+        FileRequestKey::new(FileKind::TexInput, "first.tex").expect("first key"),
+        "first.tex",
+    ));
+    let second = ResourceRequest::File(FileRequest::new(
+        FileRequestKey::new(FileKind::TexInput, "second.tex").expect("second key"),
+        "second.tex",
+    ));
+    let required = vec![second.clone(), first.clone()];
+    let probes = vec![first.clone()];
+    let prefetch_hints = vec![second.clone()];
+
+    check_resource_batch_limit(&required, &probes, &prefetch_hints, 2)
+        .expect("duplicate requests count once");
+    assert_eq!(required, [second, first]);
+    assert!(matches!(
+        check_resource_batch_limit(&required, &probes, &[], 1),
+        Err(CompileError::LimitExceeded {
+            resource: "resource request batch",
+            limit: 1,
+            attempted: 2,
+        })
+    ));
+}
+
 fn current_render_location(result: Option<RenderedSourceResult>) -> RenderedSourceLocation {
     match result.expect("mapped source") {
         RenderedSourceResult::Current(location) => location,
@@ -1725,22 +1752,6 @@ fn pdf_virtual_font_closure_uses_typed_bounded_retries() {
 
     let resources = requests(session.compile_attempt());
     assert_eq!(resources.len(), 2);
-    let plan = session.output_resource_plan();
-    assert_eq!(plan.version, OUTPUT_RESOURCE_PLAN_VERSION);
-    assert_eq!(plan.outputs, OutputCapabilitySet::PDF);
-    assert_eq!(plan.union.len(), resources.len());
-    assert!(plan.closures.iter().all(|closure| {
-        closure.owner == ResourceClosureOwner::Pdf
-            && closure.resources.iter().all(|resource| {
-                resource.reasons.iter().all(|reason| {
-                    reason.owner == ResourceClosureOwner::Pdf
-                        && matches!(
-                            reason.purpose,
-                            ResourcePurpose::PdfEncoding | ResourcePurpose::PdfFontProgram
-                        )
-                })
-            })
-    }));
     let encoding = resources
         .iter()
         .find(|request| request.key().kind() == FileKind::PdfEncoding)
@@ -1834,10 +1845,6 @@ fn pdf_bitmap_fallback_crosses_the_typed_session_boundary() {
     assert_eq!(request.tex_name(), b"cmr10");
     assert_eq!(request.dpi(), 600);
     assert_eq!(request.logical_name(), b"cmr10.600pk");
-    assert_eq!(
-        session.output_resource_plan().union[0].reasons[0].purpose,
-        ResourcePurpose::PdfBitmapProgram
-    );
     let bytes = include_bytes!("../../../../tests/corpus/pdf/pk_bitmap_600/cmr10.600pk").to_vec();
     let expected_sha256 = Some(sha2::Sha256::digest(&bytes).into());
     session
@@ -1996,18 +2003,6 @@ fn classic_tfm_html_acquires_exact_paint_resource_without_changing_dvi() {
     };
     assert_eq!(request.key.logical_name(), "cmr10");
     assert_eq!(request.purposes, tex_fonts::FontPurposes::HTML);
-    let plan = html.output_resource_plan();
-    let planned = plan.union.first().expect("planned HTML paint resource");
-    assert_eq!(planned.reasons.len(), 3);
-    assert!(planned.reasons.iter().all(|reason| {
-        reason.owner == ResourceClosureOwner::Html
-            && matches!(
-                reason.purpose,
-                ResourcePurpose::HtmlLegacyMapping
-                    | ResourcePurpose::HtmlFontTransport
-                    | ResourcePurpose::HtmlLicense
-            )
-    }));
     provide_cmu_font(&mut html, request.clone());
     let CompileAttemptResult::Complete(html_output) = html.compile_attempt() else {
         panic!("classic HTML compile should complete with its exact paint resource");

@@ -324,3 +324,29 @@ Migration is complete only when production callers use this contract and the
 obsolete request unions, response maps, downloader fronts, and admission
 registries are deleted. Temporary public compatibility adapters translate at
 the boundary and cannot become a second authority.
+
+## Rust resource-plane API decision
+
+The exported Rust `OutputResourcePlan` and `CompositeResourceResolver` families
+were retired under `umber2-vgjr.3.4`. Repository-wide caller audit found no
+production Rust consumer: the plan only mirrored requests already selected by
+the live session, and the resolver was only exercised by its own tests. Keeping
+either API, including as a deprecated adapter, would retain a second
+non-driving owner of resource state. The public Rust boundary is therefore the
+ordered, bounded `NeedResources`/`ResourceResponse` protocol alone. Authored
+JavaScript may retain an application-side composite resolver because it
+actually drives that protocol; it is not engine state or a Rust compatibility
+surface.
+
+The removed planner's only live guard, the deduplicated request-union ceiling,
+remains immediately before every session suspension. Required, probe, and
+prefetch vectors retain their existing construction and order; the guard does
+not rebuild them.
+
+Exact issue diff accounting is 55 additions and 1,171 deletions in authored
+Rust, a net deletion of 1,116 lines. Production Rust accounts for 28 additions
+and 737 deletions (709 net); proof tests account for 27 additions and 434
+deletions (407 net). Documentation and repository maps account for 40
+additions and 26 deletions, so the complete tracked change is 95 additions and
+1,197 deletions, or 1,102 lines of net deletion. No generated or binary assets
+changed.

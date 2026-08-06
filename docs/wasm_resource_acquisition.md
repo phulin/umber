@@ -206,7 +206,7 @@ fetches, local user files, or another transport. Reusable helper modules may
 implement these policies, but the core package does not require one catalog or
 deployment model.
 
-`CompositeResourceResolver` is the shared authored facade for applications
+The authored JavaScript `CompositeResourceResolver` is the shared facade for applications
 that have more than one such provider. It consults session/application,
 local/client, and hosted providers in caller-declared precedence, treats typed
 unavailability as provider-scoped, and emits an authoritative unavailable

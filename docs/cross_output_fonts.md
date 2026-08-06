@@ -52,14 +52,12 @@ to finalize one requested output. The session acquires the deduplicated union
 of the engine closure and only the requested driver closures. A resource
 required by two closures is registered and validated once.
 
-The implementation exposes this decision as
-`umber::OutputResourcePlan` (plan version 1). Each planned request records its
-engine/DVI/PDF/HTML owner, semantic purpose, and required/probe/prefetch mode;
-the union retains every reason while deduplicating by the complete typed
-request key. The same Rust planner feeds native and WASM session batches.
-Placement validation rejects an HTML-owned legacy PDF/DVI file class before a
-host resolver is invoked, and the session resource-count limit applies after
-union deduplication.
+The implementation exposes only the requests that drive acquisition through
+`NeedResources`. The session resource-count limit applies to the deduplicated
+union of required, probe, and prefetch requests without rebuilding or
+reordering those vectors. The former inspectable Rust output plan duplicated
+this already-selected batch and was retired under the resource lifecycle API
+decision.
 
 ## 2. Layout authority
 
@@ -235,8 +233,8 @@ record is not authoritative global absence. Project/private resources shadow
 hosted records before either object becomes live. After acceptance, another
 provider cannot rebind the request during that session.
 
-This rule is implemented by `umber::CompositeResourceResolver` and the authored
-JavaScript `CompositeResourceResolver`. Providers return either a positive
+This rule is implemented by the authored JavaScript
+`CompositeResourceResolver`. Providers return either a positive
 typed response or a provider-scoped miss for the complete request. The facade
 validates response correspondence and duplicates, checks cancellation between
 providers, preserves the declared order, and constructs the terminal typed
@@ -331,14 +329,11 @@ accept the MVP fixture and reject a font or mapping record whose schema is
 changed to 2. This is schema evolution evidence, not authorization to publish
 the synthetic entries or placeholder semantics for them.
 
-HTML virtual-font support remains follow-up `umber2-nobk.12`. It attaches at
-the HTML branch of `umber::OutputResourcePlanner`: after exact root-VF and
-recursive local-TFM closure validation, but before `tex-out` HTML
-serialization, it may lower bounded packets into positioned real-font leaf
-events carrying exact leaf mapping and font instance identities. Until that
-versioned record and lowering exist, the planner returns
-`ResourcePlanError::UnsupportedHtmlVirtualFont` with the unchanged typed VF
-request. It never retries the VF name as a real font or basename mapping.
+HTML virtual-font support remains follow-up `umber2-nobk.12`. It attaches after
+exact root-VF and recursive local-TFM closure validation, but before `tex-out`
+HTML serialization, where it may lower bounded packets into positioned
+real-font leaf events carrying exact leaf mapping and font instance identities.
+It must never retry the VF name as a real font or basename mapping.
 
 ## 9. Ownership, lifetime, and caches
 
