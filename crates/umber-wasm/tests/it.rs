@@ -14,7 +14,7 @@ use umber::{
 use umber_wasm::{
     CompilerSession, EditorSession, JsEditorSessionOptions, JsProjectSessionOptions,
     JsSessionOptions, JsSourcePatch, ProjectSession, accepted_input_observation_schema_version,
-    format_schema_version, package_version,
+    format_schema_version, package_version, wire_schema_version,
 };
 use wasm_bindgen::{JsCast, JsValue};
 use wasm_bindgen_futures::JsFuture;
@@ -217,6 +217,34 @@ fn compiler_exposes_versioned_accepted_input_observations() {
     assert_eq!(string_field(&main, "path"), "/job/main.tex");
     assert_eq!(string_field(&main, "namespace"), "authored");
     assert_eq!(string_field(&main, "phase"), "tex");
+}
+
+#[wasm_bindgen_test]
+fn wire_schema_is_explicit_and_option_numbers_are_javascript_safe() {
+    assert_eq!(wire_schema_version(), 1);
+
+    let unknown = options("main.tex");
+    set(&unknown, "futureSchemaOneField", &JsValue::from_bool(true));
+    CompilerSession::new(unknown.unchecked_ref()).expect("additive option field");
+
+    let unsafe_options = options("main.tex");
+    let limits = Object::new();
+    set(
+        &limits,
+        "engineFuel",
+        &JsValue::from_f64(9_007_199_254_740_992.0),
+    );
+    set(&unsafe_options, "limits", limits.as_ref());
+    let error = match CompilerSession::new(unsafe_options.unchecked_ref()) {
+        Ok(_) => panic!("unsafe integer was accepted"),
+        Err(error) => error,
+    };
+    assert!(
+        error
+            .as_string()
+            .expect("boundary message")
+            .contains("safe integer")
+    );
 }
 
 #[wasm_bindgen_test]
@@ -522,7 +550,7 @@ fn opentype_math_woff2_projects_authoritative_data_and_explicit_fallback_in_wasm
     use tex_fonts::{
         AcceptedFontContainers, FontContainer, FontFeaturePolicy, FontLimits, FontPurposes,
         FontRequest, FontRequestKey, LoadedFont, MathMetricsSource, MathVariantDirection,
-        OpenTypeFont, ResolvedFont, VariationSelection, WritingDirection,
+        OpenTypeFont, ResolvedFont, VariationSelection,
     };
 
     fn parse(name: &str, bytes: &[u8]) -> OpenTypeFont {

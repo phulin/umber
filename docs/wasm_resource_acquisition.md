@@ -67,6 +67,11 @@ or TeX input string becomes a URL inside Rust.
 
 ## Session protocol
 
+The versioned JavaScript representation of this protocol is owned by the
+host-neutral DTOs described in [WebAssembly Wire Protocol](wasm_wire_protocol.md).
+Engine request and response types remain private to the adapter and do not
+define TypeScript directly.
+
 ```rust
 pub enum ResourceRequest {
     File(FileRequest),

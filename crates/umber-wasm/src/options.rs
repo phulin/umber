@@ -606,8 +606,10 @@ where
         .as_f64()
         .filter(|number| number.is_finite() && number.fract() == 0.0 && *number >= 0.0)
         .ok_or_else(|| js_error(&format!("{name} must be a non-negative integer")))?;
-    if number > u64::MAX as f64 {
-        return Err(js_error(&format!("{name} is out of range")));
+    if number > crate::wire::MAX_SAFE_INTEGER as f64 {
+        return Err(js_error(&format!(
+            "{name} exceeds JavaScript's safe integer range"
+        )));
     }
     T::try_from(number as u64).map_err(|_| js_error(&format!("{name} is out of range")))
 }
@@ -620,8 +622,12 @@ where
         .as_f64()
         .filter(|number| number.is_finite() && number.fract() == 0.0)
         .ok_or_else(|| js_error(&format!("{name} must be an integer")))?;
-    if number < i64::MIN as f64 || number > i64::MAX as f64 {
-        return Err(js_error(&format!("{name} is out of range")));
+    if number < -(crate::wire::MAX_SAFE_INTEGER as f64)
+        || number > crate::wire::MAX_SAFE_INTEGER as f64
+    {
+        return Err(js_error(&format!(
+            "{name} exceeds JavaScript's safe integer range"
+        )));
     }
     T::try_from(number as i64).map_err(|_| js_error(&format!("{name} is out of range")))
 }

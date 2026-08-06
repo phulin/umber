@@ -19,6 +19,8 @@ the manifest's validated content-addressed object name.
   selection plans owned by `umber-distribution`.
 - `src/options.rs`: strict conversion of JavaScript options (including engine mode) plus shared-VFS typed resource responses, domain/kind wire values, and request keys.
 - `src/result.rs`: completed-attempt and diagnostic conversion facade.
+- `src/wire.rs`: schema-versioned host-neutral DTO authority, safe JavaScript
+  integers, binary serializer, and derived TypeScript shapes.
 - `src/result/`: focused binary-safe resource-request, metrics, and incremental-render conversion modules.
 - `tests/it.rs`: wasm-bindgen boundary, lifecycle, and native fixed-point
   representation/failure parity tests over shared stabilization fixtures.

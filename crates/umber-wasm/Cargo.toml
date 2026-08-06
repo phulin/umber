@@ -12,9 +12,13 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 bib-engine = { path = "../bib-engine" }
 js-sys = "0.3"
+serde.workspace = true
+serde-wasm-bindgen.workspace = true
+serde_bytes.workspace = true
 serde_json.workspace = true
 tex-arith = { path = "../tex-arith" }
 tex-state = { path = "../tex-state" }
+ts-rs.workspace = true
 umber = { path = "../umber" }
 umber-distribution = { path = "../umber-distribution" }
 wasm-bindgen = "0.2"

@@ -3,6 +3,7 @@
 mod catalog_boundary;
 mod options;
 mod result;
+pub mod wire;
 
 use js_sys::{Array, Uint8Array};
 use options::{
@@ -323,6 +324,12 @@ pub fn format_schema_version() -> u32 {
 #[wasm_bindgen(js_name = acceptedInputObservationSchemaVersion)]
 pub fn accepted_input_observation_schema_version() -> u32 {
     umber::ACCEPTED_INPUT_OBSERVATION_SCHEMA_VERSION
+}
+
+/// Returns the compatibility version of the host-neutral WebAssembly DTOs.
+#[wasm_bindgen(js_name = wireSchemaVersion)]
+pub fn wire_schema_version() -> u32 {
+    wire::SCHEMA_VERSION
 }
 
 /// Returns Umber's exact content identity for bytes supplied across the JS boundary.
