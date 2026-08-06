@@ -1,7 +1,7 @@
 #![cfg(target_arch = "wasm32")]
 
 use js_sys::{Array, Object, Reflect, Uint8Array};
-use umber_wasm::{CompilerSession, JsSessionOptions};
+use umber_wasm::{CompilerSession, JsResourceResponses, JsSessionOptions};
 use wasm_bindgen::{JsCast, JsValue};
 use wasm_bindgen_test::wasm_bindgen_test;
 
@@ -133,7 +133,7 @@ fn pdf_pk_fallback_keeps_complete_key_over_the_client_vfs_protocol() {
     );
     set(&response, "bytes", bytes(CMR10_PK_600).as_ref());
     session
-        .provide_resources(&Array::of1(&response))
+        .provide_resources(resource_responses(&Array::of1(&response)))
         .expect("typed PK response");
     assert_eq!(
         string_field(session.advance().expect("complete").as_ref(), "kind"),
@@ -160,7 +160,7 @@ fn provide(session: &mut CompilerSession, request: &JsValue, path: &str, content
     set(&response, "virtualPath", &JsValue::from_str(path));
     set(&response, "bytes", bytes(contents).as_ref());
     session
-        .provide_resources(&Array::of1(&response))
+        .provide_resources(resource_responses(&Array::of1(&response)))
         .expect("provide resolved file");
 }
 
@@ -171,7 +171,7 @@ fn provide_unavailable(session: &mut CompilerSession, request: &JsValue) {
     }
     set(&unavailable, "type", &JsValue::from_str("file-unavailable"));
     session
-        .provide_resources(&Array::of1(&unavailable))
+        .provide_resources(resource_responses(&Array::of1(&unavailable)))
         .expect("provide authoritative absence");
 }
 
@@ -215,6 +215,10 @@ fn fixture_pfb() -> Vec<u8> {
 
 fn bytes(value: &[u8]) -> Uint8Array {
     Uint8Array::from(value)
+}
+
+fn resource_responses(responses: &Array) -> &JsResourceResponses {
+    responses.unchecked_ref()
 }
 
 fn field(object: &JsValue, name: &str) -> JsValue {

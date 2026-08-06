@@ -13,8 +13,9 @@ use umber::{
 };
 use umber_wasm::{
     CompilerSession, EditorSession, JsEditorSessionOptions, JsProjectSessionOptions,
-    JsSessionOptions, JsSourcePatch, ProjectSession, accepted_input_observation_schema_version,
-    format_schema_version, package_version, wire_schema_version,
+    JsResourceResponses, JsSessionOptions, JsSourcePatch, ProjectSession,
+    accepted_input_observation_schema_version, format_schema_version, package_version,
+    wire_schema_version,
 };
 use wasm_bindgen::{JsCast, JsValue};
 use wasm_bindgen_futures::JsFuture;
@@ -47,7 +48,14 @@ fn editor_binding_exposes_provisional_and_stable_binary_outputs() {
     let provisional_dvi = Uint8Array::new(&field(&provisional_tex, "dvi"));
     assert!(provisional_dvi.length() > 0);
     assert_eq!(
-        string_field(&session.status().expect("status"), "kind"),
+        string_field(
+            session
+                .status()
+                .expect("status getter")
+                .expect("status")
+                .as_ref(),
+            "kind",
+        ),
         "provisional"
     );
 
@@ -93,7 +101,7 @@ fn editor_stabilization_resumes_the_retained_resource_wait() {
     }
     set(&unavailable, "type", &JsValue::from_str("file-unavailable"));
     session
-        .provide_resources(&Array::of1(&unavailable))
+        .provide_resources(resource_responses(&Array::of1(&unavailable)))
         .expect("negative probe");
     assert_eq!(
         string_field(session.advance().expect("provisional").as_ref(), "kind"),
@@ -113,7 +121,7 @@ fn editor_stabilization_resumes_the_retained_resource_wait() {
     let request: Object = required.get(0).unchecked_into();
     let response = file_response(&request, "/texlive/remote.tex", b"\relax\n");
     session
-        .provide_resources(&Array::of1(&response))
+        .provide_resources(resource_responses(&Array::of1(&response)))
         .expect("remote response");
     let stable = session.stabilize_attempt().expect("resumed pass");
     assert_eq!(string_field(stable.as_ref(), "kind"), "stable");
@@ -959,7 +967,7 @@ async fn generated_html_projects_exact_geometry_at_firefox_zoom_levels() {
             responses.push(&response);
         }
         session
-            .provide_resources(&responses)
+            .provide_resources(resource_responses(&responses))
             .expect("provide retained WOFF2 batch");
         complete = session.advance().expect("resume HTML compile");
     }
@@ -976,22 +984,28 @@ async fn generated_html_projects_exact_geometry_at_firefox_zoom_levels() {
     assert!(html_text.contains("αЖ µ £ ¥ é</text>"), "{html_text}");
     let event = rendered_text_event(&html_text, b'A');
     let output_id = rendered_output_id(&html_text);
-    let retention_before = session.retention_metrics().expect("accepted retention");
+    let retention_before = session
+        .retention_metrics()
+        .expect("accepted retention getter")
+        .expect("accepted retention");
     assert!(
-        field(&retention_before, "resourceBytes")
+        field(retention_before.as_ref(), "resourceBytes")
             .as_f64()
             .expect("numeric resource bytes")
             > 0.0
     );
-    let diagnostic_before = field(&retention_before, "diagnosticBytes")
+    let diagnostic_before = field(retention_before.as_ref(), "diagnosticBytes")
         .as_f64()
         .expect("numeric diagnostic bytes");
     let location = session
         .rendered_source_location(1, event, Some(0), output_id.clone(), 1)
         .expect("source query")
         .expect("mapped source");
-    let retention_after = session.retention_metrics().expect("live retention");
-    let diagnostic_after = field(&retention_after, "diagnosticBytes")
+    let retention_after = session
+        .retention_metrics()
+        .expect("live retention getter")
+        .expect("live retention");
+    let diagnostic_after = field(retention_after.as_ref(), "diagnosticBytes")
         .as_f64()
         .expect("numeric diagnostic bytes");
     assert!(diagnostic_after > diagnostic_before);
@@ -1150,7 +1164,7 @@ fn empty_resource_batch_uses_rust_no_progress_state() {
     assert_eq!(string_field(missing.as_ref(), "kind"), "need-resources");
 
     stalled_session
-        .provide_resources(&Array::new())
+        .provide_resources(resource_responses(&Array::new()))
         .expect("empty partial batch reaches Rust");
     let stalled = stalled_session.advance().expect("typed no-progress result");
     assert_eq!(string_field(stalled.as_ref(), "kind"), "error");
@@ -1174,14 +1188,14 @@ fn resource_batches_use_rust_atomic_validation_and_idempotency() {
     let conflict = file_response(&request, "/texlive/remote.tex", b"second");
     let batch = Array::of2(&first, &conflict);
     let error = fresh
-        .provide_resources(&batch)
+        .provide_resources(resource_responses(&batch))
         .expect_err("conflicting batch must fail atomically");
     assert_eq!(string_field(&error, "code"), "conflicting-resource");
     assert_eq!(fresh.resolved_file_count().expect("count"), 0);
 
     let invalid = file_response(&request, "/texlive/../escape.tex", b"first");
     let error = fresh
-        .provide_resources(&Array::of1(&invalid))
+        .provide_resources(resource_responses(&Array::of1(&invalid)))
         .expect_err("invalid path");
     assert_eq!(string_field(&error, "code"), "invalid-resource");
     assert_eq!(fresh.resolved_file_count().expect("count"), 0);
@@ -1189,16 +1203,16 @@ fn resource_batches_use_rust_atomic_validation_and_idempotency() {
     let malformed = Object::new();
     set(&malformed, "type", &JsValue::from_str("unknown"));
     let error = fresh
-        .provide_resources(&Array::of1(&malformed))
+        .provide_resources(resource_responses(&Array::of1(&malformed)))
         .expect_err("invalid response representation");
     assert_eq!(string_field(&error, "code"), "invalid-resource");
     assert_eq!(fresh.resolved_file_count().expect("count"), 0);
 
     fresh
-        .provide_resources(&Array::of1(&first))
+        .provide_resources(resource_responses(&Array::of1(&first)))
         .expect("valid response");
     fresh
-        .provide_resources(&Array::of1(&first))
+        .provide_resources(resource_responses(&Array::of1(&first)))
         .expect("exact duplicate is idempotent");
     assert_eq!(fresh.resolved_file_count().expect("count"), 1);
 }
@@ -1233,16 +1247,16 @@ fn html_font_bindings_distinguish_idempotent_duplicates_from_conflicts() {
         .unchecked_into();
     let response = html_font_response(&request);
     session
-        .provide_resources(&Array::of1(&response))
+        .provide_resources(resource_responses(&Array::of1(&response)))
         .expect("initial font binding");
     session
-        .provide_resources(&Array::of1(&response))
+        .provide_resources(resource_responses(&Array::of1(&response)))
         .expect("byte-identical duplicate binding");
 
     let conflict = Object::assign(&Object::new(), &response);
     set(&conflict, "bytes", bytes(b"different font bytes").as_ref());
     let error = session
-        .provide_resources(&Array::of1(&conflict))
+        .provide_resources(resource_responses(&Array::of1(&conflict)))
         .expect_err("different bytes must conflict");
     assert_eq!(string_field(&error, "code"), "conflicting-resource");
     assert!(string_field(&error, "message").contains("cmr10"));
@@ -1266,7 +1280,7 @@ fn resource_batches_use_rust_limits() {
         .expect("empty main source");
     let oversized = file_response(&request, "/texlive/remote.tex", b"xx");
     let error = limited
-        .provide_resources(&Array::of1(&oversized))
+        .provide_resources(resource_responses(&Array::of1(&oversized)))
         .expect_err("oversized response");
     assert_eq!(string_field(&error, "code"), "limit");
     assert_eq!(limited.resolved_file_count().expect("count"), 0);
@@ -1286,10 +1300,10 @@ fn unavailable_file_response_crosses_the_wire_and_counts_as_progress() {
     }
     set(&unavailable, "type", &JsValue::from_str("file-unavailable"));
     session
-        .provide_resources(&Array::of1(&unavailable))
+        .provide_resources(resource_responses(&Array::of1(&unavailable)))
         .expect("negative response");
     session
-        .provide_resources(&Array::of1(&unavailable))
+        .provide_resources(resource_responses(&Array::of1(&unavailable)))
         .expect("duplicate negative response");
     let result = session.advance().expect("retry after negative response");
     assert_eq!(string_field(result.as_ref(), "kind"), "error");
@@ -1610,8 +1624,16 @@ fn apply_length_changing_rendered_query_patch(
         .expect("length-changing patch");
     let third = session.advance().expect("third revision");
     assert_eq!(string_field(third.as_ref(), "kind"), "complete");
-    let reuse = session.reuse_metrics().expect("reuse metrics");
-    assert!(field(&reuse, "pagesReused").as_f64().unwrap_or_default() > 0.0);
+    let reuse = session
+        .reuse_metrics()
+        .expect("reuse metrics getter")
+        .expect("reuse metrics");
+    assert!(
+        field(reuse.as_ref(), "pagesReused")
+            .as_f64()
+            .unwrap_or_default()
+            > 0.0
+    );
     let third_output = field(third.as_ref(), "output");
     let third_html = String::from_utf8(Uint8Array::new(&field(&third_output, "html")).to_vec())
         .expect("third HTML");
@@ -1814,7 +1836,7 @@ fn provide_unavailable_editor_resources(session: &mut EditorSession, attempt: &J
         responses.push(&response);
     }
     session
-        .provide_resources(&responses)
+        .provide_resources(resource_responses(&responses))
         .expect("WASM unavailable resources");
 }
 
@@ -1854,7 +1876,7 @@ fn provide_file(
     let request: Object = request.clone().unchecked_into();
     let response = file_response(&request, path, contents);
     set(&response, "type", &JsValue::from_str("file"));
-    session.provide_resources(&Array::of1(&response))
+    session.provide_resources(resource_responses(&Array::of1(&response)))
 }
 
 fn provide_requested_html_font(session: &mut CompilerSession) {
@@ -1865,7 +1887,7 @@ fn provide_requested_html_font(session: &mut CompilerSession) {
     let request: Object = required.get(0).unchecked_into();
     let response = html_font_response(&request);
     session
-        .provide_resources(&Array::of1(&response))
+        .provide_resources(resource_responses(&Array::of1(&response)))
         .expect("provide HTML font");
 }
 
@@ -1976,6 +1998,10 @@ fn source_patch(
 
 fn bytes(value: &[u8]) -> Uint8Array {
     Uint8Array::from(value)
+}
+
+fn resource_responses(responses: &Array) -> &JsResourceResponses {
+    responses.unchecked_ref()
 }
 
 fn field(object: &JsValue, name: &str) -> JsValue {
