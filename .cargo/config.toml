@@ -7,4 +7,8 @@ rustflags = [
   'getrandom_backend="wasm_js"',
   "-C",
   "link-arg=-zstack-size=4194304",
+  # wasm-bindgen holds debug custom sections while rewriting test modules;
+  # strip them at the linker boundary while retaining symbolic function names.
+  "-C",
+  "link-arg=--strip-debug",
 ]
