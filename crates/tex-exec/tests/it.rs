@@ -13,6 +13,8 @@ use tex_state::{
 #[path = "../src/execution_receipt.rs"]
 #[allow(dead_code)]
 mod execution_receipt;
+#[path = "../src/execution_receipt/tests.rs"]
+mod execution_receipt_tests;
 
 fn run_tex82(source: &[u8], tracing_online: bool) -> String {
     let mut stores = Universe::new_with_plain_catcodes();

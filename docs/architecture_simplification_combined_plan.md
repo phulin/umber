@@ -123,10 +123,12 @@ effects, artifact identities, diagnostics, and termination. Its optional
 evidence sink is allocation-free when disabled and record-bounded when active.
 While the four predecessor entry shapes coexist, a temporary harness compares
 exact detached state preimages, complete receipts, and ordered command evidence
-for ordinary, observed, nested, and alignment operations under hard step,
-state-byte, receipt-record, and evidence-record ceilings. The harness and entry
-shape selector are migration scaffolding to delete with the predecessor paths;
-they introduce no `tex-oracle` schema or other public wire change.
+for ordinary, observed, nested, and alignment operations. State and receipt
+capture enforce their ceilings while appending, rather than after an unbounded
+detached allocation; evidence retention and comparison steps are independently
+bounded. The harness and entry shape selector are migration scaffolding to
+delete with the predecessor paths; they introduce no `tex-oracle` schema or
+other public wire change.
 
 ## 2. One oracle evidence, finalization, and comparison pipeline
 

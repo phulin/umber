@@ -64,7 +64,7 @@ pub(crate) struct ExecutionReceipt {
 }
 
 impl ExecutionReceipt {
-    pub(crate) fn new(operation: OperationKind, termination: OperationTermination) -> Self {
+    fn new(operation: OperationKind, termination: OperationTermination) -> Self {
         Self {
             operation,
             mutations: Vec::new(),
@@ -77,24 +77,13 @@ impl ExecutionReceipt {
     }
 
     /// Captures the receipt-owned projection of one already committed record.
-    pub(crate) fn capture_observation(&mut self, observation: &CommandObservation) {
+    fn capture_observation(&mut self, observation: &CommandObservation) {
         match observation {
             CommandObservation::Mutation(record) => self.mutations.push(record.clone()),
             CommandObservation::Diagnostic(record) => self.diagnostics.push(record.clone()),
             CommandObservation::Effect(record) => self.effects.semantic.push(record.clone()),
             _ => {}
         }
-    }
-
-    fn record_count(&self) -> usize {
-        self.mutations
-            .len()
-            .saturating_add(self.resources.len())
-            .saturating_add(self.effects.semantic.len())
-            .saturating_add(self.effects.world.len())
-            .saturating_add(self.artifacts.len())
-            .saturating_add(self.diagnostics.len())
-            .saturating_add(1)
     }
 }
 
@@ -124,7 +113,7 @@ impl EvidenceSink {
         }
     }
 
-    fn into_evidence(self) -> Result<Vec<CommandObservation>, ShadowLimitExceeded> {
+    pub(crate) fn into_evidence(self) -> Result<Vec<CommandObservation>, ShadowLimitExceeded> {
         match self {
             Self::Disabled => Ok(Vec::new()),
             Self::Buffered(buffer) => buffer.into_evidence(),
@@ -187,22 +176,11 @@ pub(crate) struct ShadowLimits {
 /// Exact detached state preimage supplied by each shadow implementation.
 ///
 /// The harness compares bytes, not a hash, so collisions cannot conceal a
-/// state mismatch. Construction enforces the retained-memory ceiling before
-/// the evidence can enter a comparison result.
+/// state mismatch. Only [`ShadowCapture`] can construct this value; its
+/// append-time ceiling prevents an implementation from first handing the
+/// harness an already-unbounded detached `Vec`.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct ExactStateEvidence(Vec<u8>);
-
-impl ExactStateEvidence {
-    pub(crate) fn new(bytes: Vec<u8>, limit: usize) -> Result<Self, ShadowLimitExceeded> {
-        if bytes.len() > limit {
-            return Err(ShadowLimitExceeded::StateBytes {
-                limit,
-                actual: bytes.len(),
-            });
-        }
-        Ok(Self(bytes))
-    }
-}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct ShadowOutcome {
@@ -244,6 +222,122 @@ pub(crate) enum ShadowSide {
     Replacement,
 }
 
+/// Bounded capture owned by one side of a shadow comparison.
+///
+/// State bytes and receipt records enter only through append-time checked
+/// methods. Once a ceiling is crossed, the capture retains no more records and
+/// reports the exact attempted size when the runner returns. Command evidence
+/// uses the independently bounded [`EvidenceSink`].
+pub(crate) struct ShadowCapture {
+    limits: ShadowLimits,
+    state: Vec<u8>,
+    attempted_state_bytes: usize,
+    receipt: ExecutionReceipt,
+    attempted_receipt_records: usize,
+    evidence: EvidenceSink,
+}
+
+impl ShadowCapture {
+    pub(crate) fn new(operation: OperationKind, limits: ShadowLimits) -> Self {
+        Self {
+            limits,
+            state: Vec::with_capacity(limits.max_state_bytes.min(4096)),
+            attempted_state_bytes: 0,
+            receipt: ExecutionReceipt::new(operation, OperationTermination::Continue),
+            attempted_receipt_records: 1,
+            evidence: EvidenceSink::bounded(limits.max_evidence_records, true),
+        }
+    }
+
+    pub(crate) fn record_state_bytes(&mut self, bytes: &[u8]) {
+        self.attempted_state_bytes = self.attempted_state_bytes.saturating_add(bytes.len());
+        if self.attempted_state_bytes <= self.limits.max_state_bytes {
+            self.state.extend_from_slice(bytes);
+        }
+    }
+
+    pub(crate) fn record_observation(&mut self, observation: CommandObservation) {
+        let receipt_records = usize::from(matches!(
+            &observation,
+            CommandObservation::Mutation(_)
+                | CommandObservation::Diagnostic(_)
+                | CommandObservation::Effect(_)
+        ));
+        if self.reserve_receipt_records(receipt_records) {
+            self.receipt.capture_observation(&observation);
+        }
+        if let Some(observer) = self.evidence.as_observer() {
+            observer.committed(observation);
+        }
+    }
+
+    pub(crate) fn record_resource(&mut self, resource: ResourceNeed) {
+        if self.reserve_receipt_records(1) {
+            self.receipt.resources.push(resource);
+        }
+    }
+
+    pub(crate) fn record_world_effect(&mut self, effect: WorldEffectRecord) {
+        if self.reserve_receipt_records(1) {
+            self.receipt.effects.world.push(effect);
+        }
+    }
+
+    pub(crate) fn record_artifact(&mut self, artifact: ContentHash) {
+        if self.reserve_receipt_records(1) {
+            self.receipt.artifacts.push(artifact);
+        }
+    }
+
+    pub(crate) fn set_termination(&mut self, termination: OperationTermination) {
+        self.receipt.termination = termination;
+    }
+
+    fn reserve_receipt_records(&mut self, additional: usize) -> bool {
+        self.attempted_receipt_records = self.attempted_receipt_records.saturating_add(additional);
+        self.attempted_receipt_records <= self.limits.max_receipt_records
+    }
+
+    pub(crate) fn retained_state_bytes(&self) -> usize {
+        self.state.len()
+    }
+
+    pub(crate) fn retained_receipt_records(&self) -> usize {
+        self.receipt.mutations.len()
+            + self.receipt.resources.len()
+            + self.receipt.effects.semantic.len()
+            + self.receipt.effects.world.len()
+            + self.receipt.artifacts.len()
+            + self.receipt.diagnostics.len()
+            + 1
+    }
+
+    pub(crate) fn finish(
+        self,
+    ) -> Result<(ShadowOutcome, Vec<CommandObservation>), ShadowLimitExceeded> {
+        if self.attempted_state_bytes > self.limits.max_state_bytes {
+            return Err(ShadowLimitExceeded::StateBytes {
+                limit: self.limits.max_state_bytes,
+                actual: self.attempted_state_bytes,
+            });
+        }
+        if self.attempted_receipt_records > self.limits.max_receipt_records {
+            return Err(ShadowLimitExceeded::ReceiptRecords {
+                limit: self.limits.max_receipt_records,
+                actual: self.attempted_receipt_records,
+            });
+        }
+        let evidence = self.evidence.into_evidence()?;
+        Ok((
+            ShadowOutcome {
+                state: ExactStateEvidence(self.state),
+                receipt: self.receipt,
+            },
+            evidence,
+        ))
+    }
+}
+
 /// Temporary exact differential runner used while operation paths coexist.
 pub(crate) struct ShadowDifferentialHarness {
     limits: ShadowLimits,
@@ -262,8 +356,8 @@ impl ShadowDifferentialHarness {
         replacement: Replacement,
     ) -> Result<ShadowOutcome, ShadowError>
     where
-        Legacy: FnOnce(&mut EvidenceSink) -> Result<ShadowOutcome, ShadowLimitExceeded>,
-        Replacement: FnOnce(&mut EvidenceSink) -> Result<ShadowOutcome, ShadowLimitExceeded>,
+        Legacy: FnOnce(&mut ShadowCapture) -> Result<(), ShadowLimitExceeded>,
+        Replacement: FnOnce(&mut ShadowCapture) -> Result<(), ShadowLimitExceeded>,
     {
         if self.steps >= self.limits.max_steps {
             return Err(ShadowError::Limit {
@@ -308,34 +402,18 @@ impl ShadowDifferentialHarness {
         run: Run,
     ) -> Result<(ShadowOutcome, Vec<CommandObservation>), ShadowError>
     where
-        Run: FnOnce(&mut EvidenceSink) -> Result<ShadowOutcome, ShadowLimitExceeded>,
+        Run: FnOnce(&mut ShadowCapture) -> Result<(), ShadowLimitExceeded>,
     {
-        let mut sink = EvidenceSink::bounded(self.limits.max_evidence_records, true);
-        let outcome = run(&mut sink).map_err(|error| ShadowError::Limit {
+        let mut capture = ShadowCapture::new(operation, self.limits);
+        run(&mut capture).map_err(|error| ShadowError::Limit {
             operation,
             side,
             error,
         })?;
-        let receipt_records = outcome.receipt.record_count();
-        if receipt_records > self.limits.max_receipt_records {
-            return Err(ShadowError::Limit {
-                operation,
-                side,
-                error: ShadowLimitExceeded::ReceiptRecords {
-                    limit: self.limits.max_receipt_records,
-                    actual: receipt_records,
-                },
-            });
-        }
-        let evidence = sink.into_evidence().map_err(|error| ShadowError::Limit {
+        capture.finish().map_err(|error| ShadowError::Limit {
             operation,
             side,
             error,
-        })?;
-        Ok((outcome, evidence))
+        })
     }
 }
-
-#[cfg(test)]
-#[path = "execution_receipt/tests.rs"]
-mod tests;

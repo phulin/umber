@@ -413,10 +413,12 @@ live effects, artifact identities, diagnostics, and termination while an
 optional bounded sink retains the complete ordered command evidence. A
 temporary shadow harness compares exact detached state bytes, the whole
 receipt, and the evidence stream for ordinary, observed, nested, and alignment
-entry shapes under hard step, state-byte, receipt-record, and evidence-record
-ceilings. This is an internal migration seam: it neither changes nor extends
-the `tex-oracle` wire schema, and it is deleted when the legacy operation paths
-are removed.
+entry shapes. State bytes and receipt records enter append-time bounded capture
+objects, and command evidence has its own bounded observer, so the hard step,
+state-byte, receipt-record, and evidence-record ceilings limit retained shadow
+memory instead of checking only after allocation. This is an internal migration
+seam: it neither changes nor extends the `tex-oracle` wire schema, and it is
+deleted when the legacy operation paths are removed.
 
 Shipout decodes compact node words sequentially and always drives artifact
 encoding without an ordinary-path owned page tree. DVI page-plan construction

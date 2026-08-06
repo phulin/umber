@@ -1,10 +1,11 @@
 use tex_command::{
-    CommandObservation, DiagnosticRecord, EffectRecord, MutationRecord, MutationTarget,
-    ObservationEffectKind, ObservationValue,
+    CommandObservation, DiagnosticRecord, EffectRecord, GeometryRecord, MutationRecord,
+    MutationTarget, ObservationEffectKind, ObservationValue,
 };
 use tex_state::{ContentHash, EffectRecord as WorldEffectRecord, PrintSink};
 
-use super::*;
+use super::execution_receipt::*;
+use crate::ResourceNeed;
 
 const LIMITS: ShadowLimits = ShadowLimits {
     max_steps: 4,
@@ -39,42 +40,69 @@ fn diagnostic() -> DiagnosticRecord {
     }
 }
 
-fn outcome(
-    kind: OperationKind,
-    sink: &mut EvidenceSink,
-) -> Result<ShadowOutcome, ShadowLimitExceeded> {
-    let observations = [
-        CommandObservation::Mutation(mutation()),
-        CommandObservation::Effect(semantic_effect()),
-        CommandObservation::Diagnostic(diagnostic()),
-    ];
-    let mut receipt = ExecutionReceipt::new(kind, OperationTermination::Continue);
-    for observation in observations {
-        receipt.capture_observation(&observation);
-        if let Some(observer) = sink.as_observer() {
-            observer.committed(observation);
-        }
-    }
-    receipt.effects.world.push(WorldEffectRecord::StreamWrite {
+// These are deliberately independent producers. The temporary differential
+// gate must never prove itself by passing the same function to both sides.
+fn legacy_path(kind: OperationKind, capture: &mut ShadowCapture) {
+    capture.record_state_bytes(&[1]);
+    capture.record_state_bytes(&[2, 3]);
+    capture.record_observation(CommandObservation::Mutation(mutation()));
+    capture.record_observation(CommandObservation::Effect(semantic_effect()));
+    capture.record_observation(CommandObservation::Diagnostic(diagnostic()));
+    capture.record_world_effect(WorldEffectRecord::StreamWrite {
         sink: PrintSink::TerminalAndLog,
         text: "receipt".into(),
     });
-    receipt.artifacts.push(ContentHash::from_bytes(b"artifact"));
-    Ok(ShadowOutcome {
-        state: ExactStateEvidence::new(vec![1, 2, 3], LIMITS.max_state_bytes)?,
-        receipt,
-    })
+    capture.record_artifact(ContentHash::from_bytes(b"artifact"));
+    if kind == OperationKind::Alignment {
+        capture.set_termination(OperationTermination::Continue);
+    }
+}
+
+fn replacement_path(kind: OperationKind, capture: &mut ShadowCapture) {
+    capture.record_state_bytes(&[1, 2]);
+    capture.record_state_bytes(&[3]);
+    capture.record_observation(CommandObservation::Mutation(MutationRecord {
+        target: MutationTarget::Register,
+        key: ObservationValue::Integer(7),
+        value: ObservationValue::Integer(11),
+        global: false,
+    }));
+    capture.record_observation(CommandObservation::Effect(EffectRecord {
+        kind: ObservationEffectKind::Write,
+        channel: String::from("term_and_log"),
+        value: ObservationValue::Name(String::from("receipt")),
+        source: None,
+    }));
+    capture.record_observation(CommandObservation::Diagnostic(DiagnosticRecord {
+        severity: "error",
+        diagnostic: "shadow_test",
+        arguments: vec![],
+    }));
+    capture.record_world_effect(WorldEffectRecord::StreamWrite {
+        sink: PrintSink::TerminalAndLog,
+        text: String::from("receipt"),
+    });
+    capture.record_artifact(ContentHash::from_bytes(&[
+        97, 114, 116, 105, 102, 97, 99, 116,
+    ]));
+    match kind {
+        OperationKind::Ordinary
+        | OperationKind::Observed
+        | OperationKind::Nested
+        | OperationKind::Alignment => capture.set_termination(OperationTermination::Continue),
+    }
 }
 
 #[test]
 fn receipt_covers_every_commit_domain() {
-    let mut sink = EvidenceSink::disabled();
-    let mut result = outcome(OperationKind::Ordinary, &mut sink).expect("bounded receipt");
-    result.receipt.resources.push(ResourceNeed::Input {
+    let mut capture = ShadowCapture::new(OperationKind::Ordinary, LIMITS);
+    legacy_path(OperationKind::Ordinary, &mut capture);
+    capture.record_resource(ResourceNeed::Input {
         name: "a.tex".into(),
         original_name: "a".into(),
     });
-    result.receipt.termination = OperationTermination::Suspended;
+    capture.set_termination(OperationTermination::Suspended);
+    let (result, _) = capture.finish().expect("bounded receipt");
 
     assert_eq!(result.receipt.mutations, [mutation()]);
     assert_eq!(result.receipt.resources.len(), 1);
@@ -86,7 +114,7 @@ fn receipt_covers_every_commit_domain() {
 }
 
 #[test]
-fn ordinary_observed_nested_and_alignment_paths_compare_exactly() {
+fn independent_ordinary_observed_nested_and_alignment_paths_compare_exactly() {
     let mut harness = ShadowDifferentialHarness::new(LIMITS);
     for kind in [
         OperationKind::Ordinary,
@@ -95,8 +123,18 @@ fn ordinary_observed_nested_and_alignment_paths_compare_exactly() {
         OperationKind::Alignment,
     ] {
         let compared = harness
-            .compare(kind, |sink| outcome(kind, sink), |sink| outcome(kind, sink))
-            .expect("identical shadows");
+            .compare(
+                kind,
+                |capture| {
+                    legacy_path(kind, capture);
+                    Ok(())
+                },
+                |capture| {
+                    replacement_path(kind, capture);
+                    Ok(())
+                },
+            )
+            .expect("independent equivalent shadows");
         assert_eq!(compared.receipt.operation, kind);
     }
 }
@@ -107,11 +145,14 @@ fn shadow_detects_exact_state_divergence() {
     let error = harness
         .compare(
             OperationKind::Ordinary,
-            |sink| outcome(OperationKind::Ordinary, sink),
-            |sink| {
-                let mut result = outcome(OperationKind::Ordinary, sink)?;
-                result.state = ExactStateEvidence::new(vec![1, 2, 4], LIMITS.max_state_bytes)?;
-                Ok(result)
+            |capture| {
+                legacy_path(OperationKind::Ordinary, capture);
+                Ok(())
+            },
+            |capture| {
+                replacement_path(OperationKind::Ordinary, capture);
+                capture.record_state_bytes(&[4]);
+                Ok(())
             },
         )
         .expect_err("state mismatch");
@@ -130,13 +171,20 @@ fn shadow_detects_ordered_evidence_divergence() {
     let error = harness
         .compare(
             OperationKind::Observed,
-            |sink| outcome(OperationKind::Observed, sink),
-            |sink| {
-                let result = outcome(OperationKind::Observed, sink)?;
-                if let Some(observer) = sink.as_observer() {
-                    observer.committed(CommandObservation::Diagnostic(diagnostic()));
-                }
-                Ok(result)
+            |capture| {
+                legacy_path(OperationKind::Observed, capture);
+                Ok(())
+            },
+            |capture| {
+                replacement_path(OperationKind::Observed, capture);
+                capture.record_observation(CommandObservation::Geometry(GeometryRecord::Hpack {
+                    width_sp: 1,
+                    height_sp: 2,
+                    depth_sp: 3,
+                    line: 4,
+                    source: None,
+                }));
+                Ok(())
             },
         )
         .expect_err("evidence mismatch");
@@ -155,11 +203,14 @@ fn shadow_detects_receipt_divergence() {
     let error = harness
         .compare(
             OperationKind::Nested,
-            |sink| outcome(OperationKind::Nested, sink),
-            |sink| {
-                let mut result = outcome(OperationKind::Nested, sink)?;
-                result.receipt.termination = OperationTermination::End;
-                Ok(result)
+            |capture| {
+                legacy_path(OperationKind::Nested, capture);
+                Ok(())
+            },
+            |capture| {
+                replacement_path(OperationKind::Nested, capture);
+                capture.set_termination(OperationTermination::End);
+                Ok(())
             },
         )
         .expect_err("receipt mismatch");
@@ -173,20 +224,37 @@ fn shadow_detects_receipt_divergence() {
 }
 
 #[test]
-fn evidence_state_receipt_and_step_limits_are_hard() {
+fn state_receipt_evidence_and_step_limits_are_append_time_hard() {
     let tiny = ShadowLimits {
         max_steps: 1,
         max_state_bytes: 2,
         max_evidence_records: 1,
         max_receipt_records: 1,
     };
+
+    let mut state_capture = ShadowCapture::new(OperationKind::Ordinary, tiny);
+    state_capture.record_state_bytes(&[1, 2, 3]);
+    assert!(state_capture.retained_state_bytes() <= tiny.max_state_bytes);
     assert_eq!(
-        ExactStateEvidence::new(vec![1, 2, 3], tiny.max_state_bytes),
+        state_capture.finish(),
         Err(ShadowLimitExceeded::StateBytes {
             limit: 2,
             actual: 3,
         })
     );
+
+    let mut receipt_capture = ShadowCapture::new(OperationKind::Ordinary, tiny);
+    for _ in 0..4_096 {
+        receipt_capture.record_resource(ResourceNeed::Input {
+            name: "a.tex".into(),
+            original_name: "a".into(),
+        });
+    }
+    assert!(receipt_capture.retained_receipt_records() <= tiny.max_receipt_records);
+    assert!(matches!(
+        receipt_capture.finish(),
+        Err(ShadowLimitExceeded::ReceiptRecords { limit: 1, .. })
+    ));
 
     let mut evidence_harness = ShadowDifferentialHarness::new(ShadowLimits {
         max_state_bytes: LIMITS.max_state_bytes,
@@ -196,28 +264,17 @@ fn evidence_state_receipt_and_step_limits_are_hard() {
     assert!(matches!(
         evidence_harness.compare(
             OperationKind::Alignment,
-            |sink| outcome(OperationKind::Alignment, sink),
-            |sink| outcome(OperationKind::Alignment, sink),
+            |capture| {
+                legacy_path(OperationKind::Alignment, capture);
+                Ok(())
+            },
+            |capture| {
+                replacement_path(OperationKind::Alignment, capture);
+                Ok(())
+            },
         ),
         Err(ShadowError::Limit {
             error: ShadowLimitExceeded::EvidenceRecords { limit: 1 },
-            ..
-        })
-    ));
-
-    let mut receipt_harness = ShadowDifferentialHarness::new(ShadowLimits {
-        max_state_bytes: LIMITS.max_state_bytes,
-        max_evidence_records: LIMITS.max_evidence_records,
-        ..tiny
-    });
-    assert!(matches!(
-        receipt_harness.compare(
-            OperationKind::Alignment,
-            |sink| outcome(OperationKind::Alignment, sink),
-            |sink| outcome(OperationKind::Alignment, sink),
-        ),
-        Err(ShadowError::Limit {
-            error: ShadowLimitExceeded::ReceiptRecords { limit: 1, .. },
             ..
         })
     ));
@@ -227,17 +284,19 @@ fn evidence_state_receipt_and_step_limits_are_hard() {
         step_harness
             .compare(
                 OperationKind::Ordinary,
-                |sink| outcome(OperationKind::Ordinary, sink),
-                |sink| outcome(OperationKind::Ordinary, sink),
+                |capture| {
+                    legacy_path(OperationKind::Ordinary, capture);
+                    Ok(())
+                },
+                |capture| {
+                    replacement_path(OperationKind::Ordinary, capture);
+                    Ok(())
+                },
             )
             .expect("inside step bound");
     }
     assert!(matches!(
-        step_harness.compare(
-            OperationKind::Ordinary,
-            |sink| outcome(OperationKind::Ordinary, sink),
-            |sink| outcome(OperationKind::Ordinary, sink),
-        ),
+        step_harness.compare(OperationKind::Ordinary, |_| Ok(()), |_| Ok(()),),
         Err(ShadowError::Limit {
             error: ShadowLimitExceeded::Steps { limit: 4 },
             ..
