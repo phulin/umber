@@ -1120,11 +1120,10 @@ mod option_bytes {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_arch = "wasm32"))]
 mod tests {
     use super::*;
 
-    #[cfg(target_arch = "wasm32")]
     #[wasm_bindgen_test::wasm_bindgen_test]
     fn diagnostic_codes_and_optional_omission_are_stable() {
         let diagnostic = DiagnosticDto {
@@ -1217,7 +1216,6 @@ mod tests {
         );
     }
 
-    #[cfg(target_arch = "wasm32")]
     #[wasm_bindgen_test::wasm_bindgen_test]
     fn derived_typescript_names_binary_fields_explicitly() {
         let output = typescript_declarations();
@@ -1237,7 +1235,6 @@ mod tests {
         assert!(!output.contains("base64"));
     }
 
-    #[cfg(target_arch = "wasm32")]
     #[wasm_bindgen_test::wasm_bindgen_test]
     fn wasm_shape_uses_typed_arrays_omission_and_safe_numbers() {
         use js_sys::{Reflect, Uint8Array};
