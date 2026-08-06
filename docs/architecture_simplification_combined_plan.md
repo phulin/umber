@@ -390,6 +390,25 @@ materializer. New tape records, paired-cursor machinery, iterative deep-list
 measurement, and their invariants outweigh those deletions; none of program
 10's forecast reduction is credited to this child.
 
+**Shared-metrics authority and test accounting.** `umber2-vgjr.10.3`
+establishes `tex_typeset::metrics` as the neutral metric-event and accumulation
+authority for packing, line breaking, vertical contributions, and Appendix G.
+Packing still owns glue setting and diagnostics; line breaking still owns
+font-expansion capacity, prefix subtraction, route badness, and demerits;
+vertical breaking still owns legal breakpoints, infinite-shrink reporting, and
+typed overflow; math still owns transaction topology and occurrence-ordered
+pack observations. The shared seam therefore removes arithmetic/topology
+duplication without turning those policies into flags.
+
+The implementation adds 550 and deletes 201 production Rust lines, a net
+addition of 349. The new event/cursor vocabulary and explicit overflow-policy
+boundary outweigh the removed local accumulators, so none of program 10's
+forecast production reduction is credited. The closed
+`typesetting_assertion_ledger.md` maps every assertion in the three removed
+migration aggregate cases to active case-level owners and retains the unique
+vertical-break tie case. Test Rust adds seven and deletes 165 lines, a net
+deletion of 158; this is the only test reduction credited to this child.
+
 ## 11. Publish one canonical font runtime while preserving format-specific policy
 
 **Outcome.** TFM parsing retains raw tables only through reference and error-precedence validation, then publishes canonical `FontMetrics` through one loaded-font constructor. OpenType MATH uses one strict eager validation walk and lazy borrowed queries through the existing scaled facade. A realized font identity feeds HTML, PDF, incrementality, and distribution boundaries without repeated decoding.

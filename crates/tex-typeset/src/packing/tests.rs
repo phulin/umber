@@ -2,6 +2,7 @@ use super::*;
 use tex_fonts::metrics::CharTag;
 use tex_fonts::{CharMetrics, FontMetrics, LoadedFont};
 use tex_state::Universe;
+use tex_state::glue::GlueSpec;
 use tex_state::node::{GlueKind, KernKind, LeaderPayload, Whatsit};
 
 fn sp(raw: i32) -> Scaled {
@@ -97,7 +98,12 @@ fn scalar_hlist(state: &impl TypesetState, nodes: NodeList<'_>) -> Measurement {
                 }
             }
             NodeRef::Kern { amount, .. } => out.width = add(out.width, amount),
-            NodeRef::Glue { spec, .. } => add_glue(&mut out, state.glue(spec), Axis::Horizontal),
+            NodeRef::Glue { spec, .. } => {
+                out.observe_horizontal(
+                    MetricEvent::Glue(state.glue(spec)),
+                    MetricOverflow::PACKING,
+                );
+            }
             NodeRef::MathOn(width) | NodeRef::MathOff(width) => out.width = add(out.width, width),
             NodeRef::Penalty(_) => {}
             _ => {}
@@ -848,71 +854,4 @@ fn packed_box_can_round_trip_through_survivor_box_register() {
         universe.nodes(survivor).first(),
         Some(NodeRef::HList(_))
     ));
-}
-
-#[test]
-fn tex82_hpack_node_measurement_orders_and_adjustment_migration() {
-    let mut universe = Universe::new();
-    let fil = universe.intern_glue(GlueSpec {
-        width: sp(3),
-        stretch: sp(5),
-        stretch_order: Order::Fil,
-        shrink: sp(0),
-        shrink_order: Order::Normal,
-    });
-    let list = universe.freeze_node_list(&[
-        Node::Kern {
-            amount: sp(7),
-            kind: KernKind::Explicit,
-        },
-        Node::Glue {
-            spec: fil,
-            kind: GlueKind::Normal,
-            leader: None,
-        },
-    ]);
-    let packed = hpack(
-        &universe,
-        list,
-        PackSpec::Exactly(sp(20)),
-        HpackParams {
-            hbadness: INF_BAD,
-            hfuzz: sp(0),
-            overfull_rule: sp(0),
-        },
-    );
-    assert_eq!(packed.node.width, sp(20));
-    assert_eq!(packed.node.glue_sign, Sign::Stretching);
-    assert_eq!(packed.node.glue_order, Order::Fil);
-}
-
-#[test]
-fn tex82_vpack_depth_and_append_to_vlist_baseline_matrix() {
-    let mut universe = Universe::new();
-    let child = universe.freeze_node_list(&[]);
-    let list = universe.freeze_node_list(&[Node::VList(BoxNode::new(BoxNodeFields {
-        width: sp(4),
-        height: sp(9),
-        depth: sp(7),
-        shift: sp(2),
-        box_lr: tex_state::node::BoxLr::Normal,
-        glue_set: GlueSetRatio::ZERO,
-        glue_sign: Sign::Normal,
-        glue_order: Order::Normal,
-        children: child,
-    }))]);
-    let packed = vpack(
-        &universe,
-        list,
-        PackSpec::Exactly(sp(15)),
-        VpackParams {
-            vbadness: INF_BAD,
-            vfuzz: sp(0),
-            box_max_depth: sp(3),
-        },
-    );
-    assert_eq!(
-        (packed.node.width, packed.node.height, packed.node.depth),
-        (sp(6), sp(15), sp(3))
-    );
 }

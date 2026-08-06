@@ -376,7 +376,7 @@
         },
         {
           "path": "crates/tex-typeset/src/packing/tests.rs",
-          "test": "tex82_hpack_node_measurement_orders_and_adjustment_migration"
+          "test": "spread_target_and_highest_glue_order"
         }
       ],
       "status": "covered",
@@ -431,7 +431,7 @@
         },
         {
           "path": "crates/tex-typeset/src/packing/tests.rs",
-          "test": "tex82_vpack_depth_and_append_to_vlist_baseline_matrix"
+          "test": "leader_glue_participates_in_packing_like_ordinary_glue"
         }
       ],
       "status": "covered",
@@ -552,7 +552,11 @@
         },
         {
           "path": "crates/tex-typeset/src/math/tests.rs",
-          "test": "tex82_clean_box_delimiter_and_mu_helper_matrix"
+          "test": "clean_empty_field_uses_tex82_null_box_without_hpack"
+        },
+        {
+          "path": "crates/tex-typeset/src/math/tests.rs",
+          "test": "mu_glue_kern_signed_rounding_and_rebox_boundaries"
         },
         {
           "path": "tools/tex-command-stream/tests/it/command_semantic.rs",

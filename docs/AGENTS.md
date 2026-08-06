@@ -25,6 +25,10 @@ before adding a feature to any manifest.
 fixtures, corpora, and harnesses; update it when those implementation facts
 change.
 
+`typesetting_assertion_ledger.md` maps every aggregate typesetting assertion
+removed by `umber2-vgjr.10.3` to an active case-level owner and records retained
+unique evidence.
+
 `frozen_format.md` defines the portable format-image container ABI,
 compatibility fingerprints, deterministic literal lookup-table representation,
 validation and checksum coverage, immutable/job-local split, and migration
