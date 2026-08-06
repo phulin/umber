@@ -34,6 +34,11 @@ from routine CI is never deletion evidence.
 removed by `umber2-vgjr.10.3` to an active case-level owner and records retained
 unique evidence.
 
+`typesetting_browser_compaction_ledger.md` records the post-program 7, 10, and
+13 audit of typesetting, HTML, WASM, Node, DOM, worker, hostile-input, and real
+browser evidence. It names the active owner of the one retired dormant wire
+case and the independently valuable cases that must remain.
+
 `frozen_format.md` defines the portable format-image container ABI,
 compatibility fingerprints, deterministic literal lookup-table representation,
 validation and checksum coverage, immutable/job-local split, and migration
