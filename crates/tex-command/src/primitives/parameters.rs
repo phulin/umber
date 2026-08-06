@@ -43,9 +43,7 @@ fn tex82_parameters() -> Vec<PrimitiveParameterView> {
     let mut rows = Vec::with_capacity(103);
     for index in (0..=42).chain(48..=59) {
         let parameter = IntParam::new(index);
-        let name = parameter
-            .canonical_name()
-            .expect("every TeX82 integer parameter has a canonical name");
+        let name = TEX82_INT_PARAMETER_NAMES[index as usize];
         let default = match parameter {
             IntParam::TIME => ParameterDefault::JobClock(JobClockField::MinutesSinceMidnight),
             IntParam::DAY => ParameterDefault::JobClock(JobClockField::Day),
@@ -63,11 +61,8 @@ fn tex82_parameters() -> Vec<PrimitiveParameterView> {
         ));
     }
     for index in 0..=20 {
-        let parameter = DimenParam::new(index);
         rows.push(parameter_view(
-            parameter
-                .tex82_name()
-                .expect("every TeX82 dimension parameter has a canonical name"),
+            TEX82_DIMEN_PARAMETER_NAMES[index as usize],
             PrimitiveProfile::Tex82,
             ParameterBankClass::Dimension,
             index,
@@ -75,27 +70,7 @@ fn tex82_parameters() -> Vec<PrimitiveParameterView> {
             ParameterDefault::Scaled(0),
         ));
     }
-    const GLUE_NAMES: [&str; 18] = [
-        "lineskip",
-        "baselineskip",
-        "parskip",
-        "abovedisplayskip",
-        "belowdisplayskip",
-        "abovedisplayshortskip",
-        "belowdisplayshortskip",
-        "leftskip",
-        "rightskip",
-        "topskip",
-        "splittopskip",
-        "tabskip",
-        "spaceskip",
-        "xspaceskip",
-        "parfillskip",
-        "thinmuskip",
-        "medmuskip",
-        "thickmuskip",
-    ];
-    for (index, name) in GLUE_NAMES.into_iter().enumerate() {
+    for (index, name) in TEX82_GLUE_PARAMETER_NAMES.into_iter().enumerate() {
         let index = index as u16;
         let (class, meaning) = if index < 15 {
             (ParameterBankClass::Glue, Meaning::GlueParam(index))
@@ -112,11 +87,8 @@ fn tex82_parameters() -> Vec<PrimitiveParameterView> {
         ));
     }
     for index in 0..=8 {
-        let parameter = TokParam::new(index);
         rows.push(parameter_view(
-            parameter
-                .tex82_name()
-                .expect("every TeX82 token parameter has a canonical name"),
+            TEX82_TOK_PARAMETER_NAMES[index as usize],
             PrimitiveProfile::Tex82,
             ParameterBankClass::Tokens,
             index,
@@ -137,22 +109,9 @@ fn etex_parameters() -> Vec<PrimitiveParameterView> {
         Meaning::TokParam(TokParam::EVERY_EOF.raw()),
         ParameterDefault::EmptyTokens,
     ));
-    for parameter in [
-        IntParam::TRACING_SCAN_TOKENS,
-        IntParam::TEX_XET_STATE,
-        IntParam::PRE_DISPLAY_DIRECTION,
-        IntParam::TRACING_ASSIGNS,
-        IntParam::TRACING_GROUPS,
-        IntParam::TRACING_IFS,
-        IntParam::TRACING_NESTING,
-        IntParam::SAVING_V_DISCARDS,
-        IntParam::LAST_LINE_FIT,
-        IntParam::SAVING_HYPH_CODES,
-    ] {
+    for &(name, parameter) in ETEX_INT_PARAMETERS {
         rows.push(parameter_view(
-            parameter
-                .canonical_name()
-                .expect("every e-TeX parameter has a canonical name"),
+            name,
             PrimitiveProfile::Etex26,
             ParameterBankClass::Integer,
             parameter.raw(),
@@ -162,6 +121,139 @@ fn etex_parameters() -> Vec<PrimitiveParameterView> {
     }
     rows
 }
+
+const TEX82_INT_PARAMETER_NAMES: [&str; 60] = [
+    "pretolerance",
+    "tolerance",
+    "linepenalty",
+    "hyphenpenalty",
+    "exhyphenpenalty",
+    "clubpenalty",
+    "widowpenalty",
+    "displaywidowpenalty",
+    "brokenpenalty",
+    "binoppenalty",
+    "relpenalty",
+    "predisplaypenalty",
+    "postdisplaypenalty",
+    "interlinepenalty",
+    "doublehyphendemerits",
+    "finalhyphendemerits",
+    "adjdemerits",
+    "mag",
+    "delimiterfactor",
+    "looseness",
+    "time",
+    "day",
+    "month",
+    "year",
+    "showboxbreadth",
+    "showboxdepth",
+    "hbadness",
+    "vbadness",
+    "pausing",
+    "tracingonline",
+    "tracingmacros",
+    "tracingstats",
+    "globaldefs",
+    "tracingparagraphs",
+    "tracingpages",
+    "tracingoutput",
+    "tracinglostchars",
+    "tracingcommands",
+    "tracingrestores",
+    "uchyph",
+    "escapechar",
+    "defaulthyphenchar",
+    "defaultskewchar",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "endlinechar",
+    "newlinechar",
+    "language",
+    "lefthyphenmin",
+    "righthyphenmin",
+    "holdinginserts",
+    "errorcontextlines",
+    "outputpenalty",
+    "maxdeadcycles",
+    "hangafter",
+    "floatingpenalty",
+    "fam",
+];
+
+const TEX82_DIMEN_PARAMETER_NAMES: [&str; 21] = [
+    "parindent",
+    "mathsurround",
+    "lineskiplimit",
+    "hsize",
+    "vsize",
+    "maxdepth",
+    "splitmaxdepth",
+    "boxmaxdepth",
+    "hfuzz",
+    "vfuzz",
+    "delimitershortfall",
+    "nulldelimiterspace",
+    "scriptspace",
+    "predisplaysize",
+    "displaywidth",
+    "displayindent",
+    "overfullrule",
+    "hangindent",
+    "hoffset",
+    "voffset",
+    "emergencystretch",
+];
+
+const TEX82_GLUE_PARAMETER_NAMES: [&str; 18] = [
+    "lineskip",
+    "baselineskip",
+    "parskip",
+    "abovedisplayskip",
+    "belowdisplayskip",
+    "abovedisplayshortskip",
+    "belowdisplayshortskip",
+    "leftskip",
+    "rightskip",
+    "topskip",
+    "splittopskip",
+    "tabskip",
+    "spaceskip",
+    "xspaceskip",
+    "parfillskip",
+    "thinmuskip",
+    "medmuskip",
+    "thickmuskip",
+];
+
+const TEX82_TOK_PARAMETER_NAMES: [&str; 9] = [
+    "output",
+    "everypar",
+    "everymath",
+    "everydisplay",
+    "everyhbox",
+    "everyvbox",
+    "everyjob",
+    "everycr",
+    "errhelp",
+];
+
+const ETEX_INT_PARAMETERS: &[(&str, IntParam)] = &[
+    ("tracingscantokens", IntParam::TRACING_SCAN_TOKENS),
+    ("TeXXeTstate", IntParam::TEX_XET_STATE),
+    ("predisplaydirection", IntParam::PRE_DISPLAY_DIRECTION),
+    ("tracingassigns", IntParam::TRACING_ASSIGNS),
+    ("tracinggroups", IntParam::TRACING_GROUPS),
+    ("tracingifs", IntParam::TRACING_IFS),
+    ("tracingnesting", IntParam::TRACING_NESTING),
+    ("savingvdiscards", IntParam::SAVING_V_DISCARDS),
+    ("lastlinefit", IntParam::LAST_LINE_FIT),
+    ("savinghyphcodes", IntParam::SAVING_HYPH_CODES),
+];
 
 fn pdftex_parameters() -> Vec<PrimitiveParameterView> {
     let mut rows = Vec::with_capacity(56);

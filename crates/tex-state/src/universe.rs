@@ -5707,7 +5707,7 @@ impl Universe {
 
     fn trace_restores(&mut self, records: &[crate::env::group::RestoreRecord]) {
         use crate::cell::BankTag;
-        use crate::env::banks::{DimenParam, GlueParam, IntParam, TokParam};
+        use crate::env::banks::TokParam;
 
         for record in records {
             if record.tracing_restores() <= 0 || !record.trace_eligible() {
@@ -5863,7 +5863,8 @@ impl Universe {
                     true,
                 ),
                 BankTag::IntParam if cell.index() < 128 => {
-                    let Some(name) = IntParam::new(cell.index() as u16).canonical_name() else {
+                    let Some(name) = self.primitive_name(Meaning::IntParam(cell.index() as u16))
+                    else {
                         continue;
                     };
                     (
@@ -5873,7 +5874,8 @@ impl Universe {
                     )
                 }
                 BankTag::DimenParam if cell.index() < 128 => {
-                    let Some(name) = DimenParam::new(cell.index() as u16).tex82_name() else {
+                    let Some(name) = self.primitive_name(Meaning::DimenParam(cell.index() as u16))
+                    else {
                         continue;
                     };
                     (
@@ -5888,7 +5890,8 @@ impl Universe {
                     )
                 }
                 BankTag::GlueParam if cell.index() < 128 => {
-                    let Some(name) = GlueParam::new(cell.index() as u16).tex82_name() else {
+                    let Some(name) = self.primitive_name(Meaning::GlueParam(cell.index() as u16))
+                    else {
                         continue;
                     };
                     let id = GlueId::new(record.old() as u32);
@@ -5918,7 +5921,8 @@ impl Universe {
                     ("parshape".to_owned(), line_count.to_string(), true)
                 }
                 BankTag::TokParam if cell.index() < 128 => {
-                    let Some(name) = TokParam::new(cell.index() as u16).tex82_name() else {
+                    let Some(name) = self.primitive_name(Meaning::TokParam(cell.index() as u16))
+                    else {
                         continue;
                     };
                     let value = format_restore_tokens(self, record.old(), record.escape_char());
