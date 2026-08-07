@@ -1,8 +1,11 @@
 use std::sync::Arc;
 
 use tex_command::{RegisteredSourceKind, SourceRegistration};
-use tex_exec::{MainControl, MainControlStep};
+use tex_exec::{MainControl, MainControlStep, RootCompletionPolicy};
 use tex_state::{EffectRecord, InteractionMode, PrintSink, Universe};
+
+const MAX_MAIN_CONTROL_STEPS: usize = 2_048;
+const MAX_COMMAND_FUEL: u64 = 200_000;
 
 const CASES: &[Case] = &[
     Case::new("after", &["A B"]),
@@ -11,11 +14,17 @@ const CASES: &[Case] = &[
     Case::new("box_movement", &["M:void,void"]),
     Case::new(
         "box_uncopy_badness",
-        &["Underfull \\hbox (badness 10000)", "B:10000 H:kept V:kept"],
+        &[
+            "Underfull \\hbox (badness 10000) detected at line 1",
+            "B:10000 H:kept V:kept",
+        ],
     ),
     Case::new(
         "every_box_hooks",
-        &["Underfull \\hbox (badness 10000)", "H:3,10.0pt;V:2"],
+        &[
+            "Underfull \\hbox (badness 10000) detected at line 6",
+            "H:3,10.0pt;V:2",
+        ],
     ),
     Case::new("grouping", &["G:0,2"]),
     Case::new(
@@ -83,7 +92,8 @@ fn tex82_reference_observation_fixtures_match_canonical_execution() {
         let reference = test_support::read_fixture("tex_exec", name, "ref");
         let expected = ReferenceObservation::parse(&reference)
             .unwrap_or_else(|error| panic!("parse tex_exec/{name}/expected.ref: {error}"));
-        let stores = execute(&source);
+        let stores =
+            execute(&source).unwrap_or_else(|error| panic!("execute tex_exec/{name}: {error}"));
         let actual = ActualObservation {
             terminal: channel_text(&stores, PrintSink::Terminal),
             log: channel_text(&stores, PrintSink::Log),
@@ -93,21 +103,46 @@ fn tex82_reference_observation_fixtures_match_canonical_execution() {
             ("terminal", expected.terminal, actual.terminal.as_str()),
             ("log", expected.log, actual.log.as_str()),
         ] {
-            assert_projection(name, channel, reference, case.projection, "reference");
-            assert_projection(name, channel, actual, case.projection, "Umber");
+            assert_projection(channel, reference, case.projection).unwrap_or_else(|error| {
+                panic!("tex_exec/{name} reference projection failed: {error}")
+            });
+            assert_projection(channel, actual, case.projection)
+                .unwrap_or_else(|error| panic!("tex_exec/{name} Umber projection failed: {error}"));
         }
     }
 }
 
-fn assert_projection(case: &str, channel: &str, text: &str, projection: &[&str], producer: &str) {
-    let mut remainder = text;
+fn assert_projection(channel: &str, text: &str, projection: &[&str]) -> Result<(), String> {
+    let lines = text
+        .lines()
+        .map(normalize_source_suffix)
+        .collect::<Vec<_>>();
+    let mut next_line = 0;
     for expected in projection {
-        let Some(index) = remainder.find(expected) else {
-            panic!(
-                "tex_exec/{case} {producer} {channel} lacks projected observation {expected:?}:\n{text}"
-            );
+        let Some(relative_index) = lines[next_line..].iter().position(|line| line == expected)
+        else {
+            return Err(format!(
+                "{channel} lacks exact ordered line {expected:?}:\n{text}"
+            ));
         };
-        remainder = &remainder[index + expected.len()..];
+        next_line += relative_index + 1;
+    }
+    Ok(())
+}
+
+fn normalize_source_suffix(line: &str) -> &str {
+    let Some((message, suffix)) = line.rsplit_once(" [") else {
+        return line;
+    };
+    let Some(source_id) = suffix.strip_suffix(']') else {
+        return line;
+    };
+    if source_id.split('.').all(|component| {
+        !component.is_empty() && component.bytes().all(|byte| byte.is_ascii_digit())
+    }) {
+        message
+    } else {
+        line
     }
 }
 
@@ -131,20 +166,119 @@ struct ActualObservation {
     log: String,
 }
 
-fn execute(source: &[u8]) -> Universe {
+fn execute(source: &[u8]) -> Result<Universe, String> {
+    execute_with_limits(source, MAX_MAIN_CONTROL_STEPS, MAX_COMMAND_FUEL)
+}
+
+fn execute_with_limits(
+    source: &[u8],
+    step_limit: usize,
+    fuel_limit: u64,
+) -> Result<Universe, String> {
+    execute_with_policy_and_limits(
+        source,
+        RootCompletionPolicy::RequireTeXEnd,
+        step_limit,
+        fuel_limit,
+    )
+}
+
+fn execute_with_policy_and_limits(
+    source: &[u8],
+    completion: RootCompletionPolicy,
+    step_limit: usize,
+    fuel_limit: u64,
+) -> Result<Universe, String> {
     let mut stores = Universe::new_with_plain_catcodes();
     stores.set_interaction_mode(InteractionMode::Nonstop);
     let mut control = MainControl::tex82_initex(&mut stores);
+    control.set_root_completion_policy(completion);
+    control
+        .set_fuel_limit(fuel_limit)
+        .map_err(|error| format!("invalid command-fuel limit {fuel_limit}: {error:?}"))?;
     control
         .register_root_source(SourceRegistration::new(
             RegisteredSourceKind::Generated,
             Arc::<[u8]>::from(source),
         ))
-        .expect("fixture source registers");
+        .map_err(|error| format!("fixture source registration failed: {error:?}"))?;
 
-    while let Ok(MainControlStep::Continue) = control.step(&mut stores) {}
+    for step in 1..=step_limit {
+        match control.step(&mut stores) {
+            Ok(MainControlStep::Continue) => {}
+            Ok(MainControlStep::End) => return Ok(stores),
+            Ok(MainControlStep::EndOfInput) => {
+                return Err(format!(
+                    "physical input exhaustion after {step} steps (fatal={:?}, fuel={}/{})",
+                    control.fatal_error(),
+                    control.fuel_burned(),
+                    control.fuel_limit()
+                ));
+            }
+            Err(error) => {
+                return Err(format!(
+                    "main-control step {step} failed after {}/{} fuel: {error:?}",
+                    control.fuel_burned(),
+                    control.fuel_limit()
+                ));
+            }
+        }
+    }
 
-    stores
+    Err(format!(
+        "exceeded {step_limit} main-control steps after {}/{} fuel",
+        control.fuel_burned(),
+        control.fuel_limit()
+    ))
+}
+
+#[test]
+fn fixture_runner_rejects_prefix_matches_and_noncompletion() {
+    let prefix_only = "prefix has an unreviewed suffix";
+    assert!(
+        assert_projection("terminal", prefix_only, &["prefix"]).is_err(),
+        "a projected line prefix must not hide a changed observation"
+    );
+    assert!(
+        assert_projection("terminal", "prefix [unreviewed]", &["prefix"]).is_err(),
+        "only a numeric source-id suffix may be normalized"
+    );
+
+    let exhaustion = execute_with_policy_and_limits(
+        br"\message{prefix}",
+        RootCompletionPolicy::StopAtRootEof,
+        64,
+        1_000,
+    )
+    .expect_err("fragment EOF must not count as complete-job completion");
+    assert!(
+        exhaustion.contains("physical input exhaustion"),
+        "unexpected EOF failure: {exhaustion}"
+    );
+
+    let execution_error = execute_with_limits(br"\input missing\end", 64, 1_000)
+        .expect_err("a main-control error must not count as completion");
+    assert!(
+        execution_error.contains("main-control step") && execution_error.contains("MissingToken"),
+        "unexpected execution failure: {execution_error}"
+    );
+}
+
+#[test]
+fn fixture_runner_enforces_step_and_fuel_limits() {
+    let step_error = execute_with_limits(br"\relax\end", 1, 1_000)
+        .expect_err("one step cannot finish two commands");
+    assert!(
+        step_error.contains("exceeded 1 main-control steps"),
+        "unexpected step-limit failure: {step_error}"
+    );
+
+    let fuel_error = execute_with_limits(br"\def\again{\again}\again\end", 64, 16)
+        .expect_err("recursive expansion must exhaust finite command fuel");
+    assert!(
+        fuel_error.contains("FuelExhausted"),
+        "unexpected fuel-limit failure: {fuel_error}"
+    );
 }
 
 fn channel_text(stores: &Universe, channel: PrintSink) -> String {
