@@ -165,7 +165,6 @@ mod imp {
         matches!(
             area,
             "canonical-dvi"
-                | "hello"
                 | "lexer"
                 | "lexer_dynamic"
                 | "stabilization"
@@ -184,7 +183,7 @@ mod imp {
     pub fn case_source_name(area: &str, case: &str) -> String {
         if matches!(
             area,
-            "canonical-dvi" | "hello" | "lexer" | "lexer_dynamic" | "stabilization" | "pdf"
+            "canonical-dvi" | "lexer" | "lexer_dynamic" | "stabilization" | "pdf"
         ) {
             "source.tex".to_owned()
         } else {

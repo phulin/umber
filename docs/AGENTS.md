@@ -44,6 +44,11 @@ maps value, event-order, recovery, lifecycle, rollback, source-context, and
 identity evidence to active owners, records narrative/matrix dispositions, and
 limits deletion to proven duplicate setup scaffolding.
 
+`golden_corpus_dispositions.md` records the final owner and test tier for every
+legacy execution golden area, the exact reasons retained integration cases do
+not belong in command-semantic, and the property-scoped replacements for
+retired duplicates.
+
 `frozen_format.md` defines the portable format-image container ABI,
 compatibility fingerprints, deterministic literal lookup-table representation,
 validation and checksum coverage, immutable/job-local split, and migration

@@ -55,7 +55,7 @@ Keep reusable test harness code here when multiple crates or integration tests n
 - `src/pdf_fixture.rs`: tiny `pdf-writer` adapter for ordinary valid synthetic
   inputs plus an explicitly separate handcrafted classic-xref builder for
   malformed, cyclic, depth-limit, and writer-independent evidence.
-- `src/tests.rs`: crate self-test that reads the committed hello fixture.
+- `src/tests.rs`: normalization and runtime-checkout selection self-tests.
 
 ## Boundaries
 

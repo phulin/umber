@@ -45,15 +45,6 @@ fn diagnostic_normalization_retains_every_context_kind_and_continuation() {
 }
 
 #[test]
-fn hello_fixture_is_committed() {
-    let expected = read_fixture("hello", "hello", "log");
-    assert!(
-        expected.contains("hello umber"),
-        "hello fixture should keep the reference message"
-    );
-}
-
-#[test]
 #[allow(clippy::disallowed_methods)] // Host-only cross-checkout process regression.
 fn fixture_root_follows_the_runtime_checkout() {
     const CHILD_EXPECTATION: &str = "TEST_SUPPORT_RUNTIME_ROOT_EXPECTATION";

@@ -5,7 +5,6 @@ use test_support::closed_case::FixtureCase;
 
 const FAMILIES: &[(&str, usize, usize, usize)] = &[
     ("canonical-dvi", 2, 4, 706),
-    ("hello", 1, 2, 249),
     ("lexer", 6, 12, 621),
     ("lexer_dynamic", 4, 8, 784),
     ("stabilization", 2, 2, 1_616),
@@ -63,5 +62,5 @@ fn lexical_session_minifixtures_are_closed_tracked_directories() {
         total_files += family_files;
         total_bytes += family_bytes;
     }
-    assert_eq!((total_cases, total_files, total_bytes), (15, 28, 3_976));
+    assert_eq!((total_cases, total_files, total_bytes), (14, 26, 3_727));
 }

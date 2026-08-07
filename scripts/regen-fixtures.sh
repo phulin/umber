@@ -4,7 +4,7 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
 
-text_areas=(hello lexer expand lexer_dynamic exec etex_exec typeset tex_exec tex_exec_io)
+text_areas=(lexer expand lexer_dynamic exec etex_exec typeset tex_exec tex_exec_io)
 dvi_areas=(math align)
 pdf_area=pdf
 e2e_area=e2e
@@ -49,7 +49,7 @@ usage:
   scripts/regen-fixtures.sh --oracle ENGINE --profile PROFILE --validate-only
 
 Fixture areas:
-  text/native: hello lexer expand lexer_dynamic exec etex_exec typeset tex_exec tex_exec_io
+  text/native: lexer expand lexer_dynamic exec etex_exec typeset tex_exec tex_exec_io
   DVI:         dvi page math align
   PDF:         pdf  (pinned pdfTeX structure plus exact Poppler grayscale pixels)
   minifixtures: command-semantic  (typed profile captures and contracts)
@@ -164,9 +164,6 @@ is_known_area() {
 test_command_for_area() {
   local area="$1"
   case "$area" in
-    hello)
-      printf '%s\n' 'cargo test -p test-support hello_fixture_is_committed'
-      ;;
     lexer)
       printf '%s\n' 'cargo test -p umber --test it lex_dump_prints_stable_token_format_for_corpus'
       ;;

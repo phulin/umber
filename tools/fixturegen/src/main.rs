@@ -25,7 +25,6 @@ use tex_state::token::Catcode;
 use tex_state::{Universe, World};
 
 const TEXT_AREAS: &[&str] = &[
-    "hello",
     "lexer",
     "expand",
     "lexer_dynamic",
@@ -96,7 +95,7 @@ fn run() -> Result<()> {
 fn print_usage() {
     eprintln!(
         "usage: fixturegen --area AREA | --case AREA/CASE | --case AREA CASE | --cohort-transaction (--plan|--apply) PLAN.json | --sync-corpus [--manifest PATH] [--dest PATH] [--offline] | --reference-dvi DOCUMENT OUTPUT | --check-pdf-raster\n\
-         areas: hello lexer expand lexer_dynamic exec etex_exec typeset tex_exec tex_exec_io pdf fonts"
+         areas: lexer expand lexer_dynamic exec etex_exec typeset tex_exec tex_exec_io pdf fonts"
     );
 }
 
@@ -169,7 +168,6 @@ fn ensure_no_extra_args(mut args: impl Iterator<Item = String>) -> Result<()> {
 
 fn regenerate_area(area: &str) -> Result<()> {
     match area {
-        "hello" => regenerate_cases(area, regenerate_hello_case),
         "lexer" => regenerate_cases(area, |case| {
             regenerate_umber_dump_case(area, case, "lex-dump")
         }),
@@ -214,7 +212,6 @@ fn regenerate_case(area: &str, case: &str) -> Result<()> {
         bail!("unknown fixturegen area: {area}");
     }
     match area {
-        "hello" => regenerate_hello_case(case),
         "lexer" => regenerate_umber_dump_case(area, case, "lex-dump"),
         "expand" => regenerate_umber_dump_case(area, case, "expand-dump"),
         "lexer_dynamic" => regenerate_lexer_dynamic_case(case),
@@ -225,18 +222,6 @@ fn regenerate_case(area: &str, case: &str) -> Result<()> {
         "tex_exec_io" => regenerate_tex_exec_io_case(case),
         _ => unreachable!("known area already checked"),
     }
-}
-
-fn regenerate_hello_case(case: &str) -> Result<()> {
-    let source = source_path("hello", case);
-    let output = RefTex::locate()?.run(&source, &RunOpts::default())?;
-    if !output.success {
-        bail!("reference TeX failed for hello/{case}:\n{}", output.log);
-    }
-    if !output.stdout.contains("hello umber") {
-        bail!("hello/{case} reference stdout did not contain hello message");
-    }
-    write_text_fixture("hello", case, "log", &normalize::tex_log(&output.log))
 }
 
 fn regenerate_umber_dump_case(area: &str, case: &str, command_name: &str) -> Result<()> {
@@ -451,6 +436,12 @@ fn ximage_enquiry_inputs() -> Result<GeneratedXImageInputs> {
 }
 
 fn regenerate_tex_exec_io_case(case: &str) -> Result<()> {
+    if case == "closeout_stream_selectors" {
+        eprintln!(
+            "fixture retained unchanged: tex_exec_io/{case} has no oracle-comparable effects contract (umber2-alfh.30)"
+        );
+        return Ok(());
+    }
     let spec = io_case_spec(case)?;
     let temp_dir = TempDir::new().context("failed to create reference I/O temp dir")?;
     let source_name = format!("{case}.tex");
@@ -460,14 +451,10 @@ fn regenerate_tex_exec_io_case(case: &str) -> Result<()> {
     )
     .with_context(|| format!("failed to copy tex_exec_io/{case}.tex"))?;
 
-    let needs_dvi = matches!(spec.effects, Some(IoEffects::LeaderPayload)) || spec.specials;
     let output = RefTex::locate()?.run_in_dir(
         temp_dir.path(),
         Path::new(&source_name),
-        &RunOpts {
-            dvi: needs_dvi,
-            ..RunOpts::default()
-        },
+        &RunOpts::default(),
     )?;
     if !output.success {
         bail!(
@@ -483,30 +470,9 @@ fn regenerate_tex_exec_io_case(case: &str) -> Result<()> {
         write_text_fixture("tex_exec_io", case, "out", &text)?;
     }
     if let Some(effects) = spec.effects {
-        let text = match effects {
-            IoEffects::LeaderPayload => {
-                let leader_out = if temp_dir.path().join("leader.out").exists() {
-                    "present"
-                } else {
-                    "absent"
-                };
-                format!(
-                    "leader.out: {leader_out}\nleader-write-in-log: {}\n",
-                    output.log.contains("leader-write")
-                )
-            }
-            IoEffects::OutputPresence(paths) => format_output_presence(temp_dir.path(), paths)?,
-        };
+        let IoEffects::OutputPresence(paths) = effects;
+        let text = format_output_presence(temp_dir.path(), paths)?;
         write_text_fixture("tex_exec_io", case, "effects", &text)?;
-    }
-    if spec.specials {
-        let dvi = output.dvi.context("reference TeX did not produce DVI")?;
-        write_text_fixture(
-            "tex_exec_io",
-            case,
-            "specials",
-            &format_special_payloads(&dvi_special_payloads(&dvi)),
-        )?;
     }
 
     Ok(())
@@ -546,12 +512,10 @@ fn normalize_micro_reference_text(text: &str) -> String {
 struct IoCaseSpec {
     output_name: Option<&'static str>,
     effects: Option<IoEffects>,
-    specials: bool,
 }
 
 #[derive(Clone, Copy)]
 enum IoEffects {
-    LeaderPayload,
     OutputPresence(&'static [&'static str]),
 }
 
@@ -560,12 +524,6 @@ fn io_case_spec(case: &str) -> Result<IoCaseSpec> {
         "top_open_close" => Ok(IoCaseSpec {
             output_name: Some("top.out"),
             effects: None,
-            specials: false,
-        }),
-        "ordinary_open_close" => Ok(IoCaseSpec {
-            output_name: Some("ordinary.out"),
-            effects: None,
-            specials: false,
         }),
         "open_close_without_write" => Ok(IoCaseSpec {
             output_name: None,
@@ -575,17 +533,6 @@ fn io_case_spec(case: &str) -> Result<IoCaseSpec> {
                 "boxed.out",
                 "top.out",
             ])),
-            specials: false,
-        }),
-        "special_payload" => Ok(IoCaseSpec {
-            output_name: None,
-            effects: None,
-            specials: true,
-        }),
-        "leader_payload_effects" => Ok(IoCaseSpec {
-            output_name: None,
-            effects: Some(IoEffects::LeaderPayload),
-            specials: true,
         }),
         _ => bail!("unknown tex_exec_io case: {case}"),
     }
@@ -835,53 +782,4 @@ fn push_token(actual: &mut String, token: SourceToken) {
     };
     actual.push_str(&line);
     actual.push('\n');
-}
-
-fn format_special_payloads(payloads: &[Vec<u8>]) -> String {
-    let mut output = String::new();
-    for payload in payloads {
-        output.push_str(&String::from_utf8_lossy(payload));
-        output.push('\n');
-    }
-    output
-}
-
-fn dvi_special_payloads(dvi: &[u8]) -> Vec<Vec<u8>> {
-    const XXX1: u8 = 239;
-    const XXX4: u8 = 242;
-
-    let mut payloads = Vec::new();
-    let mut index = 0usize;
-    while index < dvi.len() {
-        match dvi[index] {
-            XXX1 if index + 2 <= dvi.len() => {
-                let len = dvi[index + 1] as usize;
-                let start = index + 2;
-                let end = start + len;
-                if end <= dvi.len() {
-                    payloads.push(dvi[start..end].to_vec());
-                    index = end;
-                    continue;
-                }
-            }
-            XXX4 if index + 5 <= dvi.len() => {
-                let len = u32::from_be_bytes([
-                    dvi[index + 1],
-                    dvi[index + 2],
-                    dvi[index + 3],
-                    dvi[index + 4],
-                ]) as usize;
-                let start = index + 5;
-                let end = start + len;
-                if end <= dvi.len() {
-                    payloads.push(dvi[start..end].to_vec());
-                    index = end;
-                    continue;
-                }
-            }
-            _ => {}
-        }
-        index += 1;
-    }
-    payloads
 }

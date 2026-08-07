@@ -228,8 +228,8 @@ preamble-comment-normalized, otherwise byte-identical DVI.
 ## Corpus Layout
 
 The bounded execution minifixture families `exec`, `etex_exec`, `typeset`,
-`math`, `align`, `tex_exec`, `tex_exec_io`, and `expand`, plus `hello`,
-`lexer`, `lexer_dynamic`, `stabilization`, and `canonical-dvi`, use closed
+`math`, `align`, `tex_exec`, `tex_exec_io`, and `expand`, plus `lexer`,
+`lexer_dynamic`, `stabilization`, and `canonical-dvi`, use closed
 self-contained case directories:
 
 ```text
@@ -240,7 +240,7 @@ tests/corpus/<area>/<case>/
 ```
 
 Every exact runtime input and applicable committed output belongs in that
-directory. The five lexical/session families use `source.tex`, and
+directory. The four lexical/session families use `source.tex`, and
 `stabilization` cases are source-only. There are no area-level support files or expected-output trees for
 these families. Discovery is lexicographic by case name. The `test-support`
 inventory gate equates the filesystem with Git's tracked regular-file
@@ -261,6 +261,9 @@ by `umber run`, matching its fresh INITEX parameter state rather than
 inheriting Plain's format assignments. It captures pdfTeX's terminal channel,
 not its transcript file: canonical TeX deliberately emits some diagnostic
 newlines to only one of those channels.
+Only `math_component_recovery` and `paragraph_line_shape` remain; migrated
+duplicates were retired into property-scoped command-semantic cases. See
+`docs/golden_corpus_dispositions.md` for the exact ownership accounting.
 
 `tests/corpus/etex_exec` contains extension-mode e-TeX diagnostic parity
 cases. The `umber` runner supplies `--etex`, while fixture regeneration uses
@@ -283,6 +286,9 @@ final `World` effect commit. TeX shipouts still commit their own effect prefix,
 so stream whatsits shipped by `\shipout` or final cleanup can materialize
 output files even under `--show-fixtures`; pending immediate stream effects do
 not materialize because their final commit is skipped.
+The retained thirteen-case census is pinned by `test-support`; migrated box,
+font, and scalar duplicates were retired. See
+`docs/golden_corpus_dispositions.md` for the tier rationale.
 
 `tests/corpus/dvi` and `tests/corpus/page` are retired (`umber2-alfh.3`). Their
 thirty-two sources are now thirty-one `command-semantic` cases -- one source
@@ -325,6 +331,9 @@ enquiries without committing opaque binary support assets.
 
 `tests/corpus/tex_exec_io` contains small file-effect and DVI special-payload
 sources plus reference observations used by `tex-exec` I/O and shipout tests.
+Only the three nonempty open/close-effect cases remain pending the
+oracle-comparable contract tracked by `umber2-alfh.30`; migrated and redundant
+cases were retired.
 
 `tests/corpus/math` contains primitive-only math DVI parity fixtures plus
 committed `expected.dvi` reference fixtures. Each case carries its exact
@@ -417,9 +426,6 @@ its broader official transcript and output-artifact gate remains separate.
 Other, non-directory corpus families retain the flat
 `<case>.expected.<kind>` convention.
 
-For example, `tests/corpus/hello/hello/expected.log` is the normalized
-reference log for `tests/corpus/hello/hello/source.tex`.
-
 ## Fixture Updates
 
 Use `test_support::assert_matches_fixture(area, case, kind, actual)` for
@@ -438,7 +444,7 @@ Modes:
 - `--incremental` looks at changed paths under `tests/corpus` and regenerates
   only the affected cases or areas.
 - `--all` regenerates all committed fixture areas.
-- `--area AREA` regenerates one area, such as `hello`, `lexer`, `expand`,
+- `--area AREA` regenerates one area, such as `lexer`, `expand`,
   `lexer_dynamic`, `exec`, `typeset`, `dvi`, `page`, `math`, `align`, `pdf`,
   `e2e`, `bib`, `etex_exec`, `tex_exec`, or `tex_exec_io`.
 - `--area bib` re-exports the pinned upstream bibliography test data directly

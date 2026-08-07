@@ -1,6 +1,0 @@
-> \box10=
-\hbox(6.0+7.0)x5.0
-.\kern 1.0
-
-! OK.
-l.8 \showbox10

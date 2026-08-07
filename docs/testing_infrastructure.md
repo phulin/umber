@@ -38,7 +38,7 @@ surface.
 
 The bounded execution corpora under `tests/corpus/{exec,etex_exec,typeset,math,align,tex_exec,tex_exec_io,expand}`
 and lexical/session corpora under
-`tests/corpus/{hello,lexer,lexer_dynamic,stabilization,canonical-dvi}`
+`tests/corpus/{lexer,lexer_dynamic,stabilization,canonical-dvi}`
 use one closed Git directory per case. Each directory owns its named `.tex`
 source, every exact local support input, and each applicable
 `expected.<channel>` output. The one-time layout commands retired after the
