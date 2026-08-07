@@ -55,6 +55,7 @@ Use this crate when behavior is about driving the engine, presenting CLI output,
   mode/default application over `tex-command`'s integrated primitive
   catalogue; it owns no second name, meaning, parameter, or default table.
 - `src/pdf_output.rs`: thin detached-finalization adapter, error translation, diagnostics publication, and validated allocation-receipt replay; all lowering and serialization delegate to `tex-out`.
+- `src/pdf_output/tests.rs`: detached boundary tests for container classification and exact nested virtual-font identity, sizing, rejection, resource, and independent-parse evidence.
 - `src/pdf_output/finalization_input.rs`: compatibility adapter that freezes
   accepted engine state and host-resolved artifacts/resources into
   `tex_out::pdf::PdfFinalizationInput`; it is the only Umber-owned PDF

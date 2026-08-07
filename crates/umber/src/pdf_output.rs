@@ -513,14 +513,4 @@ impl From<PdfSerializeError> for PdfBuildError {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::is_pdf_sfnt_program;
-
-    #[test]
-    fn sfnt_program_classification_includes_supported_containers() {
-        for name in [b"font.ttf".as_slice(), b"font.otf", b"font.woff2"] {
-            assert!(is_pdf_sfnt_program(name));
-        }
-        assert!(!is_pdf_sfnt_program(b"font.pfb"));
-    }
-}
+mod tests;

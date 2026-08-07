@@ -514,6 +514,16 @@ tracked migration therefore adds 339 and deletes 10,102 lines, a 9,763-line
 net reduction; fixtures, generated source, lockfiles, and binary assets are
 unchanged.
 
+Fresh closeout verification restored two independent proof surfaces without
+restoring the predecessor: the external qpdf matrix now generates its six
+temporary compression/raster artifacts through native CLI jobs, and a compact
+detached-only nested-VF test retains 12pt -> 6pt -> 9pt exact TFM identity,
+width, allocation, tamper, cycle, depth, and Hayro-parse evidence. The repairs
+add 248 and delete 23 lines. Commit arithmetic is 587 additions and 10,125
+deletions; the base-normalized exact-tree diff is 580 additions and 10,118
+deletions, a 9,538-line net reduction, because the test-module replacement
+overlaps the migration hunk.
+
 ## 7. One canonical HTML producer and JavaScript receiver
 
 **Outcome.** A keyed `RenderDocument` or `RenderRevision` resolves positioned events, fonts, specials, accessibility, and math once. Standalone HTML/assets and incremental patch plans derive from it. JavaScript remains the browser trust and DOM transaction boundary.
