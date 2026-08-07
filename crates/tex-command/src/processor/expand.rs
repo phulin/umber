@@ -831,6 +831,7 @@ impl CommandProcessor<'_> {
             Meaning::ExpandablePrimitive(ExpandablePrimitive::Unexpanded) => {
                 self.expand_unexpanded()
             }
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::Expanded) => self.expand_expanded(),
             Meaning::ExpandablePrimitive(ExpandablePrimitive::Detokenize) => {
                 self.expand_detokenize(command)
             }
@@ -884,6 +885,9 @@ impl CommandProcessor<'_> {
                 let value = self.state.pdf_normal_deviate();
                 self.push_rendered_text(&value.to_string(), command.origin());
                 Ok(())
+            }
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::StringCompare) => {
+                self.expand_string_compare(command)
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfMatch) => {
                 self.expand_pdf_match(command)
@@ -1116,6 +1120,46 @@ impl CommandProcessor<'_> {
         })?;
         let text = token_list_string_text(&mut self.state, scanned.replacement_text.token_list());
         self.push_rendered_text(&text, opener.origin());
+        Ok(())
+    }
+
+    /// pdftex.web §§495 and 1535's `\expanded` conversion.
+    ///
+    /// `scan_pdf_ext_toks` is exactly `scan_toks(false, true)`: it expands one
+    /// balanced general-text argument and returns the resulting token list via
+    /// `ins_list`. The inserted list therefore reenters the caller's current
+    /// expansion loop instead of being rendered to characters.
+    fn expand_expanded(&mut self) -> Result<(), CommandError> {
+        let scanned = self.scan_toks(crate::scan_toks::ScanToksMode::General { expanded: true })?;
+        let replacement = scanned.replacement_text;
+        let first = self.state.tokens(replacement.token_list()).first().copied();
+        self.insert_expansion_list(
+            TokenPayload::Stored {
+                tokens: replacement.token_list(),
+                origins: replacement.origin_list(),
+            },
+            first,
+        );
+        Ok(())
+    }
+
+    /// pdftex.web §§495 and 1535's `compare_strings` conversion.
+    ///
+    /// Both operands are independently collected by `scan_pdf_ext_toks`,
+    /// rendered through `tokens_to_string`, and compared lexicographically as
+    /// pdfTeX string-pool bytes. Canonical pdfTeX input is byte-valued; UTF-8
+    /// preserves that ordering for Umber's extended scalar domain as well.
+    fn expand_string_compare(&mut self, opener: CurrentCommand) -> Result<(), CommandError> {
+        let left = self.scan_toks(crate::scan_toks::ScanToksMode::General { expanded: true })?;
+        let left = token_list_string_text(&mut self.state, left.replacement_text.token_list());
+        let right = self.scan_toks(crate::scan_toks::ScanToksMode::General { expanded: true })?;
+        let right = token_list_string_text(&mut self.state, right.replacement_text.token_list());
+        let value = match left.as_bytes().cmp(right.as_bytes()) {
+            std::cmp::Ordering::Less => -1,
+            std::cmp::Ordering::Equal => 0,
+            std::cmp::Ordering::Greater => 1,
+        };
+        self.push_rendered_text(&value.to_string(), opener.origin());
         Ok(())
     }
 

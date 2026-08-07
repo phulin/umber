@@ -484,6 +484,31 @@ fn permanent_frozen_control_sequences_retain_their_eqtb_names() {
 }
 
 #[test]
+fn frozen_primitive_rendering_uses_its_registered_eqtb_name() {
+    let mut universe = Universe::new();
+    universe.register_primitive_meaning("relax", Meaning::Relax);
+    let primitive = universe
+        .primitive_token("relax")
+        .expect("registered primitive has a frozen token");
+
+    let mut shown = String::new();
+    crate::token_show::append_token_show_text(&universe, primitive, &mut shown);
+    assert_eq!(shown, "\\relax ");
+    assert_eq!(
+        crate::token_show::token_text(&universe, primitive),
+        "\\relax"
+    );
+
+    let mut end_template = String::new();
+    crate::token_show::append_token_show_text(
+        &universe,
+        Token::frozen_end_template(),
+        &mut end_template,
+    );
+    assert_eq!(end_template, "\\endtemplate ");
+}
+
+#[test]
 fn frozen_relax_has_distinct_semantic_identity_and_format_round_trips() {
     let mut universe = Universe::new();
     let checkpoint = universe.snapshot();

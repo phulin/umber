@@ -184,14 +184,16 @@ pub fn append_token_show_text(stores: &Universe, token: Token, text: &mut String
     } else {
         append_non_character_token_text(stores, token, text);
     }
-    let Token::Cs(symbol) = token else {
-        return;
+    let name = match token {
+        Token::Cs(symbol) => {
+            if stores.control_sequence_kind(symbol) == ControlSequenceKind::ActiveCharacter {
+                return;
+            }
+            stores.resolve(symbol)
+        }
+        Token::Frozen(_) => stores.frozen_primitive_name(token).unwrap_or("endtemplate"),
+        Token::Char { .. } | Token::Param(_) => return,
     };
-    if stores.control_sequence_kind(symbol) == ControlSequenceKind::ActiveCharacter {
-        return;
-    }
-
-    let name = stores.resolve(symbol);
     let mut chars = name.chars();
     match (chars.next(), chars.next()) {
         (Some(ch), None) if stores.catcode(ch) != Catcode::Letter => {}
@@ -230,7 +232,12 @@ fn append_non_character_token_text(stores: &Universe, token: Token, text: &mut S
             text.push('#');
             text.push(char::from(b'0' + slot));
         }
-        Token::Frozen(_) => text.push_str("\\endtemplate"),
+        Token::Frozen(_) => {
+            if let Some(escape) = escapechar(stores) {
+                text.push(escape);
+            }
+            text.push_str(stores.frozen_primitive_name(token).unwrap_or("endtemplate"));
+        }
         Token::Char { .. } => unreachable!("character tokens are handled by the caller"),
     }
 }
@@ -345,7 +352,12 @@ pub fn string_tokens(stores: &Universe, token: Token) -> Vec<Token> {
             out
         }
         Token::Param(slot) => text_tokens(&format!("#{slot}")),
-        Token::Frozen(_) => text_tokens("\\endtemplate"),
+        Token::Frozen(_) => {
+            let name = stores.frozen_primitive_name(token).unwrap_or("endtemplate");
+            let mut out = Vec::with_capacity(name.len() + 1);
+            append_escaped_text(escapechar(stores), name, &mut out);
+            out
+        }
     }
 }
 

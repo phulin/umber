@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use tex_state::macro_store::MacroMeaning;
-use tex_state::meaning::{ExpandablePrimitive, Meaning, MeaningFlags};
+use tex_state::meaning::{ExpandablePrimitive, Meaning, MeaningFlags, UnexpandablePrimitive};
 use tex_state::page::PageMark;
 use tex_state::token::{Catcode, Token};
 use tex_state::{Universe, World};
@@ -388,6 +388,135 @@ fn etex_unexpanded_reenters_the_current_expansion_loop() {
     assert!(!is_expandable_command(&expanded));
     assert_eq!(rendered(&mut processor), "X");
     assert!(fuel.burned() <= 32);
+}
+
+#[test]
+fn pdftex_expanded_collects_then_reenters_the_current_expansion_loop() {
+    // pdftex.web §§495 and 1535: `\expanded` uses
+    // `scan_toks(false, true)`, then inserts the collected list. The nested
+    // `\unexpanded` suppresses expansion only while that list is collected;
+    // the inserted result is expanded normally by the enclosing fetch.
+    let mut command = CommandState::new(crate::CommandProfile::PDFTEX14029);
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
+    install_expandable(&mut universe, "expanded", ExpandablePrimitive::Expanded);
+    install_expandable(&mut universe, "unexpanded", ExpandablePrimitive::Unexpanded);
+    install_macro(
+        &mut universe,
+        "payload",
+        Token::Char {
+            ch: 'X',
+            cat: Catcode::Letter,
+        },
+    );
+    let source = command
+        .register_source(SourceRegistration::new(
+            RegisteredSourceKind::Generated,
+            br"\expanded{\unexpanded{\payload}}\payload".as_slice(),
+        ))
+        .expect("source registers");
+    command
+        .open_registered_source(source)
+        .expect("source opens");
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut fuel = crate::CommandFuelLedger::new(64).expect("finite test fuel");
+    let mut processor =
+        processor(&mut command, &mut universe, &mut capabilities).with_fuel(fuel.fuel_mut());
+
+    assert_eq!(rendered(&mut processor), "XX");
+    assert!(fuel.burned() <= 64);
+}
+
+#[test]
+fn pdftex_expanded_collects_the_numexpr_result_without_its_terminator() {
+    // pdftex.web §§495 and 1535: the expanded scan uses TeX's §478 direct
+    // `\the` path. An e-TeX expression contributes its rendered value while
+    // the terminating `\relax` remains consumed by the internal scan.
+    let mut command = CommandState::new(crate::CommandProfile::PDFTEX14029);
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
+    universe.set_catcode('_', Catcode::Letter);
+    universe.set_catcode(':', Catcode::Letter);
+    install_expandable(&mut universe, "expanded", ExpandablePrimitive::Expanded);
+    let the = install_expandable(&mut universe, "the", ExpandablePrimitive::The);
+    let numexpr = universe.intern("numexpr").symbol();
+    universe.set_meaning(
+        numexpr,
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::NumExpr),
+    );
+    let eval_end = universe.intern("__int_eval_end:").symbol();
+    universe.set_meaning(eval_end, Meaning::Relax);
+    let parameters = universe.intern_token_list(&[Token::Param(1)]);
+    let replacement = universe.intern_token_list(&[
+        Token::Cs(the),
+        Token::Cs(numexpr),
+        Token::Param(1),
+        Token::Cs(eval_end),
+    ]);
+    let definition = universe.intern_macro(MacroMeaning::new(
+        MeaningFlags::EMPTY,
+        parameters,
+        replacement,
+    ));
+    let int_eval = universe.intern("int_eval:n").symbol();
+    universe.set_meaning(
+        int_eval,
+        Meaning::Macro {
+            flags: MeaningFlags::EMPTY,
+            definition,
+        },
+    );
+    let source = command
+        .register_source(SourceRegistration::new(
+            RegisteredSourceKind::Generated,
+            br#"\expanded{\int_eval:n{"41+1}}%"#.as_slice(),
+        ))
+        .expect("source registers");
+    command
+        .open_registered_source(source)
+        .expect("source opens");
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut processor = processor(&mut command, &mut universe, &mut capabilities);
+
+    assert_eq!(rendered(&mut processor), "66");
+}
+
+#[test]
+fn pdftex_string_compare_expands_both_balanced_operands() {
+    // pdftex.web §§1535 compares the two independently expanded token
+    // strings bytewise and returns only -1, 0, or 1. Macro expansion and the
+    // empty-string case challenge both operand boundaries.
+    for (source, expected) in [
+        (br"\pdfstrcmp{a}{b}%".as_slice(), "-1"),
+        (br"\pdfstrcmp{b}{a}%".as_slice(), "1"),
+        (br"\pdfstrcmp{\payload}{x}%".as_slice(), "0"),
+        (br"\pdfstrcmp{}{}%".as_slice(), "0"),
+    ] {
+        let mut command = CommandState::new(crate::CommandProfile::PDFTEX14029);
+        let mut universe = crate::test_harness::universe_with_plain_catcodes();
+        install_expandable(
+            &mut universe,
+            "pdfstrcmp",
+            ExpandablePrimitive::StringCompare,
+        );
+        install_macro(
+            &mut universe,
+            "payload",
+            Token::Char {
+                ch: 'x',
+                cat: Catcode::Letter,
+            },
+        );
+        let input = command
+            .register_source(SourceRegistration::new(
+                RegisteredSourceKind::Generated,
+                source,
+            ))
+            .expect("source registers");
+        command.open_registered_source(input).expect("source opens");
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut processor = processor(&mut command, &mut universe, &mut capabilities);
+
+        assert_eq!(rendered(&mut processor), expected);
+    }
 }
 
 #[test]
