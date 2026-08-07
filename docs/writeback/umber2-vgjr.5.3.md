@@ -58,3 +58,11 @@ at 43,992 KiB maximum RSS under `MemoryMax=512M`; the complete 148-test
 separate malformed-artifact case proves depth-first missing-font error order
 through a discretionary list. TeX82 §§638--642 remain the semantic authority;
 this repair changes only the bounded implementation of the artifact adapter.
+
+Final repair verification also passed all 466 active `tex-exec` tests at
+362,488 KiB RSS and all 40 active `tex-incr` tests at 166,328 KiB RSS under
+`MemoryMax=512M`. The exhaustive tracer remained `CLEAN`; Story and canonical
+Gentle remained byte-exact. The shipout stop gate measured 1.129 ms ordinary
+and 6.842 ms deferred-math midpoint estimates with 230,652 KiB maximum RSS.
+The complete native suite passed under `MemoryMax=1G` at 312,152 KiB maximum
+RSS, and uncapped `CARGO_BUILD_JOBS=6 scripts/check.sh` passed all four gates.
