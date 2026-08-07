@@ -75,11 +75,9 @@ pub fn pdf_finalization_input(
 
     let forms = stores
         .pdf_forms()
-        .map(|record| {
-            let artifact = stores
-                .pdf_form_artifact(record.object())
-                .ok_or(PdfBuildError::MissingFormArtifact(record.object()))?;
-            Ok((
+        .filter_map(|record| {
+            let artifact = stores.pdf_form_artifact(record.object())?;
+            Some(Ok((
                 record.object(),
                 PdfFormInput {
                     object: record.object(),
@@ -98,7 +96,7 @@ pub fn pdf_finalization_input(
                         .unwrap_or_default(),
                     immediate: record.immediate(),
                 },
-            ))
+            )))
         })
         .collect::<Result<BTreeMap<_, _>, PdfBuildError>>()?;
 
@@ -119,16 +117,13 @@ pub fn pdf_finalization_input(
         .collect::<BTreeMap<_, _>>();
     let font_configuration = stores.pdf_font_configuration();
     let mut fonts = BTreeMap::new();
-    for resource in stores.pdf_font_resources() {
-        let resource_font = stores.font(resource.font());
-        let identity = resource_font.source_identity();
-        let artifact_resource = artifacts_by_font
-            .get(&identity)
-            .ok_or_else(|| PdfBuildError::MissingFontResource(resource_font.name().to_owned()))?
-            .clone();
+    for (identity, artifact_resource) in artifacts_by_font {
         let font_id = stores
-            .font_by_source_identity(artifact_resource.semantic_identity)
+            .font_by_source_identity(identity)
             .ok_or_else(|| PdfBuildError::MissingLiveFont(artifact_resource.name.clone()))?;
+        let resource = stores
+            .pdf_font_resource_by_identity(identity)
+            .ok_or_else(|| PdfBuildError::MissingFontResource(artifact_resource.name.clone()))?;
         let loaded = stores.font(font_id);
         let map_entry = resolved_map.get(artifact_resource.name.as_bytes()).cloned();
         let encoding = map_entry
@@ -142,7 +137,7 @@ pub fn pdf_finalization_input(
             })
             .transpose()?;
         let program = detached_font_program(stores, font_id, map_entry.as_ref(), driver_dpi)?;
-        let glyph_names = encoding
+        let mut glyph_names = encoding
             .as_ref()
             .map(|encoding| {
                 encoding
@@ -152,6 +147,9 @@ pub fn pdf_finalization_input(
                     .collect::<BTreeSet<_>>()
             })
             .unwrap_or_default();
+        if let PdfFontProgramInput::Type1(type1) = &program {
+            glyph_names.extend((0..=255).filter_map(|code| type1.builtin_glyph_name(code)));
+        }
         let glyph_to_unicode = glyph_names
             .into_iter()
             .filter_map(|name| {
@@ -263,7 +261,8 @@ pub fn pdf_finalization_input(
     }
 
     let include_info = stores.int_param(IntParam::PDF_OMIT_INFO_DICT) == 0;
-    let ids = stores
+    let mut allocation_state = stores.clone();
+    let ids = allocation_state
         .finalize_pdf_document_objects(include_info)
         .map_err(|_| PdfBuildError::ObjectCapacity)?;
     let document_objects = PdfReservedDocumentObjects {
@@ -351,7 +350,7 @@ pub fn pdf_finalization_input(
         navigation,
         allocation: PdfAllocationInput {
             document: document_objects,
-            next_object: stores.pdf_next_object_id(),
+            next_object: allocation_state.pdf_next_object_id(),
         },
         limits: PdfFinalizationLimits::default(),
     })

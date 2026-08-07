@@ -49,18 +49,18 @@ Use this crate when behavior is about driving the engine, presenting CLI output,
   tests.
 - `src/memory_output.rs`: exact committed terminal/log/DVI/aux collection for successful memory-backed runs, aggregate output limits, and auxiliary publication into VFS generated transactions.
 - `src/memory_output/tests.rs`: final-commit idempotence, output accounting, and memory-boundary tests.
-- `src/pdf_import.rs`: lightweight PDF syntax inspection and lossless selected-page resource import through `hayro-syntax`.
+- `src/pdf_import.rs`: lightweight PDF syntax inspection plus the temporarily retained legacy selected-page resource importer used by virtual-font finalization.
 - `src/pdf_import/tests.rs`: synthetic and conditional pinned-corpus PDF import regressions.
 - `src/pdftex.rs`: pdfTeX 1.40.29 behavior, focused conformance tests, and thin
   mode/default application over `tex-command`'s integrated primitive
   catalogue; it owns no second name, meaning, parameter, or default table.
-- `src/pdf_output.rs`: deterministic committed-artifact lowering into the checkpointed PDF object graph.
+- `src/pdf_output.rs`: thin detached-finalization adapter plus the temporarily retained virtual-font finalizer pending the complete VF input contract tracked by `umber2-vgjr.6.4`.
 - `src/pdf_output/finalization_input.rs`: compatibility adapter that freezes
   accepted engine state and host-resolved artifacts/resources into
   `tex_out::pdf::PdfFinalizationInput`; it is the only Umber-owned PDF
   finalization boundary.
 - `src/pdf_font_resources_tests.rs`: post-acceptance real-font fallback and virtual-root exclusion tests.
-- `src/pdf_vf.rs`: bounded recursive virtual-font packet lowering into detached PDF-positioned operations and real-font resources.
+- `src/pdf_vf.rs`: temporarily retained bounded recursive virtual-font packet lowering pending migration under `umber2-vgjr.6.4`.
 - `src/pdf_vf/tests.rs`: synthetic packet execution, recursion, resource-selection, and lowering-limit tests.
 - `src/virtual_compile.rs`: host-neutral persistent compile session over one `ProjectWorkspace`, versioned mapped-TFM layout policy, revision-checked root patches, canonical file/OpenType/PK admission and retries, atomic response registration, one retained canonical HTML render document, retained immutable resources, and configurable execution/resource accounting.
 - `src/virtual_compile/path.rs`: logical TeX/TFM request normalization over `umber-vfs` canonical paths.

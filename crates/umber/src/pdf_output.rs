@@ -4,7 +4,23 @@ mod finalization_input;
 
 pub use finalization_input::pdf_finalization_input;
 
+use tex_out::pdf::{
+    PdfModelError, PdfObjectCompression, PdfSerializationOptions, PdfSerializeError,
+    PdfStreamCompression, PdfVersion,
+};
+use tex_out::positioned::PositionedError;
+use tex_state::env::banks::{IntParam, TokParam};
+use tex_state::ids::FontId;
+use tex_state::ids::TokenListId;
+use tex_state::token_show::append_token_string_text;
+use tex_state::{
+    CommittedArtifact, ContentHash, PdfDocumentFragmentKind, PdfOutputParameters, Universe,
+    WorldError,
+};
+
 use md5::{Digest, Md5};
+use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
+use std::io::{Read, Write};
 use tex_arith::Scaled;
 use tex_out::PageNode;
 use tex_out::pdf::{
@@ -13,26 +29,15 @@ use tex_out::pdf::{
     PdfDestinationActionKind, PdfDestinationNameTree, PdfDestinationNameTreeChildren,
     PdfDestinationPage, PdfDestinationStructure, PdfDestinationTarget, PdfDestinationView,
     PdfDictionary, PdfExplicitDestination, PdfImageColorSpace, PdfImageFilter, PdfImageXObject,
-    PdfIndirectObject, PdfModelError, PdfName, PdfNamesObject, PdfNumber, PdfObject,
-    PdfObjectCompression, PdfObjectId, PdfOutlineItemObject, PdfOutlineObject,
-    PdfSerializationOptions, PdfSerializeError, PdfStreamCompression, PdfThreadObject, PdfTrailer,
-    PdfValue, PdfVersion, UnvalidatedPdfDocument, ordered_page_content, page_content,
+    PdfIndirectObject, PdfName, PdfNamesObject, PdfNumber, PdfObject, PdfObjectId,
+    PdfOutlineItemObject, PdfOutlineObject, PdfThreadObject, PdfTrailer, PdfValue,
+    UnvalidatedPdfDocument, ordered_page_content, page_content,
 };
-use tex_out::positioned::{
-    BoxKind, PositionedBox, PositionedError, PositionedEvent, PositionedPage,
-};
-use tex_state::env::banks::{IntParam, TokParam};
-use tex_state::ids::FontId;
-use tex_state::ids::TokenListId;
-use tex_state::token_show::append_token_string_text;
+use tex_out::positioned::{BoxKind, PositionedBox, PositionedEvent, PositionedPage};
 use tex_state::{
-    CommittedArtifact, ContentHash, PdfActionIdentifier, PdfActionSpec, PdfActionTarget,
-    PdfActionWindow, PdfAnnotationDimensions, PdfDocumentFragmentKind, PdfExternalImageMetadata,
-    PdfLinkRecord, PdfOutputParameters, PdfRasterColorSpace, PdfRasterFormat, Universe, WorldError,
+    PdfActionIdentifier, PdfActionSpec, PdfActionTarget, PdfActionWindow, PdfAnnotationDimensions,
+    PdfExternalImageMetadata, PdfLinkRecord, PdfRasterColorSpace, PdfRasterFormat,
 };
-
-use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
-use std::io::{Read, Write};
 
 pub(crate) const DEFAULT_PDF_PK_RESOLUTION: i32 = 600;
 const PDF_FORM_MAX_DEPTH: usize = 256;
@@ -156,6 +161,69 @@ pub fn pdf_from_committed_artifacts_at_dpi(
 
 #[allow(clippy::disallowed_methods)] // Process telemetry; PDF content never observes it.
 fn pdf_from_committed_artifacts_at_dpi_with_virtual_fonts(
+    stores: &mut Universe,
+    artifacts: &[CommittedArtifact],
+    driver_dpi: i32,
+    virtual_fonts: &crate::PdfVirtualFontResources,
+) -> Result<Vec<u8>, PdfBuildError> {
+    // The detached contract cannot yet represent exact packet-local TFM bytes
+    // or the first-use allocation of fonts discovered while lowering a VF.
+    // Keep that path on the established finalizer until umber2-vgjr.6.4
+    // completes the boundary rather than silently emitting unlowered text.
+    if !virtual_fonts.virtual_fonts.is_empty() {
+        return legacy_pdf_from_committed_artifacts_at_dpi_with_virtual_fonts(
+            stores,
+            artifacts,
+            driver_dpi,
+            virtual_fonts,
+        );
+    }
+    let input = pdf_finalization_input(stores, artifacts, driver_dpi, virtual_fonts)?;
+    let include_info = input.document.metadata.include_info_dictionary;
+    let output = tex_out::pdf::finalize_pdf(&input).map_err(|error| match error {
+        tex_out::pdf::PdfBuildError::FormCycle(object) => PdfBuildError::FormCycle(object),
+        tex_out::pdf::PdfBuildError::RecursiveForm(object) => PdfBuildError::RecursiveForm(object),
+        tex_out::pdf::PdfBuildError::ReferencedFormNotFound(object) => {
+            PdfBuildError::ReferencedFormNotFound(object)
+        }
+        tex_out::pdf::PdfBuildError::MissingFormArtifact(object) => {
+            PdfBuildError::MissingFormArtifact(object)
+        }
+        tex_out::pdf::PdfBuildError::FormTraversalDepthExceeded(limit) => {
+            PdfBuildError::FormTraversalDepthExceeded(limit)
+        }
+        tex_out::pdf::PdfBuildError::FormTraversalWorkExceeded(limit) => {
+            PdfBuildError::FormTraversalWorkExceeded(limit)
+        }
+        tex_out::pdf::PdfBuildError::InvalidPng => PdfBuildError::InvalidPng,
+        tex_out::pdf::PdfBuildError::MissingRasterImage(object) => {
+            PdfBuildError::MissingRasterImage(object)
+        }
+        tex_out::pdf::PdfBuildError::OpenActionPageNotFound(page) => {
+            PdfBuildError::OpenActionPageNotFound(page)
+        }
+        tex_out::pdf::PdfBuildError::OutlineCountIncomplete { object, missing } => {
+            PdfBuildError::OutlineCountIncomplete { object, missing }
+        }
+        tex_out::pdf::PdfBuildError::ReferencedRawObjectUninitialized(object) => {
+            PdfBuildError::ReferencedRawObjectUninitialized(object)
+        }
+        other => PdfBuildError::DetachedFinalization(other),
+    })?;
+    stores
+        .finalize_pdf_document_objects(include_info)
+        .map_err(|_| PdfBuildError::ObjectCapacity)?;
+    for diagnostic in output.diagnostics {
+        stores.world_mut().write_text(
+            tex_state::PrintSink::TerminalAndLog,
+            &format!("{diagnostic}\n"),
+        );
+    }
+    Ok(output.bytes)
+}
+
+#[allow(clippy::disallowed_methods)]
+fn legacy_pdf_from_committed_artifacts_at_dpi_with_virtual_fonts(
     stores: &mut Universe,
     artifacts: &[CommittedArtifact],
     driver_dpi: i32,
@@ -4577,6 +4645,7 @@ pub enum PdfBuildError {
     Positioned(PositionedError),
     Model(PdfModelError),
     Serialize(PdfSerializeError),
+    DetachedFinalization(tex_out::pdf::PdfBuildError),
 }
 
 impl std::fmt::Display for PdfBuildError {
@@ -4812,6 +4881,7 @@ impl std::fmt::Display for PdfBuildError {
             Self::Positioned(error) => error.fmt(f),
             Self::Model(error) => error.fmt(f),
             Self::Serialize(error) => error.fmt(f),
+            Self::DetachedFinalization(error) => error.fmt(f),
         }
     }
 }
@@ -9007,9 +9077,10 @@ mod tests {
             first_input.pages[0].page_object,
             first_stores.pdf_pages()[0].page_object()
         );
+        assert!(first_input.allocation.next_object > first_stores.pdf_next_object_id());
         assert_eq!(
-            first_input.allocation.next_object,
-            first_stores.pdf_next_object_id()
+            first_stores.pdf_next_object_id(),
+            second_stores.pdf_next_object_id()
         );
 
         let first_pdf =
@@ -9018,9 +9089,13 @@ mod tests {
         let second_pdf =
             pdf_from_committed_artifacts(&mut second_stores, &second_run.committed_artifacts)
                 .expect("legacy finalizer accepts duplicate detached fixture");
-        let legacy_pdf =
-            pdf_from_committed_artifacts(&mut legacy_stores, &legacy_run.committed_artifacts)
-                .expect("legacy finalizer accepts untouched fixture");
+        let legacy_pdf = legacy_pdf_from_committed_artifacts_at_dpi_with_virtual_fonts(
+            &mut legacy_stores,
+            &legacy_run.committed_artifacts,
+            DEFAULT_PDF_PK_RESOLUTION,
+            &resources,
+        )
+        .expect("legacy finalizer accepts untouched fixture");
         assert_eq!(first_pdf, second_pdf);
         assert_eq!(first_pdf, legacy_pdf);
     }

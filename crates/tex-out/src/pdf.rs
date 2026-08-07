@@ -9,7 +9,9 @@ use std::num::NonZeroU32;
 use sha2::{Digest, Sha256};
 
 mod finalization;
+mod finalize;
 mod graph;
+mod import;
 mod paint;
 mod serialize;
 
@@ -25,6 +27,7 @@ pub use finalization::{
     PdfRawObjectPayloadInput, PdfReservedDocumentObjects, PdfThreadBeadInput, PdfThreadInput,
     PdfVirtualFontInput,
 };
+pub use finalize::{PdfBuildError, PdfFinalizationOutput, finalize_pdf};
 
 use graph::{PdfGraphView, PdfValueCursor, PdfValueEvent};
 use paint::PdfPaintProgram;

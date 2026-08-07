@@ -1352,7 +1352,10 @@ name = "tex-out"
 version = "0.1.0"
 dependencies = [
  "flate2",
+ "hayro-syntax",
+ "md-5",
  "pdf-writer",
+ "png",
  "rustybuzz",
  "sha2",
  "test-support",
