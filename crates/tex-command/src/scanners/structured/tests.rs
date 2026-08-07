@@ -2,85 +2,27 @@ use std::sync::Arc;
 
 use tex_state::macro_store::MacroMeaning;
 use tex_state::meaning::{ExpandablePrimitive, Meaning, MeaningFlags, UnexpandablePrimitive};
-use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
-use tex_state::world::PrintSink;
-use tex_state::{EffectRecord, Universe};
+use tex_state::token::{Catcode, OriginId, Token};
 
 use super::*;
-use crate::input::{
-    ReplayTrace, RetirementBehavior, SharedTokenBuffer, TokenBehavior, TokenPayload,
-};
+use crate::input::{ReplayTrace, TokenBehavior};
 use crate::observation::{MutationTarget, ObservationValue, RecoveryKind};
-use crate::{
-    CommandHostCapabilities, CommandHostContext, CommandObservation, CommandObserver,
-    CommandReplayDelivery, CommandState, RegisteredSourceKind, SourceRegistration,
+use crate::test_harness::{
+    ProcessorScenario, Recorder, ScannerRig, diagnostic_text, plain_text_tokens as text_tokens,
+    processor, push, traced,
 };
-
-#[derive(Default)]
-struct Recorder(Vec<CommandObservation>);
-
-impl CommandObserver for Recorder {
-    fn committed(&mut self, observation: CommandObservation) {
-        self.0.push(observation);
-    }
-}
-
-fn traced(token: Token) -> TracedTokenWord {
-    TracedTokenWord::pack(token, OriginId::UNKNOWN)
-}
-
-fn push(command: &mut CommandState, tokens: impl IntoIterator<Item = Token>) {
-    command.push_token_level(
-        TokenPayload::Transient(SharedTokenBuffer::new(
-            tokens.into_iter().map(traced).collect::<Vec<_>>(),
-        )),
-        TokenBehavior::Ordinary,
-        RetirementBehavior::Pop,
-        ReplayTrace::BackedUp,
-    );
-}
-
-fn text_tokens(text: &str) -> Vec<Token> {
-    text.chars()
-        .map(|ch| Token::Char {
-            ch,
-            cat: match ch {
-                '{' => Catcode::BeginGroup,
-                '}' => Catcode::EndGroup,
-                ' ' => Catcode::Space,
-                'a'..='z' | 'A'..='Z' => Catcode::Letter,
-                _ => Catcode::Other,
-            },
-        })
-        .collect()
-}
-
-fn diagnostic_text(universe: &Universe) -> String {
-    universe
-        .world()
-        .effect_records()
-        .iter()
-        .filter_map(|effect| match effect {
-            EffectRecord::StreamWrite {
-                sink: PrintSink::Terminal | PrintSink::TerminalAndLog | PrintSink::Log,
-                text,
-            } => Some(text.as_str()),
-            _ => None,
-        })
-        .collect()
-}
+use crate::{
+    CommandHostCapabilities, CommandHostContext, CommandObservation, CommandReplayDelivery,
+    CommandState, RegisteredSourceKind, SourceRegistration,
+};
 
 #[test]
 fn setbox_forbidden_path_does_not_fetch_or_back_up_the_box_command() {
     let scan = |allowed| {
-        let mut command = CommandState::default();
-        push(&mut command, text_tokens("0=x"));
-        let mut universe = crate::test_harness::universe_with_plain_catcodes();
-        let mut capabilities = CommandHostCapabilities::default();
-        let mut recorder = Recorder::default();
+        let mut rig = ScannerRig::plain();
+        rig.scenario.push(text_tokens("0=x"));
         let (assignment, next, context) = {
-            let mut processor = processor(&mut command, &mut universe, &mut capabilities)
-                .with_observer(&mut recorder);
+            let mut processor = rig.processor();
             let assignment = processor
                 .scan_setbox_assignment(allowed)
                 .expect("setbox operand scans");
@@ -91,7 +33,7 @@ fn setbox_forbidden_path_does_not_fetch_or_back_up_the_box_command() {
                 .expect("following command remains input");
             (assignment, next, context)
         };
-        (assignment, next, context, recorder.0)
+        (assignment, next, context, rig.recorder.0)
     };
 
     let (forbidden, forbidden_next, forbidden_context, forbidden_observations) = scan(false);
@@ -142,48 +84,43 @@ fn setbox_forbidden_path_does_not_fetch_or_back_up_the_box_command() {
 
 #[test]
 fn math_scalar_requests_are_completed_before_replay() {
-    let mut command = CommandState::default();
-    let mut universe = crate::test_harness::universe_with_plain_catcodes();
-    let mut capabilities = CommandHostCapabilities::default();
-    push(
-        &mut command,
-        [
-            Token::Char {
-                ch: '4',
-                cat: Catcode::Other,
-            },
-            Token::Char {
-                ch: '0',
-                cat: Catcode::Other,
-            },
-            Token::Char {
-                ch: '9',
-                cat: Catcode::Other,
-            },
-            Token::Char {
-                ch: '6',
-                cat: Catcode::Other,
-            },
-            Token::Char {
-                ch: ' ',
-                cat: Catcode::Space,
-            },
-            Token::Char {
-                ch: '0',
-                cat: Catcode::Other,
-            },
-            Token::Char {
-                ch: 'p',
-                cat: Catcode::Letter,
-            },
-            Token::Char {
-                ch: 't',
-                cat: Catcode::Letter,
-            },
-        ],
-    );
+    let mut scenario = ProcessorScenario::plain();
+    scenario.push([
+        Token::Char {
+            ch: '4',
+            cat: Catcode::Other,
+        },
+        Token::Char {
+            ch: '0',
+            cat: Catcode::Other,
+        },
+        Token::Char {
+            ch: '9',
+            cat: Catcode::Other,
+        },
+        Token::Char {
+            ch: '6',
+            cat: Catcode::Other,
+        },
+        Token::Char {
+            ch: ' ',
+            cat: Catcode::Space,
+        },
+        Token::Char {
+            ch: '0',
+            cat: Catcode::Other,
+        },
+        Token::Char {
+            ch: 'p',
+            cat: Catcode::Letter,
+        },
+        Token::Char {
+            ch: 't',
+            cat: Catcode::Letter,
+        },
+    ]);
     let (character, fraction) = {
-        let mut processor = processor(&mut command, &mut universe, &mut capabilities);
+        let mut processor = scenario.processor();
         let character = processor
             .scan_math_character()
             .expect("math character scans");
@@ -202,34 +139,30 @@ fn math_scalar_requests_are_completed_before_replay() {
 
 #[test]
 fn character_definition_scanner_owns_target_optional_equals_and_integer() {
-    let mut command = CommandState::default();
-    let mut universe = crate::test_harness::universe_with_plain_catcodes();
-    let mut capabilities = CommandHostCapabilities::default();
-    let target = universe.intern("definedchar").symbol();
-    push(
-        &mut command,
-        [
-            Token::Char {
-                ch: ' ',
-                cat: Catcode::Space,
-            },
-            Token::Cs(target),
-            Token::Char {
-                ch: '=',
-                cat: Catcode::Other,
-            },
-            Token::Char {
-                ch: '6',
-                cat: Catcode::Other,
-            },
-            Token::Char {
-                ch: '5',
-                cat: Catcode::Other,
-            },
-        ],
-    );
+    let mut scenario = ProcessorScenario::plain();
+    let target = scenario.universe.intern("definedchar").symbol();
+    scenario.push([
+        Token::Char {
+            ch: ' ',
+            cat: Catcode::Space,
+        },
+        Token::Cs(target),
+        Token::Char {
+            ch: '=',
+            cat: Catcode::Other,
+        },
+        Token::Char {
+            ch: '6',
+            cat: Catcode::Other,
+        },
+        Token::Char {
+            ch: '5',
+            cat: Catcode::Other,
+        },
+    ]);
 
-    let definition = processor(&mut command, &mut universe, &mut capabilities)
+    let definition = scenario
+        .processor()
         .scan_character_definition(RestrictedIntegerClass::CharacterCode, false)
         .expect("character definition scans");
 
@@ -241,31 +174,31 @@ fn character_definition_scanner_owns_target_optional_equals_and_integer() {
 
 #[test]
 fn frozen_control_target_becomes_inaccessible_without_consuming_following_input() {
-    let mut command = CommandState::default();
-    let mut universe = crate::test_harness::universe_with_plain_catcodes();
-    let mut capabilities = CommandHostCapabilities::default();
-    push(
-        &mut command,
-        [
-            Token::frozen_relax(),
-            Token::Char {
-                ch: '6',
-                cat: Catcode::Other,
-            },
-            Token::Char {
-                ch: '5',
-                cat: Catcode::Other,
-            },
-        ],
-    );
+    let mut scenario = ProcessorScenario::plain();
+    scenario.push([
+        Token::frozen_relax(),
+        Token::Char {
+            ch: '6',
+            cat: Catcode::Other,
+        },
+        Token::Char {
+            ch: '5',
+            cat: Catcode::Other,
+        },
+    ]);
 
-    let definition = processor(&mut command, &mut universe, &mut capabilities)
+    let definition = scenario
+        .processor()
         .scan_character_definition(RestrictedIntegerClass::CharacterCode, false)
         .expect("frozen target recovers");
 
-    assert_eq!(universe.resolve(definition.target), "inaccessible");
+    assert_eq!(scenario.universe.resolve(definition.target), "inaccessible");
     assert_eq!(definition.value, 65, "the following operand remains owned");
-    assert!(diagnostic_text(&universe).contains("Missing control sequence inserted"));
+    assert!(
+        scenario
+            .diagnostic_text()
+            .contains("Missing control sequence inserted")
+    );
 }
 
 #[test]
@@ -1356,18 +1289,6 @@ fn a_non_radical_delimiter_backs_up_a_token_with_no_delimiter_code() {
             cat: Catcode::Letter
         }
     ));
-}
-
-fn processor<'a>(
-    command: &'a mut CommandState,
-    universe: &'a mut Universe,
-    capabilities: &'a mut CommandHostCapabilities,
-) -> CommandProcessor<'a> {
-    CommandProcessor::new(
-        command,
-        universe.command_context(),
-        CommandHostContext::new(capabilities),
-    )
 }
 
 #[test]

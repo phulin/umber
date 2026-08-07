@@ -1,38 +1,17 @@
 use tex_state::Universe;
 use tex_state::meaning::Meaning;
-use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
+use tex_state::token::{Catcode, Token};
 use tex_state::{EffectRecord, PenaltyArrayKind, PrintSink};
 
 use super::*;
-use crate::input::{
-    ReplayTrace, RetirementBehavior, SharedTokenBuffer, TokenBehavior, TokenPayload,
-};
+use crate::test_harness::{Recorder, diagnostic_text, push as push_tokens};
 use crate::{
     CommandDialect, CommandHostCapabilities, CommandHostContext, CommandObservation,
-    CommandObserver, CommandProfile, CommandState, InputTransition, ObservedToken,
+    CommandProfile, CommandState, InputTransition, ObservedToken,
 };
 
-#[derive(Default)]
-struct Recorder(Vec<CommandObservation>);
-
-impl CommandObserver for Recorder {
-    fn committed(&mut self, observation: CommandObservation) {
-        self.0.push(observation);
-    }
-}
-
 fn push(command: &mut CommandState, tokens: Vec<Token>) {
-    command.push_token_level(
-        TokenPayload::Transient(SharedTokenBuffer::new(
-            tokens
-                .into_iter()
-                .map(|token| TracedTokenWord::pack(token, OriginId::UNKNOWN))
-                .collect::<Vec<_>>(),
-        )),
-        TokenBehavior::Ordinary,
-        RetirementBehavior::Pop,
-        ReplayTrace::BackedUp,
-    );
+    push_tokens(command, tokens);
 }
 
 fn char_token(ch: char) -> Token {
@@ -67,21 +46,6 @@ fn scanner_tokens(source: &str) -> Vec<Token> {
             } else {
                 char_token(ch)
             }
-        })
-        .collect()
-}
-
-fn diagnostic_text(universe: &Universe) -> String {
-    universe
-        .world()
-        .effect_records()
-        .iter()
-        .filter_map(|effect| match effect {
-            EffectRecord::StreamWrite {
-                sink: PrintSink::Terminal | PrintSink::TerminalAndLog | PrintSink::Log,
-                text,
-            } => Some(text.as_str()),
-            _ => None,
         })
         .collect()
 }

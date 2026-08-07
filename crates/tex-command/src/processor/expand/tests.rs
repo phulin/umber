@@ -3,46 +3,22 @@ use std::sync::Arc;
 use tex_state::macro_store::MacroMeaning;
 use tex_state::meaning::{ExpandablePrimitive, Meaning, MeaningFlags};
 use tex_state::page::PageMark;
-use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
-use tex_state::{EffectRecord, PrintSink, Universe, World};
+use tex_state::token::{Catcode, Token};
+use tex_state::{Universe, World};
 
 use super::*;
 use crate::conditionals::{ConditionalKind, IfLimit};
 use crate::input::{ReplayTrace, RetirementBehavior, SharedTokenBuffer};
 use crate::observation::{
-    CommandDeliveryBoundary, CommandObservation, CommandObserver, DiagnosticArgument,
-    InputTransition, ObservationValue, ObservedToken,
+    CommandDeliveryBoundary, CommandObservation, DiagnosticArgument, InputTransition,
+    ObservationValue, ObservedToken,
 };
 use crate::processor::{DefinitionContext, ScannerStatus, ScannerWarning, TokenBuilderId};
+use crate::test_harness::{Recorder, ScannerRig, diagnostic_text, processor, traced};
 use crate::{
     CommandHostCapabilities, CommandHostContext, CommandState, RegisteredSourceKind,
     SourceRegistration,
 };
-
-#[derive(Default)]
-struct Recorder(Vec<CommandObservation>);
-
-impl CommandObserver for Recorder {
-    fn committed(&mut self, observation: CommandObservation) {
-        self.0.push(observation);
-    }
-}
-
-fn traced(token: Token) -> TracedTokenWord {
-    TracedTokenWord::pack(token, OriginId::UNKNOWN)
-}
-
-fn processor<'a>(
-    command: &'a mut CommandState,
-    universe: &'a mut Universe,
-    capabilities: &'a mut CommandHostCapabilities,
-) -> CommandProcessor<'a> {
-    CommandProcessor::new(
-        command,
-        universe.command_context(),
-        CommandHostContext::new(capabilities),
-    )
-}
 
 fn install_macro(
     universe: &mut Universe,
@@ -97,24 +73,20 @@ fn macro_expanded_alignment_lookahead_is_observed_before_backup() {
     // `init_col` backs its ordinary command up. This bounded source-free
     // microfixture models `\def\bf{\fam...}` at the start of an alignment
     // entry, the first long-document occurrence that exposed the ordering.
-    let mut command = CommandState::default();
-    let mut universe = crate::test_harness::universe_with_plain_catcodes();
-    let fam = universe.intern("fam").symbol();
-    universe.set_meaning(
+    let mut rig = ScannerRig::plain();
+    let fam = rig.scenario.universe.intern("fam").symbol();
+    rig.scenario.universe.set_meaning(
         fam,
         Meaning::IntParam(tex_state::env::banks::IntParam::FAM.raw()),
     );
-    let bf = install_macro(&mut universe, "bf", Token::Cs(fam));
-    command.push_token_level(
+    let bf = install_macro(&mut rig.scenario.universe, "bf", Token::Cs(fam));
+    rig.scenario.command.push_token_level(
         TokenPayload::Transient(SharedTokenBuffer::new(vec![traced(Token::Cs(bf))])),
         TokenBehavior::Ordinary,
         RetirementBehavior::Pop,
         ReplayTrace::BackedUp,
     );
-    let mut capabilities = CommandHostCapabilities::default();
-    let mut recorder = Recorder::default();
-    let mut processor =
-        processor(&mut command, &mut universe, &mut capabilities).with_observer(&mut recorder);
+    let mut processor = rig.processor();
 
     let lookahead = processor
         .next_alignment_lookahead()
@@ -137,7 +109,7 @@ fn macro_expanded_alignment_lookahead_is_observed_before_backup() {
         .expect("backed command exists");
 
     assert_eq!(
-        delivery_and_backup_script(&recorder, "assign_int"),
+        delivery_and_backup_script(&rig.recorder, "assign_int"),
         ["raw", "expanded", "backup", "raw", "expanded",],
         "§380's completed expansion precedes §789's one backup and one replay"
     );
@@ -147,23 +119,19 @@ fn macro_expanded_alignment_lookahead_is_observed_before_backup() {
 fn direct_alignment_lookahead_keeps_raw_expanded_backup_replay_order() {
     // TeX82 §§341, 380, 785, 789: a directly fetched unexpandable command
     // completes raw and expanded delivery before init_col backs it up.
-    let mut command = CommandState::default();
-    let mut universe = crate::test_harness::universe_with_plain_catcodes();
-    let fam = universe.intern("fam").symbol();
-    universe.set_meaning(
+    let mut rig = ScannerRig::plain();
+    let fam = rig.scenario.universe.intern("fam").symbol();
+    rig.scenario.universe.set_meaning(
         fam,
         Meaning::IntParam(tex_state::env::banks::IntParam::FAM.raw()),
     );
-    command.push_token_level(
+    rig.scenario.command.push_token_level(
         TokenPayload::Transient(SharedTokenBuffer::new(vec![traced(Token::Cs(fam))])),
         TokenBehavior::Ordinary,
         RetirementBehavior::Pop,
         ReplayTrace::BackedUp,
     );
-    let mut capabilities = CommandHostCapabilities::default();
-    let mut recorder = Recorder::default();
-    let mut processor =
-        processor(&mut command, &mut universe, &mut capabilities).with_observer(&mut recorder);
+    let mut processor = rig.processor();
 
     let lookahead = processor
         .next_alignment_lookahead()
@@ -179,7 +147,7 @@ fn direct_alignment_lookahead_keeps_raw_expanded_backup_replay_order() {
         .expect("backed direct command exists");
 
     assert_eq!(
-        delivery_and_backup_script(&recorder, "assign_int"),
+        delivery_and_backup_script(&rig.recorder, "assign_int"),
         ["raw", "expanded", "backup", "raw", "expanded",]
     );
 }
@@ -189,24 +157,20 @@ fn consumed_macro_alignment_lookahead_commits_once_without_backup() {
     // TeX82 §§380/785 consume no_align/crcr/closing-brace/omit lookahead in
     // place. Model that branch directly: its pending expansion commits once
     // and creates no backup replay.
-    let mut command = CommandState::default();
-    let mut universe = crate::test_harness::universe_with_plain_catcodes();
-    let omit = universe.intern("omit").symbol();
-    universe.set_meaning(
+    let mut rig = ScannerRig::plain();
+    let omit = rig.scenario.universe.intern("omit").symbol();
+    rig.scenario.universe.set_meaning(
         omit,
         Meaning::UnexpandablePrimitive(tex_state::meaning::UnexpandablePrimitive::Omit),
     );
-    let macro_name = install_macro(&mut universe, "next", Token::Cs(omit));
-    command.push_token_level(
+    let macro_name = install_macro(&mut rig.scenario.universe, "next", Token::Cs(omit));
+    rig.scenario.command.push_token_level(
         TokenPayload::Transient(SharedTokenBuffer::new(vec![traced(Token::Cs(macro_name))])),
         TokenBehavior::Ordinary,
         RetirementBehavior::Pop,
         ReplayTrace::BackedUp,
     );
-    let mut capabilities = CommandHostCapabilities::default();
-    let mut recorder = Recorder::default();
-    let mut processor =
-        processor(&mut command, &mut universe, &mut capabilities).with_observer(&mut recorder);
+    let mut processor = rig.processor();
 
     let lookahead = processor
         .next_alignment_lookahead()
@@ -223,7 +187,7 @@ fn consumed_macro_alignment_lookahead_commits_once_without_backup() {
     let _ = processor.commit_alignment_lookahead_delivery(lookahead);
 
     assert_eq!(
-        delivery_and_backup_script(&recorder, "omit"),
+        delivery_and_backup_script(&rig.recorder, "omit"),
         ["raw", "expanded"],
         "consumed lookahead has one completed expanded delivery and no backup"
     );
@@ -1215,21 +1179,6 @@ fn pdf_ximage_bbox_reads_typed_metadata_without_allocating() {
     }
     assert_eq!(universe.pdf_next_object_id(), initial_object);
     assert_eq!(universe.snapshot().state_hash(), initial_hash);
-}
-
-fn diagnostic_text(universe: &Universe) -> String {
-    universe
-        .world()
-        .effect_records()
-        .iter()
-        .filter_map(|effect| match effect {
-            EffectRecord::StreamWrite {
-                sink: PrintSink::Terminal | PrintSink::TerminalAndLog | PrintSink::Log,
-                text,
-            } => Some(text.as_str()),
-            _ => None,
-        })
-        .collect()
 }
 
 #[test]

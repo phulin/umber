@@ -1,27 +1,15 @@
 use std::sync::Arc;
 
+use tex_state::Universe;
 use tex_state::macro_store::MacroMeaning;
 use tex_state::meaning::UnexpandablePrimitive;
-use tex_state::{EffectRecord, PrintSink, Universe};
 
 use super::*;
-use crate::input::{
-    ReplayTrace, RetirementBehavior, SharedTokenBuffer, TokenBehavior, TokenPayload,
-};
+use crate::test_harness::{Recorder, diagnostic_text, processor, push, traced};
 use crate::{
     CommandDeliveryBoundary, CommandHostCapabilities, CommandHostContext, CommandObservation,
-    CommandObserver, CommandState, InputTransition, ObservedToken, RegisteredSourceKind,
-    SourceRegistration,
+    CommandState, InputTransition, ObservedToken, RegisteredSourceKind, SourceRegistration,
 };
-
-#[derive(Default)]
-struct Recorder(Vec<CommandObservation>);
-
-impl CommandObserver for Recorder {
-    fn committed(&mut self, observation: CommandObservation) {
-        self.0.push(observation);
-    }
-}
 
 #[test]
 fn scan_toks_modes_parse_into_semantic_configurations() {
@@ -70,48 +58,6 @@ fn scan_toks_modes_parse_into_semantic_configurations() {
             status_visibility: ScannerStatusVisibility::Observed,
         }
     );
-}
-
-fn traced(token: Token) -> TracedTokenWord {
-    TracedTokenWord::pack(token, OriginId::UNKNOWN)
-}
-
-fn processor<'a>(
-    command: &'a mut CommandState,
-    universe: &'a mut Universe,
-    capabilities: &'a mut CommandHostCapabilities,
-) -> CommandProcessor<'a> {
-    CommandProcessor::new(
-        command,
-        universe.command_context(),
-        CommandHostContext::new(capabilities),
-    )
-}
-
-fn push(command: &mut CommandState, tokens: Vec<Token>) {
-    command.push_token_level(
-        TokenPayload::Transient(SharedTokenBuffer::new(
-            tokens.into_iter().map(traced).collect::<Vec<_>>(),
-        )),
-        TokenBehavior::Ordinary,
-        RetirementBehavior::Pop,
-        ReplayTrace::BackedUp,
-    );
-}
-
-fn diagnostic_text(universe: &Universe) -> String {
-    universe
-        .world()
-        .effect_records()
-        .iter()
-        .filter_map(|effect| match effect {
-            EffectRecord::StreamWrite {
-                sink: PrintSink::Terminal | PrintSink::TerminalAndLog | PrintSink::Log,
-                text,
-            } => Some(text.as_str()),
-            _ => None,
-        })
-        .collect()
 }
 
 #[test]
