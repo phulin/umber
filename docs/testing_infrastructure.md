@@ -36,7 +36,7 @@ the wasm-bindgen browser suite runs the same bytes and compares binary output,
 generated files, pass counts, and typed fixed-point failures with the native
 surface.
 
-The bounded execution corpora under `tests/corpus/{exec,etex_exec,typeset,math,align,tex_exec,tex_exec_io,expand}`
+The bounded execution corpora under `tests/corpus/{exec,etex_exec,typeset,math,align,tex_exec,expand}`
 and lexical/session corpora under
 `tests/corpus/{lexer,lexer_dynamic,stabilization,canonical-dvi}`
 use one closed Git directory per case. Each directory owns its named `.tex`
@@ -72,16 +72,15 @@ requests to the selected checkout's committed TFM files before the isolated
 reference run; it does not substitute ambient font metrics.
 The `tex_exec` validation-only regeneration branch runs
 `cargo test -p tex-exec --test fixture_parity` for every active TeX82 source
-and reference projection, then `cargo test -p umber --lib pdftex::tests` for
-all twenty active pdfTeX property consumers. It never rewrites the historical
+and reference projection, then validates all twenty pdfTeX properties across
+the twelve complementary `tex_exec` observations and eight closed
+`tests/pdftex-properties/fixtures` cases. It never rewrites the historical
 `expected.ref` files: they predate a pinned capture contract, and ambient
 pdfTeX plus the standalone pinned 1.40.29 INITEX oracle both produce different
 transcript bytes. The eight formerly blocked cases compare explicit
-status/terminal/log projections with strict bug-linked xfails. The
-`tex_exec_io` regeneration path preserves its three
-cases and runs the exact disposition census, but does not claim behavioral
-success: all three remain blocked on the oracle-comparable structured-effects
-contract in `umber2-alfh.30`.
+status/terminal/log projections with strict bug-linked xfails. The retired
+`tex_exec_io` generator has no shadow path: its three cases are active
+oracle-backed command-semantic fixtures with exact effects and artifact bytes.
 The WASM target reserves a 4 MiB linear-memory stack because retained compile
 sessions exceed wasm-ld's 1 MiB default during Firefox retry and incremental
 HTML coverage; native targets keep their platform stack policy.

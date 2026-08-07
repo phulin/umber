@@ -31,7 +31,6 @@ const TEXT_AREAS: &[&str] = &[
     "exec",
     "etex_exec",
     "typeset",
-    "tex_exec_io",
 ];
 
 fn main() -> ExitCode {
@@ -94,7 +93,7 @@ fn run() -> Result<()> {
 fn print_usage() {
     eprintln!(
         "usage: fixturegen --area AREA | --case AREA/CASE | --case AREA CASE | --cohort-transaction (--plan|--apply) PLAN.json | --sync-corpus [--manifest PATH] [--dest PATH] [--offline] | --reference-dvi DOCUMENT OUTPUT | --check-pdf-raster\n\
-         areas: lexer expand lexer_dynamic exec etex_exec typeset tex_exec_io pdf fonts"
+         areas: lexer expand lexer_dynamic exec etex_exec typeset pdf fonts"
     );
 }
 
@@ -181,7 +180,6 @@ fn regenerate_area(area: &str) -> Result<()> {
         "typeset" => regenerate_cases(area, |case| {
             regenerate_reference_terminal_case(area, case, true)
         }),
-        "tex_exec_io" => regenerate_cases(area, regenerate_tex_exec_io_case),
         "pdf" => pdf::regenerate_area(),
         "fonts" => fonts::run(&repo_root()),
         _ => bail!("unknown fixturegen area: {area}"),
@@ -216,7 +214,6 @@ fn regenerate_case(area: &str, case: &str) -> Result<()> {
         "exec" => regenerate_reference_terminal_case(area, case, false),
         "etex_exec" => regenerate_etex_reference_log_case(case),
         "typeset" => regenerate_reference_terminal_case(area, case, true),
-        "tex_exec_io" => regenerate_tex_exec_io_case(case),
         _ => unreachable!("known area already checked"),
     }
 }
@@ -340,95 +337,6 @@ fn replace_bytes(input: &[u8], needle: &[u8], replacement: &[u8]) -> Vec<u8> {
     }
     output.extend_from_slice(remaining);
     output
-}
-
-fn regenerate_tex_exec_io_case(case: &str) -> Result<()> {
-    if case == "closeout_stream_selectors" {
-        eprintln!(
-            "fixture retained unchanged: tex_exec_io/{case} has no oracle-comparable effects contract (umber2-alfh.30)"
-        );
-        return Ok(());
-    }
-    let spec = io_case_spec(case)?;
-    let temp_dir = TempDir::new().context("failed to create reference I/O temp dir")?;
-    let source_name = format!("{case}.tex");
-    fs::copy(
-        source_path("tex_exec_io", case),
-        temp_dir.path().join(&source_name),
-    )
-    .with_context(|| format!("failed to copy tex_exec_io/{case}.tex"))?;
-
-    let output = RefTex::locate()?.run_in_dir(
-        temp_dir.path(),
-        Path::new(&source_name),
-        &RunOpts::default(),
-    )?;
-    if !output.success {
-        bail!(
-            "reference TeX failed for tex_exec_io/{case}:\n{}",
-            output.log
-        );
-    }
-
-    if let Some(output_name) = spec.output_name {
-        let bytes = fs::read(temp_dir.path().join(output_name))
-            .with_context(|| format!("failed to read reference output {output_name}"))?;
-        let text = String::from_utf8(bytes).context("reference output was not utf-8")?;
-        write_text_fixture("tex_exec_io", case, "out", &text)?;
-    }
-    if let Some(effects) = spec.effects {
-        let IoEffects::OutputPresence(paths) = effects;
-        let text = format_output_presence(temp_dir.path(), paths)?;
-        write_text_fixture("tex_exec_io", case, "effects", &text)?;
-    }
-
-    Ok(())
-}
-
-#[derive(Clone, Copy)]
-struct IoCaseSpec {
-    output_name: Option<&'static str>,
-    effects: Option<IoEffects>,
-}
-
-#[derive(Clone, Copy)]
-enum IoEffects {
-    OutputPresence(&'static [&'static str]),
-}
-
-fn io_case_spec(case: &str) -> Result<IoCaseSpec> {
-    match case {
-        "top_open_close" => Ok(IoCaseSpec {
-            output_name: Some("top.out"),
-            effects: None,
-        }),
-        "open_close_without_write" => Ok(IoCaseSpec {
-            output_name: None,
-            effects: Some(IoEffects::OutputPresence(&[
-                "immediate.out",
-                "shipped.out",
-                "boxed.out",
-                "top.out",
-            ])),
-        }),
-        _ => bail!("unknown tex_exec_io case: {case}"),
-    }
-}
-
-fn format_output_presence(run_dir: &Path, paths: &[&str]) -> Result<String> {
-    let mut output = String::new();
-    for path in paths {
-        let state = match fs::metadata(run_dir.join(path)) {
-            Ok(metadata) => format!("present:{} bytes", metadata.len()),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => "absent".to_owned(),
-            Err(error) => bail!("failed to stat reference output {path}: {error}"),
-        };
-        output.push_str(path);
-        output.push_str(": ");
-        output.push_str(&state);
-        output.push('\n');
-    }
-    Ok(output)
 }
 
 fn write_text_fixture(area: &str, case: &str, kind: &str, actual: &str) -> Result<()> {

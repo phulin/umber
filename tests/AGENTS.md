@@ -95,8 +95,8 @@ trace. Acquisition and builds run only through `scripts/regen-fixtures.sh
 --oracle pdftex14029 --profile initex-etex-eight-bit`; Cargo correctness tests
 never invoke the live oracle.
 
-`tests/pdftex-properties/catalogue.json` owns the complete retained
-`tex_exec/pdf_*` property mapping. It cites the pinned pdfTeX 1.40.29 source,
+`tests/pdftex-properties/catalogue.json` owns the complete retained pdfTeX
+extension property mapping. It cites the pinned pdfTeX 1.40.29 source,
 delegates primitive inventory authority to `docs/pdftex_primitives.md`, gives
 each case one stable property ID and exact active Rust test, and dispositions
 status, terminal, and log projections as pass or bug-linked xfail.
@@ -239,7 +239,7 @@ preamble-comment-normalized, otherwise byte-identical DVI.
 ## Corpus Layout
 
 The bounded execution minifixture families `exec`, `etex_exec`, `typeset`,
-`math`, `align`, `tex_exec`, `tex_exec_io`, and `expand`, plus `lexer`,
+`math`, `align`, `tex_exec`, and `expand`, plus `lexer`,
 `lexer_dynamic`, `stabilization`, and `canonical-dvi`, use closed
 self-contained case directories:
 
@@ -326,7 +326,7 @@ only engine primitives and repository-owned TFM data; the LaTeX-surface case
 defines its compact document-command vocabulary in the source so the default
 test tier does not depend on a live TeX installation or a generated format.
 
-`tests/corpus/tex_exec` contains small reference-observation sources and
+`tests/corpus/tex_exec` contains twenty-nine small reference-observation sources and
 normalized `expected.ref` outputs. The active TeX82 cohort is executed by
 `crates/tex-exec/tests/fixture_parity.rs`, which compares exact ordered
 normalized terminal/log lines for every case with both the preserved reference
@@ -339,22 +339,18 @@ the command-semantic or pdfTeX-extension tiers. The `pdf_output_policy`,
 `pdf_microtype_effects` observations were captured in INITEX mode so PDF parameter defaults, grouping, first-write
 recovery, font diagnostics, and effective microtype nodes do not inherit
 format-file assignments; their fixtures anchor the corresponding Umber policy
-tests. The seven `pdf_navigation_*` cases pin destination, outline, and
-article-thread scanner and lifecycle observations in INITEX mode as well.
-They and `pdf_ximage_enquiries` are actively consumed by the pdfTeX extension
-property runner, with every status, terminal, and log observation marked pass
-or strict bug-linked xfail in `tests/pdftex-properties/catalogue.json`. The
-enquiry case uses deterministic fixturegen-owned PNG, JPEG, and typed
-`pdf_writer` three-page PDF inputs without committing opaque binary support
-assets.
+tests. The seven `pdf_navigation_*` cases and `pdf_ximage_enquiries` moved
+without byte changes to closed cases under `tests/pdftex-properties/fixtures`.
+Their active pdfTeX extension runner dispositions every status, terminal, and
+log observation as pass or strict bug-linked xfail. The enquiry case uses
+deterministic fixturegen-owned PNG, JPEG, and typed `pdf_writer` three-page PDF
+inputs without committing opaque binary support assets.
 
-`tests/corpus/tex_exec_io` contains three retained-but-blocked open/close-effect
-sources and reference observations. None is active correctness evidence: the
-current engine does not reproduce all three outputs, and the structured
-effects channel cannot yet compare them with the oracle. `umber2-alfh.30` owns
-that contract and the eventual behavioral runner. The inventory test keeps the
-bytes closed and pins this blocked census; migrated and redundant cases were
-retired.
+The retired `tests/corpus/tex_exec_io` cases are owned by the oracle-backed
+command-semantic fixtures `page-output/closeout-stream-selectors`,
+`page-output/open-close-without-write`, and
+`page-output/top-open-write-close`. Their all-channel evidence includes the
+generated artifact bytes that the legacy effects/output summaries projected.
 
 `tests/corpus/math` contains primitive-only math DVI parity fixtures plus
 committed `expected.dvi` reference fixtures. Each case carries its exact
@@ -467,7 +463,7 @@ Modes:
 - `--all` regenerates all committed fixture areas.
 - `--area AREA` regenerates one area, such as `lexer`, `expand`,
   `lexer_dynamic`, `exec`, `typeset`, `dvi`, `page`, `math`, `align`, `pdf`,
-  `e2e`, `bib`, `etex_exec`, `tex_exec`, or `tex_exec_io`.
+  `e2e`, `bib`, `etex_exec`, or `tex_exec`.
 - `--area bib` re-exports the pinned upstream bibliography test data directly
   from its fixed Git commit, rebuilds its SHA-256 manifest, and validates the
   hermetic `bib-engine` integration test.

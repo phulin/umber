@@ -16,9 +16,11 @@ test. This avoids a second table that could silently become a shadow authority.
 
 ## Contract
 
-`tests/pdftex-properties/catalogue.json` assigns every retained
-`tests/corpus/tex_exec/pdf_*` case exactly one stable `pdftex.extension.*`
-property ID. Each property has:
+`tests/pdftex-properties/catalogue.json` assigns every retained pdfTeX
+extension observation exactly one stable `pdftex.extension.*` property ID.
+Twelve complementary adapter observations remain under
+`tests/corpus/tex_exec`; the eight cases owned only by this tier are closed
+fixtures under `tests/pdftex-properties/fixtures`. Each property has:
 
 - pinned `pdftex.web` sections and a paraphrased claim;
 - one semantic owner and one exact active `#[test]` link;
@@ -43,14 +45,16 @@ property. The gate validates catalogue citations against this source-derived
 map instead of comparing two handwritten number tables. It also rejects
 source-pin drift, duplicate property IDs, overlapping or incomplete case
 ownership, missing oracle channels, weak xfail fingerprints, projections absent
-from the preserved reference, unlinked xfails, and dormant or ambiguous Rust
-test links. It derives its case inventory from the closed retained corpus
-instead of pinning only a count.
+from the preserved reference, unlinked xfails, dormant or ambiguous Rust test
+links, duplicate legacy/property paths, and shadow fixtures. It derives its
+case inventory from both closed active tiers instead of pinning only a count.
 
 The eight cases previously blocked under `umber2-alfh.29` are actively executed
 by `retained_pdftex_extension_fixtures_compare_oracle_projections`. It stages
 typed generated PNG, JPEG, and three-page PDF inputs for the image enquiry case
-and compares all three channels for every case. Known navigation-finalization,
+and compares all three channels for every case. Their unique historical
+sources and references moved byte-for-byte into the owning property tier.
+Known navigation-finalization,
 fatal-diagnostic, image-allocation, and recovered-error status differences
 remain visible under `umber2-alfh.33`, `umber2-alfh.34`, `umber2-alfh.35`, and
 `umber2-alfh.36`; they do not weaken or replace the unique historical

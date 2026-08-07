@@ -86,26 +86,10 @@ const AREAS: &[(&str, &[&str])] = &[
             "pdf_metadata_config",
             "pdf_microtype_effects",
             "pdf_move_chars_warning",
-            "pdf_navigation_dest_lifecycle",
-            "pdf_navigation_dest_scan",
-            "pdf_navigation_outline_scan",
-            "pdf_navigation_outline_tree",
-            "pdf_navigation_thread_graph",
-            "pdf_navigation_thread_lifecycle",
-            "pdf_navigation_thread_scan",
             "pdf_output_policy",
-            "pdf_ximage_enquiries",
             "prefixed_macro",
             "too_many",
             "wrong_close",
-        ],
-    ),
-    (
-        "tex_exec_io",
-        &[
-            "closeout_stream_selectors",
-            "open_close_without_write",
-            "top_open_close",
         ],
     ),
     (
@@ -160,21 +144,7 @@ const ACTIVE_PDFTEX_EXEC: &[&str] = &[
     "pdf_metadata_config",
     "pdf_microtype_effects",
     "pdf_move_chars_warning",
-    "pdf_navigation_dest_lifecycle",
-    "pdf_navigation_dest_scan",
-    "pdf_navigation_outline_scan",
-    "pdf_navigation_outline_tree",
-    "pdf_navigation_thread_graph",
-    "pdf_navigation_thread_lifecycle",
-    "pdf_navigation_thread_scan",
     "pdf_output_policy",
-    "pdf_ximage_enquiries",
-];
-
-const BLOCKED_STRUCTURED_EFFECTS: &[&str] = &[
-    "closeout_stream_selectors",
-    "open_close_without_write",
-    "top_open_close",
 ];
 
 #[test]
@@ -220,11 +190,11 @@ fn execution_minifixtures_are_closed_tracked_directories() {
             "{area} disposition census changed"
         );
     }
-    assert_eq!(identities.len(), 92, "execution case census changed");
+    assert_eq!(identities.len(), 81, "execution case census changed");
 }
 
 #[test]
-fn retained_executor_cases_have_an_exact_active_or_blocked_disposition() {
+fn retained_executor_cases_have_exact_active_ownership() {
     let tex_exec = expected_cases("tex_exec");
     let classified_tex_exec = ACTIVE_TEX82_EXEC
         .iter()
@@ -234,12 +204,6 @@ fn retained_executor_cases_have_an_exact_active_or_blocked_disposition() {
     assert_eq!(
         tex_exec, classified_tex_exec,
         "tex_exec cases must have active behavioral ownership"
-    );
-
-    assert_eq!(
-        expected_cases("tex_exec_io"),
-        BLOCKED_STRUCTURED_EFFECTS.iter().copied().collect(),
-        "tex_exec_io cases must remain blocked on umber2-alfh.30 until their effects are oracle-comparable"
     );
 }
 

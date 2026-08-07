@@ -4,7 +4,7 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
 
-text_areas=(lexer expand lexer_dynamic exec etex_exec typeset tex_exec tex_exec_io)
+text_areas=(lexer expand lexer_dynamic exec etex_exec typeset tex_exec)
 dvi_areas=(math align)
 pdf_area=pdf
 e2e_area=e2e
@@ -49,7 +49,7 @@ usage:
   scripts/regen-fixtures.sh --oracle ENGINE --profile PROFILE --validate-only
 
 Fixture areas:
-  text/native: lexer expand lexer_dynamic exec etex_exec typeset tex_exec tex_exec_io
+  text/native: lexer expand lexer_dynamic exec etex_exec typeset tex_exec
   DVI:         dvi page math align
   PDF:         pdf  (pinned pdfTeX structure plus exact Poppler grayscale pixels)
   minifixtures: command-semantic  (typed profile captures and contracts)
@@ -189,9 +189,6 @@ test_command_for_area() {
     tex_exec)
       printf '%s\n' 'cargo test -p tex-exec --test fixture_parity'
       ;;
-    tex_exec_io)
-      printf '%s\n' 'cargo test -p test-support --test execution_minifixture_inventory'
-      ;;
     dvi)
       printf '%s\n' 'cargo test -p umber --test it run_dvi_corpus_matches_committed_dvi'
       ;;
@@ -224,11 +221,7 @@ validate_text_area() {
   local command_string
   command_string="$(test_command_for_area "$area")"
   # shellcheck disable=SC2086
-  if [[ "$area" == tex_exec_io ]]; then
-    run_command 'Validating blocked tex_exec_io disposition inventory' $command_string
-  else
-    run_command "Validating ${area} fixtures" $command_string
-  fi
+  run_command "Validating ${area} fixtures" $command_string
   if [[ "$area" == tex_exec ]]; then
     run_command 'Validating active pdfTeX executor reference fixtures' \
       cargo test -p umber --lib pdftex::tests

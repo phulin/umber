@@ -33,7 +33,13 @@ fn retained_pdftex_extension_fixtures_compare_oracle_projections() {
         let expected_success = property["expected_success"]
             .as_bool()
             .expect("expected success");
-        let reference = test_support::read_fixture("tex_exec", case, "ref");
+        let reference = String::from_utf8(
+            test_support::read_repository_asset(format!(
+                "tests/pdftex-properties/fixtures/{case}/expected.ref"
+            ))
+            .unwrap_or_else(|error| panic!("read {case} reference: {error:#}")),
+        )
+        .unwrap_or_else(|error| panic!("{case} reference is not UTF-8: {error}"));
         let (reference_success, terminal, log) = reference_channels(&reference);
         assert_eq!(
             reference_success, expected_success,
@@ -128,9 +134,10 @@ fn strict_xfail_fingerprints_reject_blank_unrelated_and_different_failures() {
 }
 
 fn execute(case: &str) -> ActualChannels {
-    let source =
-        test_support::read_repository_asset(format!("tests/corpus/tex_exec/{case}/{case}.tex"))
-            .unwrap_or_else(|error| panic!("read {case} source: {error:#}"));
+    let source = test_support::read_repository_asset(format!(
+        "tests/pdftex-properties/fixtures/{case}/{case}.tex"
+    ))
+    .unwrap_or_else(|error| panic!("read {case} source: {error:#}"));
     let mut stores = pdftex_oracle_stores();
     if case == "pdf_ximage_enquiries" {
         seed_ximage_inputs(&mut stores);

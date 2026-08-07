@@ -304,7 +304,7 @@ count and zero color depth. `\pdfrefximage` leaves both values unchanged, as
 does a resource-acquisition retry before the image has been decoded. The
 checkpointed external-image metadata carries these values through rollback,
 semantic hashing, and retained native/WASM compilation. The live 1.40.29
-oracle fixture `tests/corpus/tex_exec/pdf_ximage_enquiries` generates its
+oracle fixture `tests/pdftex-properties/fixtures/pdf_ximage_enquiries` generates its
 three-page input exclusively through the vendored typed `pdf_writer` API.
 
 The four PDF token parameters follow pdfTeX's distinct consumption scopes:

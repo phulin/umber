@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 use sha2::{Digest, Sha256};
+use test_support::closed_case::FixtureCase;
 
 const SCHEMA: &str = "pdftex-extension-properties-v1";
 const SOURCE_COMMIT: &str = "1664cf0ab3f6ce3b80db649bc6723f54ab12016c";
@@ -15,6 +16,7 @@ const SOURCE_EVIDENCE_SCHEMA: &str = "# pdftex-extension-source-evidence-v1";
 const SOURCE_EVIDENCE_SHA256: &str =
     "08752d2e05d122ef70f9aa2b044186df369534b23c79b2d16205227e5ee4581c";
 const WEB_MODULE_COUNT: u64 = 1868;
+const ACTIVE_RUNNER: &str = "crates/umber/src/pdftex/tests/retained_fixture_properties.rs::retained_pdftex_extension_fixtures_compare_oracle_projections";
 
 struct SourceEvidence {
     modules: BTreeMap<u64, (String, String)>,
@@ -122,20 +124,52 @@ fn required_text<'a>(value: &'a Value, field: &str) -> Result<&'a str, String> {
 }
 
 fn retained_pdftex_cases(repository: &Path) -> Result<BTreeSet<String>, String> {
-    fs::read_dir(repository.join("tests/corpus/tex_exec"))
-        .map_err(|error| error.to_string())?
-        .filter_map(|entry| {
-            let entry = match entry {
-                Ok(entry) => entry,
-                Err(error) => return Some(Err(error.to_string())),
-            };
-            let name = match entry.file_name().into_string() {
-                Ok(name) => name,
-                Err(_) => return Some(Err("non-UTF-8 tex_exec case".into())),
-            };
-            name.starts_with("pdf_").then_some(Ok(name))
-        })
-        .collect()
+    let mut cases = BTreeSet::new();
+    for (relative, require_pdf_prefix) in [
+        ("tests/corpus/tex_exec", true),
+        ("tests/pdftex-properties/fixtures", false),
+    ] {
+        for entry in fs::read_dir(repository.join(relative)).map_err(|error| error.to_string())? {
+            let entry = entry.map_err(|error| error.to_string())?;
+            let name = entry
+                .file_name()
+                .into_string()
+                .map_err(|_| format!("non-UTF-8 case in {relative}"))?;
+            if (!require_pdf_prefix || name.starts_with("pdf_")) && !cases.insert(name.clone()) {
+                return Err(format!(
+                    "pdfTeX case {name} has both legacy and property-owned fixtures"
+                ));
+            }
+        }
+    }
+    Ok(cases)
+}
+
+fn fixture_directory(repository: &Path, property: &Value, case: &str) -> Result<PathBuf, String> {
+    let property_owned = required_text(property, "active_test")? == ACTIVE_RUNNER;
+    let relative = if property_owned {
+        format!("tests/pdftex-properties/fixtures/{case}")
+    } else {
+        format!("tests/corpus/tex_exec/{case}")
+    };
+    let alternate = if property_owned {
+        format!("tests/corpus/tex_exec/{case}")
+    } else {
+        format!("tests/pdftex-properties/fixtures/{case}")
+    };
+    if repository.join(&alternate).exists() {
+        return Err(format!(
+            "pdfTeX case {case} has a shadow fixture at {alternate}"
+        ));
+    }
+    FixtureCase::discover_tracked_at(
+        repository,
+        &relative,
+        format!("{case}.tex"),
+        "pdftex-extension-properties",
+    )
+    .map_err(|error| format!("{relative} is not a closed fixture: {error:#}"))?;
+    Ok(repository.join(relative))
 }
 
 fn normalized(text: &str) -> String {
@@ -274,7 +308,7 @@ fn validate(repository: &Path, catalogue: &Value) -> Result<(), String> {
         let expected_success = property["expected_success"]
             .as_bool()
             .ok_or_else(|| format!("property {id} lacks expected_success"))?;
-        let reference_path = repository.join(format!("tests/corpus/tex_exec/{case}/expected.ref"));
+        let reference_path = fixture_directory(repository, property, case)?.join("expected.ref");
         let reference = fs::read_to_string(&reference_path)
             .map_err(|error| format!("read {}: {error}", reference_path.display()))?;
         let (reference_success, terminal, log) = reference_channels(case, &reference)?;

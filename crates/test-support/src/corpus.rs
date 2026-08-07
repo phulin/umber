@@ -174,7 +174,6 @@ mod imp {
                 | "math"
                 | "align"
                 | "tex_exec"
-                | "tex_exec_io"
                 | "expand"
                 | "pdf"
         )
