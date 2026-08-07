@@ -1136,7 +1136,7 @@ impl CommandState {
 
     /// Returns the canonical compiled implementation executing this job.
     #[must_use]
-    pub(crate) const fn engine_semantics(&self) -> CommandEngineSemantics {
+    pub const fn engine_semantics(&self) -> CommandEngineSemantics {
         self.engine_semantics
     }
 

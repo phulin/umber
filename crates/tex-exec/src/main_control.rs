@@ -11113,8 +11113,11 @@ fn shipout_replay_box(
     let effect_start = stores.world().effect_records().len();
     let effect_cursor = std::cell::Cell::new(effect_start);
     let write_publications = std::cell::RefCell::new(Vec::new());
-    let supports_pdftex = command.state.profile().capabilities().supports_pdftex();
-    let emit_dvi = command.emit_dvi_override.unwrap_or(!supports_pdftex);
+    let supports_pdftex_profile = command.state.profile().capabilities().supports_pdftex();
+    let uses_pdftex_semantics = command.state.engine_semantics().supports_pdftex();
+    let emit_dvi = command
+        .emit_dvi_override
+        .unwrap_or(!supports_pdftex_profile);
     let command_cell = std::cell::RefCell::new(command);
     let mut expand_write =
         |stores: &mut Universe, sink: PrintSink, tokens: tex_state::ids::TokenListId| {
@@ -11235,9 +11238,10 @@ fn shipout_replay_box(
             crate::shipout::ShipoutOrigin {
                 output_open_context: Some(output_open_context),
                 pending_end,
-                // The TeX82 profile follows tex.web §1374 exactly. The notice is
-                // a later Web2C change retained by the pdfTeX profile.
-                announce_openout: supports_pdftex,
+                // Web2C's `[53.1374]` notice belongs to the compiled engine,
+                // not to the loaded format's command family. A pdfTeX binary
+                // therefore retains it while executing a TeX82 profile.
+                announce_openout: uses_pdftex_semantics,
             },
             stores,
             emit_dvi,
@@ -14369,7 +14373,7 @@ fn apply_scanned_step(
                     stores
                         .world_mut()
                         .open_out(StreamSlot::new(stream), target.clone());
-                    if command.state.profile().capabilities().supports_pdftex() {
+                    if command.state.engine_semantics().supports_pdftex() {
                         crate::diagnostics::report_openout(stores, stream, &target);
                     }
                 }

@@ -1320,6 +1320,57 @@ fn tracingstats_frames_consecutive_shipouts_with_live_memory_reports() {
 }
 
 #[test]
+fn pdftex_engine_announces_deferred_openout_inside_shipout_for_tex82_profile() {
+    // Web2C's `[53.1374]` change announces the successful open immediately
+    // after tex.web §1374 sets `write_open[j]`. This is compiled pdfTeX
+    // behavior even when the loaded format selects the TeX82 command family.
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = MainControl::tex82_initex(&mut stores);
+    control.set_engine_binary(crate::EngineBinaryIdentity::Pdftex14029);
+    control.begin_job(&mut stores, "openout.tex");
+    register_source(
+        &mut control,
+        br"\shipout\hbox{\openout3=deferred\closeout3}\end",
+    );
+
+    run_to_end(&mut control, &mut stores);
+    let pages = control.take_prepared_dvi_pages();
+    assert_eq!(pages.len(), 1);
+    control.finish_job(
+        &mut stores,
+        Some(crate::DviJobOutput {
+            file_name: "openout.dvi".into(),
+            byte_len: 0,
+        }),
+        None,
+    );
+
+    let terminal = format!(
+        "{}{}",
+        String::from_utf8_lossy(stores.world().memory_terminal_output().unwrap_or_default()),
+        pending_sink_text(&stores, true)
+    );
+    let log = format!(
+        "{}{}",
+        String::from_utf8_lossy(stores.world().memory_log_output().unwrap_or_default()),
+        pending_sink_text(&stores, false)
+    );
+    let notice = "\\openout3 = `deferred.tex'.";
+    assert!(!terminal.contains(notice), "{terminal:?}");
+    assert_eq!(log.matches(notice).count(), 1, "{log:?}");
+    let marker_open = log.find("[0").expect("shipout marker opens");
+    let announcement = log.find(notice).expect("openout is announced");
+    let marker_close = log[announcement..]
+        .find(']')
+        .map(|offset| announcement + offset)
+        .expect("shipout marker closes");
+    assert!(
+        marker_open < announcement && announcement < marker_close,
+        "{log:?}"
+    );
+}
+
+#[test]
 fn showtokens_distinguishes_newlinechar_from_other_control_bytes() {
     // TeX82 §§262 and 1297: direct `token_show` output recognizes the live
     // newline character, while another non-printable byte keeps its `^^`

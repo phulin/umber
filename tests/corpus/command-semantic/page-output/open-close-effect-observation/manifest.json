@@ -1,15 +1,6 @@
 {
   "channels": {
-    "events": 146,
-    "log": {
-      "bug": "umber2-alfh.25",
-      "kind": "xfail",
-      "mismatch": {
-        "actual": "(./open-close-effect-observation.tex [0] )",
-        "expected": "(./open-close-effect-observation.tex [0",
-        "line": 3
-      }
-    }
+    "events": 146
   },
   "expected": [
     "effect:open:stream:3\u0000deferred.tex",
