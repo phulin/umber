@@ -1083,11 +1083,21 @@ fn record_best_route(
     let class = easy_line.map_or(candidate.line, |easy| {
         line_number_class(candidate.line, easy)
     });
-    if let Some(slot) = active[winner_start..].iter().position(|current| {
-        easy_line.map_or(current.line, |easy| line_number_class(current.line, easy)) == class
-            && current.fitness == candidate.fitness
-    }) {
-        let slot = winner_start + slot;
+    // The active list is visited in line order, so winners are appended in
+    // nondecreasing line-number class order. Only the final class can match,
+    // and it contains at most one champion for each of the four fitness
+    // classes. Do not rescan the growing history of earlier line classes.
+    let slot = active[winner_start..]
+        .iter()
+        .enumerate()
+        .rev()
+        .take_while(|(_, current)| {
+            easy_line.map_or(current.line, |easy| line_number_class(current.line, easy)) == class
+        })
+        .find_map(|(offset, current)| {
+            (current.fitness == candidate.fitness).then_some(winner_start + offset)
+        });
+    if let Some(slot) = slot {
         if candidate.path_demerits <= active[slot].path_demerits {
             // TeX82 uses `d <= minimal_demerits[fit_class]`, so an equal
             // later route replaces the earlier route in its first-visit slot.

@@ -1420,6 +1420,51 @@ fn equal_demerits_prefer_later_route_in_same_line_and_fitness_class() {
 }
 
 #[test]
+fn winner_lookup_replaces_only_the_latest_line_class_champion() {
+    let candidate = |position, line, fitness, path_demerits| Candidate {
+        serial: position,
+        position,
+        width_position: position,
+        start_width: Widths::zero(),
+        penalty: 0,
+        line,
+        fitness,
+        path_demerits,
+        passive: None,
+        previous: None,
+        hyphenated: false,
+        line_shortfall: sp(0),
+        line_glue: sp(0),
+    };
+    let mut active = Vec::new();
+    for line in 1..=4_096 {
+        record_best_route(
+            &mut active,
+            0,
+            candidate(line, line, Fitness::Decent, 1_000),
+            None,
+        );
+    }
+
+    record_best_route(
+        &mut active,
+        0,
+        candidate(8_192, 4_096, Fitness::Decent, 999),
+        None,
+    );
+    record_best_route(
+        &mut active,
+        0,
+        candidate(8_193, 4_096, Fitness::Loose, 1_001),
+        None,
+    );
+
+    assert_eq!(active.len(), 4_097);
+    assert_eq!(active[4_095].position, 8_192);
+    assert_eq!(active[4_096].position, 8_193);
+}
+
+#[test]
 fn equivalent_line_classes_discard_noncompetitive_fitness_routes() {
     let candidate = |serial, line, fitness, path_demerits| Candidate {
         serial,
