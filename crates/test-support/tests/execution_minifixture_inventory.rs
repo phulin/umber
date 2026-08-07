@@ -128,6 +128,58 @@ const AREAS: &[(&str, &[&str])] = &[
     ),
 ];
 
+const ACTIVE_TEX82_EXEC: &[&str] = &[
+    "after",
+    "box_brace_aliases",
+    "box_dimensions",
+    "box_movement",
+    "box_uncopy_badness",
+    "every_box_hooks",
+    "grouping",
+    "hskip_penalty_recovery",
+    "illegal_mag",
+    "incompatible_mag",
+    "insert_brace_aliases",
+    "internal_dimension_params",
+    "last_box",
+    "lccode_selector_recovery",
+    "prefixed_macro",
+    "too_many",
+    "wrong_close",
+];
+
+const ACTIVE_PDFTEX_EXEC: &[&str] = &[
+    "pdf_compatibility_controls",
+    "pdf_font_codes",
+    "pdf_font_config",
+    "pdf_form_diagnostics",
+    "pdf_form_state",
+    "pdf_form_traversal_diagnostics",
+    "pdf_ignored_dimen_effects",
+    "pdf_image_config",
+    "pdf_metadata_config",
+    "pdf_microtype_effects",
+    "pdf_move_chars_warning",
+    "pdf_output_policy",
+];
+
+const BLOCKED_PDFTEX_EXEC: &[&str] = &[
+    "pdf_navigation_dest_lifecycle",
+    "pdf_navigation_dest_scan",
+    "pdf_navigation_outline_scan",
+    "pdf_navigation_outline_tree",
+    "pdf_navigation_thread_graph",
+    "pdf_navigation_thread_lifecycle",
+    "pdf_navigation_thread_scan",
+    "pdf_ximage_enquiries",
+];
+
+const BLOCKED_STRUCTURED_EFFECTS: &[&str] = &[
+    "closeout_stream_selectors",
+    "open_close_without_write",
+    "top_open_close",
+];
+
 #[test]
 fn execution_minifixtures_are_closed_tracked_directories() {
     let repository = test_support::repository_root();
@@ -172,4 +224,35 @@ fn execution_minifixtures_are_closed_tracked_directories() {
         );
     }
     assert_eq!(identities.len(), 93, "execution case census changed");
+}
+
+#[test]
+fn retained_executor_cases_have_an_exact_active_or_blocked_disposition() {
+    let tex_exec = expected_cases("tex_exec");
+    let classified_tex_exec = ACTIVE_TEX82_EXEC
+        .iter()
+        .chain(ACTIVE_PDFTEX_EXEC)
+        .chain(BLOCKED_PDFTEX_EXEC)
+        .copied()
+        .collect();
+    assert_eq!(
+        tex_exec, classified_tex_exec,
+        "tex_exec cases must be behaviorally owned or blocked on umber2-alfh.29"
+    );
+
+    assert_eq!(
+        expected_cases("tex_exec_io"),
+        BLOCKED_STRUCTURED_EFFECTS.iter().copied().collect(),
+        "tex_exec_io cases must remain blocked on umber2-alfh.30 until their effects are oracle-comparable"
+    );
+}
+
+fn expected_cases(area: &str) -> BTreeSet<&'static str> {
+    AREAS
+        .iter()
+        .find_map(|(candidate, cases)| (*candidate == area).then_some(*cases))
+        .expect("classified execution area exists")
+        .iter()
+        .copied()
+        .collect()
 }

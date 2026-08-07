@@ -183,7 +183,7 @@ test_command_for_area() {
       printf '%s\n' 'cargo test -p umber --test it run_typeset_corpus_matches_committed_box_dumps -- --ignored'
       ;;
     tex_exec)
-      printf '%s\n' 'cargo test -p tex-exec --lib grouping_parity'
+      printf '%s\n' 'cargo test -p tex-exec --test fixture_parity'
       ;;
     tex_exec_io)
       printf '%s\n' 'cargo test -p test-support --test execution_minifixture_inventory'
@@ -213,6 +213,22 @@ test_command_for_area() {
       die "unknown fixture area: ${area}"
       ;;
   esac
+}
+
+validate_text_area() {
+  local area="$1"
+  local command_string
+  command_string="$(test_command_for_area "$area")"
+  # shellcheck disable=SC2086
+  if [[ "$area" == tex_exec_io ]]; then
+    run_command 'Validating blocked tex_exec_io disposition inventory' $command_string
+  else
+    run_command "Validating ${area} fixtures" $command_string
+  fi
+  if [[ "$area" == tex_exec ]]; then
+    run_command 'Validating active pdfTeX executor reference fixtures' \
+      cargo test -p umber --lib pdftex::tests
+  fi
 }
 
 run_command() {
@@ -531,16 +547,13 @@ regen_e2e_area() {
 
 regen_text_area() {
   local area="$1"
-  local command_string
   build_fixturegen_once
   if fixturegen_needs_umber "$area"; then
     build_umber_once
   fi
   run_command "Regenerating ${area} fixtures" \
     env UMBER_BIN="$umber_bin" "$fixturegen_bin" --area "$area"
-  command_string="$(test_command_for_area "$area")"
-  # shellcheck disable=SC2086
-  run_command "Validating ${area} fixtures" $command_string
+  validate_text_area "$area"
 }
 
 regen_dvi_area() {
@@ -1489,9 +1502,7 @@ regen_case() {
     fi
     run_command "Regenerating ${area}/${case} fixture" \
       env UMBER_BIN="$umber_bin" "$fixturegen_bin" --case "$area" "$case"
-    command_string="$(test_command_for_area "$area")"
-    # shellcheck disable=SC2086
-    run_command "Validating ${area} fixtures" $command_string
+    validate_text_area "$area"
   else
     die "--case is not meaningful for the fonts live check"
   fi

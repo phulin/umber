@@ -70,6 +70,14 @@ box output rather than comparing against assignments inherited from Plain.
 Fixture generation also resolves the corpus's explicit Computer Modern
 requests to the selected checkout's committed TFM files before the isolated
 reference run; it does not substitute ambient font metrics.
+The `tex_exec` regeneration validator runs
+`cargo test -p tex-exec --test fixture_parity` for every active TeX82 source
+and reference projection, then `cargo test -p umber --lib pdftex::tests` for
+the twelve active pdfTeX literal consumers. Eight pdfTeX cases remain blocked
+on `umber2-alfh.29`. The `tex_exec_io` regeneration path preserves its three
+cases and runs the exact disposition census, but does not claim behavioral
+success: all three remain blocked on the oracle-comparable structured-effects
+contract in `umber2-alfh.30`.
 The WASM target reserves a 4 MiB linear-memory stack because retained compile
 sessions exceed wasm-ld's 1 MiB default during Firefox retry and incremental
 HTML coverage; native targets keep their platform stack policy.

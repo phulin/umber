@@ -50,6 +50,9 @@ Command operands are scanned by `tex-command` into typed request and result valu
   replay, diagnostic, state, and exact-operand regression coverage selected by
   the library test target.
 - `tests/it.rs`: public-boundary, architecture, and compile-fail coverage, including the one-command-front source audit.
+- `tests/fixture_parity.rs`: active TeX82 reference-observation corpus runner;
+  executes every retained source and compares its explicit ordered terminal
+  and log projection with the pinned reference.
 
 ## Validation
 

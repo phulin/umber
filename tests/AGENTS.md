@@ -316,24 +316,29 @@ defines its compact document-command vocabulary in the source so the default
 test tier does not depend on a live TeX installation or a generated format.
 
 `tests/corpus/tex_exec` contains small reference-observation sources and
-normalized `expected.ref` outputs used by `tex-exec` crate-internal
-tests for grouping, after-token ordering, magnification diagnostics, and
-box-register behavior. The `pdf_output_policy`, `pdf_image_config`,
+normalized `expected.ref` outputs. The active TeX82 cohort is executed by
+`crates/tex-exec/tests/fixture_parity.rs`, which compares an explicit ordered
+terminal/log projection for every case with both the reference bytes and
+canonical `MainControl` output. The `pdf_output_policy`, `pdf_image_config`,
 `pdf_metadata_config`, `pdf_font_config`, and `pdf_microtype_effects` cases run
 pinned pdfTeX in INITEX mode so PDF parameter defaults, grouping, first-write
 recovery, font diagnostics, and effective microtype nodes do not inherit
 format-file assignments; their fixtures anchor the corresponding Umber policy
 tests. The seven `pdf_navigation_*` cases pin destination, outline, and
 article-thread scanner and lifecycle observations in that same INITEX mode.
-The `pdf_ximage_enquiries` case uses deterministic fixturegen-owned PNG, JPEG,
-and typed `pdf_writer` three-page PDF inputs to pin the two last-image metadata
-enquiries without committing opaque binary support assets.
+They and `pdf_ximage_enquiries` remain retained-but-blocked evidence until the
+pdfTeX extension property catalogue and runner tracked by `umber2-alfh.29` can
+consume them. The enquiry case uses deterministic fixturegen-owned PNG, JPEG,
+and typed `pdf_writer` three-page PDF inputs without committing opaque binary
+support assets.
 
-`tests/corpus/tex_exec_io` contains small file-effect and DVI special-payload
-sources plus reference observations used by `tex-exec` I/O and shipout tests.
-Only the three nonempty open/close-effect cases remain pending the
-oracle-comparable contract tracked by `umber2-alfh.30`; migrated and redundant
-cases were retired.
+`tests/corpus/tex_exec_io` contains three retained-but-blocked open/close-effect
+sources and reference observations. None is active correctness evidence: the
+current engine does not reproduce all three outputs, and the structured
+effects channel cannot yet compare them with the oracle. `umber2-alfh.30` owns
+that contract and the eventual behavioral runner. The inventory test keeps the
+bytes closed and pins this blocked census; migrated and redundant cases were
+retired.
 
 `tests/corpus/math` contains primitive-only math DVI parity fixtures plus
 committed `expected.dvi` reference fixtures. Each case carries its exact
