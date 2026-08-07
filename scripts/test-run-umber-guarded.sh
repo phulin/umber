@@ -27,8 +27,18 @@ publication_source="$publication_root/source"
 publication_destination="$publication_root/artifact"
 printf '%s\n' current >"$publication_source"
 printf '%s\n' previous >"$publication_destination"
-printf '%s\n' interrupted >"${publication_destination}.publishing"
-chmod 0444 "$publication_destination" "${publication_destination}.publishing"
+chmod 0444 "$publication_destination"
+set +e
+UMBER_TRIP_TIMEOUT_SECONDS=10 \
+UMBER_TRIP_MAX_RSS_MIB=128 \
+UMBER_TRIP_PROGRESS_TIMEOUT_SECONDS=1 \
+UMBER_TRIP_TERM_GRACE_SECONDS=0.2 \
+  "$root/scripts/trip.sh" sh -c \
+  'printf "%s\n" interrupted >"${1}.publishing"; chmod 0444 "${1}.publishing"; sleep 60' \
+  sh "$publication_destination"
+status=$?
+set -e
+test "$status" -eq 124
 . "$trip_common"
 trip_publish_artifact "$publication_source" "$publication_destination"
 cmp "$publication_source" "$publication_destination"
