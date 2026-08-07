@@ -1201,6 +1201,7 @@ impl MainControl {
         // terminal level; a driver that frames the job here rather than
         // scanning the line through `scan_startup_file_name` supplies it here.
         first_line.clone_into(&mut self.startup_terminal_line);
+        self.command.set_terminal_context_line(first_line);
         let engine = crate::job::JobEngineFraming {
             binary,
             extended_mode: etex,
@@ -1492,6 +1493,7 @@ impl MainControl {
         ) {
             crate::job::EndOfInputAction::Line(line) => {
                 self.terminal_line_was_empty = Some(line.is_empty());
+                self.command.set_terminal_context_line(&line);
                 let source =
                     SourceRegistration::new(RegisteredSourceKind::Generated, line.into_bytes());
                 let id = self
@@ -1499,7 +1501,7 @@ impl MainControl {
                     .register_source(source)
                     .expect("finite command fuel bounds terminal source identities");
                 self.command
-                    .open_registered_source(id)
+                    .open_registered_source_as(id, tex_command::SourceNameClass::Terminal)
                     .expect("fresh terminal source must be openable");
                 ReplayStep::Continue
             }

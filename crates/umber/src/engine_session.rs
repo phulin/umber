@@ -1677,9 +1677,10 @@ mod tests {
             session
                 .register_authored_job("terminal-end.tex", root)
                 .expect("job registers");
+            let mut observations = ObservationRecorder::default();
 
             let run = session
-                .run(&mut WorldHost, &mut Vec::new())
+                .run_with_observer(&mut WorldHost, &mut Vec::new(), &mut observations)
                 .expect("terminal end completes the job");
 
             assert!(run.fatal.is_none(), "interaction {interaction:?}");
@@ -1688,6 +1689,11 @@ mod tests {
                 session.stores().world().stream_bufs().terminal_input_next(),
                 2
             );
+            assert!(observations.0.iter().any(|observation| matches!(
+                observation,
+                CommandObservation::Input(input)
+                    if input.source_name == Some(tex_command::SourceNameClass::Terminal)
+            )));
             assert!(session.fuel_burned() <= session.fuel_limit());
         }
     }

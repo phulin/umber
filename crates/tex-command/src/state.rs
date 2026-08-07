@@ -258,6 +258,12 @@ impl CommandState {
         self.input.output_open_context(stores, &self.parameters)
     }
 
+    /// Retains TeX82 §331's bottom terminal buffer for §310 after the
+    /// startup acquisition level has been retired.
+    pub fn set_terminal_context_line(&mut self, line: impl Into<String>) {
+        self.input.terminal_context_line = Some(line.into());
+    }
+
     pub(crate) fn open_context_starts_with_print_ln(
         &self,
         stores: &tex_state::CommandContext<'_>,

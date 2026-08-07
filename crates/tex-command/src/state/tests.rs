@@ -98,6 +98,7 @@ fn semantic_ownership_domains_are_exhaustively_classified() {
 
     let InputState {
         levels,
+        terminal_context_line,
         pending_sources,
         next_level_identity,
         next_source_identity,
@@ -143,6 +144,7 @@ fn semantic_ownership_domains_are_exhaustively_classified() {
 
     drop((
         levels,
+        terminal_context_line,
         pending_sources,
         next_level_identity,
         next_source_identity,

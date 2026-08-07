@@ -45,6 +45,11 @@ pub use tokenizer::{
 #[derive(Clone, Debug, Default, Eq, Hash, PartialEq)]
 pub(crate) struct InputState {
     pub(crate) levels: Vec<InputLevel>,
+    /// TeX82 §331's bottom terminal buffer after the startup line has been
+    /// consumed. Umber retires that acquisition level before opening the root
+    /// file, but §310 must still reach its `<*>` context after the last file
+    /// retires and while EOF recovery token lists remain live.
+    pub(crate) terminal_context_line: Option<String>,
     /// Backing registered for a future one-shot open, keyed by `SourceId`.
     ///
     /// Opening removes the entry and moves its backing into the source level,
@@ -179,6 +184,7 @@ impl InputState {
         let live_endlinechar = char::from_u32(
             stores.untracked_int_param(tex_state::env::banks::IntParam::END_LINE_CHAR) as u32,
         );
+        let mut reached_bottom_source = false;
         for (index, level) in input_levels.iter().enumerate().rev() {
             let current = levels.is_empty() && index + 1 == input_levels.len();
             match level {
@@ -194,12 +200,14 @@ impl InputState {
                         // A source level with no live line has nothing to
                         // pseudoprint, but §310 still stops here.
                         if bottom {
+                            reached_bottom_source = true;
                             break;
                         }
                         continue;
                     };
                     levels.push(rendered);
                     if bottom {
+                        reached_bottom_source = true;
                         break;
                     }
                 }
@@ -211,6 +219,13 @@ impl InputState {
                     }
                 }
             }
+        }
+        if !reached_bottom_source && let Some(line) = &self.terminal_context_line {
+            let mut rendered = String::new();
+            stores.append_selector_string_text(line, &mut rendered);
+            levels.push(tex_state::print::ErrorContextLevel::new(
+                "<*> ", rendered, "",
+            ));
         }
         levels
     }

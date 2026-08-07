@@ -7,6 +7,18 @@ use crate::input::{
 };
 
 #[test]
+fn retired_root_context_reaches_the_retained_startup_terminal_line() {
+    let mut command = CommandState::default();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
+    command.set_terminal_context_line("missing-end.tex");
+
+    assert_eq!(
+        command.output_open_context(&universe.command_context()),
+        "\n<*> missing-end.tex\n                   "
+    );
+}
+
+#[test]
 fn cropped_pseudoprint_preserves_the_location_label() {
     let widths = ErrorContextWidths::new(79, 35).expect("TeX82 context widths");
     let output = render_error_context(
