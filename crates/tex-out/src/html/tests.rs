@@ -806,6 +806,8 @@ fn shared_render_document_matches_public_bytes_assets_and_incremental_identity()
         .collect::<Vec<_>>();
     let public =
         write_positioned_html(&positioned, &resolver, &options).expect("public standalone HTML");
+    let artifact = write_html(&artifacts, &resolver, &options).expect("artifact standalone HTML");
+    assert_eq!(artifact, public);
     let document = build_positioned_render_document(
         &positioned,
         &resolver,

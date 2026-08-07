@@ -13,9 +13,7 @@ use std::sync::Arc;
 use sha2::{Digest, Sha256};
 use tex_arith::Scaled;
 
-use crate::positioned::{
-    BoxKind, PositionedError, PositionedLimits, PositionedPage, TextUnit, lower_page_with_limits,
-};
+use crate::positioned::{BoxKind, PositionedError, PositionedPage, TextUnit};
 use crate::{ContentHash, FontResource, PageArtifact};
 
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
@@ -338,28 +336,17 @@ pub fn write_html<R: HtmlFontAssets>(
         });
     }
     validate_options(options)?;
-    let positioned = pages
-        .iter()
-        .enumerate()
-        .map(|(index, page)| {
-            let page_index = u32::try_from(index + 1).map_err(|_| HtmlError::TooManyPages {
-                count: pages.len(),
-                limit: u32::MAX as usize,
-            })?;
-            let positioned = lower_page_with_limits(
-                page,
-                page_index,
-                PositionedLimits {
-                    max_events: options.max_positioned_events,
-                    max_depth: options.max_positioned_depth,
-                    max_run_units: options.max_text_run_units,
-                },
-            )
-            .map_err(HtmlError::from)?;
-            Ok::<PositionedPage, HtmlError>(positioned)
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    write_positioned_html(&positioned, assets, options)
+    let document = incremental::build_render_document(
+        pages,
+        assets,
+        options,
+        incremental::RenderSessionId::from_bytes(options.output_id.as_bytes()),
+        options.revision,
+        None,
+        standalone_render_limits(options),
+    )
+    .map_err(standalone_render_error)?;
+    write_render_document(&document, options)
 }
 
 pub fn write_positioned_html<R: HtmlFontAssets>(
@@ -374,14 +361,23 @@ pub fn write_positioned_html<R: HtmlFontAssets>(
         incremental::RenderSessionId::from_bytes(options.output_id.as_bytes()),
         options.revision,
         None,
-        incremental::RenderLimits {
-            max_pages: options.max_pages,
-            max_nodes: usize::MAX,
-            max_resources: usize::MAX,
-            max_resource_bytes: usize::MAX,
-        },
+        standalone_render_limits(options),
     )
-    .map_err(|error| match error {
+    .map_err(standalone_render_error)?;
+    write_render_document(&document, options)
+}
+
+fn standalone_render_limits(options: &HtmlOptions) -> incremental::RenderLimits {
+    incremental::RenderLimits {
+        max_pages: options.max_pages,
+        max_nodes: usize::MAX,
+        max_resources: usize::MAX,
+        max_resource_bytes: usize::MAX,
+    }
+}
+
+fn standalone_render_error(error: incremental::RenderBuildError) -> HtmlError {
+    match error {
         incremental::RenderBuildError::Html(error) => error,
         incremental::RenderBuildError::TooManyNodes { .. }
         | incremental::RenderBuildError::ResourcesTooLarge { .. }
@@ -390,8 +386,7 @@ pub fn write_positioned_html<R: HtmlFontAssets>(
         | incremental::RenderBuildError::SessionMismatch => {
             unreachable!("standalone render has no previous revision or resource-count limit")
         }
-    })?;
-    write_render_document(&document, options)
+    }
 }
 
 /// Serializes a detached producer model without consulting fonts, artifacts,
