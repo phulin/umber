@@ -39,6 +39,11 @@ unique evidence.
 browser evidence. It names the active owner of the one retired dormant wire
 case and the independently valuable cases that must remain.
 
+`command_assertion_ledger.md` closes the scanner/delivery compaction audit. It
+maps value, event-order, recovery, lifecycle, rollback, source-context, and
+identity evidence to active owners, records narrative/matrix dispositions, and
+limits deletion to proven duplicate setup scaffolding.
+
 `frozen_format.md` defines the portable format-image container ABI,
 compatibility fingerprints, deterministic literal lookup-table representation,
 validation and checksum coverage, immutable/job-local split, and migration
