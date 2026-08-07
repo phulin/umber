@@ -67,7 +67,7 @@ the authored gross counts without changing the +704 net result. No moved line,
 generated source, fixture, binary, documentation, declarative map, or gross
 predecessor deletion is converted into production or proof/test credit.
 
-## Verification and performance blocker
+## Verification and resolved performance dependency
 
 On the documentation-only reconciliation tree based on `8048c0453`, the
 complete native suite and standalone typesetting performance scopes compiled
@@ -80,11 +80,31 @@ reference oracle and passed byte-exact DVI comparison. Uncapped
 `scripts/check.sh` passed all four gates. Every runtime had a finite timeout,
 and no command used `prlimit` or serialized the test harness.
 
-The unchanged deterministic `layout_allocations` performance gate did not
-pass. Its completed 512 MiB run measured `linebreak_long_paragraph` at 13
-allocations against a ceiling of 12 and `math_deep_submlist_stack` at 340,041
-allocations / 50,653,668 bytes against ceilings of 180,000 / 42,000,000. The
-alignment, deep-choice, and flat-math rows remained within their ceilings. The
-owner declined to weaken those budgets or absorb a nontrivial repair into this
-accounting audit. P1 bug `umber2-vgjr.27` owns the repair and blocks final
-closure of this issue.
+The initial unchanged deterministic `layout_allocations` performance gate
+identified a real blocker: `linebreak_long_paragraph` used 13 allocations
+against a ceiling of 12, while `math_deep_submlist_stack` used 340,041
+allocations and 50,653,668 bytes against ceilings of 180,000 and 42,000,000.
+The owner declined to weaken those budgets or absorb a nontrivial repair into
+this accounting audit. P1 bug `umber2-vgjr.27` therefore owned the repair.
+
+That dependency is resolved at exact tree
+`27cb5476c4edcbb0ad0411afc9f1b5c14ab33aa0`. The unchanged 512 MiB allocation
+gate now passes every row: long paragraph at 12 allocations and 384,619,648
+bytes; deep sublist at 160,044 and 23,855,088; alignment at 1,023 and 191,840;
+deep choice at nine and 9,758,056; and flat math at ten and 508,360. The repair
+keeps breakpoint traces inside the owning `BreakSite`, reuses
+transaction-private Appendix G planning and conversion buffers, and uses the
+existing empty `Replay` representation. It adds no second paragraph, math,
+metric, observation, or publication authority, and changes neither benchmark
+ceilings nor Program 10 accounting.
+
+Fresh closeout verification compiled the complete native scope uncapped with
+`CARGO_BUILD_JOBS=6` and `--no-run`, then compiled the release allocation gate
+uncapped. The prebuilt allocation binary and all 172 `tex-typeset` tests passed
+under `MemoryMax=512M`, `MemorySwapMax=0`, and finite 1,800-second timeouts.
+The complete native suite passed with six test threads under `MemoryMax=1G`,
+`MemorySwapMax=0`, and the same timeout, including the active Story exact-DVI
+comparison. Final `scripts/check.sh` passed all four gates uncapped. The owner
+decision, sole authorities, explicit domain policies, assertion ledger, exact
+accounting, compatibility proof, and unchanged allocation budgets are all
+satisfied; no shortfall remains to carry forward.
