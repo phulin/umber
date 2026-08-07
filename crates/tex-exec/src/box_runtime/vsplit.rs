@@ -53,7 +53,12 @@ pub(crate) fn split_vbox_register(
     let mut split_nodes = stores.nodes(source_box.children).to_vec();
     let split =
         vert_break(stores, &split_nodes, height, split_max_depth).map_err(vertical_break_error)?;
-    normalize_split_infinite_shrink(stores, &mut split_nodes, &split.infinite_shrink_glue)?;
+    normalize_split_infinite_shrink(
+        stores,
+        &mut split_nodes,
+        &split.infinite_shrink_glue,
+        error_context,
+    )?;
     let remainder = match split.break_index {
         Some(index) => split_nodes.split_off(index),
         None => Vec::new(),
@@ -74,6 +79,7 @@ fn normalize_split_infinite_shrink(
     stores: &mut Universe,
     nodes: &mut [Node],
     indices: &[usize],
+    error_context: &str,
 ) -> Result<(), ExecError> {
     for &index in indices {
         let Some(Node::Glue { spec, kind, leader }) = nodes.get(index) else {
@@ -83,7 +89,7 @@ fn normalize_split_infinite_shrink(
         if finite.shrink_order == Order::Normal || finite.shrink.raw() == 0 {
             continue;
         }
-        diagnostics::report_split_infinite_shrinkage(stores)?;
+        diagnostics::report_split_infinite_shrinkage(stores, Some(error_context))?;
         finite.shrink_order = Order::Normal;
         nodes[index] = Node::Glue {
             spec: stores.intern_glue(finite),

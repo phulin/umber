@@ -3450,10 +3450,12 @@ impl MainControl {
     }
 
     fn enter_display(&mut self, stores: &mut Universe) -> Result<(), ExecError> {
+        let error_context = self.command.output_open_context(&stores.command_context());
         let paragraph = crate::paragraph_end::interrupt_paragraph_for_display(
             &mut self.modes,
             stores,
             self.fuel.fuel_mut(),
+            error_context,
         )?;
         let dimensions = crate::paragraph_end::display_line_dimensions(&self.modes, stores);
         let pre_display_size = paragraph
@@ -3693,7 +3695,8 @@ impl MainControl {
         if scan_optional_space {
             self.scan_optional_space(stores)?;
         }
-        crate::math::display::build_page_after_display_resume(&self.modes, stores)
+        let error_context = self.command.output_open_context(&stores.command_context());
+        crate::math::display::build_page_after_display_resume(&self.modes, stores, &error_context)
     }
 
     /// TeX82 §443's `@<Scan an optional space@>`: `get_x_token; if
@@ -11484,7 +11487,13 @@ fn begin_next_replay_alignment_cell(
     // list open. A valign entry can therefore leave horizontal mode before
     // the following column starts without packaging the spanning cell yet.
     if active.kind == AlignmentKind::VAlign {
-        crate::paragraph_end::end_paragraph_without_source(modes, stores, command.fuel)?;
+        let error_context = command.state.output_open_context(&stores.command_context());
+        crate::paragraph_end::end_paragraph_with_context(
+            modes,
+            stores,
+            command.fuel,
+            error_context,
+        )?;
     }
     if delimiter == AlignmentCellDelimiter::Span {
         active.cell_span = active
@@ -11856,6 +11865,7 @@ fn finish_replay_alignment(
     modes: &mut ModeNest,
     stores: &mut Universe,
     fuel: &mut tex_command::CommandFuel,
+    error_context: &str,
 ) -> Result<(), ExecError> {
     finish_replay_alignment_row(active, modes, stores, fuel)?;
     let mut alignment = crate::box_runtime::commit_current_list(modes, stores, fuel)?;
@@ -11865,7 +11875,8 @@ fn finish_replay_alignment(
     // enclosing diagnostic state after the finished alignment is appended.
     let restore_pack_begin_line = stores.pack_begin_line();
     stores.set_pack_begin_line(-alignment.entry_line());
-    let result = finish_replay_alignment_with_origin(active, modes, stores, &mut alignment);
+    let result =
+        finish_replay_alignment_with_origin(active, modes, stores, &mut alignment, error_context);
     stores.set_pack_begin_line(restore_pack_begin_line);
     result
 }
@@ -11875,6 +11886,7 @@ fn finish_replay_alignment_with_origin(
     modes: &mut ModeNest,
     stores: &mut Universe,
     alignment: &mut crate::mode::ModeLevelSummary,
+    error_context: &str,
 ) -> Result<(), ExecError> {
     let rows = alignment.list_mutation().take_nodes();
     let columns = active
@@ -11928,7 +11940,7 @@ fn finish_replay_alignment_with_origin(
             },
         );
     }
-    crate::vertical::build_page_if_outer_vertical(modes, stores)?;
+    crate::vertical::build_page_if_outer_vertical_with_error_context(modes, stores, error_context)?;
     Ok(())
 }
 
@@ -12441,7 +12453,12 @@ fn apply_scanned_step(
             // §1057) always followed by a page-builder call in that case.
             crate::box_runtime::flush_pending_hchars_with_fuel(modes, stores, command.fuel)?;
             crate::vertical::append_vertical_contribution(modes, stores, Node::Penalty(amount));
-            crate::vertical::build_page_if_outer_vertical(modes, stores)?;
+            let error_context = command.state.output_open_context(&stores.command_context());
+            crate::vertical::build_page_if_outer_vertical_with_error_context(
+                modes,
+                stores,
+                &error_context,
+            )?;
             Ok(ReplayStep::Continue)
         }
         ScannedStep::DeleteLast { primitive, context } => {
@@ -13363,6 +13380,7 @@ fn apply_scanned_step(
                         &selector,
                         &request.name,
                         request.size,
+                        request.error_context.clone(),
                     )?;
                     let receipt = bind_null_font(stores);
                     command.retain_assignment_receipt(receipt);
@@ -14517,6 +14535,7 @@ fn apply_scanned_step(
         } => {
             boxes.pending_leader = None;
             let spec = stores.intern_glue(glue);
+            let error_context = command.state.output_open_context(&stores.command_context());
             crate::box_runtime::append_leader_contribution(
                 modes,
                 stores,
@@ -14524,6 +14543,7 @@ fn apply_scanned_step(
                 payload,
                 spec,
                 command.fuel,
+                &error_context,
             )?;
             Ok(ReplayStep::Continue)
         }
@@ -14535,6 +14555,7 @@ fn apply_scanned_step(
         } => {
             if let Some(payload) = crate::box_runtime::take_register_payload(stores, index, copy) {
                 let spec = stores.intern_glue(glue);
+                let error_context = command.state.output_open_context(&stores.command_context());
                 crate::box_runtime::append_leader_contribution(
                     modes,
                     stores,
@@ -14542,6 +14563,7 @@ fn apply_scanned_step(
                     payload,
                     spec,
                     command.fuel,
+                    &error_context,
                 )?;
             }
             Ok(ReplayStep::Continue)
@@ -14878,7 +14900,8 @@ fn apply_scanned_step(
                 crate::page_output::append_end_job_contributions(stores);
                 *end_job_ejection_pending = true;
             }
-            crate::page_builder::build_page(stores)?;
+            let error_context = command.state.output_open_context(&stores.command_context());
+            crate::page_builder::build_page_with_error_context(stores, &error_context)?;
             if stores.page_contributions().is_empty() {
                 *end_job_ejection_pending = false;
             }
@@ -15195,7 +15218,12 @@ fn apply_scanned_step(
                     node,
                     command.fuel,
                 )?;
-                crate::vertical::build_page_if_outer_vertical(modes, stores)?;
+                let error_context = command.state.output_open_context(&stores.command_context());
+                crate::vertical::build_page_if_outer_vertical_with_error_context(
+                    modes,
+                    stores,
+                    &error_context,
+                )?;
             }
             Ok(ReplayStep::Continue)
         }
@@ -15533,7 +15561,8 @@ fn apply_scanned_step(
             let active = active_alignment
                 .as_mut()
                 .expect("active replay alignment was checked");
-            finish_replay_alignment(active, modes, stores, command.fuel)?;
+            let error_context = command.state.output_open_context(&stores.command_context());
+            finish_replay_alignment(active, modes, stores, command.fuel, &error_context)?;
             schedule_aftergroup(command, stores, entry_aftergroup)?;
             schedule_aftergroup(command, stores, alignment_aftergroup)?;
             command
@@ -15560,7 +15589,12 @@ fn apply_scanned_step(
                 Mode::Vertical | Mode::InternalVertical
             ) {
                 crate::paragraph_end::normal_paragraph(modes, stores);
-                crate::vertical::build_page_if_outer_vertical(modes, stores)?;
+                let error_context = command.state.output_open_context(&stores.command_context());
+                crate::vertical::build_page_if_outer_vertical_with_error_context(
+                    modes,
+                    stores,
+                    &error_context,
+                )?;
             } else {
                 crate::paragraph_end::end_paragraph_with_fuel(
                     modes,
@@ -16145,13 +16179,13 @@ fn apply_box_shift(
                 stores.pin_survivor(id);
             }
             let node = crate::box_runtime::first_box_node(stores, id);
-            append_shifted_box(modes, stores, node, shift.delta, command.fuel)?;
+            append_shifted_box(modes, stores, node, shift.delta, command)?;
             Ok(ReplayStep::Continue)
         }
         ScannedBoxShiftPayload::LastBox { error_context } => {
             let node =
                 crate::box_runtime::take_last_box(modes, stores, command.fuel, error_context)?;
-            append_shifted_box(modes, stores, node, shift.delta, command.fuel)?;
+            append_shifted_box(modes, stores, node, shift.delta, command)?;
             Ok(ReplayStep::Continue)
         }
         ScannedBoxShiftPayload::VSplit(split) => {
@@ -16164,7 +16198,7 @@ fn apply_box_shift(
                 split.height,
                 &split.split_context,
             )?;
-            append_shifted_box(modes, stores, node, shift.delta, command.fuel)?;
+            append_shifted_box(modes, stores, node, shift.delta, command)?;
             Ok(ReplayStep::Continue)
         }
         ScannedBoxShiftPayload::Construction(construction) => {
@@ -16293,7 +16327,7 @@ fn box_end(
     command: &mut CommandMachine<'_>,
 ) -> Result<(), ExecError> {
     match context {
-        BoxContext::Append(delta) => append_shifted_box(modes, stores, node, delta, command.fuel),
+        BoxContext::Append(delta) => append_shifted_box(modes, stores, node, delta, command),
         // §1077 defines the register unconditionally: a void `cur_box` makes
         // the destination void, it does not leave the old value in place.
         BoxContext::SetBox(target) => {
@@ -16350,14 +16384,15 @@ fn append_shifted_box(
     stores: &mut Universe,
     node: Option<Node>,
     delta: Scaled,
-    fuel: &mut tex_command::CommandFuel,
+    command: &mut CommandMachine<'_>,
 ) -> Result<(), ExecError> {
     let Some(mut node) = node else {
         return Ok(());
     };
     crate::box_runtime::apply_box_shift_delta(&mut node, delta)?;
-    crate::box_runtime::append_box_node_to_current_list(modes, stores, node, fuel)?;
-    crate::vertical::build_page_if_outer_vertical(modes, stores)
+    crate::box_runtime::append_box_node_to_current_list(modes, stores, node, command.fuel)?;
+    let error_context = command.state.output_open_context(&stores.command_context());
+    crate::vertical::build_page_if_outer_vertical_with_error_context(modes, stores, &error_context)
 }
 
 fn apply_scanned_rule(

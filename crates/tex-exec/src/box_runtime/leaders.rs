@@ -5,8 +5,6 @@ use tex_state::ids::GlueId;
 use tex_state::meaning::UnexpandablePrimitive;
 use tex_state::node::{GlueKind, LeaderPayload, Node};
 
-use crate::vertical::build_page_if_outer_vertical;
-
 use super::append_node_to_current_list;
 use crate::{ExecError, ModeNest};
 
@@ -60,6 +58,7 @@ pub(crate) fn append_leader_contribution(
     payload: LeaderPayload,
     spec: GlueId,
     fuel: &mut tex_command::CommandFuel,
+    error_context: &str,
 ) -> Result<(), ExecError> {
     append_node_to_current_list(
         nest,
@@ -71,6 +70,6 @@ pub(crate) fn append_leader_contribution(
         },
         fuel,
     )?;
-    build_page_if_outer_vertical(nest, stores)?;
+    crate::vertical::build_page_if_outer_vertical_with_error_context(nest, stores, error_context)?;
     Ok(())
 }

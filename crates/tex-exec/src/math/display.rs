@@ -9,9 +9,7 @@ use tex_typeset::math::{MathParams, Style};
 use crate::box_runtime::{hpack_with_overfull_rule, split_hpack_migrations};
 use crate::mode::EqNoSide;
 use crate::packing_params::{hpack as hpack_nodes, hpack_params};
-use crate::vertical::{
-    append_node_to_vertical_list, append_vertical_contribution, build_page_if_outer_vertical,
-};
+use crate::vertical::{append_node_to_vertical_list, append_vertical_contribution};
 use crate::{ExecError, Mode, ModeNest};
 
 fn scaled_add(left: Scaled, right: Scaled) -> Scaled {
@@ -387,6 +385,7 @@ const fn tex_half(x: i32) -> i32 {
 pub(crate) fn build_page_after_display_resume(
     nest: &ModeNest,
     stores: &mut Universe,
+    error_context: &str,
 ) -> Result<(), ExecError> {
     // tex.web §1200's closing `if nest_ptr=1 then build_page`. `nest_ptr` is
     // the number of levels pushed above the outermost vertical list, so the
@@ -398,9 +397,13 @@ pub(crate) fn build_page_after_display_resume(
     // display penalties and defer a forced break until unrelated later
     // material.
     if nest.depth() == 2 && nest.current_mode() == Mode::Horizontal {
-        crate::page_builder::build_page(stores)
+        crate::page_builder::build_page_with_error_context(stores, error_context)
     } else {
-        build_page_if_outer_vertical(nest, stores)
+        crate::vertical::build_page_if_outer_vertical_with_error_context(
+            nest,
+            stores,
+            error_context,
+        )
     }
 }
 

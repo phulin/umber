@@ -51,7 +51,7 @@ pub(crate) fn break_current_paragraph(
     stores: &mut Universe,
     widow_penalty_selector: tex_typeset::linebreak::WidowPenaltySelector,
     reset_paragraph: bool,
-    error_context: Option<String>,
+    error_context: String,
     fuel: &mut tex_command::CommandFuel,
 ) -> Result<ParagraphBreakResult, ExecError> {
     flush_pending_hchars_with_fuel(nest, stores, fuel)?;
@@ -74,7 +74,13 @@ pub(crate) fn break_current_paragraph(
         crate::math::finish_math_lists_owned(stores, level.list_mutation().take_nodes(), true);
     observe_paragraph_material_dependencies(stores, &hlist);
     let tracing = stores.int_param(IntParam::TRACING_PARAGRAPHS) > 0;
-    normalize_paragraph_infinite_shrink(stores, &mut params, &mut hlist, tracing, error_context)?;
+    normalize_paragraph_infinite_shrink(
+        stores,
+        &mut params,
+        &mut hlist,
+        tracing,
+        Some(error_context.clone()),
+    )?;
     let mut line_params = line_break_params(stores, &params);
     if line_params.pdf_adjust_spacing > 1 {
         line_params.expansion_steps =
@@ -188,7 +194,7 @@ pub(crate) fn break_current_paragraph(
     if reset_paragraph {
         reset_after_par(nest, stores);
     }
-    build_page_if_outer_vertical(nest, stores)?;
+    crate::vertical::build_page_if_outer_vertical_with_error_context(nest, stores, &error_context)?;
     Ok(ParagraphBreakResult {
         last_line,
         active_directions,
@@ -276,7 +282,12 @@ fn normalize_paragraph_infinite_shrink(
                 // this print-channel boundary at the recovery point.
                 stores.begin_diagnostic().end(true);
             }
-            crate::diagnostics::report_paragraph_infinite_shrinkage(stores, error_context.take())?;
+            crate::diagnostics::report_paragraph_infinite_shrinkage(
+                stores,
+                error_context
+                    .take()
+                    .expect("paragraph completion owns its live error context"),
+            )?;
             reported = true;
         }
         glue.shrink_order = Order::Normal;
@@ -1088,7 +1099,5 @@ use crate::box_runtime::{
     hpack_owned_with_overfull_rule,
 };
 use crate::mode::ParagraphParams;
-use crate::vertical::{
-    append_migrated_contribution, append_vertical_contribution, build_page_if_outer_vertical,
-};
+use crate::vertical::{append_migrated_contribution, append_vertical_contribution};
 use crate::{ExecError, ModeNest};

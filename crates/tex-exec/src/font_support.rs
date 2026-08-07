@@ -60,8 +60,8 @@ pub(crate) fn report_font_capacity(
     selector: &str,
     font_name: &str,
     size_spec: FontSizeSpec,
+    context: String,
 ) -> Result<(), ExecError> {
-    let context = crate::diagnostics::show_context(stores, stores.input_summary());
     let mut report = stores.print_err("Font ");
     report
         .sprint_cs(selector_kind, selector)

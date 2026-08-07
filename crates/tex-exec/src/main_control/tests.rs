@@ -770,6 +770,29 @@ fn output_routine_box255_error_reports_live_command_context() {
 }
 
 #[test]
+fn vsplit_infinite_shrink_reports_the_scanner_owned_live_context() {
+    // TeX82 §§976/82: `vert_break` runs synchronously inside `\vsplit`, so
+    // its error sees the backed-up command following the completed dimension.
+    let mut stores = Universe::new_with_plain_catcodes();
+    stores.set_interaction_mode(tex_state::InteractionMode::Nonstop);
+    let mut control = MainControl::tex82_initex(&mut stores);
+    register_source(
+        &mut control,
+        br"\setbox0=\vbox{\vskip0pt minus 1fil}\setbox1=\vsplit0 to 1pt\count0=23\end",
+    );
+
+    run_to_end(&mut control, &mut stores);
+
+    let output = terminal_text(&stores);
+    let error = output
+        .find("! Infinite glue shrinkage found in box being split.")
+        .expect("vsplit reports infinite shrink");
+    assert!(output[error..].contains("<to be read again> "), "{output}");
+    assert!(output[error..].contains("\\count"), "{output}");
+    assert_eq!(stores.count(0), 23, "recovery resumes after the split");
+}
+
+#[test]
 fn tracingrestores_reports_restored_box_register_value() {
     let mut stores = Universe::new_with_plain_catcodes();
     let mut control = MainControl::tex82_initex(&mut stores);

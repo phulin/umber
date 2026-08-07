@@ -9,7 +9,6 @@ mod runtime;
 pub(crate) use hyphenation::{apply_scanned_hyphenation_exceptions, apply_scanned_patterns};
 
 use crate::box_runtime::{commit_current_list, flush_pending_hchars_with_fuel};
-use crate::vertical::build_page_if_outer_vertical;
 use crate::{ExecError, Mode, ModeNest};
 pub use runtime::cached_pretolerance_plan;
 pub(crate) use runtime::{
@@ -27,21 +26,21 @@ pub(crate) enum ParagraphEndContinuation {
 /// Command-owned paragraph completion inputs.
 pub(crate) struct ParagraphEnd {
     continuation: ParagraphEndContinuation,
-    error_context: Option<String>,
+    error_context: String,
 }
 
 impl ParagraphEnd {
-    pub(crate) fn end(error_context: Option<String>) -> Self {
+    pub(crate) fn end(error_context: String) -> Self {
         Self {
             continuation: ParagraphEndContinuation::End,
             error_context,
         }
     }
 
-    pub(crate) fn display_interruption() -> Self {
+    pub(crate) fn display_interruption(error_context: String) -> Self {
         Self {
             continuation: ParagraphEndContinuation::DisplayInterruption,
-            error_context: None,
+            error_context,
         }
     }
 
@@ -60,7 +59,11 @@ impl ParagraphEnd {
             let _ = commit_current_list(nest, stores, fuel)?;
             if !is_display {
                 normal_paragraph(nest, stores);
-                build_page_if_outer_vertical(nest, stores)?;
+                crate::vertical::build_page_if_outer_vertical_with_error_context(
+                    nest,
+                    stores,
+                    &self.error_context,
+                )?;
             }
             return Ok(ParagraphBreakResult::empty());
         }
@@ -87,16 +90,17 @@ pub(crate) fn end_paragraph_with_fuel(
     fuel: &mut tex_command::CommandFuel,
 ) -> Result<(), ExecError> {
     let context = command.output_open_context(&stores.command_context());
-    ParagraphEnd::end(Some(context)).finish(nest, stores, fuel)?;
+    ParagraphEnd::end(context).finish(nest, stores, fuel)?;
     Ok(())
 }
 
-pub(crate) fn end_paragraph_without_source(
+pub(crate) fn end_paragraph_with_context(
     nest: &mut ModeNest,
     stores: &mut Universe,
     fuel: &mut tex_command::CommandFuel,
+    error_context: String,
 ) -> Result<(), ExecError> {
-    ParagraphEnd::end(None).finish(nest, stores, fuel)?;
+    ParagraphEnd::end(error_context).finish(nest, stores, fuel)?;
     Ok(())
 }
 
@@ -104,7 +108,8 @@ pub(crate) fn interrupt_paragraph_for_display(
     nest: &mut ModeNest,
     stores: &mut Universe,
     fuel: &mut tex_command::CommandFuel,
+    error_context: String,
 ) -> Result<ParagraphBreakResult, ExecError> {
-    let result = ParagraphEnd::display_interruption().finish(nest, stores, fuel)?;
+    let result = ParagraphEnd::display_interruption(error_context).finish(nest, stores, fuel)?;
     Ok(result)
 }

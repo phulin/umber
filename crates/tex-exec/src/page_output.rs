@@ -69,7 +69,7 @@ pub(crate) fn resume_page_builder_after_output(
     }
     stores.clear_page_discards();
     prepend_output_heldover(stores, output_nodes, false);
-    crate::page_builder::build_page_with_error_context(stores, Some(&error_context))
+    crate::page_builder::build_page_with_error_context(stores, &error_context)
 }
 
 pub(crate) fn prepare_box255(
@@ -430,7 +430,8 @@ fn output_penalty_and_rewrite_break(
 ///
 /// Page output is driven by the page builder, not by a scanner, so its caller
 /// supplies §82's context. Main control renders its live command
-/// stack; the retained executor renders the last input summary it published.
+/// stack; only the explicit source-free test seam renders the last published
+/// input summary.
 pub(crate) fn report_output_loop(
     stores: &mut Universe,
     dead_cycles: i32,

@@ -540,6 +540,12 @@ fn page_contribution_last_items_and_max_depth_matrix() {
 #[test]
 fn page_infinite_shrink_recovery_normalizes_only_the_offending_glue() {
     let mut stores = crate::test_harness::universe();
+    crate::test_harness::publish_input_context(
+        &mut stores,
+        27,
+        "published page continuation",
+        "published ".len(),
+    );
     params(&mut stores, 10_000, 10, 0);
     stores.append_page_contribution(rule(1, 0));
     let bad = glue(&mut stores, 2, 0, Order::Normal, 5, Order::Fil);
@@ -577,7 +583,10 @@ fn page_infinite_shrink_recovery_normalizes_only_the_offending_glue() {
         (Order::Normal, s(7))
     );
     assert_eq!(stores.page_dimension(PageDimension::Shrink), s(12));
-    assert!(effects(&stores).contains("Infinite glue shrinkage found on current page"));
+    let output = effects(&stores);
+    assert!(output.contains("Infinite glue shrinkage found on current page"));
+    assert!(output.contains("l.27 published "), "{output}");
+    assert!(output.contains("continuation"), "{output}");
 }
 
 #[test]

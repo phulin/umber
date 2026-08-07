@@ -6,7 +6,6 @@ use tex_state::node_arena::NodeRef;
 use tex_state::scaled::Scaled;
 
 use crate::mode::ignored_depth;
-use crate::page_builder::build_page;
 use crate::{ExecError, Mode, ModeNest};
 
 pub(crate) fn append_node_to_current_list(
@@ -82,23 +81,13 @@ pub(crate) fn append_vertical_contribution(nest: &mut ModeNest, stores: &mut Uni
     }
 }
 
-pub(crate) fn build_page_if_outer_vertical(
-    nest: &ModeNest,
-    stores: &mut Universe,
-) -> Result<(), ExecError> {
-    if is_outer_vertical(nest) {
-        build_page(stores)?;
-    }
-    Ok(())
-}
-
 pub(crate) fn build_page_if_outer_vertical_with_error_context(
     nest: &ModeNest,
     stores: &mut Universe,
     error_context: &str,
 ) -> Result<(), ExecError> {
     if is_outer_vertical(nest) {
-        crate::page_builder::build_page_with_error_context(stores, Some(error_context))?;
+        crate::page_builder::build_page_with_error_context(stores, error_context)?;
     }
     Ok(())
 }

@@ -23,17 +23,24 @@ const PAGE_EPISODE_DOMAIN: u32 = 3;
 const PAGE_EPISODE_SCHEMA: u32 = 1;
 const PAGE_ENV_HASH_DOMAIN: u64 = 0x7061_6765_656e_7601;
 
+#[cfg(test)]
 pub(crate) fn build_page(stores: &mut Universe) -> Result<(), ExecError> {
-    build_page_with_error_context(stores, None)
+    build_page_impl(stores, None)
 }
 
 /// Runs TeX82's page builder with the live §82 input display of the command
-/// whose contribution triggered it. The canonical command core owns that
-/// stack; callers without one retain the legacy Universe-summary fallback.
+/// whose contribution triggered it.
 pub(crate) fn build_page_with_error_context(
     stores: &mut Universe,
-    error_context: Option<&str>,
+    error_context: &str,
 ) -> Result<(), ExecError> {
+    build_page_impl(stores, Some(error_context))
+}
+
+/// The shared implementation. `None` is reserved for input-free continuations
+/// that have no borrowed command cursor and therefore use the last published
+/// Universe summary.
+fn build_page_impl(stores: &mut Universe, error_context: Option<&str>) -> Result<(), ExecError> {
     if stores.page_fire_up().is_some() {
         return Ok(());
     }
@@ -325,6 +332,7 @@ fn prepare_insertion(
                     node,
                     *content,
                     *split_max_depth,
+                    error_context,
                 )?;
             }
         }
@@ -389,8 +397,9 @@ pub(crate) fn ensure_insertion_vbox(
         return Ok(Some(list));
     }
 
-    // The page builder runs between commands rather than inside a scanner, so
-    // §82's display comes from the last input summary the job published.
+    // Production page building is synchronous with the contributing command,
+    // whose dispatcher supplies §82's live display. Only the explicit
+    // source-free test seam falls back to the published summary.
     let context = error_context.map_or_else(
         || crate::diagnostics::show_context(stores, stores.input_summary()),
         str::to_owned,
@@ -436,6 +445,7 @@ fn split_page_insertion(
     node: &Node,
     content: tex_state::ids::NodeListId,
     split_max_depth: Scaled,
+    error_context: Option<&str>,
 ) -> Result<Option<Node>, ExecError> {
     let class = insertion.class();
     let count = stores.count(class);
@@ -467,6 +477,7 @@ fn split_page_insertion(
         node,
         &mut content_nodes,
         &split.infinite_shrink_glue,
+        error_context,
     )?;
     insertion.set_height(add(insertion.height(), split.best_height_plus_depth)?);
     let scaled_best = scaled_insertion_size(split.best_height_plus_depth, count)?;
@@ -629,6 +640,7 @@ fn normalize_insert_content_shrink(
     insert_node: &Node,
     content_nodes: &mut [Node],
     indices: &[usize],
+    error_context: Option<&str>,
 ) -> Result<Option<Node>, ExecError> {
     if indices.is_empty() {
         return Ok(None);
@@ -643,7 +655,7 @@ fn normalize_insert_content_shrink(
         if finite.shrink_order == Order::Normal || finite.shrink.raw() == 0 {
             continue;
         }
-        diagnostics::report_split_infinite_shrinkage(stores)?;
+        diagnostics::report_split_infinite_shrinkage(stores, error_context)?;
         finite.shrink_order = Order::Normal;
         content_nodes[index] = Node::Glue {
             spec: stores.intern_glue(finite),

@@ -686,9 +686,8 @@ pub(crate) fn report_page_infinite_shrinkage(
 /// TeX82 §825's once-per-paragraph infinite-shrink recovery.
 pub(crate) fn report_paragraph_infinite_shrinkage(
     stores: &mut Universe,
-    context: Option<String>,
+    context: String,
 ) -> Result<(), ExecError> {
-    let context = context.unwrap_or_else(|| show_context(stores, stores.input_summary()));
     crate::error_report::report_error(
         stores,
         "Infinite glue shrinkage found in a paragraph",
@@ -706,7 +705,10 @@ pub(crate) fn report_paragraph_infinite_shrinkage(
 
 /// TeX82 §976's `<Update the current height and depth measurements with
 /// respect to a glue or kern node p>`.
-pub(crate) fn report_split_infinite_shrinkage(stores: &mut Universe) -> Result<(), ExecError> {
+pub(crate) fn report_split_infinite_shrinkage(
+    stores: &mut Universe,
+    error_context: Option<&str>,
+) -> Result<(), ExecError> {
     if stores.int_param(IntParam::IGNORE_PRIMITIVE_ERROR) & 1 != 0 {
         write_diagnostic(
             stores,
@@ -714,7 +716,13 @@ pub(crate) fn report_split_infinite_shrinkage(stores: &mut Universe) -> Result<(
         );
         return Ok(());
     }
-    let context = show_context(stores, stores.input_summary());
+    // TeX82 §976 is shared by command-time `\vsplit` and page-builder
+    // insertion splitting. The former supplies the scanner-owned live stack;
+    // only an input-free page continuation uses the published summary.
+    let context = error_context.map_or_else(
+        || show_context(stores, stores.input_summary()),
+        str::to_owned,
+    );
     crate::error_report::report_error(
         stores,
         "Infinite glue shrinkage found in box being split",

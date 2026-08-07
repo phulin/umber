@@ -91,6 +91,35 @@ fn fire_up_recovers_hbox_insertion_register_before_distribution() {
 }
 
 #[test]
+fn input_free_box255_recovery_uses_the_published_context() {
+    // TeX82 §§1015/82: this white-box continuation has no borrowed command
+    // cursor, so the last published input summary is its sole context owner.
+    let mut stores = crate::test_harness::universe();
+    crate::test_harness::publish_input_context(
+        &mut stores,
+        31,
+        "published output continuation",
+        "published ".len(),
+    );
+    let deleted = stores.freeze_node_list(&[rule(7)]);
+
+    report_box255_not_void(&mut stores, deleted, None).expect("recovery is nonfatal");
+
+    let output = stores
+        .world()
+        .effect_records()
+        .iter()
+        .filter_map(|record| match record {
+            tex_state::EffectRecord::StreamWrite { text, .. } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect::<String>();
+    assert!(output.contains("box255 is not void"), "{output}");
+    assert!(output.contains("l.31 published "), "{output}");
+    assert!(output.contains("output continuation"), "{output}");
+}
+
+#[test]
 fn fire_up_preserves_void_and_vbox_insertion_queues() {
     let mut stores = Universe::new();
     assert_eq!(

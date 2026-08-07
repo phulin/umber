@@ -20,7 +20,7 @@ pub(crate) fn execute_scanned_unbox_with_error_context(
     fuel: &mut tex_command::CommandFuel,
     error_context: &str,
 ) -> Result<(), ExecError> {
-    execute_scanned_unbox_impl(primitive, index, nest, stores, fuel, Some(error_context))
+    execute_scanned_unbox_impl(primitive, index, nest, stores, fuel, error_context)
 }
 
 fn execute_scanned_unbox_impl(
@@ -29,7 +29,7 @@ fn execute_scanned_unbox_impl(
     nest: &mut ModeNest,
     stores: &mut Universe,
     fuel: &mut tex_command::CommandFuel,
-    error_context: Option<&str>,
+    error_context: &str,
 ) -> Result<(), ExecError> {
     let destructive = matches!(
         primitive,
@@ -391,16 +391,8 @@ fn unbox_kind_matches(primitive: UnexpandablePrimitive, node: &Node) -> bool {
 
 /// TeX.web §1110's `unpackage` refusal, which leaves the register alone.
 ///
-/// The replay prefers the context frozen at the completed register scan;
-/// retired callers without that boundary fall back to the published summary.
-fn report_incompatible_unbox(
-    stores: &mut Universe,
-    error_context: Option<&str>,
-) -> Result<(), ExecError> {
-    let context = error_context.map_or_else(
-        || crate::diagnostics::show_context(stores, stores.input_summary()),
-        str::to_owned,
-    );
+/// The completed register scan owns the live §82 context for this command.
+fn report_incompatible_unbox(stores: &mut Universe, error_context: &str) -> Result<(), ExecError> {
     crate::error_report::report_error(
         stores,
         "Incompatible list can't be unboxed",
@@ -409,7 +401,7 @@ fn report_incompatible_unbox(
             "I refuse to unbox an \\hbox in vertical mode or vice versa.",
             "And I can't open any boxes in math mode.",
         ],
-        context,
+        error_context.to_owned(),
     )?;
     Ok(())
 }
