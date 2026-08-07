@@ -1,24 +1,6 @@
 {
-  "schema": 2,
-  "property_id": "tex82.input.start-input-and-first-line",
-  "profile": "raw-tex82-loaded",
-  "provenance": {
-    "authority": "tex.web",
-    "manifest": "tests/tex82-oracle-manifest.txt",
-    "sections": [
-      537,
-      538
-    ]
-  },
-  "projection": {
-    "kind": "observations",
-    "kinds": [
-      "command",
-      "effect"
-    ],
-    "commands": [
-      "letter"
-    ]
+  "channels": {
+    "events": 34
   },
   "expected": [
     "command:raw:char:letter:110:letter:110",
@@ -42,10 +24,28 @@
     "command:expanded:char:letter:78:letter:78",
     "effect:terminate:engine\u0000"
   ],
-  "channels": {
-    "events": 34
-  },
   "inputs": {
     "nested.tex": "N"
-  }
+  },
+  "profile": "raw-tex82-loaded",
+  "projection": {
+    "commands": [
+      "letter"
+    ],
+    "kind": "observations",
+    "kinds": [
+      "command",
+      "effect"
+    ]
+  },
+  "property_id": "tex82.input.start-input-and-first-line",
+  "provenance": {
+    "authority": "tex.web",
+    "manifest": "tests/tex82-oracle-manifest.txt",
+    "sections": [
+      537,
+      538
+    ]
+  },
+  "schema": 2
 }

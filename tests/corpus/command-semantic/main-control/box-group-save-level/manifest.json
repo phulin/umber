@@ -1,7 +1,20 @@
 {
-  "schema": 2,
-  "property_id": "tex82.group.save-level-lifecycle",
+  "channels": {
+    "events": 666
+  },
+  "expected": [
+    "terminal-check:regs=1,1.0pt,7=true",
+    "terminal-check:more=1,1.0pt,4.0pt,8=true"
+  ],
   "profile": "raw-tex82-loaded",
+  "projection": {
+    "kind": "terminal-checks",
+    "terminal_checks": [
+      "regs=1,1.0pt,7",
+      "more=1,1.0pt,4.0pt,8"
+    ]
+  },
+  "property_id": "tex82.group.save-level-lifecycle",
   "provenance": {
     "authority": "tex.web",
     "manifest": "tests/tex82-oracle-manifest.txt",
@@ -11,18 +24,5 @@
       271
     ]
   },
-  "projection": {
-    "kind": "terminal-checks",
-    "terminal_checks": [
-      "regs=1,1.0pt,7",
-      "more=1,1.0pt,4.0pt,8"
-    ]
-  },
-  "expected": [
-    "terminal-check:regs=1,1.0pt,7=true",
-    "terminal-check:more=1,1.0pt,4.0pt,8=true"
-  ],
-  "channels": {
-    "events": 666
-  }
+  "schema": 2
 }

@@ -344,7 +344,7 @@
         894,
         895
       ],
-      "claim": "On the second pass, TeX finds potentially hyphenatable words only after glue, applies language and left/right minima, lowercase/font/uppercase eligibility and the 63-letter bound, then passes the accepted character and source-node span to the hyphenation procedure.",
+      "claim": "On the second pass, TeX finds potentially hyphenatable words only after glue, applies language and left/right minima, lowercase/font/uppercase eligibility and the 63-letter bound, then passes the accepted same-font character prefix and source-node span to the hyphenation procedure.",
       "preconditions": [
         "The second line-breaking pass is scanning a glue node and has initialized the current language and hyphen minima from paragraph state."
       ],
@@ -352,27 +352,31 @@
         "Present words across glue with punctuation, ligatures, implicit kerns, language whatsits, mixed fonts, uppercase starts, invalid hyphen characters, minima boundaries, and 63/64-letter lengths."
       ],
       "expected_observations": [
-        "Only a canonically delimited same-font lowercase projection that satisfies minima and uppercase policy enters hyphenation; ignored nodes retain a synchronized source span."
+        "Only a canonically delimited same-font lowercase projection that satisfies minima and uppercase policy enters hyphenation; a font change or would-be 64th letter terminates that projection as a nonletter, and ignored nodes retain a synchronized source span."
       ],
       "postconditions": [
         "An accepted candidate identifies its normalized letters, original node interval, font, language and hyphen character without changing unrelated paragraph nodes."
       ],
       "equivalence_cases": [
-        "Positive/boundary/nesting: punctuation before and after a word, ligature-expanded letters, implicit kerns, language changes, exactly 63 letters, and minima equality"
+        "Positive/boundary/nesting: punctuation before and after a word, ligature-expanded letters, implicit kerns, language changes, minima equality, exactly 63 letters, and the retained 63-letter prefix when a would-be c64 terminates the candidate"
       ],
       "recovery_cases": [
-        "Mixed-font, boxed, mathematical, explicit-kern, existing-discretionary, invalid-hyphen-character, uppercase-disabled, too-short, and 64-letter candidates are skipped without partial insertion."
+        "A font change delimits the same-font prefix; boxed, mathematical, existing-discretionary, invalid-hyphen-character, uppercase-disabled, and too-short candidates are skipped without partial insertion."
       ],
       "semantic_owner": "tex-exec::paragraph-hyphenation",
       "test_level": "rust-unit",
       "coverage": [
         {
           "path": "crates/tex-exec/src/paragraph_end/hyphenation.rs",
-          "test": "automatic_missing_hyphen_warns_but_disabled_hyphen_does_not"
+          "test": "pre_hyphenation_candidate_uses_language_minima_and_canonical_delimiters"
         },
         {
-          "path": "crates/tex-typeset/src/linebreak/tests.rs",
-          "test": "existing_discretionary_is_available_on_the_pretolerance_pass"
+          "path": "crates/tex-exec/src/paragraph_end/hyphenation.rs",
+          "test": "pre_hyphenation_candidate_applies_uppercase_and_same_font_eligibility"
+        },
+        {
+          "path": "crates/tex-exec/src/paragraph_end/hyphenation.rs",
+          "test": "pre_hyphenation_candidate_retains_the_63_letter_prefix_at_the_64_boundary"
         }
       ],
       "status": "covered",

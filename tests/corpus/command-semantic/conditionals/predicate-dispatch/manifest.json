@@ -1,27 +1,6 @@
 {
-  "schema": 2,
-  "property_id": "tex82.conditionals.predicate-dispatch",
-  "profile": "raw-tex82-loaded",
-  "provenance": {
-    "authority": "tex.web",
-    "manifest": "tests/tex82-oracle-manifest.txt",
-    "sections": [
-      501
-    ]
-  },
-  "projection": {
-    "kind": "predicate-outcomes",
-    "count_registers": [
-      0,
-      1,
-      2,
-      3,
-      4,
-      5,
-      6,
-      7,
-      8
-    ]
+  "channels": {
+    "events": 428
   },
   "expected": [
     "predicate:ifvmode:-:true",
@@ -45,7 +24,28 @@
     "count:7=1",
     "count:8=1"
   ],
-  "channels": {
-    "events": 428
-  }
+  "profile": "raw-tex82-loaded",
+  "projection": {
+    "count_registers": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+    ],
+    "kind": "predicate-outcomes"
+  },
+  "property_id": "tex82.conditionals.predicate-dispatch",
+  "provenance": {
+    "authority": "tex.web",
+    "manifest": "tests/tex82-oracle-manifest.txt",
+    "sections": [
+      501
+    ]
+  },
+  "schema": 2
 }

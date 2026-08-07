@@ -1,7 +1,21 @@
 {
-  "schema": 2,
-  "property_id": "tex82.boxes.vpack-and-vlist-append",
+  "channels": {
+    "events": 454
+  },
+  "expected": [
+    "box:1/0:vlist",
+    "box:1/0/0:hlist",
+    "box:1/0/1:hlist"
+  ],
   "profile": "raw-tex82-loaded",
+  "projection": {
+    "box_registers": [
+      1
+    ],
+    "kind": "execution-boundaries",
+    "node_depth": 2
+  },
+  "property_id": "tex82.boxes.vpack-and-vlist-append",
   "provenance": {
     "authority": "tex.web",
     "manifest": "tests/tex82-oracle-manifest.txt",
@@ -12,19 +26,5 @@
       677
     ]
   },
-  "projection": {
-    "kind": "execution-boundaries",
-    "box_registers": [
-      1
-    ],
-    "node_depth": 2
-  },
-  "expected": [
-    "box:1/0:vlist",
-    "box:1/0/0:hlist",
-    "box:1/0/1:hlist"
-  ],
-  "channels": {
-    "events": 454
-  }
+  "schema": 2
 }

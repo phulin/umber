@@ -1,7 +1,27 @@
 {
-  "schema": 2,
-  "property_id": "tex82.math.entry-and-display-setup",
+  "channels": {
+    "events": 88
+  },
+  "expected": [
+    "command:mkern:99",
+    "command:mkern:99",
+    "mode:vertical",
+    "mode:horizontal",
+    "mode:math",
+    "mode:horizontal",
+    "mode:vertical",
+    "artifact:9e2d7112a9462de7ca8bde0f3f7d9f02ec3eee501cb42096fab3a2772969c3a0"
+  ],
   "profile": "raw-tex82-loaded",
+  "projection": {
+    "command_names": [
+      "mkern"
+    ],
+    "include_artifact_hashes": true,
+    "include_mode_transitions": true,
+    "kind": "execution-boundaries"
+  },
+  "property_id": "tex82.math.entry-and-display-setup",
   "provenance": {
     "authority": "tex.web",
     "manifest": "tests/tex82-oracle-manifest.txt",
@@ -22,25 +42,5 @@
       1149
     ]
   },
-  "projection": {
-    "kind": "execution-boundaries",
-    "include_mode_transitions": true,
-    "include_artifact_hashes": true,
-    "command_names": [
-      "mkern"
-    ]
-  },
-  "expected": [
-    "command:mkern:99",
-    "command:mkern:99",
-    "mode:vertical",
-    "mode:horizontal",
-    "mode:math",
-    "mode:horizontal",
-    "mode:vertical",
-    "artifact:9e2d7112a9462de7ca8bde0f3f7d9f02ec3eee501cb42096fab3a2772969c3a0"
-  ],
-  "channels": {
-    "events": 88
-  }
+  "schema": 2
 }

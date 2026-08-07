@@ -1,10 +1,26 @@
 {
-  "schema": 2,
-  "property_id": "tex82.lists.discretionary-and-accent",
-  "profile": "raw-tex82-loaded",
+  "channels": {
+    "events": 132
+  },
+  "expected": [
+    "box:36/0:hlist",
+    "box:36/0/0:kern",
+    "box:36/0/1:char",
+    "box:36/0/2:kern",
+    "box:36/0/3:char"
+  ],
   "font_inputs": {
     "cmr10.tfm": "crates/tex-fonts/tests/fixtures/cm/cmr10.tfm"
   },
+  "profile": "raw-tex82-loaded",
+  "projection": {
+    "box_registers": [
+      36
+    ],
+    "kind": "execution-boundaries",
+    "node_depth": 2
+  },
+  "property_id": "tex82.lists.discretionary-and-accent",
   "provenance": {
     "authority": "tex.web",
     "manifest": "tests/tex82-oracle-manifest.txt",
@@ -15,21 +31,5 @@
       1117
     ]
   },
-  "projection": {
-    "kind": "execution-boundaries",
-    "box_registers": [
-      36
-    ],
-    "node_depth": 2
-  },
-  "expected": [
-    "box:36/0:hlist",
-    "box:36/0/0:kern",
-    "box:36/0/1:char",
-    "box:36/0/2:kern",
-    "box:36/0/3:char"
-  ],
-  "channels": {
-    "events": 132
-  }
+  "schema": 2
 }

@@ -1,7 +1,24 @@
 {
-  "schema": 2,
-  "property_id": "tex82.whatsits.language-state",
+  "channels": {
+    "events": 81
+  },
+  "expected": [
+    "command:extension:5",
+    "box:0/0:hlist",
+    "box:0/0/0:whatsit"
+  ],
   "profile": "raw-tex82-loaded",
+  "projection": {
+    "box_registers": [
+      0
+    ],
+    "command_names": [
+      "extension"
+    ],
+    "kind": "execution-boundaries",
+    "node_depth": 1
+  },
+  "property_id": "tex82.whatsits.language-state",
   "provenance": {
     "authority": "tex.web",
     "manifest": "tests/tex82-oracle-manifest.txt",
@@ -11,22 +28,5 @@
       1377
     ]
   },
-  "projection": {
-    "kind": "execution-boundaries",
-    "command_names": [
-      "extension"
-    ],
-    "box_registers": [
-      0
-    ],
-    "node_depth": 1
-  },
-  "expected": [
-    "command:extension:5",
-    "box:0/0:hlist",
-    "box:0/0/0:whatsit"
-  ],
-  "channels": {
-    "events": 81
-  }
+  "schema": 2
 }

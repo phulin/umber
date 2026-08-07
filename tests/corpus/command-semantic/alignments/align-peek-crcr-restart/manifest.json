@@ -1,26 +1,6 @@
 {
-  "schema": 2,
-  "property_id": "tex82.align.row-lookahead-noalign-finish",
-  "profile": "raw-tex82-loaded",
-  "provenance": {
-    "authority": "tex.web",
-    "manifest": "tests/tex82-oracle-manifest.txt",
-    "sections": [
-      309,
-      325,
-      777,
-      785,
-      800
-    ]
-  },
-  "projection": {
-    "kind": "observations",
-    "kinds": [
-      "alignment"
-    ],
-    "alignment_transitions": [
-      "state_change"
-    ]
+  "channels": {
+    "events": 144
   },
   "expected": [
     "alignment:state_change:-999999",
@@ -33,7 +13,27 @@
     "alignment:state_change:1000000",
     "alignment:state_change:999999"
   ],
-  "channels": {
-    "events": 144
-  }
+  "profile": "raw-tex82-loaded",
+  "projection": {
+    "alignment_transitions": [
+      "state_change"
+    ],
+    "kind": "observations",
+    "kinds": [
+      "alignment"
+    ]
+  },
+  "property_id": "tex82.align.row-lookahead-noalign-finish",
+  "provenance": {
+    "authority": "tex.web",
+    "manifest": "tests/tex82-oracle-manifest.txt",
+    "sections": [
+      309,
+      325,
+      777,
+      785,
+      800
+    ]
+  },
+  "schema": 2
 }

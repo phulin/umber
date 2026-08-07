@@ -1,7 +1,24 @@
 {
-  "schema": 2,
-  "property_id": "tex82.input.tokenization",
+  "channels": {
+    "events": 22
+  },
+  "expected": [
+    "command:raw:char:letter:66:letter:66",
+    "command:expanded:char:letter:66:letter:66",
+    "command:raw:char:letter:66:letter:66",
+    "command:expanded:char:letter:66:letter:66"
+  ],
   "profile": "raw-tex82-loaded",
+  "projection": {
+    "commands": [
+      "letter"
+    ],
+    "kind": "observations",
+    "kinds": [
+      "command"
+    ]
+  },
+  "property_id": "tex82.input.tokenization",
   "provenance": {
     "authority": "tex.web",
     "manifest": "tests/tex82-oracle-manifest.txt",
@@ -31,24 +48,7 @@
       365
     ]
   },
-  "projection": {
-    "kind": "observations",
-    "kinds": [
-      "command"
-    ],
-    "commands": [
-      "letter"
-    ]
-  },
-  "expected": [
-    "command:raw:char:letter:66:letter:66",
-    "command:expanded:char:letter:66:letter:66",
-    "command:raw:char:letter:66:letter:66",
-    "command:expanded:char:letter:66:letter:66"
-  ],
-  "channels": {
-    "events": 22
-  },
+  "schema": 2,
   "terminal_lines": [
     "B"
   ]

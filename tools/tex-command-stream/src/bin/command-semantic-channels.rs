@@ -41,8 +41,8 @@
 //! being true, rather than inventing an authority for content with no
 //! reference to check it against.
 //!
-//! This tool also derives a `pass` case's projection `expected` array from
-//! this same run (`plan_expected`), the same way it derives `channels`:
+//! A named, reviewed new `pass` case may derive its projection `expected`
+//! array from this same run, the same way the tool derives `channels`:
 //! `docs/testing_infrastructure.md` calls the projection layer
 //! "Umber-self-authoritative by design", so `expected` has no oracle to read
 //! it from, and the only thing it can mean for a `pass` case is exactly what
@@ -54,11 +54,10 @@
 //! not a check. An `xfail` case's `expected` is different in kind, not just
 //! in accuracy: it names a still-uncorrected divergence's position, which by
 //! definition is not what the current run produces, so it is never derived
-//! and this tool never rewrites it. A `pass` case whose freshly derived
-//! `expected` disagrees with what is already committed is a real behavior
-//! change, and this tool refuses to absorb it silently: the whole batch
-//! fails with both arrays printed, so a human reviews the diff before it can
-//! land.
+//! and this tool never rewrites it. Normal regeneration also preserves
+//! authored pass fingerprints and reports differences. The targeted
+//! `--accept-projection-change DOMAIN/CASE` route is the only mechanical
+//! acceptance path and can update exactly one selected pass case.
 
 #![allow(
     clippy::disallowed_methods,
@@ -97,28 +96,15 @@ fn main() -> ExitCode {
             let selector = arguments.next().unwrap_or_default();
             diff(&selector, StreamChannel::Log)
         }
-        Some("--profile") => {
-            let profile = arguments.next().unwrap_or_default();
-            if arguments.next().as_deref() != Some("--accept-projection-changes")
-                || arguments.next().is_some()
-            {
-                Err(
-                    "--profile requires exactly PROFILE --accept-projection-changes; the explicit \
-                     loaded-profile regeneration route is the only batch allowed to update \
-                     reviewed projections"
-                        .to_owned(),
-                )
-            } else {
-                parse_profile(&profile).and_then(|profile| run(Some(profile), true))
-            }
-        }
+        Some("--profile") => parse_profile_invocation(arguments)
+            .and_then(|(profile, policy)| run(Some(profile), policy)),
         Some(other) => Err(format!(
             "unknown argument {other:?}; the only options are no arguments (regenerate the \
              corpus), `--diff <substring>` (print the oracle/Umber terminal text of every \
              matching case), and `--diff-log <substring>` (the same for the transcript, which \
              is where §90 puts an error's help lines). Neither `--diff` writes anything."
         )),
-        None => run(None, false),
+        None => run(None, ProjectionPolicy::Preserve),
     };
     match outcome {
         Ok(summary) => {
@@ -230,7 +216,52 @@ fn parse_profile(value: &str) -> Result<SessionProfile, String> {
         .map_err(|_| format!("unknown command-semantic profile {value:?}"))
 }
 
-fn run(profile: Option<SessionProfile>, accept_projection_changes: bool) -> Result<String, String> {
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum ProjectionPolicy {
+    Preserve,
+    AcceptNamed(String),
+}
+
+fn parse_profile_invocation(
+    mut arguments: impl Iterator<Item = String>,
+) -> Result<(SessionProfile, ProjectionPolicy), String> {
+    let profile = parse_profile(&arguments.next().unwrap_or_default())?;
+    let policy = match arguments.next().as_deref() {
+        None => ProjectionPolicy::Preserve,
+        Some("--accept-projection-change") => {
+            let selector = arguments.next().ok_or_else(|| {
+                "--accept-projection-change requires exactly one DOMAIN/CASE selector".to_owned()
+            })?;
+            if selector.split('/').count() != 2
+                || selector.starts_with('/')
+                || selector.ends_with('/')
+            {
+                return Err(
+                    "--accept-projection-change requires exactly one DOMAIN/CASE selector"
+                        .to_owned(),
+                );
+            }
+            ProjectionPolicy::AcceptNamed(selector)
+        }
+        Some("--accept-projection-changes") => {
+            return Err(
+                "global projection acceptance is forbidden; use --accept-projection-change \
+                 DOMAIN/CASE for one reviewed candidate"
+                    .to_owned(),
+            );
+        }
+        Some(argument) => return Err(format!("unexpected --profile argument {argument:?}")),
+    };
+    if arguments.next().is_some() {
+        return Err("--profile accepts at most one named projection candidate".to_owned());
+    }
+    Ok((profile, policy))
+}
+
+fn run(
+    profile: Option<SessionProfile>,
+    projection_policy: ProjectionPolicy,
+) -> Result<String, String> {
     let oracle_root = oracle_root();
     let all_cases = load_suite_with(ChannelPolicy::Deriving)?;
     let cases: Vec<_> = all_cases
@@ -248,6 +279,8 @@ fn run(profile: Option<SessionProfile>, accept_projection_changes: bool) -> Resu
     let mut plans: BTreeMap<String, BTreeMap<String, CasePlan>> = BTreeMap::new();
     let mut unrunnable = Vec::new();
     let mut errors = Vec::new();
+    let mut projection_drifts = Vec::new();
+    let mut accepted_projection = false;
 
     for declared in &cases {
         let label = format!("{}/{}", declared.domain, declared.case.id);
@@ -257,12 +290,26 @@ fn run(profile: Option<SessionProfile>, accept_projection_changes: bool) -> Resu
             Ok(completed) => {
                 let captured = CapturedChannels::capture(&completed);
                 let actual_projection = project(&completed, &declared.case.projection);
-                let expected = if accept_projection_changes
-                    && matches!(declared.case.expectation, Expectation::Pass)
+                let accepts_this_case = matches!(
+                    &projection_policy,
+                    ProjectionPolicy::AcceptNamed(selector) if selector == &label
+                );
+                let expected = if accepts_this_case {
+                    accepted_projection = true;
+                    plan_accepted_expected(declared, &actual_projection)
+                } else if matches!(declared.case.expectation, Expectation::Pass)
+                    && declared.case.expected.is_empty()
                 {
-                    Ok(Some(actual_projection.clone()))
+                    Err(format!(
+                        "an empty pass projection requires --accept-projection-change {label}"
+                    ))
                 } else {
-                    plan_expected(declared, &actual_projection)
+                    if matches!(declared.case.expectation, Expectation::Pass)
+                        && declared.case.expected != actual_projection
+                    {
+                        projection_drifts.push(label.clone());
+                    }
+                    Ok(None)
                 };
                 let plan = expected.and_then(|expected| {
                     plan_case(&oracle_root, declared, &source, &captured)
@@ -295,6 +342,9 @@ fn run(profile: Option<SessionProfile>, accept_projection_changes: bool) -> Resu
             errors.len(),
             errors.join("\n  ")
         ));
+    }
+    if matches!(projection_policy, ProjectionPolicy::AcceptNamed(_)) && !accepted_projection {
+        return Err("the named projection candidate was not selected by this profile".to_owned());
     }
     if profile.is_some() && !unrunnable.is_empty() {
         return Err(format!(
@@ -339,6 +389,14 @@ fn run(profile: Option<SessionProfile>, accept_projection_changes: bool) -> Resu
             "\n{} case(s) do not run and carry no channel contract:\n  {}",
             unrunnable.len(),
             unrunnable.join("\n  ")
+        ));
+    }
+    if !projection_drifts.is_empty() {
+        summary.push_str(&format!(
+            "\npreserved {} authored projection fingerprint(s) that differ from this run; the \
+             correctness gate retains authority: {}",
+            projection_drifts.len(),
+            projection_drifts.join(", ")
         ));
     }
     Ok(summary)
@@ -436,9 +494,8 @@ enum ChannelPlan {
     },
 }
 
-/// A case's complete derived plan: its `expected` projection array (a
-/// `pass` case only; `None` for `xfail`, which is never derived -- see this
-/// file's module doc) and its channel contract.
+/// A case's complete derived plan: an optional explicitly accepted `expected`
+/// projection array and its channel contract.
 struct CasePlan {
     expected: Option<Vec<String>>,
     channels: ChannelsPlan,
@@ -451,23 +508,16 @@ struct ChannelsPlan {
     channels: [ChannelPlan; 4],
 }
 
-/// Derives a `pass` case's `expected` array from its own freshly projected
-/// run, or refuses when that would silently absorb a behavior change. See
-/// this file's module doc.
-fn plan_expected(
+/// Derives one explicitly named `pass` case's `expected` array from its own
+/// freshly projected run. Global or xfail acceptance is unavailable.
+fn plan_accepted_expected(
     declared: &DeclaredCase,
     actual: &[String],
 ) -> Result<Option<Vec<String>>, String> {
     if !matches!(declared.case.expectation, Expectation::Pass) {
-        return Ok(None);
-    }
-    if !declared.case.expected.is_empty() && declared.case.expected != actual {
         return Err(format!(
-            "expected observations changed: committed {:?}, this run's projection now produces \
-             {actual:?}; regeneration never absorbs a pass case's behavior change silently -- \
-             review the difference and, if it is an intended, reviewed change, update this \
-             case's committed \"expected\" to the new array by hand before regenerating again",
-            declared.case.expected,
+            "{} is an xfail projection and cannot be mechanically accepted",
+            declared.case.id
         ));
     }
     Ok(Some(actual.to_vec()))
@@ -736,8 +786,9 @@ impl ChannelsPlan {
     }
 }
 
-/// Replaces only generated projections and resolved channel exceptions in a
-/// V2 manifest. Meaningful xfail projections remain untouched.
+/// Replaces only an explicitly accepted projection and resolved channel
+/// exceptions in a V2 manifest. Authored pass and xfail projections remain
+/// untouched during normal regeneration.
 fn rewrite_manifest(path: &Path, plan: &CasePlan) -> Result<(), String> {
     let mut manifest: serde_json::Value = serde_json::from_slice(
         &fs::read(path).map_err(|error| format!("{}: {error}", path.display()))?,
@@ -766,6 +817,34 @@ mod tests {
             Ok(SessionProfile::RawTex82Loaded)
         );
         assert!(parse_profile("unknown").is_err());
+    }
+
+    #[test]
+    fn profile_regeneration_forbids_global_projection_acceptance() {
+        let error = parse_profile_invocation(
+            [
+                "raw-tex82-loaded".to_owned(),
+                "--accept-projection-changes".to_owned(),
+            ]
+            .into_iter(),
+        )
+        .expect_err("global acceptance must remain unavailable");
+        assert!(error.contains("global projection acceptance is forbidden"));
+
+        assert_eq!(
+            parse_profile_invocation(
+                [
+                    "raw-tex82-loaded".to_owned(),
+                    "--accept-projection-change".to_owned(),
+                    "line-breaking/paragraph-line-shape".to_owned(),
+                ]
+                .into_iter(),
+            ),
+            Ok((
+                SessionProfile::RawTex82Loaded,
+                ProjectionPolicy::AcceptNamed("line-breaking/paragraph-line-shape".to_owned()),
+            ))
+        );
     }
 
     #[test]

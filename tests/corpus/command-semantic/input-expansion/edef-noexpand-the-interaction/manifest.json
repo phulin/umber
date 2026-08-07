@@ -1,7 +1,22 @@
 {
-  "schema": 2,
-  "property_id": "tex82.expansion.delivery-and-primitives",
+  "channels": {
+    "events": 137
+  },
+  "expected": [
+    "mutation:catcode:-:123=1:local",
+    "mutation:catcode:-:125=2:local",
+    "mutation:meaning:a:macro definition:local",
+    "mutation:register:toks:0:tokens:local",
+    "mutation:meaning:e:macro definition:local"
+  ],
   "profile": "raw-tex82-loaded",
+  "projection": {
+    "kind": "observations",
+    "kinds": [
+      "mutation"
+    ]
+  },
+  "property_id": "tex82.expansion.delivery-and-primitives",
   "provenance": {
     "authority": "tex.web",
     "manifest": "tests/tex82-oracle-manifest.txt",
@@ -24,20 +39,5 @@
       381
     ]
   },
-  "projection": {
-    "kind": "observations",
-    "kinds": [
-      "mutation"
-    ]
-  },
-  "expected": [
-    "mutation:catcode:-:123=1:local",
-    "mutation:catcode:-:125=2:local",
-    "mutation:meaning:a:macro definition:local",
-    "mutation:register:toks:0:tokens:local",
-    "mutation:meaning:e:macro definition:local"
-  ],
-  "channels": {
-    "events": 137
-  }
+  "schema": 2
 }

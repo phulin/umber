@@ -1425,8 +1425,7 @@ regen_command_semantic_area() {
     --profile "$profile"
   run_command 'Deriving command-semantic channel contracts against the pinned oracle' \
     env UMBER_FIXTUREGEN="$fixturegen_bin" \
-    "$command_semantic_channels_bin" --profile "$profile" \
-    --accept-projection-changes
+    "$command_semantic_channels_bin" --profile "$profile"
 }
 
 regen_area() {

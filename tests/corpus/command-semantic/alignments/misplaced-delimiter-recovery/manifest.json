@@ -1,7 +1,21 @@
 {
-  "schema": 2,
-  "property_id": "tex82.align.misplaced-delimiter-omit-noalign-recovery",
+  "channels": {
+    "events": 203
+  },
+  "expected": [
+    "alignment:recovery:1"
+  ],
   "profile": "raw-tex82-loaded",
+  "projection": {
+    "alignment_transitions": [
+      "recovery"
+    ],
+    "kind": "observations",
+    "kinds": [
+      "alignment"
+    ]
+  },
+  "property_id": "tex82.align.misplaced-delimiter-omit-noalign-recovery",
   "provenance": {
     "authority": "tex.web",
     "manifest": "tests/tex82-oracle-manifest.txt",
@@ -10,19 +24,5 @@
       1127
     ]
   },
-  "projection": {
-    "kind": "observations",
-    "kinds": [
-      "alignment"
-    ],
-    "alignment_transitions": [
-      "recovery"
-    ]
-  },
-  "expected": [
-    "alignment:recovery:1"
-  ],
-  "channels": {
-    "events": 203
-  }
+  "schema": 2
 }

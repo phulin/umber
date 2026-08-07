@@ -1,10 +1,29 @@
 {
-  "schema": 2,
-  "property_id": "tex82.assignment.mag-freeze",
-  "profile": "raw-tex82-loaded",
+  "channels": {
+    "events": 105
+  },
+  "expected": [
+    "terminal-check:Illegal magnification has been changed to 1000 (32769).=true",
+    "terminal-check:<to be read again> =true",
+    "terminal-check:==true",
+    "count:0=1000"
+  ],
   "font_inputs": {
     "cmr10.tfm": "crates/tex-fonts/tests/fixtures/cm/cmr10.tfm"
   },
+  "profile": "raw-tex82-loaded",
+  "projection": {
+    "count_registers": [
+      0
+    ],
+    "kind": "terminal-checks",
+    "terminal_checks": [
+      "Illegal magnification has been changed to 1000 (32769).",
+      "<to be read again> ",
+      "="
+    ]
+  },
+  "property_id": "tex82.assignment.mag-freeze",
   "provenance": {
     "authority": "tex.web",
     "manifest": "tests/tex82-oracle-manifest.txt",
@@ -15,24 +34,5 @@
       1258
     ]
   },
-  "projection": {
-    "kind": "terminal-checks",
-    "terminal_checks": [
-      "Illegal magnification has been changed to 1000 (32769).",
-      "<to be read again> ",
-      "="
-    ],
-    "count_registers": [
-      0
-    ]
-  },
-  "expected": [
-    "terminal-check:Illegal magnification has been changed to 1000 (32769).=true",
-    "terminal-check:<to be read again> =true",
-    "terminal-check:==true",
-    "count:0=1000"
-  ],
-  "channels": {
-    "events": 105
-  }
+  "schema": 2
 }

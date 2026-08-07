@@ -1,7 +1,22 @@
 {
-  "schema": 2,
-  "property_id": "tex82.scanner.dimension-prefix-fraction",
+  "channels": {
+    "events": 250
+  },
+  "expected": [
+    "count:30=32768",
+    "count:31=-98304",
+    "count:32=524288"
+  ],
   "profile": "raw-tex82-loaded",
+  "projection": {
+    "count_registers": [
+      30,
+      31,
+      32
+    ],
+    "kind": "state"
+  },
+  "property_id": "tex82.scanner.dimension-prefix-fraction",
   "provenance": {
     "authority": "tex.web",
     "manifest": "tests/tex82-oracle-manifest.txt",
@@ -11,20 +26,5 @@
       453
     ]
   },
-  "projection": {
-    "kind": "state",
-    "count_registers": [
-      30,
-      31,
-      32
-    ]
-  },
-  "expected": [
-    "count:30=32768",
-    "count:31=-98304",
-    "count:32=524288"
-  ],
-  "channels": {
-    "events": 250
-  }
+  "schema": 2
 }

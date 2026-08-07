@@ -1,7 +1,30 @@
 {
-  "schema": 2,
-  "property_id": "tex82.input.level-lifecycle",
+  "channels": {
+    "events": 40
+  },
+  "expected": [
+    "input:backup:backup",
+    "input:retire:backup",
+    "effect:input:child.tex",
+    "input:backup:backup",
+    "input:retire:backup",
+    "input:retire:file",
+    "input:retire:file",
+    "input:stop:terminal",
+    "effect:terminate:engine\u0000"
+  ],
+  "inputs": {
+    "child.tex": "C"
+  },
   "profile": "raw-tex82-loaded",
+  "projection": {
+    "kind": "observations",
+    "kinds": [
+      "effect",
+      "input"
+    ]
+  },
+  "property_id": "tex82.input.level-lifecycle",
   "provenance": {
     "authority": "tex.web",
     "manifest": "tests/tex82-oracle-manifest.txt",
@@ -27,28 +50,5 @@
       331
     ]
   },
-  "projection": {
-    "kind": "observations",
-    "kinds": [
-      "effect",
-      "input"
-    ]
-  },
-  "expected": [
-    "input:backup:backup",
-    "input:retire:backup",
-    "effect:input:child.tex",
-    "input:backup:backup",
-    "input:retire:backup",
-    "input:retire:file",
-    "input:retire:file",
-    "input:stop:terminal",
-    "effect:terminate:engine\u0000"
-  ],
-  "channels": {
-    "events": 40
-  },
-  "inputs": {
-    "child.tex": "C"
-  }
+  "schema": 2
 }

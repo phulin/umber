@@ -1,7 +1,19 @@
 {
-  "schema": 2,
-  "property_id": "tex82.assignment.read-to-definition",
+  "channels": {
+    "events": 41
+  },
+  "expected": [
+    "mutation:meaning:relax:macro definition:global"
+  ],
   "profile": "raw-tex82-loaded",
+  "projection": {
+    "commands": [],
+    "kind": "observations",
+    "kinds": [
+      "mutation"
+    ]
+  },
+  "property_id": "tex82.assignment.read-to-definition",
   "provenance": {
     "authority": "tex.web",
     "manifest": "tests/tex82-oracle-manifest.txt",
@@ -12,19 +24,7 @@
       1269
     ]
   },
-  "projection": {
-    "kind": "observations",
-    "kinds": [
-      "mutation"
-    ],
-    "commands": []
-  },
-  "expected": [
-    "mutation:meaning:relax:macro definition:global"
-  ],
-  "channels": {
-    "events": 41
-  },
+  "schema": 2,
   "terminal_lines": [
     "alpha"
   ]

@@ -1,21 +1,6 @@
 {
-  "schema": 2,
-  "property_id": "tex82.assignment.afterassignment",
-  "profile": "raw-tex82-loaded",
-  "provenance": {
-    "authority": "tex.web",
-    "manifest": "tests/tex82-oracle-manifest.txt",
-    "sections": [
-      325,
-      1269
-    ]
-  },
-  "projection": {
-    "kind": "observations",
-    "kinds": [
-      "input",
-      "recovery"
-    ]
+  "channels": {
+    "events": 23
   },
   "expected": [
     "input:backup:backup",
@@ -24,7 +9,22 @@
     "input:retire:file",
     "input:stop:terminal"
   ],
-  "channels": {
-    "events": 23
-  }
+  "profile": "raw-tex82-loaded",
+  "projection": {
+    "kind": "observations",
+    "kinds": [
+      "input",
+      "recovery"
+    ]
+  },
+  "property_id": "tex82.assignment.afterassignment",
+  "provenance": {
+    "authority": "tex.web",
+    "manifest": "tests/tex82-oracle-manifest.txt",
+    "sections": [
+      325,
+      1269
+    ]
+  },
+  "schema": 2
 }

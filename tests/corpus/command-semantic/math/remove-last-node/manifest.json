@@ -1,22 +1,6 @@
 {
-  "schema": 2,
-  "property_id": "tex82.lists.structured-material",
-  "profile": "raw-tex82-loaded",
-  "provenance": {
-    "authority": "tex.web",
-    "manifest": "tests/tex82-oracle-manifest.txt",
-    "sections": [
-      1105
-    ]
-  },
-  "projection": {
-    "kind": "observations",
-    "kinds": [
-      "command"
-    ],
-    "commands": [
-      "remove_item"
-    ]
+  "channels": {
+    "events": 57
   },
   "expected": [
     "command:raw:cs:unskip:remove_item:10",
@@ -26,7 +10,23 @@
     "command:raw:cs:unpenalty:remove_item:12",
     "command:expanded:cs:unpenalty:remove_item:12"
   ],
-  "channels": {
-    "events": 57
-  }
+  "profile": "raw-tex82-loaded",
+  "projection": {
+    "commands": [
+      "remove_item"
+    ],
+    "kind": "observations",
+    "kinds": [
+      "command"
+    ]
+  },
+  "property_id": "tex82.lists.structured-material",
+  "provenance": {
+    "authority": "tex.web",
+    "manifest": "tests/tex82-oracle-manifest.txt",
+    "sections": [
+      1105
+    ]
+  },
+  "schema": 2
 }

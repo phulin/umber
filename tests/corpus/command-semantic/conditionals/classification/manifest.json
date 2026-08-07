@@ -1,18 +1,12 @@
 {
-  "schema": 2,
-  "property_id": "tex82.conditionals.classification",
-  "profile": "raw-tex82-loaded",
-  "provenance": {
-    "authority": "tex.web",
-    "manifest": "tests/tex82-oracle-manifest.txt",
-    "sections": [
-      210,
-      487,
-      491
-    ]
-  },
-  "projection": {
-    "kind": "classification"
+  "channels": {
+    "events": 301,
+    "log": {
+      "kind": "file"
+    },
+    "terminal": {
+      "kind": "file"
+    }
   },
   "expected": [
     "command:if_test:0",
@@ -37,13 +31,19 @@
     "command:fi_or_else:4",
     "recovery:inserted-token:cs:fi"
   ],
-  "channels": {
-    "events": 301,
-    "terminal": {
-      "kind": "file"
-    },
-    "log": {
-      "kind": "file"
-    }
-  }
+  "profile": "raw-tex82-loaded",
+  "projection": {
+    "kind": "classification"
+  },
+  "property_id": "tex82.conditionals.classification",
+  "provenance": {
+    "authority": "tex.web",
+    "manifest": "tests/tex82-oracle-manifest.txt",
+    "sections": [
+      210,
+      487,
+      491
+    ]
+  },
+  "schema": 2
 }

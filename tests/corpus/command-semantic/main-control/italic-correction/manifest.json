@@ -1,24 +1,6 @@
 {
-  "schema": 2,
-  "property_id": "tex82.main-control.mode-dispatch",
-  "profile": "raw-tex82-loaded",
-  "provenance": {
-    "authority": "tex.web",
-    "manifest": "tests/tex82-oracle-manifest.txt",
-    "sections": [
-      1111,
-      1112,
-      1113
-    ]
-  },
-  "projection": {
-    "kind": "observations",
-    "kinds": [
-      "command"
-    ],
-    "commands": [
-      "ital_corr"
-    ]
+  "channels": {
+    "events": 135
   },
   "expected": [
     "command:raw:cs:/:ital_corr:0",
@@ -28,7 +10,25 @@
     "command:raw:cs:/:ital_corr:0",
     "command:expanded:cs:/:ital_corr:0"
   ],
-  "channels": {
-    "events": 135
-  }
+  "profile": "raw-tex82-loaded",
+  "projection": {
+    "commands": [
+      "ital_corr"
+    ],
+    "kind": "observations",
+    "kinds": [
+      "command"
+    ]
+  },
+  "property_id": "tex82.main-control.mode-dispatch",
+  "provenance": {
+    "authority": "tex.web",
+    "manifest": "tests/tex82-oracle-manifest.txt",
+    "sections": [
+      1111,
+      1112,
+      1113
+    ]
+  },
+  "schema": 2
 }

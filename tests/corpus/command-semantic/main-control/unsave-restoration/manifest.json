@@ -1,7 +1,26 @@
 {
-  "schema": 2,
-  "property_id": "tex82.group.unsave-restoration",
+  "channels": {
+    "events": 281
+  },
+  "expected": [
+    "count:0=3",
+    "count:1=1",
+    "count:2=1",
+    "count:3=0",
+    "count:4=1"
+  ],
   "profile": "raw-tex82-loaded",
+  "projection": {
+    "count_registers": [
+      0,
+      1,
+      2,
+      3,
+      4
+    ],
+    "kind": "state"
+  },
+  "property_id": "tex82.group.unsave-restoration",
   "provenance": {
     "authority": "tex.web",
     "manifest": "tests/tex82-oracle-manifest.txt",
@@ -14,24 +33,5 @@
       1069
     ]
   },
-  "projection": {
-    "kind": "state",
-    "count_registers": [
-      0,
-      1,
-      2,
-      3,
-      4
-    ]
-  },
-  "expected": [
-    "count:0=3",
-    "count:1=1",
-    "count:2=1",
-    "count:3=0",
-    "count:4=1"
-  ],
-  "channels": {
-    "events": 281
-  }
+  "schema": 2
 }

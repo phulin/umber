@@ -1,22 +1,6 @@
 {
-  "schema": 2,
-  "property_id": "tex82.scanner.integer",
-  "profile": "raw-tex82-loaded",
-  "provenance": {
-    "authority": "tex.web",
-    "manifest": "tests/tex82-oracle-manifest.txt",
-    "sections": [
-      442,
-      444,
-      445
-    ]
-  },
-  "projection": {
-    "kind": "observations",
-    "kinds": [
-      "scanner"
-    ],
-    "commands": []
+  "channels": {
+    "events": 153
   },
   "expected": [
     "scanner:integer:50:-",
@@ -30,7 +14,23 @@
     "scanner:integer:3:-",
     "scanner:integer:0:-"
   ],
-  "channels": {
-    "events": 153
-  }
+  "profile": "raw-tex82-loaded",
+  "projection": {
+    "commands": [],
+    "kind": "observations",
+    "kinds": [
+      "scanner"
+    ]
+  },
+  "property_id": "tex82.scanner.integer",
+  "provenance": {
+    "authority": "tex.web",
+    "manifest": "tests/tex82-oracle-manifest.txt",
+    "sections": [
+      442,
+      444,
+      445
+    ]
+  },
+  "schema": 2
 }

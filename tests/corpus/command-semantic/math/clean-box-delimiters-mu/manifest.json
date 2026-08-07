@@ -1,7 +1,25 @@
 {
-  "schema": 2,
-  "property_id": "tex82.math.clean-box-delimiters-mu",
+  "channels": {
+    "events": 106
+  },
+  "expected": [
+    "command:left_right:30",
+    "command:left_right:30",
+    "command:mkern:99",
+    "command:left_right:31",
+    "command:left_right:31",
+    "artifact:344b45aff6f08acb3e9af90a70b199ef60456a4c06631652040a92c820621a69"
+  ],
   "profile": "raw-tex82-loaded",
+  "projection": {
+    "command_names": [
+      "left_right",
+      "mkern"
+    ],
+    "include_artifact_hashes": true,
+    "kind": "execution-boundaries"
+  },
+  "property_id": "tex82.math.clean-box-delimiters-mu",
   "provenance": {
     "authority": "tex.web",
     "manifest": "tests/tex82-oracle-manifest.txt",
@@ -28,23 +46,5 @@
       718
     ]
   },
-  "projection": {
-    "kind": "execution-boundaries",
-    "include_artifact_hashes": true,
-    "command_names": [
-      "left_right",
-      "mkern"
-    ]
-  },
-  "expected": [
-    "command:left_right:30",
-    "command:left_right:30",
-    "command:mkern:99",
-    "command:left_right:31",
-    "command:left_right:31",
-    "artifact:344b45aff6f08acb3e9af90a70b199ef60456a4c06631652040a92c820621a69"
-  ],
-  "channels": {
-    "events": 106
-  }
+  "schema": 2
 }

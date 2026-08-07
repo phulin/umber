@@ -1,25 +1,6 @@
 {
-  "schema": 2,
-  "property_id": "tex82.page.break-cost-selection",
-  "profile": "raw-tex82-loaded",
-  "font_inputs": {
-    "cmr10.tfm": "crates/tex-fonts/tests/fixtures/cm/cmr10.tfm"
-  },
-  "provenance": {
-    "authority": "tex.web",
-    "manifest": "tests/tex82-oracle-manifest.txt",
-    "sections": [
-      1005,
-      1006,
-      1007
-    ]
-  },
-  "projection": {
-    "kind": "execution-boundaries",
-    "command_names": [
-      "leader_ship"
-    ],
-    "include_artifact_hashes": true
+  "channels": {
+    "events": 620
   },
   "expected": [
     "command:leader_ship:99",
@@ -29,7 +10,26 @@
     "artifact:97ad124b29a9e2417dc8006d945734ee7a03246f8ecfae6b5d0112578b214eae",
     "artifact:49fd71f35c3f3711f1fb5a133a1923c8f1939d91b3e2d880b11a95ee6cf1e167"
   ],
-  "channels": {
-    "events": 620
-  }
+  "font_inputs": {
+    "cmr10.tfm": "crates/tex-fonts/tests/fixtures/cm/cmr10.tfm"
+  },
+  "profile": "raw-tex82-loaded",
+  "projection": {
+    "command_names": [
+      "leader_ship"
+    ],
+    "include_artifact_hashes": true,
+    "kind": "execution-boundaries"
+  },
+  "property_id": "tex82.page.break-cost-selection",
+  "provenance": {
+    "authority": "tex.web",
+    "manifest": "tests/tex82-oracle-manifest.txt",
+    "sections": [
+      1005,
+      1006,
+      1007
+    ]
+  },
+  "schema": 2
 }

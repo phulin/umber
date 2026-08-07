@@ -1,16 +1,14 @@
 {
-  "schema": 2,
-  "property_id": "tex82.effects.deferred-write-expansion",
-  "profile": "raw-tex82-loaded",
-  "provenance": {
-    "authority": "tex.web",
-    "manifest": "tests/tex82-oracle-manifest.txt",
-    "sections": [
-      1369,
-      1370,
-      1372
-    ]
+  "channels": {
+    "events": 208
   },
+  "expected": [
+    "terminal-check:MEANING=[undefined]=true",
+    "terminal-check:! Undefined control sequence.=true",
+    "terminal-check:BEFORE AFTER=true",
+    "terminal-check:REPLAYED=true"
+  ],
+  "profile": "raw-tex82-loaded",
   "projection": {
     "kind": "terminal-checks",
     "terminal_checks": [
@@ -20,13 +18,15 @@
       "REPLAYED"
     ]
   },
-  "expected": [
-    "terminal-check:MEANING=[undefined]=true",
-    "terminal-check:! Undefined control sequence.=true",
-    "terminal-check:BEFORE AFTER=true",
-    "terminal-check:REPLAYED=true"
-  ],
-  "channels": {
-    "events": 208
-  }
+  "property_id": "tex82.effects.deferred-write-expansion",
+  "provenance": {
+    "authority": "tex.web",
+    "manifest": "tests/tex82-oracle-manifest.txt",
+    "sections": [
+      1369,
+      1370,
+      1372
+    ]
+  },
+  "schema": 2
 }

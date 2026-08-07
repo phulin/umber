@@ -1,7 +1,22 @@
 {
-  "schema": 2,
-  "property_id": "tex82.main-control.errmessage-help",
+  "channels": {
+    "events": 109
+  },
+  "expected": [
+    "terminal-check:user help=true",
+    "count:0=1"
+  ],
   "profile": "raw-tex82-loaded",
+  "projection": {
+    "count_registers": [
+      0
+    ],
+    "kind": "terminal-checks",
+    "terminal_checks": [
+      "user help"
+    ]
+  },
+  "property_id": "tex82.main-control.errmessage-help",
   "provenance": {
     "authority": "tex.web",
     "manifest": "tests/tex82-oracle-manifest.txt",
@@ -12,20 +27,5 @@
       1284
     ]
   },
-  "projection": {
-    "kind": "terminal-checks",
-    "terminal_checks": [
-      "user help"
-    ],
-    "count_registers": [
-      0
-    ]
-  },
-  "expected": [
-    "terminal-check:user help=true",
-    "count:0=1"
-  ],
-  "channels": {
-    "events": 109
-  }
+  "schema": 2
 }

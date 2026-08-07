@@ -1,7 +1,28 @@
 {
-  "schema": 2,
-  "property_id": "tex82.math.fractions-and-left-right",
+  "channels": {
+    "events": 142
+  },
+  "expected": [
+    "command:left_right:30",
+    "command:left_right:30",
+    "command:mkern:99",
+    "command:above:1",
+    "command:above:1",
+    "command:mkern:99",
+    "command:left_right:31",
+    "artifact:4dccf6936f0a300e7c7d3bee3680b2ba8c3cff0c4fe0cb50226b976ed08875f3"
+  ],
   "profile": "raw-tex82-loaded",
+  "projection": {
+    "command_names": [
+      "above",
+      "left_right",
+      "mkern"
+    ],
+    "include_artifact_hashes": true,
+    "kind": "execution-boundaries"
+  },
+  "property_id": "tex82.math.fractions-and-left-right",
   "provenance": {
     "authority": "tex.web",
     "manifest": "tests/tex82-oracle-manifest.txt",
@@ -23,26 +44,5 @@
       1192
     ]
   },
-  "projection": {
-    "kind": "execution-boundaries",
-    "include_artifact_hashes": true,
-    "command_names": [
-      "above",
-      "left_right",
-      "mkern"
-    ]
-  },
-  "expected": [
-    "command:left_right:30",
-    "command:left_right:30",
-    "command:mkern:99",
-    "command:above:1",
-    "command:above:1",
-    "command:mkern:99",
-    "command:left_right:31",
-    "artifact:4dccf6936f0a300e7c7d3bee3680b2ba8c3cff0c4fe0cb50226b976ed08875f3"
-  ],
-  "channels": {
-    "events": 142
-  }
+  "schema": 2
 }

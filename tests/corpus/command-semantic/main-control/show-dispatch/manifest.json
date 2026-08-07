@@ -1,7 +1,22 @@
 {
-  "schema": 2,
-  "property_id": "tex82.main-control.show-dispatch",
+  "channels": {
+    "events": 28
+  },
+  "expected": [
+    "effect:terminate:engine\u0000",
+    "count:0=1"
+  ],
   "profile": "raw-tex82-loaded",
+  "projection": {
+    "count_registers": [
+      0
+    ],
+    "kind": "observations",
+    "kinds": [
+      "effect"
+    ]
+  },
+  "property_id": "tex82.main-control.show-dispatch",
   "provenance": {
     "authority": "tex.web",
     "manifest": "tests/tex82-oracle-manifest.txt",
@@ -12,20 +27,5 @@
       1293
     ]
   },
-  "projection": {
-    "kind": "observations",
-    "kinds": [
-      "effect"
-    ],
-    "count_registers": [
-      0
-    ]
-  },
-  "expected": [
-    "effect:terminate:engine\u0000",
-    "count:0=1"
-  ],
-  "channels": {
-    "events": 28
-  }
+  "schema": 2
 }

@@ -1,22 +1,6 @@
 {
-  "schema": 2,
-  "property_id": "tex82.align.set-list-and-running-rules",
-  "profile": "raw-tex82-loaded",
-  "provenance": {
-    "authority": "tex.web",
-    "manifest": "tests/tex82-oracle-manifest.txt",
-    "sections": [
-      774,
-      805,
-      806
-    ]
-  },
-  "projection": {
-    "kind": "execution-boundaries",
-    "box_registers": [
-      0
-    ],
-    "node_depth": 5
+  "channels": {
+    "events": 417
   },
   "expected": [
     "box:0/0:vlist",
@@ -38,7 +22,23 @@
     "box:0/0/6:penalty",
     "box:0/0/7:glue"
   ],
-  "channels": {
-    "events": 417
-  }
+  "profile": "raw-tex82-loaded",
+  "projection": {
+    "box_registers": [
+      0
+    ],
+    "kind": "execution-boundaries",
+    "node_depth": 5
+  },
+  "property_id": "tex82.align.set-list-and-running-rules",
+  "provenance": {
+    "authority": "tex.web",
+    "manifest": "tests/tex82-oracle-manifest.txt",
+    "sections": [
+      774,
+      805,
+      806
+    ]
+  },
+  "schema": 2
 }

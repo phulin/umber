@@ -1,7 +1,22 @@
 {
-  "schema": 2,
-  "property_id": "tex82.input.stored-token-representation",
+  "channels": {
+    "events": 94
+  },
+  "expected": [
+    "macro:activate:b:0:",
+    "count:0=1"
+  ],
   "profile": "raw-tex82-loaded",
+  "projection": {
+    "count_registers": [
+      0
+    ],
+    "kind": "observations",
+    "kinds": [
+      "macro"
+    ]
+  },
+  "property_id": "tex82.input.stored-token-representation",
   "provenance": {
     "authority": "tex.web",
     "manifest": "tests/tex82-oracle-manifest.txt",
@@ -11,20 +26,5 @@
       291
     ]
   },
-  "projection": {
-    "kind": "observations",
-    "kinds": [
-      "macro"
-    ],
-    "count_registers": [
-      0
-    ]
-  },
-  "expected": [
-    "macro:activate:b:0:",
-    "count:0=1"
-  ],
-  "channels": {
-    "events": 94
-  }
+  "schema": 2
 }

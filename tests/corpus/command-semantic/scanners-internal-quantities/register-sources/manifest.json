@@ -1,22 +1,6 @@
 {
-  "schema": 2,
-  "property_id": "tex82.scanner.internal-register-sources",
-  "profile": "raw-tex82-loaded",
-  "provenance": {
-    "authority": "tex.web",
-    "manifest": "tests/tex82-oracle-manifest.txt",
-    "sections": [
-      427
-    ]
-  },
-  "projection": {
-    "kind": "state",
-    "count_registers": [
-      1,
-      2,
-      3,
-      4
-    ]
+  "channels": {
+    "events": 250
   },
   "expected": [
     "count:1=17",
@@ -24,7 +8,23 @@
     "count:3=196608",
     "count:4=262144"
   ],
-  "channels": {
-    "events": 250
-  }
+  "profile": "raw-tex82-loaded",
+  "projection": {
+    "count_registers": [
+      1,
+      2,
+      3,
+      4
+    ],
+    "kind": "state"
+  },
+  "property_id": "tex82.scanner.internal-register-sources",
+  "provenance": {
+    "authority": "tex.web",
+    "manifest": "tests/tex82-oracle-manifest.txt",
+    "sections": [
+      427
+    ]
+  },
+  "schema": 2
 }

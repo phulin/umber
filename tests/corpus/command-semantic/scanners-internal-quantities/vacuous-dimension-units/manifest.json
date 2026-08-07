@@ -1,7 +1,24 @@
 {
-  "schema": 2,
-  "property_id": "tex82.scanner.dimension-prefix-fraction",
+  "channels": {
+    "events": 200
+  },
+  "expected": [
+    "terminal-check:! Missing number, treated as zero.=true",
+    "terminal-check:! Illegal unit of measure (pt inserted).=true",
+    "count:0=7"
+  ],
   "profile": "raw-tex82-loaded",
+  "projection": {
+    "count_registers": [
+      0
+    ],
+    "kind": "terminal-checks",
+    "terminal_checks": [
+      "! Missing number, treated as zero.",
+      "! Illegal unit of measure (pt inserted)."
+    ]
+  },
+  "property_id": "tex82.scanner.dimension-prefix-fraction",
   "provenance": {
     "authority": "tex.web",
     "manifest": "tests/tex82-oracle-manifest.txt",
@@ -15,22 +32,5 @@
       459
     ]
   },
-  "projection": {
-    "kind": "terminal-checks",
-    "terminal_checks": [
-      "! Missing number, treated as zero.",
-      "! Illegal unit of measure (pt inserted)."
-    ],
-    "count_registers": [
-      0
-    ]
-  },
-  "expected": [
-    "terminal-check:! Missing number, treated as zero.=true",
-    "terminal-check:! Illegal unit of measure (pt inserted).=true",
-    "count:0=7"
-  ],
-  "channels": {
-    "events": 200
-  }
+  "schema": 2
 }

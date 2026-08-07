@@ -1,29 +1,6 @@
 {
-  "schema": 2,
-  "property_id": "tex82.boxes.vsplit-kernel",
-  "profile": "raw-tex82-loaded",
-  "font_inputs": {
-    "cmr10.tfm": "crates/tex-fonts/tests/fixtures/cm/cmr10.tfm"
-  },
-  "provenance": {
-    "authority": "tex.web",
-    "manifest": "tests/tex82-oracle-manifest.txt",
-    "sections": [
-      977,
-      979
-    ]
-  },
-  "projection": {
-    "kind": "execution-boundaries",
-    "command_names": [
-      "leader_ship"
-    ],
-    "box_registers": [
-      10,
-      11
-    ],
-    "node_depth": 2,
-    "include_artifact_hashes": true
+  "channels": {
+    "events": 784
   },
   "expected": [
     "command:leader_ship:99",
@@ -42,7 +19,30 @@
     "box:11/0/1:mark",
     "artifact:69cd92a91c336901236a75f8a7c1b2c0024646db4b2bafb1d870d6dd5ed580dc"
   ],
-  "channels": {
-    "events": 784
-  }
+  "font_inputs": {
+    "cmr10.tfm": "crates/tex-fonts/tests/fixtures/cm/cmr10.tfm"
+  },
+  "profile": "raw-tex82-loaded",
+  "projection": {
+    "box_registers": [
+      10,
+      11
+    ],
+    "command_names": [
+      "leader_ship"
+    ],
+    "include_artifact_hashes": true,
+    "kind": "execution-boundaries",
+    "node_depth": 2
+  },
+  "property_id": "tex82.boxes.vsplit-kernel",
+  "provenance": {
+    "authority": "tex.web",
+    "manifest": "tests/tex82-oracle-manifest.txt",
+    "sections": [
+      977,
+      979
+    ]
+  },
+  "schema": 2
 }

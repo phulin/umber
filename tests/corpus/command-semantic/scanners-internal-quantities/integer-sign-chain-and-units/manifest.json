@@ -1,7 +1,18 @@
 {
-  "schema": 2,
-  "property_id": "tex82.scanner.integer",
+  "channels": {
+    "events": 446
+  },
+  "expected": [
+    "terminal-check:scan=127|0.5pt|0.00194pt|1.0pt plus 2.0fil minus 3.0fill=true"
+  ],
   "profile": "raw-tex82-loaded",
+  "projection": {
+    "kind": "terminal-checks",
+    "terminal_checks": [
+      "scan=127|0.5pt|0.00194pt|1.0pt plus 2.0fil minus 3.0fill"
+    ]
+  },
+  "property_id": "tex82.scanner.integer",
   "provenance": {
     "authority": "tex.web",
     "manifest": "tests/tex82-oracle-manifest.txt",
@@ -13,16 +24,5 @@
       454
     ]
   },
-  "projection": {
-    "kind": "terminal-checks",
-    "terminal_checks": [
-      "scan=127|0.5pt|0.00194pt|1.0pt plus 2.0fil minus 3.0fill"
-    ]
-  },
-  "expected": [
-    "terminal-check:scan=127|0.5pt|0.00194pt|1.0pt plus 2.0fil minus 3.0fill=true"
-  ],
-  "channels": {
-    "events": 446
-  }
+  "schema": 2
 }

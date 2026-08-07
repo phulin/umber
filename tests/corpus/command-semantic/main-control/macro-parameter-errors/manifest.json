@@ -1,28 +1,6 @@
 {
-  "schema": 2,
-  "property_id": "tex82.assignment.macro-definitions",
-  "profile": "raw-tex82-loaded",
-  "provenance": {
-    "authority": "tex.web",
-    "manifest": "tests/tex82-oracle-manifest.txt",
-    "sections": [
-      476,
-      479,
-      1218
-    ]
-  },
-  "projection": {
-    "kind": "terminal-checks",
-    "terminal_checks": [
-      "! Parameters must be numbered consecutively.",
-      "! Illegal parameter number in definition of \\body.",
-      "! Illegal parameter number in definition of ~.",
-      "I've inserted the digit you should have used after the #.",
-      "are all screwed up? I'm going to assume that you meant ##."
-    ],
-    "count_registers": [
-      0
-    ]
+  "channels": {
+    "events": 186
   },
   "expected": [
     "terminal-check:! Parameters must be numbered consecutively.=true",
@@ -32,7 +10,29 @@
     "terminal-check:are all screwed up? I'm going to assume that you meant ##.=true",
     "count:0=0"
   ],
-  "channels": {
-    "events": 186
-  }
+  "profile": "raw-tex82-loaded",
+  "projection": {
+    "count_registers": [
+      0
+    ],
+    "kind": "terminal-checks",
+    "terminal_checks": [
+      "! Parameters must be numbered consecutively.",
+      "! Illegal parameter number in definition of \\body.",
+      "! Illegal parameter number in definition of ~.",
+      "I've inserted the digit you should have used after the #.",
+      "are all screwed up? I'm going to assume that you meant ##."
+    ]
+  },
+  "property_id": "tex82.assignment.macro-definitions",
+  "provenance": {
+    "authority": "tex.web",
+    "manifest": "tests/tex82-oracle-manifest.txt",
+    "sections": [
+      476,
+      479,
+      1218
+    ]
+  },
+  "schema": 2
 }

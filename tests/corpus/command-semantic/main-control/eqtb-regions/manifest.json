@@ -1,7 +1,26 @@
 {
-  "schema": 2,
-  "property_id": "tex82.assignment.eqtb-regions",
+  "channels": {
+    "events": 517
+  },
+  "expected": [
+    "count:0=7",
+    "count:1=1",
+    "count:2=1",
+    "count:3=1",
+    "count:4=1"
+  ],
   "profile": "raw-tex82-loaded",
+  "projection": {
+    "count_registers": [
+      0,
+      1,
+      2,
+      3,
+      4
+    ],
+    "kind": "state"
+  },
+  "property_id": "tex82.assignment.eqtb-regions",
   "provenance": {
     "authority": "tex.web",
     "manifest": "tests/tex82-oracle-manifest.txt",
@@ -13,24 +32,5 @@
       247
     ]
   },
-  "projection": {
-    "kind": "state",
-    "count_registers": [
-      0,
-      1,
-      2,
-      3,
-      4
-    ]
-  },
-  "expected": [
-    "count:0=7",
-    "count:1=1",
-    "count:2=1",
-    "count:3=1",
-    "count:4=1"
-  ],
-  "channels": {
-    "events": 517
-  }
+  "schema": 2
 }

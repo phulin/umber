@@ -1,29 +1,6 @@
 {
-  "schema": 2,
-  "property_id": "tex82.boxes.requests-and-lifecycle",
-  "profile": "raw-tex82-loaded",
-  "font_inputs": {
-    "cmr10.tfm": "crates/tex-fonts/tests/fixtures/cm/cmr10.tfm"
-  },
-  "provenance": {
-    "authority": "tex.web",
-    "manifest": "tests/tex82-oracle-manifest.txt",
-    "sections": [
-      1073,
-      1075,
-      1076
-    ]
-  },
-  "projection": {
-    "kind": "execution-boundaries",
-    "command_names": [
-      "leader_ship"
-    ],
-    "box_registers": [
-      0
-    ],
-    "node_depth": 3,
-    "include_artifact_hashes": true
+  "channels": {
+    "events": 435
   },
   "expected": [
     "command:leader_ship:99",
@@ -35,7 +12,30 @@
     "box:0/0/3:rule",
     "artifact:40758fc4142805c5ce956758c3f4b629f70199b73f67438cc23476f9bb3491a9"
   ],
-  "channels": {
-    "events": 435
-  }
+  "font_inputs": {
+    "cmr10.tfm": "crates/tex-fonts/tests/fixtures/cm/cmr10.tfm"
+  },
+  "profile": "raw-tex82-loaded",
+  "projection": {
+    "box_registers": [
+      0
+    ],
+    "command_names": [
+      "leader_ship"
+    ],
+    "include_artifact_hashes": true,
+    "kind": "execution-boundaries",
+    "node_depth": 3
+  },
+  "property_id": "tex82.boxes.requests-and-lifecycle",
+  "provenance": {
+    "authority": "tex.web",
+    "manifest": "tests/tex82-oracle-manifest.txt",
+    "sections": [
+      1073,
+      1075,
+      1076
+    ]
+  },
+  "schema": 2
 }

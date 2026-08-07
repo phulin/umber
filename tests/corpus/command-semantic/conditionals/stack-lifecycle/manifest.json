@@ -1,22 +1,6 @@
 {
-  "schema": 2,
-  "property_id": "tex82.conditionals.stack-lifecycle",
-  "profile": "raw-tex82-loaded",
-  "provenance": {
-    "authority": "tex.web",
-    "manifest": "tests/tex82-oracle-manifest.txt",
-    "sections": [
-      489,
-      495,
-      496,
-      497
-    ]
-  },
-  "projection": {
-    "kind": "condition-steps",
-    "count_registers": [
-      0
-    ]
+  "channels": {
+    "events": 103
   },
   "expected": [
     "condition:push:ifnum:evaluating:-",
@@ -29,7 +13,23 @@
     "condition:pop:ifnum:else:-",
     "count:0=1"
   ],
-  "channels": {
-    "events": 103
-  }
+  "profile": "raw-tex82-loaded",
+  "projection": {
+    "count_registers": [
+      0
+    ],
+    "kind": "condition-steps"
+  },
+  "property_id": "tex82.conditionals.stack-lifecycle",
+  "provenance": {
+    "authority": "tex.web",
+    "manifest": "tests/tex82-oracle-manifest.txt",
+    "sections": [
+      489,
+      495,
+      496,
+      497
+    ]
+  },
+  "schema": 2
 }

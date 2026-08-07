@@ -1,7 +1,18 @@
 {
-  "schema": 2,
-  "property_id": "tex82.assignment.prefix-collection",
+  "channels": {
+    "events": 242
+  },
+  "expected": [
+    "terminal-check:g=1,3,4,0=true"
+  ],
   "profile": "raw-tex82-loaded",
+  "projection": {
+    "kind": "terminal-checks",
+    "terminal_checks": [
+      "g=1,3,4,0"
+    ]
+  },
+  "property_id": "tex82.assignment.prefix-collection",
   "provenance": {
     "authority": "tex.web",
     "manifest": "tests/tex82-oracle-manifest.txt",
@@ -15,16 +26,5 @@
       1214
     ]
   },
-  "projection": {
-    "kind": "terminal-checks",
-    "terminal_checks": [
-      "g=1,3,4,0"
-    ]
-  },
-  "expected": [
-    "terminal-check:g=1,3,4,0=true"
-  ],
-  "channels": {
-    "events": 242
-  }
+  "schema": 2
 }

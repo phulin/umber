@@ -1,7 +1,18 @@
 {
-  "schema": 2,
-  "property_id": "tex82.assignment.redefinable-target",
+  "channels": {
+    "events": 86
+  },
+  "expected": [
+    "count:0=1"
+  ],
   "profile": "raw-tex82-loaded",
+  "projection": {
+    "count_registers": [
+      0
+    ],
+    "kind": "state"
+  },
+  "property_id": "tex82.assignment.redefinable-target",
   "provenance": {
     "authority": "tex.web",
     "manifest": "tests/tex82-oracle-manifest.txt",
@@ -10,16 +21,5 @@
       1216
     ]
   },
-  "projection": {
-    "kind": "state",
-    "count_registers": [
-      0
-    ]
-  },
-  "expected": [
-    "count:0=1"
-  ],
-  "channels": {
-    "events": 86
-  }
+  "schema": 2
 }

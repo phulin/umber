@@ -1,7 +1,26 @@
 {
-  "schema": 2,
-  "property_id": "tex82.align.record-span-width",
+  "channels": {
+    "events": 7164,
+    "log": {
+      "kind": "file"
+    },
+    "status": "fatal:confusion(256 spans)",
+    "terminal": {
+      "kind": "file"
+    }
+  },
+  "expected": [
+    "execution:error:confusion(256 spans)",
+    "count:0=0"
+  ],
   "profile": "raw-tex82-loaded",
+  "projection": {
+    "count_registers": [
+      0
+    ],
+    "kind": "state"
+  },
+  "property_id": "tex82.align.record-span-width",
   "provenance": {
     "authority": "tex.web",
     "manifest": "tests/tex82-oracle-manifest.txt",
@@ -14,24 +33,5 @@
       798
     ]
   },
-  "projection": {
-    "kind": "state",
-    "count_registers": [
-      0
-    ]
-  },
-  "expected": [
-    "execution:error:confusion(256 spans)",
-    "count:0=0"
-  ],
-  "channels": {
-    "events": 7164,
-    "status": "fatal:confusion(256 spans)",
-    "terminal": {
-      "kind": "file"
-    },
-    "log": {
-      "kind": "file"
-    }
-  }
+  "schema": 2
 }

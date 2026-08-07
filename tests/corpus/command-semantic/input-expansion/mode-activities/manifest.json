@@ -1,7 +1,18 @@
 {
-  "schema": 2,
-  "property_id": "tex82.modes.activity-diagnostics",
+  "channels": {
+    "events": 5
+  },
+  "expected": [
+    "count:0=0"
+  ],
   "profile": "raw-tex82-loaded",
+  "projection": {
+    "count_registers": [
+      0
+    ],
+    "kind": "state"
+  },
+  "property_id": "tex82.modes.activity-diagnostics",
   "provenance": {
     "authority": "tex.web",
     "manifest": "tests/tex82-oracle-manifest.txt",
@@ -10,16 +21,5 @@
       219
     ]
   },
-  "projection": {
-    "kind": "state",
-    "count_registers": [
-      0
-    ]
-  },
-  "expected": [
-    "count:0=0"
-  ],
-  "channels": {
-    "events": 5
-  }
+  "schema": 2
 }

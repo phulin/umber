@@ -1,7 +1,19 @@
 {
-  "schema": 2,
-  "property_id": "tex82.effects.open-write-close-dispatch",
+  "channels": {
+    "events": 453
+  },
+  "expected": [
+    "effect:shipout:dvi\u00001",
+    "effect:terminate:engine\u0000"
+  ],
   "profile": "raw-tex82-loaded",
+  "projection": {
+    "kind": "observations",
+    "kinds": [
+      "effect"
+    ]
+  },
+  "property_id": "tex82.effects.open-write-close-dispatch",
   "provenance": {
     "authority": "tex.web",
     "manifest": "tests/tex82-oracle-manifest.txt",
@@ -10,17 +22,5 @@
       1374
     ]
   },
-  "projection": {
-    "kind": "observations",
-    "kinds": [
-      "effect"
-    ]
-  },
-  "expected": [
-    "effect:shipout:dvi\u00001",
-    "effect:terminate:engine\u0000"
-  ],
-  "channels": {
-    "events": 453
-  }
+  "schema": 2
 }

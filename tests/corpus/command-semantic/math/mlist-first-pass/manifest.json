@@ -1,7 +1,22 @@
 {
-  "schema": 2,
-  "property_id": "tex82.math.mlist-first-pass",
+  "channels": {
+    "events": 80
+  },
+  "expected": [
+    "command:math_comp:18",
+    "command:math_comp:18",
+    "command:math_comp:19",
+    "artifact:38ed866f6f608cdc5befa75be570430e34291ba0c76503cd6ff9b10b25d563d8"
+  ],
   "profile": "raw-tex82-loaded",
+  "projection": {
+    "command_names": [
+      "math_comp"
+    ],
+    "include_artifact_hashes": true,
+    "kind": "execution-boundaries"
+  },
+  "property_id": "tex82.math.mlist-first-pass",
   "provenance": {
     "authority": "tex.web",
     "manifest": "tests/tex82-oracle-manifest.txt",
@@ -23,20 +38,5 @@
       733
     ]
   },
-  "projection": {
-    "kind": "execution-boundaries",
-    "include_artifact_hashes": true,
-    "command_names": [
-      "math_comp"
-    ]
-  },
-  "expected": [
-    "command:math_comp:18",
-    "command:math_comp:18",
-    "command:math_comp:19",
-    "artifact:38ed866f6f608cdc5befa75be570430e34291ba0c76503cd6ff9b10b25d563d8"
-  ],
-  "channels": {
-    "events": 80
-  }
+  "schema": 2
 }

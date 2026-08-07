@@ -1,10 +1,25 @@
 {
-  "schema": 2,
-  "property_id": "tex82.assignment.font-definition",
-  "profile": "raw-tex82-loaded",
+  "channels": {
+    "events": 73
+  },
+  "expected": [
+    "terminal-check:! Illegal magnification has been changed to 1000 (0).=true",
+    "count:0=1"
+  ],
   "font_inputs": {
     "cmr10.tfm": "crates/tex-fonts/tests/fixtures/cm/cmr10.tfm"
   },
+  "profile": "raw-tex82-loaded",
+  "projection": {
+    "count_registers": [
+      0
+    ],
+    "kind": "terminal-checks",
+    "terminal_checks": [
+      "! Illegal magnification has been changed to 1000 (0)."
+    ]
+  },
+  "property_id": "tex82.assignment.font-definition",
   "provenance": {
     "authority": "tex.web",
     "manifest": "tests/tex82-oracle-manifest.txt",
@@ -16,20 +31,5 @@
       1260
     ]
   },
-  "projection": {
-    "kind": "terminal-checks",
-    "terminal_checks": [
-      "! Illegal magnification has been changed to 1000 (0)."
-    ],
-    "count_registers": [
-      0
-    ]
-  },
-  "expected": [
-    "terminal-check:! Illegal magnification has been changed to 1000 (0).=true",
-    "count:0=1"
-  ],
-  "channels": {
-    "events": 73
-  }
+  "schema": 2
 }

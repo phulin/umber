@@ -1,7 +1,23 @@
 {
-  "schema": 2,
-  "property_id": "tex82.math.noad-construction",
+  "channels": {
+    "events": 76
+  },
+  "expected": [
+    "command:math_comp:17",
+    "command:math_comp:17",
+    "command:limit_switch:2",
+    "artifact:f1583b0f7c6e64720eb0b716e07d72d4aa561735a8cbd96aa5f66de540d69927"
+  ],
   "profile": "raw-tex82-loaded",
+  "projection": {
+    "command_names": [
+      "limit_switch",
+      "math_comp"
+    ],
+    "include_artifact_hashes": true,
+    "kind": "execution-boundaries"
+  },
+  "property_id": "tex82.math.noad-construction",
   "provenance": {
     "authority": "tex.web",
     "manifest": "tests/tex82-oracle-manifest.txt",
@@ -35,21 +51,5 @@
       760
     ]
   },
-  "projection": {
-    "kind": "execution-boundaries",
-    "include_artifact_hashes": true,
-    "command_names": [
-      "limit_switch",
-      "math_comp"
-    ]
-  },
-  "expected": [
-    "command:math_comp:17",
-    "command:math_comp:17",
-    "command:limit_switch:2",
-    "artifact:f1583b0f7c6e64720eb0b716e07d72d4aa561735a8cbd96aa5f66de540d69927"
-  ],
-  "channels": {
-    "events": 76
-  }
+  "schema": 2
 }

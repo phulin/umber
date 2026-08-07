@@ -1,25 +1,6 @@
 {
-  "schema": 2,
-  "property_id": "tex82.input.outer-validity-recovery",
-  "profile": "raw-tex82-loaded",
-  "provenance": {
-    "authority": "tex.web",
-    "manifest": "tests/tex82-oracle-manifest.txt",
-    "sections": [
-      336,
-      337,
-      338,
-      339,
-      340
-    ]
-  },
-  "projection": {
-    "kind": "observations",
-    "kinds": [
-      "diagnostic",
-      "recovery",
-      "scanner-status"
-    ]
+  "channels": {
+    "events": 77
   },
   "expected": [
     "recovery:backup:char:other_char:61",
@@ -32,7 +13,26 @@
     "recovery:inserted-token:char:right_brace:125",
     "scanner-status:defining>normal"
   ],
-  "channels": {
-    "events": 77
-  }
+  "profile": "raw-tex82-loaded",
+  "projection": {
+    "kind": "observations",
+    "kinds": [
+      "diagnostic",
+      "recovery",
+      "scanner-status"
+    ]
+  },
+  "property_id": "tex82.input.outer-validity-recovery",
+  "provenance": {
+    "authority": "tex.web",
+    "manifest": "tests/tex82-oracle-manifest.txt",
+    "sections": [
+      336,
+      337,
+      338,
+      339,
+      340
+    ]
+  },
+  "schema": 2
 }

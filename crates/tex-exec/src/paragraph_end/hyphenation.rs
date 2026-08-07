@@ -229,16 +229,97 @@ fn hyphenate_after_glue(
     fuel: &mut tex_command::CommandFuel,
     projection: &mut HyphenationProjection<'_>,
 ) -> Result<Option<usize>, ExecError> {
+    let Some(candidate) = find_hyphenation_candidate(stores, nodes, start, context) else {
+        return Ok(None);
+    };
+    let HyphenationCandidate {
+        word_start,
+        end: index,
+        language,
+        left,
+        right,
+        word,
+    } = candidate;
+
+    let lowercase: String = word.iter().map(|ch| ch.lower).collect();
+    for dependency in [
+        tex_state::DependencyKey::HyphenationPatterns(language),
+        tex_state::DependencyKey::HyphenationExceptions(language),
+        tex_state::DependencyKey::HyphenationCodes(language),
+    ] {
+        stores.observe_semantic_dependency(dependency);
+    }
+    let positions = stores.hyphen_positions_for_language(language, &lowercase, left, right);
+    if positions.is_empty() {
+        if let Some(out) = out {
+            out.extend_from_slice(&nodes[start..index]);
+        }
+        return Ok(Some(index));
+    }
+
+    let out = out.get_or_insert_with(|| {
+        let mut out = Vec::with_capacity(nodes.len());
+        out.extend_from_slice(&nodes[..start]);
+        out
+    });
+    out.extend_from_slice(&nodes[start..word_start]);
+    let trailing_font_kern = nodes[word_start..index].last().and_then(|node| match node {
+        Node::Kern {
+            amount,
+            kind: KernKind::Font,
+        } => Some(Node::Kern {
+            amount: *amount,
+            kind: KernKind::Font,
+        }),
+        _ => None,
+    });
+    let no_left_boundary = matches!(
+        out.last(),
+        Some(Node::Kern {
+            kind: KernKind::Font,
+            ..
+        })
+    );
+    append_hyphenated_word(
+        stores,
+        &word,
+        &positions,
+        no_left_boundary,
+        out,
+        fuel,
+        projection,
+    )?;
+    if let Some(kern) = trailing_font_kern {
+        out.push(kern);
+    }
+    Ok(Some(index))
+}
+
+struct HyphenationCandidate {
+    word_start: usize,
+    end: usize,
+    language: u8,
+    left: usize,
+    right: usize,
+    word: Vec<WordChar>,
+}
+
+/// Implements TeX82 §§891--895's bounded scan from the glue after which a
+/// potentially hyphenatable part begins through the same-font letter span.
+fn find_hyphenation_candidate(
+    stores: &Universe,
+    nodes: &[Node],
+    start: usize,
+    context: (u8, usize, usize),
+) -> Option<HyphenationCandidate> {
     let (mut language, mut left, mut right) = context;
     let mut index = start;
     let (word_start, font) = loop {
-        let Some(node) = nodes.get(index) else {
-            return Ok(None);
-        };
+        let node = nodes.get(index)?;
         match first_word_char(stores, language, node) {
             Some((font, ch, lower)) => {
                 if lower != ch && stores.int_param(IntParam::UC_HYPH) <= 0 {
-                    return Ok(None);
+                    return None;
                 }
                 break (index, font);
             }
@@ -246,19 +327,17 @@ fn hyphenate_after_glue(
                 update_hyphenation_context(node, &mut language, &mut left, &mut right);
                 index += 1;
             }
-            None => return Ok(None),
+            None => return None,
         }
     };
 
-    let Some(minima) = left.checked_add(right) else {
-        return Ok(None);
-    };
+    let minima = left.checked_add(right)?;
     if minima > 63 {
-        return Ok(None);
+        return None;
     }
     let hyphen = stores.font_hyphen_char(font);
     if !(0..=255).contains(&hyphen) {
-        return Ok(None);
+        return None;
     }
 
     let mut word = Vec::new();
@@ -324,61 +403,16 @@ fn hyphenate_after_glue(
     }
 
     if word.len() < minima || !permitted_word_terminator(nodes, index) {
-        return Ok(None);
+        return None;
     }
-
-    let lowercase: String = word.iter().map(|ch| ch.lower).collect();
-    for dependency in [
-        tex_state::DependencyKey::HyphenationPatterns(language),
-        tex_state::DependencyKey::HyphenationExceptions(language),
-        tex_state::DependencyKey::HyphenationCodes(language),
-    ] {
-        stores.observe_semantic_dependency(dependency);
-    }
-    let positions = stores.hyphen_positions_for_language(language, &lowercase, left, right);
-    if positions.is_empty() {
-        if let Some(out) = out {
-            out.extend_from_slice(&nodes[start..index]);
-        }
-        return Ok(Some(index));
-    }
-
-    let out = out.get_or_insert_with(|| {
-        let mut out = Vec::with_capacity(nodes.len());
-        out.extend_from_slice(&nodes[..start]);
-        out
-    });
-    out.extend_from_slice(&nodes[start..word_start]);
-    let trailing_font_kern = nodes[word_start..index].last().and_then(|node| match node {
-        Node::Kern {
-            amount,
-            kind: KernKind::Font,
-        } => Some(Node::Kern {
-            amount: *amount,
-            kind: KernKind::Font,
-        }),
-        _ => None,
-    });
-    let no_left_boundary = matches!(
-        out.last(),
-        Some(Node::Kern {
-            kind: KernKind::Font,
-            ..
-        })
-    );
-    append_hyphenated_word(
-        stores,
-        &word,
-        &positions,
-        no_left_boundary,
-        out,
-        fuel,
-        projection,
-    )?;
-    if let Some(kern) = trailing_font_kern {
-        out.push(kern);
-    }
-    Ok(Some(index))
+    Some(HyphenationCandidate {
+        word_start,
+        end: index,
+        language,
+        left,
+        right,
+        word,
+    })
 }
 
 fn first_word_char(
@@ -858,6 +892,31 @@ use crate::mode::PendingHChar;
 mod tests {
     use super::*;
 
+    fn character(font: tex_state::ids::FontId, ch: char) -> Node {
+        Node::Char {
+            font,
+            ch,
+            origin: OriginId::UNKNOWN,
+        }
+    }
+
+    fn candidate(stores: &Universe, nodes: &[Node]) -> Option<HyphenationCandidate> {
+        find_hyphenation_candidate(stores, nodes, 0, (0, 1, 1))
+    }
+
+    fn second_font(stores: &mut Universe) -> tex_state::ids::FontId {
+        stores.intern_font(tex_state::font::LoadedFont::new(
+            "second",
+            "second.tfm",
+            tex_state::world::ContentHash::from_bytes(b"second").bytes(),
+            0,
+            tex_state::scaled::Scaled::from_raw(10 * tex_state::scaled::Scaled::UNITY),
+            tex_state::scaled::Scaled::from_raw(10 * tex_state::scaled::Scaled::UNITY),
+            vec![tex_state::scaled::Scaled::from_raw(0); 7],
+            tex_state::font::FontMetrics::default(),
+        ))
+    }
+
     fn diagnostic_text(stores: &Universe) -> String {
         stores
             .world()
@@ -889,5 +948,100 @@ mod tests {
         assert!(
             diagnostic_text(&stores).contains("Missing character: There is no ? in font nullfont!")
         );
+    }
+
+    #[test]
+    fn pre_hyphenation_candidate_uses_language_minima_and_canonical_delimiters() {
+        let mut stores = Universe::new_with_plain_catcodes();
+        let font = stores.current_font();
+        stores.set_font_hyphen_char(font, i32::from(b'-'));
+        let nodes = vec![
+            character(font, '.'),
+            Node::Whatsit(tex_state::node::Whatsit::Language {
+                language: 7,
+                left_hyphen_min: 2,
+                right_hyphen_min: 2,
+            }),
+            Node::Kern {
+                amount: tex_state::scaled::Scaled::from_raw(0),
+                kind: KernKind::Font,
+            },
+            character(font, 'a'),
+            character(font, 'b'),
+            character(font, 'c'),
+            character(font, 'd'),
+            character(font, '.'),
+            Node::Penalty(0),
+        ];
+
+        let found = candidate(&stores, &nodes).expect("four letters meet the 2+2 minima");
+        assert_eq!((found.language, found.left, found.right), (7, 2, 2));
+        assert_eq!((found.word_start, found.end), (3, 7));
+        assert!(found.word.iter().all(|letter| letter.font == font));
+        assert_eq!(
+            found
+                .word
+                .iter()
+                .map(|letter| letter.lower)
+                .collect::<String>(),
+            "abcd"
+        );
+
+        let mut too_short = nodes;
+        too_short[1] = Node::Whatsit(tex_state::node::Whatsit::Language {
+            language: 7,
+            left_hyphen_min: 3,
+            right_hyphen_min: 2,
+        });
+        assert!(candidate(&stores, &too_short).is_none());
+    }
+
+    #[test]
+    fn pre_hyphenation_candidate_applies_uppercase_and_same_font_eligibility() {
+        let mut stores = Universe::new_with_plain_catcodes();
+        let font = stores.current_font();
+        let other_font = second_font(&mut stores);
+        stores.set_font_hyphen_char(font, i32::from(b'-'));
+        stores.set_lccode('A', u32::from('a'));
+        let nodes = vec![
+            character(font, 'A'),
+            character(font, 'b'),
+            character(font, 'c'),
+            character(other_font, 'd'),
+            Node::Penalty(0),
+        ];
+
+        assert!(
+            candidate(&stores, &nodes).is_none(),
+            "uppercase starts need uchyph"
+        );
+        stores.set_int_param(IntParam::UC_HYPH, 1);
+        let found = candidate(&stores, &nodes).expect("enabled uppercase candidate");
+        assert_eq!((found.word_start, found.end), (0, 3));
+        assert!(found.word.iter().all(|letter| letter.font == font));
+        assert_eq!(
+            found
+                .word
+                .iter()
+                .map(|letter| letter.lower)
+                .collect::<String>(),
+            "abc",
+            "the other-font character delimits the same-font lowercase projection"
+        );
+    }
+
+    #[test]
+    fn pre_hyphenation_candidate_retains_the_63_letter_prefix_at_the_64_boundary() {
+        let mut stores = Universe::new_with_plain_catcodes();
+        let font = stores.current_font();
+        stores.set_font_hyphen_char(font, i32::from(b'-'));
+
+        let sixty_three = vec![character(font, 'a'); 63];
+        let found = candidate(&stores, &sixty_three).expect("63-letter candidate");
+        assert_eq!((found.word.len(), found.word_start, found.end), (63, 0, 63));
+
+        let sixty_four = vec![character(font, 'a'); 64];
+        let found = candidate(&stores, &sixty_four).expect("63-letter prefix at c64");
+        assert_eq!((found.word.len(), found.word_start, found.end), (63, 0, 63));
     }
 }

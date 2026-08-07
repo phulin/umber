@@ -1,7 +1,21 @@
 {
-  "schema": 2,
-  "property_id": "tex82.main-control.input-stream-open-close",
+  "channels": {
+    "events": 76
+  },
+  "expected": [
+    "count:0=1"
+  ],
+  "inputs": {
+    "first.tex": "ok"
+  },
   "profile": "raw-tex82-loaded",
+  "projection": {
+    "count_registers": [
+      0
+    ],
+    "kind": "state"
+  },
+  "property_id": "tex82.main-control.input-stream-open-close",
   "provenance": {
     "authority": "tex.web",
     "manifest": "tests/tex82-oracle-manifest.txt",
@@ -13,19 +27,5 @@
       1275
     ]
   },
-  "projection": {
-    "kind": "state",
-    "count_registers": [
-      0
-    ]
-  },
-  "expected": [
-    "count:0=1"
-  ],
-  "channels": {
-    "events": 76
-  },
-  "inputs": {
-    "first.tex": "ok"
-  }
+  "schema": 2
 }

@@ -1,7 +1,25 @@
 {
-  "schema": 2,
-  "property_id": "tex82.expansion.converted-token-lists",
+  "channels": {
+    "events": 37
+  },
+  "expected": [
+    "input:backup:backup",
+    "input:recovery:recovery",
+    "input:backup:backup",
+    "input:retire:backup",
+    "input:retire:recovery",
+    "input:retire:backup",
+    "input:retire:file",
+    "input:stop:terminal"
+  ],
   "profile": "raw-tex82-loaded",
+  "projection": {
+    "kind": "observations",
+    "kinds": [
+      "input"
+    ]
+  },
+  "property_id": "tex82.expansion.converted-token-lists",
   "provenance": {
     "authority": "tex.web",
     "manifest": "tests/tex82-oracle-manifest.txt",
@@ -17,23 +35,5 @@
       472
     ]
   },
-  "projection": {
-    "kind": "observations",
-    "kinds": [
-      "input"
-    ]
-  },
-  "expected": [
-    "input:backup:backup",
-    "input:recovery:recovery",
-    "input:backup:backup",
-    "input:retire:backup",
-    "input:retire:recovery",
-    "input:retire:backup",
-    "input:retire:file",
-    "input:stop:terminal"
-  ],
-  "channels": {
-    "events": 37
-  }
+  "schema": 2
 }

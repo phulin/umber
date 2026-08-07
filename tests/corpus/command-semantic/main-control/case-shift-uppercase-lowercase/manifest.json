@@ -1,7 +1,18 @@
 {
-  "schema": 2,
-  "property_id": "tex82.main-control.case-shift",
+  "channels": {
+    "events": 247
+  },
+  "expected": [
+    "terminal-check:[AB] [ab] [done]=true"
+  ],
   "profile": "raw-tex82-loaded",
+  "projection": {
+    "kind": "terminal-checks",
+    "terminal_checks": [
+      "[AB] [ab] [done]"
+    ]
+  },
+  "property_id": "tex82.main-control.case-shift",
   "provenance": {
     "authority": "tex.web",
     "manifest": "tests/tex82-oracle-manifest.txt",
@@ -13,16 +24,5 @@
       1289
     ]
   },
-  "projection": {
-    "kind": "terminal-checks",
-    "terminal_checks": [
-      "[AB] [ab] [done]"
-    ]
-  },
-  "expected": [
-    "terminal-check:[AB] [ab] [done]=true"
-  ],
-  "channels": {
-    "events": 247
-  }
+  "schema": 2
 }

@@ -1,7 +1,26 @@
 {
-  "schema": 2,
-  "property_id": "tex82.scanner.integer",
+  "channels": {
+    "events": 49
+  },
+  "expected": [
+    "terminal-check:Missing number, treated as zero.=true",
+    "terminal-check:<to be read again> =true",
+    "terminal-check:x=true",
+    "count:0=0"
+  ],
   "profile": "raw-tex82-loaded",
+  "projection": {
+    "count_registers": [
+      0
+    ],
+    "kind": "terminal-checks",
+    "terminal_checks": [
+      "Missing number, treated as zero.",
+      "<to be read again> ",
+      "x"
+    ]
+  },
+  "property_id": "tex82.scanner.integer",
   "provenance": {
     "authority": "tex.web",
     "manifest": "tests/tex82-oracle-manifest.txt",
@@ -11,24 +30,5 @@
       415
     ]
   },
-  "projection": {
-    "kind": "terminal-checks",
-    "terminal_checks": [
-      "Missing number, treated as zero.",
-      "<to be read again> ",
-      "x"
-    ],
-    "count_registers": [
-      0
-    ]
-  },
-  "expected": [
-    "terminal-check:Missing number, treated as zero.=true",
-    "terminal-check:<to be read again> =true",
-    "terminal-check:x=true",
-    "count:0=0"
-  ],
-  "channels": {
-    "events": 49
-  }
+  "schema": 2
 }

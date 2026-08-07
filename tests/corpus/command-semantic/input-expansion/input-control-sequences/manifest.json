@@ -1,27 +1,6 @@
 {
-  "schema": 2,
-  "property_id": "tex82.input.control-sequence-lookup",
-  "profile": "raw-tex82-loaded",
-  "provenance": {
-    "authority": "tex.web",
-    "manifest": "tests/tex82-oracle-manifest.txt",
-    "sections": [
-      259,
-      260
-    ]
-  },
-  "projection": {
-    "kind": "observations",
-    "kinds": [
-      "command",
-      "macro",
-      "token-list"
-    ],
-    "commands": [
-      "call",
-      "cs_name",
-      "end_cs_name"
-    ]
+  "channels": {
+    "events": 76
   },
   "expected": [
     "token-list:complete:macro_replacement:char:letter:65",
@@ -31,7 +10,28 @@
     "command:raw:cs:made:call:249984",
     "macro:activate:made:0:"
   ],
-  "channels": {
-    "events": 76
-  }
+  "profile": "raw-tex82-loaded",
+  "projection": {
+    "commands": [
+      "call",
+      "cs_name",
+      "end_cs_name"
+    ],
+    "kind": "observations",
+    "kinds": [
+      "command",
+      "macro",
+      "token-list"
+    ]
+  },
+  "property_id": "tex82.input.control-sequence-lookup",
+  "provenance": {
+    "authority": "tex.web",
+    "manifest": "tests/tex82-oracle-manifest.txt",
+    "sections": [
+      259,
+      260
+    ]
+  },
+  "schema": 2
 }

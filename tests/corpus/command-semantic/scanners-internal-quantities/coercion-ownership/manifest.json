@@ -1,7 +1,22 @@
 {
-  "schema": 2,
-  "property_id": "tex82.scanner.internal-coercion-ownership",
+  "channels": {
+    "events": 312
+  },
+  "expected": [
+    "count:10=131072",
+    "count:11=393216",
+    "count:12=-131072"
+  ],
   "profile": "raw-tex82-loaded",
+  "projection": {
+    "count_registers": [
+      10,
+      11,
+      12
+    ],
+    "kind": "state"
+  },
+  "property_id": "tex82.scanner.internal-coercion-ownership",
   "provenance": {
     "authority": "tex.web",
     "manifest": "tests/tex82-oracle-manifest.txt",
@@ -11,20 +26,5 @@
       431
     ]
   },
-  "projection": {
-    "kind": "state",
-    "count_registers": [
-      10,
-      11,
-      12
-    ]
-  },
-  "expected": [
-    "count:10=131072",
-    "count:11=393216",
-    "count:12=-131072"
-  ],
-  "channels": {
-    "events": 312
-  }
+  "schema": 2
 }

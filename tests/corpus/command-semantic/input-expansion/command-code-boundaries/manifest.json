@@ -1,47 +1,6 @@
 {
-  "schema": 2,
-  "property_id": "tex82.input.command-code-boundaries",
-  "profile": "raw-tex82-loaded",
-  "provenance": {
-    "authority": "tex.web",
-    "manifest": "tests/tex82-oracle-manifest.txt",
-    "sections": [
-      73,
-      207,
-      208,
-      209,
-      210,
-      265,
-      334,
-      410,
-      411,
-      416,
-      1052,
-      1208,
-      1219,
-      1222,
-      1262
-    ]
-  },
-  "projection": {
-    "kind": "observations",
-    "kinds": [
-      "command"
-    ],
-    "commands": [
-      "char_given",
-      "expand_after",
-      "last_item",
-      "let",
-      "math_given",
-      "par_end",
-      "prefix",
-      "register",
-      "relax",
-      "set_interaction",
-      "shorthand_def",
-      "stop"
-    ]
+  "channels": {
+    "events": 115
   },
   "expected": [
     "command:raw:cs:errorstopmode:set_interaction:3",
@@ -79,7 +38,48 @@
     "command:raw:cs:end:stop:0",
     "command:expanded:cs:end:stop:0"
   ],
-  "channels": {
-    "events": 115
-  }
+  "profile": "raw-tex82-loaded",
+  "projection": {
+    "commands": [
+      "char_given",
+      "expand_after",
+      "last_item",
+      "let",
+      "math_given",
+      "par_end",
+      "prefix",
+      "register",
+      "relax",
+      "set_interaction",
+      "shorthand_def",
+      "stop"
+    ],
+    "kind": "observations",
+    "kinds": [
+      "command"
+    ]
+  },
+  "property_id": "tex82.input.command-code-boundaries",
+  "provenance": {
+    "authority": "tex.web",
+    "manifest": "tests/tex82-oracle-manifest.txt",
+    "sections": [
+      73,
+      207,
+      208,
+      209,
+      210,
+      265,
+      334,
+      410,
+      411,
+      416,
+      1052,
+      1208,
+      1219,
+      1222,
+      1262
+    ]
+  },
+  "schema": 2
 }

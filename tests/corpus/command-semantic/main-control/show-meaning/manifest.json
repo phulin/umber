@@ -1,7 +1,34 @@
 {
-  "schema": 2,
-  "property_id": "tex82.main-control.show-meaning",
+  "channels": {
+    "events": 301
+  },
+  "expected": [
+    "terminal-check:meaning-skip=\\skip3=true",
+    "terminal-check:meaning-count=\\count4=true",
+    "terminal-check:meaning-letter=the letter Q=true",
+    "terminal-check:> \\aliasskip=\\skip3.=true",
+    "terminal-check:SkipRegister(=false",
+    "terminal-check:CountRegister(=false",
+    "count:0=1",
+    "count:9=0"
+  ],
   "profile": "raw-tex82-loaded",
+  "projection": {
+    "count_registers": [
+      0,
+      9
+    ],
+    "kind": "terminal-checks",
+    "terminal_checks": [
+      "meaning-skip=\\skip3",
+      "meaning-count=\\count4",
+      "meaning-letter=the letter Q",
+      "> \\aliasskip=\\skip3.",
+      "SkipRegister(",
+      "CountRegister("
+    ]
+  },
+  "property_id": "tex82.main-control.show-meaning",
   "provenance": {
     "authority": "tex.web",
     "manifest": "tests/tex82-oracle-manifest.txt",
@@ -15,32 +42,5 @@
       1295
     ]
   },
-  "projection": {
-    "kind": "terminal-checks",
-    "terminal_checks": [
-      "meaning-skip=\\skip3",
-      "meaning-count=\\count4",
-      "meaning-letter=the letter Q",
-      "> \\aliasskip=\\skip3.",
-      "SkipRegister(",
-      "CountRegister("
-    ],
-    "count_registers": [
-      0,
-      9
-    ]
-  },
-  "expected": [
-    "terminal-check:meaning-skip=\\skip3=true",
-    "terminal-check:meaning-count=\\count4=true",
-    "terminal-check:meaning-letter=the letter Q=true",
-    "terminal-check:> \\aliasskip=\\skip3.=true",
-    "terminal-check:SkipRegister(=false",
-    "terminal-check:CountRegister(=false",
-    "count:0=1",
-    "count:9=0"
-  ],
-  "channels": {
-    "events": 301
-  }
+  "schema": 2
 }

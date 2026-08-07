@@ -1,23 +1,6 @@
 {
-  "schema": 2,
-  "property_id": "tex82.conditionals.odd-integer",
-  "profile": "raw-tex82-loaded",
-  "provenance": {
-    "authority": "tex.web",
-    "manifest": "tests/tex82-oracle-manifest.txt",
-    "sections": [
-      504
-    ]
-  },
-  "projection": {
-    "kind": "predicate-outcomes",
-    "count_registers": [
-      0,
-      1,
-      2,
-      3,
-      4
-    ]
+  "channels": {
+    "events": 218
   },
   "expected": [
     "predicate:ifodd:integer=0:false",
@@ -31,7 +14,24 @@
     "count:3=1",
     "count:4=1"
   ],
-  "channels": {
-    "events": 218
-  }
+  "profile": "raw-tex82-loaded",
+  "projection": {
+    "count_registers": [
+      0,
+      1,
+      2,
+      3,
+      4
+    ],
+    "kind": "predicate-outcomes"
+  },
+  "property_id": "tex82.conditionals.odd-integer",
+  "provenance": {
+    "authority": "tex.web",
+    "manifest": "tests/tex82-oracle-manifest.txt",
+    "sections": [
+      504
+    ]
+  },
+  "schema": 2
 }

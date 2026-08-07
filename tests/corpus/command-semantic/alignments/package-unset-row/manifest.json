@@ -1,7 +1,25 @@
 {
-  "schema": 2,
-  "property_id": "tex82.align.package-unset-row",
+  "channels": {
+    "events": 275
+  },
+  "expected": [
+    "box:0/0:vlist",
+    "box:0/0/0:hlist",
+    "box:0/0/0/0:glue",
+    "box:0/0/0/1:hlist",
+    "box:0/0/0/1/0:glue",
+    "box:0/0/0/2:glue",
+    "box:0/0/1:kern"
+  ],
   "profile": "raw-tex82-loaded",
+  "projection": {
+    "box_registers": [
+      0
+    ],
+    "kind": "execution-boundaries",
+    "node_depth": 4
+  },
+  "property_id": "tex82.align.package-unset-row",
   "provenance": {
     "authority": "tex.web",
     "manifest": "tests/tex82-oracle-manifest.txt",
@@ -13,23 +31,5 @@
       799
     ]
   },
-  "projection": {
-    "kind": "execution-boundaries",
-    "box_registers": [
-      0
-    ],
-    "node_depth": 4
-  },
-  "expected": [
-    "box:0/0:vlist",
-    "box:0/0/0:hlist",
-    "box:0/0/0/0:glue",
-    "box:0/0/0/1:hlist",
-    "box:0/0/0/1/0:glue",
-    "box:0/0/0/2:glue",
-    "box:0/0/1:kern"
-  ],
-  "channels": {
-    "events": 275
-  }
+  "schema": 2
 }

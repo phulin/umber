@@ -1,7 +1,29 @@
 {
-  "schema": 2,
-  "property_id": "tex82.scanner.restricted-integers",
+  "channels": {
+    "events": 145
+  },
+  "expected": [
+    "terminal-check:! Bad number (-1).=true",
+    "terminal-check:! Bad number (16).=true",
+    "terminal-check:! Bad number (1000000).=false",
+    "count:0=1"
+  ],
+  "inputs": {
+    "missing.tex": "unused"
+  },
   "profile": "raw-tex82-loaded",
+  "projection": {
+    "count_registers": [
+      0
+    ],
+    "kind": "terminal-checks",
+    "terminal_checks": [
+      "! Bad number (-1).",
+      "! Bad number (16).",
+      "! Bad number (1000000)."
+    ]
+  },
+  "property_id": "tex82.scanner.restricted-integers",
   "provenance": {
     "authority": "tex.web",
     "manifest": "tests/tex82-oracle-manifest.txt",
@@ -15,31 +37,9 @@
       1275
     ]
   },
-  "projection": {
-    "kind": "terminal-checks",
-    "terminal_checks": [
-      "! Bad number (-1).",
-      "! Bad number (16).",
-      "! Bad number (1000000)."
-    ],
-    "count_registers": [
-      0
-    ]
-  },
-  "expected": [
-    "terminal-check:! Bad number (-1).=true",
-    "terminal-check:! Bad number (16).=true",
-    "terminal-check:! Bad number (1000000).=false",
-    "count:0=1"
-  ],
-  "channels": {
-    "events": 145
-  },
+  "schema": 2,
   "terminal_lines": [
     "ordinary",
     "verbatim"
-  ],
-  "inputs": {
-    "missing.tex": "unused"
-  }
+  ]
 }

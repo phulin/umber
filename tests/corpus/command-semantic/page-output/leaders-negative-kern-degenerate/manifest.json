@@ -1,22 +1,6 @@
 {
-  "schema": 2,
-  "property_id": "tex82.shipout.hlist-traversal",
-  "profile": "raw-tex82-loaded",
-  "provenance": {
-    "authority": "tex.web",
-    "manifest": "tests/tex82-oracle-manifest.txt",
-    "sections": [
-      618,
-      626,
-      627
-    ]
-  },
-  "projection": {
-    "kind": "execution-boundaries",
-    "command_names": [
-      "leader_ship"
-    ],
-    "include_artifact_hashes": true
+  "channels": {
+    "events": 1589
   },
   "expected": [
     "command:leader_ship:99",
@@ -37,7 +21,23 @@
     "command:leader_ship:100",
     "artifact:2ed9323f348b751d16b177a5eb97a4544be1f18bdd39901cbe3a98c40d246c15"
   ],
-  "channels": {
-    "events": 1589
-  }
+  "profile": "raw-tex82-loaded",
+  "projection": {
+    "command_names": [
+      "leader_ship"
+    ],
+    "include_artifact_hashes": true,
+    "kind": "execution-boundaries"
+  },
+  "property_id": "tex82.shipout.hlist-traversal",
+  "provenance": {
+    "authority": "tex.web",
+    "manifest": "tests/tex82-oracle-manifest.txt",
+    "sections": [
+      618,
+      626,
+      627
+    ]
+  },
+  "schema": 2
 }

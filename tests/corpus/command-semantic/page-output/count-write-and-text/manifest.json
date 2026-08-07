@@ -1,10 +1,23 @@
 {
-  "schema": 2,
-  "property_id": "tex82.effects.deferred-write-expansion",
-  "profile": "raw-tex82-loaded",
+  "channels": {
+    "events": 257
+  },
+  "expected": [
+    "command:leader_ship:99",
+    "artifact:4be3a72e29e10e51fbfb604556fa40f5be774c79684957debaf1de2465f66b8d"
+  ],
   "font_inputs": {
     "cmr10.tfm": "crates/tex-fonts/tests/fixtures/cm/cmr10.tfm"
   },
+  "profile": "raw-tex82-loaded",
+  "projection": {
+    "command_names": [
+      "leader_ship"
+    ],
+    "include_artifact_hashes": true,
+    "kind": "execution-boundaries"
+  },
+  "property_id": "tex82.effects.deferred-write-expansion",
   "provenance": {
     "authority": "tex.web",
     "manifest": "tests/tex82-oracle-manifest.txt",
@@ -13,18 +26,5 @@
       1371
     ]
   },
-  "projection": {
-    "kind": "execution-boundaries",
-    "command_names": [
-      "leader_ship"
-    ],
-    "include_artifact_hashes": true
-  },
-  "expected": [
-    "command:leader_ship:99",
-    "artifact:4be3a72e29e10e51fbfb604556fa40f5be774c79684957debaf1de2465f66b8d"
-  ],
-  "channels": {
-    "events": 257
-  }
+  "schema": 2
 }

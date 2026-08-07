@@ -1,7 +1,22 @@
 {
-  "schema": 2,
-  "property_id": "tex82.main-control.messages",
+  "channels": {
+    "events": 90
+  },
+  "expected": [
+    "terminal-check:a b=true",
+    "count:0=1"
+  ],
   "profile": "raw-tex82-loaded",
+  "projection": {
+    "count_registers": [
+      0
+    ],
+    "kind": "terminal-checks",
+    "terminal_checks": [
+      "a b"
+    ]
+  },
+  "property_id": "tex82.main-control.messages",
   "provenance": {
     "authority": "tex.web",
     "manifest": "tests/tex82-oracle-manifest.txt",
@@ -13,20 +28,5 @@
       1280
     ]
   },
-  "projection": {
-    "kind": "terminal-checks",
-    "terminal_checks": [
-      "a b"
-    ],
-    "count_registers": [
-      0
-    ]
-  },
-  "expected": [
-    "terminal-check:a b=true",
-    "count:0=1"
-  ],
-  "channels": {
-    "events": 90
-  }
+  "schema": 2
 }
