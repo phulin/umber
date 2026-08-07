@@ -425,6 +425,10 @@ pub struct SemanticRun {
     /// TeX82 terminal state and the job is over, which is an observable
     /// semantic fact that a fixture must be able to pin.
     pub fatal: Option<FatalError>,
+    /// Complete-job bytes used only by the reference-derived stream-channel
+    /// contract. The other fields are the authored-fragment property
+    /// projection, which stops at root EOF without inventing `\end`.
+    pub complete_job_channel_streams: Option<[Vec<u8>; 4]>,
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -1188,17 +1192,60 @@ pub fn execute_with_provider(
     case: &Case,
     provider: &umber::PreparedFormatProvider,
 ) -> Result<SemanticRun, String> {
+    let complete = execute_with_provider_completion(
+        source,
+        case,
+        provider,
+        tex_exec::RootCompletionPolicy::RequireTeXEnd,
+    )?;
+    let complete_job_channel_streams = CapturedChannels::capture(&complete).streams;
+    let mut fragment = execute_with_provider_completion(
+        source,
+        case,
+        provider,
+        tex_exec::RootCompletionPolicy::StopAtRootEof,
+    )?;
+    validate_completion_projection_pair(&fragment, &complete)?;
+    fragment.complete_job_channel_streams = Some(complete_job_channel_streams);
+    Ok(fragment)
+}
+
+fn execute_with_provider_completion(
+    source: &[u8],
+    case: &Case,
+    provider: &umber::PreparedFormatProvider,
+    completion: tex_exec::RootCompletionPolicy,
+) -> Result<SemanticRun, String> {
     match case.profile.execution_route() {
         ExecutionRoute::ProductionPdftex14029Loaded => {
-            execute_production_pdftex14029_loaded(source, case, provider)
+            execute_production_pdftex14029_loaded(source, case, provider, completion)
         }
-        ExecutionRoute::RawEtex26Loaded => execute_raw_etex26_loaded(source, case, provider),
-        ExecutionRoute::RawTex82Loaded => execute_raw_tex82_loaded(source, case, provider),
-        ExecutionRoute::Fresh => execute_fresh(source, case),
+        ExecutionRoute::RawEtex26Loaded => {
+            execute_raw_etex26_loaded(source, case, provider, completion)
+        }
+        ExecutionRoute::RawTex82Loaded => {
+            execute_raw_tex82_loaded(source, case, provider, completion)
+        }
+        ExecutionRoute::Fresh => execute_fresh_with_completion(source, case, completion),
     }
 }
 
 fn execute_fresh(source: &[u8], case: &Case) -> Result<SemanticRun, String> {
+    let complete =
+        execute_fresh_with_completion(source, case, tex_exec::RootCompletionPolicy::RequireTeXEnd)?;
+    let complete_job_channel_streams = CapturedChannels::capture(&complete).streams;
+    let mut fragment =
+        execute_fresh_with_completion(source, case, tex_exec::RootCompletionPolicy::StopAtRootEof)?;
+    validate_completion_projection_pair(&fragment, &complete)?;
+    fragment.complete_job_channel_streams = Some(complete_job_channel_streams);
+    Ok(fragment)
+}
+
+fn execute_fresh_with_completion(
+    source: &[u8],
+    case: &Case,
+    completion: tex_exec::RootCompletionPolicy,
+) -> Result<SemanticRun, String> {
     let mut universe = Universe::new();
     for line in terminal_stdin(case) {
         universe
@@ -1288,6 +1335,7 @@ fn execute_fresh(source: &[u8], case: &Case) -> Result<SemanticRun, String> {
     // its command line -- the bare source filename, e.g. `show-box.tex`.
     control.set_engine_binary(tex_exec::EngineBinaryIdentity::Pdftex14029);
     control.begin_job(&mut universe, &case.source);
+    control.set_root_completion_policy(completion);
     // kpathsea resolves a same-directory file through `./`, so pdfTeX's §537
     // `a_make_name_string` records (and prints) `./show-box.tex` rather than
     // the bare name `begin_job` was just given. Matching that leading `./` is
@@ -1369,6 +1417,7 @@ fn execute_fresh(source: &[u8], case: &Case) -> Result<SemanticRun, String> {
                     artifacts,
                     dvi,
                     fatal: control.fatal_error(),
+                    complete_job_channel_streams: None,
                 });
             }
         }
@@ -1427,6 +1476,7 @@ fn execute_production_pdftex14029_loaded(
     source: &[u8],
     case: &Case,
     provider: &umber::PreparedFormatProvider,
+    completion: tex_exec::RootCompletionPolicy,
 ) -> Result<SemanticRun, String> {
     execute_loaded_format(
         provider,
@@ -1434,6 +1484,7 @@ fn execute_production_pdftex14029_loaded(
         source,
         case,
         "production pdfTeX 1.40.29",
+        completion,
     )
 }
 
@@ -1441,16 +1492,32 @@ fn execute_raw_etex26_loaded(
     source: &[u8],
     case: &Case,
     provider: &umber::PreparedFormatProvider,
+    completion: tex_exec::RootCompletionPolicy,
 ) -> Result<SemanticRun, String> {
-    execute_loaded_format(provider, raw_etex26_recipe(), source, case, "raw e-TeX 2.6")
+    execute_loaded_format(
+        provider,
+        raw_etex26_recipe(),
+        source,
+        case,
+        "raw e-TeX 2.6",
+        completion,
+    )
 }
 
 fn execute_raw_tex82_loaded(
     source: &[u8],
     case: &Case,
     provider: &umber::PreparedFormatProvider,
+    completion: tex_exec::RootCompletionPolicy,
 ) -> Result<SemanticRun, String> {
-    execute_loaded_format(provider, raw_tex82_recipe(), source, case, "raw TeX82")
+    execute_loaded_format(
+        provider,
+        raw_tex82_recipe(),
+        source,
+        case,
+        "raw TeX82",
+        completion,
+    )
 }
 
 fn execute_loaded_format(
@@ -1459,6 +1526,7 @@ fn execute_loaded_format(
     source: &[u8],
     case: &Case,
     format_label: &str,
+    completion: tex_exec::RootCompletionPolicy,
 ) -> Result<SemanticRun, String> {
     let fixture = provider
         .prepare(&recipe)
@@ -1486,27 +1554,27 @@ fn execute_loaded_format(
             bytes: Arc::from(bytes),
         });
     }
-    let loaded = provider
-        .run(
-            &fixture,
-            umber::PreparedFormatJob {
-                engine: recipe.engine,
-                engine_binary: tex_exec::EngineBinaryIdentity::Pdftex14029,
-                backend: umber::OutputCapability::Dvi,
-                clock: tex_state::JobClock::default(),
-                interaction: case.interaction_mode.engine_mode(),
-                error_context_widths: tex_state::print::ErrorContextWidths::default(),
-                guards: recipe.guards,
-                startup_line: case.source.clone(),
-                source_name: case.source.clone(),
-                source_kind: RegisteredSourceKind::Generated,
-                source: Arc::<[u8]>::from(source),
-                resources,
-                terminal_input: terminal_stdin(case),
-                observer: &mut recorder,
-            },
-        )
-        .map_err(|error| format!("loaded {format_label} run: {error}"))?;
+    let job = umber::PreparedFormatJob {
+        engine: recipe.engine,
+        engine_binary: tex_exec::EngineBinaryIdentity::Pdftex14029,
+        backend: umber::OutputCapability::Dvi,
+        clock: tex_state::JobClock::default(),
+        interaction: case.interaction_mode.engine_mode(),
+        error_context_widths: tex_state::print::ErrorContextWidths::default(),
+        guards: recipe.guards,
+        startup_line: case.source.clone(),
+        source_name: case.source.clone(),
+        source_kind: RegisteredSourceKind::Generated,
+        source: Arc::<[u8]>::from(source),
+        resources,
+        terminal_input: terminal_stdin(case),
+        observer: &mut recorder,
+    };
+    let loaded = match completion {
+        tex_exec::RootCompletionPolicy::RequireTeXEnd => provider.run(&fixture, job),
+        tex_exec::RootCompletionPolicy::StopAtRootEof => provider.run_fragment(&fixture, job),
+    }
+    .map_err(|error| format!("loaded {format_label} run: {error}"))?;
     let counts = std::array::from_fn(|slot| {
         loaded
             .universe
@@ -1533,7 +1601,50 @@ fn execute_loaded_format(
         artifacts,
         dvi,
         fatal: loaded.result.fatal,
+        complete_job_channel_streams: None,
     })
+}
+
+fn validate_completion_projection_pair(
+    fragment: &SemanticRun,
+    complete: &SemanticRun,
+) -> Result<(), String> {
+    validate_completion_observations(&fragment.observations, &complete.observations)?;
+    if !complete
+        .mode_transitions
+        .starts_with(&fragment.mode_transitions)
+    {
+        return Err("complete-job modes diverged before the fragment root-EOF boundary".into());
+    }
+    if !complete.artifacts.starts_with(&fragment.artifacts) {
+        return Err("complete-job artifacts diverged before the fragment root-EOF boundary".into());
+    }
+    Ok(())
+}
+
+fn validate_completion_observations(
+    fragment: &[CommandObservation],
+    complete: &[CommandObservation],
+) -> Result<(), String> {
+    let first_difference = fragment
+        .iter()
+        .zip(complete)
+        .position(|(fragment, complete)| fragment != complete);
+    if let Some(index) = first_difference {
+        let is_termination = |observation: &CommandObservation| {
+            matches!(
+                observation,
+                CommandObservation::Effect(effect)
+                    if effect.kind == tex_command::ObservationEffectKind::Terminate
+            )
+        };
+        if !is_termination(&fragment[index]) {
+            return Err(
+                "complete-job observations diverged before the fragment root-EOF boundary".into(),
+            );
+        }
+    }
+    Ok(())
 }
 
 pub fn push_counts(run: &SemanticRun, projection: &Projection, output: &mut Vec<String>) {

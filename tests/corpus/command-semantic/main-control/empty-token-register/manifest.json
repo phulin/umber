@@ -25,22 +25,10 @@
     "events": 38,
     "status": "fatal:emergency-stop(End of file on the terminal!)",
     "terminal": {
-      "kind": "xfail",
-      "bug": "umber2-alfh.11",
-      "mismatch": {
-        "line": 14,
-        "expected": "<*> empty-token-register.tex",
-        "actual": "? "
-      }
+      "kind": "file"
     },
     "log": {
-      "kind": "xfail",
-      "bug": "umber2-alfh.11",
-      "mismatch": {
-        "line": 16,
-        "expected": "<*> empty-token-register.tex",
-        "actual": "? "
-      }
+      "kind": "file"
     }
   }
 }

@@ -69,6 +69,29 @@ impl PreparedFormatProvider {
         fixture: &FormatFixture,
         job: PreparedFormatJob<'_>,
     ) -> Result<LoadedFormatRun, FormatFixtureError> {
+        self.run_with_completion(fixture, job, tex_exec::RootCompletionPolicy::RequireTeXEnd)
+    }
+
+    /// Runs one authored fragment whose root EOF is the host completion boundary.
+    ///
+    /// Unlike [`Self::run`], this does not enter TeX82 §360's terminal retry
+    /// when the registered root is exhausted. Nested sources still retire back
+    /// into their parent normally, and an explicit `\end` still performs TeX's
+    /// ordinary final cleanup.
+    pub fn run_fragment(
+        &self,
+        fixture: &FormatFixture,
+        job: PreparedFormatJob<'_>,
+    ) -> Result<LoadedFormatRun, FormatFixtureError> {
+        self.run_with_completion(fixture, job, tex_exec::RootCompletionPolicy::StopAtRootEof)
+    }
+
+    fn run_with_completion(
+        &self,
+        fixture: &FormatFixture,
+        job: PreparedFormatJob<'_>,
+        completion: tex_exec::RootCompletionPolicy,
+    ) -> Result<LoadedFormatRun, FormatFixtureError> {
         job.guards.validate()?;
         let actual = fixture.engine_mode();
         if job.engine != actual {
@@ -114,6 +137,7 @@ impl PreparedFormatProvider {
                 guards: job.guards,
                 engine_binary: job.engine_binary,
                 startup_line: job.startup_line,
+                completion,
             },
             job.observer,
         )

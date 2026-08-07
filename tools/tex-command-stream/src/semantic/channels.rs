@@ -161,18 +161,21 @@ impl CapturedChannels {
                 }
             }
         }
+        let streams = run.complete_job_channel_streams.clone().unwrap_or_else(|| {
+            [
+                terminal.into_bytes(),
+                log.into_bytes(),
+                run.dvi.clone(),
+                effects.into_bytes(),
+            ]
+        });
         Self {
             events: run.observations.len(),
             status: run.fatal.map_or_else(
                 || "clean".to_owned(),
                 |fatal| format!("fatal:{}", fatal.label()),
             ),
-            streams: [
-                terminal.into_bytes(),
-                log.into_bytes(),
-                run.dvi.clone(),
-                effects.into_bytes(),
-            ],
+            streams,
         }
     }
 

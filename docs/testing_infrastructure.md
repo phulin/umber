@@ -263,8 +263,15 @@ test binary, so the regeneration path drives exactly the code the gate does.
 The test binary holds only the assertions.
 
 The runner drives each input through instrumented
-`tex_exec::MainControl` in the exact TeX82 INITEX profile. A run is a
-real TeX job, not a bare command loop: it is framed with
+`tex_exec::MainControl` in the exact TeX82 INITEX profile. Each case has two
+explicit completion projections over the same canonical driver, profile,
+source, and host inputs. Its semantic projection, event count, and status stop
+at the authored-fragment root EOF. Its terminal, log, DVI, and effects channels
+continue as a real TeX job through TeX82 §360, because the reference pdfTeX
+process exposes no host-fragment completion boundary. The runner compares the
+two executions through their typed termination observation and rejects any
+earlier divergence, so the split cannot mask driver or state drift. The
+complete-job projection is framed with
 `MainControl::begin_job`/`finish_job` exactly the way
 `docs/job_framing.md` describes -- the start-up banner, the `**` line, the
 root source registered by name so §537/§362 bracket it in `(name`/`)`, and

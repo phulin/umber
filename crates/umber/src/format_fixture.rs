@@ -306,6 +306,7 @@ pub(crate) struct LoadedRunConfiguration {
     pub guards: FormatGenerationGuards,
     pub engine_binary: tex_exec::EngineBinaryIdentity,
     pub startup_line: String,
+    pub completion: tex_exec::RootCompletionPolicy,
 }
 
 impl LoadedFormatFixture {
@@ -343,6 +344,7 @@ impl LoadedFormatFixture {
                 guards,
                 engine_binary,
                 startup_line: source_name.to_owned(),
+                completion: tex_exec::RootCompletionPolicy::RequireTeXEnd,
             },
             observer,
         )
@@ -369,12 +371,22 @@ impl LoadedFormatFixture {
         });
         session.set_engine_binary(config.engine_binary);
         session.set_fuel_limit(guards.command_fuel)?;
-        let root_source = session.register_retained_root_with_invocation(
-            source_name,
-            &config.startup_line,
-            tex_command::SourceRegistration::new(source_kind, source)
-                .with_name(format!("./{source_name}")),
-        )?;
+        let source = tex_command::SourceRegistration::new(source_kind, source)
+            .with_name(format!("./{source_name}"));
+        let root_source = match config.completion {
+            tex_exec::RootCompletionPolicy::RequireTeXEnd => session
+                .register_retained_root_with_invocation(
+                    source_name,
+                    &config.startup_line,
+                    source,
+                )?,
+            tex_exec::RootCompletionPolicy::StopAtRootEof => session
+                .register_retained_fragment_with_invocation(
+                    source_name,
+                    &config.startup_line,
+                    source,
+                )?,
+        };
         let checkpoints = GuardCheckpoints::new(guards)?;
         let mut checkpoint_sink = &checkpoints;
         let result = session.run_with_observer(

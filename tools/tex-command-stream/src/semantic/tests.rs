@@ -3,9 +3,41 @@
 //! a reject case so a rule that cannot fail is not actually enforced.
 
 use super::{
-    Case, MAX_SOURCE_BYTES, MAX_SOURCE_LINES, input_targets, validate_no_format_loading,
-    validate_source_dimensions,
+    Case, MAX_SOURCE_BYTES, MAX_SOURCE_LINES, input_targets, validate_completion_observations,
+    validate_no_format_loading, validate_source_dimensions,
 };
+
+fn effect(kind: tex_command::ObservationEffectKind) -> tex_command::CommandObservation {
+    tex_command::CommandObservation::Effect(tex_command::EffectRecord {
+        kind,
+        channel: "engine".into(),
+        value: tex_command::ObservationValue::None,
+        source: None,
+    })
+}
+
+#[test]
+fn completion_pair_allows_its_first_difference_at_fragment_termination() {
+    let shared = effect(tex_command::ObservationEffectKind::Message);
+    let fragment = [
+        shared.clone(),
+        effect(tex_command::ObservationEffectKind::Terminate),
+    ];
+    let complete = [shared, effect(tex_command::ObservationEffectKind::Input)];
+
+    assert!(validate_completion_observations(&fragment, &complete).is_ok());
+}
+
+#[test]
+fn completion_pair_rejects_semantic_drift_before_fragment_termination() {
+    let fragment = [effect(tex_command::ObservationEffectKind::Message)];
+    let complete = [effect(tex_command::ObservationEffectKind::Input)];
+
+    assert_eq!(
+        validate_completion_observations(&fragment, &complete),
+        Err("complete-job observations diverged before the fragment root-EOF boundary".into())
+    );
+}
 
 fn case_with_inputs(inputs: &[(&str, &str)]) -> Case {
     let inputs_json = inputs

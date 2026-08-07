@@ -73,7 +73,7 @@ fn rust_function_body<'a>(source: &'a str, name: &str) -> &'a str {
 #[test]
 fn every_loaded_command_route_has_only_the_generic_provider_owner() {
     let source = include_str!("../../src/semantic.rs");
-    let dispatch = rust_function_body(source, "execute_with_provider");
+    let dispatch = rust_function_body(source, "execute_with_provider_completion");
     for owner in [
         "execute_raw_tex82_loaded",
         "execute_raw_etex26_loaded",
@@ -94,6 +94,7 @@ fn every_loaded_command_route_has_only_the_generic_provider_owner() {
         ".prepare(&recipe)",
         "PreparedFormatJob {",
         ".run(",
+        ".run_fragment(",
     ] {
         assert!(
             generic.contains(required),
@@ -375,7 +376,7 @@ fn v2_identity_capture_policy_and_resolved_channels_match_the_migrated_corpus() 
     }
     assert_eq!(
         format!("{:x}", digest.finalize()),
-        "d9e29e3e29aab64dcc736f04d545bad2c565efcb2a795f7c09b0c268b487d8e5"
+        "225a75d172cd3601d73263caef3c5004a14a116e0a457cbf501bbe5d94a44515"
     );
 }
 
@@ -815,6 +816,7 @@ fn state_projection_emits_only_requested_final_counts() {
         artifacts: Vec::new(),
         dvi: Vec::new(),
         fatal: None,
+        complete_job_channel_streams: None,
     };
     let projection = Projection {
         kind: ProjectionKind::State,
@@ -846,6 +848,7 @@ fn fatal_termination_precedes_every_projection_kinds_own_output() {
         artifacts: Vec::new(),
         dvi: Vec::new(),
         fatal: Some(FatalError::confusion("256 spans")),
+        complete_job_channel_streams: None,
     };
     let projection = Projection {
         kind: ProjectionKind::State,

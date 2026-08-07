@@ -40,12 +40,10 @@
   "channels": {
     "events": 301,
     "terminal": {
-      "kind": "xfail-diagnostics",
-      "bug": "umber2-alfh.11"
+      "kind": "file"
     },
     "log": {
-      "kind": "xfail-diagnostics",
-      "bug": "umber2-alfh.11"
+      "kind": "file"
     }
   }
 }
