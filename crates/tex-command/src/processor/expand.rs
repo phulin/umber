@@ -708,28 +708,34 @@ impl CommandProcessor<'_> {
     }
 
     pub(crate) fn observe_expanded_delivery(&mut self, command: &CurrentCommand) {
-        let (command_name, command_operand) =
-            crate::observation::canonical_current_command_identity_for_profile(
+        observe!(self, {
+            #[cfg(test)]
+            {
+                self.observation_payloads_built += 1;
+            }
+            let (command_name, command_operand) =
+                crate::observation::canonical_current_command_identity_for_profile(
+                    self.command.profile(),
+                    command,
+                );
+            let spelling = self.observed_command_spelling(command);
+            let semantic_operand = crate::observation::canonical_sparse_register_operand(
                 self.command.profile(),
-                command,
+                command.meaning(),
             );
-        let spelling = self.observed_command_spelling(command);
-        let semantic_operand = crate::observation::canonical_sparse_register_operand(
-            self.command.profile(),
-            command.meaning(),
-        );
-        self.observe(CommandObservation::Command(CommandDeliveryRecord {
-            boundary: CommandDeliveryBoundary::Expanded,
-            spelling,
-            command: command_name,
-            command_operand,
-            semantic_operand,
-            provenance: CommandProvenance::from_stamp(
-                command.delivery_stamp(),
-                command.origin(),
-                command.direct_source_provenance(),
-            ),
-        }));
+            CommandObservation::Command(CommandDeliveryRecord {
+                boundary: CommandDeliveryBoundary::Expanded,
+                spelling,
+                command: command_name,
+                command_operand,
+                semantic_operand,
+                provenance: CommandProvenance::from_stamp(
+                    command.delivery_stamp(),
+                    command.origin(),
+                    command.direct_source_provenance(),
+                ),
+            })
+        });
     }
 
     /// TeX82 §375's ``@<Insert a token containing |frozen_endv|@>``:

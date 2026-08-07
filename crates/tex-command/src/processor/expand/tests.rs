@@ -68,6 +68,43 @@ fn delivery_and_backup_script(recorder: &Recorder, command_name: &str) -> Vec<&'
 }
 
 #[test]
+fn absent_observer_does_not_build_raw_or_expanded_delivery_payloads() {
+    // Observation is detached instrumentation around TeX82 §§341 and 380.
+    // The production scalar path must not allocate or resolve an observation
+    // payload when no consumer is attached.
+    fn run(observed: bool) -> usize {
+        let mut command = CommandState::default();
+        let source = command
+            .register_source(SourceRegistration::new(
+                RegisteredSourceKind::Generated,
+                Arc::<[u8]>::from(b"x".as_slice()),
+            ))
+            .expect("source registers");
+        command
+            .open_registered_source(source)
+            .expect("source opens");
+        let mut universe = Universe::new_with_plain_catcodes();
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut recorder = Recorder::default();
+        let mut processor = processor(&mut command, &mut universe, &mut capabilities);
+        if observed {
+            processor = processor.with_observer(&mut recorder);
+        }
+
+        assert!(
+            processor
+                .get_x_token()
+                .expect("expanded delivery succeeds")
+                .is_some()
+        );
+        processor.observation_payloads_built()
+    }
+
+    assert_eq!(run(false), 0);
+    assert_eq!(run(true), 2);
+}
+
+#[test]
 fn macro_expanded_alignment_lookahead_is_observed_before_backup() {
     // TeX82 §§380, 785, 789: `align_peek` completes `get_x_token` before
     // `init_col` backs its ordinary command up. This bounded source-free

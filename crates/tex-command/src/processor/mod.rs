@@ -190,6 +190,8 @@ pub struct CommandProcessor<'a> {
     command_trace_mode_prefix: Option<String>,
     command_trace_printed: bool,
     command_trace_count: usize,
+    #[cfg(test)]
+    observation_payloads_built: usize,
 }
 
 impl CommandProcessor<'_> {
@@ -374,7 +376,14 @@ impl<'a> CommandProcessor<'a> {
             command_trace_mode_prefix: None,
             command_trace_printed: false,
             command_trace_count: 0,
+            #[cfg(test)]
+            observation_payloads_built: 0,
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn observation_payloads_built(&self) -> usize {
+        self.observation_payloads_built
     }
 
     /// Lends a run-owned monotonic ledger to this processor episode.
