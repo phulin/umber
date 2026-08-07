@@ -49,12 +49,12 @@ Use this crate when behavior is about driving the engine, presenting CLI output,
   tests.
 - `src/memory_output.rs`: exact committed terminal/log/DVI/aux collection for successful memory-backed runs, aggregate output limits, and auxiliary publication into VFS generated transactions.
 - `src/memory_output/tests.rs`: final-commit idempotence, output accounting, and memory-boundary tests.
-- `src/pdf_import.rs`: lightweight PDF syntax inspection plus the temporarily retained legacy selected-page resource importer used by virtual-font finalization.
-- `src/pdf_import/tests.rs`: synthetic and conditional pinned-corpus PDF import regressions.
+- `src/pdf_import.rs`: lightweight PDF syntax inspection for host-side external-page request resolution; detached resource import belongs to `tex-out`.
+- `src/pdf_import/tests.rs`: synthetic named-page inspection regressions.
 - `src/pdftex.rs`: pdfTeX 1.40.29 behavior, focused conformance tests, and thin
   mode/default application over `tex-command`'s integrated primitive
   catalogue; it owns no second name, meaning, parameter, or default table.
-- `src/pdf_output.rs`: thin detached-finalization adapter plus a test-only byte-exact legacy finalizer oracle pending its deletion by the parent migration issue.
+- `src/pdf_output.rs`: thin detached-finalization adapter, error translation, diagnostics publication, and validated allocation-receipt replay; all lowering and serialization delegate to `tex-out`.
 - `src/pdf_output/finalization_input.rs`: compatibility adapter that freezes
   accepted engine state and host-resolved artifacts/resources into
   `tex_out::pdf::PdfFinalizationInput`; it is the only Umber-owned PDF

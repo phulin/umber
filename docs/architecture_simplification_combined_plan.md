@@ -483,18 +483,36 @@ limit that was previously a hidden finalizer constant. The allocation cursor
 is a deterministic monotonic value type. Umber's compatibility adapter is the
 last engine/host-aware step: it expands token lists, reads committed artifacts
 and raw-object files, and copies validated resources before returning the
-detached input. Differential coverage freezes two independent legacy runs,
-compares the complete inputs, and verifies the legacy finalizer still produces
-identical bytes; the next migration step may therefore move lowering without
-introducing `Universe`, `World`, or resolver callbacks into `tex-out`.
+detached input. Pre-migration differential coverage froze two independent
+legacy runs and established the exact detached boundary before the legacy
+implementation and self-comparison were deleted.
 
 Virtual-font finalization now retains each exact acquired local TFM transport
 and its `tex-fonts` validation receipt. The adapter privately replays bounded
 first-use allocation to freeze packet-sized realized identities and pdfTeX
 resource/object numbers; `tex-out` reparses those transports at each declared
 size and owns recursive packet lowering with no engine or host callback.
-Nested size, width, identity, recursion bounds, resource allocation, and final
-PDF bytes are checked against the retained legacy oracle.
+Nested size, width, identity, recursion bounds, and resource allocation are
+checked at the detached boundary and against independently parsed output.
+
+**Migration closeout and accounting.** Umber now constructs one
+`PdfFinalizationInput` and calls `tex_out::pdf::finalize_pdf` for every native
+and incremental PDF. The former handwritten finalizer, its test-only
+self-comparison oracle, duplicate form/font/image/navigation/object lowering,
+and duplicate selected-page resource importer are deleted. The retained
+adapter only freezes accepted engine and host data, translates errors and
+diagnostics, and replays the already validated allocation receipt; there is no
+fallback or second serialization path. Exact PDF structure, committed fixture
+bytes, Poppler render attestations, and focused `tex-out` form/font/VF/resource
+tests provide independent evidence instead of comparing two Umber
+implementations.
+
+Production Rust adds 310 and deletes 9,991 lines, a 9,681-line net reduction.
+Removing differential-only tests adds one and deletes 101 lines. Guidance is
+line-neutral, and documentation adds 24 and deletes six lines. The complete
+tracked migration therefore adds 339 and deletes 10,102 lines, a 9,763-line
+net reduction; fixtures, generated source, lockfiles, and binary assets are
+unchanged.
 
 ## 7. One canonical HTML producer and JavaScript receiver
 
