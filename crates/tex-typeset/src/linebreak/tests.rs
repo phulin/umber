@@ -245,6 +245,59 @@ fn pdf_image_reference_contributes_width_to_line_measurement() {
 }
 
 #[test]
+fn base_whatsit_line_visitation_is_zero_width_and_never_a_breakpoint() {
+    // TeX82 §1362: line-break traversal recognizes base whatsits without
+    // measuring, breaking, executing, or reordering them. Language-state
+    // interpretation belongs to the executor's pre-hyphenation visit.
+    let mut universe = Universe::new();
+    let tokens = universe.intern_token_list(&[Token::Char {
+        ch: 'w',
+        cat: Catcode::Letter,
+    }]);
+    let whatsits = vec![
+        Node::Whatsit(Whatsit::OpenOut {
+            slot: tex_state::StreamSlot::new(15),
+            path: "visit.tex".into(),
+        }),
+        Node::Whatsit(Whatsit::DeferredWrite {
+            sink: tex_state::PrintSink::Log,
+            tokens,
+        }),
+        Node::Whatsit(Whatsit::CloseOut {
+            slot: Some(tex_state::StreamSlot::new(0)),
+        }),
+        Node::Whatsit(Whatsit::CloseOut { slot: None }),
+        Node::Whatsit(Whatsit::Special {
+            class: "dvi".into(),
+            payload: b"visit".to_vec(),
+        }),
+        Node::Whatsit(Whatsit::Language {
+            language: 7,
+            left_hyphen_min: 2,
+            right_hyphen_min: 3,
+        }),
+    ];
+    assert_eq!(
+        line_widths_nodes(&universe, &whatsits),
+        widths::Widths::zero()
+    );
+
+    let mut paragraph = whatsits.clone();
+    paragraph.push(Node::Penalty(EJECT_PENALTY));
+    let breakpoints = legal_breakpoints(&universe, &paragraph, &params(100));
+    assert_eq!(breakpoints.len(), 1);
+    assert_eq!(breakpoints[0].position, paragraph.len());
+    assert_eq!(&paragraph[..whatsits.len()], whatsits);
+    assert_eq!(
+        universe.tokens(tokens),
+        [Token::Char {
+            ch: 'w',
+            cat: Catcode::Letter,
+        }]
+    );
+}
+
+#[test]
 fn etex_penalty_arrays_repeat_and_use_forward_and_reverse_indexes() {
     let mut universe = Universe::new();
     let empty = universe.freeze_node_list(&[]);

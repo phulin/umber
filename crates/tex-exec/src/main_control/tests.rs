@@ -12,6 +12,8 @@ use super::*;
 mod etex_diagnostic_tracing;
 #[path = "tests/material_property_matrices.rs"]
 mod material_property_matrices;
+#[path = "tests/tex82_whatsit_evidence.rs"]
+mod tex82_whatsit_evidence;
 
 fn register_source(control: &mut MainControl, bytes: &[u8]) {
     let source = control

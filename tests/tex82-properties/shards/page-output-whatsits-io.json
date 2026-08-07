@@ -1334,12 +1334,12 @@
       "test_level": "rust-unit",
       "coverage": [
         {
-          "path": "crates/tex-exec/src/main_control/tests.rs",
-          "test": "end_and_dump_run_profile_specific_cleanup_in_observable_order"
+          "path": "crates/tex-exec/src/main_control/tests/tex82_whatsit_evidence.rs",
+          "test": "output_stream_lifecycle_projects_all_numbered_and_fallback_states"
         }
       ],
-      "status": "gap",
-      "gap_bead": "umber2-alfh.32"
+      "status": "covered",
+      "gap_bead": null
     },
     {
       "id": "tex82.whatsits.primitive-and-dispatch",
@@ -1377,10 +1377,14 @@
         {
           "path": "crates/tex-command/src/command/tests.rs",
           "test": "unknown_extension_selector_fails_loudly_at_dispatch"
+        },
+        {
+          "path": "crates/tex-exec/src/main_control/tests/tex82_whatsit_evidence.rs",
+          "test": "extension_dispatch_executes_every_selector_in_every_tex82_mode"
         }
       ],
-      "status": "gap",
-      "gap_bead": "umber2-alfh.32"
+      "status": "covered",
+      "gap_bead": null
     },
     {
       "id": "tex82.whatsits.construction-and-ownership",
@@ -1423,8 +1427,8 @@
       "test_level": "rust-unit",
       "coverage": [
         {
-          "path": "crates/tex-exec/src/main_control/tests.rs",
-          "test": "base_whatsits_preserve_scan_timing_normalization_and_payload_ownership"
+          "path": "crates/tex-exec/src/main_control/tests/tex82_whatsit_evidence.rs",
+          "test": "base_whatsit_construction_projects_fields_display_size_and_ownership"
         },
         {
           "path": "crates/tex-command/src/scanners/structured/tests.rs",
@@ -1435,8 +1439,8 @@
           "test": "language_normalization_and_same_language_append_boundaries_match_tex82"
         }
       ],
-      "status": "gap",
-      "gap_bead": "umber2-alfh.32"
+      "status": "covered",
+      "gap_bead": null
     },
     {
       "id": "tex82.whatsits.list-visitation",
@@ -1472,24 +1476,24 @@
       "test_level": "rust-unit",
       "coverage": [
         {
-          "path": "crates/tex-exec/src/page_builder/tests.rs",
-          "test": "pdftex_page_top_discards_snapy_but_preserves_other_whatsits"
+          "path": "crates/tex-typeset/src/linebreak/tests.rs",
+          "test": "base_whatsit_line_visitation_is_zero_width_and_never_a_breakpoint"
         },
         {
-          "path": "crates/tex-exec/src/splitting/tests.rs",
-          "test": "pdftex_prune_page_top_discards_snapy_but_preserves_other_whatsits"
+          "path": "crates/tex-exec/src/paragraph_end/hyphenation.rs",
+          "test": "pre_hyphenation_visits_every_base_whatsit_without_transferring_ownership"
         },
         {
-          "path": "crates/tex-out/src/dvi/tests.rs",
-          "test": "specials_emit_xxx1_and_xxx4_at_anchor_positions"
+          "path": "crates/tex-exec/src/main_control/tests/tex82_whatsit_evidence.rs",
+          "test": "base_whatsits_are_passive_for_page_and_vertical_break_visits"
         },
         {
-          "path": "crates/tex-exec/src/main_control/tests.rs",
-          "test": "deferred_write_expands_at_shipout_once"
+          "path": "crates/tex-exec/src/main_control/tests/tex82_whatsit_evidence.rs",
+          "test": "hlist_and_vlist_visit_each_base_whatsit_once_in_position"
         }
       ],
-      "status": "gap",
-      "gap_bead": "umber2-alfh.32"
+      "status": "covered",
+      "gap_bead": null
     },
     {
       "id": "tex82.effects.special-output",
@@ -1565,20 +1569,12 @@
       "test_level": "rust-unit",
       "coverage": [
         {
-          "path": "crates/tex-exec/src/main_control/tests.rs",
-          "test": "deferred_write_expands_at_shipout_once"
-        },
-        {
-          "path": "crates/tex-exec/src/main_control/tests.rs",
-          "test": "base_whatsits_preserve_scan_timing_normalization_and_payload_ownership"
-        },
-        {
-          "path": "crates/tex-command/src/scanners/structured/tests.rs",
-          "test": "unbalanced_write_captures_context_before_recovery_retires_its_levels"
+          "path": "crates/tex-exec/src/main_control/tests/tex82_whatsit_evidence.rs",
+          "test": "deferred_write_projects_stopper_selector_mode_stream_and_recovery_matrix"
         }
       ],
-      "status": "gap",
-      "gap_bead": "umber2-alfh.32"
+      "status": "covered",
+      "gap_bead": null
     },
     {
       "id": "tex82.effects.open-write-close-dispatch",

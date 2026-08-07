@@ -997,6 +997,58 @@ mod tests {
     }
 
     #[test]
+    fn pre_hyphenation_visits_every_base_whatsit_without_transferring_ownership() {
+        // TeX82 §§1362--1363: pre-hyphenation recognizes only the language
+        // subtype as state; every base subtype remains in exact list order
+        // with its immutable token payload and stream fields still owned.
+        let mut stores = Universe::new_with_plain_catcodes();
+        let tokens = stores.intern_token_list(&[tex_state::token::Token::Char {
+            ch: 'w',
+            cat: tex_state::token::Catcode::Letter,
+        }]);
+        let nodes = vec![
+            Node::Whatsit(tex_state::node::Whatsit::OpenOut {
+                slot: tex_state::StreamSlot::new(15),
+                path: "visit.tex".into(),
+            }),
+            Node::Whatsit(tex_state::node::Whatsit::DeferredWrite {
+                sink: tex_state::PrintSink::Log,
+                tokens,
+            }),
+            Node::Whatsit(tex_state::node::Whatsit::CloseOut {
+                slot: Some(tex_state::StreamSlot::new(0)),
+            }),
+            Node::Whatsit(tex_state::node::Whatsit::CloseOut { slot: None }),
+            Node::Whatsit(tex_state::node::Whatsit::Special {
+                class: "dvi".into(),
+                payload: b"visit".to_vec(),
+            }),
+            Node::Whatsit(tex_state::node::Whatsit::Language {
+                language: 7,
+                left_hyphen_min: 2,
+                right_hyphen_min: 3,
+            }),
+        ];
+        let mut fuel = tex_command::CommandFuelLedger::new(1_000).expect("bounded fuel");
+
+        let (visited, diagnostics) =
+            hyphenated_hlist_sequence_with_fuel(&mut stores, nodes.clone(), fuel.fuel_mut())
+                .expect("base-whatsit visit succeeds");
+
+        assert_eq!(visited.semantic(), nodes);
+        assert_eq!(visited.physical(), nodes);
+        assert!(diagnostics.is_empty());
+        assert_eq!(
+            stores.tokens(tokens),
+            [tex_state::token::Token::Char {
+                ch: 'w',
+                cat: tex_state::token::Catcode::Letter,
+            }]
+        );
+        assert!(stores.world().effect_records().is_empty());
+    }
+
+    #[test]
     fn pre_hyphenation_candidate_applies_uppercase_and_same_font_eligibility() {
         let mut stores = Universe::new_with_plain_catcodes();
         let font = stores.current_font();
