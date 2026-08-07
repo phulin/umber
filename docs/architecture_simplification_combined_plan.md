@@ -257,6 +257,31 @@ atomic batch admission, revision rollback, bibliography pass isolation, and
 WASM delivery. Documentation repair tree `db0473664` additionally passed the
 repository-wide local-Markdown-target audit and all four check gates.
 
+**Forecast reconciliation (owner decision, 2026-08-07).** Follow-up
+`umber2-vgjr.22` audited every surviving lifecycle, acquisition, store,
+scheduler, domain-value, phase-publication, caller, compatibility facade, and
+proof boundary. It found no second writable authority and no production
+deletion with a named surviving owner and identical behavior. Parsed font
+stores, batch frontiers, and retained phase views are projections required for
+domain validation, bounded progress, or publication; authored JavaScript owns
+the live asynchronous browser scheduler rather than duplicating Rust admission.
+
+The original estimate correctly identified the deleted acquisition loops,
+admission maps, and non-driving Rust planes, but treated too much gross deletion
+as net reduction. The 1,079 added authored Rust lines implement the sole generic
+admission and download/store transitions plus independent proofs for ordering,
+offline reuse, retries, cancellation, atomic admission, and rollback. Removing
+them to recover the 532-line shortfall would recreate implicit authority or
+weaken the preserved contract.
+
+The portfolio owner therefore retires the original 1,200--1,900-line forecast
+and accepts the measured 668-line authored-Rust reduction as Program 3's final
+result. No further reduction is carried for this program, and no moved,
+generated, historical, fixture, documentation, binary, or compatibility-gated
+lines are credited. The complete retained-authority audit and independently
+reproduced accounting are recorded in
+[the reconciliation writeback](writeback/umber2-vgjr.22.md).
+
 **Dependencies.** The contract precedes program 13's browser orchestration and program 17's VFS contraction. Do not wait for API retirement to begin the canonical internal lifecycle.
 
 ## 4. Retire paragraph replay, then establish one revision transaction and effect log
