@@ -66,3 +66,33 @@ Gentle remained byte-exact. The shipout stop gate measured 1.129 ms ordinary
 and 6.842 ms deferred-math midpoint estimates with 230,652 KiB maximum RSS.
 The complete native suite passed under `MemoryMax=1G` at 312,152 KiB maximum
 RSS, and uncapped `CARGO_BUILD_JOBS=6 scripts/check.sh` passed all four gates.
+
+## Nested-leader geometry repair
+
+A second closeout challenge found that a leader payload containing another
+leader still re-entered the DVI and positioned list walkers recursively. Both
+backends now represent repetition and exact post-box coordinate restoration as
+continuation frames on their existing explicit work stacks. DVI frames retain
+only the box scalars used during traversal instead of cloning the remaining
+owned subtree. Leader start, inclusive edge tests, rounding compensation,
+glue accumulation, synchronization, event and byte order, effects, and
+provenance remain the TeX82 §§638--642 behavior.
+
+Active regressions use the unchanged maximum-depth contract: one root hlist,
+4,093 nested hlist leader payloads sized to emit exactly once, and a terminal
+rule. Canonical-byte DVI replay passed in 2.96 s at 43,988 KiB RSS and
+positioned lowering passed in 0.17 s at 43,928 KiB RSS under
+`MemoryMax=512M`. Companion cases prove depth-first box/event exit order,
+owned-versus-canonical DVI equality, and first malformed-font error order
+inside a leader before a later sibling.
+
+Final bounded verification passed all 151 `tex-out` tests at 87,180 KiB, all
+466 `tex-exec` tests at 315,916 KiB, and all 40 active `tex-incr` tests at
+161,888 KiB. Fresh/memo DVI and DVI-disabled parity passed. Story and the
+explicit canonical Gentle gate remained byte-exact at 75,088 KiB and
+262,984 KiB. The exhaustive tracer was `CLEAN` with zero semantic and zero
+advisory geometry divergences at 424,960 KiB. The repeated shipout benchmark
+reported 1.1324 ms ordinary and 6.8957 ms deferred-math midpoint estimates at
+248,028 KiB. The complete native suite passed under `MemoryMax=1G` in 29.72 s
+at 309,800 KiB, and uncapped `CARGO_BUILD_JOBS=6 scripts/check.sh` passed all
+four gates.
