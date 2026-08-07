@@ -1235,11 +1235,35 @@
         "Forbidden vadjust/unbox/italic/delete-last paths scan no extra operand beyond their canonical scanner boundary and preserve following input."
       ],
       "semantic_owner": "tex-exec::lists",
-      "test_level": "rust-unit+semantic-minifixture",
+      "test_level": "rust-unit",
       "coverage": [
         {
           "path": "crates/tex-exec/src/main_control/tests/material_property_matrices.rs",
-          "test": "structured_material_lifecycle_delete_unbox_italic_and_recovery_matrix"
+          "test": "structured_material_legal_mode_and_source_order_matrix"
+        },
+        {
+          "path": "crates/tex-exec/src/main_control/tests/material_property_matrices.rs",
+          "test": "insert_closure_snapshots_parameters_and_migrates_owned_nodes_in_order"
+        },
+        {
+          "path": "crates/tex-exec/src/main_control/tests/material_property_matrices.rs",
+          "test": "unbox_copy_move_void_wrong_kind_and_math_ownership_matrix"
+        },
+        {
+          "path": "crates/tex-exec/src/main_control/tests/material_property_matrices.rs",
+          "test": "delete_last_matches_only_the_live_tail_in_h_v_and_math_modes"
+        },
+        {
+          "path": "crates/tex-exec/src/main_control/tests/material_property_matrices.rs",
+          "test": "outer_vertical_delete_recovery_preserves_page_and_following_input"
+        },
+        {
+          "path": "crates/tex-exec/src/main_control/tests/material_property_matrices.rs",
+          "test": "italic_correction_uses_font_tail_math_zero_and_forbidden_recovery"
+        },
+        {
+          "path": "crates/tex-exec/src/main_control/tests/material_property_matrices.rs",
+          "test": "insert_class_and_forbidden_vadjust_recovery_preserve_state_and_input"
         },
         {
           "path": "crates/tex-exec/src/main_control/tests.rs",

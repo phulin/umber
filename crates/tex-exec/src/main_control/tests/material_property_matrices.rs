@@ -4,7 +4,7 @@ use tex_command::{
     CommandDeliveryBoundary, CommandObservation, CommandObserver, FontResource, InputReason,
     InputTransition, ObservedToken, RecoveryKind, RegisteredSourceKind, SourceRegistration,
 };
-use tex_state::env::banks::{DimenParam, IntParam};
+use tex_state::env::banks::{DimenParam, GlueParam, IntParam};
 use tex_state::glue::Order;
 use tex_state::node::{GlueKind, KernKind, Node, Whatsit};
 use tex_state::page::PageMark;
@@ -45,7 +45,14 @@ enum Shape {
         children: Vec<Shape>,
     },
     Mark(u16, String),
-    Insert(u16, Vec<Shape>),
+    Insert {
+        class: u16,
+        size: i32,
+        split_top_skip: i32,
+        split_max_depth: i32,
+        floating_penalty: i32,
+        content: Vec<Shape>,
+    },
     Adjust(Vec<Shape>),
     Language(u8, u8, u8),
     MathOn(i32),
@@ -192,6 +199,31 @@ fn run_observed(source: &[u8], with_font: bool) -> (MainControl, Universe, Obser
     (control, stores, observations)
 }
 
+fn run_until_count(source: &[u8], expected_count: i32) -> (MainControl, Universe) {
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = MainControl::tex82_initex(&mut stores);
+    control.set_fuel_limit(100_000).expect("bounded fuel");
+    let registered = control
+        .command_mut()
+        .register_source(SourceRegistration::new(
+            RegisteredSourceKind::Generated,
+            Arc::<[u8]>::from(source),
+        ))
+        .expect("source registers");
+    control
+        .command_mut()
+        .open_registered_source(registered)
+        .expect("source opens");
+    while stores.count(0) != expected_count {
+        assert_eq!(
+            control.step(&mut stores).expect("program executes"),
+            MainControlStep::Continue,
+            "source ended before its live-mode probe"
+        );
+    }
+    (control, stores)
+}
+
 fn text(stores: &Universe, tokens: tex_state::ids::TokenListId) -> String {
     stores
         .tokens(tokens)
@@ -255,10 +287,21 @@ fn shapes(stores: &Universe, nodes: &[Node]) -> Vec<Shape> {
                 children: shapes(stores, stores.nodes(boxed.children).testing_decoded()),
             },
             Node::Mark { class, tokens } => Shape::Mark(*class, text(stores, *tokens)),
-            Node::Ins { class, content, .. } => Shape::Insert(
-                *class,
-                shapes(stores, stores.nodes(*content).testing_decoded()),
-            ),
+            Node::Ins {
+                class,
+                size,
+                split_top_skip,
+                split_max_depth,
+                floating_penalty,
+                content,
+            } => Shape::Insert {
+                class: *class,
+                size: size.raw(),
+                split_top_skip: stores.glue(*split_top_skip).width.raw(),
+                split_max_depth: split_max_depth.raw(),
+                floating_penalty: *floating_penalty,
+                content: shapes(stores, stores.nodes(*content).testing_decoded()),
+            },
             Node::Adjust(adjust) => Shape::Adjust(shapes(
                 stores,
                 stores.nodes(adjust.content).testing_decoded(),
@@ -300,6 +343,15 @@ fn boxed_children(stores: &Universe, register: u16) -> Vec<Node> {
 
 fn terminal(stores: &Universe) -> String {
     super::terminal_text(stores)
+}
+
+fn outer_vertical_shapes(stores: &Universe) -> Vec<Shape> {
+    let nodes = stores
+        .current_page_nodes()
+        .into_iter()
+        .chain(stores.page_contributions().iter().cloned())
+        .collect::<Vec<_>>();
+    shapes(stores, &nodes)
 }
 
 #[test]
@@ -1428,85 +1480,363 @@ fn paragraph_entry_endings_migration_depth_and_recovery_matrix() {
 }
 
 #[test]
-fn structured_material_lifecycle_delete_unbox_italic_and_recovery_matrix() {
-    // TeX82 §§1097--1113: ordered node projections cover insert/vadjust/mark
-    // group closure and migration, penalties, matching/nonmatching delete,
-    // move/copy unbox ownership, italic correction, and forbidden-mode
-    // recovery without relying on node-presence counters.
-    let (_, stores) = run(
-        br"\font\f=cmr10 \f
-          \setbox0=\hbox{f\/\mark{h}\penalty7}
-          \setbox1=\vbox{\insert3{\hrule height2pt}\mark{v}\penalty8}
-          \setbox2=\vbox{\noindent B\vadjust{\kern4pt}\par}
-          \setbox3=\hbox{\kern1pt\unkern\hskip2pt\unpenalty\unskip
-                           \penalty9\unpenalty\vrule width3pt}
-          \setbox4=\hbox{\kern5pt}\setbox5=\hbox{\unhcopy4\unhbox4}
-          \setbox7=\vbox{\kern6pt}
-          \nonstopmode\setbox6=\vbox{\/\global\count0=11
-            \unskip\unkern\unpenalty\hbox{\unhbox7}\vadjust{\kern1pt}}",
-        true,
+fn structured_material_legal_mode_and_source_order_matrix() {
+    // TeX82 §§1097--1103: insert, mark, and penalty are legal in all
+    // three outer mode classes.  Project their actual nodes in source order;
+    // a diagnostic count or `lastnodetype` enquiry would not prove ownership.
+    let (_, outer) = run(
+        br"\vsize=1000pt\insert2{\kern2pt}\mark{outer}\penalty10000",
+        false,
     );
-    let horizontal = register_shapes(&stores, 0);
+    let outer_nodes = outer_vertical_shapes(&outer);
+    assert!(
+        matches!(outer_nodes.as_slice(), [Shape::Insert { class: 2, content, .. }, Shape::Mark(0, mark)]
+            if content == &[Shape::Kern(2 * Scaled::UNITY, KernKind::Explicit)] && mark == "outer"),
+        "{outer_nodes:?}"
+    );
+    assert_eq!(outer.page_last_penalty(), 10_000);
+
+    let (_, nested) = run(
+        br"\setbox0=\hbox{\insert3{\kern3pt}\mark{horizontal}\penalty51}
+          \setbox1=\vbox{\insert4{\kern4pt}\mark{vertical}\penalty52}",
+        false,
+    );
+    let horizontal = register_shapes(&nested, 0);
     assert!(
         matches!(horizontal.as_deref(), Some([Shape::HBox { children, .. }])
-        if matches!(children.as_slice(), [Shape::Char('f'), Shape::Kern(k, KernKind::Explicit), Shape::Mark(0, mark), Shape::Penalty(7)] if *k > 0 && mark == "h")),
+            if matches!(children.as_slice(), [Shape::Insert { class: 3, content, .. }, Shape::Mark(0, mark), Shape::Penalty(51)]
+                if content == &[Shape::Kern(3 * Scaled::UNITY, KernKind::Explicit)] && mark == "horizontal")),
         "{horizontal:?}"
+    );
+    let vertical = register_shapes(&nested, 1);
+    assert!(
+        matches!(vertical.as_deref(), Some([Shape::VBox { children, .. }])
+            if matches!(children.as_slice(), [Shape::Insert { class: 4, content, .. }, Shape::Mark(0, mark), Shape::Penalty(52)]
+                if content == &[Shape::Kern(4 * Scaled::UNITY, KernKind::Explicit)] && mark == "vertical")),
+        "{vertical:?}"
+    );
+    let (math_control, math_stores) = run_until_count(
+        br"\noindent$\insert5{\kern5pt}\mark{math}\penalty53\global\count0=1",
+        1,
+    );
+    let math = shapes(&math_stores, math_control.modes.current_list().nodes());
+    assert!(
+        matches!(math.as_slice(), [Shape::Insert { class: 5, content, .. }, Shape::Mark(0, mark), Shape::Penalty(53)]
+            if content == &[Shape::Kern(5 * Scaled::UNITY, KernKind::Explicit)] && mark == "math"),
+        "{math:?}"
+    );
+}
+
+#[test]
+fn insert_closure_snapshots_parameters_and_migrates_owned_nodes_in_order() {
+    // TeX82 §§1100 reads all three insertion parameters before unsave.
+    // Both hbox contribution and paragraph line-breaking then move the one
+    // insertion node, mark node, and vadjust content to the enclosing vlist.
+    let (_, stores) = run(
+        br"\font\f=cmr10 \f\splittopskip=1pt\splitmaxdepth=2pt\floatingpenalty=3
+          \setbox0=\vbox{\hbox{A\insert7{\splittopskip=11pt\splitmaxdepth=12pt\floatingpenalty=13\kern2pt}\mark{boxed}\vadjust{\kern3pt}B}}
+          \setbox1=\vbox{\noindent C\insert8{\splittopskip=21pt\splitmaxdepth=22pt\floatingpenalty=23\kern4pt}\mark{paragraph}\vadjust{\kern5pt}D\par}",
+        true,
+    );
+    assert_eq!(
+        stores
+            .glue(stores.glue_param(GlueParam::SPLIT_TOP_SKIP))
+            .width
+            .raw(),
+        Scaled::UNITY
+    );
+    assert_eq!(
+        stores.dimen_param(DimenParam::SPLIT_MAX_DEPTH).raw(),
+        2 * Scaled::UNITY
+    );
+    assert_eq!(stores.int_param(IntParam::FLOATING_PENALTY), 3);
+
+    let boxed = register_shapes(&stores, 0);
+    assert!(
+        matches!(boxed.as_deref(), Some([Shape::VBox { children, .. }])
+            if matches!(children.as_slice(), [Shape::HBox { children: retained, .. }, Shape::Insert { class: 7, size, split_top_skip, split_max_depth, floating_penalty: 13, content, .. }, Shape::Mark(0, mark), Shape::Kern(adjust, KernKind::Explicit)]
+                if retained == &[Shape::Char('A'), Shape::Char('B')]
+                    && *size == 2 * Scaled::UNITY
+                    && *split_top_skip == 11 * Scaled::UNITY
+                    && *split_max_depth == 12 * Scaled::UNITY
+                    && content == &[Shape::Kern(2 * Scaled::UNITY, KernKind::Explicit)]
+                    && mark == "boxed"
+                    && *adjust == 3 * Scaled::UNITY)),
+        "{boxed:?}"
+    );
+    let paragraph = register_shapes(&stores, 1);
+    assert!(
+        matches!(paragraph.as_deref(), Some([Shape::VBox { children, .. }])
+            if matches!(children.as_slice(), [Shape::HBox { children: retained, .. }, Shape::Insert { class: 8, size, split_top_skip, split_max_depth, floating_penalty: 23, content, .. }, Shape::Mark(0, mark), Shape::Kern(adjust, KernKind::Explicit)]
+                if retained.contains(&Shape::Char('C')) && retained.contains(&Shape::Char('D'))
+                    && *size == 4 * Scaled::UNITY
+                    && *split_top_skip == 21 * Scaled::UNITY
+                    && *split_max_depth == 22 * Scaled::UNITY
+                    && content == &[Shape::Kern(4 * Scaled::UNITY, KernKind::Explicit)]
+                    && mark == "paragraph"
+                    && *adjust == 5 * Scaled::UNITY)),
+        "{paragraph:?}"
+    );
+}
+
+#[test]
+fn unbox_copy_move_void_wrong_kind_and_math_ownership_matrix() {
+    // TeX82 §§1110: copy and move splice the same ordered child list,
+    // but only move voids the source. Void registers are silent no-ops;
+    // wrong-kind and math-mode attempts diagnose without changing ownership.
+    let (_, stores) = run(
+        br"\nonstopmode
+          \setbox0=\vbox{\hrule height1pt\kern2pt\penalty3}
+          \setbox1=\vbox{\unvcopy0\kern4pt\unvbox0}
+          \setbox2=\hbox{\kern5pt}
+          \setbox3=\vbox{\unvbox9\global\advance\count0 by1
+                           \unvcopy9\global\advance\count0 by1
+                           \unvbox2\global\advance\count0 by1
+                           \unvcopy2\global\advance\count0 by1}
+          \setbox4=\vbox{\kern6pt}
+          \setbox5=\hbox{\unhbox9\global\advance\count0 by1
+                           \unhcopy9\global\advance\count0 by1
+                           \unhbox4\global\advance\count0 by1
+                           \unhcopy4\global\advance\count0 by1}
+          \setbox6=\hbox{\kern7pt}
+          \setbox7=\hbox{$\unhbox6\global\advance\count0 by1
+                            \unhcopy6\global\advance\count0 by1$}",
+        false,
+    );
+    let moved = register_shapes(&stores, 1);
+    assert!(
+        matches!(moved.as_deref(), Some([Shape::VBox { children, .. }])
+        if children.as_slice() == [
+            Shape::Rule(None, Some(Scaled::UNITY), Some(0)),
+            Shape::Kern(2 * Scaled::UNITY, KernKind::Explicit),
+            Shape::Penalty(3),
+            Shape::Kern(4 * Scaled::UNITY, KernKind::Explicit),
+            Shape::Rule(None, Some(Scaled::UNITY), Some(0)),
+            Shape::Kern(2 * Scaled::UNITY, KernKind::Explicit),
+            Shape::Penalty(3),
+        ]),
+        "{moved:?}"
+    );
+    assert_eq!(register_shapes(&stores, 0), None, "unvbox moves");
+    assert!(
+        register_shapes(&stores, 2).is_some(),
+        "wrong v-unbox preserves hbox"
+    );
+    assert!(
+        register_shapes(&stores, 4).is_some(),
+        "wrong h-unbox preserves vbox"
+    );
+    assert!(
+        register_shapes(&stores, 6).is_some(),
+        "math unbox preserves hbox"
+    );
+    assert!(
+        matches!(register_shapes(&stores, 3).as_deref(), Some([Shape::VBox { children, .. }]) if children.is_empty())
+    );
+    assert!(
+        matches!(register_shapes(&stores, 5).as_deref(), Some([Shape::HBox { children, .. }]) if children.is_empty())
+    );
+    assert!(
+        matches!(register_shapes(&stores, 7).as_deref(), Some([Shape::HBox { children, .. }])
+        if children.as_slice() == [Shape::MathOn(0), Shape::MathOff(0)])
+    );
+    assert_eq!(stores.count(0), 10, "all following assignments execute");
+    assert_eq!(
+        terminal(&stores)
+            .matches("Incompatible list can't be unboxed")
+            .count(),
+        6
+    );
+}
+
+#[test]
+fn delete_last_matches_only_the_live_tail_in_h_v_and_math_modes() {
+    // TeX82 §§1105: each primitive removes only its own live tail.
+    // Empty and mismatched operations are exact structural no-ops.
+    let (_, stores) = run(
+        br"\font\f=cmr10 \f
+          \setbox0=\hbox{\unkern\kern1pt\unkern\kern2pt\unskip
+                           \hskip3pt\unskip\penalty4\unpenalty A\unpenalty}
+          \setbox1=\vbox{\unskip\kern5pt\unkern\kern6pt\unpenalty
+                           \vskip7pt\unskip\penalty8\unpenalty\hrule\unkern}
+          ",
+        true,
+    );
+    assert!(
+        matches!(register_shapes(&stores, 0).as_deref(), Some([Shape::HBox { children, .. }])
+        if children.as_slice() == [Shape::Kern(2 * Scaled::UNITY, KernKind::Explicit), Shape::Char('A')])
     );
     assert!(
         matches!(register_shapes(&stores, 1).as_deref(), Some([Shape::VBox { children, .. }])
-        if matches!(children.as_slice(), [Shape::Insert(3, content), Shape::Mark(0, mark), Shape::Penalty(8)]
-            if matches!(content.as_slice(), [Shape::Rule(_, Some(h), _) ] if *h == 2 * Scaled::UNITY) && mark == "v"))
+        if matches!(children.as_slice(), [Shape::Kern(k, KernKind::Explicit), Shape::Rule(_, _, _)] if *k == 6 * Scaled::UNITY))
     );
+    let (math_control, math_stores) = run_until_count(
+        br"\noindent$\unpenalty\kern9pt\unkern\kern10pt\unskip\mskip11mu\unskip\penalty12\unpenalty\global\count0=1",
+        1,
+    );
+    let math = shapes(&math_stores, math_control.modes.current_list().nodes());
     assert!(
-        matches!(register_shapes(&stores, 2).as_deref(), Some([Shape::VBox { children, .. }])
-        if matches!(children.as_slice(), [Shape::HBox { .. }, Shape::Kern(k, KernKind::Explicit)] if *k == 4 * Scaled::UNITY))
+        math.as_slice() == [Shape::Kern(10 * Scaled::UNITY, KernKind::Explicit)],
+        "{math:?}"
     );
-    assert!(
-        matches!(register_shapes(&stores, 3).as_deref(), Some([Shape::HBox { children, .. }])
-        if matches!(children.as_slice(), [Shape::Rule(Some(w), _, _)] if *w == 3 * Scaled::UNITY))
-    );
-    assert!(
-        matches!(register_shapes(&stores, 5).as_deref(), Some([Shape::HBox { children, .. }])
-        if children.as_slice() == [Shape::Kern(5 * Scaled::UNITY, KernKind::Explicit), Shape::Kern(5 * Scaled::UNITY, KernKind::Explicit)])
-    );
-    assert_eq!(register_shapes(&stores, 4), None);
-    assert!(register_shapes(&stores, 7).is_some());
-    assert_eq!(stores.count(0), 11);
-    let errors = terminal(&stores);
-    assert!(errors.contains("You can't use `\\/' in internal vertical mode"));
-    assert!(
-        errors.contains("Incompatible list can't be unboxed"),
-        "{errors}"
-    );
-    assert!(errors.contains("You can't use `\\vadjust' in internal vertical mode"));
+}
 
-    let (_, boundaries) = run(
+#[test]
+fn outer_vertical_delete_recovery_preserves_page_and_following_input() {
+    // Once build_page has consumed the contribution tail, unpenalty and
+    // unkern take §1105's apology path. Unskip uniquely stays silent after a
+    // nonglue and removes a still-pending matching contribution tail.
+    for (baseline_source, source, command) in [
+        (
+            br"\nonstopmode\hrule height1pt\penalty10000".as_slice(),
+            br"\nonstopmode\hrule height1pt\penalty10000\unpenalty\global\count0=11".as_slice(),
+            "unpenalty",
+        ),
+        (
+            br"\nonstopmode\hrule height1pt\penalty10000".as_slice(),
+            br"\nonstopmode\hrule height1pt\penalty10000\unkern\global\count0=11".as_slice(),
+            "unkern",
+        ),
+    ] {
+        let (_, baseline) = run(baseline_source, false);
+        let (_, stores) = run(source, false);
+        assert_eq!(stores.count(0), 11, "{command} lost following input");
+        assert!(
+            terminal(&stores).contains(&format!("You can't use `\\{command}' in vertical mode")),
+            "{command}: {}",
+            terminal(&stores)
+        );
+        assert_eq!(
+            outer_vertical_shapes(&stores),
+            outer_vertical_shapes(&baseline),
+            "{command} changed page ownership"
+        );
+    }
+
+    let (_, nonglue_baseline) = run(br"\hrule height1pt\penalty10000", false);
+    let (_, nonglue) = run(
+        br"\nonstopmode\hrule height1pt\penalty10000\unskip\global\count0=11",
+        false,
+    );
+    assert_eq!(nonglue.count(0), 11);
+    assert_eq!(
+        outer_vertical_shapes(&nonglue),
+        outer_vertical_shapes(&nonglue_baseline)
+    );
+    assert!(!terminal(&nonglue).contains("You can't use `\\unskip'"));
+
+    let (_, matching_baseline) = run(br"\hrule height1pt", false);
+    let (_, matching) = run(br"\hrule height1pt\vskip2pt\unskip\global\count0=11", false);
+    assert_eq!(matching.count(0), 11);
+    assert_eq!(
+        outer_vertical_shapes(&matching),
+        outer_vertical_shapes(&matching_baseline),
+        "outer unskip removes only the matching contribution tail"
+    );
+}
+
+#[test]
+fn italic_correction_uses_font_tail_math_zero_and_forbidden_recovery() {
+    // TeX82 §§1112--1113: hmode consults only the immediately preceding
+    // font character, math appends a zero font kern, and both vertical modes
+    // diagnose without consuming the following assignment.
+    let (_, stores) = run(
         br"\font\f=cmr10 \f\nonstopmode
-          \setbox0=\vbox{\insert0{\kern1pt}\insert254{\kern2pt}\insert255{\kern3pt}\insert256{\kern4pt}}
-          \setbox2=\hbox{\kern1pt\/}\end",
+          \setbox0=\hbox{f\/}
+          \setbox1=\hbox{A\/}
+          \setbox2=\hbox{f\kern1pt\/}
+          \/\global\advance\count0 by1
+          \setbox4=\vbox{\/\global\advance\count0 by1}",
         true,
     );
-    let classes = register_shapes(&boundaries, 0);
+    assert!(
+        matches!(register_shapes(&stores, 0).as_deref(), Some([Shape::HBox { children, .. }])
+        if matches!(children.as_slice(), [Shape::Char('f'), Shape::Kern(amount, KernKind::Explicit)] if *amount > 0))
+    );
+    assert!(
+        matches!(register_shapes(&stores, 1).as_deref(), Some([Shape::HBox { children, .. }])
+        if children.as_slice() == [Shape::Char('A'), Shape::Kern(0, KernKind::Explicit)])
+    );
+    assert!(
+        matches!(register_shapes(&stores, 2).as_deref(), Some([Shape::HBox { children, .. }])
+        if children.as_slice() == [Shape::Char('f'), Shape::Kern(Scaled::UNITY, KernKind::Explicit)])
+    );
+    let (math_control, math_stores) = run_until_count(br"\noindent$\kern1pt\/\global\count0=1", 1);
+    let math = shapes(&math_stores, math_control.modes.current_list().nodes());
+    assert!(
+        math.as_slice()
+            == [
+                Shape::Kern(Scaled::UNITY, KernKind::Explicit),
+                Shape::Kern(0, KernKind::Font),
+            ],
+        "{math:?}"
+    );
+    assert_eq!(stores.count(0), 2);
+    assert!(outer_vertical_shapes(&stores).is_empty());
+    assert!(
+        matches!(register_shapes(&stores, 4).as_deref(), Some([Shape::VBox { children, .. }]) if children.is_empty())
+    );
+    assert_eq!(terminal(&stores).matches("You can't use `\\/'").count(), 2);
+}
+
+#[test]
+fn insert_class_and_forbidden_vadjust_recovery_preserve_state_and_input() {
+    // TeX82 §§1099/§1111: user class 255 and overflow recover to zero;
+    // vadjust's internal 255 sentinel remains legal. Forbidden v/math paths
+    // scan no body and leave its tokens plus all existing list state live.
+    let (_, stores) = run(
+        br"\nonstopmode
+          \setbox0=\vbox{\insert0{\kern1pt}\insert254{\kern2pt}
+                           \insert255{\kern3pt}\insert256{\kern4pt}
+                           \vadjust\global\advance\count0 by1}
+          \setbox1=\hbox{\kern5pt\vadjust{\kern6pt}\kern7pt}",
+        false,
+    );
+    let classes = register_shapes(&stores, 0);
     assert!(
         matches!(classes.as_deref(), Some([Shape::VBox { children, .. }])
-        if matches!(children.as_slice(), [Shape::Insert(0, zero), Shape::Insert(254, high), Shape::Insert(0, reserved), Shape::Insert(0, overflow)]
-            if zero == &[Shape::Kern(Scaled::UNITY, KernKind::Explicit)]
+            if matches!(children.as_slice(), [
+                Shape::Insert { class: 0, content: zero, .. },
+                Shape::Insert { class: 254, content: high, .. },
+                Shape::Insert { class: 0, content: reserved, .. },
+                Shape::Insert { class: 0, content: overflow, .. },
+            ] if zero == &[Shape::Kern(Scaled::UNITY, KernKind::Explicit)]
                 && high == &[Shape::Kern(2 * Scaled::UNITY, KernKind::Explicit)]
                 && reserved == &[Shape::Kern(3 * Scaled::UNITY, KernKind::Explicit)]
                 && overflow == &[Shape::Kern(4 * Scaled::UNITY, KernKind::Explicit)])),
         "{classes:?}"
     );
     assert!(
-        matches!(register_shapes(&boundaries, 2).as_deref(), Some([Shape::HBox { children, .. }])
-        if children.as_slice() == [Shape::Kern(Scaled::UNITY, KernKind::Explicit)])
+        matches!(register_shapes(&stores, 1).as_deref(), Some([Shape::HBox { children, .. }])
+        if children.as_slice() == [
+            Shape::Kern(5 * Scaled::UNITY, KernKind::Explicit),
+            Shape::Adjust(vec![Shape::Kern(6 * Scaled::UNITY, KernKind::Explicit)]),
+            Shape::Kern(7 * Scaled::UNITY, KernKind::Explicit),
+        ])
     );
-    let boundary_errors = terminal(&boundaries);
+    let (math_control, math_stores) =
+        run_until_count(br"\noindent$\vadjust{\kern8pt}\global\count0=1", 1);
+    let math = shapes(&math_stores, math_control.modes.current_list().nodes());
     assert!(
-        boundary_errors.contains("You can't \\insert255"),
-        "{boundary_errors}"
+        math.as_slice()
+            == [Shape::Adjust(vec![Shape::Kern(
+                8 * Scaled::UNITY,
+                KernKind::Explicit,
+            )])],
+        "{math:?}"
     );
-    assert!(
-        boundary_errors.contains("Bad register code"),
-        "{boundary_errors}"
+    assert_eq!(
+        stores.count(0),
+        1,
+        "forbidden vadjust consumes no following token"
     );
+    let errors = terminal(&stores);
+    assert!(errors.contains("You can't \\insert255"), "{errors}");
+    assert!(errors.contains("Bad register code"), "{errors}");
+    assert_eq!(errors.matches("You can't use `\\vadjust'").count(), 1);
+
+    let (_, outer) = run(br"\nonstopmode\vadjust\global\advance\count0 by1", false);
+    assert_eq!(outer.count(0), 1);
+    assert!(outer_vertical_shapes(&outer).is_empty());
+    assert!(terminal(&outer).contains("You can't use `\\vadjust' in vertical mode"));
 }
