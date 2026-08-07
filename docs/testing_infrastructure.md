@@ -73,10 +73,11 @@ reference run; it does not substitute ambient font metrics.
 The `tex_exec` validation-only regeneration branch runs
 `cargo test -p tex-exec --test fixture_parity` for every active TeX82 source
 and reference projection, then `cargo test -p umber --lib pdftex::tests` for
-the twelve active pdfTeX literal consumers. It never rewrites the historical
+all twenty active pdfTeX property consumers. It never rewrites the historical
 `expected.ref` files: they predate a pinned capture contract, and ambient
 pdfTeX plus the standalone pinned 1.40.29 INITEX oracle both produce different
-transcript bytes. Eight pdfTeX cases remain blocked on `umber2-alfh.29`. The
+transcript bytes. The eight formerly blocked cases compare explicit
+status/terminal/log projections with strict bug-linked xfails. The
 `tex_exec_io` regeneration path preserves its three
 cases and runs the exact disposition census, but does not claim behavioral
 success: all three remain blocked on the oracle-comparable structured-effects

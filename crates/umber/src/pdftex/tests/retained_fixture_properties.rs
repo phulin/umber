@@ -1,0 +1,199 @@
+use serde_json::Value;
+use test_support::pdf_fixture::{Dictionary, ValidPdfFixture, array, name, reference};
+
+use super::*;
+
+const ACTIVE_TEST: &str = "crates/umber/src/pdftex/tests/retained_fixture_properties.rs::retained_pdftex_extension_fixtures_compare_oracle_projections";
+
+struct ActualChannels {
+    status: String,
+    terminal: String,
+    log: String,
+}
+
+#[test]
+fn retained_pdftex_extension_fixtures_compare_oracle_projections() {
+    let catalogue: Value = serde_json::from_str(include_str!(
+        "../../../../../tests/pdftex-properties/catalogue.json"
+    ))
+    .expect("parse pdfTeX extension property catalogue");
+    let properties = catalogue["properties"]
+        .as_array()
+        .expect("catalogue properties");
+    let owned = properties
+        .iter()
+        .filter(|property| property["active_test"] == ACTIVE_TEST)
+        .collect::<Vec<_>>();
+    assert_eq!(owned.len(), 8, "runner-owned fixture census changed");
+
+    for property in owned {
+        let id = property["id"].as_str().expect("property id");
+        let case = property["case"].as_str().expect("property case");
+        let expected_success = property["expected_success"]
+            .as_bool()
+            .expect("expected success");
+        let reference = test_support::read_fixture("tex_exec", case, "ref");
+        let (reference_success, terminal, log) = reference_channels(&reference);
+        assert_eq!(
+            reference_success, expected_success,
+            "{id} status projection drifted"
+        );
+        let actual = execute(case);
+
+        for observation in property["observations"]
+            .as_array()
+            .expect("property observations")
+        {
+            let channel = observation["channel"].as_str().expect("channel");
+            let projection = observation["projection"].as_str().expect("projection");
+            let oracle = match channel {
+                "status" => {
+                    if reference_success {
+                        "success"
+                    } else {
+                        "error"
+                    }
+                }
+                "terminal" => terminal,
+                "log" => log,
+                other => panic!("{id} invalid channel {other}"),
+            };
+            if channel != "status" {
+                assert!(
+                    normalize(oracle).contains(&normalize(projection)),
+                    "{id} {channel} oracle lacks {projection:?}"
+                );
+            }
+
+            let observed = match channel {
+                "status" => actual.status.as_str(),
+                "terminal" => actual.terminal.as_str(),
+                "log" => actual.log.as_str(),
+                _ => unreachable!(),
+            };
+            let matches = normalize(observed).contains(&normalize(projection));
+            match observation["disposition"].as_str().expect("disposition") {
+                "pass" => assert!(
+                    matches,
+                    "{id} {channel} lacks passing projection {projection:?}: {observed}"
+                ),
+                "xfail" => assert!(
+                    !matches,
+                    "{id} {channel} unexpectedly matches {projection:?}; close {} and promote this observation to pass",
+                    observation["bug"].as_str().expect("xfail bug")
+                ),
+                other => panic!("{id} invalid disposition {other}"),
+            }
+        }
+    }
+}
+
+fn execute(case: &str) -> ActualChannels {
+    let source =
+        test_support::read_repository_asset(format!("tests/corpus/tex_exec/{case}/{case}.tex"))
+            .unwrap_or_else(|error| panic!("read {case} source: {error:#}"));
+    let mut stores = pdftex_oracle_stores();
+    if case == "pdf_ximage_enquiries" {
+        seed_ximage_inputs(&mut stores);
+    }
+    prepare_pdftex_run_stores(&mut stores);
+    let result = run_pdf_memory(
+        std::str::from_utf8(&source).expect("fixture source is UTF-8"),
+        &mut stores,
+    );
+    let returned = result.as_deref().unwrap_or_default();
+    let terminal = format!(
+        "{}{}",
+        String::from_utf8_lossy(stores.world().memory_terminal_output().unwrap_or_default()),
+        returned
+    );
+    let log = format!(
+        "{}{}",
+        String::from_utf8_lossy(stores.world().memory_log_output().unwrap_or_default()),
+        returned
+    );
+    let status = match result {
+        Ok(_) => "success".to_owned(),
+        Err(error) => format!("error:{error}"),
+    };
+    ActualChannels {
+        status,
+        terminal,
+        log,
+    }
+}
+
+fn reference_channels(reference: &str) -> (bool, &str, &str) {
+    let success = reference
+        .strip_prefix("success: ")
+        .and_then(|rest| rest.lines().next())
+        .expect("reference success status");
+    let (_, channels) = reference
+        .split_once("\nstdout:\n")
+        .expect("reference stdout channel");
+    let (terminal, log) = channels
+        .split_once("log:\n")
+        .expect("reference log channel");
+    (success == "true", terminal, log)
+}
+
+fn normalize(text: &str) -> String {
+    text.chars()
+        .filter(|character| !character.is_whitespace())
+        .collect()
+}
+
+fn seed_ximage_inputs(stores: &mut Universe) {
+    let mut pdf = ValidPdfFixture::new("1.7").expect("create three-page PDF");
+    pdf.add_dictionary(
+        1,
+        Dictionary::new()
+            .entry("Type", name("Catalog"))
+            .entry("Pages", reference(2)),
+    )
+    .expect("catalog");
+    pdf.add_dictionary(
+        2,
+        Dictionary::new()
+            .entry("Type", name("Pages"))
+            .entry("Kids", array([reference(3), reference(4), reference(5)]))
+            .entry("Count", b"3"),
+    )
+    .expect("page tree");
+    for object in [3, 4, 5] {
+        pdf.add_dictionary(
+            object,
+            Dictionary::new()
+                .entry("Type", name("Page"))
+                .entry("Parent", reference(2))
+                .entry("MediaBox", b"[0 0 10 10]"),
+        )
+        .expect("page");
+    }
+    pdf.set_trailer_entry("Root", reference(1))
+        .expect("trailer root");
+
+    let mut png = vec![0_u8; 29];
+    png[..8].copy_from_slice(b"\x89PNG\r\n\x1a\n");
+    png[12..16].copy_from_slice(b"IHDR");
+    png[16..20].copy_from_slice(&1_u32.to_be_bytes());
+    png[20..24].copy_from_slice(&1_u32.to_be_bytes());
+    png[24] = 8;
+    png[25] = 0;
+    let jpeg = vec![
+        0xff, 0xd8, 0xff, 0xc1, 0x00, 0x08, 12, 0, 1, 0, 1, 1, 0xff, 0xd9,
+    ];
+    for (path, bytes) in [
+        ("depth8.png", png),
+        ("depth12.jpg", jpeg),
+        (
+            "three-pages.pdf",
+            pdf.finish().expect("serialize three-page PDF"),
+        ),
+    ] {
+        stores
+            .world_mut()
+            .set_memory_file(path, bytes)
+            .unwrap_or_else(|error| panic!("seed {path}: {error}"));
+    }
+}

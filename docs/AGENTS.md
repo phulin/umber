@@ -80,6 +80,10 @@ semantic boundary, not temporary implementation plans.
 
 `tex82_property_catalogue.md` defines the pinned 1,380-module TeX82 inventory, explicit disposition and executable-property schemas, reviewed shard contract, and hermetic completeness gate.
 
+`pdftex_extension_property_catalogue.md` defines the separate pinned pdfTeX
+extension property ownership and channel-disposition contract for retained
+executor observations without duplicating the canonical primitive inventory.
+
 `command_semantic_fixtures.md` defines repository fixture contract v1 for
 committed canonical command streams, profile/tool/source/output identity,
 mandatory WEB citations, hermetic correctness consumption, and explicit live

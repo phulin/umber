@@ -2567,4 +2567,6 @@ mod tests {
             })
             .collect()
     }
+
+    mod retained_fixture_properties;
 }

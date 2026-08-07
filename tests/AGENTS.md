@@ -95,6 +95,12 @@ trace. Acquisition and builds run only through `scripts/regen-fixtures.sh
 --oracle pdftex14029 --profile initex-etex-eight-bit`; Cargo correctness tests
 never invoke the live oracle.
 
+`tests/pdftex-properties/catalogue.json` owns the complete retained
+`tex_exec/pdf_*` property mapping. It cites the pinned pdfTeX 1.40.29 source,
+delegates primitive inventory authority to `docs/pdftex_primitives.md`, gives
+each case one stable property ID and exact active Rust test, and dispositions
+status, terminal, and log projections as pass or bug-linked xfail.
+
 `tests/oracle-regeneration-manifest.txt` pins the schema versions, exact
 engine/profile selectors, source-manifest hashes, fixture areas, and expected
 build identities for the three-engine regeneration interface. It also pins
@@ -331,11 +337,12 @@ recovery, font diagnostics, and effective microtype nodes do not inherit
 format-file assignments; their fixtures anchor the corresponding Umber policy
 tests. The seven `pdf_navigation_*` cases pin destination, outline, and
 article-thread scanner and lifecycle observations in INITEX mode as well.
-They and `pdf_ximage_enquiries` remain retained-but-blocked evidence until the
-pdfTeX extension property catalogue and runner tracked by `umber2-alfh.29` can
-consume them. The enquiry case uses deterministic fixturegen-owned PNG, JPEG,
-and typed `pdf_writer` three-page PDF inputs without committing opaque binary
-support assets.
+They and `pdf_ximage_enquiries` are actively consumed by the pdfTeX extension
+property runner, with every status, terminal, and log observation marked pass
+or strict bug-linked xfail in `tests/pdftex-properties/catalogue.json`. The
+enquiry case uses deterministic fixturegen-owned PNG, JPEG, and typed
+`pdf_writer` three-page PDF inputs without committing opaque binary support
+assets.
 
 `tests/corpus/tex_exec_io` contains three retained-but-blocked open/close-effect
 sources and reference observations. None is active correctness evidence: the

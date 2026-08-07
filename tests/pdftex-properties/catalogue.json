@@ -1,0 +1,385 @@
+{
+  "schema": "pdftex-extension-properties-v1",
+  "source": {
+    "engine": "pdfTeX 1.40.29",
+    "file": "pdftex.web",
+    "texlive_source_commit": "1664cf0ab3f6ce3b80db649bc6723f54ab12016c",
+    "sha256": "5a105669acc1b49aedb7560d4d15cb2e23467cb16d895eb0031c8dd9fea32f04"
+  },
+  "primitive_inventory_authority": "docs/pdftex_primitives.md",
+  "properties": [
+    {
+      "id": "pdftex.extension.compatibility-controls",
+      "case": "pdf_compatibility_controls",
+      "sections": [1522, 1525, 1581, 1586],
+      "claim": "Compatibility controls retain pdfTeX mode-entry and ignored-error behavior.",
+      "semantic_owner": "crates/umber/src/pdftex.rs",
+      "active_test": "crates/umber/src/pdftex.rs::mode_and_primitive_error_controls_match_the_pinned_initex_oracle",
+      "expected_success": true,
+      "observations": [
+        {
+          "channel": "terminal",
+          "projection": "default-ignore=0 local-ignore=3 restored-ignore=0",
+          "disposition": "pass"
+        },
+        { "channel": "log", "projection": "default-ignore=0 local-ignore=3 restored-ignore=0", "disposition": "pass" },
+        { "channel": "status", "projection": "success", "disposition": "pass" }
+      ]
+    },
+    {
+      "id": "pdftex.extension.font-code-tables",
+      "case": "pdf_font_codes",
+      "sections": [171, 252, 1585],
+      "claim": "Font code tables and expansion controls preserve their signed values and tag effects.",
+      "semantic_owner": "crates/umber/src/pdftex.rs",
+      "active_test": "crates/umber/src/pdftex.rs::pdf_font_codes_size_and_ligature_suppression_match_oracle",
+      "expected_success": false,
+      "observations": [
+        { "channel": "terminal", "projection": "assigned=7/-1000/800/1000/-1000/321/-432/543", "disposition": "pass" },
+        { "channel": "log", "projection": "assigned=7/-1000/800/1000/-1000/321/-432/543", "disposition": "pass" },
+        { "channel": "status", "projection": "error", "disposition": "xfail", "bug": "umber2-alfh.36" }
+      ]
+    },
+    {
+      "id": "pdftex.extension.font-configuration",
+      "case": "pdf_font_config",
+      "sections": [1587, 1588, 1589, 1590],
+      "claim": "Font configuration parameters obey signed assignment and grouping.",
+      "semantic_owner": "crates/umber/src/pdftex.rs",
+      "active_test": "crates/umber/src/pdftex.rs::pdf_font_configuration_matches_the_pinned_initex_oracle",
+      "expected_success": false,
+      "observations": [
+        { "channel": "terminal", "projection": "restored=1/2/3/4/5/6/7/300/9", "disposition": "pass" },
+        { "channel": "log", "projection": "restored=1/2/3/4/5/6/7/300/9", "disposition": "pass" },
+        { "channel": "status", "projection": "error", "disposition": "xfail", "bug": "umber2-alfh.36" }
+      ]
+    },
+    {
+      "id": "pdftex.extension.form-diagnostics",
+      "case": "pdf_form_diagnostics",
+      "sections": [1535, 1545, 1546],
+      "claim": "Form creation rejects void boxes with pdfTeX's fatal diagnostic.",
+      "semantic_owner": "crates/umber/src/pdftex.rs",
+      "active_test": "crates/umber/src/pdftex.rs::pdf_form_state_and_diagnostics_match_the_pinned_initex_oracle",
+      "expected_success": false,
+      "observations": [
+        {
+          "channel": "terminal",
+          "projection": "pdfTeX error (ext1): \\pdfxform cannot be used with a void box",
+          "disposition": "pass"
+        },
+        {
+          "channel": "log",
+          "projection": "pdfTeX error (ext1): \\pdfxform cannot be used with a void box",
+          "disposition": "pass"
+        },
+        { "channel": "status", "projection": "error", "disposition": "pass" }
+      ]
+    },
+    {
+      "id": "pdftex.extension.form-state",
+      "case": "pdf_form_state",
+      "sections": [1547, 1602, 1603],
+      "claim": "Form identities, dimensions, and lazy resource state follow source order.",
+      "semantic_owner": "crates/umber/src/pdftex.rs",
+      "active_test": "crates/umber/src/pdftex.rs::pdf_form_state_and_diagnostics_match_the_pinned_initex_oracle",
+      "expected_success": true,
+      "observations": [
+        { "channel": "terminal", "projection": "lazy-after=7/4/196608,131072", "disposition": "pass" },
+        { "channel": "log", "projection": "lazy-after=7/4/196608,131072", "disposition": "pass" },
+        { "channel": "status", "projection": "success", "disposition": "pass" }
+      ]
+    },
+    {
+      "id": "pdftex.extension.form-traversal-diagnostics",
+      "case": "pdf_form_traversal_diagnostics",
+      "sections": [1604, 1605],
+      "claim": "Form traversal reports unmatched graphics-state saves.",
+      "semantic_owner": "crates/umber/src/pdftex.rs",
+      "active_test": "crates/umber/src/pdftex.rs::pdf_form_state_and_diagnostics_match_the_pinned_initex_oracle",
+      "expected_success": false,
+      "observations": [
+        { "channel": "terminal", "projection": "1 unmatched \\pdfsave after form ship out", "disposition": "pass" },
+        { "channel": "log", "projection": "1 unmatched \\pdfsave after form ship out", "disposition": "pass" },
+        { "channel": "status", "projection": "error", "disposition": "pass" }
+      ]
+    },
+    {
+      "id": "pdftex.extension.ignored-dimension-effects",
+      "case": "pdf_ignored_dimen_effects",
+      "sections": [263, 980, 1014],
+      "claim": "The live ignored-dimension sentinel controls prevdepth and line overrides.",
+      "semantic_owner": "crates/umber/src/pdftex.rs",
+      "active_test": "crates/umber/src/pdftex.rs::pdfignoreddimen_is_the_live_prevdepth_and_line_override_sentinel",
+      "expected_success": true,
+      "observations": [
+        { "channel": "terminal", "projection": "active-line=12.0pt/12.0pt", "disposition": "pass" },
+        { "channel": "log", "projection": "active-line=12.0pt/12.0pt", "disposition": "pass" },
+        { "channel": "status", "projection": "success", "disposition": "pass" }
+      ]
+    },
+    {
+      "id": "pdftex.extension.image-configuration",
+      "case": "pdf_image_config",
+      "sections": [252, 263, 1548],
+      "claim": "Image and page configuration parameters preserve defaults, grouping, and signed values.",
+      "semantic_owner": "crates/umber/src/pdftex.rs",
+      "active_test": "crates/umber/src/pdftex.rs::pdf_image_configuration_matches_the_pinned_initex_oracle",
+      "expected_success": true,
+      "observations": [
+        { "channel": "terminal", "projection": "restored=96/300/1/2/3/4/1/2/900/1800/0/1/0/1", "disposition": "pass" },
+        { "channel": "log", "projection": "restored=96/300/1/2/3/4/1/2/900/1800/0/1/0/1", "disposition": "pass" },
+        { "channel": "status", "projection": "success", "disposition": "pass" }
+      ]
+    },
+    {
+      "id": "pdftex.extension.metadata-configuration",
+      "case": "pdf_metadata_config",
+      "sections": [1575, 1576, 1577, 1578, 1579, 1580],
+      "claim": "Document metadata parameters preserve defaults, grouping, and signed values.",
+      "semantic_owner": "crates/umber/src/pdftex.rs",
+      "active_test": "crates/umber/src/pdftex.rs::pdf_metadata_configuration_matches_the_pinned_initex_oracle",
+      "expected_success": true,
+      "observations": [
+        { "channel": "terminal", "projection": "restored=1/2/3/4/5/6/7/8/9", "disposition": "pass" },
+        { "channel": "log", "projection": "restored=1/2/3/4/5/6/7/8/9", "disposition": "pass" },
+        { "channel": "status", "projection": "success", "disposition": "pass" }
+      ]
+    },
+    {
+      "id": "pdftex.extension.microtype-effects",
+      "case": "pdf_microtype_effects",
+      "sections": [1533, 1585, 1586],
+      "claim": "Font expansion and protrusion produce the pinned effective node observations.",
+      "semantic_owner": "crates/umber/src/pdftex.rs",
+      "active_test": "crates/umber/src/pdftex.rs::pdf_microtype_effects_match_the_pinned_initex_oracle",
+      "expected_success": false,
+      "observations": [
+        { "channel": "terminal", "projection": "OK (see the transcript file)", "disposition": "pass" },
+        { "channel": "log", "projection": "OK.", "disposition": "pass" },
+        { "channel": "status", "projection": "error", "disposition": "xfail", "bug": "umber2-alfh.36" }
+      ]
+    },
+    {
+      "id": "pdftex.extension.move-chars-warning",
+      "case": "pdf_move_chars_warning",
+      "sections": [252, 1585],
+      "claim": "The obsolete move-chars switch warns and resets only on first font use.",
+      "semantic_owner": "crates/umber/src/pdftex.rs",
+      "active_test": "crates/umber/src/pdftex.rs::pdfmovechars_warns_and_resets_only_when_a_new_pdf_font_is_used",
+      "expected_success": true,
+      "observations": [
+        { "channel": "terminal", "projection": "after-second=1", "disposition": "pass" },
+        { "channel": "log", "projection": "after-second=1", "disposition": "pass" },
+        { "channel": "status", "projection": "success", "disposition": "pass" }
+      ]
+    },
+    {
+      "id": "pdftex.extension.output-policy",
+      "case": "pdf_output_policy",
+      "sections": [252, 790, 791, 792],
+      "claim": "PDF version, compression, and object-stream policy preserve recovery and grouping.",
+      "semantic_owner": "crates/umber/src/pdftex.rs",
+      "active_test": "crates/umber/src/pdftex.rs::pdf_output_policy_matches_the_pinned_initex_oracle",
+      "expected_success": false,
+      "observations": [
+        { "channel": "terminal", "projection": "defaults=0/1.4/9/0/3", "disposition": "pass" },
+        { "channel": "log", "projection": "defaults=0/1.4/9/0/3", "disposition": "pass" },
+        { "channel": "status", "projection": "error", "disposition": "xfail", "bug": "umber2-alfh.36" }
+      ]
+    },
+    {
+      "id": "pdftex.extension.destination-lifecycle",
+      "case": "pdf_navigation_dest_lifecycle",
+      "sections": [793, 794, 795, 796, 1635],
+      "claim": "Destination traversal owns duplicate handling and final missing-target diagnostics.",
+      "semantic_owner": "crates/umber/src/pdftex.rs",
+      "active_test": "crates/umber/src/pdftex/tests/retained_fixture_properties.rs::retained_pdftex_extension_fixtures_compare_oracle_projections",
+      "expected_success": true,
+      "observations": [
+        { "channel": "terminal", "projection": "destination with the same identifier", "disposition": "pass" },
+        { "channel": "log", "projection": "destination with the same identifier", "disposition": "pass" },
+        {
+          "channel": "terminal",
+          "projection": "name{missing-regular} has been referenced but does not exist",
+          "disposition": "xfail",
+          "bug": "umber2-alfh.33"
+        },
+        {
+          "channel": "log",
+          "projection": "name{missing-regular} has been referenced but does not exist",
+          "disposition": "xfail",
+          "bug": "umber2-alfh.33"
+        },
+        { "channel": "status", "projection": "success", "disposition": "pass" }
+      ]
+    },
+    {
+      "id": "pdftex.extension.destination-scanner",
+      "case": "pdf_navigation_dest_scan",
+      "sections": [1550, 1562, 1563],
+      "claim": "Destination scanning accepts every destination kind and rejects nonpositive numeric identities.",
+      "semantic_owner": "crates/umber/src/pdftex.rs",
+      "active_test": "crates/umber/src/pdftex/tests/retained_fixture_properties.rs::retained_pdftex_extension_fixtures_compare_oracle_projections",
+      "expected_success": false,
+      "observations": [
+        {
+          "channel": "terminal",
+          "projection": "pdfTeX error (ext1): num identifier must be positive",
+          "disposition": "xfail",
+          "bug": "umber2-alfh.34"
+        },
+        {
+          "channel": "log",
+          "projection": "pdfTeX error (ext1): num identifier must be positive",
+          "disposition": "xfail",
+          "bug": "umber2-alfh.34"
+        },
+        {
+          "channel": "status",
+          "projection": "error:pdfTeX error (ext1): num identifier must be positive",
+          "disposition": "pass"
+        }
+      ]
+    },
+    {
+      "id": "pdftex.extension.outline-scanner",
+      "case": "pdf_navigation_outline_scan",
+      "sections": [1554, 1555, 1561],
+      "claim": "Outline scanning preserves action, title, count, and raw-object enquiry behavior.",
+      "semantic_owner": "crates/umber/src/pdftex.rs",
+      "active_test": "crates/umber/src/pdftex/tests/retained_fixture_properties.rs::retained_pdftex_extension_fixtures_compare_oracle_projections",
+      "expected_success": true,
+      "observations": [
+        { "channel": "terminal", "projection": "last-before=0 last-after=0", "disposition": "pass" },
+        { "channel": "log", "projection": "last-before=0 last-after=0", "disposition": "pass" },
+        {
+          "channel": "terminal",
+          "projection": "destination name{article} has been referenced but does",
+          "disposition": "xfail",
+          "bug": "umber2-alfh.33"
+        },
+        {
+          "channel": "log",
+          "projection": "destination name{article} has been referenced but does",
+          "disposition": "xfail",
+          "bug": "umber2-alfh.33"
+        },
+        { "channel": "status", "projection": "success", "disposition": "pass" }
+      ]
+    },
+    {
+      "id": "pdftex.extension.outline-tree",
+      "case": "pdf_navigation_outline_tree",
+      "sections": [786, 787],
+      "claim": "Outline hierarchy construction completes two pages without diagnostics.",
+      "semantic_owner": "crates/umber/src/pdftex.rs",
+      "active_test": "crates/umber/src/pdftex/tests/retained_fixture_properties.rs::retained_pdftex_extension_fixtures_compare_oracle_projections",
+      "expected_success": true,
+      "observations": [
+        { "channel": "terminal", "projection": "[0]", "disposition": "pass" },
+        { "channel": "log", "projection": "[0]", "disposition": "pass" },
+        { "channel": "status", "projection": "success", "disposition": "pass" }
+      ]
+    },
+    {
+      "id": "pdftex.extension.thread-graph",
+      "case": "pdf_navigation_thread_graph",
+      "sections": [784, 788, 1598],
+      "claim": "Thread traversal builds page beads and diagnoses missing referenced threads.",
+      "semantic_owner": "crates/umber/src/pdftex.rs",
+      "active_test": "crates/umber/src/pdftex/tests/retained_fixture_properties.rs::retained_pdftex_extension_fixtures_compare_oracle_projections",
+      "expected_success": true,
+      "observations": [
+        { "channel": "terminal", "projection": "[0]", "disposition": "pass" },
+        { "channel": "log", "projection": "[0]", "disposition": "pass" },
+        {
+          "channel": "terminal",
+          "projection": "destination name{missing} has been referenced but does",
+          "disposition": "xfail",
+          "bug": "umber2-alfh.33"
+        },
+        {
+          "channel": "log",
+          "projection": "destination name{missing} has been referenced but does",
+          "disposition": "xfail",
+          "bug": "umber2-alfh.33"
+        },
+        { "channel": "status", "projection": "success", "disposition": "pass" }
+      ]
+    },
+    {
+      "id": "pdftex.extension.thread-lifecycle",
+      "case": "pdf_navigation_thread_lifecycle",
+      "sections": [1566, 1567, 1635],
+      "claim": "Running threads reject hlist starts and preserve nesting/page lifecycle.",
+      "semantic_owner": "crates/umber/src/pdftex.rs",
+      "active_test": "crates/umber/src/pdftex/tests/retained_fixture_properties.rs::retained_pdftex_extension_fixtures_compare_oracle_projections",
+      "expected_success": false,
+      "observations": [
+        {
+          "channel": "terminal",
+          "projection": "pdfTeX error (ext4): \\pdfstartthread ended up in hlist",
+          "disposition": "xfail",
+          "bug": "umber2-alfh.34"
+        },
+        {
+          "channel": "log",
+          "projection": "pdfTeX error (ext4): \\pdfstartthread ended up in hlist",
+          "disposition": "xfail",
+          "bug": "umber2-alfh.34"
+        },
+        {
+          "channel": "status",
+          "projection": "error:pdfTeX error (ext4): \\pdfstartthread ended up in hlist",
+          "disposition": "xfail",
+          "bug": "umber2-alfh.34"
+        }
+      ]
+    },
+    {
+      "id": "pdftex.extension.thread-scanner",
+      "case": "pdf_navigation_thread_scan",
+      "sections": [1564, 1565],
+      "claim": "Thread scanning accepts reordered dimensions and rejects nonpositive numeric identities.",
+      "semantic_owner": "crates/umber/src/pdftex.rs",
+      "active_test": "crates/umber/src/pdftex/tests/retained_fixture_properties.rs::retained_pdftex_extension_fixtures_compare_oracle_projections",
+      "expected_success": false,
+      "observations": [
+        {
+          "channel": "terminal",
+          "projection": "pdfTeX error (ext1): num identifier must be positive",
+          "disposition": "xfail",
+          "bug": "umber2-alfh.34"
+        },
+        {
+          "channel": "log",
+          "projection": "pdfTeX error (ext1): num identifier must be positive",
+          "disposition": "xfail",
+          "bug": "umber2-alfh.34"
+        },
+        {
+          "channel": "status",
+          "projection": "error:pdfTeX error (ext1): num identifier must be positive",
+          "disposition": "pass"
+        }
+      ]
+    },
+    {
+      "id": "pdftex.extension.ximage-enquiries",
+      "case": "pdf_ximage_enquiries",
+      "sections": [440, 448, 1548, 1549, 1550, 1551, 1552],
+      "claim": "Image imports update object, page-count, and color-depth enquiries and references preserve them.",
+      "semantic_owner": "crates/umber/src/pdftex.rs",
+      "active_test": "crates/umber/src/pdftex/tests/retained_fixture_properties.rs::retained_pdftex_extension_fixtures_compare_oracle_projections",
+      "expected_success": true,
+      "observations": [
+        { "channel": "terminal", "projection": "initial=0/0/0 png=1/1/8", "disposition": "pass" },
+        { "channel": "log", "projection": "initial=0/0/0 png=1/1/8", "disposition": "pass" },
+        { "channel": "terminal", "projection": "jpeg=3/1/12", "disposition": "xfail", "bug": "umber2-alfh.35" },
+        { "channel": "log", "projection": "jpeg=3/1/12", "disposition": "xfail", "bug": "umber2-alfh.35" },
+        { "channel": "status", "projection": "success", "disposition": "pass" }
+      ]
+    }
+  ]
+}

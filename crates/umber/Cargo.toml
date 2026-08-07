@@ -51,6 +51,7 @@ zeroize = "1.8"
 [dev-dependencies]
 parity-harness = { path = "../../tools/parity-harness" }
 proptest.workspace = true
+serde_json.workspace = true
 tempfile.workspace = true
 test-support = { path = "../test-support" }
 tex-command-stream = { path = "../../tools/tex-command-stream" }

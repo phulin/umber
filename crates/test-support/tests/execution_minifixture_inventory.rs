@@ -160,10 +160,6 @@ const ACTIVE_PDFTEX_EXEC: &[&str] = &[
     "pdf_metadata_config",
     "pdf_microtype_effects",
     "pdf_move_chars_warning",
-    "pdf_output_policy",
-];
-
-const BLOCKED_PDFTEX_EXEC: &[&str] = &[
     "pdf_navigation_dest_lifecycle",
     "pdf_navigation_dest_scan",
     "pdf_navigation_outline_scan",
@@ -171,6 +167,7 @@ const BLOCKED_PDFTEX_EXEC: &[&str] = &[
     "pdf_navigation_thread_graph",
     "pdf_navigation_thread_lifecycle",
     "pdf_navigation_thread_scan",
+    "pdf_output_policy",
     "pdf_ximage_enquiries",
 ];
 
@@ -232,12 +229,11 @@ fn retained_executor_cases_have_an_exact_active_or_blocked_disposition() {
     let classified_tex_exec = ACTIVE_TEX82_EXEC
         .iter()
         .chain(ACTIVE_PDFTEX_EXEC)
-        .chain(BLOCKED_PDFTEX_EXEC)
         .copied()
         .collect();
     assert_eq!(
         tex_exec, classified_tex_exec,
-        "tex_exec cases must be behaviorally owned or blocked on umber2-alfh.29"
+        "tex_exec cases must have active behavioral ownership"
     );
 
     assert_eq!(

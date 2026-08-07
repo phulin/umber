@@ -54,6 +54,7 @@ Use this crate when behavior is about driving the engine, presenting CLI output,
 - `src/pdftex.rs`: pdfTeX 1.40.29 behavior, focused conformance tests, and thin
   mode/default application over `tex-command`'s integrated primitive
   catalogue; it owns no second name, meaning, parameter, or default table.
+- `src/pdftex/tests/retained_fixture_properties.rs`: active retained pdfTeX-extension fixture runner that compares status, terminal, and log projections, including bug-linked strict xfails.
 - `src/pdf_output.rs`: thin detached-finalization adapter, error translation, diagnostics publication, and validated allocation-receipt replay; all lowering and serialization delegate to `tex-out`.
 - `src/pdf_output/tests.rs`: detached boundary tests for container classification and exact nested virtual-font identity, sizing, rejection, resource, and independent-parse evidence.
 - `src/pdf_output/finalization_input.rs`: compatibility adapter that freezes
