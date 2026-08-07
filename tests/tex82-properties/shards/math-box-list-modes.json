@@ -885,9 +885,18 @@
       ],
       "semantic_owner": "tex-exec::boxes",
       "test_level": "rust-unit+semantic-minifixture",
-      "coverage": [],
-      "status": "gap",
-      "gap_bead": "umber2-swm9.3.4",
+      "coverage": [
+        {
+          "path": "crates/tex-exec/src/main_control/tests.rs",
+          "test": "vsplit_kernel_separates_result_remainder_and_split_marks"
+        },
+        {
+          "path": "crates/tex-exec/src/main_control/tests.rs",
+          "test": "vsplit_infinite_shrink_reports_the_scanner_owned_live_context"
+        }
+      ],
+      "status": "covered",
+      "gap_bead": null,
       "planned_coverage": []
     },
     {
@@ -935,9 +944,18 @@
       ],
       "semantic_owner": "tex-exec::main-control",
       "test_level": "rust-unit+semantic-minifixture",
-      "coverage": [],
-      "status": "gap",
-      "gap_bead": "umber2-swm9.3.4",
+      "coverage": [
+        {
+          "path": "crates/tex-exec/src/main_control/tests.rs",
+          "test": "text_material_preserves_ligature_space_factor_and_font_glue"
+        },
+        {
+          "path": "crates/tex-exec/src/main_control/tests.rs",
+          "test": "language_normalization_and_same_language_append_boundaries_match_tex82"
+        }
+      ],
+      "status": "covered",
+      "gap_bead": null,
       "planned_coverage": []
     },
     {
@@ -980,9 +998,22 @@
       ],
       "semantic_owner": "tex-exec::main-control",
       "test_level": "rust-unit+semantic-minifixture",
-      "coverage": [],
-      "status": "gap",
-      "gap_bead": "umber2-swm9.3.4",
+      "coverage": [
+        {
+          "path": "crates/tex-exec/src/main_control/tests.rs",
+          "test": "direct_material_appends_typed_nodes_in_source_order"
+        },
+        {
+          "path": "crates/tex-exec/src/main_control/tests.rs",
+          "test": "outer_vertical_kern_joins_contributions_without_running_page_builder"
+        },
+        {
+          "path": "crates/tex-command/src/scanners/structured/tests.rs",
+          "test": "rule_spec_scans_expanded_keywords_and_dimensions"
+        }
+      ],
+      "status": "covered",
+      "gap_bead": null,
       "planned_coverage": []
     },
     {
@@ -1033,9 +1064,30 @@
       ],
       "semantic_owner": "tex-exec::boxes",
       "test_level": "rust-unit+semantic-minifixture",
-      "coverage": [],
-      "status": "gap",
-      "gap_bead": "umber2-swm9.3.4",
+      "coverage": [
+        {
+          "path": "crates/tex-exec/src/main_control/tests.rs",
+          "test": "copy_preserves_every_recursive_node_payload_and_source_register"
+        },
+        {
+          "path": "crates/tex-exec/src/main_control/tests.rs",
+          "test": "destructive_unbox_shares_nested_survivor_children_without_epoch_clone"
+        },
+        {
+          "path": "crates/tex-exec/src/main_control/tests.rs",
+          "test": "hbox_group_type_respects_box_context_and_vertical_mode"
+        },
+        {
+          "path": "crates/tex-exec/src/main_control/tests.rs",
+          "test": "setbox_scope_is_globaldefs_adjusted_before_the_box_is_scanned"
+        },
+        {
+          "path": "crates/tex-exec/src/main_control/tests.rs",
+          "test": "vsplit_kernel_separates_result_remainder_and_split_marks"
+        }
+      ],
+      "status": "covered",
+      "gap_bead": null,
       "planned_coverage": []
     },
     {
@@ -1078,9 +1130,22 @@
       ],
       "semantic_owner": "tex-exec::paragraphs",
       "test_level": "rust-unit+semantic-minifixture",
-      "coverage": [],
-      "status": "gap",
-      "gap_bead": "umber2-swm9.3.4",
+      "coverage": [
+        {
+          "path": "crates/tex-exec/src/main_control/tests.rs",
+          "test": "paragraph_boundaries_run_everypar_in_outer_and_internal_vertical_modes"
+        },
+        {
+          "path": "crates/tex-exec/src/main_control/tests.rs",
+          "test": "vertical_unbox_in_horizontal_mode_ends_the_paragraph_before_splicing"
+        },
+        {
+          "path": "crates/tex-exec/src/main_control/tests.rs",
+          "test": "end_inside_unterminated_box_reaches_outer_cleanup"
+        }
+      ],
+      "status": "covered",
+      "gap_bead": null,
       "planned_coverage": []
     },
     {
@@ -1131,9 +1196,26 @@
       ],
       "semantic_owner": "tex-exec::lists",
       "test_level": "rust-unit+semantic-minifixture",
-      "coverage": [],
-      "status": "gap",
-      "gap_bead": "umber2-swm9.3.4",
+      "coverage": [
+        {
+          "path": "crates/tex-exec/src/main_control/tests.rs",
+          "test": "etex_lastnodetype_covers_every_node_code"
+        },
+        {
+          "path": "crates/tex-exec/src/main_control/tests.rs",
+          "test": "etex_marks_scans_extended_classes_and_expanded_text_in_every_mode"
+        },
+        {
+          "path": "crates/tex-exec/src/main_control/tests.rs",
+          "test": "destructive_unbox_shares_nested_survivor_children_without_epoch_clone"
+        },
+        {
+          "path": "crates/tex-exec/src/main_control/tests.rs",
+          "test": "incompatible_unbox_commands_preserve_registers_and_replay_state"
+        }
+      ],
+      "status": "covered",
+      "gap_bead": null,
       "planned_coverage": []
     },
     {

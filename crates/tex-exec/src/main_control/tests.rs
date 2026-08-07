@@ -54,6 +54,22 @@ fn run_to_end(control: &mut MainControl, stores: &mut Universe) {
     }
 }
 
+fn box_child_nodes(stores: &Universe, register: u16) -> Vec<Node> {
+    let list = stores
+        .box_reg(register)
+        .unwrap_or_else(|| panic!("box register {register} is nonvoid"));
+    let boxed = stores
+        .nodes(list)
+        .first()
+        .unwrap_or_else(|| panic!("box register {register} has a root node"))
+        .to_owned();
+    let children = match boxed {
+        Node::HList(boxed) | Node::VList(boxed) => boxed.children,
+        other => panic!("box register {register} has a box root: {other:?}"),
+    };
+    stores.nodes(children).to_vec()
+}
+
 #[test]
 fn tracingcommands_reports_only_big_switch_commands_with_live_selector_and_mode() {
     // TeX82 §§299/1030/1211: `show_cur_cmd_chr` runs after `big_switch`'s
@@ -1800,6 +1816,251 @@ fn display_alignment_tail_runs_assignments_before_main_control() {
             "the do_assignments blank must not reach main control: {terminal}"
         );
     }
+}
+
+#[test]
+fn display_alignment_finish_replays_missing_double_math_shift_offender() {
+    // TeX82 §§1206--1207: a command other than the required closing math
+    // shift reports the display-math delimiter error, is backed up, and
+    // executes once after the alignment has restored its enclosing mode.
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
+    let mut control = MainControl::tex82_initex(&mut stores);
+    register_source(
+        &mut control,
+        br"\nonstopmode\noindent$$\halign{#\cr\cr}\global\count0=17\par\end",
+    );
+
+    run_to_end(&mut control, &mut stores);
+
+    let terminal = terminal_text(&stores);
+    assert_eq!(
+        terminal.matches("Display math should end with $$.").count(),
+        1,
+        "{terminal}"
+    );
+    assert_eq!(stores.count(0), 17);
+    assert_eq!(control.current_mode(), Mode::Vertical);
+}
+
+#[test]
+fn vsplit_kernel_separates_result_remainder_and_split_marks() {
+    // TeX82 §§977--979: the chosen prefix becomes a separately packed box,
+    // the source register is replaced by its pruned remainder, and the split
+    // marks describe only the extracted prefix.
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = MainControl::tex82_initex(&mut stores);
+    register_source(
+        &mut control,
+        br"\setbox0=\vbox{\mark{first}\hrule height10pt\penalty-10000\mark{second}\hrule height10pt}
+           \setbox1=\vsplit0 to10pt\end",
+    );
+
+    run_to_end(&mut control, &mut stores);
+
+    let split = stores.box_reg(1).expect("split prefix is assigned");
+    let remainder = stores.box_reg(0).expect("split remainder replaces source");
+    assert_ne!(
+        split, remainder,
+        "prefix and remainder have distinct ownership"
+    );
+    assert!(matches!(
+        stores.nodes(split).first().map(|node| node.to_owned()),
+        Some(Node::VList(_))
+    ));
+    assert!(matches!(
+        stores.nodes(remainder).first().map(|node| node.to_owned()),
+        Some(Node::VList(_))
+    ));
+    for mark in [PageMark::SplitFirst, PageMark::SplitBot] {
+        let tokens = stores.page_mark(mark);
+        assert_eq!(
+            stores.tokens(tokens),
+            [
+                Token::Char {
+                    ch: 'f',
+                    cat: Catcode::Letter,
+                },
+                Token::Char {
+                    ch: 'i',
+                    cat: Catcode::Letter,
+                },
+                Token::Char {
+                    ch: 'r',
+                    cat: Catcode::Letter,
+                },
+                Token::Char {
+                    ch: 's',
+                    cat: Catcode::Letter,
+                },
+                Token::Char {
+                    ch: 't',
+                    cat: Catcode::Letter,
+                }
+            ]
+        );
+    }
+}
+
+#[test]
+fn text_material_preserves_ligature_space_factor_and_font_glue() {
+    // TeX82 §§1033--1042: the pending character run applies the font's
+    // ligature program before the following space is selected and scaled by
+    // the live space factor.
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = MainControl::tex82_initex(&mut stores);
+    register_cmr10_as(&mut control, &mut stores, "cmr10.tfm");
+    register_source(
+        &mut control,
+        br"\font\f=cmr10 \f
+           \setbox0=\hbox{A fi B}
+           \setbox1=\hbox{A\spacefactor=3000\relax{} X}\end",
+    );
+
+    run_to_end(&mut control, &mut stores);
+
+    let ordinary = box_child_nodes(&stores, 0);
+    assert!(matches!(
+        ordinary.as_slice(),
+        [
+            Node::Char { ch: 'A', .. },
+            Node::Glue { .. },
+            Node::Lig { orig, .. },
+            Node::Glue { .. },
+            Node::Char { ch: 'B', .. },
+        ] if orig.as_slice() == ['f', 'i']
+    ));
+    let sentence = box_child_nodes(&stores, 1);
+    let [
+        Node::Char { ch: 'A', .. },
+        Node::Glue { spec, .. },
+        Node::Char { ch: 'X', .. },
+    ] = sentence.as_slice()
+    else {
+        panic!("sentence-space fixture has character/glue/character: {sentence:?}");
+    };
+    let sentence = stores.glue(*spec);
+    assert_eq!(sentence.width.raw(), 291_271);
+    assert_eq!(sentence.stretch.raw(), 327_678);
+    assert_eq!(sentence.shrink.raw(), 24_272);
+}
+
+#[test]
+fn direct_material_appends_typed_nodes_in_source_order() {
+    // TeX82 §§1055--1061: each completed typed operand is appended exactly
+    // once and preserves its distinct node kind and numeric value.
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = MainControl::tex82_initex(&mut stores);
+    register_source(
+        &mut control,
+        br"\setbox0=\hbox{\kern1pt\hskip2pt\vrule width3pt height4pt depth5pt}\end",
+    );
+
+    run_to_end(&mut control, &mut stores);
+
+    let nodes = box_child_nodes(&stores, 0);
+    let [
+        Node::Kern { amount, kind },
+        Node::Glue { spec, .. },
+        Node::Rule {
+            width,
+            height,
+            depth,
+        },
+    ] = nodes.as_slice()
+    else {
+        panic!("direct material remains in source order: {nodes:?}");
+    };
+    assert_eq!(*kind, tex_state::node::KernKind::Explicit);
+    assert_eq!(amount.raw(), Scaled::UNITY);
+    assert_eq!(stores.glue(*spec).width.raw(), 2 * Scaled::UNITY);
+    assert_eq!(width.map(Scaled::raw), Some(3 * Scaled::UNITY));
+    assert_eq!(height.map(Scaled::raw), Some(4 * Scaled::UNITY));
+    assert_eq!(depth.map(Scaled::raw), Some(5 * Scaled::UNITY));
+}
+
+#[test]
+fn paragraph_boundaries_run_everypar_in_outer_and_internal_vertical_modes() {
+    // TeX82 §§1088--1096: both outer and internal vertical paragraph entry
+    // run `everypar`, and both completed paragraphs return to their enclosing
+    // vertical mode without losing the body material.
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = MainControl::tex82_initex(&mut stores);
+    register_source(
+        &mut control,
+        br"\everypar{\global\advance\count0 by1}
+           \noindent\kern1pt\par
+           \setbox0=\vbox{\noindent\kern2pt\par}\end",
+    );
+
+    run_to_end(&mut control, &mut stores);
+
+    assert_eq!(stores.count(0), 2);
+    assert_eq!(control.current_mode(), Mode::Vertical);
+    assert!(stores.box_reg(0).is_some());
+    assert_eq!(stores.world().artifact_commits().len(), 1);
+}
+
+#[test]
+fn base_whatsits_preserve_scan_timing_normalization_and_payload_ownership() {
+    // TeX82 §§1349--1361: write text remains unexpanded, ordinary special
+    // text expands immediately, and normalized closeout fallback slots do not
+    // pretend to own a numbered output file.
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = MainControl::tex82_initex(&mut stores);
+    register_source(
+        &mut control,
+        br"\def\payload{early}
+           \setbox0=\hbox{\openout0=owned\write-1{\payload}\closeout16\special{\payload}\setlanguage7}
+           \def\payload{late}\end",
+    );
+
+    run_to_end(&mut control, &mut stores);
+
+    let nodes = box_child_nodes(&stores, 0);
+    let [
+        Node::Whatsit(tex_state::node::Whatsit::OpenOut { slot, path }),
+        Node::Whatsit(tex_state::node::Whatsit::DeferredWrite { sink, tokens }),
+        Node::Whatsit(tex_state::node::Whatsit::CloseOut { slot: close_slot }),
+        Node::Whatsit(tex_state::node::Whatsit::Special { class, payload }),
+        Node::Whatsit(tex_state::node::Whatsit::Language { language, .. }),
+    ] = nodes.as_slice()
+    else {
+        panic!("base whatsits retain their construction order: {nodes:?}");
+    };
+    assert_eq!(slot.raw(), 0);
+    assert_eq!(path, "owned");
+    assert_eq!(*sink, PrintSink::Log);
+    let payload_symbol = stores.symbol("payload").expect("payload remains defined");
+    assert_eq!(stores.tokens(*tokens), [Token::Cs(payload_symbol.symbol())]);
+    assert_eq!(*close_slot, None);
+    assert_eq!(class, "dvi");
+    assert_eq!(payload, b"early");
+    assert_eq!(*language, 7);
+}
+
+#[test]
+fn deferred_write_expands_at_shipout_once() {
+    // TeX82 §§1362--1374: hlist traversal reaches the retained write once and
+    // `write_out` expands its text only when the enclosing box is shipped.
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = MainControl::tex82_initex(&mut stores);
+    register_source(
+        &mut control,
+        br"\def\payload{early}
+           \setbox0=\hbox{\write16{\payload}\special{fixed}}
+           \def\payload{late}\shipout\box0\end",
+    );
+
+    run_to_end(&mut control, &mut stores);
+
+    let pages = control.take_prepared_dvi_pages();
+    let [page] = pages.as_slice() else {
+        panic!("exactly one page ships: {pages:?}");
+    };
+    assert!(page.committed_effects.is_empty());
+    let terminal = terminal_text(&stores);
+    assert_eq!(terminal.matches("late").count(), 1, "{terminal:?}");
+    assert!(!terminal.contains("early"), "{terminal:?}");
 }
 
 fn etex_initex(stores: &mut Universe) -> MainControl {

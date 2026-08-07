@@ -603,9 +603,18 @@
       ],
       "semantic_owner": "tex-exec::align",
       "test_level": "planned-rust-unit",
-      "coverage": [],
-      "status": "gap",
-      "gap_bead": "umber2-swm9.3.4",
+      "coverage": [
+        {
+          "path": "crates/tex-exec/src/main_control/tests.rs",
+          "test": "preamble_span_expands_one_token_and_preserves_later_template_meaning"
+        },
+        {
+          "path": "crates/tex-exec/src/main_control/tests.rs",
+          "test": "noalign_body_dispatches_nested_math_braces_by_save_stack_group"
+        }
+      ],
+      "status": "covered",
+      "gap_bead": null,
       "planned_coverage": null
     },
     {
@@ -635,9 +644,18 @@
       ],
       "semantic_owner": "tex-exec::align",
       "test_level": "planned-rust-unit",
-      "coverage": [],
-      "status": "gap",
-      "gap_bead": "umber2-swm9.3.4",
+      "coverage": [
+        {
+          "path": "crates/tex-exec/src/main_control/tests.rs",
+          "test": "nested_valign_rows_do_not_contribute_baseline_glue_to_outer_cell_width"
+        },
+        {
+          "path": "crates/tex-exec/src/main_control/tests.rs",
+          "test": "valign_cell_endv_closes_an_open_paragraph_before_fin_col"
+        }
+      ],
+      "status": "covered",
+      "gap_bead": null,
       "planned_coverage": null
     },
     {
@@ -754,9 +772,22 @@
       ],
       "semantic_owner": "tex-exec::align",
       "test_level": "planned-rust-unit",
-      "coverage": [],
-      "status": "gap",
-      "gap_bead": "umber2-swm9.3.4",
+      "coverage": [
+        {
+          "path": "crates/tex-exec/src/main_control/tests.rs",
+          "test": "preamble_span_expands_one_token_and_preserves_later_template_meaning"
+        },
+        {
+          "path": "crates/tex-exec/src/main_control/tests.rs",
+          "test": "two_hundred_fifty_five_span_steps_stay_within_section_798s_bound"
+        },
+        {
+          "path": "crates/tex-exec/src/align/widths/tests.rs",
+          "test": "fin_align_orders_groups_packing_pop_and_insertion"
+        }
+      ],
+      "status": "covered",
+      "gap_bead": null,
       "planned_coverage": null
     },
     {
@@ -1367,9 +1398,18 @@
       ],
       "semantic_owner": "tex-exec::math-display",
       "test_level": "planned-rust-unit",
-      "coverage": [],
-      "status": "gap",
-      "gap_bead": "umber2-swm9.3.4",
+      "coverage": [
+        {
+          "path": "crates/tex-exec/src/main_control/tests.rs",
+          "test": "display_alignment_tail_runs_assignments_before_main_control"
+        },
+        {
+          "path": "crates/tex-exec/src/main_control/tests.rs",
+          "test": "display_alignment_finish_replays_missing_double_math_shift_offender"
+        }
+      ],
+      "status": "covered",
+      "gap_bead": null,
       "planned_coverage": null
     }
   ]

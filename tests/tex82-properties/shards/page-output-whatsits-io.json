@@ -1332,9 +1332,14 @@
       ],
       "semantic_owner": "tex-exec::effects",
       "test_level": "rust-unit",
-      "coverage": [],
-      "status": "gap",
-      "gap_bead": "umber2-swm9.3.4"
+      "coverage": [
+        {
+          "path": "crates/tex-exec/src/main_control/tests.rs",
+          "test": "end_and_dump_run_profile_specific_cleanup_in_observable_order"
+        }
+      ],
+      "status": "covered",
+      "gap_bead": null
     },
     {
       "id": "tex82.whatsits.primitive-and-dispatch",
@@ -1374,8 +1379,8 @@
           "test": "unknown_extension_selector_fails_loudly_at_dispatch"
         }
       ],
-      "status": "gap",
-      "gap_bead": "umber2-swm9.3.4"
+      "status": "covered",
+      "gap_bead": null
     },
     {
       "id": "tex82.whatsits.construction-and-ownership",
@@ -1416,9 +1421,22 @@
       ],
       "semantic_owner": "tex-exec::whatsits",
       "test_level": "rust-unit",
-      "coverage": [],
-      "status": "gap",
-      "gap_bead": "umber2-swm9.3.4"
+      "coverage": [
+        {
+          "path": "crates/tex-exec/src/main_control/tests.rs",
+          "test": "base_whatsits_preserve_scan_timing_normalization_and_payload_ownership"
+        },
+        {
+          "path": "crates/tex-command/src/scanners/structured/tests.rs",
+          "test": "write_stream_scan_normalizes_out_of_range_stream_numbers"
+        },
+        {
+          "path": "crates/tex-exec/src/main_control/tests.rs",
+          "test": "language_normalization_and_same_language_append_boundaries_match_tex82"
+        }
+      ],
+      "status": "covered",
+      "gap_bead": null
     },
     {
       "id": "tex82.whatsits.list-visitation",
@@ -1452,9 +1470,26 @@
       ],
       "semantic_owner": "tex-exec::whatsits",
       "test_level": "rust-unit",
-      "coverage": [],
-      "status": "gap",
-      "gap_bead": "umber2-swm9.3.4"
+      "coverage": [
+        {
+          "path": "crates/tex-exec/src/page_builder/tests.rs",
+          "test": "pdftex_page_top_discards_snapy_but_preserves_other_whatsits"
+        },
+        {
+          "path": "crates/tex-exec/src/splitting/tests.rs",
+          "test": "pdftex_prune_page_top_discards_snapy_but_preserves_other_whatsits"
+        },
+        {
+          "path": "crates/tex-out/src/dvi/tests.rs",
+          "test": "specials_emit_xxx1_and_xxx4_at_anchor_positions"
+        },
+        {
+          "path": "crates/tex-exec/src/main_control/tests.rs",
+          "test": "deferred_write_expands_at_shipout_once"
+        }
+      ],
+      "status": "covered",
+      "gap_bead": null
     },
     {
       "id": "tex82.effects.special-output",
@@ -1528,9 +1563,22 @@
       ],
       "semantic_owner": "tex-exec::effects",
       "test_level": "rust-unit",
-      "coverage": [],
-      "status": "gap",
-      "gap_bead": "umber2-swm9.3.4"
+      "coverage": [
+        {
+          "path": "crates/tex-exec/src/main_control/tests.rs",
+          "test": "deferred_write_expands_at_shipout_once"
+        },
+        {
+          "path": "crates/tex-exec/src/main_control/tests.rs",
+          "test": "base_whatsits_preserve_scan_timing_normalization_and_payload_ownership"
+        },
+        {
+          "path": "crates/tex-command/src/scanners/structured/tests.rs",
+          "test": "unbalanced_write_captures_context_before_recovery_retires_its_levels"
+        }
+      ],
+      "status": "covered",
+      "gap_bead": null
     },
     {
       "id": "tex82.effects.open-write-close-dispatch",
