@@ -54,7 +54,9 @@ use tex_typeset::PackSpec;
 
 use crate::assignments::committer::AssignmentCommitter;
 use crate::assignments::tracing as assignment_tracing;
-use crate::execution_receipt::{ExecutionReceipt, OperationTermination};
+use crate::execution_receipt::{
+    ConsumedExecutionReceipt, ExecutionReceipt, MAX_EXECUTION_RECEIPT_RECORDS, OperationTermination,
+};
 use crate::font_support::{
     FontLoadFailure, GlyphToUnicodeParse, parse_glyph_to_unicode, report_font_capacity,
     report_font_not_loadable_with_context, warn_pdf_destination_duplicate,
@@ -211,6 +213,9 @@ pub struct MainControl {
     /// or none is. Observation is an instrumentation boundary, not an
     /// alternate execution mode.
     operation_observations: ObservationSlot,
+    /// Live-store boundaries used to close the typed receipt before the
+    /// operation savepoint commits. Absent for ordinary execution.
+    operation_receipt_start: Option<OperationReceiptStart>,
     completed_replay_episode: Option<tex_command::CommandReplayEpisode>,
     /// Detached DVI receipts whose artifact commits have survived an entire
     /// aggregate operation. This is replay state so rollback drops
@@ -611,19 +616,44 @@ enum OperationTransaction {
 
 const MAX_OPERATION_EVIDENCE_RECORDS: usize = 1_000_000;
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 struct ObservationBuffer {
     records: Vec<CommandObservation>,
     attempted: usize,
     overflowed: bool,
+    receipt_attempted: usize,
+    receipt_overflowed: bool,
     receipt: ExecutionReceipt,
 }
 
-impl ObservationBuffer {
-    fn flush_into(self, observer: &mut dyn CommandObserver) {
-        for observation in self.records {
-            observer.committed(observation);
+#[derive(Clone, Copy, Debug)]
+struct OperationReceiptStart {
+    effect: u64,
+    artifact: usize,
+    geometry: Option<usize>,
+}
+
+impl Default for ObservationBuffer {
+    fn default() -> Self {
+        Self {
+            records: Vec::new(),
+            attempted: 0,
+            overflowed: false,
+            receipt_attempted: 1,
+            receipt_overflowed: false,
+            receipt: ExecutionReceipt::default(),
         }
+    }
+}
+
+impl ObservationBuffer {
+    fn consume_into(self, observer: Option<&mut dyn CommandObserver>) -> ConsumedExecutionReceipt {
+        if let Some(observer) = observer {
+            for observation in self.records {
+                observer.committed(observation);
+            }
+        }
+        self.receipt.consume()
     }
 
     fn extend(&mut self, records: impl IntoIterator<Item = CommandObservation>) {
@@ -635,25 +665,40 @@ impl ObservationBuffer {
     fn append(&mut self, other: &mut Self) {
         let omitted = other.attempted.saturating_sub(other.records.len());
         self.overflowed |= other.overflowed;
+        self.receipt_overflowed |= other.receipt_overflowed;
         for record in other.records.drain(..) {
             self.committed(record);
         }
+        let consumed = std::mem::take(&mut other.receipt).consume();
+        debug_assert!(consumed.records <= MAX_EXECUTION_RECEIPT_RECORDS);
         self.attempted = self.attempted.saturating_add(omitted);
+        self.receipt_attempted = self.receipt_attempted.saturating_add(
+            other
+                .receipt_attempted
+                .saturating_sub(other.receipt.record_count()),
+        );
         self.overflowed |= self.attempted > MAX_OPERATION_EVIDENCE_RECORDS;
+        self.receipt_overflowed |= self.receipt_attempted > MAX_EXECUTION_RECEIPT_RECORDS;
     }
 
     fn append_to(&mut self, records: &mut Vec<CommandObservation>) {
         records.append(&mut self.records);
+        let consumed = std::mem::take(&mut self.receipt).consume();
+        debug_assert!(consumed.records <= MAX_EXECUTION_RECEIPT_RECORDS);
         self.attempted = 0;
         self.overflowed = false;
-        self.receipt = ExecutionReceipt::default();
+        self.receipt_attempted = 1;
+        self.receipt_overflowed = false;
     }
 
     fn clear(&mut self) {
         self.records.clear();
+        let consumed = std::mem::take(&mut self.receipt).consume();
+        debug_assert!(consumed.records <= MAX_EXECUTION_RECEIPT_RECORDS);
         self.attempted = 0;
         self.overflowed = false;
-        self.receipt = ExecutionReceipt::default();
+        self.receipt_attempted = 1;
+        self.receipt_overflowed = false;
     }
 
     fn is_empty(&self) -> bool {
@@ -661,12 +706,40 @@ impl ObservationBuffer {
     }
 
     fn limit_error(&self) -> Option<ExecError> {
-        self.overflowed
-            .then_some(ExecError::ResourceBudgetExceeded {
+        if self.overflowed {
+            Some(ExecError::ResourceBudgetExceeded {
                 resource: "operation evidence records",
                 limit: MAX_OPERATION_EVIDENCE_RECORDS as u64,
                 attempted: self.attempted.try_into().unwrap_or(u64::MAX),
             })
+        } else if self.receipt_overflowed {
+            Some(ExecError::ResourceBudgetExceeded {
+                resource: "operation receipt records",
+                limit: self.receipt.limit().try_into().unwrap_or(u64::MAX),
+                attempted: self.receipt_attempted.try_into().unwrap_or(u64::MAX),
+            })
+        } else {
+            None
+        }
+    }
+
+    fn record_receipt(&mut self, append: impl FnOnce(&mut ExecutionReceipt) -> bool) {
+        self.receipt_attempted = self.receipt_attempted.saturating_add(1);
+        if !append(&mut self.receipt) {
+            self.receipt_overflowed = true;
+        }
+    }
+
+    fn record_world_effect(&mut self, effect: tex_state::EffectRecord) {
+        self.record_receipt(|receipt| receipt.record_world_effect(effect));
+    }
+
+    fn record_artifact(&mut self, artifact: tex_state::ContentHash) {
+        self.record_receipt(|receipt| receipt.record_artifact(artifact));
+    }
+
+    fn record_resource(&mut self, resource: ResourceNeed) {
+        self.record_receipt(|receipt| receipt.record_resource(resource));
     }
 }
 
@@ -674,7 +747,17 @@ impl CommandObserver for ObservationBuffer {
     fn committed(&mut self, observation: CommandObservation) {
         self.attempted = self.attempted.saturating_add(1);
         if self.records.len() < MAX_OPERATION_EVIDENCE_RECORDS {
-            self.receipt.capture_observation(&observation);
+            if matches!(
+                observation,
+                CommandObservation::Mutation(_)
+                    | CommandObservation::Diagnostic(_)
+                    | CommandObservation::Effect(_)
+            ) {
+                self.receipt_attempted = self.receipt_attempted.saturating_add(1);
+                if !self.receipt.capture_observation(&observation) {
+                    self.receipt_overflowed = true;
+                }
+            }
             self.records.push(observation);
         } else {
             self.overflowed = true;
@@ -2386,6 +2469,17 @@ impl MainControl {
         }
         let snapshot = self.snapshot_step(stores);
         let mut applied = self.apply_operation(stores, delivery);
+        if let Ok(step) = &applied {
+            let termination = self.fatal.map_or_else(
+                || match step {
+                    ReplayStep::Continue => OperationTermination::Continue,
+                    ReplayStep::End => OperationTermination::End,
+                    ReplayStep::EndOfInput => OperationTermination::EndOfInput,
+                },
+                OperationTermination::Fatal,
+            );
+            self.close_observed_receipt(stores, termination);
+        }
         if applied.is_ok()
             && let Some(error) = self.operation_evidence_limit_error()
         {
@@ -2424,13 +2518,36 @@ impl MainControl {
                         CommandObservation::Diagnostic(fatal.record()),
                         CommandObservation::Effect(engine_termination_effect()),
                     ]);
+                    self.close_observed_receipt(stores, OperationTermination::Fatal(fatal));
                     self.commit_step(snapshot);
                     self.finish_operation_telemetry(false);
                     return Ok(StepResult::Progress(self.succumb(fatal)));
                 }
                 let rolled_back =
                     !matches!(error, ExecError::PdfXFormVoidBox) && snapshot.can_rollback(stores);
-                let result = self.finish_failed_step(snapshot, stores, error);
+                let mut result = self.finish_failed_step(snapshot, stores, error);
+                if let Ok(StepResult::Suspended(resource)) = &result
+                    && let Some(pending) = self.operation_observations.as_mut()
+                {
+                    pending.record_resource(resource.clone());
+                    pending
+                        .receipt
+                        .set_termination(OperationTermination::Suspended);
+                } else if let Some(pending) = self.operation_observations.as_mut() {
+                    pending
+                        .receipt
+                        .set_termination(OperationTermination::Failed);
+                }
+                if result.is_ok()
+                    && let Some(limit_error) = self.operation_evidence_limit_error()
+                {
+                    result = Err(limit_error);
+                    if let Some(pending) = self.operation_observations.as_mut() {
+                        pending
+                            .receipt
+                            .set_termination(OperationTermination::Failed);
+                    }
+                }
                 self.finish_operation_telemetry(rolled_back);
                 result
             }
@@ -2451,6 +2568,43 @@ impl MainControl {
             .as_ref()
             .and_then(ObservationBuffer::limit_error)
             .or_else(|| self.page_output_observations.limit_error())
+    }
+
+    fn close_observed_receipt(&mut self, stores: &Universe, termination: OperationTermination) {
+        let (Some(start), Some(pending)) = (
+            self.operation_receipt_start,
+            self.operation_observations.as_mut(),
+        ) else {
+            return;
+        };
+        let live_effects = stores.world().effect_records();
+        let effect_base = stores
+            .world()
+            .effect_pos()
+            .raw()
+            .saturating_sub(live_effects.len().try_into().unwrap_or(u64::MAX));
+        let effect_start = start
+            .effect
+            .saturating_sub(effect_base)
+            .try_into()
+            .unwrap_or(usize::MAX)
+            .min(live_effects.len());
+        for effect in &live_effects[effect_start..] {
+            pending.record_world_effect(effect.clone());
+        }
+        for artifact in &stores.world().artifact_commits()[start.artifact..] {
+            pending.record_artifact(*artifact);
+        }
+        if let Some(geometry_start) = start.geometry {
+            pending.extend(
+                stores
+                    .geometry_observations_since(geometry_start)
+                    .iter()
+                    .copied()
+                    .map(Self::geometry_observation),
+            );
+        }
+        pending.receipt.set_termination(termination);
     }
 
     /// Attempts one atomic main-control operation.
@@ -3899,69 +4053,48 @@ impl MainControl {
         // command-processor episode the operation runs, including the nested
         // ones a host-applied step runs, publishes into this one buffer.
         self.operation_observations = Some(ObservationBuffer::default());
+        self.operation_receipt_start = Some(OperationReceiptStart {
+            effect: effect_start.raw(),
+            artifact: artifact_start,
+            geometry: geometry_start,
+        });
         let stepped = self.execute_operation(
             stores,
             OperationDelivery::Replay(None),
             OperationTransaction::Advance,
         );
         let mut pending = self.operation_observations.take().unwrap_or_default();
+        self.operation_receipt_start = None;
         match &stepped {
-            Ok(StepResult::Progress(step)) => {
-                let live_effects = stores.world().effect_records();
-                let effect_base = stores
-                    .world()
-                    .effect_pos()
-                    .raw()
-                    .saturating_sub(live_effects.len().try_into().unwrap_or(u64::MAX));
-                let effect_start = effect_start
-                    .raw()
-                    .saturating_sub(effect_base)
-                    .try_into()
-                    .unwrap_or(usize::MAX)
-                    .min(live_effects.len());
-                for effect in &live_effects[effect_start..] {
-                    pending.receipt.record_world_effect(effect.clone());
-                }
-                for artifact in &stores.world().artifact_commits()[artifact_start..] {
-                    pending.receipt.record_artifact(*artifact);
-                }
-                let termination = if let Some(fatal) = self.fatal {
-                    OperationTermination::Fatal(fatal)
-                } else {
-                    match step {
-                        MainControlStep::Continue => OperationTermination::Continue,
-                        MainControlStep::End => OperationTermination::End,
-                        MainControlStep::EndOfInput => OperationTermination::EndOfInput,
-                    }
-                };
-                pending.receipt.set_termination(termination);
-            }
-            Ok(StepResult::Suspended(resource)) => {
-                pending.receipt.record_resource(resource.clone());
-                pending
-                    .receipt
-                    .set_termination(OperationTermination::Suspended);
-            }
+            Ok(StepResult::Progress(_)) => {}
+            Ok(StepResult::Suspended(_)) => {}
             Err(error) => pending.receipt.set_termination(
                 error
                     .as_fatal()
                     .map_or(OperationTermination::Failed, OperationTermination::Fatal),
             ),
         }
-        if matches!(stepped, Ok(StepResult::Progress(_)))
-            && let Some(geometry_start) = geometry_start
-        {
-            pending.extend(
-                stores
-                    .geometry_observations_since(geometry_start)
-                    .iter()
-                    .copied()
-                    .map(Self::geometry_observation),
-            );
-        }
-        if matches!(stepped, Ok(StepResult::Progress(_))) {
-            pending.flush_into(observer);
-        }
+        let expected_termination = if let Some(fatal) = self.fatal {
+            OperationTermination::Fatal(fatal)
+        } else {
+            match &stepped {
+                Ok(StepResult::Progress(MainControlStep::Continue)) => {
+                    OperationTermination::Continue
+                }
+                Ok(StepResult::Progress(MainControlStep::End)) => OperationTermination::End,
+                Ok(StepResult::Progress(MainControlStep::EndOfInput)) => {
+                    OperationTermination::EndOfInput
+                }
+                Ok(StepResult::Suspended(_)) => OperationTermination::Suspended,
+                Err(error) => error
+                    .as_fatal()
+                    .map_or(OperationTermination::Failed, OperationTermination::Fatal),
+            }
+        };
+        let publish = matches!(stepped, Ok(StepResult::Progress(_)));
+        let consumed = pending.consume_into(publish.then_some(observer));
+        debug_assert!(consumed.records <= MAX_EXECUTION_RECEIPT_RECORDS);
+        debug_assert_eq!(consumed.termination, expected_termination);
         stepped
     }
 
@@ -4470,7 +4603,7 @@ impl MainControl {
         self.operation_observations
             .take()
             .unwrap_or_default()
-            .flush_into(observer);
+            .consume_into(Some(observer));
         scanned
     }
 

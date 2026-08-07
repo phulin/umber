@@ -107,8 +107,7 @@ fn etex_session(source: &[u8]) -> (MainControl, Universe) {
 
 #[test]
 fn unified_operation_preserves_state_output_and_typed_evidence() {
-    let source =
-        br"\count0=7\afterassignment\relax\count1=9\setbox0=\hbox{A}\halign{#\cr B\cr}\end";
+    let source = br"\count0=7\afterassignment\relax\count1=9\setbox0=\hbox{A}\halign{#\cr B\cr}\write16{receipt}\end";
     let (mut ordinary, mut ordinary_stores) = etex_session(source);
     loop {
         match ordinary
@@ -143,6 +142,17 @@ fn unified_operation_preserves_state_output_and_typed_evidence() {
     assert_eq!(
         ordinary_stores.world().artifact_commits(),
         observed_stores.world().artifact_commits()
+    );
+    assert!(
+        ordinary_stores
+            .world()
+            .memory_terminal_output()
+            .is_some_and(|bytes| !bytes.is_empty()),
+        "independent ordinary producer must commit world output"
+    );
+    assert!(
+        !ordinary_stores.world().artifact_commits().is_empty(),
+        "independent ordinary producer must exercise artifact publication"
     );
     assert!(
         evidence
@@ -204,6 +214,69 @@ fn predecessor_operation_branches_are_absent() {
             "retained predecessor: {predecessor}"
         );
     }
+}
+
+#[test]
+fn receipt_categories_are_append_bounded_consumed_and_closed_before_commit() {
+    let receipt = include_str!("../src/execution_receipt.rs");
+    for method in [
+        "fn push_mutation",
+        "fn push_diagnostic",
+        "fn push_semantic_effect",
+        "fn record_resource",
+        "fn record_world_effect",
+        "fn record_artifact",
+    ] {
+        let body = receipt
+            .split_once(method)
+            .unwrap_or_else(|| panic!("missing receipt append authority {method}"))
+            .1
+            .split_once("\n    }")
+            .expect("bounded receipt method body")
+            .0;
+        assert!(body.contains("if !self.has_capacity()"), "{method}");
+        assert!(
+            body.find("has_capacity").expect("receipt capacity check")
+                < body.find(".push(").expect("receipt vector append"),
+            "{method} must reject before vector growth"
+        );
+    }
+    let consume = receipt
+        .split_once("pub(crate) fn consume(self)")
+        .expect("active receipt consumer")
+        .1;
+    let consume = consume
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect::<String>();
+    for category in [
+        "self.mutations.len()",
+        "self.resources.len()",
+        "self.effects.semantic.len()",
+        "self.effects.world.len()",
+        "self.artifacts.len()",
+        "self.diagnostics.len()",
+        "self.termination",
+    ] {
+        assert!(consume.contains(category), "unconsumed category {category}");
+    }
+
+    let control = include_str!("../src/main_control.rs");
+    let operation = control
+        .split_once("fn execute_operation(")
+        .expect("single operation authority")
+        .1
+        .split_once("fn finish_operation_telemetry")
+        .expect("operation authority boundary")
+        .0;
+    assert!(
+        operation
+            .find("close_observed_receipt")
+            .expect("receipt close")
+            < operation.find("commit_step").expect("operation commit"),
+        "world/artifact/geometry/termination receipt closes before commit"
+    );
+    assert!(control.contains("pending.consume_into(publish.then_some(observer))"));
 }
 
 fn register_mutation_keys(observations: &[CommandObservation]) -> Vec<&str> {

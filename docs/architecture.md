@@ -419,9 +419,14 @@ rollback, fatal termination, and telemetry. When observation is disabled the
 evidence slot allocates nothing. When enabled it enforces its record ceiling as
 records append and assembles the crate-private `ExecutionReceipt` from those
 same committed mutation, resource, semantic/live-effect, artifact, diagnostic,
-and termination facts. The receipt remains internal and does not extend the
-`tex-oracle` wire schema. The migration selector, shadow runner, and predecessor
-step branches are absent.
+and termination facts. Every allocating receipt category is admitted against
+the shared 1,000,000-record ceiling before its vector can grow, and live-effect,
+artifact, geometry, diagnostic, and termination closure happens before the
+operation savepoint commits. The observer-publication seam consumes the typed
+receipt and checks its terminal projection instead of constructing a write-only
+shadow value. The receipt remains internal and does not extend the `tex-oracle`
+wire schema. The migration selector, shadow runner, and predecessor step
+branches are absent.
 
 Shipout decodes compact node words sequentially and always drives artifact
 encoding without an ordinary-path owned page tree. DVI page-plan construction
