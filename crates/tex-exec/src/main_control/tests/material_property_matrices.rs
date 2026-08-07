@@ -8,6 +8,7 @@ use tex_state::env::banks::{DimenParam, GlueParam, IntParam};
 use tex_state::glue::Order;
 use tex_state::node::{GlueKind, KernKind, Node, Whatsit};
 use tex_state::page::{PageDimension, PageMark};
+use tex_state::provenance::InsertedOriginKind;
 use tex_state::scaled::Scaled;
 use tex_state::token::Token;
 use tex_state::{InputOpenState, Universe};
@@ -735,13 +736,8 @@ fn text_boundary_font_glue_scaling_and_cache_matrix() {
         );
     }
     let cached = boxed_children(&stores, 8);
-    let [
-        Node::Char { ch: 'A', .. },
-        Node::Glue { spec: first, .. },
-        Node::Char { ch: 'X', .. },
-        Node::Glue { spec: second, .. },
-        Node::Char { ch: 'X', .. },
-    ] = cached.as_slice()
+    let [Node::Char { ch: 'A', .. }, Node::Glue { spec: first, .. }, Node::Char { ch: 'X', .. }, Node::Glue { spec: second, .. }, Node::Char { ch: 'X', .. }] =
+        cached.as_slice()
     else {
         panic!("cached font spaces have exact ordered ownership: {cached:?}")
     };
@@ -771,20 +767,13 @@ fn text_boundary_font_glue_scaling_and_cache_matrix() {
         "uppercase X's sfcode 999 selects a distinct cached scaling variant"
     );
     let low_box = boxed_children(&stores, 2);
-    let [
-        Node::Char { .. },
-        Node::Glue { spec: low, .. },
-        Node::Char { .. },
-    ] = low_box.as_slice()
+    let [Node::Char { .. }, Node::Glue { spec: low, .. }, Node::Char { .. }] = low_box.as_slice()
     else {
         panic!("low-factor box has one glue")
     };
     let normal_box = boxed_children(&stores, 3);
-    let [
-        Node::Char { .. },
-        Node::Glue { spec: normal, .. },
-        Node::Char { .. },
-    ] = normal_box.as_slice()
+    let [Node::Char { .. }, Node::Glue { spec: normal, .. }, Node::Char { .. }] =
+        normal_box.as_slice()
     else {
         panic!("normal-factor box has one glue")
     };
@@ -1623,24 +1612,27 @@ fn unbox_copy_move_void_wrong_kind_and_math_ownership_matrix() {
     let horizontal = register_shapes(&stores, 9);
     assert!(
         matches!(horizontal.as_deref(), Some([Shape::HBox { children, .. }])
-        if children.as_slice() == [
-            Shape::Kern(8 * Scaled::UNITY, KernKind::Explicit),
-            Shape::Glue(9 * Scaled::UNITY, GlueKind::Normal, false),
+        if matches!(children.as_slice(), [
+            Shape::Kern(first, KernKind::Explicit),
+            Shape::Glue { width: first_glue, kind: GlueKind::Normal, leader: false, .. },
             Shape::Penalty(10),
             Shape::Kern(11 * Scaled::UNITY, KernKind::Explicit),
-            Shape::Kern(8 * Scaled::UNITY, KernKind::Explicit),
-            Shape::Glue(9 * Scaled::UNITY, GlueKind::Normal, false),
+            Shape::Kern(second, KernKind::Explicit),
+            Shape::Glue { width: second_glue, kind: GlueKind::Normal, leader: false, .. },
             Shape::Penalty(10),
-        ]),
+        ] if *first == 8 * Scaled::UNITY
+            && *first_glue == 9 * Scaled::UNITY
+            && *second == 8 * Scaled::UNITY
+            && *second_glue == 9 * Scaled::UNITY)),
         "{horizontal:?}"
     );
     assert!(
         matches!(register_shapes(&stores, 10).as_deref(), Some([Shape::HBox { children, .. }])
-        if children.as_slice() == [
-            Shape::Kern(8 * Scaled::UNITY, KernKind::Explicit),
-            Shape::Glue(9 * Scaled::UNITY, GlueKind::Normal, false),
+        if matches!(children.as_slice(), [
+            Shape::Kern(kern, KernKind::Explicit),
+            Shape::Glue { width, kind: GlueKind::Normal, leader: false, .. },
             Shape::Penalty(10),
-        ]),
+        ] if *kern == 8 * Scaled::UNITY && *width == 9 * Scaled::UNITY)),
         "unhcopy preserves the source before the matching move"
     );
     assert_eq!(register_shapes(&stores, 8), None, "unhbox moves");
@@ -1913,6 +1905,20 @@ fn box_void_vtop_box255_and_zero_shift_matrix() {
     // TeX82 §§1077--1087: void copy/take operands stay void, box255 obeys
     // the same destructive distinction, vtop's first-item rule is exact at
     // empty and leading-glue boundaries, and zero shifts remain typed boxes.
+    let (_, original) = run(br"\setbox255=\hbox{\kern1pt}", false);
+    let expected_box255 = vec![Shape::HBox {
+        width: Scaled::UNITY,
+        height: 0,
+        depth: 0,
+        shift: 0,
+        children: vec![Shape::Kern(Scaled::UNITY, KernKind::Explicit)],
+    }];
+    assert_eq!(
+        register_shapes(&original, 255),
+        Some(expected_box255.clone()),
+        "box255 starts as the exact non-void 1pt hbox"
+    );
+
     let (_, stores) = run(
         br"\setbox0=\copy7\setbox1=\box7
           \setbox255=\hbox{\kern1pt}\setbox2=\copy255\setbox3=\box255
@@ -1924,8 +1930,11 @@ fn box_void_vtop_box255_and_zero_shift_matrix() {
     );
     assert_eq!(register_shapes(&stores, 0), None);
     assert_eq!(register_shapes(&stores, 1), None);
+    let copied = register_shapes(&stores, 2).expect("copy255 destination is non-void");
+    let moved = register_shapes(&stores, 3).expect("box255 destination is non-void");
+    assert_eq!(copied, expected_box255);
+    assert_eq!(moved, copied);
     assert_eq!(register_shapes(&stores, 255), None);
-    assert_eq!(register_shapes(&stores, 2), register_shapes(&stores, 3));
     assert_eq!(register_box_height(&stores, 4), 0);
     assert_eq!(register_box_depth(&stores, 4), 0);
     assert_eq!(register_box_height(&stores, 5), 0);
@@ -1938,10 +1947,84 @@ fn box_void_vtop_box255_and_zero_shift_matrix() {
     );
     assert!(
         matches!(register_shapes(&stores, 7).as_deref(), Some([Shape::VBox { children, .. }])
-        if matches!(children.as_slice(), [Shape::HBox { shift: 0, children: left, .. }, Shape::Glue(_, _, false), Shape::VBox { shift: 0, children: right, .. }]
+        if matches!(children.as_slice(), [Shape::HBox { shift: 0, children: left, .. }, Shape::Glue { leader: false, .. }, Shape::VBox { shift: 0, children: right, .. }]
             if left.as_slice() == [Shape::Kern(6 * Scaled::UNITY, KernKind::Explicit)]
                 && right.as_slice() == [Shape::Kern(7 * Scaled::UNITY, KernKind::Explicit)]))
     );
+}
+
+#[test]
+fn insert_and_vadjust_aftergroup_closure_provenance_order_and_once() {
+    // TeX82 §§282/1098: insertion-group unsave backs up each aftergroup token
+    // with its inserted provenance before the following source token. Exact
+    // character order proves the replay happens once for both insert and
+    // vadjust, while character nodes retain the direct token origin.
+    let (_, stores) = run(
+        br"\font\f=cmr10 \f \hsize=100pt
+          \setbox8=\vbox{\insert1{\kern1pt\aftergroup A}B\par}
+          \setbox9=\vbox{\noindent A\vadjust{\kern4pt\aftergroup B}C\par}",
+        true,
+    );
+
+    let insert_box = register_box(&stores, 8);
+    let insert_children = stores.nodes(insert_box.children).testing_decoded();
+    let [Node::Ins { content, .. }, Node::Glue {
+        kind: GlueKind::ParSkip,
+        ..
+    }, Node::HList(insert_line)] = insert_children
+    else {
+        panic!(
+            "insert aftergroup closure: {:?}",
+            shapes(&stores, insert_children)
+        );
+    };
+    assert_eq!(
+        shapes(&stores, stores.nodes(*content).testing_decoded()),
+        vec![Shape::Kern(Scaled::UNITY, KernKind::Explicit)]
+    );
+    let insert_chars = stores
+        .nodes(insert_line.children)
+        .testing_decoded()
+        .iter()
+        .filter_map(|node| match node {
+            Node::Char { ch, origin, .. } => Some((*ch, *origin)),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        insert_chars.iter().map(|(ch, _)| *ch).collect::<String>(),
+        "AB"
+    );
+    assert!(stores.origin_is_inserted_kind(insert_chars[0].1, InsertedOriginKind::AfterGroup));
+
+    let adjust_box = register_box(&stores, 9);
+    let adjust_children = stores.nodes(adjust_box.children).testing_decoded();
+    let [Node::HList(line), Node::Kern {
+        amount,
+        kind: KernKind::Explicit,
+    }] = adjust_children
+    else {
+        panic!(
+            "vadjust paragraph closure: {:?}",
+            shapes(&stores, adjust_children)
+        );
+    };
+    assert_eq!(*amount, Scaled::from_raw(4 * Scaled::UNITY));
+    let line_chars = stores
+        .nodes(line.children)
+        .testing_decoded()
+        .iter()
+        .filter_map(|node| match node {
+            Node::Char { ch, origin, .. } => Some((*ch, *origin)),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        line_chars.iter().map(|(ch, _)| *ch).collect::<String>(),
+        "ABC",
+        "aftergroup token precedes the following source token"
+    );
+    assert!(stores.origin_is_inserted_kind(line_chars[1].1, InsertedOriginKind::AfterGroup));
 }
 
 #[test]
@@ -2020,18 +2103,23 @@ fn paragraph_empty_discardable_display_and_insert_matrix() {
     assert!(
         matches!(register_shapes(&stores, 1).as_deref(), Some([Shape::VBox { children, .. }])
         if matches!(children.as_slice(), [Shape::HBox { children: line, .. }]
-            if line.as_slice() == [Shape::Glue(Scaled::UNITY, GlueKind::Normal, false), Shape::Kern(2 * Scaled::UNITY, KernKind::Explicit), Shape::Penalty(7), Shape::Penalty(10_000), Shape::Glue(0, GlueKind::ParFillSkip, false), Shape::Glue(0, GlueKind::RightSkip, false)])),
+            if matches!(line.as_slice(), [
+                Shape::Glue { width: left, kind: GlueKind::Normal, leader: false, .. },
+                Shape::Kern(kern, KernKind::Explicit),
+                Shape::Penalty(7),
+                Shape::Penalty(10_000),
+                Shape::Glue { width: par_fill, kind: GlueKind::ParFillSkip, leader: false, .. },
+                Shape::Glue { width: right, kind: GlueKind::RightSkip, leader: false, .. },
+            ] if *left == Scaled::UNITY && *kern == 2 * Scaled::UNITY && *par_fill == 0 && *right == 0))),
         "{:?}",
         register_shapes(&stores, 1)
     );
     let display = register_shapes(&stores, 2)
         .unwrap_or_else(|| panic!("display vbox; terminal={}", terminal(&stores)));
-    let [
-        Shape::VBox {
-            children: display_children,
-            ..
-        },
-    ] = display.as_slice()
+    let [Shape::VBox {
+        children: display_children,
+        ..
+    }] = display.as_slice()
     else {
         panic!("display box: {display:?}");
     };
@@ -2048,7 +2136,7 @@ fn paragraph_empty_discardable_display_and_insert_matrix() {
     );
     assert!(
         matches!(register_shapes(&stores, 3).as_deref(), Some([Shape::VBox { children, .. }])
-        if matches!(children.as_slice(), [Shape::HBox { children: line, .. }, Shape::Insert(4, insertion)]
+        if matches!(children.as_slice(), [Shape::HBox { children: line, .. }, Shape::Insert { class: 4, content: insertion, .. }]
             if line.contains(&Shape::Char('B')) && line.contains(&Shape::Char('C'))
                 && insertion.as_slice() == [Shape::Kern(5 * Scaled::UNITY, KernKind::Explicit)])),
         "{:?}",
@@ -2084,9 +2172,10 @@ fn paragraph_prev_graf_depth_off_save_and_replay_provenance_matrix() {
           \dimen1=\pagedepth",
         false,
     );
-    assert!(
-        page.dimen(1).raw() > 0,
-        "descender sets outer page depth: contents={:?} contributions={:?} depth={:?}",
+    assert_eq!(
+        page.dimen(1).raw(),
+        4 * Scaled::UNITY,
+        "outer page depth is the rule's exact 4pt depth: contents={:?} contributions={:?} depth={:?}",
         page.page_contents(),
         page.page_contributions(),
         page.page_dimension(PageDimension::Depth)
@@ -2153,7 +2242,7 @@ fn structured_material_lifecycle_delete_unbox_italic_and_recovery_matrix() {
     );
     assert!(
         matches!(register_shapes(&stores, 1).as_deref(), Some([Shape::VBox { children, .. }])
-        if matches!(children.as_slice(), [Shape::Insert(3, content), Shape::Mark(0, mark), Shape::Penalty(8)]
+        if matches!(children.as_slice(), [Shape::Insert { class: 3, content, .. }, Shape::Mark(0, mark), Shape::Penalty(8)]
             if matches!(content.as_slice(), [Shape::Rule(_, Some(h), _) ] if *h == 2 * Scaled::UNITY) && mark == "v"))
     );
     assert!(
@@ -2188,7 +2277,12 @@ fn structured_material_lifecycle_delete_unbox_italic_and_recovery_matrix() {
     let classes = register_shapes(&boundaries, 0);
     assert!(
         matches!(classes.as_deref(), Some([Shape::VBox { children, .. }])
-        if matches!(children.as_slice(), [Shape::Insert(0, zero), Shape::Insert(254, high), Shape::Insert(0, reserved), Shape::Insert(0, overflow)]
+        if matches!(children.as_slice(), [
+            Shape::Insert { class: 0, content: zero, .. },
+            Shape::Insert { class: 254, content: high, .. },
+            Shape::Insert { class: 0, content: reserved, .. },
+            Shape::Insert { class: 0, content: overflow, .. },
+        ]
             if zero == &[Shape::Kern(Scaled::UNITY, KernKind::Explicit)]
                 && high == &[Shape::Kern(2 * Scaled::UNITY, KernKind::Explicit)]
                 && reserved == &[Shape::Kern(3 * Scaled::UNITY, KernKind::Explicit)]
@@ -2209,4 +2303,3 @@ fn structured_material_lifecycle_delete_unbox_italic_and_recovery_matrix() {
         "{boundary_errors}"
     );
 }
-
