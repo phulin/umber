@@ -459,6 +459,14 @@ compares the complete inputs, and verifies the legacy finalizer still produces
 identical bytes; the next migration step may therefore move lowering without
 introducing `Universe`, `World`, or resolver callbacks into `tex-out`.
 
+Virtual-font finalization now retains each exact acquired local TFM transport
+and its `tex-fonts` validation receipt. The adapter privately replays bounded
+first-use allocation to freeze packet-sized realized identities and pdfTeX
+resource/object numbers; `tex-out` reparses those transports at each declared
+size and owns recursive packet lowering with no engine or host callback.
+Nested size, width, identity, recursion bounds, resource allocation, and final
+PDF bytes are checked against the retained legacy oracle.
+
 ## 7. One canonical HTML producer and JavaScript receiver
 
 **Outcome.** A keyed `RenderDocument` or `RenderRevision` resolves positioned events, fonts, specials, accessibility, and math once. Standalone HTML/assets and incremental patch plans derive from it. JavaScript remains the browser trust and DOM transaction boundary.

@@ -158,8 +158,22 @@ pub enum PdfFontProgramInput {
 #[derive(Clone, Debug, PartialEq)]
 pub struct PdfVirtualFontInput {
     pub program: VfProgram,
-    /// Parsed TFM programs indexed by the packet-local logical font name.
-    pub local_tfms: BTreeMap<Vec<u8>, TfmFont>,
+    /// Exact validated TFM transports indexed by packet-local logical name.
+    ///
+    /// VF declarations select a size relative to the containing font. Keeping
+    /// the transport, rather than only its design-size projection, lets the
+    /// detached lowerer ask `tex-fonts` to construct the canonical instance at
+    /// that declared size without consulting a host or live engine store.
+    pub local_tfms: BTreeMap<Vec<u8>, PdfVirtualLocalTfmInput>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PdfVirtualLocalTfmInput {
+    pub content_hash: [u8; 32],
+    pub bytes: Arc<[u8]>,
+    /// Design-size validation receipt. The exact bytes remain authoritative
+    /// for every packet-local sized instance.
+    pub design_font: TfmFont,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

@@ -204,9 +204,6 @@ impl super::PdfAnnotationInput {
 /// Purely validates and lowers one complete detached PDF input.
 #[allow(clippy::disallowed_methods)] // Optional process telemetry is observational only.
 pub fn finalize_pdf(input: &PdfFinalizationInput) -> Result<PdfFinalizationOutput, PdfBuildError> {
-    if !input.virtual_fonts.is_empty() {
-        return Err(PdfBuildError::DetachedVirtualFontDataIncomplete);
-    }
     let total_started = std::time::Instant::now();
     let parameters = FinalizationParameters {
         major_version: i32::from(input.document.version.0),
@@ -238,7 +235,9 @@ pub fn finalize_pdf(input: &PdfFinalizationInput) -> Result<PdfFinalizationOutpu
             .map(|(_, positioned)| positioned),
     );
     let positioning_ns = positioning_started.elapsed().as_nanos();
-    let vf_ns = 0;
+    let vf_started = std::time::Instant::now();
+    super::vf::lower_pages(input, &mut positioned_pages)?;
+    let vf_ns = vf_started.elapsed().as_nanos();
     let positioned_forms = positioned_pages.split_off(page_count);
     let positioned_forms = positioned_form_objects
         .into_iter()
@@ -4414,7 +4413,6 @@ pub enum PdfBuildError {
     },
     TrueTypeSubset(tex_fonts::PdfTrueTypeSubsetError),
     MissingLiveFont(String),
-    DetachedVirtualFontDataIncomplete,
     UnsupportedMappedVirtualFont(String),
     VirtualFontDepthExceeded(usize),
     VirtualFontStackExceeded(usize),
@@ -4619,9 +4617,6 @@ impl std::fmt::Display for PdfBuildError {
             Self::MissingLiveFont(name) => {
                 write!(f, "PDF artifact font {name:?} has no live metric source")
             }
-            Self::DetachedVirtualFontDataIncomplete => f.write_str(
-                "detached PDF input cannot yet represent exact virtual-font leaf resources",
-            ),
             Self::UnsupportedMappedVirtualFont(name) => write!(
                 f,
                 "mapped OpenType text font {name:?} cannot execute a classic virtual-font program"

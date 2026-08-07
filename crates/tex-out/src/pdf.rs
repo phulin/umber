@@ -14,6 +14,7 @@ mod graph;
 mod import;
 mod paint;
 mod serialize;
+mod vf;
 
 pub use finalization::{
     PDF_MAX_OBJECT_ID, PdfActionInput, PdfActionTargetInput, PdfAllocationInput,
@@ -25,7 +26,7 @@ pub use finalization::{
     PdfObjectAllocationError, PdfObjectAllocator, PdfOutlineInput, PdfPageBoxInput,
     PdfPageRotationInput, PdfRasterColorSpaceInput, PdfRasterFormatInput, PdfRawObjectInput,
     PdfRawObjectPayloadInput, PdfReservedDocumentObjects, PdfThreadBeadInput, PdfThreadInput,
-    PdfVirtualFontInput,
+    PdfVirtualFontInput, PdfVirtualLocalTfmInput,
 };
 pub use finalize::{PdfBuildError, PdfFinalizationOutput, finalize_pdf};
 

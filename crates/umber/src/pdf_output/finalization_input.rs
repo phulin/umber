@@ -13,6 +13,7 @@ use tex_out::pdf::{
     PdfNavigationInput, PdfOutlineInput, PdfPageBoxInput, PdfPageRotationInput,
     PdfRasterColorSpaceInput, PdfRasterFormatInput, PdfRawObjectInput, PdfRawObjectPayloadInput,
     PdfReservedDocumentObjects, PdfThreadBeadInput, PdfThreadInput, PdfVirtualFontInput,
+    PdfVirtualLocalTfmInput,
 };
 use tex_state::env::banks::{IntParam, TokParam};
 use tex_state::{
@@ -100,6 +101,19 @@ pub fn pdf_finalization_input(
         })
         .collect::<Result<BTreeMap<_, _>, PdfBuildError>>()?;
 
+    // Run the same bounded, pure packet walk once at the host boundary to
+    // materialize the live font instances and pdfTeX resource reservations
+    // that first packet use would allocate. The positioned candidate is
+    // discarded: tex-out repeats lowering from the committed artifacts using
+    // only the detached closure captured below.
+    let mut detached_stores = stores.clone();
+    let virtual_positioned = reserve_virtual_font_resources(
+        &mut detached_stores,
+        artifacts,
+        &page_records,
+        virtual_fonts,
+    )?;
+
     let artifacts_by_font = pages
         .iter()
         .map(|page| page.artifact_bytes.as_ref())
@@ -108,6 +122,30 @@ pub fn pdf_finalization_input(
         .collect::<Result<Vec<_>, _>>()?
         .into_iter()
         .flat_map(|artifact| artifact.fonts.clone())
+        .chain(
+            virtual_positioned
+                .iter()
+                .flat_map(|positioned| positioned.fonts.iter().cloned()),
+        )
+        .chain(detached_stores.pdf_font_resources().filter_map(|resource| {
+            let font = detached_stores.font(resource.font());
+            virtual_fonts
+                .virtual_fonts
+                .contains_key(font.name())
+                .then(|| tex_out::FontResource {
+                    font_id: resource.resource_number(),
+                    name: font.name().to_owned(),
+                    tfm_content_hash: tex_out::ContentIdentity::new(font.content_hash()),
+                    tfm_checksum: font.checksum(),
+                    design_size: font.design_size(),
+                    at_size: font.size(),
+                    layout_policy: font.layout_policy(),
+                    mapping_fallback: font.mapping_fallback(),
+                    opentype: None,
+                    semantic_identity: font.source_identity(),
+                    construction: tex_out::FontResourceConstruction::Loaded,
+                })
+        }))
         .map(|font| (font.semantic_identity, font))
         .collect::<BTreeMap<_, _>>();
     let resolved_map = stores
@@ -118,25 +156,34 @@ pub fn pdf_finalization_input(
     let font_configuration = stores.pdf_font_configuration();
     let mut fonts = BTreeMap::new();
     for (identity, artifact_resource) in artifacts_by_font {
-        let font_id = stores
+        let font_id = detached_stores
             .font_by_source_identity(identity)
             .ok_or_else(|| PdfBuildError::MissingLiveFont(artifact_resource.name.clone()))?;
-        let resource = stores
+        let resource = detached_stores
             .pdf_font_resource_by_identity(identity)
             .ok_or_else(|| PdfBuildError::MissingFontResource(artifact_resource.name.clone()))?;
-        let loaded = stores.font(font_id);
+        let loaded = detached_stores.font(font_id);
         let map_entry = resolved_map.get(artifact_resource.name.as_bytes()).cloned();
         let encoding = map_entry
             .as_ref()
             .and_then(|entry| entry.encoding_files.first())
             .map(|name| {
-                stores
+                detached_stores
                     .pdf_encoding(name)
                     .cloned()
                     .ok_or_else(|| PdfBuildError::MissingEncoding(name.clone()))
             })
             .transpose()?;
-        let program = detached_font_program(stores, font_id, map_entry.as_ref(), driver_dpi)?;
+        let program = if virtual_fonts
+            .virtual_fonts
+            .contains_key(artifact_resource.name.as_str())
+        {
+            // A virtual font is composition only and is never emitted as a
+            // PDF font dictionary. Its exact VF/TFM closure is below.
+            PdfFontProgramInput::Resident
+        } else {
+            detached_font_program(&detached_stores, font_id, map_entry.as_ref(), driver_dpi)?
+        };
         let mut glyph_names = encoding
             .as_ref()
             .map(|encoding| {
@@ -153,29 +200,29 @@ pub fn pdf_finalization_input(
         let glyph_to_unicode = glyph_names
             .into_iter()
             .filter_map(|name| {
-                stores
+                detached_stores
                     .pdf_glyph_to_unicode(loaded.name().as_bytes(), &name)
-                    .or_else(|| stores.pdf_glyph_to_unicode(&[], &name))
+                    .or_else(|| detached_stores.pdf_glyph_to_unicode(&[], &name))
                     .map(|unicode| (name, unicode.to_vec()))
             })
             .collect();
         let metrics = PdfFontMetricsInput {
             widths: std::array::from_fn(|code| {
-                stores
+                detached_stores
                     .font_char_metrics(font_id, code as u8)
                     .map_or(Scaled::from_raw(0), |metric| metric.width)
             }),
             heights: std::array::from_fn(|code| {
-                stores
+                detached_stores
                     .font_char_metrics(font_id, code as u8)
                     .map_or(Scaled::from_raw(0), |metric| metric.height)
             }),
             depths: std::array::from_fn(|code| {
-                stores
+                detached_stores
                     .font_char_metrics(font_id, code as u8)
                     .map_or(Scaled::from_raw(0), |metric| metric.depth)
             }),
-            x_height: stores.font_parameter(font_id, 5),
+            x_height: detached_stores.font_parameter(font_id, 5),
         };
         fonts.insert(
             identity,
@@ -184,14 +231,15 @@ pub fn pdf_finalization_input(
                 resource_number: resource.resource_number(),
                 object_number: resource.object_number(),
                 metrics,
-                included_codes: stores
+                included_codes: detached_stores
                     .included_pdf_font_chars(font_id)
                     .into_iter()
                     .collect(),
-                descriptor_entries: stores.pdf_font_attribute(font_id).to_vec(),
+                descriptor_entries: detached_stores.pdf_font_attribute(font_id).to_vec(),
                 generate_to_unicode: font_configuration.generates_to_unicode(),
-                disable_builtin_to_unicode: stores.pdf_builtin_to_unicode_disabled(font_id),
-                infer_builtin_glyph_unicode: stores.has_pdf_glyph_to_unicode_mappings(),
+                disable_builtin_to_unicode: detached_stores
+                    .pdf_builtin_to_unicode_disabled(font_id),
+                infer_builtin_glyph_unicode: detached_stores.has_pdf_glyph_to_unicode_mappings(),
                 omit_charset: font_configuration.omits_charset(),
                 glyph_to_unicode,
                 map_entry,
@@ -261,7 +309,7 @@ pub fn pdf_finalization_input(
     }
 
     let include_info = stores.int_param(IntParam::PDF_OMIT_INFO_DICT) == 0;
-    let mut allocation_state = stores.clone();
+    let mut allocation_state = detached_stores.clone();
     let ids = allocation_state
         .finalize_pdf_document_objects(include_info)
         .map_err(|_| PdfBuildError::ObjectCapacity)?;
@@ -308,7 +356,16 @@ pub fn pdf_finalization_input(
                     local_tfms: virtual_fonts
                         .local_tfms
                         .iter()
-                        .map(|(name, cached)| (name.as_bytes().to_vec(), cached.font.clone()))
+                        .map(|(name, cached)| {
+                            (
+                                name.as_bytes().to_vec(),
+                                PdfVirtualLocalTfmInput {
+                                    content_hash: cached.content_id.bytes(),
+                                    bytes: Arc::from(cached.bytes.as_slice()),
+                                    design_font: cached.font.clone(),
+                                },
+                            )
+                        })
                         .collect(),
                 },
             )
@@ -354,6 +411,29 @@ pub fn pdf_finalization_input(
         },
         limits: PdfFinalizationLimits::default(),
     })
+}
+
+/// Replays the bounded VF first-use order against the supplied private state
+/// and returns the lowered candidate solely as a font-closure receipt.
+pub(crate) fn reserve_virtual_font_resources(
+    stores: &mut Universe,
+    artifacts: &[CommittedArtifact],
+    page_records: &[tex_state::PdfPageRecord],
+    virtual_fonts: &crate::PdfVirtualFontResources,
+) -> Result<Vec<tex_out::positioned::PositionedPage>, PdfBuildError> {
+    let mut positioned = super::positioned_pages(stores, artifacts, page_records)?;
+    positioned.extend(
+        super::positioned_forms(stores)?
+            .into_iter()
+            .map(|(_, positioned)| positioned),
+    );
+    crate::pdf_vf::lower_pages(
+        stores,
+        &mut positioned,
+        virtual_fonts,
+        crate::pdf_vf::PdfVfLimits::default(),
+    )?;
+    Ok(positioned)
 }
 
 fn detached_font_program(

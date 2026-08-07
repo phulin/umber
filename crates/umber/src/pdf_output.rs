@@ -3,6 +3,7 @@
 mod finalization_input;
 
 pub use finalization_input::pdf_finalization_input;
+use finalization_input::reserve_virtual_font_resources;
 
 use tex_out::pdf::{
     PdfModelError, PdfObjectCompression, PdfSerializationOptions, PdfSerializeError,
@@ -166,18 +167,6 @@ fn pdf_from_committed_artifacts_at_dpi_with_virtual_fonts(
     driver_dpi: i32,
     virtual_fonts: &crate::PdfVirtualFontResources,
 ) -> Result<Vec<u8>, PdfBuildError> {
-    // The detached contract cannot yet represent exact packet-local TFM bytes
-    // or the first-use allocation of fonts discovered while lowering a VF.
-    // Keep that path on the established finalizer until umber2-vgjr.6.4
-    // completes the boundary rather than silently emitting unlowered text.
-    if !virtual_fonts.virtual_fonts.is_empty() {
-        return legacy_pdf_from_committed_artifacts_at_dpi_with_virtual_fonts(
-            stores,
-            artifacts,
-            driver_dpi,
-            virtual_fonts,
-        );
-    }
     let input = pdf_finalization_input(stores, artifacts, driver_dpi, virtual_fonts)?;
     let include_info = input.document.metadata.include_info_dictionary;
     let output = tex_out::pdf::finalize_pdf(&input).map_err(|error| match error {
@@ -210,6 +199,8 @@ fn pdf_from_committed_artifacts_at_dpi_with_virtual_fonts(
         }
         other => PdfBuildError::DetachedFinalization(other),
     })?;
+    let page_records = stores.pdf_pages().to_vec();
+    reserve_virtual_font_resources(stores, artifacts, &page_records, virtual_fonts)?;
     stores
         .finalize_pdf_document_objects(include_info)
         .map_err(|_| PdfBuildError::ObjectCapacity)?;
@@ -1392,6 +1383,18 @@ fn legacy_pdf_from_committed_artifacts_at_dpi_with_virtual_fonts(
     }
     Ok(bytes)
 }
+
+// Kept only as the byte-exact differential oracle while the parent migration
+// issue deletes the legacy finalizer. A typed reference keeps that test oracle
+// and its private dependency graph lint-visible without making it a runtime
+// fallback.
+type LegacyPdfFinalizer = fn(
+    &mut Universe,
+    &[CommittedArtifact],
+    i32,
+    &crate::PdfVirtualFontResources,
+) -> Result<Vec<u8>, PdfBuildError>;
+const _: LegacyPdfFinalizer = legacy_pdf_from_committed_artifacts_at_dpi_with_virtual_fonts;
 
 fn validate_form_graph(
     stores: &Universe,
@@ -9098,6 +9101,157 @@ mod tests {
         .expect("legacy finalizer accepts untouched fixture");
         assert_eq!(first_pdf, second_pdf);
         assert_eq!(first_pdf, legacy_pdf);
+    }
+
+    #[test]
+    fn detached_nested_vf_preserves_local_sizes_identities_and_resources() {
+        const FIX_ONE: i32 = 1 << 20;
+        const CMR10: &[u8] = include_bytes!("../../tex-fonts/tests/fixtures/cm/cmr10.tfm");
+        const CMSY10: &[u8] = include_bytes!("../../tex-fonts/tests/fixtures/cm/cmsy10.tfm");
+        const CMEX10: &[u8] = include_bytes!("../../tex-fonts/tests/fixtures/cm/cmex10.tfm");
+
+        fn vf(local: &[u8], scaled_size: i32) -> Vec<u8> {
+            let mut bytes = vec![247, 202, 0];
+            bytes.extend_from_slice(&0u32.to_be_bytes());
+            bytes.extend_from_slice(&(10 * FIX_ONE).to_be_bytes());
+            bytes.extend_from_slice(&[243, 7]);
+            bytes.extend_from_slice(&0u32.to_be_bytes());
+            bytes.extend_from_slice(&scaled_size.to_be_bytes());
+            bytes.extend_from_slice(&(10 * FIX_ONE).to_be_bytes());
+            bytes.extend_from_slice(&[0, local.len() as u8]);
+            bytes.extend_from_slice(local);
+            bytes.extend_from_slice(&[1, b'A', 8, 0, 0, b'A', 248]);
+            while !bytes.len().is_multiple_of(4) {
+                bytes.push(248);
+            }
+            bytes
+        }
+
+        fn setup() -> (Universe, RunResult) {
+            let mut stores = pdftex_recovery_stores();
+            prepare_pdftex_run_stores(&mut stores);
+            stores
+                .world_mut()
+                .set_memory_file("cmr10.tfm", CMR10.to_vec())
+                .expect("seed root TFM");
+            stores
+                .provide_pdf_type1_program(
+                    b"cmr10.pfb".to_vec(),
+                    include_bytes!("../../../tests/corpus/pdf/embedded_type1/cmr10.pfb"),
+                )
+                .expect("seed leaf program");
+            let run = run_in(
+                &mut stores,
+                concat!(
+                    "\\pdfoutput=1\\pdfcompresslevel=0\\pdfobjcompresslevel=0",
+                    "\\pdfmapline{=cmex10 CMR10 <cmr10.pfb}",
+                    "\\font\\f=cmr10 at 12pt ",
+                    "\\shipout\\hbox{\\f A}\\end",
+                ),
+            );
+            (stores, run)
+        }
+
+        let root_vf = vf(b"cmsy10", FIX_ONE / 2);
+        let nested_vf = vf(b"cmex10", 3 * FIX_ONE / 2);
+        let mut resources = crate::PdfVirtualFontResources::default();
+        for (name, bytes) in [("cmr10", root_vf), ("cmsy10", nested_vf)] {
+            resources.virtual_fonts.insert(
+                name.to_owned(),
+                crate::CachedVirtualFont {
+                    content_id: umber_vfs::FileContentId::for_bytes(&bytes),
+                    program: tex_fonts::VfProgram::parse(&bytes).expect("test VF"),
+                },
+            );
+        }
+        for (name, bytes) in [("cmsy10", CMSY10), ("cmex10", CMEX10)] {
+            resources.local_tfms.insert(
+                name.to_owned(),
+                crate::CachedLocalTfm {
+                    content_id: umber_vfs::FileContentId::for_bytes(bytes),
+                    bytes: bytes.to_vec(),
+                    font: tex_fonts::TfmFont::parse(bytes).expect("test local TFM"),
+                },
+            );
+        }
+
+        let (mut detached_stores, detached_run) = setup();
+        let (mut legacy_stores, legacy_run) = setup();
+        let before = detached_stores.pdf_next_object_id();
+        let input = pdf_finalization_input(
+            &mut detached_stores,
+            &detached_run.committed_artifacts,
+            DEFAULT_PDF_PK_RESOLUTION,
+            &resources,
+        )
+        .expect("nested VF detaches");
+        assert_eq!(detached_stores.pdf_next_object_id(), before);
+        let leaf = input
+            .fonts
+            .values()
+            .find(|font| font.artifact_resource.name == "cmex10")
+            .expect("nested leaf instance is detached");
+        assert!(
+            input
+                .fonts
+                .values()
+                .any(|font| font.artifact_resource.name == "cmsy10"),
+            "intermediate resources: {:?}",
+            input
+                .fonts
+                .values()
+                .map(|font| (&font.artifact_resource.name, font.artifact_resource.at_size))
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(leaf.artifact_resource.at_size, pt(9));
+        assert_eq!(
+            input.virtual_fonts[b"cmsy10".as_slice()].local_tfms[b"cmex10".as_slice()]
+                .bytes
+                .as_ref(),
+            CMEX10,
+        );
+        assert_ne!(leaf.resource_number, 0);
+        assert_ne!(leaf.object_number, 0);
+        let mut bounded = input.clone();
+        bounded.limits.max_virtual_font_recursion = 1;
+        assert!(matches!(
+            tex_out::pdf::finalize_pdf(&bounded),
+            Err(tex_out::pdf::PdfBuildError::VirtualFontDepthExceeded(1))
+        ));
+        let mut mismatched = input.clone();
+        mismatched
+            .virtual_fonts
+            .get_mut(b"cmsy10".as_slice())
+            .expect("nested VF input")
+            .local_tfms
+            .get_mut(b"cmex10".as_slice())
+            .expect("nested local TFM")
+            .content_hash = [0; 32];
+        assert!(matches!(
+            tex_out::pdf::finalize_pdf(&mismatched),
+            Err(tex_out::pdf::PdfBuildError::MissingFontResource(_))
+        ));
+
+        let detached = pdf_from_committed_artifacts_with_virtual_fonts(
+            &mut detached_stores,
+            &detached_run.committed_artifacts,
+            &resources,
+        )
+        .expect("detached nested VF finalizes");
+        let legacy = legacy_pdf_from_committed_artifacts_at_dpi_with_virtual_fonts(
+            &mut legacy_stores,
+            &legacy_run.committed_artifacts,
+            DEFAULT_PDF_PK_RESOLUTION,
+            &resources,
+        )
+        .expect("legacy nested VF finalizes");
+        assert_eq!(detached, legacy);
+        assert_eq!(
+            detached_stores.pdf_next_object_id(),
+            legacy_stores.pdf_next_object_id(),
+        );
+        let parsed = query(&detached);
+        assert_eq!(parsed.pages().expect("nested VF page").len(), 1);
     }
 
     #[test]

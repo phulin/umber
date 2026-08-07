@@ -60,14 +60,15 @@ positive-width rules become positioned PDF rectangles; other rules only
 retain the `set_rule` advance.
 
 The same module's `output_one_char` fragment classifies the selected local
-font recursively and reaches PDF font selection only for a real leaf. Umber
-therefore instantiates retained local TFM bytes at the declared size, reserves
-PDF resources for real leaves, and computes glyph usage from the expanded
-positioned stream. Virtual TFM names never become page font resources merely
+font recursively and reaches PDF font selection only for a real leaf. The
+Umber adapter privately replays first use to reserve exact leaf identities and
+PDF resource numbers; `tex-out` then instantiates retained local TFM bytes at
+the declared size and computes glyph usage from the expanded positioned
+stream. Virtual TFM names never become emitted PDF font resources merely
 because their source artifact contained characters.
 
 Positioned interword spaces carry extraction/accessibility state but do not
-execute a VF packet. During lowering Umber rebinds those spaces to an adjacent
+execute a VF packet. During lowering `tex-out` rebinds those spaces to an adjacent
 real leaf selected by the same virtual run. This preserves their exact anchors
 without retaining a virtual-root PDF resource; leading spaces wait for the
 first expanded leaf, trailing spaces use the last expanded leaf, and a run
@@ -78,10 +79,10 @@ Section 32e's `literal(s, scan_special, false)` call delegates to section
 32c's `literal` procedure: non-`PDF:` specials are silently ignored;
 `PDF:direct:` retains text state, `PDF:page:` ends text without moving the
 origin, and an unqualified `PDF:` special uses the current packet origin.
-Umber lowers those three cases to the existing typed PDF-literal operation.
+`tex-out` lowers those three cases to the existing typed PDF-literal operation.
 
 The reference constants `vf_max_recursion=10` and `vf_stack_size=100` remain
-defaults. Umber additionally rejects an active `(font instance, character)`
+defaults. The detached lowerer additionally rejects an active `(font instance, character)`
 cycle explicitly and bounds aggregate executed commands, emitted operations,
 and retained special bytes. All cursor, dimension, work, and output accounting
 uses checked arithmetic. These finalizer-only mutations occur after engine

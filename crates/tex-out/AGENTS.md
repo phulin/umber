@@ -44,6 +44,7 @@ Use this crate for stable, driver-facing artifact structures and serialization c
 - `src/pdf/tests.rs`: PDF graph validation, canonical identity, and budget tests.
 - `src/pdf/serialize.rs`: deterministic `pdf_writer` adapter, typed errors, version selection, and stream compression policy.
 - `src/pdf/serialize/tests.rs`: exact-byte determinism, independent parsing, compression, and adapter-error tests.
+- `src/pdf/vf.rs`: bounded recursive detached virtual-font packet lowering from exact local TFM transports.
 - `src/positioned.rs`: public driver-neutral positioned-page event model and lowering API.
 - `src/positioned/traversal.rs`: Explicit-frame positioned sink for DVI-equivalent box, glue, rule, leader, special, and browser-shaped text-run events.
 - `src/positioned/tests.rs`: line-anchor, baseline, box-shift, rule, ligature, and kern-boundary coordinate tests.
