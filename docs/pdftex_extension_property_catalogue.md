@@ -30,11 +30,16 @@ test fail until the bug is closed and the observation is deliberately promoted
 to `pass`; a known mismatch cannot be absorbed as success.
 
 `crates/test-support/tests/pdftex_extension_catalogue.rs` is the hermetic
-completeness gate. It rejects source-pin drift, duplicate property IDs,
-overlapping or incomplete case ownership, invalid section citations, missing
-oracle channels, projections absent from the preserved reference, unlinked
-xfails, and dormant or ambiguous Rust test links. The gate derives its case
-inventory from the closed retained corpus instead of pinning only a count.
+completeness gate. Its reviewed citation audit binds every property ID to an
+exact ordered set of modules and a concise semantic rationale read directly
+from the pinned source. This is intentionally stronger than checking that a
+number falls inside the source's module range: substituting a real but
+unrelated module, changing a rationale, or adding an unaudited property fails.
+The gate also rejects source-pin drift, duplicate property IDs, overlapping or
+incomplete case ownership, missing oracle channels, projections absent from
+the preserved reference, unlinked xfails, and dormant or ambiguous Rust test
+links. It derives its case inventory from the closed retained corpus instead
+of pinning only a count.
 
 The eight cases previously blocked under `umber2-alfh.29` are actively executed
 by `retained_pdftex_extension_fixtures_compare_oracle_projections`. It stages

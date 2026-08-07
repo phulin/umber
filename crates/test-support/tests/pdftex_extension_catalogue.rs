@@ -11,6 +11,113 @@ const SOURCE_COMMIT: &str = "1664cf0ab3f6ce3b80db649bc6723f54ab12016c";
 const SOURCE_SHA256: &str = "5a105669acc1b49aedb7560d4d15cb2e23467cb16d895eb0031c8dd9fea32f04";
 const INVENTORY_AUTHORITY: &str = "docs/pdftex_primitives.md";
 
+// Reviewed directly against SOURCE_SHA256. This deliberately duplicates the
+// catalogue's compact citations: changing an in-range section number or moving
+// a real section to the wrong property must fail until its semantic identity is
+// reviewed here too.
+const CITATION_AUDIT: &[(&str, &[u64], &str)] = &[
+    (
+        "pdftex.extension.compatibility-controls",
+        &[1151, 1264, 1655],
+        "Section 1151 applies ignore_primitive_error to infinite-shrinkage recovery; section 1264 defines quitvmode's mode-sensitive paragraph entry; section 1655 registers ignoreprimitiveerror.",
+    ),
+    (
+        "pdftex.extension.font-code-tables",
+        &[703, 1429, 1430],
+        "Section 703 defines the bounded font-code setters and no-ligature mutation; section 1429 dispatches assign_font_int globally; section 1430 registers the font-code primitives.",
+    ),
+    (
+        "pdftex.extension.font-configuration",
+        &[252, 254],
+        "Section 252 places the font-configuration integers in eqtb; section 254 registers them as assign_int primitives, giving them ordinary scoped assignment behavior.",
+    ),
+    (
+        "pdftex.extension.form-diagnostics",
+        &[1546],
+        "Section 1546 implements pdfxform, fetches the numbered box, and raises the void-box fatal error.",
+    ),
+    (
+        "pdftex.extension.form-state",
+        &[440, 448, 1546, 1547, 1621, 1635],
+        "Sections 440 and 448 expose last-form enquiries; sections 1546 and 1547 create and reference forms with captured dimensions; section 1621 ships immediate forms; section 1635 records referenced forms for page resources.",
+    ),
+    (
+        "pdftex.extension.form-traversal-diagnostics",
+        &[725, 755, 758],
+        "Section 725 routes pdfsave and pdfrestore through the graphics-state checker; sections 755 and 758 bracket each page or form content stream and its final balance check.",
+    ),
+    (
+        "pdftex.extension.ignored-dimension-effects",
+        &[853, 1062, 1063],
+        "Section 853 compares prev_depth with pdfignoreddimen; section 1062 initializes the line overrides from that sentinel; section 1063 applies overrides only when they differ from it.",
+    ),
+    (
+        "pdftex.extension.image-configuration",
+        &[252, 254, 1550],
+        "Section 252 places image and page-policy integers in eqtb; section 254 registers their assign_int primitives; section 1550 consumes the page-box, resolution, and inclusion policy while scanning an image.",
+    ),
+    (
+        "pdftex.extension.metadata-configuration",
+        &[252, 254],
+        "Section 252 places the metadata-policy integers in eqtb; section 254 registers them as assign_int primitives, giving them ordinary scoped assignment behavior.",
+    ),
+    (
+        "pdftex.extension.microtype-effects",
+        &[703, 1055, 1061, 1064, 1217, 1533],
+        "Section 703 inserts configured character-side kerns; sections 1055 and 1061 select protrusion nodes; section 1064 applies expansion while packing lines; section 1217 adjusts interword glue; section 1533 configures expanded fonts.",
+    ),
+    (
+        "pdftex.extension.move-chars-warning",
+        &[690],
+        "Section 690 warns on a positive pdfmovechars value when a PDF font is first marked used and resets it to zero.",
+    ),
+    (
+        "pdftex.extension.output-policy",
+        &[252, 254, 670, 681],
+        "Sections 252 and 254 define and register the output-policy eqtb integers; section 670 supplies PDF defaults; section 681 validates and recovers version and object-stream settings.",
+    ),
+    (
+        "pdftex.extension.destination-lifecycle",
+        &[792, 793, 794, 795, 796, 1562, 1635],
+        "Sections 1562 and 1635 implement duplicate-destination warning and traversal; section 792 invokes final destination checks; sections 793--796 diagnose and repair missing ordinary and structure destinations.",
+    ),
+    (
+        "pdftex.extension.destination-scanner",
+        &[1563],
+        "Section 1563 implements the complete pdfdest identifier, destination-kind, zoom, rectangle, and error scanner.",
+    ),
+    (
+        "pdftex.extension.outline-scanner",
+        &[440, 448, 1554, 1561],
+        "Sections 440 and 448 expose the last-object enquiry; section 1554 scans every outline action form; section 1561 scans attributes, count, and title while constructing outline objects.",
+    ),
+    (
+        "pdftex.extension.outline-tree",
+        &[786, 787, 1561],
+        "Section 1561 constructs the parent, sibling, and child links; sections 786 and 787 serialize the outline root and entries after pages are complete.",
+    ),
+    (
+        "pdftex.extension.thread-graph",
+        &[784, 788, 1598, 1635],
+        "Section 1635 creates and links page beads; section 784 emits bead rectangles; sections 788 and 1598 serialize thread graphs and repair referenced threads with no beads.",
+    ),
+    (
+        "pdftex.extension.thread-lifecycle",
+        &[1566, 1567, 1635],
+        "Sections 1566 and 1567 create running-thread boundary nodes; section 1635 enforces hlist, nesting, page, and end-thread lifecycle rules.",
+    ),
+    (
+        "pdftex.extension.thread-scanner",
+        &[1550, 1554, 1564, 1565, 1566],
+        "Section 1550 scans reordered rule dimensions; section 1554 composes dimensions and attributes for thread nodes; section 1564 validates thread identifiers; sections 1565 and 1566 implement one-shot and running thread starts.",
+    ),
+    (
+        "pdftex.extension.ximage-enquiries",
+        &[440, 448, 1548, 1550, 1551, 1552],
+        "Sections 440 and 448 expose the three image enquiries; section 1548 owns their state; section 1550 imports an image and updates all three values; sections 1551 and 1552 implement image creation and reference nodes.",
+    ),
+];
+
 fn root() -> PathBuf {
     test_support::repository_root()
 }
@@ -131,6 +238,10 @@ fn validate(repository: &Path, catalogue: &Value) -> Result<(), String> {
     let mut ids = BTreeSet::new();
     let mut cases = BTreeSet::new();
     let mut owners = BTreeMap::new();
+    let citation_audit = CITATION_AUDIT
+        .iter()
+        .map(|(id, sections, rationale)| (*id, (*sections, *rationale)))
+        .collect::<BTreeMap<_, _>>();
     for property in properties {
         let id = required_text(property, "id")?;
         if !id.starts_with("pdftex.extension.") || !ids.insert(id.to_owned()) {
@@ -150,12 +261,26 @@ fn validate(repository: &Path, catalogue: &Value) -> Result<(), String> {
             .as_array()
             .filter(|sections| !sections.is_empty())
             .ok_or_else(|| format!("property {id} lacks pdftex.web sections"))?;
-        if sections.iter().any(|section| {
-            section
-                .as_u64()
-                .is_none_or(|section| section == 0 || section > 2000)
-        }) {
-            return Err(format!("property {id} has an invalid pdftex.web section"));
+        let sections = sections
+            .iter()
+            .map(|section| {
+                section
+                    .as_u64()
+                    .ok_or_else(|| format!("property {id} has a nonnumeric pdftex.web section"))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let (audited_sections, audited_rationale) = citation_audit
+            .get(id)
+            .ok_or_else(|| format!("property {id} lacks a reviewed source citation audit"))?;
+        if sections != *audited_sections {
+            return Err(format!(
+                "property {id} citations do not match the reviewed pdftex.web modules: catalogue={sections:?}, audited={audited_sections:?}"
+            ));
+        }
+        if required_text(property, "citation_rationale")? != *audited_rationale {
+            return Err(format!(
+                "property {id} citation rationale does not match the reviewed module identities"
+            ));
         }
         validate_test_link(repository, required_text(property, "active_test")?)?;
 
@@ -225,6 +350,13 @@ fn validate(repository: &Path, catalogue: &Value) -> Result<(), String> {
     if owners.len() != inventory.len() {
         return Err("resolved case ownership is not one-to-one".into());
     }
+    if ids.len() != citation_audit.len() {
+        return Err(format!(
+            "citation audit and catalogue differ in size: catalogue={}, audit={}",
+            ids.len(),
+            citation_audit.len()
+        ));
+    }
     Ok(())
 }
 
@@ -256,5 +388,17 @@ fn catalogue_rejects_overlapping_case_ownership_and_missing_channels() {
         validate(&repository, &incomplete)
             .expect_err("missing channel must fail")
             .contains("must disposition status, terminal, and log")
+    );
+}
+
+#[test]
+fn catalogue_rejects_semantically_drifted_but_in_range_citations() {
+    let repository = root();
+    let mut drifted = catalogue();
+    drifted["properties"][0]["sections"] = serde_json::json!([1522, 1525]);
+    assert!(
+        validate(&repository, &drifted)
+            .expect_err("in-range but unrelated sections must fail")
+            .contains("do not match the reviewed pdftex.web modules")
     );
 }
