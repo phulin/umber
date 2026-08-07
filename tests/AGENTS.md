@@ -146,9 +146,9 @@ revalidates the closed case after execution so no ambient output can appear.
 Each command-semantic manifest carries typed capture policy. Regeneration
 selects the requested profile directly from the validated V2 cases, builds one
 genuine format through `-ini`/`\dump`, and captures only the subsequent `-fmt`
-jobs. The `raw-tex82-loaded` policy selects exactly 173 jobs: the reviewed
+jobs. The `raw-tex82-loaded` policy selects exactly 176 jobs: the reviewed
 35-case scanner/input/conditional cohort, 55 ordinary main-control cases, and
-all 18 alignment, 34 math, and 30 page-output cases, plus the bounded
+all 18 alignment, 34 math, and 33 page-output cases, plus the bounded
 line-breaking paragraph-shape case.
 The latter excludes `hyphenation-data` by explicit case-local policy and excludes
 `hyphenation-errors` and

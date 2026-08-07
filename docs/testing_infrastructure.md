@@ -315,7 +315,7 @@ XPASS and changed-failure results fail the test. Nothing uses `#[ignore]`,
 `should_panic`, a live TeX process, a format or fonts, or the generated
 long-document trace registry.
 
-The corpus holds 206 fixtures across 8 domains. Bounded in-memory terminal
+The corpus holds 207 fixtures across 9 domains. Bounded in-memory terminal
 lines and named inputs keep the pausing, read, and input-open evidence
 hermetic.
 

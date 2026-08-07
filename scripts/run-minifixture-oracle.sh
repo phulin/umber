@@ -283,7 +283,7 @@ ensure_format() {
 # ~126 bytes per run), which would make this runner's terminal channel
 # vacuous for comparison purposes.
 #
-# 11 of the 202 minifixtures carry a `terminal_lines` manifest field: answers
+# 11 of the 207 minifixtures carry a `terminal_lines` manifest field: answers
 # fed to interactive prompts (`\read`-from-terminal, `\pausing`, or an
 # ordinary error's `?` prompt). tex.web section 7593 (firm_up_the_line) and
 # the `\read`-from-terminal case in read_toks (section ~9487) both gate on
@@ -301,8 +301,8 @@ ensure_format() {
 # the error, gets an unanswered `?` prompt, and immediately follows with
 # "! Emergency stop." before reaching the rest of the source (`\count0=1`
 # never executes). The same source under scrollmode reaches `\end` normally.
-# Since only 11 of 202 cases are known to need terminal interaction,
-# errorstopmode-by-default would make the other 191 fragile to *any*
+# Since only 11 of 207 cases are known to need terminal interaction,
+# errorstopmode-by-default would make the other 196 fragile to *any*
 # undeclared error the reference engine raises that Umber's simulation
 # doesn't (which is precisely the kind of divergence this whole effort exists
 # to surface).
@@ -463,8 +463,8 @@ run_one_case() {
   # page-output/open-close-effect-observation.tex does). The corpus does not
   # use the fixed "<jobname>-effects.out" convention
   # The pdftex14029 oracle builder's own transitions/extensions/state
-  # fixtures use (only one of 202 sources calls \openout at all, and it opens
-  # a name of its own choosing), so effect artifacts are discovered rather
+  # fixtures use (five of 207 sources call \openout, and they open names of
+  # their own choosing), so effect artifacts are discovered rather
   # than assumed.
   local -a staged=("$source_name" "${stem}.log" ordinary.log "${stem}.dvi" "${stem}.pdf" \
     status.txt terminal.txt pdftex14029-events.jsonl "${format_name}.fmt")

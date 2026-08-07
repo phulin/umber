@@ -373,6 +373,44 @@ fn v2_identity_capture_policy_and_resolved_channels_match_the_migrated_corpus() 
         })
         .collect();
     assert_eq!(selected_raw.len(), 176);
+    let mut selected_by_domain = BTreeMap::new();
+    for declared in &selected_raw {
+        *selected_by_domain
+            .entry(declared.domain.as_str())
+            .or_insert(0) += 1;
+    }
+    assert_eq!(
+        selected_by_domain,
+        BTreeMap::from([
+            ("alignments", 18),
+            ("conditionals", 9),
+            ("input-expansion", 13),
+            ("line-breaking", 1),
+            ("main-control", 55),
+            ("math", 34),
+            ("page-output", 33),
+            ("scanners-internal-quantities", 13),
+        ])
+    );
+    assert_eq!(
+        cases
+            .iter()
+            .filter(|declared| !declared.case.terminal_lines.is_empty())
+            .count(),
+        11
+    );
+    assert_eq!(
+        cases
+            .iter()
+            .filter(|declared| {
+                fs::read(declared.fixture_dir.join(&declared.case.source))
+                    .expect("fixture source")
+                    .windows(b"\\openout".len())
+                    .any(|window| window == b"\\openout")
+            })
+            .count(),
+        5
+    );
     let excluded: Vec<_> = cases
         .iter()
         .filter(|declared| !declared.case.capture.selected())
