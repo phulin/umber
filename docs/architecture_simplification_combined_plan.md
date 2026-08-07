@@ -819,6 +819,31 @@ case. Because the measured result does not meet either forecast reduction,
 the variance is tracked by `umber2-vgjr.25`; no historical or prospective
 deletion is credited here.
 
+**Forecast reconciliation (owner decision, 2026-08-07).** Follow-up
+`umber2-vgjr.25` audited every surviving math transaction and publication,
+paragraph analysis and materialization, shared metric projection and
+accumulation, caller, compatibility convenience, and proof boundary. It found
+no second production authority and no deletion with a named surviving owner
+and identical behavior. The manually selected-break post-line-break API is a
+retained pure compatibility and focused-proof boundary, not another paragraph
+analysis authority. Packing, line breaking, vertical breaking, and Appendix G
+retain distinct policy around the neutral metric seam rather than encoding
+those decisions as flags in a second generic engine.
+
+Reaching the original floors would require another 1,505 net production and
+799 net test deletions from the measured results. That inventory does not exist
+without removing the transaction, tape, or metric authority; collapsing
+semantic and physical topology or domain policy; weakening independent
+deep-stack, geometry, observation, overflow, exact-byte, or performance proof;
+or moving source into an excluded accounting category. The portfolio owner
+therefore retires the 900--1,250 production and 700--950 conditional test
+forecasts and accepts the measured 605-line production growth and 99-line
+proof/test growth as Program 10's final result. Authored Rust growth is 704
+lines. No shortfall or unimplemented deletion is carried forward, and no moved,
+generated, declarative, documentation, or total-line change is credited. The
+retained-authority audit, exact category accounting, and verification are
+recorded in [the reconciliation writeback](writeback/umber2-vgjr.25.md).
+
 ## 11. Publish one canonical font runtime while preserving format-specific policy
 
 **Outcome.** TFM parsing retains raw tables only through reference and error-precedence validation, then publishes canonical `FontMetrics` through one loaded-font constructor. OpenType MATH uses one strict eager validation walk and lazy borrowed queries through the existing scaled facade. A realized font identity feeds HTML, PDF, incrementality, and distribution boundaries without repeated decoding.
