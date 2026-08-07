@@ -1,34 +1,27 @@
 # Knuth TRIP Harness
 
-Status: manual two-phase semantic and output parity harness.
+Status: manual two-phase semantic and output conformance gates.
 
 The TeX82 TRIP and e-TeX V2 e-TRIP tests are pinned separately from the
-external document corpus and share the same strict final-DVI oracle as Story
-and Gentle. Run them with:
+external document corpus. Acquisition only materializes and verifies their
+inputs and local oracles:
 
 ```bash
 python3 scripts/provision.py worktree .
 python3 scripts/provision.py worktree . --offline
-cargo test -p umber --features instrumentation --test it e2e_conformance_trip_canonical -- --ignored --nocapture
-cargo test -p umber --features instrumentation --test it e2e_conformance_etrip -- --ignored --nocapture
-scripts/regen-fixtures.sh --case e2e/trip
-scripts/regen-fixtures.sh --case e2e/etrip
-scripts/trip.sh
 ```
 
-`scripts/trip.sh` is the canonical guarded entry point for hang and
-memory-growth work. It defaults to a 1,800-second wall limit, 6144 MiB aggregate
-RSS limit, 180-second output-progress limit, and five-second TERM grace, then
-kills and reaps the complete process group. Override these with
-`UMBER_TRIP_TIMEOUT_SECONDS`, `UMBER_TRIP_MAX_RSS_MIB`,
-`UMBER_TRIP_PROGRESS_TIMEOUT_SECONDS`, and `UMBER_TRIP_TERM_GRACE_SECONDS`.
-The TeX82 and e-TeX observers emit periodic progress while a cold pinned-oracle
-build is otherwise silent, so the progress ceiling continues to detect a
-stalled build without rejecting a healthy one.
-Arguments replace its default oracle-generation and manual TRIP/e-TRIP
-commands. Full documents are intentionally ignored Cargo tests and never run
-in the routine native suite. The helper selects the finite default
-expansion-fuel budget explicitly. The format-loaded TRIP path
+Provisioning is not a correctness gate. The maintained conformance owners are
+the exact ignored Cargo tests:
+
+```bash
+CARGO_INCREMENTAL=0 cargo test -q -p umber --test it e2e_conformance::e2e_conformance_trip_canonical -- --exact --ignored --nocapture
+CARGO_INCREMENTAL=0 cargo test -q -p umber --test it e2e_conformance::e2e_conformance_etrip -- --exact --ignored --nocapture
+CARGO_INCREMENTAL=0 cargo test -q -p umber --test it e2e_conformance::e2e_conformance_gentle_canonical -- --exact --ignored --nocapture
+```
+
+These full documents are intentionally ignored and never run in the routine
+native suite. The format-loaded TRIP path
 contains a deliberate nested `\message` construction at line 419: `\the` of
 a token register must stay unexpanded while the complete message text is being
 expanded, as in TeX82's `scan_toks(..., xpand=true)`. Expanding that replay a
@@ -79,8 +72,25 @@ Fixture regeneration independently executes both TRIP phases with
 pdfTeX and installs that locally generated DVI through
 `scripts/regen-fixtures.sh`; it never copies the official third-party DVI.
 The official `tripin.log`, `trip.log`, `trip.fot`, and `tripos.tex` remain
-pinned inputs for the future diagnostic transcript-parity tier; they do not
-affect the current DVI gate.
+pinned diagnostic references; they do not affect the current acceptance gate.
+Official `trip.typ` is likewise retained and identity-pinned, but it is
+DVItype's textual rendering of `trip.dvi`, not output produced by Umber. The
+upstream Web2C harness compares it only after applying a platform-numeric
+tolerance filter. Umber therefore keeps normalized byte-exact DVI as the
+stronger sole output authority and does not duplicate that evidence with a
+filtered DVItype-text gate. DVItype remains available for mismatch diagnosis.
+
+The shared comparator's focused unit coverage remains part of the routine
+suite; it is not a separate parity process or acceptance authority. The
+TeX82/e-TeX observer scripts remain separate diagnostic-oracle
+repeatability/transparency checks; they do not own Umber conformance.
+
+Fixture publication is a distinct authority operation. Regenerate the local
+reference-engine DVI oracles only with
+`scripts/regen-fixtures.sh --case e2e/trip`,
+`scripts/regen-fixtures.sh --case e2e/etrip`, or
+`scripts/regen-fixtures.sh --case e2e/gentle`; regeneration is not part of an
+audit run.
 
 ## Source Pins
 
@@ -139,7 +149,7 @@ hashes in `target/trip-initex/build-record.txt`.
 
 The current Cargo DVI gate does not require TeXware or Knuth's special TRIP
 INITEX build. `scripts/build-trip-initex.sh` retains the hash-pinned Appendix A
-toolchain for future transcript-parity work; it writes provenance and wrappers
+toolchain for diagnostic transcript work; it writes provenance and wrappers
 under `target/trip-initex/`.
 
 Umber's final-DVI oracle normalizes only the preamble comment and otherwise

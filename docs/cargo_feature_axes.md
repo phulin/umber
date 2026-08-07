@@ -101,8 +101,8 @@ Three things were wrong with it, and only the third is about tidiness:
    `cargo test --tests` resolved `tex-command/observe` on but `umber/observe`
    off, which meant the TRIP and e-TRIP tests in
    `crates/umber/tests/it/e2e_conformance.rs` were not compiled by the routine
-   gate at all, and `scripts/trip.sh` had to build a fourth resolution --
-   rebuilding umber and its dependency tree -- to run them.
+   gate at all, and the former dedicated TRIP wrapper had to build a fourth
+   resolution -- rebuilding umber and its dependency tree -- to run them.
 3. **It forced duplication.** Every entry point in
    `crates/tex-command/src/processor/observe.rs` was written twice, once real
    and once with an empty body, because a cfg'd-out call site leaves the

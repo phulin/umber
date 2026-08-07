@@ -2894,7 +2894,7 @@ fn run_loaded_trip_source_observed(source: Arc<[u8]>) -> (String, TripObservers)
 }
 
 #[test]
-#[ignore = "manual full-document e-TRIP parity; run through scripts/trip.sh"]
+#[ignore = "manual full-document e-TRIP parity tier"]
 fn e2e_conformance_etrip() {
     assets::with_gate("etrip", |gate| {
         run_two_phase_fixture(

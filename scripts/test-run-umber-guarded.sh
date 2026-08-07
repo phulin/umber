@@ -16,10 +16,6 @@ set -e
 
 test "$status" -eq 124
 
-# trip.sh's documented defaults must remain admissible to the shared guard.
-# An explicit command skips both live-reference observer scripts.
-"$root/scripts/trip.sh" true
-
 # A completed publication is sealed, but both it and a partial staging file
 # left by an interrupted publisher must be replaceable without interaction.
 publication_root=$(mktemp -d "${TMPDIR:-/tmp}/umber-trip-publication.XXXXXX")
@@ -29,11 +25,8 @@ printf '%s\n' current >"$publication_source"
 printf '%s\n' previous >"$publication_destination"
 chmod 0444 "$publication_destination"
 set +e
-UMBER_TRIP_TIMEOUT_SECONDS=10 \
-UMBER_TRIP_MAX_RSS_MIB=128 \
-UMBER_TRIP_PROGRESS_TIMEOUT_SECONDS=1 \
-UMBER_TRIP_TERM_GRACE_SECONDS=0.2 \
-  "$root/scripts/trip.sh" sh -c \
+python3 "$guard" --timeout-seconds 10 --max-rss-mib 128 \
+  --term-grace-seconds 0.2 -- sh -c \
   'printf "%s\n" interrupted >"${1}.publishing"; chmod 0444 "${1}.publishing"; sleep 60' \
   sh "$publication_destination"
 status=$?
@@ -48,24 +41,15 @@ rm -rf "$publication_root"
 
 # The oracle builder may be silent for longer than the progress ceiling. Its
 # heartbeat must keep the unchanged guard alive until that command completes.
-UMBER_TRIP_TIMEOUT_SECONDS=10 \
-UMBER_TRIP_MAX_RSS_MIB=128 \
-UMBER_TRIP_PROGRESS_TIMEOUT_SECONDS=1 \
-UMBER_TRIP_TERM_GRACE_SECONDS=0.2 \
+heartbeat_progress="$root/target/guard-self-test-heartbeat-progress"
+: > "$heartbeat_progress"
 UMBER_TRIP_HEARTBEAT_SECONDS=0.2 \
-  "$root/scripts/trip.sh" sh -c \
-  '. "$1"; trip_run_with_progress "oracle build heartbeat" sh -c "sleep 2"' \
-  sh "$trip_common"
-
-set +e
-UMBER_TRIP_TIMEOUT_SECONDS=10 \
-UMBER_TRIP_MAX_RSS_MIB=128 \
-UMBER_TRIP_PROGRESS_TIMEOUT_SECONDS=1 \
-UMBER_TRIP_TERM_GRACE_SECONDS=0.2 \
-  "$root/scripts/trip.sh" sh -c 'sleep 60'
-status=$?
-set -e
-test "$status" -eq 124
+  python3 "$guard" --timeout-seconds 10 --max-rss-mib 128 \
+  --progress-file "$heartbeat_progress" --progress-timeout-seconds 1 \
+  --term-grace-seconds 0.2 -- sh -c \
+  '. "$1"; trip_run_with_progress "oracle build heartbeat" sh -c "sleep 2" >>"$2"' \
+  sh "$trip_common" "$heartbeat_progress"
+rm -f "$heartbeat_progress"
 
 progress="$root/target/guard-self-test-progress"
 : > "$progress"

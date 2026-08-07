@@ -1782,8 +1782,9 @@ actionable report when they are not.
 ```bash
 python3 scripts/provision.py worktree .
 python3 scripts/provision.py worktree . --offline
-cargo test -p umber --test it e2e_conformance_trip_canonical -- --ignored --nocapture
-cargo test -p umber --test it e2e_conformance_etrip -- --nocapture
+CARGO_INCREMENTAL=0 cargo test -q -p umber --test it e2e_conformance::e2e_conformance_trip_canonical -- --exact --ignored --nocapture
+CARGO_INCREMENTAL=0 cargo test -q -p umber --test it e2e_conformance::e2e_conformance_etrip -- --exact --ignored --nocapture
+CARGO_INCREMENTAL=0 cargo test -q -p umber --test it e2e_conformance::e2e_conformance_gentle_canonical -- --exact --ignored --nocapture
 scripts/regen-fixtures.sh --case e2e/trip
 scripts/regen-fixtures.sh --case e2e/etrip
 ```
@@ -1805,12 +1806,21 @@ the surrounding two-phase fixture helper.
 `scripts/check-and-test.sh` preflights the gitignored e2e oracles before
 starting the workspace gate and warns that absent ones will fail their gates.
 
-The Umber integration test gates only the final DVI. Generated logs, terminal
-photo, and `tripos.tex` remain diagnostic outputs in the separate diagnostic
-parity tier. Its oracle normalizes only the DVI preamble comment and otherwise
-requires byte identity with the committed, locally pdfTeX-generated fixture.
-Regeneration executes the two-phase workload from `trip.tex` and `trip.tfm`
-and never copies the official `third_party/trip/trip.dvi`.
+The exact ignored Cargo tests above are the sole conformance owners;
+provisioning and fixture regeneration do not establish correctness. Canonical
+semantic, transcript, log, status, and effect channels gate where present. The
+DVI oracle normalizes only the preamble comment and otherwise requires byte
+identity with the locally pdfTeX-generated fixture. Comparator failure
+detection remains ordinary focused unit coverage, not a separate parity gate.
+Regeneration executes the two-phase workload from `trip.tex` and
+`trip.tfm` and never copies the official `third_party/trip/trip.dvi`.
+
+Official `trip.typ` is identity-pinned diagnostic input. It is DVItype output,
+not an Umber artifact, and the upstream Web2C comparison applies
+platform-numeric tolerance filtering. It is not a second acceptance oracle for
+the same DVI bytes. Generated terminal photos and `tripos.tex` also remain in
+the diagnostic tier. The exact ignored Cargo command above is the sole
+maintained Gentle audit; no wrapper script owns this comparison.
 
 DVItype remains diagnostic. Failures write byte, page, opcode, and
 disassembly context under `target/conformance-triage/trip/`. See

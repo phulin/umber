@@ -54,8 +54,6 @@ Read the repository-root `AGENTS.md` first. This file adds the directory map for
   suite before clippy can start a second cold Cargo workload, then runs the
   tests under the shared 6 GiB process-group guard concurrently with
   `check.sh`.
-- `trip.sh`: guarded TRIP/e-TRIP entry point with documented wall-time, RSS,
-  output-progress, fuel, and termination defaults.
 - `arxiv_corpus.py`: safe exact arXiv archive inventory, identity, verification,
   and materialization.
 - `test-arxiv-corpus.sh`: hermetic archive/view identity contract, including mutation and extra-file rejection.
