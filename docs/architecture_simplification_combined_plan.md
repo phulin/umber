@@ -524,6 +524,25 @@ deletions; the base-normalized exact-tree diff is 580 additions and 10,118
 deletions, a 9,538-line net reduction, because the test-module replacement
 overlaps the migration hunk.
 
+**Final program closeout.** The independent closeout audited implementation
+tree `710ca9de0a66f7e513d1a93289feb5ad9b76b61a`. Repository-wide definition,
+call-site, dependency, and inactive-source searches found one production call
+to `tex_out::pdf::finalize_pdf`, no Umber `pdf-writer` dependency or second
+serializer, no fallback, and no duplicate selected-page resource importer.
+Umber's remaining PDF page parser only inspects host input metadata before
+detachment. Its VF walk runs against a private cloned ledger to freeze
+first-use allocation order; `tex-out` alone repeats packet lowering into the
+final graph, imports selected-page resources, validates it, and serializes it.
+
+Across all seven Program 6 commits, production Rust adds 6,412 and deletes
+10,091 lines, a 3,679-line net reduction. Active proof Rust adds 213 and
+deletes 102; the external-validator script adds 24 and deletes eight; manifests
+and the lockfile add six; documentation and guidance add 68 and delete 26.
+The complete commit-arithmetic total is therefore 6,723 additions and 10,227
+deletions, a 3,504-line net reduction. No generated source, fixture, lockfile
+resolution, or binary asset is credited as deletion. The exact category and
+verification receipt is [the Program 6 writeback](writeback/umber2-vgjr.6.md).
+
 ## 7. One canonical HTML producer and JavaScript receiver
 
 **Outcome.** A keyed `RenderDocument` or `RenderRevision` resolves positioned events, fonts, specials, accessibility, and math once. Standalone HTML/assets and incremental patch plans derive from it. JavaScript remains the browser trust and DOM transaction boundary.
