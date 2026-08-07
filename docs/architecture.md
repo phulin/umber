@@ -429,13 +429,14 @@ wire schema. The migration selector, shadow runner, and predecessor step
 branches are absent.
 
 Shipout decodes compact node words sequentially and always drives artifact
-encoding without an ordinary-path owned page tree. DVI page-plan construction
-is a session-selected capability: classic/default sessions fuse it into the
-same traversal, while HTML-only sessions omit it so artifact Unicode above
-U+00FF reaches downstream positioned output. A
-localized owned payload remains permitted where DVI leader replay requires
-repetition. Ordinary artifacts, effects, and prepared plans publish only after
-the shipout transaction commits. A retained native run gives the suffix
+encoding without an ordinary-path owned page tree. Classic/default sessions
+compile the completed canonical artifact bytes into a detached DVI page plan;
+memo hits use that same compiler and error conversion. HTML-only sessions omit
+the plan so artifact Unicode above U+00FF reaches downstream positioned
+output. Canonical replay may materialize a localized owned payload where DVI
+leader repetition requires it; validation, replay, and both DVI and positioned
+geometry remain bounded explicit-frame traversals. Ordinary artifacts, effects,
+and prepared plans publish only after the shipout transaction commits. A retained native run gives the suffix
 beginning with a deferred `OpenOut` a typed prepared owner at the `tex-incr`
 finalization handoff. That suffix remains outside the committed artifact and
 PDF-page prefixes until the authoritative host open succeeds; a replacement
@@ -591,10 +592,12 @@ Artifact schema 23 is the durable, content-addressed page representation.
 `tex-out` owns its validation, encoding, replay, positioned-event projection,
 HTML schema 1, DVI page plans, and final DVI assembly.
 
-Fresh shipout builds canonical artifact bytes and a detached `DviPagePlan` in
-one execution-driven traversal. Durable replay validates the requested content
-identity and schema before producing output. `tex-out` never receives
-`Universe`, node handles, or mutable store access.
+Fresh shipout builds canonical artifact bytes once, then derives its detached
+`DviPagePlan` through the same `DviPagePlan::compile_v10` path as durable
+replay. DVI-disabled sessions retain the artifact and omit the plan. Durable
+replay validates the requested content identity and schema before producing
+output. `tex-out` never receives `Universe`, node handles, or mutable store
+access.
 
 DVI remains the exact compatibility output and retains its byte character
 boundary. Positioned prose stores source scalars as `u32` and keeps physical

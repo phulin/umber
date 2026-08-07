@@ -29,8 +29,8 @@ pub struct DviPagePlan {
     max_stack_depth: u16,
 }
 
-/// Incremental fresh-page compiler driven by the same detached node events as
-/// canonical artifact encoding.
+/// Shared detached page compiler used by the owned and canonical-byte
+/// adapters.
 pub struct DviPagePlanBuilder {
     writer: DviBodyCompiler,
     job: JobInfo,
@@ -177,8 +177,8 @@ impl DviPagePlanBuilder {
     }
 
     /// Emits the one node kind whose DVI semantics require subtree replay.
-    /// Fresh shipout may materialize only this localized payload; ordinary
-    /// boxes and leaves use the scalar methods above.
+    /// Canonical-byte compilation materializes only this localized payload;
+    /// ordinary boxes and leaves use the scalar methods above.
     pub fn leader(&mut self, node: &PageNode, effects: &[PageEffect]) -> Result<(), DviError> {
         debug_assert!(matches!(
             node,

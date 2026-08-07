@@ -96,3 +96,35 @@ reported 1.1324 ms ordinary and 6.8957 ms deferred-math midpoint estimates at
 248,028 KiB. The complete native suite passed under `MemoryMax=1G` in 29.72 s
 at 309,800 KiB, and uncapped `CARGO_BUILD_JOBS=6 scripts/check.sh` passed all
 four gates.
+
+## Final program closeout audit
+
+The final audit at `560be7d695b28debc807d7ac63b6ef32a12104c4`
+confirmed one artifact grammar and one page-plan authority. Owned emission,
+owned decode, canonical scan and validation, canonical DVI replay, localized
+leader reconstruction and retirement, node ordinals, DVI traversal, and
+positioned traversal use bounded explicit work stacks. Nested leaders do not
+re-enter either backend list walker. The executor contains one
+`DviPagePlan::compile_v10` call, shared by fresh and memo publication, with one
+error conversion and one DVI-disabled omission policy. The deleted executor
+builder, streamed-plan branch, coordinate oracle, and live materializer remain
+absent.
+
+The cumulative program changes are 2,225 authored additions and 2,182
+deletions, a 43-line net increase. Production Rust accounts for 1,505
+additions and 2,082 deletions, a 577-line net reduction; active proof, guidance,
+and durable documentation account for the remaining 720 additions and 100
+deletions. This measured result replaces the original 1,450--1,900-line
+production forecast.
+
+Fresh verification compiled the full native suite and standalone shipout
+benchmark uncapped with `CARGO_BUILD_JOBS=6`. Under `MemoryMax=512M`, all 151
+`tex-out`, 466 `tex-exec`, and 40 active `tex-incr` tests passed. The
+maximum-depth canonical-box and nested-leader matrix passed at 45,136 KiB RSS,
+including depth-first order and malformed-font precedence; fresh/memo DVI and
+DVI-disabled parity passed. Story and selected canonical Gentle remained
+byte-exact. The exhaustive tracer reported `CLEAN`, zero semantic divergences,
+and zero advisory geometry differences at 424,708 KiB. Repeated shipout
+midpoints were 1.0987 ms ordinary and 6.7585 ms deferred math at 249,736 KiB.
+The full native suite passed under `MemoryMax=1G` in 27.91 seconds at 308,156
+KiB. The final uncapped `scripts/check.sh` passed all four gates.

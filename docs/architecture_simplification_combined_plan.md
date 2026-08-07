@@ -419,11 +419,11 @@ live artifact/DVI builder arguments, streamed-plan branches, and 336-line
 leader materializer are deleted; positioned shipout continues to consume the
 same artifact when saved-position or snapping effects require it.
 
-The implementation changes production Rust by 34 additions and 538 deletions,
-a 504-line net reduction. Active proof tests and their exact source-audit
-coordinate add 79 and delete one Rust line. Guidance adds two and deletes two
-lines. Before this plan/writeback update, the complete tracked change is 115
-additions and 541 deletions, a 426-line net reduction. No artifact, DVI,
+The initial final-child implementation changed production Rust by 34 additions
+and 538 deletions, a 504-line net reduction. Active proof tests and their exact
+source-audit coordinate added 79 and deleted one Rust line. Guidance added two
+and deleted two lines. Including its initial plan/writeback, that child changed
+176 authored lines and deleted 541, a 365-line net reduction. No artifact, DVI,
 format, fixture, generated source, lockfile, or binary asset changed.
 
 Fresh-versus-memo tests prove byte-identical artifacts, equal page plans, and
@@ -434,6 +434,35 @@ Story and canonical Gentle match their byte-exact DVI oracles. Against the
 stored predecessor benchmark, the 1,024-node ordinary and deferred-math rows
 improve by about 12% and 42% respectively and peak at 49,836 KiB RSS. The
 complete native suite passes under 1 GiB at 315,388 KiB maximum RSS.
+
+Two adversarial closeout challenges then closed depth paths missed by the
+initial proof. The first made canonical-byte scan, validation, ordinary box
+replay, boxed-leader reconstruction, and temporary-tree retirement iterative.
+The second replaced nested-leader re-entry in both DVI and positioned lowering
+with scalar continuation frames. Active maximum-depth cases now cover a root
+plus 4,095 ordinary box levels and a root plus 4,093 nested leader payloads;
+the latter also pins depth-first event order, owned/canonical DVI equality, and
+the first malformed-font error before a later sibling.
+
+Final cumulative accounting across all three children and both repairs is
+2,225 authored additions and 2,182 deletions, a 43-line net increase.
+Production Rust is 1,505 additions and 2,082 deletions, a 577-line net
+reduction; the remaining 720 additions and 100 deletions are active proof,
+guidance, and durable closeout documentation. The original 1,450--1,900-line
+production forecast is therefore retired: it counted codec and geometry proof
+and replacement frames as deletion, while the measured surviving-authority
+implementation removes 577 production lines.
+
+Final exact-tree verification at `560be7d695b28debc807d7ac63b6ef32a12104c4`
+passed all 151 `tex-out`, 466 `tex-exec`, and 40 active `tex-incr` tests under
+512 MiB. Maximum-depth canonical bytes and nested leaders passed at 45,136 KiB
+RSS; fresh/memo DVI and DVI-disabled parity passed; Story and the selected
+canonical Gentle gate remained byte-exact. The exhaustive tracer was `CLEAN`
+with zero semantic and zero advisory geometry divergences at 424,708 KiB. The
+shipout diagnostic measured 1.0987 ms ordinary and 6.7585 ms deferred-math
+midpoints at 249,736 KiB. The complete native suite passed under 1 GiB in
+27.91 seconds at 308,156 KiB, and the final uncapped quality gate passed all
+four gates.
 
 ## 6. Move detached PDF finalization into `tex-out`
 
