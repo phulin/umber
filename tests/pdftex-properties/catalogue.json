@@ -11,8 +11,8 @@
     {
       "id": "pdftex.extension.compatibility-controls",
       "case": "pdf_compatibility_controls",
-      "sections": [1151, 1264, 1655],
-      "citation_rationale": "Section 1151 applies ignore_primitive_error to infinite-shrinkage recovery; section 1264 defines quitvmode's mode-sensitive paragraph entry; section 1655 registers ignoreprimitiveerror.",
+      "sections": [1153, 1266, 1657],
+      "citation_rationale": "Section 1153 applies ignore_primitive_error to infinite-shrinkage recovery; section 1266 defines quitvmode's mode-sensitive paragraph entry; section 1657 registers ignoreprimitiveerror.",
       "claim": "Compatibility controls retain mode-sensitive quitvmode entry and ignored infinite-shrinkage recovery.",
       "semantic_owner": "crates/umber/src/pdftex.rs",
       "active_test": "crates/umber/src/pdftex.rs::mode_and_primitive_error_controls_match_the_pinned_initex_oracle",
@@ -30,8 +30,8 @@
     {
       "id": "pdftex.extension.font-code-tables",
       "case": "pdf_font_codes",
-      "sections": [703, 1429, 1430],
-      "citation_rationale": "Section 703 defines the bounded font-code setters and no-ligature mutation; section 1429 dispatches assign_font_int globally; section 1430 registers the font-code primitives.",
+      "sections": [705, 1431, 1432],
+      "citation_rationale": "Section 705 defines the bounded font-code setters and no-ligature mutation; section 1431 dispatches assign_font_int globally; section 1432 registers the font-code primitives.",
       "claim": "Font code-table assignments use their bounded global setters and no-ligature mutation.",
       "semantic_owner": "crates/umber/src/pdftex.rs",
       "active_test": "crates/umber/src/pdftex.rs::pdf_font_codes_size_and_ligature_suppression_match_oracle",
@@ -39,14 +39,20 @@
       "observations": [
         { "channel": "terminal", "projection": "assigned=7/-1000/800/1000/-1000/321/-432/543", "disposition": "pass" },
         { "channel": "log", "projection": "assigned=7/-1000/800/1000/-1000/321/-432/543", "disposition": "pass" },
-        { "channel": "status", "projection": "error", "disposition": "xfail", "bug": "umber2-alfh.36" }
+        {
+          "channel": "status",
+          "projection": "error",
+          "disposition": "xfail",
+          "bug": "umber2-alfh.36",
+          "actual": "success"
+        }
       ]
     },
     {
       "id": "pdftex.extension.font-configuration",
       "case": "pdf_font_config",
-      "sections": [252, 254],
-      "citation_rationale": "Section 252 places the font-configuration integers in eqtb; section 254 registers them as assign_int primitives, giving them ordinary scoped assignment behavior.",
+      "sections": [254, 256],
+      "citation_rationale": "Section 254 places the font-configuration integers in eqtb; section 256 registers them as assign_int primitives, giving them ordinary scoped assignment behavior.",
       "claim": "Font configuration integers use scoped eqtb assignment and preserve signed local values through grouping.",
       "semantic_owner": "crates/umber/src/pdftex.rs",
       "active_test": "crates/umber/src/pdftex.rs::pdf_font_configuration_matches_the_pinned_initex_oracle",
@@ -54,14 +60,20 @@
       "observations": [
         { "channel": "terminal", "projection": "restored=1/2/3/4/5/6/7/300/9", "disposition": "pass" },
         { "channel": "log", "projection": "restored=1/2/3/4/5/6/7/300/9", "disposition": "pass" },
-        { "channel": "status", "projection": "error", "disposition": "xfail", "bug": "umber2-alfh.36" }
+        {
+          "channel": "status",
+          "projection": "error",
+          "disposition": "xfail",
+          "bug": "umber2-alfh.36",
+          "actual": "success"
+        }
       ]
     },
     {
       "id": "pdftex.extension.form-diagnostics",
       "case": "pdf_form_diagnostics",
-      "sections": [1546],
-      "citation_rationale": "Section 1546 implements pdfxform, fetches the numbered box, and raises the void-box fatal error.",
+      "sections": [1548],
+      "citation_rationale": "Section 1548 implements pdfxform, fetches the numbered box, and raises the void-box fatal error.",
       "claim": "Form creation rejects void boxes with pdfTeX's fatal diagnostic.",
       "semantic_owner": "crates/umber/src/pdftex.rs",
       "active_test": "crates/umber/src/pdftex.rs::pdf_form_state_and_diagnostics_match_the_pinned_initex_oracle",
@@ -83,8 +95,8 @@
     {
       "id": "pdftex.extension.form-state",
       "case": "pdf_form_state",
-      "sections": [440, 448, 1546, 1547, 1621, 1635],
-      "citation_rationale": "Sections 440 and 448 expose last-form enquiries; sections 1546 and 1547 create and reference forms with captured dimensions; section 1621 ships immediate forms; section 1635 records referenced forms for page resources.",
+      "sections": [442, 450, 1548, 1549, 1623, 1637],
+      "citation_rationale": "Sections 442 and 450 expose last-form enquiries; sections 1548 and 1549 create and reference forms with captured dimensions; section 1623 ships immediate forms; section 1637 records referenced forms for page resources.",
       "claim": "Form creation and references preserve identities, captured dimensions, immediate shipment, and page-resource discovery.",
       "semantic_owner": "crates/umber/src/pdftex.rs",
       "active_test": "crates/umber/src/pdftex.rs::pdf_form_state_and_diagnostics_match_the_pinned_initex_oracle",
@@ -98,8 +110,8 @@
     {
       "id": "pdftex.extension.form-traversal-diagnostics",
       "case": "pdf_form_traversal_diagnostics",
-      "sections": [725, 755, 758],
-      "citation_rationale": "Section 725 routes pdfsave and pdfrestore through the graphics-state checker; sections 755 and 758 bracket each page or form content stream and its final balance check.",
+      "sections": [727, 757, 760],
+      "citation_rationale": "Section 727 routes pdfsave and pdfrestore through the graphics-state checker; sections 757 and 760 bracket each page or form content stream and its final balance check.",
       "claim": "Form shipment routes graphics-state saves through the checker and closes the form content stream with balance validation.",
       "semantic_owner": "crates/umber/src/pdftex.rs",
       "active_test": "crates/umber/src/pdftex.rs::pdf_form_state_and_diagnostics_match_the_pinned_initex_oracle",
@@ -113,8 +125,8 @@
     {
       "id": "pdftex.extension.ignored-dimension-effects",
       "case": "pdf_ignored_dimen_effects",
-      "sections": [853, 1062, 1063],
-      "citation_rationale": "Section 853 compares prev_depth with pdfignoreddimen; section 1062 initializes the line overrides from that sentinel; section 1063 applies overrides only when they differ from it.",
+      "sections": [855, 1064, 1065],
+      "citation_rationale": "Section 855 compares prev_depth with pdfignoreddimen; section 1064 initializes the line overrides from that sentinel; section 1065 applies overrides only when they differ from it.",
       "claim": "The live ignored-dimension sentinel controls prevdepth and line overrides.",
       "semantic_owner": "crates/umber/src/pdftex.rs",
       "active_test": "crates/umber/src/pdftex.rs::pdfignoreddimen_is_the_live_prevdepth_and_line_override_sentinel",
@@ -128,8 +140,8 @@
     {
       "id": "pdftex.extension.image-configuration",
       "case": "pdf_image_config",
-      "sections": [252, 254, 1550],
-      "citation_rationale": "Section 252 places image and page-policy integers in eqtb; section 254 registers their assign_int primitives; section 1550 consumes the page-box, resolution, and inclusion policy while scanning an image.",
+      "sections": [254, 256, 1552],
+      "citation_rationale": "Section 254 places image and page-policy integers in eqtb; section 256 registers their assign_int primitives; section 1552 consumes the page-box, resolution, and inclusion policy while scanning an image.",
       "claim": "Image and page-policy integers use scoped eqtb assignment and feed the image scanner without coercing their stored values.",
       "semantic_owner": "crates/umber/src/pdftex.rs",
       "active_test": "crates/umber/src/pdftex.rs::pdf_image_configuration_matches_the_pinned_initex_oracle",
@@ -143,8 +155,8 @@
     {
       "id": "pdftex.extension.metadata-configuration",
       "case": "pdf_metadata_config",
-      "sections": [252, 254],
-      "citation_rationale": "Section 252 places the metadata-policy integers in eqtb; section 254 registers them as assign_int primitives, giving them ordinary scoped assignment behavior.",
+      "sections": [254, 256],
+      "citation_rationale": "Section 254 places the metadata-policy integers in eqtb; section 256 registers them as assign_int primitives, giving them ordinary scoped assignment behavior.",
       "claim": "Document metadata-policy integers use scoped eqtb assignment and preserve signed local values through grouping.",
       "semantic_owner": "crates/umber/src/pdftex.rs",
       "active_test": "crates/umber/src/pdftex.rs::pdf_metadata_configuration_matches_the_pinned_initex_oracle",
@@ -158,8 +170,8 @@
     {
       "id": "pdftex.extension.microtype-effects",
       "case": "pdf_microtype_effects",
-      "sections": [703, 1055, 1061, 1064, 1217, 1533],
-      "citation_rationale": "Section 703 inserts configured character-side kerns; sections 1055 and 1061 select protrusion nodes; section 1064 applies expansion while packing lines; section 1217 adjusts interword glue; section 1533 configures expanded fonts.",
+      "sections": [705, 1057, 1063, 1066, 1219, 1535],
+      "citation_rationale": "Section 705 inserts configured character-side kerns; sections 1057 and 1063 select protrusion nodes; section 1066 applies expansion while packing lines; section 1219 adjusts interword glue; section 1535 configures expanded fonts.",
       "claim": "Character-side kerns, interword glue, protrusion, and font expansion produce the effective list observations.",
       "semantic_owner": "crates/umber/src/pdftex.rs",
       "active_test": "crates/umber/src/pdftex.rs::pdf_microtype_effects_match_the_pinned_initex_oracle",
@@ -167,14 +179,20 @@
       "observations": [
         { "channel": "terminal", "projection": "OK (see the transcript file)", "disposition": "pass" },
         { "channel": "log", "projection": "OK.", "disposition": "pass" },
-        { "channel": "status", "projection": "error", "disposition": "xfail", "bug": "umber2-alfh.36" }
+        {
+          "channel": "status",
+          "projection": "error",
+          "disposition": "xfail",
+          "bug": "umber2-alfh.36",
+          "actual": "success"
+        }
       ]
     },
     {
       "id": "pdftex.extension.move-chars-warning",
       "case": "pdf_move_chars_warning",
-      "sections": [690],
-      "citation_rationale": "Section 690 warns on a positive pdfmovechars value when a PDF font is first marked used and resets it to zero.",
+      "sections": [692],
+      "citation_rationale": "Section 692 warns on a positive pdfmovechars value when a PDF font is first marked used and resets it to zero.",
       "claim": "The obsolete move-chars switch warns and resets only on first font use.",
       "semantic_owner": "crates/umber/src/pdftex.rs",
       "active_test": "crates/umber/src/pdftex.rs::pdfmovechars_warns_and_resets_only_when_a_new_pdf_font_is_used",
@@ -188,8 +206,8 @@
     {
       "id": "pdftex.extension.output-policy",
       "case": "pdf_output_policy",
-      "sections": [252, 254, 670, 681],
-      "citation_rationale": "Sections 252 and 254 define and register the output-policy eqtb integers; section 670 supplies PDF defaults; section 681 validates and recovers version and object-stream settings.",
+      "sections": [254, 256, 672, 683],
+      "citation_rationale": "Sections 254 and 256 define and register the output-policy eqtb integers; section 672 supplies PDF defaults; section 683 validates and recovers version and object-stream settings.",
       "claim": "PDF version, compression, and object-stream integers preserve scoped assignment, defaults, and shipout-time recovery.",
       "semantic_owner": "crates/umber/src/pdftex.rs",
       "active_test": "crates/umber/src/pdftex.rs::pdf_output_policy_matches_the_pinned_initex_oracle",
@@ -197,14 +215,20 @@
       "observations": [
         { "channel": "terminal", "projection": "defaults=0/1.4/9/0/3", "disposition": "pass" },
         { "channel": "log", "projection": "defaults=0/1.4/9/0/3", "disposition": "pass" },
-        { "channel": "status", "projection": "error", "disposition": "xfail", "bug": "umber2-alfh.36" }
+        {
+          "channel": "status",
+          "projection": "error",
+          "disposition": "xfail",
+          "bug": "umber2-alfh.36",
+          "actual": "success"
+        }
       ]
     },
     {
       "id": "pdftex.extension.destination-lifecycle",
       "case": "pdf_navigation_dest_lifecycle",
-      "sections": [792, 793, 794, 795, 796, 1562, 1635],
-      "citation_rationale": "Sections 1562 and 1635 implement duplicate-destination warning and traversal; section 792 invokes final destination checks; sections 793--796 diagnose and repair missing ordinary and structure destinations.",
+      "sections": [794, 795, 796, 797, 798, 1564, 1637],
+      "citation_rationale": "Sections 1564 and 1637 implement duplicate-destination warning and traversal; section 794 invokes final destination checks; sections 795--798 diagnose and repair missing ordinary and structure destinations.",
       "claim": "Destination traversal owns duplicate handling and final missing-target diagnostics.",
       "semantic_owner": "crates/umber/src/pdftex.rs",
       "active_test": "crates/umber/src/pdftex/tests/retained_fixture_properties.rs::retained_pdftex_extension_fixtures_compare_oracle_projections",
@@ -216,13 +240,15 @@
           "channel": "terminal",
           "projection": "name{missing-regular} has been referenced but does not exist",
           "disposition": "xfail",
-          "bug": "umber2-alfh.33"
+          "bug": "umber2-alfh.33",
+          "actual_normalized_sha256": "a6c6d35c9a6e381275beeb923e6e0baafe982002de47806d0ce8ee35a87dfe45"
         },
         {
           "channel": "log",
           "projection": "name{missing-regular} has been referenced but does not exist",
           "disposition": "xfail",
-          "bug": "umber2-alfh.33"
+          "bug": "umber2-alfh.33",
+          "actual_normalized_sha256": "6aa8c3e1fae1607c4735470fd2d70bf4cfb05bd35d5d45e55616f49e880fe3e4"
         },
         { "channel": "status", "projection": "success", "disposition": "pass" }
       ]
@@ -230,8 +256,8 @@
     {
       "id": "pdftex.extension.destination-scanner",
       "case": "pdf_navigation_dest_scan",
-      "sections": [1563],
-      "citation_rationale": "Section 1563 implements the complete pdfdest identifier, destination-kind, zoom, rectangle, and error scanner.",
+      "sections": [1565],
+      "citation_rationale": "Section 1565 implements the complete pdfdest identifier, destination-kind, zoom, rectangle, and error scanner.",
       "claim": "Destination scanning accepts every destination kind and rejects nonpositive numeric identities.",
       "semantic_owner": "crates/umber/src/pdftex.rs",
       "active_test": "crates/umber/src/pdftex/tests/retained_fixture_properties.rs::retained_pdftex_extension_fixtures_compare_oracle_projections",
@@ -241,13 +267,15 @@
           "channel": "terminal",
           "projection": "pdfTeX error (ext1): num identifier must be positive",
           "disposition": "xfail",
-          "bug": "umber2-alfh.34"
+          "bug": "umber2-alfh.34",
+          "actual_normalized_sha256": "dd6b8552cba194e36cbad1bb25cde1418c5150319071834d5b05a08d806f3c66"
         },
         {
           "channel": "log",
           "projection": "pdfTeX error (ext1): num identifier must be positive",
           "disposition": "xfail",
-          "bug": "umber2-alfh.34"
+          "bug": "umber2-alfh.34",
+          "actual_normalized_sha256": "d0bca111f8628137adc4c16f123496dcdd1d590d06cb5d9acd68b39fe656fb97"
         },
         {
           "channel": "status",
@@ -259,8 +287,8 @@
     {
       "id": "pdftex.extension.outline-scanner",
       "case": "pdf_navigation_outline_scan",
-      "sections": [440, 448, 1554, 1561],
-      "citation_rationale": "Sections 440 and 448 expose the last-object enquiry; section 1554 scans every outline action form; section 1561 scans attributes, count, and title while constructing outline objects.",
+      "sections": [442, 450, 1556, 1563],
+      "citation_rationale": "Sections 442 and 450 expose the last-object enquiry; section 1556 scans every outline action form; section 1563 scans attributes, count, and title while constructing outline objects.",
       "claim": "Outline scanning preserves action, attributes, title, count, and the separately exposed raw-object enquiry.",
       "semantic_owner": "crates/umber/src/pdftex.rs",
       "active_test": "crates/umber/src/pdftex/tests/retained_fixture_properties.rs::retained_pdftex_extension_fixtures_compare_oracle_projections",
@@ -272,13 +300,15 @@
           "channel": "terminal",
           "projection": "destination name{article} has been referenced but does",
           "disposition": "xfail",
-          "bug": "umber2-alfh.33"
+          "bug": "umber2-alfh.33",
+          "actual_normalized_sha256": "bd034919a4ab0d172c7c0c9167f5c8086f31ec897174041c30884930f7881f41"
         },
         {
           "channel": "log",
           "projection": "destination name{article} has been referenced but does",
           "disposition": "xfail",
-          "bug": "umber2-alfh.33"
+          "bug": "umber2-alfh.33",
+          "actual_normalized_sha256": "6a9676a5e07847e898221802897f2ab236faf1a63acfce6b2fb630f722bbcef2"
         },
         { "channel": "status", "projection": "success", "disposition": "pass" }
       ]
@@ -286,8 +316,8 @@
     {
       "id": "pdftex.extension.outline-tree",
       "case": "pdf_navigation_outline_tree",
-      "sections": [786, 787, 1561],
-      "citation_rationale": "Section 1561 constructs the parent, sibling, and child links; sections 786 and 787 serialize the outline root and entries after pages are complete.",
+      "sections": [788, 789, 1563],
+      "citation_rationale": "Section 1563 constructs the parent, sibling, and child links; sections 788 and 789 serialize the outline root and entries after pages are complete.",
       "claim": "Outline hierarchy construction and serialization preserve parent, sibling, child, and count relationships.",
       "semantic_owner": "crates/umber/src/pdftex.rs",
       "active_test": "crates/umber/src/pdftex/tests/retained_fixture_properties.rs::retained_pdftex_extension_fixtures_compare_oracle_projections",
@@ -301,8 +331,8 @@
     {
       "id": "pdftex.extension.thread-graph",
       "case": "pdf_navigation_thread_graph",
-      "sections": [784, 788, 1598, 1635],
-      "citation_rationale": "Section 1635 creates and links page beads; section 784 emits bead rectangles; sections 788 and 1598 serialize thread graphs and repair referenced threads with no beads.",
+      "sections": [786, 790, 1600, 1637],
+      "citation_rationale": "Section 1637 creates and links page beads; section 786 emits bead rectangles; sections 790 and 1600 serialize thread graphs and repair referenced threads with no beads.",
       "claim": "Thread traversal builds page beads and diagnoses missing referenced threads.",
       "semantic_owner": "crates/umber/src/pdftex.rs",
       "active_test": "crates/umber/src/pdftex/tests/retained_fixture_properties.rs::retained_pdftex_extension_fixtures_compare_oracle_projections",
@@ -314,13 +344,15 @@
           "channel": "terminal",
           "projection": "destination name{missing} has been referenced but does",
           "disposition": "xfail",
-          "bug": "umber2-alfh.33"
+          "bug": "umber2-alfh.33",
+          "actual_normalized_sha256": "881931c59c4022d5f1890814cd1b2d3ee4ed771d70e6cb50548d258628318237"
         },
         {
           "channel": "log",
           "projection": "destination name{missing} has been referenced but does",
           "disposition": "xfail",
-          "bug": "umber2-alfh.33"
+          "bug": "umber2-alfh.33",
+          "actual_normalized_sha256": "5d1978190bd2f1c13cf4bf33c26698d650a8a1fc55372943459e909951b5b7f5"
         },
         { "channel": "status", "projection": "success", "disposition": "pass" }
       ]
@@ -328,8 +360,8 @@
     {
       "id": "pdftex.extension.thread-lifecycle",
       "case": "pdf_navigation_thread_lifecycle",
-      "sections": [1566, 1567, 1635],
-      "citation_rationale": "Sections 1566 and 1567 create running-thread boundary nodes; section 1635 enforces hlist, nesting, page, and end-thread lifecycle rules.",
+      "sections": [1568, 1569, 1637],
+      "citation_rationale": "Sections 1568 and 1569 create running-thread boundary nodes; section 1637 enforces hlist, nesting, page, and end-thread lifecycle rules.",
       "claim": "Running threads reject hlist starts and preserve nesting/page lifecycle.",
       "semantic_owner": "crates/umber/src/pdftex.rs",
       "active_test": "crates/umber/src/pdftex/tests/retained_fixture_properties.rs::retained_pdftex_extension_fixtures_compare_oracle_projections",
@@ -339,27 +371,30 @@
           "channel": "terminal",
           "projection": "pdfTeX error (ext4): \\pdfstartthread ended up in hlist",
           "disposition": "xfail",
-          "bug": "umber2-alfh.34"
+          "bug": "umber2-alfh.34",
+          "actual_normalized_sha256": "2b8cc44c0c6b8910b0328fd877ffc19710cb9b621aaeb199199fbf1be45bf600"
         },
         {
           "channel": "log",
           "projection": "pdfTeX error (ext4): \\pdfstartthread ended up in hlist",
           "disposition": "xfail",
-          "bug": "umber2-alfh.34"
+          "bug": "umber2-alfh.34",
+          "actual_normalized_sha256": "9b6366da3580e5aebe4a371ff72164572fe4e84dcb572f1b1ecec99cb507811c"
         },
         {
           "channel": "status",
           "projection": "error:pdfTeX error (ext4): \\pdfstartthread ended up in hlist",
           "disposition": "xfail",
-          "bug": "umber2-alfh.34"
+          "bug": "umber2-alfh.34",
+          "actual": "success"
         }
       ]
     },
     {
       "id": "pdftex.extension.thread-scanner",
       "case": "pdf_navigation_thread_scan",
-      "sections": [1550, 1554, 1564, 1565, 1566],
-      "citation_rationale": "Section 1550 scans reordered rule dimensions; section 1554 composes dimensions and attributes for thread nodes; section 1564 validates thread identifiers; sections 1565 and 1566 implement one-shot and running thread starts.",
+      "sections": [1552, 1556, 1566, 1567, 1568],
+      "citation_rationale": "Section 1552 scans reordered rule dimensions; section 1556 composes dimensions and attributes for thread nodes; section 1566 validates thread identifiers; sections 1567 and 1568 implement one-shot and running thread starts.",
       "claim": "Thread scanning accepts reordered dimensions and rejects nonpositive numeric identities.",
       "semantic_owner": "crates/umber/src/pdftex.rs",
       "active_test": "crates/umber/src/pdftex/tests/retained_fixture_properties.rs::retained_pdftex_extension_fixtures_compare_oracle_projections",
@@ -369,13 +404,15 @@
           "channel": "terminal",
           "projection": "pdfTeX error (ext1): num identifier must be positive",
           "disposition": "xfail",
-          "bug": "umber2-alfh.34"
+          "bug": "umber2-alfh.34",
+          "actual_normalized_sha256": "dd6b8552cba194e36cbad1bb25cde1418c5150319071834d5b05a08d806f3c66"
         },
         {
           "channel": "log",
           "projection": "pdfTeX error (ext1): num identifier must be positive",
           "disposition": "xfail",
-          "bug": "umber2-alfh.34"
+          "bug": "umber2-alfh.34",
+          "actual_normalized_sha256": "d0bca111f8628137adc4c16f123496dcdd1d590d06cb5d9acd68b39fe656fb97"
         },
         {
           "channel": "status",
@@ -387,8 +424,8 @@
     {
       "id": "pdftex.extension.ximage-enquiries",
       "case": "pdf_ximage_enquiries",
-      "sections": [440, 448, 1548, 1550, 1551, 1552],
-      "citation_rationale": "Sections 440 and 448 expose the three image enquiries; section 1548 owns their state; section 1550 imports an image and updates all three values; sections 1551 and 1552 implement image creation and reference nodes.",
+      "sections": [442, 450, 1550, 1552, 1553, 1554],
+      "citation_rationale": "Sections 442 and 450 expose the three image enquiries; section 1550 owns their state; section 1552 imports an image and updates all three values; sections 1553 and 1554 implement image creation and reference nodes.",
       "claim": "Image imports update object, page-count, and color-depth enquiries and references preserve them.",
       "semantic_owner": "crates/umber/src/pdftex.rs",
       "active_test": "crates/umber/src/pdftex/tests/retained_fixture_properties.rs::retained_pdftex_extension_fixtures_compare_oracle_projections",
@@ -396,8 +433,20 @@
       "observations": [
         { "channel": "terminal", "projection": "initial=0/0/0 png=1/1/8", "disposition": "pass" },
         { "channel": "log", "projection": "initial=0/0/0 png=1/1/8", "disposition": "pass" },
-        { "channel": "terminal", "projection": "jpeg=3/1/12", "disposition": "xfail", "bug": "umber2-alfh.35" },
-        { "channel": "log", "projection": "jpeg=3/1/12", "disposition": "xfail", "bug": "umber2-alfh.35" },
+        {
+          "channel": "terminal",
+          "projection": "jpeg=3/1/12",
+          "disposition": "xfail",
+          "bug": "umber2-alfh.35",
+          "actual_normalized_sha256": "4cf2ba5f4f806edf923724aaa0cf1ae3f1e9aabac7dd0c6988a07bfa814c9fdf"
+        },
+        {
+          "channel": "log",
+          "projection": "jpeg=3/1/12",
+          "disposition": "xfail",
+          "bug": "umber2-alfh.35",
+          "actual_normalized_sha256": "4cf2ba5f4f806edf923724aaa0cf1ae3f1e9aabac7dd0c6988a07bfa814c9fdf"
+        },
         { "channel": "status", "projection": "success", "disposition": "pass" }
       ]
     }

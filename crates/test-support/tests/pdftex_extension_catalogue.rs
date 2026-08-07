@@ -5,118 +5,21 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 
 const SCHEMA: &str = "pdftex-extension-properties-v1";
 const SOURCE_COMMIT: &str = "1664cf0ab3f6ce3b80db649bc6723f54ab12016c";
 const SOURCE_SHA256: &str = "5a105669acc1b49aedb7560d4d15cb2e23467cb16d895eb0031c8dd9fea32f04";
 const INVENTORY_AUTHORITY: &str = "docs/pdftex_primitives.md";
+const SOURCE_EVIDENCE_SCHEMA: &str = "# pdftex-extension-source-evidence-v1";
+const SOURCE_EVIDENCE_SHA256: &str =
+    "08752d2e05d122ef70f9aa2b044186df369534b23c79b2d16205227e5ee4581c";
+const WEB_MODULE_COUNT: u64 = 1868;
 
-// Reviewed directly against SOURCE_SHA256. This deliberately duplicates the
-// catalogue's compact citations: changing an in-range section number or moving
-// a real section to the wrong property must fail until its semantic identity is
-// reviewed here too.
-const CITATION_AUDIT: &[(&str, &[u64], &str)] = &[
-    (
-        "pdftex.extension.compatibility-controls",
-        &[1151, 1264, 1655],
-        "Section 1151 applies ignore_primitive_error to infinite-shrinkage recovery; section 1264 defines quitvmode's mode-sensitive paragraph entry; section 1655 registers ignoreprimitiveerror.",
-    ),
-    (
-        "pdftex.extension.font-code-tables",
-        &[703, 1429, 1430],
-        "Section 703 defines the bounded font-code setters and no-ligature mutation; section 1429 dispatches assign_font_int globally; section 1430 registers the font-code primitives.",
-    ),
-    (
-        "pdftex.extension.font-configuration",
-        &[252, 254],
-        "Section 252 places the font-configuration integers in eqtb; section 254 registers them as assign_int primitives, giving them ordinary scoped assignment behavior.",
-    ),
-    (
-        "pdftex.extension.form-diagnostics",
-        &[1546],
-        "Section 1546 implements pdfxform, fetches the numbered box, and raises the void-box fatal error.",
-    ),
-    (
-        "pdftex.extension.form-state",
-        &[440, 448, 1546, 1547, 1621, 1635],
-        "Sections 440 and 448 expose last-form enquiries; sections 1546 and 1547 create and reference forms with captured dimensions; section 1621 ships immediate forms; section 1635 records referenced forms for page resources.",
-    ),
-    (
-        "pdftex.extension.form-traversal-diagnostics",
-        &[725, 755, 758],
-        "Section 725 routes pdfsave and pdfrestore through the graphics-state checker; sections 755 and 758 bracket each page or form content stream and its final balance check.",
-    ),
-    (
-        "pdftex.extension.ignored-dimension-effects",
-        &[853, 1062, 1063],
-        "Section 853 compares prev_depth with pdfignoreddimen; section 1062 initializes the line overrides from that sentinel; section 1063 applies overrides only when they differ from it.",
-    ),
-    (
-        "pdftex.extension.image-configuration",
-        &[252, 254, 1550],
-        "Section 252 places image and page-policy integers in eqtb; section 254 registers their assign_int primitives; section 1550 consumes the page-box, resolution, and inclusion policy while scanning an image.",
-    ),
-    (
-        "pdftex.extension.metadata-configuration",
-        &[252, 254],
-        "Section 252 places the metadata-policy integers in eqtb; section 254 registers them as assign_int primitives, giving them ordinary scoped assignment behavior.",
-    ),
-    (
-        "pdftex.extension.microtype-effects",
-        &[703, 1055, 1061, 1064, 1217, 1533],
-        "Section 703 inserts configured character-side kerns; sections 1055 and 1061 select protrusion nodes; section 1064 applies expansion while packing lines; section 1217 adjusts interword glue; section 1533 configures expanded fonts.",
-    ),
-    (
-        "pdftex.extension.move-chars-warning",
-        &[690],
-        "Section 690 warns on a positive pdfmovechars value when a PDF font is first marked used and resets it to zero.",
-    ),
-    (
-        "pdftex.extension.output-policy",
-        &[252, 254, 670, 681],
-        "Sections 252 and 254 define and register the output-policy eqtb integers; section 670 supplies PDF defaults; section 681 validates and recovers version and object-stream settings.",
-    ),
-    (
-        "pdftex.extension.destination-lifecycle",
-        &[792, 793, 794, 795, 796, 1562, 1635],
-        "Sections 1562 and 1635 implement duplicate-destination warning and traversal; section 792 invokes final destination checks; sections 793--796 diagnose and repair missing ordinary and structure destinations.",
-    ),
-    (
-        "pdftex.extension.destination-scanner",
-        &[1563],
-        "Section 1563 implements the complete pdfdest identifier, destination-kind, zoom, rectangle, and error scanner.",
-    ),
-    (
-        "pdftex.extension.outline-scanner",
-        &[440, 448, 1554, 1561],
-        "Sections 440 and 448 expose the last-object enquiry; section 1554 scans every outline action form; section 1561 scans attributes, count, and title while constructing outline objects.",
-    ),
-    (
-        "pdftex.extension.outline-tree",
-        &[786, 787, 1561],
-        "Section 1561 constructs the parent, sibling, and child links; sections 786 and 787 serialize the outline root and entries after pages are complete.",
-    ),
-    (
-        "pdftex.extension.thread-graph",
-        &[784, 788, 1598, 1635],
-        "Section 1635 creates and links page beads; section 784 emits bead rectangles; sections 788 and 1598 serialize thread graphs and repair referenced threads with no beads.",
-    ),
-    (
-        "pdftex.extension.thread-lifecycle",
-        &[1566, 1567, 1635],
-        "Sections 1566 and 1567 create running-thread boundary nodes; section 1635 enforces hlist, nesting, page, and end-thread lifecycle rules.",
-    ),
-    (
-        "pdftex.extension.thread-scanner",
-        &[1550, 1554, 1564, 1565, 1566],
-        "Section 1550 scans reordered rule dimensions; section 1554 composes dimensions and attributes for thread nodes; section 1564 validates thread identifiers; sections 1565 and 1566 implement one-shot and running thread starts.",
-    ),
-    (
-        "pdftex.extension.ximage-enquiries",
-        &[440, 448, 1548, 1550, 1551, 1552],
-        "Sections 440 and 448 expose the three image enquiries; section 1548 owns their state; section 1550 imports an image and updates all three values; sections 1551 and 1552 implement image creation and reference nodes.",
-    ),
-];
+struct SourceEvidence {
+    modules: BTreeMap<u64, (String, String)>,
+    bindings: BTreeMap<String, Vec<u64>>,
+}
 
 fn root() -> PathBuf {
     test_support::repository_root()
@@ -128,6 +31,87 @@ fn catalogue() -> Value {
             .expect("read pdfTeX extension property catalogue"),
     )
     .expect("parse pdfTeX extension property catalogue")
+}
+
+fn is_sha256(value: &str) -> bool {
+    value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+fn source_evidence(repository: &Path) -> Result<SourceEvidence, String> {
+    let path = repository.join("tests/pdftex-properties/source-evidence.tsv");
+    let text =
+        fs::read_to_string(&path).map_err(|error| format!("read {}: {error}", path.display()))?;
+    if format!("{:x}", Sha256::digest(text.as_bytes())) != SOURCE_EVIDENCE_SHA256 {
+        return Err("pdfTeX source-evidence lock digest changed".into());
+    }
+    let mut lines = text.lines();
+    if lines.next() != Some(SOURCE_EVIDENCE_SCHEMA) {
+        return Err("invalid pdfTeX source-evidence schema".into());
+    }
+    let source = lines
+        .next()
+        .ok_or("source evidence lacks pinned source identity")?
+        .split('\t')
+        .collect::<Vec<_>>();
+    if source
+        != [
+            "source",
+            "pdfTeX 1.40.29",
+            "pdftex.web",
+            SOURCE_COMMIT,
+            SOURCE_SHA256,
+        ]
+    {
+        return Err("source evidence does not bind the pinned pdftex.web identity".into());
+    }
+    let module_count = lines
+        .next()
+        .ok_or("source evidence lacks WEB module count")?
+        .split('\t')
+        .collect::<Vec<_>>();
+    if module_count != ["web_module_count", &WEB_MODULE_COUNT.to_string()] {
+        return Err("source evidence has the wrong WEB module count".into());
+    }
+
+    let mut modules = BTreeMap::new();
+    let mut bindings = BTreeMap::new();
+    for (index, line) in lines.enumerate() {
+        let fields = line.split('\t').collect::<Vec<_>>();
+        match fields.first().copied() {
+            Some("module") if fields.len() == 4 => {
+                let number = fields[1]
+                    .parse::<u64>()
+                    .map_err(|_| format!("invalid module number on evidence line {}", index + 4))?;
+                if !is_sha256(fields[2]) || fields[3].trim().is_empty() {
+                    return Err(format!("module {number} lacks a locked body hash or title"));
+                }
+                if modules
+                    .insert(number, (fields[2].to_owned(), fields[3].to_owned()))
+                    .is_some()
+                {
+                    return Err(format!("duplicate source-evidence module {number}"));
+                }
+            }
+            Some("binding") if fields.len() == 3 => {
+                let cited = fields[2]
+                    .split(',')
+                    .map(|number| {
+                        number.parse::<u64>().map_err(|_| {
+                            format!("invalid binding module on evidence line {}", index + 4)
+                        })
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                if cited.is_empty() || bindings.insert(fields[1].to_owned(), cited).is_some() {
+                    return Err(format!("invalid or duplicate binding {}", fields[1]));
+                }
+            }
+            _ => return Err(format!("invalid source-evidence line {}", index + 4)),
+        }
+    }
+    if modules.is_empty() || bindings.is_empty() {
+        return Err("source evidence lacks modules or property bindings".into());
+    }
+    Ok(SourceEvidence { modules, bindings })
 }
 
 fn required_text<'a>(value: &'a Value, field: &str) -> Result<&'a str, String> {
@@ -212,6 +196,7 @@ fn validate_test_link(repository: &Path, link: &str) -> Result<(), String> {
 }
 
 fn validate(repository: &Path, catalogue: &Value) -> Result<(), String> {
+    let evidence = source_evidence(repository)?;
     if catalogue["schema"] != SCHEMA {
         return Err("invalid pdfTeX extension property schema".into());
     }
@@ -238,10 +223,7 @@ fn validate(repository: &Path, catalogue: &Value) -> Result<(), String> {
     let mut ids = BTreeSet::new();
     let mut cases = BTreeSet::new();
     let mut owners = BTreeMap::new();
-    let citation_audit = CITATION_AUDIT
-        .iter()
-        .map(|(id, sections, rationale)| (*id, (*sections, *rationale)))
-        .collect::<BTreeMap<_, _>>();
+    let mut cited_modules = BTreeSet::new();
     for property in properties {
         let id = required_text(property, "id")?;
         if !id.starts_with("pdftex.extension.") || !ids.insert(id.to_owned()) {
@@ -269,18 +251,23 @@ fn validate(repository: &Path, catalogue: &Value) -> Result<(), String> {
                     .ok_or_else(|| format!("property {id} has a nonnumeric pdftex.web section"))
             })
             .collect::<Result<Vec<_>, _>>()?;
-        let (audited_sections, audited_rationale) = citation_audit
+        let authenticated_sections = evidence
+            .bindings
             .get(id)
-            .ok_or_else(|| format!("property {id} lacks a reviewed source citation audit"))?;
-        if sections != *audited_sections {
+            .ok_or_else(|| format!("property {id} lacks authenticated source evidence"))?;
+        if sections != *authenticated_sections {
             return Err(format!(
-                "property {id} citations do not match the reviewed pdftex.web modules: catalogue={sections:?}, audited={audited_sections:?}"
+                "property {id} citations do not match authenticated pdftex.web modules: catalogue={sections:?}, evidence={authenticated_sections:?}"
             ));
         }
-        if required_text(property, "citation_rationale")? != *audited_rationale {
-            return Err(format!(
-                "property {id} citation rationale does not match the reviewed module identities"
-            ));
+        required_text(property, "citation_rationale")?;
+        for section in &sections {
+            if !evidence.modules.contains_key(section) {
+                return Err(format!(
+                    "property {id} cites module {section} without a locked title and body hash"
+                ));
+            }
+            cited_modules.insert(*section);
         }
         validate_test_link(repository, required_text(property, "active_test")?)?;
 
@@ -317,14 +304,43 @@ fn validate(repository: &Path, catalogue: &Value) -> Result<(), String> {
             }
             match required_text(observation, "disposition")? {
                 "pass" => {
-                    if !observation["bug"].is_null() {
-                        return Err(format!("property {id} pass observation names a bug"));
+                    if !observation["bug"].is_null()
+                        || !observation["actual"].is_null()
+                        || !observation["actual_normalized_sha256"].is_null()
+                    {
+                        return Err(format!(
+                            "property {id} pass observation carries xfail metadata"
+                        ));
                     }
                 }
                 "xfail" => {
                     let bug = required_text(observation, "bug")?;
                     if !bug.starts_with("umber2-") {
                         return Err(format!("property {id} xfail has invalid bug {bug}"));
+                    }
+                    match channel {
+                        "status" => {
+                            let actual = required_text(observation, "actual")?;
+                            if normalized(actual) == normalized(projection) {
+                                return Err(format!(
+                                    "property {id} status xfail actual matches its oracle projection"
+                                ));
+                            }
+                            if !observation["actual_normalized_sha256"].is_null() {
+                                return Err(format!(
+                                    "property {id} status xfail must use an exact actual status"
+                                ));
+                            }
+                        }
+                        "terminal" | "log" => {
+                            let digest = required_text(observation, "actual_normalized_sha256")?;
+                            if !is_sha256(digest) || !observation["actual"].is_null() {
+                                return Err(format!(
+                                    "property {id} {channel} xfail must use one normalized SHA-256 fingerprint"
+                                ));
+                            }
+                        }
+                        _ => unreachable!(),
                     }
                 }
                 disposition => {
@@ -350,12 +366,15 @@ fn validate(repository: &Path, catalogue: &Value) -> Result<(), String> {
     if owners.len() != inventory.len() {
         return Err("resolved case ownership is not one-to-one".into());
     }
-    if ids.len() != citation_audit.len() {
+    if ids != evidence.bindings.keys().cloned().collect() {
         return Err(format!(
-            "citation audit and catalogue differ in size: catalogue={}, audit={}",
+            "source-evidence bindings and catalogue differ: catalogue={}, evidence={}",
             ids.len(),
-            citation_audit.len()
+            evidence.bindings.len()
         ));
+    }
+    if cited_modules != evidence.modules.keys().copied().collect() {
+        return Err("source evidence contains an unreferenced or unauthenticated module".into());
     }
     Ok(())
 }
@@ -392,13 +411,34 @@ fn catalogue_rejects_overlapping_case_ownership_and_missing_channels() {
 }
 
 #[test]
-fn catalogue_rejects_semantically_drifted_but_in_range_citations() {
+fn catalogue_rejects_citation_drift_and_weak_xfail_fingerprints() {
     let repository = root();
     let mut drifted = catalogue();
     drifted["properties"][0]["sections"] = serde_json::json!([1522, 1525]);
     assert!(
         validate(&repository, &drifted)
             .expect_err("in-range but unrelated sections must fail")
-            .contains("do not match the reviewed pdftex.web modules")
+            .contains("do not match authenticated pdftex.web modules")
+    );
+
+    let mut weak_xfail = catalogue();
+    let observation = weak_xfail["properties"]
+        .as_array_mut()
+        .expect("properties")
+        .iter_mut()
+        .flat_map(|property| {
+            property["observations"]
+                .as_array_mut()
+                .expect("observations")
+        })
+        .find(|observation| {
+            observation["disposition"] == "xfail" && observation["channel"] == "terminal"
+        })
+        .expect("terminal xfail");
+    observation["actual_normalized_sha256"] = serde_json::json!("");
+    assert!(
+        validate(&repository, &weak_xfail)
+            .expect_err("blank xfail fingerprint must fail")
+            .contains("missing non-empty actual_normalized_sha256")
     );
 }

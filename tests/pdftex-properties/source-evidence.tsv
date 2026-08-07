@@ -1,0 +1,73 @@
+# pdftex-extension-source-evidence-v1
+source	pdfTeX 1.40.29	pdftex.web	1664cf0ab3f6ce3b80db649bc6723f54ab12016c	5a105669acc1b49aedb7560d4d15cb2e23467cb16d895eb0031c8dd9fea32f04
+web_module_count	1868
+module	254	38bd4d5f632e5d1462247e4eec7db0c3ed93c5a7b79bfe7f0ebf0ebfa4530ead	Region 5 of |eqtb| contains the integer parameters and registers defined
+module	256	13f92652961d3c44a18afdc1d887f6613500e321066ca21e06ae7dd16470cb2a	The integer parameter names must be entered into the hash table.
+module	442	82cf019c337162d72ea83cb0d578a21f5812e3731bd4569cbda2502e00d47ec2	Users refer to `\.{\\the\\spacefactor}' only in horizontal
+module	450	0cb1d07b689a2d06e195c6e33752452910a2f3f32311ac5673f632b4d0feeb23	Here is where \.{\\lastpenalty}, \.{\\lastkern}, \.{\\lastskip}, and
+module	672	42d90891318d0a1deb000d860a31d90ddfc4008ab8ab20ce50ccef844db1c6f9	* \[32a] \pdfTeX\ basic.  Initialize \pdfTeX's parameters to some useful
+module	683	160213adfa47f95dc7e70eeb47489330bc6eb3847d91a1ae7ed0d204ae1d6ed8	This ensures that |pdf_major_version| and |pdf_minor_version| are set
+module	692	e58ceec9567e1228e1e6668265a5aedd921b65e2810eea959c1bb866c3705c59	Following procedures implement low-level subroutines to convert \TeX{}
+module	705	782a0ac42303899ae8404cc1bce98789e9ef898b04b777ff2603e31e045902b0	Here come some subroutines to deal with expanded fonts for HZ-algorithm.
+module	727	5d9934225505d871845ba4f9001e596be1763c85a877bc61ca9264ffdae71c02	* \[32f] PDF shipping out.
+module	757	685eed6897ec70c5ea6b4d22dc2597e46daab92b8d444b1bccf2ef6e60543e9d	@<Start stream of page/form contents@>=
+module	760	d6909af7fcc2a59ca7d9e6cbf1cdbd1786dbf24f61ccab22d8096be9c4693154	@<Finish stream of page/form contents@>=
+module	786	ab66d5f516743a2e1ec163ceedd7c97b67e759a5fb9d9e88e9a3f843784e7cbc	@<Write out PDF bead rectangle specifications@>=
+module	788	b7a1a8e5724a627ca8e142124587c88b3f8f9580e81b4cd0627c7a553b5d1a04	@<Output outlines@>=
+module	789	c97095c74aceb747417dbccdc0306f424894102b94050f82d3b36a9cd8a1b077	@<Output PDF outline entries@>=
+module	790	864fed5f5efa69d292cb3696b03078a2e0f21ac347e5babb9b0c47780c03756e	@<Output article threads@>=
+module	794	91226248fb4a593500e2891a7a1daa5199af619ab71b43ba2703c1cc5fe46c14	Now the finish of PDF output file. At this moment all Page objects
+module	795	cd5ce87e80effe454c8beebe96d300d81eec6070b694e81d10fb8c5c59a09281	Destinations that have been referenced but don't exists have
+module	796	63e3555bb280cdebb959a936d77de9087317a2720e51b44c964cd647c1890a47	@<Check for non-existing destinations@>=
+module	797	23ff318b96c37ffe3d0db3a672ad2f7c0f42712e9313917208753c71b67b8c6b	The same for structure destinations, except that there is no sensible default
+module	798	09c6d4d89734a0bfd331766e0e2ae17329be88e83e36b92af1af533a2c996366	@<Check for non-existing structure destinations@>=
+module	855	3809c59282f2de8ae37e8e643cf962ed6ecef1f560984fe9ba8a9b0ee5de1516	When a box is being appended to the current vertical list, the
+module	1057	10552a09bdd6bbb4f607fc24c2ff95e1c4bc3e24c0056c4f36fe6de14c08621a	At the end of the following code, |q| will point to the final node on the
+module	1063	bd86591133c117c4fec5555645fc6d45381d7eb112a98d64cc166b094c372933	The following code begins with |q| at the end of the list to be
+module	1064	606a231c7a7633e3119adaa77baf1144dc44ec2bd2ddf0ab5fe3702f14d29795	@<Initialize table entries...@>=
+module	1065	2f3dc4dd8a0d1092ee23d1b401f9657ea8975db93087ea835611b199130ec67a	@<Append the new box to the current vertical list...@>=
+module	1066	8e1b955bcbd671494ab2ae732eb4809f722c7ef03054e8f66bfcbec94fdaa4cd	Now |q| points to the hlist that represents the current line of the
+module	1153	0968d11e571ee9748867978cd1384b8533ddf1e30c7bb4b3e290911b35fc4ac2	Vertical lists that are subject to the |vert_break| procedure should not
+module	1219	90ec21a40554e4f9c3306e9d0252a2a9e1d45c9b0841b23ada94bbc8bd5bcf1a	The occurrence of blank spaces is almost part of \TeX's inner loop,
+module	1266	0b0af826768d8e8dc6451dc33d46f14d52e1b57245255e0bc30173b18f56c90e	Here is a really small patch to add a new primitive called
+module	1431	b2745892410482795c3ad7d8d6366ae40763d97109cc498ac1861616377c769b	All of \TeX's parameters are kept in |eqtb| except the font information,
+module	1432	19906c605a6976fc903637ac8c64ada721af6d097c2495a39b11cc91c102ab88	@<Put each...@>=
+module	1535	c6999db0bd4b2116b4260c8b0a1fbdae4d90afabd59e3bfaeccea39cbceda47e	@<Implement \.{\\pdffontexpand}@>=
+module	1548	0186b116387622f83b05ff2b0e76f71884dd7db19b09b050e2c00207a04d06ec	@<Implement \.{\\pdfxform}@>=
+module	1549	9c4323400f9b351a932143891f4d780942601fa274bef94c90e9cf6762878995	@<Implement \.{\\pdfrefxform}@>=
+module	1550	b57ac97ac8d9064b75c553f85695750cb301e61ee46f9ac98b4ede33fe71b924	\.{\\pdfximage} and \.{\\pdfrefximage} are similar to \.{\\pdfxform} and
+module	1552	dc66b8f1510e28185bafba89048164ed0cfe117924d0aee73d8830c54476b4ef	@<Declare procedures needed in |do_ext...@>=
+module	1553	b45673f64ee462f2712a48e946062058dd1c7a73c09bbb8387404779704128cd	@<Implement \.{\\pdfximage}@>=
+module	1554	d95346bb09d926c959c873cf37053e5055d09c3d62d4442a3885b9648ad90815	@<Implement \.{\\pdfrefximage}@>=
+module	1556	51e2fed5348041c22bfca05922f1356ed11fb21f3fbeb8bf47a1f2fc87a0c235	@<Declare procedures needed in |do_ext...@>=
+module	1563	e172485d0a1ca3ed82e77315770d293d9fd935f9b9a7a1e9427a044cac418fa0	@<Implement \.{\\pdfoutline}@>=
+module	1564	ef7931eaaa9f663bbdb20407b465e4457c055c83aec7f698c5d993d76f8d1746	When a destination is created we need to check whether another destination
+module	1565	f69be9278569083efa56ec767dda070b5efb9399c6999b2c1a5366fd4ad34a37	Notice that |scan_keyword| doesn't care if two words have same prefix; so
+module	1566	b1eab4ff02facdae1054bf9aee4b4399780a1baa1b2e593aab8f0150da400560	@<Declare procedures needed in |do_ext...@>=
+module	1567	0eb518be407732f51ea70b9f877e1dff3c8ca51dd11b9f489a2eb46aa6a2de0c	@<Implement \.{\\pdfthread}@>=
+module	1568	46b3935de5d46bce91d4b76b89e64b1c2ecb3d80a9a16e9e00be0dba5c75c2c3	@<Implement \.{\\pdfstartthread}@>=
+module	1569	497e5df93f9ee4819aa1e1c08ece218438d99d6850bed5f39398f12fb058082b	@<Implement \.{\\pdfendthread}@>=
+module	1600	05b977330569e22d0aed805fa6114990978535fca0bb61ef82e0c8e90dc8b5e9	The following function are needed for outputting article thread.
+module	1623	c5feb0dbc05c62d2d31ed1f033757555210ae270cc5d28fe2a651e6ad4574d79	The presence of `\.{\\immediate}' causes the |do_extension| procedure
+module	1637	dccbd2efc5bff58526f2823a6bdba1d4312b90faa372476e91761c55716bbd94	Threads are handled in similar way as link annotations.
+module	1657	0657add1c2bd9d44fa5daec84ebd6936fc66682945b31800e04e87f8c6a176c5	First we implement the additional \eTeX\ parameters in the table of
+binding	pdftex.extension.compatibility-controls	1153,1266,1657
+binding	pdftex.extension.font-code-tables	705,1431,1432
+binding	pdftex.extension.font-configuration	254,256
+binding	pdftex.extension.form-diagnostics	1548
+binding	pdftex.extension.form-state	442,450,1548,1549,1623,1637
+binding	pdftex.extension.form-traversal-diagnostics	727,757,760
+binding	pdftex.extension.ignored-dimension-effects	855,1064,1065
+binding	pdftex.extension.image-configuration	254,256,1552
+binding	pdftex.extension.metadata-configuration	254,256
+binding	pdftex.extension.microtype-effects	705,1057,1063,1066,1219,1535
+binding	pdftex.extension.move-chars-warning	692
+binding	pdftex.extension.output-policy	254,256,672,683
+binding	pdftex.extension.destination-lifecycle	794,795,796,797,798,1564,1637
+binding	pdftex.extension.destination-scanner	1565
+binding	pdftex.extension.outline-scanner	442,450,1556,1563
+binding	pdftex.extension.outline-tree	788,789,1563
+binding	pdftex.extension.thread-graph	786,790,1600,1637
+binding	pdftex.extension.thread-lifecycle	1568,1569,1637
+binding	pdftex.extension.thread-scanner	1552,1556,1566,1567,1568
+binding	pdftex.extension.ximage-enquiries	442,450,1550,1552,1553,1554

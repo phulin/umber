@@ -7,6 +7,8 @@ Its sole canonical source is pdfTeX 1.40.29's `pdftex.web`, pinned at TeX Live
 source commit `1664cf0ab3f6ce3b80db649bc6723f54ab12016c` with SHA-256
 `5a105669acc1b49aedb7560d4d15cb2e23467cb16d895eb0031c8dd9fea32f04`.
 Numeric `sections` in the catalogue are numbered WEB sections in that source.
+WEB's bare `@` module delimiters count as modules alongside `@*` and `@␣`;
+omitting the two early bare delimiters shifts every extension citation by two.
 
 The catalogue does not enumerate primitives. The exact 158-name primitive
 inventory remains owned by `docs/pdftex_primitives.md` and its source-derived
@@ -24,22 +26,26 @@ property ID. Each property has:
 - explicit status, terminal, and log projections.
 
 Each observation is either `pass` or a strict `xfail` naming a Beads bug. The
-active runner requires a passing projection to remain present and an xfail
-projection to remain absent. An implementation fix therefore makes the xfail
-test fail until the bug is closed and the observation is deliberately promoted
-to `pass`; a known mismatch cannot be absorbed as success.
+active runner requires a passing projection to remain present. An xfail pins
+both the absent oracle projection and Umber's exact current divergence: status
+uses an exact normalized value, while terminal and log use complete normalized
+SHA-256 fingerprints. Blank output, an unrelated failure, or a different
+divergence therefore fails instead of satisfying the xfail accidentally. An
+implementation fix also fails until the bug is closed and the observation is
+deliberately promoted to `pass`.
 
 `crates/test-support/tests/pdftex_extension_catalogue.rs` is the hermetic
-completeness gate. Its reviewed citation audit binds every property ID to an
-exact ordered set of modules and a concise semantic rationale read directly
-from the pinned source. This is intentionally stronger than checking that a
-number falls inside the source's module range: substituting a real but
-unrelated module, changing a rationale, or adding an unaudited property fails.
-The gate also rejects source-pin drift, duplicate property IDs, overlapping or
-incomplete case ownership, missing oracle channels, projections absent from
-the preserved reference, unlinked xfails, and dormant or ambiguous Rust test
-links. It derives its case inventory from the closed retained corpus instead
-of pinning only a count.
+completeness gate. `tests/pdftex-properties/source-evidence.tsv` is a compact
+map generated from the pinned source after independently counting every WEB
+module delimiter. It binds the source identity and complete 1,868-module count
+to each cited module's number, exact first-line title, body SHA-256, and owning
+property. The gate validates catalogue citations against this source-derived
+map instead of comparing two handwritten number tables. It also rejects
+source-pin drift, duplicate property IDs, overlapping or incomplete case
+ownership, missing oracle channels, weak xfail fingerprints, projections absent
+from the preserved reference, unlinked xfails, and dormant or ambiguous Rust
+test links. It derives its case inventory from the closed retained corpus
+instead of pinning only a count.
 
 The eight cases previously blocked under `umber2-alfh.29` are actively executed
 by `retained_pdftex_extension_fixtures_compare_oracle_projections`. It stages

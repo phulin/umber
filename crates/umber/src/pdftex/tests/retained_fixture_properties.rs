@@ -1,4 +1,5 @@
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 use test_support::pdf_fixture::{Dictionary, ValidPdfFixture, array, name, reference};
 
 use super::*;
@@ -77,15 +78,53 @@ fn retained_pdftex_extension_fixtures_compare_oracle_projections() {
                     matches,
                     "{id} {channel} lacks passing projection {projection:?}: {observed}"
                 ),
-                "xfail" => assert!(
-                    !matches,
-                    "{id} {channel} unexpectedly matches {projection:?}; close {} and promote this observation to pass",
-                    observation["bug"].as_str().expect("xfail bug")
-                ),
+                "xfail" => {
+                    assert!(
+                        !matches,
+                        "{id} {channel} unexpectedly matches {projection:?}; close {} and promote this observation to pass",
+                        observation["bug"].as_str().expect("xfail bug")
+                    );
+                    assert!(
+                        xfail_matches_exact_actual(observation, channel, observed),
+                        "{id} {channel} xfail changed to an unrelated divergence: {observed}"
+                    );
+                }
                 other => panic!("{id} invalid disposition {other}"),
             }
         }
     }
+}
+
+fn xfail_matches_exact_actual(observation: &Value, channel: &str, observed: &str) -> bool {
+    if channel == "status" {
+        return observation["actual"].as_str() == Some(observed);
+    }
+    let digest = format!("{:x}", Sha256::digest(normalize(observed)));
+    observation["actual_normalized_sha256"].as_str() == Some(digest.as_str())
+}
+
+#[test]
+fn strict_xfail_fingerprints_reject_blank_unrelated_and_different_failures() {
+    let status = serde_json::json!({"actual": "success"});
+    assert!(xfail_matches_exact_actual(&status, "status", "success"));
+    assert!(!xfail_matches_exact_actual(&status, "status", ""));
+    assert!(!xfail_matches_exact_actual(
+        &status,
+        "status",
+        "error:other"
+    ));
+
+    let log = serde_json::json!({
+        "actual_normalized_sha256": "d0bca111f8628137adc4c16f123496dcdd1d590d06cb5d9acd68b39fe656fb97"
+    });
+    assert!(xfail_matches_exact_actual(&log, "log", " [0]"));
+    assert!(!xfail_matches_exact_actual(&log, "log", ""));
+    assert!(!xfail_matches_exact_actual(
+        &log,
+        "log",
+        "unrelated failure"
+    ));
+    assert!(!xfail_matches_exact_actual(&log, "log", " [1]"));
 }
 
 fn execute(case: &str) -> ActualChannels {

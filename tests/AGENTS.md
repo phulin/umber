@@ -100,6 +100,10 @@ never invoke the live oracle.
 delegates primitive inventory authority to `docs/pdftex_primitives.md`, gives
 each case one stable property ID and exact active Rust test, and dispositions
 status, terminal, and log projections as pass or bug-linked xfail.
+`tests/pdftex-properties/source-evidence.tsv` is the compact source-derived
+module lock for that catalogue: it binds the pinned source identity and full
+WEB module count to each cited module's exact title/body hash and to the
+property that cites it.
 
 `tests/oracle-regeneration-manifest.txt` pins the schema versions, exact
 engine/profile selectors, source-manifest hashes, fixture areas, and expected
