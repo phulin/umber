@@ -736,8 +736,13 @@ fn text_boundary_font_glue_scaling_and_cache_matrix() {
         );
     }
     let cached = boxed_children(&stores, 8);
-    let [Node::Char { ch: 'A', .. }, Node::Glue { spec: first, .. }, Node::Char { ch: 'X', .. }, Node::Glue { spec: second, .. }, Node::Char { ch: 'X', .. }] =
-        cached.as_slice()
+    let [
+        Node::Char { ch: 'A', .. },
+        Node::Glue { spec: first, .. },
+        Node::Char { ch: 'X', .. },
+        Node::Glue { spec: second, .. },
+        Node::Char { ch: 'X', .. },
+    ] = cached.as_slice()
     else {
         panic!("cached font spaces have exact ordered ownership: {cached:?}")
     };
@@ -767,13 +772,20 @@ fn text_boundary_font_glue_scaling_and_cache_matrix() {
         "uppercase X's sfcode 999 selects a distinct cached scaling variant"
     );
     let low_box = boxed_children(&stores, 2);
-    let [Node::Char { .. }, Node::Glue { spec: low, .. }, Node::Char { .. }] = low_box.as_slice()
+    let [
+        Node::Char { .. },
+        Node::Glue { spec: low, .. },
+        Node::Char { .. },
+    ] = low_box.as_slice()
     else {
         panic!("low-factor box has one glue")
     };
     let normal_box = boxed_children(&stores, 3);
-    let [Node::Char { .. }, Node::Glue { spec: normal, .. }, Node::Char { .. }] =
-        normal_box.as_slice()
+    let [
+        Node::Char { .. },
+        Node::Glue { spec: normal, .. },
+        Node::Char { .. },
+    ] = normal_box.as_slice()
     else {
         panic!("normal-factor box has one glue")
     };
@@ -1616,12 +1628,13 @@ fn unbox_copy_move_void_wrong_kind_and_math_ownership_matrix() {
             Shape::Kern(first, KernKind::Explicit),
             Shape::Glue { width: first_glue, kind: GlueKind::Normal, leader: false, .. },
             Shape::Penalty(10),
-            Shape::Kern(11 * Scaled::UNITY, KernKind::Explicit),
+            Shape::Kern(copied_kern, KernKind::Explicit),
             Shape::Kern(second, KernKind::Explicit),
             Shape::Glue { width: second_glue, kind: GlueKind::Normal, leader: false, .. },
             Shape::Penalty(10),
         ] if *first == 8 * Scaled::UNITY
             && *first_glue == 9 * Scaled::UNITY
+            && *copied_kern == 11 * Scaled::UNITY
             && *second == 8 * Scaled::UNITY
             && *second_glue == 9 * Scaled::UNITY)),
         "{horizontal:?}"
@@ -1968,10 +1981,14 @@ fn insert_and_vadjust_aftergroup_closure_provenance_order_and_once() {
 
     let insert_box = register_box(&stores, 8);
     let insert_children = stores.nodes(insert_box.children).testing_decoded();
-    let [Node::Ins { content, .. }, Node::Glue {
-        kind: GlueKind::ParSkip,
-        ..
-    }, Node::HList(insert_line)] = insert_children
+    let [
+        Node::Ins { content, .. },
+        Node::Glue {
+            kind: GlueKind::ParSkip,
+            ..
+        },
+        Node::HList(insert_line),
+    ] = insert_children
     else {
         panic!(
             "insert aftergroup closure: {:?}",
@@ -1999,10 +2016,13 @@ fn insert_and_vadjust_aftergroup_closure_provenance_order_and_once() {
 
     let adjust_box = register_box(&stores, 9);
     let adjust_children = stores.nodes(adjust_box.children).testing_decoded();
-    let [Node::HList(line), Node::Kern {
-        amount,
-        kind: KernKind::Explicit,
-    }] = adjust_children
+    let [
+        Node::HList(line),
+        Node::Kern {
+            amount,
+            kind: KernKind::Explicit,
+        },
+    ] = adjust_children
     else {
         panic!(
             "vadjust paragraph closure: {:?}",
@@ -2116,10 +2136,12 @@ fn paragraph_empty_discardable_display_and_insert_matrix() {
     );
     let display = register_shapes(&stores, 2)
         .unwrap_or_else(|| panic!("display vbox; terminal={}", terminal(&stores)));
-    let [Shape::VBox {
-        children: display_children,
-        ..
-    }] = display.as_slice()
+    let [
+        Shape::VBox {
+            children: display_children,
+            ..
+        },
+    ] = display.as_slice()
     else {
         panic!("display box: {display:?}");
     };
