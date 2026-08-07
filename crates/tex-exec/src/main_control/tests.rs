@@ -70,6 +70,22 @@ fn box_child_nodes(stores: &Universe, register: u16) -> Vec<Node> {
     stores.nodes(children).to_vec()
 }
 
+fn tabskip_widths(stores: &Universe, nodes: &[Node], widths: &mut Vec<i32>) {
+    for node in nodes {
+        match node {
+            Node::Glue {
+                spec,
+                kind: GlueKind::TabSkip,
+                ..
+            } => widths.push(stores.glue(*spec).width.raw()),
+            Node::HList(boxed) | Node::VList(boxed) => {
+                tabskip_widths(stores, &stores.nodes(boxed.children).to_vec(), widths);
+            }
+            _ => {}
+        }
+    }
+}
+
 #[test]
 fn tracingcommands_reports_only_big_switch_commands_with_live_selector_and_mode() {
     // TeX82 §§299/1030/1211: `show_cur_cmd_chr` runs after `big_switch`'s
@@ -1840,6 +1856,391 @@ fn display_alignment_finish_replays_missing_double_math_shift_offender() {
     );
     assert_eq!(stores.count(0), 17);
     assert_eq!(control.current_mode(), Mode::Vertical);
+}
+
+#[test]
+fn align_peek_full_branch_prefix_recovery_and_nesting_matrix() {
+    // TeX82 §785: the expanded row probe owns blanks/macros, repeated
+    // `\crcr`, `\noalign` (including its recovered opener), the closing
+    // right brace, and the backed-up first command of an ordinary row.
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = MainControl::tex82_initex(&mut stores);
+    control.set_fuel_limit(30_000).expect("bounded fuel");
+    register_source(
+        &mut control,
+        br"\nonstopmode
+          \def\empty{}\count0=0\count1=0\count2=0
+          \setbox0=\vbox{\halign{\global\advance\count1 by1 #\cr
+            \empty \global\advance\count0 by1\cr
+            \crcr\crcr
+            \noalign{\global\advance\count2 by1}
+            \empty \global\advance\count0 by1\cr}}
+          \setbox1=\vbox{\halign{#\cr\cr\noalign
+            \global\advance\count2 by1}\crcr}}
+          \setbox2=\vbox{\halign{#\cr
+            \omit\vbox{\halign{#\cr\cr}}\cr}}
+          \setbox3=\vbox{\halign{#\cr}}
+          \end",
+    );
+    let mut observations = ObservationRecorder::default();
+
+    run_to_end_observed(&mut control, &mut stores, &mut observations);
+
+    assert_eq!(stores.count(0), 2, "each ordinary row opener executes once");
+    assert_eq!(
+        stores.count(1),
+        2,
+        "the nonempty u-template runs once per row"
+    );
+    assert_eq!(
+        stores.count(2),
+        2,
+        "valid and recovered noalign bodies run once"
+    );
+    let terminal = terminal_text(&stores);
+    assert_eq!(
+        terminal.matches("Missing { inserted").count(),
+        1,
+        "{terminal}"
+    );
+    assert!(!terminal.contains("Extra alignment tab"), "{terminal}");
+
+    let transitions = observations
+        .0
+        .iter()
+        .filter_map(|observation| match observation {
+            CommandObservation::Alignment(record) => {
+                Some((record.transition, record.nesting, record.align_state))
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        transitions
+            .iter()
+            .filter(|(transition, _, _)| *transition == "u_template_push")
+            .count(),
+        4,
+        "only ordinary (not omit, crcr, noalign, or immediate-close) rows push u-templates"
+    );
+    assert!(
+        transitions
+            .iter()
+            .any(|(transition, nesting, _)| *transition == "suspend" && *nesting == Some(1))
+    );
+    assert!(
+        transitions
+            .iter()
+            .any(|(transition, nesting, _)| *transition == "begin" && *nesting == Some(2))
+    );
+    assert!(
+        transitions
+            .iter()
+            .any(|(transition, nesting, _)| *transition == "resume" && *nesting == Some(1))
+    );
+    assert_eq!(control.current_mode(), Mode::Vertical);
+}
+
+#[test]
+fn init_row_halign_valign_leading_tabskip_template_span_and_aux_matrix() {
+    // TeX82 §786: first and later rows use one fresh semantic row/cell
+    // level, the leading tabskip, the selected first alignrecord, and the
+    // canonical h/v cell mode and auxiliary initialization.
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = MainControl::tex82_initex(&mut stores);
+    control.set_fuel_limit(30_000).expect("bounded fuel");
+    register_source(
+        &mut control,
+        br"\nonstopmode\tabskip=2pt
+          \setbox0=\vbox{\halign{
+            \ifhmode\global\advance\count0 by1\fi\hskip1pt#\cr
+            \hskip3pt\cr \hskip4pt\cr}}
+          \looseness=7\hangafter=9\hangindent=12pt
+          \setbox1=\hbox{\valign{
+            \ifvmode\ifnum\looseness=0 \ifnum\hangafter=1
+              \ifdim\hangindent=0pt \global\advance\count1 by1\fi\fi\fi\fi#\cr
+            \hbox{\kern3pt}\cr \hbox{\kern4pt}\cr}}
+          \setbox2=\vbox{\halign{#&#\cr
+            \omit\hskip1pt\span\hskip2pt\cr}}
+          \end",
+    );
+    let mut observations = ObservationRecorder::default();
+
+    run_to_end_observed(&mut control, &mut stores, &mut observations);
+
+    assert_eq!(
+        stores.count(0),
+        2,
+        "halign first/later rows enter restricted hmode"
+    );
+    assert_eq!(
+        stores.count(1),
+        2,
+        "valign first/later rows reset paragraph aux in internal vmode"
+    );
+    for register in [0, 1] {
+        let rows = box_child_nodes(&stores, register);
+        let boxed_rows = rows
+            .iter()
+            .filter_map(|node| match node {
+                Node::HList(boxed) | Node::VList(boxed) => Some(boxed),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(boxed_rows.len(), 2, "register {register}: {rows:?}");
+        for row in boxed_rows {
+            let first = stores
+                .nodes(row.children)
+                .first()
+                .map(|node| node.to_owned());
+            let Some(Node::Glue { spec, kind, .. }) = first else {
+                panic!("row begins with tabskip glue: {rows:?}");
+            };
+            assert_eq!(kind, GlueKind::TabSkip);
+            assert_eq!(stores.glue(spec).width.raw(), 2 * Scaled::UNITY);
+        }
+    }
+    assert!(
+        observations.0.iter().any(|observation| matches!(
+            observation,
+            CommandObservation::Alignment(record)
+            if record.transition == "state_change"
+                && record.previous_align_state == Some(1_000_000)
+                && record.align_state == 0
+        )),
+        "omit initializes the cell without a u-template input level"
+    );
+    assert_eq!(control.current_mode(), Mode::Vertical);
+
+    // An exhausted preamble is scanner recovery, not permission for init_row
+    // to manufacture a first alignrecord. The fragment boundary keeps this
+    // deliberately incomplete input bounded without appending `\end`.
+    let mut exhausted_stores = Universe::new_with_plain_catcodes();
+    exhausted_stores.set_interaction_mode(tex_state::InteractionMode::Nonstop);
+    let mut exhausted = MainControl::tex82_initex(&mut exhausted_stores);
+    exhausted.set_root_completion_policy(RootCompletionPolicy::StopAtRootEof);
+    exhausted.set_fuel_limit(2_000).expect("bounded fuel");
+    register_source(&mut exhausted, br"\halign{");
+    let mut exhausted_observations = ObservationRecorder::default();
+    run_to_end_observed(
+        &mut exhausted,
+        &mut exhausted_stores,
+        &mut exhausted_observations,
+    );
+    assert!(!exhausted_observations.0.iter().any(|observation| matches!(
+        observation,
+        CommandObservation::Alignment(record) if record.transition == "u_template_push"
+    )));
+    assert!(
+        terminal_text(&exhausted_stores).contains("File ended while scanning"),
+        "exhausted preamble reports before row initialization"
+    );
+}
+
+#[test]
+fn fin_col_delimiter_periodic_extra_tab_and_brace_depth_matrix() {
+    // TeX82 §§791--795: tab/span/cr/crcr select exactly one next-cell,
+    // continued-span, or row result; `\omit` uses the empty template;
+    // periodic columns reuse their u/v pair and tabskip; exhausted tab/span
+    // recover to cr; and a delimiter at nonzero brace depth is corrected
+    // before `fin_col` sees it. Exercise both halign and valign packaging.
+    for delimiter in ["&", "\\span"] {
+        let source = format!(
+            "\\nonstopmode\\setbox0=\\vbox{{\\halign{{#\\cr \\hskip1pt{delimiter}\\hskip2pt\\cr}}}}\\end"
+        );
+        let mut stores = Universe::new_with_plain_catcodes();
+        let mut control = MainControl::tex82_initex(&mut stores);
+        control.set_fuel_limit(20_000).expect("bounded fuel");
+        register_source(&mut control, source.as_bytes());
+        let mut observations = ObservationRecorder::default();
+        run_to_end_observed(&mut control, &mut stores, &mut observations);
+        let terminal = terminal_text(&stores);
+        assert_eq!(
+            terminal
+                .matches("Extra alignment tab has been changed to \\cr")
+                .count(),
+            1,
+            "{delimiter}: {terminal}"
+        );
+        assert_eq!(
+            observations
+                .0
+                .iter()
+                .filter(|observation| matches!(
+                    observation,
+                    CommandObservation::Alignment(record) if record.transition == "extra_tab"
+                ))
+                .count(),
+            1,
+            "{delimiter} converts once"
+        );
+    }
+
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = MainControl::tex82_initex(&mut stores);
+    control.set_fuel_limit(40_000).expect("bounded fuel");
+    register_source(
+        &mut control,
+        br"\nonstopmode\tabskip=1pt\count0=0\count1=0
+          \setbox0=\vbox{\halign{
+            \global\advance\count0 by1 #\global\advance\count1 by1
+            &&\tabskip=3pt
+            \global\advance\count0 by10 #\global\advance\count1 by10\cr
+            \omit\hskip1pt&\hskip2pt\span\hskip3pt&\hskip4pt\cr
+            {\hskip1pt&\hskip2pt}\crcr}}
+          \setbox1=\hbox{\valign{#&#\cr
+            \hbox{\kern1pt}&\hbox{\kern2pt}\crcr
+            \omit\vskip1pt\span\vskip2pt\cr}}
+          \end",
+    );
+    let mut observations = ObservationRecorder::default();
+    run_to_end_observed(&mut control, &mut stores, &mut observations);
+
+    assert_eq!(
+        stores.count(0),
+        41,
+        "periodic u-template selection is exact"
+    );
+    assert_eq!(
+        stores.count(1),
+        41,
+        "periodic v-template selection is exact"
+    );
+    let mut widths = Vec::new();
+    tabskip_widths(&stores, &box_child_nodes(&stores, 0), &mut widths);
+    widths.sort_unstable();
+    assert_eq!(
+        widths,
+        vec![
+            Scaled::UNITY,
+            Scaled::UNITY,
+            Scaled::UNITY,
+            Scaled::UNITY,
+            3 * Scaled::UNITY,
+            3 * Scaled::UNITY,
+            3 * Scaled::UNITY,
+            3 * Scaled::UNITY,
+        ],
+        "periodic copies retain the repeated column's following tabskip"
+    );
+    let terminal = terminal_text(&stores);
+    assert_eq!(
+        terminal.matches("Missing } inserted").count(),
+        1,
+        "{terminal}"
+    );
+    assert!(
+        !terminal.contains("Extra alignment tab"),
+        "periodic suffix absorbs columns: {terminal}"
+    );
+    let transitions = observations
+        .0
+        .iter()
+        .filter_map(|observation| match observation {
+            CommandObservation::Alignment(record) => Some(record.transition),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert!(transitions.contains(&"omit_template_push"));
+    assert!(
+        transitions
+            .iter()
+            .filter(|transition| **transition == "v_template_push")
+            .count()
+            >= 6
+    );
+    assert_eq!(control.current_mode(), Mode::Vertical);
+}
+
+#[test]
+fn display_alignment_finish_complete_content_delimiter_and_spacing_matrix() {
+    // TeX82 §§1206--1207: all row shapes share the assignment-before-$$
+    // tail, exact delimiter recovery, direct finished-list splice, display
+    // indent, penalties/glue, prevdepth restoration, and enclosing-mode resume.
+    for (body, expected_rows) in [
+        ("\\hskip1pt\\cr", 1usize),
+        ("\\hskip1pt\\cr\\hskip2pt\\cr", 2),
+        ("\\omit\\hskip1pt\\span\\hskip2pt\\cr", 1),
+    ] {
+        let source = format!(
+            "\\nonstopmode\\setbox0=\\vbox{{\\hsize=50pt\\prevdepth=6pt\\baselineskip=20pt
+             \\abovedisplayskip=3pt\\belowdisplayskip=4pt
+             \\predisplaypenalty=111\\postdisplaypenalty=222
+             \\noindent$$\\displayindent=7pt\\halign{{#&#\\cr {body}}}
+             \\global\\advance\\count0 by1 $$\\kern1pt}}\\end"
+        );
+        let mut stores = Universe::new_with_plain_catcodes();
+        let mut control = MainControl::tex82_initex(&mut stores);
+        control.set_fuel_limit(30_000).expect("bounded fuel");
+        register_source(&mut control, source.as_bytes());
+        run_to_end(&mut control, &mut stores);
+        assert_eq!(
+            stores.count(0),
+            1,
+            "post-alignment assignment executes first"
+        );
+        assert!(!terminal_text(&stores).contains("Display math should end"));
+        let nodes = box_child_nodes(&stores, 0);
+        assert!(
+            nodes.iter().any(|node| matches!(node, Node::Penalty(111))),
+            "{nodes:?}"
+        );
+        assert!(
+            nodes.iter().any(|node| matches!(
+                node,
+                Node::Glue { kind: GlueKind::BaselineSkip, spec, .. }
+                    if stores.glue(*spec).width.raw() == 20 * Scaled::UNITY
+            )),
+            "the finished alignment's zero prevdepth replaces the enclosing 6pt value: {nodes:?}"
+        );
+        assert!(
+            nodes.iter().any(|node| matches!(node, Node::Penalty(222))),
+            "{nodes:?}"
+        );
+        assert!(
+            nodes.iter().any(|node| matches!(
+                node,
+                Node::Glue { kind: GlueKind::AboveDisplaySkip, spec, .. }
+                    if stores.glue(*spec).width.raw() == 3 * Scaled::UNITY
+            )),
+            "{nodes:?}"
+        );
+        assert!(
+            nodes.iter().any(|node| matches!(
+                node,
+                Node::Glue { kind: GlueKind::BelowDisplaySkip, spec, .. }
+                    if stores.glue(*spec).width.raw() == 4 * Scaled::UNITY
+            )),
+            "{nodes:?}"
+        );
+        let display_rows = nodes
+            .iter()
+            .filter(
+                |node| matches!(node, Node::HList(boxed) if boxed.shift.raw() == 7 * Scaled::UNITY),
+            )
+            .count();
+        assert_eq!(display_rows, expected_rows, "{nodes:?}");
+        assert_eq!(control.current_mode(), Mode::Vertical);
+    }
+
+    for closer in ["$", ""] {
+        let source = format!(
+            "\\nonstopmode\\setbox0=\\vbox{{\\noindent$$\\halign{{#\\cr\\cr}}{closer}\\global\\advance\\count0 by1\\par}}\\end"
+        );
+        let mut stores = Universe::new_with_plain_catcodes();
+        let mut control = MainControl::tex82_initex(&mut stores);
+        control.set_fuel_limit(20_000).expect("bounded fuel");
+        register_source(&mut control, source.as_bytes());
+        run_to_end(&mut control, &mut stores);
+        let terminal = terminal_text(&stores);
+        assert_eq!(
+            terminal.matches("Display math should end with $$.").count(),
+            1,
+            "{terminal}"
+        );
+        assert_eq!(stores.count(0), 1, "offending assignment is backed up once");
+        assert_eq!(control.current_mode(), Mode::Vertical);
+    }
 }
 
 #[test]

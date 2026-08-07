@@ -586,7 +586,7 @@
         "Preamble completion or fin_row has reached row lookahead."
       ],
       "stimulus": [
-        "Phase 2 unit `align_peek_selects_noalign_finish_crcr_or_row` and semantic case `alignment-row-lookahead`."
+        "Active bounded MainControl unit `align_peek_full_branch_prefix_recovery_and_nesting_matrix`."
       ],
       "expected_observations": [
         "Exactly one branch owns the lookahead token and u-template installation follows command-owned backup for an ordinary row."
@@ -606,15 +606,11 @@
       "coverage": [
         {
           "path": "crates/tex-exec/src/main_control/tests.rs",
-          "test": "preamble_span_expands_one_token_and_preserves_later_template_meaning"
-        },
-        {
-          "path": "crates/tex-exec/src/main_control/tests.rs",
-          "test": "noalign_body_dispatches_nested_math_braces_by_save_stack_group"
+          "test": "align_peek_full_branch_prefix_recovery_and_nesting_matrix"
         }
       ],
-      "status": "gap",
-      "gap_bead": "umber2-alfh.32",
+      "status": "covered",
+      "gap_bead": null,
       "planned_coverage": null
     },
     {
@@ -627,7 +623,7 @@
         "align_peek selected a real row and the preamble contains its leading glue and first alignrecord."
       ],
       "stimulus": [
-        "Phase 2 unit `init_row_switches_mode_and_copies_leading_tabskip` and semantic case `alignment-row-modes`."
+        "Active bounded MainControl unit `init_row_halign_valign_leading_tabskip_template_span_and_aux_matrix`."
       ],
       "expected_observations": [
         "One leading tabskip precedes the first cell and the row-local auxiliary mode field is initialized canonically."
@@ -647,15 +643,11 @@
       "coverage": [
         {
           "path": "crates/tex-exec/src/main_control/tests.rs",
-          "test": "nested_valign_rows_do_not_contribute_baseline_glue_to_outer_cell_width"
-        },
-        {
-          "path": "crates/tex-exec/src/main_control/tests.rs",
-          "test": "valign_cell_endv_closes_an_open_paragraph_before_fin_col"
+          "test": "init_row_halign_valign_leading_tabskip_template_span_and_aux_matrix"
         }
       ],
-      "status": "gap",
-      "gap_bead": "umber2-alfh.32",
+      "status": "covered",
+      "gap_bead": null,
       "planned_coverage": null
     },
     {
@@ -755,7 +747,7 @@
         "Effective endv was delivered from an exhausted active v-template and the align group remains active."
       ],
       "stimulus": [
-        "Existing unit `do_endv_stack_walk_accepts_only_empty_frames_above_v_template`; Phase 2 units `fin_col_delimiter_matrix_and_periodic_extension` and `fin_col_extra_tab_recovers_to_cr`; semantic cases `alignment-finish-column` and `alignment-extra-tab`."
+        "Active bounded MainControl unit `fin_col_delimiter_periodic_extra_tab_and_brace_depth_matrix`."
       ],
       "expected_observations": [
         "Saved delimiter, cell packaging, span continuation, row outcome, periodic-copy, and extra-tab recovery follow the branches in §§791–795."
@@ -775,19 +767,11 @@
       "coverage": [
         {
           "path": "crates/tex-exec/src/main_control/tests.rs",
-          "test": "preamble_span_expands_one_token_and_preserves_later_template_meaning"
-        },
-        {
-          "path": "crates/tex-exec/src/main_control/tests.rs",
-          "test": "two_hundred_fifty_five_span_steps_stay_within_section_798s_bound"
-        },
-        {
-          "path": "crates/tex-exec/src/align/widths/tests.rs",
-          "test": "fin_align_orders_groups_packing_pop_and_insertion"
+          "test": "fin_col_delimiter_periodic_extra_tab_and_brace_depth_matrix"
         }
       ],
-      "status": "gap",
-      "gap_bead": "umber2-alfh.32",
+      "status": "covered",
+      "gap_bead": null,
       "planned_coverage": null
     },
     {
@@ -1381,7 +1365,7 @@
         "fin_align completed a halign whose enclosing mode is display math."
       ],
       "stimulus": [
-        "Phase 2 unit `display_alignment_finish_assignments_delimiters_and_spacing` and semantic case `alignment-display-finish`."
+        "Active bounded MainControl unit `display_alignment_finish_complete_content_delimiter_and_spacing_matrix`."
       ],
       "expected_observations": [
         "Assignments precede delimiter validation; a non-math-shift command produces `Missing $$ inserted`, is backed up by back_error, and remains available after inserted recovery; the final vertical list orders pre-penalty, above glue, alignment, post-penalty, and below glue."
@@ -1401,15 +1385,11 @@
       "coverage": [
         {
           "path": "crates/tex-exec/src/main_control/tests.rs",
-          "test": "display_alignment_tail_runs_assignments_before_main_control"
-        },
-        {
-          "path": "crates/tex-exec/src/main_control/tests.rs",
-          "test": "display_alignment_finish_replays_missing_double_math_shift_offender"
+          "test": "display_alignment_finish_complete_content_delimiter_and_spacing_matrix"
         }
       ],
-      "status": "gap",
-      "gap_bead": "umber2-alfh.32",
+      "status": "covered",
+      "gap_bead": null,
       "planned_coverage": null
     }
   ]
