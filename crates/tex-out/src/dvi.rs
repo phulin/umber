@@ -203,8 +203,8 @@ impl<W: Write> DviStreamWriter<W> {
     }
 }
 
-/// The one page-local DVI state machine. Adapters feed it owned nodes,
-/// serialized node events, or live shipout events.
+/// The one page-local DVI state machine. Adapters feed it owned nodes or
+/// serialized node events.
 struct DviBodyCompiler {
     bytes: Vec<u8>,
     fonts: BTreeMap<fonts::FontKey, DefinedFont>,

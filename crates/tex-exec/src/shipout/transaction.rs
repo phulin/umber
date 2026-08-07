@@ -1,4 +1,3 @@
-use tex_out::dvi::DviPagePlan;
 use tex_state::env::banks::{DimenParam, IntParam};
 use tex_state::node::{Node, NodeKind};
 use tex_state::node_arena::NodeRef;
@@ -61,8 +60,8 @@ pub fn retry_unavailable_stream_open(
 // TeX82 map: `ship_out` consumes a box whose child list is visited by
 // `hlist_out`/`vlist_out`. Fresh pages use the direct two-phase emitter in
 // `direct`: mutation and rare-node normalization finish first, then one live
-// compact-list traversal writes canonical artifact bytes and DVI plan bytes.
-// No detached node tree or per-list snapshot crosses that traversal.
+// compact-list traversal writes canonical artifact bytes. The same detached
+// artifact-to-DVI compiler serves fresh and memo-hit publication.
 
 /// What the surrounding job already was when a `\shipout` began.
 ///
@@ -166,18 +165,18 @@ pub(crate) fn shipout_node_with_input_summary(
             if let Some(geometry) = geometry {
                 stores.record_geometry_observation(geometry);
             }
-            let plan = DviPagePlan::compile_v10(
+            let plan = direct::compile_dvi_plan(
                 stores
                     .world()
                     .committed_artifacts()
                     .last()
                     .expect("replayed artifact commit must publish a receipt")
                     .bytes(),
-            )
-            .map_err(|error| ExecError::InvalidShipoutArtifact(error.to_string()))?;
+                emit_dvi,
+            )?;
             return Ok(Some(CommittedPagePublication {
                 artifact,
-                dvi: Some(PreparedDviPage {
+                dvi: plan.map(|plan| PreparedDviPage {
                     hash,
                     plan,
                     committed_effects: Box::new([]),

@@ -33,7 +33,7 @@ Command operands are scanned by `tex-command` into typed request and result valu
 - `src/output_provenance.rs`: stable diagnostic provenance recipes for detached shipout artifacts.
 - `src/step_snapshot_measurement.rs`: profiling-only process-local step-snapshot attribution.
 - `src/page_output.rs`: input-free page-output selection, `\box255` packaging, insertion distribution, held-over material, page marks, diagnostics, and final `\end` state.
-- `src/shipout.rs` and `src/shipout/`: typed page/PDF-form staging, direct artifact and DVI emission, normalization, lowering, transactions, and publication.
+- `src/shipout.rs` and `src/shipout/`: typed page/PDF-form staging, direct canonical artifact emission, normalization, lowering, artifact-derived DVI planning, transactions, and publication.
 - `src/diagnostics.rs`, `src/error.rs`, and `src/error_report.rs`: canonical error identity, provenance, rendering, recovery reporting, and fatal propagation. `ExecError::Fatal` is TeX82 §81's non-local exit and only main control may catch it.
 - `src/align/`: source-free alignment completion, packaging, and width resolution.
 - `src/math/`: source-free math validation, mlist lowering, and display packaging.

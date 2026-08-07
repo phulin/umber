@@ -6,6 +6,7 @@ use tex_command::{
     RegisteredSourceKind, SourceRegistration,
 };
 use tex_exec::{MainControl, MainControlStep, ResourceNeed, StepResult};
+use tex_out::dvi::{DviPagePlan, DviStreamWriter};
 use tex_state::{
     EffectRecord, InteractionMode, PrintSink, Universe,
     meaning::{Meaning, UnexpandablePrimitive},
@@ -103,6 +104,83 @@ fn etex_session(source: &[u8]) -> (MainControl, Universe) {
         ))
         .expect("test source registers");
     (control, stores)
+}
+
+fn serialize_dvi_page(plan: &DviPagePlan) -> Vec<u8> {
+    let mut writer = DviStreamWriter::new(Vec::new());
+    writer.write_page_plan(plan).expect("DVI page writes");
+    writer.finish().expect("DVI file finishes")
+}
+
+#[test]
+fn fresh_and_memo_shipouts_share_canonical_artifact_dvi() {
+    let source: &[u8] = br"\setbox0=\hbox{\kern1pt}\shipout\copy0\shipout\copy0\end";
+    let mut stores = Universe::new_with_plain_catcodes();
+    stores.enable_shipout_memo();
+    let mut control = MainControl::tex82_initex(&mut stores);
+    control.set_dvi_output(true);
+    control
+        .register_root_source(SourceRegistration::new(
+            RegisteredSourceKind::Generated,
+            Arc::<[u8]>::from(source),
+        ))
+        .expect("test source registers");
+
+    loop {
+        match control.step(&mut stores).expect("shipouts execute") {
+            MainControlStep::End | MainControlStep::EndOfInput => break,
+            MainControlStep::Continue => {}
+        }
+    }
+
+    let artifacts = stores.world().committed_artifacts();
+    assert_eq!(artifacts.len(), 2);
+    assert_eq!(artifacts[0].bytes(), artifacts[1].bytes());
+    assert_eq!(control.pure_memo_stats().shipout_hits, 1);
+    let plans = control
+        .take_prepared_dvi_pages()
+        .into_iter()
+        .map(tex_exec::PreparedDviPage::into_plan)
+        .collect::<Vec<_>>();
+    assert_eq!(plans.len(), 2);
+    assert_eq!(plans[0], plans[1]);
+    assert_eq!(serialize_dvi_page(&plans[0]), serialize_dvi_page(&plans[1]));
+}
+
+#[test]
+fn dvi_disabled_fresh_and_memo_shipouts_both_omit_plans() {
+    let source: &[u8] = br"\setbox0=\hbox{\kern1pt}\shipout\copy0\shipout\copy0\end";
+    let mut stores = Universe::new_with_plain_catcodes();
+    stores.enable_shipout_memo();
+    let mut control = MainControl::tex82_initex(&mut stores);
+    control.set_dvi_output(false);
+    control
+        .register_root_source(SourceRegistration::new(
+            RegisteredSourceKind::Generated,
+            Arc::<[u8]>::from(source),
+        ))
+        .expect("test source registers");
+
+    loop {
+        match control.step(&mut stores).expect("shipouts execute") {
+            MainControlStep::End | MainControlStep::EndOfInput => break,
+            MainControlStep::Continue => {}
+        }
+    }
+
+    let artifacts = stores.world().committed_artifacts();
+    assert_eq!(artifacts.len(), 2);
+    assert_eq!(artifacts[0].bytes(), artifacts[1].bytes());
+    assert_eq!(control.pure_memo_stats().shipout_hits, 1);
+    assert!(control.take_prepared_dvi_pages().is_empty());
+}
+
+#[test]
+fn live_shipout_has_no_second_dvi_emitter() {
+    let direct = include_str!("../src/shipout/direct.rs");
+    assert!(!direct.contains("DviPagePlanBuilder"));
+    assert!(!direct.contains("mod materialize"));
+    assert_eq!(direct.matches("DviPagePlan::compile_v10").count(), 1);
 }
 
 #[test]
