@@ -206,7 +206,16 @@ fn execute_with_policy_and_limits(
     for step in 1..=step_limit {
         match control.step(&mut stores) {
             Ok(MainControlStep::Continue) => {}
-            Ok(MainControlStep::End) => return Ok(stores),
+            Ok(MainControlStep::End) => {
+                if let Some(fatal) = control.fatal_error() {
+                    return Err(format!(
+                        "fatal main-control termination after {step} steps and {}/{} fuel: {fatal:?}",
+                        control.fuel_burned(),
+                        control.fuel_limit()
+                    ));
+                }
+                return Ok(stores);
+            }
             Ok(MainControlStep::EndOfInput) => {
                 return Err(format!(
                     "physical input exhaustion after {step} steps (fatal={:?}, fuel={}/{})",
@@ -261,6 +270,23 @@ fn fixture_runner_rejects_prefix_matches_and_noncompletion() {
     assert!(
         execution_error.contains("main-control step") && execution_error.contains("MissingToken"),
         "unexpected execution failure: {execution_error}"
+    );
+}
+
+#[test]
+fn fixture_runner_distinguishes_clean_end_from_fatal_end() {
+    execute_with_limits(br"\end", 8, 100).expect("an explicit clean end must complete");
+
+    let mut fatal_source = br"\nonstopmode ".to_vec();
+    for _ in 0..100 {
+        fatal_source.extend_from_slice(br"\badness ");
+    }
+    fatal_source.extend_from_slice(br"\count0=23\end");
+    let fatal = execute_with_limits(&fatal_source, 256, 10_000)
+        .expect_err("TeX82's hundredth-error succumb must not count as clean completion");
+    assert!(
+        fatal.contains("fatal main-control termination") && fatal.contains("TooManyErrors"),
+        "unexpected fatal-End failure: {fatal}"
     );
 }
 
