@@ -20,6 +20,25 @@ report the existing typed resource-budget error on overflow. The active typed
 execution receipt is derived from the same committed buffer; the temporary
 shadow receipt harness and its inactive tests are gone.
 
+The closeout repair makes that receipt an active consumed contract. Mutation,
+resource, semantic/live-effect, artifact, diagnostic, and scalar termination
+facts all enter through append-bounded methods; world/artifact deltas and
+geometry evidence close before the aggregate savepoint commits. The
+observer-publication seam consumes every category and verifies termination
+against the published step. Independent receipt producers and category-specific
+negative controls prove equality, rejection before capacity growth, and the
+allocation-free absent observation slot.
+
+The exhaustive tracer OOM was retained diagnostic evidence, not engine
+nontermination. Its registry parsed Plain, Story, and Gentle simultaneously,
+then replay retained a second 930,240-event Gentle stream and four full-stream
+comparison side tables. Document fixtures now load one at a time, the
+comparator derives keys directly, and replay compares/releases an exact prefix
+while retaining the complete suffix from the first mismatch for unchanged
+realignment and reporting. The same 100,000-divergence cases complete CLEAN
+under `MemoryMax=512M`: 0 gating divergences, 0 advisory geometry differences,
+425,056 KiB maximum RSS, and 11.26 seconds wall time.
+
 The predecessor functions `step_once`, `alignment_step_once`, and
 `step_with_observer_once` are deleted. Active integration tests pin their
 absence and cover state, output, typed evidence, and observation-independent
