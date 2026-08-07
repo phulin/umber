@@ -196,6 +196,7 @@ pub(crate) fn test_var_delimiter(
         pack_replays: Default::default(),
         event_replays: Default::default(),
         recovered: Default::default(),
+        scratch: Default::default(),
     };
     let boxed = var_delimiter(&mut ctx, delimiter, size, target);
     let layout = ctx.layout.finish(boxed.list);

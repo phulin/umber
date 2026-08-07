@@ -67,6 +67,7 @@ fn build_math_layout(
         pack_replays: Vec::new(),
         event_replays: RefCell::new(Vec::new()),
         recovered: Cell::new(false),
+        scratch: ConversionScratch::default(),
     };
     prepare_nested_mlists(&mut ctx, input, style);
     let root = convert_mlist_uncached(&mut ctx, input, style, penalties);
@@ -187,6 +188,9 @@ fn captured_replay<T: Clone>(
     start: usize,
     markers: Vec<ReplayMarker<T>>,
 ) -> Replay<T> {
+    if direct.is_empty() && markers.iter().all(|marker| marker.replay.0.is_none()) {
+        return Replay::default();
+    }
     let mut parts = Vec::with_capacity(markers.len().saturating_mul(2).saturating_add(1));
     let mut cursor = 0;
     for marker in markers {
@@ -211,20 +215,26 @@ fn convert_mlist_uncached<S: MathTypesetState>(
 ) -> FrozenHList {
     let saved_style = ctx.style;
     ctx.set_style(style);
-    let input = expand_math_choices(ctx.state, input, style);
-    let mut work = Vec::with_capacity(input.nodes.len());
+    let mut input_view = std::mem::take(&mut ctx.scratch.expansion);
+    expand_math_choices_into(ctx.state, input, style, &mut input_view);
+    let mut work = std::mem::take(&mut ctx.scratch.work);
+    work.reserve(input_view.nodes.len().saturating_sub(work.capacity()));
     let mut max_height = Scaled::from_raw(0);
     let mut max_depth = Scaled::from_raw(0);
     first_pass(
         ctx,
-        &input,
+        &input_view,
         style,
         &mut work,
         &mut max_height,
         &mut max_depth,
     );
+    input_view.clear();
+    ctx.scratch.expansion = input_view;
     convert_final_bin_to_ord(&mut work);
-    let result = second_pass(ctx, style, work, penalties, max_height, max_depth);
+    let result = second_pass(ctx, style, &mut work, penalties, max_height, max_depth);
+    debug_assert!(work.is_empty());
+    ctx.scratch.work = work;
     ctx.set_style(saved_style);
     result
 }
@@ -453,59 +463,69 @@ fn first_pass<S: MathTypesetState>(
 
 /// Builds the immutable node view selected by Appendix G rule 4 without
 /// recursively descending through nested `\mathchoice` lists.
+#[derive(Default)]
 struct ExpandedMathView {
     nodes: Vec<Node>,
     marker_styles: Vec<Style>,
+    stack: Vec<ExpansionFrame>,
 }
 
-fn expand_math_choices(
+impl ExpandedMathView {
+    fn clear(&mut self) {
+        self.nodes.clear();
+        self.marker_styles.clear();
+        self.stack.clear();
+    }
+}
+
+#[derive(Clone, Copy)]
+struct ExpansionFrame {
+    list: NodeListId,
+    index: usize,
+}
+
+fn expand_math_choices_into(
     state: &impl MathTypesetState,
     root: NodeListId,
     starting_style: Style,
-) -> ExpandedMathView {
-    #[derive(Clone, Copy)]
-    struct Frame {
-        list: NodeListId,
-        index: usize,
-    }
-
+    view: &mut ExpandedMathView,
+) {
+    view.clear();
     let mut style = starting_style;
-    let mut out = Vec::new();
-    let mut marker_styles = Vec::new();
-    let mut stack = vec![Frame {
+    view.stack.push(ExpansionFrame {
         list: root,
         index: 0,
-    }];
-    while let Some(frame) = stack.last_mut() {
+    });
+    while let Some(frame) = view.stack.last_mut() {
         let nodes = state.nodes(frame.list);
         let Some(node) = nodes.get(frame.index).map(|node| node.to_owned()) else {
-            stack.pop();
+            view.stack.pop();
             continue;
         };
         frame.index += 1;
         match node {
             Node::MathStyle(next) => {
                 style = Style::from_math_style(next);
-                out.push(Node::MathStyle(next));
-                marker_styles.push(style);
+                view.nodes.push(Node::MathStyle(next));
+                view.marker_styles.push(style);
             }
             Node::MathChoice(choice) => {
                 // The style marker is semantically observable by the first
                 // pass even though the choice itself disappears.
-                out.push(Node::MathStyle(match style.family() {
+                view.nodes.push(Node::MathStyle(match style.family() {
                     StyleFamily::Display => tex_state::math::MathStyle::Display,
                     StyleFamily::Text => tex_state::math::MathStyle::Text,
                     StyleFamily::Script => tex_state::math::MathStyle::Script,
                     StyleFamily::ScriptScript => tex_state::math::MathStyle::ScriptScript,
                 }));
-                marker_styles.push(style);
+                view.marker_styles.push(style);
                 let selected = match style.family() {
                     StyleFamily::Display => choice.display,
                     StyleFamily::Text => choice.text,
                     StyleFamily::Script => choice.script,
                     StyleFamily::ScriptScript => choice.script_script,
                 };
-                stack.push(Frame {
+                view.stack.push(ExpansionFrame {
                     list: selected,
                     index: 0,
                 });
@@ -518,16 +538,12 @@ fn expand_math_choices(
                         ..
                     })
                 );
-                out.push(node);
+                view.nodes.push(node);
                 if resets_style {
                     style = starting_style;
                 }
             }
         }
-    }
-    ExpandedMathView {
-        nodes: out,
-        marker_styles,
     }
 }
 
@@ -544,6 +560,9 @@ fn prepare_nested_mlists<S: MathTypesetState>(
     let mut completed = AHashSet::new();
     let mut stack = vec![(root, false)];
     let mut postorder = Vec::new();
+    let mut requests = Vec::new();
+    let mut request_seen = AHashSet::new();
+    let mut request_view = std::mem::take(&mut ctx.scratch.expansion);
     while let Some((list, expanded)) = stack.pop() {
         if expanded {
             visiting.remove(&list);
@@ -559,11 +578,20 @@ fn prepare_nested_mlists<S: MathTypesetState>(
             "math source lists must not contain structural cycles"
         );
         stack.push((list, true));
-        let dependencies = nested_mlist_requests(ctx.state, list.0, list.1);
-        for dependency in dependencies.into_iter().rev() {
+        nested_mlist_requests(
+            ctx.state,
+            list.0,
+            list.1,
+            &mut request_view,
+            &mut requests,
+            &mut request_seen,
+        );
+        for &dependency in requests.iter().rev() {
             stack.push((dependency, false));
         }
     }
+    request_view.clear();
+    ctx.scratch.expansion = request_view;
 
     for (list, style) in postorder.into_iter().filter(|key| *key != root) {
         let observation_start = ctx.layout.pack_observation_count();
@@ -600,7 +628,10 @@ fn nested_mlist_requests(
     state: &impl MathTypesetState,
     root: NodeListId,
     starting_style: Style,
-) -> Vec<(NodeListId, Style)> {
+    view: &mut ExpandedMathView,
+    out: &mut Vec<(NodeListId, Style)>,
+    seen: &mut AHashSet<(NodeListId, Style)>,
+) {
     fn add_field(
         field: &MathField,
         style: Style,
@@ -615,12 +646,12 @@ fn nested_mlist_requests(
         }
     }
 
-    let view = expand_math_choices(state, root, starting_style);
+    expand_math_choices_into(state, root, starting_style, view);
     let mut style = starting_style;
-    let mut markers = view.marker_styles.into_iter();
-    let mut out = Vec::new();
-    let mut seen = AHashSet::new();
-    for node in view.nodes {
+    let mut markers = view.marker_styles.iter().copied();
+    out.clear();
+    seen.clear();
+    for node in &view.nodes {
         match node {
             Node::MathStyle(_) => {
                 style = markers
@@ -651,28 +682,27 @@ fn nested_mlist_requests(
                 } else {
                     style
                 };
-                add_field(&noad.nucleus, nucleus_style, &mut out, &mut seen);
-                add_field(&noad.subscript, style.sub_style(), &mut out, &mut seen);
-                add_field(&noad.superscript, style.sup_style(), &mut out, &mut seen);
+                add_field(&noad.nucleus, nucleus_style, out, seen);
+                add_field(&noad.subscript, style.sub_style(), out, seen);
+                add_field(&noad.superscript, style.sup_style(), out, seen);
             }
             Node::FractionNoad(fraction) => {
                 add_field(
                     &MathField::SubMlist(fraction.numerator),
                     style.num_style(),
-                    &mut out,
-                    &mut seen,
+                    out,
+                    seen,
                 );
                 add_field(
                     &MathField::SubMlist(fraction.denominator),
                     style.denom_style(),
-                    &mut out,
-                    &mut seen,
+                    out,
+                    seen,
                 );
             }
             _ => {}
         }
     }
-    out
 }
 
 fn translate_noad<S: MathTypesetState>(
@@ -760,20 +790,21 @@ fn translate_noad<S: MathTypesetState>(
 fn second_pass<S: MathTypesetState>(
     ctx: &mut Context<'_, S>,
     base_style: Style,
-    work: Vec<WorkItem>,
+    work: &mut Vec<WorkItem>,
     penalties: bool,
     max_height: Scaled,
     max_depth: Scaled,
 ) -> FrozenHList {
     // AppG rule 20
-    let mut output = Vec::with_capacity(
-        work.len()
-            .checked_mul(2)
-            .expect("math conversion capacity fits usize"),
-    );
+    let required = work
+        .len()
+        .checked_mul(2)
+        .expect("math conversion capacity fits usize");
+    let mut output = std::mem::take(&mut ctx.scratch.output);
+    output.reserve(required.saturating_sub(output.capacity()));
     let mut previous = None;
-    let mut work = work.into_iter().peekable();
-    while let Some(item) = work.next() {
+    let mut items = work.drain(..).peekable();
+    while let Some(item) = items.next() {
         match item {
             WorkItem::Style(style) => ctx.set_style(style),
             WorkItem::Node(node) => output.push(node),
@@ -791,7 +822,7 @@ fn second_pass<S: MathTypesetState>(
                 output.push(MathNode::Sequence(noad.hlist));
                 if penalties
                     && noad.penalty < INF_PENALTY
-                    && work.peek().is_some_and(|next| {
+                    && items.peek().is_some_and(|next| {
                         !matches!(next, WorkItem::Node(MathNode::Penalty(_)))
                             && !matches!(
                                 next,
@@ -834,7 +865,9 @@ fn second_pass<S: MathTypesetState>(
             }
         }
     }
-    ctx.layout.hlist(output)
+    let result = ctx.layout.hlist(output.drain(..));
+    ctx.scratch.output = output;
+    result
 }
 
 fn math_glue_kind_for_spacing(spacing: SpacingKind) -> MathGlueKind {
@@ -1208,6 +1241,14 @@ pub(crate) struct Context<'a, S> {
     pub(crate) pack_replays: Vec<ReplayMarker<MathPackObservation>>,
     pub(crate) event_replays: RefCell<Vec<ReplayMarker<MathConversionEvent>>>,
     pub(crate) recovered: Cell<bool>,
+    pub(crate) scratch: ConversionScratch,
+}
+
+#[derive(Default)]
+pub(crate) struct ConversionScratch {
+    expansion: ExpandedMathView,
+    work: Vec<WorkItem>,
+    output: Vec<MathNode>,
 }
 
 impl<S> Context<'_, S> {

@@ -96,6 +96,7 @@ pub(crate) fn test_rebox(
         pack_replays: Default::default(),
         event_replays: Default::default(),
         recovered: Default::default(),
+        scratch: Default::default(),
     };
     let list = if empty {
         ctx.layout.empty()
@@ -136,6 +137,7 @@ pub(crate) fn test_rebox_clean_character(
         pack_replays: Default::default(),
         event_replays: Default::default(),
         recovered: Default::default(),
+        scratch: Default::default(),
     };
     let list = ctx.layout.hlist([character]);
     let mut boxed = ctx.layout.hpack(list);

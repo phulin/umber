@@ -2824,7 +2824,6 @@ fn paragraph_tape_bounds_analysis_storage_for_large_paragraphs() {
     );
 
     assert_eq!(tape.materialization.len(), tape.nodes().len());
-    assert_eq!(tape.break_sites.len(), tape.trace_spans.len());
     assert!(tape.break_sites.len() <= tape.nodes().len() + 1);
     assert_eq!(std::mem::size_of::<MaterializationAction>(), 1);
 }
@@ -2861,7 +2860,7 @@ fn paragraph_tape_analyzes_twenty_thousand_nested_replacements_iteratively() {
     );
 
     assert_eq!(tape.break_sites.len(), 2);
-    assert_eq!(tape.break_sites[1].line_width.natural.raw(), 1);
+    assert_eq!(tape.break_sites[1].breakpoint.line_width.natural.raw(), 1);
 }
 
 #[test]

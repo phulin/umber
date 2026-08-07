@@ -844,6 +844,16 @@ generated, declarative, documentation, or total-line change is credited. The
 retained-authority audit, exact category accounting, and verification are
 recorded in [the reconciliation writeback](writeback/umber2-vgjr.25.md).
 
+**Allocation-budget repair.** Follow-up `umber2-vgjr.27` restores Program 10's
+unchanged layout-allocation ceilings by storing breakpoint trace data in the
+owning `BreakSite`, reusing transaction-private Appendix G planning and
+conversion buffers across the postorder schedule, and representing an empty
+observation replay without allocated sequence storage. The sole
+`ParagraphTape`, detached math transaction, shared metric authority, benchmark
+budgets, and Program 10 accounting remain unchanged. The bounded profile and
+exact capped measurements are recorded in
+[the allocation repair writeback](writeback/umber2-vgjr.27.md).
+
 ## 11. Publish one canonical font runtime while preserving format-specific policy
 
 **Outcome.** TFM parsing retains raw tables only through reference and error-precedence validation, then publishes canonical `FontMetrics` through one loaded-font constructor. OpenType MATH uses one strict eager validation walk and lazy borrowed queries through the existing scaled facade. A realized font identity feeds HTML, PDF, incrementality, and distribution boundaries without repeated decoding.

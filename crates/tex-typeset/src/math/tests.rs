@@ -1079,6 +1079,7 @@ fn clean_empty_field_uses_tex82_null_box_without_hpack() {
         pack_replays: Default::default(),
         event_replays: Default::default(),
         recovered: Default::default(),
+        scratch: Default::default(),
     };
 
     let boxed = clean_box(&mut ctx, &MathField::Empty, Style::TEXT);
@@ -1109,6 +1110,7 @@ fn clean_math_character_observes_both_tex82_hpack_completions() {
         pack_replays: Default::default(),
         event_replays: Default::default(),
         recovered: Default::default(),
+        scratch: Default::default(),
     };
     let boxed = clean_box(&mut ctx, &MathField::MathChar(math_char('a')), Style::TEXT);
     let expected = MathPackObservation {
@@ -1142,6 +1144,7 @@ fn clean_missing_math_character_observes_both_zero_completions() {
         pack_replays: Default::default(),
         event_replays: Default::default(),
         recovered: Default::default(),
+        scratch: Default::default(),
     };
     let missing = MathChar {
         family: 15,

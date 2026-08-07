@@ -18,6 +18,7 @@ fn context<'a>(state: &'a Universe, params: &'a MathParams, style: Style) -> Con
         pack_replays: Default::default(),
         event_replays: Default::default(),
         recovered: Default::default(),
+        scratch: Default::default(),
     }
 }
 
@@ -259,7 +260,7 @@ fn tex82_second_pass_spacing_delimiter_penalty_matrix() {
     for left in classes {
         for right in classes {
             let mut ctx = context(&stores, &params, Style::TEXT);
-            let work = vec![
+            let mut work = vec![
                 WorkItem::Noad(WorkNoad {
                     class: left,
                     hlist: FrozenHList::default(),
@@ -274,7 +275,7 @@ fn tex82_second_pass_spacing_delimiter_penalty_matrix() {
             let root = second_pass(
                 &mut ctx,
                 Style::TEXT,
-                work,
+                &mut work,
                 false,
                 Scaled::from_raw(0),
                 Scaled::from_raw(0),
@@ -295,7 +296,7 @@ fn tex82_second_pass_spacing_delimiter_penalty_matrix() {
     }
 
     let mut ctx = context(&stores, &params, Style::TEXT);
-    let work = vec![
+    let mut work = vec![
         WorkItem::Delimiter(WorkDelimiter {
             left_class: NoadClass::Open,
             right_class: NoadClass::Open,
@@ -320,7 +321,7 @@ fn tex82_second_pass_spacing_delimiter_penalty_matrix() {
     let root = second_pass(
         &mut ctx,
         Style::TEXT,
-        work,
+        &mut work,
         true,
         Scaled::from_raw(20),
         Scaled::from_raw(5),

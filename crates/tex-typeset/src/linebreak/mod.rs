@@ -188,9 +188,14 @@ pub struct LineBreakResult {
 #[derive(Clone, Debug, PartialEq)]
 pub struct ParagraphTape {
     sequence: NodeSequence,
-    break_sites: Vec<Breakpoint>,
-    trace_spans: Vec<TraceSpan>,
+    break_sites: Vec<BreakSite>,
     materialization: Vec<MaterializationAction>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct BreakSite {
+    breakpoint: Breakpoint,
+    trace: TraceSpan,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -218,25 +223,25 @@ impl ParagraphTape {
     ) -> Self {
         let nodes = sequence.semantic();
         let mut analyzer = LegalBreakpoints::new(state, nodes, params);
-        let break_sites: Vec<_> = analyzer.by_ref().collect();
-        let materialization = analyzer.materialization;
-        let trace_spans = break_sites
-            .iter()
-            .copied()
+        let break_sites = analyzer
+            .by_ref()
             .map(|site| {
                 let display_end = trace_display_end(state, nodes, site);
-                TraceSpan {
-                    display_end,
-                    next_start: trace_display_next_start(state, nodes, site, display_end),
-                    display_suffix: trace_display_suffix(nodes, site),
-                    breakpoint: trace_breakpoint(nodes, site),
+                BreakSite {
+                    breakpoint: site,
+                    trace: TraceSpan {
+                        display_end,
+                        next_start: trace_display_next_start(state, nodes, site, display_end),
+                        display_suffix: trace_display_suffix(nodes, site),
+                        breakpoint: trace_breakpoint(nodes, site),
+                    },
                 }
             })
             .collect();
+        let materialization = analyzer.materialization;
         Self {
             sequence,
             break_sites,
-            trace_spans,
             materialization,
         }
     }
@@ -671,8 +676,11 @@ fn run_pass<S: TypesetState>(
         .flatten();
     let mut displayed_through = 0;
 
-    for (site_index, &bp) in tape.break_sites.iter().enumerate() {
-        let trace_span = tape.trace_spans[site_index];
+    for &BreakSite {
+        breakpoint: bp,
+        trace: trace_span,
+    } in &tape.break_sites
+    {
         // Background and discretionary material depend only on this
         // breakpoint. Combine them once instead of once per active route.
         let mut breakpoint_width = bp.line_width;
