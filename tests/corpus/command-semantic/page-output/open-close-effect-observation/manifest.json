@@ -3,10 +3,10 @@
     "events": 146
   },
   "expected": [
-    "effect:open:stream:3\u0000deferred.tex",
-    "effect:close:stream:3\u0000",
-    "effect:shipout:dvi\u00001",
-    "effect:terminate:engine\u0000"
+    "effect:open:stream:3:deferred.tex",
+    "effect:close:stream:3:none",
+    "effect:shipout:dvi:1",
+    "effect:terminate:engine:none"
   ],
   "profile": "raw-tex82-loaded",
   "projection": {

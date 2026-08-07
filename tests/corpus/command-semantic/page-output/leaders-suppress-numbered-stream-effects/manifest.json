@@ -3,8 +3,8 @@
     "events": 453
   },
   "expected": [
-    "effect:shipout:dvi\u00001",
-    "effect:terminate:engine\u0000"
+    "effect:shipout:dvi:1",
+    "effect:terminate:engine:none"
   ],
   "profile": "raw-tex82-loaded",
   "projection": {

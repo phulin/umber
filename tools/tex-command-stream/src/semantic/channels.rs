@@ -131,9 +131,7 @@ impl CapturedChannels {
                         terminal.push_str(text);
                         log.push_str(text);
                     }
-                    other => {
-                        let _ = other;
-                    }
+                    PrintSink::Stream(_) => {}
                 },
                 EffectRecord::StreamWriteBytes { sink, bytes } => {
                     let text = String::from_utf8_lossy(bytes);
@@ -144,9 +142,7 @@ impl CapturedChannels {
                             terminal.push_str(&text);
                             log.push_str(&text);
                         }
-                        other => {
-                            let _ = other;
-                        }
+                        PrintSink::Stream(_) => {}
                     }
                 }
                 EffectRecord::StreamOpen { .. }

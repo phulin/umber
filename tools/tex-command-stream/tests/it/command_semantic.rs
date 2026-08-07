@@ -356,13 +356,13 @@ fn loaded_projection_distinguishes_explicit_end_from_nested_source_exhaustion() 
 #[test]
 fn v2_identity_capture_policy_and_resolved_channels_match_the_migrated_corpus() {
     let cases = load_suite().expect("valid command-semantic corpus");
-    assert_eq!(cases.len(), 204);
+    assert_eq!(cases.len(), 207);
     assert_eq!(
         cases
             .iter()
             .map(|declared| declared.case.expected.len())
             .sum::<usize>(),
-        1_300
+        1_319
     );
 
     let selected_raw: Vec<_> = cases
@@ -372,7 +372,7 @@ fn v2_identity_capture_policy_and_resolved_channels_match_the_migrated_corpus() 
                 && declared.case.capture.selected()
         })
         .collect();
-    assert_eq!(selected_raw.len(), 173);
+    assert_eq!(selected_raw.len(), 176);
     let excluded: Vec<_> = cases
         .iter()
         .filter(|declared| !declared.case.capture.selected())
@@ -382,7 +382,7 @@ fn v2_identity_capture_policy_and_resolved_channels_match_the_migrated_corpus() 
 
     // One compact identity replaces the former 467-line census while pinning
     // every resolved field, including routes, projections, xfails, channels,
-    // statuses, host inputs, and interaction policy for all 204 cases.
+    // statuses, host inputs, and interaction policy for all 207 cases.
     let mut digest = Sha256::new();
     for declared in &cases {
         assert_eq!(
@@ -393,20 +393,20 @@ fn v2_identity_capture_policy_and_resolved_channels_match_the_migrated_corpus() 
             Some(declared.case.id.as_str())
         );
         assert_eq!(declared.case.source, format!("{}.tex", declared.case.id));
-        assert!(matches!(
+        assert!(!matches!(
             declared
                 .case
                 .channels
                 .as_ref()
                 .expect("resolved channels")
                 .effects,
-            StreamDisposition::Empty
+            StreamDisposition::Unsupported { .. }
         ));
         digest.update(format!("{}:{:?}\n", declared.domain, declared.case).as_bytes());
     }
     assert_eq!(
         format!("{:x}", digest.finalize()),
-        "f189d1eebcd2a205d324fb38efa79ca74352177949fab18042ad8a30ef89d132"
+        "4cf1c70b6095ba7907bba35d4c1ba259d139c26b4a70e6c1b668e4dfa0581ec9"
     );
 }
 

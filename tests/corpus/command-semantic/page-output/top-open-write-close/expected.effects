@@ -1,1 +1,4 @@
-
+{"record":"effect","effect":{"kind":"open","channel":"stream:0","value":{"type":"name","value":"top.out"}}}
+{"record":"effect","effect":{"kind":"write","channel":"stream:0","value":{"type":"tokens","value":[{"character":116,"catcode":"letter"},{"character":111,"catcode":"letter"},{"character":112,"catcode":"letter"}]}}}
+{"record":"effect","effect":{"kind":"close","channel":"stream:0","value":{"type":"none"}}}
+{"record":"artifact","path":"top.out","bytes":[116,111,112,10]}

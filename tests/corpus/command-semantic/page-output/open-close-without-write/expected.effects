@@ -1,0 +1,9 @@
+{"record":"effect","effect":{"kind":"open","channel":"stream:0","value":{"type":"name","value":"immediate.out"}}}
+{"record":"effect","effect":{"kind":"close","channel":"stream:0","value":{"type":"none"}}}
+{"record":"effect","effect":{"kind":"open","channel":"stream:0","value":{"type":"name","value":"shipped.out"}}}
+{"record":"effect","effect":{"kind":"close","channel":"stream:0","value":{"type":"none"}}}
+{"record":"effect","effect":{"kind":"open","channel":"stream:0","value":{"type":"name","value":"top.out"}}}
+{"record":"effect","effect":{"kind":"close","channel":"stream:0","value":{"type":"none"}}}
+{"record":"artifact","path":"immediate.out","bytes":[]}
+{"record":"artifact","path":"shipped.out","bytes":[]}
+{"record":"artifact","path":"top.out","bytes":[]}

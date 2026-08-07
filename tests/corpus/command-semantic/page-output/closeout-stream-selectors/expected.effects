@@ -1,1 +1,6 @@
-
+{"record":"effect","effect":{"kind":"open","channel":"stream:0","value":{"type":"name","value":"zero.out"}}}
+{"record":"effect","effect":{"kind":"close","channel":"stream:0","value":{"type":"none"}}}
+{"record":"effect","effect":{"kind":"open","channel":"stream:0","value":{"type":"name","value":"recovered.out"}}}
+{"record":"effect","effect":{"kind":"close","channel":"stream:0","value":{"type":"none"}}}
+{"record":"artifact","path":"recovered.out","bytes":[]}
+{"record":"artifact","path":"zero.out","bytes":[]}

@@ -17,12 +17,12 @@
     "command:expanded:char:letter:101:letter:101",
     "command:raw:char:letter:100:letter:100",
     "command:expanded:char:letter:100:letter:100",
-    "effect:input:nested.tex",
+    "effect:input:nested.tex:none",
     "command:raw:char:letter:78:letter:78",
     "command:expanded:char:letter:78:letter:78",
     "command:raw:char:letter:78:letter:78",
     "command:expanded:char:letter:78:letter:78",
-    "effect:terminate:engine\u0000"
+    "effect:terminate:engine:none"
   ],
   "inputs": {
     "nested.tex": "N"

@@ -1,0 +1,3 @@
+{"record":"effect","effect":{"kind":"open","channel":"stream:3","value":{"type":"name","value":"deferred.tex"}}}
+{"record":"effect","effect":{"kind":"close","channel":"stream:3","value":{"type":"none"}}}
+{"record":"artifact","path":"deferred.tex","bytes":[]}

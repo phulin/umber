@@ -315,8 +315,7 @@ XPASS and changed-failure results fail the test. Nothing uses `#[ignore]`,
 `should_panic`, a live TeX process, a format or fonts, or the generated
 long-document trace registry.
 
-The corpus holds 203 fixtures across 8 domains, with one strict xfail in
-`main-control`. The other seven domains carry none. Bounded in-memory terminal
+The corpus holds 206 fixtures across 8 domains. Bounded in-memory terminal
 lines and named inputs keep the pausing, read, and input-open evidence
 hermetic.
 
@@ -372,11 +371,11 @@ run produces, and the gate compares all of them alongside the projection:
   commit an Umber self-golden;
 - `status`, either `clean` or `fatal:<label>` for a §81 `jump_out`;
 - `terminal`, `log`, `dvi`, and `effects`, each `empty`, `file`, `xfail`, or
-  `xfail-diagnostics`. A fixture-local `expected.<channel>` file is required
-  for all but `empty`, and it always holds the pinned reference engine's bytes
-  (see below).
-  The corpus commits 473 applicable files today: 203 terminal, 203 log, and 67
-  DVI.
+  `xfail-diagnostics`; `effects` alone may instead be `unsupported` with a
+  reviewed nonempty reason and no expected bytes. A fixture-local
+  `expected.<channel>` file is required for `file` and both xfail forms, and it
+  always holds the pinned reference engine's bytes (see below).
+  The corpus commits applicable terminal, log, DVI, and effects files.
   Terminal and log both grew from a minority of cases to nearly every one once
   job framing gave every run a banner, a `**` line, and a page report or
   "No pages of output." to write, where previously only a case with its own
@@ -489,6 +488,19 @@ Umber's freshly captured bytes alike before any comparison, so a committed
 file is stable across regenerations regardless of which day the oracle was
 captured. Nothing else is normalized away.
 
+The effects channel is a deterministic JSON Lines projection of the shared
+`tex_oracle::EffectEvent` schema. It retains only reference-observable numbered
+stream `open`, `write`, and `close` events, in event order, followed by exact
+generated-file artifacts in bytewise logical-path order. Terminal/log writes,
+shipout, termination, and specials are omitted because the terminal/log, DVI,
+status, and DVI channels own those observations. Each artifact record carries
+its logical TeX output name and exact bytes; host paths and Umber-internal
+effect records are never serialized. Regeneration derives the event records
+only from the pinned oracle observation stream and reads the declared oracle
+artifacts, so it cannot bless an Umber self-baseline. `unsupported` records an
+explicit absence of a portable verdict; regeneration preserves that review
+decision and cannot manufacture expected bytes for it.
+
 The `dvi` entry was added late (`umber2-alfh.22`). Until then this corpus
 compared the preamble comment raw while the rest of the repository held it
 uncomparable, which pinned 66 cases as `xfail` for differing only in a
@@ -498,14 +510,12 @@ been invisible because the channel fingerprint records only the _first_
 divergence and the banner always came first. It is fixed; the point stands
 that only normalizing the banner made it visible at all.
 
-Final tally, measured at this commit: of 609 non-`effects` channel
-dispositions across 203 cases, 459 are `file`, 4 are `xfail`, 10 are
-`xfail-diagnostics`, and 136 are `empty` (the 203 `effects` dispositions are
-all `empty`; that channel has no reference-engine-comparable form at all --
-it is Umber's own structured rendering of stream opens, closes, writes, and
-shell escapes, not a byte-for-byte reproduction of anything a real TeX writes
--- so every case's capture is required to be empty rather than ever
-adjudicated). The 14 divergent channels resolve to 3 bugs:
+The effects projection makes stream ordering and generated artifacts
+reference-adjudicable. The three focused TeX82 cases cover open/close without
+a write, a top-level open/write/close sequence, and the stream-selector
+boundaries at `\closeout`; exact mismatches remain strict xfails linked to
+their implementation bugs. The pre-existing divergent terminal and log
+channels remain linked to their own bugs:
 
 - `umber2-alfh.25` (a file's `)` is closed early): 4
 - `umber2-alfh.26` (Umber raises a _different_ error than pdfTeX): 4

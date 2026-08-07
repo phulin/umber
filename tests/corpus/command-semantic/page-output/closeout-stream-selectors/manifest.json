@@ -1,36 +1,49 @@
 {
-  "schema": 2,
-  "property_id": "tex82.effects.open-write-close-dispatch",
+  "channels": {
+    "effects": {
+      "bug": "umber2-johp.763",
+      "kind": "xfail",
+      "mismatch": {
+        "actual": "<end of channel>",
+        "expected": "{\"record\":\"artifact\",\"path\":\"recovered.out\",\"bytes\":[]}",
+        "line": 5
+      }
+    },
+    "events": 192,
+    "log": {
+      "bug": "umber2-johp.761",
+      "kind": "xfail",
+      "mismatch": {
+        "actual": "! Bad number (-1).",
+        "expected": "\\openout0 = `zero.out'.",
+        "line": 4
+      }
+    }
+  },
+  "expected": [
+    "effect:open:stream:0:zero.out",
+    "effect:close:stream:0:none",
+    "effect:open:stream:0:recovered.out",
+    "effect:close:stream:0:none",
+    "effect:terminate:engine:none"
+  ],
   "profile": "raw-tex82-loaded",
+  "projection": {
+    "kind": "observations",
+    "kinds": [
+      "effect"
+    ]
+  },
+  "property_id": "tex82.effects.open-write-close-dispatch",
   "provenance": {
     "authority": "tex.web",
     "manifest": "tests/tex82-oracle-manifest.txt",
-    "sections": [1342, 1373, 1374, 1375]
+    "sections": [
+      1342,
+      1373,
+      1374,
+      1375
+    ]
   },
-  "projection": {
-    "kind": "observations",
-    "kinds": ["effect"]
-  },
-  "expected": [],
-  "channels": {
-    "events": 0,
-    "log": {
-      "kind": "xfail",
-      "bug": "umber2-johp.761",
-      "mismatch": {
-        "line": 4,
-        "expected": "\\openout0 = `zero.out'.",
-        "actual": "! Bad number (-1)."
-      }
-    },
-    "effects": {
-      "kind": "xfail",
-      "bug": "umber2-johp.763",
-      "mismatch": {
-        "line": 5,
-        "expected": "{\"record\":\"artifact\",\"path\":\"recovered.out\",\"bytes\":[]}",
-        "actual": "<end of channel>"
-      }
-    }
-  }
+  "schema": 2
 }

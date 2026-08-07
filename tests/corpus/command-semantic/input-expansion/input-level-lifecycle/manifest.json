@@ -5,13 +5,13 @@
   "expected": [
     "input:backup:backup",
     "input:retire:backup",
-    "effect:input:child.tex",
+    "effect:input:child.tex:none",
     "input:backup:backup",
     "input:retire:backup",
     "input:retire:file",
     "input:retire:file",
     "input:stop:terminal",
-    "effect:terminate:engine\u0000"
+    "effect:terminate:engine:none"
   ],
   "inputs": {
     "child.tex": "C"

@@ -1,27 +1,48 @@
 {
-  "schema": 2,
-  "property_id": "tex82.effects.open-write-close-dispatch",
+  "channels": {
+    "effects": {
+      "bug": "umber2-johp.762",
+      "kind": "xfail",
+      "mismatch": {
+        "actual": "{\"record\":\"artifact\",\"path\":\"top.out\",\"bytes\":[]}",
+        "expected": "{\"record\":\"artifact\",\"path\":\"top.out\",\"bytes\":[116,111,112,10]}",
+        "line": 4
+      }
+    },
+    "events": 136,
+    "log": {
+      "bug": "umber2-alfh.25",
+      "kind": "xfail",
+      "mismatch": {
+        "actual": "(./top-open-write-close.tex [0] )",
+        "expected": "(./top-open-write-close.tex [0",
+        "line": 3
+      }
+    }
+  },
+  "expected": [
+    "effect:open:stream:0:top.out",
+    "effect:write:stream:0:char:letter:116,char:letter:111,char:letter:112",
+    "effect:close:stream:0:none",
+    "effect:shipout:dvi:1",
+    "effect:terminate:engine:none"
+  ],
   "profile": "raw-tex82-loaded",
+  "projection": {
+    "kind": "observations",
+    "kinds": [
+      "effect"
+    ]
+  },
+  "property_id": "tex82.effects.open-write-close-dispatch",
   "provenance": {
     "authority": "tex.web",
     "manifest": "tests/tex82-oracle-manifest.txt",
-    "sections": [1370, 1373, 1374]
+    "sections": [
+      1370,
+      1373,
+      1374
+    ]
   },
-  "projection": {
-    "kind": "observations",
-    "kinds": ["effect"]
-  },
-  "expected": [],
-  "channels": {
-    "events": 0,
-    "effects": {
-      "kind": "xfail",
-      "bug": "umber2-johp.762",
-      "mismatch": {
-        "line": 4,
-        "expected": "{\"record\":\"artifact\",\"path\":\"top.out\",\"bytes\":[116,111,112,10]}",
-        "actual": "{\"record\":\"artifact\",\"path\":\"top.out\",\"bytes\":[]}"
-      }
-    }
-  }
+  "schema": 2
 }

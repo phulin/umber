@@ -3,7 +3,7 @@
     "events": 28
   },
   "expected": [
-    "effect:terminate:engine\u0000",
+    "effect:terminate:engine:none",
     "count:0=1"
   ],
   "profile": "raw-tex82-loaded",

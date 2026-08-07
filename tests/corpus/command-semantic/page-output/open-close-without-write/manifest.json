@@ -1,18 +1,43 @@
 {
-  "schema": 2,
-  "property_id": "tex82.effects.open-write-close-dispatch",
+  "channels": {
+    "events": 300,
+    "log": {
+      "bug": "umber2-alfh.25",
+      "kind": "xfail",
+      "mismatch": {
+        "actual": "(./open-close-without-write.tex [0] [0] )",
+        "expected": "(./open-close-without-write.tex",
+        "line": 3
+      }
+    }
+  },
+  "expected": [
+    "effect:open:stream:0:immediate.out",
+    "effect:close:stream:0:none",
+    "effect:open:stream:0:shipped.out",
+    "effect:close:stream:0:none",
+    "effect:shipout:dvi:1",
+    "effect:open:stream:0:top.out",
+    "effect:close:stream:0:none",
+    "effect:shipout:dvi:2",
+    "effect:terminate:engine:none"
+  ],
   "profile": "raw-tex82-loaded",
+  "projection": {
+    "kind": "observations",
+    "kinds": [
+      "effect"
+    ]
+  },
+  "property_id": "tex82.effects.open-write-close-dispatch",
   "provenance": {
     "authority": "tex.web",
     "manifest": "tests/tex82-oracle-manifest.txt",
-    "sections": [1373, 1374, 1375]
+    "sections": [
+      1373,
+      1374,
+      1375
+    ]
   },
-  "projection": {
-    "kind": "observations",
-    "kinds": ["effect"]
-  },
-  "expected": [],
-  "channels": {
-    "events": 0
-  }
+  "schema": 2
 }
