@@ -10,12 +10,15 @@ The library test target is now enabled and all 445 retained crate-internal cases
 
 All 64 former `cfg(any())` sites are gone. Test modules use `cfg(test)`, caller-owned helpers compile with their cases, and callerless scaffolding was deleted. The source audit has no reviewed exceptions. The 35-property/46-path catalogue reachability audit is complete: every retained citation now resolves to an active test, exact operands were rechecked, and repaired gap evidence was promoted only after its active assertion landed.
 
-Measured against the issue base, Rust sources add 245 lines and delete 650,
-for a net reduction of 405 lines. Within `crates/tex-exec/src`, excluding
-explicit `tests.rs` paths but including the 19-line shared test harness, the
-change adds 71 lines and deletes 441, for a net reduction of 370 lines. This
-accounting includes the two-line checkpoint repair and mechanical module-gate
-changes as well as callerless scaffolding removal.
+The execution migration measured against the issue base adds 245 Rust lines
+and deletes 650, for a net reduction of 405 lines. The combined closure,
+including the child catalogue gate and insertion-trace assertion, adds 264
+Rust lines and deletes 652, for a net reduction of 388 lines. Within
+`crates/tex-exec/src`, excluding explicit `tests.rs` paths but including the
+19-line shared test harness, the execution migration adds 71 lines and deletes
+441, for a net reduction of 370 lines. This accounting includes the two-line
+checkpoint repair and mechanical module-gate changes as well as callerless
+scaffolding removal.
 
 Every case row records: the normalized test name as its semantic **assertion**; the exact body location as authoritative **inputs** (constructors, TeX strings, fixtures, profiles, and state); the count and location of exact **expected evidence** operands/literals; explicit TeX82/property **external citations**; an active duplicate candidate or unique owner; and a review **disposition**. Helper assertions invoked by a body belong to that case. Similar names never prove duplicate evidence.
 

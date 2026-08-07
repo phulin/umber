@@ -1117,6 +1117,20 @@ attempt.
 
 **Proof.** Preserve diagnostic bytes, failure granularity, rollback, resource suspension, alignment, insertion/page output, shipout, scanner identity, TeX rule coverage, documentation citations, ignored reasons, and independently selectable failures.
 
+**Dormant tex-exec closure.** Commits `c8d7b8615`, `a5bee234b`, and
+`bfbe33682` close `umber2-vgjr.15.2` and its catalogue-reachability child.
+The original ledger's 447 cases resolve to 445 active crate-internal tests and
+two named predecessor dispositions. All 64 `cfg(any())` sites and every source
+audit exception are gone; compiler-backed cleanup removed callerless
+scaffolding. The 35 affected TeX82 properties and 46 original dormant paths
+now resolve through active assertion-complete evidence, with eight additional
+repaired-boundary links and six stale gaps promoted only after their active
+assertions landed. The combined Rust change adds 264 and deletes 652 lines, a
+measured net deletion of 388 lines; the execution migration itself accounts
+for 245 additions and 650 deletions, a net deletion of 405 lines. Active tests
+pin exact diagnostics, effects, DVI output, insertion operands, and fatal
+checkpoint replay.
+
 **Command scanner/delivery compaction.** Commits `b03e4b49d` and `bfac58c56`
 close `umber2-vgjr.15.3`. The closed
 `command_assertion_ledger.md` maps scalar and structured values, literal token
