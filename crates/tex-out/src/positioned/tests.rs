@@ -2,7 +2,8 @@ use tex_arith::Scaled;
 
 use crate::{
     BoxNode, ContentHash, FontResource, GlueKind, GlueOrder, GlueSetRatio, GlueSign, GlueSpec,
-    JobInfo, KernKind, PageEffect, PageNode, PdfAccessibilityEffect, UnvalidatedPageArtifact,
+    JobInfo, KernKind, LeaderPayload, PageEffect, PageNode, PdfAccessibilityEffect,
+    UnvalidatedPageArtifact,
 };
 
 use super::{PositionedEvent, TextUnit, lower_page};
@@ -434,6 +435,64 @@ fn deep_box_geometry_uses_bounded_explicit_frames() {
         DEPTH
     );
     crate::dvi::DviPagePlan::compile(&page).expect("compile deeply nested DVI geometry");
+}
+
+#[test]
+fn maximum_depth_canonical_artifact_compiles_with_bounded_frames() {
+    const DEPTH: usize = 4_095;
+    let mut root = PageNode::Rule {
+        width: Some(sp(1)),
+        height: Some(sp(1)),
+        depth: Some(sp(0)),
+    };
+    for _ in 0..DEPTH {
+        root = PageNode::HList(box_node(1, 1, 0, vec![root]));
+    }
+    let page = page(root);
+    let bytes = page.to_bytes().expect("encode maximum-depth artifact");
+
+    crate::dvi::DviPagePlan::compile_v10(&bytes)
+        .expect("compile maximum-depth canonical artifact bytes");
+}
+
+#[test]
+fn maximum_depth_canonical_leader_materializes_with_bounded_frames() {
+    const NESTED_BOXES: usize = 4_093;
+    let mut leader_child = PageNode::Rule {
+        width: Some(sp(1)),
+        height: Some(sp(1)),
+        depth: Some(sp(0)),
+    };
+    for _ in 0..NESTED_BOXES {
+        leader_child = PageNode::HList(box_node(1, 1, 0, vec![leader_child]));
+    }
+    let leader = LeaderPayload::HList(box_node(100, 1, 0, vec![leader_child]));
+    let root = PageNode::HList(box_node(
+        1,
+        1,
+        0,
+        vec![PageNode::Glue {
+            spec: GlueSpec {
+                width: sp(1),
+                stretch: sp(0),
+                stretch_order: GlueOrder::Normal,
+                shrink: sp(0),
+                shrink_order: GlueOrder::Normal,
+            },
+            kind: GlueKind::Leaders,
+            leader: Some(leader),
+        }],
+    ));
+    let page = page(root);
+    let bytes = page
+        .to_bytes()
+        .expect("encode maximum-depth leader artifact");
+    // This fixture exists to exercise byte replay. Keep its recursively owned
+    // construction tree out of the production replay's RSS/stack assertion.
+    std::mem::forget(page);
+
+    crate::dvi::DviPagePlan::compile_v10(&bytes)
+        .expect("compile maximum-depth canonical leader bytes");
 }
 
 fn page(root: PageNode) -> crate::PageArtifact {

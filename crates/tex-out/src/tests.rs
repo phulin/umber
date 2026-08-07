@@ -427,6 +427,55 @@ fn owned_and_streaming_cursors_reject_malformed_margin_kern_identically() {
 }
 
 #[test]
+fn streamed_validation_preserves_depth_first_error_order_through_ignored_lists() {
+    let mut page = sample_artifact();
+    let PageNode::VList(root) = &mut page.testing_mut().root else {
+        unreachable!("sample root is a vlist");
+    };
+    root.children = vec![
+        PageNode::Disc {
+            kind: DiscKind::Discretionary,
+            pre: vec![PageNode::Char {
+                font_id: 1,
+                ch: b'A' as u32,
+                width: Scaled::from_raw(41),
+            }],
+            post: Vec::new(),
+            replace: Vec::new(),
+        },
+        PageNode::Char {
+            font_id: 1,
+            ch: b'B' as u32,
+            width: Scaled::from_raw(42),
+        },
+    ];
+    let mut bytes = page.to_bytes().expect("ordered validation page serializes");
+    for (ch, width, invalid_font) in [(b'A', 41_i32, 99_u32), (b'B', 42, 100)] {
+        let needle = [
+            &[0][..],
+            &1_u32.to_le_bytes(),
+            &u32::from(ch).to_le_bytes(),
+            &width.to_le_bytes(),
+        ]
+        .concat();
+        let offset = bytes
+            .windows(needle.len())
+            .position(|window| window == needle)
+            .expect("unique character encoding");
+        bytes[offset + 1..offset + 5].copy_from_slice(&invalid_font.to_le_bytes());
+    }
+
+    let expected = ParseError::Validation(ArtifactValidationError::MissingFont { font_id: 99 });
+    assert_eq!(PageArtifact::from_bytes(&bytes), Err(expected.clone()));
+    assert_eq!(
+        crate::dvi::DviPagePlan::compile_v10(&bytes),
+        Err(crate::dvi::DviError::Artifact {
+            message: expected.to_string(),
+        })
+    );
+}
+
+#[test]
 fn streamed_v10_builder_is_byte_identical_to_owned_encoding() {
     let page = sample_artifact();
     let (root, vertical) = match &page.root {

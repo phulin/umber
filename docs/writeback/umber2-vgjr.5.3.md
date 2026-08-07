@@ -34,3 +34,27 @@ Verification on the implementation tree:
   maximum RSS was 49,836 KiB under `MemoryMax=512M`.
 - `cargo test -q --tests`: complete native suite passed under `MemoryMax=1G`,
   maximum RSS 315,388 KiB.
+
+## Maximum-depth canonical replay repair
+
+Program closeout found that the canonical-byte adapter retained recursive
+semantic validation, box replay, and boxed-leader reconstruction even though
+the owned geometry walker was iterative. A valid artifact at the 4,096-level
+codec limit therefore exhausted a 512 MiB scope before DVI compilation could
+finish.
+
+Canonical list slices now create owned byte cursors. Explicit reader frames
+validate every ordinary and DVI-ignored descendant in depth-first wire order;
+explicit replay continuations balance box entry and exit; and explicit
+materialization continuations reconstruct the localized leader payload. The
+temporary leader tree is also dismantled iteratively after replay. The codec's
+node/depth ceilings, first-error order, font/effect checks, artifact bytes, DVI
+bytes, and `DviPagePlan` ownership boundary are unchanged.
+
+Active regressions compile both an ordinary canonical artifact and a boxed
+leader whose deepest node is exactly level 4,096. Together they pass in 4.43 s
+at 43,992 KiB maximum RSS under `MemoryMax=512M`; the complete 148-test
+`tex-out` suite passes under the same cap at 265,448 KiB maximum RSS. A
+separate malformed-artifact case proves depth-first missing-font error order
+through a discretionary list. TeX82 §§638--642 remain the semantic authority;
+this repair changes only the bounded implementation of the artifact adapter.

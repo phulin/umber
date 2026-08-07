@@ -395,7 +395,6 @@ pub(crate) struct V10PageDecoder<'a> {
     reader: Reader<'a>,
     remaining: usize,
     font_ids: std::collections::BTreeMap<u32, bool>,
-    validated_nodes: usize,
 }
 
 /// Canonical artifact encoder fed one detached root child at a time.
@@ -1012,32 +1011,29 @@ impl<'a> V10PageDecoder<'a> {
             reader,
             remaining,
             font_ids,
-            validated_nodes: 1,
         })
     }
 
-    pub(crate) fn stream_children(&mut self) -> V10NodeListReader<'_, 'a> {
+    pub(crate) fn stream_children(&mut self) -> V10NodeListSlice<'_, 'a> {
         let remaining = std::mem::take(&mut self.remaining);
-        V10NodeListReader {
-            reader: &mut self.reader,
-            remaining,
+        V10NodeListSlice {
+            bytes: self.reader.bytes,
+            start: self.reader.offset,
+            count: remaining,
             depth: 2,
+            limits: self.reader.limits,
             font_ids: &self.font_ids,
             effects_len: self.page.effects.len(),
-            validated_nodes: &mut self.validated_nodes,
-            validate: true,
         }
     }
 }
 
 pub(crate) struct V10NodeListReader<'r, 'a> {
-    reader: &'r mut Reader<'a>,
+    reader: Reader<'a>,
     remaining: usize,
     depth: usize,
     font_ids: &'r std::collections::BTreeMap<u32, bool>,
     effects_len: usize,
-    validated_nodes: &'r mut usize,
-    validate: bool,
 }
 
 pub(crate) enum V10StreamNode<'r, 'a> {
@@ -1060,11 +1056,11 @@ pub(crate) enum V10StreamNode<'r, 'a> {
     Box {
         vertical: bool,
         fields: BoxNode,
-        children: V10NodeListReader<'r, 'a>,
+        children: V10NodeListSlice<'r, 'a>,
     },
     WhatsitAnchor(u32),
     Math(Scaled),
-    Ignored,
+    Ignored(Vec<V10NodeListSlice<'r, 'a>>),
 }
 
 pub(crate) enum V10StreamLeader<'r, 'a> {
@@ -1081,6 +1077,7 @@ pub(crate) enum V10StreamLeader<'r, 'a> {
     },
 }
 
+#[derive(Clone, Copy)]
 pub(crate) struct V10NodeListSlice<'r, 'a> {
     bytes: &'a [u8],
     start: usize,
@@ -1092,22 +1089,57 @@ pub(crate) struct V10NodeListSlice<'r, 'a> {
 }
 
 impl<'r, 'a> V10NodeListSlice<'r, 'a> {
-    pub(crate) fn with_reader<T>(
-        &self,
-        read: impl FnOnce(&mut V10NodeListReader<'_, 'a>) -> T,
-    ) -> T {
-        let mut reader = Reader::new_at(self.bytes, self.limits, self.start);
-        let mut ignored_count = 0;
-        let mut nodes = V10NodeListReader {
-            reader: &mut reader,
+    pub(crate) fn reader(self) -> V10NodeListReader<'r, 'a> {
+        V10NodeListReader {
+            reader: Reader::new_at(self.bytes, self.limits, self.start),
             remaining: self.count,
             depth: self.depth,
             font_ids: self.font_ids,
             effects_len: self.effects_len,
-            validated_nodes: &mut ignored_count,
-            validate: false,
-        };
-        read(&mut nodes)
+        }
+    }
+
+    pub(crate) fn validate_all(self) -> Result<(), ParseError> {
+        let mut readers = vec![self.reader()];
+        let mut validated_nodes = 1usize;
+        while let Some(reader) = readers.last_mut() {
+            let Some(node) = reader.next(true)? else {
+                readers.pop();
+                continue;
+            };
+            validated_nodes = validated_nodes
+                .checked_add(1)
+                .ok_or(ParseError::LengthOverflow)?;
+            if validated_nodes > self.limits.max_nodes {
+                return Err(ParseError::Validation(
+                    crate::ArtifactValidationError::TooManyNodes {
+                        count: validated_nodes,
+                        limit: self.limits.max_nodes,
+                    },
+                ));
+            }
+            let depth = reader.depth;
+            if depth > self.limits.max_depth {
+                return Err(ParseError::Validation(
+                    crate::ArtifactValidationError::NestingTooDeep {
+                        depth,
+                        limit: self.limits.max_depth,
+                    },
+                ));
+            }
+            match node {
+                V10StreamNode::Box { children, .. }
+                | V10StreamNode::Glue {
+                    leader: V10StreamLeader::Box { children, .. },
+                    ..
+                } => readers.push(children.reader()),
+                V10StreamNode::Ignored(children) => {
+                    readers.extend(children.into_iter().rev().map(Self::reader));
+                }
+                _ => {}
+            }
+        }
+        Ok(())
     }
 }
 
@@ -1116,33 +1148,14 @@ impl<'r, 'a> V10NodeListReader<'r, 'a> {
         self.remaining == 0
     }
 
-    pub(crate) fn next(&mut self) -> Result<Option<V10StreamNode<'_, 'a>>, ParseError> {
+    pub(crate) fn next(
+        &mut self,
+        validate: bool,
+    ) -> Result<Option<V10StreamNode<'r, 'a>>, ParseError> {
         if self.remaining == 0 {
             return Ok(None);
         }
         self.remaining -= 1;
-        if self.validate {
-            *self.validated_nodes = self
-                .validated_nodes
-                .checked_add(1)
-                .ok_or(ParseError::LengthOverflow)?;
-            if *self.validated_nodes > self.reader.limits.max_nodes {
-                return Err(ParseError::Validation(
-                    crate::ArtifactValidationError::TooManyNodes {
-                        count: *self.validated_nodes,
-                        limit: self.reader.limits.max_nodes,
-                    },
-                ));
-            }
-            if self.depth > self.reader.limits.max_depth {
-                return Err(ParseError::Validation(
-                    crate::ArtifactValidationError::NestingTooDeep {
-                        depth: self.depth,
-                        limit: self.reader.limits.max_depth,
-                    },
-                ));
-            }
-        }
 
         let tag = self.reader.u8()?;
         Ok(Some(match tag {
@@ -1150,7 +1163,7 @@ impl<'r, 'a> V10NodeListReader<'r, 'a> {
                 let font_id = self.reader.u32()?;
                 let ch = self.reader.u32()?;
                 let width = self.reader.scaled()?;
-                if self.validate {
+                if validate {
                     validate_streamed_char(self.font_ids, font_id, ch)?;
                 }
                 V10StreamNode::Char { font_id, ch, width }
@@ -1165,12 +1178,12 @@ impl<'r, 'a> V10NodeListReader<'r, 'a> {
                         crate::ArtifactValidationError::InvalidLigatureSourceLength { count },
                     ));
                 }
-                if self.validate {
+                if validate {
                     validate_streamed_char(self.font_ids, font_id, ch)?;
                 }
                 for _ in 0..count {
                     let source = self.reader.u32()?;
-                    if self.validate {
+                    if validate {
                         validate_streamed_char(self.font_ids, font_id, source)?;
                     }
                 }
@@ -1194,7 +1207,7 @@ impl<'r, 'a> V10NodeListReader<'r, 'a> {
                 }
                 let font_id = self.reader.u32()?;
                 let ch = self.reader.u8()?;
-                if self.validate {
+                if validate {
                     validate_streamed_char(self.font_ids, font_id, u32::from(ch))?;
                 }
                 V10StreamNode::Kern(amount)
@@ -1212,31 +1225,11 @@ impl<'r, 'a> V10NodeListReader<'r, 'a> {
                     tag @ (wire::leader::HLIST | wire::leader::VLIST) => {
                         let fields = self.reader.box_fields()?.finish(Vec::new());
                         let count = self.reader.collection_len(5)?;
-                        let start = self.reader.offset;
-                        {
-                            let mut children = V10NodeListReader {
-                                reader: self.reader,
-                                remaining: count,
-                                depth: self.depth + 1,
-                                font_ids: self.font_ids,
-                                effects_len: self.effects_len,
-                                validated_nodes: self.validated_nodes,
-                                validate: self.validate,
-                            };
-                            children.validate_all()?;
-                        }
+                        let children = self.read_list(count, self.depth + 1)?;
                         V10StreamLeader::Box {
                             vertical: tag == wire::leader::VLIST,
                             fields,
-                            children: V10NodeListSlice {
-                                bytes: self.reader.bytes,
-                                start,
-                                count,
-                                depth: self.depth + 1,
-                                limits: self.reader.limits,
-                                font_ids: self.font_ids,
-                                effects_len: self.effects_len,
-                            },
+                            children,
                         }
                     }
                     tag => {
@@ -1250,7 +1243,7 @@ impl<'r, 'a> V10NodeListReader<'r, 'a> {
             }
             wire::node::PENALTY => {
                 self.reader.i32()?;
-                V10StreamNode::Ignored
+                V10StreamNode::Ignored(Vec::new())
             }
             wire::node::RULE => V10StreamNode::Rule {
                 width: self.reader.optional_scaled()?,
@@ -1260,23 +1253,16 @@ impl<'r, 'a> V10NodeListReader<'r, 'a> {
             tag @ (wire::node::HLIST | wire::node::VLIST) => {
                 let fields = self.reader.box_fields()?.finish(Vec::new());
                 let remaining = self.reader.collection_len(5)?;
+                let children = self.read_list(remaining, self.depth + 1)?;
                 V10StreamNode::Box {
                     vertical: tag == wire::node::VLIST,
                     fields,
-                    children: V10NodeListReader {
-                        reader: self.reader,
-                        remaining,
-                        depth: self.depth + 1,
-                        font_ids: self.font_ids,
-                        effects_len: self.effects_len,
-                        validated_nodes: self.validated_nodes,
-                        validate: self.validate,
-                    },
+                    children,
                 }
             }
             wire::node::WHATSIT_ANCHOR => {
                 let effect_index = self.reader.u32()?;
-                if self.validate
+                if validate
                     && usize::try_from(effect_index).unwrap_or(usize::MAX) >= self.effects_len
                 {
                     return Err(ParseError::Validation(
@@ -1290,64 +1276,57 @@ impl<'r, 'a> V10NodeListReader<'r, 'a> {
             }
             wire::node::DISC => {
                 parse_disc_kind(self.reader.u8()?)?;
+                let mut children = Vec::with_capacity(3);
                 for _ in 0..3 {
                     let remaining = self.reader.collection_len(5)?;
-                    let mut children = V10NodeListReader {
-                        reader: self.reader,
-                        remaining,
-                        depth: self.depth + 1,
-                        font_ids: self.font_ids,
-                        effects_len: self.effects_len,
-                        validated_nodes: self.validated_nodes,
-                        validate: self.validate,
-                    };
-                    children.validate_all()?;
+                    children.push(self.read_list(remaining, self.depth + 1)?);
                 }
-                V10StreamNode::Ignored
+                V10StreamNode::Ignored(children)
             }
             wire::node::MARK => {
                 self.reader.u16()?;
-                self.validate_tokens()?;
-                V10StreamNode::Ignored
+                self.validate_tokens(validate)?;
+                V10StreamNode::Ignored(Vec::new())
             }
             wire::node::INSERT | wire::node::ADJUST => {
                 if tag == wire::node::INSERT {
                     self.reader.u16()?;
                 }
                 let remaining = self.reader.collection_len(5)?;
-                let mut children = V10NodeListReader {
-                    reader: self.reader,
-                    remaining,
-                    depth: self.depth + 1,
-                    font_ids: self.font_ids,
-                    effects_len: self.effects_len,
-                    validated_nodes: self.validated_nodes,
-                    validate: self.validate,
-                };
-                children.validate_all()?;
-                V10StreamNode::Ignored
+                V10StreamNode::Ignored(vec![self.read_list(remaining, self.depth + 1)?])
             }
             tag => return Err(ParseError::InvalidTag { kind: "node", tag }),
         }))
     }
 
-    pub(crate) fn validate_all(&mut self) -> Result<(), ParseError> {
-        while let Some(node) = self.next()? {
-            if let V10StreamNode::Box { mut children, .. } = node {
-                children.validate_all()?;
-            }
+    fn read_list(
+        &mut self,
+        count: usize,
+        depth: usize,
+    ) -> Result<V10NodeListSlice<'r, 'a>, ParseError> {
+        let start = self.reader.offset;
+        for _ in 0..count {
+            self.reader.skip_node()?;
         }
-        Ok(())
+        Ok(V10NodeListSlice {
+            bytes: self.reader.bytes,
+            start,
+            count,
+            depth,
+            limits: self.reader.limits,
+            font_ids: self.font_ids,
+            effects_len: self.effects_len,
+        })
     }
 
-    fn validate_tokens(&mut self) -> Result<(), ParseError> {
+    fn validate_tokens(&mut self, validate: bool) -> Result<(), ParseError> {
         let len = self.reader.collection_len(2)?;
         for _ in 0..len {
             match self.reader.u8()? {
                 wire::token::CHAR => {
                     let ch = self.reader.u32()?;
                     parse_token_catcode(self.reader.u8()?)?;
-                    if self.validate && char::from_u32(ch).is_none() {
+                    if validate && char::from_u32(ch).is_none() {
                         return Err(ParseError::Validation(
                             crate::ArtifactValidationError::InvalidTokenScalar { ch },
                         ));
@@ -1358,7 +1337,7 @@ impl<'r, 'a> V10NodeListReader<'r, 'a> {
                 }
                 wire::token::PARAM => {
                     let slot = self.reader.u8()?;
-                    if self.validate && !(1..=9).contains(&slot) {
+                    if validate && !(1..=9).contains(&slot) {
                         return Err(ParseError::Validation(
                             crate::ArtifactValidationError::InvalidTokenScalar {
                                 ch: u32::from(slot),
@@ -1368,7 +1347,7 @@ impl<'r, 'a> V10NodeListReader<'r, 'a> {
                 }
                 wire::token::ACTIVE_CONTROL_SEQUENCE => {
                     let ch = self.reader.u32()?;
-                    if self.validate && char::from_u32(ch).is_none() {
+                    if validate && char::from_u32(ch).is_none() {
                         return Err(ParseError::Validation(
                             crate::ArtifactValidationError::InvalidTokenScalar { ch },
                         ));

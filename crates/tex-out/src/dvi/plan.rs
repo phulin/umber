@@ -1,7 +1,7 @@
 use crate::{
     ArtifactCodecLimits, BoxNode, FontResource, JobInfo, LeaderPayload, PageArtifact, PageEffect,
     PageNode,
-    binary::{V10NodeListReader, V10PageDecoder, V10StreamLeader, V10StreamNode},
+    binary::{V10NodeListReader, V10NodeListSlice, V10PageDecoder, V10StreamLeader, V10StreamNode},
 };
 
 use super::{
@@ -266,8 +266,9 @@ impl DviPagePlan {
             DviPagePlanBuilder::new(page.job.clone(), page.counts, &root, root_vertical)?;
         builder.writer.snap_reference = crate::snapping::initial_reference(&page.effects);
         builder.add_fonts(&page.fonts)?;
-        let mut children = decoder.stream_children();
-        feed_v10_list(&mut builder, &mut children, &page.effects)?;
+        let children = decoder.stream_children();
+        children.validate_all()?;
+        feed_v10_list(&mut builder, children, &page.effects)?;
         builder.finish(&page.fonts)
     }
 
@@ -282,10 +283,24 @@ impl DviPagePlan {
 
 fn feed_v10_list(
     builder: &mut DviPagePlanBuilder,
-    nodes: &mut V10NodeListReader<'_, '_>,
+    nodes: V10NodeListSlice<'_, '_>,
     effects: &[PageEffect],
 ) -> Result<(), DviError> {
-    while let Some(node) = nodes.next()? {
+    enum Frame<'r, 'a> {
+        List(V10NodeListReader<'r, 'a>),
+        EndBox,
+    }
+
+    let mut frames = vec![Frame::List(nodes.reader())];
+    while let Some(frame) = frames.pop() {
+        let Frame::List(mut nodes) = frame else {
+            builder.end_box()?;
+            continue;
+        };
+        let Some(node) = nodes.next(false)? else {
+            continue;
+        };
+        frames.push(Frame::List(nodes));
         match node {
             V10StreamNode::Char { font_id, ch, width } => builder.char(font_id, ch, width)?,
             V10StreamNode::Kern(amount) => builder.kern(amount)?,
@@ -296,14 +311,14 @@ fn feed_v10_list(
             } => builder.glue(spec)?,
             V10StreamNode::Glue { spec, kind, leader } => {
                 let leader = materialize_v10_leader(leader)?;
-                builder.leader(
-                    &PageNode::Glue {
-                        spec,
-                        kind,
-                        leader: Some(leader),
-                    },
-                    effects,
-                )?;
+                let node = PageNode::Glue {
+                    spec,
+                    kind,
+                    leader: Some(leader),
+                };
+                let result = builder.leader(&node, effects);
+                drop_page_node_iterative(node);
+                result?;
             }
             V10StreamNode::Rule {
                 width,
@@ -313,22 +328,58 @@ fn feed_v10_list(
             V10StreamNode::Box {
                 vertical,
                 fields,
-                mut children,
+                children,
             } => {
-                let entered = builder.begin_box(&fields, vertical, children.is_empty())?;
+                let entered = builder.begin_box(&fields, vertical, children.reader().is_empty())?;
                 if entered {
-                    feed_v10_list(builder, &mut children, effects)?;
-                    builder.end_box()?;
+                    frames.push(Frame::EndBox);
+                    frames.push(Frame::List(children.reader()));
                 }
             }
             V10StreamNode::WhatsitAnchor(effect_index) => {
                 builder.whatsit(effect_index, effects)?;
             }
             V10StreamNode::Math(amount) => builder.math(amount)?,
-            V10StreamNode::Ignored => {}
+            V10StreamNode::Ignored(_) => {}
         }
     }
     Ok(())
+}
+
+fn drop_page_node_iterative(root: PageNode) {
+    let mut pending = vec![root];
+    while let Some(node) = pending.pop() {
+        match node {
+            PageNode::HList(box_node) | PageNode::VList(box_node) => {
+                pending.extend(box_node.children);
+            }
+            PageNode::Glue {
+                leader: Some(LeaderPayload::HList(box_node) | LeaderPayload::VList(box_node)),
+                ..
+            } => pending.extend(box_node.children),
+            PageNode::Disc {
+                pre, post, replace, ..
+            } => {
+                pending.extend(pre);
+                pending.extend(post);
+                pending.extend(replace);
+            }
+            PageNode::Insert { content, .. } | PageNode::Adjust(content) => {
+                pending.extend(content);
+            }
+            PageNode::Char { .. }
+            | PageNode::Lig { .. }
+            | PageNode::Kern { .. }
+            | PageNode::MarginKern { .. }
+            | PageNode::Glue { .. }
+            | PageNode::Penalty(_)
+            | PageNode::Rule { .. }
+            | PageNode::Mark { .. }
+            | PageNode::WhatsitAnchor { .. }
+            | PageNode::MathOn(_)
+            | PageNode::MathOff(_) => {}
+        }
+    }
 }
 
 fn materialize_v10_leader(leader: V10StreamLeader<'_, '_>) -> Result<LeaderPayload, DviError> {
@@ -348,7 +399,7 @@ fn materialize_v10_leader(leader: V10StreamLeader<'_, '_>) -> Result<LeaderPaylo
             fields,
             children,
         } => {
-            let children = children.with_reader(materialize_v10_list)?;
+            let children = materialize_v10_list(children)?;
             let box_node = BoxNode { children, ..fields };
             Ok(if vertical {
                 LeaderPayload::VList(box_node)
@@ -359,58 +410,152 @@ fn materialize_v10_leader(leader: V10StreamLeader<'_, '_>) -> Result<LeaderPaylo
     }
 }
 
-fn materialize_v10_list(nodes: &mut V10NodeListReader<'_, '_>) -> Result<Vec<PageNode>, DviError> {
-    let mut materialized = Vec::new();
-    while let Some(node) = nodes.next()? {
-        let node = match node {
-            V10StreamNode::Char { font_id, ch, width } => {
-                Some(PageNode::Char { font_id, ch, width })
-            }
-            V10StreamNode::Kern(amount) => Some(PageNode::Kern {
-                amount,
-                kind: crate::KernKind::Explicit,
-            }),
-            V10StreamNode::Glue { spec, kind, leader } => Some(PageNode::Glue {
-                spec,
-                kind,
-                leader: match leader {
-                    V10StreamLeader::None => None,
-                    leader => Some(materialize_v10_leader(leader)?),
-                },
-            }),
-            V10StreamNode::Rule {
-                width,
-                height,
-                depth,
-            } => Some(PageNode::Rule {
-                width,
-                height,
-                depth,
-            }),
-            V10StreamNode::Box {
-                vertical,
-                fields,
-                mut children,
-            } => {
-                let children = materialize_v10_list(&mut children)?;
+fn materialize_v10_list(nodes: V10NodeListSlice<'_, '_>) -> Result<Vec<PageNode>, DviError> {
+    enum Frame<'r, 'a> {
+        List {
+            reader: V10NodeListReader<'r, 'a>,
+            nodes: Vec<PageNode>,
+        },
+        Box {
+            vertical: bool,
+            fields: BoxNode,
+        },
+        Leader {
+            spec: crate::GlueSpec,
+            kind: crate::GlueKind,
+            vertical: bool,
+            fields: BoxNode,
+        },
+    }
+
+    let mut frames = vec![Frame::List {
+        reader: nodes.reader(),
+        nodes: Vec::new(),
+    }];
+    let mut completed = None;
+    loop {
+        let frame = frames.pop().expect("materialization root frame");
+        match frame {
+            Frame::Box { vertical, fields } => {
+                let children = completed.take().expect("completed box children");
                 let box_node = BoxNode { children, ..fields };
-                Some(if vertical {
+                let node = if vertical {
                     PageNode::VList(box_node)
                 } else {
                     PageNode::HList(box_node)
-                })
+                };
+                let Some(Frame::List { nodes, .. }) = frames.last_mut() else {
+                    unreachable!("box continuation follows a list")
+                };
+                nodes.push(node);
             }
-            V10StreamNode::WhatsitAnchor(effect_index) => {
-                Some(PageNode::WhatsitAnchor { effect_index })
+            Frame::Leader {
+                spec,
+                kind,
+                vertical,
+                fields,
+            } => {
+                let children = completed.take().expect("completed leader children");
+                let box_node = BoxNode { children, ..fields };
+                let leader = if vertical {
+                    LeaderPayload::VList(box_node)
+                } else {
+                    LeaderPayload::HList(box_node)
+                };
+                let Some(Frame::List { nodes, .. }) = frames.last_mut() else {
+                    unreachable!("leader continuation follows a list")
+                };
+                nodes.push(PageNode::Glue {
+                    spec,
+                    kind,
+                    leader: Some(leader),
+                });
             }
-            V10StreamNode::Math(amount) => Some(PageNode::MathOn(amount)),
-            V10StreamNode::Ignored => None,
-        };
-        if let Some(node) = node {
-            materialized.push(node);
+            Frame::List {
+                mut reader,
+                mut nodes,
+            } => {
+                let Some(node) = reader.next(false)? else {
+                    completed = Some(nodes);
+                    if frames.is_empty() {
+                        return Ok(completed.expect("completed root list"));
+                    }
+                    continue;
+                };
+                let node = match node {
+                    V10StreamNode::Char { font_id, ch, width } => {
+                        Some(PageNode::Char { font_id, ch, width })
+                    }
+                    V10StreamNode::Kern(amount) => Some(PageNode::Kern {
+                        amount,
+                        kind: crate::KernKind::Explicit,
+                    }),
+                    V10StreamNode::Glue {
+                        spec,
+                        kind,
+                        leader:
+                            V10StreamLeader::Box {
+                                vertical,
+                                fields,
+                                children,
+                            },
+                    } => {
+                        frames.push(Frame::List { reader, nodes });
+                        frames.push(Frame::Leader {
+                            spec,
+                            kind,
+                            vertical,
+                            fields,
+                        });
+                        frames.push(Frame::List {
+                            reader: children.reader(),
+                            nodes: Vec::new(),
+                        });
+                        continue;
+                    }
+                    V10StreamNode::Glue { spec, kind, leader } => Some(PageNode::Glue {
+                        spec,
+                        kind,
+                        leader: match leader {
+                            V10StreamLeader::None => None,
+                            leader => Some(materialize_v10_leader(leader)?),
+                        },
+                    }),
+                    V10StreamNode::Rule {
+                        width,
+                        height,
+                        depth,
+                    } => Some(PageNode::Rule {
+                        width,
+                        height,
+                        depth,
+                    }),
+                    V10StreamNode::Box {
+                        vertical,
+                        fields,
+                        children,
+                    } => {
+                        frames.push(Frame::List { reader, nodes });
+                        frames.push(Frame::Box { vertical, fields });
+                        frames.push(Frame::List {
+                            reader: children.reader(),
+                            nodes: Vec::new(),
+                        });
+                        continue;
+                    }
+                    V10StreamNode::WhatsitAnchor(effect_index) => {
+                        Some(PageNode::WhatsitAnchor { effect_index })
+                    }
+                    V10StreamNode::Math(amount) => Some(PageNode::MathOn(amount)),
+                    V10StreamNode::Ignored(_) => None,
+                };
+                if let Some(node) = node {
+                    nodes.push(node);
+                }
+                frames.push(Frame::List { reader, nodes });
+            }
         }
     }
-    Ok(materialized)
 }
 
 impl<W: std::io::Write> DviFileWriter<W> {
