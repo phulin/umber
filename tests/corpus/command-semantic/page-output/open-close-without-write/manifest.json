@@ -1,0 +1,18 @@
+{
+  "schema": 2,
+  "property_id": "tex82.effects.open-write-close-dispatch",
+  "profile": "raw-tex82-loaded",
+  "provenance": {
+    "authority": "tex.web",
+    "manifest": "tests/tex82-oracle-manifest.txt",
+    "sections": [1373, 1374, 1375]
+  },
+  "projection": {
+    "kind": "observations",
+    "kinds": ["effect"]
+  },
+  "expected": [],
+  "channels": {
+    "events": 0
+  }
+}

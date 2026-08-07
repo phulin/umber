@@ -33,13 +33,10 @@
 //! divergence printed, so a human decides which issue it belongs to before
 //! the corpus can commit it.
 //!
-//! The `effects` channel has no oracle-comparable source at all: it is
-//! Umber's own structured rendering of stream opens/closes/writes and shell
-//! escapes (`open:`/`close:`/`write:`/... lines), not a reproduction of
-//! anything a real TeX engine writes. Every case's `effects` capture is
-//! empty today, so this tool requires that and fails loudly if it ever stops
-//! being true, rather than inventing an authority for content with no
-//! reference to check it against.
+//! The `effects` channel projects the shared typed `tex-oracle` open, write,
+//! and close events plus exact writer-created artifacts. Its expected bytes
+//! come only from the instrumented reference stream and its captured output
+//! files. Umber's replay-internal effect log is never an authority.
 //!
 //! A named, reviewed new `pass` case may derive its projection `expected`
 //! array from this same run, the same way the tool derives `channels`:
@@ -70,11 +67,13 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
 use tex_command_stream::semantic::{
-    CapturedChannels, ChannelMismatch, ChannelPolicy, DeclaredCase, Expectation, STREAM_CHANNELS,
-    SessionProfile, StreamChannel, StreamDisposition, channel_file, classify_divergence, execute,
-    first_line_difference, first_line_difference_in, load_suite_with, normalize_channel, project,
-    reclassify_no_error_channel, repository_root, split_channel_lines, strip_diagnostic_reports,
+    CapturedChannels, ChannelMismatch, ChannelPolicy, DeclaredCase, EffectArtifact, Expectation,
+    STREAM_CHANNELS, SessionProfile, StreamChannel, StreamDisposition, channel_file,
+    classify_divergence, execute, first_line_difference, first_line_difference_in, load_suite_with,
+    normalize_channel, portable_effect_channel, project, reclassify_no_error_channel,
+    repository_root, split_channel_lines, strip_diagnostic_reports,
 };
+use tex_oracle::{Event, ObservationStream};
 
 fn main() -> ExitCode {
     if let Some(worker) = umber::dispatch_format_worker() {
@@ -440,6 +439,9 @@ fn prepare_fixture(
     let relative = fixture_dir
         .strip_prefix(repository)
         .map_err(|_| "command-semantic fixture escaped repository".to_owned())?;
+    if let Some(parent) = candidate.parent() {
+        fs::create_dir_all(parent).map_err(|error| format!("{}: {error}", parent.display()))?;
+    }
     test_support::closed_case::FixtureCase::discover_tracked_at(
         repository,
         relative,
@@ -499,6 +501,9 @@ fn publish_candidates(
 /// those same committed bytes.
 enum ChannelPlan {
     Empty,
+    Unsupported {
+        reason: String,
+    },
     File {
         bytes: Vec<u8>,
     },
@@ -599,9 +604,8 @@ fn plan_case(
     })
 }
 
-/// Resolves one channel's disposition. `terminal`/`log`/`dvi` compare Umber's
-/// captured bytes against the oracle capture at `case_dir`; `effects` has no
-/// oracle source and is required to be empty (see this file's module doc).
+/// Resolves one channel's disposition against the oracle capture at
+/// `case_dir`.
 fn plan_channel(
     declared: &DeclaredCase,
     channel: StreamChannel,
@@ -609,28 +613,28 @@ fn plan_channel(
     case_dir: &Path,
     captured: &CapturedChannels,
 ) -> Result<ChannelPlan, String> {
-    let raw_umber = captured.stream(channel);
-
-    if channel == StreamChannel::Effects {
-        return if raw_umber.is_empty() {
-            Ok(ChannelPlan::Empty)
-        } else {
-            Err(format!(
-                "effects channel is {} byte(s) but has no oracle-comparable source; decide how \
-                 this channel should be adjudicated before regenerating (see this file's module \
-                 doc)",
-                raw_umber.len()
-            ))
-        };
+    if channel == StreamChannel::Effects
+        && let Some(StreamDisposition::Unsupported { reason }) = declared
+            .case
+            .channels
+            .as_ref()
+            .map(|channels| channels.stream(channel))
+    {
+        return Ok(ChannelPlan::Unsupported {
+            reason: reason.clone(),
+        });
     }
+    let raw_umber = captured.stream(channel);
 
     let oracle_path = match channel {
         StreamChannel::Terminal => case_dir.join("terminal.txt"),
         StreamChannel::Log => case_dir.join(format!("{stem}.log")),
         StreamChannel::Dvi => case_dir.join(format!("{stem}.dvi")),
-        StreamChannel::Effects => unreachable!("handled above"),
+        StreamChannel::Effects => case_dir.join("pdftex14029-events.jsonl"),
     };
-    let raw_oracle = if oracle_path.exists() {
+    let raw_oracle = if channel == StreamChannel::Effects {
+        oracle_effect_channel(case_dir)?
+    } else if oracle_path.exists() {
         fs::read(&oracle_path).map_err(|error| format!("{}: {error}", oracle_path.display()))?
     } else {
         Vec::new()
@@ -730,6 +734,46 @@ fn plan_channel(
     }
 }
 
+fn oracle_effect_channel(case_dir: &Path) -> Result<Vec<u8>, String> {
+    let events_path = case_dir.join("pdftex14029-events.jsonl");
+    let events_bytes =
+        fs::read(&events_path).map_err(|error| format!("{}: {error}", events_path.display()))?;
+    let stream = ObservationStream::from_canonical_json_lines(&events_bytes)
+        .map_err(|error| format!("{}: {error}", events_path.display()))?;
+    let effects = stream
+        .events
+        .into_iter()
+        .filter_map(|event| match event.semantic {
+            Event::Effect(effect) => Some(effect),
+            _ => None,
+        });
+
+    let inventory_path = case_dir.join("effect-artifacts.txt");
+    let inventory = fs::read_to_string(&inventory_path)
+        .map_err(|error| format!("{}: {error}", inventory_path.display()))?;
+    let mut previous: Option<&str> = None;
+    let mut artifacts = Vec::new();
+    for path in inventory.lines() {
+        if path.is_empty()
+            || Path::new(path).components().count() != 1
+            || previous.is_some_and(|previous| previous >= path)
+        {
+            return Err(format!(
+                "{} is not a strictly sorted list of nonempty file names",
+                inventory_path.display()
+            ));
+        }
+        previous = Some(path);
+        let artifact_path = case_dir.join(path);
+        artifacts.push(EffectArtifact {
+            path: path.to_owned(),
+            bytes: fs::read(&artifact_path)
+                .map_err(|error| format!("{}: {error}", artifact_path.display()))?,
+        });
+    }
+    Ok(portable_effect_channel(effects, artifacts))
+}
+
 /// The bug a case's manifest already declares for one channel's `xfail`
 /// disposition, if any. See `plan_channel`'s three-way dispatch: this is
 /// consulted first, and everything except an already-`.13` declaration is
@@ -740,9 +784,10 @@ fn declared_diagnostics_bug(declared: &DeclaredCase, channel: StreamChannel) -> 
     let contract = declared.case.channels.as_ref()?;
     match contract.stream(channel) {
         StreamDisposition::XfailDiagnostics { bug } => Some(bug.clone()),
-        StreamDisposition::Empty | StreamDisposition::File | StreamDisposition::Xfail { .. } => {
-            None
-        }
+        StreamDisposition::Empty
+        | StreamDisposition::File
+        | StreamDisposition::Unsupported { .. }
+        | StreamDisposition::Xfail { .. } => None,
     }
 }
 
@@ -752,7 +797,9 @@ fn existing_bug(declared: &DeclaredCase, channel: StreamChannel) -> Option<Strin
         StreamDisposition::Xfail { bug, .. } | StreamDisposition::XfailDiagnostics { bug } => {
             Some(bug.clone())
         }
-        StreamDisposition::Empty | StreamDisposition::File => None,
+        StreamDisposition::Empty
+        | StreamDisposition::File
+        | StreamDisposition::Unsupported { .. } => None,
     }
 }
 
@@ -763,7 +810,7 @@ fn write_channel_files(fixture_dir: &Path, plan: &CasePlan) -> Result<(), String
     for (index, channel) in STREAM_CHANNELS.into_iter().enumerate() {
         let path = channel_file(fixture_dir, channel);
         match &channels.channels[index] {
-            ChannelPlan::Empty => {
+            ChannelPlan::Empty | ChannelPlan::Unsupported { .. } => {
                 if path.exists() {
                     fs::remove_file(&path)
                         .map_err(|error| format!("{}: {error}", path.display()))?;
@@ -793,6 +840,9 @@ impl ChannelsPlan {
         for (index, channel) in STREAM_CHANNELS.into_iter().enumerate() {
             let disposition = match &self.channels[index] {
                 ChannelPlan::Empty | ChannelPlan::File { .. } => continue,
+                ChannelPlan::Unsupported { reason } => serde_json::json!({
+                    "kind": "unsupported", "reason": reason,
+                }),
                 ChannelPlan::Xfail { bug, mismatch, .. } => serde_json::json!({
                     "kind": "xfail",
                     "bug": bug,

@@ -33,10 +33,11 @@ pub mod classify;
 mod tests;
 
 pub use channels::{
-    CapturedChannels, ChannelContract, ChannelFailure, ChannelMismatch, STREAM_CHANNELS,
-    StreamChannel, StreamDisposition, first_line_difference, first_line_difference_in,
-    normalize_channel, normalize_log_clock, split_channel_lines, strip_diagnostic_reports,
-    validate_xfail_diagnostics_disposition, validate_xfail_disposition,
+    CapturedChannels, ChannelContract, ChannelFailure, ChannelMismatch, EffectArtifact,
+    STREAM_CHANNELS, StreamChannel, StreamDisposition, first_line_difference,
+    first_line_difference_in, normalize_channel, normalize_log_clock, portable_effect_channel,
+    split_channel_lines, strip_diagnostic_reports, validate_xfail_diagnostics_disposition,
+    validate_xfail_disposition,
 };
 pub use classify::{DivergenceClass, classify_divergence, reclassify_no_error_channel};
 
@@ -589,6 +590,28 @@ pub fn validate_channels(case: &Case, fixture_dir: &Path) -> Result<(), String> 
             }
             _ => {}
         }
+        if let StreamDisposition::Unsupported { reason } = declared {
+            if channel != StreamChannel::Effects {
+                return Err(format!(
+                    "case {} declares channel {} unsupported; only effects can lack a portable oracle projection",
+                    case.id,
+                    channel.name()
+                ));
+            }
+            if reason.trim().is_empty() {
+                return Err(format!(
+                    "case {} declares effects unsupported without a reason",
+                    case.id
+                ));
+            }
+            if present {
+                return Err(format!(
+                    "case {} declares effects unsupported but commits {}; unsupported evidence has no expected bytes",
+                    case.id,
+                    path.display()
+                ));
+            }
+        }
         match declared {
             StreamDisposition::Xfail { bug, mismatch } => {
                 validate_xfail_disposition(channel, bug, mismatch)
@@ -598,7 +621,9 @@ pub fn validate_channels(case: &Case, fixture_dir: &Path) -> Result<(), String> 
                 validate_xfail_diagnostics_disposition(channel, bug)
                     .map_err(|error| format!("case {}: {error}", case.id))?;
             }
-            StreamDisposition::Empty | StreamDisposition::File => {}
+            StreamDisposition::Empty
+            | StreamDisposition::File
+            | StreamDisposition::Unsupported { .. } => {}
         }
     }
     Ok(())
@@ -613,7 +638,10 @@ fn validate_fixture_entries(case: &Case, fixture_dir: &Path) -> Result<(), Strin
     let mut allowed = BTreeSet::from(["manifest.json".to_owned(), case.source.clone()]);
     if let Some(channels) = &case.channels {
         for channel in STREAM_CHANNELS {
-            if !matches!(channels.stream(channel), StreamDisposition::Empty) {
+            if !matches!(
+                channels.stream(channel),
+                StreamDisposition::Empty | StreamDisposition::Unsupported { .. }
+            ) {
                 allowed.insert(format!("expected.{}", channel.name()));
             }
         }

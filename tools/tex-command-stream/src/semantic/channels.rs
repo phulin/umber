@@ -14,10 +14,9 @@
 //! reason `default-members` naming 21 of 34 crates was a defect rather than a
 //! configuration: an omission that reads as coverage is worse than a red gate.
 
-use std::fmt::Write as _;
-
 use schemars::JsonSchema;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
+use tex_oracle::{EffectEvent, EffectKind};
 use tex_state::{EffectRecord, PrintSink};
 
 use super::{SemanticRun, valid_bug_id};
@@ -109,7 +108,20 @@ impl CapturedChannels {
             .memory_log_output()
             .map(|bytes| String::from_utf8_lossy(bytes).into_owned())
             .unwrap_or_default();
-        let mut effects = String::new();
+        let effects = portable_effect_channel(
+            run.observations
+                .iter()
+                .filter_map(tex_observe::portable_effect_observation),
+            run.universe
+                .world()
+                .memory_outputs()
+                .into_iter()
+                .flatten()
+                .map(|output| EffectArtifact {
+                    path: output.path().to_string_lossy().into_owned(),
+                    bytes: output.bytes().to_vec(),
+                }),
+        );
         for effect in run.universe.world().effect_records() {
             match effect {
                 EffectRecord::StreamWrite { sink, text } => match sink {
@@ -120,7 +132,7 @@ impl CapturedChannels {
                         log.push_str(text);
                     }
                     other => {
-                        let _ = writeln!(effects, "write:{other:?}:{}", rendered(text));
+                        let _ = other;
                     }
                 },
                 EffectRecord::StreamWriteBytes { sink, bytes } => {
@@ -133,32 +145,16 @@ impl CapturedChannels {
                             log.push_str(&text);
                         }
                         other => {
-                            let _ = writeln!(effects, "write:{other:?}:{}", rendered(&text));
+                            let _ = other;
                         }
                     }
                 }
-                EffectRecord::StreamOpen { slot, target } => {
-                    let _ = writeln!(effects, "open:{slot:?}:{target:?}");
-                }
-                EffectRecord::StreamClose { slot } => {
-                    let _ = writeln!(effects, "close:{slot:?}");
-                }
-                EffectRecord::DeferredWrite { stream, tokens } => {
-                    let _ = writeln!(effects, "deferred-write:{stream:?}:{tokens:?}");
-                }
-                EffectRecord::Special { class, payload } => {
-                    let _ = writeln!(
-                        effects,
-                        "special:{class}:{}",
-                        rendered(&String::from_utf8_lossy(payload))
-                    );
-                }
-                EffectRecord::PdfObjectPlaceholder { label } => {
-                    let _ = writeln!(effects, "pdf-object:{label}");
-                }
-                EffectRecord::ShellEscape(record) => {
-                    let _ = writeln!(effects, "shell-escape:{record:?}");
-                }
+                EffectRecord::StreamOpen { .. }
+                | EffectRecord::StreamClose { .. }
+                | EffectRecord::DeferredWrite { .. }
+                | EffectRecord::Special { .. }
+                | EffectRecord::PdfObjectPlaceholder { .. }
+                | EffectRecord::ShellEscape(_) => {}
             }
         }
         let streams = run.complete_job_channel_streams.clone().unwrap_or_else(|| {
@@ -166,7 +162,7 @@ impl CapturedChannels {
                 terminal.into_bytes(),
                 log.into_bytes(),
                 run.dvi.clone(),
-                effects.into_bytes(),
+                effects,
             ]
         });
         Self {
@@ -190,17 +186,64 @@ impl CapturedChannels {
     }
 }
 
-/// Renders control characters so a committed expectation stays one line per
-/// record and survives review in a terminal.
-fn rendered(text: &str) -> String {
-    text.chars()
-        .map(|character| match character {
-            '\n' => "\\n".to_owned(),
-            '\r' => "\\r".to_owned(),
-            '\t' => "\\t".to_owned(),
-            other => other.to_string(),
-        })
-        .collect()
+/// One materialized file produced by TeX's numbered write streams.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EffectArtifact {
+    pub path: String,
+    pub bytes: Vec<u8>,
+}
+
+#[derive(Serialize)]
+#[serde(tag = "record", rename_all = "kebab-case")]
+enum PortableEffectRecord<'a> {
+    Effect { effect: &'a EffectEvent },
+    Artifact { path: &'a str, bytes: &'a [u8] },
+}
+
+/// Renders the oracle-comparable structured-effects contract.
+///
+/// TeX82 §§1370 and 1373--1375 make open, write, and close ordered semantic
+/// transitions. The instrumented reference engine and Umber both publish
+/// those transitions as [`EffectEvent`] values, so this projection retains
+/// only those three kinds and serializes the shared schema as canonical
+/// one-record-per-line JSON. Materialized output files follow in sorted path
+/// order with their exact bytes. Message, shipout, and termination effects are
+/// owned by the terminal/log, DVI, and status channels respectively; specials
+/// are owned by DVI. No replay-internal [`EffectRecord`] rendering enters this
+/// contract.
+#[must_use]
+pub fn portable_effect_channel(
+    effects: impl IntoIterator<Item = EffectEvent>,
+    artifacts: impl IntoIterator<Item = EffectArtifact>,
+) -> Vec<u8> {
+    let mut output = Vec::new();
+    for effect in effects.into_iter().filter(|effect| {
+        matches!(
+            effect.kind,
+            EffectKind::Open | EffectKind::Write | EffectKind::Close
+        )
+    }) {
+        serde_json::to_writer(
+            &mut output,
+            &PortableEffectRecord::Effect { effect: &effect },
+        )
+        .expect("portable effect records always serialize");
+        output.push(b'\n');
+    }
+    let mut artifacts: Vec<_> = artifacts.into_iter().collect();
+    artifacts.sort_by(|left, right| left.path.cmp(&right.path));
+    for artifact in &artifacts {
+        serde_json::to_writer(
+            &mut output,
+            &PortableEffectRecord::Artifact {
+                path: &artifact.path,
+                bytes: &artifact.bytes,
+            },
+        )
+        .expect("portable effect artifacts always serialize");
+        output.push(b'\n');
+    }
+    output
 }
 
 /// What a case declares about one stream channel.
@@ -221,6 +264,11 @@ pub enum StreamDisposition {
     /// The channel must match the committed reference-engine file byte for
     /// byte.
     File,
+    /// No portable reference projection exists for this channel in this
+    /// case. This is allowed only for `effects`, must carry a reviewed reason,
+    /// and commits no expected bytes. It is an explicit absence of a verdict,
+    /// never a baseline derived from Umber's output.
+    Unsupported { reason: String },
     /// The committed file always holds the reference engine's bytes for this
     /// channel -- that is the one meaning a committed channel file has, `file`
     /// or `xfail` alike. This disposition instead says Umber does not yet
@@ -515,6 +563,7 @@ pub fn compare(
                     });
                 }
             }
+            StreamDisposition::Unsupported { .. } => {}
             // The committed file always holds the reference engine's bytes,
             // exactly as a `file` channel's does. `mismatch` pins where
             // Umber's own output first diverges from those bytes, so the

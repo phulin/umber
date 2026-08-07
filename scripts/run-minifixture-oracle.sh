@@ -483,6 +483,11 @@ run_one_case() {
     done
     [[ "$found" -eq 1 ]] || effect_artifacts+=("$entry")
   done
+  if [[ "${#effect_artifacts[@]}" -gt 0 ]]; then
+    printf '%s\n' "${effect_artifacts[@]}" | LC_ALL=C sort >"${run_dir}/effect-artifacts.txt"
+  else
+    : >"${run_dir}/effect-artifacts.txt"
+  fi
 
   printf 'case %s/%s profile=%s interaction=%s status=%s' \
     "$domain" "$case_id" "$profile" "$interaction_mode" "$status"

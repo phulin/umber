@@ -70,6 +70,68 @@ fn output_on_a_channel_declared_empty_fails() {
 }
 
 #[test]
+fn portable_effects_are_typed_ordered_and_artifact_sorted() {
+    let effects = [
+        EffectEvent {
+            kind: EffectKind::Message,
+            channel: "terminal".into(),
+            value: tex_oracle::CanonicalValue::Bytes(b"not duplicated".to_vec()),
+        },
+        EffectEvent {
+            kind: EffectKind::Open,
+            channel: "stream:3".into(),
+            value: tex_oracle::CanonicalValue::Name("alpha.out".into()),
+        },
+        EffectEvent {
+            kind: EffectKind::Write,
+            channel: "stream:3".into(),
+            value: tex_oracle::CanonicalValue::Bytes(b"alpha".to_vec()),
+        },
+        EffectEvent {
+            kind: EffectKind::Close,
+            channel: "stream:3".into(),
+            value: tex_oracle::CanonicalValue::None,
+        },
+        EffectEvent {
+            kind: EffectKind::Terminate,
+            channel: "engine".into(),
+            value: tex_oracle::CanonicalValue::None,
+        },
+    ];
+    let artifacts = [
+        EffectArtifact {
+            path: "z.out".into(),
+            bytes: vec![],
+        },
+        EffectArtifact {
+            path: "alpha.out".into(),
+            bytes: b"alpha\n".to_vec(),
+        },
+    ];
+    assert_eq!(
+        String::from_utf8(portable_effect_channel(effects, artifacts)).expect("utf8 JSON"),
+        concat!(
+            "{\"record\":\"effect\",\"effect\":{\"kind\":\"open\",\"channel\":\"stream:3\",\"value\":{\"type\":\"name\",\"value\":\"alpha.out\"}}}\n",
+            "{\"record\":\"effect\",\"effect\":{\"kind\":\"write\",\"channel\":\"stream:3\",\"value\":{\"type\":\"bytes\",\"value\":[97,108,112,104,97]}}}\n",
+            "{\"record\":\"effect\",\"effect\":{\"kind\":\"close\",\"channel\":\"stream:3\",\"value\":{\"type\":\"none\"}}}\n",
+            "{\"record\":\"artifact\",\"path\":\"alpha.out\",\"bytes\":[97,108,112,104,97,10]}\n",
+            "{\"record\":\"artifact\",\"path\":\"z.out\",\"bytes\":[]}\n",
+        )
+    );
+}
+
+#[test]
+fn unsupported_is_an_explicit_non_authoritative_effect_disposition() {
+    let mut declared = contract();
+    declared.effects = StreamDisposition::Unsupported {
+        reason: "reference profile disables shell escape".into(),
+    };
+    let mut run = captured();
+    run.streams[3] = b"implementation-private record".to_vec();
+    assert_eq!(compare(&run, &declared, &no_files), Vec::new());
+}
+
+#[test]
 fn every_diverging_channel_is_reported_not_just_the_first() {
     let mut run = captured();
     run.streams[0] = b"terminal".to_vec();

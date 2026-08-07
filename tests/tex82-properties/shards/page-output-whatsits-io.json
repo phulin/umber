@@ -1566,7 +1566,10 @@
           "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
           "test": "declared_command_semantic_cases_match",
           "cases": [
-            "page-output/open-close-effect-observation"
+            "page-output/closeout-stream-selectors",
+            "page-output/open-close-effect-observation",
+            "page-output/open-close-without-write",
+            "page-output/top-open-write-close"
           ]
         }
       ],

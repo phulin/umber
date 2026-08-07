@@ -25,6 +25,23 @@ mod translation;
 
 use translation::{source_line_starts, translate_observation};
 
+/// Projects one committed command effect into the portable oracle schema.
+///
+/// This is the shared boundary for consumers that need a typed effect without
+/// constructing a complete source-attributed observation stream. In
+/// particular, command-semantic channel comparison uses it for the Umber side
+/// and reads the same [`EffectEvent`] type from the reference-engine stream.
+#[must_use]
+pub fn portable_effect_observation(observation: &CommandObservation) -> Option<EffectEvent> {
+    let CommandObservation::Effect(record) = observation else {
+        return None;
+    };
+    let Event::Effect(effect) = translation::translate_effect(record.clone()) else {
+        unreachable!("effect translation always produces an effect event")
+    };
+    Some(effect)
+}
+
 const CANONICAL_ROOT_PUSH_NAME: &str = "terminal";
 
 /// One translated observer event plus source/provenance-only diagnostic context.
