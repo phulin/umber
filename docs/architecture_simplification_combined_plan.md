@@ -1569,6 +1569,44 @@ red and owned by `umber2-9508` and `umber2-dtis`; neither baseline was rewritten
 The exact command and accounting receipt is recorded in
 [the Program 18 closeout](writeback/umber2-vgjr.18.md).
 
+## Final portfolio reconciliation
+
+The portfolio closed on integrated tree
+`bd50a474138ec0f13f3c76caf6453113872fefd0`. All 18 selected program epics,
+all 29 direct children of `umber2-vgjr`, and all 99 descendants are closed.
+The final audit found no retained migration-only authority. Each surviving
+adapter has a distinct compatibility, host, backend, validation, projection,
+or proof role recorded in its program section and issue receipt.
+
+The measured program results, not the planning ranges, are final. In
+particular, the portfolio owner retires every remaining forecast variance at
+the category-separated result recorded above. This includes Program 9's
+`+2,475/-1,272` authored-Rust result (net growth 1,203; the 602-line retired-
+consumer reduction is not whole-program credit), Program 16's
+`+1,751/-1,448` authored-Rust result (net growth 303), and Program 18's 1,980
+lines of explicitly approved authored retirement. Program 18's 1,808 moved
+lines and generated lockfile churn remain excluded. No unimplemented
+reduction, compatibility-gated deletion, test compaction, benchmark
+retirement, moved implementation, generated/declarative change,
+documentation change, or binary asset change is carried forward or recast as
+authored deletion.
+
+The raw mainline interval from the portfolio plan commit `0bf7219ea` through
+the integrated closeout tree changes 828 paths by 57,017 additions and 86,766
+deletions. Rename-aware category accounting is authored source
+`+40,007/-63,660`, documentation and guidance `+6,597/-1,247`,
+declarative/fixture/configuration text `+7,569/-21,607`, and generated
+lockfiles `+2,844/-252`; two binary paths are excluded from line totals. This
+interval is a repository reconciliation, not deletion credit: it contains 215
+mainline commits, including independently tracked repairs and work outside the
+18 programs. Program credit remains the non-overlapping issue-scoped
+accounting in the sections above.
+
+The final acceptance receipt is
+[the portfolio closeout](writeback/umber2-vgjr.md). It records the child audit,
+superseding safety protocol, exact capped proof and allocation measurements,
+full native result, and repository quality result.
+
 ## Dependency-aware execution plan
 
 ### Wave 0: decisions, baselines, and ledgers
