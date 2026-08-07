@@ -9204,6 +9204,17 @@ mod tests {
                 .collect::<Vec<_>>()
         );
         assert_eq!(leaf.artifact_resource.at_size, pt(9));
+        let expected_leaf =
+            tex_fonts::TfmFont::parse_with_size(CMEX10, tex_arith::FontSizeSpec::At(pt(9)))
+                .expect("sized leaf TFM");
+        assert_eq!(
+            leaf.metrics.widths[usize::from(b'A')],
+            expected_leaf
+                .metrics()
+                .character(b'A')
+                .expect("leaf character")
+                .width,
+        );
         assert_eq!(
             input.virtual_fonts[b"cmsy10".as_slice()].local_tfms[b"cmex10".as_slice()]
                 .bytes
@@ -9229,7 +9240,31 @@ mod tests {
             .content_hash = [0; 32];
         assert!(matches!(
             tex_out::pdf::finalize_pdf(&mismatched),
-            Err(tex_out::pdf::PdfBuildError::MissingFontResource(_))
+            Err(tex_out::pdf::PdfBuildError::InvalidVirtualLocalTfm { .. })
+        ));
+        let mut mismatched_bytes = input.clone();
+        let local = mismatched_bytes
+            .virtual_fonts
+            .get_mut(b"cmsy10".as_slice())
+            .expect("nested VF input")
+            .local_tfms
+            .get_mut(b"cmex10".as_slice())
+            .expect("nested local TFM");
+        local.bytes = std::sync::Arc::from(CMR10);
+        local.design_font = tex_fonts::TfmFont::parse(CMR10).expect("replacement TFM");
+        assert!(matches!(
+            tex_out::pdf::finalize_pdf(&mismatched_bytes),
+            Err(tex_out::pdf::PdfBuildError::InvalidVirtualLocalTfm { .. })
+        ));
+        let mut cyclic = input.clone();
+        cyclic
+            .virtual_fonts
+            .get_mut(b"cmsy10".as_slice())
+            .expect("nested VF input")
+            .program = tex_fonts::VfProgram::parse(&vf(b"cmsy10", FIX_ONE)).expect("cyclic VF");
+        assert!(matches!(
+            tex_out::pdf::finalize_pdf(&cyclic),
+            Err(tex_out::pdf::PdfBuildError::VirtualFontCycle { .. })
         ));
 
         let detached = pdf_from_committed_artifacts_with_virtual_fonts(
