@@ -1092,6 +1092,25 @@ attempt.
 
 **Proof.** Preserve diagnostic bytes, failure granularity, rollback, resource suspension, alignment, insertion/page output, shipout, scanner identity, TeX rule coverage, documentation citations, ignored reasons, and independently selectable failures.
 
+**Command scanner/delivery compaction.** Commits `b03e4b49d` and `bfac58c56`
+close `umber2-vgjr.15.3`. The closed
+`command_assertion_ledger.md` maps scalar and structured values, literal token
+and event order, exact recovery text and context, scanner lifecycle, rollback
+and retry state, source framing, and identity-sensitive state to active owners.
+Its narrative/matrix audit found no assertion-bearing case with a complete
+replacement, so this child deletes zero semantic cases and retains every such
+test. The only retired material is proven duplicate setup scaffolding.
+
+`ProcessorScenario` owns a newly constructed mutable command state, universe,
+and host-capability set; `ScannerRig` adds a newly constructed observation
+recorder. Neither helper caches or shares state. Representative structured and
+delivery cases now use those shallow owners, while the scalar, token-list, and
+expansion suites share the same traced-token, ordinary-level, processor,
+recorder, and diagnostic helpers without changing inputs or assertions. The
+Rust change adds 291 and deletes 349 lines, a measured net deletion of 58
+lines. Ledger and repository-map documentation adds 44 lines; no fixture,
+generated expectation, digest, or production source changes.
+
 ## 16. Consolidate PDF test support without weakening independent evidence
 
 **Outcome.** Canonical structure projection walks Hayro's borrowed objects directly. Focused raw queries replace the copied `PdfProbe` graph. Ordinary valid synthetic inputs use `pdf-writer`; explicit raw-byte helpers retain malformed, classic-xref, cycle, depth, and independent-writer cases.
