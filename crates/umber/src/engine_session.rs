@@ -21,7 +21,7 @@ use tex_out::dvi::DviPagePlan;
 use tex_state::print::{Printer, Selector};
 use tex_state::{FileContent, Universe};
 
-use crate::RunResult;
+use crate::{RunResult, TexRunStatus};
 
 fn map_step_failure(error: CanonicalStepFailure) -> SessionError {
     match error {
@@ -1009,6 +1009,7 @@ impl<'a> EngineSession<'a> {
         }
         Ok(SessionState::Complete(RunResult {
             terminal_text,
+            status: TexRunStatus::from_error_history(self.stores.world().error_channel().history()),
             mode_transitions: self.mode_transitions.clone(),
             fatal: self.control.fatal_error(),
             artifacts,
@@ -1447,13 +1448,15 @@ mod tests {
             .register_authored_job("undefined.tex", Arc::from(source.into_bytes()))
             .expect("root registers");
 
-        session
+        let run = session
             .run_with_observer(
                 &mut WorldHost,
                 &mut Vec::new(),
                 &mut ObservationRecorder::default(),
             )
             .expect("TeX fatal stop reaches engine termination");
+
+        assert_eq!(run.status, TexRunStatus::Fatal);
 
         assert_eq!(
             session.control.fatal_error(),
@@ -1517,6 +1520,30 @@ mod tests {
                 .count(),
             1
         );
+    }
+
+    #[test]
+    fn recovered_error_completes_with_unsuccessful_status_after_termination() {
+        let (mut stores, root) = prepared_session(b"\\undefined\\end");
+        stores.set_interaction_mode(tex_state::InteractionMode::Nonstop);
+        let mut session = EngineSession::new(&mut stores, CommandProfile::TEX82);
+        session
+            .register_authored_job("recovered.tex", root)
+            .expect("root registers");
+        let mut observations = ObservationRecorder::default();
+
+        let run = session
+            .run_with_observer(&mut WorldHost, &mut Vec::new(), &mut observations)
+            .expect("recoverable diagnostic does not abort execution");
+
+        assert_eq!(run.status, TexRunStatus::CompletedWithErrors);
+        assert!(run.fatal.is_none());
+        assert!(run.terminal_text.contains("Undefined control sequence"));
+        assert!(matches!(
+            observations.0.last(),
+            Some(CommandObservation::Effect(effect))
+                if effect.kind == tex_command::ObservationEffectKind::Terminate
+        ));
     }
 
     #[test]
@@ -1641,6 +1668,7 @@ mod tests {
                 Some(tex_command::FatalError::emergency_stop(help)),
                 "interaction {interaction:?}"
             );
+            assert_eq!(run.status, TexRunStatus::Fatal);
             assert_eq!(
                 session.stores().world().error_channel().history(),
                 tex_state::print::ErrorHistory::FatalErrorStop

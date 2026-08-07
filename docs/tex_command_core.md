@@ -4052,7 +4052,10 @@ artifact cursor, and prepared DVI pages aligned one-for-one with those
 artifacts. It also retains the initial mode and every distinct mode reached
 after a committed main-control step, plus TeX82 §93's exact fatal terminal
 state when §81 ends the job through `jump_out`. That fatal state is successful
-semantic completion, not a runner error. TeX82 §1335's effective INITEX
+semantic completion, not a runner error. After all §1335 and pdfTeX
+close-files diagnostics, the result derives `TexRunStatus` from §76's final
+history: spotless and warning histories are successful, a recovered error is
+completed-with-errors, and fatal history is fatal. TeX82 §1335's effective INITEX
 `\dump` is also a committed main-control receipt. The host may serialize a
 format only when that receipt is present; it must not infer dump intent by
 examining source bytes or retired executor statistics.

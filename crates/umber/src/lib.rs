@@ -639,6 +639,8 @@ impl FontResolver for FileFontResolver {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RunResult {
     pub terminal_text: String,
+    /// TeX's process-level outcome after all engine finalization diagnostics.
+    pub status: TexRunStatus,
     /// Ordered canonical execution modes, including the initial mode and each
     /// distinct mode reached after a committed main-control step.
     pub mode_transitions: Vec<tex_exec::Mode>,
@@ -655,6 +657,36 @@ pub struct RunResult {
     pub effects: Vec<EffectRecord>,
     pub dumped_format: bool,
     pub format_dump_receipt: Option<tex_exec::FormatDumpReceipt>,
+}
+
+/// TeX's completed process status, derived from the final §76 `history`.
+///
+/// Web2C maps `spotless` and `warning_issued` to a successful process and
+/// maps `error_message_issued` and `fatal_error_stop` to an unsuccessful
+/// process. Fatal completion remains separately available through
+/// [`RunResult::fatal`].
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TexRunStatus {
+    Success,
+    CompletedWithErrors,
+    Fatal,
+}
+
+impl TexRunStatus {
+    #[must_use]
+    pub const fn from_error_history(history: tex_state::print::ErrorHistory) -> Self {
+        match history {
+            tex_state::print::ErrorHistory::Spotless
+            | tex_state::print::ErrorHistory::WarningIssued => Self::Success,
+            tex_state::print::ErrorHistory::ErrorMessageIssued => Self::CompletedWithErrors,
+            tex_state::print::ErrorHistory::FatalErrorStop => Self::Fatal,
+        }
+    }
+
+    #[must_use]
+    pub const fn is_success(self) -> bool {
+        matches!(self, Self::Success)
+    }
 }
 
 /// A fully prepared downstream file that has not been materialized.
@@ -1655,7 +1687,7 @@ pub fn html_from_artifacts<R: tex_out::html::HtmlFontAssets>(
 
 /// Runs in-memory TeX through the `umber run` executor setup.
 pub fn run_memory_with_stores(source: &str, stores: &mut Universe) -> Result<String, SessionError> {
-    run_memory_with_stores_and_profile(source, stores, CommandProfile::TEX82, true)
+    run_memory_collecting_artifacts(source, stores).map(|result| result.terminal_text)
 }
 
 /// Runs in-memory input with an explicit command profile and output backend.
@@ -1665,6 +1697,25 @@ pub fn run_memory_with_stores_and_profile(
     profile: CommandProfile,
     emit_dvi: bool,
 ) -> Result<String, SessionError> {
+    run_memory_collecting_artifacts_with_profile(source, stores, profile, emit_dvi)
+        .map(|result| result.terminal_text)
+}
+
+/// Runs in-memory TeX and preserves its completed status and artifacts.
+pub fn run_memory_collecting_artifacts(
+    source: &str,
+    stores: &mut Universe,
+) -> Result<RunResult, SessionError> {
+    run_memory_collecting_artifacts_with_profile(source, stores, CommandProfile::TEX82, true)
+}
+
+/// Runs in-memory input with an explicit profile while preserving its status.
+pub fn run_memory_collecting_artifacts_with_profile(
+    source: &str,
+    stores: &mut Universe,
+    profile: CommandProfile,
+    emit_dvi: bool,
+) -> Result<RunResult, SessionError> {
     let _ = emit_dvi;
     let mut host = FileSessionResolvers::new(Path::new("texput.tex"), Vec::new(), Vec::new());
     let mut session = EngineSession::new(stores, profile);
@@ -1677,9 +1728,7 @@ pub fn run_memory_with_stores_and_profile(
             Arc::<[u8]>::from(source.as_bytes()),
         ),
     )?;
-    session
-        .run(&mut host, &mut NoCheckpoints)
-        .map(|result| result.terminal_text)
+    session.run(&mut host, &mut NoCheckpoints)
 }
 
 fn uncommitted_terminal_text(stores: &Universe) -> String {
@@ -1787,7 +1836,7 @@ impl From<tex_out::html::HtmlError> for HtmlBuildError {
 #[cfg(test)]
 mod tests {
     use super::{
-        DriverFile, FinalizationCommit, FinalizationError, PlannedFinalization,
+        DriverFile, FinalizationCommit, FinalizationError, PlannedFinalization, TexRunStatus,
         prepare_pdftex_run_stores, run_input_collecting_artifacts_with_profile,
         terminal_text_from_effects,
     };
@@ -1797,6 +1846,28 @@ mod tests {
     use tex_state::{PrintSink, StreamSlot, Universe, World};
 
     const CMR10: &[u8] = include_bytes!("../../tex-fonts/tests/fixtures/cm/cmr10.tfm");
+
+    #[test]
+    fn tex_run_status_preserves_web2c_history_threshold() {
+        use tex_state::print::ErrorHistory;
+
+        assert_eq!(
+            TexRunStatus::from_error_history(ErrorHistory::Spotless),
+            TexRunStatus::Success
+        );
+        assert_eq!(
+            TexRunStatus::from_error_history(ErrorHistory::WarningIssued),
+            TexRunStatus::Success
+        );
+        assert_eq!(
+            TexRunStatus::from_error_history(ErrorHistory::ErrorMessageIssued),
+            TexRunStatus::CompletedWithErrors
+        );
+        assert_eq!(
+            TexRunStatus::from_error_history(ErrorHistory::FatalErrorStop),
+            TexRunStatus::Fatal
+        );
+    }
 
     #[test]
     fn tracingcommands_display_end_probe_reports_restored_mode() {

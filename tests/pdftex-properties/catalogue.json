@@ -42,9 +42,7 @@
         {
           "channel": "status",
           "projection": "error",
-          "disposition": "xfail",
-          "bug": "umber2-alfh.36",
-          "actual": "success"
+          "disposition": "pass"
         }
       ]
     },
@@ -63,9 +61,7 @@
         {
           "channel": "status",
           "projection": "error",
-          "disposition": "xfail",
-          "bug": "umber2-alfh.36",
-          "actual": "success"
+          "disposition": "pass"
         }
       ]
     },
@@ -182,9 +178,7 @@
         {
           "channel": "status",
           "projection": "error",
-          "disposition": "xfail",
-          "bug": "umber2-alfh.36",
-          "actual": "success"
+          "disposition": "pass"
         }
       ]
     },
@@ -218,9 +212,7 @@
         {
           "channel": "status",
           "projection": "error",
-          "disposition": "xfail",
-          "bug": "umber2-alfh.36",
-          "actual": "success"
+          "disposition": "pass"
         }
       ]
     },

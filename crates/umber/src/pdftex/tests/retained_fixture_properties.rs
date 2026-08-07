@@ -143,11 +143,14 @@ fn execute(case: &str) -> ActualChannels {
         seed_ximage_inputs(&mut stores);
     }
     prepare_pdftex_run_stores(&mut stores);
-    let result = run_pdf_memory(
+    let result = run_pdf_memory_result(
         std::str::from_utf8(&source).expect("fixture source is UTF-8"),
         &mut stores,
     );
-    let returned = result.as_deref().unwrap_or_default();
+    let returned = result
+        .as_ref()
+        .map(|result| result.terminal_text.as_str())
+        .unwrap_or_default();
     let terminal = format!(
         "{}{}",
         String::from_utf8_lossy(stores.world().memory_terminal_output().unwrap_or_default()),
@@ -159,7 +162,8 @@ fn execute(case: &str) -> ActualChannels {
         returned
     );
     let status = match result {
-        Ok(_) => "success".to_owned(),
+        Ok(result) if result.status.is_success() => "success".to_owned(),
+        Ok(_) => "error".to_owned(),
         Err(error) => format!("error:{error}"),
     };
     ActualChannels {

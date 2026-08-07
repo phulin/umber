@@ -76,6 +76,19 @@ mod tests {
         )
     }
 
+    fn run_pdf_memory_result(
+        source: &str,
+        stores: &mut Universe,
+    ) -> Result<crate::RunResult, crate::SessionError> {
+        stores.set_interaction_mode(tex_state::InteractionMode::Nonstop);
+        crate::run_memory_collecting_artifacts_with_profile(
+            source,
+            stores,
+            tex_command::CommandProfile::PDFTEX14029,
+            false,
+        )
+    }
+
     fn complete_memory_terminal(returned: &str, stores: &Universe) -> String {
         let mut terminal =
             String::from_utf8_lossy(stores.world().memory_terminal_output().unwrap_or_default())

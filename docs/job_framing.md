@@ -150,6 +150,15 @@ report the command core detects has to be _printed_ by the command core.
 render, which put `! Bad register code (256).` after the `)` of the file it
 was still reading; it now reports from inside `scan_restricted_integer`.
 
+The retained result snapshots process status only after this entire
+finalization sequence. `TexRunStatus::Success` covers §76's `spotless` and
+`warning_issued` histories, matching Web2C's successful exit rule;
+`CompletedWithErrors` exposes `error_message_issued` without converting a
+recoverable TeX diagnostic into a session failure, and `Fatal` accompanies
+the existing typed fatal terminal state. Structured in-memory runs return the
+same result, while the string convenience helpers continue to return the
+selected terminal projection for every semantically completed run.
+
 ## Why the banner names the selected engine
 
 Byte-for-byte comparison against pinned reference engines is the whole point
