@@ -666,6 +666,38 @@ architecture closeout; it does not replace future browser execution.
 
 **Proof.** Preserve schema tags and versions, origin exclusions, child order, allocation-free views, compact sidecars, survivor patching, malformed-reference rejection, lookup rebuilding, group invalidation, dependency observation, capability restrictions, state hashes, and nonrecursive behavior.
 
+**Program closeout and cumulative accounting.** Commits `8394bbbb3`,
+`01d37a893`, `a895bea84`, `070dc6408`, and `84621b1a7` complete all four
+children. `node_arena::schema` is the one exhaustive `NodeRef`-centered
+logical grammar: schema-owned borrowed views and typed handle events drive
+semantic equality, live-handle validation, canonical child traversal,
+survivor-remap validation, hashing, and frozen projection. The private compact
+word/sidecar encoder and copier remain the specialized storage codec, and the
+validated handle-free frozen DTO remains the portable schema-11 boundary;
+neither is a second logical node model. `Universe::from_format` and
+`Stores::decode_frozen_format` form the sole production format restoration
+path. The former test-only `StoreFormat` replay and alternate recursive hash
+helpers are deleted.
+
+The public-use audit found no workspace or demonstrated external generic
+consumer for the former `ExpansionState` façade. Under the pre-1.0
+workspace-internal API policy it, `ExpansionContext`, and `MeaningCacheGuard`
+were removed without a deprecation adapter. `Universe` is the state-facing
+API; the `stores` module remains private and its `Stores` aggregate is retained
+only as rollback-coupled implementation data. `CommandContext` and
+`InputOpenContext` remain the intentional restricted capabilities. The exact
+disposition and closeout evidence are recorded in
+[`umber2-vgjr.8`](writeback/umber2-vgjr.8.md) and
+[`umber2-vgjr.8.4`](writeback/umber2-vgjr.8.4.md).
+
+Across the four implementation commits, authored Rust totals 1,412 additions
+and 3,248 deletions, a net reduction of 1,836 lines. Documentation and guidance
+across those commits plus the format-authority repair total 75 additions and
+20 deletions and are reported separately. The combined 3,100--4,200-line
+conditional forecast is therefore short by 1,264--2,364 lines; moved code,
+specialized compact storage, the portable DTO codec, and documentation are not
+credited as deletion, and no further reduction is silently scheduled.
+
 ## 9. Define one primitive, profile, WEB, and installation catalogue
 
 **Outcome.** One dependency-light declarative Rust catalogue owns stable operand, spelling and aliases, profile membership, expandable class, WEB identity, prefix/admissibility flags, installation policy, parameter cell/default, and documentation family. Execution bodies remain handwritten.
