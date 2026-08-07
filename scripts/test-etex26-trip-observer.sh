@@ -3,6 +3,7 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
+. scripts/trip-observer-common.sh
 trip_root="${repo_root}/third_party/trip"
 source_root="${repo_root}/third_party/texlive-source"
 texmfcnf="${source_root}/src/texk/web2c/triptrap"
@@ -15,7 +16,8 @@ oracle_bin="${target_dir}/etex26-oracle/bin"
   printf 'test-etex26-trip-observer: missing pinned e-TRIP inputs; run python3 scripts/provision.py worktree .\n' >&2
   exit 1
 }
-python3 scripts/provision.py oracle etex26 --offline >/dev/null
+trip_run_with_progress 'e-TeX 2.6 oracle build/provision still running' \
+  python3 scripts/provision.py oracle etex26 --offline
 work_root="$(mktemp -d "${TMPDIR:-/tmp}/umber-etex26-trip-observer.XXXXXX")"
 trap 'rm -rf "$work_root"' EXIT
 
@@ -126,14 +128,24 @@ cmp "$work_root/clean/etrip.dvi" "$work_root/profile-a/etrip.dvi"
 
 artifact_root="${target_dir}/trip-oracles/etrip"
 mkdir -p "$artifact_root"
-cp "$work_root/profile-a/profile-initex-projected.jsonl" "$artifact_root/initex-command.jsonl"
-cp "$work_root/profile-a/profile-trip-projected.jsonl" "$artifact_root/format-loaded-command.jsonl"
-cp "$work_root/geometry-a/geometry-initex-projected.jsonl" "$artifact_root/initex-geometry.jsonl"
-cp "$work_root/geometry-a/geometry-trip-projected.jsonl" "$artifact_root/format-loaded-geometry.jsonl"
-cp "$work_root/clean/clean-initex-terminal.txt" "$artifact_root/initex-terminal.txt"
-cp "$work_root/clean/clean-initex.log" "$artifact_root/initex.log"
-cp "$work_root/clean/clean-trip-terminal.txt" "$artifact_root/format-loaded-terminal.txt"
-cp "$work_root/clean/etrip.log" "$artifact_root/format-loaded.log"
-cp "$work_root/clean/etrip.dvi" "$artifact_root/format-loaded.dvi"
-cp "${target_dir}/etex26-oracle/build-record.txt" "$artifact_root/oracle-build-record.txt"
+trip_publish_artifact "$work_root/profile-a/profile-initex-projected.jsonl" \
+  "$artifact_root/initex-command.jsonl"
+trip_publish_artifact "$work_root/profile-a/profile-trip-projected.jsonl" \
+  "$artifact_root/format-loaded-command.jsonl"
+trip_publish_artifact "$work_root/geometry-a/geometry-initex-projected.jsonl" \
+  "$artifact_root/initex-geometry.jsonl"
+trip_publish_artifact "$work_root/geometry-a/geometry-trip-projected.jsonl" \
+  "$artifact_root/format-loaded-geometry.jsonl"
+trip_publish_artifact "$work_root/clean/clean-initex-terminal.txt" \
+  "$artifact_root/initex-terminal.txt"
+trip_publish_artifact "$work_root/clean/clean-initex.log" \
+  "$artifact_root/initex.log"
+trip_publish_artifact "$work_root/clean/clean-trip-terminal.txt" \
+  "$artifact_root/format-loaded-terminal.txt"
+trip_publish_artifact "$work_root/clean/etrip.log" \
+  "$artifact_root/format-loaded.log"
+trip_publish_artifact "$work_root/clean/etrip.dvi" \
+  "$artifact_root/format-loaded.dvi"
+trip_publish_artifact "${target_dir}/etex26-oracle/build-record.txt" \
+  "$artifact_root/oracle-build-record.txt"
 printf 'e-TeX 2.6 bounded e-TRIP observer passed\n'

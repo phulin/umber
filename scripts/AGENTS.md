@@ -61,8 +61,8 @@ Read the repository-root `AGENTS.md` first. This file adds the directory map for
 - `test-arxiv-corpus.sh`: hermetic archive/view identity contract, including mutation and extra-file rejection.
 - `test-run-umber-guarded.sh`: forced-timeout, progress-stall, and RSS-limit self-test proving the shared Umber watchdog kills and reaps descendants.
 - `trip-observer-common.sh`: atomic sealed-artifact replacement and cold-oracle
-  progress heartbeats shared by the TeX82 observer and its hermetic watchdog
-  self-test.
+  progress heartbeats shared by the TeX82/e-TeX observers and their hermetic
+  watchdog self-test.
 - `check-pdf-external.sh`: opt-in pinned qpdf structural validation plus pinned Poppler raster/text attestation over the representative PDF matrix; `--ci` makes missing tools fatal.
 - `run-stepwise-arxiv-census.sh`: stable entry point for the serial guarded arXiv census.
 - `stepwise-arxiv-census.py`: single-pass, row-atomic, resumable arXiv census runner and offline evidence verifier.

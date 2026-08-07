@@ -22,9 +22,9 @@ RSS limit, 180-second output-progress limit, and five-second TERM grace, then
 kills and reaps the complete process group. Override these with
 `UMBER_TRIP_TIMEOUT_SECONDS`, `UMBER_TRIP_MAX_RSS_MIB`,
 `UMBER_TRIP_PROGRESS_TIMEOUT_SECONDS`, and `UMBER_TRIP_TERM_GRACE_SECONDS`.
-The TeX82 observer emits periodic progress while a cold pinned-oracle build is
-otherwise silent, so the progress ceiling continues to detect a stalled build
-without rejecting a healthy one.
+The TeX82 and e-TeX observers emit periodic progress while a cold pinned-oracle
+build is otherwise silent, so the progress ceiling continues to detect a
+stalled build without rejecting a healthy one.
 Arguments replace its default oracle-generation and manual TRIP/e-TRIP
 commands. Full documents are intentionally ignored Cargo tests and never run
 in the routine native suite. The helper selects the finite default
@@ -183,7 +183,7 @@ channels from one ordinary `EngineSession::run_with_observer` call;
 the observer does not use replay or a legacy input-stack projection. A
 successful comparison removes any stale TRIP-specific artifact and
 emits no new triage output.
-TeX82 publication stages each channel beside its destination, seals it mode
+Each observer stages every channel beside its destination, seals it mode
 `0444`, and atomically replaces the previous artifact. A rerun replaces both a
 sealed destination and the private partial staging file left by an interrupted
 publisher, without prompts or target cleanup.
