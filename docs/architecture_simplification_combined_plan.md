@@ -596,6 +596,52 @@ net production lines rather than deleting the scheduled 300--500; the
 remaining opportunity or explicit forecast revision is tracked by
 `umber2-vgjr.26` and is not credited from gross predecessor deletion.
 
+**Producer forecast reconciliation (owner decision, 2026-08-07).** Follow-up
+`umber2-vgjr.26` audited every surviving artifact, positioned-page, retained
+session, patch, WebAssembly projection, and JavaScript receiver path. Commit
+`220fcd793` removes the one remaining duplicate producer step: the public
+standalone `write_html` adapter no longer owns a second artifact-to-positioned
+lowering loop and instead enters the same `build_render_document` authority as
+the retained session. Exact standalone output remains equal across the
+artifact, positioned-page, and detached-document entry points.
+
+The surviving paths are not interchangeable predecessors. The artifact and
+positioned-page functions are public input adapters; `build_render_document`
+and its positioned worker are the sole detached construction path;
+`write_render_document` is the required standalone serializer; `plan_patch` is
+the typed revision diff; the WebAssembly projection materializes JavaScript
+DTOs; and `HtmlPatchMount` remains the sole hostile-input validation, detached
+DOM publication, focus/scroll, rollback/resynchronization, and resource-lifetime
+authority. Removing any of them would delete a distinct contract or proof
+boundary rather than duplicate production.
+
+The reconciliation commit adds 29 and deletes 34 production Rust lines, a
+five-line net reduction, and adds two proof-test lines. Across the two original
+producer children and this follow-up, exact production accounting is therefore
+747 additions and 742 deletions, five lines of net growth. Across the complete
+HTML producer/receiver program, production accounting becomes 908 additions
+and 1,607 deletions, a 699-line net reduction; proof tests become 531 additions
+and 210 deletions. Generated and declarative source, fixtures, lockfiles, and
+binary assets remain unchanged. The portfolio owner retires the original
+300--500-line producer-reduction forecast and accepts the measured five-line
+growth as Program 7's final producer result. The 704-line receiver reduction
+remains separate, and no gross migration deletion, receiver deletion,
+documentation, generated/declarative source, fixture, lockfile, binary asset,
+or historical change is credited to the producer result.
+
+The implementation tree at `220fcd793` passed uncapped six-job focused, full
+native, wasm32 check, and wasm32 test compilation. The focused `tex-out` suite
+passed 151 tests under 512 MiB, and the complete native routine suite passed
+under 1 GiB. Biome and all 91 Node tests passed under 1 GiB. The optimized
+package build passed uncapped; the packaged Node lifecycle and 36-file npm dry
+run passed under 1 GiB. Browser execution remains unavailable rather than
+passing: `check-wasm.sh` reports Firefox missing, and the retained Chromium
+fixture stops before execution at `/usr/bin/google-chrome` `ENOENT`. Its active
+DOM identity, `MutationObserver` isolation, accessibility, focus/scroll,
+rollback, resynchronization, resource lifetime, disposal, and 200-patch
+performance assertions remain unchanged. `scripts/check.sh` passed all four
+gates with six build jobs.
+
 Exact code tree `f62894ec802ebe4a5db6487c3670d250621c335d` passed fresh
 uncapped six-job focused, full native, and wasm32 test compilation. Focused
 `tex-out` and Umber execution passed under `MemoryMax=512M`, and the complete
