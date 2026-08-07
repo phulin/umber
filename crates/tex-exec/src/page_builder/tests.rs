@@ -709,6 +709,23 @@ fn page_insertion_split_float_penalty_and_invalid_box_recovery_match_tex82() {
 }
 
 #[test]
+fn page_insertion_split_tracing_reports_class_height_and_penalty() {
+    let mut stores = crate::test_harness::universe();
+    params(&mut stores, 5, 0, 0);
+    stores.set_int_param(IntParam::TRACING_PAGES, 1);
+    stores.freeze_page_specs(PageContents::InsertsOnly);
+    ins_class(&mut stores, 7, 1_000, 20, 0, 0);
+    let split = ins(&mut stores, 7, 10, 0, &[rule(10, 0), Node::Penalty(51)]);
+
+    prepare_insertion(&mut stores, &split, None).expect("traced insertion split succeeds");
+
+    let trace = effects(&stores);
+    for operand in ["% split", "7", "0.00008", "0.00015", " p=", "51"] {
+        assert!(trace.contains(operand), "missing {operand:?} from {trace}");
+    }
+}
+
+#[test]
 fn page_insertion_count_capacity_and_null_split_matrix() {
     // TeX.web §§1008--1011: a class's correction glue is charged once, every
     // repeated insertion is count-scaled, equality fits both the page and the
