@@ -1102,6 +1102,18 @@
           "test": "box_construction_targets_specs_hooks_shifts_leaders_and_register_matrix"
         },
         {
+          "path": "crates/tex-exec/src/main_control/tests/material_property_matrices.rs",
+          "test": "box_brace_hook_scope_and_aftergroup_order_matrix"
+        },
+        {
+          "path": "crates/tex-exec/src/main_control/tests/material_property_matrices.rs",
+          "test": "box_void_vtop_box255_and_zero_shift_matrix"
+        },
+        {
+          "path": "crates/tex-exec/src/main_control/tests/material_property_matrices.rs",
+          "test": "box_forbidden_shift_lastbox_vsplit_and_recovery_ownership_matrix"
+        },
+        {
           "path": "crates/tex-exec/src/main_control/tests.rs",
           "test": "copy_preserves_every_recursive_node_payload_and_source_register"
         },
@@ -1170,6 +1182,14 @@
         {
           "path": "crates/tex-exec/src/main_control/tests/material_property_matrices.rs",
           "test": "paragraph_entry_endings_migration_depth_and_recovery_matrix"
+        },
+        {
+          "path": "crates/tex-exec/src/main_control/tests/material_property_matrices.rs",
+          "test": "paragraph_empty_discardable_display_and_insert_matrix"
+        },
+        {
+          "path": "crates/tex-exec/src/main_control/tests/material_property_matrices.rs",
+          "test": "paragraph_prev_graf_depth_off_save_and_replay_provenance_matrix"
         },
         {
           "path": "crates/tex-exec/src/main_control/tests.rs",

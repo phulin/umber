@@ -15167,11 +15167,12 @@ fn apply_scanned_step(
             // Keeping the hook here preserves save-stack order when one
             // nested source closes both a box group and a conditional.
             warn_cross_file_group_close(stores, command);
-            stores
+            let aftergroup = stores
                 .leave_group_with_kind(box_state.group_kind)
                 .map_err(|_| ExecError::MissingToken {
                     context: "box group",
                 })?;
+            schedule_aftergroup(command, stores, aftergroup)?;
             // TeX82 §1086 restores the box group before it calls `hpack` or
             // `vpack`. Besides putting §283's tracing-restores lines ahead of
             // §660/§674 diagnostics, this makes the enclosing h/v badness,
@@ -16752,11 +16753,12 @@ fn finish_insert_or_adjust_group(
     let split_top_skip = stores.glue_param(GlueParam::SPLIT_TOP_SKIP);
     let split_max_depth = stores.dimen_param(DimenParam::SPLIT_MAX_DEPTH);
     let floating_penalty = stores.int_param(IntParam::FLOATING_PENALTY);
-    stores
+    let aftergroup = stores
         .leave_group_with_kind(GroupKind::Insert)
         .map_err(|_| ExecError::MissingToken {
             context: "insert group",
         })?;
+    schedule_aftergroup(command, stores, aftergroup)?;
     let level = crate::box_runtime::commit_current_list(modes, stores, command.fuel)?;
     let content = stores.freeze_node_list(level.list().nodes());
     let params = tex_typeset::VpackParams {

@@ -7,7 +7,7 @@ use tex_command::{
 use tex_state::env::banks::{DimenParam, GlueParam, IntParam};
 use tex_state::glue::Order;
 use tex_state::node::{GlueKind, KernKind, Node, Whatsit};
-use tex_state::page::PageMark;
+use tex_state::page::{PageDimension, PageMark};
 use tex_state::scaled::Scaled;
 use tex_state::token::Token;
 use tex_state::{InputOpenState, Universe};
@@ -1866,3 +1866,347 @@ fn insert_class_and_forbidden_vadjust_recovery_preserve_state_and_input() {
     assert!(outer_vertical_shapes(&outer).is_empty());
     assert!(terminal(&outer).contains("You can't use `\\vadjust' in vertical mode"));
 }
+
+#[test]
+fn box_brace_hook_scope_and_aftergroup_order_matrix() {
+    // TeX82 §§1074--1076/1085: brace aliases enter the same box group, each
+    // nested construction runs its own hook after mode entry, and unsave
+    // restores body-local state before releasing aftergroup material.
+    let (_, stores) = run(
+        br"\let\bgroup={\let\egroup=}
+          \def\afterbox{\global\advance\count0 by1}
+          \count0=2
+          \everyhbox{\global\advance\count1 by1\kern1pt}
+          \everyvbox{\global\advance\count6 by1\kern3pt}
+          \setbox0=\hbox\bgroup
+            \count0=10
+            \aftergroup\afterbox
+            \hbox\bgroup\kern2pt\egroup
+          \egroup
+          \setbox8=\vbox\bgroup\vbox\bgroup\kern4pt\egroup\egroup
+          \global\multiply\count0 by10",
+        false,
+    );
+    assert_eq!(stores.count(0), 30, "local restoration precedes aftergroup");
+    assert_eq!(stores.count(1), 2, "outer and nested hbox hooks run once");
+    assert_eq!(stores.count(6), 2, "outer and nested vbox hooks run once");
+    assert!(
+        matches!(register_shapes(&stores, 0).as_deref(), Some([Shape::HBox { children, .. }])
+        if matches!(children.as_slice(), [Shape::Kern(outer, KernKind::Explicit), Shape::HBox { children: inner, .. }]
+            if *outer == Scaled::UNITY
+                && inner.as_slice() == [Shape::Kern(Scaled::UNITY, KernKind::Explicit), Shape::Kern(2 * Scaled::UNITY, KernKind::Explicit)])),
+        "{:?}",
+        register_shapes(&stores, 0)
+    );
+    assert!(
+        matches!(register_shapes(&stores, 8).as_deref(), Some([Shape::VBox { children, .. }])
+        if matches!(children.as_slice(), [Shape::Kern(outer, KernKind::Explicit), Shape::VBox { children: inner, .. }]
+            if *outer == 3 * Scaled::UNITY
+                && inner.as_slice() == [Shape::Kern(3 * Scaled::UNITY, KernKind::Explicit), Shape::Kern(4 * Scaled::UNITY, KernKind::Explicit)])),
+        "{:?}",
+        register_shapes(&stores, 8)
+    );
+}
+
+#[test]
+fn box_void_vtop_box255_and_zero_shift_matrix() {
+    // TeX82 §§1077--1087: void copy/take operands stay void, box255 obeys
+    // the same destructive distinction, vtop's first-item rule is exact at
+    // empty and leading-glue boundaries, and zero shifts remain typed boxes.
+    let (_, stores) = run(
+        br"\setbox0=\copy7\setbox1=\box7
+          \setbox255=\hbox{\kern1pt}\setbox2=\copy255\setbox3=\box255
+          \setbox4=\vtop{}
+          \setbox5=\vtop{\vskip2pt\hrule height3pt}
+          \setbox6=\hbox{\raise0pt\hbox{\kern4pt}\lower0pt\vbox{\kern5pt}}
+          \setbox7=\vbox{\moveleft0pt\hbox{\kern6pt}\moveright0pt\vbox{\kern7pt}}",
+        false,
+    );
+    assert_eq!(register_shapes(&stores, 0), None);
+    assert_eq!(register_shapes(&stores, 1), None);
+    assert_eq!(register_shapes(&stores, 255), None);
+    assert_eq!(register_shapes(&stores, 2), register_shapes(&stores, 3));
+    assert_eq!(register_box_height(&stores, 4), 0);
+    assert_eq!(register_box_depth(&stores, 4), 0);
+    assert_eq!(register_box_height(&stores, 5), 0);
+    assert_eq!(register_box_depth(&stores, 5), 5 * Scaled::UNITY);
+    assert!(
+        matches!(register_shapes(&stores, 6).as_deref(), Some([Shape::HBox { children, .. }])
+        if matches!(children.as_slice(), [Shape::HBox { shift: 0, children: raised, .. }, Shape::VBox { shift: 0, children: lowered, .. }]
+            if raised.as_slice() == [Shape::Kern(4 * Scaled::UNITY, KernKind::Explicit)]
+                && lowered.as_slice() == [Shape::Kern(5 * Scaled::UNITY, KernKind::Explicit)]))
+    );
+    assert!(
+        matches!(register_shapes(&stores, 7).as_deref(), Some([Shape::VBox { children, .. }])
+        if matches!(children.as_slice(), [Shape::HBox { shift: 0, children: left, .. }, Shape::Glue(_, _, false), Shape::VBox { shift: 0, children: right, .. }]
+            if left.as_slice() == [Shape::Kern(6 * Scaled::UNITY, KernKind::Explicit)]
+                && right.as_slice() == [Shape::Kern(7 * Scaled::UNITY, KernKind::Explicit)]))
+    );
+}
+
+#[test]
+fn box_forbidden_shift_lastbox_vsplit_and_recovery_ownership_matrix() {
+    // TeX82 §§1079--1084: forbidden complementary shifts do not scan an
+    // operand, outer-page lastbox is void, and invalid vsplit preserves its
+    // source register. Missing opener/operand recovery replays the rejected
+    // token exactly once, so body and following assignments remain owned.
+    let (_, forbidden) = run(
+        br"\nonstopmode
+          \raise\global\count0=11
+          \noindent\moveright\global\count1=12\par
+          \setbox0=\lastbox\global\count2=13
+          \setbox3=\hbox{\kern7pt}\setbox4=\vsplit3 to5pt
+          \global\count3=14",
+        false,
+    );
+    assert_eq!((forbidden.count(0), forbidden.count(1)), (11, 12));
+    assert_eq!((forbidden.count(2), forbidden.count(3)), (13, 14));
+    assert_eq!(register_shapes(&forbidden, 0), None);
+    assert!(matches!(
+        register_shapes(&forbidden, 3).as_deref(),
+        Some([Shape::HBox { children, .. }])
+            if children.as_slice() == [Shape::Kern(7 * Scaled::UNITY, KernKind::Explicit)]
+    ));
+    assert_eq!(register_shapes(&forbidden, 4), None);
+    let errors = terminal(&forbidden);
+    assert_eq!(errors.matches("You can't use").count(), 3, "{errors}");
+    assert!(errors.contains("\\vsplit needs a \\vbox"), "{errors}");
+
+    let (_, recovery) = run(
+        br"\nonstopmode
+          \setbox5=\hbox\kern2pt}
+          \setbox6=\global\count4=15
+          \setbox7=\hbox{\kern3pt}",
+        false,
+    );
+    assert!(matches!(
+        register_shapes(&recovery, 5).as_deref(),
+        Some([Shape::HBox { children, .. }])
+            if children.as_slice() == [Shape::Kern(2 * Scaled::UNITY, KernKind::Explicit)]
+    ));
+    assert_eq!(recovery.count(4), 15);
+    assert!(matches!(
+        register_shapes(&recovery, 7).as_deref(),
+        Some([Shape::HBox { children, .. }])
+            if children.as_slice() == [Shape::Kern(3 * Scaled::UNITY, KernKind::Explicit)]
+    ));
+    let errors = terminal(&recovery);
+    assert_eq!(errors.matches("Missing { inserted").count(), 1, "{errors}");
+    assert_eq!(errors.matches("Improper \\setbox").count(), 1, "{errors}");
+}
+
+#[test]
+fn paragraph_empty_discardable_display_and_insert_matrix() {
+    // TeX82 §§1088--1096: a genuinely null noindent paragraph contributes no
+    // line, a discardable-only nonnull list follows line breaking, display
+    // entry ends the preceding paragraph, and insert material migrates after
+    // the line rather than remaining among its children.
+    let (_, stores) = run(
+        br"\font\f=cmr10 \font\sy=cmsy10 \font\ex=cmex10
+          \textfont2=\sy\scriptfont2=\sy\scriptscriptfont2=\sy
+          \textfont3=\ex\scriptfont3=\ex\scriptscriptfont3=\ex
+          \f \hsize=100pt
+          \setbox0=\vbox{\noindent\par}
+          \setbox1=\vbox{\noindent\hskip1pt\kern2pt\penalty7\par}
+          \setbox2=\vbox{\noindent A$$$$}
+          \setbox3=\vbox{\noindent B\insert4{\kern5pt}C\par}",
+        true,
+    );
+    assert!(
+        matches!(register_shapes(&stores, 0).as_deref(), Some([Shape::VBox { children, .. }]) if children.is_empty()),
+        "{:?}",
+        register_shapes(&stores, 0)
+    );
+    assert!(
+        matches!(register_shapes(&stores, 1).as_deref(), Some([Shape::VBox { children, .. }])
+        if matches!(children.as_slice(), [Shape::HBox { children: line, .. }]
+            if line.as_slice() == [Shape::Glue(Scaled::UNITY, GlueKind::Normal, false), Shape::Kern(2 * Scaled::UNITY, KernKind::Explicit), Shape::Penalty(7), Shape::Penalty(10_000), Shape::Glue(0, GlueKind::ParFillSkip, false), Shape::Glue(0, GlueKind::RightSkip, false)])),
+        "{:?}",
+        register_shapes(&stores, 1)
+    );
+    let display = register_shapes(&stores, 2)
+        .unwrap_or_else(|| panic!("display vbox; terminal={}", terminal(&stores)));
+    let [
+        Shape::VBox {
+            children: display_children,
+            ..
+        },
+    ] = display.as_slice()
+    else {
+        panic!("display box: {display:?}");
+    };
+    assert!(
+        matches!(display_children.first(), Some(Shape::HBox { children, .. }) if children.contains(&Shape::Char('A'))),
+        "{display:?}"
+    );
+    assert!(
+        display_children
+            .iter()
+            .skip(1)
+            .any(|shape| matches!(shape, Shape::HBox { .. })),
+        "{display:?}"
+    );
+    assert!(
+        matches!(register_shapes(&stores, 3).as_deref(), Some([Shape::VBox { children, .. }])
+        if matches!(children.as_slice(), [Shape::HBox { children: line, .. }, Shape::Insert(4, insertion)]
+            if line.contains(&Shape::Char('B')) && line.contains(&Shape::Char('C'))
+                && insertion.as_slice() == [Shape::Kern(5 * Scaled::UNITY, KernKind::Explicit)])),
+        "{:?}",
+        register_shapes(&stores, 3)
+    );
+}
+
+#[test]
+fn paragraph_prev_graf_depth_off_save_and_replay_provenance_matrix() {
+    // TeX82 §§1088--1096: one completed line publishes prev_graf and its
+    // packed depth to the enclosing vlist; restricted-h vertical material
+    // takes off_save instead of ending a paragraph; and a backed-up implicit
+    // trigger runs once, after everypar, with its original source context.
+    let (_, state) = run(
+        br"\font\f=cmr10 \f \hsize=100pt
+          \setbox0=\vbox{\noindent g\par
+            \global\count0=\prevgraf\global\dimen0=\prevdepth}",
+        true,
+    );
+    assert_eq!(state.count(0), 1);
+    let line_depth = match register_shapes(&state, 0).as_deref() {
+        Some([Shape::VBox { children, .. }]) => match children.as_slice() {
+            [Shape::HBox { depth, .. }] => *depth,
+            other => panic!("paragraph vlist: {other:?}"),
+        },
+        other => panic!("paragraph box: {other:?}"),
+    };
+    assert_eq!(state.dimen(0).raw(), line_depth);
+
+    let (_, page) = run(
+        br"\hsize=100pt\maxdepth=10pt
+          \noindent\vrule height0pt depth4pt width1pt\par
+          \dimen1=\pagedepth",
+        false,
+    );
+    assert!(
+        page.dimen(1).raw() > 0,
+        "descender sets outer page depth: contents={:?} contributions={:?} depth={:?}",
+        page.page_contents(),
+        page.page_contributions(),
+        page.page_dimension(PageDimension::Depth)
+    );
+    assert_eq!(page.dimen(1), page.page_dimension(PageDimension::Depth));
+
+    let (_, restricted) = run(
+        br"\nonstopmode\setbox1=\hbox{\vskip\global\count1=21}\global\count2=22",
+        false,
+    );
+    assert_eq!((restricted.count(1), restricted.count(2)), (21, 22));
+    assert!(
+        matches!(register_shapes(&restricted, 1).as_deref(), Some([Shape::HBox { children, .. }]) if children.is_empty()),
+        "{:?}",
+        register_shapes(&restricted, 1)
+    );
+    let errors = terminal(&restricted);
+    assert_eq!(errors.matches("Missing } inserted").count(), 1, "{errors}");
+
+    let (_, replay) = run(
+        br"\nonstopmode\everypar{\global\advance\count3 by1\kern1pt}
+          \setbox2=\vbox{\unhbox300\kern2pt\par}\global\count5=25",
+        false,
+    );
+    assert_eq!((replay.count(3), replay.count(5)), (1, 25));
+    assert!(
+        matches!(register_shapes(&replay, 2).as_deref(), Some([Shape::VBox { children, .. }])
+        if matches!(children.as_slice(), [Shape::HBox { children: line, .. }]
+            if matches!(line.as_slice(), [Shape::HBox { children: indent, .. }, Shape::Kern(first, KernKind::Explicit), Shape::Kern(second, KernKind::Explicit), ..]
+                if indent.is_empty()
+                    && *first == Scaled::UNITY && *second == 2 * Scaled::UNITY))),
+        "{:?}",
+        register_shapes(&replay, 2)
+    );
+    let errors = terminal(&replay);
+    assert_eq!(errors.matches("Bad register code").count(), 1, "{errors}");
+    assert!(errors.contains("\\unhbox300"), "{errors}");
+}
+
+#[test]
+fn structured_material_lifecycle_delete_unbox_italic_and_recovery_matrix() {
+    // TeX82 §§1097--1113: ordered node projections cover insert/vadjust/mark
+    // group closure and migration, penalties, matching/nonmatching delete,
+    // move/copy unbox ownership, italic correction, and forbidden-mode
+    // recovery without relying on node-presence counters.
+    let (_, stores) = run(
+        br"\font\f=cmr10 \f
+          \setbox0=\hbox{f\/\mark{h}\penalty7}
+          \setbox1=\vbox{\insert3{\hrule height2pt}\mark{v}\penalty8}
+          \setbox2=\vbox{\noindent B\vadjust{\kern4pt}\par}
+          \setbox3=\hbox{\kern1pt\unkern\hskip2pt\unpenalty\unskip
+                           \penalty9\unpenalty\vrule width3pt}
+          \setbox4=\hbox{\kern5pt}\setbox5=\hbox{\unhcopy4\unhbox4}
+          \setbox7=\vbox{\kern6pt}
+          \nonstopmode\setbox6=\vbox{\/\global\count0=11
+            \unskip\unkern\unpenalty\hbox{\unhbox7}\vadjust{\kern1pt}}",
+        true,
+    );
+    let horizontal = register_shapes(&stores, 0);
+    assert!(
+        matches!(horizontal.as_deref(), Some([Shape::HBox { children, .. }])
+        if matches!(children.as_slice(), [Shape::Char('f'), Shape::Kern(k, KernKind::Explicit), Shape::Mark(0, mark), Shape::Penalty(7)] if *k > 0 && mark == "h")),
+        "{horizontal:?}"
+    );
+    assert!(
+        matches!(register_shapes(&stores, 1).as_deref(), Some([Shape::VBox { children, .. }])
+        if matches!(children.as_slice(), [Shape::Insert(3, content), Shape::Mark(0, mark), Shape::Penalty(8)]
+            if matches!(content.as_slice(), [Shape::Rule(_, Some(h), _) ] if *h == 2 * Scaled::UNITY) && mark == "v"))
+    );
+    assert!(
+        matches!(register_shapes(&stores, 2).as_deref(), Some([Shape::VBox { children, .. }])
+        if matches!(children.as_slice(), [Shape::HBox { .. }, Shape::Kern(k, KernKind::Explicit)] if *k == 4 * Scaled::UNITY))
+    );
+    assert!(
+        matches!(register_shapes(&stores, 3).as_deref(), Some([Shape::HBox { children, .. }])
+        if matches!(children.as_slice(), [Shape::Rule(Some(w), _, _)] if *w == 3 * Scaled::UNITY))
+    );
+    assert!(
+        matches!(register_shapes(&stores, 5).as_deref(), Some([Shape::HBox { children, .. }])
+        if children.as_slice() == [Shape::Kern(5 * Scaled::UNITY, KernKind::Explicit), Shape::Kern(5 * Scaled::UNITY, KernKind::Explicit)])
+    );
+    assert_eq!(register_shapes(&stores, 4), None);
+    assert!(register_shapes(&stores, 7).is_some());
+    assert_eq!(stores.count(0), 11);
+    let errors = terminal(&stores);
+    assert!(errors.contains("You can't use `\\/' in internal vertical mode"));
+    assert!(
+        errors.contains("Incompatible list can't be unboxed"),
+        "{errors}"
+    );
+    assert!(errors.contains("You can't use `\\vadjust' in internal vertical mode"));
+
+    let (_, boundaries) = run(
+        br"\font\f=cmr10 \f\nonstopmode
+          \setbox0=\vbox{\insert0{\kern1pt}\insert254{\kern2pt}\insert255{\kern3pt}\insert256{\kern4pt}}
+          \setbox2=\hbox{\kern1pt\/}\end",
+        true,
+    );
+    let classes = register_shapes(&boundaries, 0);
+    assert!(
+        matches!(classes.as_deref(), Some([Shape::VBox { children, .. }])
+        if matches!(children.as_slice(), [Shape::Insert(0, zero), Shape::Insert(254, high), Shape::Insert(0, reserved), Shape::Insert(0, overflow)]
+            if zero == &[Shape::Kern(Scaled::UNITY, KernKind::Explicit)]
+                && high == &[Shape::Kern(2 * Scaled::UNITY, KernKind::Explicit)]
+                && reserved == &[Shape::Kern(3 * Scaled::UNITY, KernKind::Explicit)]
+                && overflow == &[Shape::Kern(4 * Scaled::UNITY, KernKind::Explicit)])),
+        "{classes:?}"
+    );
+    assert!(
+        matches!(register_shapes(&boundaries, 2).as_deref(), Some([Shape::HBox { children, .. }])
+        if children.as_slice() == [Shape::Kern(Scaled::UNITY, KernKind::Explicit)])
+    );
+    let boundary_errors = terminal(&boundaries);
+    assert!(
+        boundary_errors.contains("You can't \\insert255"),
+        "{boundary_errors}"
+    );
+    assert!(
+        boundary_errors.contains("Bad register code"),
+        "{boundary_errors}"
+    );
+}
+
