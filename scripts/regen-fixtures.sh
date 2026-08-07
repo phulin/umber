@@ -186,7 +186,7 @@ test_command_for_area() {
       printf '%s\n' 'cargo test -p tex-exec --lib grouping_parity'
       ;;
     tex_exec_io)
-      printf '%s\n' 'cargo test -p tex-exec --lib io::'
+      printf '%s\n' 'cargo test -p test-support --test execution_minifixture_inventory'
       ;;
     dvi)
       printf '%s\n' 'cargo test -p umber --test it run_dvi_corpus_matches_committed_dvi'
