@@ -81,7 +81,7 @@ const REVIEWED_EXCEPTIONS: &[&str] = &[
     "crates/tex-exec/src/packing_params.rs:12:cfg(test) module under a library with `test = false`",
     "crates/tex-exec/src/page_output.rs:570:cfg(test) module under a library with `test = false`",
     "crates/tex-exec/src/paragraph_end/hyphenation.rs:995:cfg(test) module under a library with `test = false`",
-    "crates/tex-exec/src/shipout/transaction.rs:16:cfg(test) module under a library with `test = false`",
+    "crates/tex-exec/src/shipout/transaction.rs:15:cfg(test) module under a library with `test = false`",
 ];
 
 #[derive(Debug, Eq, Ord, PartialEq, PartialOrd)]
