@@ -322,7 +322,8 @@ pub fn run_repository(
         );
         report.fixtures.push(FixtureSummary::not_generated(name));
     }
-    for trace in &registry.traces {
+    for entry in registry.traces {
+        let trace = entry.load()?;
         collect_fixture_divergences(
             &trace.directory,
             &trace.fixture,
@@ -351,7 +352,17 @@ fn collect_fixture_divergences(
         max_divergences: options.max_divergences,
         alignment: options.alignment,
     }
-    .compare(&identity, &fixture.stream.events, &replay.events);
+    .compare(
+        &identity,
+        &fixture.stream.events[replay.verified_prefix..],
+        &replay.events,
+    );
+    let mut comparison = comparison;
+    for divergence in &mut comparison.divergences {
+        if let Divergence::Mismatch(mismatch) = divergence {
+            mismatch.offset_indices(replay.verified_prefix);
+        }
+    }
     let first = report.divergences.len();
     // The budget counts these and only these; the contained failure below is
     // outside it, so the two are recorded separately rather than summed.
@@ -365,7 +376,7 @@ fn collect_fixture_divergences(
     if let Some(failure) = replay.failure {
         report.divergences.push(Divergence::Failure {
             fixture: identity.clone(),
-            index: replay.events.len(),
+            index: replay.verified_prefix.saturating_add(replay.events.len()),
             failure,
         });
     }
@@ -647,7 +658,7 @@ fn replay_fixture(
             fixture.manifest.name
         )));
     }
-    Startup::from_fixture(directory, fixture, resources)?.replay()
+    Startup::from_fixture(directory, fixture, resources)?.replay_against(&fixture.stream.events)
 }
 
 /// Replay inputs a fixture needs beyond its own manifest: the opaque font
@@ -676,6 +687,8 @@ pub struct ReplayResources {
 /// being mistaken for a clean EOF.
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct ReplayOutput {
+    /// Exact positional prefix compared and released during replay.
+    verified_prefix: usize,
     events: Vec<ObservedEvent>,
     failure: Option<ReplayFailure>,
 }
@@ -788,6 +801,20 @@ impl Startup {
     }
 
     fn replay(self) -> Result<ReplayOutput, RunnerError> {
+        self.replay_with_expected(None)
+    }
+
+    fn replay_against(
+        self,
+        expected: &[tex_oracle::NormalizedEvent],
+    ) -> Result<ReplayOutput, RunnerError> {
+        self.replay_with_expected(Some(expected))
+    }
+
+    fn replay_with_expected(
+        self,
+        expected: Option<&[tex_oracle::NormalizedEvent]>,
+    ) -> Result<ReplayOutput, RunnerError> {
         // Replay must terminate even when a defect leaves the engine looping.
         // Registered input bytes alone bound the committed suite's synthetic
         // fixtures, but a real document expands far more commands than it has
@@ -892,6 +919,15 @@ impl Startup {
         recorder.record_source_open(CANONICAL_ROOT_PUSH_NAME, &self.root_name, root);
         recorder.activate_source(self.root_name.clone(), root, Arc::clone(&self.root_bytes));
 
+        let mut verified_prefix = 0;
+        let mut retained_events = Vec::new();
+        retain_after_first_divergence(
+            &mut recorder,
+            expected,
+            &mut verified_prefix,
+            &mut retained_events,
+        );
+
         let mut deliveries = 0;
         {
             loop {
@@ -900,7 +936,8 @@ impl Startup {
                     // will not terminate is a worklist entry, not a reason to
                     // hide every divergence already observed.
                     return Ok(ReplayOutput {
-                        events: recorder.into_events(),
+                        verified_prefix,
+                        events: finish_retained_events(recorder, retained_events),
                         failure: Some(ReplayFailure::Error(format!(
                             "root source {} exceeded replay bound {limit}",
                             self.root_name
@@ -910,12 +947,19 @@ impl Startup {
                 let step = catch_panic(std::panic::AssertUnwindSafe(|| {
                     control.step_with_observer(&mut universe, &mut recorder)
                 }));
+                retain_after_first_divergence(
+                    &mut recorder,
+                    expected,
+                    &mut verified_prefix,
+                    &mut retained_events,
+                );
                 match step {
                     Ok(Ok(MainControlStep::Continue)) => deliveries += 1,
                     Ok(Ok(MainControlStep::End | MainControlStep::EndOfInput)) => break,
                     Ok(Err(error)) => {
                         return Ok(ReplayOutput {
-                            events: recorder.into_events(),
+                            verified_prefix,
+                            events: finish_retained_events(recorder, retained_events),
                             failure: Some(ReplayFailure::Error(format!(
                                 "root source {} replay failed after {deliveries} deliveries: {error}",
                                 self.root_name
@@ -924,7 +968,8 @@ impl Startup {
                     }
                     Err(message) => {
                         return Ok(ReplayOutput {
-                            events: recorder.into_events(),
+                            verified_prefix,
+                            events: finish_retained_events(recorder, retained_events),
                             failure: Some(ReplayFailure::Panic(format!(
                                 "root source {} panicked after {deliveries} deliveries: {message}",
                                 self.root_name
@@ -935,10 +980,50 @@ impl Startup {
             }
         }
         Ok(ReplayOutput {
-            events: recorder.into_events(),
+            verified_prefix,
+            events: finish_retained_events(recorder, retained_events),
             failure: None,
         })
     }
+}
+
+fn retain_after_first_divergence(
+    recorder: &mut Recorder,
+    expected: Option<&[tex_oracle::NormalizedEvent]>,
+    verified_prefix: &mut usize,
+    retained: &mut Vec<ObservedEvent>,
+) {
+    retain_events(recorder.take_events(), expected, verified_prefix, retained);
+}
+
+fn retain_events(
+    events: impl IntoIterator<Item = ObservedEvent>,
+    expected: Option<&[tex_oracle::NormalizedEvent]>,
+    verified_prefix: &mut usize,
+    retained: &mut Vec<ObservedEvent>,
+) {
+    for event in events {
+        if retained.is_empty()
+            && expected.is_some_and(|expected| {
+                crate::compare::events_match(
+                    expected.get(*verified_prefix).map(|event| &event.semantic),
+                    Some(&event.event),
+                )
+            })
+        {
+            *verified_prefix += 1;
+        } else {
+            retained.push(event);
+        }
+    }
+}
+
+fn finish_retained_events(
+    mut recorder: Recorder,
+    mut retained: Vec<ObservedEvent>,
+) -> Vec<ObservedEvent> {
+    retained.append(&mut recorder.take_events());
+    retained
 }
 
 /// The fixture's virtual `\\input` namespace is deliberately narrower than
@@ -1096,6 +1181,47 @@ mod tests {
             compare_streams("tex82/exact", &expected, &[observed("one")]),
             Ok(())
         );
+    }
+
+    #[test]
+    fn exact_prefix_is_released_and_first_mismatch_retains_the_complete_suffix() {
+        let expected = vec![
+            NormalizedEvent {
+                sequence: 0,
+                semantic: scanner("one"),
+            },
+            NormalizedEvent {
+                sequence: 1,
+                semantic: scanner("two"),
+            },
+            NormalizedEvent {
+                sequence: 2,
+                semantic: scanner("three"),
+            },
+        ];
+        let independently_produced = [observed("one"), observed("wrong"), observed("three")];
+        let mut verified = 0;
+        let mut retained = Vec::new();
+        retain_events(
+            independently_produced,
+            Some(&expected),
+            &mut verified,
+            &mut retained,
+        );
+
+        assert_eq!(verified, 1);
+        assert_eq!(retained, [observed("wrong"), observed("three")]);
+        let mut mismatch = find_divergences(
+            "tex82/streaming",
+            &expected[verified..],
+            &retained,
+            20,
+            AlignmentTuning::default(),
+        )
+        .entries
+        .remove(0);
+        mismatch.offset_indices(verified);
+        assert_eq!(mismatch.index(), 1);
     }
 
     #[test]

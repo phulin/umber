@@ -50,11 +50,26 @@ pub struct DocumentTrace {
     pub resources: ReplayResources,
 }
 
+/// A validated registry row whose large event stream is loaded only when its
+/// turn is replayed. Keeping all three parsed document streams alive made the
+/// exhaustive diagnostic retain Plain and Story while Gentle alone needed
+/// most of the 512 MiB contract.
+pub struct DocumentTraceEntry {
+    directory: PathBuf,
+    record: DocumentRecord,
+}
+
+impl DocumentTraceEntry {
+    pub fn load(self) -> Result<DocumentTrace, RunnerError> {
+        load_trace(&self.directory, self.record)
+    }
+}
+
 /// The registry as it exists on this checkout: present documents in contract
 /// order, plus the names of registered documents whose generated tree is
 /// absent.
 pub struct DocumentRegistry {
-    pub traces: Vec<DocumentTrace>,
+    pub traces: Vec<DocumentTraceEntry>,
     pub skipped: Vec<String>,
 }
 
@@ -94,7 +109,10 @@ pub fn load_registry(repository: &Path) -> Result<DocumentRegistry, RunnerError>
             skipped.push(record.name);
             continue;
         }
-        traces.push(load_trace(&directory, record)?);
+        // Manifest/event identity is checked when this entry is loaded. Do
+        // not parse every full-document stream up front: each predecessor is
+        // dropped before the next document enters memory.
+        traces.push(DocumentTraceEntry { directory, record });
     }
     Ok(DocumentRegistry { traces, skipped })
 }

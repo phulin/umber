@@ -394,6 +394,15 @@ impl LiveSessionTranslator {
         self.events
     }
 
+    /// Drains translated events while retaining source/provenance state.
+    ///
+    /// Long-running diagnostic consumers can compare and release an exact
+    /// prefix without keeping a second full-document stream resident.
+    #[must_use]
+    pub fn take_events(&mut self) -> Vec<ObservedEvent> {
+        std::mem::take(&mut self.events)
+    }
+
     /// Finalizes portable normalized evidence without engine or source identities.
     #[must_use]
     pub fn finalize_detached_evidence(self) -> OracleBundle {

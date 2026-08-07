@@ -270,6 +270,11 @@ impl StreamMismatch {
     pub fn suppressed_cascade(&self) -> usize {
         self.suppressed_cascade
     }
+
+    pub(crate) fn offset_indices(&mut self, offset: usize) {
+        self.index = self.index.saturating_add(offset);
+        self.actual_index = self.actual_index.saturating_add(offset);
+    }
 }
 
 impl fmt::Display for StreamMismatch {
@@ -526,11 +531,8 @@ fn anchor_class(key: &EventAnchorKey<'_>) -> AnchorClass {
 
 struct Aligner<'a> {
     fixture: &'a str,
-    expected: Vec<&'a Event>,
-    actual_events: Vec<&'a Event>,
+    expected: &'a [NormalizedEvent],
     actual: &'a [ObservedEvent],
-    expected_keys: Vec<EventAlignmentKey<'a>>,
-    actual_keys: Vec<EventAlignmentKey<'a>>,
     tuning: AlignmentTuning,
 }
 
@@ -541,23 +543,10 @@ impl<'a> Aligner<'a> {
         actual: &'a [ObservedEvent],
         tuning: AlignmentTuning,
     ) -> Self {
-        let expected: Vec<&Event> = expected.iter().map(|event| &event.semantic).collect();
-        let actual_events: Vec<&Event> = actual.iter().map(|event| &event.event).collect();
-        let expected_keys = expected
-            .iter()
-            .map(|event| alignment_key(event))
-            .collect::<Vec<_>>();
-        let actual_keys = actual_events
-            .iter()
-            .map(|event| alignment_key(event))
-            .collect::<Vec<_>>();
         Self {
             fixture,
             expected,
-            actual_events,
             actual,
-            expected_keys,
-            actual_keys,
             tuning,
         }
     }
@@ -589,7 +578,7 @@ impl<'a> Aligner<'a> {
                             remaining: self.expected.len() - expected_index,
                         },
                         MismatchSides::ExpectedOnly(Box::new(
-                            self.expected[expected_index].clone(),
+                            self.expected[expected_index].semantic.clone(),
                         )),
                     ));
                     break;
@@ -608,9 +597,11 @@ impl<'a> Aligner<'a> {
                 (true, true) => {}
             }
 
-            if self.expected_keys[expected_index] == self.actual_keys[actual_index] {
+            if alignment_key(&self.expected[expected_index].semantic)
+                == alignment_key(&self.actual[actual_index].event)
+            {
                 if !events_match(
-                    Some(self.expected[expected_index]),
+                    Some(&self.expected[expected_index].semantic),
                     Some(&self.actual[actual_index].event),
                 ) {
                     entries.push(self.both(expected_index, actual_index, Repair::Changed));
@@ -661,7 +652,7 @@ impl<'a> Aligner<'a> {
             actual_index,
             repair,
             MismatchSides::Both {
-                expected: Box::new(self.expected[expected_index].clone()),
+                expected: Box::new(self.expected[expected_index].semantic.clone()),
                 actual: Box::new(self.actual[actual_index].clone()),
             },
         )
@@ -722,8 +713,12 @@ impl<'a> Aligner<'a> {
         let mut agreed = 0;
         for offset in 0..self.tuning.confirmation {
             match (
-                self.expected_keys.get(expected_index + offset),
-                self.actual_keys.get(actual_index + offset),
+                self.expected
+                    .get(expected_index + offset)
+                    .map(|event| alignment_key(&event.semantic)),
+                self.actual
+                    .get(actual_index + offset)
+                    .map(|event| alignment_key(&event.event)),
             ) {
                 (Some(expected), Some(actual)) if expected == actual => agreed += 1,
                 (None, None) => return agreed > 0,
@@ -760,10 +755,16 @@ impl<'a> Aligner<'a> {
         expected_index: usize,
         actual_index: usize,
     ) -> Option<(usize, usize, ResyncAnchor)> {
-        let expected_anchors =
-            collect_anchors(&self.expected, expected_index, self.tuning.anchor_scan);
-        let actual_anchors =
-            collect_anchors(&self.actual_events, actual_index, self.tuning.anchor_scan);
+        let expected_anchors = collect_anchors(
+            self.expected.iter().map(|event| &event.semantic),
+            expected_index,
+            self.tuning.anchor_scan,
+        );
+        let actual_anchors = collect_anchors(
+            self.actual.iter().map(|event| &event.event),
+            actual_index,
+            self.tuning.anchor_scan,
+        );
 
         [AnchorClass::Position, AnchorClass::Shape]
             .into_iter()
@@ -824,14 +825,13 @@ impl<'a> Aligner<'a> {
 /// Collects every structural anchor within `scan` events of `start`, as
 /// offsets from `start`, in ascending offset order.
 fn collect_anchors<'a>(
-    events: &[&'a Event],
+    events: impl ExactSizeIterator<Item = &'a Event>,
     start: usize,
     scan: usize,
 ) -> Vec<(usize, EventAnchorKey<'a>)> {
     let mut anchors = Vec::new();
     let mut previous_line: Option<(&str, u32)> = None;
-    let limit = events.len().min(start.saturating_add(scan));
-    for (offset, event) in events[start..limit].iter().enumerate() {
+    for (offset, event) in events.skip(start).take(scan).enumerate() {
         match event.view().anchor_key() {
             Some(anchor @ EventAnchorKey::Input { .. }) => anchors.push((offset, anchor)),
             Some(anchor @ EventAnchorKey::Line { source, line }) => {

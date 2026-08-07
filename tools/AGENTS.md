@@ -16,6 +16,10 @@ same fixturegen cohort transaction; no PDF generator writes committed fixture
 authority directly.
 
 `tex-command-stream`'s `command-semantic-schema` binary prints the structural JSON Schema generated from the V2 Rust manifest type; the committed corpus schema must match it exactly.
+Its exhaustive document tracer loads generated fixtures serially and releases
+each exact observed prefix during replay. It retains the complete suffix from
+the first mismatch, so bounded realignment and diagnostic context remain exact
+without holding a second clean full-document stream in memory.
 
 The `exec`, `typeset`, and `etex_exec` log generators run the reference in
 INITEX mode (extended for `etex_exec`) and stage the seven printable catcode
