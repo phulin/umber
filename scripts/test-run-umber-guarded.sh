@@ -3,6 +3,7 @@ set -eu
 
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 guard="$root/scripts/run-umber-guarded.py"
+trip_common="$root/scripts/trip-observer-common.sh"
 marker="$root/target/guard-self-test-child"
 mkdir -p "$root/target"
 rm -f "$marker"
@@ -18,6 +19,33 @@ test "$status" -eq 124
 # trip.sh's documented defaults must remain admissible to the shared guard.
 # An explicit command skips both live-reference observer scripts.
 "$root/scripts/trip.sh" true
+
+# A completed publication is sealed, but both it and a partial staging file
+# left by an interrupted publisher must be replaceable without interaction.
+publication_root=$(mktemp -d "${TMPDIR:-/tmp}/umber-trip-publication.XXXXXX")
+publication_source="$publication_root/source"
+publication_destination="$publication_root/artifact"
+printf '%s\n' current >"$publication_source"
+printf '%s\n' previous >"$publication_destination"
+printf '%s\n' interrupted >"${publication_destination}.publishing"
+chmod 0444 "$publication_destination" "${publication_destination}.publishing"
+. "$trip_common"
+trip_publish_artifact "$publication_source" "$publication_destination"
+cmp "$publication_source" "$publication_destination"
+test ! -e "${publication_destination}.publishing"
+test "$(LC_ALL=C ls -ld "$publication_destination" | cut -c 2-10)" = "r--r--r--"
+rm -rf "$publication_root"
+
+# The oracle builder may be silent for longer than the progress ceiling. Its
+# heartbeat must keep the unchanged guard alive until that command completes.
+UMBER_TRIP_TIMEOUT_SECONDS=10 \
+UMBER_TRIP_MAX_RSS_MIB=128 \
+UMBER_TRIP_PROGRESS_TIMEOUT_SECONDS=1 \
+UMBER_TRIP_TERM_GRACE_SECONDS=0.2 \
+UMBER_TRIP_HEARTBEAT_SECONDS=0.2 \
+  "$root/scripts/trip.sh" sh -c \
+  '. "$1"; trip_run_with_progress "oracle build heartbeat" sh -c "sleep 2"' \
+  sh "$trip_common"
 
 set +e
 UMBER_TRIP_TIMEOUT_SECONDS=10 \

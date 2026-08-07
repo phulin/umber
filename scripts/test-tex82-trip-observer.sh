@@ -3,6 +3,7 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
+. scripts/trip-observer-common.sh
 
 trip_root="${repo_root}/third_party/trip"
 source_root="${repo_root}/third_party/texlive-source"
@@ -33,7 +34,8 @@ done
   exit 1
 }
 
-python3 scripts/provision.py oracle tex82 --offline >/dev/null
+trip_run_with_progress 'TeX82 oracle build/provision still running' \
+  python3 scripts/provision.py oracle tex82 --offline
 
 work_root="$(mktemp -d "${TMPDIR:-/tmp}/umber-tex82-trip-observer.XXXXXX")"
 trap 'rm -rf "$work_root"' EXIT
@@ -146,14 +148,6 @@ project_root_session() {
   } >"$output"
 }
 
-publish_artifact() {
-  local source="$1" destination="$2" staged
-  staged="$(mktemp "${destination}.XXXXXX")"
-  cp "$source" "$staged"
-  chmod 0444 "$staged"
-  mv "$staged" "$destination"
-}
-
 validate_and_publish_geometry() {
   local phase artifact_root event_count expected_events
   for phase in initex trip; do
@@ -187,11 +181,11 @@ validate_and_publish_geometry() {
 
   artifact_root="${target_dir}/trip-oracles/trip"
   mkdir -p "$artifact_root"
-  publish_artifact "$work_root/geometry-a/geometry-initex-projected.jsonl" \
+  trip_publish_artifact "$work_root/geometry-a/geometry-initex-projected.jsonl" \
     "$artifact_root/initex-geometry.jsonl"
-  publish_artifact "$work_root/geometry-a/geometry-trip-projected.jsonl" \
+  trip_publish_artifact "$work_root/geometry-a/geometry-trip-projected.jsonl" \
     "$artifact_root/format-loaded-geometry.jsonl"
-  publish_artifact "${target_dir}/tex82-oracle/build-record.txt" \
+  trip_publish_artifact "${target_dir}/tex82-oracle/build-record.txt" \
     "$artifact_root/oracle-build-record.txt"
 }
 
@@ -261,12 +255,20 @@ validate_and_publish_geometry
 
 artifact_root="${target_dir}/trip-oracles/trip"
 mkdir -p "$artifact_root"
-cp "$work_root/full-initex-a/root-session.jsonl" "$artifact_root/initex-command.jsonl"
-cp "$work_root/profile-a/profile-trip-command.jsonl" "$artifact_root/format-loaded-command.jsonl"
-cp "$work_root/clean/clean-initex-terminal.txt" "$artifact_root/initex-terminal.txt"
-cp "$work_root/clean/clean-initex.log" "$artifact_root/initex.log"
-cp "$work_root/clean/clean-trip-terminal.txt" "$artifact_root/format-loaded-terminal.txt"
-cp "$work_root/clean/trip.log" "$artifact_root/format-loaded.log"
-cp "$work_root/clean/trip.dvi" "$artifact_root/format-loaded.dvi"
-cp "${target_dir}/tex82-oracle/build-record.txt" "$artifact_root/oracle-build-record.txt"
+trip_publish_artifact "$work_root/full-initex-a/root-session.jsonl" \
+  "$artifact_root/initex-command.jsonl"
+trip_publish_artifact "$work_root/profile-a/profile-trip-command.jsonl" \
+  "$artifact_root/format-loaded-command.jsonl"
+trip_publish_artifact "$work_root/clean/clean-initex-terminal.txt" \
+  "$artifact_root/initex-terminal.txt"
+trip_publish_artifact "$work_root/clean/clean-initex.log" \
+  "$artifact_root/initex.log"
+trip_publish_artifact "$work_root/clean/clean-trip-terminal.txt" \
+  "$artifact_root/format-loaded-terminal.txt"
+trip_publish_artifact "$work_root/clean/trip.log" \
+  "$artifact_root/format-loaded.log"
+trip_publish_artifact "$work_root/clean/trip.dvi" \
+  "$artifact_root/format-loaded.dvi"
+trip_publish_artifact "${target_dir}/tex82-oracle/build-record.txt" \
+  "$artifact_root/oracle-build-record.txt"
 printf 'TeX82 bounded TRIP observer passed\n'
