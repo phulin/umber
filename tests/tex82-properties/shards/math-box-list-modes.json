@@ -891,6 +891,10 @@
           "test": "vsplit_void_nonvbox_pruning_marks_and_packaging_matrix"
         },
         {
+          "path": "crates/tex-exec/src/main_control/tests/material_property_matrices.rs",
+          "test": "vsplit_breakpoint_mark_scope_and_complete_ownership_matrix"
+        },
+        {
           "path": "crates/tex-exec/src/main_control/tests.rs",
           "test": "vsplit_kernel_separates_result_remainder_and_split_marks"
         },
@@ -954,6 +958,14 @@
           "test": "text_material_character_ligkern_space_language_and_vertical_replay_matrix"
         },
         {
+          "path": "crates/tex-exec/src/main_control/tests/material_property_matrices.rs",
+          "test": "text_boundary_font_glue_scaling_and_cache_matrix"
+        },
+        {
+          "path": "crates/tex-exec/src/main_control/tests/material_property_matrices.rs",
+          "test": "text_outer_vertical_math_illegal_meaning_and_trigger_provenance_matrix"
+        },
+        {
           "path": "crates/tex-exec/src/main_control/tests.rs",
           "test": "text_material_preserves_ligature_space_factor_and_font_glue"
         },
@@ -1010,6 +1022,14 @@
         {
           "path": "crates/tex-exec/src/main_control/tests/material_property_matrices.rs",
           "test": "direct_material_modes_operands_page_boundary_and_group_clear_matrix"
+        },
+        {
+          "path": "crates/tex-exec/src/main_control/tests/material_property_matrices.rs",
+          "test": "direct_material_full_mode_named_glue_and_math_routing_matrix"
+        },
+        {
+          "path": "crates/tex-exec/src/main_control/tests/material_property_matrices.rs",
+          "test": "direct_material_math_recovery_and_failed_keyword_token_ownership_matrix"
         },
         {
           "path": "crates/tex-exec/src/main_control/tests.rs",
