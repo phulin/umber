@@ -68,6 +68,10 @@ Reference tools:
   workspace refexec tool and copies pinned CM TFMs from
   crates/tex-fonts/tests/fixtures/cm plus area-local support files.
 
+  tex_exec is validation-only. Its expected.ref files are preserved historical
+  observations without a reproducible pinned capture contract, so the area and
+  case commands run their active consumers but never rewrite those files.
+
   End-to-end regeneration writes gitignored local oracles and requires the
   fetched external inputs. Story and Gentle use fixturegen's deterministic
   reference staging and publication kernel; TRIP
@@ -547,6 +551,12 @@ regen_e2e_area() {
 
 regen_text_area() {
   local area="$1"
+  if [[ "$area" == tex_exec ]]; then
+    printf '%s\n' \
+      'tex_exec expected.ref files are preserved historical observations; validating without rewriting' >&2
+    validate_text_area "$area"
+    return
+  fi
   build_fixturegen_once
   if fixturegen_needs_umber "$area"; then
     build_umber_once
@@ -1496,6 +1506,12 @@ regen_case() {
     die '--case is not meaningful for the pdfTeX 1.40.29 oracle build'
   elif is_text_area "$area"; then
     printf 'Regenerating text area %s for requested case %s\n' "$area" "$case" >&2
+    if [[ "$area" == tex_exec ]]; then
+      printf '%s\n' \
+        'tex_exec expected.ref files are preserved historical observations; validating without rewriting' >&2
+      validate_text_area "$area"
+      return
+    fi
     build_fixturegen_once
     if fixturegen_needs_umber "$area"; then
       build_umber_once
@@ -1711,8 +1727,11 @@ case "$mode" in
     ;;
 esac
 
-# `--validate-only` promises to leave the working tree alone, so it is the one
-# mode that must not format; every other mode has just written fixtures.
-if [[ "$mode" != oracle || "$oracle_validate_only" -eq 0 ]]; then
+# Oracle `--validate-only` and the historical tex_exec validation branches
+# promise to leave the working tree alone. Every other mode may have written
+# fixtures and restores the repository-wide formatting fixed point.
+if [[ ( "$mode" != oracle || "$oracle_validate_only" -eq 0 ) &&
+      !( "$mode" == area && "$area_arg" == tex_exec ) &&
+      !( "$mode" == case && "$case_area" == tex_exec ) ]]; then
   format_regenerated_output
 fi

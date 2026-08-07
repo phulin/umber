@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
 use anyhow::{Context, Result, bail};
-use fixturegen::reference::{RefTex, RunOpts, RunOutput, generate_reference_fixture};
+use fixturegen::reference::{RefTex, RunOpts, generate_reference_fixture};
 use tempfile::TempDir;
 use test_support::{corpus_cases, corpus_root, fixture_path, normalize};
 use tex_command::{
@@ -31,7 +31,6 @@ const TEXT_AREAS: &[&str] = &[
     "exec",
     "etex_exec",
     "typeset",
-    "tex_exec",
     "tex_exec_io",
 ];
 
@@ -95,7 +94,7 @@ fn run() -> Result<()> {
 fn print_usage() {
     eprintln!(
         "usage: fixturegen --area AREA | --case AREA/CASE | --case AREA CASE | --cohort-transaction (--plan|--apply) PLAN.json | --sync-corpus [--manifest PATH] [--dest PATH] [--offline] | --reference-dvi DOCUMENT OUTPUT | --check-pdf-raster\n\
-         areas: lexer expand lexer_dynamic exec etex_exec typeset tex_exec tex_exec_io pdf fonts"
+         areas: lexer expand lexer_dynamic exec etex_exec typeset tex_exec_io pdf fonts"
     );
 }
 
@@ -182,7 +181,6 @@ fn regenerate_area(area: &str) -> Result<()> {
         "typeset" => regenerate_cases(area, |case| {
             regenerate_reference_terminal_case(area, case, true)
         }),
-        "tex_exec" => regenerate_cases(area, regenerate_tex_exec_case),
         "tex_exec_io" => regenerate_cases(area, regenerate_tex_exec_io_case),
         "pdf" => pdf::regenerate_area(),
         "fonts" => fonts::run(&repo_root()),
@@ -218,7 +216,6 @@ fn regenerate_case(area: &str, case: &str) -> Result<()> {
         "exec" => regenerate_reference_terminal_case(area, case, false),
         "etex_exec" => regenerate_etex_reference_log_case(case),
         "typeset" => regenerate_reference_terminal_case(area, case, true),
-        "tex_exec" => regenerate_tex_exec_case(case),
         "tex_exec_io" => regenerate_tex_exec_io_case(case),
         _ => unreachable!("known area already checked"),
     }
@@ -345,96 +342,6 @@ fn replace_bytes(input: &[u8], needle: &[u8], replacement: &[u8]) -> Vec<u8> {
     output
 }
 
-fn regenerate_tex_exec_case(case: &str) -> Result<()> {
-    let mut opts = RunOpts::default();
-    let generated_images = if case == "pdf_ximage_enquiries" {
-        Some(ximage_enquiry_inputs()?)
-    } else {
-        None
-    };
-    if let Some(inputs) = &generated_images {
-        opts.extra_inputs.extend(inputs.paths.iter().cloned());
-    }
-    if matches!(
-        case,
-        "pdf_output_policy"
-            | "pdf_image_config"
-            | "pdf_metadata_config"
-            | "pdf_font_config"
-            | "pdf_microtype_effects"
-            | "pdf_form_state"
-            | "pdf_form_diagnostics"
-            | "pdf_form_traversal_diagnostics"
-            | "pdf_compatibility_controls"
-            | "pdf_move_chars_warning"
-            | "pdf_ignored_dimen_effects"
-            | "pdf_navigation_dest_scan"
-            | "pdf_navigation_dest_lifecycle"
-            | "pdf_navigation_outline_scan"
-            | "pdf_navigation_outline_tree"
-            | "pdf_navigation_thread_scan"
-            | "pdf_navigation_thread_lifecycle"
-            | "pdf_navigation_thread_graph"
-            | "pdf_ximage_enquiries"
-    ) {
-        opts.ini = true;
-    }
-    if case == "pdf_compatibility_controls" {
-        opts.etex = true;
-    }
-    let output = RefTex::locate()?.run(&source_path("tex_exec", case), &opts)?;
-    write_text_fixture("tex_exec", case, "ref", &format_micro_reference(&output))
-}
-
-struct GeneratedXImageInputs {
-    _directory: TempDir,
-    paths: Vec<PathBuf>,
-}
-
-fn ximage_enquiry_inputs() -> Result<GeneratedXImageInputs> {
-    const PNG: &[u8] = &[
-        0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44,
-        0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x04, 0x00, 0x00, 0x00, 0xb5,
-        0x1c, 0x0c, 0x02, 0x00, 0x00, 0x00, 0x0b, 0x49, 0x44, 0x41, 0x54, 0x78, 0xda, 0x63, 0x64,
-        0xf8, 0x0f, 0x00, 0x01, 0x05, 0x01, 0x01, 0x27, 0x18, 0xe3, 0x66, 0x00, 0x00, 0x00, 0x00,
-        0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
-    ];
-    const JPEG: &[u8] = &[
-        0xff, 0xd8, 0xff, 0xc0, 0x00, 0x11, 0x0c, 0x00, 0x01, 0x00, 0x01, 0x03, 0x01, 0x11, 0x00,
-        0x02, 0x11, 0x00, 0x03, 0x11, 0x00, 0xff, 0xd9,
-    ];
-
-    let directory = TempDir::new().context("create ximage enquiry inputs")?;
-    let png = directory.path().join("depth8.png");
-    let jpeg = directory.path().join("depth12.jpg");
-    let pdf_path = directory.path().join("three-pages.pdf");
-    fs::write(&png, PNG).context("write generated PNG enquiry input")?;
-    fs::write(&jpeg, JPEG).context("write generated JPEG enquiry input")?;
-
-    let catalog = pdf_writer::Ref::new(1);
-    let pages = pdf_writer::Ref::new(2);
-    let page_ids = [
-        pdf_writer::Ref::new(3),
-        pdf_writer::Ref::new(4),
-        pdf_writer::Ref::new(5),
-    ];
-    let mut pdf = pdf_writer::Pdf::new();
-    pdf.catalog(catalog).pages(pages);
-    pdf.pages(pages).kids(page_ids).count(3);
-    for page in page_ids {
-        pdf.page(page)
-            .parent(pages)
-            .media_box(pdf_writer::Rect::new(0.0, 0.0, 10.0, 20.0))
-            .resources();
-    }
-    fs::write(&pdf_path, pdf.finish()).context("write typed three-page PDF enquiry input")?;
-
-    Ok(GeneratedXImageInputs {
-        _directory: directory,
-        paths: vec![png, jpeg, pdf_path],
-    })
-}
-
 fn regenerate_tex_exec_io_case(case: &str) -> Result<()> {
     if case == "closeout_stream_selectors" {
         eprintln!(
@@ -476,36 +383,6 @@ fn regenerate_tex_exec_io_case(case: &str) -> Result<()> {
     }
 
     Ok(())
-}
-
-fn format_micro_reference(output: &RunOutput) -> String {
-    format!(
-        "success: {}\nstdout:\n{}log:\n{}",
-        output.success,
-        normalize_micro_reference_text(&output.stdout),
-        normalize_micro_reference_text(&output.log)
-    )
-}
-
-fn normalize_micro_reference_text(text: &str) -> String {
-    let mut lines = Vec::new();
-    for line in normalize::exec_log(text).lines() {
-        let line = line.split_once(" [").map_or(line, |(message, _)| message);
-        if line.starts_with("Output written on ")
-            || line.starts_with("pdftex/")
-            || line.starts_with("lic/")
-            || line.starts_with("</")
-        {
-            continue;
-        }
-        lines.push(line.to_owned());
-    }
-
-    if lines.is_empty() {
-        String::new()
-    } else {
-        format!("{}\n", lines.join("\n"))
-    }
 }
 
 #[derive(Clone, Copy)]
@@ -652,6 +529,19 @@ fn strip_case_suffixes(case: &str) -> String {
         name = name.strip_suffix(suffix).unwrap_or(name);
     }
     name.to_owned()
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn historical_tex_exec_observations_have_no_fixturegen_mutator() {
+        let area = super::regenerate_area("tex_exec").expect_err("area must be validation-only");
+        assert!(area.to_string().contains("unknown fixturegen area"));
+
+        let case = super::regenerate_case("tex_exec", "after")
+            .expect_err("case must be validation-only");
+        assert!(case.to_string().contains("unknown fixturegen area"));
+    }
 }
 
 fn lex_catcode_mutation_fixture() -> String {

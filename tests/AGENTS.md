@@ -317,15 +317,19 @@ test tier does not depend on a live TeX installation or a generated format.
 
 `tests/corpus/tex_exec` contains small reference-observation sources and
 normalized `expected.ref` outputs. The active TeX82 cohort is executed by
-`crates/tex-exec/tests/fixture_parity.rs`, which compares an explicit ordered
-terminal/log projection for every case with both the reference bytes and
-canonical `MainControl` output. The `pdf_output_policy`, `pdf_image_config`,
-`pdf_metadata_config`, `pdf_font_config`, and `pdf_microtype_effects` cases run
-pinned pdfTeX in INITEX mode so PDF parameter defaults, grouping, first-write
+`crates/tex-exec/tests/fixture_parity.rs`, which compares exact ordered
+normalized terminal/log lines for every case with both the preserved reference
+bytes and bounded canonical `MainControl` output, and requires clean `\end`
+completion. These files predate a reproducible pinned capture contract, so
+`scripts/regen-fixtures.sh --area tex_exec` validates the active consumers but
+never rewrites `expected.ref`. New oracle-backed executor coverage belongs in
+the command-semantic or pdfTeX-extension tiers. The `pdf_output_policy`,
+`pdf_image_config`, `pdf_metadata_config`, `pdf_font_config`, and
+`pdf_microtype_effects` observations were captured in INITEX mode so PDF parameter defaults, grouping, first-write
 recovery, font diagnostics, and effective microtype nodes do not inherit
 format-file assignments; their fixtures anchor the corresponding Umber policy
 tests. The seven `pdf_navigation_*` cases pin destination, outline, and
-article-thread scanner and lifecycle observations in that same INITEX mode.
+article-thread scanner and lifecycle observations in INITEX mode as well.
 They and `pdf_ximage_enquiries` remain retained-but-blocked evidence until the
 pdfTeX extension property catalogue and runner tracked by `umber2-alfh.29` can
 consume them. The enquiry case uses deterministic fixturegen-owned PNG, JPEG,
@@ -467,6 +471,9 @@ regeneration builds and runs `tools/refexec`, copies the pinned `cmr10`,
 `math_preamble.inc`, and validates the affected cargo test after rewriting.
 It writes raw reference DVI bytes and uses only the existing DVI preamble
 comment normalization to decide whether an existing fixture is unchanged.
+`tex_exec` is the exception: its preserved `expected.ref` files have no pinned
+generator, so its area and case commands are validation-only and require no
+live reference executable.
 
 `scripts/regen-fixtures.sh --area fonts` runs the live `tftopl` font
 cross-check. It requires `tftopl` on `PATH` or
