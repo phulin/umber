@@ -1773,10 +1773,12 @@ impl MainControl {
         // failure. Preserve that canonical ledger mutation; resource
         // suspensions and all other failed operations retain atomic rollback.
         if matches!(error, ExecError::PdfXFormVoidBox) {
+            let _ = self.admit_observed_receipt(stores, OperationTermination::Failed);
             self.commit_step(snapshot);
             return Err(error);
         }
         if !snapshot.can_rollback(stores) {
+            let _ = self.admit_observed_receipt(stores, OperationTermination::Failed);
             self.commit_step(snapshot);
             return Err(error);
         }
@@ -2478,12 +2480,9 @@ impl MainControl {
                 },
                 OperationTermination::Fatal,
             );
-            self.close_observed_receipt(stores, termination);
-        }
-        if applied.is_ok()
-            && let Some(error) = self.operation_evidence_limit_error()
-        {
-            applied = Err(error);
+            if let Some(error) = self.admit_observed_receipt(stores, termination) {
+                applied = Err(error);
+            }
         }
         match applied {
             Ok(step) => {
@@ -2496,6 +2495,10 @@ impl MainControl {
             }
             Err(error) if matches!(transaction, OperationTransaction::Alignment) => {
                 if error.as_fatal().is_some() || !snapshot.can_rollback(stores) {
+                    let termination = error
+                        .as_fatal()
+                        .map_or(OperationTermination::Failed, OperationTermination::Fatal);
+                    let _ = self.admit_observed_receipt(stores, termination);
                     self.commit_step(snapshot);
                 } else {
                     self.rollback_step(snapshot, stores);
@@ -2518,10 +2521,12 @@ impl MainControl {
                         CommandObservation::Diagnostic(fatal.record()),
                         CommandObservation::Effect(engine_termination_effect()),
                     ]);
-                    self.close_observed_receipt(stores, OperationTermination::Fatal(fatal));
+                    let evidence_error =
+                        self.admit_observed_receipt(stores, OperationTermination::Fatal(fatal));
                     self.commit_step(snapshot);
                     self.finish_operation_telemetry(false);
-                    return Ok(StepResult::Progress(self.succumb(fatal)));
+                    let terminal = self.succumb(fatal);
+                    return evidence_error.map_or(Ok(StepResult::Progress(terminal)), Err);
                 }
                 let rolled_back =
                     !matches!(error, ExecError::PdfXFormVoidBox) && snapshot.can_rollback(stores);
@@ -2570,12 +2575,18 @@ impl MainControl {
             .or_else(|| self.page_output_observations.limit_error())
     }
 
-    fn close_observed_receipt(&mut self, stores: &Universe, termination: OperationTermination) {
+    /// Closes every live receipt category and performs the append-bound check
+    /// that must precede any operation commit.
+    fn admit_observed_receipt(
+        &mut self,
+        stores: &Universe,
+        termination: OperationTermination,
+    ) -> Option<ExecError> {
         let (Some(start), Some(pending)) = (
             self.operation_receipt_start,
             self.operation_observations.as_mut(),
         ) else {
-            return;
+            return self.operation_evidence_limit_error();
         };
         let live_effects = stores.world().effect_records();
         let effect_base = stores
@@ -2605,6 +2616,7 @@ impl MainControl {
             );
         }
         pending.receipt.set_termination(termination);
+        self.operation_evidence_limit_error()
     }
 
     /// Attempts one atomic main-control operation.

@@ -271,11 +271,36 @@ fn receipt_categories_are_append_bounded_consumed_and_closed_before_commit() {
         .0;
     assert!(
         operation
-            .find("close_observed_receipt")
-            .expect("receipt close")
+            .find("admit_observed_receipt")
+            .expect("receipt admission")
             < operation.find("commit_step").expect("operation commit"),
         "world/artifact/geometry/termination receipt closes before commit"
     );
+    for commit in operation.match_indices("commit_step(snapshot)") {
+        let preceding_admission = operation[..commit.0]
+            .rfind("admit_observed_receipt")
+            .expect("every direct operation commit has a preceding receipt admission");
+        assert!(
+            commit.0 - preceding_admission < 800,
+            "operation commit is detached from its receipt admission"
+        );
+    }
+    let failed = control
+        .split_once("fn finish_failed_step(")
+        .expect("failed-operation authority")
+        .1
+        .split_once("pub fn pending_resource_site")
+        .expect("failed-operation authority boundary")
+        .0;
+    for commit in failed.match_indices("commit_step(snapshot)") {
+        let preceding_admission = failed[..commit.0]
+            .rfind("admit_observed_receipt")
+            .expect("every irreversible failure commit has a receipt admission");
+        assert!(
+            commit.0 - preceding_admission < 300,
+            "failure commit is detached from its receipt admission"
+        );
+    }
     assert!(control.contains("pending.consume_into(publish.then_some(observer))"));
 }
 
