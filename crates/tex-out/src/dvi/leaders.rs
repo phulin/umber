@@ -1,11 +1,8 @@
 use tex_arith::Scaled;
 
-use crate::{BoxNode, GlueKind, LeaderPayload, PageEffect};
+use crate::{BoxNode, GlueKind, LeaderPayload};
 
-use super::{
-    DviBodyCompiler, DviError,
-    glue::{add_scaled, sub_scaled},
-};
+use super::{DviBodyCompiler, DviError, glue::add_scaled};
 use crate::geometry::{LEADER_ROUNDING_COMPENSATION, LeaderMode, leader_start};
 
 // TeX82 map: `Move right or output leaders`, `Output leaders in an hlist`,
@@ -17,9 +14,8 @@ use crate::geometry::{LEADER_ROUNDING_COMPENSATION, LeaderMode, leader_start};
 // order.  As in traversal.rs, Umber's positive-up hlist shift accounts for
 // the subtraction used for horizontal leader boxes; vlist shift adds right.
 
-pub(super) struct HLeaderContext<'a> {
-    pub(super) effects: &'a [PageEffect],
-    pub(super) this_box: &'a BoxNode,
+pub(super) struct HLeaderContext<'f, 'a> {
+    pub(super) this_box: &'f BoxNode,
     pub(super) kind: GlueKind,
     pub(super) leader: &'a Option<LeaderPayload>,
     pub(super) rule_wd: Scaled,
@@ -27,9 +23,8 @@ pub(super) struct HLeaderContext<'a> {
     pub(super) base_line: Scaled,
 }
 
-pub(super) struct VLeaderContext<'a> {
-    pub(super) effects: &'a [PageEffect],
-    pub(super) this_box: &'a BoxNode,
+pub(super) struct VLeaderContext<'f, 'a> {
+    pub(super) this_box: &'f BoxNode,
     pub(super) kind: GlueKind,
     pub(super) leader: &'a Option<LeaderPayload>,
     pub(super) rule_ht: Scaled,
@@ -37,18 +32,36 @@ pub(super) struct VLeaderContext<'a> {
     pub(super) top_edge: Scaled,
 }
 
+#[derive(Clone, Copy)]
+pub(super) struct HLeaderRepeat<'a> {
+    pub(super) leader: &'a LeaderPayload,
+    pub(super) box_node: &'a BoxNode,
+    pub(super) edge: Scaled,
+    pub(super) extra: Scaled,
+    pub(super) base_line: Scaled,
+}
+
+#[derive(Clone, Copy)]
+pub(super) struct VLeaderRepeat<'a> {
+    pub(super) leader: &'a LeaderPayload,
+    pub(super) box_node: &'a BoxNode,
+    pub(super) edge: Scaled,
+    pub(super) extra: Scaled,
+    pub(super) left_edge: Scaled,
+}
+
 impl DviBodyCompiler {
-    pub(super) fn move_right_or_output_leaders(
+    pub(super) fn move_right_or_output_leaders<'a>(
         &mut self,
-        context: HLeaderContext<'_>,
-    ) -> Result<(), DviError> {
+        context: HLeaderContext<'_, 'a>,
+    ) -> Result<Option<HLeaderRepeat<'a>>, DviError> {
         let Some(leader_kind) = LeaderMode::from_glue(context.kind) else {
             self.cur_h = add_scaled(self.cur_h, context.rule_wd)?;
-            return Ok(());
+            return Ok(None);
         };
         let Some(leader) = context.leader.as_ref() else {
             self.cur_h = add_scaled(self.cur_h, context.rule_wd)?;
-            return Ok(());
+            return Ok(None);
         };
 
         match leader {
@@ -57,6 +70,7 @@ impl DviBodyCompiler {
                 let rule_dp = depth.unwrap_or(context.this_box.depth);
                 self.output_rule_in_hlist(rule_ht, rule_dp, context.rule_wd, context.base_line)?;
                 self.cur_h = add_scaled(self.cur_h, context.rule_wd)?;
+                Ok(None)
             }
             LeaderPayload::HList(box_node) | LeaderPayload::VList(box_node) => {
                 let leader_wd = box_node.width;
@@ -71,42 +85,39 @@ impl DviBodyCompiler {
                         leader_wd,
                     )?;
                     self.cur_h = start;
-                    while add_scaled(self.cur_h, leader_wd)?.raw() <= edge.raw() {
-                        self.output_leader_box_in_hlist(
-                            context.effects,
-                            leader,
-                            box_node,
-                            leader_wd,
-                            lx,
-                            context.base_line,
-                        )?;
-                    }
-                    self.cur_h = sub_scaled(edge, LEADER_ROUNDING_COMPENSATION)?;
+                    Ok(Some(HLeaderRepeat {
+                        leader,
+                        box_node,
+                        edge,
+                        extra: lx,
+                        base_line: context.base_line,
+                    }))
                 } else {
                     self.cur_h = add_scaled(self.cur_h, context.rule_wd)?;
+                    Ok(None)
                 }
             }
         }
-        Ok(())
     }
 
-    pub(super) fn move_down_or_output_leaders(
+    pub(super) fn move_down_or_output_leaders<'a>(
         &mut self,
-        context: VLeaderContext<'_>,
-    ) -> Result<(), DviError> {
+        context: VLeaderContext<'_, 'a>,
+    ) -> Result<Option<VLeaderRepeat<'a>>, DviError> {
         let Some(leader_kind) = LeaderMode::from_glue(context.kind) else {
             self.cur_v = add_scaled(self.cur_v, context.rule_ht)?;
-            return Ok(());
+            return Ok(None);
         };
         let Some(leader) = context.leader.as_ref() else {
             self.cur_v = add_scaled(self.cur_v, context.rule_ht)?;
-            return Ok(());
+            return Ok(None);
         };
 
         match leader {
             LeaderPayload::Rule { width, .. } => {
                 let rule_wd = width.unwrap_or(context.this_box.width);
                 self.output_rule_in_vlist(context.rule_ht, rule_wd)?;
+                Ok(None)
             }
             LeaderPayload::HList(box_node) | LeaderPayload::VList(box_node) => {
                 let leader_ht = add_scaled(box_node.height, box_node.depth)?;
@@ -121,83 +132,19 @@ impl DviBodyCompiler {
                         leader_ht,
                     )?;
                     self.cur_v = start;
-                    while add_scaled(self.cur_v, leader_ht)?.raw() <= edge.raw() {
-                        self.output_leader_box_in_vlist(
-                            context.effects,
-                            leader,
-                            box_node,
-                            leader_ht,
-                            lx,
-                            context.left_edge,
-                        )?;
-                    }
-                    self.cur_v = sub_scaled(edge, LEADER_ROUNDING_COMPENSATION)?;
+                    Ok(Some(VLeaderRepeat {
+                        leader,
+                        box_node,
+                        edge,
+                        extra: lx,
+                        left_edge: context.left_edge,
+                    }))
                 } else {
                     self.cur_v = add_scaled(self.cur_v, context.rule_ht)?;
+                    Ok(None)
                 }
             }
         }
-        Ok(())
-    }
-
-    fn output_leader_box_in_hlist(
-        &mut self,
-        effects: &[PageEffect],
-        leader: &LeaderPayload,
-        box_node: &BoxNode,
-        leader_wd: Scaled,
-        lx: Scaled,
-        base_line: Scaled,
-    ) -> Result<(), DviError> {
-        self.cur_v = add_scaled(base_line, box_node.shift)?;
-        self.synch_v()?;
-        let save_v = self.dvi_v;
-        self.synch_h()?;
-        let save_h = self.dvi_h;
-        match leader {
-            LeaderPayload::HList(_) => {
-                self.direct_owned_box_at_current(effects, box_node, false)?
-            }
-            LeaderPayload::VList(_) => self.direct_owned_box_at_current(effects, box_node, true)?,
-            LeaderPayload::Rule { .. } => unreachable!("caller handles rule leaders"),
-        }
-        self.dvi_v = save_v;
-        self.dvi_h = save_h;
-        self.cur_v = base_line;
-        self.cur_h = add_scaled(add_scaled(save_h, leader_wd)?, lx)?;
-        Ok(())
-    }
-
-    fn output_leader_box_in_vlist(
-        &mut self,
-        effects: &[PageEffect],
-        leader: &LeaderPayload,
-        box_node: &BoxNode,
-        leader_ht: Scaled,
-        lx: Scaled,
-        left_edge: Scaled,
-    ) -> Result<(), DviError> {
-        self.cur_h = add_scaled(left_edge, box_node.shift)?;
-        self.synch_h()?;
-        let save_h = self.dvi_h;
-        self.cur_v = add_scaled(self.cur_v, box_node.height)?;
-        self.synch_v()?;
-        let save_v = self.dvi_v;
-        match leader {
-            LeaderPayload::HList(_) => {
-                self.direct_owned_box_at_current(effects, box_node, false)?
-            }
-            LeaderPayload::VList(_) => self.direct_owned_box_at_current(effects, box_node, true)?,
-            LeaderPayload::Rule { .. } => unreachable!("caller handles rule leaders"),
-        }
-        self.dvi_v = save_v;
-        self.dvi_h = save_h;
-        self.cur_h = left_edge;
-        self.cur_v = add_scaled(
-            sub_scaled(save_v, box_node.height)?,
-            add_scaled(leader_ht, lx)?,
-        )?;
-        Ok(())
     }
 }
 

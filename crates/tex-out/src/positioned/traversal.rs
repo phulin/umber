@@ -118,6 +118,33 @@ struct PositionedFrame<'a> {
     continuation: PositionedContinuation,
 }
 
+enum PositionedWorkFrame<'a> {
+    Box(PositionedFrame<'a>),
+    Leader(PositionedLeaderFrame<'a>),
+}
+
+#[derive(Clone, Copy)]
+struct PositionedLeaderFrame<'a> {
+    leader: &'a LeaderPayload,
+    node: &'a BoxNode,
+    depth: usize,
+    axis: PositionedLeaderAxis,
+}
+
+#[derive(Clone, Copy)]
+enum PositionedLeaderAxis {
+    Horizontal {
+        edge: Scaled,
+        extra: Scaled,
+        baseline: Scaled,
+    },
+    Vertical {
+        edge: Scaled,
+        extra: Scaled,
+        left_edge: Scaled,
+    },
+}
+
 enum PositionedAxis {
     Horizontal {
         base_line: Scaled,
@@ -146,6 +173,18 @@ enum PositionedContinuation {
         baseline: Scaled,
         left_edge: Scaled,
         depth: Scaled,
+    },
+    HorizontalLeader {
+        start_h: Scaled,
+        save_v: Scaled,
+        width: Scaled,
+        extra: Scaled,
+    },
+    VerticalLeader {
+        start_v: Scaled,
+        save_h: Scaled,
+        size: Scaled,
+        extra: Scaled,
     },
 }
 
@@ -196,7 +235,69 @@ impl Lowerer<'_> {
             depth,
             PositionedContinuation::Root,
         )?;
-        while let Some(mut frame) = frames.pop() {
+        while let Some(work) = frames.pop() {
+            let PositionedWorkFrame::Box(mut frame) = work else {
+                let PositionedWorkFrame::Leader(repeat) = work else {
+                    unreachable!()
+                };
+                match repeat.axis {
+                    PositionedLeaderAxis::Horizontal {
+                        edge,
+                        extra,
+                        baseline,
+                    } => {
+                        if add(self.cur_h, repeat.node.width)?.raw() > edge.raw() {
+                            self.cur_h = sub(edge, LEADER_ROUNDING_COMPENSATION)?;
+                            continue;
+                        }
+                        let start_h = self.cur_h;
+                        let save_v = self.cur_v;
+                        self.cur_v = add(baseline, repeat.node.shift)?;
+                        frames.push(PositionedWorkFrame::Leader(repeat));
+                        self.enter_frame(
+                            &mut frames,
+                            repeat.node,
+                            matches!(repeat.leader, LeaderPayload::VList(_)),
+                            repeat.depth,
+                            PositionedContinuation::HorizontalLeader {
+                                start_h,
+                                save_v,
+                                width: repeat.node.width,
+                                extra,
+                            },
+                        )?;
+                    }
+                    PositionedLeaderAxis::Vertical {
+                        edge,
+                        extra,
+                        left_edge,
+                    } => {
+                        let size = add(repeat.node.height, repeat.node.depth)?;
+                        if add(self.cur_v, size)?.raw() > edge.raw() {
+                            self.cur_v = sub(edge, LEADER_ROUNDING_COMPENSATION)?;
+                            continue;
+                        }
+                        let start_v = self.cur_v;
+                        let save_h = self.cur_h;
+                        self.cur_h = add(left_edge, repeat.node.shift)?;
+                        self.cur_v = add(start_v, repeat.node.height)?;
+                        frames.push(PositionedWorkFrame::Leader(repeat));
+                        self.enter_frame(
+                            &mut frames,
+                            repeat.node,
+                            matches!(repeat.leader, LeaderPayload::VList(_)),
+                            repeat.depth,
+                            PositionedContinuation::VerticalLeader {
+                                start_v,
+                                save_h,
+                                size,
+                                extra,
+                            },
+                        )?;
+                    }
+                }
+                continue;
+            };
             if frame.index == frame.node.children.len() {
                 if let PositionedAxis::Horizontal { run, .. } = &mut frame.axis {
                     run.flush(self)?;
@@ -210,6 +311,7 @@ impl Lowerer<'_> {
             frame.index += 1;
             let child = &frame.node.children[index];
             let mut child_frame = None;
+            let mut leader_frame = None;
             match &mut frame.axis {
                 PositionedAxis::Horizontal {
                     base_line,
@@ -302,7 +404,7 @@ impl Lowerer<'_> {
                                 self.cur_h = add(self.cur_h, width)?;
                             } else {
                                 run.flush(self)?;
-                                self.hleaders(
+                                leader_frame = self.plan_hleaders(
                                     frame.node,
                                     *kind,
                                     leader,
@@ -400,7 +502,7 @@ impl Lowerer<'_> {
                         }
                         PageNode::Glue { spec, kind, leader } => {
                             let height = glue_width(frame.node, *spec, cur_glue, cur_g)?;
-                            self.vleaders(
+                            leader_frame = self.plan_vleaders(
                                 frame.node,
                                 *kind,
                                 leader,
@@ -434,9 +536,11 @@ impl Lowerer<'_> {
                 }
             }
             let child_depth = frame.depth + 1;
-            frames.push(frame);
+            frames.push(PositionedWorkFrame::Box(frame));
             if let Some((node, vertical, continuation)) = child_frame {
                 self.enter_frame(&mut frames, node, vertical, child_depth, continuation)?;
+            } else if let Some(leader) = leader_frame {
+                frames.push(PositionedWorkFrame::Leader(leader));
             }
         }
         Ok(())
@@ -444,7 +548,7 @@ impl Lowerer<'_> {
 
     fn enter_frame<'a>(
         &mut self,
-        frames: &mut Vec<PositionedFrame<'a>>,
+        frames: &mut Vec<PositionedWorkFrame<'a>>,
         node: &'a BoxNode,
         vertical: bool,
         depth: usize,
@@ -476,14 +580,14 @@ impl Lowerer<'_> {
                 run: RunBuilder::default(),
             }
         };
-        frames.push(PositionedFrame {
+        frames.push(PositionedWorkFrame::Box(PositionedFrame {
             node,
             depth,
             box_id,
             index: 0,
             axis,
             continuation,
-        });
+        }));
         Ok(())
     }
 
@@ -508,6 +612,24 @@ impl Lowerer<'_> {
             } => {
                 self.cur_v = add(baseline, depth)?;
                 self.cur_h = left_edge;
+            }
+            PositionedContinuation::HorizontalLeader {
+                start_h,
+                save_v,
+                width,
+                extra,
+            } => {
+                self.cur_h = add(add(start_h, width)?, extra)?;
+                self.cur_v = save_v;
+            }
+            PositionedContinuation::VerticalLeader {
+                start_v,
+                save_h,
+                size,
+                extra,
+            } => {
+                self.cur_h = save_h;
+                self.cur_v = add(add(start_v, size)?, extra)?;
             }
         }
         Ok(())
@@ -766,23 +888,23 @@ impl Lowerer<'_> {
     }
 
     #[allow(clippy::too_many_arguments)] // Mirrors TeX's explicit leader registers.
-    fn hleaders(
+    fn plan_hleaders<'a>(
         &mut self,
         this_box: &BoxNode,
         kind: GlueKind,
-        leader: &Option<LeaderPayload>,
+        leader: &'a Option<LeaderPayload>,
         available: Scaled,
         left_edge: Scaled,
         baseline: Scaled,
         depth: usize,
-    ) -> Result<(), PositionedError> {
+    ) -> Result<Option<PositionedLeaderFrame<'a>>, PositionedError> {
         let Some(kind) = LeaderMode::from_glue(kind) else {
             self.cur_h = add(self.cur_h, available)?;
-            return Ok(());
+            return Ok(None);
         };
         let Some(leader) = leader else {
             self.cur_h = add(self.cur_h, available)?;
-            return Ok(());
+            return Ok(None);
         };
         match leader {
             LeaderPayload::Rule { height, depth, .. } => {
@@ -793,84 +915,77 @@ impl Lowerer<'_> {
                     baseline,
                 )?;
                 self.cur_h = add(self.cur_h, available)?;
+                Ok(None)
             }
             LeaderPayload::HList(node) | LeaderPayload::VList(node) => {
                 if node.width.raw() <= 0 || available.raw() <= 0 {
                     self.cur_h = add(self.cur_h, available)?;
-                    return Ok(());
+                    return Ok(None);
                 }
                 let space = add(available, LEADER_ROUNDING_COMPENSATION)?;
                 let edge = add(self.cur_h, space)?;
                 let (start, extra) = leader_start(kind, self.cur_h, left_edge, space, node.width)?;
                 self.cur_h = start;
-                while add(self.cur_h, node.width)?.raw() <= edge.raw() {
-                    let save_h = self.cur_h;
-                    let save_v = self.cur_v;
-                    self.cur_v = add(baseline, node.shift)?;
-                    if matches!(leader, LeaderPayload::VList(_)) {
-                        self.vlist(node, depth + 1)?;
-                    } else {
-                        self.hlist(node, depth + 1)?;
-                    }
-                    self.cur_h = add(add(save_h, node.width)?, extra)?;
-                    self.cur_v = save_v;
-                }
-                self.cur_h = sub(edge, LEADER_ROUNDING_COMPENSATION)?;
+                Ok(Some(PositionedLeaderFrame {
+                    leader,
+                    node,
+                    depth: depth + 1,
+                    axis: PositionedLeaderAxis::Horizontal {
+                        edge,
+                        extra,
+                        baseline,
+                    },
+                }))
             }
         }
-        Ok(())
     }
 
     #[allow(clippy::too_many_arguments)] // Mirrors TeX's explicit leader registers.
-    fn vleaders(
+    fn plan_vleaders<'a>(
         &mut self,
         this_box: &BoxNode,
         kind: GlueKind,
-        leader: &Option<LeaderPayload>,
+        leader: &'a Option<LeaderPayload>,
         available: Scaled,
         left_edge: Scaled,
         top_edge: Scaled,
         depth: usize,
-    ) -> Result<(), PositionedError> {
+    ) -> Result<Option<PositionedLeaderFrame<'a>>, PositionedError> {
         let Some(kind) = LeaderMode::from_glue(kind) else {
             self.cur_v = add(self.cur_v, available)?;
-            return Ok(());
+            return Ok(None);
         };
         let Some(leader) = leader else {
             self.cur_v = add(self.cur_v, available)?;
-            return Ok(());
+            return Ok(None);
         };
         match leader {
             LeaderPayload::Rule { width, .. } => {
                 self.rule_v(available, width.unwrap_or(this_box.width))?;
+                Ok(None)
             }
             LeaderPayload::HList(node) | LeaderPayload::VList(node) => {
                 let size = add(node.height, node.depth)?;
                 if size.raw() <= 0 || available.raw() <= 0 {
                     self.cur_v = add(self.cur_v, available)?;
-                    return Ok(());
+                    return Ok(None);
                 }
                 let space = add(available, LEADER_ROUNDING_COMPENSATION)?;
                 let edge = add(self.cur_v, space)?;
                 let (start, extra) = leader_start(kind, self.cur_v, top_edge, space, size)?;
                 self.cur_v = start;
-                while add(self.cur_v, size)?.raw() <= edge.raw() {
-                    let start_v = self.cur_v;
-                    let save_h = self.cur_h;
-                    self.cur_h = add(left_edge, node.shift)?;
-                    self.cur_v = add(start_v, node.height)?;
-                    if matches!(leader, LeaderPayload::VList(_)) {
-                        self.vlist(node, depth + 1)?;
-                    } else {
-                        self.hlist(node, depth + 1)?;
-                    }
-                    self.cur_h = save_h;
-                    self.cur_v = add(add(start_v, size)?, extra)?;
-                }
-                self.cur_v = sub(edge, LEADER_ROUNDING_COMPENSATION)?;
+                Ok(Some(PositionedLeaderFrame {
+                    leader,
+                    node,
+                    depth: depth + 1,
+                    axis: PositionedLeaderAxis::Vertical {
+                        edge,
+                        extra,
+                        left_edge,
+                    },
+                }))
             }
         }
-        Ok(())
     }
 }
 

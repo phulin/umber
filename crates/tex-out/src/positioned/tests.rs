@@ -456,43 +456,138 @@ fn maximum_depth_canonical_artifact_compiles_with_bounded_frames() {
 }
 
 #[test]
-fn maximum_depth_canonical_leader_materializes_with_bounded_frames() {
-    const NESTED_BOXES: usize = 4_093;
-    let mut leader_child = PageNode::Rule {
-        width: Some(sp(1)),
-        height: Some(sp(1)),
-        depth: Some(sp(0)),
-    };
-    for _ in 0..NESTED_BOXES {
-        leader_child = PageNode::HList(box_node(1, 1, 0, vec![leader_child]));
-    }
-    let leader = LeaderPayload::HList(box_node(100, 1, 0, vec![leader_child]));
-    let root = PageNode::HList(box_node(
-        1,
-        1,
-        0,
-        vec![PageNode::Glue {
-            spec: GlueSpec {
-                width: sp(1),
-                stretch: sp(0),
-                stretch_order: GlueOrder::Normal,
-                shrink: sp(0),
-                shrink_order: GlueOrder::Normal,
-            },
-            kind: GlueKind::Leaders,
-            leader: Some(leader),
-        }],
-    ));
-    let page = page(root);
+fn maximum_depth_nested_leader_dvi_uses_bounded_frames() {
+    const NESTED_LEADERS: usize = 4_093;
+    let page = nested_hleader_page(NESTED_LEADERS);
     let bytes = page
         .to_bytes()
-        .expect("encode maximum-depth leader artifact");
+        .expect("encode maximum-depth nested-leader artifact");
     // This fixture exists to exercise byte replay. Keep its recursively owned
     // construction tree out of the production replay's RSS/stack assertion.
     std::mem::forget(page);
 
     crate::dvi::DviPagePlan::compile_v10(&bytes)
-        .expect("compile maximum-depth canonical leader bytes");
+        .expect("compile maximum-depth nested-leader bytes");
+}
+
+#[test]
+fn maximum_depth_nested_leader_positioned_geometry_uses_bounded_frames() {
+    const NESTED_LEADERS: usize = 4_093;
+    let page = nested_hleader_page(NESTED_LEADERS);
+
+    let positioned = lower_page(&page, 12).expect("lower maximum-depth nested leaders");
+    assert_eq!(
+        positioned
+            .events
+            .iter()
+            .filter(|event| matches!(event, PositionedEvent::Box(_)))
+            .count(),
+        NESTED_LEADERS + 1
+    );
+    assert_eq!(
+        positioned
+            .events
+            .iter()
+            .filter(|event| matches!(event, PositionedEvent::Rule(_)))
+            .count(),
+        1
+    );
+    std::mem::forget(page);
+}
+
+#[test]
+fn nested_leader_geometry_preserves_depth_first_order() {
+    let page = nested_hleader_page(2);
+    let positioned = lower_page(&page, 13).expect("lower nested leader order fixture");
+    let order = positioned
+        .events
+        .iter()
+        .map(|event| match event {
+            PositionedEvent::Box(node) => format!("box:{}:{}", node.id, node.depth),
+            PositionedEvent::BoxEnd(node) => format!("end:{}:{}", node.id, node.depth),
+            PositionedEvent::Rule(_) => "rule".to_owned(),
+            _ => "other".to_owned(),
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        order,
+        [
+            "box:0:1", "box:1:2", "box:2:3", "rule", "end:2:3", "end:1:2", "end:0:1"
+        ]
+    );
+
+    let bytes = page.to_bytes().expect("encode nested leader order fixture");
+    assert_eq!(
+        crate::dvi::DviPagePlan::compile(&page).expect("compile owned nested leaders"),
+        crate::dvi::DviPagePlan::compile_v10(&bytes).expect("replay nested leader bytes")
+    );
+}
+
+#[test]
+fn nested_leader_validation_preserves_depth_first_error_order() {
+    let first = PageNode::Char {
+        font_id: 1,
+        ch: b'A' as u32,
+        width: sp(41),
+    };
+    let nested = PageNode::Glue {
+        spec: leader_glue_spec(),
+        kind: GlueKind::Leaders,
+        leader: Some(LeaderPayload::HList(box_node(11, 1, 0, vec![first]))),
+    };
+    let later = PageNode::Char {
+        font_id: 1,
+        ch: b'B' as u32,
+        width: sp(42),
+    };
+    let page = page(PageNode::HList(box_node(1, 1, 0, vec![nested, later])));
+    let mut bytes = page.to_bytes().expect("encode malformed-order fixture");
+    for (ch, width, invalid_font) in [(b'A', 41_i32, 99_u32), (b'B', 42, 100)] {
+        let needle = [
+            &[0][..],
+            &1_u32.to_le_bytes(),
+            &u32::from(ch).to_le_bytes(),
+            &width.to_le_bytes(),
+        ]
+        .concat();
+        let offset = bytes
+            .windows(needle.len())
+            .position(|window| window == needle)
+            .expect("unique character encoding");
+        bytes[offset + 1..offset + 5].copy_from_slice(&invalid_font.to_le_bytes());
+    }
+    assert_eq!(
+        crate::dvi::DviPagePlan::compile_v10(&bytes),
+        Err(crate::dvi::DviError::Artifact {
+            message: crate::ArtifactValidationError::MissingFont { font_id: 99 }.to_string(),
+        })
+    );
+}
+
+fn nested_hleader_page(levels: usize) -> crate::PageArtifact {
+    let mut child = PageNode::Rule {
+        width: Some(sp(1)),
+        height: Some(sp(1)),
+        depth: Some(sp(0)),
+    };
+    for _ in 0..levels {
+        child = PageNode::Glue {
+            spec: leader_glue_spec(),
+            kind: GlueKind::Leaders,
+            leader: Some(LeaderPayload::HList(box_node(11, 1, 0, vec![child]))),
+        };
+    }
+    page(PageNode::HList(box_node(1, 1, 0, vec![child])))
+}
+
+fn leader_glue_spec() -> GlueSpec {
+    GlueSpec {
+        width: sp(1),
+        stretch: sp(0),
+        stretch_order: GlueOrder::Normal,
+        shrink: sp(0),
+        shrink_order: GlueOrder::Normal,
+    }
 }
 
 fn page(root: PageNode) -> crate::PageArtifact {

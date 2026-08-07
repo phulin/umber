@@ -70,6 +70,21 @@ enum DirectContinuation {
         left_edge: Scaled,
         depth: Scaled,
     },
+    HLeader {
+        save_h: Scaled,
+        save_v: Scaled,
+        base_line: Scaled,
+        width: Scaled,
+        extra: Scaled,
+    },
+    VLeader {
+        save_h: Scaled,
+        save_v: Scaled,
+        left_edge: Scaled,
+        height: Scaled,
+        depth: Scaled,
+        extra: Scaled,
+    },
 }
 
 impl DviBodyCompiler {
@@ -120,7 +135,16 @@ impl DviBodyCompiler {
             }
         };
         state.frames.push(DirectFrame {
-            fields: fields.clone(),
+            fields: BoxNode {
+                width: fields.width,
+                height: fields.height,
+                depth: fields.depth,
+                shift: fields.shift,
+                glue_set: fields.glue_set,
+                glue_sign: fields.glue_sign,
+                glue_order: fields.glue_order,
+                children: Vec::new(),
+            },
             save_loc,
             axis,
             continuation,
@@ -206,6 +230,34 @@ impl DviBodyCompiler {
                 self.dvi_v = save_v;
                 self.cur_v = add_scaled(save_v, depth)?;
                 self.cur_h = left_edge;
+            }
+            DirectContinuation::HLeader {
+                save_h,
+                save_v,
+                base_line,
+                width,
+                extra,
+            } => {
+                self.dvi_h = save_h;
+                self.dvi_v = save_v;
+                self.cur_h = add_scaled(add_scaled(save_h, width)?, extra)?;
+                self.cur_v = base_line;
+            }
+            DirectContinuation::VLeader {
+                save_h,
+                save_v,
+                left_edge,
+                height,
+                depth,
+                extra,
+            } => {
+                self.dvi_h = save_h;
+                self.dvi_v = save_v;
+                self.cur_h = left_edge;
+                self.cur_v = add_scaled(
+                    sub_scaled(save_v, height)?,
+                    add_scaled(add_scaled(height, depth)?, extra)?,
+                )?;
             }
         }
         Ok(())
@@ -356,68 +408,7 @@ impl DviBodyCompiler {
         effects: &[PageEffect],
         node: &PageNode,
     ) -> Result<(), DviError> {
-        let frame = state
-            .frames
-            .last_mut()
-            .expect("direct stream has a root frame");
-        match &mut frame.axis {
-            DirectAxis::H {
-                base_line,
-                left_edge,
-                cur_g,
-                cur_glue,
-            } => {
-                let PageNode::Glue { spec, kind, leader } = node else {
-                    unreachable!("direct leader emission requires glue")
-                };
-                let rule_wd = adjusted_glue_width(
-                    *spec,
-                    frame.fields.glue_sign,
-                    frame.fields.glue_order,
-                    frame.fields.glue_set,
-                    cur_glue,
-                    cur_g,
-                )?;
-                self.move_right_or_output_leaders(leaders::HLeaderContext {
-                    effects,
-                    this_box: &frame.fields,
-                    kind: *kind,
-                    leader,
-                    rule_wd,
-                    left_edge: *left_edge,
-                    base_line: *base_line,
-                })?;
-                self.cur_v = *base_line;
-            }
-            DirectAxis::V {
-                left_edge,
-                top_edge,
-                cur_g,
-                cur_glue,
-            } => {
-                let PageNode::Glue { spec, kind, leader } = node else {
-                    unreachable!("direct leader emission requires glue")
-                };
-                let rule_ht = adjusted_glue_width(
-                    *spec,
-                    frame.fields.glue_sign,
-                    frame.fields.glue_order,
-                    frame.fields.glue_set,
-                    cur_glue,
-                    cur_g,
-                )?;
-                self.move_down_or_output_leaders(leaders::VLeaderContext {
-                    effects,
-                    this_box: &frame.fields,
-                    kind: *kind,
-                    leader,
-                    rule_ht,
-                    left_edge: *left_edge,
-                    top_edge: *top_edge,
-                })?;
-            }
-        }
-        Ok(())
+        self.direct_owned_list(state, std::slice::from_ref(node), effects)
     }
 
     pub(super) fn direct_owned_node(
@@ -451,17 +442,8 @@ impl DviBodyCompiler {
                 depth,
             } => self.direct_rule(state, *width, *height, *depth),
             PageNode::HList(box_node) | PageNode::VList(box_node) => {
-                let entered = self.direct_begin_box(
-                    state,
-                    box_node,
-                    matches!(node, PageNode::VList(_)),
-                    box_node.children.is_empty(),
-                )?;
-                if entered {
-                    self.direct_owned_list(state, &box_node.children, effects)?;
-                    self.direct_end_box(state)?;
-                }
-                Ok(())
+                let _ = box_node;
+                self.direct_owned_list(state, std::slice::from_ref(node), effects)
             }
             PageNode::WhatsitAnchor { effect_index } => {
                 self.direct_whatsit(state, effects, *effect_index)
@@ -482,6 +464,8 @@ impl DviBodyCompiler {
                 following: &'a [PageNode],
             },
             EndBox,
+            HLeader(leaders::HLeaderRepeat<'a>),
+            VLeader(leaders::VLeaderRepeat<'a>),
         }
 
         fn schedule<'a>(pending: &mut Vec<Action<'a>>, nodes: &'a [PageNode]) {
@@ -500,9 +484,74 @@ impl DviBodyCompiler {
         let mut pending = Vec::new();
         schedule(&mut pending, nodes);
         while let Some(action) = pending.pop() {
-            let Action::Node { node, following } = action else {
-                self.direct_end_box(state)?;
-                continue;
+            let (node, following) = match action {
+                Action::EndBox => {
+                    self.direct_end_box(state)?;
+                    continue;
+                }
+                Action::HLeader(repeat) => {
+                    let width = repeat.box_node.width;
+                    if add_scaled(self.cur_h, width)?.raw() > repeat.edge.raw() {
+                        self.cur_h =
+                            sub_scaled(repeat.edge, crate::geometry::LEADER_ROUNDING_COMPENSATION)?;
+                        continue;
+                    }
+                    self.cur_v = add_scaled(repeat.base_line, repeat.box_node.shift)?;
+                    self.synch_v()?;
+                    let save_v = self.dvi_v;
+                    self.synch_h()?;
+                    let save_h = self.dvi_h;
+                    self.enter_direct_frame(
+                        state,
+                        repeat.box_node,
+                        matches!(repeat.leader, crate::LeaderPayload::VList(_)),
+                        DirectContinuation::HLeader {
+                            save_h,
+                            save_v,
+                            base_line: repeat.base_line,
+                            width,
+                            extra: repeat.extra,
+                        },
+                    )?;
+                    pending.push(Action::HLeader(repeat));
+                    pending.push(Action::EndBox);
+                    schedule(&mut pending, &repeat.box_node.children);
+                    continue;
+                }
+                Action::VLeader(repeat) => {
+                    let height = repeat.box_node.height;
+                    let depth = repeat.box_node.depth;
+                    let size = add_scaled(height, depth)?;
+                    if add_scaled(self.cur_v, size)?.raw() > repeat.edge.raw() {
+                        self.cur_v =
+                            sub_scaled(repeat.edge, crate::geometry::LEADER_ROUNDING_COMPENSATION)?;
+                        continue;
+                    }
+                    self.cur_h = add_scaled(repeat.left_edge, repeat.box_node.shift)?;
+                    self.synch_h()?;
+                    let save_h = self.dvi_h;
+                    self.cur_v = add_scaled(self.cur_v, height)?;
+                    self.synch_v()?;
+                    let save_v = self.dvi_v;
+                    self.enter_direct_frame(
+                        state,
+                        repeat.box_node,
+                        matches!(repeat.leader, crate::LeaderPayload::VList(_)),
+                        DirectContinuation::VLeader {
+                            save_h,
+                            save_v,
+                            left_edge: repeat.left_edge,
+                            height,
+                            depth,
+                            extra: repeat.extra,
+                        },
+                    )?;
+                    pending.push(Action::VLeader(repeat));
+                    pending.push(Action::EndBox);
+                    schedule(&mut pending, &repeat.box_node.children);
+                    continue;
+                }
+                Action::Node { node, following } => (node, following),
             };
             if let PageNode::WhatsitAnchor { effect_index } = node {
                 let frame = state.frames.last().expect("direct stream has a root frame");
@@ -534,22 +583,73 @@ impl DviBodyCompiler {
                         schedule(&mut pending, &box_node.children);
                     }
                 }
+                PageNode::Glue { spec, kind, leader } if leader.is_some() => {
+                    let frame = state
+                        .frames
+                        .last_mut()
+                        .expect("direct stream has a root frame");
+                    match &mut frame.axis {
+                        DirectAxis::H {
+                            base_line,
+                            left_edge,
+                            cur_g,
+                            cur_glue,
+                        } => {
+                            let width = adjusted_glue_width(
+                                *spec,
+                                frame.fields.glue_sign,
+                                frame.fields.glue_order,
+                                frame.fields.glue_set,
+                                cur_glue,
+                                cur_g,
+                            )?;
+                            if let Some(repeat) =
+                                self.move_right_or_output_leaders(leaders::HLeaderContext {
+                                    this_box: &frame.fields,
+                                    kind: *kind,
+                                    leader,
+                                    rule_wd: width,
+                                    left_edge: *left_edge,
+                                    base_line: *base_line,
+                                })?
+                            {
+                                pending.push(Action::HLeader(repeat));
+                            }
+                            self.cur_v = *base_line;
+                        }
+                        DirectAxis::V {
+                            left_edge,
+                            top_edge,
+                            cur_g,
+                            cur_glue,
+                        } => {
+                            let height = adjusted_glue_width(
+                                *spec,
+                                frame.fields.glue_sign,
+                                frame.fields.glue_order,
+                                frame.fields.glue_set,
+                                cur_glue,
+                                cur_g,
+                            )?;
+                            if let Some(repeat) =
+                                self.move_down_or_output_leaders(leaders::VLeaderContext {
+                                    this_box: &frame.fields,
+                                    kind: *kind,
+                                    leader,
+                                    rule_ht: height,
+                                    left_edge: *left_edge,
+                                    top_edge: *top_edge,
+                                })?
+                            {
+                                pending.push(Action::VLeader(repeat));
+                            }
+                        }
+                    }
+                }
                 _ => self.direct_owned_node(state, node, effects)?,
             }
         }
         Ok(())
-    }
-
-    pub(super) fn direct_owned_box_at_current(
-        &mut self,
-        effects: &[PageEffect],
-        box_node: &BoxNode,
-        vertical: bool,
-    ) -> Result<(), DviError> {
-        let mut state = DirectStreamState { frames: Vec::new() };
-        self.enter_direct_frame(&mut state, box_node, vertical, DirectContinuation::Root)?;
-        self.direct_owned_list(&mut state, &box_node.children, effects)?;
-        self.finish_direct_stream(state)
     }
 
     pub(super) fn direct_whatsit(
