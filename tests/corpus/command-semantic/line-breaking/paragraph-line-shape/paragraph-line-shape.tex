@@ -1,22 +1,19 @@
-\tracingonline=1
-\hbadness=10000
-\showboxbreadth=100
-\showboxdepth=100
-\font\tenrm=../../crates/tex-fonts/tests/fixtures/cm/cmr10
+\catcode`\{=1 \catcode`\}=2
+\font\tenrm=cmr10
 \relax
 \tenrm
 \parindent=0pt
 \parfillskip=0pt
-\baselineskip=12pt
-\lineskiplimit=0pt
 \leftskip=2pt
 \rightskip=3pt
 \interlinepenalty=11
 \clubpenalty=22
 \widowpenalty=33
 \brokenpenalty=44
+\hbadness=10000
+\hfuzz=16383pt
 \setbox0=\vbox{\hsize=35pt \parshape=3 5pt 20pt 0pt 25pt 7pt 18pt a\penalty-10000 a\penalty-10000 a\penalty-10000 a\penalty-10000 a\par}
-\showbox0
 \setbox1=\vbox{\hsize=35pt \hangindent=10pt \hangafter=1 a\penalty-10000 a\penalty-10000 a\penalty-10000 a\par}
-\showbox1
+\ifdim\wd0=25pt \count0=1\fi
+\ifdim\wd1=35pt \count1=1\fi
 \end

@@ -74,7 +74,8 @@ pub struct CaseManifestV2 {
     pub expected: Vec<String>,
     #[serde(default)]
     pub expectation: Expectation,
-    pub channels: ChannelContractV2,
+    #[serde(default)]
+    pub channels: Option<ChannelContractV2>,
     #[serde(default)]
     pub terminal_lines: Vec<String>,
     #[serde(default)]
@@ -330,26 +331,22 @@ impl CaseManifestV2 {
                 StreamDisposition::Empty
             }
         };
-        let channels = ChannelContract {
-            events: self.channels.events,
-            status: self.channels.status.unwrap_or_else(|| "clean".to_owned()),
-            terminal: self
-                .channels
+        let channels = self.channels.map(|channels| ChannelContract {
+            events: channels.events,
+            status: channels.status.unwrap_or_else(|| "clean".to_owned()),
+            terminal: channels
                 .terminal
                 .unwrap_or_else(|| disposition(StreamChannel::Terminal)),
-            log: self
-                .channels
+            log: channels
                 .log
                 .unwrap_or_else(|| disposition(StreamChannel::Log)),
-            dvi: self
-                .channels
+            dvi: channels
                 .dvi
                 .unwrap_or_else(|| disposition(StreamChannel::Dvi)),
-            effects: self
-                .channels
+            effects: channels
                 .effects
                 .unwrap_or_else(|| disposition(StreamChannel::Effects)),
-        };
+        });
         Case {
             source: format!("{id}.tex"),
             id,
@@ -360,7 +357,7 @@ impl CaseManifestV2 {
             projection: self.projection,
             expected: self.expected,
             expectation: self.expectation,
-            channels: Some(channels),
+            channels,
             terminal_lines: self.terminal_lines,
             inputs: self.inputs,
             interaction_mode: self.interaction_mode,

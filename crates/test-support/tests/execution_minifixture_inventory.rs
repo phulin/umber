@@ -223,7 +223,7 @@ fn execution_minifixtures_are_closed_tracked_directories() {
             "{area} disposition census changed"
         );
     }
-    assert_eq!(identities.len(), 93, "execution case census changed");
+    assert_eq!(identities.len(), 92, "execution case census changed");
 }
 
 #[test]

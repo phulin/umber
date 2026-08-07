@@ -13,7 +13,7 @@ const DEFAULT_GAP_BEAD: &str = "umber2-johp.218";
 const DEFAULT_RATIONALE: &str =
     "Explicitly deferred to the full catalogue audit; scope is not inferred.";
 const RESOLVED_DISPOSITIONS_SHA256: &str =
-    "5daa9e3d125be82bf1ae3f07a0d857db59e096d936eb262a540cc57352090eeb";
+    "260a6f4f016e7f9bd9d1e6c9dd29e1c2a50a8575ec451d7e322ec22b89bf4a09";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum ModuleDisposition {
@@ -467,9 +467,9 @@ fn committed_tex82_property_catalogue_is_complete_and_resolvable() {
     assert_eq!(
         catalogue.census,
         CatalogueCensus {
-            reviewed: 946,
-            deferred: 434,
-            covered: 112,
+            reviewed: 1029,
+            deferred: 351,
+            covered: 117,
             gap: 39,
         }
     );

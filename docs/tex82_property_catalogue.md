@@ -81,6 +81,15 @@ the named function exists exactly, and its immediately preceding attribute is
 `#[test]`. Pinned semantic minifixtures may later provide another test level;
 live reference execution never belongs in this gate.
 
+The `line-breaking.json` shard is the sole catalogue authority for §§813–895.
+Its active, bounded `line-breaking/paragraph-line-shape` command-semantic gate
+projects the canonical shaped-line topology and resulting box-width checks and
+compares every applicable ordinary channel with the pinned oracle. The retained
+`typeset/paragraph_line_shape` complete box dump remains complementary manual
+integration evidence for exact dimensions, shifts, skip labels, and interline
+penalty values; it does not define another property catalogue. The byte-identical
+`exec/paragraph_line_shape` copy had no independent observable and was removed.
+
 ## Completeness Gate
 
 The native test rejects:

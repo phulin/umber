@@ -3,8 +3,8 @@
 //! a reject case so a rule that cannot fail is not actually enforced.
 
 use super::{
-    Case, MAX_SOURCE_BYTES, MAX_SOURCE_LINES, input_targets, validate_completion_observations,
-    validate_no_format_loading, validate_source_dimensions,
+    Case, CaseManifestV2, MAX_SOURCE_BYTES, MAX_SOURCE_LINES, input_targets,
+    validate_completion_observations, validate_no_format_loading, validate_source_dimensions,
 };
 
 fn effect(kind: tex_command::ObservationEffectKind) -> tex_command::CommandObservation {
@@ -37,6 +37,27 @@ fn completion_pair_rejects_semantic_drift_before_fragment_termination() {
         validate_completion_observations(&fragment, &complete),
         Err("complete-job observations diverged before the fragment root-EOF boundary".into())
     );
+}
+
+#[test]
+fn v2_manifest_admits_omitted_channels_only_for_derivation_validation() {
+    let manifest: CaseManifestV2 = serde_json::from_str(
+        r#"{
+            "schema": 2,
+            "property_id": "tex82.probe.case",
+            "provenance": {
+                "authority": "tex.web",
+                "manifest": "tests/tex82-oracle-manifest.txt",
+                "sections": [1]
+            },
+            "projection": {"kind": "predicate-outcomes"},
+            "expected": []
+        }"#,
+    )
+    .expect("a fresh V2 candidate is parseable before derivation");
+    let resolved = manifest.resolve(std::path::Path::new("."), "probe".to_owned());
+    assert!(resolved.channels.is_none());
+    assert!(resolved.expected.is_empty());
 }
 
 fn case_with_inputs(inputs: &[(&str, &str)]) -> Case {

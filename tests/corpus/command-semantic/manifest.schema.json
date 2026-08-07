@@ -428,7 +428,14 @@
       "$ref": "#/$defs/CapturePolicy"
     },
     "channels": {
-      "$ref": "#/$defs/ChannelContractV2"
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ChannelContractV2"
+        },
+        {
+          "type": "null"
+        }
+      ]
     },
     "expectation": {
       "$ref": "#/$defs/Expectation"
@@ -493,8 +500,7 @@
     "property_id",
     "provenance",
     "projection",
-    "expected",
-    "channels"
+    "expected"
   ],
   "title": "CaseManifestV2",
   "type": "object"

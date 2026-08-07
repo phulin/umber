@@ -257,6 +257,36 @@ fn count_write_fixture_keeps_direct_the_internal_to_scan_toks() {
 }
 
 #[test]
+fn paragraph_line_shape_matches_canonical_projection_and_channels() {
+    let formats = HermeticFormats::new();
+    let cases = load_suite().expect("valid command-semantic corpus");
+    let declared = cases
+        .iter()
+        .find(|declared| declared.case.id == "paragraph-line-shape")
+        .expect("paragraph-line-shape fixture");
+    assert_eq!(declared.domain, "line-breaking");
+    assert_eq!(
+        declared.case.property_id,
+        "tex82.linebreak.post-line-materialization"
+    );
+    let source = fs::read(declared.fixture_dir.join(&declared.case.source))
+        .expect("paragraph-line-shape source");
+    let run = formats
+        .execute(&source, &declared.case)
+        .expect("bounded paragraph-line-shape fixture executes");
+
+    assert_eq!(
+        project(&run, &declared.case.projection),
+        declared.case.expected
+    );
+    assert_eq!(
+        compare_declared_channels(declared, &run),
+        [],
+        "TeX82 §§847–849 and §§877–890 channel bytes match strictly"
+    );
+}
+
+#[test]
 fn raw_tex82_loaded_uses_pdftex_invalid_unit_help() {
     let formats = HermeticFormats::new();
     let cases = load_suite().expect("valid command-semantic corpus");
@@ -326,13 +356,13 @@ fn loaded_projection_distinguishes_explicit_end_from_nested_source_exhaustion() 
 #[test]
 fn v2_identity_capture_policy_and_resolved_channels_match_the_migrated_corpus() {
     let cases = load_suite().expect("valid command-semantic corpus");
-    assert_eq!(cases.len(), 203);
+    assert_eq!(cases.len(), 204);
     assert_eq!(
         cases
             .iter()
             .map(|declared| declared.case.expected.len())
             .sum::<usize>(),
-        1_233
+        1_300
     );
 
     let selected_raw: Vec<_> = cases
@@ -342,7 +372,7 @@ fn v2_identity_capture_policy_and_resolved_channels_match_the_migrated_corpus() 
                 && declared.case.capture.selected()
         })
         .collect();
-    assert_eq!(selected_raw.len(), 172);
+    assert_eq!(selected_raw.len(), 173);
     let excluded: Vec<_> = cases
         .iter()
         .filter(|declared| !declared.case.capture.selected())
@@ -352,7 +382,7 @@ fn v2_identity_capture_policy_and_resolved_channels_match_the_migrated_corpus() 
 
     // One compact identity replaces the former 467-line census while pinning
     // every resolved field, including routes, projections, xfails, channels,
-    // statuses, host inputs, and interaction policy for all 203 cases.
+    // statuses, host inputs, and interaction policy for all 204 cases.
     let mut digest = Sha256::new();
     for declared in &cases {
         assert_eq!(
@@ -376,7 +406,7 @@ fn v2_identity_capture_policy_and_resolved_channels_match_the_migrated_corpus() 
     }
     assert_eq!(
         format!("{:x}", digest.finalize()),
-        "225a75d172cd3601d73263caef3c5004a14a116e0a457cbf501bbe5d94a44515"
+        "e9391eeac377b7ee981b555b777a13da5e43b15ad58f4f4f644b42455b46580f"
     );
 }
 

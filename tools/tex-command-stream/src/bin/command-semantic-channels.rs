@@ -351,6 +351,11 @@ fn prepare_fixture(
     case_id: &str,
     plan: &CasePlan,
 ) -> Result<(), String> {
+    let candidate_parent = candidate
+        .parent()
+        .ok_or_else(|| format!("{} has no staging parent", candidate.display()))?;
+    fs::create_dir_all(candidate_parent)
+        .map_err(|error| format!("{}: {error}", candidate_parent.display()))?;
     let relative = fixture_dir
         .strip_prefix(repository)
         .map_err(|_| "command-semantic fixture escaped repository".to_owned())?;
@@ -775,18 +780,16 @@ mod tests {
             fixture.join("manifest.json"),
             concat!(
                 "{\n",
-                "  \"cases\": [\n",
-                "    {\n",
-                "      \"id\": \"case-a\",\n",
-                "      \"expected\": [\n",
-                "        \"old\"\n",
-                "      ],\n",
-                "      \"channels\": {\n",
-                "        \"events\": 1\n",
-                "      },\n",
-                "      \"expectation\": { \"kind\": \"pass\" }\n",
-                "    }\n",
-                "  ]\n",
+                "  \"schema\": 2,\n",
+                "  \"property_id\": \"tex82.example.case\",\n",
+                "  \"provenance\": {\n",
+                "    \"authority\": \"tex.web\",\n",
+                "    \"manifest\": \"tests/tex82-oracle-manifest.txt\",\n",
+                "    \"sections\": [1]\n",
+                "  },\n",
+                "  \"projection\": { \"kind\": \"predicate-outcomes\" },\n",
+                "  \"expected\": [\"old\"],\n",
+                "  \"channels\": { \"events\": 1 }\n",
                 "}\n",
             ),
         )
@@ -809,7 +812,7 @@ mod tests {
                 channels: std::array::from_fn(|_| ChannelPlan::Empty),
             },
         };
-        let candidate = temporary.path().join("candidate");
+        let candidate = temporary.path().join("candidate/example/case-a");
         prepare_fixture(temporary.path(), &fixture, &candidate, "case-a", &plan)
             .expect("prepare candidate");
 

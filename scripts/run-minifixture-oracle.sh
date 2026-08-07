@@ -51,7 +51,7 @@ Each selected case is staged and run under:
 
 Options:
   --case DOMAIN/CASE-ID   Run one case. May be repeated.
-  --all                   Run all 203 fixture-local manifests.
+  --all                   Run all fixture-local manifests.
   --profile PROFILE       Require every selected case to declare PROFILE.
   --profile PROFILE       Run cases whose typed capture policy selects PROFILE.
   --help, -h              Show this message.
@@ -365,8 +365,9 @@ case_json_for() {
   local manifest="${corpus_root}/${domain}/${case_id}/manifest.json"
   [[ -f "$manifest" ]] || fail "no such fixture manifest: $manifest"
   local json
-  json="$(jq -c --arg id "$case_id" '.cases[] | select(.id == $id)' "$manifest")"
-  [[ -n "$json" ]] || fail "no such case in $domain: $case_id"
+  json="$(jq -c --arg id "$case_id" '. + {id: $id, source: ($id + ".tex")}' "$manifest")"
+  [[ "$(jq -r '.schema' <<<"$json")" == 2 ]] ||
+    fail "$domain/$case_id is not a command-semantic V2 manifest"
   printf '%s\n' "$json"
 }
 

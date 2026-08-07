@@ -1,0 +1,383 @@
+{
+  "schema": 1,
+  "domain": "line-breaking",
+  "module_dispositions": [
+    {
+      "modules": {
+        "first": 813,
+        "last": 828
+      },
+      "disposition": "property",
+      "owner": "tex-typeset::linebreak",
+      "property_ids": [
+        "tex82.linebreak.input-and-width-model"
+      ],
+      "gap_bead": null,
+      "rationale": "Defines paragraph handoff, temporary break records, relative width accounting, skip background, finite-shrink recovery, and the three-pass threshold state."
+    },
+    {
+      "modules": {
+        "first": 829,
+        "last": 861
+      },
+      "disposition": "property",
+      "owner": "tex-typeset::linebreak",
+      "property_ids": [
+        "tex82.linebreak.feasibility-and-demerits"
+      ],
+      "gap_bead": null,
+      "rationale": "Owns try_break feasibility, line-shape selection, badness, fitness, demerits, active/passive candidates, and delta-list maintenance."
+    },
+    {
+      "modules": {
+        "first": 862,
+        "last": 876
+      },
+      "disposition": "property",
+      "owner": "tex-typeset::linebreak",
+      "property_ids": [
+        "tex82.linebreak.pass-and-breakpoint-selection"
+      ],
+      "gap_bead": null,
+      "rationale": "Owns pass initialization, legal breakpoint discovery, width accumulation, final forced break, looseness selection, and retry or emergency-pass transitions."
+    },
+    {
+      "modules": {
+        "first": 877,
+        "last": 890
+      },
+      "disposition": "property",
+      "owner": "tex-typeset::linebreak",
+      "property_ids": [
+        "tex82.linebreak.post-line-materialization"
+      ],
+      "gap_bead": null,
+      "rationale": "Owns chosen-break reversal, discardable pruning, discretionary surgery, left/right skips, exact-width line boxes, indentation, migrations, and interline penalties."
+    },
+    {
+      "modules": {
+        "first": 891,
+        "last": 895
+      },
+      "disposition": "property",
+      "owner": "tex-exec::paragraph-hyphenation",
+      "property_ids": [
+        "tex82.linebreak.pre-hyphenation-candidates"
+      ],
+      "gap_bead": null,
+      "rationale": "Defines the second-pass candidate-word boundary, language/minimum state, font and lowercase eligibility, the 63-letter limit, and entry into hyphenation."
+    }
+  ],
+  "properties": [
+    {
+      "id": "tex82.linebreak.input-and-width-model",
+      "sections": [
+        813,
+        814,
+        815,
+        816,
+        817,
+        818,
+        819,
+        820,
+        821,
+        822,
+        823,
+        824,
+        825,
+        826,
+        827,
+        828
+      ],
+      "claim": "Paragraph breaking consumes the nonempty current hlist, installs the forced terminal penalty and parfillskip, represents feasible prefixes with active/passive records, and measures candidate lines through six-component relative widths whose background includes leftskip and rightskip.",
+      "preconditions": [
+        "A nonempty horizontal list and a live paragraph-parameter snapshot are available at paragraph completion."
+      ],
+      "stimulus": [
+        "Break paragraphs with finite and infinite-order skips, large accumulated widths, and routes that require pretolerance, tolerance, or emergency stretch."
+      ],
+      "expected_observations": [
+        "The terminal glue is normalized, skip widths seed the background, relative width accumulation remains exact, and at most one infinite-shrink diagnostic is produced before shrink is made finite."
+      ],
+      "postconditions": [
+        "The search owns one normalized paragraph list and all temporary break records are bounded to the current break operation."
+      ],
+      "equivalence_cases": [
+        "Positive/boundary: empty skip versus nonzero skip, finite versus infinite-order stretch, widths below and above i32::MAX, and direct versus emergency success"
+      ],
+      "recovery_cases": [
+        "Infinite-order shrink is converted to finite shrink once per paragraph without changing node order; an overfull final pass retains a terminal route."
+      ],
+      "semantic_owner": "tex-typeset::linebreak",
+      "test_level": "rust-unit",
+      "coverage": [
+        {
+          "path": "crates/tex-typeset/src/linebreak/tests.rs",
+          "test": "line_break_includes_left_and_right_skip_in_background_widths"
+        },
+        {
+          "path": "crates/tex-typeset/src/linebreak/tests.rs",
+          "test": "paragraph_prefix_widths_remain_exact_past_i32_max"
+        },
+        {
+          "path": "crates/tex-typeset/src/linebreak/tests.rs",
+          "test": "positive_emergency_stretch_uses_the_real_tolerance_route"
+        }
+      ],
+      "status": "covered",
+      "gap_bead": null,
+      "planned_coverage": []
+    },
+    {
+      "id": "tex82.linebreak.feasibility-and-demerits",
+      "sections": [
+        829,
+        830,
+        831,
+        832,
+        833,
+        834,
+        835,
+        836,
+        837,
+        838,
+        839,
+        840,
+        841,
+        842,
+        843,
+        844,
+        845,
+        846,
+        847,
+        848,
+        849,
+        850,
+        851,
+        852,
+        853,
+        854,
+        855,
+        856,
+        857,
+        858,
+        859,
+        860,
+        861
+      ],
+      "claim": "try_break evaluates every active predecessor against the current line width selected by parshape or hanging indentation, classifies feasible glue ratios, computes canonical penalty and adjacency demerits, retains the best route per fitness class, and updates active and delta records without changing their source-order tie policy.",
+      "preconditions": [
+        "The active list, current breakpoint, threshold, accumulated widths, paragraph shape, and demerit parameters describe one search pass."
+      ],
+      "stimulus": [
+        "Offer legal, forbidden and forced glue, penalty, kern, math and discretionary breakpoints with equal-cost routes, adjacent fitness classes, and shaped line widths."
+      ],
+      "expected_observations": [
+        "Badness and fitness follow the selected line width; penalties affect demerits but not badness feasibility; equal candidates and active-node deletion follow §§829–861."
+      ],
+      "postconditions": [
+        "Each surviving active record names one feasible passive predecessor chain and the minimum demerits for its line/fitness class."
+      ],
+      "equivalence_cases": [
+        "Positive/boundary/nesting: parshape versus hanging indentation, exact-fit versus tight/loose routes, equal demerits, adjacent fitness classes, and discretionary replacement widths"
+      ],
+      "recovery_cases": [
+        "Penalties are clamped to the canonical range and final-pass overfull routes are deactivated or retained according to the forced-break rule without corrupting the active list."
+      ],
+      "semantic_owner": "tex-typeset::linebreak",
+      "test_level": "rust-unit",
+      "coverage": [
+        {
+          "path": "crates/tex-typeset/src/linebreak/tests.rs",
+          "test": "penalty_boundaries_match_infinite_and_eject_semantics"
+        },
+        {
+          "path": "crates/tex-typeset/src/linebreak/tests.rs",
+          "test": "equal_demerits_prefer_later_route_in_same_line_and_fitness_class"
+        },
+        {
+          "path": "crates/tex-typeset/src/linebreak/tests.rs",
+          "test": "parshape_repeats_last_line_and_overrides_hanging"
+        },
+        {
+          "path": "crates/tex-typeset/src/linebreak/tests.rs",
+          "test": "hangindent_selects_affected_lines"
+        }
+      ],
+      "status": "covered",
+      "gap_bead": null,
+      "planned_coverage": []
+    },
+    {
+      "id": "tex82.linebreak.pass-and-breakpoint-selection",
+      "sections": [
+        862,
+        863,
+        864,
+        865,
+        866,
+        867,
+        868,
+        869,
+        870,
+        871,
+        872,
+        873,
+        874,
+        875,
+        876
+      ],
+      "claim": "The paragraph scan considers only TeX82 legal breakpoints, measures every contributing node and discretionary branch in order, forces the terminal break, selects minimum demerits subject to requested looseness, and retries with hyphenation or emergency stretch only when the preceding pass has no acceptable route.",
+      "preconditions": [
+        "The normalized paragraph, pass threshold, hyphenation-pass flag, requested looseness, and initial active node are installed."
+      ],
+      "stimulus": [
+        "Scan mixed character, glue, penalty, kern, math and discretionary nodes through pretolerance failure, looseness mismatch, tolerance retry, and final forced break."
+      ],
+      "expected_observations": [
+        "Only legal boundaries call try_break, node widths enter in canonical order, discardable tails do not create an empty final line, and the chosen terminal route best matches looseness then demerits."
+      ],
+      "postconditions": [
+        "best_bet identifies a complete passive chain and best_line identifies the number following the paragraph's last line."
+      ],
+      "equivalence_cases": [
+        "Positive/boundary: glue after a character or legal predecessor, explicit versus implicit kern, math-on/off boundaries, existing discretionary breaks, and exact versus nearest looseness"
+      ],
+      "recovery_cases": [
+        "A failed pretolerance pass retries at tolerance; a failed second pass adds emergency stretch; the final forced break never leaves the paragraph without a route."
+      ],
+      "semantic_owner": "tex-typeset::linebreak",
+      "test_level": "rust-unit",
+      "coverage": [
+        {
+          "path": "crates/tex-typeset/src/linebreak/tests.rs",
+          "test": "breaks_at_legal_glue"
+        },
+        {
+          "path": "crates/tex-typeset/src/linebreak/tests.rs",
+          "test": "discardable_tail_does_not_create_an_empty_final_line"
+        },
+        {
+          "path": "crates/tex-typeset/src/linebreak/tests.rs",
+          "test": "unmet_looseness_retries_after_the_pretolerance_pass"
+        },
+        {
+          "path": "crates/tex-typeset/src/linebreak/tests.rs",
+          "test": "existing_discretionary_is_available_on_the_pretolerance_pass"
+        }
+      ],
+      "status": "covered",
+      "gap_bead": null,
+      "planned_coverage": []
+    },
+    {
+      "id": "tex82.linebreak.post-line-materialization",
+      "sections": [
+        877,
+        878,
+        879,
+        880,
+        881,
+        882,
+        883,
+        884,
+        885,
+        886,
+        887,
+        888,
+        889,
+        890
+      ],
+      "claim": "post_line_break reverses the chosen passive chain, prunes leading discardables, realizes selected discretionary pre/post branches, installs leftskip and rightskip, packs and shifts each line to its selected shape, migrates adjustment material, and inserts the canonical interline penalty sum.",
+      "preconditions": [
+        "best_bet names a complete chosen breakpoint chain over the normalized paragraph and the enclosing vertical list is ready to receive lines."
+      ],
+      "stimulus": [
+        "Materialize shaped paragraphs with glue, kern, math and discretionary breaks, nonzero skips, migrated adjustments, and club, widow, interline and broken penalties."
+      ],
+      "expected_observations": [
+        "Each line has the selected width and indent, chosen discretionary material is transplanted once, nonchosen discardables are pruned, and nonfinal penalties are the prescribed sum."
+      ],
+      "postconditions": [
+        "The vertical list owns each justified line and migrated node once, prev_graf equals the emitted line count, and no temporary paragraph material remains."
+      ],
+      "equivalence_cases": [
+        "Positive/boundary/nesting: zero/nonzero leftskip, glue versus discretionary endpoints, empty/nonempty pre/post branches, two-line club-plus-widow penalties, and repeated final parshape dimensions"
+      ],
+      "recovery_cases": [
+        "Discardable pruning retains font kerns and a chosen discretionary with replacement nodes removes and transplants exactly its declared material."
+      ],
+      "semantic_owner": "tex-typeset::linebreak",
+      "test_level": "rust-unit+semantic-minifixture+integration-diagnostic",
+      "coverage": [
+        {
+          "path": "crates/tex-typeset/src/linebreak/tests.rs",
+          "test": "chosen_discretionary_transplants_nonempty_pre_and_post_lists"
+        },
+        {
+          "path": "crates/tex-typeset/src/linebreak/tests.rs",
+          "test": "next_line_discards_all_discardables_but_retains_font_kern"
+        },
+        {
+          "path": "crates/tex-typeset/src/linebreak/tests.rs",
+          "test": "two_line_penalty_after_combines_club_widow_and_broken_penalties"
+        },
+        {
+          "path": "crates/tex-typeset/src/linebreak/tests.rs",
+          "test": "post_line_break_keeps_migrating_nodes_for_execution_layer"
+        },
+        {
+          "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
+          "test": "paragraph_line_shape_matches_canonical_projection_and_channels"
+        }
+      ],
+      "status": "covered",
+      "gap_bead": null,
+      "planned_coverage": []
+    },
+    {
+      "id": "tex82.linebreak.pre-hyphenation-candidates",
+      "sections": [
+        891,
+        892,
+        893,
+        894,
+        895
+      ],
+      "claim": "On the second pass, TeX finds potentially hyphenatable words only after glue, applies language and left/right minima, lowercase/font/uppercase eligibility and the 63-letter bound, then passes the accepted character and source-node span to the hyphenation procedure.",
+      "preconditions": [
+        "The second line-breaking pass is scanning a glue node and has initialized the current language and hyphen minima from paragraph state."
+      ],
+      "stimulus": [
+        "Present words across glue with punctuation, ligatures, implicit kerns, language whatsits, mixed fonts, uppercase starts, invalid hyphen characters, minima boundaries, and 63/64-letter lengths."
+      ],
+      "expected_observations": [
+        "Only a canonically delimited same-font lowercase projection that satisfies minima and uppercase policy enters hyphenation; ignored nodes retain a synchronized source span."
+      ],
+      "postconditions": [
+        "An accepted candidate identifies its normalized letters, original node interval, font, language and hyphen character without changing unrelated paragraph nodes."
+      ],
+      "equivalence_cases": [
+        "Positive/boundary/nesting: punctuation before and after a word, ligature-expanded letters, implicit kerns, language changes, exactly 63 letters, and minima equality"
+      ],
+      "recovery_cases": [
+        "Mixed-font, boxed, mathematical, explicit-kern, existing-discretionary, invalid-hyphen-character, uppercase-disabled, too-short, and 64-letter candidates are skipped without partial insertion."
+      ],
+      "semantic_owner": "tex-exec::paragraph-hyphenation",
+      "test_level": "rust-unit",
+      "coverage": [
+        {
+          "path": "crates/tex-exec/src/paragraph_end/hyphenation.rs",
+          "test": "automatic_missing_hyphen_warns_but_disabled_hyphen_does_not"
+        },
+        {
+          "path": "crates/tex-typeset/src/linebreak/tests.rs",
+          "test": "existing_discretionary_is_available_on_the_pretolerance_pass"
+        }
+      ],
+      "status": "covered",
+      "gap_bead": null,
+      "planned_coverage": []
+    }
+  ]
+}
