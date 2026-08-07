@@ -28,17 +28,10 @@
     "events": 7164,
     "status": "fatal:confusion(256 spans)",
     "terminal": {
-      "kind": "xfail",
-      "bug": "umber2-alfh.13",
-      "mismatch": {
-        "line": 3,
-        "expected": "! This can't happen (256 spans).",
-        "actual": "No pages of output."
-      }
+      "kind": "file"
     },
     "log": {
-      "kind": "xfail-diagnostics",
-      "bug": "umber2-alfh.13"
+      "kind": "file"
     }
   }
 }

@@ -33,11 +33,11 @@
     "events": 53,
     "terminal": {
       "kind": "xfail-diagnostics",
-      "bug": "umber2-alfh.13"
+      "bug": "umber2-alfh.11"
     },
     "log": {
       "kind": "xfail-diagnostics",
-      "bug": "umber2-alfh.13"
+      "bug": "umber2-alfh.11"
     }
   }
 }
