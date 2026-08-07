@@ -280,6 +280,7 @@ fn run(
     let mut unrunnable = Vec::new();
     let mut errors = Vec::new();
     let mut projection_drifts = Vec::new();
+    let mut channel_drifts = Vec::new();
     let mut accepted_projection = false;
 
     for declared in &cases {
@@ -312,8 +313,22 @@ fn run(
                     Ok(None)
                 };
                 let plan = expected.and_then(|expected| {
-                    plan_case(&oracle_root, declared, &source, &captured)
-                        .map(|channels| CasePlan { expected, channels })
+                    plan_case(&oracle_root, declared, &source, &captured).and_then(|channels| {
+                        let channels = if accepts_this_case {
+                            Some(channels)
+                        } else {
+                            let manifest: serde_json::Value = serde_json::from_slice(
+                                &fs::read(declared.fixture_dir.join("manifest.json"))
+                                    .map_err(|error| error.to_string())?,
+                            )
+                            .map_err(|error| error.to_string())?;
+                            if manifest.get("channels") != Some(&channels.value()) {
+                                channel_drifts.push(label.clone());
+                            }
+                            None
+                        };
+                        Ok(CasePlan { expected, channels })
+                    })
                 });
                 match plan {
                     Ok(plan) => {
@@ -397,6 +412,14 @@ fn run(
              correctness gate retains authority: {}",
             projection_drifts.len(),
             projection_drifts.join(", ")
+        ));
+    }
+    if !channel_drifts.is_empty() {
+        summary.push_str(&format!(
+            "\npreserved {} authored channel contract(s) that differ from this run; the \
+             correctness gate retains authority: {}",
+            channel_drifts.len(),
+            channel_drifts.join(", ")
         ));
     }
     Ok(summary)
@@ -498,7 +521,7 @@ enum ChannelPlan {
 /// projection array and its channel contract.
 struct CasePlan {
     expected: Option<Vec<String>>,
-    channels: ChannelsPlan,
+    channels: Option<ChannelsPlan>,
 }
 
 struct ChannelsPlan {
@@ -734,9 +757,12 @@ fn existing_bug(declared: &DeclaredCase, channel: StreamChannel) -> Option<Strin
 }
 
 fn write_channel_files(fixture_dir: &Path, plan: &CasePlan) -> Result<(), String> {
+    let Some(channels) = &plan.channels else {
+        return Ok(());
+    };
     for (index, channel) in STREAM_CHANNELS.into_iter().enumerate() {
         let path = channel_file(fixture_dir, channel);
-        match &plan.channels.channels[index] {
+        match &channels.channels[index] {
             ChannelPlan::Empty => {
                 if path.exists() {
                     fs::remove_file(&path)
@@ -800,7 +826,9 @@ fn rewrite_manifest(path: &Path, plan: &CasePlan) -> Result<(), String> {
     if let Some(expected) = &plan.expected {
         object.insert("expected".to_owned(), serde_json::json!(expected));
     }
-    object.insert("channels".to_owned(), plan.channels.value());
+    if let Some(channels) = &plan.channels {
+        object.insert("channels".to_owned(), channels.value());
+    }
     let mut bytes = serde_json::to_vec_pretty(&manifest).map_err(|error| error.to_string())?;
     bytes.push(b'\n');
     fs::write(path, bytes).map_err(|error| format!("{}: {error}", path.display()))
@@ -885,11 +913,11 @@ mod tests {
             .expect("track fixture");
         let plan = CasePlan {
             expected: Some(vec!["new".to_owned()]),
-            channels: ChannelsPlan {
+            channels: Some(ChannelsPlan {
                 events: 2,
                 status: "clean".to_owned(),
                 channels: std::array::from_fn(|_| ChannelPlan::Empty),
-            },
+            }),
         };
         let candidate = temporary.path().join("candidate/example/case-a");
         prepare_fixture(temporary.path(), &fixture, &candidate, "case-a", &plan)
