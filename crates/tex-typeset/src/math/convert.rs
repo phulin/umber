@@ -823,7 +823,7 @@ fn second_pass<S: MathTypesetState>(
                 if penalties
                     && noad.penalty < INF_PENALTY
                     && items.peek().is_some_and(|next| {
-                        !matches!(next, WorkItem::Node(MathNode::Penalty(_)))
+                        !work_item_is_penalty(next)
                             && !matches!(
                                 next,
                                 WorkItem::Noad(WorkNoad {
@@ -868,6 +868,14 @@ fn second_pass<S: MathTypesetState>(
     let result = ctx.layout.hlist(output.drain(..));
     ctx.scratch.output = output;
     result
+}
+
+fn work_item_is_penalty(item: &WorkItem) -> bool {
+    match item {
+        WorkItem::Node(MathNode::Penalty(_)) => true,
+        WorkItem::Node(MathNode::Native(node)) => matches!(node.as_ref(), Node::Penalty(_)),
+        _ => false,
+    }
 }
 
 fn math_glue_kind_for_spacing(spacing: SpacingKind) -> MathGlueKind {

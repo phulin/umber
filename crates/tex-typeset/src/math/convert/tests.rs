@@ -1,6 +1,7 @@
 use super::*;
 use crate::math::tests::{math_char, noad, root_nodes, setup_universe};
 use tex_state::Universe;
+use tex_state::env::banks::IntParam;
 use tex_state::glue::GlueSpec;
 use tex_state::math::{MathChoice, NoadClass};
 
@@ -340,4 +341,35 @@ fn tex82_second_pass_spacing_delimiter_penalty_matrix() {
             .count(),
         2
     );
+}
+
+#[test]
+fn explicit_penalty_suppresses_preceding_bin_penalty() {
+    // TeX82 §767: rule 21 inspects the physical node following a noad. A
+    // source penalty remains an opaque native node during the detached math
+    // transaction, but it must still suppress the automatic bin-op penalty.
+    let mut stores = setup_universe();
+    stores.set_int_param(IntParam::BIN_OP_PENALTY, -3333);
+    let input = stores.freeze_node_list(&[
+        Node::MathNoad(noad(NoadClass::Ord, 'A')),
+        Node::MathNoad(noad(NoadClass::Bin, '+')),
+        Node::Penalty(1000),
+        Node::MathNoad(noad(NoadClass::Ord, 'A')),
+    ]);
+    let params = MathParams::read(&stores);
+
+    let layout = mlist_to_hlist(&stores, input, Style::TEXT, true, &params);
+    let penalties = root_nodes(&layout)
+        .into_iter()
+        .filter_map(|node| match node {
+            MathNode::Penalty(value) => Some(*value),
+            MathNode::Native(node) => match node.as_ref() {
+                Node::Penalty(value) => Some(*value),
+                _ => None,
+            },
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+
+    assert_eq!(penalties, [1000]);
 }
