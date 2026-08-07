@@ -487,6 +487,43 @@ fn tex_and_etex_profiles_never_render_a_pdf_finalization_report() {
     }
 }
 
+#[test]
+fn pdf_navigation_finalization_reports_only_unresolved_objects_in_source_order() {
+    use tex_state::PdfDestinationIdentity::{Name, Number};
+
+    let mut stores = Universe::new();
+    stores
+        .reserve_pdf_destination(Name(b"missing-regular".to_vec()), false)
+        .expect("reserve regular destination");
+    stores
+        .define_pdf_destination(Number(7), None)
+        .expect("define ordinary destination");
+    stores
+        .reserve_pdf_destination(Name(b"missing-structure".to_vec()), true)
+        .expect("reserve structure destination");
+    stores
+        .reserve_pdf_thread(Name(b"missing-thread".to_vec()))
+        .expect("reserve thread");
+    stores
+        .append_pdf_thread_bead(Number(23))
+        .expect("define thread with a bead");
+
+    assert!(report_pdf_navigation_warnings(&mut stores));
+
+    let expected = concat!(
+        "pdfTeX warning (dest): name{missing-regular} has been referenced but does not e\n",
+        "xist, replaced by a fixed one\n\n",
+        "pdfTeX warning (structure dest): name{missing-structure} has been referenced bu\n",
+        "t does not exist\n\n",
+        "pdfTeX warning (thread): destination name{missing-thread} has been referenced b\n",
+        "ut does not exist, replaced by a fixed one\n\n",
+    );
+    assert_eq!(terminal_text(&stores), expected);
+    assert_eq!(log_text(&stores), expected);
+    assert!(!terminal_text(&stores).contains("num7"));
+    assert!(!terminal_text(&stores).contains("num23"));
+}
+
 /// A loaded-format job prints the format's identity on both sinks, but not
 /// the same text: web2c's replacement for §61 prints `dump_name` on the
 /// terminal (no dump date, because the banner precedes reading the format

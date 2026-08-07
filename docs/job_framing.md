@@ -47,19 +47,20 @@ identity.
 
 ## What a job prints, and when
 
-| tex.web               | Text                                                   | Sink                     |
-| --------------------- | ------------------------------------------------------ | ------------------------ |
-| §61 `wterm(banner)`   | `This is …␣(INITEX)`, then a newline                   | terminal, before the log |
-| §536                  | the same banner plus `format_ident` and the clock      | log                      |
-| etex.ch §536/§1337    | `entering extended mode`                               | both                     |
-| §534                  | `**` and the job's first line, then a newline          | log                      |
-| §537 `start_input`    | `(` and the opened file's name                         | both                     |
-| §362                  | `)` when a file's last line is consumed                | both                     |
-| §1335 `final_cleanup` | `␣)` once per still-open file                          | both                     |
-| §1333 `tracingstats`  | TeX82 allocator and stack usage report                 | live selector            |
-| §642 `finish_dvi`     | `No pages of output.` / `Output written on …`          | both                     |
-| §1335                 | `(see the transcript file for additional information)` | terminal only            |
-| §1333                 | `Transcript written on ␣<jobname>.log.`                | terminal only            |
+| tex.web                     | Text                                                               | Sink                     |
+| --------------------------- | ------------------------------------------------------------------ | ------------------------ |
+| §61 `wterm(banner)`         | `This is …␣(INITEX)`, then a newline                               | terminal, before the log |
+| §536                        | the same banner plus `format_ident` and the clock                  | log                      |
+| etex.ch §536/§1337          | `entering extended mode`                                           | both                     |
+| §534                        | `**` and the job's first line, then a newline                      | log                      |
+| §537 `start_input`          | `(` and the opened file's name                                     | both                     |
+| §362                        | `)` when a file's last line is consumed                            | both                     |
+| §1335 `final_cleanup`       | `␣)` once per still-open file                                      | both                     |
+| §1333 `tracingstats`        | TeX82 allocator and stack usage report                             | live selector            |
+| pdftex.web §§794--798/§1600 | unresolved destination, structure-destination, and thread warnings | both                     |
+| §642 `finish_dvi`           | `No pages of output.` / `Output written on …`                      | both                     |
+| §1335                       | `(see the transcript file for additional information)`             | terminal only            |
+| §1333                       | `Transcript written on ␣<jobname>.log.`                            | terminal only            |
 
 Three of those lines are conditional:
 
@@ -125,6 +126,14 @@ placed:
   opened its root before command execution, so it routes that §537 opening
   directly through `tex_state::file_framing` as a terminal-only print, and
   §1335 can close an unconsumed root with `␣)`.
+
+  pdfTeX's navigation warnings are later than that generic cleanup: the
+  session first completes `\end`'s last page ejection, then `job.rs` walks
+  the checkpointed destination and thread ledgers. Only undefined ordinary
+  and structure destinations and threads with no beads are reported. Their
+  dedicated terminal-publication phase keeps the late notices atomic, while
+  retained root-body projections extend through that phase only when it
+  emitted a warning.
 
 The same ordering rule binds the diagnostics that share these channels: a
 report the command core detects has to be _printed_ by the command core.

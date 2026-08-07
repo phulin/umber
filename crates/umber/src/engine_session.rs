@@ -935,6 +935,7 @@ impl<'a> EngineSession<'a> {
     }
 
     fn finish(&mut self) -> Result<SessionState, SessionError> {
+        self.control.finalize_pdf_navigation(self.stores);
         let receipts = self.control.take_prepared_dvi_pages();
         let dvi_pages = receipts
             .iter()

@@ -1982,6 +1982,7 @@ pub enum EffectDomain {
 pub enum TerminalPublicationPhase {
     CloseOpenParens,
     Notices,
+    PdfFinalizationNotices,
 }
 
 impl EffectSequence {

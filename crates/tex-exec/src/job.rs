@@ -648,6 +648,107 @@ pub(crate) fn finish_job(
     stores.printer().print_ln();
 }
 
+/// Emits pdfTeX's end-of-file warnings for navigation objects which were
+/// referenced but never defined.
+///
+/// pdftex.web §§794--798 checks ordinary and structure destinations before
+/// writing the document's remaining objects, while §1600 repairs a referenced
+/// article thread whose bead list is empty. Object serialization is a host
+/// concern in Umber, but these diagnostics depend only on checkpointed engine
+/// state and therefore belong at the engine's finalization boundary.
+pub(crate) fn report_pdf_navigation_warnings(stores: &mut Universe) -> bool {
+    #[derive(Clone, Copy)]
+    enum MissingNavigationKind {
+        Destination,
+        StructureDestination,
+        Thread,
+    }
+
+    let missing = stores
+        .pdf_destinations(false)
+        .iter()
+        .filter(|record| !record.defined())
+        .map(|record| {
+            (
+                MissingNavigationKind::Destination,
+                record.identity().clone(),
+            )
+        })
+        .chain(
+            stores
+                .pdf_destinations(true)
+                .iter()
+                .filter(|record| !record.defined())
+                .map(|record| {
+                    (
+                        MissingNavigationKind::StructureDestination,
+                        record.identity().clone(),
+                    )
+                }),
+        )
+        .chain(
+            stores
+                .pdf_threads()
+                .iter()
+                .filter(|record| record.beads().is_empty())
+                .map(|record| (MissingNavigationKind::Thread, record.identity().clone())),
+        )
+        .collect::<Vec<_>>();
+
+    if missing.is_empty() {
+        return false;
+    }
+
+    let mut printer = stores.printer();
+    for (kind, identity) in missing {
+        match kind {
+            MissingNavigationKind::Destination => {
+                printer.print_nl("pdfTeX warning (dest): ");
+                print_pdf_navigation_identity(&mut printer, &identity);
+                printer
+                    .print(" has been referenced but does not exist, replaced by a fixed one")
+                    .print_ln()
+                    .print_ln();
+            }
+            MissingNavigationKind::StructureDestination => {
+                printer.print("pdfTeX warning (structure dest): ");
+                print_pdf_navigation_identity(&mut printer, &identity);
+                printer
+                    .print(" has been referenced but does not exist")
+                    .print_ln()
+                    .print_ln();
+            }
+            MissingNavigationKind::Thread => {
+                printer.print_nl("pdfTeX warning (thread): destination ");
+                print_pdf_navigation_identity(&mut printer, &identity);
+                printer
+                    .print(" has been referenced but does not exist, replaced by a fixed one")
+                    .print_ln()
+                    .print_ln();
+            }
+        }
+    }
+    true
+}
+
+fn print_pdf_navigation_identity(
+    printer: &mut Printer<'_>,
+    identity: &tex_state::PdfDestinationIdentity,
+) {
+    match identity {
+        tex_state::PdfDestinationIdentity::Name(name) => {
+            printer.print("name{");
+            for &byte in name {
+                printer.print_char(char::from(byte));
+            }
+            printer.print("}");
+        }
+        tex_state::PdfDestinationIdentity::Number(number) => {
+            printer.print("num").print_int(*number);
+        }
+    }
+}
+
 fn print_pdf_report(
     stores: &mut Universe,
     profile: CommandProfile,

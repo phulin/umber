@@ -255,8 +255,12 @@ pub struct MainControl {
     /// `docs/job_framing.md`.
     job: crate::job::JobFraming,
     /// Effect-record boundary immediately before §1335 final-cleanup
-    /// framing. Drivers can project a root body without deleting framing.
+    /// framing, extended through later pdfTeX navigation warnings when they
+    /// exist. Drivers can project a root body without deleting framing.
     job_body_effect_end: Option<tex_state::EffectPos>,
+    /// Guards the host-owned pdfTeX close-files pass against repeated
+    /// `EngineSession::finish` calls after termination.
+    pdf_navigation_finalized: bool,
     /// Operational accounting only; snapshots and durable checkpoints never
     /// observe it.
     advance_telemetry: AdvanceTelemetry,
@@ -1354,6 +1358,35 @@ impl MainControl {
                 .print_nl("(\\dump is performed only by INITEX)");
         }
         stores.world_mut().commit_terminal_publication();
+    }
+
+    /// pdftex.web §§794--798 and §1600's PDF-writer diagnostics, after
+    /// the `\end` ejection has made the last page and its navigation records
+    /// visible. This is deliberately later than TeX82 §1335's generic
+    /// `final_cleanup`, matching pdfTeX's `close_files_and_terminate` order.
+    pub fn finalize_pdf_navigation(&mut self, stores: &mut Universe) {
+        if std::mem::replace(&mut self.pdf_navigation_finalized, true) {
+            return;
+        }
+        if !self.command_profile().capabilities().supports_pdftex()
+            || stores.int_param(IntParam::PDF_OUTPUT) <= 0
+            || stores.int_param(IntParam::PDF_DRAFT_MODE) != 0
+            || stores.pdf_pages().is_empty()
+        {
+            return;
+        }
+        stores.world_mut().begin_terminal_publication(
+            tex_state::TerminalPublicationPhase::PdfFinalizationNotices,
+        );
+        let reported = crate::job::report_pdf_navigation_warnings(stores);
+        stores.world_mut().commit_terminal_publication();
+        if reported {
+            // Retained root-body runs return their selected effect slice
+            // without exporting it to the World backend. Extend that slice
+            // through pdfTeX's later close-files diagnostics only when this
+            // pass actually emitted them.
+            self.job_body_effect_end = Some(stores.world().effect_pos());
+        }
     }
 
     fn resolve_font_resource(&self, scanned: ScannedStep) -> Result<ScannedStep, ExecError> {
