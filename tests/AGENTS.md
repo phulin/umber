@@ -262,8 +262,8 @@ by `umber run`, matching its fresh INITEX parameter state rather than
 inheriting Plain's format assignments. It captures pdfTeX's terminal channel,
 not its transcript file: canonical TeX deliberately emits some diagnostic
 newlines to only one of those channels.
-Only `math_component_recovery` and `paragraph_line_shape` remain; migrated
-duplicates were retired into property-scoped command-semantic cases. See
+Only `math_component_recovery` remains; migrated duplicates, including
+`paragraph_line_shape`, were retired into property-scoped command-semantic cases. See
 `docs/golden_corpus_dispositions.md` for the exact ownership accounting.
 
 `tests/corpus/etex_exec` contains extension-mode e-TeX diagnostic parity

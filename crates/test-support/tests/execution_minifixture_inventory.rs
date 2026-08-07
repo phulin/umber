@@ -20,7 +20,7 @@ const AREAS: &[(&str, &[&str])] = &[
         ],
     ),
     ("etex_exec", &["expansion_virtual_input"]),
-    ("exec", &["math_component_recovery", "paragraph_line_shape"]),
+    ("exec", &["math_component_recovery"]),
     (
         "expand",
         &[
