@@ -63,14 +63,30 @@ if [[ -n "$qpdf" ]]; then
   artifact_dir="$(mktemp -d)"
   trap 'rm -rf "$artifact_dir"' EXIT
 
-  for test_name in \
-    raster_png_ximage_is_reused_and_emitted_through_typed_xobjects \
-    rgba_png_ximage_uses_a_typed_soft_mask \
-    jpeg_bytes_are_preserved_behind_a_typed_dct_filter \
-    object_compression_levels_one_through_three_emit_type_two_xrefs
-  do
-    UMBER_PDF_EXTERNAL_GATE_DIR="$artifact_dir" \
-      cargo test -q -p umber --lib "pdf_output::tests::$test_name" -- --exact
+  printf '%s' 'iVBORw0KGgoAAAANSUhEUgAAAAIAAAABCAIAAAB7QOjdAAAADUlEQVR4nGP4zwAE/wEHAAH/4iOeWQAAAABJRU5ErkJggg==' \
+    | base64 --decode >"$artifact_dir/pixel.png"
+  printf '%s' 'iVBORw0KGgoAAAANSUhEUgAAAAIAAAABCAYAAAD0In+KAAAAEUlEQVR4nGP8z8DgwMjwvwEAC8wCwbsPiGQAAAAASUVORK5CYII=' \
+    | base64 --decode >"$artifact_dir/alpha.png"
+  printf '%s' '/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDABALDA4MChAODQ4SERATGCgaGBYWGDEjJR0oOjM9PDkzODdASFxOQERXRTc4UG1RV19iZ2hnPk1xeXBkeFxlZ2P/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAAAf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AH//Z' \
+    | base64 --decode >"$artifact_dir/pixel.jpg"
+
+  generate_pdf() {
+    local name="$1"
+    local source="$2"
+    printf '%s\n' "$source" >"$artifact_dir/$name.tex"
+    cargo run -q -p umber --bin umber -- run --pdftex \
+      "$artifact_dir/$name.tex" --pdf "$artifact_dir/$name.pdf"
+  }
+
+  generate_pdf raster-png \
+    '\pdfoutput=1 \pdfcompresslevel=0 \pdfximage width20pt height10pt "pixel.png"\shipout\hbox{\pdfrefximage\pdflastximage}\end'
+  generate_pdf raster-alpha \
+    '\pdfoutput=1 \pdfximage "alpha.png"\shipout\hbox{\pdfrefximage\pdflastximage}\end'
+  generate_pdf dct-jpeg \
+    '\pdfoutput=1 \pdfximage "pixel.jpg"\shipout\hbox{\pdfrefximage\pdflastximage}\end'
+  for level in 1 2 3; do
+    generate_pdf "object-compression-$level" \
+      "\\pdfoutput=1\\pdfminorversion=5\\pdfcompresslevel=6\\pdfobjcompresslevel=$level\\shipout\\vbox{\\hrule width10pt height5pt}\\end"
   done
 
   committed_cases=(

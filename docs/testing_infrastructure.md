@@ -937,9 +937,10 @@ bytes, normalizes the committed reference and current output, and verifies the
 SHA-256 chain connecting both committed PDFs to the equal raster.
 
 The independent host-tool gate is versioned as
-`scripts/check-pdf-external.sh`. Its qpdf 12.3.2 matrix checks representative
-classic trailers, all three object-compression policies, imported PDF and
-raster/alpha/DCT images, Type 1/TrueType/PK/subset/tagged fonts, annotations,
+`scripts/check-pdf-external.sh`. Its qpdf 12.3.2 matrix uses focused native CLI
+jobs to produce temporary object-compression, raster, alpha, and DCT artifacts,
+then checks those alongside representative classic trailers, imported PDF,
+Type 1/TrueType/PK/subset/tagged fonts, annotations,
 forms, and navigation actions. Separately, Poppler 25.08.0 re-renders every
 committed Umber PDF and compares it with the pinned PGM (exactly for ordinary
 cases and with gray-value delta two for font cases); font extraction must also
