@@ -2,7 +2,7 @@
 
 use std::fmt::Write as _;
 
-use tex_command::DimensionDiagnostic;
+use tex_command::{DimensionDiagnostic, FatalError};
 use tex_state::env::banks::IntParam;
 use tex_state::page::{PageContents, PageDimension, PageInsertionStatus};
 use tex_state::print::Selector;
@@ -11,6 +11,58 @@ use tex_state::{PrintSink, Universe};
 
 use crate::mode::ignored_depth;
 use crate::node_dump::{DumpConfig, dump_node_list, dump_node_slice};
+
+/// Renders TeX82 §§94--95's irrecoverable reports before §93 `succumb`.
+///
+/// The other `FatalError` variants already arrive after their output has been
+/// emitted: §82's hundred-error branch prints its own notice, §93
+/// `fatal_error` composes `Emergency stop`, and §84's `X` deliberately
+/// prints nothing. Capacity and consistency failures instead originate as
+/// typed errors below main control, so the one `jump_out` boundary must
+/// compose their report while the triggering command's input context is
+/// still live.
+pub(crate) fn report_irrecoverable_error(
+    stores: &mut Universe,
+    fatal: FatalError,
+    context: String,
+) {
+    let mut report = match fatal {
+        FatalError::CapacityExceeded { resource, amount } => {
+            let mut report = stores.print_err("TeX capacity exceeded, sorry [");
+            report
+                .print(resource)
+                .print_char('=')
+                .print_int(amount)
+                .print_char(']')
+                .help(&[
+                    "If you really absolutely need more capacity,",
+                    "you can ask a wizard to enlarge me.",
+                ]);
+            report
+        }
+        FatalError::Confusion { site } => {
+            if stores.world().error_channel().history()
+                < tex_state::print::ErrorHistory::ErrorMessageIssued
+            {
+                let mut report = stores.print_err("This can't happen (");
+                report.print(site).print_char(')').help(&[
+                    "I'm broken. Please show this to someone who can fix can fix",
+                ]);
+                report
+            } else {
+                let mut report = stores.print_err("I can't go on meeting you like this");
+                report.help(&[
+                    "One of your faux pas seems to have wounded me deeply...",
+                    "in fact, I'm barely conscious. Please fix it and try again.",
+                ]);
+                report
+            }
+        }
+        FatalError::TooManyErrors | FatalError::EmergencyStop { .. } | FatalError::Quit => return,
+    };
+    report.context(context);
+    report.succumb();
+}
 
 /// e-TeX's `\interactionmode` case of TeX82 §1243's `alter_integer`.
 ///

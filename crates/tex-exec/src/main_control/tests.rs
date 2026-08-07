@@ -7949,6 +7949,23 @@ fn succumbing_commits_fatal_diagnostic_then_engine_termination() {
                 && effect.kind == ObservationEffectKind::Terminate
                 && effect.channel == "engine"
     ));
+    let terminal = pending_sink_text(&stores, true);
+    let log = pending_sink_text(&stores, false);
+    for output in [&terminal, &log] {
+        assert!(
+            output.contains("! This can't happen (256 spans)."),
+            "{output:?}"
+        );
+        assert!(output.contains("<template> \\endtemplate"), "{output:?}");
+    }
+    assert!(
+        log.contains("I'm broken. Please show this to someone who can fix can fix"),
+        "{log:?}"
+    );
+    assert!(
+        !terminal.contains("I'm broken. Please show this to someone who can fix can fix"),
+        "{terminal:?}"
+    );
 }
 
 #[test]
