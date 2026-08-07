@@ -402,8 +402,7 @@ cohort pins two job-local TFMs, 17 clean statuses plus exact
 The math cohort pins 17 job-local TFMs, one terminal-interaction job, 34 clean
 statuses, and 12 empty plus 22 file DVI channels.
 The page-output cohort pins 13 job-local TFMs, 33 clean statuses, four empty
-plus 28 file DVI channels, and the existing pinned DVI xfail for
-`special-in-shipped-hbox`.
+plus 29 file DVI channels, and no DVI xfails.
 Worker-boundary regressions additionally replace stale and wrong sibling
 candidates before selection, replace a pathname after its inode is anchored,
 exercise the current-image worker entry, and submit a decoder-valid image with

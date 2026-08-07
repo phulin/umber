@@ -392,6 +392,31 @@ fn v2_identity_capture_policy_and_resolved_channels_match_the_migrated_corpus() 
             ("scanners-internal-quantities", 13),
         ])
     );
+    let page_output_dvi_dispositions = selected_raw
+        .iter()
+        .filter(|declared| declared.domain == "page-output")
+        .fold([0usize; 5], |mut counts, declared| {
+            let index = match &declared
+                .case
+                .channels
+                .as_ref()
+                .expect("resolved channels")
+                .dvi
+            {
+                StreamDisposition::Empty => 0,
+                StreamDisposition::File => 1,
+                StreamDisposition::Unsupported { .. } => 2,
+                StreamDisposition::Xfail { .. } => 3,
+                StreamDisposition::XfailDiagnostics { .. } => 4,
+            };
+            counts[index] += 1;
+            counts
+        });
+    assert_eq!(
+        page_output_dvi_dispositions,
+        [4, 29, 0, 0, 0],
+        "page-output DVI dispositions: empty, file, unsupported, xfail, xfail-diagnostics"
+    );
     assert_eq!(
         cases
             .iter()

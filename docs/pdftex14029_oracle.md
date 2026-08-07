@@ -224,15 +224,13 @@ transitions, fixture effects, resources, terminal lines, and interaction
 declarations remain unchanged.
 
 The page-output cohort contributes 13 job-local TFM resources, 33 clean jobs,
-four empty DVI channels, 28 file DVI channels, and
-`special-in-shipped-hbox`'s existing pinned DVI xfail. Genuine loaded
+four empty DVI channels, 29 file DVI channels, and no DVI xfails. Genuine loaded
 execution changed the original 30-case cohort's terminal and normalized-log
 banners and 25 first-page artifact hashes. Those hashes include the job-opening
 terminal and log effects committed before the first shipout: geometry, fonts,
 counts, complete node trees, subsequent-page hashes, normalized DVI, fixture
 effects, resources, events, projections other than those hashes, statuses, and
-mode transitions remain unchanged. The xfail's expected DVI, bug, and mismatch
-fingerprint remain byte-identical.
+mode transitions remain unchanged.
 
 Each case is staged under `target/minifixture-oracle/<domain>/<case-id>/`
 with its `source`, any `inputs` files (written as the manifest's exact
