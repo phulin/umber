@@ -58,6 +58,7 @@ identity.
 | §1335 `final_cleanup`       | `␣)` once per still-open file                                      | both                     |
 | §1333 `tracingstats`        | TeX82 allocator and stack usage report                             | live selector            |
 | pdftex.web §§794--798/§1600 | unresolved destination, structure-destination, and thread warnings | both                     |
+| pdftex.web §73              | `pdf_error` diagnostic and PDF-specific fatal close line           | both                     |
 | §642 `finish_dvi`           | `No pages of output.` / `Output written on …`                      | both                     |
 | §1335                       | `(see the transcript file for additional information)`             | terminal only            |
 | §1333                       | `Transcript written on ␣<jobname>.log.`                            | terminal only            |
@@ -134,6 +135,14 @@ placed:
   dedicated terminal-publication phase keeps the late notices atomic, while
   retained root-body projections extend through that phase only when it
   emitted a warning.
+
+  pdfTeX navigation scanner and traversal failures use a distinct fatal
+  publication. The failed operation or page transaction is settled first,
+  then `pdf_error` runs §93's `succumb`, publishes the exact terminal/log
+  asymmetry, and returns the original typed extension error to the retained
+  session owner. Thus the host sees both canonical fatal output and the
+  specific ext1/ext4 failure identity; an already committed earlier page does
+  not make the failed page or its navigation objects visible.
 
 The same ordering rule binds the diagnostics that share these channels: a
 report the command core detects has to be _printed_ by the command core.

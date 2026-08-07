@@ -5782,7 +5782,13 @@ fn pdf_link_vertical_mode_rejects_before_operand_scan_without_mutation() {
             "pdfTeX error (ext1): action type missing"
         ))
     ));
-    assert_eq!(stores.snapshot().state_hash(), state_before);
+    let terminal = terminal_text(&stores);
+    assert!(terminal.contains("! pdfTeX error (ext1): action type missing."));
+    assert!(terminal.contains("Fatal error occurred, no output PDF file produced!"));
+    assert_eq!(
+        stores.world().error_channel().history(),
+        tex_state::print::ErrorHistory::FatalErrorStop
+    );
     assert!(control.modes.current_list().nodes().is_empty());
 }
 

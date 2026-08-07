@@ -244,8 +244,10 @@ to the current vertical position plus the live margin.
 
 Running state is reset at every page shipout, so a start/end pair cannot span
 pages. It belongs to final traversal rather than TeX grouping. The implementation
-must diagnose unmatched/misnested lifecycle effects without leaking state or
-objects from a failed page commit.
+must route an hlist start, hlist end, or different-level end through
+pdftex.web §1637's fatal `pdf_error`, preserving the ext4 error identity while
+publishing §93's fatal terminal/log tail. The failed page transaction leaks no
+state or objects.
 
 Every bead rectangle is expanded on all sides by the live
 `\pdfthreadmargin`. Beads belong to the page on which they are traversed; the

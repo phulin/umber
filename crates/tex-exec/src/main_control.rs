@@ -1807,9 +1807,11 @@ impl MainControl {
         if !snapshot.can_rollback(stores) {
             let _ = self.admit_observed_receipt(stores, OperationTermination::Failed);
             self.commit_step(snapshot);
+            Self::publish_pdf_fatal_error(stores, &error)?;
             return Err(error);
         }
         self.rollback_step(snapshot, stores);
+        Self::publish_pdf_fatal_error(stores, &error)?;
         match error {
             ExecError::Captured {
                 error,
@@ -1854,6 +1856,14 @@ impl MainControl {
             }
             error => Err(error),
         }
+    }
+
+    fn publish_pdf_fatal_error(stores: &mut Universe, error: &ExecError) -> Result<(), ExecError> {
+        if error.is_pdftex_navigation_fatal() {
+            crate::job::report_pdf_fatal_error(stores, &error.to_string());
+            stores.commit_effects(stores.world().effect_pos())?;
+        }
+        Ok(())
     }
 
     /// Returns the command site retained for the most recent resource need.

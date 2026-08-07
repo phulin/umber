@@ -262,16 +262,12 @@
         {
           "channel": "terminal",
           "projection": "pdfTeX error (ext1): num identifier must be positive",
-          "disposition": "xfail",
-          "bug": "umber2-alfh.34",
-          "actual_normalized_sha256": "dd6b8552cba194e36cbad1bb25cde1418c5150319071834d5b05a08d806f3c66"
+          "disposition": "pass"
         },
         {
           "channel": "log",
           "projection": "pdfTeX error (ext1): num identifier must be positive",
-          "disposition": "xfail",
-          "bug": "umber2-alfh.34",
-          "actual_normalized_sha256": "d0bca111f8628137adc4c16f123496dcdd1d590d06cb5d9acd68b39fe656fb97"
+          "disposition": "pass"
         },
         {
           "channel": "status",
@@ -358,23 +354,17 @@
         {
           "channel": "terminal",
           "projection": "pdfTeX error (ext4): \\pdfstartthread ended up in hlist",
-          "disposition": "xfail",
-          "bug": "umber2-alfh.34",
-          "actual_normalized_sha256": "2b8cc44c0c6b8910b0328fd877ffc19710cb9b621aaeb199199fbf1be45bf600"
+          "disposition": "pass"
         },
         {
           "channel": "log",
           "projection": "pdfTeX error (ext4): \\pdfstartthread ended up in hlist",
-          "disposition": "xfail",
-          "bug": "umber2-alfh.34",
-          "actual_normalized_sha256": "9b6366da3580e5aebe4a371ff72164572fe4e84dcb572f1b1ecec99cb507811c"
+          "disposition": "pass"
         },
         {
           "channel": "status",
           "projection": "error:pdfTeX error (ext4): \\pdfstartthread ended up in hlist",
-          "disposition": "xfail",
-          "bug": "umber2-alfh.34",
-          "actual": "success"
+          "disposition": "pass"
         }
       ]
     },
@@ -391,16 +381,12 @@
         {
           "channel": "terminal",
           "projection": "pdfTeX error (ext1): num identifier must be positive",
-          "disposition": "xfail",
-          "bug": "umber2-alfh.34",
-          "actual_normalized_sha256": "dd6b8552cba194e36cbad1bb25cde1418c5150319071834d5b05a08d806f3c66"
+          "disposition": "pass"
         },
         {
           "channel": "log",
           "projection": "pdfTeX error (ext1): num identifier must be positive",
-          "disposition": "xfail",
-          "bug": "umber2-alfh.34",
-          "actual_normalized_sha256": "d0bca111f8628137adc4c16f123496dcdd1d590d06cb5d9acd68b39fe656fb97"
+          "disposition": "pass"
         },
         {
           "channel": "status",

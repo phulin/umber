@@ -624,15 +624,9 @@ fn append_whatsit_effect(
                 return Ok(());
             }
             if running && in_hlist {
-                diagnostics.push((
-                    PrintSink::TerminalAndLog,
-                    "\npdfTeX warning: \\pdfstartthread ended up in hlist\n".to_owned(),
+                return Err(ExecError::PdfNavigation(
+                    "pdfTeX error (ext4): \\pdfstartthread ended up in hlist",
                 ));
-                effects.push(PageEffect::PdfLiteral {
-                    mode: tex_out::PdfLiteralMode::Direct,
-                    payload: Vec::new(),
-                });
-                return Ok(());
             }
             if color_target == tex_state::PdfColorStackTarget::Form {
                 return Err(ExecError::PdfThreadInForm);
@@ -692,26 +686,15 @@ fn append_whatsit_effect(
             });
         }
         Whatsit::PdfEndThread if in_hlist => {
-            diagnostics.push((
-                PrintSink::TerminalAndLog,
-                "\npdfTeX warning: \\pdfendthread ended up in hlist\n".to_owned(),
+            return Err(ExecError::PdfNavigation(
+                "pdfTeX error (ext4): \\pdfendthread ended up in hlist",
             ));
-            effects.push(PageEffect::PdfLiteral {
-                mode: tex_out::PdfLiteralMode::Direct,
-                payload: Vec::new(),
-            });
         }
         Whatsit::PdfEndThread => match running_thread_depth.take() {
             Some(start_depth) if start_depth != depth => {
-                diagnostics.push((
-                    PrintSink::TerminalAndLog,
-                    "\npdfTeX warning: \\pdfendthread ended up in different nesting level than \\pdfstartthread\n"
-                        .to_owned(),
+                return Err(ExecError::PdfNavigation(
+                    "pdfTeX error (ext4): \\pdfendthread ended up in different nesting level than \\pdfstartthread",
                 ));
-                effects.push(PageEffect::PdfLiteral {
-                    mode: tex_out::PdfLiteralMode::Direct,
-                    payload: Vec::new(),
-                });
             }
             _ => effects.push(PageEffect::PdfEndThread),
         },

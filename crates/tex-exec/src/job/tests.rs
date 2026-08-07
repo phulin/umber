@@ -478,6 +478,29 @@ fn pdf_finalization_report_is_profile_aware_exact_and_one_shot() {
 }
 
 #[test]
+fn pdf_fatal_error_has_pdftex_channel_asymmetry() {
+    let mut stores = Universe::new();
+    stores.set_interaction_mode(InteractionMode::Nonstop);
+    report_pdf_fatal_error(
+        &mut stores,
+        "pdfTeX error (ext1): num identifier must be positive",
+    );
+
+    assert_eq!(
+        terminal_text(&stores),
+        "! pdfTeX error (ext1): num identifier must be positive.\n!  ==> Fatal error occurred, no output PDF file produced!\n"
+    );
+    assert_eq!(
+        log_text(&stores),
+        "! pdfTeX error (ext1): num identifier must be positive.\n\n!  ==> Fatal error occurred, no output PDF file produced!\n"
+    );
+    assert_eq!(
+        stores.world().error_channel().history(),
+        ErrorHistory::FatalErrorStop
+    );
+}
+
+#[test]
 fn tex_and_etex_profiles_never_render_a_pdf_finalization_report() {
     for profile in [CommandProfile::TEX82, CommandProfile::ETEX26] {
         let mut stores = Universe::new();

@@ -1983,6 +1983,7 @@ pub enum TerminalPublicationPhase {
     CloseOpenParens,
     Notices,
     PdfFinalizationNotices,
+    PdfFatal,
 }
 
 impl EffectSequence {

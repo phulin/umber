@@ -830,41 +830,48 @@ mod tests {
     }
 
     #[test]
-    fn running_thread_lifecycle_reports_hlist_and_nesting_errors() {
-        let mut stores = Universe::default();
-        prepare_pdftex_run_stores(&mut stores);
-        let output = run_pdf_memory(
-            "\\pdfoutput=1\\shipout\\hbox{\\pdfstartthread name{bad}\\pdfendthread}\\end",
-            &mut stores,
-        )
-        .expect("thread lifecycle diagnostics recover");
-        let output = complete_memory_terminal(&output, &stores);
-        assert!(
-            output.contains("\\pdfstartthread ended up in hlist"),
-            "{output}"
-        );
-        assert!(
-            output.contains("\\pdfendthread ended up in hlist"),
-            "{output}"
-        );
-        assert!(stores.pdf_threads().is_empty());
-
-        let mut stores = Universe::default();
-        prepare_pdftex_run_stores(&mut stores);
-        let output = run_pdf_memory(
-            "\\pdfoutput=1\\shipout\\vbox{\\pdfstartthread name{nested}\\vbox{\\pdfendthread}}\\end",
-            &mut stores,
-        )
-        .expect("misnested thread diagnostic recovers");
-        let output = complete_memory_terminal(&output, &stores);
-        assert!(
-            tex_state::print::without_line_breaks(&output).contains(
-                "\\pdfendthread ended up in different nesting level than \\pdfstartthread"
+    fn running_thread_lifecycle_fatally_rejects_hlist_and_nesting_errors() {
+        // pdftex.web §1637 calls `pdf_error` for all three illegal traversal
+        // states. Each failed shipout is atomic, but the ext4 identity remains
+        // the public session error after §93's fatal transcript is rendered.
+        for (source, expected) in [
+            (
+                "\\pdfoutput=1\\shipout\\hbox{\\pdfstartthread name{bad}}\\end",
+                "pdfTeX error (ext4): \\pdfstartthread ended up in hlist",
             ),
-            "{output}"
-        );
-        assert_eq!(stores.pdf_threads().len(), 1);
-        assert_eq!(stores.pdf_threads()[0].beads().len(), 1);
+            (
+                "\\pdfoutput=1\\shipout\\hbox{\\pdfendthread}\\end",
+                "pdfTeX error (ext4): \\pdfendthread ended up in hlist",
+            ),
+            (
+                "\\pdfoutput=1\\shipout\\vbox{\\pdfstartthread name{nested}\\vbox{\\pdfendthread}}\\end",
+                "pdfTeX error (ext4): \\pdfendthread ended up in different nesting level than \\pdfstartthread",
+            ),
+        ] {
+            let mut stores = Universe::default();
+            prepare_pdftex_run_stores(&mut stores);
+            let error = run_pdf_memory(source, &mut stores)
+                .expect_err("invalid running-thread traversal is fatal");
+            assert_eq!(error.to_string(), expected);
+            let terminal = String::from_utf8_lossy(
+                stores.world().memory_terminal_output().unwrap_or_default(),
+            );
+            let log =
+                String::from_utf8_lossy(stores.world().memory_log_output().unwrap_or_default());
+            for output in [&terminal, &log] {
+                assert!(
+                    tex_state::print::without_line_breaks(output).contains(expected),
+                    "{output}"
+                );
+                assert!(
+                    output.contains("Fatal error occurred, no output PDF file produced!"),
+                    "{output}"
+                );
+            }
+            assert!(stores.pdf_threads().is_empty());
+            assert!(stores.pdf_pages().is_empty());
+            assert!(stores.world().artifact_commits().is_empty());
+        }
 
         let mut stores = Universe::default();
         prepare_pdftex_run_stores(&mut stores);

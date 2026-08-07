@@ -648,6 +648,21 @@ pub(crate) fn finish_job(
     stores.printer().print_ln();
 }
 
+/// Completes pdfTeX's `pdf_error` path through §93 `succumb` and the
+/// PDF-specific fatal close message before the host receives the unchanged
+/// typed execution error.
+pub(crate) fn report_pdf_fatal_error(stores: &mut Universe, message: &str) {
+    stores
+        .world_mut()
+        .begin_terminal_publication(tex_state::TerminalPublicationPhase::PdfFatal);
+    stores.print_err(message).succumb();
+    stores
+        .printer()
+        .print_nl("!  ==> Fatal error occurred, no output PDF file produced!")
+        .print_ln();
+    stores.world_mut().commit_terminal_publication();
+}
+
 /// Emits pdfTeX's end-of-file warnings for navigation objects which were
 /// referenced but never defined.
 ///

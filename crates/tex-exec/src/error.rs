@@ -288,6 +288,17 @@ impl ExecError {
             _ => None,
         }
     }
+
+    /// Whether this is a navigation-family pdfTeX `pdf_error` which must
+    /// cross §93 `succumb` before the driver returns the same typed failure.
+    #[must_use]
+    pub fn is_pdftex_navigation_fatal(&self) -> bool {
+        match self {
+            Self::PdfNavigation(_) => true,
+            Self::Captured { error, .. } => error.is_pdftex_navigation_fatal(),
+            _ => false,
+        }
+    }
 }
 
 impl fmt::Display for ExecError {
