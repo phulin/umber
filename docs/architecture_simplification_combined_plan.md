@@ -383,6 +383,31 @@ than a line-count target.
 
 **Proof.** Preserve artifact v23 and legacy bytes, error precedence and limits, nonrecursive replay, Unicode/classic validation, ligature source units, DVI movement/font/leader bytes, positioned effects, throughput, and RSS. The extra fresh-page byte pass has an explicit performance stop gate.
 
+**Fresh-DVI authority and accounting.** Commits `27d9e24cf` and `dcb9fbda7`
+complete the final program child. Live shipout now performs one immutable
+compact-list pass into canonical artifact bytes. One executor helper calls
+`tex_out::dvi::DviPagePlan::compile_v10` for both fresh and memo-hit pages and
+owns their identical error conversion and DVI-disabled policy. The paired
+live artifact/DVI builder arguments, streamed-plan branches, and 336-line
+leader materializer are deleted; positioned shipout continues to consume the
+same artifact when saved-position or snapping effects require it.
+
+The implementation changes production Rust by 34 additions and 538 deletions,
+a 504-line net reduction. Active proof tests and their exact source-audit
+coordinate add 79 and delete one Rust line. Guidance adds two and deletes two
+lines. Before this plan/writeback update, the complete tracked change is 115
+additions and 541 deletions, a 426-line net reduction. No artifact, DVI,
+format, fixture, generated source, lockfile, or binary asset changed.
+
+Fresh-versus-memo tests prove byte-identical artifacts, equal page plans, and
+byte-identical serialized DVI, plus equal plan omission when DVI is disabled.
+All 145 `tex-out` and 20 active `tex-exec` tests pass under 512 MiB. The
+exhaustive canonical tracer reports zero semantic and geometry divergences;
+Story and canonical Gentle match their byte-exact DVI oracles. Against the
+stored predecessor benchmark, the 1,024-node ordinary and deferred-math rows
+improve by about 12% and 42% respectively and peak at 49,836 KiB RSS. The
+complete native suite passes under 1 GiB at 315,388 KiB maximum RSS.
+
 ## 6. Move detached PDF finalization into `tex-out`
 
 **Outcome.** `tex-out` owns pure form validation, artifact lowering, page content, font usage, font-object emission, object allocation, and deterministic final serialization behind a typed `PdfFinalizationInput`. `umber` becomes a host/session compatibility adapter; `tex-fonts` remains the validated program/metrics owner.
