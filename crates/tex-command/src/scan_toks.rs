@@ -1066,12 +1066,16 @@ impl CommandProcessor<'_> {
     }
 
     fn traced_words(&self, list: TracedTokenList) -> Vec<TracedTokenWord> {
-        self.state
-            .tokens(list.token_list())
+        let tokens = self.state.tokens(list.token_list());
+        let origins = self.state.origin_list(list.origin_list());
+        tokens
             .iter()
             .copied()
-            .zip(self.state.origin_list(list.origin_list()).iter().copied())
-            .map(|(token, origin)| TracedTokenWord::pack(token, origin))
+            .enumerate()
+            .map(|(index, token)| {
+                let origin = origins.get(index).copied().unwrap_or(OriginId::UNKNOWN);
+                TracedTokenWord::pack(token, origin)
+            })
             .collect()
     }
 }

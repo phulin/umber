@@ -149,6 +149,50 @@ fn scratch_pool_warmth_preserves_scan_semantics_and_publications() {
 }
 
 #[test]
+fn origin_list_budget_fallback_preserves_section_478_splice_semantics() {
+    // TeX82 §478 and e-TeX 2.6 change [27.465] splice the complete semantic
+    // token list. Provenance storage is diagnostic and deliberately degrades
+    // a saturated origin-list arena to EMPTY, so reconstruction must use the
+    // same indexed UNKNOWN fallback as ordinary stored input rather than zip
+    // the nonempty token list with an empty origin projection.
+    let mut command = CommandState::default();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
+    let tokens = [
+        Token::Char {
+            ch: '1',
+            cat: Catcode::Other,
+        },
+        Token::Char {
+            ch: '3',
+            cat: Catcode::Other,
+        },
+        Token::Char {
+            ch: '9',
+            cat: Catcode::Other,
+        },
+        Token::Char {
+            ch: '0',
+            cat: Catcode::Other,
+        },
+    ];
+    let token_list = universe.intern_token_list(&tokens);
+    let list = TracedTokenList::synthetic(token_list);
+    let mut capabilities = CommandHostCapabilities::default();
+    let processor = processor(&mut command, &mut universe, &mut capabilities);
+
+    let words = processor.traced_words(list);
+
+    assert_eq!(
+        words
+            .iter()
+            .map(|word| word.semantic_token())
+            .collect::<Vec<_>>(),
+        tokens
+    );
+    assert!(words.iter().all(|word| word.origin() == OriginId::UNKNOWN));
+}
+
+#[test]
 fn general_scan_toks_continues_after_section_403_inserted_left_brace() {
     let mut command = CommandState::default();
     push(
