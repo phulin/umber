@@ -179,7 +179,7 @@ validate_and_publish_geometry() {
       "$work_root/geometry-b/geometry-${phase}-projected.jsonl"
   done
 
-  artifact_root="${target_dir}/trip-oracles/trip"
+  artifact_root="$(trip_observer_artifact_root "$target_dir" trip)"
   mkdir -p "$artifact_root"
   trip_publish_artifact "$work_root/geometry-a/geometry-initex-projected.jsonl" \
     "$artifact_root/initex-geometry.jsonl"
@@ -253,7 +253,7 @@ cmp "$work_root/profile-a/profile-trip-command.jsonl" \
   "$work_root/profile-b/profile-trip-command.jsonl"
 validate_and_publish_geometry
 
-artifact_root="${target_dir}/trip-oracles/trip"
+artifact_root="$(trip_observer_artifact_root "$target_dir" trip)"
 mkdir -p "$artifact_root"
 trip_publish_artifact "$work_root/full-initex-a/root-session.jsonl" \
   "$artifact_root/initex-command.jsonl"

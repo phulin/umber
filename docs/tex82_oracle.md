@@ -311,7 +311,9 @@ DVI against the clean oracle. The DVI comparison normalizes exactly the
 preamble-comment payload; its length byte, every other preamble byte, and the
 complete body and postamble must match. The bounded profile's coverage is
 therefore the stable ordered `shipout` effects plus terminal `stop` and engine
-`terminate`, rather than the unstable full command stream.
+`terminate`, rather than the unstable full command stream. Its generated
+diagnostic channels are published under `target/trip-observer-output/trip/`,
+separate from the immutable provisioned inputs under `target/trip-oracles/`.
 
 The aggregate transparency gate is:
 

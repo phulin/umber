@@ -186,9 +186,11 @@ DVI context is escaped and bounded, and EOF is explicit. This makes a report
 reproducible from the same comparison inputs while preserving the distinction
 between a command-semantic failure and later output evidence.
 
-The TeX82 and e-TeX oracle scripts publish deterministic two-phase command-v1,
-geometry-v2, transcript, log, and loaded-format DVI channels under
-`target/trip-oracles/<trip|etrip>/`. The in-process harness captures both event
+The TeX82 and e-TeX observer scripts publish deterministic two-phase command-v1,
+geometry-v2, transcript, log, and loaded-format DVI diagnostic channels under
+`target/trip-observer-output/<trip|etrip>/`. Provisioned, lock-verified inputs
+remain immutable under `target/trip-oracles/<trip|etrip>/`; observer runs never
+publish into that namespace. The in-process harness captures both event
 channels from one ordinary `EngineSession::run_with_observer` call;
 the observer does not use replay or a legacy input-stack projection. A
 successful comparison removes any stale TRIP-specific artifact and
@@ -196,7 +198,9 @@ emits no new triage output.
 Each observer stages every channel beside its destination, seals it mode
 `0444`, and atomically replaces the previous artifact. A rerun replaces both a
 sealed destination and the private partial staging file left by an interrupted
-publisher, without prompts or target cleanup.
+publisher, without prompts or target cleanup. The hermetic observer ownership
+self-test also hashes a synthetic locked input across two generated
+publications, proving the namespaces do not alias.
 
 Umber's detached semantic and geometry evidence uses
 `tex_oracle::OracleBundle`. The oracle crate owns its `UMBREVID` encoding,

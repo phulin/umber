@@ -1,5 +1,19 @@
 #!/bin/sh
 
+# Return the generated-output root for one TRIP observer. Provisioned
+# conformance inputs live under trip-oracles and are deliberately never a
+# publication destination for these diagnostic producers.
+trip_observer_artifact_root() {
+  case "$2" in
+    trip|etrip) ;;
+    *)
+      printf 'unsupported TRIP observer fixture: %s\n' "$2" >&2
+      return 2
+      ;;
+  esac
+  printf '%s/trip-observer-output/%s\n' "$1" "$2"
+}
+
 # Atomically publish a sealed TRIP observer artifact. A fixed staging name is
 # intentional: an interrupted publisher may leave it behind, and the next run
 # deterministically replaces that private partial file before publication.

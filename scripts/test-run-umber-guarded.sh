@@ -5,6 +5,15 @@ root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 guard="$root/scripts/run-umber-guarded.py"
 trip_common="$root/scripts/trip-observer-common.sh"
 marker="$root/target/guard-self-test-child"
+
+file_sha256() {
+  if command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$1" | awk '{print $1}'
+  else
+    sha256sum "$1" | awk '{print $1}'
+  fi
+}
+
 mkdir -p "$root/target"
 rm -f "$marker"
 
@@ -38,6 +47,28 @@ cmp "$publication_source" "$publication_destination"
 test ! -e "${publication_destination}.publishing"
 test "$(LC_ALL=C ls -ld "$publication_destination" | cut -c 2-10)" = "r--r--r--"
 rm -rf "$publication_root"
+
+# Observer publication has a generated namespace distinct from the immutable
+# provisioned inputs consumed by the conformance harness. Publishing twice
+# must replace the generated artifact without changing locked bytes or modes.
+ownership_root=$(mktemp -d "${TMPDIR:-/tmp}/umber-trip-ownership.XXXXXX")
+locked_root="$ownership_root/target/trip-oracles/trip"
+mkdir -p "$locked_root"
+locked_artifact="$locked_root/initex-command.jsonl"
+printf '%s\n' provisioned >"$locked_artifact"
+chmod 0444 "$locked_artifact"
+locked_digest=$(file_sha256 "$locked_artifact")
+generated_root=$(trip_observer_artifact_root "$ownership_root/target" trip)
+publication_source="$ownership_root/first"
+printf '%s\n' first >"$publication_source"
+trip_publish_artifact "$publication_source" "$generated_root/initex-command.jsonl"
+printf '%s\n' second >"$publication_source"
+trip_publish_artifact "$publication_source" "$generated_root/initex-command.jsonl"
+test "$(file_sha256 "$locked_artifact")" = "$locked_digest"
+test "$(LC_ALL=C ls -ld "$locked_artifact" | cut -c 2-10)" = "r--r--r--"
+printf '%s\n' second | cmp - "$generated_root/initex-command.jsonl"
+test "$(LC_ALL=C ls -ld "$generated_root/initex-command.jsonl" | cut -c 2-10)" = "r--r--r--"
+rm -rf "$ownership_root"
 
 # The oracle builder may be silent for longer than the progress ceiling. Its
 # heartbeat must keep the unchanged guard alive until that command completes.

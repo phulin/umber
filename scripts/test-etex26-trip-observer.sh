@@ -126,7 +126,7 @@ for phase in initex trip; do
 done
 cmp "$work_root/clean/etrip.dvi" "$work_root/profile-a/etrip.dvi"
 
-artifact_root="${target_dir}/trip-oracles/etrip"
+artifact_root="$(trip_observer_artifact_root "$target_dir" etrip)"
 mkdir -p "$artifact_root"
 trip_publish_artifact "$work_root/profile-a/profile-initex-projected.jsonl" \
   "$artifact_root/initex-command.jsonl"

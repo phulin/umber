@@ -1072,6 +1072,14 @@ bytes, like all assets copied between worktrees, are nevertheless pinned by
 an audited lock update rather than silently distributing one checkout's changed
 oracle to every linked worktree.
 
+The manual TeX82 and e-TeX observer scripts publish their reproducible
+diagnostic channels under `target/trip-observer-output/<trip|etrip>/`. They do
+not write the lock-verified conformance inputs under `target/trip-oracles/`, so
+running either observer repeatedly leaves a subsequent worktree provision
+verification unchanged. The observer ownership self-test proves this with a
+synthetic sealed input and two atomic generated publications; it does not add a
+second conformance verdict.
+
 ## External Document Corpus
 
 External document inputs live outside committed fixtures. The line-oriented
