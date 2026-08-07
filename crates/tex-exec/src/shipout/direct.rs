@@ -41,6 +41,27 @@ pub(crate) struct StagedShipout {
     pub(crate) dvi_plan: Option<DviPagePlan>,
     pub(crate) effect_pos: tex_state::EffectPos,
     pub(crate) retained_diagnostics: Vec<(PrintSink, String)>,
+    #[cfg(test)]
+    pub(crate) base_whatsit_visits: Vec<BaseWhatsitVisit>,
+}
+
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum BaseWhatsitVisitKind {
+    OpenOut,
+    DeferredWrite,
+    NumberedCloseOut,
+    FallbackCloseOut,
+    Special,
+    Language,
+}
+
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct BaseWhatsitVisit {
+    pub(crate) in_hlist: bool,
+    pub(crate) position: usize,
+    pub(crate) kind: BaseWhatsitVisitKind,
 }
 
 pub(crate) fn stage_form(
@@ -283,6 +304,8 @@ pub(crate) fn stage_shipout(
         dvi_plan,
         effect_pos,
         retained_diagnostics,
+        #[cfg(test)]
+        base_whatsit_visits: overlay.base_whatsit_visits,
     })
 }
 

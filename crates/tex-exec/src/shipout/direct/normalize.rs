@@ -9,6 +9,8 @@ pub(super) struct PageOverlay {
     pub(super) directions: Vec<DirectionPermutation>,
     pub(super) omitted_whatsits: Vec<(NodeListId, usize)>,
     pub(super) diagnostics: Vec<(PrintSink, String)>,
+    #[cfg(test)]
+    pub(super) base_whatsit_visits: Vec<BaseWhatsitVisit>,
     color_target: tex_state::PdfColorStackTarget,
     running_thread_depth: Option<usize>,
     output_open_context: String,
@@ -85,6 +87,8 @@ pub(super) fn normalize_page(
         directions: Vec::new(),
         omitted_whatsits: Vec::new(),
         diagnostics: Vec::new(),
+        #[cfg(test)]
+        base_whatsit_visits: Vec::new(),
         color_target,
         running_thread_depth: None,
         output_open_context,
@@ -292,6 +296,14 @@ fn normalize_index(
             }
         }
         NormalizeNode::Whatsit(whatsit) => {
+            #[cfg(test)]
+            if let Some(kind) = base_whatsit_visit_kind(&whatsit) {
+                overlay.base_whatsit_visits.push(BaseWhatsitVisit {
+                    in_hlist,
+                    position: index,
+                    kind,
+                });
+            }
             let anchored = whatsit_is_anchored(&whatsit, suppress_deferred_streams);
             let effect_count = overlay.effects.len();
             append_whatsit_effect(
@@ -332,6 +344,19 @@ fn normalize_index(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+fn base_whatsit_visit_kind(whatsit: &Whatsit) -> Option<BaseWhatsitVisitKind> {
+    match whatsit {
+        Whatsit::OpenOut { .. } => Some(BaseWhatsitVisitKind::OpenOut),
+        Whatsit::DeferredWrite { .. } => Some(BaseWhatsitVisitKind::DeferredWrite),
+        Whatsit::CloseOut { slot: Some(_) } => Some(BaseWhatsitVisitKind::NumberedCloseOut),
+        Whatsit::CloseOut { slot: None } => Some(BaseWhatsitVisitKind::FallbackCloseOut),
+        Whatsit::Special { .. } => Some(BaseWhatsitVisitKind::Special),
+        Whatsit::Language { .. } => Some(BaseWhatsitVisitKind::Language),
+        _ => None,
+    }
 }
 
 fn append_whatsit_effect(

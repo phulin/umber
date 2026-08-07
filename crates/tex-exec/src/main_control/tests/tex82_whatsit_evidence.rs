@@ -295,27 +295,27 @@ fn extension_dispatch_executes_every_selector_in_every_tex82_mode() {
             usize::from(setlanguage_is_legal),
             "{mode}: setlanguage appends only in horizontal mode"
         );
-        run_to_end_observed(&mut control, &mut stores, &mut recorder);
-        let observations = recorder.0;
-        assert_eq!(stores.count(0), 1, "{mode}: immediate backed up relax");
-        let mut selected: Vec<_> = observations
+        let selected: Vec<_> = recorder
+            .0
             .iter()
             .filter_map(|observation| match observation {
                 CommandObservation::Command(command)
                     if command.boundary == CommandDeliveryBoundary::Raw
-                        && command.command == "extension" =>
+                        && command.command == "extension"
+                        && command.provenance.source_range.is_some() =>
                 {
                     command.command_operand
                 }
                 _ => None,
             })
             .collect();
-        selected.dedup();
         assert_eq!(
             selected,
             [0, 1, 2, 3, 4, 5],
-            "{mode}: every selector reaches MainControl once"
+            "{mode}: each selector reaches MainControl exactly once before output replay"
         );
+        run_to_end_observed(&mut control, &mut stores, &mut recorder);
+        assert_eq!(stores.count(0), 1, "{mode}: immediate backed up relax");
         let effects: Vec<_> = stores
             .world()
             .committed_artifacts()
@@ -404,17 +404,22 @@ fn base_whatsit_construction_projects_fields_display_size_and_ownership() {
         stores.box_reg(2).is_some(),
         "nested copy survives original replacement"
     );
-    let root = stores
-        .nodes(stores.box_reg(1).expect("box one"))
-        .first()
-        .expect("root");
-    let Node::HList(boxed) = root.to_owned() else {
-        panic!("box zero is horizontal")
-    };
-    assert_eq!(
-        (boxed.width.raw(), boxed.height.raw(), boxed.depth.raw()),
-        (0, 0, 0)
-    );
+    for (register, vertical) in [(1, false), (2, true)] {
+        let root = stores
+            .nodes(stores.box_reg(register).expect("box exists"))
+            .first()
+            .expect("box has a root")
+            .to_owned();
+        let boxed = match (vertical, root) {
+            (false, Node::HList(boxed)) | (true, Node::VList(boxed)) => boxed,
+            (_, other) => panic!("box {register} has the expected orientation: {other:?}"),
+        };
+        assert_eq!(
+            (boxed.width.raw(), boxed.height.raw(), boxed.depth.raw()),
+            (0, 0, 0),
+            "base whatsits have zero dimensions in register {register}"
+        );
+    }
     let shown = terminal_text(&stores);
     for row in [
         "\\openout15=owned",
@@ -493,6 +498,67 @@ fn hlist_and_vlist_visit_each_base_whatsit_once_in_position() {
     // payloads once, in list position. Language and fallback close nodes are
     // passive; open/write/numbered-close/special retain ordered ownership.
     for vertical in [false, true] {
+        use crate::shipout::direct::{BaseWhatsitVisit, BaseWhatsitVisitKind};
+
+        let mut trace_stores = Universe::new_with_plain_catcodes();
+        let trace_nodes = base_whatsits(&mut trace_stores);
+        let trace_root = state_box(&mut trace_stores, &trace_nodes, vertical);
+        let input_summary = trace_stores.input_summary().clone();
+        let mut write =
+            |_: &mut Universe, _, _| Ok(crate::shipout::ExpandedWrite::transactional("w\n".into()));
+        let mut unexpected_replay =
+            |_: &mut Universe, _, _| panic!("the typed visit trace does not replay text");
+        let staged = crate::shipout::direct::stage_shipout(
+            trace_root,
+            input_summary,
+            crate::shipout::ShipoutOrigin {
+                output_open_context: Some(String::new()),
+                pending_end: 0,
+                announce_openout: false,
+            },
+            &mut trace_stores,
+            true,
+            &mut write,
+            &mut unexpected_replay,
+        )
+        .expect("base-whatsit visit trace stages");
+        assert_eq!(
+            staged.base_whatsit_visits,
+            [
+                BaseWhatsitVisit {
+                    in_hlist: !vertical,
+                    position: 0,
+                    kind: BaseWhatsitVisitKind::OpenOut
+                },
+                BaseWhatsitVisit {
+                    in_hlist: !vertical,
+                    position: 1,
+                    kind: BaseWhatsitVisitKind::DeferredWrite
+                },
+                BaseWhatsitVisit {
+                    in_hlist: !vertical,
+                    position: 2,
+                    kind: BaseWhatsitVisitKind::NumberedCloseOut
+                },
+                BaseWhatsitVisit {
+                    in_hlist: !vertical,
+                    position: 3,
+                    kind: BaseWhatsitVisitKind::FallbackCloseOut
+                },
+                BaseWhatsitVisit {
+                    in_hlist: !vertical,
+                    position: 4,
+                    kind: BaseWhatsitVisitKind::Special
+                },
+                BaseWhatsitVisit {
+                    in_hlist: !vertical,
+                    position: 5,
+                    kind: BaseWhatsitVisitKind::Language
+                },
+            ],
+            "both effectful and passive base whatsits are visited exactly once"
+        );
+
         let mut stores = Universe::new_with_plain_catcodes();
         let nodes = base_whatsits(&mut stores);
         let root = state_box(&mut stores, &nodes, vertical);
@@ -619,6 +685,55 @@ fn deferred_write_projects_stopper_selector_mode_stream_and_recovery_matrix() {
             .count(),
         "every synthetic write input, including its stopper, retires"
     );
+    let stopper_installs: Vec<_> = observations
+        .windows(2)
+        .enumerate()
+        .filter_map(|(index, pair)| match pair {
+            [
+                CommandObservation::Input(input),
+                CommandObservation::Recovery(recovery),
+            ] if input.reason == InputReason::Recovery
+                && input.transition == InputTransition::Recovery
+                && recovery.kind == RecoveryKind::InsertedToken
+                && matches!(
+                    recovery.tokens.as_slice(),
+                    [ObservedToken::Character {
+                        character: '}',
+                        catcode: Catcode::EndGroup
+                    }]
+                ) =>
+            {
+                Some((index, input.level))
+            }
+            _ => None,
+        })
+        .collect();
+    assert!(!stopper_installs.is_empty());
+    for (install_index, level) in &stopper_installs {
+        let next_same_level = observations[install_index + 2..]
+            .iter()
+            .find_map(|observation| match observation {
+                CommandObservation::Input(input)
+                    if input.reason == InputReason::Recovery && input.level == *level =>
+                {
+                    Some(input.transition)
+                }
+                _ => None,
+            });
+        assert_eq!(
+            next_same_level,
+            Some(InputTransition::Retire),
+            "ReplayTrace::Inserted stopper install at level {level} has an exact-ID retirement"
+        );
+    }
+    assert_eq!(
+        stopper_installs.len(),
+        write_inputs
+            .iter()
+            .filter(|transition| **transition == InputTransition::Push)
+            .count(),
+        "every stored write replay has one inserted-stopper install/retire pair"
+    );
     assert!(terminal_text(&stores).contains("Unbalanced write command"));
     assert_eq!(
         terminal_text(&stores).matches("selector-restored").count(),
@@ -627,6 +742,24 @@ fn deferred_write_projects_stopper_selector_mode_stream_and_recovery_matrix() {
     assert!(
         stores.box_reg(9).is_some(),
         "following box scan proves mode restoration"
+    );
+    let (traced, _, _) = observed_run(
+        br"\nonstopmode\tracingcommands=2\tracingonline=1
+           \shipout\hbox{\write16{\romannumeral0\relax}}\message{restored}\end",
+    );
+    let trace = terminal_text(&traced);
+    let no_mode = trace
+        .find("{no mode: \\romannumeral}")
+        .unwrap_or_else(|| panic!("deferred expansion observes write-time no mode: {trace}"));
+    let restored = no_mode
+        + trace[no_mode..]
+            .find("{vertical mode: \\message}")
+            .unwrap_or_else(|| {
+                panic!("the command after write replay observes restored vmode: {trace}")
+            });
+    assert!(
+        restored > no_mode,
+        "mode restoration follows the no-mode replay boundary"
     );
 
     let (immediate, _, _) = observed_run(br"\def\same{stable}\newlinechar=`|\immediate\openout0=parity\immediate\write0{\same|line}\immediate\closeout0\end");

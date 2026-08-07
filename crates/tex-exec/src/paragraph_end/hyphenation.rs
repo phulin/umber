@@ -10,6 +10,13 @@ struct HyphenationProjection<'a> {
     missing_hyphens: &'a mut Vec<MissingHyphenDiagnostic>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct HyphenationContext {
+    language: u8,
+    left: usize,
+    right: usize,
+}
+
 /// Installs patterns whose §963 duplicate diagnostics were already reported
 /// by the canonical live scanner.
 pub(crate) fn apply_scanned_patterns(
@@ -62,7 +69,7 @@ fn hyphenated_hlist_with_projections(
     nodes: Vec<Node>,
     fuel: &mut tex_command::CommandFuel,
     projection: &mut HyphenationProjection<'_>,
-) -> Result<Vec<Node>, ExecError> {
+) -> Result<(Vec<Node>, HyphenationContext), ExecError> {
     // TeX82 §919 initializes the trie on entry to the first hyphenation pass,
     // even when this particular paragraph ultimately supplies no candidate.
     stores.close_hyphenation_patterns();
@@ -101,7 +108,14 @@ fn hyphenated_hlist_with_projections(
             index = next;
         }
     }
-    Ok(out.unwrap_or(nodes))
+    Ok((
+        out.unwrap_or(nodes),
+        HyphenationContext {
+            language,
+            left,
+            right,
+        },
+    ))
 }
 
 /// Builds the semantic hyphenated list together with TeX82's physical
@@ -126,7 +140,7 @@ pub(crate) fn hyphenated_hlist_sequence_with_fuel(
         physical_post_overrides: &mut physical_post_overrides,
         missing_hyphens: &mut missing_hyphens,
     };
-    let semantic = hyphenated_hlist_with_projections(stores, nodes, fuel, &mut projection)?;
+    let (semantic, _) = hyphenated_hlist_with_projections(stores, nodes, fuel, &mut projection)?;
     let mut physical = semantic.clone();
     for (index, physical_post) in physical_post_overrides {
         if let Some(Node::Disc { post, .. }) = physical.get_mut(index) {
@@ -1038,6 +1052,28 @@ mod tests {
         assert_eq!(visited.semantic(), nodes);
         assert_eq!(visited.physical(), nodes);
         assert!(diagnostics.is_empty());
+        let mut physical_post_overrides = Vec::new();
+        let mut missing_hyphens = Vec::new();
+        let mut projection = HyphenationProjection {
+            physical_post_overrides: &mut physical_post_overrides,
+            missing_hyphens: &mut missing_hyphens,
+        };
+        let (_, final_context) = hyphenated_hlist_with_projections(
+            &mut stores,
+            nodes.clone(),
+            fuel.fuel_mut(),
+            &mut projection,
+        )
+        .expect("the traced pre-hyphenation visit succeeds");
+        assert_eq!(
+            final_context,
+            HyphenationContext {
+                language: 7,
+                left: 2,
+                right: 3,
+            },
+            "the actual pre-hyphenation traversal applies the language node's state"
+        );
         assert_eq!(
             stores.tokens(tokens),
             [tex_state::token::Token::Char {
