@@ -106,5 +106,5 @@ acquisition tests passed, while the explicitly browser-only suite was skipped
 by the Node runner as designed.
 
 The complete native `cargo test -q --tests` routine suite passed under
-`MemoryMax=1G`. The exact documentation tree then passed all four
-`scripts/check.sh` gates under the same hard cap with six Cargo jobs.
+`MemoryMax=1G`. The exact documentation tree then passed the uncapped six-job
+`scripts/check.sh` run, including all four gates.
