@@ -2437,9 +2437,7 @@ impl MainControl {
                     // Those failures cross the stomach as typed terminal
                     // errors, so render them here, at the one §81 `jump_out`
                     // boundary, before latching the terminal state.
-                    let context = self
-                        .command
-                        .output_open_context(&stores.command_context());
+                    let context = self.command.output_open_context(&stores.command_context());
                     crate::diagnostics::report_irrecoverable_error(stores, fatal, context);
                     self.captured_fatal_origin = match &error {
                         ExecError::Captured { site, frozen, .. }

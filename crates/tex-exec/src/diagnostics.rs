@@ -45,9 +45,10 @@ pub(crate) fn report_irrecoverable_error(
                 < tex_state::print::ErrorHistory::ErrorMessageIssued
             {
                 let mut report = stores.print_err("This can't happen (");
-                report.print(site).print_char(')').help(&[
-                    "I'm broken. Please show this to someone who can fix can fix",
-                ]);
+                report
+                    .print(site)
+                    .print_char(')')
+                    .help(&["I'm broken. Please show this to someone who can fix can fix"]);
                 report
             } else {
                 let mut report = stores.print_err("I can't go on meeting you like this");
