@@ -11,13 +11,7 @@
     },
     "events": 136,
     "log": {
-      "bug": "umber2-alfh.25",
-      "kind": "xfail",
-      "mismatch": {
-        "actual": "(./top-open-write-close.tex [0] )",
-        "expected": "(./top-open-write-close.tex [0",
-        "line": 3
-      }
+      "kind": "file"
     }
   },
   "expected": [

@@ -2,13 +2,7 @@
   "channels": {
     "events": 300,
     "log": {
-      "bug": "umber2-alfh.25",
-      "kind": "xfail",
-      "mismatch": {
-        "actual": "(./open-close-without-write.tex [0] [0] )",
-        "expected": "(./open-close-without-write.tex",
-        "line": 3
-      }
+      "kind": "file"
     }
   },
   "expected": [

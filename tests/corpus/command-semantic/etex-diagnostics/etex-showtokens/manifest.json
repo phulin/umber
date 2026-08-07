@@ -26,8 +26,8 @@
     ]
   },
   "expected": [
-    "effect:showtokens:A {B} \\boom #### x",
-    "effect:terminate:engine\u0000",
+    "effect:showtokens:showtokens:char:letter:65,char:spacer:32,char:left_brace:123,char:letter:66,char:right_brace:125,char:spacer:32,cs:boom,char:mac_param:35,char:mac_param:35,char:spacer:32,char:letter:120",
+    "effect:terminate:engine:none",
     "count:0=1",
     "count:7=0"
   ],

@@ -20,10 +20,10 @@
     ]
   },
   "expected": [
-    "effect:showgroups:\n\n### bottom level",
-    "effect:showgroups:\n\n### semi simple group (level 1) entered at line 3 (\\begingroup)\n### bottom level",
-    "effect:showgroups:\n\n### bottom level",
-    "effect:terminate:engine\u0000",
+    "effect:showgroups:showgroups:\n\n### bottom level",
+    "effect:showgroups:showgroups:\n\n### semi simple group (level 1) entered at line 3 (\\begingroup)\n### bottom level",
+    "effect:showgroups:showgroups:\n\n### bottom level",
+    "effect:terminate:engine:none",
     "count:0=7"
   ],
   "channels": {

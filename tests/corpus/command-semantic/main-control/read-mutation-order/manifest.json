@@ -3,7 +3,7 @@
     "events": 41
   },
   "expected": [
-    "mutation:meaning:relax:macro definition:global"
+    "mutation:meaning:relax:macro-end-match,char:letter:97,char:letter:108,char:letter:112,char:letter:104,char:letter:97,char:spacer:32:global"
   ],
   "profile": "raw-tex82-loaded",
   "projection": {

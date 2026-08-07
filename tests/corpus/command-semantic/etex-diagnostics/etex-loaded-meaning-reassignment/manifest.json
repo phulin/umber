@@ -20,7 +20,7 @@
     ]
   },
   "expected": [
-    "mutation:catcode:-:123=1:local",
+    "mutation:catcode:123:left_brace:local",
     "mutation:meaning:bgroup:left_brace:local",
     "count:0=0"
   ],

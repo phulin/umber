@@ -17,7 +17,7 @@
     "count_registers": []
   },
   "expected": [
-    "mutation:code_table:-:lccode:65=122:global"
+    "mutation:code_table:lccode:65:122:global"
   ],
   "channels": {
     "events": 76

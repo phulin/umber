@@ -469,7 +469,7 @@ fn v2_identity_capture_policy_and_resolved_channels_match_the_migrated_corpus() 
     }
     assert_eq!(
         format!("{:x}", digest.finalize()),
-        "4cf1c70b6095ba7907bba35d4c1ba259d139c26b4a70e6c1b668e4dfa0581ec9"
+        "99c27329fbc815fd74af19377babfecd9111450da3b6b7249930700c117ea983"
     );
 }
 

@@ -24,7 +24,7 @@
     ]
   },
   "expected": [
-    "effect:terminate:engine\u0000",
+    "effect:terminate:engine:none",
     "count:0=15"
   ],
   "channels": {

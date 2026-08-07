@@ -3,8 +3,8 @@
     "events": 52
   },
   "expected": [
-    "mutation:meaning:line:macro definition:local",
-    "mutation:register:-:count:0=1:local"
+    "mutation:meaning:line:macro-end-match,char:letter:97,char:letter:108,char:letter:112,char:letter:104,char:letter:97,char:spacer:32:local",
+    "mutation:register:count:0:1:local"
   ],
   "profile": "raw-tex82-loaded",
   "projection": {

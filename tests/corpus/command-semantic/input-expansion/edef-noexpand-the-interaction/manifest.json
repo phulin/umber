@@ -3,11 +3,11 @@
     "events": 137
   },
   "expected": [
-    "mutation:catcode:-:123=1:local",
-    "mutation:catcode:-:125=2:local",
-    "mutation:meaning:a:macro definition:local",
-    "mutation:register:toks:0:tokens:local",
-    "mutation:meaning:e:macro definition:local"
+    "mutation:catcode:123:left_brace:local",
+    "mutation:catcode:125:right_brace:local",
+    "mutation:meaning:a:macro-end-match,char:letter:65:local",
+    "mutation:register:toks:0:char:letter:84:local",
+    "mutation:meaning:e:macro-end-match,cs:a,char:other_char:58,char:letter:84,char:other_char:58,char:other_char:55:local"
   ],
   "profile": "raw-tex82-loaded",
   "projection": {

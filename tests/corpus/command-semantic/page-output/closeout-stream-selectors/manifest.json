@@ -11,13 +11,7 @@
     },
     "events": 192,
     "log": {
-      "bug": "umber2-johp.761",
-      "kind": "xfail",
-      "mismatch": {
-        "actual": "! Bad number (-1).",
-        "expected": "\\openout0 = `zero.out'.",
-        "line": 4
-      }
+      "kind": "file"
     }
   },
   "expected": [
