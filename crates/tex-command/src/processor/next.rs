@@ -294,6 +294,13 @@ impl CommandProcessor<'_> {
             let InputLevel::Tokens(cursor) = level else {
                 break;
             };
+            // TeX82 §1131 walks downward only while `state=token_list` and
+            // `loc=null`. A live token either in the v-template itself or in
+            // an interposed token-list frame is the canonical interwoven-
+            // preamble fatal path, not an internal Rust invariant failure.
+            if self.next_stored_token(cursor).is_some() {
+                break;
+            }
             if cursor.identity == v_level
                 && matches!(cursor.behavior, TokenBehavior::VTemplate)
                 && matches!(
@@ -304,12 +311,19 @@ impl CommandProcessor<'_> {
                 found = true;
                 break;
             }
-            if self.next_stored_token(cursor).is_some() {
-                break;
-            }
         }
         if !found {
-            return Err(CommandError::input_invariant());
+            return Err(CommandError::Fatal(crate::FatalError::emergency_stop(
+                "(interwoven alignment preambles are not allowed)",
+            )));
+        }
+        // TeX82 §791 performs this independently of §1131's input-stack
+        // proof: another preamble may leave the expected exhausted frame in
+        // place while its brace sentinel is interwoven with the active cell.
+        if self.command.alignment.align_state < 500_000 {
+            return Err(CommandError::Fatal(crate::FatalError::emergency_stop(
+                "(interwoven alignment preambles are not allowed)",
+            )));
         }
         self.command
             .finish_alignment_cell_after_input_proof(alignment)
@@ -4119,7 +4133,7 @@ mod tests {
     }
 
     #[test]
-    fn retained_v_template_returns_saved_delimiter_structurally_after_endv() {
+    fn fin_col_endv_stack_accepts_exhausted_frames_and_rejects_interwoven_states() {
         let mut command = CommandState::default();
         let alignment = crate::AlignmentIdentity::new(71);
         command.push_token_level(
@@ -4200,14 +4214,49 @@ mod tests {
                 .expect("v-template delivers")
                 .expect("v-template token");
             assert!(matches!(v.meaning(), Meaning::CharToken { ch: 'v', .. }));
+            assert_eq!(
+                processor.finish_alignment_cell(alignment),
+                Err(CommandError::Fatal(crate::FatalError::emergency_stop(
+                    "(interwoven alignment preambles are not allowed)",
+                ))),
+                "a nonempty v-template has not reached do_endv's loc=null boundary"
+            );
             let endv = processor
                 .get_x_token()
                 .expect("end-template expands to end-v")
                 .expect("end-v delivery");
             assert!(matches!(endv.meaning(), Meaning::EndV));
             assert!(endv.spelling().semantic_token().is_frozen_endv());
+            processor.command.alignment.align_state = 499_999;
+            assert_eq!(
+                processor.finish_alignment_cell(alignment),
+                Err(CommandError::Fatal(crate::FatalError::emergency_stop(
+                    "(interwoven alignment preambles are not allowed)",
+                ))),
+                "fin_col rejects an interwoven brace sentinel even with the exhausted v-template present"
+            );
+            processor.command.alignment.align_state = 1_000_000;
+            processor.command.push_token_level(
+                TokenPayload::Transient(SharedTokenBuffer::new(vec![TracedTokenWord::pack(
+                    Token::Char {
+                        ch: '!',
+                        cat: Catcode::Other,
+                    },
+                    OriginId::UNKNOWN,
+                )])),
+                TokenBehavior::Ordinary,
+                RetirementBehavior::Pop,
+                ReplayTrace::BackedUp,
+            );
+            assert_eq!(
+                processor.finish_alignment_cell(alignment),
+                Err(CommandError::Fatal(crate::FatalError::emergency_stop(
+                    "(interwoven alignment preambles are not allowed)",
+                ))),
+                "a nonempty token-list interwoven above the exhausted v-template is fatal"
+            );
+            processor.command.input.levels.pop();
             let finished = processor
-                .command
                 .finish_alignment_cell(alignment)
                 .expect("do_endv proves the exact retained frame");
             assert_eq!(finished.delimiter, crate::AlignmentCellDelimiter::Tab);

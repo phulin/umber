@@ -589,7 +589,7 @@
         "Active bounded MainControl unit `align_peek_full_branch_prefix_recovery_and_nesting_matrix`."
       ],
       "expected_observations": [
-        "Exactly one branch owns the lookahead token and u-template installation follows command-owned backup for an ordinary row."
+        "Every initial or crcr-restarted probe publishes align_state 1000000; exactly one branch owns the lookahead token, and an ordinary row orders reset, command-owned backup, then u-template installation."
       ],
       "postconditions": [
         "The engine is in noalign group, alignment finish, repeated lookahead, or a new row/cell with no duplicated token."
@@ -626,7 +626,7 @@
         "Active bounded MainControl unit `init_row_halign_valign_leading_tabskip_template_span_and_aux_matrix`."
       ],
       "expected_observations": [
-        "One leading tabskip precedes the first cell and the row-local auxiliary mode field is initialized canonically."
+        "One leading tabskip precedes the first cell; halign rows have raw space_factor 0 and valign rows have prev_depth 0; the nested span level has space_factor 1000 or ignore_depth, and typed row state identifies first alignrecord/cur_span plus omit/span structure."
       ],
       "postconditions": [
         "cur_align and cur_span select the first column and the row list is ready for cell packaging."
@@ -750,7 +750,7 @@
         "Active bounded MainControl unit `fin_col_delimiter_periodic_extra_tab_and_brace_depth_matrix`."
       ],
       "expected_observations": [
-        "Saved delimiter, cell packaging, span continuation, row outcome, periodic-copy, and extra-tab recovery follow the branches in §§791–795."
+        "Saved delimiter, structurally packaged cell/span/row outcomes, column-associated tabskip, periodic-copy, and extra-tab recovery follow §§791–795; align_state below 500000, a nonempty v-template, or an interposed input frame raises the interwoven-preamble fatal."
       ],
       "postconditions": [
         "Exactly one next-cell, continued-span, or completed-row state results and align_state is 1000000 during lookahead."
@@ -768,6 +768,10 @@
         {
           "path": "crates/tex-exec/src/main_control/tests.rs",
           "test": "fin_col_delimiter_periodic_extra_tab_and_brace_depth_matrix"
+        },
+        {
+          "path": "crates/tex-command/src/processor/next.rs",
+          "test": "fin_col_endv_stack_accepts_exhausted_frames_and_rejects_interwoven_states"
         }
       ],
       "status": "covered",
@@ -1368,7 +1372,7 @@
         "Active bounded MainControl unit `display_alignment_finish_complete_content_delimiter_and_spacing_matrix`."
       ],
       "expected_observations": [
-        "Assignments precede delimiter validation; a non-math-shift command produces `Missing $$ inserted`, is backed up by back_error, and remains available after inserted recovery; the final vertical list orders pre-penalty, above glue, alignment, post-penalty, and below glue."
+        "Assignments precede delimiter validation; a direct non-math-shift produces Missing $$ inserted and is backed up/redelivered, while one closing math shift followed by a non-shift produces Display math should end with $$; the final vertical list exactly orders pre-penalty, above glue, alignment, post-penalty, below glue, restored-prevdepth baseline glue, then resumed material."
       ],
       "postconditions": [
         "Display mode is closed, prev_depth is restored, and normal post-display scanning resumes."
@@ -1378,7 +1382,7 @@
         "Boundary: valid double math shift, a non-math-shift requiring backup recovery, empty/nonempty result list, and nonzero display indentation."
       ],
       "recovery_cases": [
-        "Recovery: missing or single closing math shift follows the canonical display-delimiter diagnostic and insertion path without duplicating the alignment list."
+        "Recovery: the absent first closing math shift and the present first/missing second shift follow their distinct canonical diagnostics and backup paths without duplicating the alignment list."
       ],
       "semantic_owner": "tex-exec::math-display",
       "test_level": "planned-rust-unit",

@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use tex_command::{
-    CommandObservation, CommandObserver, InputReason, InputTransition, RegisteredSourceKind,
-    SourceRegistration,
+    CommandDeliveryBoundary, CommandObservation, CommandObserver, InputReason, InputTransition,
+    ObservedToken, RecoveryKind, RegisteredSourceKind, SourceRegistration,
 };
 use tex_state::hyphenation::PatternSpec;
 use tex_state::page::PageMark;
@@ -84,6 +84,196 @@ fn tabskip_widths(stores: &Universe, nodes: &[Node], widths: &mut Vec<i32>) {
             _ => {}
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct AlignmentRuntimeSnapshot {
+    alignment: AlignmentIdentity,
+    column: usize,
+    cell_span: u16,
+    rows: usize,
+    captured_cells: usize,
+    row_mode: Mode,
+    row_space_factor: i32,
+    row_prev_depth: Option<i32>,
+    cell_mode: Mode,
+    cell_space_factor: i32,
+    cell_prev_depth: Option<i32>,
+}
+
+fn active_alignment_runtime_snapshot(control: &MainControl) -> Option<AlignmentRuntimeSnapshot> {
+    let active = control.active_alignment.as_ref()?;
+    if !active.row_open || !active.cell_open {
+        return None;
+    }
+    let summary = control.modes.summary();
+    let levels = summary.levels();
+    let [.., row, cell] = levels else {
+        return None;
+    };
+    Some(AlignmentRuntimeSnapshot {
+        alignment: active.identity,
+        column: active.column,
+        cell_span: active.cell_span,
+        rows: active.captured_rows.len(),
+        captured_cells: active.captured_rows.last().map_or(0, Vec::len),
+        row_mode: row.mode(),
+        row_space_factor: row.list().raw_space_factor(),
+        row_prev_depth: row.list().prev_depth().map(Scaled::raw),
+        cell_mode: cell.mode(),
+        cell_space_factor: cell.list().raw_space_factor(),
+        cell_prev_depth: cell.list().prev_depth().map(Scaled::raw),
+    })
+}
+
+fn step_until_alignment_snapshot(
+    control: &mut MainControl,
+    stores: &mut Universe,
+    observations: &mut dyn CommandObserver,
+    accept: impl Fn(AlignmentRuntimeSnapshot) -> bool,
+) -> AlignmentRuntimeSnapshot {
+    loop {
+        match control
+            .step_with_observer(stores, observations)
+            .expect("program executes")
+        {
+            MainControlStep::End | MainControlStep::EndOfInput => {
+                panic!("input ended before the requested alignment state")
+            }
+            MainControlStep::Continue => {}
+        }
+        if let Some(snapshot) = active_alignment_runtime_snapshot(control)
+            && accept(snapshot)
+        {
+            return snapshot;
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum AlignmentNodeProjection {
+    TabSkip(i32),
+    Cell { span_count: u16 },
+    Box { shift: i32, kerns: Vec<i32> },
+    Penalty(i32),
+    AboveDisplay(i32),
+    BelowDisplay(i32),
+    Baseline(i32),
+    Kern(i32),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum PackagedRowItem {
+    TabSkip(i32),
+    HorizontalCell(Vec<i32>),
+    VerticalCell(Vec<i32>),
+}
+
+fn packaged_row_projection(stores: &Universe, row: &Node) -> Vec<PackagedRowItem> {
+    fn material_widths(stores: &Universe, nodes: tex_state::ids::NodeListId) -> Vec<i32> {
+        let mut widths = Vec::new();
+        for node in stores.nodes(nodes) {
+            match node {
+                tex_state::node_arena::NodeRef::Kern { amount, .. } => widths.push(amount.raw()),
+                tex_state::node_arena::NodeRef::Glue {
+                    spec,
+                    kind: GlueKind::Normal,
+                    ..
+                } => widths.push(stores.glue(spec).width.raw()),
+                tex_state::node_arena::NodeRef::HList(boxed)
+                | tex_state::node_arena::NodeRef::VList(boxed) => {
+                    widths.extend(material_widths(stores, boxed.children));
+                }
+                _ => {}
+            }
+        }
+        widths
+    }
+
+    let children = match row {
+        Node::HList(boxed) | Node::VList(boxed) => stores.nodes(boxed.children).to_vec(),
+        other => panic!("alignment outcome is a packaged row: {other:?}"),
+    };
+    children
+        .iter()
+        .filter_map(|node| match node {
+            Node::Glue {
+                spec,
+                kind: GlueKind::TabSkip,
+                ..
+            } => Some(PackagedRowItem::TabSkip(stores.glue(*spec).width.raw())),
+            Node::HList(boxed) => Some(PackagedRowItem::HorizontalCell(material_widths(
+                stores,
+                boxed.children,
+            ))),
+            Node::VList(boxed) => Some(PackagedRowItem::VerticalCell(material_widths(
+                stores,
+                boxed.children,
+            ))),
+            _ => None,
+        })
+        .collect()
+}
+
+fn alignment_node_projection(stores: &Universe, nodes: &[Node]) -> Vec<AlignmentNodeProjection> {
+    fn kerns(stores: &Universe, nodes: tex_state::ids::NodeListId) -> Vec<i32> {
+        let mut out = Vec::new();
+        for node in stores.nodes(nodes) {
+            match node {
+                tex_state::node_arena::NodeRef::Kern { amount, .. } => out.push(amount.raw()),
+                tex_state::node_arena::NodeRef::HList(boxed)
+                | tex_state::node_arena::NodeRef::VList(boxed) => {
+                    out.extend(kerns(stores, boxed.children));
+                }
+                _ => {}
+            }
+        }
+        out
+    }
+
+    nodes
+        .iter()
+        .filter_map(|node| match node {
+            Node::Glue {
+                spec,
+                kind: GlueKind::TabSkip,
+                ..
+            } => Some(AlignmentNodeProjection::TabSkip(
+                stores.glue(*spec).width.raw(),
+            )),
+            Node::Glue {
+                spec,
+                kind: GlueKind::AboveDisplaySkip,
+                ..
+            } => Some(AlignmentNodeProjection::AboveDisplay(
+                stores.glue(*spec).width.raw(),
+            )),
+            Node::Glue {
+                spec,
+                kind: GlueKind::BelowDisplaySkip,
+                ..
+            } => Some(AlignmentNodeProjection::BelowDisplay(
+                stores.glue(*spec).width.raw(),
+            )),
+            Node::Glue {
+                spec,
+                kind: GlueKind::BaselineSkip,
+                ..
+            } => Some(AlignmentNodeProjection::Baseline(
+                stores.glue(*spec).width.raw(),
+            )),
+            Node::Unset(unset) => Some(AlignmentNodeProjection::Cell {
+                span_count: unset.span_count,
+            }),
+            Node::HList(boxed) | Node::VList(boxed) => Some(AlignmentNodeProjection::Box {
+                shift: boxed.shift.raw(),
+                kerns: kerns(stores, boxed.children),
+            }),
+            Node::Penalty(value) => Some(AlignmentNodeProjection::Penalty(*value)),
+            Node::Kern { amount, .. } => Some(AlignmentNodeProjection::Kern(amount.raw())),
+            _ => None,
+        })
+        .collect()
 }
 
 #[test]
@@ -1822,7 +2012,7 @@ fn display_alignment_tail_runs_assignments_before_main_control() {
 
         run_to_end(&mut control, &mut stores);
 
-        let terminal = pending_sink_text(&stores, true);
+        let terminal = terminal_text(&stores);
         assert!(
             terminal.contains("Missing number, treated as zero"),
             "assignment reports its missing integer: {terminal}"
@@ -1850,7 +2040,7 @@ fn display_alignment_finish_replays_missing_double_math_shift_offender() {
 
     let terminal = terminal_text(&stores);
     assert_eq!(
-        terminal.matches("Display math should end with $$.").count(),
+        terminal.matches("Missing $$ inserted.").count(),
         1,
         "{terminal}"
     );
@@ -1939,6 +2129,123 @@ fn align_peek_full_branch_prefix_recovery_and_nesting_matrix() {
             .any(|(transition, nesting, _)| *transition == "resume" && *nesting == Some(1))
     );
     assert_eq!(control.current_mode(), Mode::Vertical);
+
+    // The aggregate counters above cannot prove §785's ordering. Isolate an
+    // ordinary row opener and project the command-owned reset, backup, and
+    // u-template input events in the order they committed.
+    let mut ordered_stores = Universe::new_with_plain_catcodes();
+    let mut ordered = MainControl::tex82_initex(&mut ordered_stores);
+    register_source(&mut ordered, br"\setbox0=\vbox{\halign{#\cr x\cr}}\end");
+    let mut ordered_observations = ObservationRecorder::default();
+    run_to_end_observed(&mut ordered, &mut ordered_stores, &mut ordered_observations);
+    let reset = ordered_observations
+        .0
+        .iter()
+        .position(|observation| {
+            matches!(
+                observation,
+                CommandObservation::Alignment(record)
+                    if record.transition == "state_change"
+                        && record.align_state == 1_000_000
+                        && record.previous_align_state.is_none()
+            )
+        })
+        .expect("align_peek publishes its reset before classifying the row opener");
+    let backup = ordered_observations
+        .0
+        .iter()
+        .position(|observation| {
+            matches!(
+                observation,
+                CommandObservation::Recovery(record)
+                    if record.kind == RecoveryKind::Backup
+                        && record.tokens == [ObservedToken::Character {
+                            character: 'x',
+                            catcode: Catcode::Letter,
+                        }]
+            )
+        })
+        .expect("the ordinary row opener is backed up exactly once");
+    let u_template = ordered_observations
+        .0
+        .iter()
+        .position(|observation| {
+            matches!(
+                observation,
+                CommandObservation::Input(record)
+                    if record.transition == InputTransition::Push
+                        && record.reason == InputReason::AlignmentUTemplate
+            )
+        })
+        .expect("the selected first column installs its u-template");
+    assert!(
+        reset < backup && backup < u_template,
+        "{:#?}",
+        ordered_observations.0
+    );
+
+    // Every restart caused by `\crcr` resets the sentinel, while noalign and
+    // the closing right brace consume their own lookahead and create no
+    // backed-up input level.
+    let mut branch_stores = Universe::new_with_plain_catcodes();
+    let mut branches = MainControl::tex82_initex(&mut branch_stores);
+    register_source(
+        &mut branches,
+        br"\setbox0=\vbox{\halign{#\cr\crcr\crcr\noalign{}\crcr}}\end",
+    );
+    let mut branch_observations = ObservationRecorder::default();
+    run_to_end_observed(&mut branches, &mut branch_stores, &mut branch_observations);
+    assert_eq!(
+        branch_observations
+            .0
+            .iter()
+            .filter(|observation| matches!(
+                observation,
+                CommandObservation::Alignment(record)
+                    if record.transition == "state_change"
+                        && record.align_state == 1_000_000
+                        && record.previous_align_state.is_none()
+            ))
+            .count(),
+        5,
+        "initial, two crcr, post-noalign, and final crcr probes each reset"
+    );
+    let branch_backups = branch_observations
+        .0
+        .iter()
+        .filter_map(|observation| match observation {
+            CommandObservation::Recovery(record) if record.kind == RecoveryKind::Backup => {
+                Some(record.tokens.clone())
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        branch_backups,
+        vec![
+            vec![ObservedToken::Character {
+                character: '=',
+                catcode: Catcode::Other,
+            }],
+            vec![ObservedToken::Character {
+                character: '{',
+                catcode: Catcode::BeginGroup,
+            }],
+            vec![ObservedToken::Character {
+                character: '{',
+                catcode: Catcode::BeginGroup,
+            }],
+            vec![ObservedToken::Character {
+                character: '{',
+                catcode: Catcode::BeginGroup,
+            }],
+            vec![ObservedToken::Character {
+                character: '{',
+                catcode: Catcode::BeginGroup,
+            }],
+        ],
+        "only the setbox/alignment/noalign opening scanners back input; crcr and the alignment-closing right brace are consumed"
+    );
 }
 
 #[test]
@@ -2011,6 +2318,108 @@ fn init_row_halign_valign_leading_tabskip_template_span_and_aux_matrix() {
         "omit initializes the cell without a u-template input level"
     );
     assert_eq!(control.current_mode(), Mode::Vertical);
+
+    for (
+        source,
+        row_mode,
+        row_space_factor,
+        row_prev_depth,
+        cell_mode,
+        cell_space_factor,
+        cell_prev_depth,
+    ) in [
+        (
+            br"\setbox0=\vbox{\halign{#\cr x\cr y\cr}}\end".as_slice(),
+            Mode::RestrictedHorizontal,
+            0,
+            None,
+            Mode::RestrictedHorizontal,
+            1000,
+            None,
+        ),
+        (
+            br"\setbox0=\hbox{\valign{#\cr\hbox{x}\cr\hbox{y}\cr}}\end".as_slice(),
+            Mode::InternalVertical,
+            0,
+            Some(0),
+            Mode::InternalVertical,
+            0,
+            Some(crate::mode::IGNORE_DEPTH.raw()),
+        ),
+    ] {
+        let mut snapshot_stores = Universe::new_with_plain_catcodes();
+        let mut snapshot_control = MainControl::tex82_initex(&mut snapshot_stores);
+        register_source(&mut snapshot_control, source);
+        let mut snapshot_observations = ObservationRecorder::default();
+        let first = step_until_alignment_snapshot(
+            &mut snapshot_control,
+            &mut snapshot_stores,
+            &mut snapshot_observations,
+            |snapshot| snapshot.rows == 1,
+        );
+        let alignment = first.alignment;
+        assert_eq!(
+            first,
+            AlignmentRuntimeSnapshot {
+                alignment,
+                column: 0,
+                cell_span: 1,
+                rows: 1,
+                captured_cells: 0,
+                row_mode,
+                row_space_factor,
+                row_prev_depth,
+                cell_mode,
+                cell_space_factor,
+                cell_prev_depth,
+            }
+        );
+        let later = step_until_alignment_snapshot(
+            &mut snapshot_control,
+            &mut snapshot_stores,
+            &mut snapshot_observations,
+            |snapshot| snapshot.rows == 2,
+        );
+        assert_eq!(later.alignment, alignment);
+        assert_eq!(later.column, 0, "every row starts at the first alignrecord");
+        assert_eq!(later.cell_span, 1, "cur_span starts at that alignrecord");
+        assert_eq!(
+            later.captured_cells, 0,
+            "the new row owns a fresh cell list"
+        );
+        assert_eq!(later.row_space_factor, row_space_factor);
+        assert_eq!(later.row_prev_depth, row_prev_depth);
+        assert_eq!(later.cell_space_factor, cell_space_factor);
+        assert_eq!(later.cell_prev_depth, cell_prev_depth);
+        run_to_end_observed(
+            &mut snapshot_control,
+            &mut snapshot_stores,
+            &mut snapshot_observations,
+        );
+    }
+
+    let mut span_stores = Universe::new_with_plain_catcodes();
+    let mut span_control = MainControl::tex82_initex(&mut span_stores);
+    register_source(
+        &mut span_control,
+        br"\setbox0=\vbox{\halign{#&#\cr x\span y\cr\omit z&z\cr}}\end",
+    );
+    let mut span_observations = ObservationRecorder::default();
+    let spanned = step_until_alignment_snapshot(
+        &mut span_control,
+        &mut span_stores,
+        &mut span_observations,
+        |snapshot| snapshot.column == 1 && snapshot.cell_span == 2,
+    );
+    assert_eq!(
+        spanned.captured_cells, 0,
+        "span keeps the first cell list open"
+    );
+    run_to_end_observed(&mut span_control, &mut span_stores, &mut span_observations);
+    assert!(span_observations.0.iter().any(|observation| matches!(
+        observation,
+        CommandObservation::Alignment(record) if record.transition == "omit_template_push"
+    )));
 
     // An exhausted preamble is scanner recovery, not permission for init_row
     // to manufacture a first alignrecord. The fragment boundary keeps this
@@ -2123,6 +2532,63 @@ fn fin_col_delimiter_periodic_extra_tab_and_brace_depth_matrix() {
         ],
         "periodic copies retain the repeated column's following tabskip"
     );
+    let halign_rows = box_child_nodes(&stores, 0)
+        .into_iter()
+        .filter(|node| matches!(node, Node::HList(_)))
+        .collect::<Vec<_>>();
+    assert_eq!(halign_rows.len(), 2);
+    assert_eq!(
+        packaged_row_projection(&stores, &halign_rows[0]),
+        vec![
+            PackagedRowItem::TabSkip(Scaled::UNITY),
+            PackagedRowItem::HorizontalCell(vec![Scaled::UNITY]),
+            PackagedRowItem::TabSkip(Scaled::UNITY),
+            PackagedRowItem::HorizontalCell(vec![2 * Scaled::UNITY, 3 * Scaled::UNITY]),
+            PackagedRowItem::TabSkip(3 * Scaled::UNITY),
+            PackagedRowItem::HorizontalCell(vec![]),
+            PackagedRowItem::TabSkip(3 * Scaled::UNITY),
+            PackagedRowItem::HorizontalCell(vec![4 * Scaled::UNITY]),
+            PackagedRowItem::TabSkip(3 * Scaled::UNITY),
+        ],
+        "each packaged cell retains the tabskip associated with its ending column; the span material is one cell followed by its resolved empty column"
+    );
+    assert_eq!(
+        packaged_row_projection(&stores, &halign_rows[1]),
+        vec![
+            PackagedRowItem::TabSkip(Scaled::UNITY),
+            PackagedRowItem::HorizontalCell(vec![Scaled::UNITY]),
+            PackagedRowItem::TabSkip(Scaled::UNITY),
+            PackagedRowItem::HorizontalCell(vec![2 * Scaled::UNITY]),
+            PackagedRowItem::TabSkip(3 * Scaled::UNITY),
+        ],
+        "brace-depth recovery still packages the corrected tab branch as a complete row"
+    );
+    let valign_rows = box_child_nodes(&stores, 1)
+        .into_iter()
+        .filter(|node| matches!(node, Node::VList(_)))
+        .collect::<Vec<_>>();
+    assert_eq!(valign_rows.len(), 2);
+    assert_eq!(
+        packaged_row_projection(&stores, &valign_rows[0]),
+        vec![
+            PackagedRowItem::TabSkip(Scaled::UNITY),
+            PackagedRowItem::VerticalCell(vec![Scaled::UNITY]),
+            PackagedRowItem::TabSkip(Scaled::UNITY),
+            PackagedRowItem::VerticalCell(vec![2 * Scaled::UNITY]),
+            PackagedRowItem::TabSkip(Scaled::UNITY),
+        ]
+    );
+    assert_eq!(
+        packaged_row_projection(&stores, &valign_rows[1]),
+        vec![
+            PackagedRowItem::TabSkip(Scaled::UNITY),
+            PackagedRowItem::VerticalCell(vec![Scaled::UNITY, 2 * Scaled::UNITY]),
+            PackagedRowItem::TabSkip(Scaled::UNITY),
+            PackagedRowItem::VerticalCell(vec![]),
+            PackagedRowItem::TabSkip(Scaled::UNITY),
+        ],
+        "the omit/span branch packages one two-column vertical cell and one resolved empty column"
+    );
     let terminal = terminal_text(&stores);
     assert_eq!(
         terminal.matches("Missing } inserted").count(),
@@ -2167,7 +2633,7 @@ fn display_alignment_finish_complete_content_delimiter_and_spacing_matrix() {
              \\abovedisplayskip=3pt\\belowdisplayskip=4pt
              \\predisplaypenalty=111\\postdisplaypenalty=222
              \\noindent$$\\displayindent=7pt\\halign{{#&#\\cr {body}}}
-             \\global\\advance\\count0 by1 $$\\kern1pt}}\\end"
+             \\global\\advance\\count0 by1 $$\\hbox{{\\kern13pt}}}}\\end"
         );
         let mut stores = Universe::new_with_plain_catcodes();
         let mut control = MainControl::tex82_initex(&mut stores);
@@ -2179,39 +2645,46 @@ fn display_alignment_finish_complete_content_delimiter_and_spacing_matrix() {
             1,
             "post-alignment assignment executes first"
         );
-        assert!(!terminal_text(&stores).contains("Display math should end"));
+        let terminal = terminal_text(&stores);
+        assert!(!terminal.contains("Display math should end"), "{terminal}");
         let nodes = box_child_nodes(&stores, 0);
-        assert!(
-            nodes.iter().any(|node| matches!(node, Node::Penalty(111))),
-            "{nodes:?}"
+        let projection = alignment_node_projection(&stores, &nodes);
+        let pre = projection
+            .iter()
+            .position(|node| *node == AlignmentNodeProjection::Penalty(111))
+            .expect("pre-display penalty");
+        let post = projection
+            .iter()
+            .position(|node| *node == AlignmentNodeProjection::Penalty(222))
+            .expect("post-display penalty");
+        assert_eq!(
+            projection[pre + 1],
+            AlignmentNodeProjection::AboveDisplay(3 * Scaled::UNITY)
         );
+        assert_eq!(
+            projection[post + 1],
+            AlignmentNodeProjection::BelowDisplay(4 * Scaled::UNITY)
+        );
+        assert!(pre + 1 < post);
         assert!(
-            nodes.iter().any(|node| matches!(
+            projection[pre + 2..post].iter().any(|node| matches!(
                 node,
-                Node::Glue { kind: GlueKind::BaselineSkip, spec, .. }
-                    if stores.glue(*spec).width.raw() == 20 * Scaled::UNITY
+                AlignmentNodeProjection::Box { shift, .. } if *shift == 7 * Scaled::UNITY
             )),
-            "the finished alignment's zero prevdepth replaces the enclosing 6pt value: {nodes:?}"
+            "display rows carry displayindent: {projection:?}"
         );
-        assert!(
-            nodes.iter().any(|node| matches!(node, Node::Penalty(222))),
-            "{nodes:?}"
+        assert_eq!(
+            projection[post + 2],
+            AlignmentNodeProjection::Baseline(20 * Scaled::UNITY),
+            "§1207 restores the completed alignment's zero aux prevdepth before the following zero-height hbox"
         );
-        assert!(
-            nodes.iter().any(|node| matches!(
-                node,
-                Node::Glue { kind: GlueKind::AboveDisplaySkip, spec, .. }
-                    if stores.glue(*spec).width.raw() == 3 * Scaled::UNITY
-            )),
-            "{nodes:?}"
-        );
-        assert!(
-            nodes.iter().any(|node| matches!(
-                node,
-                Node::Glue { kind: GlueKind::BelowDisplaySkip, spec, .. }
-                    if stores.glue(*spec).width.raw() == 4 * Scaled::UNITY
-            )),
-            "{nodes:?}"
+        assert_eq!(
+            projection[post + 3],
+            AlignmentNodeProjection::Box {
+                shift: 0,
+                kerns: vec![13 * Scaled::UNITY],
+            },
+            "post-display material resumes after the ordered display tail"
         );
         let display_rows = nodes
             .iter()
@@ -2223,22 +2696,60 @@ fn display_alignment_finish_complete_content_delimiter_and_spacing_matrix() {
         assert_eq!(control.current_mode(), Mode::Vertical);
     }
 
-    for closer in ["$", ""] {
+    for (tail, diagnostic, offender_kern) in [
+        (
+            "$\\global\\advance\\count0 by1\\par",
+            "Display math should end with $$.",
+            None,
+        ),
+        (
+            "\\global\\advance\\count0 by1\\kern13pt",
+            "Missing $$ inserted.",
+            Some(13 * Scaled::UNITY),
+        ),
+    ] {
         let source = format!(
-            "\\nonstopmode\\setbox0=\\vbox{{\\noindent$$\\halign{{#\\cr\\cr}}{closer}\\global\\advance\\count0 by1\\par}}\\end"
+            "\\nonstopmode\\setbox0=\\vbox{{\\noindent$$\\halign{{#\\cr\\cr}}{tail}}}\\end"
         );
         let mut stores = Universe::new_with_plain_catcodes();
         let mut control = MainControl::tex82_initex(&mut stores);
         control.set_fuel_limit(20_000).expect("bounded fuel");
         register_source(&mut control, source.as_bytes());
-        run_to_end(&mut control, &mut stores);
+        let mut recovery_observations = ObservationRecorder::default();
+        run_to_end_observed(&mut control, &mut stores, &mut recovery_observations);
         let terminal = terminal_text(&stores);
-        assert_eq!(
-            terminal.matches("Display math should end with $$.").count(),
-            1,
-            "{terminal}"
-        );
+        assert_eq!(terminal.matches(diagnostic).count(), 1, "{terminal}");
         assert_eq!(stores.count(0), 1, "offending assignment is backed up once");
+        if offender_kern.is_some() {
+            let backup = recovery_observations
+                .0
+                .iter()
+                .position(|observation| {
+                    matches!(
+                        observation,
+                        CommandObservation::Recovery(record)
+                            if record.kind == RecoveryKind::Backup
+                                && record.tokens == [ObservedToken::ControlSequence("kern".into())]
+                    )
+                })
+                .expect("the non-math-shift command is backed up");
+            let replay = recovery_observations
+                .0
+                .iter()
+                .enumerate()
+                .skip(backup + 1)
+                .find(|(_, observation)| {
+                    matches!(
+                        observation,
+                        CommandObservation::Command(record)
+                            if record.boundary == CommandDeliveryBoundary::Raw
+                                && record.command == "kern"
+                    )
+                })
+                .map(|(index, _)| index)
+                .expect("the backed-up command is delivered after display recovery");
+            assert!(backup < replay);
+        }
         assert_eq!(control.current_mode(), Mode::Vertical);
     }
 }

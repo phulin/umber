@@ -2044,9 +2044,7 @@ impl MainControl {
                 Ok(ReplayStep::Continue)
             }
             ScannedStep::Math(request) => self.apply_math_request(request, stores),
-            ScannedStep::DisplayAlignmentEquationNumber { side } => {
-                self.recover_display_alignment_equation_number(side, stores)
-            }
+            ScannedStep::DisplayAlignmentRecovery => self.recover_display_alignment_closer(stores),
             ScannedStep::MathDelimiter(boundary) => self.apply_math_delimiter(boundary, stores),
             // TeX82 §1137's `hmode+math_shift: init_math` and §1193's
             // `mmode+math_shift: if cur_group=math_shift_group then
@@ -3295,19 +3293,18 @@ impl MainControl {
         Ok(ReplayStep::Continue)
     }
 
-    /// TeX82 §1207's missing-display-closer recovery for an equation number.
-    fn recover_display_alignment_equation_number(
+    /// TeX82 §1207's missing-display-closer recovery for any non-math-shift
+    /// command left by do_assignments.
+    fn recover_display_alignment_closer(
         &mut self,
-        side: tex_command::EquationNumberSide,
         stores: &mut Universe,
     ) -> Result<ReplayStep, ExecError> {
         let Some((nodes, aux_prev_depth)) =
             self.modes.current_list_mutation().take_display_alignment()
         else {
-            return self.apply_math_request(
-                MathRequest::EquationNumber(tex_command::ScannedEquationNumber { side }),
-                stores,
-            );
+            return Err(ExecError::MissingToken {
+                context: "display alignment recovery",
+            });
         };
 
         // §1207 calls back_error before resume_after_display. The backup
@@ -4222,30 +4219,33 @@ impl MainControl {
                     .map_err(command_error)?
                 {
                     Some(command) => match command.meaning() {
-                        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::EqNo) => {
-                            processor.back_input(command).map_err(command_error)?;
-                            ScannedStep::DisplayAlignmentEquationNumber {
-                                side: tex_command::EquationNumberSide::Right,
-                            }
+                        meaning
+                            if tex_command::exceeds_max_non_prefixed_command(meaning)
+                                || matches!(
+                                    meaning,
+                                    Meaning::CharToken {
+                                        cat: Catcode::MathShift,
+                                        ..
+                                    }
+                                ) =>
+                        {
+                            dispatch_main_control_command(
+                                &mut processor,
+                                command,
+                                mode,
+                                &self.boxes,
+                                innermost_group,
+                                job_is_all_over,
+                                false,
+                                &mut self.shown_mode,
+                                &mut diagnostics,
+                                false,
+                            )?
                         }
-                        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::LeftEqNo) => {
+                        _ => {
                             processor.back_input(command).map_err(command_error)?;
-                            ScannedStep::DisplayAlignmentEquationNumber {
-                                side: tex_command::EquationNumberSide::Left,
-                            }
+                            ScannedStep::DisplayAlignmentRecovery
                         }
-                        _ => dispatch_main_control_command(
-                            &mut processor,
-                            command,
-                            mode,
-                            &self.boxes,
-                            innermost_group,
-                            job_is_all_over,
-                            false,
-                            &mut self.shown_mode,
-                            &mut diagnostics,
-                            false,
-                        )?,
                     },
                     None => ScannedStep::EndOfInput,
                 },
@@ -5310,9 +5310,7 @@ enum ScannedStep {
     MissingMathShift,
     ReplayCompleted(tex_command::CommandReplayEpisode),
     Math(MathRequest),
-    DisplayAlignmentEquationNumber {
-        side: tex_command::EquationNumberSide,
-    },
+    DisplayAlignmentRecovery,
     MathDelimiter(MathDelimiterBoundary),
     MathFamily {
         family: tex_command::ScannedMathFamily,
@@ -11717,11 +11715,11 @@ fn replay_alignment_mode(kind: AlignmentKind) -> Mode {
 
 fn replay_alignment_row_mode(kind: AlignmentKind) -> Mode {
     match kind {
-        // Keep a row frame below the cell so a recovered paragraph can
-        // return to the alignment without consuming the outer list
-        // prematurely. `finish_replay_alignment` owns the later canonical
-        // unset-row conversion and final packing.
-        AlignmentKind::HAlign => Mode::InternalVertical,
+        // TeX82 §786 pushes the row level and exchanges the alignment's
+        // internal-v/restricted-h mode. The following §787 span level keeps
+        // that mode, so the row beneath an h-alignment cell is restricted
+        // horizontal, not another internal-vertical level.
+        AlignmentKind::HAlign => Mode::RestrictedHorizontal,
         AlignmentKind::VAlign => Mode::InternalVertical,
     }
 }
@@ -11743,6 +11741,14 @@ fn begin_replay_alignment_cell(
 ) -> Result<(), ExecError> {
     if !active.row_open {
         modes.push(replay_alignment_row_mode(active.kind))?;
+        // TeX82 §786 clears the otherwise-unused row auxiliary explicitly;
+        // §787 then gives the cell/span level its distinct canonical value.
+        match active.kind {
+            AlignmentKind::HAlign => modes.current_list_mutation().set_space_factor(0),
+            AlignmentKind::VAlign => modes
+                .current_list_mutation()
+                .set_prev_depth(Scaled::from_raw(0)),
+        }
         modes.current_list_mutation().push(Node::Glue {
             spec: active
                 .tabskips
@@ -12313,7 +12319,7 @@ fn apply_scanned_step(
         // the owning opaque episode and mutable replay driver are available.
         ScannedStep::ReplayCompleted(_)
         | ScannedStep::Math(_)
-        | ScannedStep::DisplayAlignmentEquationNumber { .. }
+        | ScannedStep::DisplayAlignmentRecovery
         | ScannedStep::MathDelimiter(_) => Ok(ReplayStep::Continue),
         ScannedStep::MathFamily {
             family,
