@@ -419,6 +419,21 @@ fn retained_pdftex_extension_properties_have_complete_unique_active_ownership() 
 }
 
 #[test]
+fn catalogue_accepts_a_fully_resolved_zero_xfail_state() {
+    let catalogue = catalogue();
+    assert!(
+        catalogue["properties"]
+            .as_array()
+            .expect("catalogue properties")
+            .iter()
+            .flat_map(|property| property["observations"].as_array().expect("observations"))
+            .all(|observation| observation["disposition"] == "pass"),
+        "the resolved catalogue must not acquire a live xfail"
+    );
+    validate(&root(), &catalogue).expect("a fully resolved catalogue must remain valid");
+}
+
+#[test]
 fn catalogue_rejects_overlapping_case_ownership_and_missing_channels() {
     let repository = root();
     let mut duplicate = catalogue();
@@ -455,24 +470,35 @@ fn catalogue_rejects_citation_drift_and_weak_xfail_fingerprints() {
             .contains("do not match authenticated pdftex.web modules")
     );
 
-    let mut weak_xfail = catalogue();
-    let observation = weak_xfail["properties"]
-        .as_array_mut()
-        .expect("properties")
-        .iter_mut()
-        .flat_map(|property| {
-            property["observations"]
-                .as_array_mut()
-                .expect("observations")
-        })
-        .find(|observation| {
-            observation["disposition"] == "xfail" && observation["channel"] == "terminal"
-        })
-        .expect("terminal xfail");
-    observation["actual_normalized_sha256"] = serde_json::json!("");
-    assert!(
-        validate(&repository, &weak_xfail)
-            .expect_err("blank xfail fingerprint must fail")
-            .contains("missing non-empty actual_normalized_sha256")
-    );
+    for (fingerprint, expected_error) in [
+        ("", "missing non-empty actual_normalized_sha256"),
+        (
+            "not-a-sha256",
+            "terminal xfail must use one normalized SHA-256 fingerprint",
+        ),
+    ] {
+        let mut weak_xfail = catalogue();
+        let observation = weak_xfail["properties"]
+            .as_array_mut()
+            .expect("properties")
+            .iter_mut()
+            .flat_map(|property| {
+                property["observations"]
+                    .as_array_mut()
+                    .expect("observations")
+            })
+            .find(|observation| {
+                observation["disposition"] == "pass" && observation["channel"] == "terminal"
+            })
+            .expect("passing terminal observation");
+        observation["disposition"] = serde_json::json!("xfail");
+        observation["bug"] = serde_json::json!("umber2-synthetic-negative-control");
+        observation["actual_normalized_sha256"] = serde_json::json!(fingerprint);
+
+        assert!(
+            validate(&repository, &weak_xfail)
+                .expect_err("synthetic weak xfail fingerprint must fail")
+                .contains(expected_error)
+        );
+    }
 }
