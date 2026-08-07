@@ -1161,6 +1161,28 @@ production and test reductions are below their respective forecast floors;
 the remaining opportunity or explicit forecast revision is tracked by
 `umber2-vgjr.24` rather than credited here.
 
+**Forecast reconciliation (owner decision, 2026-08-07).** Follow-up
+`umber2-vgjr.24` audited every surviving Biber draft/freeze, classic
+compiler/READ/VM/log, XML projection, output router/sink, compatibility facade,
+caller, and proof boundary. It found no second writable or serialization
+authority and no deletion with a named surviving owner and identical behavior.
+The compatibility serializers and result/failure names are thin delegates or
+aliases; classic artifact construction remains backend-specific by contract;
+and the 417 generated cases retain unique expected values within the exact
+51-module/1,275-assertion proof rather than duplicate test authority.
+
+Reaching the original floors would require another 491 net production and
+1,588 net test deletions. That inventory does not exist without removing a
+retained public API, collapsing deliberately separate Biber/classic/input/output
+semantics, weakening cache-off or byte/diagnostic/Unicode/generated-file proof,
+or merely moving case data into an excluded category. The portfolio owner
+therefore retires the 900--1,700 production and 6,000--9,000 test forecasts and
+accepts the measured 409-line production and 4,412-line test reductions as the
+final Program 14 result. No shortfall or unimplemented deletion is carried
+forward, and no moved, generated, declarative, fixture, documentation, or total
+line count is credited. The audit and independently reproduced accounting are
+recorded in [the reconciliation writeback](writeback/umber2-vgjr.24.md).
+
 Exact implementation tree `8c7c496916454ed6df47e628d1692e817a20e510`
 passed the focused bibliography suite under `MemoryMax=512M`, the complete
 routine suite under `MemoryMax=1G`, the Node WASM tests and packaged
