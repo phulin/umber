@@ -75,9 +75,9 @@ one crate.
 The routine `workspace_selection` test executable also audits active source
 authority. Production Rust may not use the unconditionally false
 `#[cfg(any())]`, and a library that disables its unit-test target with
-`[lib] test = false` may not colocate `#[cfg(test)]` modules. The temporary
-`tex-exec` migration exceptions are exact source coordinates tied to the
-dormant-test ledger: new, moved, and stale sites all fail. Deliberate positive
+`[lib] test = false` may not colocate `#[cfg(test)]` modules. The exception set
+is empty: new sites fail, and the scanner's positive tests prove that any future
+reviewed exception must also fail when it becomes stale. Deliberate positive
 and negative source fixtures keep both rejection paths and their remediation
 diagnostics executable.
 

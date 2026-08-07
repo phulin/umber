@@ -101,5 +101,5 @@ fn vertical_height(node: &Node) -> Scaled {
         .map_or(Scaled::from_raw(0), |(height, _)| height)
 }
 
-#[cfg(any())]
+#[cfg(test)]
 mod tests;

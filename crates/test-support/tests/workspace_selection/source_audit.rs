@@ -15,74 +15,10 @@ use super::{metadata, repo_root};
 const CFG_ANY: &str = "cfg(any())";
 const DORMANT_TEST_MODULE: &str = "cfg(test) module under a library with `test = false`";
 
-/// Temporary migration debt inventoried by
-/// `docs/tex_exec_dormant_test_ledger.md` (`umber2-vgjr.15.1`). Exact source
-/// coordinates make additions and movement fail; deleting a site also requires
-/// deleting its now-stale exception.
-const REVIEWED_EXCEPTIONS: &[&str] = &[
-    "crates/tex-exec/src/align/packaging.rs:2:cfg(any())",
-    "crates/tex-exec/src/align/widths.rs:5:cfg(any())",
-    "crates/tex-exec/src/align/widths/resolution.rs:2:cfg(any())",
-    "crates/tex-exec/src/align/widths/set.rs:2:cfg(any())",
-    "crates/tex-exec/src/box_runtime/hmode.rs:30:cfg(any())",
-    "crates/tex-exec/src/box_runtime/hmode.rs:355:cfg(any())",
-    "crates/tex-exec/src/box_runtime/hmode.rs:372:cfg(any())",
-    "crates/tex-exec/src/box_runtime/hmode.rs:439:cfg(any())",
-    "crates/tex-exec/src/box_runtime/hmode.rs:684:cfg(any())",
-    "crates/tex-exec/src/box_runtime/mod.rs:12:cfg(any())",
-    "crates/tex-exec/src/effective_tail.rs:61:cfg(any())",
-    "crates/tex-exec/src/job.rs:302:cfg(any())",
-    "crates/tex-exec/src/job.rs:846:cfg(any())",
-    "crates/tex-exec/src/job_output.rs:52:cfg(any())",
-    "crates/tex-exec/src/job_output.rs:125:cfg(any())",
-    "crates/tex-exec/src/main_control.rs:933:cfg(any())",
-    "crates/tex-exec/src/main_control.rs:1043:cfg(any())",
-    "crates/tex-exec/src/main_control.rs:1884:cfg(any())",
-    "crates/tex-exec/src/main_control.rs:1896:cfg(any())",
-    "crates/tex-exec/src/main_control.rs:1906:cfg(any())",
-    "crates/tex-exec/src/main_control.rs:1913:cfg(any())",
-    "crates/tex-exec/src/main_control.rs:1932:cfg(any())",
-    "crates/tex-exec/src/main_control.rs:4742:cfg(any())",
-    "crates/tex-exec/src/main_control.rs:10030:cfg(any())",
-    "crates/tex-exec/src/main_control.rs:11383:cfg(any())",
-    "crates/tex-exec/src/main_control.rs:17449:cfg(any())",
-    "crates/tex-exec/src/math/mod.rs:92:cfg(any())",
-    "crates/tex-exec/src/mode.rs:169:cfg(any())",
-    "crates/tex-exec/src/mode.rs:177:cfg(any())",
-    "crates/tex-exec/src/mode.rs:428:cfg(any())",
-    "crates/tex-exec/src/mode.rs:485:cfg(any())",
-    "crates/tex-exec/src/mode.rs:494:cfg(any())",
-    "crates/tex-exec/src/mode.rs:1285:cfg(any())",
-    "crates/tex-exec/src/mode/journal.rs:196:cfg(any())",
-    "crates/tex-exec/src/mode/journal.rs:240:cfg(any())",
-    "crates/tex-exec/src/node_dump.rs:1191:cfg(any())",
-    "crates/tex-exec/src/pack_report.rs:26:cfg(any())",
-    "crates/tex-exec/src/page_builder.rs:908:cfg(any())",
-    "crates/tex-exec/src/paragraph_end.rs:9:cfg(any())",
-    "crates/tex-exec/src/paragraph_end.rs:24:cfg(any())",
-    "crates/tex-exec/src/paragraph_end/hyphenation.rs:60:cfg(any())",
-    "crates/tex-exec/src/paragraph_end/hyphenation.rs:229:cfg(any())",
-    "crates/tex-exec/src/paragraph_end/hyphenation.rs:241:cfg(any())",
-    "crates/tex-exec/src/paragraph_end/hyphenation.rs:255:cfg(any())",
-    "crates/tex-exec/src/paragraph_end/hyphenation.rs:278:cfg(any())",
-    "crates/tex-exec/src/paragraph_end/hyphenation.rs:298:cfg(any())",
-    "crates/tex-exec/src/paragraph_end/hyphenation.rs:828:cfg(any())",
-    "crates/tex-exec/src/paragraph_end/hyphenation.rs:848:cfg(any())",
-    "crates/tex-exec/src/paragraph_end/hyphenation.rs:893:cfg(any())",
-    "crates/tex-exec/src/paragraph_end/runtime.rs:239:cfg(any())",
-    "crates/tex-exec/src/paragraph_end/runtime.rs:264:cfg(any())",
-    "crates/tex-exec/src/paragraph_end/runtime.rs:439:cfg(any())",
-    "crates/tex-exec/src/paragraph_end/runtime.rs:470:cfg(any())",
-    "crates/tex-exec/src/paragraph_end/runtime.rs:481:cfg(any())",
-    "crates/tex-exec/src/paragraph_end/runtime.rs:783:cfg(any())",
-    "crates/tex-exec/src/splitting.rs:104:cfg(any())",
-    "crates/tex-exec/src/main_control.rs:17347:cfg(test) module under a library with `test = false`",
-    "crates/tex-exec/src/node_dump.rs:1275:cfg(test) module under a library with `test = false`",
-    "crates/tex-exec/src/packing_params.rs:12:cfg(test) module under a library with `test = false`",
-    "crates/tex-exec/src/page_output.rs:570:cfg(test) module under a library with `test = false`",
-    "crates/tex-exec/src/paragraph_end/hyphenation.rs:995:cfg(test) module under a library with `test = false`",
-    "crates/tex-exec/src/shipout/transaction.rs:15:cfg(test) module under a library with `test = false`",
-];
+// Keep this empty: source-level test authority debt is not accepted. The
+// parameter remains explicit so the scanner's stale-exception behavior stays
+// covered by its positive tests below.
+const REVIEWED_EXCEPTIONS: &[&str] = &[];
 
 #[derive(Debug, Eq, Ord, PartialEq, PartialOrd)]
 struct Site {

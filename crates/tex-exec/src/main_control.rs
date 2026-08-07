@@ -930,11 +930,6 @@ impl MainControl {
         )
     }
 
-    #[cfg(any())]
-    pub(crate) const fn main_loop_active_for_test(&self) -> bool {
-        self.main_loop_active
-    }
-
     fn local_skip_pointer_reassigned(&self, stores: &Universe, scanned: &ScannedStep) -> bool {
         let ScannedStep::Skip {
             index,
@@ -1040,11 +1035,6 @@ impl MainControl {
         self.command.input_level_count()
     }
 
-    #[cfg(any())]
-    pub(crate) fn testing_push_mode(&mut self, mode: Mode) {
-        self.modes.push(mode).expect("test mode push");
-    }
-
     /// Returns the immutable profile of this command processor.
     #[must_use]
     pub const fn command_profile(&self) -> CommandProfile {
@@ -1139,6 +1129,8 @@ impl MainControl {
         self.active_alignment = None;
         self.boxes = ReplayBoxes::default();
         self.pending_shipout_boundary = false;
+        self.fatal = None;
+        self.captured_fatal_origin = None;
         Ok(())
     }
 
@@ -1879,45 +1871,6 @@ impl MainControl {
         self.modes.current_mode()
     }
 
-    /// Returns a detached summary of the live current mode level for exact
-    /// crate-test assertions without exposing the main control.s nest.
-    #[cfg(any())]
-    pub(crate) fn current_mode_level_for_test(&self) -> crate::ModeLevelSummary {
-        self.modes
-            .summary()
-            .levels()
-            .last()
-            .expect("mode nest always has a current level")
-            .clone()
-    }
-
-    /// Returns the enquiry projection derived from main control's
-    /// live mode nest.
-    #[cfg(any())]
-    pub(crate) fn engine_state_snapshot_for_test(
-        &self,
-        stores: &Universe,
-    ) -> tex_state::EngineStateSnapshot {
-        self.modes.engine_state_snapshot(stores)
-    }
-
-    /// Returns the mode nest's current list, so a crate test can assert on the
-    /// material main control has built without shipping a page first.
-    #[cfg(any())]
-    pub(crate) fn current_list(&self) -> &crate::ModeList {
-        self.modes.current_list()
-    }
-
-    /// Finishes the current unfinished math list for crate-level structural
-    /// assertions without exposing the main control.s owned mode nest.
-    #[cfg(any())]
-    pub(crate) fn finish_current_math_list_for_test(
-        &mut self,
-        stores: &mut Universe,
-    ) -> tex_state::ids::NodeListId {
-        crate::math::testing_finish_current_math_list(&mut self.modes, stores)
-    }
-
     /// Returns the structural alignment started by the most recent replayed
     /// `\halign` or `\valign`, if it has not yet been finished.
     #[must_use]
@@ -1925,34 +1878,6 @@ impl MainControl {
         self.active_alignment
             .as_ref()
             .map(|alignment| alignment.identity)
-    }
-
-    /// Projects the preamble retained by main control for focused
-    /// crate-internal scanner assertions.
-    #[cfg(any())]
-    pub(crate) fn active_alignment_state_for_test(&self) -> Option<AlignState> {
-        let active = self.active_alignment.as_ref()?;
-        (!active.columns.is_empty()).then(|| {
-            let columns = active
-                .columns
-                .iter()
-                .map(|templates| AlignColumn {
-                    u_template: templates
-                        .u_template
-                        .expect("alignment columns retain u templates")
-                        .token_list(),
-                    v_template: templates.v_template.token_list(),
-                })
-                .collect();
-            AlignState::new(
-                active.kind,
-                active.packing,
-                columns,
-                active.tabskips.clone(),
-                active.default_tabskip,
-                active.repeat_start,
-            )
-        })
     }
 
     /// Applies an executor-selected alignment lifecycle transition.
@@ -4737,11 +4662,6 @@ pub enum RootCompletionPolicy {
 }
 
 // The fixture suite retains its historical vocabulary locally.  This alias is
-// deliberately unavailable to normal builds: production code names and uses
-// the driver directly.
-#[cfg(any())]
-type CommandReplayControl = MainControl;
-
 // Kept private while the implementation is migrated in place; callers only
 // see `MainControlStep`.
 type ReplayStep = MainControlStep;
@@ -10027,17 +9947,6 @@ fn scan_arithmetic_assignment(
     })
 }
 
-#[cfg(any())]
-fn replay_text(tokens: &[tex_state::token::Token]) -> String {
-    tokens
-        .iter()
-        .filter_map(|token| match token {
-            tex_state::token::Token::Char { ch, .. } => Some(*ch),
-            _ => None,
-        })
-        .collect()
-}
-
 fn write_text(tokens: &[Token], stores: &Universe) -> String {
     let mut text = String::new();
     for &token in tokens {
@@ -11378,37 +11287,6 @@ fn shipout_replay_box(
     // the page-state transition at the typed shipout boundary.
     stores.set_page_integer(tex_state::page::PageInteger::DeadCycles, 0);
     Ok(receipt)
-}
-
-#[cfg(any())]
-pub(crate) fn test_shipout_replay_box(
-    node: Node,
-    stores: &mut Universe,
-) -> Result<Option<crate::dispatch::PreparedDviPage>, ExecError> {
-    let mut control = MainControl::default();
-    let snapshot = StepSnapshot::capture(&mut control, stores);
-    let mut fuel = tex_command::CommandFuelLedger::default();
-    let mut shown_mode = None;
-    let mut command = CommandMachine {
-        state: &mut CommandState::default(),
-        fuel: fuel.fuel_mut(),
-        capabilities: &mut CommandHostCapabilities::default(),
-        observations: &mut None,
-        assignment_receipts: None,
-        shown_mode: &mut shown_mode,
-        initex: true,
-        emit_dvi_override: None,
-    };
-    match shipout_replay_box(node, stores, &mut command) {
-        Ok(receipt) => {
-            snapshot.commit(&mut control);
-            Ok(receipt)
-        }
-        Err(error) => {
-            snapshot.rollback(&mut control, stores);
-            Err(error)
-        }
-    }
 }
 
 /// Renders a committed meaning the way the reference instrumentation's
@@ -17446,6 +17324,6 @@ mod discretionary_hyphen_tests {
     }
 }
 
-#[cfg(any())]
+#[cfg(test)]
 #[path = "main_control/tests.rs"]
 mod direct_tests;

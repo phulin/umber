@@ -76,15 +76,26 @@ The ranking considers expected net reduction first, then architectural leverage,
 
 ## 1. Recover and compact the unreachable `tex-exec` test island
 
-**Status:** conditional upside only; coverage-recovery project, not bulk deletion.
+**Status:** completed by `umber2-vgjr.15.2`; catalogue-link follow-up is
+`umber2-vgjr.15.2.1`.
 
 **Affected code.** `crates/tex-exec`, documentation, and TeX82 property shards that cite disabled tests.
 
-**Evidence.** `[lib] test = false` at `crates/tex-exec/Cargo.toml:6-7` prevents a library unit-test target. Fourteen colocated `tests.rs` files total 15,777 lines. `main_control/etex_diagnostic_tracing.rs` adds 828 lines reachable only from disabled `main_control/tests.rs`. Additional disabled cases occur at `node_dump.rs:1275-1615`, `main_control.rs:1110-1133,19741-19842`, `page_output.rs:597-691`, and `effective_tail.rs:61-101`. `assignments/admissibility.rs` and `assignments/variable_access.rs` include production scaffolding hidden with that island. Several documents and property records cite this unreachable source as coverage.
+**Evidence.** The original inventory is preserved in
+`docs/tex_exec_dormant_test_ledger.md`. The library target now selects 445
+crate-internal cases, all former `cfg(any())` sites are gone, and the routine
+source audit accepts no exceptions. Compiler-backed caller mapping removed
+callerless production scaffolding while retaining exact case operands.
 
-**Target.** Every dormant case is classified as actively duplicated, uniquely normative, or obsolete by an explicit behavior decision. Unique cases move to active integration tests or compact oracle/property fixtures. Only then are the dormant files, inline modules, `cfg(any())` wiring, and now-unused helpers deleted. An active source audit prevents recurrence.
+**Result.** Every original case and helper row has an active or explicitly
+retired disposition. Same-path cases were retained conservatively when exact
+operand equivalence was not proved. The active source audit prevents
+recurrence.
 
-**Migration.** Build a case-level ledger containing test identity, semantic assertions, fixture inputs, expected diagnostics/events, external citations, and active replacement. Migrate unique evidence. Correct all documentation/property citations. Delete only ledger rows proven redundant or explicitly retired. Reject `cfg(any())` and colocated test modules while `test = false` remains.
+**Migration record.** The case-level ledger records test identity, semantic
+assertions, fixture inputs, expected diagnostics/events, external citations,
+and active replacements. The separate catalogue child owns its 35 properties
+and 46 source paths.
 
 **Estimate.** Gross dormant surface 17,500-18,200 authored LOC; replacement coverage 800-2,500; conditional net 15,000-17,400. The net must be recomputed from the completed ledger rather than assumed from this range.
 

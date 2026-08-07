@@ -236,15 +236,6 @@ fn discretionary_diagnostics_differ(
     semantic.next().is_some()
 }
 
-#[cfg(any())]
-pub(crate) fn test_discretionary_diagnostics_differ(
-    stores: &Universe,
-    physical: &[Node],
-    semantic: &[Node],
-) -> bool {
-    discretionary_diagnostics_differ(stores, physical, semantic)
-}
-
 fn materialize_pdf_line(
     stores: &mut Universe,
     nodes: &mut Vec<Node>,
@@ -259,17 +250,6 @@ fn materialize_pdf_line(
         tex_typeset::protrusion::insert_margin_kerns(stores, nodes);
     }
     Ok(())
-}
-
-#[cfg(any())]
-pub(crate) fn test_materialize_pdf_line(
-    stores: &mut Universe,
-    nodes: &mut Vec<Node>,
-    target: Scaled,
-    adjusts_spacing: bool,
-    protrudes_chars: bool,
-) -> Result<(), ExecError> {
-    materialize_pdf_line(stores, nodes, target, adjusts_spacing, protrudes_chars)
 }
 
 /// TeX82 §825: paragraph glue may shrink only at normal order. Each
@@ -436,18 +416,6 @@ fn pdf_line_dimensions(stores: &mut Universe) -> PdfLineDimensions {
     }
 }
 
-#[cfg(any())]
-pub(crate) fn test_apply_pdf_line_dimensions(
-    stores: &mut Universe,
-    lines: &mut [tex_state::node::BoxNode],
-) {
-    let dimensions = pdf_line_dimensions(stores);
-    let total = lines.len();
-    for (index, line) in lines.iter_mut().enumerate() {
-        dimensions.apply(line, index, total);
-    }
-}
-
 fn active_text_directions(nodes: &[Node]) -> Vec<Direction> {
     let mut active = Vec::new();
     for node in nodes {
@@ -465,27 +433,6 @@ fn active_text_directions(nodes: &[Node]) -> Vec<Direction> {
         }
     }
     active
-}
-
-#[cfg(any())]
-pub(crate) fn break_hlist(
-    stores: &mut Universe,
-    hlist: Vec<Node>,
-    line_params: LineBreakParams,
-) -> LineBreakResult {
-    let mut fuel = tex_command::CommandFuelLedger::default();
-    break_hlist_with_fuel(stores, hlist, line_params, fuel.fuel_mut())
-        .expect("default paragraph reconstruction fuel")
-}
-
-#[cfg(any())]
-pub(crate) fn break_hlist_with_fuel(
-    stores: &mut Universe,
-    hlist: Vec<Node>,
-    line_params: LineBreakParams,
-    fuel: &mut tex_command::CommandFuel,
-) -> Result<LineBreakResult, ExecError> {
-    break_hlist_with_trace(stores, hlist, line_params, fuel, false).map(|(result, _, _)| result)
 }
 
 fn break_hlist_with_trace(
@@ -778,15 +725,6 @@ fn pretolerance_memo_key(
         node_hashes[0],
         ContentHash::from_bytes(&bytes),
     )
-}
-
-#[cfg(any())]
-pub(crate) fn test_pretolerance_memo_key(
-    stores: &Universe,
-    hlist: &[Node],
-    params: &LineBreakParams,
-) -> PureMemoKey {
-    pretolerance_memo_key(stores, hlist, params)
 }
 
 fn encode_line_break_params(params: &LineBreakParams, out: &mut Vec<u8>) {

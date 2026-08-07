@@ -57,25 +57,6 @@ pub(crate) fn apply_scanned_hyphenation_exceptions(stores: &mut Universe, words:
     }
 }
 
-#[cfg(any())]
-pub(crate) fn hyphenated_hlist_with_fuel(
-    stores: &mut Universe,
-    nodes: Vec<Node>,
-    fuel: &mut tex_command::CommandFuel,
-) -> Result<Vec<Node>, ExecError> {
-    let mut physical_post_overrides = Vec::new();
-    let mut missing_hyphens = Vec::new();
-    hyphenated_hlist_with_projections(
-        stores,
-        nodes,
-        fuel,
-        &mut HyphenationProjection {
-            physical_post_overrides: &mut physical_post_overrides,
-            missing_hyphens: &mut missing_hyphens,
-        },
-    )
-}
-
 fn hyphenated_hlist_with_projections(
     stores: &mut Universe,
     nodes: Vec<Node>,
@@ -224,86 +205,6 @@ fn project_physical_pre_break_spans(
         *physical_pre = pre;
     }
     Ok(())
-}
-
-#[cfg(any())]
-pub(crate) fn test_physical_pre_break_projection(
-    stores: &mut Universe,
-    nodes: &[Node],
-) -> Vec<Node> {
-    let mut projected = nodes.to_vec();
-    let mut fuel = tex_command::CommandFuelLedger::default();
-    project_physical_pre_break_spans(stores, &mut projected, fuel.fuel_mut())
-        .expect("test diagnostic projection fuel");
-    projected
-}
-
-#[cfg(any())]
-pub(crate) fn hyphenated_hlist(stores: &mut Universe, nodes: Vec<Node>) -> Vec<Node> {
-    let mut fuel = tex_command::CommandFuelLedger::default();
-    hyphenated_hlist_with_fuel(stores, nodes, fuel.fuel_mut()).expect("test hyphenation fuel")
-}
-
-/// Renders the discretionary breaks/// Renders the discretionary breaks TeX82 §923's `hyphenate` would find in a
-/// single word, using the current `\language`, `\lefthyphenmin`, and
-/// `\righthyphenmin`.
-///
-/// This is the query plain.tex's `\showhyphens` macro answers indirectly, by
-/// packing the word into an over-wide `\vbox` and reading the underfull-box
-/// report. Tests that only need the pattern/exception/hyphen-code decision
-/// ask for it directly instead of asserting on box-display text.
-#[cfg(any())]
-pub(crate) fn test_hyphenated_word_text(stores: &Universe, word: &str) -> String {
-    let language = current_language(stores);
-    let Some(normalized) = word
-        .chars()
-        .map(|ch| normalized_hyphen_code(stores, language, ch))
-        .collect::<Option<String>>()
-    else {
-        return word.to_owned();
-    };
-    let left = usize::try_from(stores.int_param(IntParam::LEFT_HYPHEN_MIN).max(0)).unwrap_or(0);
-    let right = usize::try_from(stores.int_param(IntParam::RIGHT_HYPHEN_MIN).max(0)).unwrap_or(0);
-    let positions = stores.hyphen_positions_for_language(language, &normalized, left, right);
-    let mut text = String::new();
-    for (index, ch) in normalized.chars().enumerate() {
-        if positions.contains(&index) {
-            text.push('-');
-        }
-        text.push(ch);
-    }
-    text
-}
-
-#[cfg(any())]
-pub(crate) fn test_hyphenated_word(stores: &mut Universe, nodes: &[Node]) -> Vec<Node> {
-    let glue = stores.glue_param(tex_state::env::banks::GlueParam::PAR_SKIP);
-    let boundary = Node::Glue {
-        spec: glue,
-        kind: tex_state::node::GlueKind::Normal,
-        leader: None,
-    };
-    let mut paragraph = Vec::with_capacity(nodes.len() + 2);
-    paragraph.push(boundary.clone());
-    paragraph.extend_from_slice(nodes);
-    paragraph.push(boundary);
-    let mut fuel = tex_command::CommandFuelLedger::default();
-    let mut hyphenated = hyphenated_hlist_with_fuel(stores, paragraph, fuel.fuel_mut())
-        .expect("test hyphenation fuel");
-    hyphenated.remove(0);
-    hyphenated.pop();
-    hyphenated
-}
-
-#[cfg(any())]
-pub(crate) fn test_language_context(nodes: &[Node]) -> (u8, usize, usize) {
-    let mut language = 0;
-    let mut left = 1;
-    let mut right = 1;
-    for node in nodes {
-        update_hyphenation_context(node, &mut language, &mut left, &mut right);
-    }
-    (language, left, right)
 }
 
 fn update_hyphenation_context(node: &Node, language: &mut u8, left: &mut usize, right: &mut usize) {
@@ -825,37 +726,6 @@ fn synchronized_physical_branch_lengths(
     )
 }
 
-#[cfg(any())]
-pub(crate) fn test_physical_post_break_span(
-    word_len: usize,
-    span: (usize, usize, usize),
-    replacement: &Node,
-    following: &[Node],
-    minor: &[Node],
-) -> (u8, Vec<Node>) {
-    let (start, position, end) = span;
-    let mut major = vec![replacement.clone()];
-    major.extend_from_slice(following);
-    let (major_len, minor_len) =
-        synchronized_physical_branch_lengths(&major, start, minor, position, end, word_len);
-    (
-        u8::try_from(major_len).expect("bounded test projection"),
-        minor[..minor_len].to_vec(),
-    )
-}
-
-/// Freezes a §914 automatic discretionary when §918's replacement count fits.
-#[cfg(any())]
-fn automatic_discretionary(
-    stores: &mut Universe,
-    pre: &[Node],
-    post: &[Node],
-    replace: &[Node],
-) -> Option<Node> {
-    let physical_replace_count = automatic_physical_replace_count(replace)?;
-    automatic_discretionary_with_count(stores, pre, post, replace, physical_replace_count)
-}
-
 fn automatic_discretionary_with_count(
     stores: &mut Universe,
     pre: &[Node],
@@ -888,14 +758,6 @@ fn automatic_physical_replace_count(replace: &[Node]) -> Option<u8> {
         _ => replace.len(),
     };
     u8::try_from(count).ok().filter(|&count| count <= 127)
-}
-
-#[cfg(any())]
-pub(crate) fn test_automatic_discretionary(
-    stores: &mut Universe,
-    replace: &[Node],
-) -> Option<Node> {
-    automatic_discretionary(stores, &[], &[], replace)
 }
 
 fn node_original_len(node: &Node) -> usize {

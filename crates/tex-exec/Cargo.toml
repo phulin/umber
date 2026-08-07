@@ -3,9 +3,6 @@ name = "tex-exec"
 version.workspace = true
 edition.workspace = true
 
-[lib]
-test = false
-
 [features]
 profiling = ["tex-state/profiling"]
 

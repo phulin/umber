@@ -23,7 +23,7 @@
 //! `warning_issued` on the way, which is what makes §1335 tell the terminal
 //! the transcript has more.
 
-#[cfg(any())]
+#[cfg(test)]
 mod tests;
 
 use std::fmt::Write as _;

@@ -88,11 +88,3 @@ pub(crate) fn reject_invalid_math_fonts(
     crate::error_report::report_error(stores, message, &help, context)?;
     Ok(true)
 }
-
-#[cfg(any())]
-pub(crate) fn testing_math_font_failure(stores: &mut Universe) -> Option<&'static str> {
-    math_font_failure(stores).map(|failure| match failure {
-        MathFontFailure::Symbol => "symbol",
-        MathFontFailure::Extension => "extension",
-    })
-}

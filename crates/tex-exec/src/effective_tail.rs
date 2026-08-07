@@ -58,7 +58,7 @@ impl<'a> EffectiveTail<'a> {
     }
 }
 
-#[cfg(any())]
+#[cfg(test)]
 mod tests {
     use super::*;
     use tex_state::node::KernKind;

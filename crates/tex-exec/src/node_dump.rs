@@ -1188,7 +1188,7 @@ fn order_unit(order: Order) -> &'static str {
     }
 }
 
-#[cfg(any())]
+#[cfg(test)]
 mod tests;
 
 trait GlueKindDump {

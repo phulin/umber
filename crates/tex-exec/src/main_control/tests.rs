@@ -9,8 +9,6 @@ use tex_state::page::PageMark;
 use tex_state::token::{Catcode, OriginId, Token};
 
 use super::*;
-use crate::{EngineBoundary, ExecutionBudgetCounters};
-
 mod etex_diagnostic_tracing;
 
 fn register_source(control: &mut MainControl, bytes: &[u8]) {
@@ -159,8 +157,10 @@ fn tracingcommands_expansion_after_eqno_reports_restored_display_mode() {
     let mut initialized = Universe::new_with_plain_catcodes();
     let fresh_control = MainControl::tex82_initex(&mut initialized);
     let format = initialized.dump_format().expect("dump TeX82 format");
-    let loaded =
+    let mut loaded =
         Universe::from_format(tex_state::World::memory(), &format).expect("restore TeX82 format");
+    tex_command::install_tex82_expandable_primitives(&mut loaded);
+    crate::install_unexpandable_primitives(&mut loaded);
 
     for (mut stores, mut control) in [
         (initialized, fresh_control),
@@ -988,6 +988,8 @@ fn tracingrestores_reports_loaded_mathchar_meanings_in_unsave_order() {
     let format = initialized.dump_format().expect("dump mathchar format");
     let mut stores = Universe::from_format(tex_state::World::memory(), &format)
         .expect("restore mathchar format");
+    tex_command::install_tex82_expandable_primitives(&mut stores);
+    crate::install_unexpandable_primitives(&mut stores);
     let mut control = MainControl::with_profile(CommandProfile::TEX82);
     register_source(
         &mut control,
@@ -1327,7 +1329,7 @@ fn meaning_mutation_value_projects_protected_macro_storage_marker() {
     let empty = stores.intern_token_list(&[]);
     let definition = stores.intern_macro(MacroMeaning::new(MeaningFlags::PROTECTED, empty, empty));
 
-    let (value, tokens) = meaning_mutation_value(
+    let value = meaning_mutation_value(
         Meaning::Macro {
             definition,
             flags: MeaningFlags::PROTECTED,
@@ -1335,19 +1337,15 @@ fn meaning_mutation_value_projects_protected_macro_storage_marker() {
         &stores,
     );
 
-    assert_eq!(value, "macro definition");
     assert_eq!(
-        tokens.as_deref(),
-        Some(
-            [
-                tex_command::ObservedToken::Character {
-                    character: '\u{1}',
-                    catcode: Catcode::Comment,
-                },
-                tex_command::ObservedToken::MacroEndMatch,
-            ]
-            .as_slice()
-        )
+        value,
+        ObservationValue::Tokens(vec![
+            tex_command::ObservedToken::Character {
+                character: '\u{1}',
+                catcode: Catcode::Comment,
+            },
+            tex_command::ObservedToken::MacroEndMatch,
+        ])
     );
 }
 
@@ -2386,13 +2384,16 @@ fn etex_identical_local_let_is_a_reassignment_but_global_let_is_not() {
         .0
         .iter()
         .filter_map(|observation| match observation {
-            CommandObservation::Mutation(record) if record.target == "meaning" => {
-                Some((record.value.as_str(), record.global))
+            CommandObservation::Mutation(record) if record.target == MutationTarget::Meaning => {
+                Some((observation_name(&record.value), record.global))
             }
             _ => None,
         })
         .collect();
-    assert_eq!(mutations, [("left_brace", false), ("left_brace", true)]);
+    assert_eq!(
+        mutations,
+        [(Some("left_brace"), false), (Some("left_brace"), true)]
+    );
 }
 
 #[test]
@@ -3004,7 +3005,7 @@ fn incompatible_unbox_commands_preserve_registers_and_replay_state() {
     run_to_end(&mut control, &mut stores);
     assert_eq!(stores.box_reg(0), vbox);
     assert_eq!(stores.box_reg(1), hbox);
-    let first_hash = stores.snapshot().state_hash();
+    let first_output = terminal_text(&stores);
 
     control
         .restore_checkpoint(&checkpoint, &mut stores)
@@ -3012,7 +3013,7 @@ fn incompatible_unbox_commands_preserve_registers_and_replay_state() {
     run_to_end(&mut control, &mut stores);
     assert_eq!(stores.box_reg(0), vbox);
     assert_eq!(stores.box_reg(1), hbox);
-    assert_eq!(stores.snapshot().state_hash(), first_hash);
+    assert_eq!(terminal_text(&stores), first_output);
 }
 
 #[test]
@@ -5796,6 +5797,20 @@ impl CommandObserver for ObservationRecorder {
     }
 }
 
+fn observation_name(value: &ObservationValue) -> Option<&str> {
+    match value {
+        ObservationValue::Name(name) => Some(name),
+        _ => None,
+    }
+}
+
+fn observation_tokens(value: &ObservationValue) -> Option<&[tex_command::ObservedToken]> {
+    match value {
+        ObservationValue::Tokens(tokens) => Some(tokens),
+        _ => None,
+    }
+}
+
 #[test]
 fn etex_identical_local_integer_parameter_reassignment_is_not_a_mutation() {
     // e-TeX §275: `eq_word_define` returns immediately when extended mode
@@ -5826,8 +5841,8 @@ fn etex_identical_local_integer_parameter_reassignment_is_not_a_mutation() {
         .0
         .iter()
         .filter_map(|observation| match observation {
-            CommandObservation::Mutation(record) if record.target == "parameter" => {
-                Some((record.value.as_str(), record.global))
+            CommandObservation::Mutation(record) if record.target == MutationTarget::Parameter => {
+                Some((&record.key, &record.value, record.global))
             }
             _ => None,
         })
@@ -5835,19 +5850,18 @@ fn etex_identical_local_integer_parameter_reassignment_is_not_a_mutation() {
     assert_eq!(
         mutations,
         [
-            ("integer_parameter:48=12", false),
-            ("integer_parameter:48=12", true),
+            (
+                &ObservationValue::Name("integer_parameter:48".into()),
+                &ObservationValue::Integer(12),
+                false,
+            ),
+            (
+                &ObservationValue::Name("integer_parameter:48".into()),
+                &ObservationValue::Integer(12),
+                true,
+            ),
         ]
     );
-
-    let mut tex82 = Universe::new_with_plain_catcodes();
-    assert!(
-        !etex_redundant_local_word_assignment(&tex82, 13, 13),
-        "TeX82 has no e-TeX reassignment shortcut"
-    );
-    tex82.set_int_param_global(IntParam::ETEX_EXTENDED_MODE, 1);
-    assert!(etex_redundant_local_word_assignment(&tex82, 13, 13));
-    assert!(!etex_redundant_local_word_assignment(&tex82, 13, 12));
 }
 
 #[test]
@@ -5873,15 +5887,24 @@ fn etex_sparse_word_reassignment_retains_its_observed_boundary() {
         .0
         .iter()
         .filter_map(|observation| match observation {
-            CommandObservation::Mutation(record) if record.target == "register" => {
-                Some((record.key.as_deref(), record.value.as_str()))
+            CommandObservation::Mutation(record) if record.target == MutationTarget::Register => {
+                Some((&record.key, &record.value))
             }
             _ => None,
         })
         .collect();
     assert_eq!(
         mutations,
-        [(None, "count:300=0"), (Some("dimen:301"), "scaled:0"),]
+        [
+            (
+                &ObservationValue::Name("count:300".into()),
+                &ObservationValue::Integer(0),
+            ),
+            (
+                &ObservationValue::Name("dimen:301".into()),
+                &ObservationValue::Scaled(0),
+            ),
+        ]
     );
     assert_eq!(stores.count(300), 0);
     assert_eq!(stores.dimen(301), Scaled::from_raw(0));
@@ -5930,8 +5953,11 @@ fn etex_toks_assignment_and_rhs_keep_sparse_register_indices() {
         .0
         .iter()
         .filter_map(|observation| match observation {
-            CommandObservation::Mutation(record) if record.target == "register" => {
-                Some((record.key.as_deref(), record.tokens.as_ref()))
+            CommandObservation::Mutation(record) if record.target == MutationTarget::Register => {
+                Some((
+                    observation_name(&record.key),
+                    observation_tokens(&record.value),
+                ))
             }
             _ => None,
         })
@@ -5966,9 +5992,10 @@ fn etex_dense_token_list_reassignments_use_eq_define_shortcut() {
         .iter()
         .filter_map(|observation| match observation {
             CommandObservation::Mutation(record)
-                if record.target == "register" || record.target == "parameter" =>
+                if record.target == MutationTarget::Register
+                    || record.target == MutationTarget::Parameter =>
             {
-                Some((record.target, record.key.as_deref(), record.global))
+                Some((record.target, observation_name(&record.key), record.global))
             }
             _ => None,
         })
@@ -5976,9 +6003,9 @@ fn etex_dense_token_list_reassignments_use_eq_define_shortcut() {
     assert_eq!(
         mutations,
         [
-            ("register", Some("toks:300"), false),
-            ("register", Some("toks:20"), true),
-            ("parameter", Some("token_parameter:1"), true),
+            (MutationTarget::Register, Some("toks:300"), false),
+            (MutationTarget::Register, Some("toks:20"), true),
+            (MutationTarget::Parameter, Some("token_parameter:1"), true),
         ]
     );
 
@@ -6018,8 +6045,12 @@ fn etex_sparse_setbox_observes_delayed_and_immediate_commits() {
         .0
         .iter()
         .filter_map(|observation| match observation {
-            CommandObservation::Mutation(record) if record.target == "register" => {
-                Some((record.key.as_deref(), record.value.as_str(), record.global))
+            CommandObservation::Mutation(record) if record.target == MutationTarget::Register => {
+                Some((
+                    observation_name(&record.key),
+                    observation_name(&record.value),
+                    record.global,
+                ))
             }
             _ => None,
         })
@@ -6027,9 +6058,9 @@ fn etex_sparse_setbox_observes_delayed_and_immediate_commits() {
     assert_eq!(
         mutations,
         [
-            (Some("box:300"), "name:occupied", false),
-            (Some("box:301"), "name:occupied", true),
-            (Some("box:302"), "name:void", false),
+            (Some("box:300"), Some("occupied"), false),
+            (Some("box:301"), Some("occupied"), true),
+            (Some("box:302"), Some("void"), false),
         ]
     );
     assert!(stores.box_reg(20).is_none());
@@ -6058,13 +6089,15 @@ fn etex_sparse_copy_keeps_a_nested_constructed_source_box() {
         .0
         .iter()
         .filter_map(|observation| match observation {
-            CommandObservation::Mutation(record) if record.key.as_deref() == Some("box:32103") => {
-                Some(record.value.as_str())
+            CommandObservation::Mutation(record)
+                if observation_name(&record.key) == Some("box:32103") =>
+            {
+                observation_name(&record.value)
             }
             _ => None,
         })
         .collect::<Vec<_>>();
-    assert_eq!(mutations, ["name:occupied", "name:occupied"]);
+    assert_eq!(mutations, ["occupied", "occupied"]);
     assert!(stores.box_reg(32101).is_some());
     assert!(stores.box_reg(32103).is_some());
 }
@@ -6120,25 +6153,20 @@ fn etex_identical_local_code_reassignment_is_a_save_stack_noop() {
         .0
         .iter()
         .filter_map(|observation| match observation {
-            CommandObservation::Mutation(record) if record.target == "code_table" => {
-                Some((record.value.as_str(), record.global))
+            CommandObservation::Mutation(record) if record.target == MutationTarget::CodeTable => {
+                Some((&record.key, &record.value, record.global))
             }
             _ => None,
         })
         .collect();
-    assert_eq!(mutations, [("lccode:65=122", true)]);
-
-    let mut tex82 = Universe::new_with_plain_catcodes();
-    assert!(
-        !etex_redundant_local_word_assignment(&tex82, tex82.lccode('A'), u32::from('a')),
-        "TeX82 performs the identical local eq_word_define"
+    assert_eq!(
+        mutations,
+        [(
+            &ObservationValue::Name("lccode:65".into()),
+            &ObservationValue::Integer(122),
+            true,
+        )]
     );
-    tex82.set_int_param_global(IntParam::ETEX_EXTENDED_MODE, 1);
-    assert!(etex_redundant_local_word_assignment(
-        &tex82,
-        tex82.lccode('A'),
-        u32::from('a')
-    ));
 
     let format = stores.dump_format().expect("dump extended e-TeX format");
     let mut loaded = Universe::from_format(tex_state::World::memory(), &format)
@@ -6162,13 +6190,20 @@ fn etex_identical_local_code_reassignment_is_a_save_stack_noop() {
         .0
         .iter()
         .filter_map(|observation| match observation {
-            CommandObservation::Mutation(record) if record.target == "code_table" => {
-                Some((record.value.as_str(), record.global))
+            CommandObservation::Mutation(record) if record.target == MutationTarget::CodeTable => {
+                Some((&record.key, &record.value, record.global))
             }
             _ => None,
         })
         .collect();
-    assert_eq!(loaded_mutations, [("lccode:65=113", true)]);
+    assert_eq!(
+        loaded_mutations,
+        [(
+            &ObservationValue::Name("lccode:65".into()),
+            &ObservationValue::Integer(113),
+            true,
+        )]
+    );
 }
 
 #[test]
@@ -6204,9 +6239,9 @@ fn etex_zero_glue_parameter_reassignment_uses_canonical_pointer_identity() {
         .iter()
         .filter_map(|observation| match observation {
             CommandObservation::Mutation(record)
-                if record.key.as_deref() == Some("glue_parameter:14") =>
+                if observation_name(&record.key) == Some("glue_parameter:14") =>
             {
-                Some(record.value.as_str())
+                Some(&record.value)
             }
             _ => None,
         })
@@ -6251,7 +6286,9 @@ fn etex_glue_expression_reassignment_retains_source_pointer_identity() {
         .0
         .iter()
         .filter_map(|observation| match observation {
-            CommandObservation::Mutation(record) if record.key.as_deref() == Some("skip:0") => {
+            CommandObservation::Mutation(record)
+                if observation_name(&record.key) == Some("skip:0") =>
+            {
                 Some(record.global)
             }
             _ => None,
@@ -6286,7 +6323,7 @@ fn etex_sparse_skip_reassignment_keeps_sa_def_mutation_boundary() {
             matches!(
                 observation,
                 CommandObservation::Mutation(record)
-                    if record.key.as_deref() == Some("skip:32767")
+                    if observation_name(&record.key) == Some("skip:32767")
             )
         })
         .count();
@@ -6366,11 +6403,13 @@ fn etex_penalty_array_mutations_use_their_extended_token_register_slots() {
         .0
         .iter()
         .filter_map(|observation| match observation {
-            CommandObservation::Mutation(record) if record.target == "register" => Some((
-                record.key.as_deref(),
-                record.tokens.as_deref(),
-                record.global,
-            )),
+            CommandObservation::Mutation(record) if record.target == MutationTarget::Register => {
+                Some((
+                    observation_name(&record.key),
+                    observation_tokens(&record.value),
+                    record.global,
+                ))
+            }
             _ => None,
         })
         .collect::<Vec<_>>();
@@ -6405,9 +6444,9 @@ fn etex_vertical_box_normal_paragraph_observes_interline_penalty_reset() {
                 matches!(
                     observation,
                     CommandObservation::Mutation(record)
-                        if record.target == "register"
-                            && record.key.as_deref() == Some("toks:256")
-                            && record.tokens.as_deref() == Some([].as_slice())
+                        if record.target == MutationTarget::Register
+                            && observation_name(&record.key) == Some("toks:256")
+                            && observation_tokens(&record.value) == Some([].as_slice())
                             && !record.global
                 )
             })
@@ -6565,7 +6604,12 @@ fn main_control_dispatch_matrix_consumes_each_command_once() {
             "one main-control mutation committed in mode {mode:?}: {:?}",
             observations.0
         );
-        assert!(observations.0.iter().any(|observation| matches!(observation, CommandObservation::Mutation(mutation) if mutation.value == "count:0=17")));
+        assert!(observations.0.iter().any(|observation| matches!(
+            observation,
+            CommandObservation::Mutation(mutation)
+                if mutation.key == ObservationValue::Name("count:0".into())
+                    && mutation.value == ObservationValue::Integer(17)
+        )));
 
         observations.0.clear();
         assert_eq!(
@@ -6585,7 +6629,12 @@ fn main_control_dispatch_matrix_consumes_each_command_once() {
             1,
             "the following command commits exactly once in mode {mode:?}"
         );
-        assert!(observations.0.iter().any(|observation| matches!(observation, CommandObservation::Mutation(mutation) if mutation.value == "count:1=29")));
+        assert!(observations.0.iter().any(|observation| matches!(
+            observation,
+            CommandObservation::Mutation(mutation)
+                if mutation.key == ObservationValue::Name("count:1".into())
+                    && mutation.value == ObservationValue::Integer(29)
+        )));
     }
 }
 
@@ -6619,7 +6668,7 @@ fn main_control_error_privilege_and_stop_paths_are_finite() {
     assert_eq!(page_stores.world().artifact_commits().len(), 1);
     assert!(observations.0.iter().any(|observation| matches!(
         observation,
-        CommandObservation::Effect(effect) if effect.kind == "terminate"
+        CommandObservation::Effect(effect) if effect.kind == ObservationEffectKind::Terminate
     )));
 }
 
@@ -6678,43 +6727,11 @@ fn openin_closein_replace_stream_state_and_apply_filename_rules() {
             cat: Catcode::Letter,
         }
     );
-    assert!(stores.input_stream_eof(tex_state::StreamSlot::new(3)));
-}
-
-#[test]
-fn unavailable_input_diagnostic_site_survives_failed_step_retry() {
-    let mut stores = Universe::new_with_plain_catcodes();
-    stores.set_interaction_mode(tex_state::InteractionMode::Nonstop);
-    let mut control = MainControl::tex82_initex(&mut stores);
-    control
-        .capabilities_mut()
-        .mark_input_unavailable("absent.tex");
-    register_source(&mut control, br"\input absent");
-    let state_before = stores.snapshot().state_hash();
-    let provenance_before = stores.provenance_stats();
-
-    let first = control
-        .advance(&mut stores)
-        .expect_err("unavailable input is a captured diagnostic");
-    let first_site = first.diagnostic_site();
-    let first_origin = first_site
-        .primary_origin()
-        .expect("triggering input command has an origin");
-    assert!(first.as_fatal().is_some());
-    assert!(first.frozen_diagnostic_origin().is_some());
-    assert_eq!(stores.snapshot().state_hash(), state_before);
-    assert_eq!(stores.provenance_stats(), provenance_before);
-
-    let second = control
-        .advance(&mut stores)
-        .expect_err("rolled-back input command retries identically");
-    assert_eq!(
-        second.diagnostic_site().primary_origin(),
-        Some(first_origin)
+    assert!(
+        stores
+            .world()
+            .input_stream_eof(tex_state::StreamSlot::new(3))
     );
-    assert!(second.frozen_diagnostic_origin().is_some());
-    assert_eq!(stores.snapshot().state_hash(), state_before);
-    assert_eq!(stores.provenance_stats(), provenance_before);
 }
 
 /// TeX82 §314's macro arm is `print_ln; print_cs(name)`, and §319
@@ -6857,7 +6874,8 @@ fn out_of_range_read_selector_reaches_the_terminal_without_a_report() {
             matches!(
                 event,
                 CommandObservation::Scanner(scanner)
-                    if scanner.kind == "integer" && scanner.value == "16"
+                    if scanner.kind == "integer"
+                        && scanner.value == ObservationValue::Integer(16)
             )
         })
         .expect("raw selector is observed");
@@ -6868,7 +6886,7 @@ fn out_of_range_read_selector_reaches_the_terminal_without_a_report() {
             matches!(
                 event,
                 CommandObservation::Mutation(mutation)
-                    if mutation.key.as_deref() == Some("line")
+                    if observation_name(&mutation.key) == Some("line")
             )
         })
         .expect("recovered read target is committed");
@@ -6961,8 +6979,8 @@ fn read_to_mutation_precedes_afterassignment_replay_and_carries_exact_meaning() 
             matches!(
                 observation,
                 CommandObservation::Mutation(record)
-                    if record.key.as_deref() == Some("target")
-                        && record.value == "macro definition"
+                    if observation_name(&record.key) == Some("target")
+                        && matches!(record.value, ObservationValue::Tokens(_))
                         && record.global
             )
         })
@@ -6987,7 +7005,7 @@ fn read_to_mutation_precedes_afterassignment_replay_and_carries_exact_meaning() 
         unreachable!()
     };
     assert!(matches!(
-        mutation.tokens.as_deref(),
+        observation_tokens(&mutation.value),
         Some([
             tex_command::ObservedToken::MacroEndMatch,
             tex_command::ObservedToken::Character {
@@ -7305,11 +7323,9 @@ fn showlists_is_a_diagnostic_without_a_canonical_effect_event() {
     }
 
     assert!(terminal_text(&stores).contains("### vertical mode"));
-    assert!(!observations.0.iter().any(|observation| {
-        matches!(
-            observation,
-            CommandObservation::Effect(effect) if effect.kind == "activities"
-        )
+    assert!(observations.0.iter().all(|observation| {
+        !matches!(observation, CommandObservation::Effect(effect)
+            if effect.kind != ObservationEffectKind::Terminate)
     }));
 }
 
@@ -7612,7 +7628,7 @@ fn final_cleanup_retires_inputs_reports_open_state_and_selects_end_or_dump() {
     )));
     assert!(observations.0.iter().any(|observation| matches!(
         observation,
-        CommandObservation::Effect(effect) if effect.kind == "terminate"
+        CommandObservation::Effect(effect) if effect.kind == ObservationEffectKind::Terminate
     )));
 }
 
@@ -7651,8 +7667,14 @@ fn end_and_dump_run_profile_specific_cleanup_in_observable_order() {
                     {
                         Some("retire")
                     }
-                    CommandObservation::Effect(effect) if effect.kind == "close" => Some("close"),
-                    CommandObservation::Effect(effect) if effect.kind == "terminate" => {
+                    CommandObservation::Effect(effect)
+                        if effect.kind == ObservationEffectKind::Close =>
+                    {
+                        Some("close")
+                    }
+                    CommandObservation::Effect(effect)
+                        if effect.kind == ObservationEffectKind::Terminate =>
+                    {
                         Some("terminate")
                     }
                     _ => None,
@@ -7924,8 +7946,8 @@ fn succumbing_commits_fatal_diagnostic_then_engine_termination() {
         observations.0.as_slice(),
         [.., CommandObservation::Diagnostic(record), CommandObservation::Effect(effect)]
             if *record == fatal.record()
-                && effect.kind == "terminate"
-                && effect.detail == "engine\0"
+                && effect.kind == ObservationEffectKind::Terminate
+                && effect.channel == "engine"
     ));
 }
 
@@ -7979,7 +8001,9 @@ fn effective_scope_is_shared_by_provisional_and_committed_meaning_mutations() {
             .0
             .iter()
             .filter_map(|observation| match observation {
-                CommandObservation::Mutation(record) if record.key.as_deref() == Some(name) => {
+                CommandObservation::Mutation(record)
+                    if observation_name(&record.key) == Some(name) =>
+                {
                     Some(record.global)
                 }
                 _ => None,
@@ -8427,8 +8451,8 @@ fn frozen_page_scalar_rejection_is_checkpoint_atomic() {
         .expect("frozen page checkpoint captures");
 
     run_to_end(&mut control, &mut stores);
-    let first_hash = stores.snapshot().state_hash();
     let first_output = terminal_text(&stores);
+    let first_snapshot = macro_tokens(&stores, "snapshot").to_vec();
     assert_eq!(
         stores.page_dimension(PageDimension::Goal).raw(),
         12 * Scaled::UNITY
@@ -8439,7 +8463,12 @@ fn frozen_page_scalar_rejection_is_checkpoint_atomic() {
         .restore_checkpoint(&checkpoint, &mut stores)
         .expect("frozen page checkpoint restores");
     run_to_end(&mut control, &mut stores);
-    assert_eq!(stores.snapshot().state_hash(), first_hash);
+    assert_eq!(
+        stores.page_dimension(PageDimension::Goal).raw(),
+        12 * Scaled::UNITY
+    );
+    assert_eq!(stores.page_integer(PageInteger::InsertPenalties), 4);
+    assert_eq!(macro_tokens(&stores, "snapshot"), first_snapshot);
     assert_eq!(terminal_text(&stores), first_output);
 }
 

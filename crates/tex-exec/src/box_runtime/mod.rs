@@ -9,8 +9,6 @@ mod material;
 mod packaging;
 mod vsplit;
 
-#[cfg(any())]
-pub(crate) use packaging::project_short_diagnostic_discs;
 pub(crate) use packaging::{
     first_box_node, hpack_owned_with_overfull_rule, hpack_with_overfull_rule, take_last_box,
 };

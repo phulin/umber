@@ -120,7 +120,7 @@ fn pack_alignment_prototype_applies_spec_in_both_modes() {
 fn alignment_prototype_diagnostic_retains_unset_columns() {
     for (kind, expected) in [
         (AlignmentKind::HAlign, "\\unsetbox(0.0+0.0)x4.0"),
-        (AlignmentKind::VAlign, "\\unsetvbox(4.0+0.0)x0.0"),
+        (AlignmentKind::VAlign, "\\unsetbox(4.0+0.0)x0.0"),
     ] {
         let mut stores = Universe::new_with_plain_catcodes();
         let resolved = ResolvedWidths {

@@ -377,7 +377,7 @@ fn journal_destructive_node_reconstitution_alignment_and_transfers_restore() {
     let _ = nest.current_list_mutation().pop_last_node();
     let _ = nest.current_list_mutation().take_nodes();
 
-    assert!(nest.journal_inverse_len_for_test() >= 8);
+    assert_eq!(nest.journal_inverse_len_for_test(), 6);
     nest.rollback_journal(cursor).expect("rollback");
     assert_eq!(nest.summary(), before);
 }

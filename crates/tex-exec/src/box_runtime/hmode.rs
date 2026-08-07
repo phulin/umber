@@ -27,17 +27,6 @@ pub(crate) fn append_character_with_fuel(
     append_hchar_with_fuel(nest, stores, ch, origin, etex_extended, fuel)
 }
 
-#[cfg(any())]
-pub(crate) fn append_character(
-    nest: &mut ModeNest,
-    stores: &mut Universe,
-    ch: char,
-    origin: OriginId,
-) -> Result<(), ExecError> {
-    let mut fuel = tex_command::CommandFuelLedger::default();
-    append_character_with_fuel(nest, stores, ch, origin, false, fuel.fuel_mut())
-}
-
 /// Appends an ordinary space from main control after horizontal
 /// mode has been selected by TeX82 §1095.
 pub(crate) fn append_space_with_fuel(
@@ -352,28 +341,6 @@ pub(crate) fn append_hchar_with_fuel(
     Ok(())
 }
 
-#[cfg(any())]
-pub(crate) fn append_hchar(
-    nest: &mut ModeNest,
-    stores: &mut Universe,
-    ch: char,
-    origin: OriginId,
-) -> Result<(), ExecError> {
-    append_hchar_with_fuel(
-        nest,
-        stores,
-        ch,
-        origin,
-        false,
-        tex_command::CommandFuelLedger::default().fuel_mut(),
-    )
-}
-
-#[cfg(any())]
-pub(crate) fn test_fix_hyphen_language(nest: &mut ModeNest, stores: &mut Universe, mode: Mode) {
-    fix_hyphen_language(nest, stores, mode).expect("test ligature run is fueled");
-}
-
 /// TeX82 §1091's `norm_min`, verbatim: `if h<=0 then norm_min:=1 else if
 /// h>=63 then norm_min:=63 else norm_min:=h`.
 ///
@@ -434,16 +401,6 @@ pub(crate) fn indent_in_hmode(
         nest.current_list_mutation().push(indent_box);
     }
     Ok(())
-}
-
-#[cfg(any())]
-pub(crate) fn fix_hyphen_language(
-    nest: &mut ModeNest,
-    stores: &mut Universe,
-    mode: Mode,
-) -> Result<(), ExecError> {
-    let mut fuel = tex_command::CommandFuelLedger::default();
-    fix_hyphen_language_with_fuel(nest, stores, mode, fuel.fuel_mut())
 }
 
 pub(crate) fn fix_hyphen_language_with_fuel(
@@ -679,24 +636,6 @@ pub(crate) fn reshape_open_type_runs(stores: &Universe, nodes: &mut Vec<Node>) {
         nodes.splice(start..index, shaped);
         index = start + shaped_len;
     }
-}
-
-#[cfg(any())]
-pub(crate) fn reconstitute(
-    stores: &mut Universe,
-    pending: &[crate::mode::PendingHChar],
-    no_left_boundary: bool,
-    insert_hyphen_discs: bool,
-) -> Vec<Node> {
-    let mut fuel = tex_command::CommandFuelLedger::default();
-    reconstitute_with_fuel(
-        stores,
-        pending,
-        no_left_boundary,
-        insert_hyphen_discs,
-        fuel.fuel_mut(),
-    )
-    .expect("test reconstruction fuel")
 }
 
 pub(crate) fn reconstitute_with_fuel(

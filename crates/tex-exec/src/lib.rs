@@ -39,6 +39,9 @@ mod step_snapshot_measurement;
 mod timing;
 mod vertical;
 
+#[cfg(test)]
+mod test_harness;
+
 #[cfg(feature = "profiling")]
 pub use align::{AlignmentTemplateMeasurement, alignment_template_measurement};
 #[cfg(feature = "profiling")]

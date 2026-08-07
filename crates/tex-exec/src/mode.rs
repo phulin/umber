@@ -166,7 +166,7 @@ impl ModeList {
             .mutate_semantic(|nodes| nodes.get_mut(index).map(mutate))
     }
 
-    #[cfg(any())]
+    #[cfg(test)]
     pub(crate) fn with_reconstitution_target<R>(
         &mut self,
         mutate: impl for<'a> FnOnce(&'a mut Vec<Node>) -> R,
@@ -174,7 +174,7 @@ impl ModeList {
         self.sequence.mutate_semantic(mutate)
     }
 
-    #[cfg(any())]
+    #[cfg(test)]
     pub(crate) fn push_reconstituted(
         &mut self,
         insertion: Option<(usize, Node)>,
@@ -425,14 +425,6 @@ pub(crate) struct ModeListMutation<'a> {
 }
 
 impl ModeListMutation<'_> {
-    #[cfg(any())]
-    pub(crate) fn for_test(list: &mut ModeList) -> ModeListMutation<'_> {
-        ModeListMutation {
-            list,
-            journal: None,
-        }
-    }
-
     pub(crate) fn push(&mut self, node: Node) {
         self.list.push(node);
     }
@@ -482,7 +474,7 @@ impl ModeListMutation<'_> {
         self.list.with_last_node_mut(mutate)
     }
 
-    #[cfg(any())]
+    #[cfg(test)]
     pub(crate) fn with_reconstitution_target<R>(
         &mut self,
         mutate: impl for<'a> FnOnce(&'a mut Vec<Node>) -> R,
@@ -491,7 +483,7 @@ impl ModeListMutation<'_> {
         self.list.with_reconstitution_target(mutate)
     }
 
-    #[cfg(any())]
+    #[cfg(test)]
     pub(crate) fn push_reconstituted(
         &mut self,
         insertion: Option<(usize, Node)>,
@@ -534,12 +526,35 @@ impl ModeListMutation<'_> {
         self.list.set_hyphen_context(language, left, right);
     }
 
+    #[cfg(test)]
+    pub(crate) fn set_hyphen_language(&mut self, language: u8) {
+        self.list.set_hyphen_language(language);
+    }
+
     pub(crate) fn set_prev_depth(&mut self, depth: Scaled) {
         self.list.set_prev_depth(depth);
     }
 
     pub(crate) fn set_prev_graf(&mut self, lines: i32) {
         self.list.set_prev_graf(lines);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_align_state(&mut self, state: AlignState) {
+        self.list.set_align_state(state);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_align_state_mut<R>(
+        &mut self,
+        mutate: impl for<'a> FnOnce(&'a mut AlignState) -> R,
+    ) -> Option<R> {
+        self.list.with_align_state_mut(mutate)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn take_align_state(&mut self) -> Option<AlignState> {
+        self.list.take_align_state()
     }
 
     pub(crate) fn set_incomplete_fraction(&mut self, fraction: IncompleteFraction) {
@@ -1282,5 +1297,5 @@ impl ModeNest {
     }
 }
 
-#[cfg(any())]
+#[cfg(test)]
 mod tests;
