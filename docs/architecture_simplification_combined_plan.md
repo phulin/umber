@@ -1177,6 +1177,36 @@ Rust change adds 291 and deletes 349 lines, a measured net deletion of 58
 lines. Ledger and repository-map documentation adds 44 lines; no fixture,
 generated expectation, digest, or production source changes.
 
+**Typesetting/browser and source-authority closure.** Commits `61bc3793e`,
+`8c6350dbe`, and `593c2c4a2` close `umber2-vgjr.15.4`. The typesetting ledger's
+three aggregate retirements remain assertion-complete through active rule
+owners. Exact rule matrices, 20,000-deep math and discretionary cases, the
+100,000-node line-break bound, HTML bytes and semantic projections, WASM wire
+values, worker containment, hostile DOM input, identity/lifetime behavior, and
+real-browser fixtures remain independent evidence. One dormant wire case is
+retired; its unique declaration and diagnostic cases are active WASM tests,
+and the accepted `9_007_199_254_740_991` plus rejected
+`9_007_199_254_740_992` boundaries cross the actual `JsValue` DTO. The Rust
+proof-test change adds 13 and deletes 41 lines, a measured net deletion of 28.
+
+Commit `4b3db8016` closes `umber2-vgjr.15.5`. The routine source audit scans
+tracked production Rust using Cargo library-target metadata, rejects
+unconditionally false `cfg(any())` attributes and test modules under disabled
+library test targets, rejects stale exceptions, and carries an empty exception
+set. Its positive and negative controls are active in the workspace-selection
+executable.
+
+**Program accounting and closeout.** Base-normalized child diffs add 879 and
+delete 1,042 authored Rust lines, a measured net deletion of 163. The three
+semantic compaction children contribute 474 lines of net deletion; the
+recurrence audit adds 311 lines. Documentation and guidance add 1,614 and
+delete 619 lines, while Cargo/property-catalogue declarative data adds 67 and
+deletes 51. No generated source, fixture payload, JavaScript, or binary asset
+changes receive credit. The original 447-case ledger closes as 445 active
+tests plus two explicit retirements; all 64 inactive sites are gone. The 94-row
+TeX82 audit retains 29 explicit gap-owned rows, and all 54 links across the 35
+formerly dormant-citing properties resolve to active tests.
+
 ## 16. Consolidate PDF test support without weakening independent evidence
 
 **Outcome.** Canonical structure projection walks Hayro's borrowed objects directly. Focused raw queries replace the copied `PdfProbe` graph. Ordinary valid synthetic inputs use `pdf-writer`; explicit raw-byte helpers retain malformed, classic-xref, cycle, depth, and independent-writer cases.
