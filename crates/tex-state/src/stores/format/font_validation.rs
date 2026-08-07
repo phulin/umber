@@ -46,7 +46,7 @@ impl StoreFormat {
                 ));
             }
             if (font.font_info_words as usize) < font.parameters.len()
-                || (font.font_info_words as usize) > crate::font::FONT_INFO_CAPACITY
+                || (font.font_info_words as usize) > crate::font::WEB2C_FONT_INFO_CAPACITY
             {
                 return Err(StoreFormatError::Invalid(
                     "font-info allocation is outside canonical bounds",
@@ -203,7 +203,7 @@ impl StoreFormat {
                         .saturating_sub(font.parameters.len())
             })
             .sum::<usize>();
-        if font_info_words > crate::font::FONT_INFO_CAPACITY {
+        if font_info_words > crate::font::WEB2C_FONT_INFO_CAPACITY {
             return Err(StoreFormatError::Invalid(
                 "shared font-info capacity exceeded",
             ));

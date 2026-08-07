@@ -2,7 +2,7 @@ use super::{
     FormatError, GenerationForkError, TakeUnboxResult, UnboxKind, Universe, utf8_scalar_len_at,
 };
 use crate::env::banks::{IntParam, TokParam};
-use crate::font::{FONT_INFO_CAPACITY, MAX_FONT_DIMEN, NULL_FONT};
+use crate::font::{FONT_INFO_CAPACITY, MAX_FONT_DIMEN, NULL_FONT, WEB2C_FONT_INFO_CAPACITY};
 use crate::glue::{GlueSpec, Order};
 use crate::hyphenation::{ExceptionSpec, PatternSpec};
 use crate::ids::{ArenaRef, FontId, NodeListId, TokenListId};
@@ -850,6 +850,27 @@ fn font_info_capacity_boundary_is_grouped_rollback_safe_and_format_stable() {
         .expect("restored capacity-boundary fontdimen remains writable");
     restored.rollback(&restored_snapshot);
     assert_eq!(restored.snapshot().state_hash(), restored_hash);
+}
+
+#[test]
+fn web2c_font_memory_configuration_accepts_large_pdftex_fontdimen_banks() {
+    let mut universe = Universe::new();
+    let font = universe.intern_font(test_font("web2c-font", b"web2c-font"));
+    let error = universe
+        .set_font_dimen(font, 65_536, Scaled::from_raw(1))
+        .expect_err("TeX82's compiled font-memory default is smaller");
+    assert_eq!(
+        error,
+        super::FontParameterError::FontInfoCapacity {
+            capacity: FONT_INFO_CAPACITY,
+        }
+    );
+
+    universe.configure_font_info_capacity(WEB2C_FONT_INFO_CAPACITY);
+    universe
+        .set_font_dimen(font, 65_536, Scaled::from_raw(1))
+        .expect("the pinned Web2C configuration admits expl3's intarray bank");
+    assert_eq!(universe.font_dimen(font, 65_536), Scaled::from_raw(1));
 }
 
 #[test]

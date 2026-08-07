@@ -386,6 +386,7 @@ impl EngineMode {
     /// line, and is the same thing this crate's `-interaction=nonstopmode`
     /// reference captures run under.
     pub fn prepare_fresh(self, stores: &mut Universe) {
+        self.configure_font_memory(stores);
         stores.set_interaction_mode(tex_state::InteractionMode::Nonstop);
         match self {
             Self::Tex82 => prepare_run_stores(stores),
@@ -401,6 +402,7 @@ impl EngineMode {
     /// Unlike [`Self::prepare_fresh`], this preserves TeX82's initial
     /// category-code table while the format source is tokenized.
     pub fn prepare_initex(self, stores: &mut Universe) {
+        self.configure_font_memory(stores);
         // Same non-interactive host as [`Self::prepare_fresh`].
         stores.set_interaction_mode(tex_state::InteractionMode::Nonstop);
         crate::prepare_initex_stores(stores);
@@ -435,6 +437,7 @@ impl EngineMode {
 
     /// Restores driver-owned primitive implementations after a format load.
     pub fn install_after_format(self, stores: &mut Universe) {
+        self.configure_font_memory(stores);
         match self {
             Self::Tex82 => {
                 tex_command::register_tex82_expandable_primitives(stores);
@@ -450,6 +453,18 @@ impl EngineMode {
             Self::Latex => install_latex_format_primitives(stores),
             Self::PdfLatex => install_pdflatex_format_primitives(stores),
         }
+    }
+
+    fn configure_font_memory(self, stores: &mut Universe) {
+        let capacity = if matches!(
+            self.binary_identity(),
+            tex_exec::EngineBinaryIdentity::Pdftex14029
+        ) {
+            tex_state::font::WEB2C_FONT_INFO_CAPACITY
+        } else {
+            tex_state::font::FONT_INFO_CAPACITY
+        };
+        stores.configure_font_info_capacity(capacity);
     }
 
     /// Whether this compatibility contract uses LaTeX's byte-oriented UTF-8 input layer.

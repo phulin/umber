@@ -71,6 +71,12 @@ pub const MAX_FONT_DIMEN: u32 = 1 << 17;
 /// TeX82's shared `font_info` word capacity (tex.web §11).
 pub const FONT_INFO_CAPACITY: usize = 20_000;
 
+/// TeX Live's Web2C runtime `font_mem_size` bound used by pdfTeX.
+///
+/// The pinned 2026 `texmf.cnf` selects this value; unlike TeX82's compiled
+/// default, it is process configuration and is not part of a format image.
+pub const WEB2C_FONT_INFO_CAPACITY: usize = 8_000_000;
+
 /// Largest dense font id representable in a fontdimen cell key.
 ///
 /// A font owns `2^17` possible parameter slots inside `CellId`'s 32-bit

@@ -196,6 +196,7 @@ pub struct Stores {
     hyphenation: Arc<HyphenationTable>,
     prepared_mag: Option<i32>,
     last_loaded_font: FontId,
+    font_info_capacity: usize,
     semantic_hash_cache: state_hash::SemanticHashCache,
     exact_env_identity: exact_identity::ExactEnvIdentity,
     exact_identity_cache: Arc<std::sync::Mutex<format::ExactIdentityCache>>,
@@ -392,6 +393,7 @@ impl Clone for Stores {
             hyphenation: self.hyphenation.clone(),
             prepared_mag: self.prepared_mag,
             last_loaded_font: self.last_loaded_font,
+            font_info_capacity: self.font_info_capacity,
             semantic_hash_cache: self.semantic_hash_cache.clone(),
             exact_env_identity: self.exact_env_identity.clone(),
             exact_identity_cache: Arc::clone(&self.exact_identity_cache),
@@ -541,6 +543,7 @@ impl Stores {
             hyphenation: Arc::new(HyphenationTable::new()),
             prepared_mag: None,
             last_loaded_font: NULL_FONT,
+            font_info_capacity: crate::font::FONT_INFO_CAPACITY,
             semantic_hash_cache: state_hash::SemanticHashCache::default(),
             exact_env_identity: exact_identity::ExactEnvIdentity::default(),
             exact_identity_cache: Arc::new(std::sync::Mutex::new(
@@ -1655,10 +1658,12 @@ impl Stores {
             })?;
         if self.fonts.would_allocate(&font)
             && font.font_info_words()
-                > crate::font::FONT_INFO_CAPACITY.saturating_sub(self.font_info_words())
+                > self
+                    .font_info_capacity
+                    .saturating_sub(self.font_info_words())
         {
             return Err(FontParameterError::FontInfoCapacity {
-                capacity: crate::font::FONT_INFO_CAPACITY,
+                capacity: self.font_info_capacity,
             });
         }
         let parameters = font.parameters().to_vec();
@@ -2125,6 +2130,18 @@ impl Stores {
         Ok(())
     }
 
+    /// Selects the process-owned Web2C `font_mem_size` limit.
+    ///
+    /// Canonical formats record their occupied extent, not this runtime
+    /// configuration. Drivers therefore reapply the engine configuration
+    /// after constructing or loading a universe.
+    pub(crate) fn configure_font_info_capacity(&mut self, capacity: usize) {
+        assert!(capacity <= crate::font::WEB2C_FONT_INFO_CAPACITY);
+        // Web2C's `undump_size` raises a smaller runtime setting to the
+        // occupied extent recorded by the loaded format.
+        self.font_info_capacity = capacity.max(self.font_info_words());
+    }
+
     #[must_use]
     pub fn font_hyphen_char(&self, font: FontId) -> i32 {
         self.assert_live_font(font);
@@ -2195,9 +2212,9 @@ impl Stores {
             }
             let growth = (number - current_len) as usize;
             let used = self.font_info_words();
-            if growth > crate::font::FONT_INFO_CAPACITY.saturating_sub(used) {
+            if growth > self.font_info_capacity.saturating_sub(used) {
                 return Err(FontParameterError::FontInfoCapacity {
-                    capacity: crate::font::FONT_INFO_CAPACITY,
+                    capacity: self.font_info_capacity,
                 });
             }
             self.env.set_font_param_len_global(font, number);

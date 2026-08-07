@@ -1277,6 +1277,14 @@ impl Default for Universe {
 }
 
 impl Universe {
+    /// Applies the process-selected Web2C font-memory bound.
+    ///
+    /// This operational limit is intentionally excluded from formats,
+    /// snapshots, and semantic hashes.
+    pub fn configure_font_info_capacity(&mut self, capacity: usize) {
+        self.stores.configure_font_info_capacity(capacity);
+    }
+
     /// TeX82-shaped live allocator use projected from the typed stores.
     #[must_use]
     pub fn engine_usage_statistics(&mut self) -> crate::stores::EngineUsageStatistics {

@@ -30,6 +30,14 @@ fn map_step_failure(error: CanonicalStepFailure) -> SessionError {
     }
 }
 
+fn configure_font_memory(stores: &mut Universe, profile: CommandProfile) {
+    let capacity = match profile.dialect() {
+        CommandDialect::Pdftex14029 => tex_state::font::WEB2C_FONT_INFO_CAPACITY,
+        CommandDialect::Tex82 | CommandDialect::Etex26 => tex_state::font::FONT_INFO_CAPACITY,
+    };
+    stores.configure_font_info_capacity(capacity);
+}
+
 /// Default bound for a host that repeatedly declines the same typed need.
 pub const DEFAULT_NO_PROGRESS_LIMIT: u8 = 8;
 
@@ -302,6 +310,7 @@ impl<'a> EngineSession<'a> {
     }
     #[must_use]
     pub fn new(stores: &'a mut Universe, profile: CommandProfile) -> Self {
+        configure_font_memory(stores, profile);
         Self {
             artifact_cursor: stores.world().artifact_commits().len(),
             effect_cursor: stores.world().effect_records().len(),
@@ -333,6 +342,7 @@ impl<'a> EngineSession<'a> {
     /// `\patterns` and installs the TeX82 primitive meanings in `stores`.
     #[must_use]
     pub fn tex82_initex(stores: &'a mut Universe) -> Self {
+        configure_font_memory(stores, CommandProfile::TEX82);
         Self {
             artifact_cursor: stores.world().artifact_commits().len(),
             effect_cursor: stores.world().effect_records().len(),
@@ -361,6 +371,7 @@ impl<'a> EngineSession<'a> {
     /// its fresh primitive profile into `stores`.
     #[must_use]
     pub fn prepared_initex(stores: &'a mut Universe, profile: CommandProfile) -> Self {
+        configure_font_memory(stores, profile);
         Self {
             artifact_cursor: stores.world().artifact_commits().len(),
             effect_cursor: stores.world().effect_records().len(),
