@@ -131,6 +131,15 @@ remain on the stack lives in `MainControl`, `Universe`, or the retained session:
 | output state         | Pending page fire-up already represented in `Universe`, prepared DVI pages in stats, recoverable/terminal diagnostics in the virtual `World`, and generated output/effect prefixes in the private build stage.                                                           |
 | accounting           | Committed execution statistics, cumulative fuel, hard fuel limit, advance count, suspension serial, and optional failure-injection sequence.                                                                                                                             |
 
+Main control additionally retains one failure-only causal diagnostic context.
+The first committed recoverable error freezes only its stable family plus the
+total input/group depths and the innermost eight content-free frame/group
+descriptors. The field participates in aggregate step rollback, so a resource
+retry cannot publish evidence from an attempt that did not commit. A later
+fatal reuses that first context instead of replacing it with terminal cleanup
+state. Runs without an error allocate no diagnostic context and perform only
+the existing scalar error-count observation at the operation boundary.
+
 `MainControl` owns `CommandState`, mode/execution roots, fuel ledger,
 and explicit host capabilities. Each operation constructs borrow-scoped
 `CommandProcessor` and `CommandHostContext` values; neither can outlive the

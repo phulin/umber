@@ -221,6 +221,34 @@ impl CommandState {
         self.input.levels.len()
     }
 
+    /// Returns a content-free, innermost-first tail of the live input stack
+    /// for failure diagnostics. No tokens, source names, or source lines cross
+    /// this boundary.
+    #[must_use]
+    pub fn diagnostic_input_context(&self, limit: usize) -> (usize, Vec<&'static str>) {
+        let tail = self
+            .input
+            .levels
+            .iter()
+            .rev()
+            .take(limit)
+            .map(|level| match level {
+                InputLevel::Source(_) => "source",
+                InputLevel::Tokens(cursor) => match &cursor.trace {
+                    ReplayTrace::MacroReplacement => "macro-body",
+                    ReplayTrace::MacroParameter { .. } => "macro-argument",
+                    ReplayTrace::BackedUp => "backed-up",
+                    ReplayTrace::Inserted => "inserted",
+                    ReplayTrace::UTemplate => "alignment-u-template",
+                    ReplayTrace::VTemplate | ReplayTrace::OmitTemplate => "alignment-v-template",
+                    ReplayTrace::Stored(_) => "stored-token-list",
+                    ReplayTrace::Transient(_) => "transient-token-list",
+                },
+            })
+            .collect();
+        (self.input.levels.len(), tail)
+    }
+
     pub(crate) const fn name_in_progress(&self) -> bool {
         self.name_in_progress
     }

@@ -48,6 +48,8 @@ HEADER = [
     "output_bytes",
 ]
 TELEMETRY_FIELDS = HEADER[3:11]
+CAUSAL_DIAGNOSTIC_PREFIX = "CAUSAL_DIAGNOSTIC "
+CAUSAL_DIAGNOSTIC_LIMIT = 1024
 
 
 def env_path(name: str, default: Path | None = None) -> Path:
@@ -141,6 +143,16 @@ def parse_phase_telemetry(log: str) -> dict[str, int]:
     }
 
 
+def parse_causal_diagnostic(log: str) -> str | None:
+    lines = [line for line in log.splitlines()
+             if line.startswith(CAUSAL_DIAGNOSTIC_PREFIX)]
+    if not lines:
+        return None
+    if len(lines) != 1 or len(lines[0].encode()) > CAUSAL_DIAGNOSTIC_LIMIT:
+        fail("causal diagnostic is repeated or exceeds its bounded contract")
+    return lines[0]
+
+
 def artifact_hashes(results: Path, key: str, finalizer_status: str) -> dict[str, str | None]:
     log = results / f"{key}.engine.log"
     pdf = results / f"{key}.pdf"
@@ -175,7 +187,7 @@ def outcome_digest(papers: list[dict], records: dict[str, dict]) -> str:
     stable = [
         [paper["id"], records[paper["id"]]["engine_status"],
          records[paper["id"]]["finalizer_status"], records[paper["id"]]["error_cluster"],
-         records[paper["id"]]["guard_status"]]
+         records[paper["id"]]["guard_status"], records[paper["id"]].get("causal_diagnostic")]
         for paper in papers
     ]
     return hashlib.sha256(json.dumps(stable, separators=(",", ":")).encode()).hexdigest()
@@ -210,6 +222,7 @@ def run_paper(
         main_input = run_source / entrypoints[paper_id]
         env = os.environ.copy()
         env.update(UMBER_RESOURCE_TELEMETRY="1", UMBER_ENGINE_FUEL=str(fuel),
+                   UMBER_CAUSAL_DIAGNOSTIC="1",
                    TEXINPUTS=f"{main_input.parent}:{texinputs}", TEXFONTS=texfonts)
         command = [sys.executable, str(guard), "--timeout-seconds", str(timeout),
                    "--max-rss-mib", str(rss), "--term-grace-seconds", "2", "--",
@@ -239,6 +252,7 @@ def run_paper(
                                "guard-timeout-or-rss" if accepted and completed.returncode == 124 else
                                "failed" if accepted else "not-run")
     row["error_cluster"] = error_cluster(log, completed.returncode)
+    row["causal_diagnostic"] = parse_causal_diagnostic(log)
     if completed.returncode == 0:
         if partial_pdf.exists():
             os.replace(partial_pdf, results / f"{key}.pdf")
@@ -294,7 +308,7 @@ def main() -> None:
         entrypoints[paper_id] = relative_entrypoint
         source_identities[paper_id] = source_identity(archive, relative_entrypoint)
     immutable = {
-        "schema": 3,
+        "schema": 4,
         "binary_path": str(binary),
         "binary_sha256": sha256_file(binary),
         "format_path": str(format_path),

@@ -488,6 +488,7 @@ pub struct CompileSourceLocation {
 pub struct CompileDiagnostic {
     pub message: String,
     pub location: Option<CompileSourceLocation>,
+    pub context: Option<Box<tex_exec::FrozenDiagnosticContext>>,
 }
 
 /// Live retained-memory charges for one accepted compile session.
@@ -873,6 +874,7 @@ impl CompileDiagnostic {
         Self {
             message: error.to_string(),
             location,
+            context: error.frozen_diagnostic_context().cloned().map(Box::new),
         }
     }
 }

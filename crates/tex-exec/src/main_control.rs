@@ -250,7 +250,11 @@ pub struct MainControl {
     captured_fatal_origin: Option<(
         tex_state::provenance::DiagnosticSite,
         Option<crate::FrozenDiagnosticOrigin>,
+        Option<crate::FrozenDiagnosticContext>,
     )>,
+    /// First recoverable error's bounded stack evidence. Trace-only
+    /// diagnostics do not populate it, and aggregate rollback restores it.
+    first_causal_context: Option<crate::FrozenDiagnosticContext>,
     /// tex.web's job-framing state: see [`crate::job`] and
     /// `docs/job_framing.md`.
     job: crate::job::JobFraming,
@@ -509,6 +513,7 @@ struct StepSnapshot {
     completed_boundaries: Vec<crate::EngineBoundary>,
     pending_shipout_boundary: bool,
     end_job_ejection_pending: bool,
+    first_causal_context: Option<crate::FrozenDiagnosticContext>,
     /// A step's §537/§362 open-paren accounting is engine state outside
     /// `Universe`, exactly like `next_alignment_identity` and `boxes` above:
     /// a step that prints `(name` and then rolls back must have
@@ -540,6 +545,7 @@ impl StepSnapshot {
             completed_boundaries: control.completed_boundaries.clone(),
             pending_shipout_boundary: control.pending_shipout_boundary,
             end_job_ejection_pending: control.end_job_ejection_pending,
+            first_causal_context: control.first_causal_context.clone(),
             job: control.job.clone(),
             universe: stores.snapshot(),
         };
@@ -580,6 +586,7 @@ impl StepSnapshot {
         control.completed_boundaries = self.completed_boundaries;
         control.pending_shipout_boundary = self.pending_shipout_boundary;
         control.end_job_ejection_pending = self.end_job_ejection_pending;
+        control.first_causal_context = self.first_causal_context;
         control.job = self.job;
     }
 
@@ -1793,13 +1800,15 @@ impl MainControl {
         stores: &mut Universe,
         error: ExecError,
     ) -> Result<StepResult, ExecError> {
-        let error = error.freeze_diagnostic_origin(stores);
+        let preserve_pdf_xform_reservations = matches!(error, ExecError::PdfXFormVoidBox);
+        let error =
+            error.freeze_diagnostic_origin(stores, self.command.diagnostic_input_context(8));
         // pdftex.web §1549 reserves both the form object and its resource
         // object before it fetches the box register. Its ext1 void-box error
         // leaves those identities consumed even though the command reports
         // failure. Preserve that canonical ledger mutation; resource
         // suspensions and all other failed operations retain atomic rollback.
-        if matches!(error, ExecError::PdfXFormVoidBox) {
+        if preserve_pdf_xform_reservations {
             let _ = self.admit_observed_receipt(stores, OperationTermination::Failed);
             self.commit_step(snapshot);
             return Err(error);
@@ -2311,6 +2320,7 @@ impl MainControl {
                         .map(PendingDiagnostic::Command),
                 );
             }
+            self.capture_first_causal_context(stores, &diagnostics);
             report_pending_diagnostics(stores, diagnostics)?;
             self.open_discretionary_part(stores)?;
             return Ok(ReplayStep::Continue);
@@ -2474,6 +2484,8 @@ impl MainControl {
                 Err(error)
             }
             Err(error) => {
+                let error = error
+                    .freeze_diagnostic_origin(stores, self.command.diagnostic_input_context(8));
                 if let Some(fatal) = error.as_fatal() {
                     // TeX82 §93's `succumb` runs only after §94's
                     // `overflow` or §95's `confusion` has composed its report.
@@ -2486,7 +2498,17 @@ impl MainControl {
                         ExecError::Captured { site, frozen, .. }
                             if fatal != FatalError::TooManyErrors =>
                         {
-                            Some((site.clone(), frozen.clone()))
+                            Some((
+                                site.clone(),
+                                frozen
+                                    .as_deref()
+                                    .and_then(|evidence| evidence.origin.clone()),
+                                self.first_causal_context.clone().or_else(|| {
+                                    frozen
+                                        .as_deref()
+                                        .and_then(|evidence| evidence.context.clone())
+                                }),
+                            ))
                         }
                         _ => None,
                     };
@@ -2531,6 +2553,22 @@ impl MainControl {
                 self.finish_operation_telemetry(rolled_back);
                 result
             }
+        }
+    }
+
+    fn capture_first_causal_context(
+        &mut self,
+        stores: &Universe,
+        diagnostics: &[PendingDiagnostic],
+    ) {
+        if self.first_causal_context.is_none()
+            && let Some(cause_kind) = diagnostics.iter().find_map(PendingDiagnostic::causal_kind)
+        {
+            self.first_causal_context = Some(crate::FrozenDiagnosticContext::capture(
+                stores,
+                self.command.diagnostic_input_context(8),
+                cause_kind,
+            ));
         }
     }
 
@@ -3795,6 +3833,7 @@ impl MainControl {
         // to this nested scanner boundary; leaving them on CommandState lets
         // the following outer main-control step report them only after
         // build_page has emitted its tracingpages state.
+        self.capture_first_causal_context(stores, &diagnostics);
         report_pending_diagnostics(stores, diagnostics)
     }
 
@@ -4157,11 +4196,14 @@ impl MainControl {
     /// Reconstructs the source-bearing fatal for a diagnostic session owner.
     pub(crate) fn captured_fatal_error(&self) -> Option<ExecError> {
         let fatal = self.fatal?;
-        let (site, frozen) = self.captured_fatal_origin.as_ref()?;
+        let (site, frozen, context) = self.captured_fatal_origin.as_ref()?;
         Some(ExecError::Captured {
             error: Box::new(ExecError::Fatal(fatal)),
             site: site.clone(),
-            frozen: frozen.clone(),
+            frozen: Some(Box::new(crate::FrozenDiagnosticEvidence {
+                origin: frozen.clone(),
+                context: context.clone(),
+            })),
         })
     }
 
@@ -4302,6 +4344,14 @@ impl MainControl {
             i32::try_from(self.command.current_file_line_number()).unwrap_or(i32::MAX),
             self.command.current_file_source_id(),
         );
+        if self.first_causal_context.is_none() && stores.world().error_channel().error_count() > 0 {
+            self.first_causal_context = Some(crate::FrozenDiagnosticContext::capture(
+                stores,
+                self.command.diagnostic_input_context(8),
+                "command-error",
+            ));
+        }
+        self.capture_first_causal_context(stores, &diagnostics);
         report_pending_diagnostics(stores, diagnostics)?;
         self.drain_file_framing_events(stores);
         let scanned = self.resolve_font_resource(scanned)?;
@@ -16931,6 +16981,34 @@ enum PendingDiagnostic {
     /// The `bool` is `eTeX_ex`, which here rewrites the *message* as well as
     /// the help: etex.ch prints `' or `\protected'` before `' with `'.
     IrrelevantLongOuterPrefix(tex_command::PrintCommand, String, bool),
+}
+
+impl PendingDiagnostic {
+    fn causal_kind(&self) -> Option<&'static str> {
+        match self {
+            Self::Command(tex_command::CommandSemanticDiagnostic::Trace { .. })
+            | Self::Command(tex_command::CommandSemanticDiagnostic::PdfExpansionMessage {
+                ..
+            }) => None,
+            Self::Command(tex_command::CommandSemanticDiagnostic::UndefinedControlSequence {
+                ..
+            }) => Some("undefined-control-sequence"),
+            Self::Command(tex_command::CommandSemanticDiagnostic::MacroPrefixMismatch {
+                ..
+            }) => Some("macro-prefix-mismatch"),
+            Self::Command(tex_command::CommandSemanticDiagnostic::MissingNumber { .. }) => {
+                Some("missing-number")
+            }
+            Self::Command(tex_command::CommandSemanticDiagnostic::FontDimenUnavailable {
+                ..
+            }) => Some("font-dimen-unavailable"),
+            Self::Command(tex_command::CommandSemanticDiagnostic::Recoverable { .. }) => {
+                Some("command-recoverable")
+            }
+            Self::PrefixOnNonPrefixedCommand(..) => Some("prefix-on-non-prefixed-command"),
+            Self::IrrelevantLongOuterPrefix(..) => Some("irrelevant-long-outer-prefix"),
+        }
+    }
 }
 
 /// Output made durable only after a shipout artifact transaction commits.

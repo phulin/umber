@@ -3226,6 +3226,14 @@ impl SessionError {
             _ => None,
         }
     }
+
+    #[must_use]
+    pub fn frozen_diagnostic_context(&self) -> Option<&tex_exec::FrozenDiagnosticContext> {
+        match self {
+            Self::Execute(error) => error.frozen_diagnostic_context(),
+            _ => None,
+        }
+    }
 }
 
 impl From<tex_exec::ExecError> for SessionError {

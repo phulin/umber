@@ -343,6 +343,31 @@ fn engine_diagnostic_preserves_included_file_location() {
 }
 
 #[test]
+fn engine_diagnostic_captures_first_bounded_expansion_and_group_context() {
+    let mut session = session("\\begingroup\\def\\a#2{x}\\input absent\\endgroup\\end");
+    let [request] = requests(session.compile_attempt())
+        .try_into()
+        .expect("one input");
+    session
+        .provide_resources(vec![ResourceResponse::FileUnavailable(
+            request.key().clone(),
+        )])
+        .expect("unavailable input");
+
+    let diagnostic = compile_diagnostic(&mut session);
+    let context = diagnostic
+        .context
+        .unwrap_or_else(|| panic!("candidate diagnostic context: {}", diagnostic.message));
+    assert!(context.input_frame_count >= context.input_frame_tail.len());
+    assert!(context.input_frame_tail.len() <= 8);
+    assert_eq!(context.cause_kind, "command-error");
+    assert!(context.input_frame_tail.contains(&"source"));
+    assert_eq!(context.group_depth, 1);
+    assert_eq!(context.group_tail.len(), 1);
+    assert_eq!(context.group_tail[0].kind, "semi-simple");
+}
+
+#[test]
 fn accepted_finalization_transfers_uncommitted_engine_state() {
     let mut session = session("\\message{accepted-finalization}\\end");
     let CompileAttemptResult::Complete(output) = session.compile_attempt() else {

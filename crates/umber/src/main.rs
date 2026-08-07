@@ -3,6 +3,7 @@ use std::env;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
+use sha2::{Digest, Sha256};
 use tex_command::{
     CatcodeQueries, CharacterCode, CommandDialect, CommandProfile, CommandState,
     SourceControlSequenceKind, SourceRegistration, SourceToken, SourceTokenizationStep,
@@ -32,6 +33,11 @@ fn main() -> ExitCode {
     match run() {
         Ok(()) => ExitCode::SUCCESS,
         Err(err) => {
+            if env::var_os("UMBER_CAUSAL_DIAGNOSTIC").is_some_and(|value| value == "1")
+                && let Some(diagnostic) = err.causal_diagnostic()
+            {
+                eprintln!("{}", causal_diagnostic_line(diagnostic));
+            }
             eprintln!("umber: {err}");
             ExitCode::from(err.exit_status())
         }
@@ -925,6 +931,46 @@ impl CliError {
             _ => 1,
         }
     }
+
+    fn causal_diagnostic(&self) -> Option<&umber::CompileDiagnostic> {
+        match self {
+            Self::NativeRun(error) => error.diagnostic(),
+            _ => None,
+        }
+    }
+}
+
+fn causal_diagnostic_line(diagnostic: &umber::CompileDiagnostic) -> String {
+    let cause_sha256 = Sha256::digest(diagnostic.message.as_bytes());
+    let mut line = format!("CAUSAL_DIAGNOSTIC schema=1 cause_sha256={cause_sha256:x}");
+    match &diagnostic.location {
+        Some(location) => {
+            let source_sha256 = Sha256::digest(location.file.as_bytes());
+            line.push_str(&format!(
+                " source_sha256={source_sha256:x} bytes={}..{} line={} column={}",
+                location.byte_start, location.byte_end, location.line, location.column
+            ));
+        }
+        None => line.push_str(" source=unknown"),
+    }
+    if let Some(context) = &diagnostic.context {
+        line.push_str(&format!(
+            " cause_kind={} input_frames={} input_tail={:?} group_depth={} group_tail={:?}",
+            context.cause_kind,
+            context.input_frame_count,
+            context.input_frame_tail.join(","),
+            context.group_depth,
+            context
+                .group_tail
+                .iter()
+                .map(|group| format!("{}@{}", group.kind, group.entered_line))
+                .collect::<Vec<_>>()
+                .join(",")
+        ));
+    } else {
+        line.push_str(" input_frames=unknown input_tail=\"\" group_depth=unknown group_tail=\"\"");
+    }
+    line
 }
 
 impl std::error::Error for CliError {}
@@ -981,6 +1027,41 @@ impl From<umber::cli_resource::NativeRunError> for CliError {
 mod tests {
     use super::*;
     use tex_state::{InputOrigin, PrintSink, StreamSlot};
+
+    #[test]
+    fn causal_diagnostic_is_bounded_and_content_free() {
+        let diagnostic = umber::CompileDiagnostic {
+            message: "invalid parameter token #4".to_owned(),
+            location: Some(umber::CompileSourceLocation {
+                file: format!("/private/secret/{}/package/main.tex", "x".repeat(200)),
+                byte_start: 41,
+                byte_end: 43,
+                line: 7,
+                column: 11,
+            }),
+            context: Some(Box::new(tex_exec::FrozenDiagnosticContext {
+                cause_kind: "command-recoverable",
+                input_frame_count: 29,
+                input_frame_tail: vec!["macro-body", "macro-argument", "source"],
+                group_depth: 3,
+                group_tail: vec![tex_exec::FrozenDiagnosticGroup {
+                    kind: "simple",
+                    entered_line: 6,
+                }],
+            })),
+        };
+
+        let line = causal_diagnostic_line(&diagnostic);
+        assert!(line.starts_with("CAUSAL_DIAGNOSTIC schema=1 cause_sha256="));
+        assert!(line.contains("bytes=41..43 line=7 column=11"));
+        assert!(line.contains("input_tail=\"macro-body,macro-argument,source\""));
+        assert!(line.contains("group_tail=\"simple@6\""));
+        assert!(!line.contains("invalid parameter token"));
+        assert!(line.contains("source_sha256="));
+        assert!(!line.contains("private"));
+        assert!(!line.contains("secret"));
+        assert!(line.len() < 1024);
+    }
 
     #[test]
     fn input_receipt_deduplicates_external_reads_and_excludes_same_run_outputs() {

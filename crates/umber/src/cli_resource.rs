@@ -24,10 +24,11 @@ use umber_fetch::{
 };
 
 use crate::{
-    AcceptedFinalization, CompileAttemptResult, CompileTelemetry, EngineMode, FileContentId,
-    FileKind, FileRequest, MemoryRunOutput, NeedResources, OutputCapability, OutputCapabilitySet,
-    ResolvedFile, ResolvedPkFont, ResourceRequest, ResourceResponse, SessionLimits, SessionOptions,
-    SourcePatch, TexFontSearchPath, TexInputSearchPath, VirtualCompileSession,
+    AcceptedFinalization, CompileAttemptResult, CompileError, CompileTelemetry, EngineMode,
+    FileContentId, FileKind, FileRequest, MemoryRunOutput, NeedResources, OutputCapability,
+    OutputCapabilitySet, ResolvedFile, ResolvedPkFont, ResourceRequest, ResourceResponse,
+    SessionLimits, SessionOptions, SourcePatch, TexFontSearchPath, TexInputSearchPath,
+    VirtualCompileSession,
 };
 
 pub const DEFAULT_DISTRIBUTION_URL: &str =
@@ -73,6 +74,7 @@ pub enum NativeRunError {
     Selection(String),
     Fetch(String),
     Compile(String),
+    Diagnostic(Box<crate::CompileDiagnostic>),
     Format(String),
     Cancelled,
 }
@@ -103,6 +105,7 @@ impl fmt::Display for NativeRunError {
             Self::Selection(message) => write!(f, "distribution selection error: {message}"),
             Self::Fetch(message) => f.write_str(message),
             Self::Compile(message) => f.write_str(message),
+            Self::Diagnostic(diagnostic) => f.write_str(&diagnostic.message),
             Self::Format(message) => write!(f, "format resource error: {message}"),
             Self::Cancelled => f.write_str("distribution acquisition cancelled"),
         }
@@ -110,6 +113,16 @@ impl fmt::Display for NativeRunError {
 }
 
 impl Error for NativeRunError {}
+
+impl NativeRunError {
+    #[must_use]
+    pub fn diagnostic(&self) -> Option<&crate::CompileDiagnostic> {
+        match self {
+            Self::Diagnostic(diagnostic) => Some(diagnostic.as_ref()),
+            _ => None,
+        }
+    }
+}
 
 pub fn run(options: &NativeRunOptions) -> Result<MemoryRunOutput, NativeRunError> {
     NativeCompileSession::new(options, &FetchCancellation::new())?
@@ -445,7 +458,12 @@ impl NativeCompileSession {
                     return Ok(output);
                 }
                 CompileAttemptResult::Error(error) => {
-                    return Err(NativeRunError::Compile(error.to_string()));
+                    return Err(match error {
+                        CompileError::Diagnostic(diagnostic) => {
+                            NativeRunError::Diagnostic(Box::new(diagnostic))
+                        }
+                        error => NativeRunError::Compile(error.to_string()),
+                    });
                 }
                 CompileAttemptResult::NeedResources(batch) => {
                     let resolver_started = Instant::now();

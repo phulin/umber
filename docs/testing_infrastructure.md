@@ -648,7 +648,15 @@ failure therefore remains a finalizer outcome without recompiling the paper.
 The TSV records both phase outcomes, replay telemetry, resource and engine time,
 mutually exclusive accepted-run host phases, nested resolver/cache phases and
 hit counts, estimated finalizer time, and guard status; failed rows retain
-stable clusters.
+stable clusters. Census children also set `UMBER_CAUSAL_DIAGNOSTIC=1`. A
+failed engine compile then emits exactly one `CAUSAL_DIAGNOSTIC` line before
+the ordinary terminal summary. The line carries a stable cause family, hashes
+of the terminal cause and virtual source path, exact byte/line/column
+coordinates, and innermost-first tails of at most eight input frames and eight
+groups. It contains no source excerpt, token-list contents, macro arguments,
+or unhashed path. The runner rejects repeated or larger-than-1,024-byte lines
+and stores the accepted line in the row JSON receipt; successful rows emit no
+line and retain `null` in that field.
 
 The `profile.test` build is the optimized profile used by `cargo run-dev` and
 shares its `target/debug/umber` artifact. A plain `cargo build` replaces that

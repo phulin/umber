@@ -1208,6 +1208,14 @@ The design distinguishes five state classes:
 No type may mix fields from these classes merely because they are used by the
 same procedure.
 
+The command state exposes one content-free failure projection to main control:
+the live input-level count and an innermost-first tail of at most eight level
+families (`source`, macro body/argument, backup, inserted, alignment template,
+or generic stored/transient replay). It exposes no cursor, token, source name,
+line text, macro argument, or replay handle. Main control samples this only
+after an error and couples it to the aggregate rollback root; it is diagnostic
+metadata, not a second input consumer or durable command summary.
+
 ## 8. Persistent command state
 
 The future-relevant command-machine state is one ownership unit:

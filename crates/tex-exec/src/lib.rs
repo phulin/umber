@@ -63,7 +63,10 @@ pub use dispatch::{
     ArtifactLedger, DispatchAction, ExecutionStats, PreparedDviPage, RevisionOutputPatch,
     RevisionOutputPatchError,
 };
-pub use error::{ExecError, FrozenDiagnosticOrigin};
+pub use error::{
+    ExecError, FrozenDiagnosticContext, FrozenDiagnosticEvidence, FrozenDiagnosticGroup,
+    FrozenDiagnosticOrigin,
+};
 pub use host_api::{
     FontResolver, FontSource, PdfImagePageBox, PdfImagePageSelection, PdfImageRequest,
     PdfImageResolver, ResolverResourceNeed, ResourceLookup, ResourceResult,

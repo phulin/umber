@@ -24,6 +24,42 @@ pub enum FrozenDiagnosticOrigin {
     Resolved(tex_state::ResolvedSourceLocation),
 }
 
+/// Failure-only, content-free snapshot captured before a failed step rolls
+/// its live input and group stacks back.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FrozenDiagnosticContext {
+    pub cause_kind: &'static str,
+    pub input_frame_count: usize,
+    pub input_frame_tail: Vec<&'static str>,
+    pub group_depth: u32,
+    pub group_tail: Vec<FrozenDiagnosticGroup>,
+}
+
+/// One bounded group-stack entry in [`FrozenDiagnosticContext`].
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct FrozenDiagnosticGroup {
+    pub kind: &'static str,
+    pub entered_line: u32,
+}
+
+/// Frozen source and causal-stack evidence kept behind the captured-error
+/// allocation boundary so ordinary `Result<_, ExecError>` values stay small.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FrozenDiagnosticEvidence {
+    pub origin: Option<FrozenDiagnosticOrigin>,
+    pub context: Option<FrozenDiagnosticContext>,
+}
+
+impl FrozenDiagnosticContext {
+    pub(crate) fn capture(
+        stores: &Universe,
+        input_context: (usize, Vec<&'static str>),
+        cause_kind: &'static str,
+    ) -> Self {
+        freeze_diagnostic_context(stores, input_context, cause_kind)
+    }
+}
+
 #[derive(Debug)]
 pub enum ExecError {
     ExecutionAlreadyTerminated,
@@ -40,7 +76,7 @@ pub enum ExecError {
     Captured {
         error: Box<ExecError>,
         site: DiagnosticSite,
-        frozen: Option<FrozenDiagnosticOrigin>,
+        frozen: Option<Box<FrozenDiagnosticEvidence>>,
     },
     NeedResource(crate::ResolverResourceNeed),
     World(WorldError),
@@ -806,30 +842,61 @@ impl ExecError {
 
     /// Freezes the primary diagnostic origin without retaining speculative
     /// provenance arena entries past rollback.
-    pub(crate) fn freeze_diagnostic_origin(mut self, stores: &Universe) -> Self {
+    pub(crate) fn freeze_diagnostic_origin(
+        mut self,
+        stores: &Universe,
+        input_context: (usize, Vec<&'static str>),
+    ) -> Self {
         if let Self::Captured { site, frozen, .. } = &mut self
             && frozen.is_none()
-            && let Some(origin) = site.primary_origin()
         {
-            let resolver = ProvenanceResolver::new(stores);
-            *frozen = stores
-                .root_span_for_origin(origin)
-                .map(FrozenDiagnosticOrigin::Root)
-                .or_else(|| {
-                    let fallback = resolver.resolve_origin(origin)?;
-                    Some(match resolver.detach_generated_origin(origin) {
-                        Some(span) => FrozenDiagnosticOrigin::Generated { span, fallback },
-                        None => FrozenDiagnosticOrigin::Resolved(fallback),
-                    })
-                });
+            *frozen = Some(Box::new(FrozenDiagnosticEvidence {
+                origin: site
+                    .primary_origin()
+                    .and_then(|origin| freeze_diagnostic_origin(stores, origin)),
+                context: Some(freeze_diagnostic_context(
+                    stores,
+                    input_context.clone(),
+                    "terminal-execution",
+                )),
+            }));
         }
-        self
+        if matches!(self, Self::Captured { .. } | Self::PdfXFormVoidBox)
+            || self.as_fatal().is_none()
+        {
+            self
+        } else {
+            let site = self.diagnostic_site();
+            let frozen = site
+                .primary_origin()
+                .and_then(|origin| freeze_diagnostic_origin(stores, origin));
+            Self::Captured {
+                error: Box::new(self),
+                site,
+                frozen: Some(Box::new(FrozenDiagnosticEvidence {
+                    origin: frozen,
+                    context: Some(freeze_diagnostic_context(
+                        stores,
+                        input_context,
+                        "terminal-execution",
+                    )),
+                })),
+            }
+        }
     }
 
     #[must_use]
     pub fn frozen_diagnostic_origin(&self) -> Option<&FrozenDiagnosticOrigin> {
         match self {
-            Self::Captured { frozen, .. } => frozen.as_ref(),
+            Self::Captured { frozen, .. } => frozen.as_deref()?.origin.as_ref(),
+            _ => None,
+        }
+    }
+
+    #[must_use]
+    pub fn frozen_diagnostic_context(&self) -> Option<&FrozenDiagnosticContext> {
+        match self {
+            Self::Captured { frozen, .. } => frozen.as_deref()?.context.as_ref(),
             _ => None,
         }
     }
@@ -857,6 +924,66 @@ impl ExecError {
             ),
             _ => self.to_string(),
         }
+    }
+}
+
+fn freeze_diagnostic_origin(stores: &Universe, origin: OriginId) -> Option<FrozenDiagnosticOrigin> {
+    let resolver = ProvenanceResolver::new(stores);
+    stores
+        .root_span_for_origin(origin)
+        .map(FrozenDiagnosticOrigin::Root)
+        .or_else(|| {
+            let fallback = resolver.resolve_origin(origin)?;
+            Some(match resolver.detach_generated_origin(origin) {
+                Some(span) => FrozenDiagnosticOrigin::Generated { span, fallback },
+                None => FrozenDiagnosticOrigin::Resolved(fallback),
+            })
+        })
+}
+
+fn freeze_diagnostic_context(
+    stores: &Universe,
+    input_context: (usize, Vec<&'static str>),
+    cause_kind: &'static str,
+) -> FrozenDiagnosticContext {
+    const TAIL_LIMIT: usize = 8;
+
+    FrozenDiagnosticContext {
+        cause_kind,
+        input_frame_count: input_context.0,
+        input_frame_tail: input_context.1.into_iter().take(TAIL_LIMIT).collect(),
+        group_depth: stores.group_depth(),
+        group_tail: stores
+            .group_frames()
+            .rev()
+            .take(TAIL_LIMIT)
+            .map(|frame| FrozenDiagnosticGroup {
+                kind: diagnostic_group_kind(frame.kind()),
+                entered_line: frame.entered_line(),
+            })
+            .collect(),
+    }
+}
+
+const fn diagnostic_group_kind(kind: tex_state::GroupKind) -> &'static str {
+    use tex_state::GroupKind as Kind;
+    match kind {
+        Kind::Simple => "simple",
+        Kind::HBox => "hbox",
+        Kind::AdjustedHBox => "adjusted-hbox",
+        Kind::VBox => "vbox",
+        Kind::VTop => "vtop",
+        Kind::SemiSimple => "semi-simple",
+        Kind::MathShift => "math-shift",
+        Kind::Align => "align",
+        Kind::NoAlign => "no-align",
+        Kind::Output => "output",
+        Kind::Math => "math",
+        Kind::Disc => "disc",
+        Kind::Insert => "insert",
+        Kind::VCenter => "vcenter",
+        Kind::MathChoice => "math-choice",
+        Kind::MathLeft => "math-left",
     }
 }
 

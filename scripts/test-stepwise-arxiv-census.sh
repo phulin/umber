@@ -39,7 +39,12 @@ done
 main=$argument
 printf 'generated\n' >"$(dirname "$main")/document.aux"
 case "$main" in
-  *enginefail*) echo 'invalid parameter token' >&2; exit 1 ;;
+  *enginefail*)
+    test "${UMBER_CAUSAL_DIAGNOSTIC:-}" = 1
+    echo 'CAUSAL_DIAGNOSTIC schema=1 cause_sha256=abc source_sha256=def bytes=9..11 line=1 column=10 cause_kind=command-error input_frames=11 input_tail="macro-body,macro-argument,source" group_depth=2 group_tail="simple@1,hbox@0"' >&2
+    echo 'invalid parameter token' >&2
+    exit 1
+    ;;
 esac
 echo RESOURCE_ENGINE_ACCEPTED >&2
 echo 'RESOURCE_TELEMETRY cold_starts=1 suspensions=2 local_step_retries=2 replayed_delivered_tokens=3 replayed_dispatches=3 cumulative_fuel=4 resource_wait_ns=5 engine_ns=6' >&2
@@ -74,6 +79,12 @@ test ! -e "$work/corpus/ok/document.aux"
 awk -F '\t' '$1 == "ok" { exit !($2 == "accepted" && $3 == "complete") }' "$work/results/summary.tsv"
 awk -F '\t' '$1 == "finalfail" { exit !($2 == "accepted" && $3 == "failed") }' "$work/results/summary.tsv"
 awk -F '\t' '$1 == "enginefail" { exit !($2 == "failed" && $3 == "not-run") }' "$work/results/summary.tsv"
+test "$(grep -c '^CAUSAL_DIAGNOSTIC ' "$work/results/enginefail.engine.log")" -eq 1
+test "$(wc -c <"$work/results/enginefail.engine.log")" -lt 1024
+test "$(sed -n '/^CAUSAL_DIAGNOSTIC /=' "$work/results/enginefail.engine.log")" -lt \
+  "$(sed -n '/^invalid parameter token$/=' "$work/results/enginefail.engine.log")"
+! grep -q '^CAUSAL_DIAGNOSTIC ' "$work/results/ok.engine.log"
+grep -q '"causal_diagnostic": "CAUSAL_DIAGNOSTIC schema=1' "$work/results/rows/enginefail.json"
 
 run_census
 test "$(cat "$work/count")" -eq 3
