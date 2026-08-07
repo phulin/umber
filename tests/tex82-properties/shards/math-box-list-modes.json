@@ -887,6 +887,10 @@
       "test_level": "rust-unit+semantic-minifixture",
       "coverage": [
         {
+          "path": "crates/tex-exec/src/main_control/tests/material_property_matrices.rs",
+          "test": "vsplit_void_nonvbox_pruning_marks_and_packaging_matrix"
+        },
+        {
           "path": "crates/tex-exec/src/main_control/tests.rs",
           "test": "vsplit_kernel_separates_result_remainder_and_split_marks"
         },
@@ -895,8 +899,8 @@
           "test": "vsplit_infinite_shrink_reports_the_scanner_owned_live_context"
         }
       ],
-      "status": "gap",
-      "gap_bead": "umber2-alfh.32",
+      "status": "covered",
+      "gap_bead": null,
       "planned_coverage": []
     },
     {
@@ -946,6 +950,10 @@
       "test_level": "rust-unit+semantic-minifixture",
       "coverage": [
         {
+          "path": "crates/tex-exec/src/main_control/tests/material_property_matrices.rs",
+          "test": "text_material_character_ligkern_space_language_and_vertical_replay_matrix"
+        },
+        {
           "path": "crates/tex-exec/src/main_control/tests.rs",
           "test": "text_material_preserves_ligature_space_factor_and_font_glue"
         },
@@ -954,8 +962,8 @@
           "test": "language_normalization_and_same_language_append_boundaries_match_tex82"
         }
       ],
-      "status": "gap",
-      "gap_bead": "umber2-alfh.32",
+      "status": "covered",
+      "gap_bead": null,
       "planned_coverage": []
     },
     {
@@ -1000,6 +1008,10 @@
       "test_level": "rust-unit+semantic-minifixture",
       "coverage": [
         {
+          "path": "crates/tex-exec/src/main_control/tests/material_property_matrices.rs",
+          "test": "direct_material_modes_operands_page_boundary_and_group_clear_matrix"
+        },
+        {
           "path": "crates/tex-exec/src/main_control/tests.rs",
           "test": "direct_material_appends_typed_nodes_in_source_order"
         },
@@ -1012,8 +1024,8 @@
           "test": "rule_spec_scans_expanded_keywords_and_dimensions"
         }
       ],
-      "status": "gap",
-      "gap_bead": "umber2-alfh.32",
+      "status": "covered",
+      "gap_bead": null,
       "planned_coverage": []
     },
     {
@@ -1066,6 +1078,10 @@
       "test_level": "rust-unit+semantic-minifixture",
       "coverage": [
         {
+          "path": "crates/tex-exec/src/main_control/tests/material_property_matrices.rs",
+          "test": "box_construction_targets_specs_hooks_shifts_leaders_and_register_matrix"
+        },
+        {
           "path": "crates/tex-exec/src/main_control/tests.rs",
           "test": "copy_preserves_every_recursive_node_payload_and_source_register"
         },
@@ -1086,8 +1102,8 @@
           "test": "vsplit_kernel_separates_result_remainder_and_split_marks"
         }
       ],
-      "status": "gap",
-      "gap_bead": "umber2-alfh.32",
+      "status": "covered",
+      "gap_bead": null,
       "planned_coverage": []
     },
     {
@@ -1132,6 +1148,10 @@
       "test_level": "rust-unit+semantic-minifixture",
       "coverage": [
         {
+          "path": "crates/tex-exec/src/main_control/tests/material_property_matrices.rs",
+          "test": "paragraph_entry_endings_migration_depth_and_recovery_matrix"
+        },
+        {
           "path": "crates/tex-exec/src/main_control/tests.rs",
           "test": "paragraph_boundaries_run_everypar_in_outer_and_internal_vertical_modes"
         },
@@ -1144,8 +1164,8 @@
           "test": "end_inside_unterminated_box_reaches_outer_cleanup"
         }
       ],
-      "status": "gap",
-      "gap_bead": "umber2-alfh.32",
+      "status": "covered",
+      "gap_bead": null,
       "planned_coverage": []
     },
     {
@@ -1198,6 +1218,10 @@
       "test_level": "rust-unit+semantic-minifixture",
       "coverage": [
         {
+          "path": "crates/tex-exec/src/main_control/tests/material_property_matrices.rs",
+          "test": "structured_material_lifecycle_delete_unbox_italic_and_recovery_matrix"
+        },
+        {
           "path": "crates/tex-exec/src/main_control/tests.rs",
           "test": "etex_lastnodetype_covers_every_node_code"
         },
@@ -1214,8 +1238,8 @@
           "test": "incompatible_unbox_commands_preserve_registers_and_replay_state"
         }
       ],
-      "status": "gap",
-      "gap_bead": "umber2-alfh.32",
+      "status": "covered",
+      "gap_bead": null,
       "planned_coverage": []
     },
     {
