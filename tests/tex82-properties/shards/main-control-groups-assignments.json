@@ -859,7 +859,7 @@
       ],
       "recovery_cases": ["Missing `to` diagnoses then continues; invalid targets recover through get_r_token."],
       "semantic_owner": "tex-exec::assignments",
-      "test_level": "rust-unit+semantic-minifixture+strict-semantic-xfail",
+      "test_level": "rust-unit+semantic-minifixture",
       "coverage": [
         {
           "path": "crates/tex-exec/src/main_control/tests.rs",
@@ -872,22 +872,16 @@
         {
           "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
           "test": "declared_command_semantic_cases_match",
-          "cases": ["main-control/read-mutation-order"]
-        }
-      ],
-      "status": "gap",
-      "gap_bead": "umber2-vq14",
-      "planned_coverage": [
-        {
-          "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
-          "test": "declared_command_semantic_cases_match",
           "cases": [
-            "read-to-definition strict xfail",
-            "linked to umber2-vq14",
-            "pinned first mismatch rejects XPASS and changed failure"
+            "main-control/read-mutation-order",
+            "main-control/read-missing-to",
+            "main-control/read-to-definition"
           ]
         }
-      ]
+      ],
+      "status": "covered",
+      "gap_bead": null,
+      "planned_coverage": []
     },
     {
       "id": "tex82.assignment.parameters-registers-arithmetic",
@@ -1486,7 +1480,7 @@
         "Production dump prints the canonical INITEX-only diagnostic and returns without format storage; preexisting incomplete groups/conditions are reported and condition nodes are freed without invoking ordinary delimiter recovery."
       ],
       "semantic_owner": "tex-exec::main-control",
-      "test_level": "rust-unit+strict-semantic-xfail",
+      "test_level": "rust-unit+semantic-minifixture",
       "coverage": [
         {
           "path": "crates/tex-command/src/conditionals/tests.rs",
@@ -1497,28 +1491,25 @@
           "test": "final_cleanup_reports_nested_condition_kinds_lines_and_order_exactly"
         },
         {
-          "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
-          "test": "declared_command_semantic_cases_match",
-          "cases": ["final-cleanup-incomplete-conditionals"]
-        }
-      ],
-      "status": "gap",
-      "gap_bead": "umber2-xfj3",
-      "planned_coverage": [
-        {
           "path": "crates/tex-exec/src/main_control/tests.rs",
           "test": "final_cleanup_retires_inputs_reports_open_state_and_selects_end_or_dump"
+        },
+        {
+          "path": "crates/tex-exec/src/main_control/tests.rs",
+          "test": "end_and_dump_run_profile_specific_cleanup_in_observable_order"
         },
         {
           "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
           "test": "declared_command_semantic_cases_match",
           "cases": [
-            "final-cleanup-end-or-dump strict xfail",
-            "linked to umber2-xfj3",
-            "pinned first mismatch rejects XPASS and changed failure"
+            "final-cleanup-incomplete-conditionals",
+            "main-control/final-cleanup-end-or-dump"
           ]
         }
-      ]
+      ],
+      "status": "covered",
+      "gap_bead": null,
+      "planned_coverage": []
     }
   ]
 }

@@ -406,15 +406,15 @@
         "An invalid mode or incompatible auxiliary interpretation is rejected at the typed boundary rather than silently projected as another mode."
       ],
       "semantic_owner": "tex-exec::mode-nest",
-      "test_level": "planned-rust-unit",
+      "test_level": "rust-unit",
       "coverage": [
         {
           "path": "crates/tex-exec/src/mode/tests.rs",
           "test": "semantic_nest_six_modes_and_fields_initialize_canonically"
         }
       ],
-      "status": "gap",
-      "gap_bead": "umber2-johp.242"
+      "status": "covered",
+      "gap_bead": null
     },
     {
       "id": "tex82.modes.semantic-nest-lifecycle",
@@ -438,15 +438,19 @@
         "Bottom-level pop and capacity overflow fail explicitly without fabricating or partially restoring a record."
       ],
       "semantic_owner": "tex-exec::mode-nest",
-      "test_level": "planned-rust-unit",
+      "test_level": "rust-unit",
       "coverage": [
         {
           "path": "crates/tex-exec/src/mode/tests.rs",
           "test": "semantic_nest_push_and_pop_preserve_fields_and_start_empty_list"
+        },
+        {
+          "path": "crates/tex-exec/src/mode/tests.rs",
+          "test": "semantic_nest_capacity_and_bottom_pop_recovery_match_tex82"
         }
       ],
-      "status": "gap",
-      "gap_bead": "umber2-o85m"
+      "status": "covered",
+      "gap_bead": null
     },
     {
       "id": "tex82.modes.activity-diagnostics",

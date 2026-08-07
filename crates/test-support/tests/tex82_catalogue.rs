@@ -469,8 +469,8 @@ fn committed_tex82_property_catalogue_is_complete_and_resolvable() {
         CatalogueCensus {
             reviewed: 946,
             deferred: 434,
-            covered: 106,
-            gap: 45,
+            covered: 112,
+            gap: 39,
         }
     );
     let modules = catalogue.resolved.keys().copied().collect::<Vec<_>>();

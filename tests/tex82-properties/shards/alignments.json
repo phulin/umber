@@ -785,7 +785,7 @@
         "Recovery: §796 specifies no diagnostic branch; packing diagnostics belong to the invoked hpack/vpackage contracts rather than a new alignment recovery."
       ],
       "semantic_owner": "tex-exec::align-packing",
-      "test_level": "planned-rust-unit",
+      "test_level": "rust-unit",
       "coverage": [
         {
           "path": "crates/tex-exec/src/align/packaging/tests.rs",
@@ -961,7 +961,7 @@
         "Recovery: §§801–803 specify no user-error branch; list ordering is a procedure precondition and no modern validation behavior is asserted."
       ],
       "semantic_owner": "tex-exec::align-packing",
-      "test_level": "planned-rust-unit",
+      "test_level": "rust-unit",
       "coverage": [
         {
           "path": "crates/tex-exec/src/align/widths/resolution/tests.rs",
@@ -970,6 +970,10 @@
         {
           "path": "crates/tex-exec/src/align/widths/resolution/tests.rs",
           "test": "resolve_alignment_widths_zeroes_null_column_tabskip"
+        },
+        {
+          "path": "crates/tex-exec/src/align/widths/resolution/tests.rs",
+          "test": "alignment_width_resolution_negative_zero_and_competing_span_matrix"
         }
       ],
       "status": "covered",
@@ -1002,7 +1006,7 @@
         "Recovery: ordinary hpack/vpack diagnostics remain observable; §804 adds no alignment-specific recovery."
       ],
       "semantic_owner": "tex-exec::align-packing",
-      "test_level": "planned-rust-unit",
+      "test_level": "rust-unit",
       "coverage": [
         {
           "path": "crates/tex-exec/src/align/widths/tests.rs",
@@ -1090,7 +1094,7 @@
         "Recovery: §§807–809 specify no user-error branch; prototype/list correspondence is a canonical precondition."
       ],
       "semantic_owner": "tex-exec::align-packing",
-      "test_level": "planned-rust-unit",
+      "test_level": "rust-unit",
       "coverage": [
         {
           "path": "crates/tex-exec/src/align/widths/set/tests.rs",
@@ -1128,7 +1132,7 @@
         "Recovery: §§810–811 specify saturating glue behavior, not an error branch; no additional recovery is asserted."
       ],
       "semantic_owner": "tex-exec::align-packing",
-      "test_level": "planned-rust-unit",
+      "test_level": "rust-unit",
       "coverage": [
         {
           "path": "crates/tex-exec/src/align/widths/set/tests.rs",
@@ -1165,7 +1169,7 @@
         "Recovery: §812 defines no independent diagnostic; malformed display closure is owned by §§1206–1207."
       ],
       "semantic_owner": "tex-exec::align-packing",
-      "test_level": "planned-rust-unit",
+      "test_level": "rust-unit",
       "coverage": [
         {
           "path": "crates/tex-exec/src/align/widths/tests.rs",
