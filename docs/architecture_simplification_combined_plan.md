@@ -140,6 +140,33 @@ wrappers are deleted. Receipts remain operation-local until the existing
 bounded evidence/receipt publication seam commits, so resource retries and
 `\afterassignment` retain their prior atomic ordering without a wire change.
 
+**Final program closeout.** The exact pre-closeout implementation tree
+`bfbe33682891249f37796477543828fdb7d40097` retains one
+`execute_operation`/`apply_operation` authority and one
+`AssignmentCommitter`; `CommandRuntime`, `PendingMutation`, the temporary
+shadow harness, and the three predecessor step branches remain absent. The
+observer seam consumes every receipt category and verifies its termination
+against the published result. Mutation, resource, semantic effect, world
+effect, artifact, geometry, and diagnostic records reject before vector
+growth, and success, fatal, alignment, `PdfXFormVoidBox`, and other
+irreversible commit paths close and check the receipt before commit. Ordinary
+execution retains no observation slot and therefore allocates no receipt or
+ordered-evidence buffer.
+
+The optimized exhaustive tracer compared every registered microfixture plus
+Plain, Story, and Gentle to exhaustion under `MemoryMax=512M`, reporting zero
+semantic divergences and zero advisory geometry differences in 12.02 seconds
+wall time at 424,776 KiB maximum RSS. Its serial document loading, on-demand
+alignment keys, exact-prefix release, and complete first-mismatch suffix keep
+the comparison policy and all 1,107,729 document events intact. Cumulative
+selected authored Rust accounting, including both receipt/tracer repair rounds,
+is 3,819 additions and 4,617 deletions, or 798 net deleted lines; documentation
+and guidance are excluded. Focused executor, incremental, command-semantic,
+source-audit, exact DVI, text-channel, resource-retry, Story-locator, and
+snapshot gates passed under 512 MiB; the full routine suite passed under 1 GiB;
+and the uncapped six-job quality gate passed all four checks. The issue-scoped
+receipt is [the Program 1 writeback](writeback/umber2-vgjr.1.4.md).
+
 ## 2. One oracle evidence, finalization, and comparison pipeline
 
 **Outcome.** `tex-oracle` owns exhaustive event views for normalization, locations, position erasure, alignment keys, concise rendering, and typed profile projection. `tex-observe` enriches and finalizes once into semantic and geometry evidence. `tex-command-stream` owns named strict and ordinary comparison policies and returns divergence plus accounting in one parsed result. Parity consumes that result.

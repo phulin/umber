@@ -64,3 +64,43 @@ resource retry parity, loaded/ordinary text-channel parity, and the enforced
 snapshot allocation/runtime gate pass under their 512 MiB or 1 GiB guards.
 The full native `cargo test -q --tests` suite and all four `scripts/check.sh`
 gates are the final repository acceptance gates.
+
+## Final program closeout
+
+The independent Program 1 closeout audited exact implementation tree
+`bfbe33682891249f37796477543828fdb7d40097`. Repository-wide definition and
+call-site searches found one `execute_operation`, one `apply_operation`, and
+one `AssignmentCommitter`, with no `CommandRuntime`, `PendingMutation`, shadow
+harness, or predecessor step definition. The receipt consumer reads mutation,
+resource, semantic-effect, world-effect, artifact, diagnostic, and termination
+facts. Each allocating category checks the shared ceiling before `Vec::push`,
+and every success, fatal, alignment, void-form, and non-rollback commit path
+admits the closed receipt first. The ordinary path leaves
+`operation_observations` absent, so no receipt or ordered-evidence vector is
+constructed.
+
+The optimized exhaustive tracer loaded the three document fixtures serially,
+derived alignment keys on demand, released the exact observed prefix, and
+retained the complete actual suffix from the first mismatch. Under
+`MemoryMax=512M` it compared all six committed semantic fixtures, the geometry
+fixture, and the complete pinned Plain (87,965), Story (89,524), and Gentle
+(930,240) event streams: `VERDICT: CLEAN`, zero semantic divergences, zero
+advisory geometry differences, 12.02 seconds wall time, and 424,776 KiB maximum
+RSS. This reproduces the repaired performance without dropping a registered
+case or weakening realignment and diagnostic context.
+
+Cumulative selected authored Rust accounting starts from the first closeout's
+3,177 additions and 4,470 deletions. The receipt-consumer/tracer repair adds
+583 and deletes 125; the fatal/alignment/irreversible repair plus shifted
+source audit adds 59 and deletes 22. The final total is therefore 3,819
+additions and 4,617 deletions, or 798 net deleted lines. Documentation and
+guidance are excluded.
+
+Receipt-bearing validation used `CARGO_BUILD_JOBS=6`, uncapped compilation,
+and default test parallelism. Under 512 MiB, `tex-exec` passed 446 unit plus 20
+integration tests, `tex-incr` passed 40 active tests, command-semantic passed
+17 active cases, source audit passed five cases, and the exact Story DVI,
+loaded/ordinary text, resource retry, Story locator, and enforced snapshot
+gates passed. The complete routine suite passed under 1 GiB in 44.66 seconds
+at 575,944 KiB maximum RSS. The final uncapped `scripts/check.sh` verdict was
+all four gates passed.
