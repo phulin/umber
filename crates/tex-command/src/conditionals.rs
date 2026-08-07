@@ -992,12 +992,33 @@ impl CommandProcessor<'_> {
         Ok(true)
     }
 
-    /// TeX.web §500's `\if\iftrue abc\else d\fi` skip: an `\or` reached while
-    /// looking for this condition's `\else` or `\fi` matches no `\ifcase`
+    /// TeX.web §500's false-branch skip, including the `cond_ptr=p` test.
+    ///
+    /// Operand expansion may leave a completed inner condition above the
+    /// condition whose false branch is being skipped. A delimiter belonging
+    /// to that inner frame cannot end the saved condition: its `\fi` pops the
+    /// inner frame and scanning continues until the saved frame is current.
+    /// An `\or` reached for the saved boolean condition matches no `\ifcase`
     /// limb and is diagnosed rather than accepted.
     fn resume_after_skip(&mut self, condition: ConditionId) -> Result<(), CommandError> {
         loop {
             let delimiter = self.pass_text(condition, ScannerWarning(0))?.delimiter;
+            if self
+                .command
+                .conditions
+                .current()
+                .is_some_and(|frame| frame.identity != condition)
+            {
+                if delimiter == ConditionalDelimiter::Fi {
+                    let frame = self
+                        .command
+                        .conditions
+                        .pop()
+                        .ok_or(CommandError::input_invariant())?;
+                    self.observe_condition("pop", &frame, None);
+                }
+                continue;
+            }
             if delimiter == ConditionalDelimiter::Or {
                 self.record_extra_delimiter(delimiter);
                 continue;

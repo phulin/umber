@@ -2408,6 +2408,49 @@ fn etex_box_conditionals_read_sparse_register_kinds() {
 }
 
 #[test]
+fn false_boolean_skip_closes_a_condition_left_by_operand_expansion() {
+    let mut command = CommandState::default();
+    let mut universe = crate::test_harness::universe();
+    let if_char = install(&mut universe, "if", ExpandablePrimitive::If);
+    let no_expand = install(&mut universe, "noexpand", ExpandablePrimitive::NoExpand);
+    let otherwise = install(&mut universe, "else", ExpandablePrimitive::Else);
+    let fi = install(&mut universe, "fi", ExpandablePrimitive::Fi);
+    let sentinel = Token::Cs(universe.intern("sentinel").symbol());
+
+    // TeX.web §500 saves the outer `cond_ptr` before operand expansion. The
+    // inner false condition remains above it until its selected branch's
+    // `\fi`; that delimiter must pop the inner frame, not end the outer one.
+    push(
+        &mut command,
+        vec![
+            if_char,
+            other('e'),
+            if_char,
+            other('E'),
+            no_expand,
+            sentinel,
+            other('e'),
+            otherwise,
+            no_expand,
+            sentinel,
+            fi,
+            other('t'),
+            otherwise,
+            other('f'),
+            fi,
+            other('z'),
+        ],
+    );
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut processor = processor(&mut command, &mut universe, &mut capabilities);
+
+    assert_eq!(next_character(&mut processor), 'f');
+    assert_eq!(next_character(&mut processor), 'z');
+    assert!(processor.command.conditions.current().is_none());
+    assert!(processor.command.expansion.pending_diagnostics.is_empty());
+}
+
+#[test]
 fn if_ifcat_and_ifx_complete_operand_matrix() {
     let mut command = CommandState::default();
     let mut universe = crate::test_harness::universe();
