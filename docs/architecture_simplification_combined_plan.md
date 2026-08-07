@@ -815,6 +815,30 @@ authored category misses its 500-900-line reduction forecast; that separate
 shortfall is tracked by `umber2-vgjr.23` rather than credited to repetitive
 fixture deletion.
 
+**Forecast reconciliation (owner decision, 2026-08-07).** Follow-up
+`umber2-vgjr.23` audited every surviving Git inventory, typed contract,
+validation, staging, serialization, command-semantic, TeX82 catalogue,
+publication, caller, and proof boundary. It found no second authority and no
+authored deletion with a named surviving owner and identical behavior. Git
+checkout validation and local candidate validation deliberately defend
+different trust boundaries; typed roles, source closure, status, profile, and
+publication metadata are the common consumer contract; and fixturegen's
+transaction owns mutation, rollback, and publication rather than repeating
+either validator.
+
+Reaching the forecast floor from the measured 503-line growth would require at
+least 1,003 further net authored deletions. That inventory does not exist:
+removing the retained contract and adversarial proof would weaken exact
+membership, xfail, capture, census, traversal, local-edit, rollback, retry, or
+partial-publication guarantees. The portfolio owner therefore retires the
+original 500--900-line authored-reduction forecast and accepts the measured
+1,676 additions and 1,173 deletions in authored source/configuration as Program
+12's final result. No further reduction is carried for this program, and no
+declarative fixture, generated schema, generated lockfile, moved, historical,
+documentation, binary, or total-line change is credited as authored reduction.
+The retained-authority audit, category accounting, and verification are
+recorded in [the reconciliation writeback](writeback/umber2-vgjr.23.md).
+
 Exact implementation tree `1aceb8ae8e5bd6b3f8fbf2a9a3a8fd2b961d128a`
 passed the combined fixture-consumer selection and all 33 fixturegen tests
 after uncapped `--no-run` builds and under `MemoryMax=512M`. The complete native
