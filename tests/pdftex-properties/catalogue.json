@@ -407,20 +407,10 @@
       "observations": [
         { "channel": "terminal", "projection": "initial=0/0/0 png=1/1/8", "disposition": "pass" },
         { "channel": "log", "projection": "initial=0/0/0 png=1/1/8", "disposition": "pass" },
-        {
-          "channel": "terminal",
-          "projection": "jpeg=3/1/12",
-          "disposition": "xfail",
-          "bug": "umber2-alfh.35",
-          "actual_normalized_sha256": "4cf2ba5f4f806edf923724aaa0cf1ae3f1e9aabac7dd0c6988a07bfa814c9fdf"
-        },
-        {
-          "channel": "log",
-          "projection": "jpeg=3/1/12",
-          "disposition": "xfail",
-          "bug": "umber2-alfh.35",
-          "actual_normalized_sha256": "4cf2ba5f4f806edf923724aaa0cf1ae3f1e9aabac7dd0c6988a07bfa814c9fdf"
-        },
+        { "channel": "terminal", "projection": "jpeg=3/1/12", "disposition": "pass" },
+        { "channel": "log", "projection": "jpeg=3/1/12", "disposition": "pass" },
+        { "channel": "terminal", "projection": "pdf=4/3/0 reuse=4/3/0", "disposition": "pass" },
+        { "channel": "log", "projection": "pdf=4/3/0 reuse=4/3/0", "disposition": "pass" },
         { "channel": "status", "projection": "success", "disposition": "pass" }
       ]
     }

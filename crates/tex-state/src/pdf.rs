@@ -3821,6 +3821,54 @@ mod tests {
     }
 
     #[test]
+    fn alpha_external_images_reserve_their_companion_and_replay_exactly() {
+        // pdftex.web §1552 allocates the image object before `read_image`;
+        // an alpha PNG then reserves its companion in that shared PDF ledger.
+        let mut state = PdfState::default();
+        state.enable();
+        let snapshot = state.snapshot();
+        let source = PdfExternalImageSource {
+            identity: ContentHash::new([23; 32]),
+            metadata: PdfExternalImageMetadata::Raster(PdfRasterImageMetadata {
+                format: PdfRasterFormat::Png,
+                width: 1,
+                height: 1,
+                bits_per_component: 8,
+                color_space: PdfRasterColorSpace::Gray,
+                alpha: true,
+                png_color_type: Some(4),
+            }),
+            natural_width: Scaled::from_raw(640),
+            natural_height: Scaled::from_raw(480),
+            bytes: Arc::from([1, 2, 3]),
+        };
+        let dimensions = PdfExternalImageDimensions {
+            width: Scaled::from_raw(320),
+            height: Scaled::from_raw(240),
+            depth: Scaled::from_raw(0),
+        };
+
+        let allocated = state
+            .allocate_external_image(source.clone(), dimensions, 0)
+            .expect("allocate alpha image");
+        assert_eq!(allocated.id().raw(), 1);
+        assert_eq!(allocated.mask_object(), Some(2));
+        assert_eq!(state.next_object(), 3);
+        let allocated_hash = state.hash_fragment();
+
+        state.rollback(snapshot);
+        assert_eq!(state.next_object(), 1);
+        assert_eq!(state.last_external_image(), None);
+        assert_eq!(
+            state
+                .allocate_external_image(source, dimensions, 0)
+                .expect("replay alpha allocation"),
+            allocated
+        );
+        assert_eq!(state.hash_fragment(), allocated_hash);
+    }
+
+    #[test]
     fn raw_object_reservation_initialization_and_rollback_share_one_ledger() {
         let mut state = PdfState::default();
         state.enable();
