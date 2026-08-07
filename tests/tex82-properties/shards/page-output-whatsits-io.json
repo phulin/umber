@@ -1338,8 +1338,8 @@
           "test": "end_and_dump_run_profile_specific_cleanup_in_observable_order"
         }
       ],
-      "status": "covered",
-      "gap_bead": null
+      "status": "gap",
+      "gap_bead": "umber2-alfh.32"
     },
     {
       "id": "tex82.whatsits.primitive-and-dispatch",
@@ -1379,8 +1379,8 @@
           "test": "unknown_extension_selector_fails_loudly_at_dispatch"
         }
       ],
-      "status": "covered",
-      "gap_bead": null
+      "status": "gap",
+      "gap_bead": "umber2-alfh.32"
     },
     {
       "id": "tex82.whatsits.construction-and-ownership",
@@ -1435,8 +1435,8 @@
           "test": "language_normalization_and_same_language_append_boundaries_match_tex82"
         }
       ],
-      "status": "covered",
-      "gap_bead": null
+      "status": "gap",
+      "gap_bead": "umber2-alfh.32"
     },
     {
       "id": "tex82.whatsits.list-visitation",
@@ -1488,8 +1488,8 @@
           "test": "deferred_write_expands_at_shipout_once"
         }
       ],
-      "status": "covered",
-      "gap_bead": null
+      "status": "gap",
+      "gap_bead": "umber2-alfh.32"
     },
     {
       "id": "tex82.effects.special-output",
@@ -1577,8 +1577,8 @@
           "test": "unbalanced_write_captures_context_before_recovery_retires_its_levels"
         }
       ],
-      "status": "covered",
-      "gap_bead": null
+      "status": "gap",
+      "gap_bead": "umber2-alfh.32"
     },
     {
       "id": "tex82.effects.open-write-close-dispatch",

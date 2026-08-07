@@ -895,8 +895,8 @@
           "test": "vsplit_infinite_shrink_reports_the_scanner_owned_live_context"
         }
       ],
-      "status": "covered",
-      "gap_bead": null,
+      "status": "gap",
+      "gap_bead": "umber2-alfh.32",
       "planned_coverage": []
     },
     {
@@ -954,8 +954,8 @@
           "test": "language_normalization_and_same_language_append_boundaries_match_tex82"
         }
       ],
-      "status": "covered",
-      "gap_bead": null,
+      "status": "gap",
+      "gap_bead": "umber2-alfh.32",
       "planned_coverage": []
     },
     {
@@ -1012,8 +1012,8 @@
           "test": "rule_spec_scans_expanded_keywords_and_dimensions"
         }
       ],
-      "status": "covered",
-      "gap_bead": null,
+      "status": "gap",
+      "gap_bead": "umber2-alfh.32",
       "planned_coverage": []
     },
     {
@@ -1086,8 +1086,8 @@
           "test": "vsplit_kernel_separates_result_remainder_and_split_marks"
         }
       ],
-      "status": "covered",
-      "gap_bead": null,
+      "status": "gap",
+      "gap_bead": "umber2-alfh.32",
       "planned_coverage": []
     },
     {
@@ -1144,8 +1144,8 @@
           "test": "end_inside_unterminated_box_reaches_outer_cleanup"
         }
       ],
-      "status": "covered",
-      "gap_bead": null,
+      "status": "gap",
+      "gap_bead": "umber2-alfh.32",
       "planned_coverage": []
     },
     {
@@ -1214,8 +1214,8 @@
           "test": "incompatible_unbox_commands_preserve_registers_and_replay_state"
         }
       ],
-      "status": "covered",
-      "gap_bead": null,
+      "status": "gap",
+      "gap_bead": "umber2-alfh.32",
       "planned_coverage": []
     },
     {

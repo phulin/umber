@@ -613,8 +613,8 @@
           "test": "noalign_body_dispatches_nested_math_braces_by_save_stack_group"
         }
       ],
-      "status": "covered",
-      "gap_bead": null,
+      "status": "gap",
+      "gap_bead": "umber2-alfh.32",
       "planned_coverage": null
     },
     {
@@ -654,8 +654,8 @@
           "test": "valign_cell_endv_closes_an_open_paragraph_before_fin_col"
         }
       ],
-      "status": "covered",
-      "gap_bead": null,
+      "status": "gap",
+      "gap_bead": "umber2-alfh.32",
       "planned_coverage": null
     },
     {
@@ -786,8 +786,8 @@
           "test": "fin_align_orders_groups_packing_pop_and_insertion"
         }
       ],
-      "status": "covered",
-      "gap_bead": null,
+      "status": "gap",
+      "gap_bead": "umber2-alfh.32",
       "planned_coverage": null
     },
     {
@@ -1408,8 +1408,8 @@
           "test": "display_alignment_finish_replays_missing_double_math_shift_offender"
         }
       ],
-      "status": "covered",
-      "gap_bead": null,
+      "status": "gap",
+      "gap_bead": "umber2-alfh.32",
       "planned_coverage": null
     }
   ]
