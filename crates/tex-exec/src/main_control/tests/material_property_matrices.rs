@@ -1600,7 +1600,9 @@ fn unbox_copy_move_void_wrong_kind_and_math_ownership_matrix() {
                            \unhcopy4\global\advance\count0 by1}
           \setbox6=\hbox{\kern7pt}
           \setbox7=\hbox{$\unhbox6\global\advance\count0 by1
-                            \unhcopy6\global\advance\count0 by1$}",
+                            \unhcopy6\global\advance\count0 by1$}
+          \setbox8=\hbox{\kern8pt\hskip9pt\penalty10}
+          \setbox9=\hbox{\unhcopy8\kern11pt\global\setbox10=\copy8\unhbox8}",
         false,
     );
     let moved = register_shapes(&stores, 1);
@@ -1618,6 +1620,30 @@ fn unbox_copy_move_void_wrong_kind_and_math_ownership_matrix() {
         "{moved:?}"
     );
     assert_eq!(register_shapes(&stores, 0), None, "unvbox moves");
+    let horizontal = register_shapes(&stores, 9);
+    assert!(
+        matches!(horizontal.as_deref(), Some([Shape::HBox { children, .. }])
+        if children.as_slice() == [
+            Shape::Kern(8 * Scaled::UNITY, KernKind::Explicit),
+            Shape::Glue(9 * Scaled::UNITY, GlueKind::Normal, false),
+            Shape::Penalty(10),
+            Shape::Kern(11 * Scaled::UNITY, KernKind::Explicit),
+            Shape::Kern(8 * Scaled::UNITY, KernKind::Explicit),
+            Shape::Glue(9 * Scaled::UNITY, GlueKind::Normal, false),
+            Shape::Penalty(10),
+        ]),
+        "{horizontal:?}"
+    );
+    assert!(
+        matches!(register_shapes(&stores, 10).as_deref(), Some([Shape::HBox { children, .. }])
+        if children.as_slice() == [
+            Shape::Kern(8 * Scaled::UNITY, KernKind::Explicit),
+            Shape::Glue(9 * Scaled::UNITY, GlueKind::Normal, false),
+            Shape::Penalty(10),
+        ]),
+        "unhcopy preserves the source before the matching move"
+    );
+    assert_eq!(register_shapes(&stores, 8), None, "unhbox moves");
     assert!(
         register_shapes(&stores, 2).is_some(),
         "wrong v-unbox preserves hbox"
