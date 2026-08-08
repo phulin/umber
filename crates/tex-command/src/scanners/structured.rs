@@ -2679,7 +2679,7 @@ impl CommandProcessor<'_> {
     /// §57's `print_ln` does nothing, which is why only this caller breaks
     /// the line.
     fn shown_meaning_text(
-        state: &tex_state::CommandContext<'_>,
+        state: &mut tex_state::CommandContext<'_>,
         command: &crate::CurrentCommand,
     ) -> String {
         let text = meaning_text(state, command);
@@ -2720,11 +2720,11 @@ impl CommandProcessor<'_> {
                 self.state.append_selector_string_text(&raw, &mut shown);
                 format!(
                     "> {shown}={}",
-                    Self::shown_meaning_text(&self.state, &command)
+                    Self::shown_meaning_text(&mut self.state, &command)
                 )
             }
             Token::Char { .. } | Token::Param(_) | Token::Frozen(_) => {
-                format!("> {}", Self::shown_meaning_text(&self.state, &command))
+                format!("> {}", Self::shown_meaning_text(&mut self.state, &command))
             }
         };
         Ok(ScannedDisplayDiagnostic {
@@ -3227,9 +3227,8 @@ impl CommandProcessor<'_> {
             },),
         );
         let mut columns = Vec::new();
-        let mut current_tabskip = self
-            .state
-            .glue(self.state.glue_param(GlueParam::TAB_SKIP.raw()));
+        let tabskip = self.state.glue_param(GlueParam::TAB_SKIP.raw());
+        let mut current_tabskip = self.state.glue(tabskip);
         let mut tabskips = vec![current_tabskip];
         let mut repeat_start = None;
         loop {
@@ -3814,6 +3813,7 @@ impl CommandProcessor<'_> {
         let has_area = !file_name.components.area.is_empty();
         let packed_name = file_name.packed();
         let attempts = crate::host::input_lookup_candidates(&packed_name, has_area);
+        self.state.unsupported_host_capability();
 
         let mut unresolved = false;
         for attempted_name in attempts {

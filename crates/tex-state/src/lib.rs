@@ -126,7 +126,7 @@ pub use dependency::{
     ChangedAt, DependencyCodeTable, DependencyEngineField, DependencyFontField, DependencyKey,
     DependencyPageField, DependencyRegion, DependencyRegionError, DependencyRegionToken,
     DependencyRuntime, DependencyTracker, DependencyValidation, DependencyValue,
-    DependencyWorldField, ObservedDependency,
+    DependencyWorldField, ObservedDependency, TrackedRegionBarrier,
 };
 pub use effect_journal::EffectJournal;
 pub use engine_state::{EngineMode, EngineStateSnapshot};

@@ -1807,23 +1807,30 @@ impl CommandProcessor<'_> {
     }
 
     fn next_source_step(&mut self) -> SourceTokenizationStep {
+        self.command
+            .observe_active_source_dependencies(&mut self.state);
         let profile = self.command.profile();
         // TeX82's `firm_up_the_line` captures `end_line_char` when it loads
         // each physical line.  The cursor keeps that captured value through
         // the line, so assignments affect the next refill but cannot rewrite
         // a partially consumed line.
         let endlinechar = self.state.int_param(IntParam::END_LINE_CHAR);
-        let mut queries = LiveSourceQueries {
-            state: &mut self.state,
+        let step = {
+            let mut queries = LiveSourceQueries {
+                state: &mut self.state,
+            };
+            match profile.character_mode() {
+                CharacterMode::EightBitExact => self
+                    .command
+                    .next_exact_source_step(endlinechar, &mut queries),
+                CharacterMode::UnicodeExtended => self
+                    .command
+                    .next_unicode_source_step(endlinechar, &mut queries),
+            }
         };
-        match profile.character_mode() {
-            CharacterMode::EightBitExact => self
-                .command
-                .next_exact_source_step(endlinechar, &mut queries),
-            CharacterMode::UnicodeExtended => self
-                .command
-                .next_unicode_source_step(endlinechar, &mut queries),
-        }
+        self.command
+            .observe_active_source_dependencies(&mut self.state);
+        step
     }
 
     fn ensure_source_registration(&mut self, source: &crate::input::RegisteredSource) {

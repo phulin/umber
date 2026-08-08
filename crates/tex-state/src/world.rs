@@ -3002,6 +3002,17 @@ impl World {
         !self.input_contents.contains_key(&target.hash)
     }
 
+    pub(crate) fn input_stream_dependency(&self, slot: StreamSlot) -> Option<(ContentHash, u64)> {
+        self.stream_bufs.read_streams[slot.index()]
+            .as_ref()
+            .map(|target| {
+                (
+                    target.hash,
+                    u64::try_from(target.next_byte).expect("stream cursor fits u64"),
+                )
+            })
+    }
+
     pub fn read_stream_line(&mut self, slot: StreamSlot) -> Result<Option<String>, WorldError> {
         let Some(target) = self.stream_bufs.read_streams[slot.index()].as_ref() else {
             return Ok(None);

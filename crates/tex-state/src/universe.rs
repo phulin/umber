@@ -12,6 +12,7 @@ use crate::dependency::{
     ChangedAt, DependencyCodeTable, DependencyEngineField, DependencyFontField, DependencyKey,
     DependencyPageField, DependencyRegionError, DependencyRegionToken, DependencyRuntime,
     DependencyTrackerSnapshot, DependencyValue, DependencyWorldField, ObservedDependency,
+    TrackedRegionBarrier,
 };
 #[cfg(test)]
 use crate::env::Env;
@@ -189,6 +190,7 @@ pub enum TrackedRegionError {
     StaleMark,
     UnsupportedTimelineChange,
     UnsupportedEnvironmentCell(CellId),
+    UnsupportedRegion(TrackedRegionBarrier),
 }
 
 impl std::fmt::Display for TrackedRegionError {
@@ -207,6 +209,9 @@ impl std::fmt::Display for TrackedRegionError {
                     "environment cell {cell:?} has no detached semantic projection"
                 )
             }
+            Self::UnsupportedRegion(barrier) => {
+                write!(f, "the tracked region is unsupported: {barrier:?}")
+            }
         }
     }
 }
@@ -219,6 +224,7 @@ impl From<DependencyRegionError> for TrackedRegionError {
             DependencyRegionError::AlreadyActive => Self::AlreadyActive,
             DependencyRegionError::NoActiveRegion => Self::NoActiveRegion,
             DependencyRegionError::StaleToken => Self::StaleMark,
+            DependencyRegionError::Unsupported(barrier) => Self::UnsupportedRegion(barrier),
         }
     }
 }
@@ -1711,6 +1717,13 @@ impl Universe {
         self.dependencies.record(key, value);
     }
 
+    /// Marks an active tracked region unsupported without affecting TeX state.
+    /// The first reason wins; with no recorder this is an allocation-free no-op.
+    #[inline(always)]
+    pub fn poison_tracked_region(&mut self, barrier: TrackedRegionBarrier) {
+        self.dependencies.poison(barrier);
+    }
+
     /// Finishes a tracked region into deterministic detached evidence.
     ///
     /// Timeline changes that can destructively compact the marked journal
@@ -1967,7 +1980,25 @@ impl Universe {
                         DependencyValue::Integer(i64::from(self.font_skew_char(id)))
                     }
                     DependencyFontField::Metrics => font(id),
-                    DependencyFontField::PdfCode => return None,
+                    DependencyFontField::PdfCode => {
+                        let table = match index / 256 {
+                            0 => crate::font::PdfFontCode::Lp,
+                            1 => crate::font::PdfFontCode::Rp,
+                            2 => crate::font::PdfFontCode::Ef,
+                            3 => crate::font::PdfFontCode::Tag,
+                            4 => crate::font::PdfFontCode::Knbs,
+                            5 => crate::font::PdfFontCode::Stbs,
+                            6 => crate::font::PdfFontCode::Shbs,
+                            7 => crate::font::PdfFontCode::Knbc,
+                            8 => crate::font::PdfFontCode::Knac,
+                            _ => return None,
+                        };
+                        DependencyValue::Integer(i64::from(self.pdf_font_code(
+                            table,
+                            id,
+                            (index % 256) as u8,
+                        )))
+                    }
                     DependencyFontField::PdfShaping => {
                         let mut build = |hash: &mut EngineBoundaryHasher<'_>| {
                             hash.bool(self.pdf_font_ligatures_disabled(id));
@@ -1988,7 +2019,20 @@ impl Universe {
                     return None;
                 }
                 let stream = crate::world::StreamSlot::new(raw);
-                Some(DependencyValue::Bool(self.world.input_stream_eof(stream)))
+                Some(self.world.input_stream_dependency(stream).map_or(
+                    DependencyValue::Absent,
+                    |(content, cursor)| {
+                        let mut build = |hash: &mut EngineBoundaryHasher<'_>| {
+                            for bytes in content.bytes().chunks_exact(8) {
+                                hash.u64(u64::from_le_bytes(
+                                    bytes.try_into().expect("content hash chunk is eight bytes"),
+                                ));
+                            }
+                            hash.u64(cursor);
+                        };
+                        projection(&mut build)
+                    },
+                ))
             }
             DependencyKey::PageDimension(raw) => {
                 let dimension = PageDimension::from_index(raw)?;
@@ -2278,6 +2322,13 @@ impl Universe {
                     },
                     index: 0,
                 });
+                if cell.bank() == BankTag::PdfTagCode {
+                    self.dependencies.mark_changed(DependencyKey::Font {
+                        field: DependencyFontField::PdfCode,
+                        font: index >> 8,
+                        index: 3 * 256 + (index & 0xff),
+                    });
+                }
             }
             BankTag::PdfLpCode
             | BankTag::PdfRpCode
@@ -2286,7 +2337,24 @@ impl Universe {
             | BankTag::PdfStbsCode
             | BankTag::PdfShbsCode
             | BankTag::PdfKnbcCode
-            | BankTag::PdfKnacCode => {}
+            | BankTag::PdfKnacCode => {
+                let table = match cell.bank() {
+                    BankTag::PdfLpCode => 0,
+                    BankTag::PdfRpCode => 1,
+                    BankTag::PdfEfCode => 2,
+                    BankTag::PdfKnbsCode => 4,
+                    BankTag::PdfStbsCode => 5,
+                    BankTag::PdfShbsCode => 6,
+                    BankTag::PdfKnbcCode => 7,
+                    BankTag::PdfKnacCode => 8,
+                    _ => unreachable!("matched one exact PDF font-code bank"),
+                };
+                self.dependencies.mark_changed(DependencyKey::Font {
+                    field: DependencyFontField::PdfCode,
+                    font: index >> 8,
+                    index: table * 256 + (index & 0xff),
+                });
+            }
         }
     }
 

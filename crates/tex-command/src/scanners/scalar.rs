@@ -1179,7 +1179,7 @@ impl CommandProcessor<'_> {
         let value = match self.scan_the_internal_value(&command)? {
             Some(value) => value,
             None => {
-                let rendered = meaning_text(&self.state, &command);
+                let rendered = meaning_text(&mut self.state, &command);
                 let context = self.command.output_open_context(&self.state);
                 let mut report = self
                     .state
@@ -2598,7 +2598,7 @@ impl CommandProcessor<'_> {
         }));
     }
 
-    fn font_identity(&self, font: FontId) -> InternalValue {
+    fn font_identity(&mut self, font: FontId) -> InternalValue {
         InternalValue::Font(
             self.state
                 .font_identifier_symbol(font)

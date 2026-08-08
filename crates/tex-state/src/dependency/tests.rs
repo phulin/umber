@@ -221,6 +221,28 @@ fn disabled_runtime_does_not_retain_reads_or_allocate_a_region() {
 }
 
 #[test]
+fn poison_is_an_inactive_noop_and_first_reason_fails_closed() {
+    let mut runtime = DependencyRuntime::default();
+    runtime.poison(TrackedRegionBarrier::UnsupportedCommandState);
+    assert!(!runtime.is_recording());
+
+    let token = runtime.begin_region().expect("start dependency region");
+    runtime.record(meaning(1), DependencyValue::Integer(2));
+    runtime.poison(TrackedRegionBarrier::UnsupportedCommandState);
+    runtime.poison(TrackedRegionBarrier::UnsupportedHostCapability);
+    assert_eq!(
+        runtime.finish_region(token),
+        Err(DependencyRegionError::Unsupported(
+            TrackedRegionBarrier::UnsupportedCommandState
+        ))
+    );
+    assert!(!runtime.is_recording());
+
+    let next = runtime.begin_region().expect("poison was cleared");
+    assert!(runtime.finish_region(next).is_ok());
+}
+
+#[test]
 fn tracked_region_orders_reads_and_uses_live_final_write_values() {
     let mut universe = crate::Universe::new();
     let mark = universe

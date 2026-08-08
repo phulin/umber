@@ -2869,6 +2869,15 @@ Input transition recording occurs inside `InputState`, where exact cursor
 movement and source identities are authoritative. Provenance does not stand in
 for dependency identity.
 
+One processor borrow admitted to an active outer region records versioned
+`InputLine`, `InputStack`, and condition projections through `CommandContext`.
+The projection hashes immutable source bytes, cursor scalars, semantic tokens,
+control-sequence spellings, and stack order; it never hashes runtime source,
+level, token-list, or provenance handles. Unsupported live continuations and
+borrow-scoped host file lookups poison the outer region before their fact can
+influence semantics. With no outer recorder, processor construction skips the
+projection and barrier policy entirely.
+
 ## 28. Snapshots and durable summaries
 
 There are two snapshot forms.

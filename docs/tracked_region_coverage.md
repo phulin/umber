@@ -1,8 +1,9 @@
 # Tracked-region semantic read coverage
 
-Status: authoritative coverage contract. The generic state-layer recorder is
-implemented; command- and execution-side routing and the perturbation proof are
-the ordered follow-up work in `umber2-trcn.4.2` through `umber2-trcn.4.4`.
+Status: authoritative coverage contract. The generic state-layer recorder and
+command-side routing are implemented; execution-side routing and the
+cross-layer perturbation proof remain the ordered follow-up work in
+`umber2-trcn.4.3` and `umber2-trcn.4.4`.
 
 This document defines the only region for which the first generic dependency
 coverage proof is made. It is a recording contract, not permission to replay
@@ -136,6 +137,17 @@ input-stack projections, conditions, stream/resource facts, and barriers from
 command diagnostics or unsupported host capabilities. It must use
 `CommandContext`; it must not expose substores or create a second input
 recorder.
+
+The implemented command admission observes `InputLine`, `InputStack`, and the
+four conditional projections once when a processor borrow enters an active
+outer region. Its versioned input projection replaces source, input-level,
+token-list, symbol, and provenance handles with immutable bytes, stack order,
+semantic tokens, and control-sequence spellings. A continuation whose
+stack-relative macro/alignment identity or pending resource request has no
+canonical translation is an unsupported-command-state barrier before it is
+read. Existing borrow-scoped host file lookup and file-probe capabilities are
+unsupported-host-capability barriers; moving those outcomes into the virtual
+`World` vocabulary is required before such an operation can publish a record.
 
 `umber2-trcn.4.3` owns the outer lifecycle and execution half: begin/finish at
 `execute_operation`, mode/group facts, execution-side environment and font

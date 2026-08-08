@@ -851,15 +851,14 @@ impl CommandProcessor<'_> {
             // selected font size as an ordinary scaled dimension.
             Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfFontSize) => {
                 let font = self.scan_font_selector()?;
-                self.push_rendered_text(
-                    &format_scaled(self.state.font_size(font)),
-                    command.origin(),
-                );
+                let size = format_scaled(self.state.tracked_font_size(font));
+                self.push_rendered_text(&size, command.origin());
                 Ok(())
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::Input) => self.expand_input(command),
             Meaning::ExpandablePrimitive(ExpandablePrimitive::EndInput) => self.expand_endinput(),
             Meaning::ExpandablePrimitive(ExpandablePrimitive::JobName) => {
+                self.state.unsupported_host_capability();
                 let job_name = self.host.job_name().to_owned();
                 self.push_rendered_text(&job_name, command.origin());
                 Ok(())
@@ -1275,7 +1274,8 @@ impl CommandProcessor<'_> {
         let target = self
             .get_token_with_normal_scanner_status()?
             .ok_or(CommandError::input_invariant())?;
-        self.push_rendered_text(&meaning_text(&self.state, &target), opener.origin());
+        let text = meaning_text(&mut self.state, &target);
+        self.push_rendered_text(&text, opener.origin());
         Ok(())
     }
 
@@ -1349,7 +1349,8 @@ impl CommandProcessor<'_> {
     /// font, including its invalid-identifier recovery to `nullfont`.
     fn expand_fontname(&mut self, opener: CurrentCommand) -> Result<(), CommandError> {
         let font = self.scan_font_selector()?;
-        self.push_rendered_text(&self.state.font_name(font), opener.origin());
+        let name = self.state.font_name(font);
+        self.push_rendered_text(&name, opener.origin());
         Ok(())
     }
 
@@ -1531,6 +1532,7 @@ impl CommandProcessor<'_> {
             .into_iter()
             .map(char::from)
             .collect::<String>();
+        self.state.unsupported_host_capability();
         let Some(source) = self.host.input_probe(&name) else {
             return if self.host.input_probe_is_unavailable(&name) {
                 Ok(())
@@ -1564,6 +1566,7 @@ impl CommandProcessor<'_> {
             .into_iter()
             .map(char::from)
             .collect::<String>();
+        self.state.unsupported_host_capability();
         let Some(source) = self.host.input_probe(&name) else {
             return if self.host.input_probe_is_unavailable(&name) {
                 Ok(())
@@ -1583,6 +1586,7 @@ impl CommandProcessor<'_> {
         opener: CurrentCommand,
     ) -> Result<(), CommandError> {
         let name = self.scan_pdf_file_name()?;
+        self.state.unsupported_host_capability();
         let Some(resource) = self.host.input_probe(&name) else {
             return if self.host.input_probe_is_unavailable(&name) {
                 Ok(())
@@ -1612,6 +1616,7 @@ impl CommandProcessor<'_> {
         let mut bytes = pdftex_token_bytes(&mut self.state, tokens);
         if file {
             let name = bytes.iter().copied().map(char::from).collect::<String>();
+            self.state.unsupported_host_capability();
             let Some(resource) = self.host.input_probe(&name) else {
                 return if self.host.input_probe_is_unavailable(&name) {
                     Ok(())
@@ -2018,7 +2023,7 @@ pub(crate) fn append_print_cs_text(
 }
 
 pub(crate) fn meaning_text(
-    state: &tex_state::CommandContext<'_>,
+    state: &mut tex_state::CommandContext<'_>,
     command: &CurrentCommand,
 ) -> String {
     let mut text = String::new();
@@ -2027,7 +2032,7 @@ pub(crate) fn meaning_text(
 }
 
 pub(crate) fn append_meaning_text(
-    state: &tex_state::CommandContext<'_>,
+    state: &mut tex_state::CommandContext<'_>,
     command: &CurrentCommand,
     text: &mut String,
 ) {
@@ -2115,7 +2120,8 @@ pub(crate) fn append_meaning_text(
         ) => {
             append_meaning_control_sequence_text(state, command, command.meaning(), text);
             text.push(':');
-            append_token_list_text(state, state.page_mark(page_mark(primitive)), text);
+            let tokens = state.page_mark(page_mark(primitive));
+            append_token_list_text(state, tokens, text);
         }
         meaning @ (Meaning::ExpandablePrimitive(_) | Meaning::UnexpandablePrimitive(_)) => {
             append_meaning_control_sequence_text(state, command, meaning, text);

@@ -61,6 +61,250 @@ pub(crate) struct InputState {
     pub(crate) force_eof: bool,
 }
 
+/// Versioned, allocation-independent projection of command input state.
+/// Runtime source, level, token-list, and provenance ids are deliberately
+/// translated to immutable content and stack position before hashing.
+pub(crate) fn tracked_input_projection(
+    input: &InputState,
+    state: &mut tex_state::CommandContext<'_>,
+) -> Option<(u64, u64)> {
+    let mut stack = ProjectionHasher::new(0x696e_7075_745f_0001);
+    stack.bytes(
+        input
+            .terminal_context_line
+            .as_deref()
+            .unwrap_or_default()
+            .as_bytes(),
+    );
+    stack.byte(input.force_eof.into());
+    // Pending ids are referenced by future host/resource operations. Until
+    // their stable request identity is admitted here, fail closed.
+    if !input.pending_sources.is_empty() {
+        return None;
+    }
+    stack.u64(input.levels.len() as u64);
+    let mut line = ProjectionHasher::new(0x696e_6c69_6e65_0001);
+    for level in &input.levels {
+        match level {
+            InputLevel::Source(source) => {
+                stack.byte(0);
+                observe_immutable_source(state, source);
+                project_source(&mut stack, source);
+                if let Some(current) = &source.cursor.line {
+                    project_line(&mut line, &source.cursor, current);
+                }
+            }
+            InputLevel::Tokens(cursor) => {
+                stack.byte(1);
+                // Macro-activation and alignment identities need stack-relative
+                // translation, which is deliberately fail-closed for now.
+                if matches!(
+                    cursor.behavior,
+                    TokenBehavior::MacroBody(_)
+                        | TokenBehavior::UTemplate
+                        | TokenBehavior::VTemplate
+                ) {
+                    return None;
+                }
+                project_token_cursor(&mut stack, cursor, state)?;
+            }
+        }
+    }
+    Some((line.finish(), stack.finish()))
+}
+
+pub(crate) fn observe_immutable_source(
+    state: &mut tex_state::CommandContext<'_>,
+    source: &SourceLevel,
+) {
+    let backing = source.cursor.current_backing();
+    let record = tex_state::world::ContentHash::from_bytes(&backing.bytes);
+    state.observe_command_projection(
+        tex_state::DependencyKey::InputRecord(record),
+        tex_state::DependencyValue::Content(record),
+    );
+    let Some(line) = &source.cursor.line else {
+        return;
+    };
+    let range = line.physical.content_range();
+    let start = usize::try_from(range.start()).expect("registered source offsets fit usize");
+    let end = usize::try_from(range.end()).expect("registered source offsets fit usize");
+    let content = tex_state::world::ContentHash::from_bytes(&backing.bytes[start..end]);
+    let terminator = match line.physical.terminator() {
+        LineTerminator::Missing => 0,
+        LineTerminator::Lf => 1,
+        LineTerminator::Cr => 2,
+        LineTerminator::CrLf => 3,
+    };
+    state.observe_command_projection(
+        tex_state::DependencyKey::PhysicalLine {
+            content,
+            terminator,
+        },
+        tex_state::DependencyValue::Content(content),
+    );
+}
+
+fn project_source(hash: &mut ProjectionHasher, source: &SourceLevel) {
+    hash.bytes(&source.cursor.backing.bytes);
+    hash.byte(source.cursor.backing.mode as u8);
+    hash.bytes(
+        source
+            .cursor
+            .backing
+            .name
+            .as_deref()
+            .unwrap_or_default()
+            .as_bytes(),
+    );
+    hash.u64(source.cursor.next_physical_offset);
+    hash.u64(source.cursor.next_line_number);
+    hash.byte(source.cursor.pending_acquired_line.into());
+    hash.byte(source.cursor.end_after_line.into());
+    hash.byte(match source.cursor.lexer_state {
+        LexerState::MidLine => 0,
+        LexerState::SkipBlanks => 1,
+        LexerState::NewLine => 2,
+    });
+    hash.byte(match source.retirement {
+        SourceRetirement::Pop => 0,
+        SourceRetirement::EndReadLine => 1,
+    });
+}
+
+fn project_line(hash: &mut ProjectionHasher, cursor: &SourceCursor, line: &lines::SourceLineState) {
+    let backing = cursor.current_backing();
+    hash.bytes(&backing.bytes);
+    hash.u64(line.physical.number());
+    hash.u64(line.physical.content_range().start());
+    hash.u64(line.physical.content_range().end());
+    hash.u64(line.retained_end);
+    hash.u64(line.byte_cursor);
+    hash.u64(line.scalar_cursor);
+    hash.byte(line.endline_delivered.into());
+    if let Some(endline) = line.endline {
+        hash.byte(1);
+        hash.bytes(&endline.to_stable_bytes());
+    } else {
+        hash.byte(0);
+    }
+    hash.u64(line.reduced_spellings.len() as u64);
+    for spelling in &line.reduced_spellings {
+        hash.u64(spelling.range.start());
+        hash.u64(spelling.range.end());
+        hash.bytes(&spelling.code.to_stable_bytes());
+    }
+}
+
+fn project_token_cursor(
+    hash: &mut ProjectionHasher,
+    cursor: &TokenCursor,
+    state: &tex_state::CommandContext<'_>,
+) -> Option<()> {
+    hash.u64(cursor.index as u64);
+    hash.byte(match cursor.retirement {
+        RetirementBehavior::Pop => 0,
+        RetirementBehavior::StopAtEnd => 1,
+        RetirementBehavior::RetainExhaustedVTemplate => 2,
+        RetirementBehavior::AwaitingVTemplateRetirement => 3,
+    });
+    hash.byte(match cursor.behavior {
+        TokenBehavior::Ordinary => 0,
+        TokenBehavior::Recovery => 1,
+        TokenBehavior::Parameter => 2,
+        TokenBehavior::BackedUp(BackupTreatment::Ordinary) => 3,
+        TokenBehavior::BackedUp(BackupTreatment::SuppressExpandableControlSequence) => 4,
+        TokenBehavior::MacroBody(_) | TokenBehavior::UTemplate | TokenBehavior::VTemplate => {
+            return None;
+        }
+    });
+    match &cursor.payload {
+        TokenPayload::Stored { tokens, .. } => {
+            for &token in state.tokens(*tokens) {
+                project_token(hash, token, state)?;
+            }
+        }
+        TokenPayload::Transient(words) => {
+            for word in words.words() {
+                project_token(hash, word.token()?, state)?;
+            }
+        }
+        TokenPayload::InlineTransient(word) => project_token(hash, word.token()?, state)?,
+        TokenPayload::BackedUp(words) => {
+            for word in words.words() {
+                project_token(hash, word.spelling.token()?, state)?;
+            }
+        }
+        TokenPayload::InlineBackedUp(word) => {
+            project_token(hash, word.spelling.token()?, state)?;
+        }
+        TokenPayload::ArgumentRange { buffer, .. } => {
+            for word in buffer.words() {
+                project_token(hash, word.token()?, state)?;
+            }
+        }
+    }
+    Some(())
+}
+
+fn project_token(
+    hash: &mut ProjectionHasher,
+    token: tex_state::token::Token,
+    state: &tex_state::CommandContext<'_>,
+) -> Option<()> {
+    use tex_state::token::Token;
+    match token {
+        Token::Char { ch, cat } => {
+            hash.byte(0);
+            hash.u64(ch as u64);
+            hash.byte(cat as u8);
+        }
+        Token::Cs(symbol) => {
+            hash.byte(1);
+            hash.bytes(state.resolve(symbol).as_bytes());
+        }
+        Token::Param(slot) => {
+            hash.byte(2);
+            hash.byte(slot);
+        }
+        Token::Frozen(_) => {
+            hash.byte(3);
+            hash.bytes(state.frozen_primitive_name(token)?.as_bytes());
+        }
+    }
+    Some(())
+}
+
+struct ProjectionHasher(u64);
+
+impl ProjectionHasher {
+    const fn new(domain: u64) -> Self {
+        Self(0xcbf2_9ce4_8422_2325 ^ domain)
+    }
+
+    fn byte(&mut self, byte: u8) {
+        self.0 ^= u64::from(byte);
+        self.0 = self.0.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+
+    fn bytes(&mut self, bytes: &[u8]) {
+        self.u64(bytes.len() as u64);
+        for &byte in bytes {
+            self.byte(byte);
+        }
+    }
+
+    fn u64(&mut self, value: u64) {
+        for byte in value.to_le_bytes() {
+            self.byte(byte);
+        }
+    }
+
+    const fn finish(self) -> u64 {
+        self.0
+    }
+}
+
 impl InputState {
     /// tex.web §310's `show_context` display for the canonical input stack.
     ///

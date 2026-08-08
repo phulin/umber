@@ -5,7 +5,8 @@
 //! they represent typed reads or mutations of [`Universe`] state.
 
 use crate::{
-    ChangedAt, DependencyCodeTable, DependencyKey, DependencyValue, TracedTokenList, Universe,
+    ChangedAt, DependencyCodeTable, DependencyEngineField, DependencyFontField, DependencyKey,
+    DependencyValue, TracedTokenList, TrackedRegionBarrier, Universe,
     cell::{BankTag, CellId},
     env::banks::{GlueParam, IntParam, TokParam},
     glue::GlueSpec,
@@ -33,11 +34,79 @@ pub struct CommandContext<'a> {
 
 impl CommandContext<'_> {
     fn observe_dependency(&mut self, key: DependencyKey) {
-        self.universe.observe_semantic_dependency(key);
+        if !self.universe.dependency_region_is_active() {
+            return;
+        }
+        self.universe.track_dependency(key);
+        if let Some(value) = self.universe.semantic_dependency_value(key) {
+            self.universe.record_dependency(key, value);
+        } else {
+            self.universe
+                .poison_tracked_region(TrackedRegionBarrier::UnsupportedCommandState);
+        }
     }
 
     fn observe_cell(&mut self, bank: BankTag, index: u32) {
         self.observe_dependency(DependencyKey::Cell(CellId::new(bank, index)));
+    }
+
+    fn observe_font(&mut self, font: FontId, field: DependencyFontField, index: u32) {
+        self.observe_dependency(DependencyKey::Font {
+            field,
+            font: font.raw(),
+            index,
+        });
+    }
+
+    /// Records a command-owned canonical projection that is not stored by
+    /// [`Universe`], such as the input or conditional stack.
+    pub fn observe_command_projection(&mut self, key: DependencyKey, value: DependencyValue) {
+        if !self.universe.dependency_region_is_active() {
+            return;
+        }
+        self.universe.track_dependency(key);
+        self.universe.record_dependency(key, value);
+    }
+
+    /// Whether the aggregate owner installed the one outer tracked region.
+    #[must_use]
+    pub fn tracked_region_is_active(&self) -> bool {
+        self.universe.dependency_region_is_active()
+    }
+
+    /// Fails closed before an unsupported command-owned fact can influence
+    /// the containing tracked region.
+    #[inline(always)]
+    pub fn unsupported_command_state(&mut self) {
+        self.universe
+            .poison_tracked_region(TrackedRegionBarrier::UnsupportedCommandState);
+    }
+
+    /// Fails closed before an unvirtualized host capability can influence the
+    /// containing tracked region.
+    #[inline(always)]
+    pub fn unsupported_host_capability(&mut self) {
+        self.universe
+            .poison_tracked_region(TrackedRegionBarrier::UnsupportedHostCapability);
+    }
+
+    /// Conservatively records the command renderer's shared parameter reads.
+    /// Rendering helpers borrow this context immutably, so the processor owns
+    /// this once-per-region aggregate admission before any helper can run.
+    pub fn observe_command_rendering_dependencies(&mut self) {
+        for param in [
+            IntParam::ESCAPE_CHAR,
+            IntParam::NEWLINE_CHAR,
+            IntParam::END_LINE_CHAR,
+            IntParam::TRACING_IFS,
+            IntParam::GLOBAL_DEFS,
+            IntParam::TRACING_COMMANDS,
+            IntParam::PDF_OUTPUT,
+            IntParam::TEX_XET_STATE,
+        ] {
+            self.observe_cell(BankTag::IntParam, u32::from(param.raw()));
+        }
+        self.observe_dependency(DependencyKey::CodeGeneration(DependencyCodeTable::Catcode));
     }
 
     /// Reads an integer parameter for diagnostic rendering outside semantic
@@ -96,7 +165,8 @@ impl CommandContext<'_> {
 
     /// Reads TeX82 §960's live `trie_not_ready` state.
     #[must_use]
-    pub fn hyphenation_patterns_open(&self) -> bool {
+    pub fn hyphenation_patterns_open(&mut self) -> bool {
+        self.unsupported_command_state();
         self.universe.hyphenation_patterns_open()
     }
 
@@ -104,10 +174,11 @@ impl CommandContext<'_> {
     /// ownership out of the executor.
     #[must_use]
     pub fn contains_hyphenation_pattern_for_language(
-        &self,
+        &mut self,
         language: u8,
         letters: &[char],
     ) -> bool {
+        self.observe_dependency(DependencyKey::HyphenationPatterns(language));
         self.universe
             .contains_hyphenation_pattern_for_language(language, letters)
     }
@@ -120,6 +191,7 @@ impl CommandContext<'_> {
     /// unlike the executor-driven `\tracingassigns`/`\tracinggroups` traces,
     /// so it needs this channel directly rather than a queued diagnostic.
     pub fn begin_diagnostic(&mut self) -> crate::diagnostic::Diagnostic<'_> {
+        self.unsupported_command_state();
         self.universe.begin_diagnostic()
     }
 
@@ -133,6 +205,7 @@ impl CommandContext<'_> {
     /// on `\tracingonline` and must reach the terminal whenever the ambient
     /// selector already does.
     pub fn printer(&mut self) -> crate::print::Printer<'_> {
+        self.unsupported_command_state();
         self.universe.printer()
     }
 
@@ -143,6 +216,7 @@ impl CommandContext<'_> {
     /// command processor can emit canonical scanner diagnostics without
     /// retaining the print channel in command state, snapshots, or formats.
     pub fn print_err(&mut self, text: &str) -> crate::print::ErrorReport<'_> {
+        self.unsupported_command_state();
         self.universe.print_err(text)
     }
 
@@ -165,6 +239,7 @@ impl CommandContext<'_> {
         &mut self,
         deferred: crate::print::DeferredErrorReport,
     ) -> crate::print::ErrorReport<'_> {
+        self.unsupported_command_state();
         self.universe.resume_error_report(deferred)
     }
 
@@ -243,7 +318,8 @@ impl CommandContext<'_> {
     /// `None` means the language saved no table at all, so TeX82 §935/§961's
     /// plain `lc_code` applies; `Some(None)` is a saved code of zero.
     #[must_use]
-    pub fn saved_hyphenation_code(&self, language: u8, ch: char) -> Option<Option<char>> {
+    pub fn saved_hyphenation_code(&mut self, language: u8, ch: char) -> Option<Option<char>> {
+        self.observe_dependency(DependencyKey::HyphenationCodes(language));
         self.universe.saved_hyphenation_code(language, ch)
     }
 
@@ -477,20 +553,26 @@ impl CommandContext<'_> {
 
     /// Reads one dimension parameter through the aggregate state boundary.
     #[must_use]
-    pub fn dimen_param(&self, index: u16) -> crate::scaled::Scaled {
+    pub fn dimen_param(&mut self, index: u16) -> crate::scaled::Scaled {
+        self.observe_cell(BankTag::DimenParam, u32::from(index));
         self.universe
             .dimen_param(crate::env::banks::DimenParam::new(index))
     }
 
     /// Reads one page dimension through the aggregate state boundary.
     #[must_use]
-    pub fn page_dimension(&self, dimension: crate::page::PageDimension) -> crate::scaled::Scaled {
+    pub fn page_dimension(
+        &mut self,
+        dimension: crate::page::PageDimension,
+    ) -> crate::scaled::Scaled {
+        self.observe_dependency(DependencyKey::PageDimension(dimension.index()));
         self.universe.page_dimension(dimension)
     }
 
     /// Reads one page-builder integer through the aggregate boundary.
     #[must_use]
-    pub fn page_integer(&self, integer: PageInteger) -> i32 {
+    pub fn page_integer(&mut self, integer: PageInteger) -> i32 {
+        self.observe_dependency(DependencyKey::PageInteger(integer.index()));
         self.universe.page_integer(integer)
     }
 
@@ -516,7 +598,8 @@ impl CommandContext<'_> {
 
     /// Reads one glue parameter through the aggregate boundary.
     #[must_use]
-    pub fn glue_param(&self, index: u16) -> GlueId {
+    pub fn glue_param(&mut self, index: u16) -> GlueId {
+        self.observe_cell(BankTag::GlueParam, u32::from(index));
         self.universe.glue_param(GlueParam::new(index))
     }
 
@@ -663,7 +746,8 @@ impl CommandContext<'_> {
     /// is a single boolean read rather than an exposure of stream ownership.
     /// The caller supplies a `scan_four_bit_int`-bounded slot (§433).
     #[must_use]
-    pub fn read_stream_at_eof(&self, stream: crate::world::StreamSlot) -> bool {
+    pub fn read_stream_at_eof(&mut self, stream: crate::world::StreamSlot) -> bool {
+        self.observe_dependency(DependencyKey::InputStream(stream.raw()));
         self.universe.world().input_stream_eof(stream)
     }
 
@@ -693,6 +777,12 @@ impl CommandContext<'_> {
     /// opens a file or a stream, and observes only what the aggregate already
     /// holds or what the driver's own terminal reader hands back.
     pub fn input_ln(&mut self, source: CommandLineSource<'_>) -> Option<String> {
+        match source {
+            CommandLineSource::Terminal { .. } => self.unsupported_host_capability(),
+            CommandLineSource::Stream(stream) => {
+                self.observe_dependency(DependencyKey::InputStream(stream.raw()));
+            }
+        }
         let line = match source {
             CommandLineSource::Terminal { prompt } => {
                 // §71: `prompt_input(#) == wake_up_terminal; print(#);
@@ -716,6 +806,18 @@ impl CommandContext<'_> {
         // indistinguishable from one that has been entirely read.
         let mut line = line.ok().flatten()?;
         line.truncate(line.trim_end_matches(' ').len());
+        let content = crate::world::ContentHash::from_bytes(line.as_bytes());
+        self.observe_command_projection(
+            DependencyKey::InputRecord(content),
+            DependencyValue::Content(content),
+        );
+        self.observe_command_projection(
+            DependencyKey::PhysicalLine {
+                content,
+                terminator: 0,
+            },
+            DependencyValue::Content(content),
+        );
         Some(line)
     }
 
@@ -725,7 +827,10 @@ impl CommandContext<'_> {
     /// states outright that `prompt_input` "is never called when
     /// `interaction<scroll_mode`".
     #[must_use]
-    pub fn interaction_permits_terminal_input(&self) -> bool {
+    pub fn interaction_permits_terminal_input(&mut self) -> bool {
+        self.observe_dependency(DependencyKey::Engine(
+            DependencyEngineField::InteractionMode,
+        ));
         matches!(
             self.universe.interaction_mode(),
             crate::InteractionMode::Scroll | crate::InteractionMode::ErrorStop
@@ -734,7 +839,10 @@ impl CommandContext<'_> {
 
     /// Returns e-TeX's numeric interaction-mode internal quantity.
     #[must_use]
-    pub fn interaction_mode_value(&self) -> i32 {
+    pub fn interaction_mode_value(&mut self) -> i32 {
+        self.observe_dependency(DependencyKey::Engine(
+            DependencyEngineField::InteractionMode,
+        ));
         match self.universe.interaction_mode() {
             crate::InteractionMode::Batch => 0,
             crate::InteractionMode::Nonstop => 1,
@@ -773,37 +881,50 @@ impl CommandContext<'_> {
 
     /// Reads one TeX82 page-mark slot for expandable mark retrieval.
     #[must_use]
-    pub fn page_mark(&self, mark: PageMark) -> TokenListId {
+    pub fn page_mark(&mut self, mark: PageMark) -> TokenListId {
+        self.observe_dependency(DependencyKey::PageMark(mark.index()));
         self.universe.page_mark(mark)
     }
 
     #[must_use]
-    pub fn page_mark_value(&self, mark: PageMark) -> Option<TokenListId> {
+    pub fn page_mark_value(&mut self, mark: PageMark) -> Option<TokenListId> {
+        self.observe_dependency(DependencyKey::PageMark(mark.index()));
         self.universe.page_mark_value(mark)
     }
 
     /// Reads one e-TeX mark-class slot for expandable mark retrieval.
     #[must_use]
-    pub fn page_mark_class(&self, mark: PageMark, class: u16) -> TokenListId {
+    pub fn page_mark_class(&mut self, mark: PageMark, class: u16) -> TokenListId {
+        self.observe_dependency(DependencyKey::PageMarkClass {
+            mark: mark.index(),
+            class,
+        });
         self.universe.page_mark_class(mark, class)
     }
 
     /// Distinguishes an absent sparse mark from a present empty token list.
     #[must_use]
-    pub fn page_mark_class_value(&self, mark: PageMark, class: u16) -> Option<TokenListId> {
+    pub fn page_mark_class_value(&mut self, mark: PageMark, class: u16) -> Option<TokenListId> {
+        self.observe_dependency(DependencyKey::PageMarkClass {
+            mark: mark.index(),
+            class,
+        });
         self.universe.page_mark_class_value(mark, class)
     }
 
     /// Reads a font's immutable external name for `\\fontname` and meaning.
     #[must_use]
-    pub fn font_name(&self, font: FontId) -> String {
+    pub fn font_name(&mut self, font: FontId) -> String {
+        self.observe_font(font, DependencyFontField::Name, 0);
         self.universe.font_name(font)
     }
 
     /// TeX82 §578's `find_font_dimen` decision, made before §1253 scans
     /// `=<dimen>`; see [`crate::stores::Stores::font_dimen_writable`].
     #[must_use]
-    pub fn font_dimen_writable(&self, font: FontId, number: u32) -> bool {
+    pub fn font_dimen_writable(&mut self, font: FontId, number: u32) -> bool {
+        self.observe_font(font, DependencyFontField::ParameterCount, 0);
+        self.unsupported_command_state();
         self.universe.font_dimen_writable(font, number)
     }
 
@@ -811,7 +932,8 @@ impl CommandContext<'_> {
     /// `\\fontdimen` enquiry. Unlike the assignment form, an enquiry cannot
     /// extend even the most recently loaded font.
     #[must_use]
-    pub fn font_dimen_readable(&self, font: FontId, number: u32) -> bool {
+    pub fn font_dimen_readable(&mut self, font: FontId, number: u32) -> bool {
+        self.observe_font(font, DependencyFontField::ParameterCount, 0);
         number > 0 && number <= self.universe.font_parameter_count(font)
     }
 
@@ -828,6 +950,13 @@ impl CommandContext<'_> {
         self.universe.font(font).size()
     }
 
+    /// Reads a font size as a semantic command enquiry.
+    #[must_use]
+    pub fn tracked_font_size(&mut self, font: FontId) -> crate::scaled::Scaled {
+        self.observe_font(font, DependencyFontField::Metrics, 0);
+        self.universe.font(font).size()
+    }
+
     /// Reads a font's design size for TeX82 §298's `print_cmd_chr`.
     #[must_use]
     pub fn font_design_size(&self, font: FontId) -> crate::scaled::Scaled {
@@ -837,19 +966,41 @@ impl CommandContext<'_> {
     /// Reads one pdfTeX per-font byte-code table through the canonical
     /// checkpointed font-state owner.
     #[must_use]
-    pub fn pdf_font_code(&self, table: crate::PdfFontCode, font: FontId, code: u8) -> i32 {
+    pub fn pdf_font_code(&mut self, table: crate::PdfFontCode, font: FontId, code: u8) -> i32 {
+        let table_index = match table {
+            crate::PdfFontCode::Lp => 0,
+            crate::PdfFontCode::Rp => 1,
+            crate::PdfFontCode::Ef => 2,
+            crate::PdfFontCode::Tag => 3,
+            crate::PdfFontCode::Knbs => 4,
+            crate::PdfFontCode::Stbs => 5,
+            crate::PdfFontCode::Shbs => 6,
+            crate::PdfFontCode::Knbc => 7,
+            crate::PdfFontCode::Knac => 8,
+        };
+        self.observe_font(
+            font,
+            DependencyFontField::PdfCode,
+            table_index * 256 + u32::from(code),
+        );
         self.universe.pdf_font_code(table, font, code)
     }
 
     /// Reads one immutable TFM character metric for e-TeX font enquiries.
     #[must_use]
-    pub fn font_char_metrics(&self, font: FontId, code: u8) -> Option<crate::font::CharMetrics> {
+    pub fn font_char_metrics(
+        &mut self,
+        font: FontId,
+        code: u8,
+    ) -> Option<crate::font::CharMetrics> {
+        self.observe_font(font, DependencyFontField::Metrics, u32::from(code));
         self.universe.font_char_metrics(font, code)
     }
 
     /// Reads the control-sequence identity assigned to a font.
     #[must_use]
-    pub fn font_identifier_symbol(&self, font: FontId) -> Option<Symbol> {
+    pub fn font_identifier_symbol(&mut self, font: FontId) -> Option<Symbol> {
+        self.observe_font(font, DependencyFontField::Identifier, 0);
         self.universe
             .font_identifier_symbol(font)
             .map(SymbolId::symbol)
@@ -873,9 +1024,10 @@ impl CommandContext<'_> {
 
     /// Reads one current-font parameter through the command boundary.
     #[must_use]
-    pub fn current_font_parameter(&self, number: u32) -> crate::scaled::Scaled {
-        self.universe
-            .font_parameter(self.universe.current_font(), number)
+    pub fn current_font_parameter(&mut self, number: u32) -> crate::scaled::Scaled {
+        let font = self.current_font();
+        self.observe_font(font, DependencyFontField::Parameter, number);
+        self.universe.font_parameter(font, number)
     }
 
     /// Reads one named font's `\\fontdimen` parameter through the command
@@ -885,7 +1037,8 @@ impl CommandContext<'_> {
     /// pre-canonical `Variable::FontDimen` read policy already established in
     /// `tex-exec`'s `variable_access` module.
     #[must_use]
-    pub fn font_dimen(&self, font: FontId, number: u32) -> crate::scaled::Scaled {
+    pub fn font_dimen(&mut self, font: FontId, number: u32) -> crate::scaled::Scaled {
+        self.observe_font(font, DependencyFontField::Parameter, number);
         self.universe.font_parameter(font, number)
     }
 
@@ -895,7 +1048,8 @@ impl CommandContext<'_> {
     /// `scan_something_internal`: `scan_font_ident` selects the font and
     /// `hyphen_char[cur_val]` is delivered at `int_val`.
     #[must_use]
-    pub fn font_hyphen_char(&self, font: FontId) -> i32 {
+    pub fn font_hyphen_char(&mut self, font: FontId) -> i32 {
+        self.observe_font(font, DependencyFontField::HyphenChar, 0);
         self.universe.font_hyphen_char(font)
     }
 
@@ -903,7 +1057,8 @@ impl CommandContext<'_> {
     ///
     /// The `m<>0` half of TeX82 §426's "Fetch a font integer".
     #[must_use]
-    pub fn font_skew_char(&self, font: FontId) -> i32 {
+    pub fn font_skew_char(&mut self, font: FontId) -> i32 {
+        self.observe_font(font, DependencyFontField::SkewChar, 0);
         self.universe.font_skew_char(font)
     }
 
@@ -947,12 +1102,7 @@ impl CommandContext<'_> {
     #[must_use]
     pub fn meaning(&mut self, symbol: Symbol) -> Meaning {
         let key = DependencyKey::Cell(CellId::new(BankTag::Meaning, symbol.raw()));
-        self.universe.track_dependency(key);
-        if self.universe.dependency_region_is_active()
-            && let Some(value) = self.universe.semantic_dependency_value(key)
-        {
-            self.universe.record_dependency(key, value);
-        }
+        self.observe_dependency(key);
         self.universe.meaning(symbol)
     }
 
@@ -1092,7 +1242,69 @@ impl Universe {
 #[cfg(test)]
 mod tests {
     use super::CommandLineSource;
-    use crate::{InteractionMode, Universe, meaning::InternalInteger, world::StreamSlot};
+    use crate::{
+        DependencyKey, DependencyValue, InteractionMode, Universe,
+        cell::{BankTag, CellId},
+        meaning::InternalInteger,
+        world::StreamSlot,
+    };
+
+    #[test]
+    fn command_context_records_exact_reads_and_ignores_unrelated_mutation() {
+        let mut universe = Universe::new();
+        universe.set_count(7, 11);
+        let mark = universe.begin_tracked_region().expect("start region");
+        assert_eq!(universe.command_context().count(7), 11);
+        let mut observations = universe
+            .finish_tracked_region(mark)
+            .expect("finish region")
+            .observations()
+            .to_vec();
+        let key = DependencyKey::Cell(CellId::new(BankTag::Count, 7));
+        assert_eq!(observations.len(), 1);
+        assert_eq!(observations[0].key, key);
+        assert_eq!(observations[0].value, DependencyValue::Integer(11));
+
+        universe.set_count(8, 12);
+        assert!(universe.validate_dependencies(&mut observations, |_| {
+            panic!("unrelated mutation must retain the stamp fast path")
+        }));
+        universe.set_count(7, 13);
+        assert!(
+            !universe
+                .validate_dependencies(&mut observations, |_| { DependencyValue::Integer(13) })
+        );
+    }
+
+    #[test]
+    fn command_font_code_read_tracks_the_exact_table_entry() {
+        let mut universe = Universe::new();
+        let font = crate::font::NULL_FONT;
+        universe.set_pdf_font_code(crate::PdfFontCode::Lp, font, 65, 17);
+        let mark = universe.begin_tracked_region().expect("start region");
+        assert_eq!(
+            universe
+                .command_context()
+                .pdf_font_code(crate::PdfFontCode::Lp, font, 65),
+            17
+        );
+        let mut observations = universe
+            .finish_tracked_region(mark)
+            .expect("finish region")
+            .observations()
+            .to_vec();
+        assert_eq!(observations.len(), 1);
+
+        universe.set_pdf_font_code(crate::PdfFontCode::Rp, font, 65, 18);
+        assert!(universe.validate_dependencies(&mut observations, |_| {
+            panic!("nearby PDF font-code entry is unrelated")
+        }));
+        universe.set_pdf_font_code(crate::PdfFontCode::Lp, font, 65, 19);
+        assert!(
+            !universe
+                .validate_dependencies(&mut observations, |_| { DependencyValue::Integer(19) })
+        );
+    }
 
     #[test]
     fn command_context_publishes_the_live_pdf_return_value() {

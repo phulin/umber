@@ -6,6 +6,8 @@ mod next;
 pub(crate) use next::RUNAWAY_SCAN_DIAGNOSTIC;
 mod observe;
 pub(crate) mod status;
+#[cfg(test)]
+mod tests;
 
 use tex_state::CommandContext;
 
@@ -221,7 +223,7 @@ impl CommandProcessor<'_> {
     /// eventual write fail: §579's context is the one at this cursor, not the
     /// one after the whole assignment has been consumed.
     #[must_use]
-    pub fn font_dimen_writable(&self, font: tex_state::ids::FontId, number: i32) -> bool {
+    pub fn font_dimen_writable(&mut self, font: tex_state::ids::FontId, number: i32) -> bool {
         u32::try_from(number)
             .ok()
             .filter(|number| *number > 0)
@@ -230,7 +232,7 @@ impl CommandProcessor<'_> {
 
     /// TeX82 §578's `find_font_dimen(false)` decision for enquiries.
     #[must_use]
-    pub fn font_dimen_readable(&self, font: tex_state::ids::FontId, number: i32) -> bool {
+    pub fn font_dimen_readable(&mut self, font: tex_state::ids::FontId, number: i32) -> bool {
         u32::try_from(number)
             .ok()
             .is_some_and(|number| self.state.font_dimen_readable(font, number))
@@ -344,9 +346,10 @@ impl<'a> CommandProcessor<'a> {
     #[must_use]
     pub fn new(
         command: &'a mut CommandState,
-        state: CommandContext<'a>,
+        mut state: CommandContext<'a>,
         host: CommandHostContext<'a>,
     ) -> Self {
+        command.observe_tracked_dependencies(&mut state);
         Self {
             command,
             state,

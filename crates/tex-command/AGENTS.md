@@ -104,6 +104,8 @@ print channel of its own outside the borrowed
   `status.rs` owns the one processor-level scanner episode mechanism for
   typed status entry, observation visibility, recovery re-entry, and complete
   prior-state restoration; scanner families do not open-code that lifecycle.
+- `src/processor/tests.rs`: tracked command-root publication and fail-closed
+  unsupported-continuation coverage.
 - `src/processor/alignment.rs`, `src/processor/alignment/tests.rs`: canonical
   alignment-delivery state and focused stack, brace-depth, template, and omit
   lifecycle tests.

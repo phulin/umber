@@ -222,6 +222,84 @@ pub enum CommandReplayDelivery {
 }
 
 impl CommandState {
+    pub(crate) fn observe_active_source_dependencies(&self, state: &mut CommandContext<'_>) {
+        if !state.tracked_region_is_active() {
+            return;
+        }
+        let Some(InputLevel::Source(source)) = self.input.levels.last() else {
+            return;
+        };
+        crate::input::observe_immutable_source(state, source);
+    }
+
+    /// Publishes the command-owned dependency roots read by one processor
+    /// episode. Complex continuations without a complete canonical projection
+    /// poison the outer region before the processor can inspect them.
+    pub(crate) fn observe_tracked_dependencies(&self, state: &mut CommandContext<'_>) {
+        if !state.tracked_region_is_active() {
+            return;
+        }
+        state.observe_command_rendering_dependencies();
+        let Some((line, mut stack)) = crate::input::tracked_input_projection(&self.input, state)
+        else {
+            state.unsupported_command_state();
+            return;
+        };
+        let supported_continuation = self.parameters.activations.is_empty()
+            && self.scanner.is_quiescent()
+            && self.alignment == AlignmentDeliveryState::default()
+            && self.transient == TransientState::default()
+            && self.replay_completions.is_empty()
+            && self.pending_replay_completions.is_empty()
+            && self.semantic_diagnostics.is_empty()
+            && !self.name_in_progress
+            && self.named_token_list_pushes.is_empty()
+            && self.file_framing_events.is_empty()
+            && self.expansion.pending_diagnostics.is_empty()
+            && self.expansion.observed_dependencies.is_empty()
+            && self.expansion.semantic_barriers.is_empty();
+        if !supported_continuation {
+            state.unsupported_command_state();
+            return;
+        }
+        stack ^= self.profile().fingerprint().get();
+        stack = stack.rotate_left(17) ^ self.expansion.cumulative_expansions;
+        stack = stack.rotate_left(17) ^ self.expansion.next_resource_resolution;
+        state.observe_command_projection(
+            tex_state::DependencyKey::InputLine,
+            tex_state::DependencyValue::Projection {
+                schema: 1,
+                fingerprint: line,
+            },
+        );
+        state.observe_command_projection(
+            tex_state::DependencyKey::InputStack,
+            tex_state::DependencyValue::Projection {
+                schema: 1,
+                fingerprint: stack,
+            },
+        );
+
+        let (level, ty, branch) = self.conditions.current_etex_values();
+        for (field, value) in [
+            (tex_state::DependencyEngineField::ConditionLevel, level),
+            (tex_state::DependencyEngineField::ConditionType, ty),
+            (tex_state::DependencyEngineField::ConditionBranch, branch),
+        ] {
+            state.observe_command_projection(
+                tex_state::DependencyKey::Engine(field),
+                tex_state::DependencyValue::Integer(i64::from(value)),
+            );
+        }
+        state.observe_command_projection(
+            tex_state::DependencyKey::Engine(tex_state::DependencyEngineField::ConditionStack),
+            tex_state::DependencyValue::Projection {
+                schema: 1,
+                fingerprint: self.conditions.tracked_stack_projection(),
+            },
+        );
+    }
+
     /// Returns the number of live TeX input levels retained by this command state.
     #[must_use]
     pub fn input_level_count(&self) -> usize {

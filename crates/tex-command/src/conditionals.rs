@@ -258,6 +258,29 @@ pub(crate) struct ConditionStack {
 }
 
 impl ConditionStack {
+    pub(crate) fn tracked_stack_projection(&self) -> u64 {
+        let mut hash = 0xcbf2_9ce4_8422_2325_u64 ^ 0x636f_6e64_0000_0001;
+        let mut feed = |value: u64| {
+            for byte in value.to_le_bytes() {
+                hash ^= u64::from(byte);
+                hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+            }
+        };
+        feed(self.frames.len() as u64);
+        for frame in &self.frames {
+            feed(frame.kind.etex_type() as u64);
+            feed(match frame.limit {
+                IfLimit::Evaluating => 0,
+                IfLimit::Or => 1,
+                IfLimit::Else => 2,
+                IfLimit::Fi => 3,
+            });
+            feed(u64::from(frame.source_line));
+            feed(frame.inverted.into());
+        }
+        hash
+    }
+
     #[cfg(test)]
     pub(crate) fn push(&mut self, kind: ConditionalKind, source_line: u32) -> ConditionId {
         self.push_with_inversion(kind, source_line, false)

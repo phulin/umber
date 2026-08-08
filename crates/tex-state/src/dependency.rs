@@ -256,6 +256,23 @@ pub struct DependencyRuntime {
 struct ActiveDependencyRegion {
     epoch: u64,
     region: DependencyRegion,
+    barrier: Option<TrackedRegionBarrier>,
+}
+
+/// The first semantic fact that makes an active tracked region ineligible.
+///
+/// This is deliberately a closed family.  A consumer may use the value as
+/// diagnostic evidence, but eligibility is only the binary supported versus
+/// unsupported result.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TrackedRegionBarrier {
+    UnsupportedCommandState,
+    UnsupportedExecutionState,
+    UnsupportedWorldFact,
+    IrreversibleEffect,
+    UnsupportedHostCapability,
+    FatalPartialCommit,
+    EnvironmentTimelineChange,
 }
 
 /// Opaque authority for one active dependency recorder.
@@ -272,6 +289,7 @@ pub enum DependencyRegionError {
     AlreadyActive,
     NoActiveRegion,
     StaleToken,
+    Unsupported(TrackedRegionBarrier),
 }
 
 impl std::fmt::Display for DependencyRegionError {
@@ -280,6 +298,7 @@ impl std::fmt::Display for DependencyRegionError {
             Self::AlreadyActive => "a dependency region is already active",
             Self::NoActiveRegion => "no dependency region is active",
             Self::StaleToken => "the dependency region token is stale",
+            Self::Unsupported(_) => "the dependency region is unsupported",
         })
     }
 }
@@ -313,6 +332,7 @@ impl DependencyRuntime {
         self.active = Some(ActiveDependencyRegion {
             epoch,
             region: DependencyRegion::default(),
+            barrier: None,
         });
         Ok(DependencyRegionToken(epoch))
     }
@@ -330,6 +350,15 @@ impl DependencyRuntime {
         }
     }
 
+    /// Poisons the active region, retaining only its first typed reason.
+    /// With no active recorder this is the inactive-path semantic no-op.
+    #[inline(always)]
+    pub fn poison(&mut self, barrier: TrackedRegionBarrier) {
+        if let Some(active) = &mut self.active {
+            active.barrier.get_or_insert(barrier);
+        }
+    }
+
     /// Finishes the active region in canonical key order.
     pub fn finish_region(
         &mut self,
@@ -341,6 +370,9 @@ impl DependencyRuntime {
             .ok_or(DependencyRegionError::NoActiveRegion)?;
         if active.epoch != token.0 {
             return Err(DependencyRegionError::StaleToken);
+        }
+        if let Some(barrier) = active.barrier {
+            return Err(DependencyRegionError::Unsupported(barrier));
         }
         Ok(active.region.into_observations())
     }

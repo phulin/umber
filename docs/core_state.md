@@ -186,6 +186,10 @@ assignments inside an already-open group and finish before that group exits;
 local and global journal identities collapse to the same semantic cell.
 Nested begin, stale or foreign marks, and unsupported cell projections also
 fail closed. Explicit abandon publishes nothing and leaves no active recorder.
+One typed poison operation retains the first unsupported-fact reason while a
+region is active and is an allocation-free no-op otherwise. Finishing a
+poisoned region clears its partial observations and returns the typed reason;
+repeated barriers cannot restore eligibility.
 The record validates data only: it contains no transition replay authority,
 paragraph continuation, mounted output, raw substore, or checkpoint handle.
 The exact ordinary-main-control region, exhaustive read/barrier matrix,

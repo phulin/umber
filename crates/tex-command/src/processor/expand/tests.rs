@@ -3746,7 +3746,7 @@ fn meaning_separates_a_control_word_from_following_letters() {
     };
 
     assert_eq!(
-        meaning_text(&universe.command_context(), &command),
+        meaning_text(&mut universe.command_context(), &command),
         "macro:->\\leaf N"
     );
 }
@@ -3796,7 +3796,7 @@ fn meaning_renders_class_zero_mark_contents_but_not_etex_mark_classes() {
         };
         let suffix = if index == 0 { "" } else { "mark text" };
         assert_eq!(
-            meaning_text(&universe.command_context(), &command),
+            meaning_text(&mut universe.command_context(), &command),
             format!("\\{name}:{suffix}")
         );
     }
@@ -3813,7 +3813,7 @@ fn meaning_renders_class_zero_mark_contents_but_not_etex_mark_classes() {
         )
     };
     assert_eq!(
-        meaning_text(&universe.command_context(), &plural),
+        meaning_text(&mut universe.command_context(), &plural),
         "\\botmarks"
     );
 }
@@ -3849,7 +3849,7 @@ fn meaning_renders_tex82_long_and_outer_macro_command_identity() {
         };
 
         assert_eq!(
-            meaning_text(&universe.command_context(), &command),
+            meaning_text(&mut universe.command_context(), &command),
             expected
         );
     }
@@ -3887,7 +3887,7 @@ fn end_template_alias_retains_outer_command_identity_and_meaning() {
         "\\outer endtemplate"
     );
     assert_eq!(
-        meaning_text(&universe.command_context(), &command),
+        meaning_text(&mut universe.command_context(), &command),
         "\\outer endtemplate:"
     );
 }
@@ -3913,7 +3913,7 @@ fn meaning_macro_prefixes_use_live_escape_character() {
     };
 
     assert_eq!(
-        meaning_text(&universe.command_context(), &command),
+        meaning_text(&mut universe.command_context(), &command),
         "|protected|long|outer macro:->"
     );
 }
@@ -3956,7 +3956,7 @@ fn meaning_macro_token_list_distinguishes_words_symbols_spaces_and_active_chars(
     };
 
     assert_eq!(
-        meaning_text(&universe.command_context(), &command),
+        meaning_text(&mut universe.command_context(), &command),
         "macro:->\\word \\!~ "
     );
 }
@@ -4270,7 +4270,7 @@ fn print_cmd_chr_renders_all_parameter_and_register_names() {
                 "print_cmd_chr name for {name}",
             );
             assert_eq!(
-                meaning_text(&universe.command_context(), &command),
+                meaning_text(&mut universe.command_context(), &command),
                 expected
             );
         }
@@ -4323,7 +4323,7 @@ fn print_cmd_chr_renders_all_parameter_and_register_names() {
                 expected,
             );
             assert_eq!(
-                meaning_text(&universe.command_context(), &command),
+                meaning_text(&mut universe.command_context(), &command),
                 expected
             );
         }
@@ -4583,7 +4583,7 @@ fn etex_print_cmd_chr_selector_table_is_exact_for_primitives_registers_and_alias
                 ""
             };
             assert_eq!(
-                meaning_text(&universe.command_context(), &command),
+                meaning_text(&mut universe.command_context(), &command),
                 format!("\\{name}{meaning_suffix}"),
                 "meaning selector or alias for {name}",
             );
@@ -4612,7 +4612,7 @@ fn etex_print_cmd_chr_selector_table_is_exact_for_primitives_registers_and_alias
             expected,
         );
         assert_eq!(
-            meaning_text(&universe.command_context(), &command),
+            meaning_text(&mut universe.command_context(), &command),
             expected
         );
     }
@@ -4663,7 +4663,7 @@ fn etex_protected_parameterized_macro_meaning_renders_structural_end_match() {
             "\\protected macro",
         );
         assert_eq!(
-            meaning_text(&universe.command_context(), &command),
+            meaning_text(&mut universe.command_context(), &command),
             "\\protected macro:#1!->#1",
         );
     }
@@ -4858,7 +4858,7 @@ fn meaning_renderer_covers_register_quantity_and_primitive_families() {
                 &mut state,
             )
         };
-        let rendered = meaning_text(&universe.command_context(), &command);
+        let rendered = meaning_text(&mut universe.command_context(), &command);
         assert_eq!(rendered, expected);
         assert!(!rendered.contains("Register("));
         assert!(!rendered.contains("Primitive("));
