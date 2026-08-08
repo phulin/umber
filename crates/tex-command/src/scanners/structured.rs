@@ -2580,10 +2580,6 @@ impl CommandProcessor<'_> {
         if unbalanced {
             self.retire_exhausted_through(stopper_level)?;
         }
-        // This nested replay belongs wholly to `write_out`; its completion
-        // must not surface as completion of the surrounding main-control
-        // source episode.
-        self.replay_completion = None;
         Ok(ExpandedWriteText {
             tokens: expanded,
             unbalanced,

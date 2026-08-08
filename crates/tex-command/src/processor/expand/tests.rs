@@ -105,6 +105,56 @@ fn absent_observer_does_not_build_raw_or_expanded_delivery_payloads() {
 }
 
 #[test]
+fn replay_completion_survives_a_descendant_macro_across_processor_episodes() {
+    // TeX82 §§357 and 390: retiring the stored replay before installing the
+    // final macro's replacement does not permit the source below that replay
+    // to resume.  The replacement can deliver an unexpandable command to main
+    // control, ending this borrow, so the pending ownership boundary must be
+    // command state rather than call-local processor state.
+    let mut command = CommandState::default();
+    let source = command
+        .register_source(SourceRegistration::new(
+            RegisteredSourceKind::Generated,
+            Arc::<[u8]>::from(b"z".as_slice()),
+        ))
+        .expect("source registers");
+    command
+        .open_registered_source(source)
+        .expect("source opens beneath replay");
+    let mut universe = Universe::new_with_plain_catcodes();
+    let relax = universe.intern("relax").symbol();
+    universe.set_meaning(relax, Meaning::Relax);
+    let final_macro = install_macro(&mut universe, "finalmacro", Token::Cs(relax));
+    let replay = command.push_discretionary_episode(tex_state::input::TracedTokenList::synthetic(
+        universe.intern_token_list(&[Token::Cs(final_macro)]),
+    ));
+    let mut capabilities = CommandHostCapabilities::default();
+
+    {
+        let mut processor = processor(&mut command, &mut universe, &mut capabilities);
+        let crate::CommandReplayDelivery::Command(delivery) = processor
+            .get_x_token_with_replay_completion()
+            .expect("final macro expands")
+            .expect("replacement command delivers")
+        else {
+            panic!("the replacement command precedes replay completion");
+        };
+        assert_eq!(delivery.meaning(), Meaning::Relax);
+    }
+
+    let mut processor = processor(&mut command, &mut universe, &mut capabilities);
+    assert!(
+        matches!(
+            processor
+                .get_x_token_with_replay_completion()
+                .expect("descendant macro retires"),
+            Some(crate::CommandReplayDelivery::Completed(completed)) if completed == replay
+        ),
+        "the replay ownership boundary must surface before source resumes",
+    );
+}
+
+#[test]
 fn macro_expanded_alignment_lookahead_is_observed_before_backup() {
     // TeX82 §§380, 785, 789: `align_peek` completes `get_x_token` before
     // `init_col` backs its ordinary command up. This bounded source-free

@@ -363,7 +363,10 @@ impl CommandState {
         if !self.semantic_diagnostics.is_empty() {
             return Err(CommandSummaryError::PendingSemanticDiagnostic);
         }
-        if self.transient.active_expansion_depth != 0 {
+        if self.transient.active_expansion_depth != 0
+            || !self.replay_completions.is_empty()
+            || !self.pending_replay_completions.is_empty()
+        {
             return Err(CommandSummaryError::ExpansionActive);
         }
         if self.alignment.active_alignment.is_some() || self.alignment.active_cell.is_some() {
@@ -414,6 +417,7 @@ impl CommandState {
             },
             expansion: summary.expansion,
             replay_completions: Vec::new(),
+            pending_replay_completions: Vec::new(),
             semantic_diagnostics: Vec::new(),
             name_in_progress: false,
             named_token_list_pushes: Vec::new(),

@@ -67,7 +67,14 @@ pub struct CommandState {
     pub(crate) alignment: AlignmentDeliveryState,
     pub(crate) expansion: ExpansionState,
     pub(crate) transient: TransientState,
+    /// Executor-owned stored levels that remain live in the input stack.
     pub(crate) replay_completions: Vec<InputLevelId>,
+    /// Retired stored levels whose descendants still own input above the
+    /// enclosing source.  TeX82 §§390 can retire such a level immediately
+    /// before installing a macro replacement, and main control may end the
+    /// processor borrow on an unexpandable replacement command.  The pending
+    /// completion fence is therefore future-relevant command state.
+    pub(crate) pending_replay_completions: Vec<InputLevelId>,
     /// Semantic diagnostics committed by command processing but rendered by
     /// the executor's World-facing diagnostic boundary.
     ///
@@ -381,7 +388,7 @@ impl CommandState {
     /// after command-owned retirement. Input replay explanations remain
     /// diagnostic-only; this independent state records only the typed
     /// executor delivery contract.
-    pub(crate) fn take_replay_completion(
+    pub(crate) fn complete_replay(
         &mut self,
         identity: InputLevelId,
     ) -> Option<CommandReplayEpisode> {
@@ -389,7 +396,8 @@ impl CommandState {
             .replay_completions
             .iter()
             .position(|candidate| *candidate == identity)?;
-        self.replay_completions.swap_remove(index);
+        self.replay_completions.remove(index);
+        self.pending_replay_completions.push(identity);
         Some(CommandReplayEpisode(identity))
     }
 
@@ -406,6 +414,27 @@ impl CommandState {
             .levels
             .last()
             .is_none_or(|level| crate::input::input_level_identity(level) < episode.0)
+    }
+
+    /// Whether a retired executor-owned level has no remaining descendants.
+    pub(crate) fn has_ready_replay_completion(&self) -> bool {
+        self.pending_replay_completions
+            .iter()
+            .copied()
+            .any(|identity| self.replay_completion_is_ready(CommandReplayEpisode(identity)))
+    }
+
+    /// Claims the first retired ownership boundary whose descendants are gone.
+    pub(crate) fn take_ready_replay_completion(&mut self) -> Option<CommandReplayEpisode> {
+        let index = self
+            .pending_replay_completions
+            .iter()
+            .position(|&identity| {
+                self.replay_completion_is_ready(CommandReplayEpisode(identity))
+            })?;
+        Some(CommandReplayEpisode(
+            self.pending_replay_completions.remove(index),
+        ))
     }
 
     /// Schedules a frozen `\everypar` list after canonical main control has

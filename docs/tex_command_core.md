@@ -1715,6 +1715,16 @@ Its detached observation also retains the exhausted level's immutable class
 list), so host-side canonical translation preserves lifecycle ordering without
 letting diagnostic explanation select retirement behavior.
 
+An executor-owned stored replay has a second, command-state-owned completion
+fence. TeX82 §390 can retire the stored level and immediately install the
+replacement text of its final macro token; if that replacement yields an
+unexpandable command, main control ends the current processor borrow while the
+macro body still owns input. The retired replay identity therefore remains in
+`CommandState` until every newer descendant level retires. A later processor
+episode surfaces that completion before it may resume an older enclosing
+source. The fence is snapshotted with the input stack and is never processor-
+local observation state.
+
 ### 12.3 Macro parameters
 
 A macro activation owns one shared argument buffer and at most nine ranges:
@@ -2013,11 +2023,12 @@ or to the delivering level reorders the resulting `input retire` transitions
 after the new level's push, which is observable. `v_template` is the sole
 exception in both sections: an exhausted v-part stays live until `do_endv`
 retires it (§13's alignment cell completion). A retirement that completes an
-executor-owned stored replay episode records that completion for the next
-`get_next` and keeps draining. TeX82 §390 can then push the replacement text
-of the episode's final macro token above that retired level; the completion
-fence waits for input levels newer than the episode before it permits delivery
-to resume from an older enclosing level.
+executor-owned stored replay episode records that completion in persistent
+command state for the next `get_next` and keeps draining. TeX82 §390 can then
+push the replacement text of the episode's final macro token above that retired
+level; the completion fence survives processor borrows and waits for input
+levels newer than the episode before it permits delivery to resume from an
+older enclosing level.
 
 ## 16. Scanner status and outer validity
 

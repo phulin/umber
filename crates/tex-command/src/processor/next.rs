@@ -1523,10 +1523,7 @@ impl CommandProcessor<'_> {
         allow_control_sequence_creation: bool,
     ) -> Result<Option<DeliveredToken>, CommandError> {
         loop {
-            if self
-                .replay_completion
-                .is_some_and(|episode| self.command.replay_completion_is_ready(episode))
-            {
+            if self.command.has_ready_replay_completion() {
                 return Ok(None);
             }
             let Some(level) = self.command.input.levels.last().cloned() else {
@@ -1694,12 +1691,7 @@ impl CommandProcessor<'_> {
     }
 
     fn take_ready_replay_completion(&mut self) -> Option<crate::CommandReplayEpisode> {
-        let episode = self.replay_completion?;
-        self.command.replay_completion_is_ready(episode).then(|| {
-            self.replay_completion
-                .take()
-                .expect("ready completion remains pending")
-        })
+        self.command.take_ready_replay_completion()
     }
 
     fn retire_and_restart(
@@ -1805,8 +1797,7 @@ impl CommandProcessor<'_> {
                         }),
                     );
                 }
-                if let Some(episode) = self.command.take_replay_completion(identity) {
-                    self.replay_completion = Some(episode);
+                if self.command.complete_replay(identity).is_some() {
                     Ok(RetirementRestart::Completed)
                 } else {
                     Ok(RetirementRestart::Continue)
@@ -1973,7 +1964,6 @@ impl CommandProcessor<'_> {
     /// delivery: a run of levels can be depleted at once, and the whole run
     /// retires before the push.
     pub(crate) fn conserve_input_stack(&mut self) -> Result<(), CommandError> {
-        let mut completed = false;
         loop {
             let depleted = match self.command.input.levels.last() {
                 Some(InputLevel::Tokens(cursor))
@@ -1988,16 +1978,12 @@ impl CommandProcessor<'_> {
                 return Ok(());
             };
             match self.retire_and_restart(identity)? {
-                RetirementRestart::Continue => {}
-                // A finished stored replay episode is recorded on the
-                // processor and reported to the caller by the next `get_next`;
-                // draining continues so the whole depleted run is cleaned off.
-                // Two completions in one drain would overwrite that one slot,
-                // so refuse loudly rather than dropping an episode silently.
-                RetirementRestart::Completed if !completed => completed = true,
-                RetirementRestart::Stop
-                | RetirementRestart::EndV(_)
-                | RetirementRestart::Completed => {
+                // Finished stored replay episodes queue their completion in
+                // command state. Draining continues so the whole depleted run
+                // is cleaned off; delivery surfaces each ready ownership
+                // boundary before any enclosing source.
+                RetirementRestart::Continue | RetirementRestart::Completed => {}
+                RetirementRestart::Stop | RetirementRestart::EndV(_) => {
                     return Err(CommandError::input_invariant());
                 }
             }
