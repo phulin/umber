@@ -111,6 +111,21 @@ fn sparse_source_index_tracks_registration_rollback_retry_and_fork() {
     );
     assert_eq!(fork.position(SourceId::new(3), 0), Ok(discarded));
 
+    let discarded_index = map
+        .region_by_source
+        .remove(&SourceId::new(3))
+        .expect("source has a derived index");
+    assert_eq!(
+        map.position(SourceId::new(3), 0),
+        Err(SourceMapError::UnknownSource),
+        "source lookup must not retain a linear fallback"
+    );
+    assert_eq!(
+        map.region_by_source
+            .insert(SourceId::new(3), discarded_index),
+        None
+    );
+
     map.truncate_to_for_retry(mark);
     assert_eq!(map.region_by_source.get(&SourceId::new(40)), Some(&0));
     assert!(!map.region_by_source.contains_key(&SourceId::new(3)));

@@ -1287,13 +1287,14 @@ mod tests {
         );
         let world_scans = universe.testing_tracked_world_scan_calls();
 
-        let mut context = universe.command_context();
-        assert_eq!(
-            context.take_error_recovery_request(),
-            Some(ErrorRecoveryRequest::Insert("replacement".to_owned()))
-        );
-        assert_eq!(context.take_error_recovery_request(), None);
-        drop(context);
+        {
+            let mut context = universe.command_context();
+            assert_eq!(
+                context.take_error_recovery_request(),
+                Some(ErrorRecoveryRequest::Insert("replacement".to_owned()))
+            );
+            assert_eq!(context.take_error_recovery_request(), None);
+        }
         assert_eq!(universe.testing_tracked_world_scan_calls(), world_scans);
     }
 
