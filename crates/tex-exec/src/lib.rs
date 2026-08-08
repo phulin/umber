@@ -78,6 +78,7 @@ pub use job::{
 pub use main_control::{
     AdvanceOutcome, AdvanceReadiness, AdvanceTelemetry, DiagnosticStep, DiagnosticStepResult,
     MainControl, MainControlStep, ResourceNeed, RootCompletionPolicy, StepResult,
+    TrackedStepResult,
 };
 pub use mode::{
     AlignColumn, AlignState, AlignmentKind, AlignmentPackSpec, Mode, ModeLevelSummary, ModeList,

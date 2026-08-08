@@ -47,8 +47,9 @@ use tex_state::scaled::Scaled;
 use tex_state::token::TracedTokenWord;
 use tex_state::token::{Catcode, Token};
 use tex_state::{
-    GroupKind, InputOpenState, InputReadState, ParagraphShapeLine, PenaltyArrayKind, PrintSink,
-    StreamSlot, TracedTokenList, Universe,
+    DependencyEngineField, DependencyKey, DependencyValue, GroupKind, InputOpenState,
+    InputReadState, ParagraphShapeLine, PenaltyArrayKind, PrintSink, StreamSlot, TracedTokenList,
+    TrackedRegionBarrier, TrackedRegionError, TrackedRegionRecord, Universe,
 };
 use tex_typeset::PackSpec;
 
@@ -443,6 +444,16 @@ pub enum ResourceNeed {
 pub enum StepResult {
     Progress(MainControlStep),
     Suspended(ResourceNeed),
+}
+
+/// One committed ordinary step and the detached dependency evidence attempted
+/// for exactly that operation.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TrackedStepResult {
+    pub step: StepResult,
+    /// `None` means the operation suspended or rolled back and the recorder
+    /// was abandoned before aggregate restoration.
+    pub region: Option<Result<TrackedRegionRecord, TrackedRegionError>>,
 }
 
 /// Host decision sampled immediately before a aggregate operation.
@@ -1396,13 +1407,18 @@ impl MainControl {
         }
     }
 
-    fn resolve_font_resource(&self, scanned: ScannedStep) -> Result<ScannedStep, ExecError> {
+    fn resolve_font_resource(
+        &self,
+        scanned: ScannedStep,
+        stores: &Universe,
+    ) -> Result<ScannedStep, ExecError> {
         let ScannedStep::FontDefinition {
             request, global, ..
         } = scanned
         else {
             return Ok(scanned);
         };
+        stores.poison_tracked_region(TrackedRegionBarrier::UnsupportedHostCapability);
         let path = crate::canonical_font_resource_path(&request.name);
         let resource = self
             .capabilities
@@ -1420,6 +1436,7 @@ impl MainControl {
     fn resolve_input_stream_resource(
         &self,
         scanned: ScannedStep,
+        stores: &Universe,
     ) -> Result<ScannedStep, ExecError> {
         let ScannedStep::InputStream {
             mut request,
@@ -1428,6 +1445,7 @@ impl MainControl {
         else {
             return Ok(scanned);
         };
+        stores.poison_tracked_region(TrackedRegionBarrier::UnsupportedHostCapability);
         let resource = match &mut request {
             InputStreamRequest::Open { file_name, .. } => {
                 // tex.web §1275: `if cur_ext="" then cur_ext:=".tex";
@@ -1467,6 +1485,7 @@ impl MainControl {
         let ScannedStep::PdfXImage { mut request, .. } = scanned else {
             return Ok(scanned);
         };
+        stores.poison_tracked_region(TrackedRegionBarrier::UnsupportedHostCapability);
         // pdfTeX checks \pdfoutput before it enters `scan_image`; in DVI
         // mode this must be the diagnostic, not a host-resource suspension.
         if stores.int_param(IntParam::PDF_OUTPUT) <= 0 {
@@ -2029,6 +2048,7 @@ impl MainControl {
             stores,
             OperationDelivery::Alignment(alignment),
             OperationTransaction::Alignment,
+            None,
         )? {
             StepResult::Progress(step) => Ok(step),
             StepResult::Suspended(_) => Err(ExecError::MissingToken {
@@ -2427,6 +2447,7 @@ impl MainControl {
         stores: &mut Universe,
         delivery: OperationDelivery,
         transaction: OperationTransaction,
+        mut tracked_region: Option<&mut Option<Result<TrackedRegionRecord, TrackedRegionError>>>,
     ) -> Result<StepResult, ExecError> {
         if matches!(transaction, OperationTransaction::Nested) {
             let result = self.apply_operation(stores, delivery);
@@ -2448,6 +2469,20 @@ impl MainControl {
                 .max(self.advance_telemetry.live_savepoints);
         }
         let snapshot = self.snapshot_step(stores);
+        let tracked_mark =
+            if matches!(transaction, OperationTransaction::Advance) && tracked_region.is_some() {
+                match stores.begin_tracked_region() {
+                    Ok(mark) => Some(mark),
+                    Err(error) => {
+                        if let Some(outcome) = tracked_region.as_deref_mut() {
+                            *outcome = Some(Err(error));
+                        }
+                        None
+                    }
+                }
+            } else {
+                None
+            };
         let mut applied = self.apply_operation(stores, delivery);
         if let Ok(step) = &applied {
             let termination = self.fatal.map_or_else(
@@ -2464,10 +2499,16 @@ impl MainControl {
         }
         match applied {
             Ok(step) => {
+                let tracked_result = tracked_mark.map(|mark| stores.finish_tracked_region(mark));
                 self.commit_step(snapshot);
                 if tracks_telemetry {
                     self.advance_telemetry.live_savepoints -= 1;
                     self.advance_telemetry.commits += 1;
+                }
+                if let (Some(outcome), Some(result)) =
+                    (tracked_region.as_deref_mut(), tracked_result)
+                {
+                    *outcome = Some(result);
                 }
                 Ok(StepResult::Progress(step))
             }
@@ -2520,13 +2561,34 @@ impl MainControl {
                     ]);
                     let evidence_error =
                         self.admit_observed_receipt(stores, OperationTermination::Fatal(fatal));
+                    let tracked_result = tracked_mark.map(|mark| {
+                        stores.poison_tracked_region(TrackedRegionBarrier::FatalPartialCommit);
+                        stores.finish_tracked_region(mark)
+                    });
                     self.commit_step(snapshot);
                     self.finish_operation_telemetry(false);
                     let terminal = self.succumb(fatal);
+                    if let (Some(outcome), Some(result)) =
+                        (tracked_region.as_deref_mut(), tracked_result)
+                    {
+                        *outcome = Some(result);
+                    }
                     return evidence_error.map_or(Ok(StepResult::Progress(terminal)), Err);
                 }
                 let rolled_back =
                     !matches!(error, ExecError::PdfXFormVoidBox) && snapshot.can_rollback(stores);
+                if let Some(mark) = tracked_mark {
+                    if rolled_back {
+                        let _ = stores.abandon_tracked_region(mark);
+                    } else {
+                        stores
+                            .poison_tracked_region(TrackedRegionBarrier::UnsupportedExecutionState);
+                        let result = stores.finish_tracked_region(mark);
+                        if let Some(outcome) = tracked_region {
+                            *outcome = Some(result);
+                        }
+                    }
+                }
                 let mut result = self.finish_failed_step(snapshot, stores, error);
                 if let Ok(StepResult::Suspended(resource)) = &result
                     && let Some(pending) = self.operation_observations.as_mut()
@@ -2654,7 +2716,42 @@ impl MainControl {
             stores,
             OperationDelivery::Replay(None),
             OperationTransaction::Advance,
+            None,
         )
+    }
+
+    /// Attempts one ordinary main-control operation while collecting detached
+    /// semantic dependency evidence for that operation only.
+    ///
+    /// Recording failure never changes the TeX result. A committed supported
+    /// operation returns a record, a fail-closed barrier returns its typed
+    /// rejection, and rollback or resource suspension returns no region.
+    pub fn advance_with_tracked_region(
+        &mut self,
+        stores: &mut Universe,
+    ) -> Result<TrackedStepResult, ExecError> {
+        if !self.pure_memo_initialized {
+            let runtime = stores.take_pure_memo_config().map_or_else(
+                tex_state::PureMemoRuntime::default,
+                tex_state::PureMemoRuntime::new,
+            );
+            self.install_pure_memo_runtime(runtime);
+        }
+        stores.attach_pure_memo_capability(&self.pure_memo);
+        if self.fatal.is_some() {
+            return Ok(TrackedStepResult {
+                step: StepResult::Progress(MainControlStep::End),
+                region: None,
+            });
+        }
+        let mut region = None;
+        let step = self.execute_operation(
+            stores,
+            OperationDelivery::Replay(None),
+            OperationTransaction::Advance,
+            Some(&mut region),
+        )?;
+        Ok(TrackedStepResult { step, region })
     }
 
     /// Expands one command for an analysis host without entering ordinary
@@ -2688,6 +2785,7 @@ impl MainControl {
                     stores,
                     OperationDelivery::Replay(Some(command)),
                     OperationTransaction::Nested,
+                    None,
                 )?;
                 Ok(DiagnosticStep::Assignment)
             } else {
@@ -2757,6 +2855,7 @@ impl MainControl {
             stores,
             OperationDelivery::Replay(redispatch),
             OperationTransaction::Nested,
+            None,
         )? {
             StepResult::Progress(step) => Ok(step),
             StepResult::Suspended(_) => unreachable!("nested operations do not own rollback"),
@@ -4090,6 +4189,7 @@ impl MainControl {
             stores,
             OperationDelivery::Replay(None),
             OperationTransaction::Advance,
+            None,
         );
         let mut pending = self.operation_observations.take().unwrap_or_default();
         self.operation_receipt_start = None;
@@ -4218,6 +4318,38 @@ impl MainControl {
         stores: &mut Universe,
         delivery: OperationDelivery,
     ) -> Result<ReplayStep, ExecError> {
+        if stores.dependency_region_is_active() {
+            let mode = self.modes.current_mode();
+            let mode_key = DependencyKey::Engine(DependencyEngineField::Mode);
+            let inner_key = DependencyKey::Engine(DependencyEngineField::InnerMode);
+            let last_node_key = DependencyKey::Engine(DependencyEngineField::LastNodeType);
+            // Executor-owned mode facts have no state-layer mutation facade.
+            // Advance their conservative generation once per observed outer
+            // operation so validation always compares the canonical value
+            // after another operation has had a chance to mutate the nest.
+            for key in [mode_key, inner_key, last_node_key] {
+                stores.mark_dependency_changed(key);
+            }
+            stores.track_dependency(mode_key);
+            stores.record_dependency(
+                mode_key,
+                DependencyValue::Projection {
+                    schema: 1,
+                    fingerprint: self.modes.summary().semantic_fingerprint(stores),
+                },
+            );
+            stores.track_dependency(inner_key);
+            stores.record_dependency(inner_key, DependencyValue::Bool(mode.is_inner()));
+            let last_node_type = self.last_node_type_value(stores);
+            stores.track_dependency(last_node_key);
+            stores.record_dependency(
+                last_node_key,
+                DependencyValue::Integer(i64::from(last_node_type)),
+            );
+            stores.observe_semantic_dependency(DependencyKey::Engine(
+                DependencyEngineField::PageInsertions,
+            ));
+        }
         // Observation is an instrumentation boundary, not an alternate
         // execution mode. Keep the command processor's borrowed mode facts
         // identical to an unobserved step (notably for \ifhmode after a
@@ -4354,8 +4486,8 @@ impl MainControl {
         self.capture_first_causal_context(stores, &diagnostics);
         report_pending_diagnostics(stores, diagnostics)?;
         self.drain_file_framing_events(stores);
-        let scanned = self.resolve_font_resource(scanned)?;
-        let scanned = self.resolve_input_stream_resource(scanned)?;
+        let scanned = self.resolve_font_resource(scanned, stores)?;
+        let scanned = self.resolve_input_stream_resource(scanned, stores)?;
         let scanned = self.resolve_pdf_image_resource(scanned, stores)?;
         let parking = self.suspend_main_control_parking(&scanned);
         let artifact_count = stores.world().artifact_commits().len();
@@ -10767,8 +10899,7 @@ fn immediate_write_sink(
         tex_command::WriteStreamSelector::Stream(slot) => {
             let slot = StreamSlot::new(slot);
             stores
-                .world()
-                .write_stream_is_open(slot)
+                .output_stream_is_open(slot)
                 .then_some(PrintSink::Stream(slot))
                 .or_else(|| selector.sink())
         }
@@ -12443,7 +12574,7 @@ fn apply_scanned_step(
             // output_stream_final_cleanup_closes_only_live_numbered_files`
             // already observes it, synchronous with the terminating step.
             for raw in 0..tex_state::world::STREAM_SLOT_COUNT as u8 {
-                stores.world_mut().close_out(StreamSlot::new(raw));
+                stores.close_output_stream(StreamSlot::new(raw));
             }
             Ok(ReplayStep::End)
         }
@@ -14469,9 +14600,7 @@ fn apply_scanned_step(
                 }
                 ImmediateExtension::OpenOut { stream, file_name } => {
                     let target = replay_openout_target(file_name.packed());
-                    stores
-                        .world_mut()
-                        .open_out(StreamSlot::new(stream), target.clone());
+                    stores.open_output_stream(StreamSlot::new(stream), target.clone());
                     if command.state.engine_semantics().supports_pdftex() {
                         crate::diagnostics::report_openout(stores, stream, &target);
                     }
@@ -14484,7 +14613,7 @@ fn apply_scanned_step(
                 }
                 ImmediateExtension::CloseOut { stream } => {
                     if let Some(stream) = stream.stream_slot() {
-                        stores.world_mut().close_out(stream);
+                        stores.close_output_stream(stream);
                     }
                 }
                 ImmediateExtension::PdfObject(request) => {

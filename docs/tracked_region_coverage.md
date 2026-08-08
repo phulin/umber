@@ -1,9 +1,9 @@
 # Tracked-region semantic read coverage
 
-Status: authoritative coverage contract. The generic state-layer recorder and
-command-side routing are implemented; execution-side routing and the
-cross-layer perturbation proof remain the ordered follow-up work in
-`umber2-trcn.4.3` and `umber2-trcn.4.4`.
+Status: authoritative coverage contract. The generic state-layer recorder,
+command-side routing, and execution-side routing are implemented. The
+cross-layer perturbation proof and final source audit remain in
+`umber2-trcn.4.4`.
 
 This document defines the only region for which the first generic dependency
 coverage proof is made. It is a recording contract, not permission to replay
@@ -149,11 +149,18 @@ read. Existing borrow-scoped host file lookup and file-probe capabilities are
 unsupported-host-capability barriers; moving those outcomes into the virtual
 `World` vocabulary is required before such an operation can publish a record.
 
-`umber2-trcn.4.3` owns the outer lifecycle and execution half: begin/finish at
-`execute_operation`, mode/group facts, execution-side environment and font
-reads, hyphenation/layout, page and PDF roots, virtual `World` facts, effect
-barriers, suspension abandon, and delayed publication after commit. Nested
-command work contributes to the same active recorder.
+The implemented execution admission begins after the ordinary operation's
+savepoint, records the canonical mode-nest projection before lending its mode
+and list facts to command processing, and finishes before savepoint commit.
+Nested command work contributes to that same recorder. `Universe` getters
+observe execution-side environment, font, hyphenation/layout, page, PDF, and
+virtual `World` facts through an atomic inactive fast path. PDF and page root
+projections currently share one conservative changed-at clock per family.
+Suspension and rollback abandon before restore; timeline changes, unsupported
+host resource selection, fatal or partial commit, and irreversible effect
+materialization fail closed. A committed attempt is returned only after the
+ordinary TeX operation commits, and recording failure never changes that
+operation's result.
 
 `umber2-trcn.4.4` owns the cross-layer proof and the final source audit. Neither
 implementation child may weaken a matrix row locally; an unimplemented row is

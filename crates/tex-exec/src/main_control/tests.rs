@@ -29,6 +29,77 @@ fn register_source(control: &mut MainControl, bytes: &[u8]) {
         .expect("source opens");
 }
 
+#[test]
+fn tracked_advance_records_command_and_execution_reads_after_commit() {
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = MainControl::tex82_initex(&mut stores);
+    register_source(&mut control, br"\count0=17");
+
+    let tracked = control
+        .advance_with_tracked_region(&mut stores)
+        .expect("tracked operation executes");
+
+    assert_eq!(
+        tracked.step,
+        StepResult::Progress(MainControlStep::Continue)
+    );
+    assert_eq!(stores.count(0), 17, "the TeX operation committed first");
+    let record = tracked
+        .region
+        .expect("committed operation finishes its region")
+        .expect("ordinary assignment is supported");
+    assert!(record.observations().iter().any(|observation| {
+        observation.key == DependencyKey::Engine(DependencyEngineField::Mode)
+    }));
+    assert!(record.observations().iter().any(|observation| {
+        observation.key == DependencyKey::Engine(DependencyEngineField::GroupType)
+    }));
+    assert!(!stores.dependency_region_is_active());
+}
+
+#[test]
+fn tracked_advance_abandons_before_resource_suspension_rollback() {
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = MainControl::tex82_initex(&mut stores);
+    register_source(&mut control, br"\font\missing=not-installed");
+
+    let tracked = control
+        .advance_with_tracked_region(&mut stores)
+        .expect("resource suspension is a step result");
+
+    assert!(matches!(
+        tracked.step,
+        StepResult::Suspended(ResourceNeed::Font { .. })
+    ));
+    assert_eq!(tracked.region, None);
+    assert!(!stores.dependency_region_is_active());
+}
+
+#[test]
+fn tracked_group_exit_fails_closed_at_the_journal_timeline_barrier() {
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = MainControl::tex82_initex(&mut stores);
+    register_source(&mut control, br"\begingroup\endgroup");
+
+    let entered = control
+        .advance_with_tracked_region(&mut stores)
+        .expect("group entry executes");
+    assert!(
+        matches!(entered.region, Some(Ok(_))),
+        "group entry result: {:?}",
+        entered.region
+    );
+    let exited = control
+        .advance_with_tracked_region(&mut stores)
+        .expect("group exit executes");
+
+    assert!(matches!(
+        exited.region,
+        Some(Err(TrackedRegionError::UnsupportedTimelineChange))
+    ));
+    assert!(!stores.dependency_region_is_active());
+}
+
 fn register_cmr10_as(control: &mut MainControl, stores: &mut Universe, name: &str) {
     const CMR10: &[u8] = include_bytes!("../../../tex-fonts/tests/fixtures/cm/cmr10.tfm");
     stores

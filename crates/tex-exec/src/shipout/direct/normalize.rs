@@ -379,9 +379,9 @@ fn append_whatsit_effect(
         Whatsit::OpenOut { slot, path } if !suppress_deferred_streams => {
             // TeX82 §1374 closes the old stream before it attempts the
             // replacement, even when every subsequent open attempt fails.
-            stores.world_mut().close_out(slot);
+            stores.close_output_stream(slot);
             let path = retry_openout_target(stores, path, &output_open_context)?;
-            stores.world_mut().open_out(slot, path.clone());
+            stores.open_output_stream(slot, path.clone());
             stores
                 .world_mut()
                 .set_last_stream_open_context(output_open_context);
@@ -399,7 +399,7 @@ fn append_whatsit_effect(
         }
         Whatsit::CloseOut { slot } if !suppress_deferred_streams => {
             if let Some(slot) = slot {
-                stores.world_mut().close_out(slot);
+                stores.close_output_stream(slot);
                 effects.push(PageEffect::CloseOut { stream: slot.raw() });
             }
         }
@@ -740,9 +740,7 @@ pub(super) fn deferred_write_sink(
 ) -> Option<tex_state::PrintSink> {
     let selector = tex_state::print::Selector::for_interaction(stores.interaction_mode());
     match sink {
-        tex_state::PrintSink::Stream(slot) if stores.world().write_stream_is_open(slot) => {
-            Some(sink)
-        }
+        tex_state::PrintSink::Stream(slot) if stores.output_stream_is_open(slot) => Some(sink),
         tex_state::PrintSink::Stream(_) | tex_state::PrintSink::TerminalAndLog => selector.sink(),
         tex_state::PrintSink::Log if selector == tex_state::print::Selector::TermAndLog => {
             Some(tex_state::PrintSink::Log)
