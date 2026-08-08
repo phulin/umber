@@ -380,7 +380,7 @@ impl Env {
         self.bump_epoch();
         super::JournalRegionMark {
             journal_pos: self.journal.pos(),
-            epoch: self.epoch,
+            lineage: self.journal_lineage,
         }
     }
 
@@ -393,7 +393,7 @@ impl Env {
         &self,
         mark: super::JournalRegionMark,
     ) -> Result<Vec<CellId>, super::JournalRegionInvalidated> {
-        if self.epoch != mark.epoch || mark.journal_pos > self.journal.pos() {
+        if self.journal_lineage != mark.lineage || mark.journal_pos > self.journal.pos() {
             return Err(super::JournalRegionInvalidated);
         }
         let mut cells = self
@@ -437,6 +437,10 @@ impl Env {
             epoch: self.epoch,
         };
         self.epoch.bump();
+        self.journal_lineage = self
+            .journal_lineage
+            .checked_add(1)
+            .expect("environment journal lineage exhausted");
         snapshot
     }
 
@@ -780,6 +784,10 @@ impl Env {
         // exit must start a fresh epoch or the enclosing undo slice can be
         // corrupted by a later write to the same restored cell.
         self.epoch.bump();
+        self.journal_lineage = self
+            .journal_lineage
+            .checked_add(1)
+            .expect("environment journal lineage exhausted");
         let receipts = candidate_cells
             .into_iter()
             .map(|cell| {
@@ -962,6 +970,10 @@ impl Env {
         ));
         self.afterassignment = snapshot.afterassignment;
         self.epoch.bump();
+        self.journal_lineage = self
+            .journal_lineage
+            .checked_add(1)
+            .expect("environment journal lineage exhausted");
         candidate_cells
             .into_iter()
             .map(|cell| {

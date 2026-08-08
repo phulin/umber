@@ -3336,6 +3336,64 @@ fn empty_page_mark_presence_invalidates_dependencies_and_survives_rollback() {
 }
 
 #[test]
+fn execution_facade_reads_record_exact_and_aggregate_dependencies() {
+    use crate::{DependencyEngineField, DependencyKey};
+
+    let mut universe = Universe::new_with_plain_catcodes();
+    let region = universe
+        .begin_tracked_region()
+        .expect("start execution read region");
+    let _ = universe.count(3);
+    let _ = universe.current_font();
+    let _ = universe.catcode('A');
+    let _ = universe.hyphen_positions_for_language(0, "letters", 2, 3);
+    let _ = universe.page_contents();
+    let _ = universe.innermost_group_kind();
+    let record = universe
+        .finish_tracked_region(region)
+        .expect("execution reads are projectable");
+
+    for key in [
+        DependencyKey::Cell(crate::cell::CellId::new(crate::cell::BankTag::Count, 3)),
+        DependencyKey::Cell(crate::cell::CellId::new(
+            crate::cell::BankTag::CurrentFont,
+            0,
+        )),
+        DependencyKey::Code {
+            table: crate::DependencyCodeTable::Catcode,
+            scalar: 'A'.into(),
+        },
+        DependencyKey::HyphenationPatterns(0),
+        DependencyKey::HyphenationExceptions(0),
+        DependencyKey::HyphenationCodes(0),
+        DependencyKey::Page(crate::DependencyPageField::Contents),
+        DependencyKey::Engine(DependencyEngineField::GroupType),
+    ] {
+        assert!(
+            record
+                .observations()
+                .iter()
+                .any(|observation| observation.key == key),
+            "missing execution dependency {key:?}"
+        );
+    }
+
+    let mut observations = record.observations().to_vec();
+    universe.set_count(4, 99);
+    assert!(universe.validate_dependencies(&mut observations, |key| {
+        universe
+            .semantic_dependency_value(key)
+            .expect("recorded execution dependency remains projectable")
+    }));
+    universe.set_count(3, 17);
+    assert!(!universe.validate_dependencies(&mut observations, |key| {
+        universe
+            .semantic_dependency_value(key)
+            .expect("recorded execution dependency remains projectable")
+    }));
+}
+
+#[test]
 fn replay_probe_drop_restores_semantic_page_store_and_world_state() {
     let mut universe = Universe::with_world(World::memory());
     let base_hash = universe.snapshot().state_hash();

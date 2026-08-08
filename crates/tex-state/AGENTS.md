@@ -23,11 +23,11 @@ All production mutation of live TeX state should pass through `Universe` or simi
   not-`stat`-gated `file_warning`), and `group_frames_from` (the same
   per-group display `\showgroups` uses) so `tex-command` can render those
   without a queued cross-crate diagnostic.
-- `src/dependency.rs`: Region-scoped dependency keys with scope-free `CellId` environment identity, typed recorder lifecycle and first-reason poison barrier, detached observations, changed-at validation, semantic backdating, and opaque cross-Universe memo validation stamps.
+- `src/dependency.rs`: Region-scoped dependency keys with scope-free `CellId` environment identity, typed recorder lifecycle and first-reason poison barrier, detached observations, changed-at validation, conservative page/PDF family clocks, semantic backdating, and opaque cross-Universe memo validation stamps.
 - `src/dependency/tests.rs`: Dependency mutation matrix, generic tracked-region lifecycle and journal-write records, deterministic ordering, rollback failure closure, and handle-independent observation tests.
 - `src/diagnostic.rs`: tex.web §245's shared `begin_diagnostic`/`end_diagnostic` print channel, which every `\tracing*` parameter's text is routed through.
 - `src/diagnostic/tests.rs`: Destination-selection, `print_nl` line-break, and scalar-formatting tests for the diagnostic channel.
-- `src/env.rs`: Barriered mutable environment storage for meanings, registers, parameters, font values, grouping, and journals; typed writes produce canonical semantic mutation receipts.
+- `src/env.rs`: Barriered mutable environment storage for meanings, registers, parameters, font values, grouping, journals, and tracked-region journal lineage; typed writes produce canonical semantic mutation receipts.
 - `src/engine_state.rs`: Read-only execution mode and state projection consumed by expansion-time enquiries.
 - `src/expansion_diagnostic.rs`: Detached recoverable expansion diagnostic
   values shared by command expansion and execution-side presentation.
@@ -143,9 +143,10 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/token_store.rs`: Immutable hash-consed token-list storage, builders, lookup, and rollback marks.
 - `src/token_store/tests.rs`: Unit tests for token-list interning, builder reuse, lookup, and rollback.
 - `src/universe.rs`: Top-level TeX state timeline and sole state API, with
-  snapshots, effect commits, and the input-open capability context. Restoration
-  traces resolve named parameters through the installed primitive registry
-  rather than a state-local spelling table.
+  snapshots, effect commits, execution-side dependency-aware getters and
+  barriers, and the input-open capability context. Restoration traces resolve
+  named parameters through the installed primitive registry rather than a
+  state-local spelling table.
 - `src/universe/tests.rs`: Unit tests for `Universe` mutation, snapshots, contexts, effects, and boundary behavior.
 - `src/world.rs`: External-effect boundary for files, atomic downstream file-set publication, streams, clocks, randomness, shell policy, printing, and effect records.
 - `src/world/tests.rs`: Unit tests for world snapshots, file records, streams, printing, randomness, shell escape, and effect replay.

@@ -120,6 +120,25 @@ fn scalar_code_stamps_share_one_table_generation_entry() {
 }
 
 #[test]
+fn aggregate_page_and_pdf_projections_share_family_clocks() {
+    let mut tracker = DependencyTracker::default();
+    let page_stamp = tracker.mark_changed(DependencyKey::Page(DependencyPageField::FireUp));
+    assert_eq!(
+        tracker.changed_at(DependencyKey::Page(DependencyPageField::Contributions)),
+        page_stamp
+    );
+
+    let pdf_stamp = tracker.mark_changed(DependencyKey::Engine(
+        DependencyEngineField::PdfExternalImages,
+    ));
+    assert_eq!(
+        tracker.changed_at(DependencyKey::Engine(DependencyEngineField::PdfForms)),
+        pdf_stamp
+    );
+    assert_eq!(tracker.changed.len(), 2);
+}
+
+#[test]
 fn every_key_variant_is_independently_invalidated_and_backdated() {
     for key in key_matrix() {
         let unrelated = DependencyKey::Query {

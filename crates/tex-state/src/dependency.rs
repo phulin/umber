@@ -450,11 +450,21 @@ impl DependencyTracker {
 
     #[must_use]
     pub fn changed_at(&self, key: DependencyKey) -> ChangedAt {
-        // Scalar code-table reads share one mutation clock per table. This
-        // keeps the stamp table bounded while validation still compares the
-        // exact scalar value recorded by the reader.
+        // Scalar code-table reads share one mutation clock per table. Page
+        // and PDF roots currently use full canonical projections, so each
+        // family likewise shares one conservative mutation clock. This keeps
+        // the stamp table bounded while validation still compares the exact
+        // key's recorded value.
         let key = match key.canonical() {
             DependencyKey::Code { table, .. } => DependencyKey::CodeGeneration(table),
+            DependencyKey::Page(_) => DependencyKey::Page(DependencyPageField::Contents),
+            DependencyKey::Engine(
+                DependencyEngineField::PdfExternalImages
+                | DependencyEngineField::PdfObjects
+                | DependencyEngineField::PdfPositions
+                | DependencyEngineField::PdfForms
+                | DependencyEngineField::PdfPages,
+            ) => DependencyKey::Engine(DependencyEngineField::PdfObjects),
             key => key,
         };
         self.changed
@@ -468,6 +478,14 @@ impl DependencyTracker {
     pub fn mark_changed(&mut self, key: DependencyKey) -> ChangedAt {
         let key = match key.canonical() {
             DependencyKey::Code { table, .. } => DependencyKey::CodeGeneration(table),
+            DependencyKey::Page(_) => DependencyKey::Page(DependencyPageField::Contents),
+            DependencyKey::Engine(
+                DependencyEngineField::PdfExternalImages
+                | DependencyEngineField::PdfObjects
+                | DependencyEngineField::PdfPositions
+                | DependencyEngineField::PdfForms
+                | DependencyEngineField::PdfPages,
+            ) => DependencyKey::Engine(DependencyEngineField::PdfObjects),
             key => key,
         };
         self.revision = self

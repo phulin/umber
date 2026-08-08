@@ -168,7 +168,7 @@ aggregate keys keep their existing mutation paths.
 
 `Universe` also owns the generic tracked-region contract. Beginning returns an
 opaque mark containing only aggregate-owned dependency and environment-journal
-positions/epochs. It advances the environment epoch first, so a cell already
+positions/lineage. It advances the environment write epoch first, so a cell already
 written immediately before the region cannot coalesce away the region's first
 write. Finishing returns two deterministic detached sequences: observed
 dependencies ordered by canonical dependency key, and distinct scope-free
@@ -180,16 +180,24 @@ writes.
 
 Journal-compacting operations are a conservative boundary for this first
 generic product. A checkpoint, group exit, or rollback after the mark advances
-the environment epoch, so finish rejects the region with a typed unsupported-
-timeline result and atomically discards its observations. A region may record
-assignments inside an already-open group and finish before that group exits;
-local and global journal identities collapse to the same semantic cell.
+the dedicated journal lineage, so finish rejects the region with a typed
+unsupported-timeline result and atomically discards its observations. Group
+entry advances the write epoch without changing that lineage, so a region may
+enter a group or record assignments inside an already-open group and finish
+before that group exits; local and global journal identities collapse to the
+same semantic cell.
 Nested begin, stale or foreign marks, and unsupported cell projections also
 fail closed. Explicit abandon publishes nothing and leaves no active recorder.
 One typed poison operation retains the first unsupported-fact reason while a
 region is active and is an allocation-free no-op otherwise. Finishing a
 poisoned region clears its partial observations and returns the typed reason;
 repeated barriers cannot restore eligibility.
+Dependency-aware `Universe` getters use an atomic inactive fast path. During
+an ordinary tracked main-control operation they project supported execution
+environment, font, hyphenation, layout, page, PDF, and virtual `World` reads;
+page and PDF aggregate projections share conservative per-family mutation
+clocks. Unsupported host facts and irreversible materialization poison the
+active region before they influence execution.
 The record validates data only: it contains no transition replay authority,
 paragraph continuation, mounted output, raw substore, or checkpoint handle.
 The exact ordinary-main-control region, exhaustive read/barrier matrix,

@@ -191,7 +191,10 @@ fn packed_hyphenation_data_survives_two_format_loads_identically() {
     assert_eq!(once.hyphen_positions_for_language(0, "abcd", 0, 0), [1, 2]);
     assert_eq!(once.hyphen_positions_for_language(7, "ab", 0, 0), [2]);
     assert_eq!(once.hyphen_positions_for_language(7, "abcd", 0, 0), [2]);
-    assert_eq!(once.hyphen_positions_for_language(8, "abcd", 0, 0), []);
+    assert_eq!(
+        once.hyphen_positions_for_language(8, "abcd", 0, 0),
+        Vec::<usize>::new()
+    );
 
     let once_image = once.dump_format().expect("redump first loaded format");
     assert_eq!(once_image, image);

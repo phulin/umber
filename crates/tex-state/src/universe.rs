@@ -72,7 +72,8 @@ use crate::world::{
     WorldError, WorldSnapshot, WorldStateHashCursor, install_job_clock_params,
 };
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
 
@@ -467,21 +468,27 @@ impl ShipoutTransaction<'_> {
         effect_pos: EffectPos,
         reservation: crate::ArtifactPublicationReservation,
     ) -> Result<(ContentHash, crate::ArtifactPublicationRecord), WorldError> {
+        if self.world.commit_mode() != WorldCommitMode::Retained {
+            self.poison_tracked_region(TrackedRegionBarrier::IrreversibleEffect);
+        }
         let output_parameters = self.current_pdf_output_parameters();
         let page_parameters = self.current_pdf_page_parameters();
         let pk_mode = self.current_pdf_token_parameter(TokParam::PDF_PK_MODE);
+        self.observe_pdf_dependency(DependencyEngineField::PdfPages);
         self.pdf
             .ensure_page_capacity(output_parameters)
             .map_err(|()| WorldError::pdf_object_ids_exhausted())?;
+        self.mark_pdf_dependency_changed(DependencyEngineField::PdfPages);
         let hash_base = self.state_hash_base.clone();
         let hash = self.world.store_verified_artifact(&artifact)?;
         if self.world.commit_mode() == WorldCommitMode::Retained {
             let node_mark = self.node_mark;
             self.stores.release_shipout_nodes(node_mark);
             self.state_hash_base = self.retarget_hash_base_after_committed_boundary(hash_base);
-            self.page.set_integer(PageInteger::DeadCycles, 0);
+            self.set_page_integer(PageInteger::DeadCycles, 0);
             self.pdf
                 .commit_page(hash, output_parameters, page_parameters, pk_mode);
+            self.mark_pdf_dependency_changed(DependencyEngineField::PdfPages);
             let (bytes, render_provenance, open_out_occurrences) = artifact.into_parts();
             let record = reservation.record();
             self.world.record_artifact_commit(
@@ -506,9 +513,10 @@ impl ShipoutTransaction<'_> {
         let node_mark = self.node_mark;
         self.stores.release_shipout_nodes(node_mark);
         self.state_hash_base = self.retarget_hash_base_after_committed_boundary(hash_base);
-        self.page.set_integer(PageInteger::DeadCycles, 0);
+        self.set_page_integer(PageInteger::DeadCycles, 0);
         self.pdf
             .commit_page(hash, output_parameters, page_parameters, pk_mode);
+        self.mark_pdf_dependency_changed(DependencyEngineField::PdfPages);
         let (bytes, render_provenance, open_out_occurrences) = artifact.into_parts();
         let record = reservation.record();
         self.world.record_artifact_commit(
@@ -1102,7 +1110,12 @@ pub struct Universe {
     next_snapshot_serial: u64,
     fork_origin: Option<ForkOrigin>,
     /// Operational memo metadata; excluded from snapshots and semantic hashes.
-    dependencies: DependencyRuntime,
+    dependencies: Mutex<DependencyRuntime>,
+    /// Allocation-free inactive fast path for dependency-aware getters.
+    dependency_region_active: AtomicBool,
+    /// Prevents dependency projection from recursively observing the getters
+    /// used to build that same canonical projection.
+    dependency_projection_active: AtomicBool,
     /// Driver-requested memo configuration. Execution consumes this once;
     /// retained values and acceptance policy never live in aggregate state.
     pure_memo_config: Option<crate::PureMemoConfig>,
@@ -1192,6 +1205,21 @@ struct DiagnosticPosition {
     /// paragraph inside a box inside a paragraph report its own start line
     /// rather than the outer paragraph's.
     paragraph_start_lines: Vec<i32>,
+}
+
+struct DependencyProjectionGuard<'a>(&'a AtomicBool);
+
+impl<'a> DependencyProjectionGuard<'a> {
+    fn enter(active: &'a AtomicBool) -> Self {
+        debug_assert!(!active.swap(true, Ordering::Relaxed));
+        Self(active)
+    }
+}
+
+impl Drop for DependencyProjectionGuard<'_> {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Relaxed);
+    }
 }
 
 /// Canonical semantic hasher for executor-owned state at a named boundary.
@@ -1359,7 +1387,14 @@ impl Clone for Universe {
             state_hash_projection_cache: self.state_hash_projection_cache.clone(),
             next_snapshot_serial: self.next_snapshot_serial,
             fork_origin: self.fork_origin,
-            dependencies: self.dependencies.clone(),
+            dependencies: Mutex::new(
+                self.dependencies
+                    .lock()
+                    .expect("dependency runtime mutex is not poisoned")
+                    .clone(),
+            ),
+            dependency_region_active: AtomicBool::new(false),
+            dependency_projection_active: AtomicBool::new(false),
             pure_memo_config: self.pure_memo_config,
             pure_memo_capability: self.pure_memo_capability.clone(),
             geometry_observations: self.geometry_observations.clone(),
@@ -1581,7 +1616,9 @@ impl Universe {
             state_hash_projection_cache: StateHashProjectionCache::default(),
             next_snapshot_serial: 0,
             fork_origin: None,
-            dependencies: DependencyRuntime::default(),
+            dependencies: Mutex::new(DependencyRuntime::default()),
+            dependency_region_active: AtomicBool::new(false),
+            dependency_projection_active: AtomicBool::new(false),
             pure_memo_config: None,
             pure_memo_capability: std::sync::Weak::new(),
             geometry_observations: Vec::new(),
@@ -1697,7 +1734,12 @@ impl Universe {
     /// to every cell after this boundary even when the preceding operation
     /// wrote the same cell in its epoch.
     pub fn begin_tracked_region(&mut self) -> Result<TrackedRegionMark, TrackedRegionError> {
-        let dependency = self.dependencies.begin_region()?;
+        let dependency = self
+            .dependencies
+            .get_mut()
+            .expect("dependency runtime mutex is not poisoned")
+            .begin_region()?;
+        self.dependency_region_active.store(true, Ordering::Release);
         let environment = self.stores.begin_dependency_journal_region();
         Ok(TrackedRegionMark {
             owner: self.owner.snapshot_owner(),
@@ -1708,20 +1750,29 @@ impl Universe {
 
     #[must_use]
     pub fn dependency_region_is_active(&self) -> bool {
-        self.dependencies.is_recording()
+        self.dependency_region_active.load(Ordering::Acquire)
     }
 
     /// Records a detached semantic read when a region is active.
     #[inline(always)]
-    pub fn record_dependency(&mut self, key: DependencyKey, value: DependencyValue) {
-        self.dependencies.record(key, value);
+    pub fn record_dependency(&self, key: DependencyKey, value: DependencyValue) {
+        self.dependencies
+            .lock()
+            .expect("dependency runtime mutex is not poisoned")
+            .record(key, value);
     }
 
     /// Marks an active tracked region unsupported without affecting TeX state.
     /// The first reason wins; with no recorder this is an allocation-free no-op.
     #[inline(always)]
-    pub fn poison_tracked_region(&mut self, barrier: TrackedRegionBarrier) {
-        self.dependencies.poison(barrier);
+    pub fn poison_tracked_region(&self, barrier: TrackedRegionBarrier) {
+        if !self.dependency_region_is_active() {
+            return;
+        }
+        self.dependencies
+            .lock()
+            .expect("dependency runtime mutex is not poisoned")
+            .poison(barrier);
     }
 
     /// Finishes a tracked region into deterministic detached evidence.
@@ -1733,11 +1784,26 @@ impl Universe {
         mark: TrackedRegionMark,
     ) -> Result<TrackedRegionRecord, TrackedRegionError> {
         if mark.owner != self.owner.snapshot_owner() {
-            self.dependencies.abandon_active_region();
+            self.dependencies
+                .get_mut()
+                .expect("dependency runtime mutex is not poisoned")
+                .abandon_active_region();
+            self.dependency_region_active
+                .store(false, Ordering::Release);
             return Err(TrackedRegionError::ForeignMark);
         }
-        if let Err(error) = self.dependencies.ensure_region(&mark.dependency) {
-            self.dependencies.abandon_active_region();
+        if let Err(error) = self
+            .dependencies
+            .get_mut()
+            .expect("dependency runtime mutex is not poisoned")
+            .ensure_region(&mark.dependency)
+        {
+            self.dependencies
+                .get_mut()
+                .expect("dependency runtime mutex is not poisoned")
+                .abandon_active_region();
+            self.dependency_region_active
+                .store(false, Ordering::Release);
             return Err(error.into());
         }
         let cells = match self
@@ -1746,19 +1812,38 @@ impl Universe {
         {
             Ok(cells) => cells,
             Err(_) => {
-                self.dependencies.abandon_active_region();
+                self.dependencies
+                    .get_mut()
+                    .expect("dependency runtime mutex is not poisoned")
+                    .abandon_active_region();
+                self.dependency_region_active
+                    .store(false, Ordering::Release);
                 return Err(TrackedRegionError::UnsupportedTimelineChange);
             }
         };
         let mut environment_writes = Vec::with_capacity(cells.len());
+        let projection_guard = DependencyProjectionGuard::enter(&self.dependency_projection_active);
         for cell in cells {
             let Some(value) = self.tracked_environment_cell_value(cell) else {
-                self.dependencies.abandon_active_region();
+                self.dependencies
+                    .get_mut()
+                    .expect("dependency runtime mutex is not poisoned")
+                    .abandon_active_region();
+                self.dependency_region_active
+                    .store(false, Ordering::Release);
                 return Err(TrackedRegionError::UnsupportedEnvironmentCell(cell));
             };
             environment_writes.push(TrackedEnvironmentWrite { cell, value });
         }
-        let observations = self.dependencies.finish_region(mark.dependency)?;
+        drop(projection_guard);
+        let observations = self
+            .dependencies
+            .get_mut()
+            .expect("dependency runtime mutex is not poisoned")
+            .finish_region(mark.dependency);
+        self.dependency_region_active
+            .store(false, Ordering::Release);
+        let observations = observations?;
         Ok(TrackedRegionRecord {
             observations,
             environment_writes,
@@ -1771,36 +1856,98 @@ impl Universe {
         mark: TrackedRegionMark,
     ) -> Result<(), TrackedRegionError> {
         if mark.owner != self.owner.snapshot_owner() {
-            self.dependencies.abandon_active_region();
+            self.dependencies
+                .get_mut()
+                .expect("dependency runtime mutex is not poisoned")
+                .abandon_active_region();
+            self.dependency_region_active
+                .store(false, Ordering::Release);
             return Err(TrackedRegionError::ForeignMark);
         }
-        self.dependencies.abandon_region(mark.dependency)?;
+        let abandoned = self
+            .dependencies
+            .get_mut()
+            .expect("dependency runtime mutex is not poisoned")
+            .abandon_region(mark.dependency);
+        self.dependency_region_active
+            .store(false, Ordering::Release);
+        abandoned?;
         Ok(())
     }
 
     /// Marks one observable fact after its aggregate mutation barrier.
     pub fn mark_dependency_changed(&mut self, key: DependencyKey) -> ChangedAt {
-        self.dependencies.mark_changed(key)
+        self.dependencies
+            .get_mut()
+            .expect("dependency runtime mutex is not poisoned")
+            .mark_changed(key)
     }
 
     /// Registers one memo read for later changed-at invalidation.
-    pub fn track_dependency(&mut self, key: DependencyKey) -> ChangedAt {
-        self.dependencies.track(key)
+    pub fn track_dependency(&self, key: DependencyKey) -> ChangedAt {
+        self.dependencies
+            .lock()
+            .expect("dependency runtime mutex is not poisoned")
+            .track(key)
     }
 
     /// Records one typed state read using its allocation-independent semantic
     /// value. Reads outside an active region are intentionally ignored.
-    pub fn observe_semantic_dependency(&mut self, key: DependencyKey) {
-        self.track_dependency(key);
-        if let Some(value) = self.semantic_dependency_value(key) {
-            self.record_dependency(key, value);
+    pub fn observe_semantic_dependency(&self, key: DependencyKey) {
+        if self.dependency_projection_active.load(Ordering::Relaxed)
+            || !self.dependency_region_is_active()
+        {
+            return;
         }
+        let projection_guard = DependencyProjectionGuard::enter(&self.dependency_projection_active);
+        let value = self.semantic_dependency_value(key);
+        drop(projection_guard);
+        self.track_dependency(key);
+        if let Some(value) = value {
+            self.record_dependency(key, value);
+        } else {
+            self.poison_tracked_region(TrackedRegionBarrier::UnsupportedExecutionState);
+        }
+    }
+
+    #[inline(always)]
+    fn observe_cell_dependency(&self, bank: BankTag, index: u32) {
+        self.observe_semantic_dependency(DependencyKey::Cell(CellId::new(bank, index)));
+    }
+
+    #[inline(always)]
+    fn observe_font_dependency(&self, font: FontId, field: DependencyFontField, index: u32) {
+        self.observe_semantic_dependency(DependencyKey::Font {
+            field,
+            font: font.raw(),
+            index,
+        });
+    }
+
+    #[inline(always)]
+    fn observe_pdf_dependency(&self, field: DependencyEngineField) {
+        self.observe_semantic_dependency(DependencyKey::Engine(field));
+    }
+
+    #[inline(always)]
+    fn mark_pdf_dependency_changed(&mut self, _field: DependencyEngineField) {
+        // PDF ledger projections deliberately use one canonical full-state
+        // identity and one shared mutation stamp for now, so a mutation cannot
+        // leave a differently keyed full projection falsely green.
+        self.dependencies
+            .get_mut()
+            .expect("dependency runtime mutex is not poisoned")
+            .mark_changed(DependencyKey::Engine(DependencyEngineField::PdfObjects));
     }
 
     /// Returns the current changed-at stamp for validation.
     #[must_use]
     pub fn dependency_changed_at(&self, key: DependencyKey) -> ChangedAt {
-        self.dependencies.tracker().changed_at(key)
+        self.dependencies
+            .lock()
+            .expect("dependency runtime mutex is not poisoned")
+            .tracker()
+            .changed_at(key)
     }
 
     /// Validates a recorded region through the aggregate state boundary.
@@ -1810,9 +1957,13 @@ impl Universe {
         observations: &mut [ObservedDependency],
         read_current: impl FnMut(DependencyKey) -> DependencyValue,
     ) -> bool {
-        self.dependencies
+        let tracker = self
+            .dependencies
+            .lock()
+            .expect("dependency runtime mutex is not poisoned")
             .tracker()
-            .validate_region(observations, read_current)
+            .clone();
+        tracker.validate_region(observations, read_current)
     }
 
     /// Validates a recorded region and identifies its first changed dependency.
@@ -1821,9 +1972,13 @@ impl Universe {
         observations: &mut [ObservedDependency],
         read_current: impl FnMut(DependencyKey) -> DependencyValue,
     ) -> Option<DependencyKey> {
-        self.dependencies
+        let tracker = self
+            .dependencies
+            .lock()
+            .expect("dependency runtime mutex is not poisoned")
             .tracker()
-            .validate_region_failure(observations, read_current)
+            .clone();
+        tracker.validate_region_failure(observations, read_current)
     }
 
     /// Validates immutable shared observations without backdating stamps.
@@ -1832,9 +1987,13 @@ impl Universe {
         observations: &[ObservedDependency],
         read_current: impl FnMut(DependencyKey) -> DependencyValue,
     ) -> Option<DependencyKey> {
-        self.dependencies
+        let tracker = self
+            .dependencies
+            .lock()
+            .expect("dependency runtime mutex is not poisoned")
             .tracker()
-            .validate_region_failure_readonly(observations, read_current)
+            .clone();
+        tracker.validate_region_failure_readonly(observations, read_current)
     }
 
     /// Reads one state-owned dependency as an allocation-independent value.
@@ -2113,6 +2272,39 @@ impl Universe {
             DependencyKey::Engine(DependencyEngineField::InteractionMode) => Some(
                 DependencyValue::Integer(i64::from(encode_interaction_mode(self.interaction_mode))),
             ),
+            DependencyKey::Engine(DependencyEngineField::LastNodeType) => Some(
+                DependencyValue::Integer(i64::from(self.page.last_node_type())),
+            ),
+            DependencyKey::Engine(DependencyEngineField::PdfTimer) => Some(
+                DependencyValue::Integer(i64::from(self.world.pdf_elapsed_time())),
+            ),
+            DependencyKey::Engine(DependencyEngineField::PdfRandom) => {
+                Some(DependencyValue::Projection {
+                    schema: 1,
+                    fingerprint: self
+                        .hash_exact_world_state(&mut StateHashProjectionCache::default())
+                        .fingerprint(),
+                })
+            }
+            DependencyKey::Engine(DependencyEngineField::PdfShellEscape) => Some(
+                DependencyValue::Integer(i64::from(self.pdf_shell_escape_status())),
+            ),
+            DependencyKey::Engine(DependencyEngineField::PageInsertions) => {
+                Some(DependencyValue::Projection {
+                    schema: 1,
+                    fingerprint: self.page_memo_fingerprint(),
+                })
+            }
+            DependencyKey::Engine(
+                DependencyEngineField::PdfExternalImages
+                | DependencyEngineField::PdfObjects
+                | DependencyEngineField::PdfPositions
+                | DependencyEngineField::PdfForms
+                | DependencyEngineField::PdfPages,
+            ) => Some(DependencyValue::Projection {
+                schema: 1,
+                fingerprint: self.pdf.hash_fragment().fingerprint(),
+            }),
             DependencyKey::HyphenationPatterns(language) => Some(DependencyValue::Projection {
                 schema: 1,
                 fingerprint: self.stores.hyphenation_dependency_fingerprint(language, 0),
@@ -2125,13 +2317,21 @@ impl Universe {
                 schema: 1,
                 fingerprint: self.stores.hyphenation_dependency_fingerprint(language, 2),
             }),
+            DependencyKey::Page(_) => Some(DependencyValue::Projection {
+                schema: 1,
+                fingerprint: self.page_memo_fingerprint(),
+            }),
+            DependencyKey::World { .. } => Some(DependencyValue::Projection {
+                schema: 1,
+                fingerprint: self
+                    .hash_exact_world_state(&mut StateHashProjectionCache::default())
+                    .fingerprint(),
+            }),
             DependencyKey::InputRecord(_)
             | DependencyKey::PhysicalLine { .. }
             | DependencyKey::InputLine
             | DependencyKey::InputStack
             | DependencyKey::Engine(_)
-            | DependencyKey::Page(_)
-            | DependencyKey::World { .. }
             | DependencyKey::Query { .. } => None,
         }
     }
@@ -2251,6 +2451,8 @@ impl Universe {
 
     fn mark_code_changed(&mut self, table: DependencyCodeTable, _ch: char) {
         self.dependencies
+            .get_mut()
+            .expect("dependency runtime mutex is not poisoned")
             .mark_changed(DependencyKey::CodeGeneration(table));
     }
 
@@ -2274,60 +2476,84 @@ impl Universe {
             | BankTag::TokParam
             | BankTag::CurrentFont
             | BankTag::MathFamilyFont => {
-                self.dependencies.mark_changed(DependencyKey::Cell(cell));
+                self.dependencies
+                    .get_mut()
+                    .expect("dependency runtime mutex is not poisoned")
+                    .mark_changed(DependencyKey::Cell(cell));
             }
             BankTag::FontDimen => {
                 let font = index >> 17;
-                self.dependencies.mark_changed(DependencyKey::Font {
-                    field: DependencyFontField::Parameters,
-                    font,
-                    index: 0,
-                });
-                self.dependencies.mark_changed(DependencyKey::Font {
-                    field: DependencyFontField::Parameter,
-                    font,
-                    index: (index & ((1 << 17) - 1)) + 1,
-                });
+                self.dependencies
+                    .get_mut()
+                    .expect("dependency runtime mutex is not poisoned")
+                    .mark_changed(DependencyKey::Font {
+                        field: DependencyFontField::Parameters,
+                        font,
+                        index: 0,
+                    });
+                self.dependencies
+                    .get_mut()
+                    .expect("dependency runtime mutex is not poisoned")
+                    .mark_changed(DependencyKey::Font {
+                        field: DependencyFontField::Parameter,
+                        font,
+                        index: (index & ((1 << 17) - 1)) + 1,
+                    });
             }
             BankTag::FontParamLen => {
-                self.dependencies.mark_changed(DependencyKey::Font {
-                    field: DependencyFontField::Parameters,
-                    font: index,
-                    index: 0,
-                });
-                self.dependencies.mark_changed(DependencyKey::Font {
-                    field: DependencyFontField::ParameterCount,
-                    font: index,
-                    index: 0,
-                });
+                self.dependencies
+                    .get_mut()
+                    .expect("dependency runtime mutex is not poisoned")
+                    .mark_changed(DependencyKey::Font {
+                        field: DependencyFontField::Parameters,
+                        font: index,
+                        index: 0,
+                    });
+                self.dependencies
+                    .get_mut()
+                    .expect("dependency runtime mutex is not poisoned")
+                    .mark_changed(DependencyKey::Font {
+                        field: DependencyFontField::ParameterCount,
+                        font: index,
+                        index: 0,
+                    });
             }
             BankTag::FontHyphenChar | BankTag::FontSkewChar => {
-                self.dependencies.mark_changed(DependencyKey::Font {
-                    field: if cell.bank() == BankTag::FontHyphenChar {
-                        DependencyFontField::HyphenChar
-                    } else {
-                        DependencyFontField::SkewChar
-                    },
-                    font: index,
-                    index: 0,
-                });
+                self.dependencies
+                    .get_mut()
+                    .expect("dependency runtime mutex is not poisoned")
+                    .mark_changed(DependencyKey::Font {
+                        field: if cell.bank() == BankTag::FontHyphenChar {
+                            DependencyFontField::HyphenChar
+                        } else {
+                            DependencyFontField::SkewChar
+                        },
+                        font: index,
+                        index: 0,
+                    });
             }
             BankTag::PdfTagCode | BankTag::PdfNoLigatures => {
-                self.dependencies.mark_changed(DependencyKey::Font {
-                    field: DependencyFontField::PdfShaping,
-                    font: if cell.bank() == BankTag::PdfTagCode {
-                        index >> 8
-                    } else {
-                        index
-                    },
-                    index: 0,
-                });
-                if cell.bank() == BankTag::PdfTagCode {
-                    self.dependencies.mark_changed(DependencyKey::Font {
-                        field: DependencyFontField::PdfCode,
-                        font: index >> 8,
-                        index: 3 * 256 + (index & 0xff),
+                self.dependencies
+                    .get_mut()
+                    .expect("dependency runtime mutex is not poisoned")
+                    .mark_changed(DependencyKey::Font {
+                        field: DependencyFontField::PdfShaping,
+                        font: if cell.bank() == BankTag::PdfTagCode {
+                            index >> 8
+                        } else {
+                            index
+                        },
+                        index: 0,
                     });
+                if cell.bank() == BankTag::PdfTagCode {
+                    self.dependencies
+                        .get_mut()
+                        .expect("dependency runtime mutex is not poisoned")
+                        .mark_changed(DependencyKey::Font {
+                            field: DependencyFontField::PdfCode,
+                            font: index >> 8,
+                            index: 3 * 256 + (index & 0xff),
+                        });
                 }
             }
             BankTag::PdfLpCode
@@ -2349,11 +2575,14 @@ impl Universe {
                     BankTag::PdfKnacCode => 8,
                     _ => unreachable!("matched one exact PDF font-code bank"),
                 };
-                self.dependencies.mark_changed(DependencyKey::Font {
-                    field: DependencyFontField::PdfCode,
-                    font: index >> 8,
-                    index: table * 256 + (index & 0xff),
-                });
+                self.dependencies
+                    .get_mut()
+                    .expect("dependency runtime mutex is not poisoned")
+                    .mark_changed(DependencyKey::Font {
+                        field: DependencyFontField::PdfCode,
+                        font: index >> 8,
+                        index: table * 256 + (index & 0xff),
+                    });
             }
         }
     }
@@ -2608,7 +2837,9 @@ impl Universe {
             state_hash_projection_cache: StateHashProjectionCache::default(),
             next_snapshot_serial: 0,
             fork_origin: None,
-            dependencies: DependencyRuntime::default(),
+            dependencies: Mutex::new(DependencyRuntime::default()),
+            dependency_region_active: AtomicBool::new(false),
+            dependency_projection_active: AtomicBool::new(false),
             pure_memo_config: None,
             pure_memo_capability: std::sync::Weak::new(),
             geometry_observations: Vec::new(),
@@ -2721,7 +2952,11 @@ impl Universe {
             pdf: self.pdf.snapshot(),
             state_hash_base: self.state_hash_base.clone(),
             state_hash_projection_cache: self.state_hash_projection_cache.clone(),
-            dependency_tracker: self.dependencies.snapshot_tracker(),
+            dependency_tracker: self
+                .dependencies
+                .lock()
+                .expect("dependency runtime mutex is not poisoned")
+                .snapshot_tracker(),
         }
     }
 
@@ -2742,6 +2977,8 @@ impl Universe {
         self.state_hash_base = rollback.state_hash_base;
         self.state_hash_projection_cache = rollback.state_hash_projection_cache;
         self.dependencies
+            .get_mut()
+            .expect("dependency runtime mutex is not poisoned")
             .restore_tracker(&rollback.dependency_tracker);
     }
 
@@ -2804,7 +3041,11 @@ impl Universe {
             pdf: self.pdf.snapshot(),
             exact_state_identity,
             state_hash_projection_cache: self.state_hash_projection_cache.clone(),
-            dependency_tracker: self.dependencies.snapshot_tracker(),
+            dependency_tracker: self
+                .dependencies
+                .lock()
+                .expect("dependency runtime mutex is not poisoned")
+                .snapshot_tracker(),
             state_hash,
             state_hash_base: next_hash_base,
             geometry_observations_len: self.geometry_observations.len(),
@@ -2851,6 +3092,8 @@ impl Universe {
         self.state_hash_base = snapshot.state_hash_base.clone();
         self.state_hash_projection_cache = snapshot.state_hash_projection_cache.clone();
         self.dependencies
+            .get_mut()
+            .expect("dependency runtime mutex is not poisoned")
             .restore_tracker(&snapshot.dependency_tracker);
         self.geometry_observations
             .truncate(snapshot.geometry_observations_len);
@@ -2872,6 +3115,8 @@ impl Universe {
         self.state_hash_base = snapshot.state_hash_base.clone();
         self.state_hash_projection_cache = snapshot.state_hash_projection_cache.clone();
         self.dependencies
+            .get_mut()
+            .expect("dependency runtime mutex is not poisoned")
             .restore_tracker(&snapshot.dependency_tracker);
         self.geometry_observations
             .truncate(snapshot.geometry_observations_len);
@@ -2893,6 +3138,8 @@ impl Universe {
         self.state_hash_base = snapshot.state_hash_base.clone();
         self.state_hash_projection_cache = snapshot.state_hash_projection_cache.clone();
         self.dependencies
+            .get_mut()
+            .expect("dependency runtime mutex is not poisoned")
             .restore_tracker(&snapshot.dependency_tracker);
         self.geometry_observations
             .truncate(snapshot.geometry_observations_len);
@@ -3205,11 +3452,48 @@ impl Universe {
         &self.world
     }
 
+    /// Reads one virtual output-stream state through the dependency boundary.
+    #[must_use]
+    pub fn output_stream_is_open(&self, stream: StreamSlot) -> bool {
+        self.observe_semantic_dependency(DependencyKey::World {
+            field: DependencyWorldField::OutputStream,
+            index: u64::from(stream.raw()),
+        });
+        self.world.write_stream_is_open(stream)
+    }
+
+    /// Applies one virtual output-stream open through the dependency boundary.
+    pub fn open_output_stream(&mut self, stream: StreamSlot, target: String) {
+        self.world.open_out(stream, target);
+        self.dependencies
+            .get_mut()
+            .expect("dependency runtime mutex is not poisoned")
+            .mark_changed(DependencyKey::World {
+                field: DependencyWorldField::OutputStream,
+                index: u64::from(stream.raw()),
+            });
+    }
+
+    /// Applies one virtual output-stream close through the dependency boundary.
+    pub fn close_output_stream(&mut self, stream: StreamSlot) {
+        self.world.close_out(stream);
+        self.dependencies
+            .get_mut()
+            .expect("dependency runtime mutex is not poisoned")
+            .mark_changed(DependencyKey::World {
+                field: DependencyWorldField::OutputStream,
+                index: u64::from(stream.raw()),
+            });
+    }
+
     /// Mutates the external-effect capability object through the Universe boundary.
     pub fn world_mut(&mut self) -> &mut World {
         // This intentionally broad escape hatch is retained for top-level
         // drivers. Capability-specific paths below mark narrower World keys.
-        self.dependencies.invalidate_all();
+        self.dependencies
+            .get_mut()
+            .expect("dependency runtime mutex is not poisoned")
+            .invalidate_all();
         &mut self.world
     }
 
@@ -3218,15 +3502,22 @@ impl Universe {
     pub fn record_deferred_write(&mut self, stream: StreamSlot, tokens: TokenListId) {
         self.stores.assert_live_token_list(tokens);
         self.world.record_deferred_write(stream, tokens);
-        self.dependencies.mark_changed(DependencyKey::World {
-            field: DependencyWorldField::OutputStream,
-            index: u64::from(stream.raw()),
-        });
+        self.dependencies
+            .get_mut()
+            .expect("dependency runtime mutex is not poisoned")
+            .mark_changed(DependencyKey::World {
+                field: DependencyWorldField::OutputStream,
+                index: u64::from(stream.raw()),
+            });
     }
 
     /// Marks the start of node allocations owned by one in-progress shipout.
     #[must_use]
     pub fn begin_shipout(&mut self) -> ShipoutTransaction<'_> {
+        self.observe_semantic_dependency(DependencyKey::World {
+            field: DependencyWorldField::EffectPolicy,
+            index: 0,
+        });
         let rollback = self.capture_scoped_rollback();
         let node_mark = self.stores.shipout_node_mark();
         ShipoutTransaction {
@@ -3254,15 +3545,19 @@ impl Universe {
         if self.world.commit_mode() == WorldCommitMode::Retained {
             return Ok(());
         }
+        self.poison_tracked_region(TrackedRegionBarrier::IrreversibleEffect);
         let hash_base = self.state_hash_base.clone();
         if let Err(err) = self.world.commit_effects(effect_pos) {
             self.state_hash_base = self.retarget_hash_base_after_committed_boundary(hash_base);
             return Err(err);
         }
-        self.dependencies.mark_changed(DependencyKey::World {
-            field: DependencyWorldField::MaterializationBarrier,
-            index: 0,
-        });
+        self.dependencies
+            .get_mut()
+            .expect("dependency runtime mutex is not poisoned")
+            .mark_changed(DependencyKey::World {
+                field: DependencyWorldField::MaterializationBarrier,
+                index: 0,
+            });
         self.state_hash_base = self.retarget_hash_base_after_committed_boundary(hash_base);
         Ok(())
     }
@@ -3429,7 +3724,10 @@ impl Universe {
     pub fn set_input_summary(&mut self, summary: InputSummary) {
         self.stores.assert_live_input_summary(&self.world, &summary);
         self.input_summary = summary;
-        self.dependencies.mark_changed(DependencyKey::InputStack);
+        self.dependencies
+            .get_mut()
+            .expect("dependency runtime mutex is not poisoned")
+            .mark_changed(DependencyKey::InputStack);
     }
 
     /// tex.web's `line`: the innermost open file's current line number, or 0
@@ -3514,16 +3812,22 @@ impl Universe {
 
     /// Returns the current interaction mode.
     #[must_use]
-    pub const fn interaction_mode(&self) -> InteractionMode {
+    pub fn interaction_mode(&self) -> InteractionMode {
+        self.observe_semantic_dependency(DependencyKey::Engine(
+            DependencyEngineField::InteractionMode,
+        ));
         self.interaction_mode
     }
 
     /// Sets the current interaction mode.
     pub fn set_interaction_mode(&mut self, mode: InteractionMode) {
         self.interaction_mode = mode;
-        self.dependencies.mark_changed(DependencyKey::Engine(
-            DependencyEngineField::InteractionMode,
-        ));
+        self.dependencies
+            .get_mut()
+            .expect("dependency runtime mutex is not poisoned")
+            .mark_changed(DependencyKey::Engine(
+                DependencyEngineField::InteractionMode,
+            ));
     }
 
     pub fn set_pdf_match_state(
@@ -3534,25 +3838,32 @@ impl Universe {
         matched: bool,
     ) {
         self.pdf.set_match(haystack, captures, slot_count, matched);
+        self.mark_pdf_dependency_changed(DependencyEngineField::PdfObjects);
     }
 
     #[must_use]
     pub fn pdf_match_capture(&self, index: u32) -> Option<(u32, &[u8])> {
+        self.observe_pdf_dependency(DependencyEngineField::PdfObjects);
         self.pdf.match_capture(index)
     }
 
     #[must_use]
     pub fn pdf_elapsed_time(&self) -> i32 {
+        self.observe_semantic_dependency(DependencyKey::Engine(DependencyEngineField::PdfTimer));
         self.world.pdf_elapsed_time()
     }
 
     #[must_use]
     pub fn pdf_random_seed(&self) -> i32 {
+        self.observe_semantic_dependency(DependencyKey::Engine(DependencyEngineField::PdfRandom));
         self.world.pdf_random_seed()
     }
 
     #[must_use]
     pub fn pdf_shell_escape_status(&self) -> i32 {
+        self.observe_semantic_dependency(DependencyKey::Engine(
+            DependencyEngineField::PdfShellEscape,
+        ));
         match self.world.shell_escape_policy() {
             ShellEscapePolicy::Disabled => 0,
             ShellEscapePolicy::Enabled => 1,
@@ -3561,45 +3872,64 @@ impl Universe {
     }
 
     pub fn pdf_uniform_deviate(&mut self, bound: i32) -> i32 {
-        self.world.pdf_uniform_deviate(bound)
+        self.observe_semantic_dependency(DependencyKey::Engine(DependencyEngineField::PdfRandom));
+        let value = self.world.pdf_uniform_deviate(bound);
+        self.dependencies
+            .get_mut()
+            .expect("dependency runtime mutex is not poisoned")
+            .mark_changed(DependencyKey::Engine(DependencyEngineField::PdfRandom));
+        value
     }
 
     pub fn pdf_normal_deviate(&mut self) -> i32 {
-        self.world.pdf_normal_deviate()
+        self.observe_semantic_dependency(DependencyKey::Engine(DependencyEngineField::PdfRandom));
+        let value = self.world.pdf_normal_deviate();
+        self.dependencies
+            .get_mut()
+            .expect("dependency runtime mutex is not poisoned")
+            .mark_changed(DependencyKey::Engine(DependencyEngineField::PdfRandom));
+        value
     }
 
     /// Enables checkpointed PDF object allocation for this timeline.
     pub fn enable_pdf_output(&mut self) {
         self.pdf.enable();
+        self.mark_pdf_dependency_changed(DependencyEngineField::PdfObjects);
     }
 
     #[must_use]
-    pub const fn pdf_output_enabled(&self) -> bool {
+    pub fn pdf_output_enabled(&self) -> bool {
+        self.observe_pdf_dependency(DependencyEngineField::PdfObjects);
         self.pdf.enabled()
     }
 
     #[must_use]
     pub fn pdf_pages(&self) -> &[crate::PdfPageRecord] {
+        self.observe_pdf_dependency(DependencyEngineField::PdfPages);
         self.pdf.pages()
     }
 
     pub fn set_pdf_space_font_name(&mut self, name: Vec<u8>) {
         self.pdf.set_space_font_name(name);
+        self.mark_pdf_dependency_changed(DependencyEngineField::PdfObjects);
     }
 
     #[must_use]
     pub fn pdf_space_font_name(&self, id: u32) -> Option<&[u8]> {
+        self.observe_pdf_dependency(DependencyEngineField::PdfObjects);
         self.pdf.space_font_name(id)
     }
 
     #[must_use]
-    pub const fn pdf_next_object_id(&self) -> u32 {
+    pub fn pdf_next_object_id(&self) -> u32 {
+        self.observe_pdf_dependency(DependencyEngineField::PdfObjects);
         self.pdf.next_object()
     }
 
     /// Returns the output controls fixed by the first committed shipout.
     #[must_use]
-    pub const fn fixed_pdf_output_parameters(&self) -> Option<PdfOutputParameters> {
+    pub fn fixed_pdf_output_parameters(&self) -> Option<PdfOutputParameters> {
+        self.observe_pdf_dependency(DependencyEngineField::PdfPages);
         self.pdf.output_parameters()
     }
 
@@ -3622,7 +3952,8 @@ impl Universe {
 
     /// Returns the PK mode consumed when PDF output was first initialized.
     #[must_use]
-    pub const fn fixed_pdf_pk_mode(&self) -> Option<TokenListId> {
+    pub fn fixed_pdf_pk_mode(&self) -> Option<TokenListId> {
+        self.observe_pdf_dependency(DependencyEngineField::PdfPages);
         self.pdf.pk_mode()
     }
 
@@ -3632,11 +3963,16 @@ impl Universe {
         id: PdfExternalImageId,
         metadata: PdfExternalImageMetadata,
     ) -> Result<(), PdfExternalImageRegistrationError> {
-        self.pdf.register_external_image(id, metadata)
+        let result = self.pdf.register_external_image(id, metadata);
+        if result.is_ok() {
+            self.mark_pdf_dependency_changed(DependencyEngineField::PdfExternalImages);
+        }
+        result
     }
 
     #[must_use]
     pub fn pdf_external_image(&self, id: PdfExternalImageId) -> Option<PdfExternalImageMetadata> {
+        self.observe_pdf_dependency(DependencyEngineField::PdfExternalImages);
         self.pdf.external_image(id)
     }
 
@@ -3652,11 +3988,17 @@ impl Universe {
         restore_at_page_start: bool,
         initial: Vec<u8>,
     ) -> Result<u32, crate::PdfColorStackCapacityError> {
-        self.pdf
-            .allocate_color_stack(mode, restore_at_page_start, initial)
+        let result = self
+            .pdf
+            .allocate_color_stack(mode, restore_at_page_start, initial);
+        if result.is_ok() {
+            self.mark_pdf_dependency_changed(DependencyEngineField::PdfObjects);
+        }
+        result
     }
 
     pub fn has_pdf_color_stack(&mut self, id: u32) -> bool {
+        self.observe_pdf_dependency(DependencyEngineField::PdfObjects);
         self.pdf.has_color_stack(id)
     }
 
@@ -3666,18 +4008,25 @@ impl Universe {
         target: crate::PdfColorStackTarget,
         action: &crate::PdfColorStackAction,
     ) -> Result<crate::PdfColorStackEmission, crate::PdfColorStackApplyError> {
-        self.pdf.apply_color_stack(id, target, action)
+        let result = self.pdf.apply_color_stack(id, target, action);
+        if result.is_ok() {
+            self.mark_pdf_dependency_changed(DependencyEngineField::PdfObjects);
+        }
+        result
     }
 
     pub fn pdf_page_color_stack_restorations(&mut self) -> Vec<crate::PdfColorStackEmission> {
+        self.observe_pdf_dependency(DependencyEngineField::PdfObjects);
         self.pdf.page_color_stack_restorations()
     }
 
-    pub const fn pdf_last_position(&self) -> (Scaled, Scaled) {
+    pub fn pdf_last_position(&self) -> (Scaled, Scaled) {
+        self.observe_pdf_dependency(DependencyEngineField::PdfPositions);
         self.pdf.last_position()
     }
 
-    pub const fn pdf_snap_reference(&self) -> (Scaled, Scaled) {
+    pub fn pdf_snap_reference(&self) -> (Scaled, Scaled) {
+        self.observe_pdf_dependency(DependencyEngineField::PdfPositions);
         self.pdf.snap_reference()
     }
 
@@ -3688,19 +4037,23 @@ impl Universe {
     ) {
         self.pdf
             .publish_traversal_positions(last_position, snap_reference);
+        self.mark_pdf_dependency_changed(DependencyEngineField::PdfPositions);
     }
 
     /// Records a parsed, host-neutral font-map mutation.
     pub fn push_pdf_font_map(&mut self, operation: crate::PdfFontMapOperation) {
         self.pdf.push_font_map(operation);
+        self.mark_pdf_dependency_changed(DependencyEngineField::PdfObjects);
     }
 
     pub fn pdf_font_maps(&self) -> impl Iterator<Item = &crate::PdfFontMapOperation> {
+        self.observe_pdf_dependency(DependencyEngineField::PdfObjects);
         self.pdf.font_maps()
     }
 
     #[must_use]
     pub fn pdf_font_map_file_requests(&self) -> Vec<Vec<u8>> {
+        self.observe_pdf_dependency(DependencyEngineField::PdfObjects);
         self.pdf.font_map_file_requests()
     }
 
@@ -3711,16 +4064,19 @@ impl Universe {
     ) -> Result<(), tex_fonts::PdfFontMapError> {
         let map = tex_fonts::PdfFontMap::parse(bytes)?;
         self.pdf.provide_font_map_file(logical_name, map);
+        self.mark_pdf_dependency_changed(DependencyEngineField::PdfObjects);
         Ok(())
     }
 
     #[must_use]
     pub fn has_pdf_font_map_file(&self, logical_name: &[u8]) -> bool {
+        self.observe_pdf_dependency(DependencyEngineField::PdfObjects);
         self.pdf.has_font_map_file(logical_name)
     }
 
     #[must_use]
     pub fn authoritative_pdf_font_map_names(&self) -> Vec<Vec<u8>> {
+        self.observe_pdf_dependency(DependencyEngineField::PdfObjects);
         self.pdf
             .authoritative_font_map_names()
             .into_keys()
@@ -3729,52 +4085,63 @@ impl Universe {
 
     #[must_use]
     pub fn resolved_pdf_font_map_lines(&self) -> Vec<tex_fonts::PdfFontMapEntry> {
+        self.observe_pdf_dependency(DependencyEngineField::PdfObjects);
         self.pdf.resolved_font_map_lines()
     }
 
     #[must_use]
     pub fn pdf_font_map_duplicate_names(&self) -> Vec<Vec<u8>> {
+        self.observe_pdf_dependency(DependencyEngineField::PdfObjects);
         self.pdf.font_map_duplicate_names()
     }
 
     pub fn set_pdf_font_attribute(&mut self, font: FontId, bytes: Vec<u8>) {
         self.pdf.set_font_attribute(font, bytes);
+        self.mark_pdf_dependency_changed(DependencyEngineField::PdfObjects);
     }
 
     #[must_use]
     pub fn pdf_font_attribute(&self, font: FontId) -> &[u8] {
+        self.observe_pdf_dependency(DependencyEngineField::PdfObjects);
         self.pdf.font_attribute(font)
     }
 
     pub fn include_pdf_font_chars(&mut self, font: FontId, chars: Vec<u8>) {
         self.pdf.include_font_chars(font, chars);
+        self.mark_pdf_dependency_changed(DependencyEngineField::PdfObjects);
     }
 
     #[must_use]
     pub fn included_pdf_font_chars(&self, font: FontId) -> Vec<u8> {
+        self.observe_pdf_dependency(DependencyEngineField::PdfObjects);
         self.pdf.included_font_chars(font)
     }
 
     pub fn set_pdf_glyph_to_unicode(&mut self, mapping: crate::PdfGlyphToUnicode) {
         self.pdf.set_glyph_to_unicode(mapping);
+        self.mark_pdf_dependency_changed(DependencyEngineField::PdfObjects);
     }
 
     #[must_use]
     pub fn pdf_glyph_to_unicode(&self, tfm_name: &[u8], glyph_name: &[u8]) -> Option<&[u32]> {
+        self.observe_pdf_dependency(DependencyEngineField::PdfObjects);
         self.pdf.glyph_to_unicode(tfm_name, glyph_name)
     }
 
     #[must_use]
     pub fn has_pdf_glyph_to_unicode_mappings(&self) -> bool {
+        self.observe_pdf_dependency(DependencyEngineField::PdfObjects);
         self.pdf.has_glyph_to_unicode_mappings()
     }
 
     pub fn disable_pdf_builtin_to_unicode(&mut self, font: FontId) {
         self.pdf.disable_builtin_to_unicode(font);
+        self.mark_pdf_dependency_changed(DependencyEngineField::PdfObjects);
     }
 
     #[must_use]
     pub fn pdf_builtin_to_unicode_disabled(&self, font: FontId) -> bool {
+        self.observe_pdf_dependency(DependencyEngineField::PdfObjects);
         self.pdf.builtin_to_unicode_disabled(font)
     }
 
@@ -3787,11 +4154,13 @@ impl Universe {
     ) -> Result<(), tex_fonts::PdfType1ProgramError> {
         let program = tex_fonts::PdfType1Program::from_pfb(bytes)?;
         self.pdf.provide_type1_program(logical_name, program);
+        self.mark_pdf_dependency_changed(DependencyEngineField::PdfObjects);
         Ok(())
     }
 
     #[must_use]
     pub fn pdf_type1_program(&self, logical_name: &[u8]) -> Option<&tex_fonts::PdfType1Program> {
+        self.observe_pdf_dependency(DependencyEngineField::PdfObjects);
         self.pdf.type1_program(logical_name)
     }
 
@@ -3802,11 +4171,13 @@ impl Universe {
     ) -> Result<(), tex_fonts::PdfEncodingError> {
         let encoding = tex_fonts::PdfEncoding::parse(bytes)?;
         self.pdf.provide_encoding(logical_name, encoding);
+        self.mark_pdf_dependency_changed(DependencyEngineField::PdfObjects);
         Ok(())
     }
 
     #[must_use]
     pub fn pdf_encoding(&self, logical_name: &[u8]) -> Option<&tex_fonts::PdfEncoding> {
+        self.observe_pdf_dependency(DependencyEngineField::PdfObjects);
         self.pdf.encoding(logical_name)
     }
 
@@ -3825,6 +4196,7 @@ impl Universe {
             tex_fonts::PdfTrueTypeProgram::parse(bytes)?
         };
         self.pdf.provide_truetype_program(logical_name, program);
+        self.mark_pdf_dependency_changed(DependencyEngineField::PdfObjects);
         Ok(())
     }
 
@@ -3833,6 +4205,7 @@ impl Universe {
         &self,
         logical_name: &[u8],
     ) -> Option<&tex_fonts::PdfTrueTypeProgram> {
+        self.observe_pdf_dependency(DependencyEngineField::PdfObjects);
         self.pdf.truetype_program(logical_name)
     }
 
@@ -3845,6 +4218,7 @@ impl Universe {
     ) -> Result<(), tex_fonts::PdfPkFontError> {
         let font = tex_fonts::PdfPkFont::parse(bytes)?;
         self.pdf.provide_pk_font(request, font);
+        self.mark_pdf_dependency_changed(DependencyEngineField::PdfObjects);
         Ok(())
     }
 
@@ -3853,6 +4227,7 @@ impl Universe {
         &self,
         request: &tex_fonts::PdfPkFontRequest,
     ) -> Option<&tex_fonts::PdfPkFont> {
+        self.observe_pdf_dependency(DependencyEngineField::PdfObjects);
         self.pdf.pk_font(request)
     }
 
@@ -3862,12 +4237,19 @@ impl Universe {
         dimensions: crate::PdfExternalImageDimensions,
         color_space_object: i32,
     ) -> Result<crate::PdfExternalImageRecord, PdfObjectCapacityError> {
-        self.pdf
-            .allocate_external_image(source, dimensions, color_space_object)
+        let result = self
+            .pdf
+            .allocate_external_image(source, dimensions, color_space_object);
+        if result.is_ok() {
+            self.mark_pdf_dependency_changed(DependencyEngineField::PdfExternalImages);
+            self.mark_pdf_dependency_changed(DependencyEngineField::PdfObjects);
+        }
+        result
     }
 
     #[must_use]
     pub fn pdf_last_external_image(&self) -> Option<crate::PdfExternalImageRecord> {
+        self.observe_pdf_dependency(DependencyEngineField::PdfExternalImages);
         self.pdf.last_external_image()
     }
 
@@ -3876,11 +4258,13 @@ impl Universe {
         &self,
         id: crate::PdfExternalImageId,
     ) -> Option<crate::PdfExternalImageRecord> {
+        self.observe_pdf_dependency(DependencyEngineField::PdfExternalImages);
         self.pdf.external_image_record(id)
     }
 
     #[must_use]
     pub fn pdf_external_images(&self) -> &[crate::PdfExternalImageRecord] {
+        self.observe_pdf_dependency(DependencyEngineField::PdfExternalImages);
         self.pdf.external_images()
     }
 
@@ -3893,12 +4277,18 @@ impl Universe {
         let loaded = self.font(font);
         let source_identity = loaded.source_identity();
         let identity = loaded.pdf_resource_identity();
-        self.pdf
-            .ensure_font_resource(font, source_identity, identity)
+        let result = self
+            .pdf
+            .ensure_font_resource(font, source_identity, identity);
+        if result.is_ok() {
+            self.mark_pdf_dependency_changed(DependencyEngineField::PdfObjects);
+        }
+        result
     }
 
     #[must_use]
     pub fn pdf_font_resource(&self, font: FontId) -> Option<PdfFontResourceRecord> {
+        self.observe_pdf_dependency(DependencyEngineField::PdfObjects);
         self.pdf.font_resource(font)
     }
 
@@ -3907,21 +4297,32 @@ impl Universe {
         &self,
         identity: tex_fonts::FontSourceIdentity,
     ) -> Option<PdfFontResourceRecord> {
+        self.observe_pdf_dependency(DependencyEngineField::PdfObjects);
         self.pdf.font_resource_by_identity(identity)
     }
 
     pub fn pdf_font_resources(&self) -> impl Iterator<Item = PdfFontResourceRecord> + '_ {
+        self.observe_pdf_dependency(DependencyEngineField::PdfObjects);
         self.pdf.font_resources()
     }
 
     /// Reserves the next identity in the canonical PDF object ledger.
     pub fn reserve_pdf_raw_object(&mut self) -> Result<PdfRawObjectId, PdfObjectCapacityError> {
-        self.pdf.reserve_raw_object()
+        let result = self.pdf.reserve_raw_object();
+        if result.is_ok() {
+            self.mark_pdf_dependency_changed(DependencyEngineField::PdfObjects);
+        }
+        result
     }
 
     /// Reserves pdfTeX's object and resource identities before scanning form options.
     pub fn reserve_pdf_form(&mut self) -> Result<(u32, u32), PdfObjectCapacityError> {
-        self.pdf.reserve_form()
+        let result = self.pdf.reserve_form();
+        if result.is_ok() {
+            self.mark_pdf_dependency_changed(DependencyEngineField::PdfForms);
+            self.mark_pdf_dependency_changed(DependencyEngineField::PdfObjects);
+        }
+        result
     }
 
     /// Captures a consumed box into a previously reserved PDF form identity.
@@ -3949,38 +4350,46 @@ impl Universe {
         // object. That owner must outlive temporary box-build and shipout
         // allocation scopes, but must still disappear on aggregate rollback.
         self.stores.pin_timeline_node_list(box_list);
+        self.mark_pdf_dependency_changed(DependencyEngineField::PdfForms);
         Ok(form)
     }
 
     #[must_use]
     pub fn pdf_form(&self, object: u32) -> Option<crate::PdfFormRecord> {
+        self.observe_pdf_dependency(DependencyEngineField::PdfForms);
         self.pdf.form(object)
     }
 
     pub fn pdf_forms(&self) -> impl ExactSizeIterator<Item = crate::PdfFormRecord> + '_ {
+        self.observe_pdf_dependency(DependencyEngineField::PdfForms);
         self.pdf.forms()
     }
 
     #[must_use]
     pub fn pdf_last_form(&self) -> u32 {
+        self.observe_pdf_dependency(DependencyEngineField::PdfForms);
         self.pdf.last_form()
     }
 
     pub fn set_pdf_form_artifact(&mut self, object: u32, artifact: crate::PdfFormArtifact) {
         self.pdf.set_form_artifact(object, artifact);
+        self.mark_pdf_dependency_changed(DependencyEngineField::PdfForms);
     }
 
     #[must_use]
     pub fn pdf_form_artifact(&self, object: u32) -> Option<&crate::PdfFormArtifact> {
+        self.observe_pdf_dependency(DependencyEngineField::PdfForms);
         self.pdf.form_artifact(object)
     }
 
     pub fn pdf_form_color_rollback(&self) -> crate::PdfFormColorRollback {
+        self.observe_pdf_dependency(DependencyEngineField::PdfForms);
         self.pdf.form_color_rollback()
     }
 
     pub fn rollback_pdf_form_colors(&mut self, rollback: crate::PdfFormColorRollback) {
         self.pdf.rollback_form_colors(rollback);
+        self.mark_pdf_dependency_changed(DependencyEngineField::PdfForms);
     }
 
     /// Initializes a previously reserved raw object without changing its ID.
@@ -3995,15 +4404,20 @@ impl Universe {
     ) -> Result<(), PdfRawObjectInitializeError> {
         let stream_attr = stream_attr.map(|tokens| self.pdf_token_parameter(tokens));
         let data = self.pdf_token_parameter(data);
-        self.pdf.initialize_raw_object(
+        let result = self.pdf.initialize_raw_object(
             id,
             PdfRawObjectData::new(stream, stream_attr, file, data),
             immediate,
-        )
+        );
+        if result.is_ok() {
+            self.mark_pdf_dependency_changed(DependencyEngineField::PdfObjects);
+        }
+        result
     }
 
     #[must_use]
     pub fn pdf_raw_object(&self, raw: u32) -> Option<PdfRawObjectRecord> {
+        self.observe_pdf_dependency(DependencyEngineField::PdfObjects);
         self.pdf.raw_object(PdfRawObjectId::from_allocated(raw))
     }
 
@@ -4011,34 +4425,47 @@ impl Universe {
         &mut self,
         raw: u32,
     ) -> Result<(), PdfRawObjectInitializeError> {
-        self.pdf
-            .reference_raw_object(PdfRawObjectId::from_allocated(raw))
+        let result = self
+            .pdf
+            .reference_raw_object(PdfRawObjectId::from_allocated(raw));
+        if result.is_ok() {
+            self.mark_pdf_dependency_changed(DependencyEngineField::PdfObjects);
+        }
+        result
     }
 
     #[must_use]
     pub fn pdf_raw_objects(&self) -> &[PdfRawObjectRecord] {
+        self.observe_pdf_dependency(DependencyEngineField::PdfObjects);
         self.pdf.raw_objects()
     }
 
     #[must_use]
     pub fn pdf_last_object(&self) -> u32 {
+        self.observe_pdf_dependency(DependencyEngineField::PdfObjects);
         self.pdf.last_raw_object()
     }
 
     #[must_use]
     pub fn pdf_last_annotation(&self) -> u32 {
+        self.observe_pdf_dependency(DependencyEngineField::PdfObjects);
         self.pdf.last_annotation()
     }
 
     #[must_use]
     pub fn pdf_last_link(&self) -> u32 {
+        self.observe_pdf_dependency(DependencyEngineField::PdfObjects);
         self.pdf.last_link()
     }
 
     pub fn reserve_pdf_annotation(
         &mut self,
     ) -> Result<crate::PdfAnnotationRecord, PdfObjectCapacityError> {
-        self.pdf.reserve_annotation()
+        let result = self.pdf.reserve_annotation();
+        if result.is_ok() {
+            self.mark_pdf_dependency_changed(DependencyEngineField::PdfObjects);
+        }
+        result
     }
 
     pub fn initialize_pdf_annotation(
@@ -4047,21 +4474,28 @@ impl Universe {
         data: crate::PdfAnnotationData,
     ) -> Result<crate::PdfAnnotationRecord, crate::PdfAnnotationInitializeError> {
         let semantic_id = self.stores.token_list_semantic_fragment(data.entries);
-        self.pdf.initialize_annotation(object, data, semantic_id)
+        let result = self.pdf.initialize_annotation(object, data, semantic_id);
+        if result.is_ok() {
+            self.mark_pdf_dependency_changed(DependencyEngineField::PdfObjects);
+        }
+        result
     }
 
     pub fn create_pdf_annotation(
         &mut self,
         data: crate::PdfAnnotationData,
     ) -> Result<crate::PdfAnnotationRecord, PdfObjectCapacityError> {
-        let record = self.pdf.reserve_annotation()?;
-        Ok(self
+        let record = self.reserve_pdf_annotation()?;
+        let record = self
             .initialize_pdf_annotation(record.object(), data)
-            .expect("fresh annotation reservation initializes"))
+            .expect("fresh annotation reservation initializes");
+        self.mark_pdf_dependency_changed(DependencyEngineField::PdfObjects);
+        Ok(record)
     }
 
     #[must_use]
     pub fn pdf_annotations(&self) -> &[crate::PdfAnnotationRecord] {
+        self.observe_pdf_dependency(DependencyEngineField::PdfObjects);
         self.pdf.annotations()
     }
 
@@ -4071,6 +4505,7 @@ impl Universe {
         identity: &crate::PdfDestinationIdentity,
         structure: bool,
     ) -> Option<&crate::PdfDestinationRecord> {
+        self.observe_pdf_dependency(DependencyEngineField::PdfObjects);
         self.pdf.destination(identity, structure)
     }
 
@@ -4079,7 +4514,11 @@ impl Universe {
         identity: crate::PdfDestinationIdentity,
         structure: bool,
     ) -> Result<crate::PdfDestinationRecord, PdfObjectCapacityError> {
-        self.pdf.reserve_destination(identity, structure)
+        let result = self.pdf.reserve_destination(identity, structure);
+        if result.is_ok() {
+            self.mark_pdf_dependency_changed(DependencyEngineField::PdfObjects);
+        }
+        result
     }
 
     pub fn define_pdf_destination(
@@ -4087,11 +4526,16 @@ impl Universe {
         identity: crate::PdfDestinationIdentity,
         structure_target: Option<u32>,
     ) -> Result<crate::PdfDestinationDefinition, PdfObjectCapacityError> {
-        self.pdf.define_destination(identity, structure_target)
+        let result = self.pdf.define_destination(identity, structure_target);
+        if result.is_ok() {
+            self.mark_pdf_dependency_changed(DependencyEngineField::PdfObjects);
+        }
+        result
     }
 
     #[must_use]
     pub fn pdf_destinations(&self, structure: bool) -> &[crate::PdfDestinationRecord] {
+        self.observe_pdf_dependency(DependencyEngineField::PdfObjects);
         self.pdf.destinations(structure)
     }
 
@@ -4099,18 +4543,27 @@ impl Universe {
         &mut self,
         identity: crate::PdfDestinationIdentity,
     ) -> Result<(crate::PdfThreadRecord, crate::PdfThreadBeadRecord), PdfObjectCapacityError> {
-        self.pdf.append_thread_bead(identity)
+        let result = self.pdf.append_thread_bead(identity);
+        if result.is_ok() {
+            self.mark_pdf_dependency_changed(DependencyEngineField::PdfObjects);
+        }
+        result
     }
 
     pub fn reserve_pdf_thread(
         &mut self,
         identity: crate::PdfDestinationIdentity,
     ) -> Result<crate::PdfThreadRecord, PdfObjectCapacityError> {
-        self.pdf.reserve_thread(identity)
+        let result = self.pdf.reserve_thread(identity);
+        if result.is_ok() {
+            self.mark_pdf_dependency_changed(DependencyEngineField::PdfObjects);
+        }
+        result
     }
 
     #[must_use]
     pub fn pdf_threads(&self) -> &[crate::PdfThreadRecord] {
+        self.observe_pdf_dependency(DependencyEngineField::PdfObjects);
         self.pdf.threads()
     }
 
@@ -4125,7 +4578,7 @@ impl Universe {
         let action_semantic_id =
             action.fingerprint(|tokens| self.stores.token_list_semantic_fragment(tokens));
         let title_semantic_id = self.stores.token_list_semantic_fragment(title);
-        self.pdf.create_outline(
+        let result = self.pdf.create_outline(
             attributes,
             action,
             count,
@@ -4135,11 +4588,16 @@ impl Universe {
                 action_semantic_id,
                 title_semantic_id,
             ],
-        )
+        );
+        if result.is_ok() {
+            self.mark_pdf_dependency_changed(DependencyEngineField::PdfObjects);
+        }
+        result
     }
 
     #[must_use]
     pub fn pdf_outlines(&self) -> &[crate::PdfOutlineRecord] {
+        self.observe_pdf_dependency(DependencyEngineField::PdfObjects);
         self.pdf.outlines()
     }
 
@@ -4153,38 +4611,53 @@ impl Universe {
         let attributes_semantic_id = self.stores.token_list_semantic_fragment(attributes);
         let action_semantic_id =
             action.fingerprint(|tokens| self.stores.token_list_semantic_fragment(tokens));
-        self.pdf.create_link(
+        let result = self.pdf.create_link(
             dimensions,
             attributes,
             action,
             attributes_semantic_id,
             action_semantic_id,
             nesting_depth,
-        )
+        );
+        if result.is_ok() {
+            self.mark_pdf_dependency_changed(DependencyEngineField::PdfObjects);
+        }
+        result
     }
 
     pub fn end_pdf_link(&mut self) -> Option<crate::PdfOpenLink> {
-        self.pdf.end_link()
+        let result = self.pdf.end_link();
+        if result.is_some() {
+            self.mark_pdf_dependency_changed(DependencyEngineField::PdfObjects);
+        }
+        result
     }
 
     #[must_use]
     pub fn open_pdf_links(&self) -> &[crate::PdfOpenLink] {
+        self.observe_pdf_dependency(DependencyEngineField::PdfObjects);
         self.pdf.open_links()
     }
 
     #[must_use]
     pub fn pdf_links(&self) -> &[crate::PdfLinkRecord] {
+        self.observe_pdf_dependency(DependencyEngineField::PdfObjects);
         self.pdf.links()
     }
 
     /// Reserves a distinct indirect annotation object for a shipped segment
     /// after the logical link's first segment.
     pub fn reserve_pdf_link_continuation(&mut self) -> Result<u32, PdfObjectCapacityError> {
-        self.pdf.reserve_link_continuation()
+        let result = self.pdf.reserve_link_continuation();
+        if result.is_ok() {
+            self.mark_pdf_dependency_changed(DependencyEngineField::PdfObjects);
+        }
+        result
     }
 
     #[must_use]
     pub fn pdf_last_ximage(&self) -> u32 {
+        self.observe_pdf_dependency(DependencyEngineField::PdfExternalImages);
         self.pdf
             .last_external_image()
             .map_or(0, |record| record.id().raw())
@@ -4193,6 +4666,7 @@ impl Universe {
     /// Returns the page count reported by the most recently registered image.
     #[must_use]
     pub fn pdf_last_ximage_pages(&self) -> u32 {
+        self.observe_pdf_dependency(DependencyEngineField::PdfExternalImages);
         self.pdf
             .last_external_image()
             .map_or(0, |record| record.metadata().page_count())
@@ -4201,6 +4675,7 @@ impl Universe {
     /// Returns the raster bits-per-component reported by the last image.
     #[must_use]
     pub fn pdf_last_ximage_color_depth(&self) -> u8 {
+        self.observe_pdf_dependency(DependencyEngineField::PdfExternalImages);
         self.pdf
             .last_external_image()
             .map_or(0, |record| record.metadata().color_depth())
@@ -4208,13 +4683,15 @@ impl Universe {
 
     /// Returns pdfTeX's session-global result value.
     #[must_use]
-    pub const fn pdf_return_value(&self) -> i32 {
+    pub fn pdf_return_value(&self) -> i32 {
+        self.observe_pdf_dependency(DependencyEngineField::PdfObjects);
         self.pdf.return_value()
     }
 
     /// Updates pdfTeX's session-global result value.
-    pub const fn set_pdf_return_value(&mut self, value: i32) {
+    pub fn set_pdf_return_value(&mut self, value: i32) {
         self.pdf.set_return_value(value);
+        self.mark_pdf_dependency_changed(DependencyEngineField::PdfObjects);
     }
 
     /// Appends expanded tokens to one document-level PDF dictionary destination.
@@ -4225,6 +4702,7 @@ impl Universe {
     ) {
         let value = self.pdf_token_parameter(tokens);
         self.pdf.append_document_fragment(kind, value);
+        self.mark_pdf_dependency_changed(DependencyEngineField::PdfObjects);
     }
 
     /// Returns document-level fragments of `kind` in source order.
@@ -4232,11 +4710,13 @@ impl Universe {
         &self,
         kind: PdfDocumentFragmentKind,
     ) -> impl Iterator<Item = TokenListId> + '_ {
+        self.observe_pdf_dependency(DependencyEngineField::PdfObjects);
         self.pdf.document_fragments(kind)
     }
 
     #[must_use]
     pub fn pdf_catalog_open_action(&self) -> Option<crate::PdfActionRecord> {
+        self.observe_pdf_dependency(DependencyEngineField::PdfObjects);
         self.pdf.catalog_open_action()
     }
 
@@ -4270,13 +4750,17 @@ impl Universe {
     ) -> Result<crate::PdfActionRecord, PdfObjectCapacityError> {
         let fingerprint =
             spec.fingerprint(|tokens| self.stores.token_list_semantic_fragment(tokens));
-        self.pdf.set_catalog_open_action(
+        let result = self.pdf.set_catalog_open_action(
             spec,
             fingerprint,
             destination_identity,
             structure_identity,
             thread_identity,
-        )
+        );
+        if result.is_ok() {
+            self.mark_pdf_dependency_changed(DependencyEngineField::PdfObjects);
+        }
+        result
     }
 
     /// Allocates final document dictionaries through the canonical PDF ledger.
@@ -4284,7 +4768,11 @@ impl Universe {
         &mut self,
         include_info: bool,
     ) -> Result<PdfDocumentObjectIds, PdfObjectCapacityError> {
-        self.pdf.finalize_document_objects(include_info)
+        let result = self.pdf.finalize_document_objects(include_info);
+        if result.is_ok() {
+            self.mark_pdf_dependency_changed(DependencyEngineField::PdfObjects);
+        }
+        result
     }
 
     fn current_pdf_output_parameters(&self) -> PdfOutputParameters {
@@ -4321,6 +4809,7 @@ impl Universe {
     }
 
     fn current_pdf_page_parameters(&self) -> PdfPageParameters {
+        self.observe_pdf_dependency(DependencyEngineField::PdfObjects);
         PdfPageParameters {
             h_origin: self.dimen_param(DimenParam::PDF_H_ORIGIN),
             v_origin: self.dimen_param(DimenParam::PDF_V_ORIGIN),
@@ -4342,6 +4831,10 @@ impl Universe {
 
     #[must_use]
     pub fn catcode(&self, ch: char) -> Catcode {
+        self.observe_semantic_dependency(DependencyKey::Code {
+            table: DependencyCodeTable::Catcode,
+            scalar: ch.into(),
+        });
         self.stores.catcode(ch)
     }
 
@@ -4357,6 +4850,10 @@ impl Universe {
 
     #[must_use]
     pub fn lccode(&self, ch: char) -> LcCode {
+        self.observe_semantic_dependency(DependencyKey::Code {
+            table: DependencyCodeTable::Lccode,
+            scalar: ch.into(),
+        });
         self.stores.lccode(ch)
     }
 
@@ -4372,6 +4869,10 @@ impl Universe {
 
     #[must_use]
     pub fn uccode(&self, ch: char) -> UcCode {
+        self.observe_semantic_dependency(DependencyKey::Code {
+            table: DependencyCodeTable::Uccode,
+            scalar: ch.into(),
+        });
         self.stores.uccode(ch)
     }
 
@@ -4387,6 +4888,10 @@ impl Universe {
 
     #[must_use]
     pub fn sfcode(&self, ch: char) -> SfCode {
+        self.observe_semantic_dependency(DependencyKey::Code {
+            table: DependencyCodeTable::Sfcode,
+            scalar: ch.into(),
+        });
         self.stores.sfcode(ch)
     }
 
@@ -4402,6 +4907,10 @@ impl Universe {
 
     #[must_use]
     pub fn mathcode(&self, ch: char) -> MathCode {
+        self.observe_semantic_dependency(DependencyKey::Code {
+            table: DependencyCodeTable::Mathcode,
+            scalar: ch.into(),
+        });
         self.stores.mathcode(ch)
     }
 
@@ -4417,6 +4926,10 @@ impl Universe {
 
     #[must_use]
     pub fn delcode(&self, ch: char) -> DelCode {
+        self.observe_semantic_dependency(DependencyKey::Code {
+            table: DependencyCodeTable::Delcode,
+            scalar: ch.into(),
+        });
         self.stores.delcode(ch)
     }
 
@@ -4436,6 +4949,8 @@ impl Universe {
     ) -> Result<(), crate::hyphenation::HyphenationCapacityError> {
         self.stores.add_hyphenation_pattern(pattern)?;
         self.dependencies
+            .get_mut()
+            .expect("dependency runtime mutex is not poisoned")
             .mark_changed(DependencyKey::HyphenationPatterns(0));
         Ok(())
     }
@@ -4449,6 +4964,8 @@ impl Universe {
             .stores
             .add_hyphenation_pattern_for_language(language, pattern)?;
         self.dependencies
+            .get_mut()
+            .expect("dependency runtime mutex is not poisoned")
             .mark_changed(DependencyKey::HyphenationPatterns(language));
         Ok(duplicate)
     }
@@ -4469,6 +4986,7 @@ impl Universe {
         language: u8,
         letters: &[char],
     ) -> bool {
+        self.observe_semantic_dependency(DependencyKey::HyphenationPatterns(language));
         self.stores
             .contains_hyphenation_pattern_for_language(language, letters)
     }
@@ -4487,6 +5005,8 @@ impl Universe {
     pub fn add_hyphenation_exception(&mut self, exception: ExceptionSpec) {
         self.stores.add_hyphenation_exception(exception);
         self.dependencies
+            .get_mut()
+            .expect("dependency runtime mutex is not poisoned")
             .mark_changed(DependencyKey::HyphenationExceptions(0));
     }
 
@@ -4498,6 +5018,8 @@ impl Universe {
         self.stores
             .add_hyphenation_exception_for_language(language, exception);
         self.dependencies
+            .get_mut()
+            .expect("dependency runtime mutex is not poisoned")
             .mark_changed(DependencyKey::HyphenationExceptions(language));
     }
 
@@ -4508,16 +5030,21 @@ impl Universe {
     ) {
         self.stores.save_hyphenation_codes(language, codes);
         self.dependencies
+            .get_mut()
+            .expect("dependency runtime mutex is not poisoned")
             .mark_changed(DependencyKey::HyphenationCodes(language));
     }
 
     #[must_use]
     pub fn saved_hyphenation_code(&self, language: u8, ch: char) -> Option<Option<char>> {
+        self.observe_semantic_dependency(DependencyKey::HyphenationCodes(language));
         self.stores.saved_hyphenation_code(language, ch)
     }
 
     #[must_use]
     pub fn hyphen_positions(&self, word: &str, left_min: usize, right_min: usize) -> Vec<usize> {
+        self.observe_semantic_dependency(DependencyKey::HyphenationPatterns(0));
+        self.observe_semantic_dependency(DependencyKey::HyphenationExceptions(0));
         self.stores.hyphen_positions(word, left_min, right_min)
     }
 
@@ -4529,12 +5056,16 @@ impl Universe {
         left_min: usize,
         right_min: usize,
     ) -> Vec<usize> {
+        self.observe_semantic_dependency(DependencyKey::HyphenationPatterns(language));
+        self.observe_semantic_dependency(DependencyKey::HyphenationExceptions(language));
+        self.observe_semantic_dependency(DependencyKey::HyphenationCodes(language));
         self.stores
             .hyphen_positions_for_language(language, word, left_min, right_min)
     }
 
     #[must_use]
     pub fn hyphenation_exception(&self, word: &str) -> Option<&[usize]> {
+        self.observe_semantic_dependency(DependencyKey::HyphenationExceptions(0));
         self.stores.hyphenation_exception(word)
     }
 
@@ -5111,6 +5642,7 @@ impl Universe {
 
     #[must_use]
     pub fn font_expansion(&self, font: FontId) -> Option<crate::font::FontExpansion> {
+        self.observe_font_dependency(font, DependencyFontField::Metrics, 0);
         self.stores.font_expansion(font)
     }
 
@@ -5124,6 +5656,7 @@ impl Universe {
 
     #[must_use]
     pub fn font(&self, id: FontId) -> &LoadedFont {
+        self.observe_font_dependency(id, DependencyFontField::Metrics, 0);
         self.stores.font(id)
     }
 
@@ -5170,16 +5703,19 @@ impl Universe {
         &self,
         identity: tex_fonts::FontSourceIdentity,
     ) -> Option<FontId> {
+        self.poison_tracked_region(TrackedRegionBarrier::UnsupportedExecutionState);
         self.stores.font_by_source_identity(identity)
     }
 
     #[must_use]
     pub fn font_name(&self, id: FontId) -> String {
+        self.observe_font_dependency(id, DependencyFontField::Name, 0);
         self.stores.font_name(id)
     }
 
     #[must_use]
     pub fn font_identifier_symbol(&self, id: FontId) -> Option<SymbolId> {
+        self.observe_font_dependency(id, DependencyFontField::Identifier, 0);
         self.stores.font_identifier_symbol(id)
     }
 
@@ -5200,52 +5736,62 @@ impl Universe {
 
     #[must_use]
     pub fn font_metrics(&self, font: FontId) -> &FontMetrics {
+        self.observe_font_dependency(font, DependencyFontField::Metrics, 0);
         self.stores.font_metrics(font)
     }
 
     #[must_use]
     pub fn font_char_exists(&self, font: FontId, code: u8) -> bool {
+        self.observe_font_dependency(font, DependencyFontField::Metrics, u32::from(code));
         self.stores.font_char_exists(font, code)
     }
 
     #[must_use]
     pub fn font_char_metrics(&self, font: FontId, code: u8) -> Option<CharMetrics> {
+        self.observe_font_dependency(font, DependencyFontField::Metrics, u32::from(code));
         self.stores.font_char_metrics(font, code)
     }
 
     #[must_use]
     pub fn font_character_exists(&self, font: FontId, ch: char) -> bool {
+        self.observe_font_dependency(font, DependencyFontField::Metrics, ch.into());
         self.stores.font_character_exists(font, ch)
     }
 
     #[must_use]
     pub fn font_character_metrics(&self, font: FontId, ch: char) -> Option<CharMetrics> {
+        self.observe_font_dependency(font, DependencyFontField::Metrics, ch.into());
         self.stores.font_character_metrics(font, ch)
     }
 
     #[must_use]
     pub fn font_uses_tfm_metrics(&self, font: FontId) -> bool {
+        self.observe_font_dependency(font, DependencyFontField::Metrics, 0);
         self.stores.font_uses_tfm_metrics(font)
     }
 
     /// Returns the immutable dense TFM-byte width projection for a live font.
     #[must_use]
     pub fn font_widths(&self, font: FontId) -> &[Scaled; 256] {
+        self.observe_font_dependency(font, DependencyFontField::Metrics, 0);
         self.stores.font_widths(font)
     }
 
     #[must_use]
     pub fn font_characters(&self, font: FontId) -> &[Option<CharMetrics>] {
+        self.observe_font_dependency(font, DependencyFontField::Metrics, 0);
         self.stores.font_characters(font)
     }
 
     #[must_use]
     pub fn font_next_larger(&self, font: FontId, code: u8) -> Option<u8> {
+        self.observe_font_dependency(font, DependencyFontField::Metrics, u32::from(code));
         self.stores.font_next_larger(font, code)
     }
 
     #[must_use]
     pub fn missing_font_character(&self, font: FontId, code: u8) -> Option<MissingCharacter> {
+        self.observe_font_dependency(font, DependencyFontField::Metrics, u32::from(code));
         self.stores.missing_font_character(font, code)
     }
 
@@ -5256,6 +5802,7 @@ impl Universe {
         left: LigKernChar,
         right: LigKernChar,
     ) -> LigKernIter<'_> {
+        self.observe_font_dependency(font, DependencyFontField::Metrics, 0);
         self.stores.lig_kern_iter(font, left, right)
     }
 
@@ -5266,6 +5813,7 @@ impl Universe {
         left: LigKernChar,
         right: LigKernChar,
     ) -> Option<LigKernCommand> {
+        self.observe_font_dependency(font, DependencyFontField::Metrics, 0);
         self.stores.lig_kern_command(font, left, right)
     }
 
@@ -5276,16 +5824,34 @@ impl Universe {
         left: LigKernChar,
         right: LigKernChar,
     ) -> Option<LigKernCommand> {
+        self.observe_font_dependency(font, DependencyFontField::Metrics, 0);
         self.stores.tfm_lig_kern_command(font, left, right)
     }
 
     #[must_use]
     pub fn font_false_boundary_char(&self, font: FontId) -> Option<u8> {
+        self.observe_font_dependency(font, DependencyFontField::Metrics, 0);
         self.stores.font_false_boundary_char(font)
     }
 
     #[must_use]
     pub fn pdf_font_code(&self, table: crate::font::PdfFontCode, font: FontId, code: u8) -> i32 {
+        let table_index = match table {
+            crate::font::PdfFontCode::Lp => 0,
+            crate::font::PdfFontCode::Rp => 1,
+            crate::font::PdfFontCode::Ef => 2,
+            crate::font::PdfFontCode::Tag => 3,
+            crate::font::PdfFontCode::Knbs => 4,
+            crate::font::PdfFontCode::Stbs => 5,
+            crate::font::PdfFontCode::Shbs => 6,
+            crate::font::PdfFontCode::Knbc => 7,
+            crate::font::PdfFontCode::Knac => 8,
+        };
+        self.observe_font_dependency(
+            font,
+            DependencyFontField::PdfCode,
+            table_index * 256 + u32::from(code),
+        );
         self.stores.pdf_font_code(table, font, code)
     }
 
@@ -5307,16 +5873,19 @@ impl Universe {
 
     #[must_use]
     pub fn pdf_font_ligatures_disabled(&self, font: FontId) -> bool {
+        self.observe_font_dependency(font, DependencyFontField::PdfShaping, 0);
         self.stores.pdf_font_ligatures_disabled(font)
     }
 
     #[must_use]
     pub fn extensible_recipe(&self, font: FontId, code: u8) -> Option<ExtensibleRecipe> {
+        self.observe_font_dependency(font, DependencyFontField::Metrics, u32::from(code));
         self.stores.extensible_recipe(font, code)
     }
 
     #[must_use]
     pub fn font_parameter(&self, font: FontId, number: u32) -> Scaled {
+        self.observe_font_dependency(font, DependencyFontField::Parameter, number);
         self.stores.font_parameter(font, number)
     }
 
@@ -5345,11 +5914,13 @@ impl Universe {
 
     #[must_use]
     pub fn current_font(&self) -> FontId {
+        self.observe_cell_dependency(BankTag::CurrentFont, 0);
         self.stores.current_font()
     }
 
     #[must_use]
     pub fn current_font_symbol(&self) -> Option<SymbolId> {
+        self.observe_cell_dependency(BankTag::CurrentFont, 0);
         self.stores.current_font_symbol()
     }
 
@@ -5383,6 +5954,12 @@ impl Universe {
 
     #[must_use]
     pub fn math_family_font(&self, size: MathFontSize, family: u8) -> FontId {
+        let size_index = match size {
+            MathFontSize::Text => 0,
+            MathFontSize::Script => 1,
+            MathFontSize::ScriptScript => 2,
+        };
+        self.observe_cell_dependency(BankTag::MathFamilyFont, size_index * 16 + u32::from(family));
         self.stores.math_family_font(size, family)
     }
 
@@ -5399,11 +5976,13 @@ impl Universe {
 
     #[must_use]
     pub fn font_dimen(&self, font: FontId, number: u32) -> Scaled {
+        self.observe_font_dependency(font, DependencyFontField::Parameter, number);
         self.stores.font_dimen(font, number)
     }
 
     #[must_use]
     pub fn font_parameter_count(&self, font: FontId) -> u32 {
+        self.observe_font_dependency(font, DependencyFontField::ParameterCount, 0);
         self.stores.font_parameter_count(font)
     }
 
@@ -5411,6 +5990,7 @@ impl Universe {
     /// [`crate::stores::Stores::font_dimen_writable`].
     #[must_use]
     pub fn font_dimen_writable(&self, font: FontId, number: u32) -> bool {
+        self.observe_font_dependency(font, DependencyFontField::ParameterCount, number);
         self.stores.font_dimen_writable(font, number)
     }
 
@@ -5427,6 +6007,7 @@ impl Universe {
 
     #[must_use]
     pub fn font_hyphen_char(&self, font: FontId) -> i32 {
+        self.observe_font_dependency(font, DependencyFontField::HyphenChar, 0);
         self.stores.font_hyphen_char(font)
     }
 
@@ -5437,6 +6018,7 @@ impl Universe {
 
     #[must_use]
     pub fn font_skew_char(&self, font: FontId) -> i32 {
+        self.observe_font_dependency(font, DependencyFontField::SkewChar, 0);
         self.stores.font_skew_char(font)
     }
 
@@ -5578,12 +6160,14 @@ impl Universe {
 
     #[must_use]
     pub fn innermost_group_kind(&self) -> Option<GroupKind> {
+        self.observe_semantic_dependency(DependencyKey::Engine(DependencyEngineField::GroupType));
         self.stores.innermost_group_kind()
     }
 
     /// Returns the current TeX execution-group depth.
     #[must_use]
     pub fn execution_group_depth(&self) -> u32 {
+        self.observe_semantic_dependency(DependencyKey::Engine(DependencyEngineField::GroupLevel));
         self.stores.env_group_depth()
     }
 
@@ -5631,8 +6215,12 @@ impl Universe {
 
     fn mark_group_entry_dependencies(&mut self) {
         self.dependencies
+            .get_mut()
+            .expect("dependency runtime mutex is not poisoned")
             .mark_changed(DependencyKey::Engine(DependencyEngineField::GroupLevel));
         self.dependencies
+            .get_mut()
+            .expect("dependency runtime mutex is not poisoned")
             .mark_changed(DependencyKey::Engine(DependencyEngineField::GroupType));
     }
 
@@ -6068,12 +6656,18 @@ impl Universe {
         ] {
             if changed {
                 self.dependencies
+                    .get_mut()
+                    .expect("dependency runtime mutex is not poisoned")
                     .mark_changed(DependencyKey::CodeGeneration(table));
             }
         }
         self.dependencies
+            .get_mut()
+            .expect("dependency runtime mutex is not poisoned")
             .mark_changed(DependencyKey::Engine(DependencyEngineField::GroupLevel));
         self.dependencies
+            .get_mut()
+            .expect("dependency runtime mutex is not poisoned")
             .mark_changed(DependencyKey::Engine(DependencyEngineField::GroupType));
     }
 
@@ -6092,6 +6686,7 @@ impl Universe {
 
     #[must_use]
     pub fn count(&self, index: u16) -> i32 {
+        self.observe_cell_dependency(BankTag::Count, u32::from(index));
         self.stores.count(index)
     }
 
@@ -6107,6 +6702,7 @@ impl Universe {
 
     #[must_use]
     pub fn dimen(&self, index: u16) -> Scaled {
+        self.observe_cell_dependency(BankTag::Dimen, u32::from(index));
         self.stores.dimen(index)
     }
 
@@ -6122,6 +6718,7 @@ impl Universe {
 
     #[must_use]
     pub fn skip(&self, index: u16) -> GlueId {
+        self.observe_cell_dependency(BankTag::Skip, u32::from(index));
         self.stores.skip(index)
     }
 
@@ -6137,6 +6734,7 @@ impl Universe {
 
     #[must_use]
     pub fn muskip(&self, index: u16) -> GlueId {
+        self.observe_cell_dependency(BankTag::Muskip, u32::from(index));
         self.stores.muskip(index)
     }
 
@@ -6152,6 +6750,7 @@ impl Universe {
 
     #[must_use]
     pub fn toks(&self, index: u16) -> TokenListId {
+        self.observe_cell_dependency(BankTag::Toks, u32::from(index));
         self.stores.toks(index)
     }
 
@@ -6183,6 +6782,7 @@ impl Universe {
 
     #[must_use]
     pub fn box_reg(&self, index: u16) -> Option<NodeListId> {
+        self.observe_cell_dependency(BankTag::Box, u32::from(index));
         self.stores.box_reg(index)
     }
 
@@ -6198,6 +6798,7 @@ impl Universe {
 
     #[must_use]
     pub fn page_dimension(&self, dimension: PageDimension) -> Scaled {
+        self.observe_semantic_dependency(DependencyKey::PageDimension(dimension.index()));
         self.page
             .dimension(dimension, self.output_routine_is_active())
     }
@@ -6205,11 +6806,18 @@ impl Universe {
     pub fn set_page_dimension(&mut self, dimension: PageDimension, value: Scaled) {
         self.page.set_dimension(dimension, value);
         self.dependencies
+            .get_mut()
+            .expect("dependency runtime mutex is not poisoned")
             .mark_changed(DependencyKey::PageDimension(dimension.index()));
     }
 
     #[must_use]
     pub fn page_integer(&self, integer: PageInteger) -> i32 {
+        let index = match integer {
+            PageInteger::DeadCycles => 0,
+            PageInteger::InsertPenalties => 1,
+        };
+        self.observe_semantic_dependency(DependencyKey::PageInteger(index));
         self.page.integer(integer)
     }
 
@@ -6220,16 +6828,20 @@ impl Universe {
             PageInteger::InsertPenalties => 1,
         };
         self.dependencies
+            .get_mut()
+            .expect("dependency runtime mutex is not poisoned")
             .mark_changed(DependencyKey::PageInteger(index));
     }
 
     #[must_use]
     pub fn page_mark(&self, mark: PageMark) -> TokenListId {
+        self.observe_semantic_dependency(DependencyKey::PageMark(mark.index()));
         self.page.mark(mark)
     }
 
     #[must_use]
     pub fn page_mark_value(&self, mark: PageMark) -> Option<TokenListId> {
+        self.observe_semantic_dependency(DependencyKey::PageMark(mark.index()));
         self.page.mark_value(mark)
     }
 
@@ -6237,8 +6849,12 @@ impl Universe {
         let _ = self.stores.tokens(value);
         self.page.set_mark(mark, value);
         self.dependencies
+            .get_mut()
+            .expect("dependency runtime mutex is not poisoned")
             .mark_changed(DependencyKey::PageMark(mark.index()));
         self.dependencies
+            .get_mut()
+            .expect("dependency runtime mutex is not poisoned")
             .mark_changed(DependencyKey::PageMarkClass {
                 mark: mark.index(),
                 class: 0,
@@ -6248,8 +6864,12 @@ impl Universe {
     pub fn clear_page_mark(&mut self, mark: PageMark) {
         self.page.clear_mark(mark);
         self.dependencies
+            .get_mut()
+            .expect("dependency runtime mutex is not poisoned")
             .mark_changed(DependencyKey::PageMark(mark.index()));
         self.dependencies
+            .get_mut()
+            .expect("dependency runtime mutex is not poisoned")
             .mark_changed(DependencyKey::PageMarkClass {
                 mark: mark.index(),
                 class: 0,
@@ -6258,11 +6878,19 @@ impl Universe {
 
     #[must_use]
     pub fn page_mark_class(&self, mark: PageMark, class: u16) -> TokenListId {
+        self.observe_semantic_dependency(DependencyKey::PageMarkClass {
+            mark: mark.index(),
+            class,
+        });
         self.page.mark_class(mark, class)
     }
 
     #[must_use]
     pub fn page_mark_class_value(&self, mark: PageMark, class: u16) -> Option<TokenListId> {
+        self.observe_semantic_dependency(DependencyKey::PageMarkClass {
+            mark: mark.index(),
+            class,
+        });
         self.page.mark_class_value(mark, class)
     }
 
@@ -6270,12 +6898,16 @@ impl Universe {
         let _ = self.stores.tokens(value);
         self.page.set_mark_class(mark, class, value);
         self.dependencies
+            .get_mut()
+            .expect("dependency runtime mutex is not poisoned")
             .mark_changed(DependencyKey::PageMarkClass {
                 mark: mark.index(),
                 class,
             });
         if class == 0 {
             self.dependencies
+                .get_mut()
+                .expect("dependency runtime mutex is not poisoned")
                 .mark_changed(DependencyKey::PageMark(mark.index()));
         }
     }
@@ -6283,17 +6915,22 @@ impl Universe {
     pub fn clear_page_mark_class(&mut self, mark: PageMark, class: u16) {
         self.page.clear_mark_class(mark, class);
         self.dependencies
+            .get_mut()
+            .expect("dependency runtime mutex is not poisoned")
             .mark_changed(DependencyKey::PageMarkClass {
                 mark: mark.index(),
                 class,
             });
         if class == 0 {
             self.dependencies
+                .get_mut()
+                .expect("dependency runtime mutex is not poisoned")
                 .mark_changed(DependencyKey::PageMark(mark.index()));
         }
     }
 
     pub fn page_mark_classes(&self) -> impl Iterator<Item = u16> + '_ {
+        self.poison_tracked_region(TrackedRegionBarrier::UnsupportedExecutionState);
         self.page.mark_class_ids()
     }
 
@@ -6318,12 +6955,16 @@ impl Universe {
         let max_depth = self.dimen_param(DimenParam::MAX_DEPTH);
         self.page.freeze_specs(contents, vsize, max_depth);
         self.dependencies
+            .get_mut()
+            .expect("dependency runtime mutex is not poisoned")
             .mark_changed(DependencyKey::Page(DependencyPageField::Contents));
     }
 
     pub fn start_new_page(&mut self) {
         self.page.start_new_page();
         self.dependencies
+            .get_mut()
+            .expect("dependency runtime mutex is not poisoned")
             .mark_changed(DependencyKey::Page(DependencyPageField::CurrentPage));
     }
 
@@ -6332,11 +6973,14 @@ impl Universe {
     pub fn start_page_after_output(&mut self) {
         self.page.start_page_after_output();
         self.dependencies
+            .get_mut()
+            .expect("dependency runtime mutex is not poisoned")
             .mark_changed(DependencyKey::Page(DependencyPageField::CurrentPage));
     }
 
     #[must_use]
     pub fn page_discards(&self) -> &[Node] {
+        self.observe_semantic_dependency(DependencyKey::Page(DependencyPageField::Discards));
         self.page.page_discards()
     }
 
@@ -6344,12 +6988,16 @@ impl Universe {
         self.stores.assert_live_handles_in_node(&node);
         self.page.push_page_discard(node);
         self.dependencies
+            .get_mut()
+            .expect("dependency runtime mutex is not poisoned")
             .mark_changed(DependencyKey::Page(DependencyPageField::Discards));
     }
 
     pub fn take_page_discards(&mut self) -> Vec<Node> {
         let nodes = self.page.take_page_discards();
         self.dependencies
+            .get_mut()
+            .expect("dependency runtime mutex is not poisoned")
             .mark_changed(DependencyKey::Page(DependencyPageField::Discards));
         nodes
     }
@@ -6357,11 +7005,14 @@ impl Universe {
     pub fn clear_page_discards(&mut self) {
         self.page.clear_page_discards();
         self.dependencies
+            .get_mut()
+            .expect("dependency runtime mutex is not poisoned")
             .mark_changed(DependencyKey::Page(DependencyPageField::Discards));
     }
 
     #[must_use]
     pub fn split_discards(&self) -> &[Node] {
+        self.observe_semantic_dependency(DependencyKey::Page(DependencyPageField::SplitDiscards));
         self.page.split_discards()
     }
 
@@ -6371,12 +7022,16 @@ impl Universe {
         }
         self.page.set_split_discards(nodes);
         self.dependencies
+            .get_mut()
+            .expect("dependency runtime mutex is not poisoned")
             .mark_changed(DependencyKey::Page(DependencyPageField::SplitDiscards));
     }
 
     pub fn take_split_discards(&mut self) -> Vec<Node> {
         let nodes = self.page.take_split_discards();
         self.dependencies
+            .get_mut()
+            .expect("dependency runtime mutex is not poisoned")
             .mark_changed(DependencyKey::Page(DependencyPageField::SplitDiscards));
         nodes
     }
@@ -6384,59 +7039,74 @@ impl Universe {
     pub fn clear_split_discards(&mut self) {
         self.page.clear_split_discards();
         self.dependencies
+            .get_mut()
+            .expect("dependency runtime mutex is not poisoned")
             .mark_changed(DependencyKey::Page(DependencyPageField::SplitDiscards));
     }
 
     #[must_use]
     pub fn page_contents(&self) -> PageContents {
+        self.observe_semantic_dependency(DependencyKey::Page(DependencyPageField::Contents));
         self.page.contents()
     }
 
     pub fn set_page_contents(&mut self, contents: PageContents) {
         self.page.set_contents(contents);
         self.dependencies
+            .get_mut()
+            .expect("dependency runtime mutex is not poisoned")
             .mark_changed(DependencyKey::Page(DependencyPageField::Contents));
     }
 
     #[must_use]
     pub fn page_max_depth(&self) -> Scaled {
+        self.observe_semantic_dependency(DependencyKey::Page(DependencyPageField::Contents));
         self.page.page_max_depth()
     }
 
     #[must_use]
     pub fn insert_penalties(&self) -> i32 {
+        self.observe_semantic_dependency(DependencyKey::PageInteger(1));
         self.page.insert_penalties()
     }
 
     #[must_use]
     pub fn least_page_cost(&self) -> i32 {
+        self.observe_semantic_dependency(DependencyKey::Page(DependencyPageField::BreakState));
         self.page.least_page_cost()
     }
 
     #[must_use]
     pub fn best_page_break(&self) -> Option<PageBreak> {
+        self.observe_semantic_dependency(DependencyKey::Page(DependencyPageField::BreakState));
         self.page.best_page_break()
     }
 
     #[must_use]
     pub fn best_size(&self) -> Scaled {
+        self.observe_semantic_dependency(DependencyKey::Page(DependencyPageField::BreakState));
         self.page.best_size()
     }
 
     pub fn record_best_page_break(&mut self, break_index: usize, best_size: Scaled, cost: i32) {
         self.page.record_best_break(break_index, best_size, cost);
         self.dependencies
+            .get_mut()
+            .expect("dependency runtime mutex is not poisoned")
             .mark_changed(DependencyKey::Page(DependencyPageField::BreakState));
     }
 
     pub fn record_page_fire_up(&mut self, trigger_index: usize) {
         self.page.record_fire_up(trigger_index);
         self.dependencies
+            .get_mut()
+            .expect("dependency runtime mutex is not poisoned")
             .mark_changed(DependencyKey::Page(DependencyPageField::FireUp));
     }
 
     #[must_use]
     pub fn page_fire_up(&self) -> Option<PageFireUp> {
+        self.observe_semantic_dependency(DependencyKey::Page(DependencyPageField::FireUp));
         self.page.fire_up()
     }
 
@@ -6444,6 +7114,8 @@ impl Universe {
     pub fn defer_page_fire_up(&mut self) {
         self.page.defer_fire_up();
         self.dependencies
+            .get_mut()
+            .expect("dependency runtime mutex is not poisoned")
             .mark_changed(DependencyKey::Page(DependencyPageField::FireUp));
     }
 
@@ -6451,6 +7123,8 @@ impl Universe {
         self.stores.assert_live_handles_in_node(&node);
         self.page.push_contribution(node);
         self.dependencies
+            .get_mut()
+            .expect("dependency runtime mutex is not poisoned")
             .mark_changed(DependencyKey::Page(DependencyPageField::Contributions));
     }
 
@@ -6458,32 +7132,40 @@ impl Universe {
         self.stores.assert_live_handles_in_node(&node);
         self.page.prepend_contribution(node);
         self.dependencies
+            .get_mut()
+            .expect("dependency runtime mutex is not poisoned")
             .mark_changed(DependencyKey::Page(DependencyPageField::Contributions));
     }
 
     #[must_use]
     pub fn page_contributions(&self) -> &std::collections::VecDeque<Node> {
+        self.observe_semantic_dependency(DependencyKey::Page(DependencyPageField::Contributions));
         self.page.contribution()
     }
 
     #[must_use]
     pub fn page_contribution_front(&self) -> Option<&Node> {
+        self.observe_semantic_dependency(DependencyKey::Page(DependencyPageField::Contributions));
         self.page.contribution_front()
     }
 
     #[must_use]
     pub fn page_contribution_second(&self) -> Option<&Node> {
+        self.observe_semantic_dependency(DependencyKey::Page(DependencyPageField::Contributions));
         self.page.contribution_second()
     }
 
     #[must_use]
     pub fn page_contribution_tail(&self) -> Option<&Node> {
+        self.observe_semantic_dependency(DependencyKey::Page(DependencyPageField::Contributions));
         self.page.contribution_tail()
     }
 
     pub fn pop_page_contribution_front(&mut self) -> Option<Node> {
         let node = self.page.pop_contribution_front();
         self.dependencies
+            .get_mut()
+            .expect("dependency runtime mutex is not poisoned")
             .mark_changed(DependencyKey::Page(DependencyPageField::Contributions));
         node
     }
@@ -6491,6 +7173,8 @@ impl Universe {
     pub fn pop_page_contribution_tail(&mut self) -> Option<Node> {
         let node = self.page.pop_contribution_tail();
         self.dependencies
+            .get_mut()
+            .expect("dependency runtime mutex is not poisoned")
             .mark_changed(DependencyKey::Page(DependencyPageField::Contributions));
         node
     }
@@ -6501,6 +7185,8 @@ impl Universe {
     ) -> Vec<Node> {
         let nodes = self.page.remove_contribution_range(range);
         self.dependencies
+            .get_mut()
+            .expect("dependency runtime mutex is not poisoned")
             .mark_changed(DependencyKey::Page(DependencyPageField::Contributions));
         nodes
     }
@@ -6526,6 +7212,8 @@ impl Universe {
             _ => unreachable!("contribution tail was checked to be a box"),
         }
         self.dependencies
+            .get_mut()
+            .expect("dependency runtime mutex is not poisoned")
             .mark_changed(DependencyKey::Page(DependencyPageField::Contributions));
         Some(node)
     }
@@ -6534,6 +7222,8 @@ impl Universe {
         self.stores.assert_live_handles_in_nodes(&nodes);
         self.page.prepend_contributions(nodes);
         self.dependencies
+            .get_mut()
+            .expect("dependency runtime mutex is not poisoned")
             .mark_changed(DependencyKey::Page(DependencyPageField::Contributions));
     }
 
@@ -6670,34 +7360,49 @@ impl Universe {
             return Err(error);
         }
         self.dependencies
+            .get_mut()
+            .expect("dependency runtime mutex is not poisoned")
             .mark_changed(DependencyKey::Page(DependencyPageField::Contributions));
         self.dependencies
+            .get_mut()
+            .expect("dependency runtime mutex is not poisoned")
             .mark_changed(DependencyKey::Page(DependencyPageField::CurrentPage));
         for dimension in 0..8 {
             self.dependencies
+                .get_mut()
+                .expect("dependency runtime mutex is not poisoned")
                 .mark_changed(DependencyKey::PageDimension(dimension));
         }
         self.dependencies
+            .get_mut()
+            .expect("dependency runtime mutex is not poisoned")
             .mark_changed(DependencyKey::Page(DependencyPageField::Insertions));
         self.dependencies
+            .get_mut()
+            .expect("dependency runtime mutex is not poisoned")
             .mark_changed(DependencyKey::Page(DependencyPageField::BreakState));
         self.dependencies
+            .get_mut()
+            .expect("dependency runtime mutex is not poisoned")
             .mark_changed(DependencyKey::Page(DependencyPageField::FireUp));
         Ok(())
     }
 
     #[must_use]
     pub fn current_page_nodes(&self) -> Vec<Node> {
+        self.observe_semantic_dependency(DependencyKey::Page(DependencyPageField::CurrentPage));
         self.page.current_page().cloned().collect()
     }
 
     #[must_use]
     pub fn current_page_tail(&self) -> Option<&Node> {
+        self.observe_semantic_dependency(DependencyKey::Page(DependencyPageField::CurrentPage));
         self.page.current_page_tail()
     }
 
     #[must_use]
     pub fn current_page_len(&self) -> usize {
+        self.observe_semantic_dependency(DependencyKey::Page(DependencyPageField::CurrentPage));
         self.page.current_page_len()
     }
 
@@ -6705,21 +7410,26 @@ impl Universe {
         self.stores.assert_live_handles_in_node(&node);
         self.page.push_current_page(node);
         self.dependencies
+            .get_mut()
+            .expect("dependency runtime mutex is not poisoned")
             .mark_changed(DependencyKey::Page(DependencyPageField::CurrentPage));
     }
 
     #[must_use]
     pub fn page_insertions(&self) -> &[PageInsertion] {
+        self.observe_semantic_dependency(DependencyKey::Page(DependencyPageField::Insertions));
         self.page.page_insertions()
     }
 
     #[must_use]
     pub fn page_insertion(&self, class: u16) -> Option<PageInsertion> {
+        self.observe_semantic_dependency(DependencyKey::Page(DependencyPageField::Insertions));
         self.page.page_insertion(class)
     }
 
     #[must_use]
     pub fn page_insertion_height(&self, class: u16) -> Option<Scaled> {
+        self.observe_semantic_dependency(DependencyKey::Page(DependencyPageField::Insertions));
         self.page
             .page_insertion(class)
             .map(|insertion| insertion.height())
@@ -6728,43 +7438,56 @@ impl Universe {
     pub fn upsert_page_insertion(&mut self, insertion: PageInsertion) {
         self.page.upsert_page_insertion(insertion);
         self.dependencies
+            .get_mut()
+            .expect("dependency runtime mutex is not poisoned")
             .mark_changed(DependencyKey::Page(DependencyPageField::Insertions));
     }
 
     pub fn take_current_page_prefix(&mut self, split_index: usize) -> (Vec<Node>, Vec<Node>) {
         let split = self.page.take_current_page_prefix(split_index);
         self.dependencies
+            .get_mut()
+            .expect("dependency runtime mutex is not poisoned")
             .mark_changed(DependencyKey::Page(DependencyPageField::CurrentPage));
         split
     }
 
     pub fn update_page_last_from_node(&mut self, node: &Node) {
         self.page.update_last_from_node(node);
+        self.dependencies
+            .get_mut()
+            .expect("dependency runtime mutex is not poisoned")
+            .mark_changed(DependencyKey::Page(DependencyPageField::CurrentPage));
     }
 
     #[must_use]
     pub fn page_last_skip(&self) -> GlueSpec {
+        self.observe_semantic_dependency(DependencyKey::Page(DependencyPageField::CurrentPage));
         self.page.last_skip(|id| self.glue(id))
     }
 
     #[must_use]
     pub fn page_last_penalty(&self) -> i32 {
+        self.observe_semantic_dependency(DependencyKey::Page(DependencyPageField::CurrentPage));
         self.page.last_penalty()
     }
 
     #[must_use]
     pub fn page_last_kern(&self) -> Scaled {
+        self.observe_semantic_dependency(DependencyKey::Page(DependencyPageField::CurrentPage));
         self.page.last_kern()
     }
 
     #[must_use]
     pub fn page_last_node_type(&self) -> i32 {
+        self.observe_semantic_dependency(DependencyKey::Page(DependencyPageField::CurrentPage));
         self.page.last_node_type()
     }
 
     /// See [`crate::page::PageBuilderState::has_last_glue`].
     #[must_use]
     pub fn page_has_last_glue(&self) -> bool {
+        self.observe_semantic_dependency(DependencyKey::Page(DependencyPageField::CurrentPage));
         self.page.has_last_glue()
     }
 
@@ -6887,6 +7610,7 @@ impl Universe {
 
     #[must_use]
     pub fn int_param(&self, param: IntParam) -> i32 {
+        self.observe_cell_dependency(BankTag::IntParam, u32::from(param.raw()));
         self.stores.int_param(param)
     }
 
@@ -6943,6 +7667,7 @@ impl Universe {
 
     #[must_use]
     pub fn dimen_param(&self, param: DimenParam) -> Scaled {
+        self.observe_cell_dependency(BankTag::DimenParam, u32::from(param.raw()));
         self.stores.dimen_param(param)
     }
 
@@ -6953,6 +7678,7 @@ impl Universe {
 
     #[must_use]
     pub fn glue_param(&self, param: GlueParam) -> GlueId {
+        self.observe_cell_dependency(BankTag::GlueParam, u32::from(param.raw()));
         self.stores.glue_param(param)
     }
 
@@ -6968,12 +7694,14 @@ impl Universe {
 
     #[must_use]
     pub fn tok_param(&self, param: TokParam) -> TokenListId {
+        self.observe_cell_dependency(BankTag::TokParam, u32::from(param.raw()));
         self.stores.tok_param(param)
     }
 
     /// Returns a token-list parameter while preserving an unassigned null cell.
     #[must_use]
     pub fn tok_param_option(&self, param: TokParam) -> Option<TokenListId> {
+        self.observe_cell_dependency(BankTag::TokParam, u32::from(param.raw()));
         self.stores.tok_param_option(param)
     }
 
@@ -6985,6 +7713,7 @@ impl Universe {
     /// Returns the current barriered, group-scoped `\parshape` value.
     #[must_use]
     pub fn paragraph_shape(&self) -> Vec<ParagraphShapeLine> {
+        self.observe_semantic_dependency(DependencyKey::Engine(DependencyEngineField::ParShape));
         let id = self.tok_param(TokParam::PAR_SHAPE_INTERNAL);
         let tokens = self.tokens(id);
         assert_eq!(
@@ -7014,6 +7743,7 @@ impl Universe {
     /// without materializing its decoded line pairs.
     #[must_use]
     pub fn paragraph_shape_len(&self) -> usize {
+        self.observe_semantic_dependency(DependencyKey::Engine(DependencyEngineField::ParShape));
         let tokens = self.tokens(self.tok_param(TokParam::PAR_SHAPE_INTERNAL));
         assert_eq!(
             tokens.len() % 8,
@@ -7027,6 +7757,7 @@ impl Universe {
     /// for positive indexes beyond the explicitly assigned shape.
     #[must_use]
     pub fn paragraph_shape_dimension(&self, line: i32, width: bool) -> Scaled {
+        self.observe_semantic_dependency(DependencyKey::Engine(DependencyEngineField::ParShape));
         if line <= 0 {
             return Scaled::from_raw(0);
         }
@@ -7089,6 +7820,9 @@ impl Universe {
     /// Returns a current e-TeX penalty array through the state facade.
     #[must_use]
     pub fn penalty_array(&self, kind: PenaltyArrayKind) -> Vec<i32> {
+        self.observe_semantic_dependency(DependencyKey::Engine(
+            DependencyEngineField::PenaltyArrays,
+        ));
         let tokens = self.tokens(self.tok_param(kind.storage()));
         assert_eq!(tokens.len() % 4, 0, "internal penalty array is truncated");
         tokens
@@ -7110,6 +7844,9 @@ impl Universe {
     /// length and positive indexes repeat the last explicitly assigned value.
     #[must_use]
     pub fn penalty_array_value(&self, kind: PenaltyArrayKind, index: i32) -> i32 {
+        self.observe_semantic_dependency(DependencyKey::Engine(
+            DependencyEngineField::PenaltyArrays,
+        ));
         let tokens = self.tokens(self.tok_param(kind.storage()));
         let len = tokens.len() / 4;
         if index <= 0 || len == 0 {

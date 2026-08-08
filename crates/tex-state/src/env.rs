@@ -66,7 +66,7 @@ pub(crate) enum CellMutationDisposition {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct JournalRegionMark {
     journal_pos: crate::journal::JournalPos,
-    epoch: Epoch,
+    lineage: u64,
 }
 
 /// The journal lineage changed while a tracked region was active.
@@ -252,6 +252,10 @@ pub struct Env {
     afterassignment: Option<Token>,
     group_depth: u32,
     next_group_lineage: u64,
+    /// Monotonic identity of the uncompacted dependency-journal timeline.
+    /// Group entry changes write epochs but does not invalidate a region;
+    /// checkpoint capture, group exit, and rollback do.
+    journal_lineage: u64,
     epoch: Epoch,
     #[cfg(feature = "shadow")]
     shadow: AHashMap<CellId, u64>,
@@ -302,6 +306,7 @@ impl Env {
             afterassignment: None,
             group_depth: 0,
             next_group_lineage: 1,
+            journal_lineage: 1,
             epoch: Epoch::START,
             #[cfg(feature = "shadow")]
             shadow: AHashMap::new(),
