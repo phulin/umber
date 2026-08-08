@@ -73,23 +73,30 @@ fn dependency_recording(c: &mut Criterion) {
     group.bench_function("enabled_deduplicated", |b| {
         b.iter(|| {
             let mut runtime = DependencyRuntime::default();
-            runtime.begin_region();
+            let token = runtime.begin_region().expect("begin dependency region");
             for _ in 0..DEPENDENCY_READS {
                 runtime.record(key, value.clone());
             }
-            black_box(runtime.finish_region());
+            black_box(
+                runtime
+                    .finish_region(token)
+                    .expect("finish dependency region"),
+            );
         });
     });
     group.bench_function("interleaved_pair", |b| {
         b.iter(|| {
             let mut disabled = DependencyRuntime::default();
             let mut enabled = DependencyRuntime::default();
-            enabled.begin_region();
+            let token = enabled.begin_region().expect("begin dependency region");
             for _ in 0..DEPENDENCY_READS {
                 disabled.record(key, value.clone());
                 enabled.record(key, value.clone());
             }
-            black_box((disabled, enabled.finish_region()));
+            let observations = enabled
+                .finish_region(token)
+                .expect("finish dependency region");
+            black_box((disabled, observations));
         });
     });
     group.finish();

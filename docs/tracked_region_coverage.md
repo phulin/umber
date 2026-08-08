@@ -235,3 +235,42 @@ remaining field-specific values and stamps.
 same resources in different allocation orders and proves all ten projections
 are equal. The matrix and supported region remain unchanged; none of this
 evidence authorizes replay.
+
+## Measurement and backend disposition
+
+The standalone state diagnostic owns the reproducible micro-cost and retention
+receipt for this substrate:
+
+```bash
+cargo run --release --manifest-path benchmarks/tex-state/Cargo.toml \
+  --bin dependency_gate
+```
+
+It uses median optimized timings, requested-byte allocation accounting, 4,096
+unique facts, and a 256-cell dense environment footprint. It reports the
+tracking-disabled branch against an equivalent control, active unique-read
+recording, disabled and tracked mutation-receipt paths, unchanged and
+backdated validation, journal-derived write-footprint extraction, rollback
+backdating and temporary allocation, detached observation/write retention,
+tracker retention, and the logical sizes of the public evidence types. The
+`dependency_recording` filter in `state_budgets` remains the Criterion-owned
+deduplicated-read cross-check.
+
+The dated optimized numbers, toolchain identity, and frozen edit-restart
+comparison are durable on Beads issue `umber2-trcn.5`; historical numbers do
+not live in this architecture contract. The edit-restart run verifies the
+committed workload checksums and cold DVI equality under ordinary execution,
+where no driver requests a tracked region. It therefore measures the inactive
+substrate and the existing named-boundary restart path, not reuse of a tracked
+record.
+
+The current `AHashMap` changed-at tracker and deterministic `BTreeMap` recorder
+remain the backend. The closure measurements do not justify bank-local stamp
+arrays, seen-epoch vectors, dirty sets, or another index: the inactive path is
+subnanosecond at the recorder boundary, and active costs have no authorized
+consumer workload against which a replacement could earn its retained-memory
+and complexity cost. A downstream replay or reuse design must be separately
+authorized, must retain this one-advance semantic contract, and must establish
+its own end-to-end workload and latency acceptance before proposing such a
+backend change. This substrate does not skip execution and makes no edit-latency
+claim.
