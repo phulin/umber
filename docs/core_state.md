@@ -166,6 +166,29 @@ snapshot restore remains responsible for restoring non-environment facts and
 monotonic changed-at ancestry. Code-table generations and other coarse
 aggregate keys keep their existing mutation paths.
 
+`Universe` also owns the generic tracked-region contract. Beginning returns an
+opaque mark containing only aggregate-owned dependency and environment-journal
+positions/epochs. It advances the environment epoch first, so a cell already
+written immediately before the region cannot coalesce away the region's first
+write. Finishing returns two deterministic detached sequences: observed
+dependencies ordered by canonical dependency key, and distinct scope-free
+`CellId` writes ordered by cell identity. The journal identifies which cells
+were written, but each final value is projected from live state through the
+same allocation-independent semantic vocabulary used by dependency
+validation; the first-write redo word is not authoritative after repeated
+writes.
+
+Journal-compacting operations are a conservative boundary for this first
+generic product. A checkpoint, group exit, or rollback after the mark advances
+the environment epoch, so finish rejects the region with a typed unsupported-
+timeline result and atomically discards its observations. A region may record
+assignments inside an already-open group and finish before that group exits;
+local and global journal identities collapse to the same semantic cell.
+Nested begin, stale or foreign marks, and unsupported cell projections also
+fail closed. Explicit abandon publishes nothing and leaves no active recorder.
+The record validates data only: it contains no transition replay authority,
+paragraph continuation, mounted output, raw substore, or checkpoint handle.
+
 No downstream crate receives `&mut Env`, raw restore hooks, partial checkpoint
 mutation, or constructors for opaque handles.
 

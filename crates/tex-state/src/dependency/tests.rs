@@ -205,13 +205,172 @@ fn disabled_runtime_does_not_retain_reads_or_allocate_a_region() {
     assert!(runtime.tracker.changed.is_empty());
     assert!(!runtime.is_recording());
 
-    runtime.begin_region();
+    let token = runtime.begin_region().expect("start dependency region");
     runtime.record(meaning(1), DependencyValue::Integer(2));
     runtime.record(meaning(1), DependencyValue::Integer(2));
-    assert_eq!(runtime.finish_region().len(), 1);
+    assert_eq!(
+        runtime
+            .finish_region(token)
+            .expect("finish dependency region")
+            .len(),
+        1
+    );
     assert!(runtime.mark_changed(meaning(1)) > ChangedAt::NEVER);
     assert_eq!(runtime.tracker.changed.len(), 1);
     assert!(!runtime.is_recording());
+}
+
+#[test]
+fn tracked_region_orders_reads_and_uses_live_final_write_values() {
+    let mut universe = crate::Universe::new();
+    let mark = universe
+        .begin_tracked_region()
+        .expect("start tracked region");
+
+    universe.set_count(7, 1);
+    universe.observe_semantic_dependency(cell(BankTag::Count, 7));
+    universe.set_count(3, 4);
+    universe.set_count(7, 9);
+
+    let record = universe
+        .finish_tracked_region(mark)
+        .expect("finish tracked region");
+    assert_eq!(record.observations().len(), 1);
+    assert_eq!(record.observations()[0].value, DependencyValue::Integer(1));
+    assert_eq!(record.environment_writes().len(), 2);
+    assert_eq!(
+        record.environment_writes()[0].cell(),
+        CellId::new(BankTag::Count, 3)
+    );
+    assert_eq!(
+        record.environment_writes()[1].cell(),
+        CellId::new(BankTag::Count, 7)
+    );
+    assert_eq!(
+        record.environment_writes()[1].value(),
+        &DependencyValue::Integer(9),
+        "the first-write journal redo word must not determine the final value"
+    );
+}
+
+#[test]
+fn tracked_region_canonicalizes_grouped_assignment_scope() {
+    let mut universe = crate::Universe::new();
+    universe.enter_group();
+    let mark = universe
+        .begin_tracked_region()
+        .expect("start tracked region");
+    universe.set_count(12, 1);
+    universe.set_count_global(12, 2);
+
+    let record = universe
+        .finish_tracked_region(mark)
+        .expect("finish grouped tracked region");
+    assert_eq!(record.environment_writes().len(), 1);
+    assert_eq!(
+        record.environment_writes()[0].cell(),
+        CellId::new(BankTag::Count, 12)
+    );
+    assert_eq!(
+        record.environment_writes()[0].value(),
+        &DependencyValue::Integer(2)
+    );
+    let _ = universe.leave_group();
+}
+
+#[test]
+fn rollback_invalidates_region_and_discards_recorder_atomically() {
+    let mut universe = crate::Universe::new();
+    let snapshot = universe.snapshot();
+    let mark = universe
+        .begin_tracked_region()
+        .expect("start tracked region");
+    universe.set_count(12, 1);
+    universe.record_dependency(meaning(1), DependencyValue::Absent);
+    universe.rollback(&snapshot);
+
+    assert_eq!(
+        universe.finish_tracked_region(mark),
+        Err(crate::TrackedRegionError::UnsupportedTimelineChange)
+    );
+    assert!(!universe.dependency_region_is_active());
+    let next = universe
+        .begin_tracked_region()
+        .expect("recorder was cleared");
+    let empty = universe
+        .finish_tracked_region(next)
+        .expect("finish replacement region");
+    assert!(empty.observations().is_empty());
+    assert!(empty.environment_writes().is_empty());
+}
+
+#[test]
+fn group_exit_across_region_mark_fails_closed() {
+    let mut universe = crate::Universe::new();
+    let mark = universe
+        .begin_tracked_region()
+        .expect("start tracked region");
+    universe.enter_group();
+    universe.set_count(12, 1);
+    let _ = universe.leave_group();
+
+    assert_eq!(
+        universe.finish_tracked_region(mark),
+        Err(crate::TrackedRegionError::UnsupportedTimelineChange)
+    );
+    assert!(!universe.dependency_region_is_active());
+}
+
+#[test]
+fn nested_begin_and_abandon_are_typed_and_leave_no_observations() {
+    let mut universe = crate::Universe::new();
+    let mark = universe
+        .begin_tracked_region()
+        .expect("start tracked region");
+    assert!(matches!(
+        universe.begin_tracked_region(),
+        Err(crate::TrackedRegionError::AlreadyActive)
+    ));
+    universe.record_dependency(meaning(1), DependencyValue::Absent);
+    universe
+        .abandon_tracked_region(mark)
+        .expect("abandon tracked region");
+    assert!(!universe.dependency_region_is_active());
+
+    universe.record_dependency(meaning(2), DependencyValue::Absent);
+    let next = universe.begin_tracked_region().expect("start clean region");
+    let record = universe
+        .finish_tracked_region(next)
+        .expect("finish clean region");
+    assert!(record.observations().is_empty());
+}
+
+#[test]
+fn final_write_values_are_allocation_independent() {
+    use crate::token::Token;
+
+    let mut left = crate::Universe::new();
+    let mut right = crate::Universe::new();
+    let _unrelated = left.intern_token_list(&[Token::param(1)]);
+    let left_value = left.intern_token_list(&[Token::param(2)]);
+    let right_value = right.intern_token_list(&[Token::param(2)]);
+    assert_ne!(left_value.raw(), right_value.raw());
+
+    let left_mark = left.begin_tracked_region().expect("start left region");
+    let right_mark = right.begin_tracked_region().expect("start right region");
+    left.set_toks(4, left_value);
+    right.set_toks(4, right_value);
+    let left_record = left
+        .finish_tracked_region(left_mark)
+        .expect("finish left region");
+    let right_record = right
+        .finish_tracked_region(right_mark)
+        .expect("finish right region");
+
+    assert_eq!(
+        left_record.environment_writes(),
+        right_record.environment_writes()
+    );
 }
 
 #[test]
@@ -221,9 +380,14 @@ fn universe_facade_records_and_invalidates_across_rollback() {
         index: 0,
     };
     let mut universe = crate::Universe::new();
-    universe.begin_dependency_region();
+    let mark = universe
+        .begin_tracked_region()
+        .expect("start tracked region");
     universe.record_dependency(key, DependencyValue::Unsigned(7));
-    let observations = universe.finish_dependency_region();
+    let record = universe
+        .finish_tracked_region(mark)
+        .expect("finish tracked region");
+    let observations = record.observations();
     assert_eq!(observations.len(), 1);
     assert_eq!(observations[0].changed_at, ChangedAt::NEVER);
 
@@ -291,9 +455,15 @@ fn rollback_preserves_unrelated_stamps_and_clone_ancestry() {
 fn aggregate_region_validates_after_change_and_restore() {
     let key = cell(BankTag::Count, 12);
     let mut universe = crate::Universe::new();
-    universe.begin_dependency_region();
+    let mark = universe
+        .begin_tracked_region()
+        .expect("start tracked region");
     universe.record_dependency(key, DependencyValue::Integer(0));
-    let mut observations = universe.finish_dependency_region();
+    let mut observations = universe
+        .finish_tracked_region(mark)
+        .expect("finish tracked region")
+        .observations()
+        .to_vec();
 
     universe.set_count(13, 9);
     let mut reads = 0;
@@ -323,9 +493,15 @@ fn aggregate_region_validates_after_change_and_restore() {
 fn readonly_region_combines_stamp_fast_path_and_semantic_fallback() {
     let key = cell(BankTag::Count, 12);
     let mut universe = crate::Universe::new();
-    universe.begin_dependency_region();
+    let mark = universe
+        .begin_tracked_region()
+        .expect("start tracked region");
     universe.record_dependency(key, DependencyValue::Integer(0));
-    let observations = universe.finish_dependency_region();
+    let observations = universe
+        .finish_tracked_region(mark)
+        .expect("finish tracked region")
+        .observations()
+        .to_vec();
 
     let mut reads = 0;
     assert_eq!(
@@ -381,11 +557,15 @@ fn aggregate_mutation_barriers_advance_exact_registered_facts() {
         index: 0,
     };
     let mut universe = crate::Universe::new();
-    universe.begin_dependency_region();
+    let mark = universe
+        .begin_tracked_region()
+        .expect("start tracked region");
     for key in [count, catcode, generation, page, world] {
         universe.record_dependency(key, DependencyValue::Absent);
     }
-    let _ = universe.finish_dependency_region();
+    let _ = universe
+        .finish_tracked_region(mark)
+        .expect("finish tracked region");
 
     universe.set_count(8, 1);
     assert_eq!(universe.dependency_changed_at(count), ChangedAt::NEVER);

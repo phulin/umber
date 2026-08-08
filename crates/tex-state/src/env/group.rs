@@ -374,6 +374,46 @@ impl EnvSnapshot {
 }
 
 impl Env {
+    /// Opens a journal slice whose first write cannot coalesce with work that
+    /// preceded the mark.
+    pub(crate) fn begin_journal_region(&mut self) -> super::JournalRegionMark {
+        self.bump_epoch();
+        super::JournalRegionMark {
+            journal_pos: self.journal.pos(),
+            epoch: self.epoch,
+        }
+    }
+
+    /// Returns the canonical cells written since `mark`.
+    ///
+    /// Checkpoints, group exits, and rollback advance the environment epoch.
+    /// Rejecting such a region keeps destructive journal compaction from
+    /// silently producing an incomplete write footprint.
+    pub(crate) fn journal_region_cells(
+        &self,
+        mark: super::JournalRegionMark,
+    ) -> Result<Vec<CellId>, super::JournalRegionInvalidated> {
+        if self.epoch != mark.epoch || mark.journal_pos > self.journal.pos() {
+            return Err(super::JournalRegionInvalidated);
+        }
+        let mut cells = self
+            .journal
+            .entries_since(mark.journal_pos)
+            .iter()
+            .filter_map(|entry| match *entry {
+                Entry::Undo(rec) => Some(rec.cell().without_assignment_scope()),
+                Entry::BoxUndo(id) => Some(CellId::new(
+                    BankTag::Box,
+                    u32::from(self.journal.box_undo(id).index()),
+                )),
+                Entry::Marker(_) => None,
+            })
+            .collect::<Vec<_>>();
+        cells.sort_unstable();
+        cells.dedup();
+        Ok(cells)
+    }
+
     /// Records a checkpoint position and starts a fresh epoch for later writes.
     #[must_use]
     pub(crate) fn checkpoint(&mut self) -> EnvSnapshot {

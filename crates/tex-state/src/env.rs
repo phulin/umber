@@ -62,6 +62,17 @@ pub(crate) enum CellMutationDisposition {
     Retained,
 }
 
+/// Opaque environment-journal boundary owned by the aggregate state layer.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct JournalRegionMark {
+    journal_pos: crate::journal::JournalPos,
+    epoch: Epoch,
+}
+
+/// The journal lineage changed while a tracked region was active.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct JournalRegionInvalidated;
+
 impl CellMutationReceipt {
     pub(crate) fn write(cell: CellId, old: u64, new: u64) -> Self {
         Self {
@@ -323,7 +334,6 @@ impl Env {
     }
 
     /// Advances to the next epoch.
-    #[cfg(test)]
     pub(crate) fn bump_epoch(&mut self) {
         self.epoch.bump();
     }

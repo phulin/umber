@@ -124,8 +124,9 @@ pub use resource::{InputResolver, ResourceLookup, ResourceNeed, ResourceResult};
 pub use command_context::{CommandBoxKind, CommandContext, CommandLineSource};
 pub use dependency::{
     ChangedAt, DependencyCodeTable, DependencyEngineField, DependencyFontField, DependencyKey,
-    DependencyPageField, DependencyRegion, DependencyRuntime, DependencyTracker,
-    DependencyValidation, DependencyValue, DependencyWorldField, ObservedDependency,
+    DependencyPageField, DependencyRegion, DependencyRegionError, DependencyRegionToken,
+    DependencyRuntime, DependencyTracker, DependencyValidation, DependencyValue,
+    DependencyWorldField, ObservedDependency,
 };
 pub use effect_journal::EffectJournal;
 pub use engine_state::{EngineMode, EngineStateSnapshot};
@@ -162,7 +163,8 @@ pub use universe::{
     BoxBuildTransaction, BoxDimension, EngineBoundaryHasher, FormatError, GenerationForkError,
     GenerationSubstrate, GeometryObservation, InputOpenContext, InputOpenState, InputReadState,
     InteractionMode, ParagraphShapeLine, PenaltyArrayKind, PreparedPageSuffix,
-    ReplayProbeTransaction, ShipoutTransaction, Snapshot, TakeUnboxResult, UnboxKind, Universe,
+    ReplayProbeTransaction, ShipoutTransaction, Snapshot, TakeUnboxResult, TrackedEnvironmentWrite,
+    TrackedRegionError, TrackedRegionMark, TrackedRegionRecord, UnboxKind, Universe,
 };
 #[cfg(feature = "profiling")]
 pub use world::ProfilingTimer;

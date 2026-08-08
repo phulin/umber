@@ -3253,11 +3253,17 @@ fn empty_page_mark_presence_invalidates_dependencies_and_survives_rollback() {
             );
         }
 
-        universe.begin_dependency_region();
+        let region = universe
+            .begin_tracked_region()
+            .expect("start tracked region");
         for key in [direct, class_zero, sparse] {
             universe.record_dependency(key, DependencyValue::Absent);
         }
-        let observations = universe.finish_dependency_region();
+        let observations = universe
+            .finish_tracked_region(region)
+            .expect("finish tracked region")
+            .observations()
+            .to_vec();
 
         universe.set_page_mark(mark, TokenListId::EMPTY);
         universe.set_page_mark_class(mark, sparse_class, TokenListId::EMPTY);
@@ -3285,7 +3291,9 @@ fn empty_page_mark_presence_invalidates_dependencies_and_survives_rollback() {
             );
         }
 
-        universe.begin_dependency_region();
+        let region = universe
+            .begin_tracked_region()
+            .expect("start tracked region");
         for key in [direct, class_zero, sparse] {
             universe.record_dependency(
                 key,
@@ -3294,7 +3302,11 @@ fn empty_page_mark_presence_invalidates_dependencies_and_survives_rollback() {
                     .expect("page mark dependency"),
             );
         }
-        let observations = universe.finish_dependency_region();
+        let observations = universe
+            .finish_tracked_region(region)
+            .expect("finish tracked region")
+            .observations()
+            .to_vec();
 
         universe.clear_page_mark_class(mark, 0);
         universe.clear_page_mark_class(mark, sparse_class);

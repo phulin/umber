@@ -6,12 +6,12 @@
 //! public timeline tuple lives here so future World/effect/input state cannot
 //! grow a partial rollback API beside the store tuple.
 
-use crate::cell::BankTag;
+use crate::cell::{BankTag, CellId};
 use crate::code_tables::{CodeTableGenerations, DelCode, LcCode, MathCode, SfCode, UcCode};
 use crate::dependency::{
     ChangedAt, DependencyCodeTable, DependencyEngineField, DependencyFontField, DependencyKey,
-    DependencyPageField, DependencyRuntime, DependencyTrackerSnapshot, DependencyValue,
-    DependencyWorldField, ObservedDependency,
+    DependencyPageField, DependencyRegionError, DependencyRegionToken, DependencyRuntime,
+    DependencyTrackerSnapshot, DependencyValue, DependencyWorldField, ObservedDependency,
 };
 #[cfg(test)]
 use crate::env::Env;
@@ -129,6 +129,98 @@ pub trait InputOpenState {
 /// Production input-open capability over a [`Universe`].
 pub struct InputOpenContext<'a> {
     universe: &'a mut Universe,
+}
+
+/// Opaque aggregate authority for one active tracked region.
+///
+/// The mark owns only runtime and environment-journal positions. It exposes no
+/// substore, checkpoint, or replay capability.
+#[derive(Debug)]
+pub struct TrackedRegionMark {
+    owner: SnapshotOwner,
+    dependency: DependencyRegionToken,
+    environment: crate::env::JournalRegionMark,
+}
+
+/// One canonical environment cell written by a tracked region.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TrackedEnvironmentWrite {
+    cell: CellId,
+    value: DependencyValue,
+}
+
+impl TrackedEnvironmentWrite {
+    #[must_use]
+    pub const fn cell(&self) -> CellId {
+        self.cell
+    }
+
+    #[must_use]
+    pub const fn value(&self) -> &DependencyValue {
+        &self.value
+    }
+}
+
+/// Detached evidence recorded by one successfully finished region.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TrackedRegionRecord {
+    observations: Vec<ObservedDependency>,
+    environment_writes: Vec<TrackedEnvironmentWrite>,
+}
+
+impl TrackedRegionRecord {
+    #[must_use]
+    pub fn observations(&self) -> &[ObservedDependency] {
+        &self.observations
+    }
+
+    #[must_use]
+    pub fn environment_writes(&self) -> &[TrackedEnvironmentWrite] {
+        &self.environment_writes
+    }
+}
+
+/// Typed rejection from the aggregate tracked-region lifecycle.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TrackedRegionError {
+    AlreadyActive,
+    NoActiveRegion,
+    ForeignMark,
+    StaleMark,
+    UnsupportedTimelineChange,
+    UnsupportedEnvironmentCell(CellId),
+}
+
+impl std::fmt::Display for TrackedRegionError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::AlreadyActive => f.write_str("a tracked region is already active"),
+            Self::NoActiveRegion => f.write_str("no tracked region is active"),
+            Self::ForeignMark => f.write_str("the tracked region mark belongs to another Universe"),
+            Self::StaleMark => f.write_str("the tracked region mark is stale"),
+            Self::UnsupportedTimelineChange => {
+                f.write_str("the environment journal lineage changed inside the tracked region")
+            }
+            Self::UnsupportedEnvironmentCell(cell) => {
+                write!(
+                    f,
+                    "environment cell {cell:?} has no detached semantic projection"
+                )
+            }
+        }
+    }
+}
+
+impl std::error::Error for TrackedRegionError {}
+
+impl From<DependencyRegionError> for TrackedRegionError {
+    fn from(value: DependencyRegionError) -> Self {
+        match value {
+            DependencyRegionError::AlreadyActive => Self::AlreadyActive,
+            DependencyRegionError::NoActiveRegion => Self::NoActiveRegion,
+            DependencyRegionError::StaleToken => Self::StaleMark,
+        }
+    }
 }
 
 impl<'a> InputOpenContext<'a> {
@@ -1593,9 +1685,19 @@ impl Universe {
             .copied()
     }
 
-    /// Begins recording semantic reads for one computation region.
-    pub fn begin_dependency_region(&mut self) {
-        self.dependencies.begin_region();
+    /// Begins one generic tracked region.
+    ///
+    /// A fresh environment epoch ensures the journal records the first write
+    /// to every cell after this boundary even when the preceding operation
+    /// wrote the same cell in its epoch.
+    pub fn begin_tracked_region(&mut self) -> Result<TrackedRegionMark, TrackedRegionError> {
+        let dependency = self.dependencies.begin_region()?;
+        let environment = self.stores.begin_dependency_journal_region();
+        Ok(TrackedRegionMark {
+            owner: self.owner.snapshot_owner(),
+            dependency,
+            environment,
+        })
     }
 
     #[must_use]
@@ -1609,9 +1711,58 @@ impl Universe {
         self.dependencies.record(key, value);
     }
 
-    /// Finishes the active dependency region in deterministic key order.
-    pub fn finish_dependency_region(&mut self) -> Vec<ObservedDependency> {
-        self.dependencies.finish_region()
+    /// Finishes a tracked region into deterministic detached evidence.
+    ///
+    /// Timeline changes that can destructively compact the marked journal
+    /// slice fail closed. The failed attempt also clears the recorder.
+    pub fn finish_tracked_region(
+        &mut self,
+        mark: TrackedRegionMark,
+    ) -> Result<TrackedRegionRecord, TrackedRegionError> {
+        if mark.owner != self.owner.snapshot_owner() {
+            self.dependencies.abandon_active_region();
+            return Err(TrackedRegionError::ForeignMark);
+        }
+        if let Err(error) = self.dependencies.ensure_region(&mark.dependency) {
+            self.dependencies.abandon_active_region();
+            return Err(error.into());
+        }
+        let cells = match self
+            .stores
+            .dependency_journal_region_cells(mark.environment)
+        {
+            Ok(cells) => cells,
+            Err(_) => {
+                self.dependencies.abandon_active_region();
+                return Err(TrackedRegionError::UnsupportedTimelineChange);
+            }
+        };
+        let mut environment_writes = Vec::with_capacity(cells.len());
+        for cell in cells {
+            let Some(value) = self.tracked_environment_cell_value(cell) else {
+                self.dependencies.abandon_active_region();
+                return Err(TrackedRegionError::UnsupportedEnvironmentCell(cell));
+            };
+            environment_writes.push(TrackedEnvironmentWrite { cell, value });
+        }
+        let observations = self.dependencies.finish_region(mark.dependency)?;
+        Ok(TrackedRegionRecord {
+            observations,
+            environment_writes,
+        })
+    }
+
+    /// Atomically abandons a tracked region without publishing evidence.
+    pub fn abandon_tracked_region(
+        &mut self,
+        mark: TrackedRegionMark,
+    ) -> Result<(), TrackedRegionError> {
+        if mark.owner != self.owner.snapshot_owner() {
+            self.dependencies.abandon_active_region();
+            return Err(TrackedRegionError::ForeignMark);
+        }
+        self.dependencies.abandon_region(mark.dependency)?;
+        Ok(())
     }
 
     /// Marks one observable fact after its aggregate mutation barrier.
@@ -1625,8 +1776,7 @@ impl Universe {
     }
 
     /// Records one typed state read using its allocation-independent semantic
-    /// value. Reads before a paragraph region opens remain staged by the
-    /// dependency runtime and are claimed by the next canonical paragraph.
+    /// value. Reads outside an active region are intentionally ignored.
     pub fn observe_semantic_dependency(&mut self, key: DependencyKey) {
         self.track_dependency(key);
         if let Some(value) = self.semantic_dependency_value(key) {
@@ -1940,6 +2090,42 @@ impl Universe {
             | DependencyKey::World { .. }
             | DependencyKey::Query { .. } => None,
         }
+    }
+
+    fn tracked_environment_cell_value(&self, cell: CellId) -> Option<DependencyValue> {
+        if let Some(value) = self.semantic_dependency_value(DependencyKey::Cell(cell)) {
+            return Some(value);
+        }
+        let word = self.stores.semantic_env_word(cell);
+        Some(match cell.bank() {
+            BankTag::FontParamLen => DependencyValue::Unsigned(word),
+            BankTag::PdfNoLigatures => DependencyValue::Bool(word != 0),
+            BankTag::FontDimen
+            | BankTag::FontHyphenChar
+            | BankTag::FontSkewChar
+            | BankTag::PdfLpCode
+            | BankTag::PdfRpCode
+            | BankTag::PdfEfCode
+            | BankTag::PdfTagCode
+            | BankTag::PdfKnbsCode
+            | BankTag::PdfStbsCode
+            | BankTag::PdfShbsCode
+            | BankTag::PdfKnbcCode
+            | BankTag::PdfKnacCode => DependencyValue::Integer(i64::from(word as u32 as i32)),
+            BankTag::Meaning
+            | BankTag::Count
+            | BankTag::Dimen
+            | BankTag::Skip
+            | BankTag::Toks
+            | BankTag::Box
+            | BankTag::IntParam
+            | BankTag::DimenParam
+            | BankTag::GlueParam
+            | BankTag::TokParam
+            | BankTag::Muskip
+            | BankTag::CurrentFont
+            | BankTag::MathFamilyFont => return None,
+        })
     }
 
     /// Projects a selected font through the same semantic dependency domain

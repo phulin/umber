@@ -244,21 +244,77 @@ pub(crate) struct DependencyTrackerSnapshot {
 ///
 /// Ordinary execution keeps `active` empty.  Recording therefore adds one
 /// predictable branch and does not allocate, lock, or touch an atomic.
-#[derive(Clone, Debug, Default)]
+#[derive(Debug, Default)]
 pub struct DependencyRuntime {
     tracker: DependencyTracker,
-    active: Option<DependencyRegion>,
-    staged: DependencyRegion,
+    active: Option<ActiveDependencyRegion>,
+    next_region_epoch: u64,
     tracking_enabled: bool,
+}
+
+#[derive(Debug)]
+struct ActiveDependencyRegion {
+    epoch: u64,
+    region: DependencyRegion,
+}
+
+/// Opaque authority for one active dependency recorder.
+///
+/// The token is combined with aggregate-owned environment-journal state by
+/// [`crate::Universe::begin_tracked_region`]. It carries no store handle or
+/// checkpoint internals.
+#[derive(Debug)]
+pub struct DependencyRegionToken(u64);
+
+/// Typed rejection from the dependency-recorder lifecycle.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DependencyRegionError {
+    AlreadyActive,
+    NoActiveRegion,
+    StaleToken,
+}
+
+impl std::fmt::Display for DependencyRegionError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::AlreadyActive => "a dependency region is already active",
+            Self::NoActiveRegion => "no dependency region is active",
+            Self::StaleToken => "the dependency region token is stale",
+        })
+    }
+}
+
+impl std::error::Error for DependencyRegionError {}
+
+impl Clone for DependencyRuntime {
+    fn clone(&self) -> Self {
+        Self {
+            tracker: self.tracker.clone(),
+            active: None,
+            next_region_epoch: self.next_region_epoch,
+            tracking_enabled: self.tracking_enabled,
+        }
+    }
 }
 
 impl DependencyRuntime {
     /// Starts a region. Nested computations should instead record a bounded
     /// [`DependencyKey::Query`] in their parent.
-    pub fn begin_region(&mut self) {
-        assert!(self.active.is_none(), "dependency region already active");
+    pub fn begin_region(&mut self) -> Result<DependencyRegionToken, DependencyRegionError> {
+        if self.active.is_some() {
+            return Err(DependencyRegionError::AlreadyActive);
+        }
+        self.next_region_epoch = self
+            .next_region_epoch
+            .checked_add(1)
+            .expect("dependency region epoch exhausted");
+        let epoch = self.next_region_epoch;
         self.tracking_enabled = true;
-        self.active = Some(std::mem::take(&mut self.staged));
+        self.active = Some(ActiveDependencyRegion {
+            epoch,
+            region: DependencyRegion::default(),
+        });
+        Ok(DependencyRegionToken(epoch))
     }
 
     #[must_use]
@@ -269,19 +325,54 @@ impl DependencyRuntime {
     /// Records a semantic read only when a region is active.
     #[inline(always)]
     pub fn record(&mut self, key: DependencyKey, value: DependencyValue) {
-        if let Some(region) = &mut self.active {
-            region.record(self.tracker.observe(key, value));
-        } else if self.tracking_enabled {
-            self.staged.record(self.tracker.observe(key, value));
+        if let Some(active) = &mut self.active {
+            active.region.record(self.tracker.observe(key, value));
         }
     }
 
     /// Finishes the active region in canonical key order.
-    pub fn finish_region(&mut self) -> Vec<ObservedDependency> {
-        self.active
+    pub fn finish_region(
+        &mut self,
+        token: DependencyRegionToken,
+    ) -> Result<Vec<ObservedDependency>, DependencyRegionError> {
+        let active = self
+            .active
             .take()
-            .expect("no dependency region is active")
-            .into_observations()
+            .ok_or(DependencyRegionError::NoActiveRegion)?;
+        if active.epoch != token.0 {
+            return Err(DependencyRegionError::StaleToken);
+        }
+        Ok(active.region.into_observations())
+    }
+
+    /// Abandons one active region without publishing observations.
+    pub fn abandon_region(
+        &mut self,
+        token: DependencyRegionToken,
+    ) -> Result<(), DependencyRegionError> {
+        let active = self
+            .active
+            .take()
+            .ok_or(DependencyRegionError::NoActiveRegion)?;
+        if active.epoch != token.0 {
+            return Err(DependencyRegionError::StaleToken);
+        }
+        Ok(())
+    }
+
+    pub(crate) fn ensure_region(
+        &self,
+        token: &DependencyRegionToken,
+    ) -> Result<(), DependencyRegionError> {
+        match &self.active {
+            Some(active) if active.epoch == token.0 => Ok(()),
+            Some(_) => Err(DependencyRegionError::StaleToken),
+            None => Err(DependencyRegionError::NoActiveRegion),
+        }
+    }
+
+    pub(crate) fn abandon_active_region(&mut self) {
+        self.active = None;
     }
 
     pub fn mark_changed(&mut self, key: DependencyKey) -> ChangedAt {

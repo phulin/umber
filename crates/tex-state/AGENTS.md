@@ -23,8 +23,8 @@ All production mutation of live TeX state should pass through `Universe` or simi
   not-`stat`-gated `file_warning`), and `group_frames_from` (the same
   per-group display `\showgroups` uses) so `tex-command` can render those
   without a queued cross-crate diagnostic.
-- `src/dependency.rs`: Region-scoped dependency keys with scope-free `CellId` environment identity, detached observations, changed-at validation, semantic backdating, and opaque cross-Universe memo validation stamps.
-- `src/dependency/tests.rs`: Dependency mutation matrix, deterministic nested propagation, and handle-independent observation tests.
+- `src/dependency.rs`: Region-scoped dependency keys with scope-free `CellId` environment identity, typed recorder lifecycle, detached observations, changed-at validation, semantic backdating, and opaque cross-Universe memo validation stamps.
+- `src/dependency/tests.rs`: Dependency mutation matrix, generic tracked-region lifecycle and journal-write records, deterministic ordering, rollback failure closure, and handle-independent observation tests.
 - `src/diagnostic.rs`: tex.web §245's shared `begin_diagnostic`/`end_diagnostic` print channel, which every `\tracing*` parameter's text is routed through.
 - `src/diagnostic/tests.rs`: Destination-selection, `print_nl` line-break, and scalar-formatting tests for the diagnostic channel.
 - `src/env.rs`: Barriered mutable environment storage for meanings, registers, parameters, font values, grouping, and journals; typed writes produce canonical semantic mutation receipts.

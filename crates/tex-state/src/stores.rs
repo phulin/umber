@@ -579,6 +579,21 @@ impl Stores {
         self.env.restored_semantic_word(cell, raw).word
     }
 
+    pub(crate) fn begin_dependency_journal_region(&mut self) -> crate::env::JournalRegionMark {
+        self.env.begin_journal_region()
+    }
+
+    pub(crate) fn dependency_journal_region_cells(
+        &self,
+        mark: crate::env::JournalRegionMark,
+    ) -> Result<Vec<crate::cell::CellId>, crate::env::JournalRegionInvalidated> {
+        self.env.journal_region_cells(mark)
+    }
+
+    pub(crate) fn semantic_env_word(&self, cell: crate::cell::CellId) -> u64 {
+        self.env.semantic_word(cell)
+    }
+
     pub(crate) fn rewrite_null_parshape_representation(&mut self, value: TokenListId) {
         let cell = crate::cell::CellId::new(
             crate::cell::BankTag::TokParam,
