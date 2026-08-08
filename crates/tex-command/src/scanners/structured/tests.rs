@@ -17,6 +17,52 @@ use crate::{
 };
 
 #[test]
+fn futurelet_target_control_sequence_is_not_skipped_when_it_means_space() {
+    // TeX82 §1215's `get_r_token` accepts a control-sequence token based on
+    // `cur_cs`, independent of its current command meaning. LaTeX's
+    // space-skipping `\@ifnextchar` path relies on this when `\@let@token`
+    // was just made equivalent to a space and is immediately reused as the
+    // target of another `\futurelet`.
+    let mut command = CommandState::default();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
+    let target = universe.intern("target").symbol();
+    let first = universe.intern("first").symbol();
+    universe.set_meaning_global(
+        target,
+        Meaning::CharToken {
+            ch: ' ',
+            cat: Catcode::Space,
+        },
+    );
+    universe.set_meaning_global(first, Meaning::Relax);
+    push(
+        &mut command,
+        [
+            Token::Cs(target),
+            Token::Cs(first),
+            Token::Char {
+                ch: '[',
+                cat: Catcode::Other,
+            },
+        ],
+    );
+    let mut capabilities = CommandHostCapabilities::default();
+
+    let assignment = processor(&mut command, &mut universe, &mut capabilities)
+        .scan_let_assignment(true)
+        .expect("futurelet assignment scans");
+
+    assert_eq!(assignment.target, target);
+    assert_eq!(
+        assignment.meaning,
+        Meaning::CharToken {
+            ch: '[',
+            cat: Catcode::Other
+        }
+    );
+}
+
+#[test]
 fn setbox_forbidden_path_does_not_fetch_or_back_up_the_box_command() {
     let scan = |allowed| {
         let mut rig = ScannerRig::plain();

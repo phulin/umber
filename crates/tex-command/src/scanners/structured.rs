@@ -3883,14 +3883,18 @@ impl CommandProcessor<'_> {
         }
     }
 
+    /// TeX82 §1215's `repeat get_token until cur_tok<>space_token`.
+    ///
+    /// This tests the raw spelling, not `cur_cmd`: a control sequence whose
+    /// current meaning is a space remains a legal definition target.
     fn next_non_space_raw(&mut self) -> Result<Option<crate::CurrentCommand>, CommandError> {
         loop {
             let Some(command) = self.get_token()? else {
                 return Ok(None);
             };
             if !matches!(
-                command.meaning(),
-                Meaning::CharToken {
+                command.spelling().semantic_token(),
+                Token::Char {
                     cat: Catcode::Space,
                     ..
                 }
