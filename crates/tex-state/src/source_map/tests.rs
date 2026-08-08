@@ -91,6 +91,42 @@ fn registration_is_idempotent_but_rejects_conflicting_backing() {
 }
 
 #[test]
+fn sparse_source_index_tracks_registration_rollback_retry_and_fork() {
+    let mut map = SourceMap::default();
+    map.register(SourceId::new(40), generated(b"root"))
+        .expect("sparse source registers");
+    let mark = map.watermark();
+    let discarded = map
+        .register(SourceId::new(3), generated(b"retry"))
+        .expect("out-of-order source registers");
+
+    assert_eq!(map.region_by_source.get(&SourceId::new(40)), Some(&0));
+    assert_eq!(map.region_by_source.get(&SourceId::new(3)), Some(&1));
+    assert_eq!(map.position(SourceId::new(3), 0), Ok(discarded));
+
+    let fork = map.clone();
+    assert_eq!(
+        fork.position(SourceId::new(40), 0),
+        map.position(SourceId::new(40), 0)
+    );
+    assert_eq!(fork.position(SourceId::new(3), 0), Ok(discarded));
+
+    map.truncate_to_for_retry(mark);
+    assert_eq!(map.region_by_source.get(&SourceId::new(40)), Some(&0));
+    assert!(!map.region_by_source.contains_key(&SourceId::new(3)));
+    assert_eq!(
+        map.position(SourceId::new(3), 0),
+        Err(SourceMapError::UnknownSource)
+    );
+
+    let retried = map
+        .register(SourceId::new(3), generated(b"retry"))
+        .expect("retry source registers");
+    assert_eq!(retried, discarded);
+    assert_eq!(map.region_by_source.get(&SourceId::new(3)), Some(&1));
+}
+
+#[test]
 fn existing_registration_distinguishes_absent_identical_and_conflicting_sources() {
     let mut map = SourceMap::default();
     let source = SourceId::new(7);

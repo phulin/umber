@@ -3,6 +3,8 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use ahash::AHashMap;
+
 use crate::identity::{HandleIdentity, IdentityAllocator, IdentityMark};
 use crate::input::SourceId;
 use crate::token::OriginId;
@@ -303,6 +305,7 @@ pub(crate) struct SourceMapMark {
 #[derive(Debug)]
 pub(crate) struct SourceMap {
     regions: Vec<SourceRegion>,
+    region_by_source: AHashMap<SourceId, usize>,
     line_starts: Vec<Arc<[usize]>>,
     generated: Vec<GeneratedSource>,
     next_pos: u64,
@@ -323,6 +326,7 @@ impl Default for SourceMap {
     fn default() -> Self {
         Self {
             regions: Vec::new(),
+            region_by_source: AHashMap::new(),
             line_starts: Vec::new(),
             generated: Vec::new(),
             next_pos: 0,
@@ -337,6 +341,7 @@ impl Clone for SourceMap {
     fn clone(&self) -> Self {
         Self {
             regions: self.regions.clone(),
+            region_by_source: self.region_by_source.clone(),
             line_starts: self.line_starts.clone(),
             generated: self.generated.clone(),
             next_pos: self.next_pos,
@@ -425,6 +430,7 @@ impl SourceMap {
             .identities
             .allocate()
             .map_err(|_| SourceMapError::LogicalPositionExhausted)?;
+        let region_index = self.regions.len();
         self.regions.push(SourceRegion {
             start: SourcePos(start),
             byte_len,
@@ -432,6 +438,11 @@ impl SourceMap {
             backing,
             identity,
         });
+        assert_eq!(
+            self.region_by_source.insert(source, region_index),
+            None,
+            "live source registration is unique"
+        );
         self.line_starts.push(line_starts);
         self.next_pos = next_pos;
         Ok(SourcePos(start))
@@ -522,17 +533,12 @@ impl SourceMap {
     }
 
     pub(crate) fn region_for_source(&self, source: SourceId) -> Option<SourceRegion> {
-        if let Some(region) = self.regions.get(source.raw() as usize).copied()
-            && region.source == source
-            && self.identities.contains(region.identity)
-        {
-            return Some(region);
-        }
-        self.regions
-            .iter()
-            .rev()
-            .copied()
-            .find(|region| region.source == source && self.identities.contains(region.identity))
+        let region = self
+            .region_by_source
+            .get(&source)
+            .and_then(|index| self.regions.get(*index))
+            .copied()?;
+        (region.source == source && self.identities.contains(region.identity)).then_some(region)
     }
 
     pub(crate) fn contains_registration(
@@ -577,6 +583,7 @@ impl SourceMap {
             regions: self.regions.len(),
             generated_backings: self.generated.len(),
             live_bytes: self.regions.len() * std::mem::size_of::<SourceRegion>()
+                + self.region_by_source.len() * std::mem::size_of::<(SourceId, usize)>()
                 + self.generated.len() * std::mem::size_of::<GeneratedSource>()
                 + self
                     .line_starts
@@ -584,6 +591,7 @@ impl SourceMap {
                     .map(|starts| starts.len() * std::mem::size_of::<usize>())
                     .sum::<usize>(),
             retained_bytes: self.regions.capacity() * std::mem::size_of::<SourceRegion>()
+                + self.region_by_source.capacity() * std::mem::size_of::<(SourceId, usize)>()
                 + self.generated.capacity() * std::mem::size_of::<GeneratedSource>()
                 + self
                     .generated
@@ -653,6 +661,13 @@ impl SourceMap {
         self.identities
             .rollback(mark.identities)
             .expect("source-map mark is not an ancestor");
+        for (index, region) in self.regions[mark.regions..].iter().enumerate() {
+            assert_eq!(
+                self.region_by_source.remove(&region.source),
+                Some(mark.regions + index),
+                "live source index matches rollback suffix"
+            );
+        }
         self.regions.truncate(mark.regions);
         self.line_starts.truncate(mark.regions);
         self.generated.truncate(mark.generated);
