@@ -474,6 +474,25 @@ fn explicit_local_distribution_resolves_nested_ec_tfm_record() {
 }
 
 #[test]
+fn local_resolution_owns_virtual_and_request_path_receipt_aliases() {
+    let directory = TempDir::new().expect("local resolution tempdir");
+    let path = directory.path().join("owned.ltx");
+    std::fs::write(&path, b"owned bytes").expect("write local input");
+    let resolver = local_resolver(directory.path());
+    let request = FileRequest::new(
+        crate::FileRequestKey::new(FileKind::TexInput, "owned.ltx").expect("local request key"),
+        "owned.ltx",
+    );
+
+    let resolved = resolver.resolve(&request).expect("resolve local input");
+    let path_map = resolver.input_path_map();
+
+    assert_eq!(path_map.get(Path::new("owned.ltx")), Some(&path));
+    assert_eq!(path_map.get(Path::new(&resolved.virtual_path)), Some(&path));
+    assert_eq!(resolver.resolved_inputs(), vec![(path, 11)]);
+}
+
+#[test]
 fn verified_schema_v2_root_returns_typed_font_unavailable() {
     let directory = TempDir::new().expect("distribution tempdir");
     let shard = "{\"schema\":1,\"distribution\":\"absence\",\"index\":0,\"files\":{}}\n";

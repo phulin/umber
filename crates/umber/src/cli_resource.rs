@@ -645,9 +645,14 @@ impl LocalResolver {
             .push((content.path().to_owned(), bytes.len()));
         let digest = FileContentId::for_bytes(&bytes);
         let virtual_path = self.virtual_path(request.key().kind(), content.path(), digest);
-        self.input_paths
-            .borrow_mut()
-            .insert(virtual_path.clone(), content.path().to_owned());
+        let resolved_path = content.path().to_owned();
+        let mut input_paths = self.input_paths.borrow_mut();
+        input_paths.insert(virtual_path.clone(), resolved_path.clone());
+        input_paths.insert(
+            PathBuf::from(request.original_name()),
+            resolved_path.clone(),
+        );
+        input_paths.insert(PathBuf::from(request.key().name()), resolved_path);
         Some(ResolvedFile {
             request: request.key().clone(),
             virtual_path: virtual_path.to_string_lossy().into_owned(),

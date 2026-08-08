@@ -12,7 +12,7 @@ use tex_state::env::banks::IntParam;
 use tex_state::token::Token;
 use tex_state::{FormatError, Universe, World, WorldError};
 use umber::EngineMode as RunEngine;
-use umber::{DriverFile, PlannedFinalization};
+use umber::{DriverFile, MemoryOutputFile, PlannedFinalization};
 
 mod bib;
 mod classic_bib;
@@ -472,14 +472,15 @@ fn finalize_run(
         let format = stores.dump_format()?;
         driver_files.push(DriverFile::new(output.clone(), format));
     }
-    if let Some(output) = &opts.input_records_out {
+    if let Some(receipt_output) = &opts.input_records_out {
         driver_files.push(DriverFile::new(
-            output.clone(),
+            receipt_output.clone(),
             input_record_receipt(
                 stores.world(),
                 &input_path_map,
                 &resolved_inputs,
                 Some(main_input),
+                &output.files,
             )?,
         ));
     }
@@ -787,12 +788,19 @@ fn input_record_receipt(
     path_map: &BTreeMap<PathBuf, PathBuf>,
     resolved_inputs: &[(PathBuf, usize)],
     main_input: Option<(PathBuf, usize)>,
+    same_run_outputs: &[MemoryOutputFile],
 ) -> Result<Vec<u8>, CliError> {
     let mut records = BTreeMap::<PathBuf, usize>::new();
     for (path, len) in resolved_inputs {
         insert_input_record(&mut records, path.clone(), *len)?;
     }
     for record in world.external_input_records() {
+        if same_run_outputs
+            .iter()
+            .any(|output| receipt_path_key(&output.path) == receipt_path_key(record.path()))
+        {
+            continue;
+        }
         let path = path_map
             .get(record.path())
             .cloned()
@@ -822,6 +830,12 @@ fn input_record_receipt(
         receipt.push(b'\n');
     }
     Ok(receipt)
+}
+
+fn receipt_path_key(path: &Path) -> PathBuf {
+    path.components()
+        .filter(|component| !matches!(component, std::path::Component::CurDir))
+        .collect()
 }
 
 fn insert_input_record(
@@ -1087,9 +1101,35 @@ mod tests {
             .expect("same-run generated read");
         assert_eq!(generated.origin(), InputOrigin::SameRunGenerated);
 
-        let receipt =
-            input_record_receipt(&world, &BTreeMap::new(), &[], None).expect("build input receipt");
+        let receipt = input_record_receipt(&world, &BTreeMap::new(), &[], None, &[])
+            .expect("build input receipt");
         assert_eq!(receipt, b"8\texternal.cfg\n");
+    }
+
+    #[test]
+    fn input_receipt_prefers_resolved_paths_and_excludes_normalized_output_aliases() {
+        let mut world = World::memory();
+        world
+            .set_memory_file("logical.ltx", b"resolved".to_vec())
+            .expect("seed logical input");
+        world
+            .set_memory_file("./texsys.aux", b"generated".to_vec())
+            .expect("seed reconstructed output read");
+        world.read_file("logical.ltx").expect("read logical input");
+        world
+            .read_file("./texsys.aux")
+            .expect("read reconstructed output");
+
+        let resolved = PathBuf::from("/locked/texmf/logical.ltx");
+        let path_map = BTreeMap::from([(PathBuf::from("logical.ltx"), resolved.clone())]);
+        let outputs = vec![MemoryOutputFile {
+            path: PathBuf::from("texsys.aux"),
+            bytes: b"generated".to_vec(),
+        }];
+        let receipt = input_record_receipt(&world, &path_map, &[(resolved, 8)], None, &outputs)
+            .expect("build authoritative receipt");
+
+        assert_eq!(receipt, b"8\t/locked/texmf/logical.ltx\n");
     }
 
     #[test]
@@ -1100,6 +1140,7 @@ mod tests {
                 &BTreeMap::new(),
                 &[(PathBuf::from(path), 1)],
                 None,
+                &[],
             )
             .expect_err("receipt paths containing delimiters must be rejected");
             assert!(matches!(error, CliError::InputReceipt(_)));
