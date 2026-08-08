@@ -64,6 +64,12 @@ Its README records the exact interpretation and partial-capture status.
 retention, edit mapping, pruning, and schedule-relative convergence contract
 for the first incremental engine.
 
+`tracked_region_coverage.md` defines the exact ordinary main-control operation
+covered by generic dependency recording, its begin/finish and fail-closed
+ownership, the exhaustive semantic read/barrier matrix, the command/execution
+implementation split, and the required perturbation proof. It does not
+authorize replay or paragraph continuation.
+
 `alignment_brace_semantics.md` is the canonical TeX82/pdfTeX mapping for
 `align_state`, token-delivery corrections, nested alignment ownership,
 template retirement, and recovery.

@@ -2841,6 +2841,12 @@ These must remain identical with complete, degraded, or unknown origins:
 Incremental read recording occurs at aggregate state-access boundaries rather
 than at scattered primitive call sites.
 
+The authoritative supported-region boundary, exhaustive family disposition,
+fail-closed rule, and command/execution implementation split are defined by
+[tracked_region_coverage.md](tracked_region_coverage.md). This section describes
+the command-side access shape; it does not expand that region or authorize
+replay.
+
 `tex_state::CommandContext` observes typed reads such as:
 
 - control-sequence meaning;

@@ -188,6 +188,10 @@ Nested begin, stale or foreign marks, and unsupported cell projections also
 fail closed. Explicit abandon publishes nothing and leaves no active recorder.
 The record validates data only: it contains no transition replay authority,
 paragraph continuation, mounted output, raw substore, or checkpoint handle.
+The exact ordinary-main-control region, exhaustive read/barrier matrix,
+lifecycle ownership, and proof obligation are defined by
+[tracked_region_coverage.md](tracked_region_coverage.md). That contract does
+not grant replay authority or add a paragraph continuation.
 
 No downstream crate receives `&mut Env`, raw restore hooks, partial checkpoint
 mutation, or constructors for opaque handles.
