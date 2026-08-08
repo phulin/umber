@@ -45,6 +45,8 @@ fn cell_id_packs_every_bank_index_and_global_bit() {
             assert_eq!(global.index(), index);
             assert!(global.is_global());
             assert_eq!(global.raw(), local.raw() | (1_u64 << GLOBAL_SHIFT));
+            assert_eq!(global.without_assignment_scope(), local);
+            assert_eq!(local.without_assignment_scope(), local);
             assert_eq!(CellId::from_raw(global.raw()), Some(global));
         }
     }

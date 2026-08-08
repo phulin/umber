@@ -123,8 +123,8 @@ pub use resource::{InputResolver, ResourceLookup, ResourceNeed, ResourceResult};
 
 pub use command_context::{CommandBoxKind, CommandContext, CommandLineSource};
 pub use dependency::{
-    ChangedAt, DependencyBank, DependencyCodeTable, DependencyEngineField, DependencyFontField,
-    DependencyKey, DependencyPageField, DependencyRegion, DependencyRuntime, DependencyTracker,
+    ChangedAt, DependencyCodeTable, DependencyEngineField, DependencyFontField, DependencyKey,
+    DependencyPageField, DependencyRegion, DependencyRuntime, DependencyTracker,
     DependencyValidation, DependencyValue, DependencyWorldField, ObservedDependency,
 };
 pub use effect_journal::EffectJournal;

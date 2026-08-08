@@ -369,10 +369,12 @@ pub(crate) fn indent_in_hmode(
         return Ok(());
     }
     fn make_indent_box(stores: &mut Universe) -> Node {
-        stores.observe_semantic_dependency(tex_state::DependencyKey::Cell {
-            bank: tex_state::DependencyBank::DimenParam,
-            index: u32::from(tex_state::env::banks::DimenParam::PAR_INDENT.raw()),
-        });
+        stores.observe_semantic_dependency(tex_state::DependencyKey::Cell(
+            tex_state::cell::CellId::new(
+                tex_state::cell::BankTag::DimenParam,
+                u32::from(tex_state::env::banks::DimenParam::PAR_INDENT.raw()),
+            ),
+        ));
         let children = stores.freeze_node_list(&[]);
         Node::HList(BoxNode::new(BoxNodeFields {
             width: stores.dimen_param(tex_state::env::banks::DimenParam::PAR_INDENT),

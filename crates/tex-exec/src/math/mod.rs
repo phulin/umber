@@ -47,10 +47,12 @@ pub(super) fn math_font_failure(stores: &mut Universe) -> Option<MathFontFailure
         MathFontSize::ScriptScript,
     ];
     if SIZES.into_iter().any(|size| {
-        stores.observe_semantic_dependency(tex_state::DependencyKey::Cell {
-            bank: tex_state::DependencyBank::MathFamilyFont,
-            index: u32::from(size.index()) * 16 + 2,
-        });
+        stores.observe_semantic_dependency(tex_state::DependencyKey::Cell(
+            tex_state::cell::CellId::new(
+                tex_state::cell::BankTag::MathFamilyFont,
+                u32::from(size.index()) * 16 + 2,
+            ),
+        ));
         let font = stores.math_family_font(size, 2);
         stores.classic_math_parameter_count(font) < 22
             && !matches!(
@@ -61,10 +63,12 @@ pub(super) fn math_font_failure(stores: &mut Universe) -> Option<MathFontFailure
         return Some(MathFontFailure::Symbol);
     }
     if SIZES.into_iter().any(|size| {
-        stores.observe_semantic_dependency(tex_state::DependencyKey::Cell {
-            bank: tex_state::DependencyBank::MathFamilyFont,
-            index: u32::from(size.index()) * 16 + 3,
-        });
+        stores.observe_semantic_dependency(tex_state::DependencyKey::Cell(
+            tex_state::cell::CellId::new(
+                tex_state::cell::BankTag::MathFamilyFont,
+                u32::from(size.index()) * 16 + 3,
+            ),
+        ));
         let font = stores.math_family_font(size, 3);
         stores.classic_math_parameter_count(font) < 13
             && !matches!(

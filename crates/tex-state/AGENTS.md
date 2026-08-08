@@ -12,7 +12,7 @@ All production mutation of live TeX state should pass through `Universe` or simi
 
 - `AGENTS.md`: Local guidance for agents working in the `tex-state` crate.
 - `Cargo.toml`: Crate manifest, dependencies, features, library target, and integration test wiring.
-- `src/cell.rs`: Packed environment cell identifiers and bank tags used by journals and raw storage.
+- `src/cell.rs`: Packed environment cell identifiers and bank tags shared by journals, raw storage, dependency tracking, and semantic hashing; assignment scope is stripped through the canonical `CellId` helper.
 - `src/cell/tests.rs`: Unit tests for cell id packing, bank decoding, and global-bit handling.
 - `src/code_tables.rs`: Sparse persistent-radix TeX catcode, lc/uc/sf/math/delcode tables whose virtual defaults are INITEX's initial values (tex.web §232 and §240, never a format's), plus generation stamps, groups, and snapshots.
 - `src/code_tables/global.rs`: Persistent global-assignment delta history used to rebase saved group roots without depth-sensitive writes.
@@ -23,7 +23,7 @@ All production mutation of live TeX state should pass through `Universe` or simi
   not-`stat`-gated `file_warning`), and `group_frames_from` (the same
   per-group display `\showgroups` uses) so `tex-command` can render those
   without a queued cross-crate diagnostic.
-- `src/dependency.rs`: Region-scoped dependency keys, detached observations, changed-at validation, semantic backdating, and opaque cross-Universe memo validation stamps.
+- `src/dependency.rs`: Region-scoped dependency keys with scope-free `CellId` environment identity, detached observations, changed-at validation, semantic backdating, and opaque cross-Universe memo validation stamps.
 - `src/dependency/tests.rs`: Dependency mutation matrix, deterministic nested propagation, and handle-independent observation tests.
 - `src/diagnostic.rs`: tex.web §245's shared `begin_diagnostic`/`end_diagnostic` print channel, which every `\tracing*` parameter's text is routed through.
 - `src/diagnostic/tests.rs`: Destination-selection, `print_nl` line-break, and scalar-formatting tests for the diagnostic channel.

@@ -2,6 +2,7 @@ use std::hint::black_box;
 use std::time::{Duration, Instant};
 
 use tex_state::{DependencyKey, DependencyValue, Universe};
+use tex_state::cell::{BankTag, CellId};
 
 const ITERATIONS: u64 = 2_000_000;
 const SAMPLES: usize = 12;
@@ -60,7 +61,10 @@ fn measure_order(
 fn run_control(iterations: u64) -> Duration {
     let started = Instant::now();
     for index in 0..iterations {
-        black_box((DependencyKey::Meaning(index as u32), DependencyValue::Integer(index as i64)));
+        black_box((
+            DependencyKey::Cell(CellId::new(BankTag::Meaning, index as u32)),
+            DependencyValue::Integer(index as i64),
+        ));
     }
     started.elapsed()
 }
@@ -69,7 +73,10 @@ fn run_disabled(universe: &mut Universe, iterations: u64) -> Duration {
     let started = Instant::now();
     for index in 0..iterations {
         black_box(&mut *universe).record_dependency(
-            black_box(DependencyKey::Meaning(index as u32)),
+            black_box(DependencyKey::Cell(CellId::new(
+                BankTag::Meaning,
+                index as u32,
+            ))),
             black_box(DependencyValue::Integer(index as i64)),
         );
     }
@@ -84,7 +91,7 @@ fn run_enabled(universe: &mut Universe, iterations: u64) -> Duration {
         // inside a scanner or executor dispatch region.
         let index = index as u32 & 31;
         black_box(&mut *universe).record_dependency(
-            black_box(DependencyKey::Meaning(index)),
+            black_box(DependencyKey::Cell(CellId::new(BankTag::Meaning, index))),
             black_box(DependencyValue::Integer(i64::from(index))),
         );
     }

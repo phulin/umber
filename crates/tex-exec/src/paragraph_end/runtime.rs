@@ -413,10 +413,12 @@ fn pdf_line_dimensions(stores: &mut Universe) -> PdfLineDimensions {
         DimenParam::PDF_EACH_LINE_HEIGHT,
         DimenParam::PDF_EACH_LINE_DEPTH,
     ] {
-        stores.observe_semantic_dependency(tex_state::DependencyKey::Cell {
-            bank: tex_state::DependencyBank::DimenParam,
-            index: u32::from(param.raw()),
-        });
+        stores.observe_semantic_dependency(tex_state::DependencyKey::Cell(
+            tex_state::cell::CellId::new(
+                tex_state::cell::BankTag::DimenParam,
+                u32::from(param.raw()),
+            ),
+        ));
     }
     PdfLineDimensions {
         ignored: stores.dimen_param(DimenParam::PDF_IGNORED_DIMEN),
@@ -864,7 +866,8 @@ fn observe_paragraph_material_dependencies(stores: &mut Universe, nodes: &[Node]
 }
 
 fn snapshot_paragraph_params(nest: &ModeNest, stores: &mut Universe) -> ParagraphParams {
-    use tex_state::{DependencyBank, DependencyEngineField, DependencyKey};
+    use tex_state::cell::{BankTag, CellId};
+    use tex_state::{DependencyEngineField, DependencyKey};
     for param in [
         IntParam::HANG_AFTER,
         IntParam::LOOSENESS,
@@ -883,30 +886,30 @@ fn snapshot_paragraph_params(nest: &ModeNest, stores: &mut Universe) -> Paragrap
         IntParam::DISPLAY_WIDOW_PENALTY,
         IntParam::BROKEN_PENALTY,
     ] {
-        stores.observe_semantic_dependency(DependencyKey::Cell {
-            bank: DependencyBank::IntParam,
-            index: u32::from(param.raw()),
-        });
+        stores.observe_semantic_dependency(DependencyKey::Cell(CellId::new(
+            BankTag::IntParam,
+            u32::from(param.raw()),
+        )));
     }
     for param in [
         DimenParam::HANG_INDENT,
         DimenParam::EMERGENCY_STRETCH,
         DimenParam::H_SIZE,
     ] {
-        stores.observe_semantic_dependency(DependencyKey::Cell {
-            bank: DependencyBank::DimenParam,
-            index: u32::from(param.raw()),
-        });
+        stores.observe_semantic_dependency(DependencyKey::Cell(CellId::new(
+            BankTag::DimenParam,
+            u32::from(param.raw()),
+        )));
     }
     for param in [
         GlueParam::LEFT_SKIP,
         GlueParam::RIGHT_SKIP,
         GlueParam::PAR_FILL_SKIP,
     ] {
-        stores.observe_semantic_dependency(DependencyKey::Cell {
-            bank: DependencyBank::GlueParam,
-            index: u32::from(param.raw()),
-        });
+        stores.observe_semantic_dependency(DependencyKey::Cell(CellId::new(
+            BankTag::GlueParam,
+            u32::from(param.raw()),
+        )));
     }
     stores.observe_semantic_dependency(DependencyKey::Engine(DependencyEngineField::ParShape));
     stores.observe_semantic_dependency(DependencyKey::Engine(DependencyEngineField::PenaltyArrays));

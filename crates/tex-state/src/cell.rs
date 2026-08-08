@@ -82,8 +82,9 @@ impl BankTag {
 pub struct CellId(u64);
 
 impl CellId {
-    #[allow(dead_code)]
-    pub(crate) const fn new(bank: BankTag, index: u32) -> Self {
+    /// Creates the scope-free identity of one environment cell.
+    #[must_use]
+    pub const fn new(bank: BankTag, index: u32) -> Self {
         Self(((bank as u64) << BANK_SHIFT) | index as u64)
     }
 
@@ -119,6 +120,16 @@ impl CellId {
     #[must_use]
     pub const fn is_global(self) -> bool {
         (self.0 & (1_u64 << GLOBAL_SHIFT)) != 0
+    }
+
+    /// Removes the assignment scope carried by journal records.
+    ///
+    /// Local and global assignments address the same semantic environment
+    /// cell. Dependency tracking and state hashing therefore use this
+    /// scope-free identity.
+    #[must_use]
+    pub const fn without_assignment_scope(self) -> Self {
+        Self(self.0 & !(1_u64 << GLOBAL_SHIFT))
     }
 
     /// Returns the encoded cell index.

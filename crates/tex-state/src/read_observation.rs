@@ -1,5 +1,6 @@
 use std::collections::BTreeSet;
 
+use crate::cell::{BankTag, CellId};
 use crate::dependency::DependencyKey;
 use crate::interner::Symbol;
 use crate::meaning::Meaning;
@@ -7,7 +8,10 @@ use crate::meaning::Meaning;
 /// Receives canonical state reads performed by expansion or execution.
 pub trait ReadRecorder {
     fn record_meaning(&mut self, symbol: Symbol, _meaning: Meaning) {
-        self.record_dependency(DependencyKey::Meaning(symbol.raw()));
+        self.record_dependency(DependencyKey::Cell(CellId::new(
+            BankTag::Meaning,
+            symbol.raw(),
+        )));
     }
 
     fn record_dependency(&mut self, _dependency: DependencyKey) {}
@@ -66,7 +70,7 @@ impl ReadSetRecorder {
 
 impl ReadRecorder for ReadSetRecorder {
     fn record_dependency(&mut self, dependency: DependencyKey) {
-        self.dependencies.insert(dependency);
+        self.dependencies.insert(dependency.canonical());
     }
 }
 

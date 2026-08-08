@@ -9,9 +9,9 @@
 use crate::cell::{BankTag, CellId};
 use crate::code_tables::{CodeTableGenerations, DelCode, LcCode, MathCode, SfCode, UcCode};
 use crate::dependency::{
-    ChangedAt, DependencyBank, DependencyCodeTable, DependencyEngineField, DependencyFontField,
-    DependencyKey, DependencyPageField, DependencyRuntime, DependencyTrackerSnapshot,
-    DependencyValue, DependencyWorldField, ObservedDependency,
+    ChangedAt, DependencyCodeTable, DependencyEngineField, DependencyFontField, DependencyKey,
+    DependencyPageField, DependencyRuntime, DependencyTrackerSnapshot, DependencyValue,
+    DependencyWorldField, ObservedDependency,
 };
 #[cfg(test)]
 use crate::env::Env;
@@ -1697,39 +1697,38 @@ impl Universe {
             projection(&mut build)
         };
         match key {
-            DependencyKey::Meaning(raw) => {
-                let symbol = self.stores.try_resolve_stored_symbol(Symbol::new(raw))?;
-                let meaning = self.meaning(symbol);
-                let mut build = |hash: &mut EngineBoundaryHasher<'_>| hash.meaning(meaning);
-                Some(projection(&mut build))
-            }
-            DependencyKey::Cell { bank, index } => {
+            DependencyKey::Cell(cell) => {
+                let index = cell.index();
+                if cell.bank() == BankTag::Meaning {
+                    let symbol = self.stores.try_resolve_stored_symbol(Symbol::new(index))?;
+                    let meaning = self.meaning(symbol);
+                    let mut build = |hash: &mut EngineBoundaryHasher<'_>| hash.meaning(meaning);
+                    return Some(projection(&mut build));
+                }
                 let index16 = u16::try_from(index).ok()?;
-                Some(match bank {
-                    DependencyBank::Count => {
-                        DependencyValue::Integer(i64::from(self.count(index16)))
-                    }
-                    DependencyBank::Dimen => {
+                Some(match cell.bank() {
+                    BankTag::Count => DependencyValue::Integer(i64::from(self.count(index16))),
+                    BankTag::Dimen => {
                         DependencyValue::Integer(i64::from(self.dimen(index16).raw()))
                     }
-                    DependencyBank::Skip => glue(self.skip(index16)),
-                    DependencyBank::Muskip => glue(self.muskip(index16)),
-                    DependencyBank::Toks => token_list(self.toks(index16)),
-                    DependencyBank::Box => self
+                    BankTag::Skip => glue(self.skip(index16)),
+                    BankTag::Muskip => glue(self.muskip(index16)),
+                    BankTag::Toks => token_list(self.toks(index16)),
+                    BankTag::Box => self
                         .box_reg(index16)
                         .map_or(DependencyValue::Absent, node_list),
-                    DependencyBank::IntParam => {
+                    BankTag::IntParam => {
                         DependencyValue::Integer(i64::from(self.int_param(IntParam::new(index16))))
                     }
-                    DependencyBank::DimenParam => DependencyValue::Integer(i64::from(
+                    BankTag::DimenParam => DependencyValue::Integer(i64::from(
                         self.dimen_param(DimenParam::new(index16)).raw(),
                     )),
-                    DependencyBank::GlueParam => glue(self.glue_param(GlueParam::new(index16))),
-                    DependencyBank::TokParam => self
+                    BankTag::GlueParam => glue(self.glue_param(GlueParam::new(index16))),
+                    BankTag::TokParam => self
                         .tok_param_option(TokParam::new(index16))
                         .map_or(DependencyValue::Absent, token_list),
-                    DependencyBank::CurrentFont => font(self.current_font()),
-                    DependencyBank::MathFamilyFont => {
+                    BankTag::CurrentFont => font(self.current_font()),
+                    BankTag::MathFamilyFont => {
                         let family = u8::try_from(index % 16).ok()?;
                         let size = match index / 16 {
                             0 => MathFontSize::Text,
@@ -1739,12 +1738,21 @@ impl Universe {
                         };
                         font(self.math_family_font(size, family))
                     }
-                    DependencyBank::LastBadness => {
-                        DependencyValue::Integer(i64::from(self.last_badness()))
-                    }
-                    DependencyBank::Magnification => {
-                        DependencyValue::Integer(i64::from(self.mag()))
-                    }
+                    BankTag::Meaning
+                    | BankTag::FontDimen
+                    | BankTag::FontParamLen
+                    | BankTag::FontHyphenChar
+                    | BankTag::FontSkewChar
+                    | BankTag::PdfLpCode
+                    | BankTag::PdfRpCode
+                    | BankTag::PdfEfCode
+                    | BankTag::PdfTagCode
+                    | BankTag::PdfKnbsCode
+                    | BankTag::PdfStbsCode
+                    | BankTag::PdfShbsCode
+                    | BankTag::PdfKnbcCode
+                    | BankTag::PdfKnacCode
+                    | BankTag::PdfNoLigatures => return None,
                 })
             }
             DependencyKey::Code { table, scalar } => {
@@ -2013,9 +2021,8 @@ impl Universe {
             .mark_changed(DependencyKey::CodeGeneration(table));
     }
 
-    fn mark_cell_changed(&mut self, bank: DependencyBank, index: u32) {
-        self.dependencies
-            .mark_changed(DependencyKey::Cell { bank, index });
+    fn mark_cell_changed(&mut self, cell: CellId) {
+        self.dependencies.mark_changed(DependencyKey::Cell(cell));
     }
 
     /// Projects executor-owned roots into the same allocation-independent
@@ -4189,7 +4196,7 @@ impl Universe {
     }
 
     pub fn set_meaning(&mut self, symbol: impl crate::interner::SymbolReference, meaning: Meaning) {
-        let dependency = DependencyKey::Meaning(symbol_reference_raw(symbol));
+        let dependency = meaning_dependency(symbol);
         self.stores.set_meaning(symbol, meaning);
         self.dependencies.mark_changed(dependency);
     }
@@ -4203,7 +4210,7 @@ impl Universe {
         symbol: impl crate::interner::SymbolReference,
         meaning: Meaning,
     ) {
-        let dependency = DependencyKey::Meaning(symbol_reference_raw(symbol));
+        let dependency = meaning_dependency(symbol);
         self.stores.set_meaning_global(symbol, meaning);
         self.dependencies.mark_changed(dependency);
     }
@@ -4261,7 +4268,7 @@ impl Universe {
         symbol: impl crate::interner::SymbolReference,
         macro_meaning: MacroMeaning,
     ) {
-        let dependency = DependencyKey::Meaning(symbol_reference_raw(symbol));
+        let dependency = meaning_dependency(symbol);
         self.stores.set_macro_meaning(symbol, macro_meaning);
         self.dependencies.mark_changed(dependency);
     }
@@ -4272,7 +4279,7 @@ impl Universe {
         macro_meaning: MacroMeaning,
         provenance: MacroDefinitionProvenance,
     ) {
-        let dependency = DependencyKey::Meaning(symbol_reference_raw(symbol));
+        let dependency = meaning_dependency(symbol);
         self.stores
             .set_macro_meaning_with_provenance(symbol, macro_meaning, provenance);
         self.dependencies.mark_changed(dependency);
@@ -4283,7 +4290,7 @@ impl Universe {
         symbol: impl crate::interner::SymbolReference,
         macro_meaning: MacroMeaning,
     ) {
-        let dependency = DependencyKey::Meaning(symbol_reference_raw(symbol));
+        let dependency = meaning_dependency(symbol);
         self.stores.set_macro_meaning_global(symbol, macro_meaning);
         self.dependencies.mark_changed(dependency);
     }
@@ -4294,7 +4301,7 @@ impl Universe {
         macro_meaning: MacroMeaning,
         provenance: MacroDefinitionProvenance,
     ) {
-        let dependency = DependencyKey::Meaning(symbol_reference_raw(symbol));
+        let dependency = meaning_dependency(symbol);
         self.stores
             .set_macro_meaning_global_with_provenance(symbol, macro_meaning, provenance);
         self.dependencies.mark_changed(dependency);
@@ -5008,12 +5015,12 @@ impl Universe {
 
     pub fn set_current_font(&mut self, id: FontId) {
         self.stores.set_current_font(id);
-        self.mark_cell_changed(DependencyBank::CurrentFont, 0);
+        self.mark_cell_changed(CellId::new(BankTag::CurrentFont, 0));
     }
 
     pub fn set_current_font_global(&mut self, id: FontId) {
         self.stores.set_current_font_global(id);
-        self.mark_cell_changed(DependencyBank::CurrentFont, 0);
+        self.mark_cell_changed(CellId::new(BankTag::CurrentFont, 0));
     }
 
     pub fn set_current_font_selector(
@@ -5022,7 +5029,7 @@ impl Universe {
         id: FontId,
     ) {
         self.stores.set_current_font_selector(symbol, id);
-        self.mark_cell_changed(DependencyBank::CurrentFont, 0);
+        self.mark_cell_changed(CellId::new(BankTag::CurrentFont, 0));
     }
 
     pub fn set_current_font_selector_global(
@@ -5031,7 +5038,7 @@ impl Universe {
         id: FontId,
     ) {
         self.stores.set_current_font_selector_global(symbol, id);
-        self.mark_cell_changed(DependencyBank::CurrentFont, 0);
+        self.mark_cell_changed(CellId::new(BankTag::CurrentFont, 0));
     }
 
     #[must_use]
@@ -5047,10 +5054,10 @@ impl Universe {
         global: bool,
     ) {
         self.stores.set_math_family_font(size, family, id, global);
-        self.mark_cell_changed(
-            DependencyBank::MathFamilyFont,
+        self.mark_cell_changed(CellId::new(
+            BankTag::MathFamilyFont,
             u32::from(size.index()) * 16 + u32::from(family),
-        );
+        ));
     }
 
     #[must_use]
@@ -5719,7 +5726,6 @@ impl Universe {
         code_before: CodeTableGenerations,
         code_after: CodeTableGenerations,
     ) {
-        let dependency_cell = |bank, index| DependencyKey::Cell { bank, index };
         for &cell in changed_cells {
             let index = cell.index();
             if matches!(cell.bank(), BankTag::FontDimen | BankTag::FontParamLen) {
@@ -5730,19 +5736,19 @@ impl Universe {
                 });
             }
             let key = match cell.bank() {
-                BankTag::Meaning => DependencyKey::Meaning(index),
-                BankTag::Count => dependency_cell(DependencyBank::Count, index),
-                BankTag::Dimen => dependency_cell(DependencyBank::Dimen, index),
-                BankTag::Skip => dependency_cell(DependencyBank::Skip, index),
-                BankTag::Toks => dependency_cell(DependencyBank::Toks, index),
-                BankTag::Box => dependency_cell(DependencyBank::Box, index),
-                BankTag::Muskip => dependency_cell(DependencyBank::Muskip, index),
-                BankTag::IntParam => dependency_cell(DependencyBank::IntParam, index),
-                BankTag::DimenParam => dependency_cell(DependencyBank::DimenParam, index),
-                BankTag::GlueParam => dependency_cell(DependencyBank::GlueParam, index),
-                BankTag::TokParam => dependency_cell(DependencyBank::TokParam, index),
-                BankTag::CurrentFont => dependency_cell(DependencyBank::CurrentFont, index),
-                BankTag::MathFamilyFont => dependency_cell(DependencyBank::MathFamilyFont, index),
+                BankTag::Meaning
+                | BankTag::Count
+                | BankTag::Dimen
+                | BankTag::Skip
+                | BankTag::Toks
+                | BankTag::Box
+                | BankTag::Muskip
+                | BankTag::IntParam
+                | BankTag::DimenParam
+                | BankTag::GlueParam
+                | BankTag::TokParam
+                | BankTag::CurrentFont
+                | BankTag::MathFamilyFont => DependencyKey::Cell(cell.without_assignment_scope()),
                 BankTag::FontDimen
                 | BankTag::FontParamLen
                 | BankTag::FontHyphenChar
@@ -5833,7 +5839,7 @@ impl Universe {
 
     pub fn set_count(&mut self, index: u16, value: i32) {
         self.stores.set_count(index, value);
-        self.mark_cell_changed(DependencyBank::Count, u32::from(index));
+        self.mark_cell_changed(CellId::new(BankTag::Count, u32::from(index)));
     }
 
     #[must_use]
@@ -5843,12 +5849,12 @@ impl Universe {
 
     pub fn set_count_global(&mut self, index: u16, value: i32) {
         self.stores.set_count_global(index, value);
-        self.mark_cell_changed(DependencyBank::Count, u32::from(index));
+        self.mark_cell_changed(CellId::new(BankTag::Count, u32::from(index)));
     }
 
     pub fn set_dimen(&mut self, index: u16, value: Scaled) {
         self.stores.set_dimen(index, value);
-        self.mark_cell_changed(DependencyBank::Dimen, u32::from(index));
+        self.mark_cell_changed(CellId::new(BankTag::Dimen, u32::from(index)));
     }
 
     #[must_use]
@@ -5858,12 +5864,12 @@ impl Universe {
 
     pub fn set_dimen_global(&mut self, index: u16, value: Scaled) {
         self.stores.set_dimen_global(index, value);
-        self.mark_cell_changed(DependencyBank::Dimen, u32::from(index));
+        self.mark_cell_changed(CellId::new(BankTag::Dimen, u32::from(index)));
     }
 
     pub fn set_skip(&mut self, index: u16, value: GlueId) {
         self.stores.set_skip(index, value);
-        self.mark_cell_changed(DependencyBank::Skip, u32::from(index));
+        self.mark_cell_changed(CellId::new(BankTag::Skip, u32::from(index)));
     }
 
     #[must_use]
@@ -5873,12 +5879,12 @@ impl Universe {
 
     pub fn set_skip_global(&mut self, index: u16, value: GlueId) {
         self.stores.set_skip_global(index, value);
-        self.mark_cell_changed(DependencyBank::Skip, u32::from(index));
+        self.mark_cell_changed(CellId::new(BankTag::Skip, u32::from(index)));
     }
 
     pub fn set_muskip(&mut self, index: u16, value: GlueId) {
         self.stores.set_muskip(index, value);
-        self.mark_cell_changed(DependencyBank::Muskip, u32::from(index));
+        self.mark_cell_changed(CellId::new(BankTag::Muskip, u32::from(index)));
     }
 
     #[must_use]
@@ -5888,12 +5894,12 @@ impl Universe {
 
     pub fn set_muskip_global(&mut self, index: u16, value: GlueId) {
         self.stores.set_muskip_global(index, value);
-        self.mark_cell_changed(DependencyBank::Muskip, u32::from(index));
+        self.mark_cell_changed(CellId::new(BankTag::Muskip, u32::from(index)));
     }
 
     pub fn set_toks(&mut self, index: u16, value: TokenListId) {
         self.stores.set_toks(index, value);
-        self.mark_cell_changed(DependencyBank::Toks, u32::from(index));
+        self.mark_cell_changed(CellId::new(BankTag::Toks, u32::from(index)));
     }
 
     #[must_use]
@@ -5903,17 +5909,17 @@ impl Universe {
 
     pub fn set_toks_global(&mut self, index: u16, value: TokenListId) {
         self.stores.set_toks_global(index, value);
-        self.mark_cell_changed(DependencyBank::Toks, u32::from(index));
+        self.mark_cell_changed(CellId::new(BankTag::Toks, u32::from(index)));
     }
 
     pub fn set_box_reg(&mut self, index: u16, value: NodeListId) {
         self.stores.set_box_reg(index, value);
-        self.mark_cell_changed(DependencyBank::Box, u32::from(index));
+        self.mark_cell_changed(CellId::new(BankTag::Box, u32::from(index)));
     }
 
     pub fn set_box_reg_global(&mut self, index: u16, value: NodeListId) {
         self.stores.set_box_reg_global(index, value);
-        self.mark_cell_changed(DependencyBank::Box, u32::from(index));
+        self.mark_cell_changed(CellId::new(BankTag::Box, u32::from(index)));
     }
 
     /// Marks the epoch-node suffix owned by one box-register value scan.
@@ -6520,7 +6526,7 @@ impl Universe {
             self.stores.pin_survivor(value);
         }
         let _ = self.stores.take_box_reg(index);
-        self.mark_cell_changed(DependencyBank::Box, u32::from(index));
+        self.mark_cell_changed(CellId::new(BankTag::Box, u32::from(index)));
         value
     }
 
@@ -6530,7 +6536,7 @@ impl Universe {
             self.stores.pin_survivor(value);
         }
         let _ = self.stores.take_box_reg_same_level(index);
-        self.mark_cell_changed(DependencyBank::Box, u32::from(index));
+        self.mark_cell_changed(CellId::new(BankTag::Box, u32::from(index)));
         value
     }
 
@@ -6567,28 +6573,28 @@ impl Universe {
         self.stores.pin_survivor(value);
         let taken = self.stores.take_box_reg_same_level(index);
         debug_assert_eq!(taken, Some(value));
-        self.mark_cell_changed(DependencyBank::Box, u32::from(index));
+        self.mark_cell_changed(CellId::new(BankTag::Box, u32::from(index)));
         TakeUnboxResult::Children(children)
     }
 
     pub fn set_box_reg_same_level(&mut self, index: u16, value: NodeListId) {
         self.stores.set_box_reg_same_level(index, value);
-        self.mark_cell_changed(DependencyBank::Box, u32::from(index));
+        self.mark_cell_changed(CellId::new(BankTag::Box, u32::from(index)));
     }
 
     pub fn clear_box_reg(&mut self, index: u16) {
         self.stores.clear_box_reg(index);
-        self.mark_cell_changed(DependencyBank::Box, u32::from(index));
+        self.mark_cell_changed(CellId::new(BankTag::Box, u32::from(index)));
     }
 
     pub fn clear_box_reg_global(&mut self, index: u16) {
         self.stores.clear_box_reg_global(index);
-        self.mark_cell_changed(DependencyBank::Box, u32::from(index));
+        self.mark_cell_changed(CellId::new(BankTag::Box, u32::from(index)));
     }
 
     pub fn clear_box_reg_same_level(&mut self, index: u16) {
         self.stores.clear_box_reg_same_level(index);
-        self.mark_cell_changed(DependencyBank::Box, u32::from(index));
+        self.mark_cell_changed(CellId::new(BankTag::Box, u32::from(index)));
     }
 
     #[must_use]
@@ -6623,12 +6629,12 @@ impl Universe {
 
     pub fn set_int_param(&mut self, param: IntParam, value: i32) {
         self.stores.set_int_param(param, value);
-        self.mark_cell_changed(DependencyBank::IntParam, u32::from(param.raw()));
+        self.mark_cell_changed(CellId::new(BankTag::IntParam, u32::from(param.raw())));
     }
 
     pub fn set_int_param_global(&mut self, param: IntParam, value: i32) {
         self.stores.set_int_param_global(param, value);
-        self.mark_cell_changed(DependencyBank::IntParam, u32::from(param.raw()));
+        self.mark_cell_changed(CellId::new(BankTag::IntParam, u32::from(param.raw())));
     }
 
     #[must_use]
@@ -6643,7 +6649,10 @@ impl Universe {
 
     pub fn set_last_badness(&mut self, value: i32) {
         self.stores.set_last_badness(value);
-        self.mark_cell_changed(DependencyBank::LastBadness, 0);
+        self.mark_cell_changed(CellId::new(
+            BankTag::IntParam,
+            u32::from(IntParam::LAST_BADNESS.raw()),
+        ));
     }
 
     #[must_use]
@@ -6653,12 +6662,18 @@ impl Universe {
 
     pub fn set_mag(&mut self, value: i32) {
         self.stores.set_mag(value);
-        self.mark_cell_changed(DependencyBank::Magnification, 0);
+        self.mark_cell_changed(CellId::new(
+            BankTag::IntParam,
+            u32::from(IntParam::MAG.raw()),
+        ));
     }
 
     pub fn set_mag_global(&mut self, value: i32) {
         self.stores.set_mag_global(value);
-        self.mark_cell_changed(DependencyBank::Magnification, 0);
+        self.mark_cell_changed(CellId::new(
+            BankTag::IntParam,
+            u32::from(IntParam::MAG.raw()),
+        ));
     }
 
     #[must_use]
@@ -6677,12 +6692,12 @@ impl Universe {
 
     pub fn set_dimen_param(&mut self, param: DimenParam, value: Scaled) {
         self.stores.set_dimen_param(param, value);
-        self.mark_cell_changed(DependencyBank::DimenParam, u32::from(param.raw()));
+        self.mark_cell_changed(CellId::new(BankTag::DimenParam, u32::from(param.raw())));
     }
 
     pub fn set_dimen_param_global(&mut self, param: DimenParam, value: Scaled) {
         self.stores.set_dimen_param_global(param, value);
-        self.mark_cell_changed(DependencyBank::DimenParam, u32::from(param.raw()));
+        self.mark_cell_changed(CellId::new(BankTag::DimenParam, u32::from(param.raw())));
     }
 
     #[must_use]
@@ -6692,7 +6707,7 @@ impl Universe {
 
     pub fn set_glue_param(&mut self, param: GlueParam, value: GlueId) {
         self.stores.set_glue_param(param, value);
-        self.mark_cell_changed(DependencyBank::GlueParam, u32::from(param.raw()));
+        self.mark_cell_changed(CellId::new(BankTag::GlueParam, u32::from(param.raw())));
     }
 
     #[must_use]
@@ -6702,12 +6717,12 @@ impl Universe {
 
     pub fn set_glue_param_global(&mut self, param: GlueParam, value: GlueId) {
         self.stores.set_glue_param_global(param, value);
-        self.mark_cell_changed(DependencyBank::GlueParam, u32::from(param.raw()));
+        self.mark_cell_changed(CellId::new(BankTag::GlueParam, u32::from(param.raw())));
     }
 
     pub fn set_tok_param(&mut self, param: TokParam, value: TokenListId) {
         self.stores.set_tok_param(param, value);
-        self.mark_cell_changed(DependencyBank::TokParam, u32::from(param.raw()));
+        self.mark_cell_changed(CellId::new(BankTag::TokParam, u32::from(param.raw())));
     }
 
     #[must_use]
@@ -6723,7 +6738,7 @@ impl Universe {
 
     pub fn set_tok_param_global(&mut self, param: TokParam, value: TokenListId) {
         self.stores.set_tok_param_global(param, value);
-        self.mark_cell_changed(DependencyBank::TokParam, u32::from(param.raw()));
+        self.mark_cell_changed(CellId::new(BankTag::TokParam, u32::from(param.raw())));
     }
 
     /// Returns the current barriered, group-scoped `\parshape` value.
@@ -7104,6 +7119,10 @@ fn symbol_reference_raw(symbol: impl crate::interner::SymbolReference) -> u32 {
         .map(|id| id.symbol().raw())
         .or_else(|| symbol.stored_key().map(Symbol::raw))
         .expect("symbol reference has a live id or compact key")
+}
+
+fn meaning_dependency(symbol: impl crate::interner::SymbolReference) -> DependencyKey {
+    DependencyKey::Cell(CellId::new(BankTag::Meaning, symbol_reference_raw(symbol)))
 }
 
 fn set_box_dimension_in_node(node: &mut Node, dimension: BoxDimension, value: Scaled) -> bool {

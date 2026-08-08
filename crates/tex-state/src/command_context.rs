@@ -5,8 +5,8 @@
 //! they represent typed reads or mutations of [`Universe`] state.
 
 use crate::{
-    ChangedAt, DependencyBank, DependencyCodeTable, DependencyKey, DependencyValue,
-    TracedTokenList, Universe,
+    ChangedAt, DependencyCodeTable, DependencyKey, DependencyValue, TracedTokenList, Universe,
+    cell::{BankTag, CellId},
     env::banks::{GlueParam, IntParam, TokParam},
     glue::GlueSpec,
     ids::{FontId, GlueId},
@@ -34,6 +34,10 @@ pub struct CommandContext<'a> {
 impl CommandContext<'_> {
     fn observe_dependency(&mut self, key: DependencyKey) {
         self.universe.observe_semantic_dependency(key);
+    }
+
+    fn observe_cell(&mut self, bank: BankTag, index: u32) {
+        self.observe_dependency(DependencyKey::Cell(CellId::new(bank, index)));
     }
 
     /// Reads an integer parameter for diagnostic rendering outside semantic
@@ -403,10 +407,7 @@ impl CommandContext<'_> {
     /// Reads one integer parameter for canonical expandable conversion.
     #[must_use]
     pub fn int_param(&mut self, param: IntParam) -> i32 {
-        self.observe_dependency(DependencyKey::Cell {
-            bank: DependencyBank::IntParam,
-            index: u32::from(param.raw()),
-        });
+        self.observe_cell(BankTag::IntParam, u32::from(param.raw()));
         self.universe.int_param(param)
     }
 
@@ -449,40 +450,28 @@ impl CommandContext<'_> {
     /// Reads one token parameter for direct `\\the` insertion.
     #[must_use]
     pub fn tok_param(&mut self, param: TokParam) -> TokenListId {
-        self.observe_dependency(DependencyKey::Cell {
-            bank: DependencyBank::TokParam,
-            index: u32::from(param.raw()),
-        });
+        self.observe_cell(BankTag::TokParam, u32::from(param.raw()));
         self.universe.tok_param(param)
     }
 
     /// Reads a token parameter without conflating null with an assigned empty list.
     #[must_use]
     pub fn tok_param_option(&mut self, param: TokParam) -> Option<TokenListId> {
-        self.observe_dependency(DependencyKey::Cell {
-            bank: DependencyBank::TokParam,
-            index: u32::from(param.raw()),
-        });
+        self.observe_cell(BankTag::TokParam, u32::from(param.raw()));
         self.universe.tok_param_option(param)
     }
 
     /// Reads one count register for canonical expandable conversion.
     #[must_use]
     pub fn count(&mut self, index: u16) -> i32 {
-        self.observe_dependency(DependencyKey::Cell {
-            bank: DependencyBank::Count,
-            index: u32::from(index),
-        });
+        self.observe_cell(BankTag::Count, u32::from(index));
         self.universe.count(index)
     }
 
     /// Reads one dimension register through the aggregate state boundary.
     #[must_use]
     pub fn dimen(&mut self, index: u16) -> crate::scaled::Scaled {
-        self.observe_dependency(DependencyKey::Cell {
-            bank: DependencyBank::Dimen,
-            index: u32::from(index),
-        });
+        self.observe_cell(BankTag::Dimen, u32::from(index));
         self.universe.dimen(index)
     }
 
@@ -514,20 +503,14 @@ impl CommandContext<'_> {
     /// Reads one skip register through the aggregate boundary.
     #[must_use]
     pub fn skip(&mut self, index: u16) -> GlueId {
-        self.observe_dependency(DependencyKey::Cell {
-            bank: DependencyBank::Skip,
-            index: u32::from(index),
-        });
+        self.observe_cell(BankTag::Skip, u32::from(index));
         self.universe.skip(index)
     }
 
     /// Reads one mu-skip register through the aggregate boundary.
     #[must_use]
     pub fn muskip(&mut self, index: u16) -> GlueId {
-        self.observe_dependency(DependencyKey::Cell {
-            bank: DependencyBank::Muskip,
-            index: u32::from(index),
-        });
+        self.observe_cell(BankTag::Muskip, u32::from(index));
         self.universe.muskip(index)
     }
 
@@ -664,10 +647,7 @@ impl CommandContext<'_> {
     /// Classifies a box register without exposing node-store ownership.
     #[must_use]
     pub fn box_kind(&mut self, index: u16) -> Option<CommandBoxKind> {
-        self.observe_dependency(DependencyKey::Cell {
-            bank: DependencyBank::Box,
-            index: u32::from(index),
-        });
+        self.observe_cell(BankTag::Box, u32::from(index));
         let list = self.universe.box_reg(index)?;
         match self.universe.nodes(list).first()? {
             crate::node_arena::NodeRef::HList(_) => Some(CommandBoxKind::Horizontal),
@@ -780,20 +760,14 @@ impl CommandContext<'_> {
         index: u16,
         dimension: crate::BoxDimension,
     ) -> Option<crate::scaled::Scaled> {
-        self.observe_dependency(DependencyKey::Cell {
-            bank: DependencyBank::Box,
-            index: u32::from(index),
-        });
+        self.observe_cell(BankTag::Box, u32::from(index));
         self.universe.box_dimension(index, dimension)
     }
 
     /// Reads one token register for direct `\\the` insertion.
     #[must_use]
     pub fn toks(&mut self, index: u16) -> TokenListId {
-        self.observe_dependency(DependencyKey::Cell {
-            bank: DependencyBank::Toks,
-            index: u32::from(index),
-        });
+        self.observe_cell(BankTag::Toks, u32::from(index));
         self.universe.toks(index)
     }
 
@@ -884,10 +858,7 @@ impl CommandContext<'_> {
     /// Reads the currently selected font through the command boundary.
     #[must_use]
     pub fn current_font(&mut self) -> FontId {
-        self.observe_dependency(DependencyKey::Cell {
-            bank: DependencyBank::CurrentFont,
-            index: 0,
-        });
+        self.observe_cell(BankTag::CurrentFont, 0);
         self.universe.current_font()
     }
 
@@ -944,10 +915,7 @@ impl CommandContext<'_> {
             MathFontSize::Script => 1,
             MathFontSize::ScriptScript => 2,
         };
-        self.observe_dependency(DependencyKey::Cell {
-            bank: DependencyBank::MathFamilyFont,
-            index: size_index * 16 + u32::from(family),
-        });
+        self.observe_cell(BankTag::MathFamilyFont, size_index * 16 + u32::from(family));
         self.universe.math_family_font(size, family)
     }
 
@@ -978,7 +946,7 @@ impl CommandContext<'_> {
     /// read for the active dependency region.
     #[must_use]
     pub fn meaning(&mut self, symbol: Symbol) -> Meaning {
-        let key = DependencyKey::Meaning(symbol.raw());
+        let key = DependencyKey::Cell(CellId::new(BankTag::Meaning, symbol.raw()));
         self.universe.track_dependency(key);
         if self.universe.dependency_region_is_active()
             && let Some(value) = self.universe.semantic_dependency_value(key)

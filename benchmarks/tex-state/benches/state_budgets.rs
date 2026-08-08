@@ -9,6 +9,7 @@ use tex_command::{
 };
 use tex_state::ProvenanceResolver;
 use tex_state::SourceId;
+use tex_state::cell::{BankTag, CellId};
 use tex_state::glue::Order;
 use tex_state::ids::OriginListId;
 use tex_state::macro_store::{MacroDefinitionProvenance, MacroMeaning};
@@ -55,7 +56,7 @@ const HASH_MIX_INCREMENT: u64 = 0x9e37_79b9_7f4a_7c15;
 const HASH_INITIAL_STATE: u64 = 0x6a09_e667_f3bc_c909;
 
 fn dependency_recording(c: &mut Criterion) {
-    let key = DependencyKey::Meaning(7);
+    let key = DependencyKey::Cell(CellId::new(BankTag::Meaning, 7));
     let value = DependencyValue::Integer(42);
     let mut group = c.benchmark_group("dependency_recording");
     group.throughput(Throughput::Elements(DEPENDENCY_READS as u64));

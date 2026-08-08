@@ -77,6 +77,14 @@ The environment stores dense meanings, parameters, registers, font selectors,
 and epoch stamps. Reads are indexed. Every write records enough information for
 TeX grouping, rollback, convergence accounting, and cache invalidation.
 
+`CellId` is the canonical identity shared by environment storage, journal
+records, exact state hashing, and dependency tracking. Its assignment-scope bit
+records whether a journal write was local or global, but that bit is stripped
+for semantic identity: both assignments address the same bank/index cell.
+Meanings use the `Meaning` bank rather than a separate dependency namespace.
+Coarse font dependency projections remain separate because they name semantic
+font aggregates rather than individual environment cells.
+
 Local writes restore at group exit. Global writes survive and supersede older
 local restoration. Sparse e-TeX registers obey the same rules as dense cells.
 Meaning caches are owned above the environment but invalidate through exact
@@ -317,11 +325,12 @@ successor rather than cloned. Every extension validates allocator ancestry
 and falls back to canonical reconstruction after divergent rollback allocation.
 The caches are not semantic state. Environment
 cells also maintain a persistent deterministic Merkle treap keyed by canonical
-semantic cell identity. At a checkpoint, the existing mutation-journal slice
-identifies the distinct dirty cells; only those Merkle paths are replaced, and
-the root is retained in the store snapshot so rollback and generation forks
-restore it in O(1). A full environment walk seeds the root only when a fresh
-store or format image is loaded.
+semantic cell identity. The same `CellId` assignment-scope stripping operation
+canonicalizes dependency keys and Merkle keys. At a checkpoint, the existing
+mutation-journal slice identifies the distinct dirty cells; only those Merkle
+paths are replaced, and the root is retained in the store snapshot so rollback
+and generation forks restore it in O(1). A full environment walk seeds the root
+only when a fresh store or format image is loaded.
 
 The session-local aHash comparison composes that environment root with cached
 canonical roots for code tables, hyphenation, magnification/font selection, page-builder

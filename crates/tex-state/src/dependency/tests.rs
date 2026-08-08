@@ -1,13 +1,19 @@
 use super::*;
+use crate::cell::{BankTag, CellId};
+
+fn cell(bank: BankTag, index: u32) -> DependencyKey {
+    DependencyKey::Cell(CellId::new(bank, index))
+}
+
+fn meaning(index: u32) -> DependencyKey {
+    cell(BankTag::Meaning, index)
+}
 
 fn key_matrix() -> Vec<DependencyKey> {
     let hash = ContentHash::from_bytes(b"dependency");
     vec![
-        DependencyKey::Meaning(1),
-        DependencyKey::Cell {
-            bank: DependencyBank::Count,
-            index: 2,
-        },
+        meaning(1),
+        cell(BankTag::Count, 2),
         DependencyKey::Code {
             table: DependencyCodeTable::Catcode,
             scalar: 65,
@@ -48,8 +54,8 @@ fn key_matrix() -> Vec<DependencyKey> {
 
 #[test]
 fn observations_are_read_only_and_mutations_register_stamps() {
-    let observed_key = DependencyKey::Meaning(7);
-    let changed_key = DependencyKey::Meaning(8);
+    let observed_key = meaning(7);
+    let changed_key = meaning(8);
     let mut tracker = DependencyTracker::default();
     let shared = Arc::clone(&tracker.changed);
 
@@ -68,6 +74,29 @@ fn observations_are_read_only_and_mutations_register_stamps() {
     tracker.invalidate_all();
     assert!(tracker.changed_at(observed_key) > before_global);
     assert_eq!(tracker.changed.len(), 1);
+}
+
+#[test]
+fn environment_dependencies_strip_assignment_scope() {
+    let local = cell(BankTag::Count, 7);
+    let global = DependencyKey::Cell(CellId::new_global(BankTag::Count, 7));
+    let mut tracker = DependencyTracker::default();
+
+    let stamp = tracker.mark_changed(global);
+    assert_eq!(tracker.changed_at(local), stamp);
+    assert_eq!(tracker.changed.len(), 1);
+
+    let observed = tracker.observe(global, DependencyValue::Integer(1));
+    assert_eq!(observed.key, local);
+
+    let mut region = DependencyRegion::default();
+    region.record(observed);
+    region.record(ObservedDependency {
+        key: global,
+        changed_at: stamp,
+        value: DependencyValue::Integer(2),
+    });
+    assert_eq!(region.into_observations().len(), 1);
 }
 
 #[test]
@@ -137,7 +166,7 @@ fn every_key_variant_is_independently_invalidated_and_backdated() {
 fn region_deduplication_and_nested_query_order_are_deterministic() {
     let mut tracker = DependencyTracker::default();
     let mut region = DependencyRegion::default();
-    let parent = DependencyKey::Meaning(12);
+    let parent = meaning(12);
     let child = DependencyKey::Query {
         domain: 2,
         identity: 9,
@@ -171,19 +200,16 @@ fn canonical_content_observations_ignore_allocation_identity() {
 fn disabled_runtime_does_not_retain_reads_or_allocate_a_region() {
     let mut runtime = DependencyRuntime::default();
     assert!(!runtime.is_recording());
-    runtime.record(DependencyKey::Meaning(1), DependencyValue::Integer(2));
-    assert_eq!(
-        runtime.mark_changed(DependencyKey::Meaning(1)),
-        ChangedAt::NEVER
-    );
+    runtime.record(meaning(1), DependencyValue::Integer(2));
+    assert_eq!(runtime.mark_changed(meaning(1)), ChangedAt::NEVER);
     assert!(runtime.tracker.changed.is_empty());
     assert!(!runtime.is_recording());
 
     runtime.begin_region();
-    runtime.record(DependencyKey::Meaning(1), DependencyValue::Integer(2));
-    runtime.record(DependencyKey::Meaning(1), DependencyValue::Integer(2));
+    runtime.record(meaning(1), DependencyValue::Integer(2));
+    runtime.record(meaning(1), DependencyValue::Integer(2));
     assert_eq!(runtime.finish_region().len(), 1);
-    assert!(runtime.mark_changed(DependencyKey::Meaning(1)) > ChangedAt::NEVER);
+    assert!(runtime.mark_changed(meaning(1)) > ChangedAt::NEVER);
     assert_eq!(runtime.tracker.changed.len(), 1);
     assert!(!runtime.is_recording());
 }
@@ -211,14 +237,8 @@ fn universe_facade_records_and_invalidates_across_rollback() {
 
 #[test]
 fn group_exit_invalidates_only_restored_facts() {
-    let restored = DependencyKey::Cell {
-        bank: DependencyBank::Count,
-        index: 12,
-    };
-    let unrelated = DependencyKey::Cell {
-        bank: DependencyBank::Count,
-        index: 13,
-    };
+    let restored = cell(BankTag::Count, 12);
+    let unrelated = cell(BankTag::Count, 13);
     let mut universe = crate::Universe::new();
     universe.track_dependency(unrelated);
     universe.enter_group();
@@ -245,8 +265,8 @@ fn group_exit_invalidates_only_restored_facts() {
 
 #[test]
 fn rollback_preserves_unrelated_stamps_and_clone_ancestry() {
-    let changed = DependencyKey::Meaning(1);
-    let unrelated = DependencyKey::Meaning(2);
+    let changed = meaning(1);
+    let unrelated = meaning(2);
     let mut universe = crate::Universe::new();
     let changed_before = universe.track_dependency(changed);
     let unrelated_before = universe.track_dependency(unrelated);
@@ -269,10 +289,7 @@ fn rollback_preserves_unrelated_stamps_and_clone_ancestry() {
 
 #[test]
 fn aggregate_region_validates_after_change_and_restore() {
-    let key = DependencyKey::Cell {
-        bank: DependencyBank::Count,
-        index: 12,
-    };
+    let key = cell(BankTag::Count, 12);
     let mut universe = crate::Universe::new();
     universe.begin_dependency_region();
     universe.record_dependency(key, DependencyValue::Integer(0));
@@ -304,10 +321,7 @@ fn aggregate_region_validates_after_change_and_restore() {
 
 #[test]
 fn readonly_region_combines_stamp_fast_path_and_semantic_fallback() {
-    let key = DependencyKey::Cell {
-        bank: DependencyBank::Count,
-        index: 12,
-    };
+    let key = cell(BankTag::Count, 12);
     let mut universe = crate::Universe::new();
     universe.begin_dependency_region();
     universe.record_dependency(key, DependencyValue::Integer(0));
@@ -355,10 +369,7 @@ fn aggregate_mutation_barriers_advance_exact_registered_facts() {
     use crate::scaled::Scaled;
     use crate::token::Catcode;
 
-    let count = DependencyKey::Cell {
-        bank: DependencyBank::Count,
-        index: 7,
-    };
+    let count = cell(BankTag::Count, 7);
     let catcode = DependencyKey::Code {
         table: DependencyCodeTable::Catcode,
         scalar: 'x' as u32,

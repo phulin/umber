@@ -518,7 +518,7 @@ impl Stores {
         {
             match entry {
                 Entry::Undo(rec) => {
-                    let cell = canonical_cell(rec.cell());
+                    let cell = rec.cell().without_assignment_scope();
                     first_old.push((cell, position, rec.old()));
                 }
                 Entry::BoxUndo(id) => {
@@ -1617,10 +1617,6 @@ enum NodeFrame {
     NodeAt(NodeListId, usize),
 }
 
-fn canonical_cell(cell: CellId) -> CellId {
-    CellId::new(cell.bank(), cell.index())
-}
-
 fn hash_prepared_mag(value: Option<i32>, hasher: &mut StateHasher) {
     hasher.tag(0x40);
     match value {
@@ -1879,7 +1875,7 @@ mod cell_tests {
     #[test]
     fn canonical_hash_cells_preserve_full_symbol_index_and_drop_global_bit() {
         for index in [1 << 26, (1 << 30) - 1] {
-            let canonical = canonical_cell(CellId::new_global(BankTag::Meaning, index));
+            let canonical = CellId::new_global(BankTag::Meaning, index).without_assignment_scope();
             assert_eq!(canonical, CellId::new(BankTag::Meaning, index));
             assert_eq!(canonical.index(), index);
             assert!(!canonical.is_global());

@@ -4,6 +4,7 @@
 //! detached from a [`crate::Universe`]: live ids may be used to locate a fact,
 //! but the recorded value is always a scalar or canonical content identity.
 
+use crate::cell::CellId;
 use crate::world::ContentHash;
 use ahash::AHashMap;
 use std::collections::BTreeMap;
@@ -21,25 +22,6 @@ impl ChangedAt {
     pub const fn raw(self) -> u64 {
         self.0
     }
-}
-
-/// Environment bank addressed by a [`DependencyKey::Cell`].
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub enum DependencyBank {
-    Count,
-    Dimen,
-    Skip,
-    Muskip,
-    Toks,
-    Box,
-    IntParam,
-    DimenParam,
-    GlueParam,
-    TokParam,
-    CurrentFont,
-    MathFamilyFont,
-    LastBadness,
-    Magnification,
 }
 
 /// One mutable TeX code table.
@@ -127,11 +109,8 @@ pub enum DependencyWorldField {
 /// Complete state-layer vocabulary for memoized reads.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum DependencyKey {
-    Meaning(u32),
-    Cell {
-        bank: DependencyBank,
-        index: u32,
-    },
+    /// One scope-free semantic environment cell.
+    Cell(CellId),
     Code {
         table: DependencyCodeTable,
         scalar: u32,
@@ -173,6 +152,17 @@ pub enum DependencyKey {
     },
 }
 
+impl DependencyKey {
+    /// Returns the canonical identity used by dependency tracking.
+    #[must_use]
+    pub const fn canonical(self) -> Self {
+        match self {
+            Self::Cell(cell) => Self::Cell(cell.without_assignment_scope()),
+            key => key,
+        }
+    }
+}
+
 /// A detached semantic value suitable for comparison across Universes.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum DependencyValue {
@@ -204,6 +194,10 @@ pub struct DependencyRegion {
 
 impl DependencyRegion {
     pub fn record(&mut self, observation: ObservedDependency) {
+        let observation = ObservedDependency {
+            key: observation.key.canonical(),
+            ..observation
+        };
         self.observations
             .entry(observation.key)
             .or_insert(observation);
@@ -336,7 +330,7 @@ impl DependencyTracker {
         // Scalar code-table reads share one mutation clock per table. This
         // keeps the stamp table bounded while validation still compares the
         // exact scalar value recorded by the reader.
-        let key = match key {
+        let key = match key.canonical() {
             DependencyKey::Code { table, .. } => DependencyKey::CodeGeneration(table),
             key => key,
         };
@@ -349,7 +343,7 @@ impl DependencyTracker {
 
     /// Marks a fact after its aggregate mutation barrier has run.
     pub fn mark_changed(&mut self, key: DependencyKey) -> ChangedAt {
-        let key = match key {
+        let key = match key.canonical() {
             DependencyKey::Code { table, .. } => DependencyKey::CodeGeneration(table),
             key => key,
         };
@@ -373,6 +367,7 @@ impl DependencyTracker {
 
     #[must_use]
     pub fn observe(&mut self, key: DependencyKey, value: DependencyValue) -> ObservedDependency {
+        let key = key.canonical();
         ObservedDependency {
             key,
             changed_at: self.changed_at(key),
