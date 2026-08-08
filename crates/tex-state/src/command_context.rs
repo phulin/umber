@@ -245,10 +245,7 @@ impl CommandContext<'_> {
 
     /// Takes one ErrorStop request for mutation by the canonical input owner.
     pub fn take_error_recovery_request(&mut self) -> Option<crate::print::ErrorRecoveryRequest> {
-        self.universe
-            .world_mut()
-            .error_channel_mut()
-            .take_recovery_request()
+        self.universe.take_error_recovery_request()
     }
 
     /// Re-enters the ErrorStop advice loop after token deletion.
@@ -1246,6 +1243,7 @@ mod tests {
         DependencyKey, DependencyValue, InteractionMode, Universe,
         cell::{BankTag, CellId},
         meaning::InternalInteger,
+        print::{ErrorOutcome, ErrorRecoveryRequest},
         world::StreamSlot,
     };
 
@@ -1274,6 +1272,29 @@ mod tests {
             !universe
                 .validate_dependencies(&mut observations, |_| { DependencyValue::Integer(13) })
         );
+    }
+
+    #[test]
+    fn command_context_transfers_error_stop_recovery_once() {
+        let mut universe = Universe::new();
+        universe
+            .world_mut()
+            .push_memory_terminal_line("Ireplacement")
+            .expect("memory terminal accepts an ErrorStop answer");
+        assert_eq!(
+            universe.print_err("Controlled error").error(),
+            ErrorOutcome::Continue
+        );
+        let world_scans = universe.testing_tracked_world_scan_calls();
+
+        let mut context = universe.command_context();
+        assert_eq!(
+            context.take_error_recovery_request(),
+            Some(ErrorRecoveryRequest::Insert("replacement".to_owned()))
+        );
+        assert_eq!(context.take_error_recovery_request(), None);
+        drop(context);
+        assert_eq!(universe.testing_tracked_world_scan_calls(), world_scans);
     }
 
     #[test]

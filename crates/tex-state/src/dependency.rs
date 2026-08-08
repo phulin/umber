@@ -7,6 +7,8 @@
 use crate::cell::CellId;
 use crate::world::ContentHash;
 use ahash::{AHashMap, AHashSet};
+#[cfg(test)]
+use std::cell::Cell;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
@@ -251,6 +253,8 @@ pub struct DependencyRuntime {
     active: Option<ActiveDependencyRegion>,
     next_region_epoch: u64,
     tracking_enabled: bool,
+    #[cfg(test)]
+    tracked_world_scan_calls: Cell<usize>,
 }
 
 #[derive(Debug)]
@@ -314,6 +318,8 @@ impl Clone for DependencyRuntime {
             active: None,
             next_region_epoch: self.next_region_epoch,
             tracking_enabled: self.tracking_enabled,
+            #[cfg(test)]
+            tracked_world_scan_calls: Cell::new(self.tracked_world_scan_calls.get()),
         }
     }
 }
@@ -443,6 +449,9 @@ impl DependencyRuntime {
     /// need no stamp: a later first observation records their then-current
     /// semantic value.
     pub(crate) fn tracked_world_backed_keys(&self) -> Vec<DependencyKey> {
+        #[cfg(test)]
+        self.tracked_world_scan_calls
+            .set(self.tracked_world_scan_calls.get() + 1);
         let mut keys = self
             .tracked_world_backed
             .iter()
@@ -450,6 +459,11 @@ impl DependencyRuntime {
             .collect::<Vec<_>>();
         keys.sort_unstable();
         keys
+    }
+
+    #[cfg(test)]
+    pub(crate) fn tracked_world_scan_calls(&self) -> usize {
+        self.tracked_world_scan_calls.get()
     }
 
     pub(crate) fn snapshot_tracker(&self) -> DependencyTrackerSnapshot {

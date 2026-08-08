@@ -3462,6 +3462,27 @@ impl Universe {
         &self.world
     }
 
+    /// Takes one ErrorStop input mutation without opening the broad World
+    /// mutation guard.
+    ///
+    /// The error channel is diagnostic control state, not a memo-observable
+    /// [`DependencyWorldField`]. Canonical raw delivery polls this on every
+    /// token, so routing the empty fast path through [`Self::world_mut`]
+    /// would repeatedly collect and compare every tracked World-backed key.
+    pub(crate) fn take_error_recovery_request(
+        &mut self,
+    ) -> Option<crate::print::ErrorRecoveryRequest> {
+        self.world.error_channel_mut().take_recovery_request()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn testing_tracked_world_scan_calls(&self) -> usize {
+        self.dependencies
+            .lock()
+            .expect("dependency runtime mutex is not poisoned")
+            .tracked_world_scan_calls()
+    }
+
     /// Reads one virtual output-stream state through the dependency boundary.
     #[must_use]
     pub fn output_stream_is_open(&self, stream: StreamSlot) -> bool {
