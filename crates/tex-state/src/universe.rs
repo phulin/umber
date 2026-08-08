@@ -1249,7 +1249,8 @@ struct DependencyProjectionGuard<'a>(&'a AtomicBool);
 
 impl<'a> DependencyProjectionGuard<'a> {
     fn enter(active: &'a AtomicBool) -> Self {
-        debug_assert!(!active.swap(true, Ordering::Relaxed));
+        let was_active = active.swap(true, Ordering::Relaxed);
+        debug_assert!(!was_active);
         Self(active)
     }
 }

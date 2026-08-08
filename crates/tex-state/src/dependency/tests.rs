@@ -551,6 +551,32 @@ fn tracked_region_orders_reads_and_uses_live_final_write_values() {
 }
 
 #[test]
+fn tracked_environment_write_projection_is_release_safe() {
+    let mut universe = crate::Universe::new();
+    let mark = universe
+        .begin_tracked_region()
+        .expect("start tracked region");
+    universe.set_count(7, 9);
+
+    // This specifically exercises optimized builds: projecting the final
+    // value uses an ordinary dependency-aware getter, so the projection guard
+    // must suppress recursive observation even when debug assertions are off.
+    let record = universe
+        .finish_tracked_region(mark)
+        .expect("finish tracked environment write");
+    assert!(record.observations().is_empty());
+    assert_eq!(record.environment_writes().len(), 1);
+    assert_eq!(
+        record.environment_writes()[0].cell(),
+        CellId::new(BankTag::Count, 7)
+    );
+    assert_eq!(
+        record.environment_writes()[0].value(),
+        &DependencyValue::Integer(9)
+    );
+}
+
+#[test]
 fn tracked_region_canonicalizes_grouped_assignment_scope() {
     let mut universe = crate::Universe::new();
     universe.enter_group();
