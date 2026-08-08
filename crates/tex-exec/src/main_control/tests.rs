@@ -14,6 +14,8 @@ mod etex_diagnostic_tracing;
 mod material_property_matrices;
 #[path = "tests/tex82_whatsit_evidence.rs"]
 mod tex82_whatsit_evidence;
+#[path = "tests/tracked_region_coverage.rs"]
+mod tracked_region_coverage;
 
 fn register_source(control: &mut MainControl, bytes: &[u8]) {
     let source = control

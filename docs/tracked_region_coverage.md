@@ -1,9 +1,10 @@
 # Tracked-region semantic read coverage
 
-Status: authoritative coverage contract. The generic state-layer recorder,
-command-side routing, and execution-side routing are implemented. The
-cross-layer perturbation proof and final source audit remain in
-`umber2-trcn.4.4`.
+Status: implemented authoritative coverage contract. The generic state-layer
+recorder, command-side routing, execution-side routing, and cross-layer
+perturbation harness are complete. The final audit found the exact-World
+unrelated-change precision gap tracked by `umber2-trcn.4.5`; the parent proof
+cannot close until that blocker supplies the remaining matrix evidence.
 
 This document defines the only region for which the first generic dependency
 coverage proof is made. It is a recording contract, not permission to replay
@@ -187,3 +188,41 @@ requests, errors, operation termination, and named-checkpoint schedule.
 Disabled execution calls the existing ordinary path: it does not begin a
 region, allocate a recorder, compute command/mode/page aggregate projections,
 or execute barrier policy beyond the existing predictable inactive checks.
+
+## Executable closure evidence
+
+The source audit is compile-closed in
+`tex_state::dependency::tests::every_documented_key_variant_is_classified_invalidated_and_backdated`.
+It exhaustively matches every nested code-table, font, engine, page, and World
+field without a wildcard, then gives every key variant an exact red
+perturbation and an unrelated green perturbation. Adding vocabulary without a
+matrix disposition therefore fails compilation; omitting a listed key from
+the 101-entry perturbation inventory fails the test.
+
+`tex_exec::main_control::direct_tests::tracked_region_coverage` supplies the
+cross-layer proof. Its command case reads a count register through real
+conditional scanning, proves a nearby register remains green, proves the read
+register turns red, and removes that observation from the detached record as
+deliberate fault injection. The harness detects the resulting false green.
+Paired complete jobs and paired resource suspensions compare termination,
+aggregate state, diagnostics and virtual effects, committed artifacts,
+prepared DVI pages, resource requests, and named-boundary schedules with
+recording disabled and enabled.
+
+`tex_state::dependency::tests::every_documented_barrier_discards_partial_evidence_and_resets_the_recorder`
+exercises every closed barrier reason and proves its partial observations are
+not reusable. The cross-layer suite proves the nested-begin and fatal paths;
+`tracked_advance_abandons_before_resource_suspension_rollback` and
+`tracked_group_exit_fails_closed_at_the_journal_timeline_barrier` prove
+suspension abandonment and group-exit failure. State-layer rollback and
+explicit-abandon coverage prove each path leaves a clean replacement recorder.
+
+### Residual source-audit blocker
+
+`Universe::semantic_dependency_value` currently maps every `World` key to the
+same full-World projection, and the retained `world_mut` driver escape hatch
+advances a global dependency clock. This is safe but too conservative for the
+matrix rows that promise exact indexed facts: an unrelated World mutation may
+reject validation. `umber2-trcn.4.5` owns field/key-specific projections,
+mutation stamps, and the missing unrelated-green cases. The matrix remains
+unchanged; this proof does not treat conservative false reds as acceptance.

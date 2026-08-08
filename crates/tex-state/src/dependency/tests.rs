@@ -11,19 +11,7 @@ fn meaning(index: u32) -> DependencyKey {
 
 fn key_matrix() -> Vec<DependencyKey> {
     let hash = ContentHash::from_bytes(b"dependency");
-    vec![
-        meaning(1),
-        cell(BankTag::Count, 2),
-        DependencyKey::Code {
-            table: DependencyCodeTable::Catcode,
-            scalar: 65,
-        },
-        DependencyKey::CodeGeneration(DependencyCodeTable::Lccode),
-        DependencyKey::Font {
-            field: DependencyFontField::Metrics,
-            font: 3,
-            index: 4,
-        },
+    let mut keys = vec![
         DependencyKey::HyphenationPatterns(1),
         DependencyKey::HyphenationExceptions(2),
         DependencyKey::HyphenationCodes(3),
@@ -35,21 +23,256 @@ fn key_matrix() -> Vec<DependencyKey> {
         DependencyKey::InputLine,
         DependencyKey::InputStream(4),
         DependencyKey::InputStack,
-        DependencyKey::Engine(DependencyEngineField::Mode),
         DependencyKey::PageDimension(0),
         DependencyKey::PageInteger(1),
         DependencyKey::PageMark(2),
         DependencyKey::PageMarkClass { mark: 3, class: 4 },
-        DependencyKey::Page(DependencyPageField::CurrentPage),
-        DependencyKey::World {
-            field: DependencyWorldField::Rng,
-            index: 0,
-        },
         DependencyKey::Query {
             domain: 7,
             identity: 8,
         },
-    ]
+    ];
+    for bank in [
+        BankTag::Meaning,
+        BankTag::Count,
+        BankTag::Dimen,
+        BankTag::Skip,
+        BankTag::Toks,
+        BankTag::Box,
+        BankTag::IntParam,
+        BankTag::DimenParam,
+        BankTag::GlueParam,
+        BankTag::TokParam,
+        BankTag::Muskip,
+        BankTag::FontDimen,
+        BankTag::FontParamLen,
+        BankTag::FontHyphenChar,
+        BankTag::FontSkewChar,
+        BankTag::CurrentFont,
+        BankTag::MathFamilyFont,
+        BankTag::PdfLpCode,
+        BankTag::PdfRpCode,
+        BankTag::PdfEfCode,
+        BankTag::PdfTagCode,
+        BankTag::PdfKnbsCode,
+        BankTag::PdfStbsCode,
+        BankTag::PdfShbsCode,
+        BankTag::PdfKnbcCode,
+        BankTag::PdfKnacCode,
+        BankTag::PdfNoLigatures,
+    ] {
+        keys.push(cell(bank, 0));
+    }
+    for table in [
+        DependencyCodeTable::Catcode,
+        DependencyCodeTable::Lccode,
+        DependencyCodeTable::Uccode,
+        DependencyCodeTable::Sfcode,
+        DependencyCodeTable::Mathcode,
+        DependencyCodeTable::Delcode,
+    ] {
+        keys.push(DependencyKey::Code { table, scalar: 65 });
+        keys.push(DependencyKey::CodeGeneration(table));
+    }
+    for field in [
+        DependencyFontField::Identifier,
+        DependencyFontField::Name,
+        DependencyFontField::Parameter,
+        DependencyFontField::ParameterCount,
+        DependencyFontField::Parameters,
+        DependencyFontField::HyphenChar,
+        DependencyFontField::SkewChar,
+        DependencyFontField::Metrics,
+        DependencyFontField::PdfCode,
+        DependencyFontField::PdfShaping,
+    ] {
+        keys.push(DependencyKey::Font {
+            field,
+            font: 3,
+            index: 4,
+        });
+    }
+    for field in [
+        DependencyEngineField::Mode,
+        DependencyEngineField::InnerMode,
+        DependencyEngineField::GroupLevel,
+        DependencyEngineField::GroupType,
+        DependencyEngineField::ConditionLevel,
+        DependencyEngineField::ConditionType,
+        DependencyEngineField::ConditionBranch,
+        DependencyEngineField::ConditionStack,
+        DependencyEngineField::LastNodeType,
+        DependencyEngineField::ParShape,
+        DependencyEngineField::PenaltyArrays,
+        DependencyEngineField::InteractionMode,
+        DependencyEngineField::PdfTimer,
+        DependencyEngineField::PdfRandom,
+        DependencyEngineField::PdfShellEscape,
+        DependencyEngineField::PageInsertions,
+        DependencyEngineField::PdfExternalImages,
+        DependencyEngineField::PdfObjects,
+        DependencyEngineField::PdfPositions,
+        DependencyEngineField::PdfForms,
+        DependencyEngineField::PdfPages,
+    ] {
+        keys.push(DependencyKey::Engine(field));
+    }
+    for field in [
+        DependencyPageField::Contents,
+        DependencyPageField::Contributions,
+        DependencyPageField::CurrentPage,
+        DependencyPageField::Insertions,
+        DependencyPageField::Discards,
+        DependencyPageField::SplitDiscards,
+        DependencyPageField::BreakState,
+        DependencyPageField::FireUp,
+    ] {
+        keys.push(DependencyKey::Page(field));
+    }
+    for field in [
+        DependencyWorldField::InputResource,
+        DependencyWorldField::OutputStream,
+        DependencyWorldField::InputStream,
+        DependencyWorldField::TerminalInputCursor,
+        DependencyWorldField::EffectPolicy,
+        DependencyWorldField::ShellEscapePolicy,
+        DependencyWorldField::JobClock,
+        DependencyWorldField::Rng,
+        DependencyWorldField::LoadedResources,
+        DependencyWorldField::MaterializationBarrier,
+    ] {
+        keys.push(DependencyKey::World { field, index: 0 });
+    }
+    keys
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum CoverageFamily {
+    Meaning,
+    Environment,
+    FontSelector,
+    Code,
+    Font,
+    Hyphenation,
+    ImmutableInput,
+    CommandInput,
+    InputStream,
+    Engine,
+    PageScalar,
+    PageRoot,
+    World,
+    Query,
+}
+
+fn coverage_family(key: DependencyKey) -> CoverageFamily {
+    match key {
+        DependencyKey::Cell(cell) => match cell.bank() {
+            BankTag::Meaning => CoverageFamily::Meaning,
+            BankTag::Count
+            | BankTag::Dimen
+            | BankTag::Skip
+            | BankTag::Toks
+            | BankTag::Box
+            | BankTag::IntParam
+            | BankTag::DimenParam
+            | BankTag::GlueParam
+            | BankTag::TokParam
+            | BankTag::Muskip => CoverageFamily::Environment,
+            BankTag::CurrentFont | BankTag::MathFamilyFont => CoverageFamily::FontSelector,
+            BankTag::FontDimen
+            | BankTag::FontParamLen
+            | BankTag::FontHyphenChar
+            | BankTag::FontSkewChar
+            | BankTag::PdfLpCode
+            | BankTag::PdfRpCode
+            | BankTag::PdfEfCode
+            | BankTag::PdfTagCode
+            | BankTag::PdfKnbsCode
+            | BankTag::PdfStbsCode
+            | BankTag::PdfShbsCode
+            | BankTag::PdfKnbcCode
+            | BankTag::PdfKnacCode
+            | BankTag::PdfNoLigatures => CoverageFamily::Font,
+        },
+        DependencyKey::Code { table, .. } | DependencyKey::CodeGeneration(table) => match table {
+            DependencyCodeTable::Catcode
+            | DependencyCodeTable::Lccode
+            | DependencyCodeTable::Uccode
+            | DependencyCodeTable::Sfcode
+            | DependencyCodeTable::Mathcode
+            | DependencyCodeTable::Delcode => CoverageFamily::Code,
+        },
+        DependencyKey::Font { field, .. } => match field {
+            DependencyFontField::Identifier
+            | DependencyFontField::Name
+            | DependencyFontField::Parameter
+            | DependencyFontField::ParameterCount
+            | DependencyFontField::Parameters
+            | DependencyFontField::HyphenChar
+            | DependencyFontField::SkewChar
+            | DependencyFontField::Metrics
+            | DependencyFontField::PdfCode
+            | DependencyFontField::PdfShaping => CoverageFamily::Font,
+        },
+        DependencyKey::HyphenationPatterns(_)
+        | DependencyKey::HyphenationExceptions(_)
+        | DependencyKey::HyphenationCodes(_) => CoverageFamily::Hyphenation,
+        DependencyKey::InputRecord(_) | DependencyKey::PhysicalLine { .. } => {
+            CoverageFamily::ImmutableInput
+        }
+        DependencyKey::InputLine | DependencyKey::InputStack => CoverageFamily::CommandInput,
+        DependencyKey::InputStream(_) => CoverageFamily::InputStream,
+        DependencyKey::Engine(field) => match field {
+            DependencyEngineField::Mode
+            | DependencyEngineField::InnerMode
+            | DependencyEngineField::GroupLevel
+            | DependencyEngineField::GroupType
+            | DependencyEngineField::ConditionLevel
+            | DependencyEngineField::ConditionType
+            | DependencyEngineField::ConditionBranch
+            | DependencyEngineField::ConditionStack
+            | DependencyEngineField::LastNodeType
+            | DependencyEngineField::ParShape
+            | DependencyEngineField::PenaltyArrays
+            | DependencyEngineField::InteractionMode
+            | DependencyEngineField::PdfTimer
+            | DependencyEngineField::PdfRandom
+            | DependencyEngineField::PdfShellEscape
+            | DependencyEngineField::PageInsertions
+            | DependencyEngineField::PdfExternalImages
+            | DependencyEngineField::PdfObjects
+            | DependencyEngineField::PdfPositions
+            | DependencyEngineField::PdfForms
+            | DependencyEngineField::PdfPages => CoverageFamily::Engine,
+        },
+        DependencyKey::PageDimension(_)
+        | DependencyKey::PageInteger(_)
+        | DependencyKey::PageMark(_)
+        | DependencyKey::PageMarkClass { .. } => CoverageFamily::PageScalar,
+        DependencyKey::Page(field) => match field {
+            DependencyPageField::Contents
+            | DependencyPageField::Contributions
+            | DependencyPageField::CurrentPage
+            | DependencyPageField::Insertions
+            | DependencyPageField::Discards
+            | DependencyPageField::SplitDiscards
+            | DependencyPageField::BreakState
+            | DependencyPageField::FireUp => CoverageFamily::PageRoot,
+        },
+        DependencyKey::World { field, .. } => match field {
+            DependencyWorldField::InputResource
+            | DependencyWorldField::OutputStream
+            | DependencyWorldField::InputStream
+            | DependencyWorldField::TerminalInputCursor
+            | DependencyWorldField::EffectPolicy
+            | DependencyWorldField::ShellEscapePolicy
+            | DependencyWorldField::JobClock
+            | DependencyWorldField::Rng
+            | DependencyWorldField::LoadedResources
+            | DependencyWorldField::MaterializationBarrier => CoverageFamily::World,
+        },
+        DependencyKey::Query { .. } => CoverageFamily::Query,
+    }
 }
 
 #[test]
@@ -139,8 +362,11 @@ fn aggregate_page_and_pdf_projections_share_family_clocks() {
 }
 
 #[test]
-fn every_key_variant_is_independently_invalidated_and_backdated() {
-    for key in key_matrix() {
+fn every_documented_key_variant_is_classified_invalidated_and_backdated() {
+    let keys = key_matrix();
+    assert_eq!(keys.len(), 101, "coverage inventory lost a documented key");
+    for key in keys {
+        let _family = coverage_family(key);
         let unrelated = DependencyKey::Query {
             domain: 99,
             identity: key_matrix().len() as u64,
@@ -259,6 +485,36 @@ fn poison_is_an_inactive_noop_and_first_reason_fails_closed() {
 
     let next = runtime.begin_region().expect("poison was cleared");
     assert!(runtime.finish_region(next).is_ok());
+}
+
+#[test]
+fn every_documented_barrier_discards_partial_evidence_and_resets_the_recorder() {
+    for barrier in [
+        TrackedRegionBarrier::UnsupportedCommandState,
+        TrackedRegionBarrier::UnsupportedExecutionState,
+        TrackedRegionBarrier::UnsupportedWorldFact,
+        TrackedRegionBarrier::IrreversibleEffect,
+        TrackedRegionBarrier::UnsupportedHostCapability,
+        TrackedRegionBarrier::FatalPartialCommit,
+        TrackedRegionBarrier::EnvironmentTimelineChange,
+    ] {
+        let mut runtime = DependencyRuntime::default();
+        let token = runtime.begin_region().expect("start dependency region");
+        runtime.record(meaning(1), DependencyValue::Integer(2));
+        runtime.poison(barrier);
+        assert_eq!(
+            runtime.finish_region(token),
+            Err(DependencyRegionError::Unsupported(barrier))
+        );
+        assert!(!runtime.is_recording());
+
+        let clean = runtime.begin_region().expect("start replacement region");
+        assert_eq!(
+            runtime.finish_region(clean),
+            Ok(Vec::new()),
+            "partial evidence leaked after {barrier:?}"
+        );
+    }
 }
 
 #[test]
