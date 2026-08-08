@@ -270,6 +270,10 @@ impl TokenStore {
     pub(crate) fn requires_legacy_frozen_key(&self) -> bool {
         matches!(self.frozen_lookup, FrozenTokenLookup::Legacy(_))
     }
+    #[must_use]
+    pub(crate) const fn has_frozen_lists(&self) -> bool {
+        self.frozen_len != 0
+    }
 
     pub(crate) fn retains_mark(&self, mark: TokenStoreMark) -> bool {
         self.identities.retains(mark.identities)

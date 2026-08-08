@@ -4,6 +4,7 @@
 //! a watermark, but that rollback machinery is crate-private so the live
 //! interner rolls back only as part of the aggregate `Universe` tuple.
 
+use crate::ContentHash;
 use crate::identity::{HandleIdentity, IdentityAllocator, IdentityMark};
 use crate::state_hash::StateHasher;
 use ahash::{AHashMap, AHasher};
@@ -137,6 +138,7 @@ pub struct Interner {
     spans: Vec<(u32, u32)>,
     kinds: Vec<ControlSequenceKind>,
     semantic_atoms: Vec<u64>,
+    semantic_identities: Vec<ContentHash>,
     symbols: Vec<Symbol>,
     symbol_slots: AHashMap<Symbol, u32>,
     frozen_lookup: crate::frozen_lookup::FrozenLookup,
@@ -153,6 +155,7 @@ impl Clone for Interner {
             spans: self.spans.clone(),
             kinds: self.kinds.clone(),
             semantic_atoms: self.semantic_atoms.clone(),
+            semantic_identities: self.semantic_identities.clone(),
             symbols: self.symbols.clone(),
             symbol_slots: self.symbol_slots.clone(),
             frozen_lookup: self.frozen_lookup.clone(),
@@ -179,6 +182,7 @@ impl Interner {
             spans: Vec::new(),
             kinds: Vec::new(),
             semantic_atoms: Vec::new(),
+            semantic_identities: Vec::new(),
             symbols: Vec::new(),
             symbol_slots: AHashMap::new(),
             frozen_lookup: crate::frozen_lookup::FrozenLookup::empty(),
@@ -205,6 +209,7 @@ impl Interner {
         let count = u32::try_from(spans.len()).map_err(|_| "frozen interner capacity")?;
         let identities = IdentityAllocator::from_frozen_len(0, count);
         let mut symbols = Vec::with_capacity(spans.len());
+        let mut semantic_identities = Vec::with_capacity(spans.len());
         let mut symbol_slots = AHashMap::with_capacity(spans.len());
         let index: AHashMap<u64, Vec<SymbolId>> = AHashMap::new();
         for slot in 0..spans.len() {
@@ -220,6 +225,7 @@ impl Interner {
             if semantic_atoms[slot] != semantic_atom(kind, name) {
                 return Err("frozen interner semantic atom mismatch");
             }
+            semantic_identities.push(semantic_identity(kind, name));
             if matches!(
                 kind,
                 ControlSequenceKind::ActiveCharacter | ControlSequenceKind::SingleCharacter
@@ -240,6 +246,7 @@ impl Interner {
             spans,
             kinds,
             semantic_atoms,
+            semantic_identities,
             symbols,
             symbol_slots,
             frozen_lookup,
@@ -272,6 +279,7 @@ impl Interner {
             let slot = symbol.raw() as usize;
             self.kinds[slot] = ControlSequenceKind::Internal;
             self.semantic_atoms[slot] = semantic_atom(ControlSequenceKind::Internal, name);
+            self.semantic_identities[slot] = semantic_identity(ControlSequenceKind::Internal, name);
             self.index_dirty = true;
             return Ok(symbol);
         }
@@ -319,6 +327,7 @@ impl Interner {
         self.spans.push((start, len));
         self.kinds.push(kind);
         self.semantic_atoms.push(semantic_atom(kind, name));
+        self.semantic_identities.push(semantic_identity(kind, name));
         self.symbols.push(stored);
         let old = self.symbol_slots.insert(stored, identity.slot());
         debug_assert!(old.is_none(), "symbol already mapped in local interner");
@@ -407,6 +416,21 @@ impl Interner {
         self.semantic_atoms.get(id.raw() as usize).copied()
     }
 
+    /// Returns both cached semantic projections with one compact-key lookup.
+    ///
+    /// Token-list freezing visits control-sequence tokens proportionally to
+    /// list length. Keeping this spelling-derived value beside the interner's
+    /// existing atom makes each visit O(1), instead of allocating and hashing
+    /// the same control-sequence name again for every token occurrence.
+    pub(crate) fn semantic_atom_identity(&self, symbol: Symbol) -> Option<(u64, ContentHash)> {
+        let id = self.resolve_stored(symbol)?;
+        let slot = id.raw() as usize;
+        Some((
+            *self.semantic_atoms.get(slot)?,
+            *self.semantic_identities.get(slot)?,
+        ))
+    }
+
     #[must_use]
     pub fn contains(&self, symbol: Symbol) -> bool {
         self.resolve_stored(symbol).is_some()
@@ -456,6 +480,7 @@ impl Interner {
         debug_assert_eq!(self.symbols.len(), self.spans.len());
         debug_assert_eq!(self.kinds.len(), self.spans.len());
         debug_assert_eq!(self.semantic_atoms.len(), self.spans.len());
+        debug_assert_eq!(self.semantic_identities.len(), self.spans.len());
         InternerMark {
             spans: u32_len(self.spans.len(), "interner spans exceed u32 entries"),
             bytes: u32_len(self.arena.len(), "interner arena exceeds u32 bytes"),
@@ -488,12 +513,14 @@ impl Interner {
         self.spans.truncate(spans);
         self.kinds.truncate(spans);
         self.semantic_atoms.truncate(spans);
+        self.semantic_identities.truncate(spans);
         for symbol in self.symbols.drain(spans..) {
             self.symbol_slots.remove(&symbol);
         }
         self.arena.truncate(bytes);
         debug_assert_eq!(self.kinds.len(), self.spans.len());
         debug_assert_eq!(self.semantic_atoms.len(), self.spans.len());
+        debug_assert_eq!(self.semantic_identities.len(), self.spans.len());
         debug_assert_eq!(self.symbols.len(), self.spans.len());
         self.index_dirty = true;
     }
@@ -538,6 +565,19 @@ pub(crate) fn semantic_atom(kind: ControlSequenceKind, name: &str) -> u64 {
     });
     hasher.str(name);
     hasher.finish()
+}
+
+fn semantic_identity(kind: ControlSequenceKind, name: &str) -> ContentHash {
+    let mut bytes = Vec::with_capacity(name.len() + 1);
+    bytes.push(match kind {
+        ControlSequenceKind::Null
+        | ControlSequenceKind::SingleCharacter
+        | ControlSequenceKind::Named => 0,
+        ControlSequenceKind::ActiveCharacter => 1,
+        ControlSequenceKind::Internal => 2,
+    });
+    bytes.extend_from_slice(name.as_bytes());
+    crate::state_hash::semantic_identity_bytes(b"umber-control-sequence-v1", &bytes)
 }
 
 /// Selects TeX82 §222's fixed control-sequence namespace from its spelling.

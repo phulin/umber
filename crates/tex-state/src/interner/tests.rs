@@ -31,6 +31,27 @@ fn intern_is_idempotent() {
 }
 
 #[test]
+fn semantic_identity_is_cached_once_per_control_sequence_slot() {
+    // TeX82 §§222, 259 give one canonical name/kind identity to a control
+    // sequence. Large macro token lists may repeat that token millions of
+    // times; freezing them must reuse the interner-owned identity instead of
+    // allocating and hashing the spelling once per occurrence.
+    let mut interner = Interner::new();
+    let symbol = intern(&mut interner, "large_list_control_sequence");
+    let (atom, cached) = interner
+        .semantic_atom_identity(symbol)
+        .expect("live symbol has cached semantic projections");
+
+    for _ in 0..10_000 {
+        assert_eq!(
+            interner.semantic_atom_identity(symbol),
+            Some((atom, cached))
+        );
+    }
+    assert_eq!(interner.semantic_identities, [cached]);
+}
+
+#[test]
 fn resolve_round_trips_ascii_and_non_ascii() {
     let mut interner = Interner::new();
 

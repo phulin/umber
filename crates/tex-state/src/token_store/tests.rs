@@ -1,4 +1,4 @@
-use super::{TokenListBuilder, TokenSemanticId, TokenStore, TokenStoreMark};
+use super::{FrozenTokenLookup, TokenListBuilder, TokenSemanticId, TokenStore, TokenStoreMark};
 use crate::ids::TokenListId;
 use crate::interner::Symbol;
 use crate::token::{Catcode, OriginId, Token, TracedTokenWord};
@@ -25,6 +25,24 @@ fn empty_list_is_canonical_and_allocates_no_tokens() {
     assert_eq!(store.get(first), &[]);
     assert!(store.arena.is_empty());
     assert_eq!(store.spans, vec![(0, 0)]);
+}
+
+#[test]
+fn fresh_initex_store_skips_frozen_prefix_lookup() {
+    // TeX82 §§202--203 create token lists directly in INITEX; there is no
+    // preloaded format prefix to search. Large definitions must therefore not
+    // pay a second whole-list hash pass for an empty frozen lookup.
+    let fresh = TokenStore::new();
+    assert!(!fresh.has_frozen_lists());
+
+    let loaded = TokenStore::from_frozen(
+        Vec::new(),
+        vec![(0, 0)],
+        vec![fresh.semantic_ids[0]],
+        FrozenTokenLookup::Direct(crate::frozen_lookup::DirectFrozenLookup::empty()),
+    )
+    .expect("canonical empty frozen prefix");
+    assert!(loaded.has_frozen_lists());
 }
 
 #[test]

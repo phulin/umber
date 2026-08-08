@@ -1104,19 +1104,29 @@ impl Stores {
     /// Interns a frozen token-list value in the owned token store.
     pub fn intern_token_list(&mut self, tokens: &[Token]) -> TokenListId {
         let semantic_id = self.token_list_semantic_id(tokens.iter().copied());
-        let frozen_hash = self.frozen_token_lookup_hash(tokens.iter().copied());
+        let frozen_hash = self
+            .tokens
+            .has_frozen_lists()
+            .then(|| self.frozen_token_lookup_hash(tokens.iter().copied()));
         let legacy_key = self
             .tokens
             .requires_legacy_frozen_key()
             .then(|| self.legacy_frozen_token_lookup_key(tokens.iter().copied()));
-        self.tokens
-            .intern_with_semantic_id(tokens, semantic_id, frozen_hash, legacy_key.as_deref())
+        self.tokens.intern_with_semantic_id(
+            tokens,
+            semantic_id,
+            frozen_hash.unwrap_or(0),
+            legacy_key.as_deref(),
+        )
     }
 
     /// Interns the current token-list builder value and clears it for reuse.
     pub fn finish_token_list(&mut self, builder: &mut TokenListBuilder) -> TokenListId {
         let semantic_id = self.token_list_semantic_id(builder.as_slice().iter().copied());
-        let frozen_hash = self.frozen_token_lookup_hash(builder.as_slice().iter().copied());
+        let frozen_hash = self
+            .tokens
+            .has_frozen_lists()
+            .then(|| self.frozen_token_lookup_hash(builder.as_slice().iter().copied()));
         let legacy_key = self
             .tokens
             .requires_legacy_frozen_key()
@@ -1124,7 +1134,7 @@ impl Stores {
         let id = self.tokens.intern_with_semantic_id(
             builder.as_slice(),
             semantic_id,
-            frozen_hash,
+            frozen_hash.unwrap_or(0),
             legacy_key.as_deref(),
         );
         builder.clear();
@@ -1134,22 +1144,13 @@ impl Stores {
     /// Freezes semantic tokens and per-instance origins directly from their
     /// packed traced representation.
     pub fn finish_traced_token_list(&mut self, traced: &[TracedTokenWord]) -> TracedTokenList {
-        for &word in traced {
-            let token = word
-                .token()
-                .expect("traced token list contains an invalid semantic token");
-            self.assert_live_token(token);
-            self.assert_live_origin(word.origin());
-        }
-
-        let semantic_id = self.token_list_semantic_id(traced.iter().map(|word| {
-            word.token()
-                .expect("validated traced token became invalid during semantic hashing")
-        }));
-        let frozen_hash = self.frozen_token_lookup_hash(traced.iter().map(|word| {
-            word.token()
-                .expect("validated traced token became invalid during lookup encoding")
-        }));
+        let semantic_id = self.traced_token_list_semantic_id(traced);
+        let frozen_hash = self.tokens.has_frozen_lists().then(|| {
+            self.frozen_token_lookup_hash(traced.iter().map(|word| {
+                word.token()
+                    .expect("validated traced token became invalid during lookup encoding")
+            }))
+        });
         let legacy_key = self.tokens.requires_legacy_frozen_key().then(|| {
             self.legacy_frozen_token_lookup_key(traced.iter().map(|word| {
                 word.token()
@@ -1162,7 +1163,7 @@ impl Stores {
         let token_list = self.tokens.intern_traced_with_semantic_id(
             traced,
             semantic_id,
-            frozen_hash,
+            frozen_hash.unwrap_or(0),
             legacy_key.as_deref(),
         );
         let origin_list = self.provenance.allocate_traced_list(traced);
@@ -1194,30 +1195,61 @@ impl Stores {
 
     fn token_list_semantic_id(&self, tokens: impl IntoIterator<Item = Token>) -> TokenSemanticId {
         let mut identity = TokenSemanticIdBuilder::new();
+        let mut cached_symbol = None;
         for token in tokens {
             let atom = match token {
                 Token::Cs(symbol) => {
-                    let fingerprint = self
-                        .interner
-                        .semantic_atom(symbol)
-                        .expect("symbol is not live in this Universe timeline");
-                    let symbol = self.resolve_stored_symbol(symbol);
-                    let mut bytes = Vec::with_capacity(self.interner.resolve_id(symbol).len() + 1);
-                    bytes.push(match self.interner.kind_id(symbol) {
-                        ControlSequenceKind::Null
-                        | ControlSequenceKind::SingleCharacter
-                        | ControlSequenceKind::Named => 0,
-                        ControlSequenceKind::ActiveCharacter => 1,
-                        ControlSequenceKind::Internal => 2,
-                    });
-                    bytes.extend_from_slice(self.interner.resolve_id(symbol).as_bytes());
-                    Some((
-                        fingerprint,
-                        crate::state_hash::semantic_identity_bytes(
-                            b"umber-control-sequence-v1",
-                            &bytes,
-                        ),
-                    ))
+                    let atom = cached_symbol
+                        .filter(|(cached, _)| *cached == symbol)
+                        .map_or_else(
+                            || {
+                                let atom = self
+                                    .interner
+                                    .semantic_atom_identity(symbol)
+                                    .expect("symbol is not live in this Universe timeline");
+                                cached_symbol = Some((symbol, atom));
+                                atom
+                            },
+                            |(_, atom)| atom,
+                        );
+                    Some(atom)
+                }
+                _ => None,
+            };
+            identity.push(token, atom);
+        }
+        identity.finish()
+    }
+
+    fn traced_token_list_semantic_id(&self, traced: &[TracedTokenWord]) -> TokenSemanticId {
+        let mut identity = TokenSemanticIdBuilder::new();
+        let mut cached_symbol = None;
+        let mut validated_origin = None;
+        for &word in traced {
+            let token = word
+                .token()
+                .expect("traced token list contains an invalid semantic token");
+            let origin = word.origin();
+            if validated_origin != Some(origin) {
+                self.assert_live_origin(origin);
+                validated_origin = Some(origin);
+            }
+            let atom = match token {
+                Token::Cs(symbol) => {
+                    let atom = cached_symbol
+                        .filter(|(cached, _)| *cached == symbol)
+                        .map_or_else(
+                            || {
+                                let atom = self
+                                    .interner
+                                    .semantic_atom_identity(symbol)
+                                    .expect("symbol is not live in this Universe timeline");
+                                cached_symbol = Some((symbol, atom));
+                                atom
+                            },
+                            |(_, atom)| atom,
+                        );
+                    Some(atom)
                 }
                 _ => None,
             };
