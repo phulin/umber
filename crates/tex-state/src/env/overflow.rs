@@ -2,7 +2,7 @@
 
 use crate::cell::CellId;
 use crate::env::banks::{BankCodec, BankSetContext, DENSE_REGISTER_COUNT};
-use crate::env::barrier;
+use crate::env::{CellMutationReceipt, barrier};
 use crate::epoch::Epoch;
 use core::array;
 use core::marker::PhantomData;
@@ -44,7 +44,12 @@ where
         C::decode(word)
     }
 
-    pub(crate) fn set(&mut self, index: u16, value: C::Value, ctx: BankSetContext<'_>) {
+    pub(crate) fn set(
+        &mut self,
+        index: u16,
+        value: C::Value,
+        ctx: BankSetContext<'_>,
+    ) -> CellMutationReceipt {
         let (page, offset) = sparse_location(index);
         let page = self.pages[page].get_or_insert_with(|| Box::new(Page::new(C::DEFAULT_WORD)));
         let cell_id = if ctx.global {
@@ -61,7 +66,7 @@ where
             ctx.epoch,
             cell_id,
             C::encode(value),
-        );
+        )
     }
 
     #[allow(dead_code)]

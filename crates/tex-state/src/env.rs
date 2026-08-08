@@ -44,6 +44,63 @@ const MATH_FAMILY_FONT_COUNT: usize = 3 * MATH_FAMILY_COUNT as usize;
 type MeaningSegment = Box<[Meaning]>;
 type StampSegment = Box<[Epoch; SEGMENT_LEN]>;
 
+/// Canonical semantic outcome of one barriered environment-cell operation.
+///
+/// The cell identity never carries assignment scope. The disposition is
+/// deliberately independent of journal activity: an equal assignment can
+/// still save or trace while remaining semantically unchanged.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct CellMutationReceipt {
+    cell: CellId,
+    disposition: CellMutationDisposition,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum CellMutationDisposition {
+    Changed,
+    Unchanged,
+    Retained,
+}
+
+impl CellMutationReceipt {
+    pub(crate) fn write(cell: CellId, old: u64, new: u64) -> Self {
+        Self {
+            cell: cell.without_assignment_scope(),
+            disposition: if old == new {
+                CellMutationDisposition::Unchanged
+            } else {
+                CellMutationDisposition::Changed
+            },
+        }
+    }
+
+    pub(crate) fn restore(cell: CellId, old: u64, new: u64, retained: bool) -> Self {
+        Self {
+            cell: cell.without_assignment_scope(),
+            disposition: if old != new {
+                CellMutationDisposition::Changed
+            } else if retained {
+                CellMutationDisposition::Retained
+            } else {
+                CellMutationDisposition::Unchanged
+            },
+        }
+    }
+
+    pub(crate) const fn cell(self) -> CellId {
+        self.cell
+    }
+
+    pub(crate) const fn changed(self) -> bool {
+        matches!(self.disposition, CellMutationDisposition::Changed)
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn disposition(self) -> CellMutationDisposition {
+        self.disposition
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 struct WordStamp {
     word: u64,
@@ -79,7 +136,7 @@ macro_rules! register_accessors {
             }
         }
 
-        pub(crate) fn $set(&mut self, index: u16, value: $value) {
+        pub(crate) fn $set(&mut self, index: u16, value: $value) -> CellMutationReceipt {
             if is_dense_register(index) {
                 self.$dense.set(
                     index,
@@ -92,7 +149,7 @@ macro_rules! register_accessors {
                         bank: BankTag::$bank,
                         global: false,
                     },
-                );
+                )
             } else {
                 self.$sparse.set(
                     index,
@@ -105,11 +162,11 @@ macro_rules! register_accessors {
                         bank: BankTag::$bank,
                         global: false,
                     },
-                );
+                )
             }
         }
 
-        pub(crate) fn $set_global(&mut self, index: u16, value: $value) {
+        pub(crate) fn $set_global(&mut self, index: u16, value: $value) -> CellMutationReceipt {
             if is_dense_register(index) {
                 self.$dense.set(
                     index,
@@ -122,7 +179,7 @@ macro_rules! register_accessors {
                         bank: BankTag::$bank,
                         global: true,
                     },
-                );
+                )
             } else {
                 self.$sparse.set(
                     index,
@@ -135,7 +192,7 @@ macro_rules! register_accessors {
                         bank: BankTag::$bank,
                         global: true,
                     },
-                );
+                )
             }
         }
     };
@@ -330,8 +387,13 @@ impl Env {
     }
 
     /// Sets a meaning by dense interner slot after aggregate validation.
-    pub(crate) fn set_meaning_slot(&mut self, slot: u32, meaning: Meaning, global: bool) {
-        self.set_meaning_value(slot, meaning, global);
+    pub(crate) fn set_meaning_slot(
+        &mut self,
+        slot: u32,
+        meaning: Meaning,
+        global: bool,
+    ) -> CellMutationReceipt {
+        self.set_meaning_value(slot, meaning, global)
     }
 
     /// Test-only local meaning write for isolated `Env` barrier coverage.
@@ -355,15 +417,20 @@ impl Env {
         }
     }
 
-    pub(crate) fn set_count(&mut self, index: u16, value: i32) {
-        self.set_count_with_scope(index, value, false);
+    pub(crate) fn set_count(&mut self, index: u16, value: i32) -> CellMutationReceipt {
+        self.set_count_with_scope(index, value, false)
     }
 
-    pub(crate) fn set_count_global(&mut self, index: u16, value: i32) {
-        self.set_count_with_scope(index, value, true);
+    pub(crate) fn set_count_global(&mut self, index: u16, value: i32) -> CellMutationReceipt {
+        self.set_count_with_scope(index, value, true)
     }
 
-    fn set_count_with_scope(&mut self, index: u16, value: i32, global: bool) {
+    fn set_count_with_scope(
+        &mut self,
+        index: u16,
+        value: i32,
+        global: bool,
+    ) -> CellMutationReceipt {
         let context = BankSetContext {
             journal: &mut self.journal,
             #[cfg(feature = "shadow")]
@@ -373,9 +440,9 @@ impl Env {
             global,
         };
         if is_dense_register(index) {
-            self.counts.set(index, value, context);
+            self.counts.set(index, value, context)
         } else {
-            self.overflow_counts.set(index, value, context);
+            self.overflow_counts.set(index, value, context)
         }
     }
     register_accessors!(
@@ -421,7 +488,11 @@ impl Env {
     }
 
     /// Sets a local box register value validated by the owning store.
-    pub(crate) fn set_box_reg(&mut self, index: u16, value: Option<NodeListId>) -> BoxWriteOutcome {
+    pub(crate) fn set_box_reg(
+        &mut self,
+        index: u16,
+        value: Option<NodeListId>,
+    ) -> (CellMutationReceipt, BoxWriteOutcome) {
         self.set_box_reg_local(index, value, true)
     }
 
@@ -430,7 +501,9 @@ impl Env {
         index: u16,
         value: Option<NodeListId>,
         coalesce: bool,
-    ) -> BoxWriteOutcome {
+    ) -> (CellMutationReceipt, BoxWriteOutcome) {
+        let old_word = self.boxes.get(index).value();
+        let new_word = NodeListId::encode_box_word(value);
         let outcome = self.boxes.write(
             index,
             value,
@@ -448,7 +521,14 @@ impl Env {
             CellId::new(BankTag::Box, u32::from(index)),
             NodeListId::encode_box_word(value),
         );
-        outcome
+        (
+            CellMutationReceipt::write(
+                CellId::new(BankTag::Box, u32::from(index)),
+                old_word,
+                new_word,
+            ),
+            outcome,
+        )
     }
 
     /// Sets a global box register value validated by the owning store.
@@ -456,7 +536,9 @@ impl Env {
         &mut self,
         index: u16,
         value: Option<NodeListId>,
-    ) -> BoxWriteOutcome {
+    ) -> (CellMutationReceipt, BoxWriteOutcome) {
+        let old_word = self.boxes.get(index).value();
+        let new_word = NodeListId::encode_box_word(value);
         let outcome = self.boxes.write(
             index,
             value,
@@ -474,7 +556,14 @@ impl Env {
             CellId::new(BankTag::Box, u32::from(index)),
             NodeListId::encode_box_word(value),
         );
-        outcome
+        (
+            CellMutationReceipt::write(
+                CellId::new(BankTag::Box, u32::from(index)),
+                old_word,
+                new_word,
+            ),
+            outcome,
+        )
     }
 
     /// Sets a box register at TeX's current box level.
@@ -482,11 +571,13 @@ impl Env {
         &mut self,
         index: u16,
         value: Option<NodeListId>,
-    ) -> BoxWriteOutcome {
+    ) -> (CellMutationReceipt, BoxWriteOutcome) {
         let owner_depth = self.boxes.get(index).owner_depth();
         if owner_depth == 0 {
             return self.set_box_reg_global(index, value);
         }
+        let old_word = self.boxes.get(index).value();
+        let new_word = NodeListId::encode_box_word(value);
         let outcome = self.boxes.write_same_level(index, value, &mut self.journal);
         #[cfg(feature = "shadow")]
         shadow_set(
@@ -494,7 +585,14 @@ impl Env {
             CellId::new(BankTag::Box, u32::from(index)),
             NodeListId::encode_box_word(value),
         );
-        outcome
+        (
+            CellMutationReceipt::write(
+                CellId::new(BankTag::Box, u32::from(index)),
+                old_word,
+                new_word,
+            ),
+            outcome,
+        )
     }
 
     /// Takes a box register at TeX's current box level.
@@ -505,23 +603,26 @@ impl Env {
     pub(crate) fn take_box_reg_same_level(
         &mut self,
         index: u16,
-    ) -> (Option<NodeListId>, BoxWriteOutcome) {
+    ) -> (Option<NodeListId>, CellMutationReceipt, BoxWriteOutcome) {
         let old = self.box_reg(index);
         let owner_depth = self.boxes.get(index).owner_depth();
-        let rec = if owner_depth == 0 {
+        let (receipt, rec) = if owner_depth == 0 {
             self.set_box_reg_global(index, None)
         } else {
             self.set_box_reg_same_level(index, None)
         };
-        (old, rec)
+        (old, receipt, rec)
     }
 
     /// Takes a local box while retaining its returned handle in a distinct
     /// undo record until the caller has consumed it.
-    pub(crate) fn take_box_reg(&mut self, index: u16) -> (Option<NodeListId>, BoxWriteOutcome) {
+    pub(crate) fn take_box_reg(
+        &mut self,
+        index: u16,
+    ) -> (Option<NodeListId>, CellMutationReceipt, BoxWriteOutcome) {
         let old = self.box_reg(index);
-        let outcome = self.set_box_reg_local(index, None, false);
-        (old, outcome)
+        let (receipt, outcome) = self.set_box_reg_local(index, None, false);
+        (old, receipt, outcome)
     }
 
     #[cfg(test)]
@@ -536,7 +637,7 @@ impl Env {
     }
 
     /// Sets a local integer parameter value.
-    pub(crate) fn set_int_param(&mut self, param: IntParam, value: i32) {
+    pub(crate) fn set_int_param(&mut self, param: IntParam, value: i32) -> CellMutationReceipt {
         self.int_params.set(
             param.raw(),
             value,
@@ -548,11 +649,15 @@ impl Env {
                 bank: BankTag::IntParam,
                 global: false,
             },
-        );
+        )
     }
 
     /// Sets a global integer parameter value.
-    pub(crate) fn set_int_param_global(&mut self, param: IntParam, value: i32) {
+    pub(crate) fn set_int_param_global(
+        &mut self,
+        param: IntParam,
+        value: i32,
+    ) -> CellMutationReceipt {
         self.int_params.set(
             param.raw(),
             value,
@@ -564,7 +669,7 @@ impl Env {
                 bank: BankTag::IntParam,
                 global: true,
             },
-        );
+        )
     }
 
     /// Returns a dimension parameter value.
@@ -574,7 +679,11 @@ impl Env {
     }
 
     /// Sets a local dimension parameter value.
-    pub(crate) fn set_dimen_param(&mut self, param: DimenParam, value: Scaled) {
+    pub(crate) fn set_dimen_param(
+        &mut self,
+        param: DimenParam,
+        value: Scaled,
+    ) -> CellMutationReceipt {
         self.dimen_params.set(
             param.raw(),
             value,
@@ -586,11 +695,15 @@ impl Env {
                 bank: BankTag::DimenParam,
                 global: false,
             },
-        );
+        )
     }
 
     /// Sets a global dimension parameter value.
-    pub(crate) fn set_dimen_param_global(&mut self, param: DimenParam, value: Scaled) {
+    pub(crate) fn set_dimen_param_global(
+        &mut self,
+        param: DimenParam,
+        value: Scaled,
+    ) -> CellMutationReceipt {
         self.dimen_params.set(
             param.raw(),
             value,
@@ -602,7 +715,7 @@ impl Env {
                 bank: BankTag::DimenParam,
                 global: true,
             },
-        );
+        )
     }
 
     /// Returns a glue parameter value.
@@ -612,7 +725,11 @@ impl Env {
     }
 
     /// Sets a local glue parameter value.
-    pub(crate) fn set_glue_param(&mut self, param: GlueParam, value: GlueId) {
+    pub(crate) fn set_glue_param(
+        &mut self,
+        param: GlueParam,
+        value: GlueId,
+    ) -> CellMutationReceipt {
         self.glue_params.set(
             param.raw(),
             value,
@@ -624,11 +741,15 @@ impl Env {
                 bank: BankTag::GlueParam,
                 global: false,
             },
-        );
+        )
     }
 
     /// Sets a global glue parameter value.
-    pub(crate) fn set_glue_param_global(&mut self, param: GlueParam, value: GlueId) {
+    pub(crate) fn set_glue_param_global(
+        &mut self,
+        param: GlueParam,
+        value: GlueId,
+    ) -> CellMutationReceipt {
         self.glue_params.set(
             param.raw(),
             value,
@@ -640,7 +761,7 @@ impl Env {
                 bank: BankTag::GlueParam,
                 global: true,
             },
-        );
+        )
     }
 
     /// Returns a token-list parameter value.
@@ -656,7 +777,11 @@ impl Env {
     }
 
     /// Sets a local token-list parameter value.
-    pub(crate) fn set_tok_param(&mut self, param: TokParam, value: TokenListId) {
+    pub(crate) fn set_tok_param(
+        &mut self,
+        param: TokParam,
+        value: TokenListId,
+    ) -> CellMutationReceipt {
         self.tok_params.set(
             param.raw(),
             Some(value),
@@ -668,11 +793,15 @@ impl Env {
                 bank: BankTag::TokParam,
                 global: false,
             },
-        );
+        )
     }
 
     /// Sets a global token-list parameter value.
-    pub(crate) fn set_tok_param_global(&mut self, param: TokParam, value: TokenListId) {
+    pub(crate) fn set_tok_param_global(
+        &mut self,
+        param: TokParam,
+        value: TokenListId,
+    ) -> CellMutationReceipt {
         self.tok_params.set(
             param.raw(),
             Some(value),
@@ -684,7 +813,7 @@ impl Env {
                 bank: BankTag::TokParam,
                 global: true,
             },
-        );
+        )
     }
 
     #[must_use]
@@ -702,20 +831,28 @@ impl Env {
         }
     }
 
-    pub(crate) fn set_current_font(&mut self, value: FontId) {
-        self.set_current_font_word(pack_current_font(self.current_font_symbol(), value), false);
+    pub(crate) fn set_current_font(&mut self, value: FontId) -> CellMutationReceipt {
+        self.set_current_font_word(pack_current_font(self.current_font_symbol(), value), false)
     }
 
-    pub(crate) fn set_current_font_global(&mut self, value: FontId) {
-        self.set_current_font_word(pack_current_font(self.current_font_symbol(), value), true);
+    pub(crate) fn set_current_font_global(&mut self, value: FontId) -> CellMutationReceipt {
+        self.set_current_font_word(pack_current_font(self.current_font_symbol(), value), true)
     }
 
-    pub(crate) fn set_current_font_selector(&mut self, symbol: Symbol, value: FontId) {
-        self.set_current_font_word(pack_current_font(Some(symbol), value), false);
+    pub(crate) fn set_current_font_selector(
+        &mut self,
+        symbol: Symbol,
+        value: FontId,
+    ) -> CellMutationReceipt {
+        self.set_current_font_word(pack_current_font(Some(symbol), value), false)
     }
 
-    pub(crate) fn set_current_font_selector_global(&mut self, symbol: Symbol, value: FontId) {
-        self.set_current_font_word(pack_current_font(Some(symbol), value), true);
+    pub(crate) fn set_current_font_selector_global(
+        &mut self,
+        symbol: Symbol,
+        value: FontId,
+    ) -> CellMutationReceipt {
+        self.set_current_font_word(pack_current_font(Some(symbol), value), true)
     }
 
     /// Returns the font selected for a math family and size.
@@ -726,7 +863,12 @@ impl Env {
     }
 
     /// Sets a local math-family font selector.
-    pub(crate) fn set_math_family_font(&mut self, size: MathFontSize, family: u8, value: FontId) {
+    pub(crate) fn set_math_family_font(
+        &mut self,
+        size: MathFontSize,
+        family: u8,
+        value: FontId,
+    ) -> CellMutationReceipt {
         self.math_family_fonts.set(
             math_family_font_index(size, family),
             value,
@@ -738,7 +880,7 @@ impl Env {
                 bank: BankTag::MathFamilyFont,
                 global: false,
             },
-        );
+        )
     }
 
     /// Sets a global math-family font selector.
@@ -747,7 +889,7 @@ impl Env {
         size: MathFontSize,
         family: u8,
         value: FontId,
-    ) {
+    ) -> CellMutationReceipt {
         self.math_family_fonts.set(
             math_family_font_index(size, family),
             value,
@@ -759,7 +901,7 @@ impl Env {
                 bank: BankTag::MathFamilyFont,
                 global: true,
             },
-        );
+        )
     }
 
     #[must_use]
@@ -770,7 +912,11 @@ impl Env {
         Scaled::from_raw(decode_i32(font_bank_word(&self.font_dimens, index)))
     }
 
-    pub(crate) fn set_font_dimen_global(&mut self, index: u32, value: Scaled) {
+    pub(crate) fn set_font_dimen_global(
+        &mut self,
+        index: u32,
+        value: Scaled,
+    ) -> CellMutationReceipt {
         set_font_bank_word(
             &mut self.font_dimens,
             &mut self.journal,
@@ -781,7 +927,7 @@ impl Env {
             index,
             encode_i32(value.raw()),
             true,
-        );
+        )
     }
 
     #[must_use]
@@ -789,7 +935,11 @@ impl Env {
         decode_u32(font_bank_word(&self.font_param_lens, font.raw()))
     }
 
-    pub(crate) fn set_font_param_len_global(&mut self, font: FontId, value: u32) {
+    pub(crate) fn set_font_param_len_global(
+        &mut self,
+        font: FontId,
+        value: u32,
+    ) -> CellMutationReceipt {
         set_font_bank_word(
             &mut self.font_param_lens,
             &mut self.journal,
@@ -800,7 +950,7 @@ impl Env {
             font.raw(),
             u64::from(value),
             true,
-        );
+        )
     }
 
     #[must_use]
@@ -808,8 +958,12 @@ impl Env {
         decode_i32(font_bank_word(&self.font_hyphen_chars, font.raw()))
     }
 
-    pub(crate) fn set_font_hyphen_char_global(&mut self, font: FontId, value: i32) {
-        self.set_font_int_bank(BankTag::FontHyphenChar, font, value, true);
+    pub(crate) fn set_font_hyphen_char_global(
+        &mut self,
+        font: FontId,
+        value: i32,
+    ) -> CellMutationReceipt {
+        self.set_font_int_bank(BankTag::FontHyphenChar, font, value, true)
     }
 
     #[must_use]
@@ -817,8 +971,12 @@ impl Env {
         decode_i32(font_bank_word(&self.font_skew_chars, font.raw()))
     }
 
-    pub(crate) fn set_font_skew_char_global(&mut self, font: FontId, value: i32) {
-        self.set_font_int_bank(BankTag::FontSkewChar, font, value, true);
+    pub(crate) fn set_font_skew_char_global(
+        &mut self,
+        font: FontId,
+        value: i32,
+    ) -> CellMutationReceipt {
+        self.set_font_int_bank(BankTag::FontSkewChar, font, value, true)
     }
 
     pub(crate) fn pdf_font_code(&self, bank: BankTag, font: FontId, code: u8) -> Option<i32> {
@@ -844,7 +1002,7 @@ impl Env {
         font: FontId,
         code: u8,
         value: i32,
-    ) {
+    ) -> CellMutationReceipt {
         let index = (font.raw() << 8) | u32::from(code);
         let map = match bank {
             BankTag::PdfLpCode => &mut self.pdf_lp_codes,
@@ -868,14 +1026,14 @@ impl Env {
             index,
             encode_i32(value),
             true,
-        );
+        )
     }
 
     pub(crate) fn pdf_no_ligatures(&self, font: FontId) -> bool {
         font_bank_word(&self.pdf_no_ligatures, font.raw()) != 0
     }
 
-    pub(crate) fn set_pdf_no_ligatures_global(&mut self, font: FontId) {
+    pub(crate) fn set_pdf_no_ligatures_global(&mut self, font: FontId) -> CellMutationReceipt {
         set_font_bank_word(
             &mut self.pdf_no_ligatures,
             &mut self.journal,
@@ -886,10 +1044,10 @@ impl Env {
             font.raw(),
             1,
             true,
-        );
+        )
     }
 
-    fn set_current_font_word(&mut self, word: u64, global: bool) {
+    fn set_current_font_word(&mut self, word: u64, global: bool) -> CellMutationReceipt {
         let cell = if global {
             CellId::new_global(BankTag::CurrentFont, 0)
         } else {
@@ -904,10 +1062,16 @@ impl Env {
             self.epoch,
             cell,
             word,
-        );
+        )
     }
 
-    fn set_font_int_bank(&mut self, bank: BankTag, font: FontId, value: i32, global: bool) {
+    fn set_font_int_bank(
+        &mut self,
+        bank: BankTag,
+        font: FontId,
+        value: i32,
+        global: bool,
+    ) -> CellMutationReceipt {
         let map = match bank {
             BankTag::FontHyphenChar => &mut self.font_hyphen_chars,
             BankTag::FontSkewChar => &mut self.font_skew_chars,
@@ -923,7 +1087,7 @@ impl Env {
             font.raw(),
             encode_i32(value),
             global,
-        );
+        )
     }
 }
 
@@ -936,7 +1100,8 @@ pub(crate) fn barrier(
     epoch: Epoch,
     cell_id: CellId,
     new_word: u64,
-) {
+) -> CellMutationReceipt {
+    let receipt = CellMutationReceipt::write(cell_id, *cell_slot, new_word);
     if *cell_slot == new_word {
         if cell_id.is_global() {
             journal.push_undo(UndoRec::new(cell_id, *cell_slot, new_word));
@@ -948,7 +1113,7 @@ pub(crate) fn barrier(
             journal.push_undo(UndoRec::new(cell_id, *cell_slot, new_word));
             *stamp_slot = epoch;
         }
-        return;
+        return receipt;
     }
 
     if *stamp_slot < epoch {
@@ -964,6 +1129,7 @@ pub(crate) fn barrier(
         CellId::new(cell_id.bank(), cell_id.index()),
         new_word,
     );
+    receipt
 }
 
 #[cfg(feature = "shadow")]
@@ -1068,7 +1234,7 @@ fn set_font_bank_word(
     index: u32,
     word: u64,
     global: bool,
-) {
+) -> CellMutationReceipt {
     let entry = map.entry(index).or_default();
     let cell = if global {
         CellId::new_global(bank, index)
@@ -1084,7 +1250,7 @@ fn set_font_bank_word(
         epoch,
         cell,
         word,
-    );
+    )
 }
 
 fn encode_i32(value: i32) -> u64 {

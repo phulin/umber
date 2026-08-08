@@ -9,7 +9,8 @@ use crate::code_tables::{
     MathCode, SfCode, UcCode,
 };
 use crate::env::banks::{DimenParam, GlueParam, IntParam, TokParam};
-use crate::env::{Env, EnvSnapshot};
+use crate::env::group::MutationReceipts;
+use crate::env::{CellMutationReceipt, Env, EnvSnapshot};
 use crate::font::{
     CharMetrics, CharTag, ExtensibleRecipe, FontMetrics, FontMetricsValidationError,
     FontSourceIdentity, FontStore, FontStoreMark, LigKernChar, LigKernCommand, LigKernIter,
@@ -21,7 +22,7 @@ use serde::{Deserialize, Serialize};
 
 type GroupExitObservation = (
     Vec<crate::token::TracedTokenWord>,
-    crate::env::group::ChangedCells,
+    crate::env::group::MutationReceipts,
     CodeTableGenerations,
     CodeTableGenerations,
     Vec<crate::env::group::RestoreRecord>,
@@ -807,29 +808,39 @@ impl Stores {
     }
 
     /// Sets the local meaning for a live control-sequence symbol.
-    pub fn set_meaning(&mut self, symbol: impl SymbolReference, meaning: Meaning) {
+    pub fn set_meaning(
+        &mut self,
+        symbol: impl SymbolReference,
+        meaning: Meaning,
+    ) -> crate::env::CellMutationReceipt {
         let symbol = self.resolve_symbol_reference(symbol);
         self.assert_live_macro_definition_in_meaning(meaning);
         self.assert_live_font_in_meaning(meaning);
-        self.env.set_meaning_slot(symbol.raw(), meaning, false);
+        self.env.set_meaning_slot(symbol.raw(), meaning, false)
     }
 
     /// Interns a control-sequence name and gives a previously undefined name
     /// TeX's `\csname`-created `\relax` meaning.
-    pub fn intern_relaxed_control_sequence(&mut self, name: &str) -> SymbolId {
+    pub(crate) fn intern_relaxed_control_sequence_with_receipt(
+        &mut self,
+        name: &str,
+    ) -> (SymbolId, Option<CellMutationReceipt>) {
         let symbol = self.intern(name);
-        if self.meaning(symbol) == Meaning::Undefined {
-            self.set_meaning(symbol, Meaning::Relax);
-        }
-        symbol
+        let receipt = (self.meaning(symbol) == Meaning::Undefined)
+            .then(|| self.set_meaning(symbol, Meaning::Relax));
+        (symbol, receipt)
     }
 
     /// Sets the global meaning for a live control-sequence symbol.
-    pub fn set_meaning_global(&mut self, symbol: impl SymbolReference, meaning: Meaning) {
+    pub fn set_meaning_global(
+        &mut self,
+        symbol: impl SymbolReference,
+        meaning: Meaning,
+    ) -> crate::env::CellMutationReceipt {
         let symbol = self.resolve_symbol_reference(symbol);
         self.assert_live_macro_definition_in_meaning(meaning);
         self.assert_live_font_in_meaning(meaning);
-        self.env.set_meaning_slot(symbol.raw(), meaning, true);
+        self.env.set_meaning_slot(symbol.raw(), meaning, true)
     }
 
     /// Interns a frozen macro definition in the owned macro-definition store.
@@ -930,7 +941,11 @@ impl Stores {
     }
 
     /// Sets a local macro meaning by freezing its public aggregate first.
-    pub fn set_macro_meaning(&mut self, symbol: impl SymbolReference, macro_meaning: MacroMeaning) {
+    pub fn set_macro_meaning(
+        &mut self,
+        symbol: impl SymbolReference,
+        macro_meaning: MacroMeaning,
+    ) -> CellMutationReceipt {
         let definition = self.intern_macro(macro_meaning);
         self.set_meaning(
             symbol,
@@ -938,7 +953,7 @@ impl Stores {
                 flags: macro_meaning.flags(),
                 definition,
             },
-        );
+        )
     }
 
     /// Sets a local macro meaning with diagnostic definition provenance.
@@ -947,7 +962,7 @@ impl Stores {
         symbol: impl SymbolReference,
         macro_meaning: MacroMeaning,
         provenance: MacroDefinitionProvenance,
-    ) {
+    ) -> CellMutationReceipt {
         let definition = self.intern_macro_with_provenance(macro_meaning, Some(provenance));
         self.set_meaning(
             symbol,
@@ -955,7 +970,7 @@ impl Stores {
                 flags: macro_meaning.flags(),
                 definition,
             },
-        );
+        )
     }
 
     /// Sets a global macro meaning by freezing its public aggregate first.
@@ -963,7 +978,7 @@ impl Stores {
         &mut self,
         symbol: impl SymbolReference,
         macro_meaning: MacroMeaning,
-    ) {
+    ) -> CellMutationReceipt {
         let definition = self.intern_macro(macro_meaning);
         self.set_meaning_global(
             symbol,
@@ -971,7 +986,7 @@ impl Stores {
                 flags: macro_meaning.flags(),
                 definition,
             },
-        );
+        )
     }
 
     /// Sets a global macro meaning with diagnostic definition provenance.
@@ -980,7 +995,7 @@ impl Stores {
         symbol: impl SymbolReference,
         macro_meaning: MacroMeaning,
         provenance: MacroDefinitionProvenance,
-    ) {
+    ) -> CellMutationReceipt {
         let definition = self.intern_macro_with_provenance(macro_meaning, Some(provenance));
         self.set_meaning_global(
             symbol,
@@ -988,7 +1003,7 @@ impl Stores {
                 flags: macro_meaning.flags(),
                 definition,
             },
-        );
+        )
     }
 
     /// Decodes a symbol's meaning as a public macro aggregate when applicable.
@@ -2037,7 +2052,13 @@ impl Stores {
             })
     }
 
-    pub fn set_pdf_font_code(&mut self, table: PdfFontCode, font: FontId, code: u8, value: i32) {
+    pub fn set_pdf_font_code(
+        &mut self,
+        table: PdfFontCode,
+        font: FontId,
+        code: u8,
+        value: i32,
+    ) -> crate::env::CellMutationReceipt {
         self.assert_live_font(font);
         let value = match table {
             PdfFontCode::Lp
@@ -2058,12 +2079,12 @@ impl Stores {
             }
         };
         self.env
-            .set_pdf_font_code_global(pdf_font_code_bank(table), font, code, value);
+            .set_pdf_font_code_global(pdf_font_code_bank(table), font, code, value)
     }
 
-    pub fn disable_pdf_font_ligatures(&mut self, font: FontId) {
+    pub fn disable_pdf_font_ligatures(&mut self, font: FontId) -> crate::env::CellMutationReceipt {
         self.assert_live_font(font);
-        self.env.set_pdf_no_ligatures_global(font);
+        self.env.set_pdf_no_ligatures_global(font)
     }
 
     #[must_use]
@@ -2096,27 +2117,35 @@ impl Stores {
             .resolve_stored(self.env.current_font_symbol()?)
     }
 
-    pub fn set_current_font(&mut self, id: FontId) {
+    pub fn set_current_font(&mut self, id: FontId) -> crate::env::CellMutationReceipt {
         self.assert_live_font(id);
-        self.env.set_current_font(id);
+        self.env.set_current_font(id)
     }
 
-    pub fn set_current_font_global(&mut self, id: FontId) {
+    pub fn set_current_font_global(&mut self, id: FontId) -> crate::env::CellMutationReceipt {
         self.assert_live_font(id);
-        self.env.set_current_font_global(id);
+        self.env.set_current_font_global(id)
     }
 
-    pub fn set_current_font_selector(&mut self, symbol: impl SymbolReference, id: FontId) {
+    pub fn set_current_font_selector(
+        &mut self,
+        symbol: impl SymbolReference,
+        id: FontId,
+    ) -> crate::env::CellMutationReceipt {
         let symbol = self.resolve_symbol_reference(symbol);
         self.assert_live_font(id);
-        self.env.set_current_font_selector(symbol.symbol(), id);
+        self.env.set_current_font_selector(symbol.symbol(), id)
     }
 
-    pub fn set_current_font_selector_global(&mut self, symbol: impl SymbolReference, id: FontId) {
+    pub fn set_current_font_selector_global(
+        &mut self,
+        symbol: impl SymbolReference,
+        id: FontId,
+    ) -> crate::env::CellMutationReceipt {
         let symbol = self.resolve_symbol_reference(symbol);
         self.assert_live_font(id);
         self.env
-            .set_current_font_selector_global(symbol.symbol(), id);
+            .set_current_font_selector_global(symbol.symbol(), id)
     }
 
     #[must_use]
@@ -2130,12 +2159,12 @@ impl Stores {
         family: u8,
         id: FontId,
         global: bool,
-    ) {
+    ) -> crate::env::CellMutationReceipt {
         self.assert_live_font(id);
         if global {
-            self.env.set_math_family_font_global(size, family, id);
+            self.env.set_math_family_font_global(size, family, id)
         } else {
-            self.env.set_math_family_font(size, family, id);
+            self.env.set_math_family_font(size, family, id)
         }
     }
 
@@ -2156,10 +2185,14 @@ impl Stores {
         font: FontId,
         number: u32,
         value: Scaled,
-    ) -> Result<(), FontParameterError> {
-        let index = self.prepare_font_dimen_write(font, number)?;
-        self.env.set_font_dimen_global(index, value);
-        Ok(())
+    ) -> Result<smallvec::SmallVec<[crate::env::CellMutationReceipt; 2]>, FontParameterError> {
+        let (index, length_receipt) = self.prepare_font_dimen_write(font, number)?;
+        let mut receipts = smallvec::SmallVec::new();
+        if let Some(receipt) = length_receipt {
+            receipts.push(receipt);
+        }
+        receipts.push(self.env.set_font_dimen_global(index, value));
+        Ok(receipts)
     }
 
     /// Selects the process-owned Web2C `font_mem_size` limit.
@@ -2180,9 +2213,13 @@ impl Stores {
         self.env.font_hyphen_char(font)
     }
 
-    pub fn set_font_hyphen_char(&mut self, font: FontId, value: i32) {
+    pub fn set_font_hyphen_char(
+        &mut self,
+        font: FontId,
+        value: i32,
+    ) -> crate::env::CellMutationReceipt {
         self.assert_live_font(font);
-        self.env.set_font_hyphen_char_global(font, value);
+        self.env.set_font_hyphen_char_global(font, value)
     }
 
     #[must_use]
@@ -2191,9 +2228,13 @@ impl Stores {
         self.env.font_skew_char(font)
     }
 
-    pub fn set_font_skew_char(&mut self, font: FontId, value: i32) {
+    pub fn set_font_skew_char(
+        &mut self,
+        font: FontId,
+        value: i32,
+    ) -> crate::env::CellMutationReceipt {
         self.assert_live_font(font);
-        self.env.set_font_skew_char_global(font, value);
+        self.env.set_font_skew_char_global(font, value)
     }
 
     fn initialize_font_banks(&mut self, font: FontId, parameter_count: u32, parameters: &[Scaled]) {
@@ -2229,11 +2270,11 @@ impl Stores {
         &mut self,
         font: FontId,
         number: u32,
-    ) -> Result<u32, FontParameterError> {
+    ) -> Result<(u32, Option<crate::env::CellMutationReceipt>), FontParameterError> {
         self.assert_live_font(font);
         let index = crate::env::font_dimen_index(font, number)?;
         let current_len = self.env.font_param_len(font);
-        if number > current_len {
+        let length_receipt = if number > current_len {
             if font != self.last_loaded_font {
                 return Err(FontParameterError::CannotGrow {
                     font,
@@ -2249,9 +2290,11 @@ impl Stores {
                     capacity: self.font_info_capacity,
                 });
             }
-            self.env.set_font_param_len_global(font, number);
-        }
-        Ok(index)
+            Some(self.env.set_font_param_len_global(font, number))
+        } else {
+            None
+        };
+        Ok((index, length_receipt))
     }
 
     fn font_info_words(&self) -> usize {
@@ -2425,8 +2468,8 @@ impl Stores {
         self.env.take_afterassignment()
     }
 
-    pub fn set_count(&mut self, index: u16, value: i32) {
-        self.env.set_count(index, value);
+    pub fn set_count(&mut self, index: u16, value: i32) -> crate::env::CellMutationReceipt {
+        self.env.set_count(index, value)
     }
 
     #[must_use]
@@ -2434,12 +2477,12 @@ impl Stores {
         self.env.count(index)
     }
 
-    pub fn set_count_global(&mut self, index: u16, value: i32) {
-        self.env.set_count_global(index, value);
+    pub fn set_count_global(&mut self, index: u16, value: i32) -> crate::env::CellMutationReceipt {
+        self.env.set_count_global(index, value)
     }
 
-    pub fn set_dimen(&mut self, index: u16, value: Scaled) {
-        self.env.set_dimen(index, value);
+    pub fn set_dimen(&mut self, index: u16, value: Scaled) -> crate::env::CellMutationReceipt {
+        self.env.set_dimen(index, value)
     }
 
     #[must_use]
@@ -2447,13 +2490,17 @@ impl Stores {
         self.env.dimen(index)
     }
 
-    pub fn set_dimen_global(&mut self, index: u16, value: Scaled) {
-        self.env.set_dimen_global(index, value);
+    pub fn set_dimen_global(
+        &mut self,
+        index: u16,
+        value: Scaled,
+    ) -> crate::env::CellMutationReceipt {
+        self.env.set_dimen_global(index, value)
     }
 
-    pub fn set_skip(&mut self, index: u16, value: GlueId) {
+    pub fn set_skip(&mut self, index: u16, value: GlueId) -> crate::env::CellMutationReceipt {
         self.assert_live_glue(value);
-        self.env.set_skip(index, value);
+        self.env.set_skip(index, value)
     }
 
     #[must_use]
@@ -2461,14 +2508,18 @@ impl Stores {
         self.resolve_stored_glue(self.env.skip(index))
     }
 
-    pub fn set_skip_global(&mut self, index: u16, value: GlueId) {
+    pub fn set_skip_global(
+        &mut self,
+        index: u16,
+        value: GlueId,
+    ) -> crate::env::CellMutationReceipt {
         self.assert_live_glue(value);
-        self.env.set_skip_global(index, value);
+        self.env.set_skip_global(index, value)
     }
 
-    pub fn set_muskip(&mut self, index: u16, value: GlueId) {
+    pub fn set_muskip(&mut self, index: u16, value: GlueId) -> crate::env::CellMutationReceipt {
         self.assert_live_glue(value);
-        self.env.set_muskip(index, value);
+        self.env.set_muskip(index, value)
     }
 
     #[must_use]
@@ -2476,14 +2527,18 @@ impl Stores {
         self.resolve_stored_glue(self.env.muskip(index))
     }
 
-    pub fn set_muskip_global(&mut self, index: u16, value: GlueId) {
+    pub fn set_muskip_global(
+        &mut self,
+        index: u16,
+        value: GlueId,
+    ) -> crate::env::CellMutationReceipt {
         self.assert_live_glue(value);
-        self.env.set_muskip_global(index, value);
+        self.env.set_muskip_global(index, value)
     }
 
-    pub fn set_toks(&mut self, index: u16, value: TokenListId) {
+    pub fn set_toks(&mut self, index: u16, value: TokenListId) -> crate::env::CellMutationReceipt {
         self.assert_live_token_list(value);
-        self.env.set_toks(index, value);
+        self.env.set_toks(index, value)
     }
 
     #[must_use]
@@ -2491,33 +2546,49 @@ impl Stores {
         self.resolve_stored_token_list(self.env.toks(index))
     }
 
-    pub fn set_toks_global(&mut self, index: u16, value: TokenListId) {
+    pub fn set_toks_global(
+        &mut self,
+        index: u16,
+        value: TokenListId,
+    ) -> crate::env::CellMutationReceipt {
         self.assert_live_token_list(value);
-        self.env.set_toks_global(index, value);
+        self.env.set_toks_global(index, value)
     }
 
-    pub fn set_box_reg(&mut self, index: u16, value: NodeListId) {
-        self.write_box_reg(index, Some(value), false);
+    pub fn set_box_reg(
+        &mut self,
+        index: u16,
+        value: NodeListId,
+    ) -> crate::env::CellMutationReceipt {
+        self.write_box_reg(index, Some(value), false)
     }
 
-    pub fn set_box_reg_global(&mut self, index: u16, value: NodeListId) {
-        self.write_box_reg(index, Some(value), true);
+    pub fn set_box_reg_global(
+        &mut self,
+        index: u16,
+        value: NodeListId,
+    ) -> crate::env::CellMutationReceipt {
+        self.write_box_reg(index, Some(value), true)
     }
 
-    pub fn set_box_reg_same_level(&mut self, index: u16, value: NodeListId) {
-        self.write_box_reg_same_level(index, Some(value));
+    pub fn set_box_reg_same_level(
+        &mut self,
+        index: u16,
+        value: NodeListId,
+    ) -> crate::env::CellMutationReceipt {
+        self.write_box_reg_same_level(index, Some(value))
     }
 
-    pub fn clear_box_reg(&mut self, index: u16) {
-        self.write_box_reg(index, None, false);
+    pub fn clear_box_reg(&mut self, index: u16) -> crate::env::CellMutationReceipt {
+        self.write_box_reg(index, None, false)
     }
 
-    pub fn clear_box_reg_global(&mut self, index: u16) {
-        self.write_box_reg(index, None, true);
+    pub fn clear_box_reg_global(&mut self, index: u16) -> crate::env::CellMutationReceipt {
+        self.write_box_reg(index, None, true)
     }
 
-    pub fn clear_box_reg_same_level(&mut self, index: u16) {
-        self.write_box_reg_same_level(index, None);
+    pub fn clear_box_reg_same_level(&mut self, index: u16) -> crate::env::CellMutationReceipt {
+        self.write_box_reg_same_level(index, None)
     }
 
     #[must_use]
@@ -2525,24 +2596,48 @@ impl Stores {
         self.env.box_reg(index)
     }
 
+    #[cfg(test)]
     pub fn take_box_reg(&mut self, index: u16) -> Option<NodeListId> {
-        let (old, rec) = self.env.take_box_reg(index);
-        self.account_box_write(old, rec);
-        old
+        self.take_box_reg_with_receipt(index).0
     }
 
+    pub(crate) fn take_box_reg_with_receipt(
+        &mut self,
+        index: u16,
+    ) -> (Option<NodeListId>, crate::env::CellMutationReceipt) {
+        let (old, receipt, rec) = self.env.take_box_reg(index);
+        self.account_box_write(old, rec);
+        (old, receipt)
+    }
+
+    #[cfg(test)]
     pub fn take_box_reg_same_level(&mut self, index: u16) -> Option<NodeListId> {
-        let (old, rec) = self.env.take_box_reg_same_level(index);
+        self.take_box_reg_same_level_with_receipt(index).0
+    }
+
+    pub(crate) fn take_box_reg_same_level_with_receipt(
+        &mut self,
+        index: u16,
+    ) -> (Option<NodeListId>, crate::env::CellMutationReceipt) {
+        let (old, receipt, rec) = self.env.take_box_reg_same_level(index);
         self.account_box_write(old, rec);
-        old
+        (old, receipt)
     }
 
-    pub fn set_int_param(&mut self, param: IntParam, value: i32) {
-        self.env.set_int_param(param, value);
+    pub fn set_int_param(
+        &mut self,
+        param: IntParam,
+        value: i32,
+    ) -> crate::env::CellMutationReceipt {
+        self.env.set_int_param(param, value)
     }
 
-    pub fn set_int_param_global(&mut self, param: IntParam, value: i32) {
-        self.env.set_int_param_global(param, value);
+    pub fn set_int_param_global(
+        &mut self,
+        param: IntParam,
+        value: i32,
+    ) -> crate::env::CellMutationReceipt {
+        self.env.set_int_param_global(param, value)
     }
 
     #[must_use]
@@ -2557,8 +2652,8 @@ impl Stores {
     }
 
     /// Records TeX's most recent glue-setting badness as global engine state.
-    pub fn set_last_badness(&mut self, value: i32) {
-        self.set_int_param_global(IntParam::LAST_BADNESS, value);
+    pub fn set_last_badness(&mut self, value: i32) -> CellMutationReceipt {
+        self.set_int_param_global(IntParam::LAST_BADNESS, value)
     }
 
     /// Reads TeX's current `\mag` parameter.
@@ -2568,13 +2663,13 @@ impl Stores {
     }
 
     /// Sets TeX's local `\mag` parameter.
-    pub fn set_mag(&mut self, value: i32) {
-        self.set_int_param(IntParam::MAG, value);
+    pub fn set_mag(&mut self, value: i32) -> CellMutationReceipt {
+        self.set_int_param(IntParam::MAG, value)
     }
 
     /// Sets TeX's global `\mag` parameter.
-    pub fn set_mag_global(&mut self, value: i32) {
-        self.set_int_param_global(IntParam::MAG, value);
+    pub fn set_mag_global(&mut self, value: i32) -> CellMutationReceipt {
+        self.set_int_param_global(IntParam::MAG, value)
     }
 
     /// Returns the job-level magnification frozen by `prepare_mag`, if any.
@@ -2588,10 +2683,21 @@ impl Stores {
     /// This mirrors tex.web's `prepare_mag`: illegal `\mag` values are
     /// globally coerced to 1000, and once any magnification has been prepared
     /// the same effective value is retained for the rest of the job.
+    #[cfg(test)]
     pub fn prepare_mag(&mut self) -> (i32, Option<PrepareMagDiagnostic>) {
+        self.prepare_mag_with_receipts().0
+    }
+
+    pub(crate) fn prepare_mag_with_receipts(
+        &mut self,
+    ) -> (
+        (i32, Option<PrepareMagDiagnostic>),
+        smallvec::SmallVec<[CellMutationReceipt; 1]>,
+    ) {
         let attempted = self.mag();
+        let mut receipts = smallvec::SmallVec::new();
         let (effective, diagnostic) = if !(1..=32_768).contains(&attempted) {
-            self.set_mag_global(1000);
+            receipts.push(self.set_int_param_global(IntParam::MAG, 1000));
             (
                 1000,
                 Some(PrepareMagDiagnostic::IllegalMagnification { attempted }),
@@ -2599,7 +2705,7 @@ impl Stores {
         } else if attempted != 1000 {
             match self.prepared_mag {
                 Some(retained) if retained != attempted => {
-                    self.set_mag_global(retained);
+                    receipts.push(self.set_int_param_global(IntParam::MAG, retained));
                     (
                         retained,
                         Some(PrepareMagDiagnostic::IncompatibleMagnification {
@@ -2614,7 +2720,7 @@ impl Stores {
             (attempted, None)
         };
         self.prepared_mag = Some(effective);
-        (effective, diagnostic)
+        ((effective, diagnostic), receipts)
     }
 
     /// Reads TeX's current `\endlinechar` parameter.
@@ -2623,12 +2729,20 @@ impl Stores {
         self.int_param(IntParam::END_LINE_CHAR)
     }
 
-    pub fn set_dimen_param(&mut self, param: DimenParam, value: Scaled) {
-        self.env.set_dimen_param(param, value);
+    pub fn set_dimen_param(
+        &mut self,
+        param: DimenParam,
+        value: Scaled,
+    ) -> crate::env::CellMutationReceipt {
+        self.env.set_dimen_param(param, value)
     }
 
-    pub fn set_dimen_param_global(&mut self, param: DimenParam, value: Scaled) {
-        self.env.set_dimen_param_global(param, value);
+    pub fn set_dimen_param_global(
+        &mut self,
+        param: DimenParam,
+        value: Scaled,
+    ) -> crate::env::CellMutationReceipt {
+        self.env.set_dimen_param_global(param, value)
     }
 
     #[must_use]
@@ -2636,9 +2750,13 @@ impl Stores {
         self.env.dimen_param(param)
     }
 
-    pub fn set_glue_param(&mut self, param: GlueParam, value: GlueId) {
+    pub fn set_glue_param(
+        &mut self,
+        param: GlueParam,
+        value: GlueId,
+    ) -> crate::env::CellMutationReceipt {
         self.assert_live_glue(value);
-        self.env.set_glue_param(param, value);
+        self.env.set_glue_param(param, value)
     }
 
     #[must_use]
@@ -2646,14 +2764,22 @@ impl Stores {
         self.resolve_stored_glue(self.env.glue_param(param))
     }
 
-    pub fn set_glue_param_global(&mut self, param: GlueParam, value: GlueId) {
+    pub fn set_glue_param_global(
+        &mut self,
+        param: GlueParam,
+        value: GlueId,
+    ) -> crate::env::CellMutationReceipt {
         self.assert_live_glue(value);
-        self.env.set_glue_param_global(param, value);
+        self.env.set_glue_param_global(param, value)
     }
 
-    pub fn set_tok_param(&mut self, param: TokParam, value: TokenListId) {
+    pub fn set_tok_param(
+        &mut self,
+        param: TokParam,
+        value: TokenListId,
+    ) -> crate::env::CellMutationReceipt {
         self.assert_live_token_list(value);
-        self.env.set_tok_param(param, value);
+        self.env.set_tok_param(param, value)
     }
 
     #[must_use]
@@ -2669,9 +2795,13 @@ impl Stores {
             .map(|value| self.resolve_stored_token_list(value))
     }
 
-    pub fn set_tok_param_global(&mut self, param: TokParam, value: TokenListId) {
+    pub fn set_tok_param_global(
+        &mut self,
+        param: TokParam,
+        value: TokenListId,
+    ) -> crate::env::CellMutationReceipt {
         self.assert_live_token_list(value);
-        self.env.set_tok_param_global(param, value);
+        self.env.set_tok_param_global(param, value)
     }
 
     /// Takes a checkpoint for the rollback-coupled store tuple.
@@ -2730,21 +2860,21 @@ impl Stores {
     }
 
     /// Rolls all stores back to `snapshot` as one atomic tuple.
-    pub(crate) fn rollback(&mut self, snapshot: &StoreSnapshot) {
-        self.rollback_inner(snapshot, false);
+    pub(crate) fn rollback(&mut self, snapshot: &StoreSnapshot) -> MutationReceipts {
+        self.rollback_inner(snapshot, false)
     }
 
-    pub(crate) fn rollback_for_retry(&mut self, snapshot: &StoreSnapshot) {
-        self.rollback_inner(snapshot, true);
+    pub(crate) fn rollback_for_retry(&mut self, snapshot: &StoreSnapshot) -> MutationReceipts {
+        self.rollback_inner(snapshot, true)
     }
 
-    fn rollback_inner(&mut self, snapshot: &StoreSnapshot, retry: bool) {
+    fn rollback_inner(&mut self, snapshot: &StoreSnapshot, retry: bool) -> MutationReceipts {
         self.assert_valid_snapshot(snapshot);
         let _ = self.engine_usage_statistics();
         self.release_survivor_pins_to(snapshot.survivor_pin_mark);
         self.release_timeline_node_pins_to(snapshot.timeline_node_pin_mark);
         self.account_rollback_box_refs(snapshot.env_snapshot);
-        self.env.rollback_to(snapshot.env_snapshot);
+        let receipts = self.env.rollback_to(snapshot.env_snapshot);
         self.interner.truncate_to(snapshot.interner_mark);
         self.string_pool = snapshot.string_pool;
         self.tokens.truncate_to(snapshot.token_mark);
@@ -2772,6 +2902,7 @@ impl Stores {
         // journal slice instead of adding it to the O(1) snapshot tuple.
         self.semantic_hash_cache.clear();
         self.semantic_hash_cache.projections = snapshot.exact_projection_cache.clone();
+        receipts
     }
 
     #[cfg(any(test, feature = "testing"))]

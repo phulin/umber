@@ -403,3 +403,50 @@ fn aggregate_mutation_barriers_advance_exact_registered_facts() {
     let _ = universe.world_mut();
     assert!(universe.dependency_changed_at(world) > before_world);
 }
+
+#[test]
+fn equal_environment_writes_and_restores_do_not_advance_stamps() {
+    let count = cell(BankTag::Count, 300);
+    let meaning = cell(BankTag::Meaning, 0);
+    let box_register = cell(BankTag::Box, 300);
+    let current_font = cell(BankTag::CurrentFont, 0);
+    let hyphen_char = DependencyKey::Font {
+        field: DependencyFontField::HyphenChar,
+        font: 0,
+        index: 0,
+    };
+    let mut universe = crate::Universe::new();
+    for key in [count, meaning, box_register, current_font, hyphen_char] {
+        universe.track_dependency(key);
+        assert_eq!(universe.dependency_changed_at(key), ChangedAt::NEVER);
+    }
+
+    universe.set_count(300, 0);
+    let symbol = universe.intern("receipt-equal-meaning");
+    universe.track_dependency(cell(BankTag::Meaning, symbol.symbol().raw()));
+    universe.set_meaning(symbol, crate::meaning::Meaning::Undefined);
+    universe.clear_box_reg_global(300);
+    universe.set_current_font(universe.current_font());
+    universe.set_font_hyphen_char(
+        crate::font::NULL_FONT,
+        universe.font_hyphen_char(crate::font::NULL_FONT),
+    );
+    for key in [count, box_register, current_font, hyphen_char] {
+        assert_eq!(universe.dependency_changed_at(key), ChangedAt::NEVER);
+    }
+    assert_eq!(
+        universe.dependency_changed_at(cell(BankTag::Meaning, symbol.symbol().raw())),
+        ChangedAt::NEVER
+    );
+
+    universe.enter_group();
+    universe.set_count(300, 0);
+    let before_exit = universe.dependency_changed_at(count);
+    let _ = universe.leave_group();
+    assert_eq!(universe.dependency_changed_at(count), before_exit);
+
+    let snapshot = universe.snapshot();
+    universe.set_count(300, 0);
+    universe.rollback(&snapshot);
+    assert_eq!(universe.dependency_changed_at(count), before_exit);
+}

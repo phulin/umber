@@ -445,30 +445,41 @@ impl Stores {
         }
     }
 
-    pub(super) fn write_box_reg(&mut self, index: u16, value: Option<NodeListId>, global: bool) {
+    pub(super) fn write_box_reg(
+        &mut self,
+        index: u16,
+        value: Option<NodeListId>,
+        global: bool,
+    ) -> crate::env::CellMutationReceipt {
         let old = self.env.box_reg(index);
         let value = match value {
             Some(value) if Some(value) == old => Some(value),
             Some(value) => Some(self.prepare_box_value(value)),
             None => None,
         };
-        let rec = if global {
+        let (receipt, rec) = if global {
             self.env.set_box_reg_global(index, value)
         } else {
             self.env.set_box_reg(index, value)
         };
         self.account_box_write(old, rec);
+        receipt
     }
 
-    pub(super) fn write_box_reg_same_level(&mut self, index: u16, value: Option<NodeListId>) {
+    pub(super) fn write_box_reg_same_level(
+        &mut self,
+        index: u16,
+        value: Option<NodeListId>,
+    ) -> crate::env::CellMutationReceipt {
         let old = self.env.box_reg(index);
         let value = match value {
             Some(value) if Some(value) == old => Some(value),
             Some(value) => Some(self.prepare_box_value(value)),
             None => None,
         };
-        let rec = self.env.set_box_reg_same_level(index, value);
+        let (receipt, rec) = self.env.set_box_reg_same_level(index, value);
         self.account_box_write(old, rec);
+        receipt
     }
 
     pub(super) fn account_box_write(

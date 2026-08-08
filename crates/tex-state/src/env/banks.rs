@@ -1,7 +1,7 @@
 //! Dense fixed-size environment banks.
 
 use crate::cell::{BankTag, CellId};
-use crate::env::barrier;
+use crate::env::{CellMutationReceipt, barrier};
 use crate::epoch::Epoch;
 use crate::ids::{FontId, GlueId, TokenListId};
 use crate::journal::{Journal, JournalPos};
@@ -537,7 +537,12 @@ where
         C::decode(self.values[checked_index::<N>(index)])
     }
 
-    pub(crate) fn set(&mut self, index: u16, value: C::Value, ctx: BankSetContext<'_>) {
+    pub(crate) fn set(
+        &mut self,
+        index: u16,
+        value: C::Value,
+        ctx: BankSetContext<'_>,
+    ) -> CellMutationReceipt {
         let offset = checked_index::<N>(index);
         let cell_id = ctx.cell_id(index);
         barrier(
@@ -549,7 +554,7 @@ where
             ctx.epoch,
             cell_id,
             C::encode(value),
-        );
+        )
     }
 
     #[allow(dead_code)]

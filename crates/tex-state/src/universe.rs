@@ -6,7 +6,7 @@
 //! public timeline tuple lives here so future World/effect/input state cannot
 //! grow a partial rollback API beside the store tuple.
 
-use crate::cell::{BankTag, CellId};
+use crate::cell::BankTag;
 use crate::code_tables::{CodeTableGenerations, DelCode, LcCode, MathCode, SfCode, UcCode};
 use crate::dependency::{
     ChangedAt, DependencyCodeTable, DependencyEngineField, DependencyFontField, DependencyKey,
@@ -429,12 +429,13 @@ impl ShipoutTransaction<'_> {
 impl BoxBuildTransaction<'_> {
     /// Promotes the result into the register store and commits the owned suffix.
     pub fn finish(mut self, index: u16, value: Option<NodeListId>, global: bool) {
-        match (global, value) {
+        let receipt = match (global, value) {
             (false, Some(value)) => self.stores.set_box_reg(index, value),
             (true, Some(value)) => self.stores.set_box_reg_global(index, value),
             (false, None) => self.stores.clear_box_reg(index),
             (true, None) => self.stores.clear_box_reg_global(index),
-        }
+        };
+        self.consume_env_mutation(receipt);
         let node_mark = self.node_mark;
         self.stores.release_shipout_nodes(node_mark);
         self.finished = true;
@@ -1443,7 +1444,9 @@ impl Universe {
         let mut stores = Stores::new();
         let clock = world.job_clock();
         install_job_clock_params(
-            &mut |param, value| stores.set_int_param(param, value),
+            &mut |param, value| {
+                let _ = stores.set_int_param(param, value);
+            },
             clock,
         );
         stores.initialize_exact_env_identity();
@@ -2021,8 +2024,93 @@ impl Universe {
             .mark_changed(DependencyKey::CodeGeneration(table));
     }
 
-    fn mark_cell_changed(&mut self, cell: CellId) {
-        self.dependencies.mark_changed(DependencyKey::Cell(cell));
+    fn consume_env_mutation(&mut self, receipt: crate::env::CellMutationReceipt) {
+        if !receipt.changed() {
+            return;
+        }
+        let cell = receipt.cell();
+        let index = cell.index();
+        match cell.bank() {
+            BankTag::Meaning
+            | BankTag::Count
+            | BankTag::Dimen
+            | BankTag::Skip
+            | BankTag::Toks
+            | BankTag::Box
+            | BankTag::Muskip
+            | BankTag::IntParam
+            | BankTag::DimenParam
+            | BankTag::GlueParam
+            | BankTag::TokParam
+            | BankTag::CurrentFont
+            | BankTag::MathFamilyFont => {
+                self.dependencies.mark_changed(DependencyKey::Cell(cell));
+            }
+            BankTag::FontDimen => {
+                let font = index >> 17;
+                self.dependencies.mark_changed(DependencyKey::Font {
+                    field: DependencyFontField::Parameters,
+                    font,
+                    index: 0,
+                });
+                self.dependencies.mark_changed(DependencyKey::Font {
+                    field: DependencyFontField::Parameter,
+                    font,
+                    index: (index & ((1 << 17) - 1)) + 1,
+                });
+            }
+            BankTag::FontParamLen => {
+                self.dependencies.mark_changed(DependencyKey::Font {
+                    field: DependencyFontField::Parameters,
+                    font: index,
+                    index: 0,
+                });
+                self.dependencies.mark_changed(DependencyKey::Font {
+                    field: DependencyFontField::ParameterCount,
+                    font: index,
+                    index: 0,
+                });
+            }
+            BankTag::FontHyphenChar | BankTag::FontSkewChar => {
+                self.dependencies.mark_changed(DependencyKey::Font {
+                    field: if cell.bank() == BankTag::FontHyphenChar {
+                        DependencyFontField::HyphenChar
+                    } else {
+                        DependencyFontField::SkewChar
+                    },
+                    font: index,
+                    index: 0,
+                });
+            }
+            BankTag::PdfTagCode | BankTag::PdfNoLigatures => {
+                self.dependencies.mark_changed(DependencyKey::Font {
+                    field: DependencyFontField::PdfShaping,
+                    font: if cell.bank() == BankTag::PdfTagCode {
+                        index >> 8
+                    } else {
+                        index
+                    },
+                    index: 0,
+                });
+            }
+            BankTag::PdfLpCode
+            | BankTag::PdfRpCode
+            | BankTag::PdfEfCode
+            | BankTag::PdfKnbsCode
+            | BankTag::PdfStbsCode
+            | BankTag::PdfShbsCode
+            | BankTag::PdfKnbcCode
+            | BankTag::PdfKnacCode => {}
+        }
+    }
+
+    fn consume_env_mutations(
+        &mut self,
+        receipts: impl IntoIterator<Item = crate::env::CellMutationReceipt>,
+    ) {
+        for receipt in receipts {
+            self.consume_env_mutation(receipt);
+        }
     }
 
     /// Projects executor-owned roots into the same allocation-independent
@@ -2226,7 +2314,9 @@ impl Universe {
         stores.restore_string_pool_accounting(format.string_pool);
         let clock = world.job_clock();
         install_job_clock_params(
-            &mut |param, value| stores.set_int_param(param, value),
+            &mut |param, value| {
+                let _ = stores.set_int_param(param, value);
+            },
             clock,
         );
         stores.initialize_exact_env_identity();
@@ -2388,7 +2478,8 @@ impl Universe {
             "scoped rollback belongs to a different Universe instance"
         );
         self.world.assert_snapshot_retained(&rollback.world);
-        self.stores.rollback(&rollback.store);
+        let receipts = self.stores.rollback(&rollback.store);
+        self.consume_env_mutations(receipts);
         self.world.rollback(&rollback.world);
         self.input_summary = rollback.input_summary;
         self.interaction_mode = rollback.interaction_mode;
@@ -2496,7 +2587,8 @@ impl Universe {
     pub fn rollback(&mut self, snapshot: &Snapshot) {
         self.assert_valid_snapshot(snapshot);
         self.world.assert_snapshot_retained(&snapshot.world);
-        self.stores.rollback(&snapshot.store);
+        let receipts = self.stores.rollback(&snapshot.store);
+        self.consume_env_mutations(receipts);
         self.world.rollback(&snapshot.world);
         self.input_summary = snapshot.input_summary.clone();
         self.interaction_mode = snapshot.interaction_mode;
@@ -2516,7 +2608,8 @@ impl Universe {
     pub fn rollback_for_local_retry(&mut self, snapshot: &Snapshot) {
         self.assert_valid_snapshot(snapshot);
         self.world.assert_snapshot_retained(&snapshot.world);
-        self.stores.rollback_for_retry(&snapshot.store);
+        let receipts = self.stores.rollback_for_retry(&snapshot.store);
+        self.consume_env_mutations(receipts);
         self.world.rollback(&snapshot.world);
         self.input_summary = snapshot.input_summary.clone();
         self.interaction_mode = snapshot.interaction_mode;
@@ -2536,7 +2629,8 @@ impl Universe {
             self.world.snapshot_is_forkable(&snapshot.world),
             "World snapshot effect root is not a valid generation fork"
         );
-        self.stores.rollback(&snapshot.store);
+        let receipts = self.stores.rollback(&snapshot.store);
+        self.consume_env_mutations(receipts);
         self.world.rollback_generation_fork(&snapshot.world);
         self.input_summary = snapshot.input_summary.clone();
         self.interaction_mode = snapshot.interaction_mode;
@@ -4196,13 +4290,18 @@ impl Universe {
     }
 
     pub fn set_meaning(&mut self, symbol: impl crate::interner::SymbolReference, meaning: Meaning) {
-        let dependency = meaning_dependency(symbol);
-        self.stores.set_meaning(symbol, meaning);
-        self.dependencies.mark_changed(dependency);
+        let receipt = self.stores.set_meaning(symbol, meaning);
+        self.consume_env_mutation(receipt);
     }
 
     pub fn intern_relaxed_control_sequence(&mut self, name: &str) -> SymbolId {
-        self.stores.intern_relaxed_control_sequence(name)
+        let (symbol, receipt) = self
+            .stores
+            .intern_relaxed_control_sequence_with_receipt(name);
+        if let Some(receipt) = receipt {
+            self.consume_env_mutation(receipt);
+        }
+        symbol
     }
 
     pub fn set_meaning_global(
@@ -4210,9 +4309,8 @@ impl Universe {
         symbol: impl crate::interner::SymbolReference,
         meaning: Meaning,
     ) {
-        let dependency = meaning_dependency(symbol);
-        self.stores.set_meaning_global(symbol, meaning);
-        self.dependencies.mark_changed(dependency);
+        let receipt = self.stores.set_meaning_global(symbol, meaning);
+        self.consume_env_mutation(receipt);
     }
 
     pub fn intern_macro(&mut self, macro_meaning: MacroMeaning) -> MacroDefinitionId {
@@ -4268,9 +4366,8 @@ impl Universe {
         symbol: impl crate::interner::SymbolReference,
         macro_meaning: MacroMeaning,
     ) {
-        let dependency = meaning_dependency(symbol);
-        self.stores.set_macro_meaning(symbol, macro_meaning);
-        self.dependencies.mark_changed(dependency);
+        let receipt = self.stores.set_macro_meaning(symbol, macro_meaning);
+        self.consume_env_mutation(receipt);
     }
 
     pub fn set_macro_meaning_with_provenance(
@@ -4279,10 +4376,10 @@ impl Universe {
         macro_meaning: MacroMeaning,
         provenance: MacroDefinitionProvenance,
     ) {
-        let dependency = meaning_dependency(symbol);
-        self.stores
-            .set_macro_meaning_with_provenance(symbol, macro_meaning, provenance);
-        self.dependencies.mark_changed(dependency);
+        let receipt =
+            self.stores
+                .set_macro_meaning_with_provenance(symbol, macro_meaning, provenance);
+        self.consume_env_mutation(receipt);
     }
 
     pub fn set_macro_meaning_global(
@@ -4290,9 +4387,8 @@ impl Universe {
         symbol: impl crate::interner::SymbolReference,
         macro_meaning: MacroMeaning,
     ) {
-        let dependency = meaning_dependency(symbol);
-        self.stores.set_macro_meaning_global(symbol, macro_meaning);
-        self.dependencies.mark_changed(dependency);
+        let receipt = self.stores.set_macro_meaning_global(symbol, macro_meaning);
+        self.consume_env_mutation(receipt);
     }
 
     pub fn set_macro_meaning_global_with_provenance(
@@ -4301,10 +4397,10 @@ impl Universe {
         macro_meaning: MacroMeaning,
         provenance: MacroDefinitionProvenance,
     ) {
-        let dependency = meaning_dependency(symbol);
-        self.stores
-            .set_macro_meaning_global_with_provenance(symbol, macro_meaning, provenance);
-        self.dependencies.mark_changed(dependency);
+        let receipt =
+            self.stores
+                .set_macro_meaning_global_with_provenance(symbol, macro_meaning, provenance);
+        self.consume_env_mutation(receipt);
     }
 
     #[must_use]
@@ -4946,23 +5042,13 @@ impl Universe {
         code: u8,
         value: i32,
     ) {
-        self.stores.set_pdf_font_code(table, font, code, value);
-        if table == crate::font::PdfFontCode::Tag {
-            self.dependencies.mark_changed(DependencyKey::Font {
-                field: DependencyFontField::PdfShaping,
-                font: font.raw(),
-                index: 0,
-            });
-        }
+        let receipt = self.stores.set_pdf_font_code(table, font, code, value);
+        self.consume_env_mutation(receipt);
     }
 
     pub fn disable_pdf_font_ligatures(&mut self, font: FontId) {
-        self.stores.disable_pdf_font_ligatures(font);
-        self.dependencies.mark_changed(DependencyKey::Font {
-            field: DependencyFontField::PdfShaping,
-            font: font.raw(),
-            index: 0,
-        });
+        let receipt = self.stores.disable_pdf_font_ligatures(font);
+        self.consume_env_mutation(receipt);
     }
 
     #[must_use]
@@ -5014,13 +5100,13 @@ impl Universe {
     }
 
     pub fn set_current_font(&mut self, id: FontId) {
-        self.stores.set_current_font(id);
-        self.mark_cell_changed(CellId::new(BankTag::CurrentFont, 0));
+        let receipt = self.stores.set_current_font(id);
+        self.consume_env_mutation(receipt);
     }
 
     pub fn set_current_font_global(&mut self, id: FontId) {
-        self.stores.set_current_font_global(id);
-        self.mark_cell_changed(CellId::new(BankTag::CurrentFont, 0));
+        let receipt = self.stores.set_current_font_global(id);
+        self.consume_env_mutation(receipt);
     }
 
     pub fn set_current_font_selector(
@@ -5028,8 +5114,8 @@ impl Universe {
         symbol: impl crate::interner::SymbolReference,
         id: FontId,
     ) {
-        self.stores.set_current_font_selector(symbol, id);
-        self.mark_cell_changed(CellId::new(BankTag::CurrentFont, 0));
+        let receipt = self.stores.set_current_font_selector(symbol, id);
+        self.consume_env_mutation(receipt);
     }
 
     pub fn set_current_font_selector_global(
@@ -5037,8 +5123,8 @@ impl Universe {
         symbol: impl crate::interner::SymbolReference,
         id: FontId,
     ) {
-        self.stores.set_current_font_selector_global(symbol, id);
-        self.mark_cell_changed(CellId::new(BankTag::CurrentFont, 0));
+        let receipt = self.stores.set_current_font_selector_global(symbol, id);
+        self.consume_env_mutation(receipt);
     }
 
     #[must_use]
@@ -5053,11 +5139,8 @@ impl Universe {
         id: FontId,
         global: bool,
     ) {
-        self.stores.set_math_family_font(size, family, id, global);
-        self.mark_cell_changed(CellId::new(
-            BankTag::MathFamilyFont,
-            u32::from(size.index()) * 16 + u32::from(family),
-        ));
+        let receipt = self.stores.set_math_family_font(size, family, id, global);
+        self.consume_env_mutation(receipt);
     }
 
     #[must_use]
@@ -5083,25 +5166,9 @@ impl Universe {
         number: u32,
         value: Scaled,
     ) -> Result<(), FontParameterError> {
-        let result = self.stores.set_font_dimen(font, number, value);
-        if result.is_ok() {
-            self.dependencies.mark_changed(DependencyKey::Font {
-                field: DependencyFontField::Parameters,
-                font: font.raw(),
-                index: 0,
-            });
-            self.dependencies.mark_changed(DependencyKey::Font {
-                field: DependencyFontField::Parameter,
-                font: font.raw(),
-                index: number,
-            });
-            self.dependencies.mark_changed(DependencyKey::Font {
-                field: DependencyFontField::ParameterCount,
-                font: font.raw(),
-                index: 0,
-            });
-        }
-        result
+        let receipts = self.stores.set_font_dimen(font, number, value)?;
+        self.consume_env_mutations(receipts);
+        Ok(())
     }
 
     #[must_use]
@@ -5110,12 +5177,8 @@ impl Universe {
     }
 
     pub fn set_font_hyphen_char(&mut self, font: FontId, value: i32) {
-        self.stores.set_font_hyphen_char(font, value);
-        self.dependencies.mark_changed(DependencyKey::Font {
-            field: DependencyFontField::HyphenChar,
-            font: font.raw(),
-            index: 0,
-        });
+        let receipt = self.stores.set_font_hyphen_char(font, value);
+        self.consume_env_mutation(receipt);
     }
 
     #[must_use]
@@ -5124,12 +5187,8 @@ impl Universe {
     }
 
     pub fn set_font_skew_char(&mut self, font: FontId, value: i32) {
-        self.stores.set_font_skew_char(font, value);
-        self.dependencies.mark_changed(DependencyKey::Font {
-            field: DependencyFontField::SkewChar,
-            font: font.raw(),
-            index: 0,
-        });
+        let receipt = self.stores.set_font_skew_char(font, value);
+        self.consume_env_mutation(receipt);
     }
 
     #[must_use]
@@ -5334,10 +5393,10 @@ impl Universe {
     #[must_use]
     pub fn leave_group(&mut self) -> Vec<Token> {
         let trace_context = self.leaving_group_trace_context();
-        let (tokens, changed_cells, code_before, code_after, restores, code_restores) =
+        let (tokens, receipts, code_before, code_after, restores, code_restores) =
             self.stores.leave_group_observing_dependencies();
         self.retarget_hash_base_after_group_compaction();
-        self.mark_group_exit_dependencies(&changed_cells, code_before, code_after);
+        self.mark_group_exit_dependencies(receipts, code_before, code_after);
         self.trace_interleaved_restores(&restores, &code_restores);
         if let Some((kind, level, entered_line)) = trace_context {
             self.trace_group_leave(kind, level, entered_line);
@@ -5353,11 +5412,11 @@ impl Universe {
         expected: GroupKind,
     ) -> Result<Vec<crate::token::TracedTokenWord>, GroupMismatch> {
         let trace_context = self.leaving_group_trace_context();
-        let (tokens, changed_cells, code_before, code_after, restores, code_restores) = self
+        let (tokens, receipts, code_before, code_after, restores, code_restores) = self
             .stores
             .leave_group_with_kind_observing_dependencies(expected)?;
         self.retarget_hash_base_after_group_compaction();
-        self.mark_group_exit_dependencies(&changed_cells, code_before, code_after);
+        self.mark_group_exit_dependencies(receipts, code_before, code_after);
         self.trace_interleaved_restores(&restores, &code_restores);
         if let Some((kind, level, entered_line)) = trace_context {
             self.trace_group_leave(kind, level, entered_line);
@@ -5722,76 +5781,11 @@ impl Universe {
 
     fn mark_group_exit_dependencies(
         &mut self,
-        changed_cells: &[CellId],
+        receipts: crate::env::group::MutationReceipts,
         code_before: CodeTableGenerations,
         code_after: CodeTableGenerations,
     ) {
-        for &cell in changed_cells {
-            let index = cell.index();
-            if matches!(cell.bank(), BankTag::FontDimen | BankTag::FontParamLen) {
-                self.dependencies.mark_changed(DependencyKey::Font {
-                    field: DependencyFontField::Parameters,
-                    font: index >> 17,
-                    index: 0,
-                });
-            }
-            let key = match cell.bank() {
-                BankTag::Meaning
-                | BankTag::Count
-                | BankTag::Dimen
-                | BankTag::Skip
-                | BankTag::Toks
-                | BankTag::Box
-                | BankTag::Muskip
-                | BankTag::IntParam
-                | BankTag::DimenParam
-                | BankTag::GlueParam
-                | BankTag::TokParam
-                | BankTag::CurrentFont
-                | BankTag::MathFamilyFont => DependencyKey::Cell(cell.without_assignment_scope()),
-                BankTag::FontDimen
-                | BankTag::FontParamLen
-                | BankTag::FontHyphenChar
-                | BankTag::FontSkewChar => {
-                    let font = index >> 17;
-                    let slot = index & ((1 << 17) - 1);
-                    let field = match cell.bank() {
-                        BankTag::FontDimen => DependencyFontField::Parameter,
-                        BankTag::FontParamLen => DependencyFontField::ParameterCount,
-                        BankTag::FontHyphenChar => DependencyFontField::HyphenChar,
-                        BankTag::FontSkewChar => DependencyFontField::SkewChar,
-                        _ => unreachable!(),
-                    };
-                    DependencyKey::Font {
-                        field,
-                        font,
-                        index: if matches!(field, DependencyFontField::Parameter) {
-                            slot
-                        } else {
-                            0
-                        },
-                    }
-                }
-                BankTag::PdfTagCode | BankTag::PdfNoLigatures => DependencyKey::Font {
-                    field: DependencyFontField::PdfShaping,
-                    font: if cell.bank() == BankTag::PdfNoLigatures {
-                        index
-                    } else {
-                        index >> 8
-                    },
-                    index: 0,
-                },
-                BankTag::PdfLpCode
-                | BankTag::PdfRpCode
-                | BankTag::PdfEfCode
-                | BankTag::PdfKnbsCode
-                | BankTag::PdfStbsCode
-                | BankTag::PdfShbsCode
-                | BankTag::PdfKnbcCode
-                | BankTag::PdfKnacCode => continue,
-            };
-            self.dependencies.mark_changed(key);
-        }
+        self.consume_env_mutations(receipts);
         for (table, changed) in [
             (
                 DependencyCodeTable::Catcode,
@@ -5838,8 +5832,8 @@ impl Universe {
     }
 
     pub fn set_count(&mut self, index: u16, value: i32) {
-        self.stores.set_count(index, value);
-        self.mark_cell_changed(CellId::new(BankTag::Count, u32::from(index)));
+        let receipt = self.stores.set_count(index, value);
+        self.consume_env_mutation(receipt);
     }
 
     #[must_use]
@@ -5848,13 +5842,13 @@ impl Universe {
     }
 
     pub fn set_count_global(&mut self, index: u16, value: i32) {
-        self.stores.set_count_global(index, value);
-        self.mark_cell_changed(CellId::new(BankTag::Count, u32::from(index)));
+        let receipt = self.stores.set_count_global(index, value);
+        self.consume_env_mutation(receipt);
     }
 
     pub fn set_dimen(&mut self, index: u16, value: Scaled) {
-        self.stores.set_dimen(index, value);
-        self.mark_cell_changed(CellId::new(BankTag::Dimen, u32::from(index)));
+        let receipt = self.stores.set_dimen(index, value);
+        self.consume_env_mutation(receipt);
     }
 
     #[must_use]
@@ -5863,13 +5857,13 @@ impl Universe {
     }
 
     pub fn set_dimen_global(&mut self, index: u16, value: Scaled) {
-        self.stores.set_dimen_global(index, value);
-        self.mark_cell_changed(CellId::new(BankTag::Dimen, u32::from(index)));
+        let receipt = self.stores.set_dimen_global(index, value);
+        self.consume_env_mutation(receipt);
     }
 
     pub fn set_skip(&mut self, index: u16, value: GlueId) {
-        self.stores.set_skip(index, value);
-        self.mark_cell_changed(CellId::new(BankTag::Skip, u32::from(index)));
+        let receipt = self.stores.set_skip(index, value);
+        self.consume_env_mutation(receipt);
     }
 
     #[must_use]
@@ -5878,13 +5872,13 @@ impl Universe {
     }
 
     pub fn set_skip_global(&mut self, index: u16, value: GlueId) {
-        self.stores.set_skip_global(index, value);
-        self.mark_cell_changed(CellId::new(BankTag::Skip, u32::from(index)));
+        let receipt = self.stores.set_skip_global(index, value);
+        self.consume_env_mutation(receipt);
     }
 
     pub fn set_muskip(&mut self, index: u16, value: GlueId) {
-        self.stores.set_muskip(index, value);
-        self.mark_cell_changed(CellId::new(BankTag::Muskip, u32::from(index)));
+        let receipt = self.stores.set_muskip(index, value);
+        self.consume_env_mutation(receipt);
     }
 
     #[must_use]
@@ -5893,13 +5887,13 @@ impl Universe {
     }
 
     pub fn set_muskip_global(&mut self, index: u16, value: GlueId) {
-        self.stores.set_muskip_global(index, value);
-        self.mark_cell_changed(CellId::new(BankTag::Muskip, u32::from(index)));
+        let receipt = self.stores.set_muskip_global(index, value);
+        self.consume_env_mutation(receipt);
     }
 
     pub fn set_toks(&mut self, index: u16, value: TokenListId) {
-        self.stores.set_toks(index, value);
-        self.mark_cell_changed(CellId::new(BankTag::Toks, u32::from(index)));
+        let receipt = self.stores.set_toks(index, value);
+        self.consume_env_mutation(receipt);
     }
 
     #[must_use]
@@ -5908,18 +5902,18 @@ impl Universe {
     }
 
     pub fn set_toks_global(&mut self, index: u16, value: TokenListId) {
-        self.stores.set_toks_global(index, value);
-        self.mark_cell_changed(CellId::new(BankTag::Toks, u32::from(index)));
+        let receipt = self.stores.set_toks_global(index, value);
+        self.consume_env_mutation(receipt);
     }
 
     pub fn set_box_reg(&mut self, index: u16, value: NodeListId) {
-        self.stores.set_box_reg(index, value);
-        self.mark_cell_changed(CellId::new(BankTag::Box, u32::from(index)));
+        let receipt = self.stores.set_box_reg(index, value);
+        self.consume_env_mutation(receipt);
     }
 
     pub fn set_box_reg_global(&mut self, index: u16, value: NodeListId) {
-        self.stores.set_box_reg_global(index, value);
-        self.mark_cell_changed(CellId::new(BankTag::Box, u32::from(index)));
+        let receipt = self.stores.set_box_reg_global(index, value);
+        self.consume_env_mutation(receipt);
     }
 
     /// Marks the epoch-node suffix owned by one box-register value scan.
@@ -6525,8 +6519,8 @@ impl Universe {
         if let Some(value) = value {
             self.stores.pin_survivor(value);
         }
-        let _ = self.stores.take_box_reg(index);
-        self.mark_cell_changed(CellId::new(BankTag::Box, u32::from(index)));
+        let (_, receipt) = self.stores.take_box_reg_with_receipt(index);
+        self.consume_env_mutation(receipt);
         value
     }
 
@@ -6535,8 +6529,8 @@ impl Universe {
         if let Some(value) = value {
             self.stores.pin_survivor(value);
         }
-        let _ = self.stores.take_box_reg_same_level(index);
-        self.mark_cell_changed(CellId::new(BankTag::Box, u32::from(index)));
+        let (_, receipt) = self.stores.take_box_reg_same_level_with_receipt(index);
+        self.consume_env_mutation(receipt);
         value
     }
 
@@ -6571,30 +6565,30 @@ impl Universe {
             _ => return TakeUnboxResult::Incompatible,
         };
         self.stores.pin_survivor(value);
-        let taken = self.stores.take_box_reg_same_level(index);
+        let (taken, receipt) = self.stores.take_box_reg_same_level_with_receipt(index);
         debug_assert_eq!(taken, Some(value));
-        self.mark_cell_changed(CellId::new(BankTag::Box, u32::from(index)));
+        self.consume_env_mutation(receipt);
         TakeUnboxResult::Children(children)
     }
 
     pub fn set_box_reg_same_level(&mut self, index: u16, value: NodeListId) {
-        self.stores.set_box_reg_same_level(index, value);
-        self.mark_cell_changed(CellId::new(BankTag::Box, u32::from(index)));
+        let receipt = self.stores.set_box_reg_same_level(index, value);
+        self.consume_env_mutation(receipt);
     }
 
     pub fn clear_box_reg(&mut self, index: u16) {
-        self.stores.clear_box_reg(index);
-        self.mark_cell_changed(CellId::new(BankTag::Box, u32::from(index)));
+        let receipt = self.stores.clear_box_reg(index);
+        self.consume_env_mutation(receipt);
     }
 
     pub fn clear_box_reg_global(&mut self, index: u16) {
-        self.stores.clear_box_reg_global(index);
-        self.mark_cell_changed(CellId::new(BankTag::Box, u32::from(index)));
+        let receipt = self.stores.clear_box_reg_global(index);
+        self.consume_env_mutation(receipt);
     }
 
     pub fn clear_box_reg_same_level(&mut self, index: u16) {
-        self.stores.clear_box_reg_same_level(index);
-        self.mark_cell_changed(CellId::new(BankTag::Box, u32::from(index)));
+        let receipt = self.stores.clear_box_reg_same_level(index);
+        self.consume_env_mutation(receipt);
     }
 
     #[must_use]
@@ -6628,13 +6622,13 @@ impl Universe {
     }
 
     pub fn set_int_param(&mut self, param: IntParam, value: i32) {
-        self.stores.set_int_param(param, value);
-        self.mark_cell_changed(CellId::new(BankTag::IntParam, u32::from(param.raw())));
+        let receipt = self.stores.set_int_param(param, value);
+        self.consume_env_mutation(receipt);
     }
 
     pub fn set_int_param_global(&mut self, param: IntParam, value: i32) {
-        self.stores.set_int_param_global(param, value);
-        self.mark_cell_changed(CellId::new(BankTag::IntParam, u32::from(param.raw())));
+        let receipt = self.stores.set_int_param_global(param, value);
+        self.consume_env_mutation(receipt);
     }
 
     #[must_use]
@@ -6648,11 +6642,8 @@ impl Universe {
     }
 
     pub fn set_last_badness(&mut self, value: i32) {
-        self.stores.set_last_badness(value);
-        self.mark_cell_changed(CellId::new(
-            BankTag::IntParam,
-            u32::from(IntParam::LAST_BADNESS.raw()),
-        ));
+        let receipt = self.stores.set_last_badness(value);
+        self.consume_env_mutation(receipt);
     }
 
     #[must_use]
@@ -6661,19 +6652,13 @@ impl Universe {
     }
 
     pub fn set_mag(&mut self, value: i32) {
-        self.stores.set_mag(value);
-        self.mark_cell_changed(CellId::new(
-            BankTag::IntParam,
-            u32::from(IntParam::MAG.raw()),
-        ));
+        let receipt = self.stores.set_mag(value);
+        self.consume_env_mutation(receipt);
     }
 
     pub fn set_mag_global(&mut self, value: i32) {
-        self.stores.set_mag_global(value);
-        self.mark_cell_changed(CellId::new(
-            BankTag::IntParam,
-            u32::from(IntParam::MAG.raw()),
-        ));
+        let receipt = self.stores.set_mag_global(value);
+        self.consume_env_mutation(receipt);
     }
 
     #[must_use]
@@ -6682,7 +6667,9 @@ impl Universe {
     }
 
     pub fn prepare_mag(&mut self) -> (i32, Option<PrepareMagDiagnostic>) {
-        self.stores.prepare_mag()
+        let (result, receipts) = self.stores.prepare_mag_with_receipts();
+        self.consume_env_mutations(receipts);
+        result
     }
 
     #[must_use]
@@ -6691,13 +6678,13 @@ impl Universe {
     }
 
     pub fn set_dimen_param(&mut self, param: DimenParam, value: Scaled) {
-        self.stores.set_dimen_param(param, value);
-        self.mark_cell_changed(CellId::new(BankTag::DimenParam, u32::from(param.raw())));
+        let receipt = self.stores.set_dimen_param(param, value);
+        self.consume_env_mutation(receipt);
     }
 
     pub fn set_dimen_param_global(&mut self, param: DimenParam, value: Scaled) {
-        self.stores.set_dimen_param_global(param, value);
-        self.mark_cell_changed(CellId::new(BankTag::DimenParam, u32::from(param.raw())));
+        let receipt = self.stores.set_dimen_param_global(param, value);
+        self.consume_env_mutation(receipt);
     }
 
     #[must_use]
@@ -6706,8 +6693,8 @@ impl Universe {
     }
 
     pub fn set_glue_param(&mut self, param: GlueParam, value: GlueId) {
-        self.stores.set_glue_param(param, value);
-        self.mark_cell_changed(CellId::new(BankTag::GlueParam, u32::from(param.raw())));
+        let receipt = self.stores.set_glue_param(param, value);
+        self.consume_env_mutation(receipt);
     }
 
     #[must_use]
@@ -6716,13 +6703,13 @@ impl Universe {
     }
 
     pub fn set_glue_param_global(&mut self, param: GlueParam, value: GlueId) {
-        self.stores.set_glue_param_global(param, value);
-        self.mark_cell_changed(CellId::new(BankTag::GlueParam, u32::from(param.raw())));
+        let receipt = self.stores.set_glue_param_global(param, value);
+        self.consume_env_mutation(receipt);
     }
 
     pub fn set_tok_param(&mut self, param: TokParam, value: TokenListId) {
-        self.stores.set_tok_param(param, value);
-        self.mark_cell_changed(CellId::new(BankTag::TokParam, u32::from(param.raw())));
+        let receipt = self.stores.set_tok_param(param, value);
+        self.consume_env_mutation(receipt);
     }
 
     #[must_use]
@@ -6737,8 +6724,8 @@ impl Universe {
     }
 
     pub fn set_tok_param_global(&mut self, param: TokParam, value: TokenListId) {
-        self.stores.set_tok_param_global(param, value);
-        self.mark_cell_changed(CellId::new(BankTag::TokParam, u32::from(param.raw())));
+        let receipt = self.stores.set_tok_param_global(param, value);
+        self.consume_env_mutation(receipt);
     }
 
     /// Returns the current barriered, group-scoped `\parshape` value.
@@ -7111,18 +7098,6 @@ fn box_dimension_from_nodes(nodes: NodeList<'_>, dimension: BoxDimension) -> Opt
         BoxDimension::Height => box_node.height,
         BoxDimension::Depth => box_node.depth,
     })
-}
-
-fn symbol_reference_raw(symbol: impl crate::interner::SymbolReference) -> u32 {
-    symbol
-        .live_id()
-        .map(|id| id.symbol().raw())
-        .or_else(|| symbol.stored_key().map(Symbol::raw))
-        .expect("symbol reference has a live id or compact key")
-}
-
-fn meaning_dependency(symbol: impl crate::interner::SymbolReference) -> DependencyKey {
-    DependencyKey::Cell(CellId::new(BankTag::Meaning, symbol_reference_raw(symbol)))
 }
 
 fn set_box_dimension_in_node(node: &mut Node, dimension: BoxDimension, value: Scaled) -> bool {

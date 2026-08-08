@@ -1,4 +1,4 @@
-use super::{Env, SEGMENT_LEN, font_dimen_index};
+use super::{CellMutationDisposition, Env, SEGMENT_LEN, font_dimen_index};
 use crate::GroupKind;
 use crate::cell::{BankTag, CellId};
 use crate::env::banks::{DimenParam, GlueParam, IntParam, TokParam};
@@ -15,6 +15,59 @@ fn default_get_before_any_set_is_undefined() {
     let env = Env::new();
 
     assert_eq!(env.get(Symbol::new(10)), Meaning::Undefined);
+}
+
+#[test]
+fn mutation_receipts_separate_semantics_from_journal_disposition() {
+    let mut env = Env::new();
+
+    assert_eq!(
+        env.set_count(300, 0).disposition(),
+        CellMutationDisposition::Unchanged,
+        "an equal sparse write still passes through the barrier"
+    );
+    assert_eq!(
+        env.set_meaning_slot(7, Meaning::Undefined, false)
+            .disposition(),
+        CellMutationDisposition::Unchanged
+    );
+    assert_eq!(
+        env.set_font_hyphen_char_global(FontId::new(0), 0)
+            .disposition(),
+        CellMutationDisposition::Unchanged
+    );
+    let (box_receipt, box_outcome) = env.set_box_reg_global(300, None);
+    assert_eq!(
+        box_receipt.disposition(),
+        CellMutationDisposition::Unchanged
+    );
+    assert!(matches!(
+        box_outcome,
+        crate::env::banks::BoxWriteOutcome::Journaled { .. }
+    ));
+
+    env.enter_group();
+    assert_eq!(
+        env.set_count(300, 9).disposition(),
+        CellMutationDisposition::Changed
+    );
+    assert_eq!(
+        env.set_count_global(300, 9).disposition(),
+        CellMutationDisposition::Unchanged
+    );
+    let (_, _, receipts, _) = env.leave_group_observing_meanings();
+    assert_eq!(receipts.len(), 1);
+    assert_eq!(
+        receipts[0].disposition(),
+        CellMutationDisposition::Retained,
+        "global retention is explicit even when the visible word is stable"
+    );
+
+    let snapshot = env.checkpoint();
+    let _ = env.set_count(300, 11);
+    let receipts = env.rollback_to(snapshot);
+    assert_eq!(receipts.len(), 1);
+    assert_eq!(receipts[0].disposition(), CellMutationDisposition::Changed);
 }
 
 #[test]

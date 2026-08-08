@@ -85,6 +85,16 @@ Meanings use the `Meaning` bank rather than a separate dependency namespace.
 Coarse font dependency projections remain separate because they name semantic
 font aggregates rather than individual environment cells.
 
+Every typed environment write returns a canonical mutation receipt containing
+that scope-free cell identity and a semantic disposition. `Changed` means the
+visible word changed; `Unchanged` means the write barrier still performed any
+required TeX save-stack work without changing the word. Restoration walks
+deduplicate touched cells and compare their visible values before and after the
+complete walk. They additionally report `Retained` when a global assignment
+survives group compaction without changing the group-exit value. Box ownership
+and survivor accounting remain attached to the box write outcome but do not
+replace this semantic receipt.
+
 Local writes restore at group exit. Global writes survive and supersede older
 local restoration. Sparse e-TeX registers obey the same rules as dense cells.
 Meaning caches are owned above the environment but invalidate through exact
@@ -142,8 +152,19 @@ There is one semantic mutation boundary:
 - callers identify the logical cell or aggregate operation;
 - `Universe` validates ownership and liveness;
 - the store records history before mutation;
-- the write updates generations and semantic bookkeeping; and
+- the environment returns a canonical semantic mutation receipt;
+- `Universe` advances exact-cell or font-projection dependency stamps only for
+  a `Changed` receipt; and
 - restoration or commit is performed only through the owning aggregate.
+
+Equal assignments therefore preserve local/global journal entries,
+coalescing, group ownership, and tracing while leaving semantic dependency
+stamps unchanged. Group exit consumes final-value receipts after global
+compaction; retained and equal restorations do not advance stamps. Rollback
+also reports final restoration receipts, while the aggregate dependency
+snapshot restore remains responsible for restoring non-environment facts and
+monotonic changed-at ancestry. Code-table generations and other coarse
+aggregate keys keep their existing mutation paths.
 
 No downstream crate receives `&mut Env`, raw restore hooks, partial checkpoint
 mutation, or constructors for opaque handles.

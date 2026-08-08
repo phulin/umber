@@ -6,7 +6,7 @@ use ahash::AHashMap;
 use ahash::AHashSet;
 use smallvec::SmallVec;
 
-pub(crate) type ChangedCells = SmallVec<[crate::cell::CellId; 8]>;
+pub(crate) type MutationReceipts = SmallVec<[crate::env::CellMutationReceipt; 8]>;
 
 /// One TeX82 §283 save-stack diagnostic observed while unsaving a group.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -556,7 +556,12 @@ impl Env {
     #[must_use]
     pub(crate) fn leave_group_observing_meanings(
         &mut self,
-    ) -> (Vec<TracedTokenWord>, bool, ChangedCells, Vec<RestoreRecord>) {
+    ) -> (
+        Vec<TracedTokenWord>,
+        bool,
+        MutationReceipts,
+        Vec<RestoreRecord>,
+    ) {
         self.leave_group_unchecked()
     }
 
@@ -583,7 +588,15 @@ impl Env {
     pub(crate) fn leave_group_with_kind_observing_meanings(
         &mut self,
         expected: GroupKind,
-    ) -> Result<(Vec<TracedTokenWord>, bool, ChangedCells, Vec<RestoreRecord>), GroupMismatch> {
+    ) -> Result<
+        (
+            Vec<TracedTokenWord>,
+            bool,
+            MutationReceipts,
+            Vec<RestoreRecord>,
+        ),
+        GroupMismatch,
+    > {
         let Some(actual) = self.innermost_group_kind() else {
             return Err(GroupMismatch::new_no_group(expected));
         };
@@ -595,7 +608,12 @@ impl Env {
 
     fn leave_group_unchecked(
         &mut self,
-    ) -> (Vec<TracedTokenWord>, bool, ChangedCells, Vec<RestoreRecord>) {
+    ) -> (
+        Vec<TracedTokenWord>,
+        bool,
+        MutationReceipts,
+        Vec<RestoreRecord>,
+    ) {
         let Some(boundary) = self.group_boundaries.pop() else {
             panic!("leave_group without matching group marker");
         };
@@ -608,7 +626,7 @@ impl Env {
             .expect("leave_group without matching group marker");
         let marker_index = marker_pos.raw() as usize;
         let group_end = self.journal.len();
-        let mut changed_cells = (marker_index + 1..group_end)
+        let mut candidate_cells = (marker_index + 1..group_end)
             .filter_map(|index| match self.journal.entry(index) {
                 Entry::Undo(rec) => Some(rec.cell()),
                 Entry::BoxUndo(id) => Some(crate::cell::CellId::new(
@@ -617,9 +635,29 @@ impl Env {
                 )),
                 Entry::Marker(_) => None,
             })
-            .collect::<ChangedCells>();
-        changed_cells.sort_unstable();
-        changed_cells.dedup();
+            .map(CellId::without_assignment_scope)
+            .collect::<SmallVec<[CellId; 8]>>();
+        candidate_cells.sort_unstable();
+        candidate_cells.dedup();
+        let before_words = candidate_cells
+            .iter()
+            .copied()
+            .map(|cell| (cell, self.semantic_word(cell)))
+            .collect::<AHashMap<_, _>>();
+        let retained_cells = (marker_index + 1..group_end)
+            .filter_map(|index| match self.journal.entry(index) {
+                Entry::Undo(rec) if rec.cell().is_global() => {
+                    Some(rec.cell().without_assignment_scope())
+                }
+                Entry::BoxUndo(id) if self.journal.box_undo(id).survives_group(leaving_depth) => {
+                    Some(CellId::new(
+                        BankTag::Box,
+                        u32::from(self.journal.box_undo(id).index()),
+                    ))
+                }
+                Entry::Undo(_) | Entry::BoxUndo(_) | Entry::Marker(_) => None,
+            })
+            .collect::<AHashSet<_>>();
         let has_globals =
             (marker_index + 1..group_end).any(|index| match self.journal.entry(index) {
                 Entry::Undo(rec) => rec.cell().is_global(),
@@ -702,7 +740,18 @@ impl Env {
         // exit must start a fresh epoch or the enclosing undo slice can be
         // corrupted by a later write to the same restored cell.
         self.epoch.bump();
-        (payloads, meaning_changed, changed_cells, restores)
+        let receipts = candidate_cells
+            .into_iter()
+            .map(|cell| {
+                crate::env::CellMutationReceipt::restore(
+                    cell,
+                    before_words[&cell],
+                    self.semantic_word(cell),
+                    retained_cells.contains(&cell),
+                )
+            })
+            .collect();
+        (payloads, meaning_changed, receipts, restores)
     }
 
     fn leave_group_with_globals(
@@ -830,9 +879,26 @@ impl Env {
     }
 
     /// Rolls back all environment state after `snapshot`.
-    pub(crate) fn rollback_to(&mut self, snapshot: EnvSnapshot) {
+    pub(crate) fn rollback_to(&mut self, snapshot: EnvSnapshot) -> MutationReceipts {
         let snapshot_index = snapshot.journal_pos.raw() as usize;
         let rollback_end = self.journal.len();
+        let mut candidate_cells = (snapshot_index..rollback_end)
+            .filter_map(|index| match self.journal.entry(index) {
+                Entry::Undo(rec) => Some(rec.cell().without_assignment_scope()),
+                Entry::BoxUndo(id) => Some(CellId::new(
+                    BankTag::Box,
+                    u32::from(self.journal.box_undo(id).index()),
+                )),
+                Entry::Marker(_) => None,
+            })
+            .collect::<SmallVec<[CellId; 8]>>();
+        candidate_cells.sort_unstable();
+        candidate_cells.dedup();
+        let before_words = candidate_cells
+            .iter()
+            .copied()
+            .map(|cell| (cell, self.semantic_word(cell)))
+            .collect::<AHashMap<_, _>>();
         for index in (snapshot_index..rollback_end).rev() {
             if let Entry::Undo(rec) = self.journal.entry(index) {
                 self.restore_raw(rec.cell(), rec.old());
@@ -856,6 +922,17 @@ impl Env {
         ));
         self.afterassignment = snapshot.afterassignment;
         self.epoch.bump();
+        candidate_cells
+            .into_iter()
+            .map(|cell| {
+                crate::env::CellMutationReceipt::restore(
+                    cell,
+                    before_words[&cell],
+                    self.semantic_word(cell),
+                    false,
+                )
+            })
+            .collect()
     }
 }
 

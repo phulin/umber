@@ -268,7 +268,7 @@ impl Env {
         index: u32,
         meaning: crate::meaning::Meaning,
         global: bool,
-    ) {
+    ) -> super::CellMutationReceipt {
         self.ensure_meaning_segment(index);
         let segment = segment_index(index);
         let offset = segment_offset(index);
@@ -287,12 +287,13 @@ impl Env {
         let old = cells[offset];
         let old_word = old.encode();
         let new_word = meaning.encode();
+        let receipt = super::CellMutationReceipt::write(cell, old_word, new_word);
         if old == meaning {
             if cell.is_global() {
                 self.journal
                     .push_undo(crate::journal::UndoRec::new(cell, old_word, new_word));
             }
-            return;
+            return receipt;
         }
         if stamps[offset] < self.epoch {
             self.journal
@@ -309,6 +310,7 @@ impl Env {
             CellId::new(cell.bank(), cell.index()),
             new_word,
         );
+        receipt
     }
 
     fn ensure_meaning_segment(&mut self, index: u32) {
