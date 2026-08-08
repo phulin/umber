@@ -72,6 +72,7 @@ use crate::world::{
     WorldError, WorldSnapshot, WorldStateHashCursor, install_job_clock_params,
 };
 use std::collections::HashMap;
+use std::ops::{Deref, DerefMut};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -142,6 +143,43 @@ pub struct TrackedRegionMark {
     owner: SnapshotOwner,
     dependency: DependencyRegionToken,
     environment: crate::env::JournalRegionMark,
+}
+
+/// Driver-only mutable access to [`World`] with precise dependency stamping.
+///
+/// The guard compares only already-tracked World facts and advances the stamp
+/// for each fact whose canonical projection changed during the borrow.
+pub struct WorldMut<'a> {
+    world: &'a mut World,
+    dependencies: &'a mut DependencyRuntime,
+    before: Vec<(DependencyKey, DependencyValue)>,
+}
+
+impl Deref for WorldMut<'_> {
+    type Target = World;
+
+    fn deref(&self) -> &Self::Target {
+        self.world
+    }
+}
+
+impl DerefMut for WorldMut<'_> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.world
+    }
+}
+
+impl Drop for WorldMut<'_> {
+    fn drop(&mut self) {
+        for &(key, ref before) in &self.before {
+            let Some(after) = world_backed_dependency_value(self.world, key) else {
+                continue;
+            };
+            if &after != before {
+                self.dependencies.mark_changed(key);
+            }
+        }
+    }
 }
 
 /// One canonical environment cell written by a tracked region.
@@ -2173,26 +2211,7 @@ impl Universe {
                     }
                 })
             }
-            DependencyKey::InputStream(raw) => {
-                if raw >= 16 {
-                    return None;
-                }
-                let stream = crate::world::StreamSlot::new(raw);
-                Some(self.world.input_stream_dependency(stream).map_or(
-                    DependencyValue::Absent,
-                    |(content, cursor)| {
-                        let mut build = |hash: &mut EngineBoundaryHasher<'_>| {
-                            for bytes in content.bytes().chunks_exact(8) {
-                                hash.u64(u64::from_le_bytes(
-                                    bytes.try_into().expect("content hash chunk is eight bytes"),
-                                ));
-                            }
-                            hash.u64(cursor);
-                        };
-                        projection(&mut build)
-                    },
-                ))
-            }
+            DependencyKey::InputStream(_) => world_backed_dependency_value(&self.world, key),
             DependencyKey::PageDimension(raw) => {
                 let dimension = PageDimension::from_index(raw)?;
                 Some(DependencyValue::Integer(i64::from(
@@ -2279,12 +2298,7 @@ impl Universe {
                 DependencyValue::Integer(i64::from(self.world.pdf_elapsed_time())),
             ),
             DependencyKey::Engine(DependencyEngineField::PdfRandom) => {
-                Some(DependencyValue::Projection {
-                    schema: 1,
-                    fingerprint: self
-                        .hash_exact_world_state(&mut StateHashProjectionCache::default())
-                        .fingerprint(),
-                })
+                world_backed_dependency_value(&self.world, key)
             }
             DependencyKey::Engine(DependencyEngineField::PdfShellEscape) => Some(
                 DependencyValue::Integer(i64::from(self.pdf_shell_escape_status())),
@@ -2321,12 +2335,7 @@ impl Universe {
                 schema: 1,
                 fingerprint: self.page_memo_fingerprint(),
             }),
-            DependencyKey::World { .. } => Some(DependencyValue::Projection {
-                schema: 1,
-                fingerprint: self
-                    .hash_exact_world_state(&mut StateHashProjectionCache::default())
-                    .fingerprint(),
-            }),
+            DependencyKey::World { .. } => world_backed_dependency_value(&self.world, key),
             DependencyKey::InputRecord(_)
             | DependencyKey::PhysicalLine { .. }
             | DependencyKey::InputLine
@@ -3487,14 +3496,26 @@ impl Universe {
     }
 
     /// Mutates the external-effect capability object through the Universe boundary.
-    pub fn world_mut(&mut self) -> &mut World {
+    pub fn world_mut(&mut self) -> WorldMut<'_> {
         // This intentionally broad escape hatch is retained for top-level
-        // drivers. Capability-specific paths below mark narrower World keys.
-        self.dependencies
+        // drivers. Only facts already capable of validating a memo need to be
+        // compared; capability-specific paths below remain the fast path.
+        let dependencies = self
+            .dependencies
             .get_mut()
-            .expect("dependency runtime mutex is not poisoned")
-            .invalidate_all();
-        &mut self.world
+            .expect("dependency runtime mutex is not poisoned");
+        let before = dependencies
+            .tracked_world_backed_keys()
+            .into_iter()
+            .filter_map(|key| {
+                world_backed_dependency_value(&self.world, key).map(|value| (key, value))
+            })
+            .collect();
+        WorldMut {
+            world: &mut self.world,
+            dependencies,
+            before,
+        }
     }
 
     /// Records an unexpanded deferred-write payload after validating that its
@@ -3564,7 +3585,15 @@ impl Universe {
 
     /// Opens a rollback-capable editor session with deferred host materialization.
     pub fn begin_retained_session(&mut self) -> Result<(), WorldError> {
-        self.world.begin_retained_session()
+        self.world.begin_retained_session()?;
+        self.dependencies
+            .get_mut()
+            .expect("dependency runtime mutex is not poisoned")
+            .mark_changed(DependencyKey::World {
+                field: DependencyWorldField::EffectPolicy,
+                index: 0,
+            });
+        Ok(())
     }
 
     /// Captures an authored fragment's borrowed terminal-input cursor.
@@ -3580,12 +3609,31 @@ impl Universe {
         position: crate::world::TerminalInputPosition,
     ) {
         self.world.restore_terminal_input_position(position);
+        self.dependencies
+            .get_mut()
+            .expect("dependency runtime mutex is not poisoned")
+            .mark_changed(DependencyKey::World {
+                field: DependencyWorldField::TerminalInputCursor,
+                index: 0,
+            });
     }
 
     /// Consumes the retained effect branch by exposing it exactly once in order.
     pub fn export_retained_effects(&mut self) -> Result<(), WorldError> {
         let hash_base = self.state_hash_base.clone();
         self.world.export_retained_effects()?;
+        let dependencies = self
+            .dependencies
+            .get_mut()
+            .expect("dependency runtime mutex is not poisoned");
+        dependencies.mark_changed(DependencyKey::World {
+            field: DependencyWorldField::EffectPolicy,
+            index: 0,
+        });
+        dependencies.mark_changed(DependencyKey::World {
+            field: DependencyWorldField::MaterializationBarrier,
+            index: 0,
+        });
         self.state_hash_base = self.retarget_hash_base_after_committed_boundary(hash_base);
         Ok(())
     }
@@ -8109,14 +8157,14 @@ impl InputReadState for InputOpenContext<'_> {
         &mut self,
         path: &std::path::Path,
     ) -> Result<crate::FileContent, crate::WorldError> {
-        self.universe.world.read_file(path)
+        self.universe.world_mut().read_file(path)
     }
 
     fn read_pending_output_file(
         &mut self,
         path: &std::path::Path,
     ) -> Result<Option<crate::FileContent>, crate::WorldError> {
-        self.universe.world.read_pending_output_file(path)
+        self.universe.world_mut().read_pending_output_file(path)
     }
 
     fn read_supplied_input_file(
@@ -8124,7 +8172,7 @@ impl InputReadState for InputOpenContext<'_> {
         path: &std::path::Path,
         bytes: std::sync::Arc<[u8]>,
     ) -> Result<crate::FileContent, crate::WorldError> {
-        self.universe.world.read_supplied_file(path, bytes)
+        self.universe.world_mut().read_supplied_file(path, bytes)
     }
 
     fn record_input_dependency(
@@ -8134,7 +8182,7 @@ impl InputReadState for InputOpenContext<'_> {
         access: crate::InputDependencyAccess,
     ) -> Result<(), crate::WorldError> {
         self.universe
-            .world
+            .world_mut()
             .record_input_dependency(path, outcome, access)
     }
 }
@@ -8174,6 +8222,49 @@ fn hash_stream_bufs(streams: &StreamBufState, hasher: &mut StateHasher) {
     }
     hasher.str(streams.log_partial_line());
     hasher.str(streams.terminal_partial_line());
+}
+
+fn world_backed_dependency_value(world: &World, key: DependencyKey) -> Option<DependencyValue> {
+    match key {
+        DependencyKey::World { field, index } => world.dependency_value(field, index),
+        DependencyKey::InputStream(raw) if usize::from(raw) < crate::world::STREAM_SLOT_COUNT => {
+            let stream = StreamSlot::new(raw);
+            Some(world.input_stream_dependency(stream).map_or(
+                DependencyValue::Absent,
+                |(content, cursor)| {
+                    let fragment =
+                        StateHashFragment::from_exact_builder(0x776f_726c_645f_6973, |hash| {
+                            hash.bytes(&content.bytes());
+                            hash.u64(cursor);
+                        });
+                    DependencyValue::Projection {
+                        schema: 1,
+                        fingerprint: fragment.fingerprint(),
+                    }
+                },
+            ))
+        }
+        DependencyKey::Engine(DependencyEngineField::PdfTimer) => Some(DependencyValue::Integer(
+            i64::from(world.pdf_elapsed_time()),
+        )),
+        DependencyKey::Engine(DependencyEngineField::PdfRandom) => {
+            let fragment = StateHashFragment::from_exact_builder(0x776f_726c_645f_7072, |hash| {
+                hash_pdf_random_state(world, hash)
+            });
+            Some(DependencyValue::Projection {
+                schema: 1,
+                fingerprint: fragment.fingerprint(),
+            })
+        }
+        DependencyKey::Engine(DependencyEngineField::PdfShellEscape) => Some(
+            DependencyValue::Integer(match world.shell_escape_policy() {
+                ShellEscapePolicy::Disabled => 0,
+                ShellEscapePolicy::Enabled => 1,
+                ShellEscapePolicy::Restricted => 2,
+            }),
+        ),
+        _ => None,
+    }
 }
 
 fn hash_rng_state(rng: crate::world::RngState, hasher: &mut StateHasher) {

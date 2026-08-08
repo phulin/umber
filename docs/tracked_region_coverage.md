@@ -1,10 +1,8 @@
 # Tracked-region semantic read coverage
 
 Status: implemented authoritative coverage contract. The generic state-layer
-recorder, command-side routing, execution-side routing, and cross-layer
-perturbation harness are complete. The final audit found the exact-World
-unrelated-change precision gap tracked by `umber2-trcn.4.5`; the parent proof
-cannot close until that blocker supplies the remaining matrix evidence.
+recorder, command-side routing, execution-side routing, cross-layer
+perturbation harness, and exact-World unrelated-change proof are complete.
 
 This document defines the only region for which the first generic dependency
 coverage proof is made. It is a recording contract, not permission to replay
@@ -157,6 +155,14 @@ Nested command work contributes to that same recorder. `Universe` getters
 observe execution-side environment, font, hyphenation/layout, page, PDF, and
 virtual `World` facts through an atomic inactive fast path. PDF and page root
 projections currently share one conservative changed-at clock per family.
+World projections are field-specific: stream slots and input-resource request
+identities are exact, loaded resources retain the matrix's bounded aggregate,
+and the other policy, clock, RNG, cursor, and materialization facts have
+independent canonical values. The retained driver-only `world_mut` capability
+compares only previously tracked World-backed facts around its mutable borrow
+and advances only the stamps whose values changed. Capability-specific
+aggregate paths keep their direct exact stamps. No World mutation globally
+invalidates unrelated environment, page, command, or engine facts.
 Suspension and rollback abandon before restore; timeline changes, unsupported
 host resource selection, fatal or partial commit, and irreversible effect
 materialization fail closed. A committed attempt is returned only after the
@@ -217,12 +223,15 @@ not reusable. The cross-layer suite proves the nested-begin and fatal paths;
 suspension abandonment and group-exit failure. State-layer rollback and
 explicit-abandon coverage prove each path leaves a clean replacement recorder.
 
-### Residual source-audit blocker
+### Exact World precision evidence
 
-`Universe::semantic_dependency_value` currently maps every `World` key to the
-same full-World projection, and the retained `world_mut` driver escape hatch
-advances a global dependency clock. This is safe but too conservative for the
-matrix rows that promise exact indexed facts: an unrelated World mutation may
-reject validation. `umber2-trcn.4.5` owns field/key-specific projections,
-mutation stamps, and the missing unrelated-green cases. The matrix remains
-unchanged; this proof does not treat conservative false reds as acceptance.
+`tex_state::universe::tests::every_world_projection_stays_green_after_an_unrelated_world_mutation`
+proves the unrelated-World mutation case for every `DependencyWorldField`.
+`exact_world_keys_reject_relevant_mutations_without_cross_talk` proves exact
+request and stream-slot separation, while
+`scalar_and_aggregate_world_keys_reject_their_relevant_mutations` covers the
+remaining field-specific values and stamps.
+`world_projections_are_allocation_independent_across_universes` constructs the
+same resources in different allocation orders and proves all ten projections
+are equal. The matrix and supported region remain unchanged; none of this
+evidence authorizes replay.

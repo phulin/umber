@@ -164,7 +164,7 @@ pub use universe::{
     GenerationSubstrate, GeometryObservation, InputOpenContext, InputOpenState, InputReadState,
     InteractionMode, ParagraphShapeLine, PenaltyArrayKind, PreparedPageSuffix,
     ReplayProbeTransaction, ShipoutTransaction, Snapshot, TakeUnboxResult, TrackedEnvironmentWrite,
-    TrackedRegionError, TrackedRegionMark, TrackedRegionRecord, UnboxKind, Universe,
+    TrackedRegionError, TrackedRegionMark, TrackedRegionRecord, UnboxKind, Universe, WorldMut,
 };
 #[cfg(feature = "profiling")]
 pub use world::ProfilingTimer;

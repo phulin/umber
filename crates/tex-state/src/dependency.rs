@@ -6,7 +6,7 @@
 
 use crate::cell::CellId;
 use crate::world::ContentHash;
-use ahash::AHashMap;
+use ahash::{AHashMap, AHashSet};
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
@@ -247,6 +247,7 @@ pub(crate) struct DependencyTrackerSnapshot {
 #[derive(Debug, Default)]
 pub struct DependencyRuntime {
     tracker: DependencyTracker,
+    tracked_world_backed: AHashSet<DependencyKey>,
     active: Option<ActiveDependencyRegion>,
     next_region_epoch: u64,
     tracking_enabled: bool,
@@ -309,6 +310,7 @@ impl Clone for DependencyRuntime {
     fn clone(&self) -> Self {
         Self {
             tracker: self.tracker.clone(),
+            tracked_world_backed: self.tracked_world_backed.clone(),
             active: None,
             next_region_epoch: self.next_region_epoch,
             tracking_enabled: self.tracking_enabled,
@@ -346,6 +348,10 @@ impl DependencyRuntime {
     #[inline(always)]
     pub fn record(&mut self, key: DependencyKey, value: DependencyValue) {
         if let Some(active) = &mut self.active {
+            let key = key.canonical();
+            if is_world_backed(key) {
+                self.tracked_world_backed.insert(key);
+            }
             active.region.record(self.tracker.observe(key, value));
         }
     }
@@ -417,6 +423,10 @@ impl DependencyRuntime {
     /// Registers a key for changed-at tracking without opening a region.
     pub fn track(&mut self, key: DependencyKey) -> ChangedAt {
         self.tracking_enabled = true;
+        let key = key.canonical();
+        if is_world_backed(key) {
+            self.tracked_world_backed.insert(key);
+        }
         self.tracker.track(key)
     }
 
@@ -424,6 +434,22 @@ impl DependencyRuntime {
         if self.tracking_enabled {
             self.tracker.invalidate_all();
         }
+    }
+
+    /// Returns the World facts whose stamps can affect an existing memo.
+    ///
+    /// The broad driver-only World mutation capability uses this bounded set
+    /// to compare canonical values around a mutable borrow. Untracked facts
+    /// need no stamp: a later first observation records their then-current
+    /// semantic value.
+    pub(crate) fn tracked_world_backed_keys(&self) -> Vec<DependencyKey> {
+        let mut keys = self
+            .tracked_world_backed
+            .iter()
+            .copied()
+            .collect::<Vec<_>>();
+        keys.sort_unstable();
+        keys
     }
 
     pub(crate) fn snapshot_tracker(&self) -> DependencyTrackerSnapshot {
@@ -441,6 +467,19 @@ impl DependencyRuntime {
     pub const fn tracker(&self) -> &DependencyTracker {
         &self.tracker
     }
+}
+
+fn is_world_backed(key: DependencyKey) -> bool {
+    matches!(
+        key,
+        DependencyKey::World { .. }
+            | DependencyKey::InputStream(_)
+            | DependencyKey::Engine(
+                DependencyEngineField::PdfTimer
+                    | DependencyEngineField::PdfRandom
+                    | DependencyEngineField::PdfShellEscape
+            )
+    )
 }
 
 impl DependencyTracker {

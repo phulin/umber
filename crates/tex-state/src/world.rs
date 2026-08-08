@@ -6,9 +6,11 @@
 
 #![allow(clippy::disallowed_methods)]
 
+use crate::dependency::{DependencyValue, DependencyWorldField};
 use crate::env::banks::IntParam;
 use crate::identity::{HandleIdentity, IdentityAllocator, IdentityMark};
 use crate::ids::TokenListId;
+use crate::state_hash::{StateHashFragment, StateHasher};
 use crate::token::OriginId;
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsString;
@@ -4768,6 +4770,186 @@ impl World {
     #[must_use]
     pub fn stream_bufs(&self) -> &StreamBufState {
         &self.stream_bufs
+    }
+
+    /// Stable request identity used by [`DependencyWorldField::InputResource`].
+    #[must_use]
+    pub fn input_resource_dependency_identity(path: impl AsRef<Path>) -> u64 {
+        StateHashFragment::from_exact_builder(0x776f_726c_645f_7271, |hash| {
+            hash.bytes(path.as_ref().as_os_str().as_encoded_bytes());
+        })
+        .fingerprint()
+    }
+
+    /// Reads one canonical, allocation-independent tracked World fact.
+    pub(crate) fn dependency_value(
+        &self,
+        field: DependencyWorldField,
+        index: u64,
+    ) -> Option<DependencyValue> {
+        const SCHEMA: u32 = 1;
+        let projection =
+            |domain, build: &mut dyn FnMut(&mut StateHasher)| DependencyValue::Projection {
+                schema: SCHEMA,
+                fingerprint: StateHashFragment::from_exact_builder(domain, |hash| build(hash))
+                    .fingerprint(),
+            };
+        let unit_index = || (index == 0).then_some(());
+        Some(match field {
+            DependencyWorldField::InputResource => {
+                let mut matches = self.input_dependencies.values().filter(|dependency| {
+                    Self::input_resource_dependency_identity(dependency.path()) == index
+                });
+                let Some(first) = matches.next() else {
+                    return Some(DependencyValue::Absent);
+                };
+                let mut dependencies = std::iter::once(first).chain(matches).collect::<Vec<_>>();
+                dependencies.sort_by(|left, right| {
+                    left.path()
+                        .as_os_str()
+                        .as_encoded_bytes()
+                        .cmp(right.path().as_os_str().as_encoded_bytes())
+                });
+                let mut build = |hash: &mut StateHasher| {
+                    hash.usize(dependencies.len());
+                    for dependency in &dependencies {
+                        hash.bytes(dependency.path().as_os_str().as_encoded_bytes());
+                        hash.u8(match dependency.access() {
+                            InputDependencyAccess::RequiredRead => 0,
+                            InputDependencyAccess::AuthoritativeProbe => 1,
+                        });
+                        match dependency.outcome() {
+                            InputDependencyOutcome::Present(content) => {
+                                hash.tag(0);
+                                hash.bytes(&content.bytes());
+                            }
+                            InputDependencyOutcome::Missing => hash.tag(1),
+                        }
+                    }
+                };
+                projection(0x776f_726c_645f_6972, &mut build)
+            }
+            DependencyWorldField::OutputStream => {
+                let raw = u8::try_from(index).ok()?;
+                if usize::from(raw) >= STREAM_SLOT_COUNT {
+                    return None;
+                }
+                let slot = StreamSlot::new(raw);
+                let mut build = |hash: &mut StateHasher| {
+                    if let Some(target) = self.stream_bufs.write_stream_target(slot) {
+                        hash.bool(true);
+                        hash.bytes(target.path().as_os_str().as_encoded_bytes());
+                    } else {
+                        hash.bool(false);
+                    }
+                };
+                projection(0x776f_726c_645f_6f73, &mut build)
+            }
+            DependencyWorldField::InputStream => {
+                let raw = u8::try_from(index).ok()?;
+                if usize::from(raw) >= STREAM_SLOT_COUNT {
+                    return None;
+                }
+                let slot = StreamSlot::new(raw);
+                let mut build = |hash: &mut StateHasher| {
+                    if let Some(target) = self.stream_bufs.read_stream_target(slot) {
+                        hash.bool(true);
+                        hash.bytes(target.path().as_os_str().as_encoded_bytes());
+                        hash.bytes(&target.hash().bytes());
+                        hash.usize(target.next_byte());
+                    } else {
+                        hash.bool(false);
+                    }
+                };
+                projection(0x776f_726c_645f_6973, &mut build)
+            }
+            DependencyWorldField::TerminalInputCursor => {
+                unit_index()?;
+                let cursor = self.stream_bufs.terminal_input_next();
+                let mut build = |hash: &mut StateHasher| {
+                    hash.usize(cursor);
+                    match self.terminal_inputs.get(cursor) {
+                        Some(line) => {
+                            hash.bool(true);
+                            hash.str(line);
+                        }
+                        None => hash.bool(false),
+                    }
+                };
+                projection(0x776f_726c_645f_7469, &mut build)
+            }
+            DependencyWorldField::EffectPolicy => {
+                unit_index()?;
+                DependencyValue::Integer(match self.commit_mode {
+                    WorldCommitMode::Eager => 0,
+                    WorldCommitMode::Retained => 1,
+                    WorldCommitMode::Exported => 2,
+                })
+            }
+            DependencyWorldField::ShellEscapePolicy => {
+                unit_index()?;
+                DependencyValue::Integer(match self.shell_escape_policy {
+                    ShellEscapePolicy::Disabled => 0,
+                    ShellEscapePolicy::Enabled => 1,
+                    ShellEscapePolicy::Restricted => 2,
+                })
+            }
+            DependencyWorldField::JobClock => {
+                unit_index()?;
+                let mut build = |hash: &mut StateHasher| {
+                    hash.i32(self.job_clock.time);
+                    hash.i32(self.job_clock.second);
+                    hash.i32(self.job_clock.day);
+                    hash.i32(self.job_clock.month);
+                    hash.i32(self.job_clock.year);
+                };
+                projection(0x776f_726c_645f_6a63, &mut build)
+            }
+            DependencyWorldField::Rng => {
+                unit_index()?;
+                let mut build = |hash: &mut StateHasher| {
+                    for word in self.rng.state_words() {
+                        hash.u64(word);
+                    }
+                };
+                projection(0x776f_726c_645f_726e, &mut build)
+            }
+            DependencyWorldField::LoadedResources => {
+                unit_index()?;
+                let mut build = |hash: &mut StateHasher| {
+                    hash.usize(self.input_contents.len());
+                    for (content, bytes) in &self.input_contents {
+                        hash.bytes(&content.bytes());
+                        hash.usize(bytes.len());
+                    }
+                    hash.usize(self.input_dependencies.len());
+                    for dependency in self.input_dependencies.values() {
+                        hash.bytes(dependency.path().as_os_str().as_encoded_bytes());
+                        hash.u8(match dependency.access() {
+                            InputDependencyAccess::RequiredRead => 0,
+                            InputDependencyAccess::AuthoritativeProbe => 1,
+                        });
+                        match dependency.outcome() {
+                            InputDependencyOutcome::Present(content) => {
+                                hash.tag(0);
+                                hash.bytes(&content.bytes());
+                            }
+                            InputDependencyOutcome::Missing => hash.tag(1),
+                        }
+                    }
+                };
+                projection(0x776f_726c_645f_6c72, &mut build)
+            }
+            DependencyWorldField::MaterializationBarrier => {
+                unit_index()?;
+                let mut build = |hash: &mut StateHasher| {
+                    hash.u64(self.effect_base.raw());
+                    hash.usize(self.artifact_base);
+                    hash.bool(self.effect_commit_poison.is_some());
+                };
+                projection(0x776f_726c_645f_6d62, &mut build)
+            }
+        })
     }
 
     pub(crate) fn stream_bufs_root(&self) -> Arc<StreamBufState> {

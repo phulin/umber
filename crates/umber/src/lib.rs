@@ -301,7 +301,7 @@ impl FileSessionResolvers {
             let logical_name = String::from_utf8_lossy(name);
             self.font
                 .0
-                .read_program_from_world(stores.world_mut(), Path::new(logical_name.as_ref()))
+                .read_program_from_world(&mut stores.world_mut(), Path::new(logical_name.as_ref()))
                 .map(|content| content.bytes().to_vec())
         })
     }

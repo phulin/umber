@@ -27,7 +27,8 @@ use crate::source_fragments::{EditorLayout, FragmentStore, LayoutGeneration, Pie
 use crate::source_map::{SourceDescriptor, SourceMapError};
 use crate::token::{Catcode, OriginId, Token, TracedTokenWord};
 use crate::world::{
-    ContentDomain, ContentHash, EffectRecord, JobClock, PrintSink, StreamSlot, World,
+    ContentDomain, ContentHash, EffectRecord, InputDependencyAccess, InputDependencyOutcome,
+    JobClock, PrintSink, ShellEscapePolicy, StreamSlot, World,
 };
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;
@@ -3391,6 +3392,349 @@ fn execution_facade_reads_record_exact_and_aggregate_dependencies() {
             .semantic_dependency_value(key)
             .expect("recorded execution dependency remains projectable")
     }));
+}
+
+fn record_world_observation(
+    universe: &mut Universe,
+    key: crate::DependencyKey,
+) -> crate::ObservedDependency {
+    let region = universe
+        .begin_tracked_region()
+        .expect("start World dependency region");
+    universe.observe_semantic_dependency(key);
+    universe
+        .finish_tracked_region(region)
+        .expect("World fact is projectable")
+        .observations()
+        .iter()
+        .find(|observation| observation.key == key)
+        .expect("World fact was observed")
+        .clone()
+}
+
+fn world_observation_validates(
+    universe: &Universe,
+    observation: &crate::ObservedDependency,
+) -> bool {
+    universe
+        .validate_dependencies_with_failure_readonly(std::slice::from_ref(observation), |key| {
+            universe
+                .semantic_dependency_value(key)
+                .expect("tracked World fact remains projectable")
+        })
+        .is_none()
+}
+
+#[test]
+fn every_world_projection_stays_green_after_an_unrelated_world_mutation() {
+    use crate::{DependencyKey, DependencyWorldField};
+
+    let request = World::input_resource_dependency_identity("tracked.tex");
+    for key in [
+        DependencyKey::World {
+            field: DependencyWorldField::InputResource,
+            index: request,
+        },
+        DependencyKey::World {
+            field: DependencyWorldField::OutputStream,
+            index: 0,
+        },
+        DependencyKey::World {
+            field: DependencyWorldField::InputStream,
+            index: 0,
+        },
+        DependencyKey::World {
+            field: DependencyWorldField::TerminalInputCursor,
+            index: 0,
+        },
+        DependencyKey::World {
+            field: DependencyWorldField::EffectPolicy,
+            index: 0,
+        },
+        DependencyKey::World {
+            field: DependencyWorldField::ShellEscapePolicy,
+            index: 0,
+        },
+        DependencyKey::World {
+            field: DependencyWorldField::JobClock,
+            index: 0,
+        },
+        DependencyKey::World {
+            field: DependencyWorldField::Rng,
+            index: 0,
+        },
+        DependencyKey::World {
+            field: DependencyWorldField::LoadedResources,
+            index: 0,
+        },
+        DependencyKey::World {
+            field: DependencyWorldField::MaterializationBarrier,
+            index: 0,
+        },
+    ] {
+        let mut universe = Universe::new();
+        let observation = record_world_observation(&mut universe, key);
+        universe
+            .world_mut()
+            .open_out(StreamSlot::new(15), "unrelated.aux");
+        assert!(
+            world_observation_validates(&universe, &observation),
+            "unrelated output slot changed {key:?}"
+        );
+    }
+}
+
+#[test]
+fn exact_world_keys_reject_relevant_mutations_without_cross_talk() {
+    use crate::{DependencyKey, DependencyWorldField};
+
+    let path = std::path::Path::new("tracked.tex");
+    let request = World::input_resource_dependency_identity(path);
+    let other_request = World::input_resource_dependency_identity("other.tex");
+    let resource = DependencyKey::World {
+        field: DependencyWorldField::InputResource,
+        index: request,
+    };
+    let other_resource = DependencyKey::World {
+        field: DependencyWorldField::InputResource,
+        index: other_request,
+    };
+    let mut universe = Universe::new();
+    let resource_observation = record_world_observation(&mut universe, resource);
+    let other_resource_observation = record_world_observation(&mut universe, other_resource);
+    universe
+        .world_mut()
+        .record_input_dependency(
+            path,
+            InputDependencyOutcome::Missing,
+            InputDependencyAccess::AuthoritativeProbe,
+        )
+        .expect("record exact input request");
+    assert!(!world_observation_validates(
+        &universe,
+        &resource_observation
+    ));
+    assert!(world_observation_validates(
+        &universe,
+        &other_resource_observation
+    ));
+
+    let output = DependencyKey::World {
+        field: DependencyWorldField::OutputStream,
+        index: 0,
+    };
+    let other_output = DependencyKey::World {
+        field: DependencyWorldField::OutputStream,
+        index: 1,
+    };
+    let mut universe = Universe::new();
+    let output_observation = record_world_observation(&mut universe, output);
+    let other_output_observation = record_world_observation(&mut universe, other_output);
+    universe
+        .world_mut()
+        .open_out(StreamSlot::new(0), "tracked.aux");
+    assert!(!world_observation_validates(&universe, &output_observation));
+    assert!(world_observation_validates(
+        &universe,
+        &other_output_observation
+    ));
+
+    let input = DependencyKey::World {
+        field: DependencyWorldField::InputStream,
+        index: 0,
+    };
+    let other_input = DependencyKey::World {
+        field: DependencyWorldField::InputStream,
+        index: 1,
+    };
+    let mut universe = Universe::new();
+    let input_observation = record_world_observation(&mut universe, input);
+    let other_input_observation = record_world_observation(&mut universe, other_input);
+    universe
+        .world_mut()
+        .set_memory_file(path, b"line\n".to_vec())
+        .expect("seed input stream");
+    let content = universe.world_mut().read_file(path).expect("read input");
+    universe
+        .world_mut()
+        .open_in_content(StreamSlot::new(0), &content)
+        .expect("open input stream");
+    assert!(!world_observation_validates(&universe, &input_observation));
+    assert!(world_observation_validates(
+        &universe,
+        &other_input_observation
+    ));
+}
+
+#[test]
+fn scalar_and_aggregate_world_keys_reject_their_relevant_mutations() {
+    use crate::{DependencyKey, DependencyWorldField};
+
+    type WorldMutation = (DependencyWorldField, fn(&mut Universe));
+    let cases: &[WorldMutation] = &[
+        (DependencyWorldField::TerminalInputCursor, |universe| {
+            universe
+                .world_mut()
+                .push_memory_terminal_line("typed")
+                .expect("supply terminal line");
+        }),
+        (DependencyWorldField::EffectPolicy, |universe| {
+            universe
+                .begin_retained_session()
+                .expect("enter retained mode");
+        }),
+        (DependencyWorldField::ShellEscapePolicy, |universe| {
+            universe
+                .world_mut()
+                .set_shell_escape_policy(ShellEscapePolicy::Restricted);
+        }),
+        (DependencyWorldField::Rng, |universe| {
+            let _ = universe.world_mut().next_random_u64();
+        }),
+        (DependencyWorldField::LoadedResources, |universe| {
+            universe
+                .world_mut()
+                .set_memory_file("loaded.tex", b"loaded".to_vec())
+                .expect("seed loaded resource");
+            universe
+                .world_mut()
+                .read_file("loaded.tex")
+                .expect("load resource");
+        }),
+        (DependencyWorldField::MaterializationBarrier, |universe| {
+            universe
+                .world_mut()
+                .write_text(PrintSink::Log, "materialize");
+            let end = universe.world().effect_pos();
+            universe.commit_effects(end).expect("materialize effects");
+        }),
+    ];
+    for &(field, mutate) in cases {
+        let key = DependencyKey::World { field, index: 0 };
+        let mut universe = Universe::new();
+        let observation = record_world_observation(&mut universe, key);
+        mutate(&mut universe);
+        assert!(
+            !world_observation_validates(&universe, &observation),
+            "relevant mutation left {field:?} green"
+        );
+    }
+
+    let mut baseline = Universe::with_world(World::memory_with_clock(JobClock::DEFAULT));
+    let mut changed = Universe::with_world(World::memory_with_clock(JobClock {
+        year: 2027,
+        ..JobClock::DEFAULT
+    }));
+    let key = DependencyKey::World {
+        field: DependencyWorldField::JobClock,
+        index: 0,
+    };
+    assert_ne!(
+        baseline.semantic_dependency_value(key),
+        changed.semantic_dependency_value(key),
+        "job clock construction input must have an exact projection"
+    );
+    let observation = record_world_observation(&mut baseline, key);
+    changed.track_dependency(key);
+    changed.mark_dependency_changed(key);
+    assert!(
+        !world_observation_validates(&changed, &observation),
+        "a different fixed job clock must reject the dependency"
+    );
+}
+
+#[test]
+fn world_projections_are_allocation_independent_across_universes() {
+    use crate::{DependencyKey, DependencyWorldField};
+
+    fn configured_world(reverse: bool) -> World {
+        let mut world = World::memory();
+        world
+            .set_memory_file("a.tex", b"a\n".to_vec())
+            .expect("seed a");
+        world
+            .set_memory_file("b.tex", b"b\n".to_vec())
+            .expect("seed b");
+        let paths = if reverse {
+            ["b.tex", "a.tex"]
+        } else {
+            ["a.tex", "b.tex"]
+        };
+        let mut a = None;
+        for path in paths {
+            let content = world.read_file(path).expect("read configured input");
+            world
+                .record_input_dependency(
+                    path,
+                    InputDependencyOutcome::Present(content.hash()),
+                    InputDependencyAccess::RequiredRead,
+                )
+                .expect("record configured dependency");
+            if path == "a.tex" {
+                a = Some(content);
+            }
+        }
+        world
+            .open_in_content(StreamSlot::new(3), &a.expect("a was read"))
+            .expect("open configured input stream");
+        world.open_out(StreamSlot::new(2), "same.aux");
+        world
+            .push_memory_terminal_line("same terminal line")
+            .expect("supply configured terminal line");
+        world
+    }
+
+    let left = Universe::with_world(configured_world(false));
+    let right = Universe::with_world(configured_world(true));
+    let request = World::input_resource_dependency_identity("a.tex");
+    for key in [
+        DependencyKey::World {
+            field: DependencyWorldField::InputResource,
+            index: request,
+        },
+        DependencyKey::World {
+            field: DependencyWorldField::OutputStream,
+            index: 2,
+        },
+        DependencyKey::World {
+            field: DependencyWorldField::InputStream,
+            index: 3,
+        },
+        DependencyKey::World {
+            field: DependencyWorldField::TerminalInputCursor,
+            index: 0,
+        },
+        DependencyKey::World {
+            field: DependencyWorldField::EffectPolicy,
+            index: 0,
+        },
+        DependencyKey::World {
+            field: DependencyWorldField::ShellEscapePolicy,
+            index: 0,
+        },
+        DependencyKey::World {
+            field: DependencyWorldField::JobClock,
+            index: 0,
+        },
+        DependencyKey::World {
+            field: DependencyWorldField::Rng,
+            index: 0,
+        },
+        DependencyKey::World {
+            field: DependencyWorldField::LoadedResources,
+            index: 0,
+        },
+        DependencyKey::World {
+            field: DependencyWorldField::MaterializationBarrier,
+            index: 0,
+        },
+    ] {
+        assert_eq!(
+            left.semantic_dependency_value(key),
+            right.semantic_dependency_value(key),
+            "allocation order leaked into {key:?}"
+        );
+    }
 }
 
 #[test]

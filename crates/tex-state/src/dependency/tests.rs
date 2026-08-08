@@ -877,7 +877,7 @@ fn aggregate_mutation_barriers_advance_exact_registered_facts() {
     assert!(universe.dependency_changed_at(page) > ChangedAt::NEVER);
 
     let before_world = universe.dependency_changed_at(world);
-    let _ = universe.world_mut();
+    let _ = universe.world_mut().next_random_u64();
     assert!(universe.dependency_changed_at(world) > before_world);
 }
 
