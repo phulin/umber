@@ -219,8 +219,9 @@ impl CommandProcessor<'_> {
     ///
     /// A hyphen is §937's position marker and bypasses the test; anything
     /// whose `lc_code` is zero is diagnosed and ignored; everything else
-    /// enters the word lowercased. pdfTeX's `\savinghyphcodes` table takes
-    /// precedence over `\lccode` when the current language saved one.
+    /// enters the word lowercased. pdfTeX §934 forces `hyph_index=0` while
+    /// `trie_not_ready`, so saved `\savinghyphcodes` values take precedence
+    /// only after the pattern trie has been initialized.
     fn exception_word_character(
         &mut self,
         language: u8,
@@ -229,9 +230,13 @@ impl CommandProcessor<'_> {
         if ch == '-' {
             return Ok(Some('-'));
         }
-        let normalized = match self.state.saved_hyphenation_code(language, ch) {
-            Some(saved) => saved,
-            None => char::from_u32(self.state.lccode(ch)).filter(|&mapped| mapped != '\0'),
+        let normalized = if self.state.hyphenation_patterns_open() {
+            char::from_u32(self.state.lccode(ch)).filter(|&mapped| mapped != '\0')
+        } else {
+            match self.state.saved_hyphenation_code(language, ch) {
+                Some(saved) => saved,
+                None => char::from_u32(self.state.lccode(ch)).filter(|&mapped| mapped != '\0'),
+            }
         };
         if normalized.is_none() {
             let context = self.command.output_open_context(&self.state);

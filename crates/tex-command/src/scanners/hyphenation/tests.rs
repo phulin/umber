@@ -54,6 +54,37 @@ fn words(scanned: &ScannedHyphenationData) -> Vec<String> {
 }
 
 #[test]
+fn initex_exception_scan_defers_saved_codes_until_the_trie_is_ready() {
+    fn scan(patterns_open: bool) -> Vec<String> {
+        let mut command = CommandState::default();
+        let mut universe = crate::test_harness::universe();
+        universe.set_lccode('B', u32::from(b'b'));
+        universe.save_hyphenation_codes(0, [('q', 'q'), ('p', 'p'), ('B', 'r')]);
+        if !patterns_open {
+            universe.close_hyphenation_patterns();
+        }
+        let mut capabilities = CommandHostCapabilities::default();
+        push(&mut command, "{qqB-pp}");
+        let mut processor = CommandProcessor::new(
+            &mut command,
+            universe.command_context(),
+            CommandHostContext::new(&mut capabilities),
+        );
+
+        words(
+            &processor
+                .scan_hyphenation_data(HyphenationDataKind::Exceptions)
+                .expect("exception group scans"),
+        )
+    }
+
+    // pdfTeX §934: INITEX leaves `hyph_index=0` while `trie_not_ready`, but
+    // a loaded/initialized trie selects the language's saved hyphen codes.
+    assert_eq!(scan(true), ["qqb-pp"]);
+    assert_eq!(scan(false), ["qqr-pp"]);
+}
+
+#[test]
 fn patterns_keep_exactly_pdftexs_first_63_characters() {
     for supplied in [63, 64] {
         let mut command = CommandState::default();
