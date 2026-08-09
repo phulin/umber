@@ -348,6 +348,7 @@ fn journal_append_watermarks_restore_scalars_without_append_inverses() {
         });
         list.set_display_interrupt(DisplayInterrupt {
             active_directions: Vec::new(),
+            prototype: None,
         });
         list.set_display_eq_no(DisplayEqNo {
             side: EqNoSide::Right,
@@ -407,6 +408,7 @@ fn journal_math_and_display_ownership_transfers_restore() {
         });
         list.set_display_interrupt(DisplayInterrupt {
             active_directions: vec![tex_state::node::Direction::BeginR],
+            prototype: None,
         });
         list.set_display_eq_no(DisplayEqNo {
             side: EqNoSide::Left,

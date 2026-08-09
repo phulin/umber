@@ -5,7 +5,7 @@ use tex_state::ids::GlueId;
 use tex_state::ids::NodeListId;
 use tex_state::ids::TokenListId;
 use tex_state::math::FractionThickness;
-use tex_state::node::Node;
+use tex_state::node::{BoxNode, Node};
 use tex_state::scaled::Scaled;
 use tex_state::token::OriginId;
 use tex_state::{EngineBoundaryHasher, EngineMode, Universe};
@@ -846,9 +846,10 @@ pub struct IncompleteFraction {
     pub right_delimiter: Option<u32>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct DisplayInterrupt {
     pub active_directions: Vec<tex_state::node::Direction>,
+    pub prototype: Option<BoxNode>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1017,6 +1018,13 @@ fn hash_mode_list(list: &ModeList, projection: &mut EngineBoundaryHasher<'_>) {
                     tex_state::node::Direction::BeginM => 4,
                     tex_state::node::Direction::EndM => 5,
                 });
+            }
+            match interrupt.prototype {
+                Some(prototype) => {
+                    projection.bool(true);
+                    projection.nodes(&[Node::HList(prototype)]);
+                }
+                None => projection.bool(false),
             }
         }
         None => projection.bool(false),

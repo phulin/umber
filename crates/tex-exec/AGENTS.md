@@ -37,6 +37,10 @@ Command operands are scanned by `tex-command` into typed request and result valu
 - `src/diagnostics.rs`, `src/error.rs`, and `src/error_report.rs`: canonical error identity, provenance, rendering, recovery reporting, and fatal propagation. `ExecError::Fatal` is TeX82 §81's non-local exit and only main control may catch it.
 - `src/align/`: source-free alignment completion, packaging, and width resolution.
 - `src/math/`: source-free math validation, mlist lowering, and display packaging.
+- `src/math/display/prototype.rs`: e-TeX saved display-line prototype and
+  directed `app_display` list replacement.
+- `src/math/display/tests.rs`: focused display-prototype reuse and
+  no-prototype packing coverage.
 - `src/checkpoint.rs`: command-only named boundaries, editor forks, aggregate checkpoint restore, budgets, and rooted mode summaries.
 - `src/dispatch.rs`: dispatch result, execution statistics, and prepared-page contract.
 - `src/execution_receipt.rs`: crate-private typed operation receipts assembled

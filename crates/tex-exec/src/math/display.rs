@@ -29,6 +29,13 @@ fn scaled_mul(factor: i32, value: Scaled) -> Scaled {
 
 use super::lower::{MathConversionErrorContext, convert_math_hlist_with_error_context};
 
+mod prototype;
+#[cfg(test)]
+mod tests;
+
+pub(crate) use prototype::display_line_prototype;
+use prototype::package_directed_display_line;
+
 pub(crate) struct FinishedEqNo {
     pub side: EqNoSide,
     pub boxed: BoxNode,
@@ -60,6 +67,7 @@ pub(crate) fn finish_display_math(
     stores: &mut Universe,
     content: tex_state::ids::NodeListId,
     eq_no: Option<FinishedEqNo>,
+    prototype: Option<BoxNode>,
     error_context: Option<&MathConversionErrorContext>,
 ) -> Result<(), ExecError> {
     let (display_content, mut eq_box, left_eq_no) = match eq_no {
@@ -195,8 +203,15 @@ pub(crate) fn finish_display_math(
     if pre_display_direction == 0 {
         display_line.shift = s + d;
     } else {
-        display_line =
-            package_directed_display_line(stores, display_line, d, s, z, pre_display_direction);
+        display_line = package_directed_display_line(
+            stores,
+            display_line,
+            prototype,
+            d,
+            s,
+            z,
+            pre_display_direction,
+        );
     }
     for node in pre_migrated {
         append_vertical_contribution(nest, stores, node);
@@ -242,54 +257,6 @@ pub(crate) fn finish_display_math(
     }
 
     Ok(())
-}
-
-/// e-TeX §§1478–1480's nonzero-`pre_display_direction` `app_display` path.
-///
-/// The inner `dlist` identity belongs to the formula box. The line appended
-/// to the vertical list is a normal hbox whose math-direction boundaries make
-/// the display transparent to the surrounding TeXXeT paragraph direction.
-pub(super) fn package_directed_display_line(
-    stores: &mut Universe,
-    display_line: BoxNode,
-    mut displacement: Scaled,
-    display_indent: Scaled,
-    display_width: Scaled,
-    pre_display_direction: i32,
-) -> BoxNode {
-    let end_displacement = if pre_display_direction > 0 {
-        scaled_sub(scaled_sub(display_width, displacement), display_line.width)
-    } else {
-        let end = displacement;
-        displacement = scaled_sub(scaled_sub(display_width, end), display_line.width);
-        end
-    };
-
-    let mut payload = if display_line.box_lr == tex_state::node::BoxLr::DList {
-        vec![Node::HList(display_line)]
-    } else {
-        let mut children = stores.nodes(display_line.children).to_vec();
-        if pre_display_direction < 0 {
-            children.reverse();
-        }
-        children
-    };
-    let mut children = Vec::with_capacity(payload.len() + 4);
-    children.push(Node::Direction(tex_state::node::Direction::BeginM));
-    children.push(Node::Kern {
-        amount: displacement,
-        kind: KernKind::Font,
-    });
-    children.append(&mut payload);
-    children.push(Node::Kern {
-        amount: end_displacement,
-        kind: KernKind::Font,
-    });
-    children.push(Node::Direction(tex_state::node::Direction::EndM));
-    let list = stores.freeze_node_list(&children);
-    let mut boxed = hpack_nodes(stores, list, PackSpec::Natural, hpack_params(stores)).node;
-    boxed.shift = display_indent;
-    boxed
 }
 
 pub(crate) fn finish_display_alignment(

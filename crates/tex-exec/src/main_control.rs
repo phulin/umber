@@ -3696,6 +3696,13 @@ impl MainControl {
             .map_or(Scaled::from_raw(-Scaled::MAX_DIMEN.raw()), |line| {
                 crate::math::display::pre_display_size(stores, line)
             });
+        let prototype = if stores.int_param(IntParam::ETEX_EXTENDED_MODE) > 0 {
+            paragraph
+                .last_line
+                .map(|line| crate::math::display::display_line_prototype(stores, line))
+        } else {
+            None
+        };
         // TeX82 §1145 opens `math_shift_group` before these local parameter
         // definitions, so §283 restores all of them when the display ends.
         // `\everydisplay` is scheduled only after the definitions are live.
@@ -3720,6 +3727,7 @@ impl MainControl {
             .current_list_mutation()
             .set_display_interrupt(crate::mode::DisplayInterrupt {
                 active_directions: paragraph.active_directions,
+                prototype,
             });
         Ok(())
     }
@@ -3875,6 +3883,7 @@ impl MainControl {
             stores,
             content,
             eq_no,
+            interrupt.prototype,
             Some(&conversion_error_context),
         )?;
         let aftergroup = stores
