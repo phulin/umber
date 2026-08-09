@@ -1223,6 +1223,30 @@ fn restored_tok_param_tokens(universe: &Universe, stored: u64) -> Option<&[Token
     OptionalTokenListIdCodec::decode(stored).map(|id| universe.tokens(id))
 }
 
+/// Merged etex.web [17.233]'s `show_eqtb` representation for one of the four
+/// penalty-array locations, decoded from Umber's internal token-list payload.
+fn format_restore_penalty_array(universe: &Universe, stored: u64, escape_char: i32) -> String {
+    let tokens = restored_tok_param_tokens(universe, stored).unwrap_or_default();
+    assert_eq!(tokens.len() % 4, 0, "restored penalty array is truncated");
+    let count = tokens.len() / 4;
+    let mut value = count.to_string();
+    if let Some(chunk) = tokens.get(..4) {
+        let mut raw = [0_u8; 4];
+        for (byte, token) in raw.iter_mut().zip(chunk) {
+            let Token::Param(encoded) = token else {
+                panic!("restored penalty array has a non-byte token");
+            };
+            *byte = *encoded;
+        }
+        value.push(' ');
+        value.push_str(&i32::from_le_bytes(raw).to_string());
+        if count > 1 {
+            value.push_str(&escaped_restore_name(escape_char, "ETC."));
+        }
+    }
+    value
+}
+
 /// tex.web's `line`, `pack_begin_line`, and the `mode_line` stack §804 reads
 /// `pack_begin_line` from.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -6577,6 +6601,43 @@ impl Universe {
                     let line_count = tokens.len() / 8;
                     ("parshape".to_owned(), line_count.to_string(), true)
                 }
+                BankTag::TokParam
+                    if cell.index() == u32::from(TokParam::INTER_LINE_PENALTIES_INTERNAL.raw()) =>
+                {
+                    (
+                        "interlinepenalties".to_owned(),
+                        format_restore_penalty_array(self, record.old(), record.escape_char()),
+                        true,
+                    )
+                }
+                BankTag::TokParam
+                    if cell.index() == u32::from(TokParam::CLUB_PENALTIES_INTERNAL.raw()) =>
+                {
+                    (
+                        "clubpenalties".to_owned(),
+                        format_restore_penalty_array(self, record.old(), record.escape_char()),
+                        true,
+                    )
+                }
+                BankTag::TokParam
+                    if cell.index() == u32::from(TokParam::WIDOW_PENALTIES_INTERNAL.raw()) =>
+                {
+                    (
+                        "widowpenalties".to_owned(),
+                        format_restore_penalty_array(self, record.old(), record.escape_char()),
+                        true,
+                    )
+                }
+                BankTag::TokParam
+                    if cell.index()
+                        == u32::from(TokParam::DISPLAY_WIDOW_PENALTIES_INTERNAL.raw()) =>
+                {
+                    (
+                        "displaywidowpenalties".to_owned(),
+                        format_restore_penalty_array(self, record.old(), record.escape_char()),
+                        true,
+                    )
+                }
                 BankTag::TokParam if cell.index() < 128 => {
                     let Some(name) = self.primitive_name(Meaning::TokParam(cell.index() as u16))
                     else {
@@ -7966,6 +8027,12 @@ impl Universe {
 
     /// Assigns an e-TeX penalty array through the ordinary group barrier.
     pub fn set_penalty_array(&mut self, kind: PenaltyArrayKind, values: &[i32], global: bool) {
+        // e-TeX [19.277]/[49.1248] represents an empty array by the null
+        // shape pointer. An identical local null assignment returns before
+        // `eq_save`, so it must not create a restore record in Umber either.
+        if !global && values.is_empty() && self.penalty_array(kind).is_empty() {
+            return;
+        }
         let mut tokens = Vec::with_capacity(values.len().saturating_mul(4));
         for value in values {
             tokens.extend(value.to_le_bytes().into_iter().map(Token::Param));

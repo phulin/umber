@@ -423,6 +423,52 @@ fn tracingrestores_reports_a_locally_defined_control_sequence_as_undefined() {
 }
 
 #[test]
+fn tracingrestores_reports_penalty_arrays_through_show_eqtb() {
+    // e-TeX [17.233] adds all four penalty arrays to `show_eqtb`; TeX82
+    // §283 invokes that renderer after installing each restored or retained
+    // save-stack value.  A repeated null assignment is the negative control:
+    // e-TeX [19.277] recognizes the identical eqtb word and saves nothing.
+    let (mut stores, mut control) = etex_control();
+    register_source(
+        &mut control,
+        br"\tracingonline=1 \tracingrestores=1
+\interlinepenalties=3 1 2 3
+\clubpenalties=1 -4
+\widowpenalties=2 5 6
+\displaywidowpenalties=1 7
+{\interlinepenalties=0
+ \clubpenalties=2 8 9
+ \widowpenalties=0
+ \displaywidowpenalties=2 10 11}
+{\global\interlinepenalties=1 99
+ \interlinepenalties=2 44 55}
+{\clubpenalties=0}
+\interlinepenalties=0 {\interlinepenalties=0}
+\end",
+    );
+
+    run_to_end(&mut control, &mut stores);
+
+    let log = terminal_text(&stores);
+    let restores = log
+        .lines()
+        .filter(|line| line.contains("penalties="))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        restores,
+        [
+            "{restoring \\displaywidowpenalties=1 7}",
+            "{restoring \\widowpenalties=2 5\\ETC.}",
+            "{restoring \\clubpenalties=1 -4}",
+            "{restoring \\interlinepenalties=3 1\\ETC.}",
+            "{restoring \\interlinepenalties=1 99}",
+            "{restoring \\clubpenalties=1 -4}",
+        ],
+        "{log:?}"
+    );
+}
+
+#[test]
 fn tracingassigns_reports_globally_changing_unconditionally() {
     let (mut stores, mut control) = etex_control();
     register_source(

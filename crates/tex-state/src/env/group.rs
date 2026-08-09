@@ -128,9 +128,19 @@ impl RestoreRecord {
         self.box_trace_text = Some(text);
     }
 
-    fn refresh_restored_eqtb_value(&mut self, env: &Env) {
+    fn refresh_restored_shape_value(&mut self, env: &Env) {
+        use crate::env::banks::TokParam;
+
         if self.cell.bank() != BankTag::TokParam
-            || self.cell.index() != u32::from(crate::env::banks::TokParam::PAR_SHAPE_INTERNAL.raw())
+            || ![
+                TokParam::INTER_LINE_PENALTIES_INTERNAL,
+                TokParam::CLUB_PENALTIES_INTERNAL,
+                TokParam::WIDOW_PENALTIES_INTERNAL,
+                TokParam::DISPLAY_WIDOW_PENALTIES_INTERNAL,
+                TokParam::PAR_SHAPE_INTERNAL,
+            ]
+            .iter()
+            .any(|param| self.cell.index() == u32::from(param.raw()))
         {
             return;
         }
@@ -841,7 +851,7 @@ impl Env {
         };
         reorder_sparse_register_restores(&mut restores);
         for restore in &mut restores {
-            restore.refresh_restored_eqtb_value(self);
+            restore.refresh_restored_shape_value(self);
         }
 
         let aftergroup_start = checked_aftergroup_start(aftergroup_start, self.aftergroup.len());
