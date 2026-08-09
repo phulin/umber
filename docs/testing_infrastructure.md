@@ -500,6 +500,13 @@ artifacts, so it cannot bless an Umber self-baseline. `unsupported` records an
 explicit absence of a portable verdict; regeneration preserves that review
 decision and cannot manufacture expected bytes for it.
 
+Complete-job capture commits the final staged effect suffix before reading
+those artifacts. This is the ordinary driver finalization boundary for TeX82
+§§1373--1375, and it matters even when no page shipped: an immediate
+`\openout` followed by `\closeout` still creates an exact empty file. The
+authored-fragment run retains its suffix without materializing host output, so
+the root-EOF rollback contract remains independent of complete-job effects.
+
 The `dvi` entry was added late (`umber2-alfh.22`). Until then this corpus
 compared the preamble comment raw while the rest of the repository held it
 uncomparable, which pinned 66 cases as `xfail` for differing only in a

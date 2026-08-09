@@ -1434,6 +1434,7 @@ fn execute_fresh_with_completion(
                     byte_len: dvi.len() as u64,
                 });
                 control.finish_job(&mut universe, dvi_output, None);
+                materialize_complete_job_effects(&mut universe, completion)?;
                 return Ok(SemanticRun {
                     observations: recorder.0,
                     counts,
@@ -1600,10 +1601,10 @@ fn execute_loaded_format(
         tex_exec::RootCompletionPolicy::StopAtRootEof => provider.run_fragment(&fixture, job),
     }
     .map_err(|error| format!("loaded {format_label} run: {error}"))?;
+    let mut universe = loaded.universe;
+    materialize_complete_job_effects(&mut universe, completion)?;
     let counts = std::array::from_fn(|slot| {
-        loaded
-            .universe
-            .count(u16::try_from(slot).expect("count register index"))
+        universe.count(u16::try_from(slot).expect("count register index"))
     });
     let artifacts = loaded.result.artifacts.clone();
     let mut dvi = Vec::new();
@@ -1621,13 +1622,33 @@ fn execute_loaded_format(
     Ok(SemanticRun {
         observations: recorder.0,
         counts,
-        universe: loaded.universe,
+        universe,
         mode_transitions: loaded.result.mode_transitions,
         artifacts,
         dvi,
         fatal: loaded.result.fatal,
         complete_job_channel_streams: None,
     })
+}
+
+/// Crosses the host-effect boundary only for a complete TeX job.
+///
+/// TeX82 §§1373--1375 performs an immediate open or close synchronously,
+/// while Umber stages that host mutation until the finalization owner accepts
+/// the effect suffix. A shipped page crosses an earlier commit boundary, but
+/// a zero-page job still has to commit its final suffix before its output
+/// artifacts are captured. Fragment runs deliberately retain their suffix so
+/// their rollback-capable contract remains unchanged.
+fn materialize_complete_job_effects(
+    universe: &mut Universe,
+    completion: tex_exec::RootCompletionPolicy,
+) -> Result<(), String> {
+    if completion == tex_exec::RootCompletionPolicy::RequireTeXEnd {
+        universe
+            .commit_effects(universe.world().effect_pos())
+            .map_err(|error| format!("complete-job effect commit: {error}"))?;
+    }
+    Ok(())
 }
 
 fn validate_completion_projection_pair(

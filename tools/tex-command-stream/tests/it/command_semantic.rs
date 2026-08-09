@@ -257,6 +257,30 @@ fn count_write_fixture_keeps_direct_the_internal_to_scan_toks() {
 }
 
 #[test]
+fn immediate_open_close_materializes_empty_artifacts_without_shipout() {
+    let formats = HermeticFormats::new();
+    let cases = load_suite().expect("valid command-semantic corpus");
+    let declared = cases
+        .iter()
+        .find(|declared| declared.case.id == "closeout-stream-selectors")
+        .expect("closeout-stream-selectors fixture");
+    let source = fs::read(declared.fixture_dir.join(&declared.case.source))
+        .expect("closeout-stream-selectors source");
+    let run = formats
+        .execute(&source, &declared.case)
+        .expect("closeout-stream-selectors executes");
+
+    assert!(
+        run.artifacts.is_empty(),
+        "the zero-page job shipped no pages"
+    );
+    assert!(
+        compare_declared_channels(declared, &run).is_empty(),
+        "TeX82 §§1373--1375 immediate effects and empty artifacts match the oracle"
+    );
+}
+
+#[test]
 fn paragraph_line_shape_matches_canonical_projection_and_channels() {
     let formats = HermeticFormats::new();
     let cases = load_suite().expect("valid command-semantic corpus");
@@ -469,7 +493,7 @@ fn v2_identity_capture_policy_and_resolved_channels_match_the_migrated_corpus() 
     }
     assert_eq!(
         format!("{:x}", digest.finalize()),
-        "880739dec8b5ab7b2b5c6c58c5e97cc76b239b965cc6f0b77f5f84f7fbe7af53"
+        "5ee494dfdec28b4d696b155b15c2e27fabb6bfc2d21a53874c6b02fbba8cabb4"
     );
 }
 

@@ -1,13 +1,7 @@
 {
   "channels": {
     "effects": {
-      "bug": "umber2-johp.763",
-      "kind": "xfail",
-      "mismatch": {
-        "actual": "<end of channel>",
-        "expected": "{\"record\":\"artifact\",\"path\":\"recovered.out\",\"bytes\":[]}",
-        "line": 5
-      }
+      "kind": "file"
     },
     "events": 192,
     "log": {
