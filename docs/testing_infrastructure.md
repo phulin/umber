@@ -906,6 +906,18 @@ Its independent bounds are configurable through
 `UMBER_PLAIN_FORMAT_ENGINE_FUEL`, `UMBER_PLAIN_FORMAT_MAX_RSS_MIB`, and
 `UMBER_PLAIN_FORMAT_TIMEOUT_SECONDS`.
 
+The complete supported INITEX matrix has a serial entry point with distinct
+pinned distribution roots for Plain and LaTeX:
+
+```bash
+scripts/build-initex-format-matrix.sh \
+  --plain-texmf-dist /path/to/texlive-2025/texmf-dist \
+  --latex-texmf-dist target/texlive-snapshot/texmf-dist
+```
+
+It delegates to the three builders above without overriding their resource
+guards and reports success only after Plain, LaTeX, and pdfLaTeX all pass.
+
 With `--publish-input-closure`, format metadata schema 2 also records the
 canonical sorted request keys derived from that already verified trace. The
 production snapshot builder uses this mode for both engines, stages local

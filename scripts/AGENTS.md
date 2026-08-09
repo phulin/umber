@@ -72,6 +72,9 @@ Read the repository-root `AGENTS.md` first. This file adds the directory map for
 - `build-wasm-plain-format.sh`: reproducibly rebuilds and verifies the packaged
   Plain format image from `assets/plain-source.lock`, with every Umber process
   constrained by the shared watchdog.
+- `build-initex-format-matrix.sh` and
+  `test-build-initex-format-matrix.sh`: serial guarded Plain, LaTeX, and
+  pdfLaTeX INITEX reproduction plus hermetic argument-routing coverage.
 - `sync-github-issues.sh`: explicit Beads-to-GitHub issue, epic-label, and
   project synchronization helper.
 - `build-tex82-oracle.sh`: hash-pinned TeX Live source acquisition and
