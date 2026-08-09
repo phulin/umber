@@ -24,6 +24,19 @@ fn traced_a() -> TracedTokenWord {
     )
 }
 
+#[test]
+fn terminal_buffer_usage_is_runtime_only_and_monotonic() {
+    let mut command = CommandState::default();
+    command.set_terminal_context_line("trip  ");
+    let semantic = command.clone();
+
+    assert_eq!(command.stack_usage().buffer_stack, 7);
+    command.usage.record_buffer_usage(19);
+    assert_eq!(command, semantic);
+    command.set_terminal_context_line("x");
+    assert_eq!(command.stack_usage().buffer_stack, 19);
+}
+
 fn retained_capacities(pool: &TracedTokenBufferPool) -> Vec<usize> {
     pool.buffers
         .lock()

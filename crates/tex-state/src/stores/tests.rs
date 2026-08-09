@@ -18,6 +18,7 @@ use crate::node::{
 use crate::scaled::{GlueSetRatio, Scaled};
 use crate::source_map::SourceDescriptor;
 use crate::state_hash::StateHasher;
+use crate::stores::EngineStackUsage;
 use crate::token::{Catcode, OriginId, Token, TracedTokenWord};
 use crate::world::InputRecordId;
 use crate::{
@@ -27,6 +28,32 @@ use crate::{
         SynthesizedOrigin, SynthesizedOriginKind, SyntheticOrigin, SyntheticOriginKind,
     },
 };
+
+#[test]
+fn engine_stack_usage_merges_runtime_high_water_by_owner() {
+    let mut stores = Stores::new();
+    stores.record_engine_stack_usage(EngineStackUsage {
+        input_stack: 7,
+        nest_stack: 3,
+        parameter_stack: 9,
+        buffer_stack: 20,
+        save_stack: 5,
+    });
+    stores.record_engine_stack_usage(EngineStackUsage {
+        input_stack: 2,
+        nest_stack: 8,
+        parameter_stack: 1,
+        buffer_stack: 11,
+        save_stack: 13,
+    });
+
+    let usage = stores.engine_usage_statistics();
+    assert_eq!(usage.input_stack, 7);
+    assert_eq!(usage.nest_stack, 8);
+    assert_eq!(usage.parameter_stack, 9);
+    assert_eq!(usage.buffer_stack, 20);
+    assert_eq!(usage.save_stack, 13);
+}
 
 #[test]
 fn rollback_restores_env_and_interner_as_one_tuple() {

@@ -225,6 +225,16 @@ pub struct EngineUsageStatistics {
     pub save_stack: usize,
 }
 
+/// Runtime-only TeX82 stack maxima supplied by their owning engine layers.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct EngineStackUsage {
+    pub input_stack: usize,
+    pub nest_stack: usize,
+    pub parameter_stack: usize,
+    pub buffer_stack: usize,
+    pub save_stack: usize,
+}
+
 /// Web2C TeX82's configured main-memory arena profile.
 ///
 /// The typed node and token stores are the two owners corresponding to WEB's
@@ -413,6 +423,21 @@ impl Clone for Stores {
 }
 
 impl Stores {
+    pub(crate) fn live_save_stack_words(&self) -> usize {
+        self.env.canonical_save_stack_words()
+    }
+
+    pub(crate) fn record_engine_stack_usage(&mut self, usage: EngineStackUsage) {
+        self.usage_high_water = self.usage_high_water.merge_max(EngineUsageStatistics {
+            input_stack: usage.input_stack,
+            nest_stack: usage.nest_stack,
+            parameter_stack: usage.parameter_stack,
+            buffer_stack: usage.buffer_stack,
+            save_stack: usage.save_stack,
+            ..EngineUsageStatistics::default()
+        });
+    }
+
     pub(crate) fn engine_usage_statistics(&mut self) -> EngineUsageStatistics {
         let font_mark = self.fonts.watermark();
         let fonts = font_mark.len as usize;

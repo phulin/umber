@@ -1282,6 +1282,10 @@ impl CommandProcessor<'_> {
             }
             Ok(name)
         })();
+        if let Ok(name) = &result {
+            self.command
+                .record_csname_buffer_usage(name.chars().count());
+        }
         self.is_in_csname = previous;
         result
     }

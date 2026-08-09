@@ -81,7 +81,12 @@ Three of those lines are conditional:
   termination lines. `Universe::engine_usage_statistics` projects interned
   strings and characters, token/glue/node words, control sequences, font
   information, fonts, and hyphenation exceptions without exposing raw stores
-  to the execution layer.
+  to the execution layer. Its §1334 stack fields are runtime-only high-water
+  projections supplied by their semantic owners: `tex-command` records
+  §§31/374 buffer use, §321 input depth, and §390 macro parameters;
+  `tex-exec` records §216's mode nest and §§273--280's typed save journal,
+  including §645's box-specification words. Formats, checkpoints, semantic
+  hashes, and rollback do not include these diagnostic counters.
 
 ## Where each piece lives
 

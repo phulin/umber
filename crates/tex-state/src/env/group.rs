@@ -1,6 +1,7 @@
 use super::{Env, cell_key, checked_aftergroup_start, u32_len};
 use crate::cell::{BankTag, CellId};
 use crate::journal::{BoxUndoRec, Entry, JournalPos, Marker, UndoRec};
+use crate::meaning::Meaning;
 use crate::token::{Token, TracedTokenWord};
 use ahash::AHashMap;
 use ahash::AHashSet;
@@ -374,6 +375,56 @@ impl EnvSnapshot {
 }
 
 impl Env {
+    /// Reconstructs the live TeX82 `save_ptr` represented by the typed group
+    /// journal. This is diagnostic accounting only: journal storage remains
+    /// the semantic owner, and §1334's high-water mark is kept outside it.
+    pub(crate) fn canonical_save_stack_words(&self) -> usize {
+        let mut words = 0_usize;
+        let mut locally_saved = Vec::<AHashSet<CellId>>::new();
+        for index in 0..self.journal.len() {
+            match self.journal.entry(index) {
+                Entry::Marker(Marker::Group { .. }) => {
+                    words = words.saturating_add(1);
+                    locally_saved.push(AHashSet::new());
+                }
+                Entry::Undo(rec) => {
+                    let Some(saved) = locally_saved.last_mut() else {
+                        continue;
+                    };
+                    let cell = rec.cell().without_assignment_scope();
+                    if rec.cell().is_global() {
+                        saved.remove(&cell);
+                    } else if saved.insert(cell) {
+                        // TeX82 §§275--276 represents `restore_zero` in one
+                        // word, while `restore_old_value` occupies two.
+                        let restore_words = if cell.bank() == BankTag::Meaning
+                            && rec.old() == Meaning::Undefined.encode()
+                        {
+                            1
+                        } else {
+                            2
+                        };
+                        words = words.saturating_add(restore_words);
+                    }
+                }
+                Entry::BoxUndo(id) => {
+                    let Some(saved) = locally_saved.last_mut() else {
+                        continue;
+                    };
+                    let rec = self.journal.box_undo(id);
+                    let cell = CellId::new(BankTag::Box, u32::from(rec.index()));
+                    if rec.is_global() {
+                        saved.remove(&cell);
+                    } else if saved.insert(cell) {
+                        words = words.saturating_add(2);
+                    }
+                }
+                Entry::Marker(Marker::Checkpoint(_)) => {}
+            }
+        }
+        words.saturating_add(self.aftergroup.len())
+    }
+
     /// Opens a journal slice whose first write cannot coalesce with work that
     /// preceded the mark.
     pub(crate) fn begin_journal_region(&mut self) -> super::JournalRegionMark {

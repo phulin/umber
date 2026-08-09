@@ -235,9 +235,34 @@ impl SourceRegistration {
 pub(crate) struct LineBackingRegistry<'a> {
     pub(crate) profile: CommandProfile,
     pub(crate) next_identity: &'a mut u64,
+    pub(crate) usage: crate::state::CommandUsageTracker,
+    pub(crate) buffer_start: usize,
 }
 
 impl LineBackingRegistry<'_> {
+    pub(crate) fn record_line_usage(&self, cursor: &SourceCursor) {
+        let Some(line) = cursor.line.as_ref() else {
+            return;
+        };
+        let backing = cursor.current_backing();
+        let start = usize::try_from(line.physical.content_range().start()).unwrap_or(usize::MAX);
+        let end = usize::try_from(line.retained_end).unwrap_or(usize::MAX);
+        let len = match backing.mode {
+            CharacterMode::EightBitExact => end.saturating_sub(start),
+            CharacterMode::UnicodeExtended => backing
+                .bytes
+                .get(start..end)
+                .and_then(|bytes| std::str::from_utf8(bytes).ok())
+                .map_or(usize::MAX, |text| text.chars().count()),
+        };
+        if len > 0 {
+            // §31 updates max_buf_stack for each stored character; §1334
+            // prints that greatest index plus one.
+            self.usage
+                .record_buffer_usage(self.buffer_start.saturating_add(len).saturating_add(1));
+        }
+    }
+
     /// Registers acquired line bytes, or refuses when no identity remains.
     pub(crate) fn register(
         &mut self,

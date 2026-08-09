@@ -346,7 +346,9 @@ impl SourceCursor {
                 if self.load_next_line(endlinechar).is_none() {
                     return SourceTokenizationStep::End;
                 }
+                lines.record_line_usage(self);
                 self.firm_up_the_line(endlinechar, queries, lines);
+                lines.record_line_usage(self);
             }
             // The replacement §363 installs has backing of its own, so the
             // current line's bytes must be taken after it has run, not once

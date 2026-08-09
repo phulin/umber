@@ -1093,6 +1093,9 @@ fn hash_optional_u32(value: Option<u32>, projection: &mut EngineBoundaryHasher<'
 pub struct ModeNest {
     levels: Arc<Vec<ModeLevelSummary>>,
     journal: journal::ModeJournal,
+    /// TeX82 §216's maximum pre-push `nest_ptr`. This runtime diagnostic is
+    /// intentionally absent from summaries, semantic equality, and hashes.
+    max_nest_stack: usize,
 }
 
 impl Clone for ModeNest {
@@ -1100,6 +1103,7 @@ impl Clone for ModeNest {
         Self {
             levels: self.levels.clone(),
             journal: journal::ModeJournal::enabled(self.levels.len()),
+            max_nest_stack: self.max_nest_stack,
         }
     }
 }
@@ -1140,6 +1144,7 @@ impl ModeNest {
         Self {
             levels: Arc::new(levels),
             journal: journal::ModeJournal::enabled(1),
+            max_nest_stack: 0,
         }
     }
 
@@ -1157,6 +1162,7 @@ impl ModeNest {
         Ok(Self {
             journal: journal::ModeJournal::enabled(summary.levels.len()),
             levels: summary.levels,
+            max_nest_stack: 0,
         })
     }
 
@@ -1170,6 +1176,12 @@ impl ModeNest {
     #[must_use]
     pub fn depth(&self) -> usize {
         self.levels.len()
+    }
+
+    /// TeX82 §216's maximum `nest_ptr` observed before a semantic push.
+    #[must_use]
+    pub const fn maximum_saved_depth(&self) -> usize {
+        self.max_nest_stack
     }
 
     #[must_use]
@@ -1198,6 +1210,7 @@ impl ModeNest {
                 Self::TEX82_NEST_SIZE as i32,
             )));
         }
+        self.max_nest_stack = self.max_nest_stack.max(self.levels.len().saturating_sub(1));
         let mut level = ModeLevelSummary::new(mode);
         level.set_entry_line(entry_line);
         if matches!(mode, Mode::Horizontal | Mode::RestrictedHorizontal) {

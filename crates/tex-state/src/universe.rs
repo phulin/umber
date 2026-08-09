@@ -1464,6 +1464,18 @@ impl Universe {
         self.stores.engine_usage_statistics()
     }
 
+    /// Merges runtime-only TeX82 stack maxima from their command/execution
+    /// owners into §1334's aggregate diagnostic projection.
+    pub fn record_engine_stack_usage(&mut self, usage: crate::stores::EngineStackUsage) {
+        self.stores.record_engine_stack_usage(usage);
+    }
+
+    /// Live typed projection of TeX82's `save_ptr` for §1334 accounting.
+    #[must_use]
+    pub fn live_save_stack_words(&self) -> usize {
+        self.stores.live_save_stack_words()
+    }
+
     /// Records completed TeX82 `make_string` allocations owned outside the
     /// control-sequence namespace.
     pub fn record_string_pool_allocations(&mut self, strings: usize, characters: usize) {

@@ -140,8 +140,8 @@ pub use scanners::{
 };
 pub use snapshot::{CommandStateSnapshot, CommandSummary, CommandSummaryError};
 pub use state::{
-    CommandReplayDelivery, CommandReplayEpisode, CommandSemanticDiagnostic, CommandState,
-    RunawayPrelude, UnknownRegisteredSource,
+    CommandReplayDelivery, CommandReplayEpisode, CommandSemanticDiagnostic, CommandStackUsage,
+    CommandState, RunawayPrelude, UnknownRegisteredSource,
 };
 pub use tex_state::SourceId;
 pub use tex_state::TracedTokenList;

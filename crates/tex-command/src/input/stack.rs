@@ -131,6 +131,26 @@ impl CommandState {
         replacement_tokens: TokenListId,
         replacement_origins: OriginListId,
     ) -> InputLevelId {
+        let parameter_count = arguments
+            .ranges
+            .iter()
+            .filter(|range| range.is_some())
+            .count();
+        let parameter_ptr = self
+            .parameters
+            .activations
+            .iter()
+            .map(|activation| {
+                activation
+                    .arguments
+                    .ranges
+                    .iter()
+                    .filter(|range| range.is_some())
+                    .count()
+            })
+            .sum::<usize>()
+            .saturating_add(parameter_count);
+        self.usage.record_parameter_push(parameter_ptr);
         let activation = self
             .parameters
             .push_activation(name, definition, arguments, invocation);
@@ -152,6 +172,8 @@ impl CommandState {
         retirement: RetirementBehavior,
         trace: ReplayTrace,
     ) -> InputLevelId {
+        // TeX82 §321 checks `input_ptr` before `push_input` increments it.
+        self.usage.record_input_push(self.input.levels.len());
         let identity = self.allocate_input_level_identity();
         self.input.levels.push(InputLevel::Tokens(TokenCursor {
             payload,

@@ -19,6 +19,18 @@ fn kern(value: i32) -> Node {
 }
 
 #[test]
+fn nest_usage_records_tex82_pre_push_depth_and_survives_pop() {
+    let mut nest = ModeNest::new();
+    nest.push(Mode::Horizontal).expect("horizontal push");
+    nest.push(Mode::Math).expect("math push");
+    assert_eq!(nest.maximum_saved_depth(), 1);
+
+    nest.pop().expect("math pop");
+    nest.pop().expect("horizontal pop");
+    assert_eq!(nest.maximum_saved_depth(), 1);
+}
+
+#[test]
 fn mode_summary_shares_roots_and_restored_mutation_detaches() {
     let mut nest = ModeNest::new();
     nest.push(Mode::Horizontal).expect("test mode push");

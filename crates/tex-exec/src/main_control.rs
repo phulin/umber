@@ -99,6 +99,9 @@ pub struct MainControl {
     /// PDF driver. Virtual multi-output sessions set this explicitly.
     emit_dvi_override: Option<bool>,
     modes: ModeNest,
+    /// Maximum live typed §273 save-stack projection. Runtime diagnostics do
+    /// not participate in step rollback, checkpoint identity, or formats.
+    max_save_stack: usize,
     next_alignment_identity: u64,
     active_alignment: Option<ActiveReplayAlignment>,
     boxes: ReplayBoxes,
@@ -1327,6 +1330,16 @@ impl MainControl {
         dvi: Option<crate::DviJobOutput>,
         pdf: Option<&mut crate::PdfJobFinalizationReport>,
     ) {
+        let command = self.command.stack_usage();
+        stores.record_engine_stack_usage(tex_state::EngineStackUsage {
+            input_stack: command.input_stack,
+            nest_stack: self.modes.maximum_saved_depth(),
+            parameter_stack: command.parameter_stack,
+            buffer_stack: command.buffer_stack,
+            // TeX82 §1334 prints `max_save_stack+6`; §273 explains that the
+            // margin is the conservative reservation at checked mutations.
+            save_stack: self.max_save_stack.saturating_add(6),
+        });
         crate::job::finish_job(
             stores,
             self.command_profile(),
@@ -2466,6 +2479,19 @@ impl MainControl {
     /// Executes one main-control operation under the selected delivery and
     /// transaction policy. This is the sole owner of aggregate savepoints,
     /// commit/rollback, fatal termination, and resource suspension.
+    fn record_save_stack_usage(&mut self, stores: &Universe) {
+        // TeX82 §§645/1084 keeps the packing kind, dimension, and box
+        // context immediately below each live box boundary. The typed box
+        // owner carries those three values as one record; at §273's check
+        // point its already-counted boundary stands in for one word, leaving
+        // two additional canonical save-stack words to project.
+        let box_spec_words = self.boxes.active_boxes.len().saturating_mul(2);
+        let live = stores
+            .live_save_stack_words()
+            .saturating_add(box_spec_words);
+        self.max_save_stack = self.max_save_stack.max(live);
+    }
+
     fn execute_operation(
         &mut self,
         stores: &mut Universe,
@@ -2473,8 +2499,10 @@ impl MainControl {
         transaction: OperationTransaction,
         mut tracked_region: Option<&mut Option<Result<TrackedRegionRecord, TrackedRegionError>>>,
     ) -> Result<StepResult, ExecError> {
+        self.record_save_stack_usage(stores);
         if matches!(transaction, OperationTransaction::Nested) {
             let result = self.apply_operation(stores, delivery);
+            self.record_save_stack_usage(stores);
             if result.is_ok()
                 && let Some(error) = self.operation_evidence_limit_error()
             {
@@ -2508,6 +2536,7 @@ impl MainControl {
                 None
             };
         let mut applied = self.apply_operation(stores, delivery);
+        self.record_save_stack_usage(stores);
         if let Ok(step) = &applied {
             let termination = self.fatal.map_or_else(
                 || match step {

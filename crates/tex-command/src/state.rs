@@ -1,6 +1,8 @@
 //! Future-relevant state and discardable scratch allocation ownership.
 
+use std::hash::{Hash, Hasher};
 use std::ops::{Deref, DerefMut};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use tex_state::CommandContext;
@@ -134,6 +136,84 @@ pub struct CommandState {
     /// [`Self::take_file_framing_events`]. No per-field bookkeeping is
     /// needed because the whole-struct snapshot already covers it.
     pub(crate) file_framing_events: Vec<FileFramingEvent>,
+    /// Runtime-only TeX82 stack accounting. Clones deliberately share this
+    /// tracker, while its equality/hash implementations erase it, so §1334's
+    /// diagnostic high-water marks survive a retried step without becoming
+    /// command semantics, checkpoint identity, or format state.
+    pub(crate) usage: CommandUsageTracker,
+}
+
+/// TeX82 §§31/321/374/390 command-owned stack maxima for §1334.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct CommandStackUsage {
+    pub input_stack: usize,
+    pub parameter_stack: usize,
+    pub buffer_stack: usize,
+}
+
+#[derive(Clone, Default)]
+pub(crate) struct CommandUsageTracker {
+    maxima: Arc<Mutex<CommandStackUsage>>,
+    terminal_buffer_slots: Arc<AtomicUsize>,
+}
+
+impl std::fmt::Debug for CommandUsageTracker {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("CommandUsageTracker(..)")
+    }
+}
+
+impl PartialEq for CommandUsageTracker {
+    fn eq(&self, _other: &Self) -> bool {
+        true
+    }
+}
+
+impl Eq for CommandUsageTracker {}
+
+impl Hash for CommandUsageTracker {
+    fn hash<H: Hasher>(&self, _state: &mut H) {}
+}
+
+impl CommandUsageTracker {
+    pub(crate) fn record_input_push(&self, input_ptr: usize) {
+        let mut usage = self
+            .maxima
+            .lock()
+            .expect("command usage mutex is not poisoned");
+        usage.input_stack = usage.input_stack.max(input_ptr);
+    }
+
+    pub(crate) fn record_parameter_push(&self, param_ptr_after: usize) {
+        let mut usage = self
+            .maxima
+            .lock()
+            .expect("command usage mutex is not poisoned");
+        usage.parameter_stack = usage.parameter_stack.max(param_ptr_after);
+    }
+
+    pub(crate) fn record_buffer_usage(&self, buffer_positions: usize) {
+        let mut usage = self
+            .maxima
+            .lock()
+            .expect("command usage mutex is not poisoned");
+        usage.buffer_stack = usage.buffer_stack.max(buffer_positions);
+    }
+
+    pub(crate) fn get(&self) -> CommandStackUsage {
+        *self
+            .maxima
+            .lock()
+            .expect("command usage mutex is not poisoned")
+    }
+
+    fn set_terminal_buffer_slots(&self, slots: usize) {
+        self.terminal_buffer_slots.store(slots, Ordering::Relaxed);
+    }
+
+    fn terminal_buffer_slots(&self) -> usize {
+        self.terminal_buffer_slots.load(Ordering::Relaxed)
+    }
 }
 
 /// A recoverable command-owned semantic diagnostic awaiting executor output.
@@ -306,6 +386,12 @@ impl CommandState {
         self.input.levels.len()
     }
 
+    /// Returns runtime-only TeX82 command-stack maxima for §1334.
+    #[must_use]
+    pub fn stack_usage(&self) -> CommandStackUsage {
+        self.usage.get()
+    }
+
     /// Returns a content-free, innermost-first tail of the live input stack
     /// for failure diagnostics. No tokens, source names, or source lines cross
     /// this boundary.
@@ -374,7 +460,14 @@ impl CommandState {
     /// Retains TeX82 §331's bottom terminal buffer for §310 after the
     /// startup acquisition level has been retired.
     pub fn set_terminal_context_line(&mut self, line: impl Into<String>) {
-        self.input.terminal_context_line = Some(line.into());
+        let line = line.into();
+        // TeX82 §31's initial terminal `input_ln` starts at buffer index zero;
+        // §1334 subsequently prints `max_buf_stack+1`.
+        if !line.is_empty() {
+            self.usage.record_buffer_usage(line.chars().count() + 1);
+        }
+        self.usage.set_terminal_buffer_slots(line.chars().count());
+        self.input.terminal_context_line = Some(line);
     }
 
     pub(crate) fn open_context_starts_with_print_ln(
@@ -1490,6 +1583,8 @@ impl CommandState {
         retirement: crate::input::SourceRetirement,
         every_eof: Option<TracedTokenList>,
     ) -> InputLevelId {
+        // TeX82 §321 checks `input_ptr` before `push_input` increments it.
+        self.usage.record_input_push(self.input.levels.len());
         let identity = InputLevelId(self.input.next_level_identity);
         self.input.next_level_identity = self.input.next_level_identity.wrapping_add(1);
         let framing_name = match name_class {
@@ -1618,13 +1713,99 @@ impl CommandState {
     /// trailing spaces are removed and the current `endlinechar` is captured
     /// for this line without tokenizing any characters.
     pub fn load_next_source_line(&mut self, endlinechar: i32) -> Option<PhysicalLine> {
-        let InputLevel::Source(level) = self.input.levels.last_mut()? else {
-            return None;
+        let physical = {
+            let InputLevel::Source(level) = self.input.levels.last_mut()? else {
+                return None;
+            };
+            level
+                .cursor
+                .load_next_line(endlinechar)
+                .map(|line| line.physical)?
         };
-        level
-            .cursor
-            .load_next_line(endlinechar)
-            .map(|line| line.physical)
+        self.record_active_buffer_line_usage();
+        Some(physical)
+    }
+
+    /// Records the §31 buffer index reached by the active physical line.
+    /// Every enclosing source retains its normalized line in TeX's shared
+    /// buffer; token-list levels consume no buffer positions.
+    fn record_active_buffer_line_usage(&self) {
+        let mut lines = self.active_buffer_lines();
+        let Some((active_len, _)) = lines.pop() else {
+            return;
+        };
+        if active_len > 0 {
+            let outer_slots = lines.into_iter().fold(0_usize, |total, (len, endline)| {
+                total
+                    .saturating_add(len)
+                    .saturating_add(usize::from(endline))
+                    .saturating_add(1)
+            });
+            // §331 starts the buffer at one; §1334 prints max_buf_stack+1.
+            self.usage.record_buffer_usage(
+                self.usage
+                    .terminal_buffer_slots()
+                    .saturating_add(outer_slots)
+                    .saturating_add(active_len)
+                    .saturating_add(2),
+            );
+        }
+    }
+
+    pub(crate) fn record_csname_buffer_usage(&self, name_len: usize) {
+        if name_len == 0 {
+            return;
+        }
+        let occupied =
+            self.active_buffer_lines()
+                .into_iter()
+                .fold(0_usize, |total, (len, endline)| {
+                    total
+                        .saturating_add(len)
+                        .saturating_add(usize::from(endline))
+                        .saturating_add(1)
+                });
+        // §374 starts at `first`; §1334 adds one to the greatest written
+        // buffer index.
+        self.usage.record_buffer_usage(
+            self.usage
+                .terminal_buffer_slots()
+                .saturating_add(occupied)
+                .saturating_add(name_len)
+                .saturating_add(2),
+        );
+    }
+
+    fn active_buffer_lines(&self) -> Vec<(usize, bool)> {
+        let mut lines = Vec::new();
+        for level in &self.input.levels {
+            let InputLevel::Source(source) = level else {
+                continue;
+            };
+            let Some(line) = source.cursor.line.as_ref() else {
+                continue;
+            };
+            let start = line.physical.content_range().start();
+            let retained = line.retained_end.saturating_sub(start);
+            let len = match source.cursor.current_backing().mode {
+                crate::CharacterMode::EightBitExact => {
+                    usize::try_from(retained).unwrap_or(usize::MAX)
+                }
+                crate::CharacterMode::UnicodeExtended => {
+                    let start = usize::try_from(start).unwrap_or(usize::MAX);
+                    let end = usize::try_from(line.retained_end).unwrap_or(usize::MAX);
+                    source
+                        .cursor
+                        .current_backing()
+                        .bytes
+                        .get(start..end)
+                        .and_then(|bytes| std::str::from_utf8(bytes).ok())
+                        .map_or(usize::MAX, |text| text.chars().count())
+                }
+            };
+            lines.push((len, line.endline.is_some()));
+        }
+        lines
     }
 
     /// Reads one byte-domain character or decoded Unicode scalar from the
@@ -1767,10 +1948,23 @@ impl CommandState {
         Option<&mut crate::input::SourceCursor>,
         crate::input::LineBackingRegistry<'_>,
     ) {
+        let buffer_start = 1_usize
+            .saturating_add(self.usage.terminal_buffer_slots())
+            .saturating_add(self.active_buffer_lines().into_iter().rev().skip(1).fold(
+                0_usize,
+                |total, (len, endline)| {
+                    total
+                        .saturating_add(len)
+                        .saturating_add(usize::from(endline))
+                        .saturating_add(1)
+                },
+            ));
         let input = &mut self.input;
         let lines = crate::input::LineBackingRegistry {
             profile,
             next_identity: &mut input.next_source_identity,
+            usage: self.usage.clone(),
+            buffer_start,
         };
         let cursor = match input.levels.last_mut() {
             Some(InputLevel::Source(level)) => Some(&mut level.cursor),
