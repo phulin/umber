@@ -3929,6 +3929,10 @@ impl MainControl {
         // than falling back to "detected at line B" for want of a
         // `pack_begin_line`.
         stores.push_paragraph_start_line(stores.current_input_line());
+        let (language, left, right) = crate::box_runtime::hmode::current_hyphen_context(stores);
+        self.modes
+            .current_list_mutation()
+            .set_hyphen_context(language, left, right);
         self.modes.current_list_mutation().set_space_factor(1000);
         self.modes
             .current_list_mutation()

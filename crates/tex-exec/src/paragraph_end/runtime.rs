@@ -1072,6 +1072,9 @@ pub(crate) fn start_paragraph(
             }
             nest.push_at_line(crate::Mode::Horizontal, stores.current_input_line())?;
             stores.push_paragraph_start_line(stores.current_input_line());
+            let (language, left, right) = crate::box_runtime::hmode::current_hyphen_context(stores);
+            nest.current_list_mutation()
+                .set_hyphen_context(language, left, right);
             if indent {
                 let mut fuel = tex_command::CommandFuelLedger::default();
                 crate::box_runtime::indent_in_hmode(nest, stores, true, fuel.fuel_mut())?;

@@ -9372,6 +9372,55 @@ fn language_normalization_and_same_language_append_boundaries_match_tex82() {
 }
 
 #[test]
+fn paragraph_entry_snapshots_language_before_first_character() {
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = MainControl::tex82_initex(&mut stores);
+    // TeX82 §1091 runs `set_cur_lang; clang:=cur_lang` on each `new_graf`.
+    // Thus §1376 appends one language whatsit when the first paragraph changes
+    // 7 -> 0 before its first character, while the second paragraph's
+    // unchanged 0 -> 0 state is the negative control.
+    register_source(
+        &mut control,
+        br"\language=7 \lefthyphenmin=2 \righthyphenmin=3
+           \setbox0=\vbox{\noindent\language=0 a\hskip1pt\par
+                           \noindent a\hskip1pt\par}\end",
+    );
+    run_to_end(&mut control, &mut stores);
+
+    let outer = stores.box_reg(0).expect("box 0 holds the paragraph vbox");
+    let Some(Node::VList(vbox)) = stores.nodes(outer).first().map(|node| node.to_owned()) else {
+        panic!("box 0 holds a vlist");
+    };
+    let lines = stores
+        .nodes(vbox.children)
+        .iter()
+        .filter_map(|node| match node.to_owned() {
+            Node::HList(line) => Some(line),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(lines.len(), 2);
+    let languages = lines
+        .iter()
+        .map(|line| {
+            stores
+                .nodes(line.children)
+                .iter()
+                .filter_map(|node| match node.to_owned() {
+                    Node::Whatsit(tex_state::node::Whatsit::Language {
+                        language,
+                        left_hyphen_min,
+                        right_hyphen_min,
+                    }) => Some((language, left_hyphen_min, right_hyphen_min)),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(languages, [vec![(0, 2, 3)], vec![]]);
+}
+
+#[test]
 fn setlanguage_illegal_mode_recovers_without_scan_or_append() {
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
     let mut control = MainControl::tex82_initex(&mut stores);

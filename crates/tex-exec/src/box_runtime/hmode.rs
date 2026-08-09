@@ -359,6 +359,18 @@ pub(crate) const fn norm_min(value: i32) -> u8 {
     }
 }
 
+/// TeX82 §§1091/1200's `set_cur_lang; clang:=cur_lang` paragraph-entry state.
+///
+/// The hyphen minima travel with `clang` in Umber's typed mode-list state so
+/// the first §1376 `fix_language` node can retain the complete prior context.
+pub(crate) fn current_hyphen_context(stores: &Universe) -> (u8, u8, u8) {
+    (
+        u8::try_from(stores.int_param(IntParam::LANGUAGE)).unwrap_or(0),
+        norm_min(stores.int_param(IntParam::LEFT_HYPHEN_MIN)),
+        norm_min(stores.int_param(IntParam::RIGHT_HYPHEN_MIN)),
+    )
+}
+
 pub(crate) fn indent_in_hmode(
     nest: &mut ModeNest,
     stores: &mut Universe,
@@ -414,7 +426,7 @@ pub(crate) fn fix_hyphen_language_with_fuel(
     if mode != Mode::Horizontal {
         return Ok(());
     }
-    let language = u8::try_from(stores.int_param(IntParam::LANGUAGE)).unwrap_or(0);
+    let (language, left_hyphen_min, right_hyphen_min) = current_hyphen_context(stores);
     if language == nest.current_list().hyphen_language() {
         return Ok(());
     }
@@ -424,8 +436,6 @@ pub(crate) fn fix_hyphen_language_with_fuel(
     // names the mode, so this run hyphenates even when the nest has already
     // moved on; `append_whatsit`'s flush then finds nothing pending.
     flush_pending_hchar_run_with_fuel(nest, stores, true, false, fuel)?;
-    let left_hyphen_min = norm_min(stores.int_param(IntParam::LEFT_HYPHEN_MIN));
-    let right_hyphen_min = norm_min(stores.int_param(IntParam::RIGHT_HYPHEN_MIN));
     append_whatsit(
         nest,
         stores,
