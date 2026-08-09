@@ -292,8 +292,18 @@ pub enum LineBreakTrace {
         fitness: i32,
         hyphenated: bool,
         total_demerits: i32,
+        /// e-TeX's additional active-node evidence when its last-line-fit
+        /// algorithm is enabled (e-TeX change-file section 38.846).
+        last_line_fit: Option<LastLineFitTrace>,
         previous: usize,
     },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct LastLineFitTrace {
+    pub shortfall: Scaled,
+    pub glue: Scaled,
+    pub terminal: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -897,6 +907,11 @@ fn run_pass<S: TypesetState>(
                             || (candidate.penalty <= EJECT_PENALTY
                                 && candidate.position >= nodes.len()),
                         total_demerits: candidate.path_demerits,
+                        last_line_fit: last_line_fit.enabled.then_some(LastLineFitTrace {
+                            shortfall: candidate.line_shortfall,
+                            glue: candidate.line_glue,
+                            terminal: candidate.position >= nodes.len(),
+                        }),
                         previous: candidate.previous.map_or(0, |id| passive[id].serial),
                     },
                 ));

@@ -813,6 +813,32 @@ fn etex_last_line_fit_numeric_boundaries_preserve_break_and_artifact_state() {
     }
 }
 
+/// e-TeX change-file section 38.846 prints the saved shortfall and glue (or
+/// final adjustment) from every active node while last-line fitting is active.
+#[test]
+fn etex_last_line_fit_trace_retains_active_node_diagnostic_words() {
+    let (universe, nodes, parameters) = last_line_fit_paragraph();
+
+    let (_, trace) = try_line_break_without_hyphenation_traced(&universe, &nodes, &parameters);
+    let active = trace
+        .iter()
+        .filter_map(|event| match event {
+            LineBreakTrace::Active { last_line_fit, .. } => Some(*last_line_fit),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+
+    assert!(!active.is_empty());
+    assert!(active.iter().all(|evidence| evidence.is_some()));
+    assert!(
+        active
+            .iter()
+            .flatten()
+            .any(|evidence| evidence.terminal && evidence.glue.raw() != 0),
+        "{active:?}"
+    );
+}
+
 /// e-TeX change-file section 38.827: the extension requires positive
 /// infinite `par_fill_skip` stretch and finite `left_skip + right_skip`.
 #[test]

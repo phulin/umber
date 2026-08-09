@@ -1464,6 +1464,28 @@ fn tracingparagraphs_reports_exact_first_pass_break_sequence() {
 }
 
 #[test]
+fn etex_lastlinefit_traces_saved_shortfall_glue_and_final_adjustment() {
+    // e-TeX change-file section 38.846 prints the two extra active-node
+    // words whenever last-line fitting is enabled, naming the terminal
+    // candidate's second value as its adjustment rather than ordinary glue.
+    let stores = run_etex(
+        br"\def\z{\hbox to30pt{}\hskip5pt plus20pt minus4pt }\tracingparagraphs=1\tracingonline=1\hbadness=100\pretolerance=9000\parfillskip=0pt plus1fill\hsize=96pt\lastlinefit=500\setbox0=\vbox{\noindent\z\z\z\z\z}\end",
+    );
+
+    let trace = terminal_text(&stores);
+    for expected in [
+        "@@1: line 1.0 t=137641 s=31.0 g=20.0 -> @@0",
+        "@@2: line 1.2 t=144 s=-4.0 g=8.0 -> @@0",
+        "@@4: line 2.2- t=148 s=31.0 a=-1.0 -> @@2",
+    ] {
+        assert!(
+            trace.contains(expected),
+            "missing {expected:?} from {trace:?}"
+        );
+    }
+}
+
+#[test]
 fn paragraph_shrink_error_uses_the_live_input_context() {
     // TeX82 §§82/825 reports the `\par` source line before the paragraph
     // recovery help, while command state still owns that cursor.

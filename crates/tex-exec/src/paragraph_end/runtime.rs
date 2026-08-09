@@ -628,6 +628,7 @@ fn report_line_break_trace(
                 fitness,
                 hyphenated,
                 total_demerits,
+                last_line_fit,
                 previous,
             } => {
                 diagnostic
@@ -640,11 +641,18 @@ fn report_line_break_trace(
                 if *hyphenated {
                     diagnostic.print_char('-');
                 }
-                diagnostic
-                    .print(" t=")
-                    .print_int(*total_demerits)
-                    .print(" -> @@")
-                    .print_int(*previous as i32);
+                diagnostic.print(" t=").print_int(*total_demerits);
+                if let Some(last_line_fit) = last_line_fit {
+                    // e-TeX change-file section 38.846 reports the additional
+                    // active-node words whenever last-line fitting is active.
+                    diagnostic
+                        .print(" s=")
+                        .print_scaled(last_line_fit.shortfall);
+                    diagnostic
+                        .print(if last_line_fit.terminal { " a=" } else { " g=" })
+                        .print_scaled(last_line_fit.glue);
+                }
+                diagnostic.print(" -> @@").print_int(*previous as i32);
             }
         }
     }
