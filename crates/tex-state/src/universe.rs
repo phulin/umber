@@ -1514,6 +1514,11 @@ impl Universe {
         self.stores.flush_pool_strings(strings, characters);
     }
 
+    /// Selects the engine's pre-input WEB string-pool vocabulary.
+    pub fn select_string_pool_profile(&mut self, profile: crate::stores::StringPoolProfile) {
+        self.stores.select_string_pool_profile(profile);
+    }
+
     #[must_use]
     pub fn font_would_allocate(&self, font: &crate::font::LoadedFont) -> bool {
         self.stores.font_would_allocate(font)

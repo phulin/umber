@@ -113,7 +113,9 @@ pub use pdf::{
     PdfRawObjectData, PdfRawObjectId, PdfRawObjectInitializeError, PdfRawObjectRecord,
     PdfThreadBeadRecord, PdfThreadRecord,
 };
-pub use stores::{EngineStackUsage, EngineUsageStatistics, StringPoolAccounting};
+pub use stores::{
+    EngineStackUsage, EngineUsageStatistics, StringPoolAccounting, StringPoolProfile,
+};
 pub mod world;
 
 pub use expansion_diagnostic::RecoverableExpansionDiagnostic;

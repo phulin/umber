@@ -264,6 +264,26 @@ pub struct StringPoolAccounting {
     pool_size: usize,
 }
 
+/// Engine-owned static string-pool vocabulary installed before INITEX input.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum StringPoolProfile {
+    Tex82,
+    Etex26,
+}
+
+impl StringPoolProfile {
+    const fn baseline(self) -> (usize, usize) {
+        match self {
+            Self::Tex82 => (1_027, 106_841),
+            // TeX82 §§47 and 50 load every multi-character WEB literal before
+            // input. The merged e-TeX program adds literals that are not all
+            // represented by its typed primitive names, leaving this static
+            // profile floor 55 strings and 888 characters above TeX82's.
+            Self::Etex26 => (1_082, 107_729),
+        }
+    }
+}
+
 impl Default for StringPoolAccounting {
     fn default() -> Self {
         Self {
@@ -284,6 +304,15 @@ impl Default for StringPoolAccounting {
 }
 
 impl StringPoolAccounting {
+    fn select_profile(&mut self, profile: StringPoolProfile) {
+        let (strings, characters) = profile.baseline();
+        let added_strings = strings.saturating_sub(self.init_str_ptr);
+        let added_characters = characters.saturating_sub(self.init_pool_ptr);
+        self.allocate(added_strings, added_characters);
+        self.init_str_ptr = self.init_str_ptr.max(strings);
+        self.init_pool_ptr = self.init_pool_ptr.max(characters);
+    }
+
     fn allocate(&mut self, strings: usize, characters: usize) {
         self.strings = self.strings.saturating_add(strings);
         self.characters = self.characters.saturating_add(characters);
@@ -1121,6 +1150,10 @@ impl Stores {
         self.string_pool = accounting;
         self.tokens
             .restore_format_head_reserve(accounting.token_list_baseline());
+    }
+
+    pub(crate) fn select_string_pool_profile(&mut self, profile: StringPoolProfile) {
+        self.string_pool.select_profile(profile);
     }
 
     /// Interns a control-sequence name, reporting packed-token capacity exhaustion.

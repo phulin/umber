@@ -102,6 +102,25 @@ fn string_pool_format_baselines_and_capacities_round_trip() {
 }
 
 #[test]
+fn etex_string_pool_profile_selects_the_static_web_vocabulary_once() {
+    let mut universe = Universe::new();
+    let before = universe.engine_usage_statistics();
+    universe.select_string_pool_profile(crate::StringPoolProfile::Etex26);
+    let selected = universe.engine_usage_statistics();
+
+    assert_eq!(selected.strings, before.strings);
+    assert_eq!(selected.string_characters, before.string_characters);
+    assert_eq!(before.string_capacity - selected.string_capacity, 55);
+    assert_eq!(
+        before.string_character_capacity - selected.string_character_capacity,
+        888
+    );
+
+    universe.select_string_pool_profile(crate::StringPoolProfile::Etex26);
+    assert_eq!(universe.engine_usage_statistics(), selected);
+}
+
+#[test]
 fn memory_usage_counts_token_list_heads_relative_to_the_format_baseline() {
     let mut source = Universe::new();
     let format_tokens = source.intern_token_list(&[

@@ -48,6 +48,7 @@ pub fn register_tex82_unexpandable_primitives(universe: &mut Universe) {
 
 /// Installs e-TeX's enum-backed unexpandable primitive meanings.
 pub fn install_etex_unexpandable_primitives(universe: &mut Universe) {
+    universe.select_string_pool_profile(tex_state::StringPoolProfile::Etex26);
     configure_generated(
         universe,
         true,
@@ -117,6 +118,7 @@ fn configure_tex82_expandable_primitives(universe: &mut Universe, install: bool)
 
 /// Installs e-TeX 2.6's expandable primitive meanings for a fresh INITEX state.
 pub fn install_etex_expandable_primitives(universe: &mut Universe) {
+    universe.select_string_pool_profile(tex_state::StringPoolProfile::Etex26);
     universe.set_int_param_global(tex_state::env::banks::IntParam::ETEX_EXTENDED_MODE, 1);
     configure_etex_expandable_primitives(universe, true);
 }
@@ -318,5 +320,38 @@ mod tests {
                 },
             ]
         );
+    }
+
+    #[test]
+    fn etex_initex_profile_includes_the_merged_web_string_pool() {
+        fn install_tex82(universe: &mut Universe) {
+            install_tex82_expandable_primitives(universe);
+            install_tex82_unexpandable_primitives(universe);
+        }
+
+        fn loaded_capacity(universe: &Universe) -> (usize, usize) {
+            let image = universe.dump_format().expect("primitive state dumps");
+            let mut loaded = Universe::from_format(tex_state::World::default(), &image)
+                .expect("primitive state reloads");
+            let usage = loaded.engine_usage_statistics();
+            (usage.string_capacity, usage.string_character_capacity)
+        }
+
+        let mut etex = Universe::new();
+        install_tex82(&mut etex);
+        install_etex_expandable_primitives(&mut etex);
+        install_etex_unexpandable_primitives(&mut etex);
+        let once = loaded_capacity(&etex);
+
+        // Selecting the profile explicitly is a no-op because each installer
+        // already selected TeX82 §§47/50's merged e-TeX WEB vocabulary.
+        etex.select_string_pool_profile(tex_state::StringPoolProfile::Etex26);
+        assert_eq!(loaded_capacity(&etex), once);
+
+        // Both e-TeX installation halves select the profile, and repeated
+        // setup must not charge TeX82 §§47/50's static pool twice.
+        install_etex_expandable_primitives(&mut etex);
+        install_etex_unexpandable_primitives(&mut etex);
+        assert_eq!(loaded_capacity(&etex), once);
     }
 }
