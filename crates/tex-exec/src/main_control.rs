@@ -16183,10 +16183,16 @@ fn arithmetic_dimension(
     old: Scaled,
     operand: ArithmeticOperand,
 ) -> Result<Scaled, ExecError> {
+    if let (UnexpandablePrimitive::Advance, ArithmeticOperand::Dimension(rhs)) =
+        (primitive, operand)
+    {
+        // TeX82 §104 deliberately does not range-check dimension addition,
+        // and §1238 computes `cur_val+eqtb[l].int` without setting
+        // `arith_error`. Preserve every sum representable by TeX's machine
+        // integer, including `-max_dimen-1sp`.
+        return old.checked_add(rhs).ok_or(ExecError::ArithmeticOverflow);
+    }
     let raw = match (primitive, operand) {
-        (UnexpandablePrimitive::Advance, ArithmeticOperand::Dimension(rhs)) => {
-            old.raw().checked_add(rhs.raw())
-        }
         (UnexpandablePrimitive::Multiply, ArithmeticOperand::Integer(rhs)) => {
             old.raw().checked_mul(rhs)
         }

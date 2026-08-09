@@ -9830,6 +9830,35 @@ fn font_definition_identity_is_case_sensitive_and_tracks_newest_identifier() {
 }
 
 #[test]
+fn dimension_advance_accepts_the_negative_max_dimen_boundary() {
+    // TeX82 §104 deliberately leaves dimension addition unchecked, and
+    // §1238 applies `advance` with a plain sum. Thus `-max_dimen-1sp`
+    // commits the representable `-2^30sp` value instead of setting
+    // `arith_error`. This is the e-TRIP line-781 boundary case.
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
+    let mut control = MainControl::tex82_initex(&mut stores);
+    register_source(
+        &mut control,
+        br"\dimen44=-1073741823sp \advance\dimen44 by-1sp \end",
+    );
+    let mut observations = ObservationRecorder::default();
+    run_to_end_observed(&mut control, &mut stores, &mut observations);
+
+    assert_eq!(stores.dimen(44), Scaled::from_raw(-1_073_741_824));
+    assert!(!terminal_text(&stores).contains("Arithmetic overflow"));
+    assert!(observations.0.iter().any(|observation| {
+        matches!(
+            observation,
+            CommandObservation::Mutation(record)
+                if record.target == MutationTarget::Register
+                    && observation_name(&record.key) == Some("dimen:44")
+                    && record.value == ObservationValue::Scaled(-1_073_741_824)
+                    && !record.global
+        )
+    }));
+}
+
+#[test]
 fn arithmetic_overflow_reports_and_leaves_the_target_unchanged() {
     // TeX82 §1236 returns before `word_define` when `arith_error` is set.
     let mut stores = crate::test_harness::universe_with_plain_catcodes();

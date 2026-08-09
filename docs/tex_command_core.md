@@ -2544,6 +2544,13 @@ then publish the nested integer, internal-value, and outer integer results in
 canonical order. Overflow, rounding, radix, unit, and recovery behavior cite
 canonical sections and compare against reference fixtures.
 
+Register arithmetic preserves TeX82 §104's intentional distinction between
+unchecked dimension addition and the checked multiplication routines. In
+particular, §1238's plain `cur_val+eqtb[l].int` sum may commit the
+machine-representable `-max_dimen-1sp` boundary; it does not take §1236's
+`arith_error` return merely because the result lies outside the scanner's
+input range.
+
 TeX82 §452 retains at most the first 17 decimal-fraction digits for §453's
 rounding. The scanner stores those digits in a fixed byte array while still
 delivering and consuming every later decimal digit through the canonical
