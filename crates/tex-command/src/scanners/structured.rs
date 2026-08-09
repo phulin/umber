@@ -873,6 +873,24 @@ impl FileNameComponents {
             self.extension.push_str(extension);
         }
     }
+
+    fn push_character(&mut self, ch: char) {
+        match ch {
+            '/' | '\\' | ':' => {
+                self.area.push_str(&self.name);
+                self.area.push_str(&self.extension);
+                self.area.push(ch);
+                self.name.clear();
+                self.extension.clear();
+            }
+            // TeX82 §§516--519: the first dot after the final area
+            // delimiter starts `cur_ext`; later dots stay in that same
+            // component.
+            '.' => self.extension.push(ch),
+            _ if self.extension.is_empty() => self.name.push(ch),
+            _ => self.extension.push(ch),
+        }
+    }
 }
 
 /// A filename scanned from expanded command-owned input.
@@ -3768,21 +3786,7 @@ impl CommandProcessor<'_> {
                             FILE_NAME_POOL_CAPACITY as i32,
                         )));
                     }
-                    match ch {
-                        '/' | '\\' | ':' => {
-                            components.area.push_str(&components.name);
-                            components.area.push_str(&components.extension);
-                            components.area.push(ch);
-                            components.name.clear();
-                            components.extension.clear();
-                        }
-                        // TeX82 §§516--519: the first dot after the final
-                        // area delimiter starts `cur_ext`; later dots stay in
-                        // that same component.
-                        '.' => components.extension.push(ch),
-                        _ if components.extension.is_empty() => components.name.push(ch),
-                        _ => components.extension.push(ch),
-                    }
+                    components.push_character(ch);
                 }
                 _ if !grouped => {
                     self.back_input(command)?;
@@ -3808,79 +3812,154 @@ impl CommandProcessor<'_> {
     /// capability. No filesystem or host lookup escapes this boundary.
     pub fn open_registered_input(&mut self) -> Result<RegisteredInput, CommandError> {
         let mut file_name = self.scan_file_name()?;
-        let original_name = file_name.packed();
-        file_name.components.apply_default_extension(".tex");
-        let has_area = !file_name.components.area.is_empty();
-        let packed_name = file_name.packed();
-        let attempts = crate::host::input_lookup_candidates(&packed_name, has_area);
-        self.state.unsupported_host_capability();
+        loop {
+            let original_name = file_name.packed();
+            file_name.components.apply_default_extension(".tex");
+            let has_area = !file_name.components.area.is_empty();
+            let packed_name = file_name.packed();
+            let attempts = crate::host::input_lookup_candidates(&packed_name, has_area);
+            self.state.unsupported_host_capability();
 
-        let mut unresolved = false;
-        for attempted_name in attempts {
-            let Some(registration) = self.host.input(&attempted_name) else {
-                unresolved |= !self.host.input_is_unavailable(&attempted_name);
-                continue;
-            };
-            let bytes = registration.shared_bytes();
-            // §537's `a_make_name_string`: tex.web records the name it
-            // actually opened on the level, and later prints exactly that
-            // as the transcript's `(name` -- so it is the resolved name,
-            // not the name the user typed. Only the host knows what
-            // resolving did: web2c's kpathsea answers a bare `child.tex`
-            // found beside the job with `./child.tex`, and prints the `./`.
-            // A host that reports a resolved name keeps it; one that does
-            // not falls back to the name that matched.
-            let registration = match registration.name() {
-                Some(_) => registration,
-                None => registration.with_name(attempted_name.as_str()),
-            };
-            let source = self
-                .command
-                .register_source(registration)
-                .map_err(|_| CommandError::input_invariant())?;
-            self.command
-                .open_registered_source(source)
-                .map_err(|_| CommandError::input_invariant())?;
-            // e-TeX 2.6 [23.328]'s `grp_stack[in_open]:=cur_boundary;
-            // if_stack[in_open]:=cond_ptr`, recorded for `\tracingnesting`'s
-            // `file_warning` at this level's eventual `end_file_reading`.
-            if let Some(level) = self.command.top_input_level_identity() {
-                self.command.record_source_open_depths(
-                    level,
-                    self.state.group_lineages().into_boxed_slice(),
-                    self.command
-                        .conditions
-                        .frames
-                        .iter()
-                        .map(|frame| frame.identity.0)
-                        .collect::<Vec<_>>()
-                        .into_boxed_slice(),
-                );
+            let mut unresolved = false;
+            for attempted_name in attempts {
+                let Some(registration) = self.host.input(&attempted_name) else {
+                    unresolved |= !self.host.input_is_unavailable(&attempted_name);
+                    continue;
+                };
+                let bytes = registration.shared_bytes();
+                // §537's `a_make_name_string`: tex.web records the name it
+                // actually opened on the level, and later prints exactly that
+                // as the transcript's `(name` -- so it is the resolved name,
+                // not the name the user typed. Only the host knows what
+                // resolving did: web2c's kpathsea answers a bare `child.tex`
+                // found beside the job with `./child.tex`, and prints the `./`.
+                // A host that reports a resolved name keeps it; one that does
+                // not falls back to the name that matched.
+                let registration = match registration.name() {
+                    Some(_) => registration,
+                    None => registration.with_name(attempted_name.as_str()),
+                };
+                let source = self
+                    .command
+                    .register_source(registration)
+                    .map_err(|_| CommandError::input_invariant())?;
+                self.command
+                    .open_registered_source(source)
+                    .map_err(|_| CommandError::input_invariant())?;
+                // e-TeX 2.6 [23.328]'s `grp_stack[in_open]:=cur_boundary;
+                // if_stack[in_open]:=cond_ptr`, recorded for `\tracingnesting`'s
+                // `file_warning` at this level's eventual `end_file_reading`.
+                if let Some(level) = self.command.top_input_level_identity() {
+                    self.command.record_source_open_depths(
+                        level,
+                        self.state.group_lineages().into_boxed_slice(),
+                        self.command
+                            .conditions
+                            .frames
+                            .iter()
+                            .map(|frame| frame.identity.0)
+                            .collect::<Vec<_>>()
+                            .into_boxed_slice(),
+                    );
+                }
+                let endlinechar = self.state.int_param(IntParam::END_LINE_CHAR);
+                self.command
+                    .prepare_started_input(endlinechar)
+                    .ok_or_else(CommandError::input_invariant)?;
+                self.host.initialize_job_name(&attempted_name);
+                if attempted_name != packed_name {
+                    file_name.components.area = "TeXinputs:".to_owned();
+                }
+                return Ok(RegisteredInput {
+                    file_name,
+                    source,
+                    bytes,
+                });
             }
-            let endlinechar = self.state.int_param(IntParam::END_LINE_CHAR);
-            self.command
-                .prepare_started_input(endlinechar)
-                .ok_or_else(CommandError::input_invariant)?;
-            self.host.initialize_job_name(&attempted_name);
-            if attempted_name != packed_name {
-                file_name.components.area = "TeXinputs:".to_owned();
+            if unresolved {
+                return Err(CommandError::MissingInput {
+                    name: packed_name,
+                    original_name,
+                });
             }
-            return Ok(RegisteredInput {
-                file_name,
-                source,
-                bytes,
-            });
+            file_name = self.prompt_for_input_file_name(&file_name)?;
         }
-        if unresolved || self.state.interaction_permits_terminal_input() {
-            Err(CommandError::MissingInput {
-                name: packed_name,
-                original_name,
-            })
-        } else {
-            Err(CommandError::Fatal(crate::FatalError::emergency_stop(
+    }
+
+    /// TeX82 §530's `prompt_file_name("input file name", ".tex")` after
+    /// the retained host has authoritatively answered that both §537 input
+    /// candidates are absent.
+    fn prompt_for_input_file_name(
+        &mut self,
+        missing: &ScannedFileName,
+    ) -> Result<ScannedFileName, CommandError> {
+        let context = self.command.output_open_context(&self.state);
+        self.state
+            .printer()
+            .print_nl("! I can't find file `")
+            .print(&missing.packed())
+            .print("'.")
+            .print_rendered(&context)
+            .print_nl("Please type another input file name");
+
+        if !self.state.interaction_permits_terminal_input() {
+            let help = "*** (job aborted, file error in nonstop mode)";
+            let mut report = self.state.print_err("Emergency stop");
+            report.help(&[help]).context(context);
+            report.succumb();
+            return Err(CommandError::Fatal(crate::FatalError::emergency_stop(
                 "job aborted, file error in nonstop mode",
-            )))
+            )));
         }
+
+        let Some(line) = self
+            .state
+            .input_ln(tex_state::CommandLineSource::Terminal { prompt: ": " })
+        else {
+            let help = "End of file on the terminal!";
+            let mut report = self.state.print_err("Emergency stop");
+            report.help(&[help]).context(context);
+            report.succumb();
+            return Err(CommandError::Fatal(crate::FatalError::emergency_stop(help)));
+        };
+        self.file_name_from_terminal_line(&line)
+    }
+
+    fn file_name_from_terminal_line(
+        &mut self,
+        line: &str,
+    ) -> Result<ScannedFileName, CommandError> {
+        let mut components = FileNameComponents::default();
+        let mut quoted = false;
+        let mut character_count = 0usize;
+        for ch in line.chars().skip_while(|ch| *ch == ' ') {
+            if ch == '"' {
+                quoted = !quoted;
+                continue;
+            }
+            if ch == ' ' && !quoted {
+                break;
+            }
+            character_count += 1;
+            if character_count > FILE_NAME_POOL_CAPACITY {
+                return Err(CommandError::Fatal(crate::FatalError::overflow(
+                    "pool size",
+                    FILE_NAME_POOL_CAPACITY as i32,
+                )));
+            }
+            components.push_character(ch);
+        }
+        self.state.record_string_pool_allocations(
+            1 + usize::from(!components.area.is_empty())
+                + usize::from(!components.extension.is_empty()),
+            components.area.len() + components.name.len() + components.extension.len(),
+        );
+        Ok(ScannedFileName {
+            components,
+            provenance: StructuredProvenance {
+                primary: OriginId::UNKNOWN,
+            },
+        })
     }
 
     /// TeX82 §1215's `repeat get_token until cur_tok<>space_token`.

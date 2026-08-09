@@ -676,10 +676,16 @@ brace depth. This remains a special case inside the collector's one-step
 terminator, backing up a non-character terminator, or reaching end of input.
 `open_registered_input` composes that scan with the borrow-scoped
 registered-input capability, then registers
-and opens the immutable source through `CommandState`; unavailable backing is
-the typed `CommandError::MissingInput` recovery. Neither API exposes a source
-cursor, input level, raw token, or host filesystem operation. Snapshot rollback
-therefore restores the complete future input state after every structured scan.
+and opens the immutable source through `CommandState`. An unresolved backing
+is the typed `CommandError::MissingInput` suspension. After the retained host
+binds an authoritative negative response, the same live processor owns TeX82
+§530's missing-file text and input context: scroll/error-stop reads a
+replacement filename through `CommandContext::input_ln` and retries the
+unchanged typed capability boundary, while batch/nonstop composes §93's
+`Emergency stop`, fatal history, and terminal state. Neither API exposes a
+source cursor, input level, raw token, or host filesystem operation. Snapshot
+rollback therefore restores the complete future input and terminal state after
+every structured scan.
 
 ### 5.3.1 Canonical main-control ownership gate
 
@@ -2732,6 +2738,15 @@ A missing resource returns a typed `NeedResource`. No async future, callback,
 or scanner continuation is stored in `CommandState`. The enclosing executor
 restores its complete pre-step savepoint and retries after the host binds a
 stable positive or negative response.
+
+For canonical `\input`, that negative response is evidence, not presentation:
+the fresh retry reaches `open_registered_input` with the live filename scan,
+input stack, and `CommandContext`. Only there can TeX82 §530 render the missing
+name and `show_context`, acquire an interactive replacement, or enter §93's
+fatal-history transition in batch/nonstop mode. A replacement that is not yet
+registered suspends under its own ordinary `ResourceNeed::Input` identity; the
+host does not receive a diagnostic callback or a second kind of absence
+request.
 
 The promoted scalar input/state slice keeps the same split concretely:
 `CommandHostCapabilities` maps a logical `\input` name to already-acquired

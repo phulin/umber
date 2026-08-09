@@ -1315,29 +1315,30 @@ mod tests {
         }
     }
 
-    struct UnavailableThenInputHost {
-        unavailable: usize,
-        calls: usize,
+    struct MissingThenReplacementHost {
+        replacement: Option<&'static str>,
+        calls: Vec<String>,
     }
 
-    impl ResourceHost for UnavailableThenInputHost {
+    impl ResourceHost for MissingThenReplacementHost {
         fn fulfill(
             &mut self,
             _world: &mut ResourceWorld<'_>,
             need: &ResourceNeed,
         ) -> ResourceOutcome {
-            self.calls += 1;
-            if self.calls <= self.unavailable {
-                return ResourceOutcome::Unavailable;
-            }
             let ResourceNeed::Input { name, .. } = need else {
                 return ResourceOutcome::Unavailable;
             };
-            ResourceOutcome::Fulfilled(ResourceFulfillment::input(
-                name,
-                RegisteredSourceKind::Generated,
-                Arc::from(&b"\\relax"[..]),
-            ))
+            self.calls.push(name.clone());
+            if self.replacement == Some(name) {
+                ResourceOutcome::Fulfilled(ResourceFulfillment::input(
+                    name,
+                    RegisteredSourceKind::Generated,
+                    Arc::from(&b"\\relax"[..]),
+                ))
+            } else {
+                ResourceOutcome::Unavailable
+            }
         }
     }
 
@@ -2055,19 +2056,52 @@ mod tests {
         ] {
             let (mut stores, root) = prepared_session(b"\\input missing\\end");
             stores.set_interaction_mode(interaction);
+            stores
+                .world_mut()
+                .push_memory_terminal_line("replacement")
+                .expect("replacement filename is staged");
             let mut session = EngineSession::new(&mut stores, CommandProfile::TEX82);
             session
                 .register_authored_job("job.tex", root)
                 .expect("root registers");
-            let mut host = UnavailableThenInputHost {
-                unavailable: 2,
-                calls: 0,
+            let mut host = MissingThenReplacementHost {
+                replacement: Some("replacement.tex"),
+                calls: Vec::new(),
             };
 
-            session
+            let run = session
                 .run(&mut host, &mut Vec::new())
                 .expect("interactive lookup retries after completed absence");
-            assert_eq!(host.calls, 3);
+            assert_eq!(host.calls, ["missing.tex", "replacement.tex"]);
+            assert_eq!(run.status, TexRunStatus::Success);
+            assert_eq!(run.fatal, None);
+            assert_eq!(
+                session.stores().world().error_channel().history(),
+                tex_state::print::ErrorHistory::Spotless
+            );
+            let (terminal, log) = transcript_channels(session.stores());
+            for output in [&terminal, &log] {
+                assert_eq!(
+                    output.matches("! I can't find file `missing.tex'.").count(),
+                    1,
+                    "output={output:?}"
+                );
+                assert!(output.contains("l.1 \\input missing"), "output={output:?}");
+                assert!(!output.contains("Emergency stop"), "output={output:?}");
+            }
+            assert_eq!(
+                terminal
+                    .matches("Please type another input file name: ")
+                    .count(),
+                1,
+                "terminal={terminal:?}"
+            );
+            assert_eq!(
+                log.matches("Please type another input file name: replacement")
+                    .count(),
+                1,
+                "log={log:?}"
+            );
         }
 
         for interaction in [
@@ -2080,9 +2114,9 @@ mod tests {
             session
                 .register_authored_job("job.tex", root)
                 .expect("root registers");
-            let mut host = UnavailableThenInputHost {
-                unavailable: usize::MAX,
-                calls: 0,
+            let mut host = MissingThenReplacementHost {
+                replacement: None,
+                calls: Vec::new(),
             };
 
             let run = session
@@ -2091,15 +2125,48 @@ mod tests {
             let fatal =
                 tex_command::FatalError::emergency_stop("job aborted, file error in nonstop mode");
             assert_eq!(run.fatal, Some(fatal));
+            assert_eq!(run.status, TexRunStatus::Fatal);
             assert_eq!(session.control.fatal_error(), Some(fatal));
-            assert_eq!(host.calls, 1);
+            assert_eq!(host.calls, ["missing.tex"]);
+            assert_eq!(
+                session.stores().world().error_channel().history(),
+                tex_state::print::ErrorHistory::FatalErrorStop
+            );
+            let (terminal, log) = transcript_channels(session.stores());
+            assert_eq!(
+                log.matches("! I can't find file `missing.tex'.").count(),
+                1,
+                "log={log:?}"
+            );
+            assert_eq!(
+                log.matches("Please type another input file name").count(),
+                1,
+                "log={log:?}"
+            );
+            assert_eq!(log.matches("! Emergency stop.").count(), 1, "log={log:?}");
+            assert_eq!(
+                log.matches("*** (job aborted, file error in nonstop mode)")
+                    .count(),
+                1,
+                "log={log:?}"
+            );
+            assert_eq!(
+                log.matches("l.1 \\input missing").count(),
+                2,
+                "§530 and §93 each render the live context: log={log:?}"
+            );
+            assert_eq!(
+                terminal.contains("! I can't find file `missing.tex'."),
+                interaction == tex_state::InteractionMode::Nonstop,
+                "terminal={terminal:?}"
+            );
             assert!(matches!(
                 session
                     .advance_until_waiting(&mut Vec::new())
                     .expect("fatal retained cleanup stays complete"),
                 SessionState::Complete(result) if result.fatal == Some(fatal)
             ));
-            assert_eq!(host.calls, 1);
+            assert_eq!(host.calls, ["missing.tex"]);
         }
     }
 
