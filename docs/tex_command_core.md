@@ -3033,6 +3033,14 @@ comparison. Umber does not claim binary compatibility with their `.fmt` files.
 
 Semantic recovery and diagnostic presentation are separate:
 
+Printable diagnostic values also preserve TeX's selector boundary. TeX82
+§§59/262/296 makes `\meaning` collect `show_token_list` under
+`new_string`, while `\show` prints a macro or mark list through the active
+terminal/log selector; only the latter turns a character equal to the live
+`\newlinechar` into a line break. The command-owned display freezes that
+already selector-aware result for execution instead of rendering a
+context-free `^^` spelling or rescanning the completed diagnostic text.
+
 TeX82 macro tracing follows that same split. The command processor formats
 §389's invocation and §400's completed arguments while it owns their live token
 buffers, then queues non-error diagnostic values. `tex-exec` drains those

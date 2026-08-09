@@ -31,7 +31,7 @@ use crate::scanners::RestrictedIntegerClass;
 use crate::{
     AlignmentCellTemplates, AlignmentPreamble, CommandError, CommandProcessor,
     CommandReplayDelivery, CurrentCommand, InternalValue,
-    processor::{meaning_text, print_cs_text, render_the_value, string_text},
+    processor::{print_cs_text, render_the_value, selector_meaning_text, string_text},
 };
 
 /// Stable pending-diagnostic identities for TeX82 §760 template recovery.
@@ -2700,7 +2700,7 @@ impl CommandProcessor<'_> {
         state: &mut tex_state::CommandContext<'_>,
         command: &crate::CurrentCommand,
     ) -> String {
-        let text = meaning_text(state, command);
+        let text = selector_meaning_text(state, command);
         let breaks_after_colon = matches!(command.meaning(), Meaning::Macro { .. })
             || matches!(
                 command.meaning(),

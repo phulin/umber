@@ -3210,6 +3210,40 @@ fn etex_showtokens_uses_recursive_general_text_in_fresh_and_loaded_formats() {
 }
 
 #[test]
+fn show_macro_body_honors_newlinechar_in_fresh_and_loaded_formats() {
+    // TeX82 §§59/262/296/1294: `\show` reaches a macro body through
+    // active-selector `token_show`, so character 10 becomes a line break when
+    // `\newlinechar=10`. The adjacent control byte proves generated caret
+    // notation is not subsequently rescanned as diagnostic input.
+    let mut initialized = crate::test_harness::universe_with_plain_catcodes();
+    let fresh_control = etex_initex(&mut initialized);
+    let format = initialized
+        .dump_format()
+        .expect("dump extended e-TeX format");
+    let loaded = Universe::from_format(tex_state::World::memory(), &format)
+        .expect("restore extended e-TeX format");
+
+    for (mut stores, mut control) in [
+        (initialized, fresh_control),
+        (loaded, MainControl::with_profile(CommandProfile::ETEX26)),
+    ] {
+        control.set_fuel_limit(10_000).expect("bounded fuel");
+        register_source(
+            &mut control,
+            br"\nonstopmode\newlinechar=10\def\shown{A^^JB^^AC}\show\shown\end",
+        );
+        run_to_end(&mut control, &mut stores);
+
+        let output = terminal_text(&stores);
+        assert!(
+            output.contains("> \\shown=macro:\n->A\nB^^AC."),
+            "{output:?}"
+        );
+        assert!(!output.contains("->A^^JB"), "{output:?}");
+    }
+}
+
+#[test]
 fn etex_raw_font_character_enquiries_are_forbidden_without_scanning_in_every_mode() {
     // e-TeX 2.6 etex.ch [3413--3453] registers these four read-only
     // dimensions as `last_item`. TeX82 §1048's `any_mode(last_item)` sends a

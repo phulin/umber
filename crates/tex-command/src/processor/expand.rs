@@ -2055,13 +2055,28 @@ pub(crate) fn meaning_text(
     command: &CurrentCommand,
 ) -> String {
     let mut text = String::new();
-    append_meaning_text(state, command, &mut text);
+    append_meaning_text_with_token_selector(state, command, false, &mut text);
     text
 }
 
-pub(crate) fn append_meaning_text(
+/// TeX82 §§59, 262, and 296's `print_meaning` through an active selector.
+///
+/// `\meaning` builds a string, but `\show` prints a macro or mark token list
+/// directly. Character tokens in the latter path therefore observe the live
+/// `\newlinechar` instead of always using their context-free `^^` spelling.
+pub(crate) fn selector_meaning_text(
     state: &mut tex_state::CommandContext<'_>,
     command: &CurrentCommand,
+) -> String {
+    let mut text = String::new();
+    append_meaning_text_with_token_selector(state, command, true, &mut text);
+    text
+}
+
+fn append_meaning_text_with_token_selector(
+    state: &mut tex_state::CommandContext<'_>,
+    command: &CurrentCommand,
+    active_selector: bool,
     text: &mut String,
 ) {
     match command.meaning() {
@@ -2131,9 +2146,14 @@ pub(crate) fn append_meaning_text(
                 text.push(' ');
             }
             text.push_str("macro:");
-            append_token_list_text(state, macro_meaning.parameter_text(), text);
+            append_meaning_token_list(state, macro_meaning.parameter_text(), active_selector, text);
             text.push_str("->");
-            append_token_list_text(state, macro_meaning.replacement_text(), text);
+            append_meaning_token_list(
+                state,
+                macro_meaning.replacement_text(),
+                active_selector,
+                text,
+            );
         }
         Meaning::ExpandablePrimitive(ExpandablePrimitive::EndTemplate) => {
             append_print_esc_text(state, "outer", text);
@@ -2149,13 +2169,26 @@ pub(crate) fn append_meaning_text(
             append_meaning_control_sequence_text(state, command, command.meaning(), text);
             text.push(':');
             let tokens = state.page_mark(page_mark(primitive));
-            append_token_list_text(state, tokens, text);
+            append_meaning_token_list(state, tokens, active_selector, text);
         }
         meaning @ (Meaning::ExpandablePrimitive(_) | Meaning::UnexpandablePrimitive(_)) => {
             append_meaning_control_sequence_text(state, command, meaning, text);
         }
         Meaning::EndV => text.push_str("end of alignment template"),
         Meaning::Unknown(_) => text.push_str("unknown"),
+    }
+}
+
+fn append_meaning_token_list(
+    state: &tex_state::CommandContext<'_>,
+    tokens: TokenListId,
+    active_selector: bool,
+    text: &mut String,
+) {
+    if active_selector {
+        append_selector_token_list_text(state, tokens, text);
+    } else {
+        append_token_list_text(state, tokens, text);
     }
 }
 
@@ -2444,6 +2477,33 @@ pub(crate) fn append_token_list_text(
             continue;
         }
         append_token_list_token_text(state, tokens[index], text);
+        index += 1;
+    }
+}
+
+/// TeX82 §262's `show_token_list` through an active print selector.
+fn append_selector_token_list_text(
+    state: &tex_state::CommandContext<'_>,
+    tokens: TokenListId,
+    text: &mut String,
+) {
+    let tokens = state.tokens(tokens);
+    let mut index = 0;
+    while index < tokens.len() {
+        if let Token::Char {
+            ch,
+            cat: Catcode::Parameter,
+        } = tokens[index]
+            && let Some(Token::Param(slot)) = tokens.get(index + 1)
+        {
+            let raw = [ch, char::from(b'0' + *slot)]
+                .into_iter()
+                .collect::<String>();
+            state.append_selector_string_text(&raw, text);
+            index += 2;
+            continue;
+        }
+        state.append_token_selector_text(tokens[index], text);
         index += 1;
     }
 }
