@@ -1196,9 +1196,13 @@ fn format_restore_glue(spec: GlueSpec, normal_unit: &'static str) -> String {
 }
 
 /// TeX82 §252's bounded token-list display used by §283 restore tracing.
-fn format_restore_tokens(universe: &Universe, stored: u64, escape_char: i32) -> String {
+fn format_restore_tokens(
+    universe: &Universe,
+    token_list: Option<TokenListId>,
+    escape_char: i32,
+) -> String {
     let mut value = String::new();
-    if let Some(tokens) = restored_tok_param_tokens(universe, stored) {
+    if let Some(tokens) = token_list.map(|id| universe.tokens(id)) {
         let mut shown = 0;
         while shown < tokens.len() && value.chars().count() < 32 {
             crate::token_show::append_token_show_text(universe, tokens[shown], &mut value);
@@ -6502,7 +6506,17 @@ impl Universe {
                 }
                 BankTag::Toks => (
                     format!("toks{}", cell.index()),
-                    format_restore_tokens(self, record.old(), record.escape_char()),
+                    // e-TeX [53a] stores a sparse token-register pointer
+                    // directly. This is not the optional-plus-one encoding
+                    // used by Umber's token-parameter cells.
+                    format_restore_tokens(
+                        self,
+                        Some(TokenListId::new(
+                            u32::try_from(record.old())
+                                .expect("token-register restore word exceeds u32"),
+                        )),
+                        record.escape_char(),
+                    ),
                     true,
                 ),
                 BankTag::IntParam if cell.index() < 128 => {
@@ -6568,7 +6582,12 @@ impl Universe {
                     else {
                         continue;
                     };
-                    let value = format_restore_tokens(self, record.old(), record.escape_char());
+                    use crate::env::banks::{BankCodec, OptionalTokenListIdCodec};
+                    let value = format_restore_tokens(
+                        self,
+                        OptionalTokenListIdCodec::decode(record.old()),
+                        record.escape_char(),
+                    );
                     (name.to_owned(), value, true)
                 }
                 BankTag::CurrentFont => {

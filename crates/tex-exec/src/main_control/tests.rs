@@ -1247,6 +1247,31 @@ fn etex_identical_sparse_pointer_assignments_do_not_create_restore_entries() {
 }
 
 #[test]
+fn etex_sparse_toks_restore_tracing_decodes_register_words_without_parameter_offset() {
+    // e-TeX [53a] saves a sparse token-register pointer and restores that
+    // exact value before tracing it through `show_sa`; unlike token-parameter
+    // cells, register words encode `TokenListId` directly. TeX82 §§252/283
+    // likewise show the just-restored value. The preceding nonempty list
+    // detects an erroneous optional-parameter offset, while the empty
+    // `\toks2200` restoration is the zero-word negative control.
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = etex_initex(&mut stores);
+    register_source(
+        &mut control,
+        br"\toks2001={a b c}\toks2002={d e f}\tracingrestores=1\tracingonline=1{\toks2002=\toks2001\toks2200=\toks2001}\end",
+    );
+
+    run_to_end(&mut control, &mut stores);
+
+    let expected = concat!(
+        "{restoring \\toks2200=}\n",
+        "{restoring \\toks2002=d e f}\n",
+    );
+    assert_eq!(pending_sink_text(&stores, true), expected);
+    assert_eq!(pending_sink_text(&stores, false), expected);
+}
+
+#[test]
 fn tracingrestores_coalesces_same_level_writes_and_renders_parameter_banks() {
     let mut stores = Universe::new_with_plain_catcodes();
     let mut control = MainControl::tex82_initex(&mut stores);
