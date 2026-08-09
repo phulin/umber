@@ -4,7 +4,10 @@ use tex_state::macro_store::MacroMeaning;
 use tex_state::meaning::{ExpandablePrimitive, Meaning, MeaningFlags, UnexpandablePrimitive};
 use tex_state::page::PageMark;
 use tex_state::token::{Catcode, Token};
-use tex_state::{DependencyKey, DependencyWorldField, JobClock, Universe, World};
+use tex_state::{
+    DependencyEngineField, DependencyKey, DependencyWorldField, JobClock, ShellEscapePolicy,
+    Universe, World,
+};
 
 use super::*;
 use crate::conditionals::{ConditionalKind, IfLimit};
@@ -691,6 +694,59 @@ fn creation_date_uses_each_jobs_tracked_clock_fresh_and_after_format_load() {
                     field: DependencyWorldField::JobClock,
                     index: 0,
                 }
+        }));
+    }
+}
+
+#[test]
+fn latex_shell_escape_reports_each_loaded_jobs_tracked_policy() {
+    // pdfTeX and XeTeX change section [53a]: the shell-escape enquiry is 0
+    // when disabled, 1 when unrestricted, and 2 when restricted. The LaTeX
+    // compatibility spelling shares that policy and a loaded format must use
+    // the new job's World rather than the construction policy.
+    fn world(policy: ShellEscapePolicy) -> World {
+        World::memory_with_pdftex_inputs(JobClock::DEFAULT, 0, 0, policy)
+    }
+
+    let mut disabled = Universe::with_world(world(ShellEscapePolicy::Disabled));
+    crate::primitives::install_latex_expandable_primitives(&mut disabled);
+    let format = disabled.dump_format().expect("quiescent LaTeX format");
+    let mut restricted = Universe::from_format(world(ShellEscapePolicy::Restricted), &format)
+        .expect("LaTeX format loads");
+    crate::primitives::register_latex_expandable_primitives(&mut restricted);
+    let mut enabled = Universe::with_world(world(ShellEscapePolicy::Enabled));
+    crate::primitives::install_latex_expandable_primitives(&mut enabled);
+
+    for (mut universe, expected) in [(disabled, "0"), (enabled, "1"), (restricted, "2")] {
+        let primitive = universe
+            .symbol("shellescape")
+            .expect("LaTeX compatibility spelling is installed");
+        assert_eq!(
+            universe.meaning(primitive),
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::ShellEscape)
+        );
+        let mut command = CommandState::new(crate::CommandProfile::ETEX26);
+        command.push_token_level(
+            TokenPayload::Transient(SharedTokenBuffer::new(vec![traced(Token::Cs(
+                primitive.symbol(),
+            ))])),
+            TokenBehavior::Ordinary,
+            RetirementBehavior::Pop,
+            ReplayTrace::BackedUp,
+        );
+        let mut capabilities = CommandHostCapabilities::default();
+        let mark = universe
+            .begin_tracked_region()
+            .expect("start tracked conversion");
+        {
+            let mut processor = processor(&mut command, &mut universe, &mut capabilities);
+            assert_eq!(rendered(&mut processor), expected);
+        }
+        let dependencies = universe
+            .finish_tracked_region(mark)
+            .expect("shell status remains memoizable");
+        assert!(dependencies.observations().iter().any(|observation| {
+            observation.key == DependencyKey::Engine(DependencyEngineField::PdfShellEscape)
         }));
     }
 }

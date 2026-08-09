@@ -901,6 +901,18 @@ impl CommandProcessor<'_> {
                 self.push_rendered_text(&format_pdf_date(clock, 0), command.origin());
                 Ok(())
             }
+            // pdfTeX and XeTeX change section [53a] report shell escape as
+            // 0 (disabled), 1 (unrestricted), or 2 (restricted). Umber's
+            // LaTeX compatibility spelling is an expandable alias over the
+            // same tracked World policy used by `\pdfshellescape`.
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::ShellEscape) => {
+                let status = self
+                    .state
+                    .internal_integer(tex_state::meaning::InternalInteger::PdfShellEscape)
+                    .expect("the shell-escape status is an integer enquiry");
+                self.push_rendered_text(&status.to_string(), command.origin());
+                Ok(())
+            }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::StringCompare) => {
                 self.expand_string_compare(command)
             }
