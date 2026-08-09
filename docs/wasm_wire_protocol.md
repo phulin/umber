@@ -53,8 +53,10 @@ moving this projection into derived DTOs must not recreate a second receiver.
 ## Representation invariants
 
 - Every integral DTO field whose Rust range can exceed 32 bits uses
-  `SafeInteger`; values above `2^53 - 1` are rejected. Existing manual option
-  parsing applies the same bound.
+  `SafeInteger`. Incoming JavaScript numbers accept exact nonnegative integral
+  values through `2^53 - 1`; fractional, negative, non-finite, and larger
+  values are rejected, with larger values retaining the actionable safe-integer
+  diagnostic. Existing manual option parsing applies the same bound.
 - Byte fields use `serde_bytes`, an explicit TypeScript `Uint8Array` override,
   and the non-JSON `serde-wasm-bindgen` serializer. The serializer emits a
   `Uint8Array`; no byte field uses base64, a JSON number array, or an

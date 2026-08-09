@@ -37,8 +37,48 @@ impl<'de> Deserialize<'de> for SafeInteger {
     where
         D: serde::Deserializer<'de>,
     {
-        let value = u64::deserialize(deserializer)?;
-        Self::new(value).map_err(serde::de::Error::custom)
+        struct SafeIntegerVisitor;
+
+        impl serde::de::Visitor<'_> for SafeIntegerVisitor {
+            type Value = SafeInteger;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a JavaScript-safe unsigned integer")
+            }
+
+            fn visit_u64<E>(self, value: u64) -> Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                SafeInteger::new(value).map_err(E::custom)
+            }
+
+            fn visit_i64<E>(self, value: i64) -> Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                let value = u64::try_from(value)
+                    .map_err(|_| E::invalid_value(serde::de::Unexpected::Signed(value), &self))?;
+                self.visit_u64(value)
+            }
+
+            fn visit_f64<E>(self, value: f64) -> Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                if !value.is_finite() || value.fract() != 0.0 || value < 0.0 {
+                    return Err(E::invalid_value(serde::de::Unexpected::Float(value), &self));
+                }
+                if value > MAX_SAFE_INTEGER as f64 {
+                    return Err(E::custom(format_args!(
+                        "{value:.0} exceeds JavaScript's safe integer range"
+                    )));
+                }
+                Ok(SafeInteger(value as u64))
+            }
+        }
+
+        deserializer.deserialize_any(SafeIntegerVisitor)
     }
 }
 

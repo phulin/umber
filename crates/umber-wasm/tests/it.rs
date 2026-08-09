@@ -247,11 +247,10 @@ fn wire_schema_is_explicit_and_option_numbers_are_javascript_safe() {
         Ok(_) => panic!("unsafe integer was accepted"),
         Err(error) => error,
     };
+    assert!(error.is_instance_of::<js_sys::Error>());
     assert!(
-        error
-            .as_string()
-            .expect("boundary message")
-            .contains("safe integer")
+        string_field(&error, "message").contains("safe integer"),
+        "public boundary error must explain JavaScript's safe-integer limit",
     );
 }
 
@@ -1379,7 +1378,7 @@ fn committed_plain_format_loads_and_rejects_incompatible_bytes() {
     wrong_magic[..8].copy_from_slice(b"plaintex");
     assert_format_error(&wrong_magic, "not an Umber format file");
 
-    for incompatible in [8_u32, 9, 11] {
+    for incompatible in [8_u32, 9, 10, 12] {
         let mut wrong_schema = format.to_vec();
         wrong_schema[8..12].copy_from_slice(&incompatible.to_le_bytes());
         assert_format_error(
@@ -1478,7 +1477,7 @@ fn rendered_queries_track_length_changes_before_a_reused_page() {
 
 #[wasm_bindgen_test]
 fn retained_html_updates_cross_the_wasm_boundary_as_typed_snapshots_and_patches() {
-    let original = "\\font\\tenrm=cmr10\\relax\\shipout\\hbox{A}\\end";
+    let original = "\\font\\tenrm=cmr10\\relax\\tenrm\\shipout\\hbox{A}\\end";
     let mut session = initial_rendered_query_session(original);
     let snapshot = session.render_update().expect("initial render update");
     assert_eq!(string_field(&snapshot, "kind"), "snapshot");
@@ -1736,6 +1735,9 @@ fn native_stabilize(
                         ResourceRequest::File(request) => {
                             ResourceResponse::FileUnavailable(request.key().clone())
                         }
+                        ResourceRequest::Font(request) => {
+                            ResourceResponse::FontUnavailable(request.key)
+                        }
                         request => panic!("unexpected native resource: {request:?}"),
                     })
                     .collect();
@@ -1757,6 +1759,9 @@ fn native_stabilize(
                     .map(|request| match request {
                         ResourceRequest::File(request) => {
                             ResourceResponse::FileUnavailable(request.key().clone())
+                        }
+                        ResourceRequest::Font(request) => {
+                            ResourceResponse::FontUnavailable(request.key)
                         }
                         request => panic!("unexpected native resource: {request:?}"),
                     })
@@ -1828,11 +1833,14 @@ fn provide_unavailable_editor_resources(session: &mut EditorSession, attempt: &J
         .chain(Array::from(&field(attempt, "probes")).iter())
     {
         let request: Object = request.unchecked_into();
-        let response = Object::new();
-        for name in ["domain", "kind", "name"] {
-            set(&response, name, &field(request.as_ref(), name));
-        }
-        set(&response, "type", &JsValue::from_str("file-unavailable"));
+        let response = Object::assign(&Object::new(), &request);
+        let unavailable_type = match string_field(request.as_ref(), "type").as_str() {
+            "file" => "file-unavailable",
+            "font" => "font-unavailable",
+            "pk-font" => "pk-font-unavailable",
+            unexpected => panic!("unexpected WASM resource type: {unexpected}"),
+        };
+        set(&response, "type", &JsValue::from_str(unavailable_type));
         responses.push(&response);
     }
     session
