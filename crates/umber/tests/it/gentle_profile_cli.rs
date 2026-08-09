@@ -71,4 +71,5 @@ mean_literal_run=7.101272 segmentation_cache_hits=0 segmentation_cache_misses=0 
 builder_appends=0 source_text_span_attempts=236260 source_text_spans=5775 \
 source_text_tokens=84306 mean_source_text_run=14.598442"
     ));
+    assert!(!stdout.contains("gentle-profile meaning invalidations:"));
 }

@@ -132,7 +132,7 @@ scripts/profile-gentle.sh
 ```
 
 The script builds `gentle-profile` with release optimizations, full debug
-information, and the compile-time `profiling-stats` instrumentation. It records
+information, and the compile-time `profiling` instrumentation. It records
 50 measured executions with Samply and writes the profile to
 `target/profiles/gentle.json.gz`. Override the run counts and output path with:
 
@@ -199,9 +199,9 @@ under `--memo-layers none` and the relevant remaining pure layer in alternating
 command order when a focused gate must remain usable independently of the
 composite sequence.
 
-Use the build without `profiling-stats` for release latency. Its summary prints
+Use the build without `profiling` for release latency. Its summary prints
 `profiling_stats=false` so an attributed run cannot be mistaken for a release
-comparison. Rebuild with `--features profiling-runner,profiling-stats` only
+comparison. Rebuild with `--features profiling-runner,profiling` only
 when named phases and identity counters are needed to explain a path.
 
 To isolate cold pure-cache recording overhead, repeat fresh session priming
@@ -494,6 +494,14 @@ survivor from the owned box payload, while keeping the existing register and
 rollback representation, is the narrower higher-value follow-up.
 
 ## Non-macro decoded-meaning cache experiment
+
+The feature-gated local-write, global-write, group-exit, and rollback
+invalidation census belonged to the earlier expansion meaning-site cache. The
+cache, its `MeaningCacheGuard`, and its measurement hooks were retired with the
+expansion state facade, so `gentle-profile` no longer reports meaning-cache
+invalidations. Restoring that census without a guarded cache would measure no
+live optimization and would add profiling overhead without an attribution
+owner.
 
 Issue `umber2-qxh1` added a 64-entry direct-mapped cache for decoded control-
 sequence meanings outside immutable macro replay sites. Entries were guarded
