@@ -219,7 +219,9 @@ authenticates the complete result envelope with HMAC-SHA-256, binding the
 protocol, recipe identity, image digest, and success or diagnostic payload to
 the trusted child.
 
-The parent samples worker wall time and RSS independently of command return or
+Before releasing the authenticated construction request, the parent samples
+the worker's baseline RSS and rejects an already-exceeded bound. It continues
+sampling worker wall time and RSS independently of command return or
 cooperative engine checkpoints while bounded readers concurrently drain both
 worker pipes. Standard output is limited to the 256 MiB format-image limit plus
 64 KiB of protocol framing, and diagnostic standard error is limited to 1 MiB.

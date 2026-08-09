@@ -236,6 +236,10 @@ pub(crate) fn construct(
                 "missing worker stderr".into(),
             ));
         };
+        if let Err(error) = arm_resident_set_guard(&mut child, recipe.guards.resident_bytes) {
+            terminate(&mut child);
+            return Err(error);
+        }
         let writer_key = Zeroizing::new(*auth_key);
         let writer = std::thread::spawn(move || {
             stdin
@@ -622,6 +626,21 @@ fn terminate(child: &mut Child) {
 fn worker_rss(pid: u32) -> Result<u64, WorkerResidentSetError> {
     let path = format!("/proc/{pid}/statm");
     resident_set_from_statm_result(std::fs::read_to_string(path))
+}
+
+#[cfg(target_os = "linux")]
+fn arm_resident_set_guard(
+    child: &mut Child,
+    resident_bytes: u64,
+) -> Result<(), FormatFixtureError> {
+    match worker_rss(child.id()) {
+        Ok(rss) if rss > resident_bytes => Err(FormatFixtureError::ResidentSetExceeded),
+        Ok(_) => Ok(()),
+        Err(WorkerResidentSetError::ProcessVanished) => {
+            reconcile_process_disappearance(&mut None, || child.try_wait())
+        }
+        Err(WorkerResidentSetError::Unsupported) => Err(FormatFixtureError::ResidentSetUnsupported),
+    }
 }
 
 #[cfg(target_os = "linux")]
