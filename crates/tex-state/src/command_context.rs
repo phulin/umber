@@ -6,7 +6,8 @@
 
 use crate::{
     ChangedAt, DependencyCodeTable, DependencyEngineField, DependencyFontField, DependencyKey,
-    DependencyValue, TracedTokenList, TrackedRegionBarrier, Universe,
+    DependencyValue, DependencyWorldField, JobClock, TracedTokenList, TrackedRegionBarrier,
+    Universe,
     cell::{BankTag, CellId},
     env::banks::{GlueParam, IntParam, TokParam},
     glue::GlueSpec,
@@ -88,6 +89,18 @@ impl CommandContext<'_> {
     pub fn unsupported_host_capability(&mut self) {
         self.universe
             .poison_tracked_region(TrackedRegionBarrier::UnsupportedHostCapability);
+    }
+
+    /// Reads the immutable job-start clock through its precise World
+    /// dependency. Conversions such as pdfTeX's `\pdfcreationdate` depend on
+    /// this value without gaining general host or clock access.
+    #[must_use]
+    pub fn job_clock(&mut self) -> JobClock {
+        self.observe_dependency(DependencyKey::World {
+            field: DependencyWorldField::JobClock,
+            index: 0,
+        });
+        self.universe.world().job_clock()
     }
 
     /// Conservatively records the command renderer's shared parameter reads.

@@ -1713,7 +1713,6 @@ fn run_initializes_clock_parameters_from_source_date_epoch() {
 
 #[test]
 #[allow(clippy::disallowed_methods)] // host-side temporary files and command execution.
-#[ignore = "manual compatibility/parity tier: not a cutover closure gate"]
 fn latex_creationdate_uses_the_source_date_epoch_job_clock() {
     let temp_dir = tempfile::tempdir().expect("create creation-date temp dir");
     let source = temp_dir.path().join("creationdate.tex");

@@ -2716,11 +2716,17 @@ terminal, or process access.
 
 - opening an input request into registered immutable backing;
 - reading stream state through `World`;
-- fixed job clock;
 - deterministic random values;
 - PDF and font enquiries owned by aggregate state;
 - staged terminal/log diagnostics; and
 - optional dependency observation.
+
+The immutable fixed job clock is already owned by `World`, so canonical
+conversions read it through `CommandContext`'s precise tracked dependency
+rather than duplicating it in the transient host capability set. In
+particular, pdftex.web §1590's `\pdfcreationdate` and the LaTeX-compatible
+`\creationdate` alias read the current job's clock after a format load and
+return it through the ordinary conversion-token path.
 
 A missing resource returns a typed `NeedResource`. No async future, callback,
 or scanner continuation is stored in `CommandState`. The enclosing executor

@@ -891,6 +891,16 @@ impl CommandProcessor<'_> {
                 self.push_rendered_text(&value.to_string(), command.origin());
                 Ok(())
             }
+            // pdftex.web §1590's `pdf_creation_date_code` conversion calls
+            // `getcreationdate`, then returns the fixed job-start timestamp
+            // through the ordinary `str_toks`/`ins_list` conversion path.
+            // Both the LaTeX-compatible `\creationdate` spelling and
+            // pdfTeX's `\pdfcreationdate` spelling share this meaning.
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::CreationDate) => {
+                let clock = self.state.job_clock();
+                self.push_rendered_text(&format_pdf_date(clock, 0), command.origin());
+                Ok(())
+            }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::StringCompare) => {
                 self.expand_string_compare(command)
             }

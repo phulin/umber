@@ -4,7 +4,7 @@ use tex_state::macro_store::MacroMeaning;
 use tex_state::meaning::{ExpandablePrimitive, Meaning, MeaningFlags, UnexpandablePrimitive};
 use tex_state::page::PageMark;
 use tex_state::token::{Catcode, Token};
-use tex_state::{Universe, World};
+use tex_state::{DependencyKey, DependencyWorldField, JobClock, Universe, World};
 
 use super::*;
 use crate::conditionals::{ConditionalKind, IfLimit};
@@ -603,6 +603,95 @@ fn pdftex_string_compare_expands_both_balanced_operands() {
         let mut processor = processor(&mut command, &mut universe, &mut capabilities);
 
         assert_eq!(rendered(&mut processor), expected);
+    }
+}
+
+#[test]
+fn creation_date_uses_each_jobs_tracked_clock_fresh_and_after_format_load() {
+    // pdftex.web §1590: `pdf_creation_date_code` inserts the immutable
+    // job-start timestamp. The LaTeX compatibility spelling and pdfTeX
+    // spelling are aliases of that one conversion, while a loaded format
+    // must read the new job's World clock rather than format-time state.
+    let fresh_clock = JobClock {
+        time: 13 * 60 + 36,
+        second: 0,
+        day: 9,
+        month: 7,
+        year: 2026,
+    };
+    let loaded_clock = JobClock {
+        time: 2 * 60 + 3,
+        second: 4,
+        day: 5,
+        month: 6,
+        year: 2042,
+    };
+
+    let mut latex_fresh = Universe::with_world(World::memory_with_clock(fresh_clock));
+    crate::primitives::install_latex_expandable_primitives(&mut latex_fresh);
+    let latex_format = latex_fresh.dump_format().expect("quiescent LaTeX format");
+    let mut latex_loaded =
+        Universe::from_format(World::memory_with_clock(loaded_clock), &latex_format)
+            .expect("LaTeX format loads");
+    crate::primitives::register_latex_expandable_primitives(&mut latex_loaded);
+
+    let mut pdftex = Universe::with_world(World::memory_with_clock(fresh_clock));
+    crate::primitives::install_pdftex_expandable_primitives(&mut pdftex);
+
+    for (mut universe, profile, spelling, expected) in [
+        (
+            latex_fresh,
+            crate::CommandProfile::ETEX26,
+            "creationdate",
+            "D:20260709133600Z",
+        ),
+        (
+            latex_loaded,
+            crate::CommandProfile::ETEX26,
+            "creationdate",
+            "D:20420605020304Z",
+        ),
+        (
+            pdftex,
+            crate::CommandProfile::PDFTEX14029,
+            "pdfcreationdate",
+            "D:20260709133600Z",
+        ),
+    ] {
+        let primitive = universe
+            .symbol(spelling)
+            .expect("profile spelling is installed");
+        assert_eq!(
+            universe.meaning(primitive),
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::CreationDate)
+        );
+        let mut command = CommandState::new(profile);
+        command.push_token_level(
+            TokenPayload::Transient(SharedTokenBuffer::new(vec![traced(Token::Cs(
+                primitive.symbol(),
+            ))])),
+            TokenBehavior::Ordinary,
+            RetirementBehavior::Pop,
+            ReplayTrace::BackedUp,
+        );
+        let mut capabilities = CommandHostCapabilities::default();
+        let mark = universe
+            .begin_tracked_region()
+            .expect("start tracked conversion");
+        {
+            let mut processor = processor(&mut command, &mut universe, &mut capabilities);
+            assert_eq!(rendered(&mut processor), expected);
+        }
+        let dependencies = universe
+            .finish_tracked_region(mark)
+            .expect("conversion remains memoizable");
+        assert!(dependencies.observations().iter().any(|observation| {
+            observation.key
+                == DependencyKey::World {
+                    field: DependencyWorldField::JobClock,
+                    index: 0,
+                }
+        }));
     }
 }
 
