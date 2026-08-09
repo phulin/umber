@@ -249,6 +249,7 @@ pub struct StringPoolAccounting {
     characters: usize,
     init_str_ptr: usize,
     init_pool_ptr: usize,
+    init_token_lists: usize,
     max_strings: usize,
     pool_size: usize,
 }
@@ -256,7 +257,7 @@ pub struct StringPoolAccounting {
 impl Default for StringPoolAccounting {
     fn default() -> Self {
         Self {
-            profile_version: 3,
+            profile_version: 4,
             // TeX82's INITEX profile begins after `get_strings_started` has
             // installed the character strings and tex.pool vocabulary. These
             // are profile coordinates, not job usage or fixture totals.
@@ -264,6 +265,7 @@ impl Default for StringPoolAccounting {
             characters: 106_841,
             init_str_ptr: 1_027,
             init_pool_ptr: 106_841,
+            init_token_lists: 0,
             // Web2C's TeX82 profile used by the pinned canonical oracle.
             max_strings: 15_000,
             pool_size: 125_000,
@@ -282,9 +284,12 @@ impl StringPoolAccounting {
         self.characters = self.characters.saturating_sub(characters);
     }
 
-    fn mark_format_baseline(&mut self) {
+    fn mark_format_baseline(&mut self, token_lists: usize) {
         self.init_str_ptr = self.strings;
         self.init_pool_ptr = self.characters;
+        if self.init_token_lists == 0 {
+            self.init_token_lists = token_lists;
+        }
     }
 
     #[must_use]
@@ -307,8 +312,12 @@ impl StringPoolAccounting {
         self.pool_size.saturating_sub(self.init_pool_ptr)
     }
 
+    pub(crate) const fn token_list_baseline(self) -> usize {
+        self.init_token_lists
+    }
+
     pub(crate) const fn has_current_profile(self) -> bool {
-        self.profile_version == 3
+        self.profile_version == 4
     }
 }
 
@@ -319,8 +328,8 @@ impl EngineUsageStatistics {
             string_capacity: other.string_capacity,
             string_characters: self.string_characters.max(other.string_characters),
             string_character_capacity: other.string_character_capacity,
-            // TeX82 §1334 reports the occupied arena extent at termination,
-            // not the largest transient extent seen by a transactional host.
+            // Variable-size typed nodes report their terminating live extent;
+            // TokenStore separately retains §125's one-word allocator extent.
             memory_words: other.memory_words,
             memory_word_capacity: other.memory_word_capacity,
             control_sequences: self.control_sequences.max(other.control_sequences),
@@ -416,6 +425,10 @@ impl Stores {
             memory_words: self
                 .tokens
                 .token_count()
+                .saturating_add(
+                    self.tokens
+                        .job_list_head_words(self.string_pool.token_list_baseline()),
+                )
                 .saturating_add(self.nodes.word_count())
                 .saturating_add(TEX82_MEMORY_ARENA_FIXED_EXTENT),
             memory_word_capacity: TEX82_MEMORY_WORD_CAPACITY,
@@ -1075,11 +1088,14 @@ impl Stores {
     }
 
     pub(crate) fn mark_string_pool_format_baseline(&mut self) {
-        self.string_pool.mark_format_baseline();
+        self.string_pool
+            .mark_format_baseline(self.tokens.list_head_extent_words());
     }
 
     pub(crate) fn restore_string_pool_accounting(&mut self, accounting: StringPoolAccounting) {
         self.string_pool = accounting;
+        self.tokens
+            .restore_format_head_reserve(accounting.token_list_baseline());
     }
 
     /// Interns a control-sequence name, reporting packed-token capacity exhaustion.

@@ -34,7 +34,7 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;
 
 #[test]
-fn engine_usage_statistics_retain_monotone_usage_but_report_live_memory_across_rollback() {
+fn engine_usage_statistics_retain_one_word_extent_across_rollback() {
     let mut universe = Universe::new();
     let baseline = universe.snapshot();
     let before = universe.engine_usage_statistics();
@@ -52,7 +52,10 @@ fn engine_usage_statistics_retain_monotone_usage_but_report_live_memory_across_r
     let rolled_back = universe.engine_usage_statistics();
     assert_eq!(rolled_back.strings, peak.strings);
     assert_eq!(rolled_back.string_characters, peak.string_characters);
-    assert_eq!(rolled_back.memory_words, before.memory_words);
+    // tex.web §125 returns the freed token node to `avail`, but §1334's
+    // `mem_end-hi_mem_min` extent does not shrink with the live token body.
+    assert_eq!(rolled_back.memory_words, before.memory_words + 1);
+    assert!(rolled_back.memory_words < peak.memory_words);
     assert_eq!(
         rolled_back.memory_word_capacity,
         before.memory_word_capacity
@@ -96,6 +99,62 @@ fn string_pool_format_baselines_and_capacities_round_trip() {
     assert_eq!(used.strings, 5);
     assert_eq!(used.string_characters, "job-control".len() + 23);
     assert_eq!(source.string_pool_accounting(), baseline);
+}
+
+#[test]
+fn memory_usage_counts_token_list_heads_relative_to_the_format_baseline() {
+    let mut source = Universe::new();
+    let format_tokens = source.intern_token_list(&[
+        Token::Char {
+            ch: 'f',
+            cat: crate::token::Catcode::Other,
+        },
+        Token::Char {
+            ch: 'm',
+            cat: crate::token::Catcode::Other,
+        },
+        Token::Char {
+            ch: 't',
+            cat: crate::token::Catcode::Other,
+        },
+    ]);
+    source.set_toks_global(0, format_tokens);
+    let image = source.dump_format().expect("format dumps");
+    let mut loaded = Universe::from_format(World::default(), &image).expect("format loads");
+    let baseline = loaded.engine_usage_statistics().memory_words;
+
+    loaded.intern_token_list(&[
+        Token::Char {
+            ch: 'j',
+            cat: crate::token::Catcode::Other,
+        },
+        Token::Char {
+            ch: 'o',
+            cat: crate::token::Catcode::Other,
+        },
+        Token::Char {
+            ch: 'b',
+            cat: crate::token::Catcode::Other,
+        },
+    ]);
+    loaded.intern_token_list(&[
+        Token::Char {
+            ch: 'r',
+            cat: crate::token::Catcode::Other,
+        },
+        Token::Char {
+            ch: 'u',
+            cat: crate::token::Catcode::Other,
+        },
+        Token::Char {
+            ch: 'n',
+            cat: crate::token::Catcode::Other,
+        },
+    ]);
+
+    // The first list reuses the format allocator's one freed head; the second
+    // extends it by tex.web §200's reference-count word.
+    assert_eq!(loaded.engine_usage_statistics().memory_words, baseline + 7);
 }
 
 #[test]

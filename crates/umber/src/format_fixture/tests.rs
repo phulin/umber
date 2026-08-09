@@ -143,15 +143,15 @@ fn recipe_identity_invalidates_every_fixture_input_class() {
 }
 
 #[test]
-fn producer_contract_five_rejects_pre_alignment_delivery_fix_entries() {
+fn producer_contract_seven_rejects_pre_token_head_extent_entries() {
     let recipe = FormatRecipe::raw_tex82();
-    let stale = producer_contract(4, &recipe.format_name, &recipe.format_ident_name);
+    let stale = producer_contract(6, &recipe.format_name, &recipe.format_ident_name);
     let current = producer_contract(
         PRODUCER_CONTRACT_VERSION,
         &recipe.format_name,
         &recipe.format_ident_name,
     );
-    assert_eq!(PRODUCER_CONTRACT_VERSION, 5);
+    assert_eq!(PRODUCER_CONTRACT_VERSION, 7);
     assert_ne!(current, stale);
 }
 

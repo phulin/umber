@@ -85,17 +85,22 @@ an accidental-corruption checksum, not an authenticity mechanism.
 
 Section kind 1 retains the historical directory name
 `TransitionalSemanticV9`, but its schema-11 payload is restricted to
-Universe-level interaction mode, TeX82 string-pool profile/accounting metadata,
-and a versioned pdfTeX INITEX resource DTO. The string-pool record carries
-`str_ptr`/`pool_ptr`, the format-relative `init_str_ptr`/`init_pool_ptr`, and
-the profile's `max_strings`/`pool_size`; typed control-sequence, filename, and
-hyphenation owners retain their own bytes and publish only `make_string`-style
-accounting transitions to this record.
-TeX82 §1334's main-memory statistic is instead a live projection of the
-typed node and token arena extents under the pinned Web2C capacity profile
-(tex.web §§125--126). Immutable glue-value interning is deliberately outside
-that projection: it is not a third WEB allocator and remains ordinary store
-state across format dump/load.
+Universe-level interaction mode, TeX82 allocation-reporting metadata, and a
+versioned pdfTeX INITEX resource DTO. The reporting record carries
+`str_ptr`/`pool_ptr`, the format-relative `init_str_ptr`/`init_pool_ptr`, the
+token-list-head baseline, and the profile's `max_strings`/`pool_size`; typed
+control-sequence, filename, hyphenation, and token-list owners retain their own
+bytes and publish only their TeX-style accounting transitions to this record.
+TeX82 §1334's main-memory statistic projects the typed node and token arenas
+under the pinned Web2C capacity profile (tex.web §§125--126). Each token list
+also contributes tex.web §200's one-word reference-count head. The format records the INITEX
+head extent, and loading derives the reusable head reserve left when semantic
+compaction removes unreachable lists. The dense canonical empty-list identity
+does not consume a TeX word. Post-format allocation consumes that reserve
+before extending the reported one-word arena.
+Immutable glue-value interning is deliberately outside that projection: it is
+not a third WEB allocator and remains ordinary store state across format
+dump/load.
 The PDF DTO retains allocation counters, raw objects, forms, external images,
 and ToUnicode mappings; token lists and node graphs are embedded as validated
 handle-free semantic envelopes. It contains no store or environment data.
