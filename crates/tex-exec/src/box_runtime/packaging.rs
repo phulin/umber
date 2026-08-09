@@ -124,8 +124,47 @@ pub(crate) fn hpack_with_overfull_rule(
         });
         packed.node.children = stores.freeze_node_list(&nodes);
     }
+    // TeX82 §§115/162 stores a discretionary's replacement as the
+    // physical nodes immediately following the disc node. Umber keeps that
+    // material in `replace` so semantic list traversal cannot count it twice;
+    // retain the physical projection separately for §182's diagnostic walk.
+    if let Some(diagnostic_children) =
+        physical_discretionary_projection(stores, packed.node.children)
+    {
+        packed.node.diagnostic_children = Some(diagnostic_children);
+    }
     crate::packing_params::report_hpack(stores, &packed, lr_problems);
     packed.node
+}
+
+fn physical_discretionary_projection(
+    stores: &mut Universe,
+    children: NodeListId,
+) -> Option<NodeListId> {
+    let nodes = stores.nodes(children).to_vec();
+    if !nodes.iter().any(|node| {
+        matches!(
+            node,
+            Node::Disc {
+                physical_replace_count: 1..,
+                ..
+            }
+        )
+    }) {
+        return None;
+    }
+    let mut physical = Vec::with_capacity(nodes.len());
+    for node in nodes {
+        let replace = match &node {
+            Node::Disc { replace, .. } => Some(stores.nodes(*replace).to_vec()),
+            _ => None,
+        };
+        physical.push(node);
+        if let Some(replace) = replace {
+            physical.extend(replace);
+        }
+    }
+    Some(stores.freeze_node_list_owned(&mut physical))
 }
 
 pub(crate) fn hpack_owned_with_overfull_rule(

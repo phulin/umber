@@ -8872,6 +8872,27 @@ fn showbox_scans_register_and_distinguishes_void_from_box_contents() {
 }
 
 #[test]
+fn showbox_retains_the_node_after_a_discretionary_replacement() {
+    // TeX82 §§115/162 links replacement nodes after the discretionary,
+    // and §182 resumes its outer diagnostic traversal after that span.
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
+    let mut control = MainControl::tex82_initex(&mut stores);
+    register_cmr10_as(&mut control, &mut stores, "cmr10.tfm");
+    register_source(
+        &mut control,
+        br"\font\f=cmr10 \f\showboxbreadth=10\showboxdepth=10\setbox0=\hbox{a\discretionary{b}{c}{d}e}\showbox0\end",
+    );
+
+    run_to_end(&mut control, &mut stores);
+
+    let output = terminal_text(&stores);
+    assert!(
+        output.contains(".\\f a\n.\\discretionary replacing 1\n..\\f b\n.|\\f c\n.\\f d\n.\\f e"),
+        "{output}"
+    );
+}
+
+#[test]
 fn etex_showbox_invalid_register_loaded_format_checkpoint_retry_recovers_to_zero() {
     // e-TeX 2.6 etex.ch [49.1296] replaces TeX82's `scan_eight_bit_int`
     // with `scan_register_num`, whose restricted scan diagnoses -1, recovers
