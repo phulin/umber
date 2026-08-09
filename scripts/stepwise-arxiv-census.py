@@ -80,6 +80,14 @@ def sha256_file(path: Path) -> str:
     return value.hexdigest()
 
 
+def distribution_manifest(distribution: Path) -> Path:
+    for name in ("manifest-v3.json", "manifest-v2.json", "manifest.json"):
+        manifest = distribution / name
+        if manifest.is_file():
+            return manifest
+    return distribution / "manifest.json"
+
+
 def atomic_json(path: Path, value: object) -> None:
     temporary = path.with_name(path.name + ".tmp")
     temporary.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n")
@@ -285,7 +293,7 @@ def main() -> None:
         fail("UMBER_ARXIV_OFFLINE must be 0 or 1")
     if os.environ.get("UMBER_ARXIV_FINALIZE", "1") != "1":
         fail("UMBER_ARXIV_FINALIZE=0 is retired; the census always records PDF finalization")
-    manifest = distribution / "manifest.json"
+    manifest = distribution_manifest(distribution)
     for path, label in ((sample, "sample"), (format_path, "format"), (manifest, "distribution manifest"), (binary, "Umber binary")):
         if not path.is_file():
             fail(f"{label} is missing: {path}")

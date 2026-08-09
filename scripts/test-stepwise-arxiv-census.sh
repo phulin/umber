@@ -14,7 +14,7 @@ for paper in ok finalfail enginefail; do
   tar -czf "$work/archives/$paper.src" -C "$work/archive-input/$paper" main.tex
 done
 printf 'format\n' >"$work/format.fmt"
-printf '{}\n' >"$work/distribution/manifest.json"
+printf '{}\n' >"$work/distribution/manifest-v3.json"
 
 cat >"$work/fake-umber" <<'EOF'
 #!/bin/sh
