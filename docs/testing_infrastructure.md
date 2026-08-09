@@ -894,6 +894,18 @@ work remains outside that guard. Tune the bounded builder through the
 `UMBER_LATEX_FORMAT_ENGINE_FUEL`, `UMBER_LATEX_FORMAT_MAX_RSS_MIB`, and
 `UMBER_LATEX_FORMAT_TIMEOUT_SECONDS` variables rather than writing a separate
 watchdog.
+
+The committed Plain-format builder applies the same watchdog contract to both
+clean INITEX generations and to the source-loaded and format-loaded DVI runs:
+
+```bash
+scripts/build-wasm-plain-format.sh --texmf-dist /path/to/texmf-dist --check
+```
+
+Its independent bounds are configurable through
+`UMBER_PLAIN_FORMAT_ENGINE_FUEL`, `UMBER_PLAIN_FORMAT_MAX_RSS_MIB`, and
+`UMBER_PLAIN_FORMAT_TIMEOUT_SECONDS`.
+
 With `--publish-input-closure`, format metadata schema 2 also records the
 canonical sorted request keys derived from that already verified trace. The
 production snapshot builder uses this mode for both engines, stages local

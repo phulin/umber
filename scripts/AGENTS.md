@@ -70,7 +70,8 @@ Read the repository-root `AGENTS.md` first. This file adds the directory map for
 - `build-wasm-package.sh`: builds the authored npm runtime with format fixtures
   only; font catalogs and font payload fixtures stay outside the package.
 - `build-wasm-plain-format.sh`: reproducibly rebuilds and verifies the packaged
-  Plain format image from `assets/plain-source.lock`.
+  Plain format image from `assets/plain-source.lock`, with every Umber process
+  constrained by the shared watchdog.
 - `sync-github-issues.sh`: explicit Beads-to-GitHub issue, epic-label, and
   project synchronization helper.
 - `build-tex82-oracle.sh`: hash-pinned TeX Live source acquisition and

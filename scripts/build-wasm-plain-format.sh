@@ -6,6 +6,10 @@ lock_file="${repo_root}/crates/umber-wasm/assets/plain-source.lock"
 output_dir="${repo_root}/crates/umber-wasm/assets"
 texmf_dist="${UMBER_TEXMF_DIST:-/usr/local/texlive/2025/texmf-dist}"
 check_only=0
+guard="${repo_root}/scripts/run-umber-guarded.py"
+guard_timeout="${UMBER_PLAIN_FORMAT_TIMEOUT_SECONDS:-600}"
+guard_rss_mib="${UMBER_PLAIN_FORMAT_MAX_RSS_MIB:-2048}"
+engine_fuel="${UMBER_PLAIN_FORMAT_ENGINE_FUEL:-500000000}"
 
 usage() {
   cat <<'EOF'
@@ -97,7 +101,7 @@ build_one() {
   stage_sources "$destination"
   (
     cd "$destination"
-    SOURCE_DATE_EPOCH="$source_date_epoch" "$umber_bin" run build.tex --format-out plain.fmt
+    SOURCE_DATE_EPOCH="$source_date_epoch" run_umber run build.tex --format-out plain.fmt
   )
 }
 
@@ -105,6 +109,15 @@ cd "$repo_root"
 cargo build -p umber
 umber_bin="${CARGO_TARGET_DIR:-${repo_root}/target}/debug/umber"
 [[ -x "$umber_bin" ]] || fail "Umber binary was not built at $umber_bin"
+[[ -x "$guard" ]] || fail "missing shared Umber watchdog: $guard"
+
+run_umber() {
+  python3 "$guard" \
+    --timeout-seconds "$guard_timeout" \
+    --max-rss-mib "$guard_rss_mib" \
+    --term-grace-seconds 5 \
+    -- env UMBER_ENGINE_FUEL="$engine_fuel" "$umber_bin" "$@"
+}
 
 build_one "${tmp_root}/first"
 build_one "${tmp_root}/second"
@@ -125,8 +138,8 @@ EOF
 printf '\\input plain \\input document\n' > "${tmp_root}/first/source-run.tex"
 (
   cd "${tmp_root}/first"
-  SOURCE_DATE_EPOCH="$source_date_epoch" "$umber_bin" run source-run.tex --dvi source.dvi
-  SOURCE_DATE_EPOCH="$source_date_epoch" "$umber_bin" run document.tex --format plain.fmt --dvi loaded.dvi
+  SOURCE_DATE_EPOCH="$source_date_epoch" run_umber run source-run.tex --dvi source.dvi
+  SOURCE_DATE_EPOCH="$source_date_epoch" run_umber run document.tex --format plain.fmt --dvi loaded.dvi
 )
 cmp "${tmp_root}/first/source.dvi" "${tmp_root}/first/loaded.dvi" || \
   fail "source-initialized and format-loaded Plain DVI differ"
