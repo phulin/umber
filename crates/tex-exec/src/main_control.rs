@@ -12420,19 +12420,12 @@ fn apply_scanned_step(
     match scanned {
         ScannedStep::Continue => Ok(ReplayStep::Continue),
         ScannedStep::AlignmentTemplateEntered => {
-            // TeX82 §§1034--1036 finishes the current ligature/kerning
-            // word when the alignment delimiter interrupts `main_loop`, before
-            // the v-template is processed. A `\span` keeps the same alignment
-            // cell list open, but it does not join the character runs on its
-            // two sides. Without this flush, `b\span\omit c` reaches the TFM
-            // lig/kern machine as one `bc` run and acquires a noncanonical
-            // inter-character kern.
-            if matches!(
-                modes.current_mode(),
-                Mode::Horizontal | Mode::RestrictedHorizontal
-            ) {
-                crate::box_runtime::flush_pending_hchars_with_fuel(modes, stores, command.fuel)?;
-            }
+            // TeX82 §§1034--1038's character lookahead calls `get_next`,
+            // whose alignment interception inserts the v-template and then
+            // resumes that same lookahead. Characters at the end of a cell
+            // body can therefore ligate or kern with the v-template prefix.
+            // The run ends at §1131's `endv` below, before `fin_col` advances
+            // across a tab or span delimiter.
             Ok(ReplayStep::Continue)
         }
         ScannedStep::Relax => {
@@ -15775,6 +15768,12 @@ fn apply_scanned_step(
             Ok(ReplayStep::Continue)
         }
         ScannedStep::AlignmentCellFinish { alignment } => {
+            if matches!(
+                modes.current_mode(),
+                Mode::Horizontal | Mode::RestrictedHorizontal
+            ) {
+                crate::box_runtime::flush_pending_hchars_with_fuel(modes, stores, command.fuel)?;
+            }
             let finished = command
                 .processor(stores)
                 .finish_alignment_cell(alignment)

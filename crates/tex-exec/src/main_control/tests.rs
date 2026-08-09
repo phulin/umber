@@ -2074,6 +2074,47 @@ fn span_delimiter_ends_the_pending_ligkern_run() {
 }
 
 #[test]
+fn alignment_v_template_continues_the_pending_ligkern_run() {
+    // TeX82 §§1034--1038: `main_loop_lookahead` crosses the §342 alignment
+    // interception into the v-template. CMR10's `fi` ligature therefore
+    // combines a final body character with the template's first character.
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = MainControl::tex82_initex(&mut stores);
+    control.set_fuel_limit(20_000).expect("bounded fuel");
+    register_cmr10_as(&mut control, &mut stores, "cmr10.tfm");
+    register_source(
+        &mut control,
+        br"\font\f=cmr10 \f
+          \setbox0=\vbox{\halign{#i\cr f\cr}}
+          \end",
+    );
+
+    run_to_end(&mut control, &mut stores);
+
+    fn collect_ligatures(
+        stores: &Universe,
+        nodes: tex_state::ids::NodeListId,
+        found: &mut Vec<Vec<char>>,
+    ) {
+        for node in stores.nodes(nodes) {
+            match node {
+                tex_state::node_arena::NodeRef::Lig { orig, .. } => found.push(orig.to_vec()),
+                tex_state::node_arena::NodeRef::HList(boxed)
+                | tex_state::node_arena::NodeRef::VList(boxed) => {
+                    collect_ligatures(stores, boxed.children, found);
+                }
+                _ => {}
+            }
+        }
+    }
+
+    let root = stores.box_reg(0).expect("vbox is assigned");
+    let mut ligatures = Vec::new();
+    collect_ligatures(&stores, root, &mut ligatures);
+    assert_eq!(ligatures, [vec!['f', 'i']]);
+}
+
+#[test]
 fn nested_valign_rows_do_not_contribute_baseline_glue_to_outer_cell_width() {
     // TeX82 §799 appends a finished `\valign` row with a plain horizontal
     // splice. The two row widths therefore total exactly 5pt in the enclosing

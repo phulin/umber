@@ -35,7 +35,11 @@ interception. It must not back up or convert the intercepted delimiter to
 `endv`. The ordinary alignment-delivery path reports the original TeX82
 delimiter identity (`tab`, `span`, `cr`, or `crcr`) at state 0 before selecting
 the same v-template transition. In either path, the intercepted delimiter is
-not separately observed as an ordinary raw command. At the later retained
+not separately observed as an ordinary raw command. When the interception
+occurs inside TeX82 §§1034--1038 `main_loop_lookahead`, that lookahead resumes
+inside the v-template: a final body character and an initial v-template
+character remain in one ligature/kern run. The run ends at §1131 `do_endv`,
+before `fin_col` advances across the saved tab or span. At the later retained
 v-template boundary, `get_next` first delivers frozen
 `end_template`; TeX82 §343 expands it to frozen `endv`, and §1131's `do_endv`
 then walks the input stack expecting to find that frame still live. `do_endv`
