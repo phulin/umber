@@ -10,6 +10,7 @@ pub use trip_triage::{
 
 use std::fmt::Write as _;
 use std::fs;
+use std::io::Write as _;
 use std::path::{Path, PathBuf};
 #[cfg(feature = "reference-tools")]
 use std::process::Command;
@@ -156,15 +157,131 @@ pub fn run_named_fixture_document(
         .join("target/conformance-artifacts")
         .join(document)
         .with_extension("dvi");
-    if let Some(parent) = actual_path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    fs::write(&actual_path, actual)?;
-    compare_dvi_files(
-        fixture,
+    publish_and_compare_dvi(
         &actual_path,
+        &fixture_bytes,
+        &actual,
         &repo_root.join("target/conformance-triage"),
         document,
+    )
+}
+
+/// Publishes a diagnostic artifact without making its shared path the
+/// comparison authority.
+///
+/// Libtest may run multiple conformance routes for the same document at once.
+/// They deliberately share the human-facing artifact path, but each route
+/// must compare the exact bytes returned by its own engine invocation. The
+/// atomic replacement also ensures an external reader sees either complete
+/// predecessor bytes or complete successor bytes, never `fs::write`'s
+/// truncate-and-fill interval.
+fn publish_and_compare_dvi(
+    actual_path: &Path,
+    expected: &[u8],
+    actual: &[u8],
+    triage_root: &Path,
+    label: &str,
+) -> Result<()> {
+    publish_dvi_atomically(actual_path, actual)?;
+    compare_dvi_bytes(expected, actual, triage_root, label)
+}
+
+fn publish_dvi_atomically(path: &Path, bytes: &[u8]) -> Result<()> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| anyhow!("DVI artifact path has no parent: {}", path.display()))?;
+    fs::create_dir_all(parent).with_context(|| {
+        format!(
+            "failed to create DVI artifact directory {}",
+            parent.display()
+        )
+    })?;
+    let mut staged = tempfile::NamedTempFile::new_in(parent)
+        .with_context(|| format!("failed to stage DVI artifact in {}", parent.display()))?;
+    staged
+        .write_all(bytes)
+        .with_context(|| format!("failed to stage DVI artifact {}", path.display()))?;
+    staged
+        .persist(path)
+        .map_err(|error| error.error)
+        .with_context(|| format!("failed to publish DVI artifact {}", path.display()))?;
+    Ok(())
+}
+
+/// Applies the shared end-to-end conformance oracle directly to two DVI byte
+/// sequences. The only normalization is the variable preamble comment
+/// payload.
+pub fn compare_dvi_bytes(
+    expected_bytes: &[u8],
+    actual_bytes: &[u8],
+    triage_root: &Path,
+    label: &str,
+) -> Result<()> {
+    let expected = EngineDvi {
+        normalized: normalized_dvi_for_comparison(expected_bytes)?,
+        bytes: expected_bytes.to_vec(),
+    };
+    let actual = EngineDvi {
+        normalized: normalized_dvi_for_comparison(actual_bytes)?,
+        bytes: actual_bytes.to_vec(),
+    };
+    compare_normalized_dvi(expected, actual, triage_root, label)
+}
+
+/// Applies the shared end-to-end conformance oracle to two DVI artifacts.
+/// The only normalization is the variable preamble comment payload.
+pub fn compare_dvi_files(
+    expected_path: &Path,
+    actual_path: &Path,
+    triage_root: &Path,
+    label: &str,
+) -> Result<()> {
+    let expected_bytes = fs::read(expected_path)
+        .with_context(|| format!("failed to read expected DVI {}", expected_path.display()))?;
+    let actual_bytes = fs::read(actual_path)
+        .with_context(|| format!("failed to read actual DVI {}", actual_path.display()))?;
+    compare_dvi_bytes(&expected_bytes, &actual_bytes, triage_root, label)
+}
+
+fn compare_normalized_dvi(
+    expected: EngineDvi,
+    actual: EngineDvi,
+    triage_root: &Path,
+    label: &str,
+) -> Result<()> {
+    let bundle = triage_root.join(safe_bundle_name(label));
+    if expected.normalized == actual.normalized {
+        if let Err(error) = fs::remove_dir_all(&bundle)
+            && error.kind() != std::io::ErrorKind::NotFound
+        {
+            return Err(error)
+                .with_context(|| format!("failed to remove stale {}", bundle.display()));
+        }
+        return Ok(());
+    }
+
+    if bundle.exists() {
+        fs::remove_dir_all(&bundle)
+            .with_context(|| format!("failed to replace {}", bundle.display()))?;
+    }
+    fs::create_dir_all(&bundle)
+        .with_context(|| format!("failed to create {}", bundle.display()))?;
+    fs::write(bundle.join("expected.dvi"), &expected.bytes)?;
+    fs::write(bundle.join("actual.dvi"), &actual.bytes)?;
+    let diff = first_diff(&expected.normalized, &actual.normalized);
+    fs::write(bundle.join("byte-diff.txt"), byte_diff_text(&diff))?;
+    write_page_disassembly(&bundle, &expected, &actual, diff.offset)?;
+    let (page, expected_opcode, actual_opcode) =
+        divergent_page_and_opcodes(&expected, &actual, diff.offset)?;
+    let summary = format!(
+        "case: {label}\nstatus: dvi mismatch\nfirst_divergent_byte_offset: {}\ndivergent_page: {page}\nexpected_opcode: {expected_opcode}\nactual_opcode: {actual_opcode}\n",
+        diff.offset
+    );
+    fs::write(bundle.join("summary.txt"), &summary)?;
+    bail!(
+        "{label} DVI mismatch at byte {} on page {page} ({expected_opcode} != {actual_opcode}); see {}",
+        diff.offset,
+        bundle.display()
     )
 }
 
@@ -216,60 +333,6 @@ pub fn run_named_external_document(
     } else {
         bail!("end-to-end DVI conformance failed for {document}")
     }
-}
-
-/// Applies the shared end-to-end conformance oracle to two DVI artifacts.
-/// The only normalization is the variable preamble comment payload.
-pub fn compare_dvi_files(
-    expected_path: &Path,
-    actual_path: &Path,
-    triage_root: &Path,
-    label: &str,
-) -> Result<()> {
-    let expected_bytes = fs::read(expected_path)
-        .with_context(|| format!("failed to read expected DVI {}", expected_path.display()))?;
-    let actual_bytes = fs::read(actual_path)
-        .with_context(|| format!("failed to read actual DVI {}", actual_path.display()))?;
-    let expected = EngineDvi {
-        normalized: normalized_dvi_for_comparison(&expected_bytes)?,
-        bytes: expected_bytes,
-    };
-    let actual = EngineDvi {
-        normalized: normalized_dvi_for_comparison(&actual_bytes)?,
-        bytes: actual_bytes,
-    };
-    let bundle = triage_root.join(safe_bundle_name(label));
-    if expected.normalized == actual.normalized {
-        if bundle.exists() {
-            fs::remove_dir_all(&bundle)
-                .with_context(|| format!("failed to remove stale {}", bundle.display()))?;
-        }
-        return Ok(());
-    }
-
-    if bundle.exists() {
-        fs::remove_dir_all(&bundle)
-            .with_context(|| format!("failed to replace {}", bundle.display()))?;
-    }
-    fs::create_dir_all(&bundle)
-        .with_context(|| format!("failed to create {}", bundle.display()))?;
-    fs::write(bundle.join("expected.dvi"), &expected.bytes)?;
-    fs::write(bundle.join("actual.dvi"), &actual.bytes)?;
-    let diff = first_diff(&expected.normalized, &actual.normalized);
-    fs::write(bundle.join("byte-diff.txt"), byte_diff_text(&diff))?;
-    write_page_disassembly(&bundle, &expected, &actual, diff.offset)?;
-    let (page, expected_opcode, actual_opcode) =
-        divergent_page_and_opcodes(&expected, &actual, diff.offset)?;
-    let summary = format!(
-        "case: {label}\nstatus: dvi mismatch\nfirst_divergent_byte_offset: {}\ndivergent_page: {page}\nexpected_opcode: {expected_opcode}\nactual_opcode: {actual_opcode}\n",
-        diff.offset
-    );
-    fs::write(bundle.join("summary.txt"), &summary)?;
-    bail!(
-        "{label} DVI mismatch at byte {} on page {page} ({expected_opcode} != {actual_opcode}); see {}",
-        diff.offset,
-        bundle.display()
-    )
 }
 
 #[cfg(feature = "reference-tools")]
@@ -1143,8 +1206,8 @@ fn print_usage() {
 #[cfg(test)]
 mod tests {
     use super::{
-        ManifestBoundSource, compare_dvi_files, run_self_test, synthetic_second_page_body_offset,
-        synthetic_two_page_dvi,
+        ManifestBoundSource, compare_dvi_files, publish_and_compare_dvi, run_self_test,
+        synthetic_second_page_body_offset, synthetic_two_page_dvi,
     };
 
     #[test]
@@ -1205,5 +1268,38 @@ mod tests {
                 .expect("read strict comparison summary");
         assert!(summary.contains("status: dvi mismatch"), "{summary}");
         assert!(summary.contains("divergent_page: 2"), "{summary}");
+    }
+
+    #[test]
+    fn concurrent_comparisons_keep_invocation_bytes_separate_from_shared_publication() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let artifact = temp.path().join("artifacts/story.dvi");
+        let triage = temp.path().join("triage");
+        let first = synthetic_two_page_dvi();
+        let mut second = first.clone();
+        let operand = synthetic_second_page_body_offset(&second) + 4;
+        second[operand] = second[operand].wrapping_add(1);
+        let barrier = std::sync::Barrier::new(2);
+
+        std::thread::scope(|scope| {
+            let mut runs = Vec::new();
+            for bytes in [&first, &second] {
+                let artifact = &artifact;
+                let triage = &triage;
+                let barrier = &barrier;
+                runs.push(scope.spawn(move || {
+                    barrier.wait();
+                    publish_and_compare_dvi(artifact, bytes, bytes, triage, "story")
+                }));
+            }
+            for run in runs {
+                run.join()
+                    .expect("conformance comparison thread")
+                    .expect("each invocation compares its own complete DVI");
+            }
+        });
+
+        let published = std::fs::read(&artifact).expect("read atomically published artifact");
+        assert!(published == first || published == second);
     }
 }
