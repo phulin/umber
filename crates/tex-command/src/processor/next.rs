@@ -1628,7 +1628,12 @@ impl CommandProcessor<'_> {
                             match restart {
                                 RetirementRestart::Stop => return Ok(None),
                                 RetirementRestart::Continue => {
-                                    if self.recover_runaway_eof_since(&source.scanner_at_open)? {
+                                    // TeX82 §343 calls `check_outer_validity`
+                                    // after every real source retirement. The
+                                    // scanner episode may predate this source:
+                                    // EOF still makes that unfinished scan a
+                                    // runaway before parent input can resume.
+                                    if self.recover_runaway_eof()? {
                                         continue;
                                     }
                                 }
@@ -2056,20 +2061,6 @@ impl CommandProcessor<'_> {
         self.observe_outer_validity_diagnostic(&recovery.status, true);
         self.install_outer_recovery(recovery, true)?;
         Ok(true)
-    }
-
-    /// Applies §343 only to a scanner episode entered by the source that just
-    /// ended. A source opened while an outer scanner is already active
-    /// suspends that exact typed episode; exhausting the nested source resumes
-    /// it instead of diagnosing and clearing it as a runaway.
-    fn recover_runaway_eof_since(
-        &mut self,
-        scanner_at_open: &crate::processor::status::ScannerState,
-    ) -> Result<bool, CommandError> {
-        if &self.command.scanner == scanner_at_open {
-            return Ok(false);
-        }
-        self.recover_runaway_eof()
     }
 
     /// TeX.web's `check_outer_validity` recovery table. Primitive insertions
@@ -4968,6 +4959,70 @@ mod tests {
         assert!(
             diagnostic_positions[1].0 < recovery,
             "§§379/510 diagnose skipped EOF before inserting frozen fi"
+        );
+    }
+
+    #[test]
+    fn scantokens_eof_recovers_scanner_episode_that_predates_the_pseudo_source() {
+        // e-TeX 2.6 etex.ch §53a opens `\scantokens` as a real source level,
+        // and TeX82 §343 unconditionally runs `check_outer_validity` after
+        // `end_file_reading`. The defining episode can therefore predate the
+        // pseudo-source open; its unchanged identity does not make EOF legal.
+        let mut command = CommandState::new(crate::CommandProfile::ETEX26);
+        command.begin_scanner_status(ScannerStatus::Defining(DefinitionContext {
+            target: None,
+            builder: TokenBuilderId(2),
+            warning: ScannerWarning(17),
+        }));
+        command
+            .open_scantokens(
+                SourceRegistration::new(
+                    RegisteredSourceKind::Generated,
+                    Arc::<[u8]>::from(&b""[..]),
+                ),
+                None,
+                18,
+            )
+            .expect("empty scantokens pseudo-source opens during definition scan");
+
+        let mut universe = Universe::new_with_plain_catcodes();
+        recovery_primitives(&mut universe);
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut recorder = Recorder::default();
+        let recovered = processor(&mut command, &mut universe, &mut capabilities)
+            .with_observer(&mut recorder)
+            .get_next()
+            .expect("pseudo-source EOF recovery succeeds")
+            .expect("definition recovery inserts a right brace");
+        assert_eq!(
+            recovered.spelling().semantic_token(),
+            Token::Char {
+                ch: '}',
+                cat: Catcode::EndGroup,
+            }
+        );
+        assert!(matches!(command.scanner.status(), ScannerStatus::Normal));
+
+        let retirement = recorder
+            .0
+            .iter()
+            .position(|record| {
+                matches!(record, CommandObservation::Input(input)
+                    if input.transition == InputTransition::Retire
+                        && input.source_name == Some(SourceNameClass::Scantokens(18)))
+            })
+            .expect("scantokens source retirement is observed");
+        let diagnostic = recorder
+            .0
+            .iter()
+            .position(|record| {
+                matches!(record, CommandObservation::Diagnostic(diagnostic)
+                    if diagnostic.diagnostic == "outer_validity_eof")
+            })
+            .expect("definition EOF outer-validity diagnostic is observed");
+        assert!(
+            retirement < diagnostic,
+            "TeX82 §343 retires the source before checking outer validity"
         );
     }
 

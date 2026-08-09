@@ -38,11 +38,6 @@ pub(crate) struct SourceLevel {
     /// and not on [`InputLevel`].
     pub(crate) name_class: SourceNameClass,
     pub(crate) retirement: SourceRetirement,
-    /// The complete scanner episode suspended by this source open. At this
-    /// source's EOF, an unchanged episode belongs to the enclosing caller and
-    /// must resume there; only a different episode entered inside this source
-    /// is eligible for §343 outer-validity recovery.
-    pub(crate) scanner_at_open: crate::processor::status::ScannerState,
     /// e-TeX §24.362's once-only token list, pushed above this source when
     /// natural EOF is first observed and before `end_file_reading`.
     pub(crate) every_eof: Option<tex_state::TracedTokenList>,
