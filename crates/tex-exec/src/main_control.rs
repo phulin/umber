@@ -12418,7 +12418,23 @@ fn apply_scanned_step(
     end_job_ejection_pending: &mut bool,
 ) -> Result<ReplayStep, ExecError> {
     match scanned {
-        ScannedStep::Continue | ScannedStep::AlignmentTemplateEntered => Ok(ReplayStep::Continue),
+        ScannedStep::Continue => Ok(ReplayStep::Continue),
+        ScannedStep::AlignmentTemplateEntered => {
+            // TeX82 §§1034--1036 finishes the current ligature/kerning
+            // word when the alignment delimiter interrupts `main_loop`, before
+            // the v-template is processed. A `\span` keeps the same alignment
+            // cell list open, but it does not join the character runs on its
+            // two sides. Without this flush, `b\span\omit c` reaches the TFM
+            // lig/kern machine as one `bc` run and acquires a noncanonical
+            // inter-character kern.
+            if matches!(
+                modes.current_mode(),
+                Mode::Horizontal | Mode::RestrictedHorizontal
+            ) {
+                crate::box_runtime::flush_pending_hchars_with_fuel(modes, stores, command.fuel)?;
+            }
+            Ok(ReplayStep::Continue)
+        }
         ScannedStep::Relax => {
             // TeX82 §1030 reaches §1045's do-nothing arm only after leaving
             // the ligature loop. The command itself has no list effect, but

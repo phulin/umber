@@ -1570,7 +1570,6 @@ fn run_typeset_corpus_matches_committed_box_dumps() {
         true,
         &[
             "alignment_showlists_unset", // umber2-johp.758
-            "alignment_widths_spans",    // umber2-johp.759
             "material_primitives",       // umber2-johp.757
         ],
     );

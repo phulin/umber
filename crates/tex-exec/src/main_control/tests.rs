@@ -2039,6 +2039,41 @@ fn preamble_span_expands_one_token_and_preserves_later_template_meaning() {
 }
 
 #[test]
+fn span_delimiter_ends_the_pending_ligkern_run() {
+    // TeX82 §§1034--1036 finish a character word when the alignment
+    // delimiter interrupts `main_loop`. Although §791 keeps a spanned cell's
+    // list open, the characters on opposite sides of `\span` are therefore
+    // distinct lig/kern runs. CMR10 kerns `bc` by 0.27779pt, so this fixture
+    // detects an accidental run carried across either span boundary.
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = MainControl::tex82_initex(&mut stores);
+    control.set_fuel_limit(20_000).expect("bounded fuel");
+    register_cmr10_as(&mut control, &mut stores, "cmr10.tfm");
+    register_source(
+        &mut control,
+        br"\font\f=cmr10 \f
+          \setbox0=\vbox{\halign{<#>&[#]&( # )\cr
+            \omit a\span\omit b\span\omit c\cr}}
+          \end",
+    );
+
+    run_to_end(&mut control, &mut stores);
+
+    let root = stores.box_reg(0).expect("vbox is assigned");
+    let Some(Node::VList(boxed)) = stores.nodes(root).first().map(|node| node.to_owned()) else {
+        panic!("box 0 holds a vlist");
+    };
+    assert_eq!(boxed.width.raw(), 983_042, "natural width is 15.00003pt");
+    assert_eq!(
+        alignment_node_projection(&stores, &box_child_nodes(&stores, 0)),
+        vec![AlignmentNodeProjection::Box {
+            shift: 0,
+            kerns: Vec::new(),
+        }],
+    );
+}
+
+#[test]
 fn nested_valign_rows_do_not_contribute_baseline_glue_to_outer_cell_width() {
     // TeX82 §799 appends a finished `\valign` row with a plain horizontal
     // splice. The two row widths therefore total exactly 5pt in the enclosing
