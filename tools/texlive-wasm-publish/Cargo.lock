@@ -203,6 +203,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
 
 [[package]]
+name = "pdf-writer"
+version = "0.15.0"
+source = "git+https://github.com/phulin/pdf-writer.git?rev=030c3b1ad0e528b13ee3e6ca4605c91fbeaa3d91#030c3b1ad0e528b13ee3e6ca4605c91fbeaa3d91"
+dependencies = [
+ "bitflags",
+ "itoa",
+ "memchr",
+ "ryu",
+]
+
+[[package]]
 name = "proc-macro2"
 version = "1.0.106"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -244,6 +255,12 @@ dependencies = [
  "linux-raw-sys",
  "windows-sys",
 ]
+
+[[package]]
+name = "ryu"
+version = "1.0.23"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9774ba4a74de5f7b1c1451ed6cd5285a32eddb5cccb8cc655a4e50009e06477f"
 
 [[package]]
 name = "serde"
@@ -347,6 +364,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "hayro-syntax",
+ "pdf-writer",
  "serde_json",
  "sha2",
  "similar",
