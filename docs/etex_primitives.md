@@ -63,8 +63,12 @@ rounding. `\glueexpr` and `\muexpr` implement the same grammar componentwise,
 including dominant infinite orders and combined scaling. `\gluestretch`,
 `\glueshrink`, `\gluestretchorder`, and `\glueshrinkorder` expose the manual's
 component values and order codes; `\gluetomu` and `\mutoglue` preserve all
-components while changing the unit type. `\fontcharwd`, `\fontcharht`, `\fontchardp`, and
-`\fontcharic` are implemented as read-only internal dimensions.
+components and their e-TeX [53a.5404--5425] glue-pointer identity while
+changing the unit type. Local `\skip` and `\muskip` writes therefore take
+e-TeX [19.277]'s `reassigning` branch after a no-op conversion/expression
+round trip instead of comparing only their rendered components. `\fontcharwd`,
+`\fontcharht`, `\fontchardp`, and `\fontcharic` are implemented as read-only
+internal dimensions.
 
 ## Diagnostics and mutable state (manual sections 3.4, 3.6)
 

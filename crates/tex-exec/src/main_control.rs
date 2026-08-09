@@ -116,6 +116,10 @@ pub struct MainControl {
     /// scanning allocated a fresh TeX glue node that Umber subsequently
     /// hash-consed with an equal existing node.
     skip_pointer_sources: Vec<Option<(GlueId, Option<GlueId>)>>,
+    /// Mu-glue counterpart of [`Self::skip_pointer_sources`]. e-TeX's
+    /// `\gluetomu` and `\mutoglue` conversions retain the source pointer, so
+    /// the two register banks need the same identity accounting.
+    muskip_pointer_sources: Vec<Option<(GlueId, Option<GlueId>)>>,
     /// True while `main_control` is parked at TeX82 §1034's
     /// `main_loop_lookahead` rather than at §1030's `big_switch`.
     ///
@@ -952,19 +956,40 @@ impl MainControl {
         )
     }
 
-    fn local_skip_pointer_reassigned(&self, stores: &Universe, scanned: &ScannedStep) -> bool {
-        let ScannedStep::Skip {
-            index,
-            value,
-            source_identity,
-            source_skip_index,
-            global: false,
-            ..
-        } = scanned
-        else {
-            return false;
-        };
-        let physical = stores.skip(*index);
+    fn local_glue_pointer_reassigned(&self, stores: &Universe, scanned: &ScannedStep) -> bool {
+        let (index, value, source_identity, source_is_target, physical, pointer_sources) =
+            match scanned {
+                ScannedStep::Skip {
+                    index,
+                    value,
+                    source_identity,
+                    source_skip_index,
+                    global: false,
+                    ..
+                } => (
+                    *index,
+                    value,
+                    source_identity,
+                    *source_skip_index == Some(*index),
+                    stores.skip(*index),
+                    &self.skip_pointer_sources,
+                ),
+                ScannedStep::Muskip {
+                    index,
+                    value,
+                    source_identity,
+                    global: false,
+                    ..
+                } => (
+                    *index,
+                    value,
+                    source_identity,
+                    false,
+                    stores.muskip(*index),
+                    &self.muskip_pointer_sources,
+                ),
+                _ => return false,
+            };
         if stores.glue(physical) == GlueSpec::ZERO && *value == GlueSpec::ZERO {
             // TeX82 §1237's `trap_zero_glue` canonicalizes every scanned
             // zero specification before e-TeX [19.277] compares pointers.
@@ -973,25 +998,24 @@ impl MainControl {
         let Some(source_identity) = source_identity else {
             return false;
         };
-        if *source_skip_index == Some(*index) {
+        if source_is_target {
             return true;
         }
-        let canonical_source = self
-            .skip_pointer_sources
-            .get(usize::from(*index))
+        let canonical_source = pointer_sources
+            .get(usize::from(index))
             .and_then(|entry| *entry)
             .filter(|(recorded_physical, _)| *recorded_physical == physical)
             .map_or(Some(physical), |(_, source)| source);
         canonical_source == Some(*source_identity)
     }
 
-    fn etex_redundant_local_skip_assignment(
+    fn etex_redundant_local_glue_assignment(
         &self,
         stores: &mut Universe,
         scanned: &ScannedStep,
     ) -> bool {
         stores.int_param(IntParam::ETEX_EXTENDED_MODE) > 0
-            && self.local_skip_pointer_reassigned(stores, scanned)
+            && self.local_glue_pointer_reassigned(stores, scanned)
     }
 
     pub const DEFAULT_FUEL_LIMIT: u64 = tex_command::DEFAULT_COMMAND_FUEL_LIMIT;
@@ -4520,16 +4544,23 @@ impl MainControl {
             },
             scanned => scanned,
         };
-        let reassigning_skip = self.local_skip_pointer_reassigned(stores, &scanned);
-        let redundant_skip = self.etex_redundant_local_skip_assignment(stores, &scanned);
-        if let ScannedStep::Skip {
-            redundant,
-            reassigning,
-            ..
-        } = &mut scanned
-        {
-            *redundant = redundant_skip;
-            *reassigning = reassigning_skip;
+        let reassigning_glue = self.local_glue_pointer_reassigned(stores, &scanned);
+        let redundant_glue = self.etex_redundant_local_glue_assignment(stores, &scanned);
+        match &mut scanned {
+            ScannedStep::Skip {
+                redundant,
+                reassigning,
+                ..
+            }
+            | ScannedStep::Muskip {
+                redundant,
+                reassigning,
+                ..
+            } => {
+                *redundant = redundant_glue;
+                *reassigning = reassigning_glue;
+            }
+            _ => {}
         }
         let observing = self.operation_observations.is_some();
         let mut assignment_receipts = observing.then(Vec::new);
@@ -4599,19 +4630,35 @@ impl MainControl {
             &mut self.end_job_ejection_pending,
         );
         if result.is_ok()
-            && !redundant_skip
-            && let ScannedStep::Skip {
-                index,
-                source_identity,
-                ..
-            } = &scanned
-        {
-            if self.skip_pointer_sources.len() <= usize::from(*index) {
-                self.skip_pointer_sources
-                    .resize(usize::from(*index) + 1, None);
+            && !redundant_glue
+            && let Some((index, physical, source_identity, pointer_sources)) = match &scanned {
+                ScannedStep::Skip {
+                    index,
+                    source_identity,
+                    ..
+                } => Some((
+                    *index,
+                    stores.skip(*index),
+                    *source_identity,
+                    &mut self.skip_pointer_sources,
+                )),
+                ScannedStep::Muskip {
+                    index,
+                    source_identity,
+                    ..
+                } => Some((
+                    *index,
+                    stores.muskip(*index),
+                    *source_identity,
+                    &mut self.muskip_pointer_sources,
+                )),
+                _ => None,
             }
-            self.skip_pointer_sources[usize::from(*index)] =
-                Some((stores.skip(*index), *source_identity));
+        {
+            if pointer_sources.len() <= usize::from(index) {
+                pointer_sources.resize(usize::from(index) + 1, None);
+            }
+            pointer_sources[usize::from(index)] = Some((physical, source_identity));
         }
         if result.is_ok() && self.initex && matches!(scanned, ScannedStep::End { dump: true, .. }) {
             self.dumped_format = Some(crate::job::FormatDumpReceipt::new(
@@ -5577,6 +5624,9 @@ enum ScannedStep {
     Muskip {
         index: u16,
         value: GlueSpec,
+        source_identity: Option<tex_state::ids::GlueId>,
+        redundant: bool,
+        reassigning: bool,
         global: bool,
     },
     HorizontalSkip {
@@ -7750,18 +7800,26 @@ fn scan_command(
                 .map_err(command_error)?;
             let _ = processor.scan_optional_equals().map_err(command_error)?;
             let value = processor.scan_glue(true).map_err(command_error)?.value;
+            let source_identity = processor.scanned_glue_identity();
             Ok(ScannedStep::Muskip {
                 index,
                 value,
+                source_identity,
+                redundant: false,
+                reassigning: false,
                 global,
             })
         }
         Meaning::MuskipRegister(index) => {
             let _ = processor.scan_optional_equals().map_err(command_error)?;
             let value = processor.scan_glue(true).map_err(command_error)?.value;
+            let source_identity = processor.scanned_glue_identity();
             Ok(ScannedStep::Muskip {
                 index,
                 value,
+                source_identity,
+                redundant: false,
+                reassigning: false,
                 global,
             })
         }
@@ -12636,9 +12694,18 @@ fn apply_scanned_step(
             index,
             value,
             global,
+            redundant,
+            reassigning,
+            ..
         } => {
-            let receipt =
-                AssignmentCommitter::new(stores).skip(index, value, global, true, false, false);
+            let receipt = AssignmentCommitter::new(stores).skip(
+                index,
+                value,
+                global,
+                true,
+                redundant,
+                reassigning,
+            );
             command.retain_assignment_receipt(receipt);
             Ok(ReplayStep::Continue)
         }

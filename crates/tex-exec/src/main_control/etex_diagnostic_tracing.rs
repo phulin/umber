@@ -360,6 +360,40 @@ fn tracingassigns_uses_storage_identity_for_repeated_assignment_families() {
 }
 
 #[test]
+fn tracingassigns_preserves_muglue_pointer_identity_through_noop_conversions() {
+    // e-TeX [19.277] compares the `eq_define` halfword, while change
+    // [53a.5404--5425] makes `\gluetomu`/`\mutoglue` change only the value
+    // level. The nested no-op expression chain therefore returns the exact
+    // pointer already stored in the sparse muskip register. A separately
+    // scanned equal literal is a distinct TeX glue node and is the negative
+    // control against comparing rendered components.
+    let (mut stores, mut control) = etex_control();
+    register_source(
+        &mut control,
+        br"\nonstopmode\tracingonline=1
+\skipdef\1=32767 \1=7pt
+\muskipdef\2=32766 \2=\gluetomu\1
+\tracingassigns=1
+\1=--\mutoglue--\muexpr(--\gluetomu--\glueexpr(--\1))
+\2=--\gluetomu--\glueexpr(--\mutoglue--\muexpr(--\2))
+\muskip32765=7mu \muskip32765=7mu
+\end",
+    );
+
+    run_to_end(&mut control, &mut stores);
+
+    let log = terminal_text(&stores);
+    assert!(
+        log.contains("{reassigning \\skip32767=7.0pt}\n{reassigning \\muskip32766=7.0mu}"),
+        "{log:?}"
+    );
+    assert!(
+        log.contains("{changing \\muskip32765=7.0mu}\n{into \\muskip32765=7.0mu}"),
+        "{log:?}"
+    );
+}
+
+#[test]
 fn tracingrestores_names_the_restored_etex_tracingassigns_parameter() {
     let (mut stores, mut control) = etex_control();
     register_source(
