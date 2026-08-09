@@ -11334,7 +11334,7 @@ fn shipout_replay_box(
         print_ship_out_marker_open(stores, tracing_output, &counts, traced_node.as_ref());
     let effect_start = stores.world().effect_records().len();
     let effect_cursor = std::cell::Cell::new(effect_start);
-    let write_publications = std::cell::RefCell::new(Vec::new());
+    let replay_diagnostics = std::cell::RefCell::new(Vec::new());
     let supports_pdftex_profile = command.state.profile().capabilities().supports_pdftex();
     let uses_pdftex_semantics = command.state.engine_semantics().supports_pdftex();
     let emit_dvi = command
@@ -11375,17 +11375,18 @@ fn shipout_replay_box(
                 processor.set_command_trace_mode_prefix(mode_prefix);
                 let result = processor.expand_write_text(traced).map_err(command_error);
                 let command_trace_printed = processor.command_trace_printed();
-                write_publications.borrow_mut().extend(
-                    processor
-                        .take_semantic_diagnostics()
-                        .into_iter()
-                        .map(|diagnostic| {
-                            PendingShipoutPublication::Diagnostic(PendingDiagnostic::Command(
-                                diagnostic,
-                            ))
-                        }),
-                );
+                let diagnostics = processor
+                    .take_semantic_diagnostics()
+                    .into_iter()
+                    .map(PendingDiagnostic::Command)
+                    .collect();
                 drop(processor);
+                // TeX82 §1370 performs expansion and then writes the
+                // resulting token list on one live `write_out` call stack.
+                // Publish §367 traces and scanner diagnostics into the
+                // shipout transaction now, before normalization appends the
+                // payload's stream effect.
+                report_pending_diagnostics(stores, diagnostics)?;
                 if command_trace_printed {
                     *command.shown_mode = None;
                 }
@@ -11413,16 +11414,20 @@ fn shipout_replay_box(
             }
             if expanded.unbalanced {
                 // TeX82 §1372's `<Recover from an unbalanced write command>`.
-                // The expansion diagnostics above and this report occur on one
-                // live `write_out` call stack in tex.web. Both must cross the
-                // atomic page transaction in that same detection order.
-                write_publications
-                    .borrow_mut()
-                    .push(PendingShipoutPublication::UnbalancedWrite {
-                        context: expanded
-                            .error_context
-                            .expect("unbalanced write retains its live input context"),
-                    });
+                // Expansion diagnostics above, this report, and the recovered
+                // payload all remain in their live-call order inside the
+                // atomic page transaction.
+                crate::error_report::report_error(
+                    stores,
+                    "Unbalanced write command",
+                    &[
+                        "On this page there's a \\write with fewer real {'s than }'s.",
+                        "I can't handle that very well; good luck.",
+                    ],
+                    expanded
+                        .error_context
+                        .expect("unbalanced write retains its live input context"),
+                )?;
             }
             let mut text = String::new();
             for &token in stores.tokens(expanded.tokens.token_list()) {
@@ -11438,11 +11443,7 @@ fn shipout_replay_box(
             let mut diagnostics = Vec::new();
             let result = replay_text(&mut command, stores, kind, tokens, &mut diagnostics)
                 .map(crate::shipout::ExpandedReplayText);
-            write_publications.borrow_mut().extend(
-                diagnostics
-                    .into_iter()
-                    .map(PendingShipoutPublication::Diagnostic),
-            );
+            replay_diagnostics.borrow_mut().extend(diagnostics);
             result
         };
     let mut receipt =
@@ -11469,15 +11470,11 @@ fn shipout_replay_box(
             .to_vec()
             .into_boxed_slice();
     }
-    // TeX82 §1370 expands deferred writes during `ship_out`; §§82 and 90
-    // render any recoverable scanner errors before shipout returns. The
-    // expansion itself runs inside Umber's artifact transaction, so render
-    // the command-owned reports only after that transaction has committed:
-    // otherwise its transcript effects are consumed as staging scratch.
-    // The publication queue also contains §367 command traces: direct output
-    // inside the artifact transaction is staging scratch, so it retains every
-    // trace, scanner recovery, and resulting stream write in detection order.
-    report_shipout_publications(stores, write_publications.into_inner())?;
+    // Deferred special/PDF-literal replay diagnostics remain command-owned
+    // publications and cross the artifact transaction only after it commits.
+    // Deferred writes publish their §1370 expansion diagnostics inside the
+    // transaction so they precede the resulting stream payload.
+    report_pending_diagnostics(stores, replay_diagnostics.into_inner())?;
     print_ship_out_marker_close(stores, tracing_output);
     if let Some(publication) = receipt.as_mut() {
         stores.world_mut().claim_effect_publication_boundary(
@@ -17153,42 +17150,6 @@ impl PendingDiagnostic {
     }
 }
 
-/// Output made durable only after a shipout artifact transaction commits.
-///
-/// TeX82 §§418/1370 run expansion, diagnostics, and the resulting stream
-/// write on one live call stack. Umber stages the page atomically, so every
-/// publication crossing that transaction boundary must retain the same
-/// detection order rather than grouping reports after writes.
-enum PendingShipoutPublication {
-    Diagnostic(PendingDiagnostic),
-    UnbalancedWrite { context: String },
-}
-
-fn report_shipout_publications(
-    stores: &mut Universe,
-    publications: Vec<PendingShipoutPublication>,
-) -> Result<(), ExecError> {
-    for publication in publications {
-        match publication {
-            PendingShipoutPublication::Diagnostic(diagnostic) => {
-                report_pending_diagnostics(stores, vec![diagnostic])?;
-            }
-            PendingShipoutPublication::UnbalancedWrite { context } => {
-                crate::error_report::report_error(
-                    stores,
-                    "Unbalanced write command",
-                    &[
-                        "On this page there's a \\write with fewer real {'s than }'s.",
-                        "I can't handle that very well; good luck.",
-                    ],
-                    context,
-                )?;
-            }
-        }
-    }
-    Ok(())
-}
-
 /// Prints each report a completed scan owes, in detection order.
 fn report_pending_diagnostics(
     stores: &mut Universe,
@@ -17606,33 +17567,32 @@ mod discretionary_hyphen_tests {
         // TeX82 §§1369--1372: `write_out` traces the write-text token list
         // and expands its condition before testing the frozen `\endwrite`
         // stopper. Atomic shipout staging must retain that live-call order.
-        let mut stores = Universe::new_with_plain_catcodes();
+        let mut stores = Universe::with_world(tex_state::World::memory()).with_plain_catcodes();
         let mut control = MainControl::tex82_initex(&mut stores);
         control
             .register_root_source(tex_command::SourceRegistration::new(
                 tex_command::RegisteredSourceKind::Generated,
-                br"\tracingmacros=2\shipout\hbox{\write16{\if01{\else unbal}\fi}}\end".to_vec(),
+                br"\nonstopmode\tracingmacros=2\shipout\hbox{\write16{\if01{\else unbal}\fi}}\end"
+                    .to_vec(),
             ))
             .expect("register canonical source");
         while let MainControlStep::Continue =
             control.step(&mut stores).expect("write source executes")
         {}
-        let effects = stores.world().effect_records();
-        let trace = effects
-            .iter()
-            .position(|effect| {
-                matches!(effect, tex_state::EffectRecord::StreamWrite { text, .. }
-                    if text.contains("write->") && text.contains("unbal"))
-            })
-            .unwrap_or_else(|| panic!("write trace is visible: {effects:?}"));
-        let report = effects
-            .iter()
-            .position(|effect| {
-                matches!(effect, tex_state::EffectRecord::StreamWrite { text, .. }
-                    if text.contains("Unbalanced write command"))
-            })
-            .unwrap_or_else(|| panic!("write report is visible: {effects:?}"));
-        assert!(trace < report, "{effects:?}");
+        let log = String::from_utf8_lossy(
+            stores
+                .world()
+                .memory_log_output()
+                .expect("memory world retains committed log output"),
+        );
+        let trace = log
+            .find("write->")
+            .filter(|&start| log[start..].contains("unbal"))
+            .unwrap_or_else(|| panic!("write trace is visible: {log:?}"));
+        let report = log
+            .find("Unbalanced write command")
+            .unwrap_or_else(|| panic!("write report is visible: {log:?}"));
+        assert!(trace < report, "{log:?}");
     }
 }
 

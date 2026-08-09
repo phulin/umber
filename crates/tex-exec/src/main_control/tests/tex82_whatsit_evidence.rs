@@ -789,3 +789,27 @@ fn deferred_write_projects_stopper_selector_mode_stream_and_recovery_matrix() {
         "unchanged meanings and newlinechar give immediate/deferred byte parity"
     );
 }
+
+#[test]
+fn deferred_write_publishes_trace_and_diagnostic_before_payload() {
+    // TeX82 §§1370/418: `write_out` expands its token list with `mode=0`,
+    // so the macro trace and improper `\spacefactor` diagnostic are emitted
+    // before `token_show(def_ref)` writes the recovered zero payload.
+    let (stores, _, _) = observed_run(
+        br"\nonstopmode\tracingonline=1\tracingmacros=2
+           x\write16{\the\spacefactor}\par\vfill\penalty-10000\end",
+    );
+    let transcript = terminal_text(&stores);
+    let trace = transcript
+        .find("\\write->\\the \\spacefactor")
+        .unwrap_or_else(|| panic!("deferred-write trace is visible: {transcript:?}"));
+    let diagnostic = transcript
+        .find("Improper \\spacefactor")
+        .unwrap_or_else(|| panic!("deferred-write diagnostic is visible: {transcript:?}"));
+    let payload = transcript
+        .rfind("\n0\n")
+        .unwrap_or_else(|| panic!("deferred-write payload is visible: {transcript:?}"));
+
+    assert!(trace < diagnostic, "{transcript:?}");
+    assert!(diagnostic < payload, "{transcript:?}");
+}
