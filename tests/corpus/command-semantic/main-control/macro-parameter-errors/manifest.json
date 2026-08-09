@@ -6,8 +6,8 @@
     "terminal-check:! Parameters must be numbered consecutively.=true",
     "terminal-check:! Illegal parameter number in definition of \\body.=true",
     "terminal-check:! Illegal parameter number in definition of ~.=true",
-    "terminal-check:I've inserted the digit you should have used after the #.=true",
-    "terminal-check:are all screwed up? I'm going to assume that you meant ##.=true",
+    "terminal-check:I've inserted the digit you should have used after the #.=false",
+    "terminal-check:are all screwed up? I'm going to assume that you meant ##.=false",
     "count:0=0"
   ],
   "profile": "raw-tex82-loaded",

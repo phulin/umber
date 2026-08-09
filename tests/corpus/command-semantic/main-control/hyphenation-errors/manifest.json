@@ -42,7 +42,7 @@
     "terminal-check:l.5 \\patterns{a\\relax b a!=true",
     "terminal-check:Duplicate pattern=true",
     "terminal-check:l.5 \\patterns{a\\relax b a!b a1b a2b}=true",
-    "terminal-check:(See Appendix H.)=true",
+    "terminal-check:(See Appendix H.)=false",
     "count:0=1"
   ],
   "channels": {

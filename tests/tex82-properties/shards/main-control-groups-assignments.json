@@ -1109,21 +1109,16 @@
       "equivalence_cases": ["All four modes, log open/closed, nested groups, and repeated commands."],
       "recovery_cases": ["No value scanning occurs; an unresolved primitive is rejected before this action."],
       "semantic_owner": "tex-exec::assignments",
-      "test_level": "rust-unit+strict-semantic-xfail",
-      "coverage": [],
-      "status": "gap",
-      "gap_bead": "umber2-mp0d",
-      "planned_coverage": [
+      "test_level": "rust-unit+semantic-minifixture",
+      "coverage": [
         {
           "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
-          "test": "declared_command_semantic_cases_match",
-          "cases": [
-            "interaction-mode strict xfail",
-            "linked to umber2-mp0d",
-            "pinned first mismatch rejects XPASS and changed failure"
-          ]
+          "test": "declared_command_semantic_cases_match"
         }
-      ]
+      ],
+      "status": "covered",
+      "gap_bead": null,
+      "planned_coverage": []
     },
     {
       "id": "tex82.assignment.afterassignment",

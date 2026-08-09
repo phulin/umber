@@ -19,6 +19,52 @@ fn captured() -> CapturedChannels {
     }
 }
 
+fn run_with_printable_sink_writes(committed: bool) -> SemanticRun {
+    let mut universe = tex_state::Universe::new();
+    universe
+        .world_mut()
+        .write_text_unmetered(PrintSink::Terminal, "terminal|");
+    universe
+        .world_mut()
+        .write_text_unmetered(PrintSink::Log, "log-only|");
+    universe
+        .world_mut()
+        .write_text_unmetered(PrintSink::TerminalAndLog, "both|");
+    if committed {
+        let through = universe.world().effect_pos();
+        universe
+            .commit_effects(through)
+            .expect("printable writes commit to their memory archives");
+    }
+    SemanticRun {
+        observations: Vec::new(),
+        counts: [0; super::super::COUNT_SLOTS],
+        universe,
+        mode_transitions: Vec::new(),
+        artifacts: Vec::new(),
+        dvi: Vec::new(),
+        fatal: None,
+        complete_job_channel_streams: None,
+    }
+}
+
+#[test]
+fn terminal_projection_excludes_log_only_writes_before_and_after_commit() {
+    for committed in [false, true] {
+        let run = run_with_printable_sink_writes(committed);
+        assert_eq!(super::super::captured_terminal_text(&run), "terminal|both|");
+    }
+}
+
+#[test]
+fn channel_capture_preserves_terminal_log_and_shared_sink_routing() {
+    for committed in [false, true] {
+        let captured = CapturedChannels::capture(&run_with_printable_sink_writes(committed));
+        assert_eq!(captured.stream(StreamChannel::Terminal), b"terminal|both|");
+        assert_eq!(captured.stream(StreamChannel::Log), b"log-only|both|");
+    }
+}
+
 fn no_files(_: StreamChannel) -> Option<Vec<u8>> {
     None
 }

@@ -4,7 +4,7 @@
   },
   "expected": [
     "terminal-check:! Bad \\prevgraf (-1).=true",
-    "terminal-check:I allow only nonnegative values here.=true",
+    "terminal-check:I allow only nonnegative values here.=false",
     "count:0=1",
     "count:1=1",
     "count:2=1",

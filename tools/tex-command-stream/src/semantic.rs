@@ -23,9 +23,7 @@ use tex_command::{
     RecoveryKind, RegisteredSourceKind, SourceRegistration, canonical_names,
 };
 use tex_exec::{MainControl, MainControlStep, Mode};
-use tex_state::{
-    ContentHash, EffectRecord, InputOpenState, InputReadState, PrintSink, Universe, node::Node,
-};
+use tex_state::{ContentHash, InputOpenState, InputReadState, Universe, node::Node};
 
 pub mod channels;
 pub mod classify;
@@ -2167,26 +2165,7 @@ fn observation_value_text(value: &tex_command::ObservationValue) -> String {
 }
 
 pub fn captured_terminal_text(run: &SemanticRun) -> String {
-    let committed = run
-        .universe
-        .world()
-        .memory_terminal_output()
-        .map(|bytes| String::from_utf8_lossy(bytes).into_owned())
-        .unwrap_or_default();
-    let pending: String = run
-        .universe
-        .world()
-        .effect_records()
-        .iter()
-        .filter_map(|effect| match effect {
-            EffectRecord::StreamWrite {
-                sink: PrintSink::Terminal | PrintSink::TerminalAndLog | PrintSink::Log,
-                text,
-            } => Some(text.as_str()),
-            _ => None,
-        })
-        .collect();
-    committed + &pending
+    channels::captured_printable_text(run).0
 }
 
 pub fn terminal_check_results(output: &str, checks: &[String]) -> Vec<String> {

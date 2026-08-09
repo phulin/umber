@@ -96,18 +96,7 @@ impl CapturedChannels {
         // early bytes, which is what surfaced this for the `log` channel
         // (the `terminal` channel was already reading its own archive
         // before this comment existed).
-        let mut terminal = run
-            .universe
-            .world()
-            .memory_terminal_output()
-            .map(|bytes| String::from_utf8_lossy(bytes).into_owned())
-            .unwrap_or_default();
-        let mut log = run
-            .universe
-            .world()
-            .memory_log_output()
-            .map(|bytes| String::from_utf8_lossy(bytes).into_owned())
-            .unwrap_or_default();
+        let (terminal, log) = captured_printable_text(run);
         let effects = portable_effect_channel(
             run.observations
                 .iter()
@@ -122,37 +111,6 @@ impl CapturedChannels {
                     bytes: output.bytes().to_vec(),
                 }),
         );
-        for effect in run.universe.world().effect_records() {
-            match effect {
-                EffectRecord::StreamWrite { sink, text } => match sink {
-                    PrintSink::Terminal => terminal.push_str(text),
-                    PrintSink::Log => log.push_str(text),
-                    PrintSink::TerminalAndLog => {
-                        terminal.push_str(text);
-                        log.push_str(text);
-                    }
-                    PrintSink::Stream(_) => {}
-                },
-                EffectRecord::StreamWriteBytes { sink, bytes } => {
-                    let text = String::from_utf8_lossy(bytes);
-                    match sink {
-                        PrintSink::Terminal => terminal.push_str(&text),
-                        PrintSink::Log => log.push_str(&text),
-                        PrintSink::TerminalAndLog => {
-                            terminal.push_str(&text);
-                            log.push_str(&text);
-                        }
-                        PrintSink::Stream(_) => {}
-                    }
-                }
-                EffectRecord::StreamOpen { .. }
-                | EffectRecord::StreamClose { .. }
-                | EffectRecord::DeferredWrite { .. }
-                | EffectRecord::Special { .. }
-                | EffectRecord::PdfObjectPlaceholder { .. }
-                | EffectRecord::ShellEscape(_) => {}
-            }
-        }
         let streams = run.complete_job_channel_streams.clone().unwrap_or_else(|| {
             [
                 terminal.into_bytes(),
@@ -180,6 +138,60 @@ impl CapturedChannels {
             .expect("STREAM_CHANNELS covers every StreamChannel");
         &self.streams[index]
     }
+}
+
+/// Captures the terminal and transcript projections from their exact TeX82
+/// sinks, including both already-committed and pending writes.
+///
+/// TeX82 §54 makes `term_only`, `log_only`, and `term_and_log` distinct
+/// selectors. Keeping this routing in one helper prevents a concise terminal
+/// projection from accidentally treating transcript-only text as terminal
+/// evidence while preserving the independent log channel.
+pub(crate) fn captured_printable_text(run: &SemanticRun) -> (String, String) {
+    let mut terminal = run
+        .universe
+        .world()
+        .memory_terminal_output()
+        .map(|bytes| String::from_utf8_lossy(bytes).into_owned())
+        .unwrap_or_default();
+    let mut log = run
+        .universe
+        .world()
+        .memory_log_output()
+        .map(|bytes| String::from_utf8_lossy(bytes).into_owned())
+        .unwrap_or_default();
+    for effect in run.universe.world().effect_records() {
+        match effect {
+            EffectRecord::StreamWrite { sink, text } => match sink {
+                PrintSink::Terminal => terminal.push_str(text),
+                PrintSink::Log => log.push_str(text),
+                PrintSink::TerminalAndLog => {
+                    terminal.push_str(text);
+                    log.push_str(text);
+                }
+                PrintSink::Stream(_) => {}
+            },
+            EffectRecord::StreamWriteBytes { sink, bytes } => {
+                let text = String::from_utf8_lossy(bytes);
+                match sink {
+                    PrintSink::Terminal => terminal.push_str(&text),
+                    PrintSink::Log => log.push_str(&text),
+                    PrintSink::TerminalAndLog => {
+                        terminal.push_str(&text);
+                        log.push_str(&text);
+                    }
+                    PrintSink::Stream(_) => {}
+                }
+            }
+            EffectRecord::StreamOpen { .. }
+            | EffectRecord::StreamClose { .. }
+            | EffectRecord::DeferredWrite { .. }
+            | EffectRecord::Special { .. }
+            | EffectRecord::PdfObjectPlaceholder { .. }
+            | EffectRecord::ShellEscape(_) => {}
+        }
+    }
+    (terminal, log)
 }
 
 /// One materialized file produced by TeX's numbered write streams.

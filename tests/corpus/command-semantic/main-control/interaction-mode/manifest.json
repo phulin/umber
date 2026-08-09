@@ -2,18 +2,8 @@
   "channels": {
     "events": 80
   },
-  "expectation": {
-    "bug": "umber2-mp0d",
-    "kind": "xfail",
-    "mismatch": {
-      "actual": "terminal-check:x=true",
-      "expected": "terminal-check:x=false",
-      "index": 0,
-      "kind": "observation"
-    }
-  },
   "expected": [
-    "terminal-check:x=false",
+    "terminal-check:x )=false",
     "count:0=1"
   ],
   "profile": "raw-tex82-loaded",
@@ -23,7 +13,7 @@
     ],
     "kind": "terminal-checks",
     "terminal_checks": [
-      "x"
+      "x )"
     ]
   },
   "property_id": "tex82.assignment.interaction-mode",

@@ -4,8 +4,8 @@
   },
   "expected": [
     "terminal-check:Missing { inserted=true",
-    "terminal-check:A left brace was mandatory here, so I've put one in.=true",
-    "terminal-check:(If you're confused by all this, try typing `I}' now.)=true"
+    "terminal-check:A left brace was mandatory here, so I've put one in.=false",
+    "terminal-check:(If you're confused by all this, try typing `I}' now.)=false"
   ],
   "profile": "raw-tex82-loaded",
   "projection": {
