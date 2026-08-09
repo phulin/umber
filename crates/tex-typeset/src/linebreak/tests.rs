@@ -939,7 +939,7 @@ fn etex_last_line_fit_adjustment_and_disable_state_boundaries() {
     assert_eq!(
         fit.badness(
             &previous(-20 * Scaled::UNITY, 10 * Scaled::UNITY),
-            terminal_widths(110 * Scaled::UNITY, 0, 20 * Scaled::UNITY, 0),
+            terminal_widths(70 * Scaled::UNITY, 0, 20 * Scaled::UNITY, 0),
             sp(100 * Scaled::UNITY),
         ),
         Some((100, Fitness::Tight, sp(-20 * Scaled::UNITY)))
@@ -983,6 +983,47 @@ fn etex_last_line_fit_adjustment_and_disable_state_boundaries() {
         ),
     ];
     assert_eq!(disabled, [None; 5]);
+}
+
+/// e-TeX change-file section 38.852: the special last-line computation is
+/// reached only for a short line with infinite stretch. A long terminal line
+/// retains TeX's ordinary finite-shrink badness even when the preceding line
+/// saved a positive stretch ratio.
+#[test]
+fn etex_last_line_fit_preserves_ordinary_badness_for_long_terminal_line() {
+    let (_, _, mut parameters) = last_line_fit_paragraph();
+    parameters.last_line_fit = 500;
+    let fit = LastLineFit::new(&parameters, Widths::zero());
+    let previous = Candidate {
+        serial: 1,
+        position: 1,
+        width_position: 1,
+        start_width: Widths::zero(),
+        penalty: 0,
+        line: 1,
+        fitness: Fitness::Decent,
+        path_demerits: 0,
+        passive: None,
+        previous: None,
+        hyphenated: false,
+        line_shortfall: sp(31 * Scaled::UNITY),
+        line_glue: sp(20 * Scaled::UNITY),
+    };
+    let mut terminal_widths = Widths::from_glue(GlueSpec {
+        width: sp(100 * Scaled::UNITY),
+        stretch: sp(40 * Scaled::UNITY),
+        stretch_order: Order::Normal,
+        shrink: sp(8 * Scaled::UNITY),
+        shrink_order: Order::Normal,
+    });
+    terminal_widths.add_assign(Widths::from_glue(parameters.par_fill_skip));
+    let target = sp(96 * Scaled::UNITY);
+
+    assert_eq!(fit.badness(&previous, terminal_widths, target), None);
+    assert_eq!(
+        line_badness(terminal_widths, target, Scaled::from_raw(0), None),
+        12
+    );
 }
 
 /// e-TeX change-file sections 38.851 and 38.863: a one-line paragraph has

@@ -1297,6 +1297,9 @@ impl LastLineFit {
         if !self.enabled
             || previous.line_shortfall.raw() == 0
             || previous.line_glue.raw() <= 0
+            // e-TeX change-file section 38.852 reaches last-line fitting
+            // only from TeX's `shortfall > 0` infinite-stretch branch.
+            || widths.natural.raw() >= i64::from(target.raw())
             || widths.infinite_stretch() != self.fill_width
         {
             return None;
