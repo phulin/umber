@@ -73,6 +73,20 @@ impl RestoreRecord {
         }
     }
 
+    fn retaining_box(env: &Env, save_position: usize, index: u16) -> Self {
+        Self {
+            save_position,
+            cell: CellId::new(BankTag::Box, u32::from(index)),
+            old: env.boxes.get(index).value(),
+            trace_eligible: true,
+            retaining: true,
+            tracing_restores: env.int_param(crate::env::banks::IntParam::TRACING_RESTORES),
+            tracing_online: env.int_param(crate::env::banks::IntParam::TRACING_ONLINE),
+            escape_char: env.int_param(crate::env::banks::IntParam::ESCAPE_CHAR),
+            box_trace_text: None,
+        }
+    }
+
     #[must_use]
     pub const fn cell(&self) -> CellId {
         self.cell
@@ -760,21 +774,34 @@ impl Env {
                 Entry::Marker(_) => false,
             });
         let mut restores = Vec::new();
-        // TeX's `eq_define` saves a cell only on its first local assignment
-        // at the current level. Our journal deliberately records every write,
-        // so select the entries that correspond to real save-stack words for
-        // `\tracingrestores`; a global write starts a new local run.
+        // TeX82 §275's `eq_define` and e-TeX [53a]'s `sa_def` save a cell only
+        // on its first local assignment at the current level. Our journal
+        // deliberately records additional box writes after nested box groups
+        // advance the epoch, so select only entries that correspond to real
+        // save-stack words for `\tracingrestores`; a global write starts a new
+        // local run.
         let mut locally_saved = AHashSet::new();
         let mut traced_local_entries = AHashSet::new();
         for index in marker_index + 1..group_end {
-            let Entry::Undo(rec) = self.journal.entry(index) else {
-                continue;
-            };
-            let key = cell_key(rec.cell());
-            if rec.cell().is_global() {
-                locally_saved.remove(&key);
-            } else if locally_saved.insert(key) {
-                traced_local_entries.insert(index);
+            match self.journal.entry(index) {
+                Entry::Undo(rec) => {
+                    let key = cell_key(rec.cell());
+                    if rec.cell().is_global() {
+                        locally_saved.remove(&key);
+                    } else if locally_saved.insert(key) {
+                        traced_local_entries.insert(index);
+                    }
+                }
+                Entry::BoxUndo(id) => {
+                    let rec = self.journal.box_undo(id);
+                    let key = cell_key(CellId::new(BankTag::Box, u32::from(rec.index())));
+                    if rec.is_global() {
+                        locally_saved.remove(&key);
+                    } else if locally_saved.insert(key) {
+                        traced_local_entries.insert(index);
+                    }
+                }
+                Entry::Marker(_) => {}
             }
         }
         let meaning_changed = if has_globals {
@@ -798,31 +825,20 @@ impl Env {
                 } else if let Entry::BoxUndo(id) = self.journal.entry(index) {
                     let rec = self.journal.box_undo(id);
                     self.boxes.restore(rec.index(), rec.old());
-                    restores.push(RestoreRecord::restoring_box(
-                        self,
-                        index,
-                        rec.index(),
-                        rec.old(),
-                    ));
+                    if traced_local_entries.contains(&index) {
+                        restores.push(RestoreRecord::restoring_box(
+                            self,
+                            index,
+                            rec.index(),
+                            rec.old(),
+                        ));
+                    }
                 }
             }
             self.journal.truncate_to(marker_pos);
             self.journal.truncate_box_undos(boundary.box_undo_len);
             meaning_changed
         };
-        let mut traced_boxes = SmallVec::<[u32; 8]>::new();
-        restores.retain(|record| {
-            if record.cell().bank() != BankTag::Box {
-                return true;
-            }
-            let index = record.cell().index();
-            if traced_boxes.contains(&index) {
-                false
-            } else {
-                traced_boxes.push(index);
-                true
-            }
-        });
         reorder_sparse_register_restores(&mut restores);
         for restore in &mut restores {
             restore.refresh_restored_eqtb_value(self);
@@ -923,12 +939,16 @@ impl Env {
                             .expect("box undo was indexed before group compaction");
                         if !state.has_later_global {
                             self.boxes.restore(rec.index(), rec.old());
-                            restores.push(RestoreRecord::restoring_box(
-                                self,
-                                index,
-                                rec.index(),
-                                rec.old(),
-                            ));
+                            if traced_local_entries.contains(&index) {
+                                restores.push(RestoreRecord::restoring_box(
+                                    self,
+                                    index,
+                                    rec.index(),
+                                    rec.old(),
+                                ));
+                            }
+                        } else if traced_local_entries.contains(&index) {
+                            restores.push(RestoreRecord::retaining_box(self, index, rec.index()));
                         }
                     }
                 }

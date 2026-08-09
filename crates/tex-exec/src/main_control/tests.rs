@@ -1144,7 +1144,9 @@ fn consuming_current_group_box_preserves_original_void_restore() {
 }
 
 #[test]
-fn tracingrestores_captures_intermediate_box_before_its_arena_lifetime_ends() {
+fn tracingrestores_reports_value_before_first_local_box_assignment() {
+    // TeX82 §§275/283 save a box only on its first local assignment at the
+    // current level, then display that restored value after `unsave`.
     let mut stores = Universe::new_with_plain_catcodes();
     let mut control = MainControl::tex82_initex(&mut stores);
     register_source(
@@ -1156,7 +1158,46 @@ fn tracingrestores_captures_intermediate_box_before_its_arena_lifetime_ends() {
 
     assert_eq!(
         pending_sink_text(&stores, true),
-        "{restoring \\box7=\n\\vbox(0.0+0.0)x0.0}\n"
+        "{restoring \\box7=\n\\hbox(0.0+0.0)x0.0}\n"
+    );
+}
+
+#[test]
+fn etex_sparse_box_restore_reports_value_before_first_local_assignment() {
+    // e-TeX [47.1077] sends box registers above 255 through [53a]'s
+    // `sa_def_box`; repeated local assignments save only the original value,
+    // and `sa_restore` displays that value when the group ends.
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = etex_initex(&mut stores);
+    register_source(
+        &mut control,
+        b"\\tracingrestores=1\\tracingonline=1{\\setbox32106=\\vbox{}\\setbox32106=\\hbox{X}}\\end",
+    );
+
+    run_to_end(&mut control, &mut stores);
+
+    assert_eq!(
+        pending_sink_text(&stores, true),
+        "{restoring \\box32106=void}\n"
+    );
+}
+
+#[test]
+fn tracingrestores_reports_retained_box_after_global_assignment() {
+    // TeX82 §283 retains and displays a global value instead of reinstalling
+    // the value saved by an earlier local assignment in the same group.
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = MainControl::tex82_initex(&mut stores);
+    register_source(
+        &mut control,
+        b"\\tracingrestores=1\\tracingonline=1\\setbox7=\\vbox{}{\\setbox7=\\hbox{}\\global\\setbox7=\\hbox{X}}\\end",
+    );
+
+    run_to_end(&mut control, &mut stores);
+
+    assert_eq!(
+        pending_sink_text(&stores, true),
+        "{retaining \\box7=\n\\hbox(0.0+0.0)x0.0}\n"
     );
 }
 

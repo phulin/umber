@@ -25,9 +25,10 @@ impl Stores {
             .journal_entries_since(pos)
             .iter()
             .filter_map(|entry| match entry {
-                crate::journal::Entry::BoxUndo(id) => Some(self.env.box_undo(*id).old().value()),
+                crate::journal::Entry::BoxUndo(id) => Some(self.env.box_undo(*id)),
                 _ => None,
             })
+            .flat_map(|record| [record.old().value(), record.new_value().value()])
             .map(|word| {
                 let text = NodeListId::decode_box_word(word)
                     .map_or_else(|| "void".to_owned(), |id| self.box_restore_trace_text(id));
