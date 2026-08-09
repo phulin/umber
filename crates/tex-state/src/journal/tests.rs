@@ -1,6 +1,9 @@
 use super::{BoxUndoRec, Entry, Journal, Marker, UndoRec};
 use crate::cell::{BankTag, CellId};
+use crate::env::box_bank::BoxSlot;
+use crate::env::group::GroupKind;
 use crate::ids::SnapshotId;
+use crate::meaning::Meaning;
 use std::mem::size_of;
 
 #[test]
@@ -65,4 +68,55 @@ fn undo_record_accessors_preserve_fields() {
     assert_eq!(rec.cell(), cell);
     assert_eq!(rec.old(), u64::MIN);
     assert_eq!(rec.new_value(), u64::MAX);
+}
+
+#[test]
+fn save_stack_projection_updates_incrementally_and_rebuilds_only_on_truncate() {
+    let mut journal = Journal::new();
+    journal.push_marker(Marker::Group {
+        aftergroup_start: 0,
+        kind: GroupKind::Simple,
+    });
+    assert_eq!(journal.canonical_save_stack_words(), 1);
+
+    let undefined = CellId::new(BankTag::Meaning, 1);
+    journal.push_undo(UndoRec::new(
+        undefined,
+        Meaning::Undefined.encode(),
+        Meaning::Relax.encode(),
+    ));
+    journal.push_undo(UndoRec::new(
+        undefined,
+        Meaning::Relax.encode(),
+        Meaning::Undefined.encode(),
+    ));
+    assert_eq!(journal.canonical_save_stack_words(), 2);
+
+    let count = CellId::new(BankTag::Count, 2);
+    journal.push_undo(UndoRec::new(count, 10, 20));
+    assert_eq!(journal.canonical_save_stack_words(), 4);
+    journal.push_undo(UndoRec::new(CellId::new_global(BankTag::Count, 2), 20, 30));
+    assert_eq!(journal.canonical_save_stack_words(), 2);
+
+    journal.push_box_undo(BoxUndoRec::new(
+        3,
+        false,
+        BoxSlot::default(),
+        BoxSlot::default(),
+    ));
+    assert_eq!(journal.canonical_save_stack_words(), 4);
+    assert_eq!(journal.testing_save_stack_projection_rebuilds(), 0);
+
+    let before_nested = journal.pos();
+    journal.push_marker(Marker::Group {
+        aftergroup_start: 0,
+        kind: GroupKind::SemiSimple,
+    });
+    journal.push_undo(UndoRec::new(CellId::new(BankTag::Dimen, 4), 0, 1));
+    assert_eq!(journal.canonical_save_stack_words(), 7);
+    assert_eq!(journal.testing_save_stack_projection_rebuilds(), 0);
+
+    journal.truncate_to(before_nested);
+    assert_eq!(journal.canonical_save_stack_words(), 4);
+    assert_eq!(journal.testing_save_stack_projection_rebuilds(), 1);
 }

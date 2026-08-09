@@ -4,10 +4,12 @@
 //! group-exit and rollback walks; this module owns positions, append, slicing,
 //! truncation, and marker lookup.
 
-use crate::cell::CellId;
+use crate::cell::{BankTag, CellId};
 use crate::env::box_bank::BoxSlot;
 use crate::env::group::GroupKind;
 use crate::ids::SnapshotId;
+use crate::meaning::Meaning;
+use ahash::AHashMap;
 
 /// A journal entry.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -150,6 +152,66 @@ impl JournalPos {
 pub(crate) struct Journal {
     entries: Vec<Entry>,
     box_undos: Vec<BoxUndoRec>,
+    save_stack: SaveStackProjection,
+}
+
+/// Incremental projection of TeX82 §§273--280's physical save stack.
+///
+/// The typed journal is the semantic owner. This derived, rollback-coupled
+/// view exists only for §1334's diagnostic high-water accounting.
+#[derive(Clone, Debug, Default)]
+struct SaveStackProjection {
+    words: usize,
+    groups: Vec<AHashMap<CellId, usize>>,
+    #[cfg(test)]
+    rebuilds: usize,
+}
+
+impl SaveStackProjection {
+    fn push_undo(&mut self, rec: UndoRec) {
+        let Some(saved) = self.groups.last_mut() else {
+            return;
+        };
+        let cell = rec.cell().without_assignment_scope();
+        if rec.cell().is_global() {
+            if let Some(words) = saved.remove(&cell) {
+                self.words = self.words.saturating_sub(words);
+            }
+        } else if !saved.contains_key(&cell) {
+            // TeX82 §§275--276 represents `restore_zero` in one word,
+            // while `restore_old_value` occupies two.
+            let words =
+                if cell.bank() == BankTag::Meaning && rec.old() == Meaning::Undefined.encode() {
+                    1
+                } else {
+                    2
+                };
+            saved.insert(cell, words);
+            self.words = self.words.saturating_add(words);
+        }
+    }
+
+    fn push_box_undo(&mut self, rec: BoxUndoRec) {
+        let Some(saved) = self.groups.last_mut() else {
+            return;
+        };
+        let cell = CellId::new(BankTag::Box, u32::from(rec.index()));
+        if rec.is_global() {
+            if let Some(words) = saved.remove(&cell) {
+                self.words = self.words.saturating_sub(words);
+            }
+        } else if !saved.contains_key(&cell) {
+            saved.insert(cell, 2);
+            self.words = self.words.saturating_add(2);
+        }
+    }
+
+    fn push_marker(&mut self, marker: Marker) {
+        if matches!(marker, Marker::Group { .. }) {
+            self.words = self.words.saturating_add(1);
+            self.groups.push(AHashMap::new());
+        }
+    }
 }
 
 impl Journal {
@@ -168,17 +230,30 @@ impl Journal {
                     .capacity()
                     .saturating_mul(std::mem::size_of::<BoxUndoRec>()),
             )
+            .saturating_add(
+                self.save_stack
+                    .groups
+                    .iter()
+                    .map(|group| {
+                        group.capacity().saturating_mul(
+                            std::mem::size_of::<CellId>() + std::mem::size_of::<usize>(),
+                        )
+                    })
+                    .sum::<usize>(),
+            )
     }
 
     /// Appends an undo+redo record.
     pub(crate) fn push_undo(&mut self, rec: UndoRec) -> JournalPos {
         let pos = self.pos();
+        self.save_stack.push_undo(rec);
         self.entries.push(Entry::Undo(rec));
         pos
     }
 
     pub(crate) fn push_box_undo(&mut self, rec: BoxUndoRec) -> (BoxUndoRec, JournalPos) {
         let pos = self.pos();
+        self.save_stack.push_box_undo(rec);
         let id = BoxUndoId(u32_len(
             self.box_undos.len(),
             "box undo arena exceeds u32 entries",
@@ -211,7 +286,14 @@ impl Journal {
 
     /// Appends a structural marker.
     pub(crate) fn push_marker(&mut self, marker: Marker) {
+        self.save_stack.push_marker(marker);
         self.entries.push(Entry::Marker(marker));
+    }
+
+    /// Returns the live TeX82 save-stack words represented by this journal.
+    #[must_use]
+    pub(crate) const fn canonical_save_stack_words(&self) -> usize {
+        self.save_stack.words
     }
 
     /// Returns the current end position.
@@ -242,7 +324,32 @@ impl Journal {
     /// Truncates the journal to `pos`.
     pub(crate) fn truncate_to(&mut self, pos: JournalPos) {
         let len = checked_pos(pos, self.entries.len());
+        if len == self.entries.len() {
+            return;
+        }
         self.entries.truncate(len);
+        self.rebuild_save_stack_projection();
+    }
+
+    fn rebuild_save_stack_projection(&mut self) {
+        let mut projection = SaveStackProjection::default();
+        #[cfg(test)]
+        {
+            projection.rebuilds = self.save_stack.rebuilds.saturating_add(1);
+        }
+        for entry in &self.entries {
+            match *entry {
+                Entry::Undo(rec) => projection.push_undo(rec),
+                Entry::BoxUndo(id) => projection.push_box_undo(self.box_undos[id.0 as usize]),
+                Entry::Marker(marker) => projection.push_marker(marker),
+            }
+        }
+        self.save_stack = projection;
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn testing_save_stack_projection_rebuilds(&self) -> usize {
+        self.save_stack.rebuilds
     }
 }
 

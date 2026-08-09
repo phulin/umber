@@ -1,7 +1,6 @@
 use super::{Env, cell_key, checked_aftergroup_start, u32_len};
 use crate::cell::{BankTag, CellId};
 use crate::journal::{BoxUndoRec, Entry, JournalPos, Marker, UndoRec};
-use crate::meaning::Meaning;
 use crate::token::{Token, TracedTokenWord};
 use ahash::AHashMap;
 use ahash::AHashSet;
@@ -399,53 +398,15 @@ impl EnvSnapshot {
 }
 
 impl Env {
-    /// Reconstructs the live TeX82 `save_ptr` represented by the typed group
-    /// journal. This is diagnostic accounting only: journal storage remains
-    /// the semantic owner, and §1334's high-water mark is kept outside it.
+    /// Returns the live TeX82 `save_ptr` represented by the typed group
+    /// journal. This is diagnostic accounting only: the journal updates its
+    /// derived projection at the same append/truncate boundary that owns the
+    /// underlying records, and §1334's high-water mark remains outside it.
     pub(crate) fn canonical_save_stack_words(&self, save_group_source_lines: bool) -> usize {
-        let mut words = 0_usize;
-        let mut locally_saved = Vec::<AHashSet<CellId>>::new();
-        for index in 0..self.journal.len() {
-            match self.journal.entry(index) {
-                Entry::Marker(Marker::Group { .. }) => {
-                    words = words.saturating_add(1);
-                    locally_saved.push(AHashSet::new());
-                }
-                Entry::Undo(rec) => {
-                    let Some(saved) = locally_saved.last_mut() else {
-                        continue;
-                    };
-                    let cell = rec.cell().without_assignment_scope();
-                    if rec.cell().is_global() {
-                        saved.remove(&cell);
-                    } else if saved.insert(cell) {
-                        // TeX82 §§275--276 represents `restore_zero` in one
-                        // word, while `restore_old_value` occupies two.
-                        let restore_words = if cell.bank() == BankTag::Meaning
-                            && rec.old() == Meaning::Undefined.encode()
-                        {
-                            1
-                        } else {
-                            2
-                        };
-                        words = words.saturating_add(restore_words);
-                    }
-                }
-                Entry::BoxUndo(id) => {
-                    let Some(saved) = locally_saved.last_mut() else {
-                        continue;
-                    };
-                    let rec = self.journal.box_undo(id);
-                    let cell = CellId::new(BankTag::Box, u32::from(rec.index()));
-                    if rec.is_global() {
-                        saved.remove(&cell);
-                    } else if saved.insert(cell) {
-                        words = words.saturating_add(2);
-                    }
-                }
-                Entry::Marker(Marker::Checkpoint(_)) => {}
-            }
-        }
+        let mut words = self
+            .journal
+            .canonical_save_stack_words()
+            .saturating_add(self.aftergroup.len());
         if save_group_source_lines {
             // e-TeX [19.274] stores one source-line word before each level
             // boundary. TeX82 §273 samples `save_ptr` before the innermost
@@ -453,7 +414,7 @@ impl Env {
             // line words to this checked high-water projection.
             words = words.saturating_add(self.group_boundaries.len().saturating_sub(1));
         }
-        words.saturating_add(self.aftergroup.len())
+        words
     }
 
     /// Opens a journal slice whose first write cannot coalesce with work that
