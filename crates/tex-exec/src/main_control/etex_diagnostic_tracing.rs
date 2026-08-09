@@ -585,6 +585,52 @@ fn tracingassigns_reports_exact_penalty_array_show_eqtb_values_and_scope() {
 }
 
 #[test]
+fn normal_paragraph_traces_the_nonempty_interline_penalty_reset() {
+    // e-TeX [47.1070] clears a non-null interline array through `eq_define`
+    // when a vertical box enters `normal_paragraph`. Section [19.277] routes
+    // that write through the ordinary changing/into assignment trace; an
+    // hbox is the negative control because it does not enter normal_paragraph.
+    for (box_command, expected) in [
+        (
+            "vbox",
+            [
+                "{changing \\interlinepenalties=0}",
+                "{into \\interlinepenalties=3 101\\ETC.}",
+                "{changing \\interlinepenalties=3 101\\ETC.}",
+                "{into \\interlinepenalties=0}",
+            ]
+            .as_slice(),
+        ),
+        (
+            "hbox",
+            [
+                "{changing \\interlinepenalties=0}",
+                "{into \\interlinepenalties=3 101\\ETC.}",
+            ]
+            .as_slice(),
+        ),
+    ] {
+        let (mut stores, mut control) = etex_control();
+        register_source(
+            &mut control,
+            format!(
+                "\\nonstopmode\\tracingonline=1\\tracingassigns=1 \\interlinepenalties=3 101 102 103 \\setbox0=\\{box_command}{{}} \\end"
+            )
+            .as_bytes(),
+        );
+
+        run_to_end(&mut control, &mut stores);
+
+        let log = terminal_text(&stores);
+        let traces = log
+            .lines()
+            .filter(|line| line.contains("interlinepenalties"))
+            .collect::<Vec<_>>();
+        assert_eq!(traces, expected, "\\{box_command}: {log:?}");
+    }
+}
+
+#[test]
 fn tracingassigns_reports_catcode_table_writes() {
     let (mut stores, mut control) = etex_control();
     register_source(

@@ -1026,9 +1026,20 @@ fn line_shape(params: &ParagraphParams) -> LineShape {
 }
 
 pub(crate) fn normal_paragraph(_nest: &mut ModeNest, stores: &mut Universe) {
-    // e-TeX resets only the interline array at every normal paragraph; the
-    // club and widow arrays retain their scoped assignments (manual §3.4).
-    stores.set_penalty_array(PenaltyArrayKind::InterLine, &[], false);
+    // e-TeX [47.1070] resets a non-null interline array through `eq_define`,
+    // so [19.277]'s generic assignment hook traces the local write. The club
+    // and widow arrays retain their scoped assignments (manual §3.4).
+    let interline_penalties = stores.penalty_array(PenaltyArrayKind::InterLine);
+    if !interline_penalties.is_empty() {
+        stores.set_penalty_array(PenaltyArrayKind::InterLine, &[], false);
+        crate::assignments::tracing::trace_penalty_array(
+            stores,
+            PenaltyArrayKind::InterLine,
+            false,
+            &interline_penalties,
+            &[],
+        );
+    }
     // TeX82 §1090 saves these eqtb entries in this exact order. Section 283
     // unwinds them in reverse, so `\parshape` is traced before `\hangafter`,
     // `\hangindent`, and `\looseness`.
