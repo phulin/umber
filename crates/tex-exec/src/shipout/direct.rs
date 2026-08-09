@@ -438,14 +438,6 @@ mod lower;
 pub(crate) use lower::page_counts;
 mod normalize;
 
-pub(crate) fn deferred_write_sink(stores: &Universe, sink: PrintSink) -> Option<PrintSink> {
-    normalize::deferred_write_sink(stores, sink)
-}
-
-pub(crate) fn write_line_is_open(stores: &Universe, sink: PrintSink) -> bool {
-    normalize::write_line_is_open(stores, sink)
-}
-
 use lower::*;
 use normalize::{PageOverlay, normalize_page};
 

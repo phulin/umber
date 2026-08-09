@@ -3046,7 +3046,19 @@ fn deferred_write_expands_at_shipout_once() {
     let [page] = pages.as_slice() else {
         panic!("exactly one page ships: {pages:?}");
     };
-    assert!(page.committed_effects.is_empty());
+    let committed_write = page
+        .committed_effects
+        .iter()
+        .filter_map(|effect| match effect {
+            tex_state::EffectRecord::StreamWrite { sink, text }
+                if *sink == PrintSink::TerminalAndLog =>
+            {
+                Some(text.as_str())
+            }
+            _ => None,
+        })
+        .collect::<String>();
+    assert_eq!(committed_write, "\nlate\n");
     let terminal = terminal_text(&stores);
     assert_eq!(terminal.matches("late").count(), 1, "{terminal:?}");
     assert!(!terminal.contains("early"), "{terminal:?}");

@@ -11430,15 +11430,7 @@ fn shipout_replay_box(
             }
             let mut text = crate::diagnostics::print_text_with_newlinechar(stores, &text);
             text.push('\n');
-            if let Some(sink) = crate::shipout::direct::deferred_write_sink(stores, sink) {
-                write_publications
-                    .borrow_mut()
-                    .push(PendingShipoutPublication::Write {
-                        sink,
-                        text: text.clone(),
-                    });
-            }
-            Ok(crate::shipout::ExpandedWrite::deferred(text))
+            Ok(crate::shipout::ExpandedWrite::transactional(text))
         };
     let mut expand_replay =
         |stores: &mut Universe, kind: crate::shipout::ReplayTextKind, tokens: TokenListId| {
@@ -17149,7 +17141,6 @@ impl PendingDiagnostic {
 enum PendingShipoutPublication {
     Diagnostic(PendingDiagnostic),
     UnbalancedWrite { context: String },
-    Write { sink: PrintSink, text: String },
 }
 
 fn report_shipout_publications(
@@ -17171,12 +17162,6 @@ fn report_shipout_publications(
                     ],
                     context,
                 )?;
-            }
-            PendingShipoutPublication::Write { sink, text } => {
-                if crate::shipout::direct::write_line_is_open(stores, sink) {
-                    stores.world_mut().write_text(sink, "\n");
-                }
-                stores.world_mut().write_text(sink, &text);
             }
         }
     }

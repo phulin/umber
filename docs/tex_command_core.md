@@ -3027,10 +3027,13 @@ Nested command episodes retain the same boundary. In particular, TeX82
 §1370 expands deferred writes during shipout: scanner recovery is recorded in
 command state with its live §82 context, then rendered by the executor after
 the artifact transaction, so transaction scratch cannot consume terminal or
-log diagnostics. The transaction-crossing publication queue preserves the
-live `write_out` detection order across expansion traces, recoverable reports,
-and the resulting stream write; in particular, §1372's unbalanced-write report
-cannot overtake the §1369--1370 expansion trace that precedes it. TeX82 §1043
+log diagnostics. The expanded write bytes themselves remain in the shipout
+transaction at the whatsit's exact list position, so §§1373--1374 open and
+close effects cannot commit around an absent write or materialize an empty
+numbered-stream artifact. The transaction-crossing diagnostic queue preserves
+the live `write_out` detection order across expansion traces and recoverable
+reports; in particular, §1372's unbalanced-write report cannot overtake the
+§1369--1370 expansion trace that precedes it. TeX82 §1043
 extension whatsits in outer vertical mode enter
 the page contribution list directly; leaving them on the mode nest delays
 their write expansion past the page that canonically owns it.

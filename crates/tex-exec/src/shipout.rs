@@ -33,7 +33,6 @@ pub(crate) struct ExpandedWrite {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum WritePublication {
     Transactional,
-    Deferred,
 }
 
 impl ExpandedWrite {
@@ -41,13 +40,6 @@ impl ExpandedWrite {
         Self {
             text,
             publication: WritePublication::Transactional,
-        }
-    }
-
-    pub(crate) fn deferred(text: String) -> Self {
-        Self {
-            text,
-            publication: WritePublication::Deferred,
         }
     }
 }
