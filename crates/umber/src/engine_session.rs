@@ -522,6 +522,13 @@ impl<'a> EngineSession<'a> {
         if completion == tex_exec::RootCompletionPolicy::StopAtRootEof {
             self.terminal_input_cursor = Some(self.stores.terminal_input_position());
         }
+        if self.loaded_job_framing {
+            self.control.record_retained_startup_strings(
+                self.stores,
+                startup_input_name,
+                source.name(),
+            );
+        }
         let source = self.control.register_root_source(source)?;
         self.root_registered = true;
         self.startup_input_name = Some(startup_input_name.to_owned());

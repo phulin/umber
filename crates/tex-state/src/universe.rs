@@ -1510,6 +1510,21 @@ impl Universe {
         self.stores.record_pool_strings(strings, characters);
     }
 
+    /// Records one retained `make_string` result.
+    pub fn make_string_pool_string(&mut self, value: &str) {
+        self.stores.make_pool_string(value);
+    }
+
+    /// Records Web2C tex.ch [29.517]'s recycling `slow_make_string` result.
+    pub fn slow_make_string_pool_string(&mut self, value: &str) {
+        self.stores.slow_make_pool_string(value);
+    }
+
+    /// Registers a typed string already included in aggregate pool counters.
+    pub fn remember_string_pool_string(&mut self, value: &str) {
+        self.stores.remember_pool_string(value);
+    }
+
     pub fn flush_string_pool_allocations(&mut self, strings: usize, characters: usize) {
         self.stores.flush_pool_strings(strings, characters);
     }

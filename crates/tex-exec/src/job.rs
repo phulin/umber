@@ -344,9 +344,17 @@ pub(crate) fn begin_job_with_terminal_banner(
     // §§534--536 open the transcript as soon as the first input establishes
     // the job name. Ordinary drivers have an available retained target;
     // focused retry paths exercise the structured owner directly.
-    job.output
+    let log_name = job
+        .output
         .open_log(stores, capabilities.job_name())
-        .expect("startup transcript target must be available or retried by the driver");
+        .expect("startup transcript target must be available or retried by the driver")
+        .to_owned();
+    if format.is_some() {
+        // TeX82 §§525/536 retain `a_make_name_string(log_file)` for the
+        // loaded job. INITEX construction accounting is sealed separately
+        // into the format baseline.
+        stores.make_string_pool_string(&log_name);
+    }
 
     // §61: the terminal's very first output -- `format_ident` and a
     // terminating `print_ln`, no clock (the clock is §536's log-only

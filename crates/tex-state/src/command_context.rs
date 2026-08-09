@@ -868,6 +868,16 @@ impl CommandContext<'_> {
             .record_string_pool_allocations(strings, characters);
     }
 
+    /// Retains one Web2C string-pool value, recycling an equal prior string.
+    pub fn slow_make_string_pool_string(&mut self, value: &str) {
+        self.universe.slow_make_string_pool_string(value);
+    }
+
+    /// Retains one new string even when an equal value already exists.
+    pub fn make_string_pool_string(&mut self, value: &str) {
+        self.universe.make_string_pool_string(value);
+    }
+
     /// Reads one box-register dimension through the aggregate state boundary.
     ///
     /// A void box has no dimension; TeX's internal-quantity scanner maps

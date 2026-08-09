@@ -3795,13 +3795,13 @@ impl CommandProcessor<'_> {
                 _ => return Err(CommandError::input_invariant()),
             }
         }
-        // §§516--520's `end_name` reuses the preloaded empty string. It makes
-        // the name plus only the nonempty area and extension components.
-        self.state.record_string_pool_allocations(
-            1 + usize::from(!components.area.is_empty())
-                + usize::from(!components.extension.is_empty()),
-            components.area.len() + components.name.len() + components.extension.len(),
-        );
+        // Web2C tex.ch [29.517] applies `search_string`/`slow_make_string`
+        // independently to TeX82 §§516--520's nonempty components.
+        for component in [&components.area, &components.name, &components.extension] {
+            if !component.is_empty() {
+                self.state.slow_make_string_pool_string(component);
+            }
+        }
         Ok(ScannedFileName {
             components,
             provenance,
@@ -3835,6 +3835,10 @@ impl CommandProcessor<'_> {
                 // found beside the job with `./child.tex`, and prints the `./`.
                 // A host that reports a resolved name keeps it; one that does
                 // not falls back to the name that matched.
+                let resolved_name = registration
+                    .name()
+                    .unwrap_or(attempted_name.as_str())
+                    .to_owned();
                 let registration = match registration.name() {
                     Some(_) => registration,
                     None => registration.with_name(attempted_name.as_str()),
@@ -3867,6 +3871,12 @@ impl CommandProcessor<'_> {
                     .prepare_started_input(endlinechar)
                     .ok_or_else(CommandError::input_invariant)?;
                 self.host.initialize_job_name(&attempted_name);
+                // TeX82 §537 retains `a_make_name_string` for the opened
+                // request; Web2C additionally retains its full resolved name.
+                self.state.make_string_pool_string(&attempted_name);
+                if resolved_name != attempted_name {
+                    self.state.make_string_pool_string(&resolved_name);
+                }
                 if attempted_name != packed_name {
                     file_name.components.area = "TeXinputs:".to_owned();
                 }
@@ -3949,11 +3959,11 @@ impl CommandProcessor<'_> {
             }
             components.push_character(ch);
         }
-        self.state.record_string_pool_allocations(
-            1 + usize::from(!components.area.is_empty())
-                + usize::from(!components.extension.is_empty()),
-            components.area.len() + components.name.len() + components.extension.len(),
-        );
+        for component in [&components.area, &components.name, &components.extension] {
+            if !component.is_empty() {
+                self.state.slow_make_string_pool_string(component);
+            }
+        }
         Ok(ScannedFileName {
             components,
             provenance: StructuredProvenance {

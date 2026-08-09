@@ -19,6 +19,7 @@ use crate::font::{
 use crate::font::{FontExpansion, FontExpansionConfigError, PdfFontCode};
 use crate::state_hash::StateHashFragment;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeSet;
 
 type GroupExitObservation = (
     Vec<crate::token::TracedTokenWord>,
@@ -252,7 +253,7 @@ const TEX82_MEMORY_ARENA_FIXED_EXTENT: usize = 17;
 /// The bytes themselves remain in their typed owners; this ledger models only
 /// the `make_string` side effect shared by those owners. Control-sequence names
 /// are deliberately one allocation class among several, not the pool owner.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct StringPoolAccounting {
     profile_version: u8,
     strings: usize,
@@ -262,6 +263,12 @@ pub struct StringPoolAccounting {
     init_token_lists: usize,
     max_strings: usize,
     pool_size: usize,
+    /// Strings available to Web2C's `search_string` recycling extension.
+    recycled: BTreeSet<String>,
+    /// INITEX's aggregate ledger predates the runtime recycling projection;
+    /// restoration enables exact post-format `slow_make_string` behavior.
+    #[serde(skip)]
+    recycling_enabled: bool,
 }
 
 /// Engine-owned static string-pool vocabulary installed before INITEX input.
@@ -287,7 +294,7 @@ impl StringPoolProfile {
 impl Default for StringPoolAccounting {
     fn default() -> Self {
         Self {
-            profile_version: 4,
+            profile_version: 5,
             // TeX82's INITEX profile begins after `get_strings_started` has
             // installed the character strings and tex.pool vocabulary. These
             // are profile coordinates, not job usage or fixture totals.
@@ -299,6 +306,8 @@ impl Default for StringPoolAccounting {
             // Web2C's TeX82 profile used by the pinned canonical oracle.
             max_strings: 15_000,
             pool_size: 125_000,
+            recycled: BTreeSet::new(),
+            recycling_enabled: false,
         }
     }
 }
@@ -318,6 +327,32 @@ impl StringPoolAccounting {
         self.characters = self.characters.saturating_add(characters);
     }
 
+    fn make_string(&mut self, value: &str) {
+        self.allocate(1, value.len());
+        self.recycled.insert(value.to_owned());
+    }
+
+    fn slow_make_string(&mut self, value: &str) {
+        let is_new = self.recycled.insert(value.to_owned());
+        if !self.recycling_enabled || is_new {
+            self.allocate(1, value.len());
+        }
+    }
+
+    fn account_direct_character_name(&mut self, characters: usize) {
+        if !self.recycling_enabled {
+            // The format-construction ledger predates the loaded-job
+            // namespace projection and includes scanner scratch bytes in its
+            // sealed `pool_ptr` baseline. Loaded jobs follow §§341/372 and do
+            // not allocate a string for direct character control sequences.
+            self.allocate(0, characters);
+        }
+    }
+
+    fn remember_string(&mut self, value: &str) {
+        self.recycled.insert(value.to_owned());
+    }
+
     fn flush_last(&mut self, strings: usize, characters: usize) {
         self.strings = self.strings.saturating_sub(strings);
         self.characters = self.characters.saturating_sub(characters);
@@ -332,31 +367,31 @@ impl StringPoolAccounting {
     }
 
     #[must_use]
-    pub const fn used_strings(self) -> usize {
+    pub const fn used_strings(&self) -> usize {
         self.strings.saturating_sub(self.init_str_ptr)
     }
 
     #[must_use]
-    pub const fn used_characters(self) -> usize {
+    pub const fn used_characters(&self) -> usize {
         self.characters.saturating_sub(self.init_pool_ptr)
     }
 
     #[must_use]
-    pub const fn string_capacity(self) -> usize {
+    pub const fn string_capacity(&self) -> usize {
         self.max_strings.saturating_sub(self.init_str_ptr)
     }
 
     #[must_use]
-    pub const fn character_capacity(self) -> usize {
+    pub const fn character_capacity(&self) -> usize {
         self.pool_size.saturating_sub(self.init_pool_ptr)
     }
 
-    pub(crate) const fn token_list_baseline(self) -> usize {
+    pub(crate) const fn token_list_baseline(&self) -> usize {
         self.init_token_lists
     }
 
-    pub(crate) const fn has_current_profile(self) -> bool {
-        self.profile_version == 4
+    pub(crate) const fn has_current_profile(&self) -> bool {
+        self.profile_version == 5
     }
 }
 
@@ -426,7 +461,7 @@ impl Clone for Stores {
             owner: StoreOwner::new(),
             env: self.env.clone(),
             interner: self.interner.clone(),
-            string_pool: self.string_pool,
+            string_pool: self.string_pool.clone(),
             tokens: self.tokens.clone(),
             provenance: self.provenance.clone(),
             source_map: self.source_map.clone(),
@@ -816,14 +851,22 @@ impl Stores {
         language: u8,
         exception: ExceptionSpec,
     ) {
-        // TeX82 §934 appends the language byte to the normalized word before
-        // `make_string`; the exception table retains that string. The second
-        // extra byte is the command core's unfinished current-string byte:
-        // §1334 counts it in `pool_ptr` although it has no `str_ptr` entry.
-        let string_bytes = exception.word.len().saturating_add(2);
-        let _insertion =
+        // TeX82 §934 retains the normalized word plus its language byte.
+        // Web2C tex.ch [42.941] flushes that just-made string when the same
+        // language/word entry is replaced.
+        let word = exception.word.clone();
+        let insertion =
             Arc::make_mut(&mut self.hyphenation).add_exception_for_language(language, exception);
-        self.string_pool.allocate(1, string_bytes);
+        if matches!(insertion, crate::hyphenation::ExceptionInsertion::Allocated) {
+            self.string_pool.allocate(1, word.len().saturating_add(1));
+            if !self.string_pool.recycling_enabled {
+                // INITEX's sealed aggregate includes the command core's
+                // unfinished current-string byte. It is baseline capacity,
+                // whereas a loaded job reports only §934's retained
+                // word-and-language string.
+                self.string_pool.allocate(0, 1);
+            }
+        }
     }
 
     pub fn save_hyphenation_codes(
@@ -1111,7 +1154,10 @@ impl Stores {
             .intern_active(ch)
             .expect("control-sequence symbol capacity exceeded");
         if self.interner.len() != before {
-            self.string_pool.allocate(0, ch.len_utf8());
+            // TeX82 §§341/372 use the direct one-character control-sequence
+            // namespace without calling `id_lookup` or `make_string`.
+            self.string_pool
+                .account_direct_character_name(ch.len_utf8());
         }
         symbol
     }
@@ -1124,7 +1170,7 @@ impl Stores {
             .intern_internal(name)
             .expect("control-sequence symbol capacity exceeded");
         if self.interner.len() != before {
-            self.string_pool.allocate(1, name.len());
+            self.string_pool.make_string(name);
         }
         symbol
     }
@@ -1133,12 +1179,24 @@ impl Stores {
         self.string_pool.allocate(strings, characters);
     }
 
+    pub(crate) fn make_pool_string(&mut self, value: &str) {
+        self.string_pool.make_string(value);
+    }
+
+    pub(crate) fn slow_make_pool_string(&mut self, value: &str) {
+        self.string_pool.slow_make_string(value);
+    }
+
+    pub(crate) fn remember_pool_string(&mut self, value: &str) {
+        self.string_pool.remember_string(value);
+    }
+
     pub(crate) fn flush_pool_strings(&mut self, strings: usize, characters: usize) {
         self.string_pool.flush_last(strings, characters);
     }
 
-    pub(crate) const fn string_pool_accounting(&self) -> StringPoolAccounting {
-        self.string_pool
+    pub(crate) fn string_pool_accounting(&self) -> StringPoolAccounting {
+        self.string_pool.clone()
     }
 
     pub(crate) fn mark_string_pool_format_baseline(&mut self) {
@@ -1146,10 +1204,11 @@ impl Stores {
             .mark_format_baseline(self.tokens.list_head_extent_words());
     }
 
-    pub(crate) fn restore_string_pool_accounting(&mut self, accounting: StringPoolAccounting) {
+    pub(crate) fn restore_string_pool_accounting(&mut self, mut accounting: StringPoolAccounting) {
+        let token_list_baseline = accounting.token_list_baseline();
+        accounting.recycling_enabled = true;
         self.string_pool = accounting;
-        self.tokens
-            .restore_format_head_reserve(accounting.token_list_baseline());
+        self.tokens.restore_format_head_reserve(token_list_baseline);
     }
 
     pub(crate) fn select_string_pool_profile(&mut self, profile: StringPoolProfile) {
@@ -1162,12 +1221,11 @@ impl Stores {
         let symbol = self.interner.intern(name)?;
         if self.interner.len() != before {
             if name.len() > 1 {
-                self.string_pool.allocate(1, name.len());
+                self.string_pool.make_string(name);
             } else {
-                // A one-character control sequence uses TeX82's direct
-                // single-character namespace. Its spelling can still be the
-                // unfinished pool text while `id_lookup` decides that path.
-                self.string_pool.allocate(0, name.len());
+                // TeX82 §§341/372 select the direct single-character
+                // namespace without constructing a pool string.
+                self.string_pool.account_direct_character_name(name.len());
             }
         }
         Ok(symbol)
@@ -2904,7 +2962,7 @@ impl Stores {
             owner: self.owner.snapshot_owner(),
             env_snapshot: self.env.checkpoint(),
             interner_mark: self.interner.watermark(),
-            string_pool: self.string_pool,
+            string_pool: self.string_pool.clone(),
             token_mark: self.tokens.watermark(),
             provenance_mark: self.provenance.watermark(),
             source_map_mark: self.source_map.watermark(),
@@ -2965,7 +3023,7 @@ impl Stores {
         self.account_rollback_box_refs(snapshot.env_snapshot);
         let receipts = self.env.rollback_to(snapshot.env_snapshot);
         self.interner.truncate_to(snapshot.interner_mark);
-        self.string_pool = snapshot.string_pool;
+        self.string_pool = snapshot.string_pool.clone();
         self.tokens.truncate_to(snapshot.token_mark);
         if retry {
             self.provenance

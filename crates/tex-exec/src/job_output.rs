@@ -31,7 +31,10 @@ impl JobOutput {
     ) -> Result<&str, JobOutputOpenError> {
         if self.dvi_name.is_none() {
             let initial = derived_name(job_name, ".dvi");
-            self.dvi_name = Some(open_with_retry(stores, initial, ".dvi", false)?);
+            let opened = open_with_retry(stores, initial, ".dvi", false)?;
+            // TeX82 §§525/532 retain `b_make_name_string(dvi_file)`.
+            stores.make_string_pool_string(&opened);
+            self.dvi_name = Some(opened);
         }
         Ok(self.dvi_name.as_deref().expect("DVI name was initialized"))
     }

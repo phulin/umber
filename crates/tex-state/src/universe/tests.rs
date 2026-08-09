@@ -102,6 +102,62 @@ fn string_pool_format_baselines_and_capacities_round_trip() {
 }
 
 #[test]
+fn loaded_string_pool_recycles_components_but_retains_fresh_strings() {
+    let mut source = Universe::new();
+    source.remember_string_pool_string("etrip");
+    source.remember_string_pool_string(".out");
+    let image = source.dump_format().expect("string-pool format");
+    let mut loaded = Universe::from_format(World::memory(), &image).expect("loaded string pool");
+    let baseline = loaded.engine_usage_statistics();
+
+    // Web2C tex.ch [29.517] reuses filename components already present in the
+    // format, while a new component is retained exactly once.
+    loaded.slow_make_string_pool_string("etrip");
+    loaded.slow_make_string_pool_string(".out");
+    assert_eq!(loaded.engine_usage_statistics(), baseline);
+    loaded.slow_make_string_pool_string("tripos");
+    loaded.slow_make_string_pool_string("tripos");
+    let after_components = loaded.engine_usage_statistics();
+    assert_eq!(after_components.strings, 1);
+    assert_eq!(after_components.string_characters, "tripos".len());
+
+    // TeX82 §§525/532/536/537 retain every made output or opened-input name.
+    loaded.make_string_pool_string("etrip.out");
+    loaded.make_string_pool_string("etrip.out");
+    let after_names = loaded.engine_usage_statistics();
+    assert_eq!(after_names.strings, 3);
+    assert_eq!(
+        after_names.string_characters,
+        "tripos".len() + 2 * "etrip.out".len()
+    );
+
+    // §§341/372's direct one-character namespace does not call make_string;
+    // §934 retains one word-and-language string, and tex.ch [42.941] flushes
+    // that just-made string when the same exception is replaced.
+    loaded.intern("3");
+    loaded.add_hyphenation_exception_for_language(
+        7,
+        ExceptionSpec {
+            word: "hyphen".to_owned(),
+            positions: vec![2],
+        },
+    );
+    loaded.add_hyphenation_exception_for_language(
+        7,
+        ExceptionSpec {
+            word: "hyphen".to_owned(),
+            positions: vec![3],
+        },
+    );
+    let final_usage = loaded.engine_usage_statistics();
+    assert_eq!(final_usage.strings, 4);
+    assert_eq!(
+        final_usage.string_characters,
+        "tripos".len() + 2 * "etrip.out".len() + "hyphen".len() + 1
+    );
+}
+
+#[test]
 fn etex_string_pool_profile_selects_the_static_web_vocabulary_once() {
     let mut universe = Universe::new();
     let before = universe.engine_usage_statistics();

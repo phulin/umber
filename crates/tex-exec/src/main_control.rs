@@ -1625,6 +1625,12 @@ impl MainControl {
             ) + usize::from(path.extension().is_some()),
             startup_name.len(),
         );
+        if let Some(stem) = path.file_stem().and_then(|value| value.to_str()) {
+            stores.remember_string_pool_string(stem);
+        }
+        if let Some(extension) = path.extension().and_then(|value| value.to_str()) {
+            stores.remember_string_pool_string(&format!(".{extension}"));
+        }
         let id = self.register_root_source(source)?;
         if has_resolved_name {
             self.command
@@ -1633,6 +1639,22 @@ impl MainControl {
             crate::job::open_startup_input_after_log(stores, startup_name);
         }
         Ok(id)
+    }
+
+    /// Accounts for a host-retained root that bypassed §526's live filename
+    /// scan but still crossed §537's opened-name boundary.
+    pub fn record_retained_startup_strings(
+        &mut self,
+        stores: &mut Universe,
+        requested_name: &str,
+        resolved_name: Option<&str>,
+    ) {
+        stores.make_string_pool_string(requested_name);
+        if let Some(resolved_name) = resolved_name
+            && resolved_name != requested_name
+        {
+            stores.make_string_pool_string(resolved_name);
+        }
     }
 
     /// Refreshes executor-owned mode facts for the next processor borrow.
