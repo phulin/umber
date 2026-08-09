@@ -1227,10 +1227,22 @@ mod primitive_mode_tests {
             latex.meaning(strcmp),
             Meaning::ExpandablePrimitive(ExpandablePrimitive::StringCompare)
         );
+        let ifincsname = latex.intern("ifincsname");
+        assert_eq!(
+            latex.meaning(ifincsname),
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::IfInCsName)
+        );
         assert_eq!(latex.catcode('{'), Catcode::Other);
         assert_eq!(latex.catcode('#'), Catcode::Other);
         assert_eq!(latex.catcode('A'), Catcode::Letter);
         assert_eq!(latex.catcode('\\'), Catcode::Escape);
+        let pdftex_version = latex.intern("pdftexversion");
+        assert_eq!(latex.meaning(pdftex_version), Meaning::Undefined);
+
+        let mut latex_initex = Universe::default();
+        EngineMode::Latex.prepare_initex(&mut latex_initex);
+        let pdftex_version = latex_initex.intern("pdftexversion");
+        assert_eq!(latex_initex.meaning(pdftex_version), Meaning::Undefined);
     }
 
     #[test]

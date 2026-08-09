@@ -1253,31 +1253,37 @@ impl CommandProcessor<'_> {
     /// name-building scan for `\\ifcsname`; only the subsequent hash-table
     /// operation differs.
     pub(crate) fn scan_csname_characters(&mut self) -> Result<String, CommandError> {
-        let mut name = String::new();
-        loop {
-            let Some(command) = self.get_x_token()? else {
-                return Err(CommandError::input_invariant());
-            };
-            match command.meaning() {
-                Meaning::ExpandablePrimitive(ExpandablePrimitive::EndCsName) => break,
-                Meaning::CharToken { ch, .. } => name.push(ch),
-                _ => {
-                    let name = print_esc_text(&self.state, "endcsname");
-                    self.back_error_reporting(
-                        command,
-                        MISSING_ENDCSNAME_DIAGNOSTIC,
-                        format!("Missing {name} inserted"),
-                        &[
-                            "The control sequence marked <to be read again> should",
-                            "not appear between \\csname and \\endcsname.",
-                        ],
-                    )?;
-                    break;
+        // pdfTeX section 57 saves and restores the prior flag so nested name
+        // scans remain true to ifincsname and unwind to their caller.
+        let previous = std::mem::replace(&mut self.is_in_csname, true);
+        let result = (|| {
+            let mut name = String::new();
+            loop {
+                let Some(command) = self.get_x_token()? else {
+                    return Err(CommandError::input_invariant());
+                };
+                match command.meaning() {
+                    Meaning::ExpandablePrimitive(ExpandablePrimitive::EndCsName) => break,
+                    Meaning::CharToken { ch, .. } => name.push(ch),
+                    _ => {
+                        let rendered = print_esc_text(&self.state, "endcsname");
+                        self.back_error_reporting(
+                            command,
+                            MISSING_ENDCSNAME_DIAGNOSTIC,
+                            format!("Missing {rendered} inserted"),
+                            &[
+                                "The control sequence marked <to be read again> should",
+                                "not appear between \\csname and \\endcsname.",
+                            ],
+                        )?;
+                        break;
+                    }
                 }
             }
-        }
-
-        Ok(name)
+            Ok(name)
+        })();
+        self.is_in_csname = previous;
+        result
     }
 
     /// `\\string` observes spelling, never an effective control-sequence meaning.

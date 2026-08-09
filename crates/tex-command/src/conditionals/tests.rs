@@ -2761,6 +2761,81 @@ fn etex_ifcsname_expands_names_without_creating_missing_control_sequences() {
 }
 
 #[test]
+fn pdftex_ifincsname_tracks_the_dynamic_csname_scan() {
+    let mut command = CommandState::new(crate::CommandProfile::PDFTEX14029);
+    let mut universe = crate::test_harness::universe();
+    let csname = install(
+        &mut universe,
+        "ifincsname-csname",
+        ExpandablePrimitive::CsName,
+    );
+    let endcsname = install(
+        &mut universe,
+        "ifincsname-endcsname",
+        ExpandablePrimitive::EndCsName,
+    );
+    let ifincsname = install(
+        &mut universe,
+        "ifincsname-test",
+        ExpandablePrimitive::IfInCsName,
+    );
+    let else_token = install(&mut universe, "ifincsname-else", ExpandablePrimitive::Else);
+    let fi = install(&mut universe, "ifincsname-fi", ExpandablePrimitive::Fi);
+    let mut tokens = Vec::new();
+    append_boolean_case(
+        &mut universe,
+        &mut tokens,
+        "ifincsname-outside",
+        ExpandablePrimitive::IfInCsName,
+        [],
+    );
+    tokens.extend([
+        csname,
+        other('x'),
+        ifincsname,
+        other('y'),
+        else_token,
+        other('n'),
+        fi,
+        endcsname,
+    ]);
+    let defined = universe.intern("zy").symbol();
+    universe.set_meaning(defined, Meaning::Relax);
+    append_boolean_case(
+        &mut universe,
+        &mut tokens,
+        "ifincsname-inside-ifcsname",
+        ExpandablePrimitive::IfCsName,
+        [
+            other('z'),
+            ifincsname,
+            other('y'),
+            else_token,
+            other('n'),
+            fi,
+            endcsname,
+        ],
+    );
+    push(&mut command, tokens);
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut processor = processor(&mut command, &mut universe, &mut capabilities);
+
+    assert_eq!(next_character(&mut processor), 'f');
+    let named = processor
+        .get_x_token()
+        .expect("csname expansion succeeds")
+        .expect("csname injects its result");
+    assert_eq!(
+        named
+            .control_sequence()
+            .map(|symbol| processor.state.resolve(symbol)),
+        Some("xy")
+    );
+    assert_eq!(next_character(&mut processor), 't');
+    assert!(!processor.is_in_csname);
+}
+
+#[test]
 fn etex_ifcsname_uses_csname_boundary_recovery_and_conditional_lifecycle() {
     let mut command = CommandState::new(crate::CommandProfile::ETEX26);
     let mut universe = crate::test_harness::universe();

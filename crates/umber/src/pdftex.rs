@@ -1374,7 +1374,7 @@ mod tests {
             (prepare_etex_run_stores as fn(&mut Universe), &[][..]),
             (
                 prepare_latex_run_stores as fn(&mut Universe),
-                &["expanded"][..],
+                &["expanded", "ifincsname"][..],
             ),
         ] {
             let mut stores = Universe::default();
@@ -1414,6 +1414,13 @@ mod tests {
             ),
             (
                 prepare_pdftex_run_stores as fn(&mut Universe),
+                [
+                    Meaning::ExpandablePrimitive(ExpandablePrimitive::Expanded),
+                    Meaning::ExpandablePrimitive(ExpandablePrimitive::IfInCsName),
+                ],
+            ),
+            (
+                prepare_latex_run_stores as fn(&mut Universe),
                 [
                     Meaning::ExpandablePrimitive(ExpandablePrimitive::Expanded),
                     Meaning::ExpandablePrimitive(ExpandablePrimitive::IfInCsName),

@@ -54,6 +54,7 @@ additionally exposes the documented pdfTeX-prefixed primitive surface.
 | `\strcmp`       | done   | Fully expands two balanced texts, converts their tokens with TeX string-printing rules, and returns `-1`, `0`, or `1` from bytewise lexical comparison.                                                                                 |
 | `\shellescape`  | done   | Expands to `0`, reporting the supported driver's always-disabled shell-escape policy without executing or authorizing host commands.                                                                                                    |
 | `\creationdate` | done   | Expands to the immutable UTC job-start timestamp as `D:YYYYMMDDhhmmssZ`; native runs derive it from the pinned `SOURCE_DATE_EPOCH`, and format-loaded jobs do not consult mutable TeX clock parameters.                                 |
+| `\ifincsname`   | done   | Tests whether expansion is currently constructing a control-sequence name, using the canonical pdfTeX conditional without exposing pdfTeX engine identity in LaTeX-DVI mode.                                                            |
 
 This inventory will grow only when the pinned LaTeX kernel or representative
 base corpus demonstrates a semantic dependency. pdfTeX-prefixed aliases such

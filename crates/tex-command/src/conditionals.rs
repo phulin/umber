@@ -774,12 +774,10 @@ impl CommandProcessor<'_> {
                 let right = i64::from(self.scan_dimension()?.value.raw()).abs();
                 Ok(relation.compare(left, right))
             }
-            ConditionalKind::IfInCsName | ConditionalKind::IfCase => {
-                Err(CommandError::UnsupportedExpandablePrimitive(match kind {
-                    ConditionalKind::IfInCsName => ExpandablePrimitive::IfInCsName,
-                    _ => unreachable!(),
-                }))
-            }
+            // pdfTeX section 57.1 reads the dynamically scoped flag maintained
+            // by both canonical control-sequence-name scanners.
+            ConditionalKind::IfInCsName => Ok(self.is_in_csname),
+            ConditionalKind::IfCase => unreachable!(),
         }
     }
 

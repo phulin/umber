@@ -112,7 +112,7 @@ fn markdown_documentation_table_is_generated_in_catalogue_order() {
     assert_eq!(
         rows.last().copied(),
         Some(
-            "| `\\creationdate` | `Expandable:57` | `Expandable` | `Forbidden` | `LatexCompatibility` |"
+            "| `\\ifincsname` | `Expandable:58` | `Expandable` | `Forbidden` | `LatexCompatibility` |"
         )
     );
 }

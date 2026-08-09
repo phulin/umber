@@ -60,7 +60,7 @@ primitive_metadata! {
         StringCompare => { spellings: [(Latex, "strcmp"), (Pdftex, "pdfstrcmp")], identity: ("convert", Some(8)) },
         ShellEscape => { spellings: [(Latex, "shellescape")], identity: ("convert", Some(9)) },
         CreationDate => { spellings: [(Latex, "creationdate"), (Pdftex, "pdfcreationdate")], identity: ("convert", Some(22)) },
-        IfInCsName => { spellings: [(Pdftex, "ifincsname")], identity: ("if_test", Some(20)) },
+        IfInCsName => { spellings: [(Latex, "ifincsname"), (Pdftex, "ifincsname")], identity: ("if_test", Some(20)) },
         PdfTeXRevision => { spellings: [(Pdftex, "pdftexrevision")], identity: ("convert", Some(7)) },
         PdfTeXBanner => { spellings: [(Pdftex, "pdftexbanner")], identity: ("convert", Some(8)) },
         PdfFontSize => { spellings: [(Pdftex, "pdffontsize")], identity: ("convert", Some(11)) },

@@ -348,8 +348,8 @@ impl EngineMode {
     pub const fn command_profile(self) -> tex_command::CommandProfile {
         match self {
             Self::Tex82 => tex_command::CommandProfile::TEX82,
-            Self::ETex => tex_command::CommandProfile::ETEX26,
-            Self::PdfTex | Self::Latex | Self::PdfLatex => tex_command::CommandProfile::PDFTEX14029,
+            Self::ETex | Self::Latex => tex_command::CommandProfile::ETEX26,
+            Self::PdfTex | Self::PdfLatex => tex_command::CommandProfile::PDFTEX14029,
         }
     }
 

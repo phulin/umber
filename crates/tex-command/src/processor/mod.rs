@@ -178,6 +178,8 @@ pub struct CommandProcessor<'a> {
     /// e-TeX expression primitives. Parentheses use `scan_expr`'s explicit
     /// stack and do not enter this counter.
     pub(crate) expression_depth: u32,
+    /// pdfTeX section 57's dynamically scoped control-sequence-name flag.
+    pub(crate) is_in_csname: bool,
     /// Canonical glue-node identity retained only while an internal glue or
     /// e-TeX expression result remains pointer-identical to its source.
     pub(crate) scanned_glue_identity: Option<tex_state::ids::GlueId>,
@@ -366,6 +368,7 @@ impl<'a> CommandProcessor<'a> {
             outer_recovered_while_absorbing: false,
             eof_recovered_while_matching: false,
             expression_depth: 0,
+            is_in_csname: false,
             scanned_glue_identity: None,
             scanned_glue_skip_index: None,
             command_trace_mode_prefix: None,

@@ -3445,6 +3445,35 @@ fn virtual_initex_installs_the_canonical_profile_registry() {
 }
 
 #[test]
+fn latex_session_keeps_pdftex_identity_out_of_the_etex_compatibility_profile() {
+    assert_eq!(
+        EngineMode::Latex.command_profile(),
+        tex_command::CommandProfile::ETEX26
+    );
+    let mut session = VirtualCompileSession::new(SessionOptions {
+        engine: EngineMode::Latex,
+        ..SessionOptions::default()
+    })
+    .expect("LaTeX session");
+    session
+        .add_user_file(
+            "main.tex",
+            br"\catcode123=1 \catcode125=2
+               \ifdefined\pdftexversion\message{PDFTEX}\else\message{ETEX}\fi
+               \end"
+                .to_vec(),
+        )
+        .expect("LaTeX source");
+
+    let CompileAttemptResult::Complete(output) = session.compile_attempt() else {
+        panic!("LaTeX compatibility source did not complete");
+    };
+    let terminal = String::from_utf8_lossy(&output.terminal);
+    assert!(terminal.contains("ETEX"), "{terminal}");
+    assert!(!terminal.contains("PDFTEX"), "{terminal}");
+}
+
+#[test]
 fn virtual_format_registry_preserves_live_meanings_and_profile_distinctions() {
     for engine in [
         EngineMode::Tex82,
