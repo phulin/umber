@@ -867,7 +867,12 @@ fn print_stack_usage(printer: &mut Printer<'_>, usage: EngineUsageStatistics) {
         print_usize(printer, value);
         printer.print(suffix);
     }
-    printer.print(" stack positions out of 200i,40n,60p,500b,600s");
+    // TeX82 §1334 ends this final direct-to-log row with `wlog_ln`.
+    // Closing the log line independently matters when §642's following
+    // `print_nl` sees a still-open terminal line and breaks both sinks.
+    printer
+        .print(" stack positions out of 200i,40n,60p,500b,600s")
+        .print_ln();
 }
 
 fn print_usize(printer: &mut Printer<'_>, value: usize) {

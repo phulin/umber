@@ -78,10 +78,14 @@ Three of those lines are conditional:
   selector at `term_only`, i.e. only when the job was writing both channels.
 - §1333's usage block is emitted only when `\tracingstats` is positive. It is
   routed through the ambient selector and precedes the DVI and transcript
-  termination lines. `Universe::engine_usage_statistics` projects interned
-  strings and characters, token/glue/node words, control sequences, font
-  information, fonts, and hyphenation exceptions without exposing raw stores
-  to the execution layer. Its §1334 stack fields are runtime-only high-water
+  termination lines. Every §1334 row, including the final stack-usage row,
+  retains its direct `wlog_ln` terminator. The log cursor is therefore already
+  closed when §642's shared `print_nl` independently responds to a partial
+  terminal line; the two channel offsets must not be collapsed.
+  `Universe::engine_usage_statistics` projects interned strings and characters,
+  token/glue/node words, control sequences, font information, fonts, and
+  hyphenation exceptions without exposing raw stores to the execution layer.
+  Its §1334 stack fields are runtime-only high-water
   projections supplied by their semantic owners: `tex-command` records
   §§31/374 buffer use, §321 input depth, and §390 macro parameters;
   `tex-exec` records §216's mode nest and §§273--280's typed save journal,

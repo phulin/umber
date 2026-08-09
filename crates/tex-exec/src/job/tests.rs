@@ -363,6 +363,23 @@ fn usage_report_separates_a_partial_final_cleanup_line_before_breaking() {
 }
 
 #[test]
+fn usage_report_closes_log_before_shared_dvi_line_break() {
+    // TeX82 §1334 closes its last `wlog_ln` row independently. When the
+    // terminal remains mid-line, §642's `print_nl` then breaks both sinks:
+    // one terminal newline, but a second newline in the already-closed log.
+    let mut stores = Universe::new();
+    stores.set_int_param_global(IntParam::TRACING_STATS, 1);
+    Printer::new(&mut stores, Selector::TermOnly).print("terminal tail");
+
+    finish_job(&mut stores, CommandProfile::TEX82, "stats", None, None);
+
+    assert!(terminal_text(&stores).starts_with("terminal tail\nNo pages of output."));
+    assert!(log_text(&stores).contains(
+        "0i,0n,0p,0b,0s stack positions out of 200i,40n,60p,500b,600s\n\nNo pages of output."
+    ));
+}
+
+#[test]
 fn finish_job_keeps_log_only_statistics_before_the_committed_page_report() {
     let mut stores = run_source_to_end(br"\shipout\hbox{}\end");
     stores.set_int_param_global(IntParam::TRACING_STATS, 1);
