@@ -1979,6 +1979,62 @@ fn looseness_can_select_empty_line_after_terminal_discretionary() {
 }
 
 #[test]
+fn equal_demerit_easy_line_champion_uses_terminal_discretionary_route() {
+    // TeX82 §848 makes every line after `easy_line` equivalent when
+    // `\looseness=0`. Sections 851--854 retain one champion per equivalent
+    // line/fitness class, and `d<=minimal_demerits` lets the later route via
+    // this terminal discretionary replace the direct route.
+    let mut universe = Universe::new();
+    let empty = universe.freeze_node_list(&[]);
+    let par_fill = universe.intern_glue(GlueSpec::ZERO);
+    let nodes = vec![
+        Node::Disc {
+            kind: DiscKind::Discretionary,
+            pre: empty,
+            post: empty,
+            replace: empty,
+            physical_replace_count: 0,
+        },
+        Node::Penalty(INF_PENALTY),
+        Node::Glue {
+            spec: par_fill,
+            kind: GlueKind::ParFillSkip,
+            leader: None,
+        },
+    ];
+    let mut parameters = params(0);
+    parameters.line_penalty = 0;
+    parameters.hyphen_penalty = 0;
+    parameters.ex_hyphen_penalty = 0;
+    parameters.adj_demerits = 0;
+    parameters.double_hyphen_demerits = 0;
+    parameters.final_hyphen_demerits = 0;
+    let mut hook = NoHyphenation;
+
+    let equal = line_break(&universe, &nodes, parameters.clone(), &mut hook);
+    assert_eq!(
+        equal
+            .breaks
+            .iter()
+            .map(|br| br.position)
+            .collect::<Vec<_>>(),
+        [1, nodes.len()]
+    );
+
+    parameters.line_penalty = 1;
+    let unequal = line_break(&universe, &nodes, parameters, &mut hook);
+    assert_eq!(
+        unequal
+            .breaks
+            .iter()
+            .map(|br| br.position)
+            .collect::<Vec<_>>(),
+        [nodes.len()],
+        "a genuinely more expensive two-line route is not retained"
+    );
+}
+
+#[test]
 fn unmet_looseness_retries_after_the_pretolerance_pass() {
     let mut universe = Universe::new();
     let break_glue = universe.intern_glue(GlueSpec {

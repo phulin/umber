@@ -849,28 +849,19 @@ fn run_pass<S: TypesetState>(
                 if !canonical_trace_admission {
                     next_serial += 1;
                 }
-                record_best_route(
-                    &mut active,
-                    prior_active_len,
-                    candidate,
-                    canonical_trace_admission.then_some(easy_line),
-                );
+                record_best_route(&mut active, prior_active_len, candidate, Some(easy_line));
             }
             if !deactivates {
                 active[survivor_count] = active_candidate;
                 survivor_count += 1;
             }
         }
-        let winner_count = if canonical_trace_admission {
-            retain_competitive_routes(
-                &mut active,
-                prior_active_len,
-                params.adj_demerits,
-                easy_line,
-            )
-        } else {
-            active.len() - prior_active_len
-        };
+        let winner_count = retain_competitive_routes(
+            &mut active,
+            prior_active_len,
+            params.adj_demerits,
+            easy_line,
+        );
         let mut active_traces = Vec::new();
         for candidate in &mut active[prior_active_len..] {
             if canonical_trace_admission {
