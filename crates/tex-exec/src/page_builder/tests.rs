@@ -321,6 +321,71 @@ fn box_error_and_ensure_vbox_recover_only_invalid_live_boxes() {
 }
 
 #[test]
+fn box_error_voids_the_register_without_creating_local_assignment_history() {
+    fn install_box(stores: &mut Universe, register: u16, vertical: bool) {
+        let node = boxed(stores, 9, 2, vertical);
+        let list = stores.freeze_node_list(&[node]);
+        stores.set_box_reg_global(register, list);
+    }
+
+    fn log_text(stores: &Universe) -> String {
+        stores
+            .world()
+            .effect_records()
+            .iter()
+            .filter_map(|effect| match effect {
+                tex_state::EffectRecord::StreamWrite { sink, text }
+                    if matches!(
+                        sink,
+                        tex_state::PrintSink::Log | tex_state::PrintSink::TerminalAndLog
+                    ) =>
+                {
+                    Some(text.as_str())
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    let register = 5;
+    let mut recovered = crate::test_harness::universe();
+    recovered.set_int_param(IntParam::TRACING_RESTORES, 1);
+    install_box(&mut recovered, register, false);
+    recovered.enter_group();
+
+    assert_eq!(
+        insertion_box_size(&mut recovered, register, None)
+            .expect("section 993 recovery is nonfatal"),
+        s(0)
+    );
+    install_box(&mut recovered, register, true);
+    assert!(recovered.leave_group().is_empty());
+
+    let recovered_effects = log_text(&recovered);
+    assert!(
+        !recovered_effects.contains("retaining \\box5="),
+        "section 993 direct mutation must not create a restore record: {recovered_effects}"
+    );
+    assert!(recovered.box_reg(register).is_some());
+
+    // Negative control: the ordinary local assignment barrier must still
+    // save and report the retained global value under TeX82 §§275/283.
+    let mut assigned = crate::test_harness::universe();
+    assigned.set_int_param(IntParam::TRACING_RESTORES, 1);
+    install_box(&mut assigned, register, false);
+    assigned.enter_group();
+    assigned.clear_box_reg(register);
+    install_box(&mut assigned, register, true);
+    assert!(assigned.leave_group().is_empty());
+
+    let assigned_effects = log_text(&assigned);
+    assert!(
+        assigned_effects.contains("retaining \\box5="),
+        "ordinary assignments remain save-stack visible: {assigned_effects}"
+    );
+}
+
+#[test]
 fn outer_vertical_contribution_routes_every_node_kind_canonically() {
     let mut stores = Universe::new();
     params(&mut stores, 10_000, 10, 10);

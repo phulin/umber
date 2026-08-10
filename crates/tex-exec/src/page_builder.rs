@@ -425,7 +425,10 @@ pub(crate) fn ensure_insertion_vbox(
         .print_ln()
         .print_rendered(&text);
     diagnostic.end(true);
-    stores.clear_box_reg(class);
+    // TeX82 §993 flushes the list and then assigns `box(n):=null` directly;
+    // it does not call §275's `eq_define` or create a local save-stack entry.
+    // Preserve the register's existing eq level while voiding its value.
+    stores.clear_box_reg_same_level(class);
     Ok(None)
 }
 

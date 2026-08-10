@@ -518,7 +518,10 @@ the output routine when configured, and resumes page building afterward.
 TeX.web §§199/1015/1028's shared `box_error` recovery displays an unexpected
 box's retained immutable contents through the diagnostic channel while
 voiding the register, both before page packaging and after a completed output
-routine.
+routine. Section 993's insertion-register recovery performs the literal
+`box(n):=null` mutation at the register's existing equivalence level; it does
+not pass through §275's local-definition barrier or create a §283 restore
+trace.
 Outermost completed shipout is both an effect commit boundary and one of the
 named incremental checkpoint opportunities.
 
