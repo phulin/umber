@@ -274,6 +274,10 @@ pub struct StringPoolAccounting {
     /// restoration enables exact post-format `slow_make_string` behavior.
     #[serde(skip)]
     recycling_enabled: bool,
+    /// Whether §38's single unfinished current-string byte is already present
+    /// in the INITEX aggregate coordinate.
+    #[serde(default)]
+    unfinished_current_string_accounted: bool,
 }
 
 fn serialize_recycled_strings<S>(
@@ -351,7 +355,7 @@ impl StringPoolProfile {
 impl Default for StringPoolAccounting {
     fn default() -> Self {
         Self {
-            profile_version: 9,
+            profile_version: 10,
             // TeX82's INITEX profile begins after `get_strings_started` has
             // installed the character strings and tex.pool vocabulary. These
             // are profile coordinates, not job usage or fixture totals.
@@ -366,6 +370,7 @@ impl Default for StringPoolAccounting {
             pool_size: 125_000,
             recycled: BTreeSet::new(),
             recycling_enabled: false,
+            unfinished_current_string_accounted: false,
         }
     }
 }
@@ -477,7 +482,7 @@ impl StringPoolAccounting {
     }
 
     pub(crate) const fn has_current_profile(&self) -> bool {
-        self.profile_version == 9
+        self.profile_version == 10
     }
 }
 
@@ -982,12 +987,14 @@ impl Stores {
             Arc::make_mut(&mut self.hyphenation).add_exception_for_language(language, exception);
         if matches!(insertion, crate::hyphenation::ExceptionInsertion::Allocated) {
             self.string_pool.allocate(1, word.len().saturating_add(1));
-            if !self.string_pool.recycling_enabled {
-                // INITEX's sealed aggregate includes the command core's
-                // unfinished current-string byte. It is baseline capacity,
-                // whereas a loaded job reports only §934's retained
-                // word-and-language string.
+            if !self.string_pool.recycling_enabled
+                && !self.string_pool.unfinished_current_string_accounted
+            {
+                // TeX82 §38 has one current string between str_start[str_ptr]
+                // and pool_ptr. INITEX's aggregate projection includes that
+                // one unfinished byte, not one byte per §934 exception.
                 self.string_pool.allocate(0, 1);
+                self.string_pool.unfinished_current_string_accounted = true;
             }
         }
     }

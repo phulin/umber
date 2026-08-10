@@ -614,6 +614,27 @@ fn exact_environment_identity_updates_distinct_journal_cells_and_rolls_back() {
 }
 
 #[test]
+fn initex_string_pool_counts_one_unfinished_current_string_across_exceptions() {
+    // TeX82 §38 exposes exactly one current string at pool_ptr. Section 934
+    // makes each exception word (including its language byte), but multiple
+    // exceptions cannot each own another unfinished current-string byte.
+    let mut stores = Stores::new();
+    let before = stores.engine_usage_statistics();
+    stores.add_hyphenation_exception(ExceptionSpec {
+        word: "ab".to_owned(),
+        positions: vec![1],
+    });
+    stores.add_hyphenation_exception(ExceptionSpec {
+        word: "cde".to_owned(),
+        positions: vec![2],
+    });
+    let after = stores.engine_usage_statistics();
+
+    assert_eq!(after.strings - before.strings, 2);
+    assert_eq!(after.string_characters - before.string_characters, 8);
+}
+
+#[test]
 fn exact_environment_identity_ignores_intern_allocation_order() {
     fn build(filler_first: bool) -> Stores {
         let mut stores = Stores::new();
