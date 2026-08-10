@@ -306,13 +306,14 @@ fn main_memory_usage_inner(
     // live occupancy. A construction-time extra list is itself a separate
     // allocator observation, so it must not charge those historical scratch
     // positions again.
+    let scratch_extent = if include_scratch_extent {
+        TEX82_UNTYPED_ONE_WORD_SCRATCH_EXTENT
+    } else {
+        0
+    };
     let dynamic_extent = dynamic
         .saturating_add(detached_dynamic_extent)
-        .saturating_add(
-            include_scratch_extent
-                .then_some(TEX82_UNTYPED_ONE_WORD_SCRATCH_EXTENT)
-                .unwrap_or(0),
-        );
+        .saturating_add(scratch_extent);
     Ok(MainMemoryUsage {
         variable,
         dynamic,
