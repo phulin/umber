@@ -672,8 +672,8 @@ pub(crate) fn finish_job(
     dvi: Option<DviJobOutput>,
     pdf: Option<&mut PdfJobFinalizationReport>,
 ) {
-    print_usage_statistics(stores, binary);
-    print_dvi_report(stores, dvi);
+    let statistics_left_file_offset_open = print_usage_statistics(stores, binary);
+    print_dvi_report(stores, dvi, statistics_left_file_offset_open);
     print_pdf_report(stores, profile, pdf);
     print_transcript_note(stores, job_name);
     stores.printer().print_ln();
@@ -834,11 +834,12 @@ fn print_u32(printer: &mut Printer<'_>, value: u32) {
     printer.print_int(i32::try_from(value).unwrap_or(i32::MAX));
 }
 
-fn print_usage_statistics(stores: &mut Universe, binary: EngineBinaryIdentity) {
+fn print_usage_statistics(stores: &mut Universe, binary: EngineBinaryIdentity) -> bool {
     if stores.int_param(IntParam::TRACING_STATS) <= 0 {
-        return;
+        return false;
     }
     let usage = stores.engine_usage_statistics();
+    let file_offset_was_open = stores.printer().log_offset() > 0;
     // TeX82 §1333 deliberately uses `wlog*` rather than the live selector
     // for this block: statistics belong to the transcript even when ordinary
     // job framing is going to both terminal and log.
@@ -885,6 +886,7 @@ fn print_usage_statistics(stores: &mut Universe, binary: EngineBinaryIdentity) {
     print_usize(&mut printer, usage.hyphenation_exception_capacity);
     printer.print_nl(" ");
     print_stack_usage(&mut printer, usage);
+    file_offset_was_open
 }
 
 fn print_stack_usage(printer: &mut Printer<'_>, usage: EngineUsageStatistics) {
@@ -947,7 +949,20 @@ pub fn confirm_format_dump_publication(
 /// cannot make this print "Output written on..." with a fabricated page
 /// count, and cannot make it print a byte count when the engine committed no
 /// pages, because the zero-page branch never inspects `dvi` at all.
-fn print_dvi_report(stores: &mut Universe, dvi: Option<DviJobOutput>) {
+fn print_dvi_report(
+    stores: &mut Universe,
+    dvi: Option<DviJobOutput>,
+    statistics_left_file_offset_open: bool,
+) {
+    // TeX82 §1334 emits its statistics through direct `wlog*` macros. Those
+    // writes change the transcript bytes but not §54's `file_offset`, so an
+    // offset that was open before the report still satisfies §62's guard at
+    // §642. Umber's structured log sink derives its offset from the rendered
+    // bytes, so reproduce that one direct-write cursor effect at the owning
+    // `print_nl` boundary.
+    if statistics_left_file_offset_open {
+        stores.printer().print_ln();
+    }
     let total_pages = i32::try_from(stores.world().artifact_commits().len()).unwrap_or(i32::MAX);
     if total_pages == 0 {
         stores.printer().print_nl("No pages of output.");

@@ -79,9 +79,11 @@ Three of those lines are conditional:
 - §1333's usage block is emitted only when `\tracingstats` is positive. It is
   routed through the ambient selector and precedes the DVI and transcript
   termination lines. Every §1334 row, including the final stack-usage row,
-  retains its direct `wlog_ln` terminator. The log cursor is therefore already
-  closed when §642's shared `print_nl` independently responds to a partial
-  terminal line; the two channel offsets must not be collapsed.
+  retains its direct `wlog_ln` terminator. Those direct writes change the log
+  bytes without changing §54's `file_offset`; if the log line was open before
+  the usage block, §62's guard therefore makes §642's shared `print_nl` emit
+  one more line break after the final row. A separately partial terminal line
+  has the same effect. The two channel offsets must not be collapsed.
   `Universe::engine_usage_statistics` projects interned strings and characters,
   token/glue/node words, control sequences, font information, fonts, and
   hyphenation exceptions without exposing raw stores to the execution layer.

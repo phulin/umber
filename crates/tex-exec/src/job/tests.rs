@@ -446,6 +446,37 @@ fn usage_report_closes_log_before_shared_dvi_line_break() {
 }
 
 #[test]
+fn direct_usage_report_preserves_the_open_log_cursor_for_the_dvi_break() {
+    // TeX82 §§54/62/1334/642: §1334's direct `wlog*` writes do not
+    // update `file_offset`. A line open before the statistics therefore
+    // still makes §642's `print_nl` emit one shared line break after the
+    // final statistics row. Batch mode is the negative control for a
+    // terminal offset: only the stale log cursor can cause this blank line.
+    let mut stores = run_source_to_end(br"\shipout\hbox{}\end");
+    stores.set_interaction_mode(InteractionMode::Batch);
+    stores.set_int_param_global(IntParam::TRACING_STATS, 1);
+    Printer::new(&mut stores, Selector::LogOnly).print(" )");
+
+    finish_job(
+        &mut stores,
+        CommandProfile::TEX82,
+        EngineBinaryIdentity::Tex82,
+        "doc",
+        Some(DviJobOutput {
+            file_name: "doc.dvi".into(),
+            byte_len: 44,
+        }),
+        None,
+    );
+
+    assert!(terminal_text(&stores).is_empty());
+    assert!(log_text(&stores).contains(
+        "0i,0n,0p,0b,0s stack positions out of 200i,40n,60p,500b,600s\n\n\
+         Output written on doc.dvi (1 page, 44 bytes)."
+    ));
+}
+
+#[test]
 fn finish_job_keeps_log_only_statistics_before_the_committed_page_report() {
     let mut stores = run_source_to_end(br"\shipout\hbox{}\end");
     stores.set_int_param_global(IntParam::TRACING_STATS, 1);
