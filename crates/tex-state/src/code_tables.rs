@@ -387,6 +387,14 @@ impl CodeTables {
         roots.saved
     }
 
+    /// TeX82 §275 save-stack words owned by live code-table assignments.
+    pub(crate) fn canonical_save_stack_words(&self) -> usize {
+        self.group_roots
+            .iter()
+            .map(|frame| frame.saved.len().saturating_mul(2))
+            .fold(0_usize, usize::saturating_add)
+    }
+
     /// Returns the generation vector for all code tables.
     #[must_use]
     pub fn generations(&self) -> CodeTableGenerations {

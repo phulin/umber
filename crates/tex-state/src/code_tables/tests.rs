@@ -79,6 +79,31 @@ fn snapshot_restores_roots_and_generations() {
 }
 
 #[test]
+fn save_stack_projection_counts_local_code_table_runs() {
+    // TeX82 §§240/275 initialize code-table cells at level_one and preserve
+    // each first local assignment as a two-word restore_old_value record.
+    // Reassignment in one local run is free; a global write retains the old
+    // physical record but lets the next local run allocate another.
+    let mut tables = CodeTables::new();
+    tables.enter_group();
+    tables.set_catcode_at(1, '@', Catcode::Letter);
+    assert_eq!(tables.canonical_save_stack_words(), 2);
+    tables.set_catcode_at(2, '@', Catcode::Active);
+    assert_eq!(tables.canonical_save_stack_words(), 2);
+
+    tables.set_catcode_global('@', Catcode::Other);
+    assert_eq!(tables.canonical_save_stack_words(), 2);
+    tables.set_catcode_at(3, '@', Catcode::Letter);
+    assert_eq!(tables.canonical_save_stack_words(), 4);
+
+    tables.enter_group();
+    tables.set_lccode_at(4, '@', u32::from('a'));
+    assert_eq!(tables.canonical_save_stack_words(), 6);
+    let _ = tables.leave_group();
+    assert_eq!(tables.canonical_save_stack_words(), 4);
+}
+
+#[test]
 fn snapshots_keep_old_shared_pages_after_copy_on_write() {
     let mut tables = CodeTables::new();
     let snapshot = tables.checkpoint();
