@@ -1236,15 +1236,9 @@ impl MainControl {
         input_name: &str,
         print_terminal_banner: bool,
     ) {
-        let binary = self
-            .engine_binary
-            .unwrap_or_else(|| match self.command_profile().dialect() {
-                tex_command::CommandDialect::Tex82 => crate::job::EngineBinaryIdentity::Tex82,
-                tex_command::CommandDialect::Etex26 => crate::job::EngineBinaryIdentity::Etex26,
-                tex_command::CommandDialect::Pdftex14029 => {
-                    crate::job::EngineBinaryIdentity::Pdftex14029
-                }
-            });
+        let binary = self.engine_binary.unwrap_or_else(|| {
+            crate::job::EngineBinaryIdentity::for_profile(self.command_profile())
+        });
         let etex = self.command_profile() == CommandProfile::ETEX26;
         // §534's `**` line is exactly what §313 pseudoprints for the base
         // terminal level; a driver that frames the job here rather than
@@ -1343,6 +1337,9 @@ impl MainControl {
         crate::job::finish_job(
             stores,
             self.command_profile(),
+            self.engine_binary.unwrap_or_else(|| {
+                crate::job::EngineBinaryIdentity::for_profile(self.command_profile())
+            }),
             self.capabilities.job_name(),
             dvi,
             pdf,

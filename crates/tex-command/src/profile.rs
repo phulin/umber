@@ -237,32 +237,6 @@ impl CommandEngineSemantics {
     }
 }
 
-/// TeX's configured multiletter control-sequence capacity.
-///
-/// TeX82 §1334 reports the fixed hash table and the Web2C extension area as
-/// separate values. This is profile configuration, not live interner usage;
-/// deriving it from [`CommandProfile`] also makes the stable profile encoding
-/// the single format/checkpoint projection of this state.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub struct ControlSequenceCapacity {
-    hash_size: u32,
-    hash_extra: u32,
-}
-
-impl ControlSequenceCapacity {
-    /// Configured `hash_size`.
-    #[must_use]
-    pub const fn hash_size(self) -> u32 {
-        self.hash_size
-    }
-
-    /// Configured Web2C `hash_extra` extension.
-    #[must_use]
-    pub const fn hash_extra(self) -> u32 {
-        self.hash_extra
-    }
-}
-
 impl CommandCapabilities {
     /// Whether the e-TeX command family is installed.
     #[must_use]
@@ -403,21 +377,6 @@ impl CommandProfile {
             ),
             pdftex: matches!(self.dialect, CommandDialect::Pdftex14029),
             unicode: matches!(self.characters, CharacterMode::UnicodeExtended),
-        }
-    }
-
-    /// Returns the profile-owned capacity rendered by TeX82 §1334.
-    #[must_use]
-    pub const fn control_sequence_capacity(self) -> ControlSequenceCapacity {
-        match self.dialect {
-            CommandDialect::Tex82 => ControlSequenceCapacity {
-                hash_size: 15_000,
-                hash_extra: 0,
-            },
-            CommandDialect::Etex26 | CommandDialect::Pdftex14029 => ControlSequenceCapacity {
-                hash_size: 15_000,
-                hash_extra: 600_000,
-            },
         }
     }
 

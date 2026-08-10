@@ -62,6 +62,14 @@ pub enum EngineBinaryIdentity {
 }
 
 impl EngineBinaryIdentity {
+    pub(crate) const fn for_profile(profile: CommandProfile) -> Self {
+        match profile.dialect() {
+            tex_command::CommandDialect::Tex82 => Self::Tex82,
+            tex_command::CommandDialect::Etex26 => Self::Etex26,
+            tex_command::CommandDialect::Pdftex14029 => Self::Pdftex14029,
+        }
+    }
+
     fn banner(self) -> &'static str {
         match self {
             Self::Tex82 => TEX82_BANNER,
@@ -83,6 +91,20 @@ impl EngineBinaryIdentity {
             Self::Tex82 => tex_command::CommandEngineSemantics::Tex82,
             Self::Etex26 => tex_command::CommandEngineSemantics::Etex26,
             Self::Pdftex14029 => tex_command::CommandEngineSemantics::Pdftex14029,
+        }
+    }
+
+    /// Returns the hash capacity of this pinned executable configuration.
+    ///
+    /// Web2C `tex.ch` [51.1332] reads `hash_extra` as an executable runtime
+    /// bound, independently of the loaded format's command profile, and
+    /// [51.1334] renders that value in the usage report. The TeX82/e-TeX
+    /// conformance executables use triptrap's default zero extension; the
+    /// pinned pdfTeX distribution configuration supplies 600000.
+    const fn control_sequence_capacity(self) -> (u32, u32) {
+        match self {
+            Self::Tex82 | Self::Etex26 => (15_000, 0),
+            Self::Pdftex14029 => (15_000, 600_000),
         }
     }
 }
@@ -645,11 +667,12 @@ fn report_emergency_stop(
 pub(crate) fn finish_job(
     stores: &mut Universe,
     profile: CommandProfile,
+    binary: EngineBinaryIdentity,
     job_name: &str,
     dvi: Option<DviJobOutput>,
     pdf: Option<&mut PdfJobFinalizationReport>,
 ) {
-    print_usage_statistics(stores, profile);
+    print_usage_statistics(stores, binary);
     print_dvi_report(stores, dvi);
     print_pdf_report(stores, profile, pdf);
     print_transcript_note(stores, job_name);
@@ -811,7 +834,7 @@ fn print_u32(printer: &mut Printer<'_>, value: u32) {
     printer.print_int(i32::try_from(value).unwrap_or(i32::MAX));
 }
 
-fn print_usage_statistics(stores: &mut Universe, profile: CommandProfile) {
+fn print_usage_statistics(stores: &mut Universe, binary: EngineBinaryIdentity) {
     if stores.int_param(IntParam::TRACING_STATS) <= 0 {
         return;
     }
@@ -839,11 +862,11 @@ fn print_usage_statistics(stores: &mut Universe, profile: CommandProfile) {
     print_usize(&mut printer, usage.memory_word_capacity);
     printer.print_nl(" ");
     print_usize(&mut printer, usage.control_sequences);
-    let capacity = profile.control_sequence_capacity();
+    let (hash_size, hash_extra) = binary.control_sequence_capacity();
     printer.print(" multiletter control sequences out of ");
-    print_u32(&mut printer, capacity.hash_size());
+    print_u32(&mut printer, hash_size);
     printer.print_char('+');
-    print_u32(&mut printer, capacity.hash_extra());
+    print_u32(&mut printer, hash_extra);
     printer.print_nl(" ");
     print_usize(&mut printer, usage.font_info_words);
     printer.print(" words of font info for ");

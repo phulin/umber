@@ -298,7 +298,14 @@ fn history_note_is_silent_in_batch_mode_even_when_history_is_raised() {
 fn finish_job_reports_no_pages_of_output_for_a_zero_page_job() {
     let mut stores = Universe::new();
 
-    finish_job(&mut stores, CommandProfile::TEX82, "show-box", None, None);
+    finish_job(
+        &mut stores,
+        CommandProfile::TEX82,
+        EngineBinaryIdentity::Tex82,
+        "show-box",
+        None,
+        None,
+    );
 
     assert_eq!(
         terminal_text(&stores),
@@ -312,7 +319,14 @@ fn finish_job_reports_no_pages_of_output_for_a_zero_page_job() {
 fn finish_job_suppresses_usage_report_when_tracingstats_is_zero() {
     let mut stores = Universe::new();
     stores.set_int_param_global(IntParam::TRACING_STATS, 0);
-    finish_job(&mut stores, CommandProfile::TEX82, "stats", None, None);
+    finish_job(
+        &mut stores,
+        CommandProfile::TEX82,
+        EngineBinaryIdentity::Tex82,
+        "stats",
+        None,
+        None,
+    );
     assert!(!terminal_text(&stores).contains("Here is how much"));
     assert!(!log_text(&stores).contains("Here is how much"));
 }
@@ -326,7 +340,14 @@ fn finish_job_prints_tex82_usage_report_only_to_log_before_dvi_tail() {
         let mut stores = Universe::new();
         stores.set_interaction_mode(interaction);
         stores.set_int_param_global(IntParam::TRACING_STATS, 1);
-        finish_job(&mut stores, CommandProfile::TEX82, "stats", None, None);
+        finish_job(
+            &mut stores,
+            CommandProfile::TEX82,
+            EngineBinaryIdentity::Tex82,
+            "stats",
+            None,
+            None,
+        );
         let log = log_text(&stores);
         let report = "Here is how much of TeX's memory you used:\n";
         assert!(log.starts_with(report));
@@ -348,6 +369,37 @@ fn finish_job_prints_tex82_usage_report_only_to_log_before_dvi_tail() {
 }
 
 #[test]
+fn usage_report_hash_capacity_belongs_to_the_executing_binary() {
+    // Web2C tex.ch [51.1332] owns `hash_extra` as executable runtime
+    // configuration, and [51.1334] prints it independently of the loaded
+    // format's command family. The older profile is the negative control.
+    for (profile, binary, expected) in [
+        (
+            CommandProfile::ETEX26,
+            EngineBinaryIdentity::Etex26,
+            "15000+0",
+        ),
+        (
+            CommandProfile::TEX82,
+            EngineBinaryIdentity::Pdftex14029,
+            "15000+600000",
+        ),
+    ] {
+        let mut stores = Universe::new();
+        stores.set_int_param_global(IntParam::TRACING_STATS, 1);
+        finish_job(&mut stores, profile, binary, "stats", None, None);
+
+        assert!(
+            log_text(&stores).contains(&format!(
+                "multiletter control sequences out of {expected}\n"
+            )),
+            "unexpected usage report: {:?}",
+            log_text(&stores)
+        );
+    }
+}
+
+#[test]
 fn usage_report_separates_a_partial_final_cleanup_line_before_breaking() {
     // TeX82 §1333's log-only usage report preserves the separator at the
     // final-cleanup column before its first `wlog_cr`-style line break.
@@ -355,7 +407,14 @@ fn usage_report_separates_a_partial_final_cleanup_line_before_breaking() {
     stores.set_int_param_global(IntParam::TRACING_STATS, 1);
     Printer::new(&mut stores, Selector::LogOnly).print("unfinished)");
 
-    finish_job(&mut stores, CommandProfile::TEX82, "stats", None, None);
+    finish_job(
+        &mut stores,
+        CommandProfile::TEX82,
+        EngineBinaryIdentity::Tex82,
+        "stats",
+        None,
+        None,
+    );
 
     assert!(
         log_text(&stores).starts_with("unfinished) \nHere is how much of TeX's memory you used:\n")
@@ -371,7 +430,14 @@ fn usage_report_closes_log_before_shared_dvi_line_break() {
     stores.set_int_param_global(IntParam::TRACING_STATS, 1);
     Printer::new(&mut stores, Selector::TermOnly).print("terminal tail");
 
-    finish_job(&mut stores, CommandProfile::TEX82, "stats", None, None);
+    finish_job(
+        &mut stores,
+        CommandProfile::TEX82,
+        EngineBinaryIdentity::Tex82,
+        "stats",
+        None,
+        None,
+    );
 
     assert!(terminal_text(&stores).starts_with("terminal tail\nNo pages of output."));
     assert!(log_text(&stores).contains(
@@ -387,6 +453,7 @@ fn finish_job_keeps_log_only_statistics_before_the_committed_page_report() {
     finish_job(
         &mut stores,
         CommandProfile::TEX82,
+        EngineBinaryIdentity::Tex82,
         "doc",
         Some(DviJobOutput {
             file_name: "doc.dvi".into(),
@@ -411,6 +478,7 @@ fn finish_job_reports_output_written_with_the_singular_page_form() {
     finish_job(
         &mut stores,
         CommandProfile::TEX82,
+        EngineBinaryIdentity::Tex82,
         "doc",
         Some(DviJobOutput {
             file_name: "doc.dvi".into(),
@@ -434,6 +502,7 @@ fn finish_job_reports_output_written_with_the_plural_page_form() {
     finish_job(
         &mut stores,
         CommandProfile::TEX82,
+        EngineBinaryIdentity::Tex82,
         "doc",
         Some(DviJobOutput {
             file_name: "doc.dvi".into(),
@@ -453,7 +522,14 @@ fn finish_job_reports_output_written_with_the_plural_page_form() {
 #[should_panic(expected = "no `DviJobOutput` was supplied")]
 fn finish_job_refuses_to_fabricate_a_byte_count_for_a_shipped_page() {
     let mut stores = run_source_to_end(br"\shipout\hbox{}\end");
-    finish_job(&mut stores, CommandProfile::TEX82, "doc", None, None);
+    finish_job(
+        &mut stores,
+        CommandProfile::TEX82,
+        EngineBinaryIdentity::Tex82,
+        "doc",
+        None,
+        None,
+    );
 }
 
 #[test]
@@ -461,7 +537,14 @@ fn finish_job_transcript_note_is_terminal_only_and_silent_in_batch_mode() {
     let mut stores = Universe::new();
     stores.set_interaction_mode(InteractionMode::Batch);
 
-    finish_job(&mut stores, CommandProfile::TEX82, "show-box", None, None);
+    finish_job(
+        &mut stores,
+        CommandProfile::TEX82,
+        EngineBinaryIdentity::Tex82,
+        "show-box",
+        None,
+        None,
+    );
 
     assert!(!terminal_text(&stores).contains("Transcript written on"));
     assert!(!log_text(&stores).contains("Transcript written on"));
@@ -474,6 +557,7 @@ fn pdf_finalization_report_is_profile_aware_exact_and_one_shot() {
     finish_job(
         &mut stores,
         CommandProfile::PDFTEX14029,
+        EngineBinaryIdentity::Pdftex14029,
         "doc",
         None,
         Some(&mut report),
@@ -481,6 +565,7 @@ fn pdf_finalization_report_is_profile_aware_exact_and_one_shot() {
     finish_job(
         &mut stores,
         CommandProfile::PDFTEX14029,
+        EngineBinaryIdentity::Pdftex14029,
         "doc",
         None,
         Some(&mut report),
@@ -522,7 +607,14 @@ fn tex_and_etex_profiles_never_render_a_pdf_finalization_report() {
     for profile in [CommandProfile::TEX82, CommandProfile::ETEX26] {
         let mut stores = Universe::new();
         let mut report = PdfJobFinalizationReport::new(1, 0, 0, 0, 1);
-        finish_job(&mut stores, profile, "doc", None, Some(&mut report));
+        finish_job(
+            &mut stores,
+            profile,
+            EngineBinaryIdentity::for_profile(profile),
+            "doc",
+            None,
+            Some(&mut report),
+        );
         assert!(!terminal_text(&stores).contains("PDF statistics:"));
     }
 }
