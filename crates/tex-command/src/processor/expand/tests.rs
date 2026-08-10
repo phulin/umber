@@ -610,6 +610,82 @@ fn pdftex_string_compare_expands_both_balanced_operands() {
 }
 
 #[test]
+fn pdftex_escape_string_expands_and_escapes_only_pdf_literal_bytes() {
+    // pdftex.web §495 and utils.c `escapestring`: scan one expanded balanced
+    // operand, prefix the three PDF literal delimiters, octal-encode bytes
+    // outside !..~, and leave safe endpoints unchanged. Fresh and loaded
+    // universes are the format-registration negative control.
+    let mut fresh = crate::test_harness::universe_with_plain_catcodes();
+    crate::primitives::install_pdftex_expandable_primitives(&mut fresh);
+    let format = fresh.dump_format().expect("quiescent pdfTeX format");
+    let mut loaded = Universe::from_format(World::default(), &format).expect("format loads");
+    crate::primitives::register_pdftex_expandable_primitives(&mut loaded);
+
+    for mut universe in [fresh, loaded] {
+        let escape = universe
+            .symbol("pdfescapestring")
+            .expect("pdfTeX spelling is installed");
+        assert_eq!(
+            universe.meaning(escape.symbol()),
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfEscapeString),
+        );
+        install_macro(
+            &mut universe,
+            "backslash",
+            Token::Char {
+                ch: '\\',
+                cat: Catcode::Other,
+            },
+        );
+        install_macro(
+            &mut universe,
+            "highbyte",
+            Token::Char {
+                ch: '\u{80}',
+                cat: Catcode::Other,
+            },
+        );
+        install_macro(
+            &mut universe,
+            "spacechar",
+            Token::Char {
+                ch: ' ',
+                cat: Catcode::Space,
+            },
+        );
+        let mut command = CommandState::new(crate::CommandProfile::PDFTEX14029);
+        let source = command
+            .register_source(SourceRegistration::new(
+                RegisteredSourceKind::Generated,
+                br"\pdfescapestring{(\backslash)\highbyte\spacechar A!~}%".as_slice(),
+            ))
+            .expect("source registers");
+        command
+            .open_registered_source(source)
+            .expect("source opens");
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut recorder = Recorder::default();
+        let mut processor =
+            processor(&mut command, &mut universe, &mut capabilities).with_observer(&mut recorder);
+
+        assert_eq!(rendered(&mut processor), r"\(\\\)\200\040A!~");
+        let returned = recorder.0.iter().find_map(|record| match record {
+            CommandObservation::TokenList(record) if record.purpose == "pdf_escape_string" => {
+                Some(record)
+            }
+            _ => None,
+        });
+        assert_eq!(
+            returned
+                .expect("conversion return is observed")
+                .tokens
+                .len(),
+            r"\(\\\)\200\040A!~".len(),
+        );
+    }
+}
+
+#[test]
 fn creation_date_uses_each_jobs_tracked_clock_fresh_and_after_format_load() {
     // pdftex.web §1590: `pdf_creation_date_code` inserts the immutable
     // job-start timestamp. The LaTeX compatibility spelling and pdfTeX

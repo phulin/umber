@@ -36,6 +36,7 @@ use super::{
 use crate::observation::{
     CommandDeliveryBoundary, CommandDeliveryRecord, CommandObservation, CommandProvenance,
     EffectRecord, InputReason, InputRecord, InputTransition, RecoveryKind, RecoveryRecord,
+    TokenListRecord,
 };
 
 /// Stable pending-diagnostic identity for TeX.web's `Missing \\endcsname
@@ -80,6 +81,34 @@ fn format_glue(value: GlueSpec, unit: &str) -> String {
     let mut output = String::new();
     append_format_glue(value, unit, &mut output);
     output
+}
+
+/// pdfTeX's `utils.c` `escapestring` projection for a PDF literal-string body.
+fn escape_pdf_literal_string(text: &str) -> String {
+    fn append_byte(output: &mut String, byte: u8) {
+        match byte {
+            b'!'..=b'~' => {
+                if matches!(byte, b'(' | b')' | b'\\') {
+                    output.push('\\');
+                }
+                output.push(char::from(byte));
+            }
+            _ => write!(output, "\\{byte:03o}").expect("writing to String cannot fail"),
+        }
+    }
+
+    let mut escaped = String::with_capacity(text.len());
+    for character in text.chars() {
+        if let Ok(byte) = u8::try_from(u32::from(character)) {
+            append_byte(&mut escaped, byte);
+        } else {
+            let mut encoded = [0; 4];
+            for byte in character.encode_utf8(&mut encoded).bytes() {
+                append_byte(&mut escaped, byte);
+            }
+        }
+    }
+    escaped
 }
 
 fn append_format_glue(value: GlueSpec, unit: &str, output: &mut String) {
@@ -916,6 +945,9 @@ impl CommandProcessor<'_> {
             Meaning::ExpandablePrimitive(ExpandablePrimitive::StringCompare) => {
                 self.expand_string_compare(command)
             }
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfEscapeString) => {
+                self.expand_pdf_escape_string(command)
+            }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfMatch) => {
                 self.expand_pdf_match(command)
             }
@@ -1187,6 +1219,40 @@ impl CommandProcessor<'_> {
             std::cmp::Ordering::Greater => 1,
         };
         self.push_rendered_text(&value.to_string(), opener.origin());
+        Ok(())
+    }
+
+    /// pdftex.web §495's `pdf_escape_string_code` conversion.
+    ///
+    /// The operand is one expanded general-text token list. `tokens_to_string`
+    /// first projects that list to pdfTeX's byte string, then `escapestring`
+    /// writes a PDF literal-string body: parentheses and backslashes gain an
+    /// escape prefix, while bytes outside `!` through `~` use three octal
+    /// digits. The result reenters expansion as category-12 characters.
+    fn expand_pdf_escape_string(&mut self, opener: CurrentCommand) -> Result<(), CommandError> {
+        let scanned = self.scan_toks(crate::scan_toks::ScanToksMode::General { expanded: true })?;
+        let text = token_list_string_text(&mut self.state, scanned.replacement_text.token_list());
+        let escaped = escape_pdf_literal_string(&text);
+        observe!(
+            self,
+            CommandObservation::TokenList(TokenListRecord {
+                transition: "complete",
+                purpose: "pdf_escape_string",
+                tokens: escaped
+                    .chars()
+                    .map(|ch| {
+                        self.observed_token(TracedTokenWord::pack(
+                            Token::Char {
+                                ch,
+                                cat: Catcode::Other,
+                            },
+                            OriginId::UNKNOWN,
+                        ))
+                    })
+                    .collect(),
+            }),
+        );
+        self.push_rendered_text(&escaped, opener.origin());
         Ok(())
     }
 
