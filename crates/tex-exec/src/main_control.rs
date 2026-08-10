@@ -367,6 +367,20 @@ impl ReplayBoxKind {
             Self::Insert(..) => GroupKind::Insert,
         }
     }
+
+    /// Integer words placed below this body's §273 level boundary.
+    const fn save_stack_spec_words(self) -> usize {
+        match self {
+            // §1083 calls §645's `scan_spec(..., true)`, preserving the box
+            // context in addition to the packing kind and dimension.
+            Self::HBox | Self::VBox | Self::VTop => 3,
+            // §1167 uses `scan_spec(..., false)`, so only the packing pair is
+            // below the vcenter boundary.
+            Self::VCenter => 2,
+            // §1099 opens insert_group directly and saves no box spec.
+            Self::Insert(..) => 0,
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -2510,12 +2524,15 @@ impl MainControl {
     /// transaction policy. This is the sole owner of aggregate savepoints,
     /// commit/rollback, fatal termination, and resource suspension.
     fn record_save_stack_usage(&mut self, stores: &Universe) {
-        // TeX82 §§645/1084 keeps the packing kind, dimension, and box
-        // context immediately below each live box boundary. The typed box
-        // owner carries those three values as one record; at §273's check
-        // point its already-counted boundary stands in for one word, leaving
-        // two additional canonical save-stack words to project.
-        let box_spec_words = self.boxes.active_boxes.len().saturating_mul(2);
+        // TeX82 §§645/1083 keeps ordinary box specs immediately below their
+        // §273 boundaries. Vcenters and insertions deliberately have smaller
+        // projections (§§1167/1099), so derive the words from each live kind.
+        let box_spec_words = self
+            .boxes
+            .active_boxes
+            .iter()
+            .map(|active| active.kind.save_stack_spec_words())
+            .fold(0_usize, usize::saturating_add);
         let live = stores
             .live_save_stack_words(self.command_profile().capabilities().supports_etex())
             .saturating_add(box_spec_words);

@@ -131,6 +131,22 @@ fn run_to_end(control: &mut MainControl, stores: &mut Universe) {
     }
 }
 
+#[test]
+fn box_save_stack_projection_distinguishes_scan_spec_callers() {
+    // TeX82 §§645/1083's ordinary boxes preserve box_context plus the
+    // packing pair. Section 1167's vcenter omits the context, and §1099's
+    // insertion opens its group without calling scan_spec at all.
+    for kind in [
+        ReplayBoxKind::HBox,
+        ReplayBoxKind::VBox,
+        ReplayBoxKind::VTop,
+    ] {
+        assert_eq!(kind.save_stack_spec_words(), 3);
+    }
+    assert_eq!(ReplayBoxKind::VCenter.save_stack_spec_words(), 2);
+    assert_eq!(ReplayBoxKind::Insert(7, false).save_stack_spec_words(), 0);
+}
+
 fn box_child_nodes(stores: &Universe, register: u16) -> Vec<Node> {
     let list = stores
         .box_reg(register)
