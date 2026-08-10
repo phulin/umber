@@ -2,7 +2,7 @@ use super::{FrozenCoreSections, FrozenNodeSection, FrozenNonNodeSections};
 use crate::env::banks::IntParam;
 use crate::glue::GlueSpec;
 use crate::glue::Order;
-use crate::node::{BoxLr, BoxNode, BoxNodeFields, DiscKind, Node, Sign};
+use crate::node::{BoxLr, BoxNode, BoxNodeFields, DiscKind, GlueKind, LeaderPayload, Node, Sign};
 use crate::node_arena::NodeRef;
 use crate::scaled::{GlueSetRatio, Scaled};
 use crate::stores::Stores;
@@ -52,6 +52,94 @@ fn format_round_trip_preserves_diagnostic_disc_replacement_count() {
             physical_replace_count: 3,
             ..
         })
+    ));
+}
+
+#[test]
+fn format_round_trip_preserves_physical_diagnostic_box_children() {
+    // TeX82 §§135 and 1307 make a box's list pointer part of the dumped
+    // memory graph. Umber's diagnostic list is a second physical pointer:
+    // format capture must retain it without changing the semantic child.
+    let mut stores = Stores::new();
+    let semantic_children = stores.freeze_node_list(&[Node::Penalty(1)]);
+    let diagnostic_children = stores.freeze_node_list(&[Node::Penalty(2)]);
+    let mut box_node = BoxNode::new(BoxNodeFields {
+        width: Scaled::from_raw(0),
+        height: Scaled::from_raw(0),
+        depth: Scaled::from_raw(0),
+        shift: Scaled::from_raw(0),
+        box_lr: BoxLr::Normal,
+        glue_set: GlueSetRatio::ZERO,
+        glue_sign: Sign::Normal,
+        glue_order: Order::Normal,
+        children: semantic_children,
+    });
+    box_node.diagnostic_children = Some(diagnostic_children);
+    let root = stores.freeze_node_list(&[Node::HList(box_node)]);
+    stores.set_box_reg(0, root);
+
+    let restored = frozen_round_trip(&stores);
+    let restored_root = restored.box_reg(0).expect("restored box root");
+    let Some(NodeRef::HList(restored_box)) = restored.nodes(restored_root).first() else {
+        panic!("expected restored hlist")
+    };
+    assert!(matches!(
+        restored.nodes(restored_box.children).first(),
+        Some(NodeRef::Penalty(1))
+    ));
+    let diagnostic = restored_box
+        .diagnostic_children
+        .expect("restored diagnostic child");
+    assert!(matches!(
+        restored.nodes(diagnostic).first(),
+        Some(NodeRef::Penalty(2))
+    ));
+}
+
+#[test]
+fn format_round_trip_preserves_physical_diagnostic_leader_children() {
+    let mut stores = Stores::new();
+    let semantic_children = stores.freeze_node_list(&[Node::Penalty(3)]);
+    let diagnostic_children = stores.freeze_node_list(&[Node::Penalty(4)]);
+    let mut leader_box = BoxNode::new(BoxNodeFields {
+        width: Scaled::from_raw(0),
+        height: Scaled::from_raw(0),
+        depth: Scaled::from_raw(0),
+        shift: Scaled::from_raw(0),
+        box_lr: BoxLr::Normal,
+        glue_set: GlueSetRatio::ZERO,
+        glue_sign: Sign::Normal,
+        glue_order: Order::Normal,
+        children: semantic_children,
+    });
+    leader_box.diagnostic_children = Some(diagnostic_children);
+    let glue = stores.intern_glue(GlueSpec::ZERO);
+    let root = stores.freeze_node_list(&[Node::Glue {
+        spec: glue,
+        kind: GlueKind::Leaders,
+        leader: Some(LeaderPayload::HList(leader_box)),
+    }]);
+    stores.set_box_reg(0, root);
+
+    let restored = frozen_round_trip(&stores);
+    let restored_root = restored.box_reg(0).expect("restored box root");
+    let Some(NodeRef::Glue {
+        leader: Some(LeaderPayload::HList(restored_box)),
+        ..
+    }) = restored.nodes(restored_root).first()
+    else {
+        panic!("expected restored hlist leader")
+    };
+    assert!(matches!(
+        restored.nodes(restored_box.children).first(),
+        Some(NodeRef::Penalty(3))
+    ));
+    let diagnostic = restored_box
+        .diagnostic_children
+        .expect("restored leader diagnostic child");
+    assert!(matches!(
+        restored.nodes(diagnostic).first(),
+        Some(NodeRef::Penalty(4))
     ));
 }
 
@@ -151,6 +239,7 @@ fn format_round_trip_preserves_all_box_lr_states() {
             panic!("expected restored hlist")
         };
         assert_eq!(box_node.box_lr, expected);
+        assert!(box_node.diagnostic_children.is_none());
     }
 }
 

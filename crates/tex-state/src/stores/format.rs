@@ -1024,7 +1024,7 @@ impl StoreFormat {
             let mut seen = std::collections::BTreeSet::new();
             let mut visiting = std::collections::BTreeSet::new();
             let mut survivor_roots = std::collections::BTreeMap::new();
-            for child in crate::node_arena::NodeRef::from(extra_node).children() {
+            for child in crate::node_arena::NodeRef::from(extra_node).physical_children() {
                 capture_node_list(
                     stores,
                     child,
@@ -1845,7 +1845,11 @@ fn capture_node_list(
                 stack.push(Visit::Exit(id));
                 let nodes = stores.nodes(id);
                 for node in nodes.iter().rev() {
-                    for child in node.children().rev() {
+                    // TeX82 §§135 and 1307 dump the complete reachable
+                    // memory graph behind every box list pointer. Format DTOs
+                    // likewise retain diagnostic-only physical children even
+                    // though semantic traversal deliberately excludes them.
+                    for child in node.physical_children().rev() {
                         stack.push(Visit::Enter(child));
                     }
                 }

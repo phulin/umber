@@ -472,7 +472,12 @@ impl NodeRef<'_> {
             Self::Glue {
                 leader: Some(LeaderPayload::HList(node) | LeaderPayload::VList(node)),
                 ..
-            } => children[0] = Some(node.children),
+            } => {
+                children[0] = Some(node.children);
+                if physical {
+                    children[1] = node.diagnostic_children;
+                }
+            }
             Self::Unset(node) => children[0] = Some(node.children),
             Self::Disc {
                 pre, post, replace, ..
