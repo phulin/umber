@@ -20,8 +20,10 @@ exact e-TeX 2.6 oracle runs first, so the V2 bridge is not an alternate
 semantic authority. Perturbation controls prove output-byte and DVItype-page
 changes fail with a named channel and first offset.
 
-Fresh e-TRIP and routine gates pass on base `8abf3cef8`. The separately
-required fresh-cache TeX82 compatibility TRIP run exposed a pre-comparison
-format-node decode panic at `crates/tex-state/src/stores/format/node.rs:290`.
-That observed-only divergence is `umber2-jg04.37`; this issue cannot close
-until its compatibility gate passes.
+Fresh e-TRIP and routine gates pass. The separately required fresh-cache TeX82
+compatibility run no longer panics after `umber2-jg04.37` made frozen graph
+discovery include serialized physical diagnostic edges. Its semantic events,
+geometry, and normalized DVI are exact, but its first remaining difference is
+a log-only restore trace caused by the independent TeX82 §993 page-builder box
+mutation boundary. That observed-only divergence is `umber2-jg04.38`; this
+issue cannot close until the exact compatibility gate passes.
