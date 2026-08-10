@@ -71,7 +71,7 @@ fn undo_record_accessors_preserve_fields() {
 }
 
 #[test]
-fn save_stack_projection_updates_incrementally_and_rebuilds_only_on_truncate() {
+fn save_stack_projection_updates_and_rolls_back_incrementally() {
     let mut journal = Journal::new();
     journal.push_marker(Marker::Group {
         aftergroup_start: 0,
@@ -113,7 +113,10 @@ fn save_stack_projection_updates_incrementally_and_rebuilds_only_on_truncate() {
     ));
     assert_eq!(journal.canonical_save_stack_words(), 6);
     assert_eq!(journal.canonical_save_stack_projection().1, Some((6, 2)));
-    assert_eq!(journal.testing_save_stack_projection_rebuilds(), 0);
+    assert_eq!(
+        journal.testing_save_stack_projection_rolled_back_entries(),
+        0
+    );
 
     let before_nested = journal.pos();
     journal.push_marker(Marker::Group {
@@ -122,10 +125,72 @@ fn save_stack_projection_updates_incrementally_and_rebuilds_only_on_truncate() {
     });
     journal.push_undo(UndoRec::new(CellId::new(BankTag::Dimen, 4), 0, 1));
     assert_eq!(journal.canonical_save_stack_words(), 9);
-    assert_eq!(journal.testing_save_stack_projection_rebuilds(), 0);
+    assert_eq!(
+        journal.testing_save_stack_projection_rolled_back_entries(),
+        0
+    );
 
     journal.truncate_to(before_nested);
     assert_eq!(journal.canonical_save_stack_words(), 6);
     assert_eq!(journal.canonical_save_stack_projection().1, Some((6, 2)));
-    assert_eq!(journal.testing_save_stack_projection_rebuilds(), 1);
+    assert_eq!(
+        journal.testing_save_stack_projection_rolled_back_entries(),
+        2,
+        "truncate rolls back only the removed suffix"
+    );
+}
+
+#[test]
+fn save_stack_projection_truncate_restores_local_eligibility_removed_by_global_assignment() {
+    let mut journal = Journal::new();
+    journal.push_marker(Marker::Group {
+        aftergroup_start: 0,
+        kind: GroupKind::Simple,
+    });
+    let count = CellId::new(BankTag::Count, 9);
+    journal.push_undo(UndoRec::new(count, 10, 20));
+    let after_local = journal.pos();
+    let after_local_projection = journal.canonical_save_stack_projection();
+
+    journal.push_undo(UndoRec::new(CellId::new_global(BankTag::Count, 9), 20, 30));
+    journal.push_undo(UndoRec::new(count, 30, 40));
+    assert_eq!(journal.canonical_save_stack_words(), 5);
+
+    journal.truncate_to(after_local);
+    assert_eq!(
+        journal.canonical_save_stack_projection(),
+        after_local_projection
+    );
+    journal.push_undo(UndoRec::new(count, 20, 50));
+    assert_eq!(
+        journal.canonical_save_stack_projection(),
+        after_local_projection,
+        "rolling back the global reset must restore the enclosing local run"
+    );
+}
+
+#[test]
+fn save_stack_projection_truncate_does_not_replay_retained_prefix() {
+    let mut journal = Journal::new();
+    for index in 0..4096 {
+        journal.push_undo(UndoRec::new(
+            CellId::new_global(BankTag::Meaning, index),
+            Meaning::Undefined.encode(),
+            Meaning::Relax.encode(),
+        ));
+    }
+    let retained_prefix = journal.pos();
+    journal.push_marker(Marker::Group {
+        aftergroup_start: 0,
+        kind: GroupKind::Simple,
+    });
+    journal.push_undo(UndoRec::new(CellId::new(BankTag::Dimen, 1), 0, 65_536));
+
+    journal.truncate_to(retained_prefix);
+    assert_eq!(journal.canonical_save_stack_projection(), (0, None));
+    assert_eq!(
+        journal.testing_save_stack_projection_rolled_back_entries(),
+        2,
+        "projection work is bounded by the removed suffix, not the retained prefix"
+    );
 }

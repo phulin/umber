@@ -66,9 +66,12 @@ fn engine_usage_statistics_retain_one_word_extent_across_rollback() {
 }
 
 #[test]
-fn main_memory_extent_samples_reachable_state_before_group_restore() {
+fn main_memory_extent_is_recorded_at_allocation_before_group_restore() {
     let mut positive = Universe::new();
     positive.enter_group();
+    // TeX82 §§125/127 move the one-word allocator coordinate when the
+    // scanner allocates the list, not when §283 later walks `unsave`.
+    positive.observe_transient_token_words(601);
     let tokens = positive.intern_token_list(&vec![
         Token::Char {
             ch: 'x',
@@ -78,9 +81,9 @@ fn main_memory_extent_samples_reachable_state_before_group_restore() {
     ]);
     positive.set_toks(0, tokens);
     let _ = positive.leave_group();
-    // TeX82 §§283/1334: `unsave` releases the local token list, but the
-    // one-word allocator coordinate reached before restoration survives.
-    assert_eq!(positive.engine_usage_statistics().memory_words, 1_646);
+    // Section 283 releases the local token list, while §1334 retains the
+    // allocator coordinate recorded at the allocation event.
+    assert_eq!(positive.engine_usage_statistics().memory_words, 1_642);
 
     let mut negative = Universe::new();
     negative.enter_group();
@@ -92,8 +95,8 @@ fn main_memory_extent_samples_reachable_state_before_group_restore() {
         600
     ]);
     let _ = negative.leave_group();
-    // An immutable host-store allocation that never became reachable TeX
-    // state does not occupy TeX's allocator and must not move the coordinate.
+    // An immutable host-store allocation without a canonical allocator event
+    // does not occupy TeX's allocator and must not move the coordinate.
     assert_eq!(negative.engine_usage_statistics().memory_words, 1_045);
 }
 

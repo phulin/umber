@@ -45,8 +45,11 @@ The same boundary owns TeX82-shaped allocator diagnostics:
 `Universe::engine_usage_statistics` combines live usage from the interner,
 token, glue, node, font, and hyphenation stores. End-of-job code consumes this
 small value projection and never receives raw store access. The aggregate
-retains componentwise high-water values before rollback, so speculative or
-checkpointed allocation is still represented at job termination.
+retains componentwise high-water values at §§125--127 allocation events, so
+speculative or checkpointed allocation is still represented at job
+termination. Section 283 `unsave` restores or frees existing allocator-owned
+values; it does not rescan the complete live closure to rediscover a coordinate
+that was already recorded when the value was allocated.
 
 Mutable font parameter banks share a process-configured `font_info` capacity:
 TeX82's compiled default is 20,000 words, while the pinned Web2C pdfTeX
@@ -100,8 +103,11 @@ The journal also owns an incremental projection of TeX82 §§273--280's physical
 save-stack words for §1334's diagnostic high-water accounting. Appending a
 group marker, local save, global supersession, or box save updates that derived
 projection with the journal entry; ordinary reads are constant-time and do not
-rescan the growing journal. Rollback truncation rebuilds the projection from
-the retained prefix, keeping it coupled to the journal's authoritative state.
+rescan the growing journal. Each entry records the inverse of its projection
+mutation, so rollback truncation walks only the removed suffix. This restores
+local-save eligibility removed by a later global assignment and keeps the
+projection coupled to the journal without replaying retained level-zero
+definitions.
 
 Local writes restore at group exit. Global writes survive and supersede older
 local restoration. Sparse e-TeX registers obey the same rules as dense cells.

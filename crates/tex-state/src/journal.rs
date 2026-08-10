@@ -167,15 +167,31 @@ struct SaveStackProjection {
     groups: Vec<AHashMap<CellId, usize>>,
     entries: usize,
     latest_push: Option<(usize, usize)>,
+    undos: Vec<SaveStackProjectionUndo>,
     #[cfg(test)]
-    rebuilds: usize,
+    rolled_back_entries: usize,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct SaveStackProjectionUndo {
+    previous_latest_push: Option<(usize, usize)>,
+    mutation: SaveStackProjectionMutation,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum SaveStackProjectionMutation {
+    None,
+    InsertedSaved { cell: CellId, words: usize },
+    RemovedSaved { cell: CellId, words: usize },
+    PushedGroup,
 }
 
 impl SaveStackProjection {
     fn push_undo(&mut self, rec: UndoRec) {
         let mut pushed_words = 0;
+        let mut mutation = SaveStackProjectionMutation::None;
         let Some(saved) = self.groups.last_mut() else {
-            self.finish_entry(0);
+            self.finish_entry(0, mutation);
             return;
         };
         let cell = rec.cell().without_assignment_scope();
@@ -183,7 +199,9 @@ impl SaveStackProjection {
             // TeX82 §§275/283 retain an already-pushed restore record after
             // a global definition; only the current local-run eligibility is
             // reset so a later local definition can push another record.
-            saved.remove(&cell);
+            if let Some(words) = saved.remove(&cell) {
+                mutation = SaveStackProjectionMutation::RemovedSaved { cell, words };
+            }
         } else if !saved.contains_key(&cell) {
             // TeX82 §§275--276 represents `restore_zero` in one word,
             // while `restore_old_value` occupies two.
@@ -195,46 +213,112 @@ impl SaveStackProjection {
             saved.insert(cell, words);
             self.words = self.words.saturating_add(words);
             pushed_words = words;
+            mutation = SaveStackProjectionMutation::InsertedSaved { cell, words };
         }
-        self.finish_entry(pushed_words);
+        self.finish_entry(pushed_words, mutation);
     }
 
     fn push_box_undo(&mut self, rec: BoxUndoRec) {
         let mut pushed_words = 0;
+        let mut mutation = SaveStackProjectionMutation::None;
         let Some(saved) = self.groups.last_mut() else {
-            self.finish_entry(0);
+            self.finish_entry(0, mutation);
             return;
         };
         let cell = CellId::new(BankTag::Box, u32::from(rec.index()));
         if rec.is_global() {
-            saved.remove(&cell);
+            if let Some(words) = saved.remove(&cell) {
+                mutation = SaveStackProjectionMutation::RemovedSaved { cell, words };
+            }
         } else if !saved.contains_key(&cell) {
             saved.insert(cell, 2);
             self.words = self.words.saturating_add(2);
             pushed_words = 2;
+            mutation = SaveStackProjectionMutation::InsertedSaved { cell, words: 2 };
         }
-        self.finish_entry(pushed_words);
+        self.finish_entry(pushed_words, mutation);
     }
 
     fn push_marker(&mut self, marker: Marker) {
-        let pushed_words = match marker {
+        let (pushed_words, mutation) = match marker {
             Marker::Group { .. } => {
                 self.words = self.words.saturating_add(1);
                 self.groups.push(AHashMap::new());
-                1
+                (1, SaveStackProjectionMutation::PushedGroup)
             }
             // The separately stored aftergroup payload owns this word count,
             // but its journal marker still orders the most recent §276 push.
-            Marker::Aftergroup => 1,
-            Marker::Checkpoint(_) => 0,
+            Marker::Aftergroup => (1, SaveStackProjectionMutation::None),
+            Marker::Checkpoint(_) => (0, SaveStackProjectionMutation::None),
         };
-        self.finish_entry(pushed_words);
+        self.finish_entry(pushed_words, mutation);
     }
 
-    fn finish_entry(&mut self, pushed_words: usize) {
+    fn finish_entry(&mut self, pushed_words: usize, mutation: SaveStackProjectionMutation) {
+        self.undos.push(SaveStackProjectionUndo {
+            previous_latest_push: self.latest_push,
+            mutation,
+        });
         self.entries = self.entries.saturating_add(1);
         if pushed_words != 0 {
             self.latest_push = Some((self.entries, pushed_words));
+        }
+    }
+
+    fn truncate_to(&mut self, len: usize) {
+        assert!(len <= self.entries, "save-stack position is past the end");
+        while self.entries > len {
+            let undo = self
+                .undos
+                .pop()
+                .expect("save-stack projection undo is aligned with the journal");
+            match undo.mutation {
+                SaveStackProjectionMutation::None => {}
+                SaveStackProjectionMutation::InsertedSaved { cell, words } => {
+                    let removed = self
+                        .groups
+                        .last_mut()
+                        .expect("saved cell belongs to a live group")
+                        .remove(&cell);
+                    assert_eq!(
+                        removed,
+                        Some(words),
+                        "saved-cell projection must round trip"
+                    );
+                    self.words = self
+                        .words
+                        .checked_sub(words)
+                        .expect("save-stack word count must cover saved cell");
+                }
+                SaveStackProjectionMutation::RemovedSaved { cell, words } => {
+                    let previous = self
+                        .groups
+                        .last_mut()
+                        .expect("saved cell belongs to a live group")
+                        .insert(cell, words);
+                    assert!(previous.is_none(), "removed saved cell must remain absent");
+                }
+                SaveStackProjectionMutation::PushedGroup => {
+                    let group = self
+                        .groups
+                        .pop()
+                        .expect("group marker belongs to a live save-stack group");
+                    assert!(
+                        group.is_empty(),
+                        "group entries must roll back before its marker"
+                    );
+                    self.words = self
+                        .words
+                        .checked_sub(1)
+                        .expect("save-stack word count must cover group marker");
+                }
+            }
+            self.latest_push = undo.previous_latest_push;
+            self.entries -= 1;
+            #[cfg(test)]
+            {
+                self.rolled_back_entries = self.rolled_back_entries.saturating_add(1);
+            }
         }
     }
 }
@@ -277,6 +361,12 @@ impl Journal {
                         )
                     })
                     .sum::<usize>(),
+            )
+            .saturating_add(
+                self.save_stack
+                    .undos
+                    .capacity()
+                    .saturating_mul(std::mem::size_of::<SaveStackProjectionUndo>()),
             )
     }
 
@@ -372,29 +462,13 @@ impl Journal {
         if len == self.entries.len() {
             return;
         }
+        self.save_stack.truncate_to(len);
         self.entries.truncate(len);
-        self.rebuild_save_stack_projection();
-    }
-
-    fn rebuild_save_stack_projection(&mut self) {
-        let mut projection = SaveStackProjection::default();
-        #[cfg(test)]
-        {
-            projection.rebuilds = self.save_stack.rebuilds.saturating_add(1);
-        }
-        for entry in &self.entries {
-            match *entry {
-                Entry::Undo(rec) => projection.push_undo(rec),
-                Entry::BoxUndo(id) => projection.push_box_undo(self.box_undos[id.0 as usize]),
-                Entry::Marker(marker) => projection.push_marker(marker),
-            }
-        }
-        self.save_stack = projection;
     }
 
     #[cfg(test)]
-    pub(crate) const fn testing_save_stack_projection_rebuilds(&self) -> usize {
-        self.save_stack.rebuilds
+    pub(crate) const fn testing_save_stack_projection_rolled_back_entries(&self) -> usize {
+        self.save_stack.rolled_back_entries
     }
 }
 
