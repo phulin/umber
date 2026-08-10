@@ -56,6 +56,57 @@ fn engine_stack_usage_merges_runtime_high_water_by_owner() {
 }
 
 #[test]
+fn string_pool_checkpoint_marks_recycled_strings_without_cloning_them() {
+    let mut stores = Stores::new();
+    stores.string_pool.recycling_enabled = true;
+    stores.remember_pool_string("format-name");
+    let journal_before = stores.string_pool_recycled_journal.len();
+    let owners_before = std::sync::Arc::strong_count(
+        stores
+            .string_pool
+            .recycled
+            .get("format-name")
+            .expect("retained format name"),
+    );
+    let snapshot = stores.checkpoint();
+
+    // Web2C tex.ch [29.517] searches the retained pool without changing it.
+    // Aggregate operation checkpoints therefore retain only the append mark,
+    // not a cloned membership tree or another owner for every pooled string.
+    assert_eq!(snapshot.string_pool_recycled_mark, journal_before);
+    assert_eq!(
+        std::sync::Arc::strong_count(
+            stores
+                .string_pool
+                .recycled
+                .get("format-name")
+                .expect("retained format name"),
+        ),
+        owners_before
+    );
+    let baseline = stores.engine_usage_statistics();
+    stores.slow_make_pool_string("format-name");
+    assert_eq!(stores.engine_usage_statistics(), baseline);
+    assert_eq!(stores.string_pool_recycled_journal.len(), journal_before);
+
+    stores.slow_make_pool_string("runtime-name");
+    assert_eq!(
+        stores.string_pool_recycled_journal.len(),
+        journal_before + 1
+    );
+    assert_eq!(stores.engine_usage_statistics().strings, 1);
+
+    stores.rollback(&snapshot);
+    assert_eq!(stores.string_pool_recycled_journal.len(), journal_before);
+    assert!(!stores.string_pool.recycled.contains("runtime-name"));
+    assert_eq!(stores.string_pool.used_strings(), 0);
+    assert_eq!(stores.string_pool.used_characters(), 0);
+    stores.slow_make_pool_string("runtime-name");
+    assert_eq!(stores.string_pool.used_strings(), 1);
+    assert_eq!(stores.string_pool.used_characters(), "runtime-name".len());
+}
+
+#[test]
 fn rollback_restores_env_and_interner_as_one_tuple() {
     let mut stores = Stores::new();
     let kept = stores.intern("kept");

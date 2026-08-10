@@ -20,22 +20,23 @@ ownership. It does not permit untracked mutation or host I/O for performance.
 
 `Universe` owns the complete live engine substrate:
 
-| Store                | Contents                                          | History model            |
-| -------------------- | ------------------------------------------------- | ------------------------ |
-| Interner             | control-sequence names and semantic atoms         | append-only watermark    |
-| Environment          | meanings, parameters, registers, current fonts    | journaled writes         |
-| Sparse registers     | e-TeX register overflow                           | journaled map/page roots |
-| Code tables          | cat/lc/uc/sf/math/del codes                       | copy-on-write pages      |
-| Token store          | durable token lists and semantic identities       | frozen + watermark       |
-| Provenance           | origins and origin-list spans                     | append-only watermark    |
-| Source fragments/map | immutable bytes and current editor layout         | roots + watermarks       |
-| Glue store           | canonical immutable glue specs                    | frozen + watermark       |
-| Node arenas          | compact node words, sidecars, semantic identities | epoch + survivors        |
-| Fonts                | immutable TFM/OpenType selections                 | frozen + watermark       |
-| Hyphenation          | patterns, exceptions, language state              | snapshot-owned roots     |
-| Page state           | contribution queue, marks, insertions, best break | copy-on-write roots      |
-| Journal              | undo entries, group and checkpoint markers        | append-only position     |
-| World/effects        | inputs, streams, output, clock, randomness        | snapshot/effect log      |
+| Store                | Contents                                            | History model            |
+| -------------------- | --------------------------------------------------- | ------------------------ |
+| Interner             | control-sequence names and semantic atoms           | append-only watermark    |
+| String pool          | TeX/Web2C allocation coordinates and recycled names | append-only position     |
+| Environment          | meanings, parameters, registers, current fonts      | journaled writes         |
+| Sparse registers     | e-TeX register overflow                             | journaled map/page roots |
+| Code tables          | cat/lc/uc/sf/math/del codes                         | copy-on-write pages      |
+| Token store          | durable token lists and semantic identities         | frozen + watermark       |
+| Provenance           | origins and origin-list spans                       | append-only watermark    |
+| Source fragments/map | immutable bytes and current editor layout           | roots + watermarks       |
+| Glue store           | canonical immutable glue specs                      | frozen + watermark       |
+| Node arenas          | compact node words, sidecars, semantic identities   | epoch + survivors        |
+| Fonts                | immutable TFM/OpenType selections                   | frozen + watermark       |
+| Hyphenation          | patterns, exceptions, language state                | snapshot-owned roots     |
+| Page state           | contribution queue, marks, insertions, best break   | copy-on-write roots      |
+| Journal              | undo entries, group and checkpoint markers          | append-only position     |
+| World/effects        | inputs, streams, output, clock, randomness          | snapshot/effect log      |
 
 Only aggregate APIs on `Universe` and its owned `Stores` facade may coordinate
 changes across these stores.
@@ -365,6 +366,14 @@ Each environment snapshot also carries the O(1) lineage token of its enclosing
 group. Rollback may unwind descendant groups entered after capture, while an
 exited-and-replaced enclosing group invalidates the snapshot even if the live
 stack later returns to the same depth and journal position.
+
+The string-pool store follows the same bound. TeX82 §44's pool coordinates and
+Web2C tex.ch [29.517]'s `search_string` membership are semantic state, but a
+snapshot retains only their scalar coordinates and the position in an
+append-only unique-string journal. A duplicate search changes neither the
+membership index nor the journal. Rollback removes only the suffix introduced
+after the mark, so taking an unrelated main-control savepoint never clones the
+retained format vocabulary.
 
 The probabilistic canonical identity used for optional suffix adoption remains
 optional for ordinary snapshots. Incremental accepted-history sinks request it

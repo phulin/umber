@@ -109,7 +109,8 @@ pub(crate) struct StoreSnapshot {
     owner: SnapshotOwner,
     env_snapshot: EnvSnapshot,
     interner_mark: InternerMark,
-    string_pool: StringPoolAccounting,
+    string_pool: StringPoolSnapshot,
+    string_pool_recycled_mark: usize,
     token_mark: TokenStoreMark,
     provenance_mark: ProvenanceStoreMark,
     source_map_mark: SourceMapMark,
@@ -183,6 +184,7 @@ pub struct Stores {
     env: Env,
     interner: Interner,
     string_pool: StringPoolAccounting,
+    string_pool_recycled_journal: Vec<Arc<str>>,
     tokens: TokenStore,
     provenance: ProvenanceStore,
     source_map: SourceMap,
@@ -260,10 +262,59 @@ pub struct StringPoolAccounting {
     max_strings: usize,
     pool_size: usize,
     /// Strings available to Web2C's `search_string` recycling extension.
-    recycled: BTreeSet<String>,
+    #[serde(
+        serialize_with = "serialize_recycled_strings",
+        deserialize_with = "deserialize_recycled_strings"
+    )]
+    recycled: BTreeSet<Arc<str>>,
     /// INITEX's aggregate ledger predates the runtime recycling projection;
     /// restoration enables exact post-format `slow_make_string` behavior.
     #[serde(skip)]
+    recycling_enabled: bool,
+}
+
+fn serialize_recycled_strings<S>(
+    strings: &BTreeSet<Arc<str>>,
+    serializer: S,
+) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    strings
+        .iter()
+        .map(AsRef::as_ref)
+        .collect::<Vec<&str>>()
+        .serialize(serializer)
+}
+
+fn deserialize_recycled_strings<'de, D>(deserializer: D) -> Result<BTreeSet<Arc<str>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Vec::<String>::deserialize(deserializer).map(|strings| {
+        strings
+            .into_iter()
+            .map(Arc::<str>::from)
+            .collect::<BTreeSet<_>>()
+    })
+}
+
+/// Constant-size rollback coordinates for the canonical string-pool ledger.
+///
+/// Web2C tex.ch [29.517] keeps the retained strings in the append-only TeX
+/// pool. The owning [`Stores`] journal removes only unique strings appended
+/// after this mark when an aggregate operation rolls back.
+#[derive(Clone, Copy, Debug)]
+struct StringPoolSnapshot {
+    profile_version: u8,
+    strings: usize,
+    characters: usize,
+    init_str_ptr: usize,
+    init_pool_ptr: usize,
+    memory_low_extent: usize,
+    memory_high_extent: usize,
+    max_strings: usize,
+    pool_size: usize,
     recycling_enabled: bool,
 }
 
@@ -324,16 +375,18 @@ impl StringPoolAccounting {
         self.characters = self.characters.saturating_add(characters);
     }
 
-    fn make_string(&mut self, value: &str) {
+    fn make_string(&mut self, value: &str) -> Option<Arc<str>> {
         self.allocate(1, value.len());
-        self.recycled.insert(value.to_owned());
+        self.remember_string(value)
     }
 
-    fn slow_make_string(&mut self, value: &str) {
-        let is_new = self.recycled.insert(value.to_owned());
+    fn slow_make_string(&mut self, value: &str) -> Option<Arc<str>> {
+        let inserted = self.remember_string(value);
+        let is_new = inserted.is_some();
         if !self.recycling_enabled || is_new {
             self.allocate(1, value.len());
         }
+        inserted
     }
 
     fn account_direct_character_name(&mut self, characters: usize) {
@@ -346,8 +399,41 @@ impl StringPoolAccounting {
         }
     }
 
-    fn remember_string(&mut self, value: &str) {
-        self.recycled.insert(value.to_owned());
+    fn remember_string(&mut self, value: &str) -> Option<Arc<str>> {
+        if self.recycled.contains(value) {
+            return None;
+        }
+        let retained = Arc::<str>::from(value);
+        self.recycled.insert(Arc::clone(&retained));
+        Some(retained)
+    }
+
+    fn checkpoint(&self) -> StringPoolSnapshot {
+        StringPoolSnapshot {
+            profile_version: self.profile_version,
+            strings: self.strings,
+            characters: self.characters,
+            init_str_ptr: self.init_str_ptr,
+            init_pool_ptr: self.init_pool_ptr,
+            memory_low_extent: self.memory_low_extent,
+            memory_high_extent: self.memory_high_extent,
+            max_strings: self.max_strings,
+            pool_size: self.pool_size,
+            recycling_enabled: self.recycling_enabled,
+        }
+    }
+
+    fn rollback_to(&mut self, snapshot: StringPoolSnapshot) {
+        self.profile_version = snapshot.profile_version;
+        self.strings = snapshot.strings;
+        self.characters = snapshot.characters;
+        self.init_str_ptr = snapshot.init_str_ptr;
+        self.init_pool_ptr = snapshot.init_pool_ptr;
+        self.memory_low_extent = snapshot.memory_low_extent;
+        self.memory_high_extent = snapshot.memory_high_extent;
+        self.max_strings = snapshot.max_strings;
+        self.pool_size = snapshot.pool_size;
+        self.recycling_enabled = snapshot.recycling_enabled;
     }
 
     fn flush_last(&mut self, strings: usize, characters: usize) {
@@ -463,6 +549,7 @@ impl Clone for Stores {
             env: self.env.clone(),
             interner: self.interner.clone(),
             string_pool: self.string_pool.clone(),
+            string_pool_recycled_journal: self.string_pool_recycled_journal.clone(),
             tokens: self.tokens.clone(),
             provenance: self.provenance.clone(),
             source_map: self.source_map.clone(),
@@ -606,6 +693,7 @@ impl Stores {
         snapshot.owner == self.owner.snapshot_owner()
             && self.env.can_rollback_to(snapshot.env_snapshot)
             && snapshot.env_snapshot.journal_pos() <= self.env.current_journal_pos()
+            && snapshot.string_pool_recycled_mark <= self.string_pool_recycled_journal.len()
             && snapshot.survivor_pin_mark <= self.survivor_pins.len()
             && snapshot.timeline_node_pin_mark <= self.timeline_node_pins.len()
     }
@@ -640,6 +728,7 @@ impl Stores {
             env: Env::new(),
             interner: Interner::new(),
             string_pool: StringPoolAccounting::default(),
+            string_pool_recycled_journal: Vec::new(),
             tokens: TokenStore::new(),
             provenance: ProvenanceStore::new(),
             source_map: SourceMap::default(),
@@ -1183,7 +1272,7 @@ impl Stores {
             .intern_internal(name)
             .expect("control-sequence symbol capacity exceeded");
         if self.interner.len() != before {
-            self.string_pool.make_string(name);
+            self.make_pool_string(name);
         }
         symbol
     }
@@ -1193,15 +1282,24 @@ impl Stores {
     }
 
     pub(crate) fn make_pool_string(&mut self, value: &str) {
-        self.string_pool.make_string(value);
+        let retained = self.string_pool.make_string(value);
+        self.record_recycled_string(retained);
     }
 
     pub(crate) fn slow_make_pool_string(&mut self, value: &str) {
-        self.string_pool.slow_make_string(value);
+        let retained = self.string_pool.slow_make_string(value);
+        self.record_recycled_string(retained);
     }
 
     pub(crate) fn remember_pool_string(&mut self, value: &str) {
-        self.string_pool.remember_string(value);
+        let retained = self.string_pool.remember_string(value);
+        self.record_recycled_string(retained);
+    }
+
+    fn record_recycled_string(&mut self, retained: Option<Arc<str>>) {
+        if let Some(retained) = retained {
+            self.string_pool_recycled_journal.push(retained);
+        }
     }
 
     pub(crate) fn flush_pool_strings(&mut self, strings: usize, characters: usize) {
@@ -1232,6 +1330,7 @@ impl Stores {
         accounting.recycling_enabled = true;
         (self.memory_low_extent, self.memory_high_extent) = accounting.memory_extents();
         self.string_pool = accounting;
+        self.string_pool_recycled_journal.clear();
     }
 
     pub(crate) fn select_string_pool_profile(&mut self, profile: StringPoolProfile) {
@@ -1244,7 +1343,7 @@ impl Stores {
         let symbol = self.interner.intern(name)?;
         if self.interner.len() != before {
             if name.len() > 1 {
-                self.string_pool.make_string(name);
+                self.make_pool_string(name);
             } else {
                 // TeX82 §§341/372 select the direct single-character
                 // namespace without constructing a pool string.
@@ -1260,7 +1359,7 @@ impl Stores {
         let symbol = self.interner.intern_hash(name)?;
         if self.interner.len() != before {
             if name.len() > 1 {
-                self.string_pool.make_string(name);
+                self.make_pool_string(name);
             } else {
                 // Web2C recycles the preloaded one-character pool string even
                 // when §356 sends the control word through §259's hash.
@@ -3001,7 +3100,8 @@ impl Stores {
             owner: self.owner.snapshot_owner(),
             env_snapshot: self.env.checkpoint(),
             interner_mark: self.interner.watermark(),
-            string_pool: self.string_pool.clone(),
+            string_pool: self.string_pool.checkpoint(),
+            string_pool_recycled_mark: self.string_pool_recycled_journal.len(),
             token_mark: self.tokens.watermark(),
             provenance_mark: self.provenance.watermark(),
             source_map_mark: self.source_map.watermark(),
@@ -3062,7 +3162,17 @@ impl Stores {
         self.account_rollback_box_refs(snapshot.env_snapshot);
         let receipts = self.env.rollback_to(snapshot.env_snapshot);
         self.interner.truncate_to(snapshot.interner_mark);
-        self.string_pool = snapshot.string_pool.clone();
+        while self.string_pool_recycled_journal.len() > snapshot.string_pool_recycled_mark {
+            let retained = self
+                .string_pool_recycled_journal
+                .pop()
+                .expect("checked string-pool journal length");
+            assert!(
+                self.string_pool.recycled.remove(retained.as_ref()),
+                "string-pool journal entry is absent from the recycling index"
+            );
+        }
+        self.string_pool.rollback_to(snapshot.string_pool);
         self.tokens.truncate_to(snapshot.token_mark);
         if retry {
             self.provenance
