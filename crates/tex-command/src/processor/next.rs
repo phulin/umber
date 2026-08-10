@@ -880,6 +880,21 @@ impl CommandProcessor<'_> {
         &mut self,
         command: CurrentCommand,
     ) -> Result<(), CommandError> {
+        self.insert_par_before(command)
+    }
+
+    /// Performs Web2C `partoken.ch`'s boundary replay for a positive
+    /// `\partokencontext`.
+    ///
+    /// The boundary command is backed up first and the current `\par`
+    /// control sequence is installed above it with `inserted` ownership.
+    /// This is the same raw-input transition as TeX82 §1095's
+    /// `head_for_vmode`; only the caller's boundary predicate differs.
+    pub fn insert_partoken_before(&mut self, command: CurrentCommand) -> Result<(), CommandError> {
+        self.insert_par_before(command)
+    }
+
+    fn insert_par_before(&mut self, command: CurrentCommand) -> Result<(), CommandError> {
         self.back_input(command)?;
         let par = TracedTokenWord::pack(
             Token::Cs(

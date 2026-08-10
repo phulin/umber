@@ -182,8 +182,9 @@ fn exceptional_catalogue_covers_frozen_private_and_profile_meanings() {
     }
 
     let pdftex = primitive_names(PrimitiveProfile::Pdftex14029);
-    assert_eq!(pdftex.len(), 158);
+    assert_eq!(pdftex.len(), 159);
     for name in [
+        "partokencontext",
         "pdfoptionpdfminorversion",
         "pdfminorversion",
         "pdflastxform",

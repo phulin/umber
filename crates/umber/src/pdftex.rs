@@ -153,17 +153,21 @@ mod tests {
         source_names.dedup();
 
         let catalogue_names = pdftex_primitive_names();
-        assert_eq!(catalogue_names.len(), 158);
+        assert_eq!(catalogue_names.len(), 159);
         assert_eq!(
             catalogue_names
                 .iter()
                 .copied()
                 .collect::<BTreeSet<_>>()
                 .len(),
-            158,
+            159,
             "the registered inventory must not contain duplicates",
         );
-        assert_eq!(catalogue_names, source_names);
+        let source_derived_catalogue = catalogue_names
+            .into_iter()
+            .filter(|name| *name != "partokencontext")
+            .collect::<Vec<_>>();
+        assert_eq!(source_derived_catalogue, source_names);
     }
 
     #[test]
@@ -1780,7 +1784,7 @@ mod tests {
         prepare_pdftex_run_stores(&mut stores);
 
         let parameters = pdftex_parameters();
-        assert_eq!(parameters.len(), 56);
+        assert_eq!(parameters.len(), 57);
         for row in parameters {
             match row.default {
                 tex_command::ParameterDefault::Integer(expected) => assert_eq!(

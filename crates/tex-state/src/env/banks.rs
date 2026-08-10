@@ -282,6 +282,14 @@ impl IntParam {
     /// encountered by `\vsplit` while retaining a one-line diagnostic.
     pub const IGNORE_PRIMITIVE_ERROR: Self = Self::new(109);
 
+    /// Web2C/pdfTeX's paragraph-token insertion context.
+    ///
+    /// Zero retains TeX82's direct paragraph completion. Positive values
+    /// replay `\par` at vertical-box boundaries, and values greater than one
+    /// extend that replay to insertion, output, alignment-item, and no-align
+    /// boundaries.
+    pub const PAR_TOKEN_CONTEXT: Self = Self::new(110);
+
     /// Current hyphenation language.
     pub const LANGUAGE: Self = Self::new(50);
 

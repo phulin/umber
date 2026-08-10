@@ -21,20 +21,24 @@ file, then subtracts the unique names registered by the matching TeX82
 engine inventory: it includes obsolete compatibility controls and internal
 aliases that a manual organized by user-facing features can omit.
 
-| Layer                       | Registered names | Exact names currently installed by Umber |
-| --------------------------- | ---------------: | ---------------------------------------: |
-| TeX82 prerequisite          |              325 |                                      325 |
-| Original e-TeX prerequisite |               66 |                                       66 |
-| pdfTeX layer                |              158 |                       158 in pdfTeX mode |
-| Total                       |              549 |                       549 in pdfTeX mode |
+| Layer                        | Registered names | Exact names currently installed by Umber |
+| ---------------------------- | ---------------: | ---------------------------------------: |
+| TeX82 prerequisite           |              325 |                                      325 |
+| Original e-TeX prerequisite  |               66 |                                       66 |
+| pdfTeX source layer          |              158 |                       158 in pdfTeX mode |
+| Web2C change-file supplement |                2 |    1 (`\partokencontext`) in pdfTeX mode |
+| Total                        |              551 |                       550 in pdfTeX mode |
 
 The prerequisite count is nominal control-sequence coverage; its behavioral
 gates remain the TeX and e-TeX corpora. `umber run --pdftex` and the native or
 WASM session option `engine: "pdftex"` select this layer and its truthful
-1.40.29 identity. The exact 158-name set is projected from `tex-command`'s
-integrated catalogue rather than retained as an Umber table. All names are registered in that mode; names whose
-semantics were implemented by the dependency-ordered checklist have no
-unsupported-placeholder meanings.
+1.40.29 identity. The exact 158-name `pdftex.web` set is projected from
+`tex-command`'s integrated catalogue rather than retained as an Umber table.
+The catalogue also installs `\partokencontext`, the supported
+`texk/web2c/partoken.ch` supplement used by the matching TeX Live runtime.
+All 158 source-layer names and this supported supplement are registered in
+that mode; names whose semantics were implemented by the dependency-ordered
+checklist have no unsupported-placeholder meanings.
 
 In addition to `\expanded` and `\ifincsname`, the completed layer implements
 the parameter banks, enquiries and conversions, font and microtype controls,
@@ -44,9 +48,10 @@ The supported LaTeX-DVI compatibility layer intentionally keeps `\expanded`
 and `\ifincsname`, which the pinned kernel requires without identifying the
 engine as pdfTeX. Plain e-TeX 2.6 defines neither primitive; both retain their
 source-derived pdfTeX 1.40.29 command and operand in the compatibility layer.
-The source-set gate still requires all 158 names in pdfTeX mode and isolates
-the other 157 from the plain e-TeX mode. The source-set test compares this
-catalogue projection directly with the pinned checklist below.
+The source-set gate still requires all 158 `pdftex.web` names in pdfTeX mode
+and isolates the other 157 from the plain e-TeX mode. The source-set test
+compares those names directly with the pinned checklist below and separately
+excludes the Web2C supplement from that source-derived equality.
 Umber also exposes the engine-neutral names `\creationdate`, `\filesize`,
 `\shellescape`, and `\strcmp`; these are implementation reuse candidates for
 the corresponding `\pdf...` aliases, not exact-name coverage.

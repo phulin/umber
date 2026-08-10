@@ -256,7 +256,7 @@ const ETEX_INT_PARAMETERS: &[(&str, IntParam)] = &[
 ];
 
 fn pdftex_parameters() -> Vec<PrimitiveParameterView> {
-    let mut rows = Vec::with_capacity(56);
+    let mut rows = Vec::with_capacity(57);
     for &(name, parameter) in PDFTEX_INT_PARAMETERS {
         rows.push(parameter_view(
             name,
@@ -369,6 +369,7 @@ const PDFTEX_INT_PARAMETERS: &[(&str, IntParam)] = &[
     ("pdfomitprocset", IntParam::PDF_OMIT_PROCSET),
     ("pdfptexuseunderscore", IntParam::PDF_PTEX_USE_UNDERSCORE),
     ("ignoreprimitiveerror", IntParam::IGNORE_PRIMITIVE_ERROR),
+    ("partokencontext", IntParam::PAR_TOKEN_CONTEXT),
 ];
 
 const fn pdftex_int_default(parameter: IntParam) -> i32 {

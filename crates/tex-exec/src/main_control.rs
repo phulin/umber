@@ -6644,6 +6644,12 @@ fn scan_noalign_body(
             cat: Catcode::EndGroup,
             ..
         } if innermost_group == Some(GroupKind::NoAlign) => {
+            if partoken_context_replays(processor, mode, 2) {
+                processor
+                    .insert_partoken_before(command)
+                    .map_err(command_error)?;
+                return Ok(ScannedStep::Continue);
+            }
             Ok(ScannedStep::NoAlignEndGroup { alignment })
         }
         // A `\noalign` body is ordinary main control between its braces
@@ -6748,6 +6754,12 @@ fn scan_alignment_delivery_step(
                         .recover_missing_math_shift(command)
                         .map_err(command_error)?;
                     return Ok(ScannedStep::MissingMathShift);
+                }
+                if partoken_context_replays(processor, mode, 2) {
+                    processor
+                        .insert_partoken_before(command)
+                        .map_err(command_error)?;
+                    return Ok(ScannedStep::Continue);
                 }
                 // TeX82 §1131 accepts end-v only when `cur_group=align_group`.
                 // The replay driver tracks align-error's inserted `{`
@@ -7658,6 +7670,17 @@ fn scan_command(
             }
         )
     {
+        let threshold = match box_state.kind {
+            ReplayBoxKind::VBox | ReplayBoxKind::VTop | ReplayBoxKind::VCenter => 1,
+            ReplayBoxKind::Insert(..) => 2,
+            ReplayBoxKind::HBox => 0,
+        };
+        if threshold != 0 && partoken_context_replays(processor, mode, threshold) {
+            processor
+                .insert_partoken_before(command)
+                .map_err(command_error)?;
+            return Ok(ScannedStep::Continue);
+        }
         return Ok(ScannedStep::BoxEndGroup {
             ships_out: box_state.ships_out,
         });
@@ -7675,6 +7698,12 @@ fn scan_command(
             }
         )
     {
+        if partoken_context_replays(processor, mode, 2) {
+            processor
+                .insert_partoken_before(command)
+                .map_err(command_error)?;
+            return Ok(ScannedStep::Continue);
+        }
         return Ok(ScannedStep::EndOutputRoutine);
     }
     // TeX82 §1090's `@<Cases of |main_control| that build boxes and lists@>`
@@ -9484,6 +9513,18 @@ fn scan_command(
         // there instead of reaching a silent `ScannedStep::Continue` here.
         meaning => scan_unclassified_meaning(processor, command, meaning, mode, innermost_group),
     }
+}
+
+/// Web2C/pdfTeX `partoken.ch` replaces selected direct `end_graf` calls with
+/// an inserted `\par` replay only while unrestricted horizontal mode is
+/// current. Context one covers vertical boxes; context two adds insertion,
+/// output, alignment-item, and no-align boundaries.
+fn partoken_context_replays(
+    processor: &mut CommandProcessor<'_>,
+    mode: Mode,
+    threshold: i32,
+) -> bool {
+    mode == Mode::Horizontal && processor.int_param(IntParam::PAR_TOKEN_CONTEXT) >= threshold
 }
 
 /// TeX82 §1335 reports and frees unfinished conditionals innermost-first.

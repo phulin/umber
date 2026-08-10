@@ -17,12 +17,13 @@ fn profile_parameter_views_have_exact_counts_and_order() {
     assert_eq!(etex.last().map(|row| row.name), Some("savinghyphcodes"));
 
     let pdftex = primitive_parameter_views(PrimitiveProfile::Pdftex14029);
-    assert_eq!(pdftex.len(), 56);
+    assert_eq!(pdftex.len(), 57);
     assert_eq!(pdftex.first().map(|row| row.name), Some("pdfoutput"));
     assert_eq!(
         pdftex.get(38).map(|row| row.name),
         Some("ignoreprimitiveerror")
     );
+    assert_eq!(pdftex.get(39).map(|row| row.name), Some("partokencontext"));
     assert_eq!(pdftex.last().map(|row| row.name), Some("pdfpkmode"));
 }
 
@@ -69,6 +70,7 @@ fn defaults_preserve_job_clock_and_pdftex_nonzero_values() {
     );
     let pdftex = primitive_parameter_views(PrimitiveProfile::Pdftex14029);
     for (name, expected) in [
+        ("partokencontext", ParameterDefault::Integer(0)),
         ("pdfcompresslevel", ParameterDefault::Integer(9)),
         ("pdfminorversion", ParameterDefault::Integer(4)),
         ("pdfhorigin", ParameterDefault::Scaled(4_736_287)),

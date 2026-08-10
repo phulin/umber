@@ -3294,6 +3294,63 @@ fn etex_initex(stores: &mut Universe) -> MainControl {
     MainControl::prepared_initex(CommandProfile::ETEX26)
 }
 
+fn pdftex_initex(stores: &mut Universe) -> MainControl {
+    tex_command::install_tex82_expandable_primitives(stores);
+    tex_command::install_etex_expandable_primitives(stores);
+    tex_command::install_pdftex_expandable_primitives(stores);
+    crate::install_unexpandable_primitives(stores);
+    crate::install_etex_unexpandable_primitives(stores);
+    tex_command::install_pdftex_unexpandable_primitives(stores);
+    MainControl::prepared_initex(CommandProfile::PDFTEX14029)
+}
+
+#[test]
+fn pdftex_partokencontext_replays_par_at_numbered_boundaries() {
+    // Web2C/pdfTeX partoken.ch replaces TeX82 §§1085/1096's direct end_graf
+    // at vbox/vtop boundaries for context 1. Context 2 additionally covers
+    // §§1100/1130/1133's insertion, valign-item, and no-align boundaries.
+    // Redefining \par distinguishes a real inserted-token replay from merely
+    // calling the paragraph-ending implementation directly.
+    let mut initialized = Universe::new_with_plain_catcodes();
+    let fresh = pdftex_initex(&mut initialized);
+    let format = initialized.dump_format().expect("dump pdfTeX format");
+    let loaded =
+        Universe::from_format(tex_state::World::memory(), &format).expect("restore pdfTeX format");
+
+    for (mut stores, mut control) in [
+        (initialized, fresh),
+        (
+            loaded,
+            MainControl::with_profile(CommandProfile::PDFTEX14029),
+        ),
+    ] {
+        register_source(
+            &mut control,
+            br"\let\endgraf=\par
+               \def\par{\global\advance\count0 by1 \endgraf}
+               \partokencontext=0 \setbox0=\vbox{\hskip1pt}\count1=\count0
+               \partokencontext=1 \setbox0=\vbox{\hskip1pt}\count2=\count0
+               \setbox0=\vbox{\insert0{\hskip1pt}}\count3=\count0
+               \setbox0=\vbox{\halign{#\cr\noalign{\hskip1pt}}}\count4=\count0
+               \partokencontext=2 \setbox0=\vbox{\insert0{\hskip1pt}}\count5=\count0
+               \setbox0=\vbox{\halign{#\cr\noalign{\hskip1pt}}}\count6=\count0
+               \partokencontext=1 {\partokencontext=2}\count7=\partokencontext
+               \end",
+        );
+
+        run_to_end(&mut control, &mut stores);
+
+        assert_eq!(stores.count(1), 0, "context zero calls end_graf directly");
+        assert_eq!(stores.count(2), 1, "context one replays par at vbox end");
+        assert_eq!(stores.count(3), 1, "context one excludes insert end");
+        assert_eq!(stores.count(4), 1, "context one excludes noalign end");
+        assert_eq!(stores.count(5), 2, "context two includes insert end");
+        assert_eq!(stores.count(6), 3, "context two includes noalign end");
+        assert_eq!(stores.count(7), 1, "the integer parameter is grouped");
+        assert_eq!(stores.int_param(IntParam::PAR_TOKEN_CONTEXT), 1);
+    }
+}
+
 #[test]
 fn etex_showtokens_uses_recursive_general_text_in_fresh_and_loaded_formats() {
     // e-TeX 2.6 etex.ch [17.3623--3671] routes \showtokens through
