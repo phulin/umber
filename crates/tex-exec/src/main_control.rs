@@ -15309,11 +15309,15 @@ fn apply_scanned_step(
             )?;
             let output_level =
                 crate::box_runtime::commit_current_list(modes, stores, command.fuel)?;
-            stores
+            let aftergroup = stores
                 .leave_group_with_kind(GroupKind::Output)
                 .map_err(|_| ExecError::MissingToken {
                     context: "output routine group",
                 })?;
+            // TeX82 §1026 closes `output_group` with §282's `unsave`
+            // before resuming `build_page`. `unsave` backs every saved
+            // `insert_token` into input, including `\aftergroup` material.
+            schedule_aftergroup(command, stores, aftergroup)?;
             stores.set_output_routine_active(false);
             boxes.output_routine_active = false;
             crate::page_output::resume_page_builder_after_output(

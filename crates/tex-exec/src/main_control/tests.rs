@@ -766,6 +766,29 @@ fn tracingcommands_does_not_trace_output_routine_scanner_brace() {
 }
 
 #[test]
+fn output_routine_unsave_replays_aftergroup_before_source_resumes() {
+    // TeX82 §§1026/282: closing output_group runs unsave, which backs each
+    // insert_token into input before main control reads the following source.
+    for (aftergroup, expected) in [("\\aftergroup\\aftermark", 1), ("", 0)] {
+        let mut stores = Universe::new_with_plain_catcodes();
+        let mut control = MainControl::tex82_initex(&mut stores);
+        register_source(
+            &mut control,
+            format!(
+                "\\count0=0\\def\\aftermark{{\\global\\count0=1 }}\
+                 \\output={{\\shipout\\box255 {aftergroup}}}\
+                 \\vsize=1pt\\hrule height2pt\\penalty-10000\\end"
+            )
+            .as_bytes(),
+        );
+
+        run_to_end(&mut control, &mut stores);
+
+        assert_eq!(stores.count(0), expected, "aftergroup={aftergroup:?}");
+    }
+}
+
+#[test]
 fn tracingmacros_two_traces_the_named_output_token_list() {
     // TeX82 §§323/1025: `begin_token_list(output_routine,output_text)` traces
     // the named token-list parameter only at the stronger tracing level.
