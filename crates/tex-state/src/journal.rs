@@ -165,20 +165,25 @@ pub(crate) struct Journal {
 struct SaveStackProjection {
     words: usize,
     groups: Vec<AHashMap<CellId, usize>>,
+    entries: usize,
+    latest_push: Option<(usize, usize)>,
     #[cfg(test)]
     rebuilds: usize,
 }
 
 impl SaveStackProjection {
     fn push_undo(&mut self, rec: UndoRec) {
+        let mut pushed_words = 0;
         let Some(saved) = self.groups.last_mut() else {
+            self.finish_entry(0);
             return;
         };
         let cell = rec.cell().without_assignment_scope();
         if rec.cell().is_global() {
-            if let Some(words) = saved.remove(&cell) {
-                self.words = self.words.saturating_sub(words);
-            }
+            // TeX82 §§275/283 retain an already-pushed restore record after
+            // a global definition; only the current local-run eligibility is
+            // reset so a later local definition can push another record.
+            saved.remove(&cell);
         } else if !saved.contains_key(&cell) {
             // TeX82 §§275--276 represents `restore_zero` in one word,
             // while `restore_old_value` occupies two.
@@ -189,28 +194,47 @@ impl SaveStackProjection {
             };
             saved.insert(cell, words);
             self.words = self.words.saturating_add(words);
+            pushed_words = words;
         }
+        self.finish_entry(pushed_words);
     }
 
     fn push_box_undo(&mut self, rec: BoxUndoRec) {
+        let mut pushed_words = 0;
         let Some(saved) = self.groups.last_mut() else {
+            self.finish_entry(0);
             return;
         };
         let cell = CellId::new(BankTag::Box, u32::from(rec.index()));
         if rec.is_global() {
-            if let Some(words) = saved.remove(&cell) {
-                self.words = self.words.saturating_sub(words);
-            }
+            saved.remove(&cell);
         } else if !saved.contains_key(&cell) {
             saved.insert(cell, 2);
             self.words = self.words.saturating_add(2);
+            pushed_words = 2;
         }
+        self.finish_entry(pushed_words);
     }
 
     fn push_marker(&mut self, marker: Marker) {
-        if matches!(marker, Marker::Group { .. }) {
-            self.words = self.words.saturating_add(1);
-            self.groups.push(AHashMap::new());
+        let pushed_words = match marker {
+            Marker::Group { .. } => {
+                self.words = self.words.saturating_add(1);
+                self.groups.push(AHashMap::new());
+                1
+            }
+            // The separately stored aftergroup payload owns this word count,
+            // but its journal marker still orders the most recent §276 push.
+            Marker::Aftergroup => 1,
+            Marker::Checkpoint(_) => 0,
+        };
+        self.finish_entry(pushed_words);
+    }
+
+    fn finish_entry(&mut self, pushed_words: usize) {
+        self.entries = self.entries.saturating_add(1);
+        if pushed_words != 0 {
+            self.latest_push = Some((self.entries, pushed_words));
         }
     }
 }
@@ -303,11 +327,18 @@ impl Journal {
         self.entries.push(Entry::Marker(marker));
     }
 
+    /// Returns the live TeX82 save-stack words and latest physical push
+    /// represented by this journal.
+    #[must_use]
+    pub(crate) const fn canonical_save_stack_projection(&self) -> (usize, Option<(usize, usize)>) {
+        (self.save_stack.words, self.save_stack.latest_push)
+    }
+
     /// Returns the live TeX82 save-stack words represented by this journal.
     #[must_use]
     #[cfg(test)]
     pub(crate) const fn canonical_save_stack_words(&self) -> usize {
-        self.save_stack.words
+        self.canonical_save_stack_projection().0
     }
 
     /// Returns the current end position.

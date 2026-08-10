@@ -78,6 +78,7 @@ fn save_stack_projection_updates_incrementally_and_rebuilds_only_on_truncate() {
         kind: GroupKind::Simple,
     });
     assert_eq!(journal.canonical_save_stack_words(), 1);
+    assert_eq!(journal.canonical_save_stack_projection().1, Some((1, 1)));
 
     let undefined = CellId::new(BankTag::Meaning, 1);
     journal.push_undo(UndoRec::new(
@@ -95,8 +96,14 @@ fn save_stack_projection_updates_incrementally_and_rebuilds_only_on_truncate() {
     let count = CellId::new(BankTag::Count, 2);
     journal.push_undo(UndoRec::new(count, 10, 20));
     assert_eq!(journal.canonical_save_stack_words(), 4);
+    assert_eq!(journal.canonical_save_stack_projection().1, Some((4, 2)));
     journal.push_undo(UndoRec::new(CellId::new_global(BankTag::Count, 2), 20, 30));
-    assert_eq!(journal.canonical_save_stack_words(), 2);
+    assert_eq!(journal.canonical_save_stack_words(), 4);
+    assert_eq!(
+        journal.canonical_save_stack_projection().1,
+        Some((4, 2)),
+        "a global definition retains the already-pushed physical restore"
+    );
 
     journal.push_box_undo(BoxUndoRec::new(
         3,
@@ -104,7 +111,8 @@ fn save_stack_projection_updates_incrementally_and_rebuilds_only_on_truncate() {
         BoxSlot::default(),
         BoxSlot::default(),
     ));
-    assert_eq!(journal.canonical_save_stack_words(), 4);
+    assert_eq!(journal.canonical_save_stack_words(), 6);
+    assert_eq!(journal.canonical_save_stack_projection().1, Some((6, 2)));
     assert_eq!(journal.testing_save_stack_projection_rebuilds(), 0);
 
     let before_nested = journal.pos();
@@ -113,10 +121,11 @@ fn save_stack_projection_updates_incrementally_and_rebuilds_only_on_truncate() {
         kind: GroupKind::SemiSimple,
     });
     journal.push_undo(UndoRec::new(CellId::new(BankTag::Dimen, 4), 0, 1));
-    assert_eq!(journal.canonical_save_stack_words(), 7);
+    assert_eq!(journal.canonical_save_stack_words(), 9);
     assert_eq!(journal.testing_save_stack_projection_rebuilds(), 0);
 
     journal.truncate_to(before_nested);
-    assert_eq!(journal.canonical_save_stack_words(), 4);
+    assert_eq!(journal.canonical_save_stack_words(), 6);
+    assert_eq!(journal.canonical_save_stack_projection().1, Some((6, 2)));
     assert_eq!(journal.testing_save_stack_projection_rebuilds(), 1);
 }

@@ -87,6 +87,8 @@ pub(crate) struct CodeTablesSnapshot {
     delcodes: PagedTableSnapshot<DelCode>,
     group_roots: Arc<Vec<CodeTableRoots>>,
     global_writes: GlobalWriteHistory,
+    save_stack_words: usize,
+    latest_save: Option<(usize, usize)>,
 }
 
 #[derive(Clone, Debug)]
@@ -227,6 +229,9 @@ pub struct CodeTables {
     delcodes: PagedTable<DelCode, DelCodeDefaults>,
     group_roots: Arc<Vec<CodeTableRoots>>,
     global_writes: GlobalWriteHistory,
+    /// Incremental TeX82 §275 physical save-stack projection.
+    save_stack_words: usize,
+    latest_save: Option<(usize, usize)>,
 }
 
 impl CodeTables {
@@ -242,6 +247,8 @@ impl CodeTables {
             delcodes: PagedTable::new(),
             group_roots: Arc::new(Vec::new()),
             global_writes: GlobalWriteHistory::default(),
+            save_stack_words: 0,
+            latest_save: None,
         }
     }
 
@@ -310,6 +317,8 @@ impl CodeTables {
             delcodes: self.delcodes.checkpoint(),
             group_roots: Arc::clone(&self.group_roots),
             global_writes: self.global_writes.clone(),
+            save_stack_words: self.save_stack_words,
+            latest_save: self.latest_save,
         }
     }
 
@@ -346,6 +355,8 @@ impl CodeTables {
         self.delcodes.rollback_to(snapshot.delcodes);
         self.group_roots = snapshot.group_roots;
         self.global_writes = snapshot.global_writes;
+        self.save_stack_words = snapshot.save_stack_words;
+        self.latest_save = snapshot.latest_save;
     }
 
     pub(crate) fn enter_group(&mut self) {
@@ -383,6 +394,15 @@ impl CodeTables {
         if self.group_roots.is_empty() {
             self.global_writes = GlobalWriteHistory::default();
         }
+        self.save_stack_words = self
+            .save_stack_words
+            .saturating_sub(roots.saved.len().saturating_mul(2));
+        self.latest_save = self
+            .group_roots
+            .iter()
+            .rev()
+            .find_map(|frame| frame.saved.last())
+            .map(|record| (record.save_position, 2));
         roots.saved.reverse();
         roots.saved
     }
@@ -394,18 +414,7 @@ impl CodeTables {
     }
 
     pub(crate) fn canonical_save_stack_projection(&self) -> (usize, Option<(usize, usize)>) {
-        let latest = self
-            .group_roots
-            .iter()
-            .flat_map(|frame| &frame.saved)
-            .map(|record| (record.save_position, 2))
-            .max_by_key(|record| record.0);
-        let words = self
-            .group_roots
-            .iter()
-            .map(|frame| frame.saved.len().saturating_mul(2))
-            .fold(0_usize, usize::saturating_add);
-        (words, latest)
+        (self.save_stack_words, self.latest_save)
     }
 
     /// Returns the generation vector for all code tables.
@@ -601,6 +610,8 @@ impl CodeTables {
                 value: old,
                 retaining: false,
             });
+            self.save_stack_words = self.save_stack_words.saturating_add(2);
+            self.latest_save = Some((save_position, 2));
         }
     }
 

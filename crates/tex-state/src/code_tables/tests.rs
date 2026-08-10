@@ -88,6 +88,7 @@ fn save_stack_projection_counts_local_code_table_runs() {
     tables.enter_group();
     tables.set_catcode_at(1, '@', Catcode::Letter);
     assert_eq!(tables.canonical_save_stack_words(), 2);
+    assert_eq!(tables.canonical_save_stack_projection().1, Some((1, 2)));
     tables.set_catcode_at(2, '@', Catcode::Active);
     assert_eq!(tables.canonical_save_stack_words(), 2);
 
@@ -95,12 +96,28 @@ fn save_stack_projection_counts_local_code_table_runs() {
     assert_eq!(tables.canonical_save_stack_words(), 2);
     tables.set_catcode_at(3, '@', Catcode::Letter);
     assert_eq!(tables.canonical_save_stack_words(), 4);
+    assert_eq!(tables.canonical_save_stack_projection().1, Some((3, 2)));
 
     tables.enter_group();
     tables.set_lccode_at(4, '@', u32::from('a'));
     assert_eq!(tables.canonical_save_stack_words(), 6);
     let _ = tables.leave_group();
     assert_eq!(tables.canonical_save_stack_words(), 4);
+    assert_eq!(tables.canonical_save_stack_projection().1, Some((3, 2)));
+}
+
+#[test]
+fn save_stack_projection_rolls_back_with_code_table_roots() {
+    let mut tables = CodeTables::new();
+    tables.enter_group();
+    tables.set_catcode_at(1, '@', Catcode::Letter);
+    let snapshot = tables.checkpoint();
+
+    tables.set_lccode_at(2, '@', u32::from('a'));
+    assert_eq!(tables.canonical_save_stack_projection(), (4, Some((2, 2))));
+
+    tables.rollback_to(snapshot);
+    assert_eq!(tables.canonical_save_stack_projection(), (2, Some((1, 2))));
 }
 
 #[test]

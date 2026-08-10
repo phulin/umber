@@ -416,55 +416,7 @@ impl Env {
         // physical record. Return both the completed live depth and that
         // record's (journal-end position, word count), so the aggregate owner
         // can reconstruct the checked depth across split typed stores.
-        let mut words = 0_usize;
-        let mut latest_push = None;
-        let mut locally_saved = Vec::<AHashSet<CellId>>::new();
-        for index in 0..self.journal.len() {
-            match self.journal.entry(index) {
-                Entry::Marker(Marker::Group { .. }) => {
-                    words = words.saturating_add(1);
-                    latest_push = Some((index.saturating_add(1), 1));
-                    locally_saved.push(AHashSet::new());
-                }
-                Entry::Undo(rec) => {
-                    let Some(saved) = locally_saved.last_mut() else {
-                        continue;
-                    };
-                    let cell = rec.cell().without_assignment_scope();
-                    if rec.cell().is_global() {
-                        saved.remove(&cell);
-                    } else if saved.insert(cell) {
-                        // TeX82 §§275--276 represents `restore_zero` in one
-                        // word, while `restore_old_value` occupies two.
-                        let restore_words =
-                            if crate::journal::is_canonical_restore_zero(cell, rec.old()) {
-                                1
-                            } else {
-                                2
-                            };
-                        words = words.saturating_add(restore_words);
-                        latest_push = Some((index.saturating_add(1), restore_words));
-                    }
-                }
-                Entry::BoxUndo(id) => {
-                    let Some(saved) = locally_saved.last_mut() else {
-                        continue;
-                    };
-                    let rec = self.journal.box_undo(id);
-                    let cell = CellId::new(BankTag::Box, u32::from(rec.index()));
-                    if rec.is_global() {
-                        saved.remove(&cell);
-                    } else if saved.insert(cell) {
-                        words = words.saturating_add(2);
-                        latest_push = Some((index.saturating_add(1), 2));
-                    }
-                }
-                Entry::Marker(Marker::Aftergroup) => {
-                    latest_push = Some((index.saturating_add(1), 1));
-                }
-                Entry::Marker(Marker::Checkpoint(_)) => {}
-            }
-        }
+        let (mut words, latest_push) = self.journal.canonical_save_stack_projection();
         if save_group_source_lines {
             // e-TeX [19.274] stores one source-line word before each level
             // boundary. TeX82 §273 samples `save_ptr` before the innermost
@@ -472,7 +424,7 @@ impl Env {
             // line words to this checked high-water projection.
             words = words.saturating_add(self.group_boundaries.len().saturating_sub(1));
         }
-        let words = words.saturating_add(self.aftergroup.len());
+        words = words.saturating_add(self.aftergroup.len());
         (words, latest_push)
     }
 
