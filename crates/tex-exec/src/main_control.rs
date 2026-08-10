@@ -99,8 +99,8 @@ pub struct MainControl {
     /// PDF driver. Virtual multi-output sessions set this explicitly.
     emit_dvi_override: Option<bool>,
     modes: ModeNest,
-    /// Maximum live typed §273 save-stack projection. Runtime diagnostics do
-    /// not participate in step rollback, checkpoint identity, or formats.
+    /// Maximum typed §273/§275 checked pre-push save-stack projection. Runtime
+    /// diagnostics do not participate in rollback, identity, or formats.
     max_save_stack: usize,
     next_alignment_identity: u64,
     active_alignment: Option<ActiveReplayAlignment>,
@@ -2533,10 +2533,10 @@ impl MainControl {
             .iter()
             .map(|active| active.kind.save_stack_spec_words())
             .fold(0_usize, usize::saturating_add);
-        let live = stores
-            .live_save_stack_words(self.command_profile().capabilities().supports_etex())
+        let checked = stores
+            .checked_save_stack_words(self.command_profile().capabilities().supports_etex())
             .saturating_add(box_spec_words);
-        self.max_save_stack = self.max_save_stack.max(live);
+        self.max_save_stack = self.max_save_stack.max(checked);
     }
 
     fn execute_operation(

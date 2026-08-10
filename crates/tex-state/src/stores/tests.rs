@@ -870,6 +870,39 @@ fn group_exit_restores_all_code_tables() {
 }
 
 #[test]
+fn checked_save_stack_projection_samples_before_each_owner_push() {
+    // TeX82 §§273/275 check save_ptr before pushing boundaries and restore
+    // records. Section 276's aftergroup token is likewise checked before its
+    // one-word push. The projection must identify the newest physical record
+    // across the Env journal, CodeTables, and aftergroup payloads.
+    let mut stores = Stores::new();
+    stores.enter_group();
+    assert_eq!(stores.checked_save_stack_words(false), 0);
+
+    stores.set_count(0, 1);
+    assert_eq!(stores.checked_save_stack_words(false), 1);
+
+    stores.set_catcode('@', Catcode::Letter);
+    assert_eq!(stores.checked_save_stack_words(false), 3);
+
+    stores.push_aftergroup(Token::Char {
+        ch: 'x',
+        cat: Catcode::Other,
+    });
+    assert_eq!(stores.checked_save_stack_words(false), 5);
+
+    stores.set_count_global(0, 2);
+    assert_eq!(
+        stores.checked_save_stack_words(false),
+        5,
+        "§275's global definition does not push a save record"
+    );
+
+    stores.enter_group();
+    assert_eq!(stores.checked_save_stack_words(false), 6);
+}
+
+#[test]
 fn global_code_table_assignments_survive_groups_but_not_snapshot_rollback() {
     let mut stores = Stores::new();
     let ch = '@';

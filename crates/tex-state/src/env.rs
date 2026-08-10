@@ -377,6 +377,7 @@ impl Env {
                 }
                 crate::journal::Entry::Undo(_)
                 | crate::journal::Entry::BoxUndo(_)
+                | crate::journal::Entry::Marker(crate::journal::Marker::Aftergroup)
                 | crate::journal::Entry::Marker(crate::journal::Marker::Checkpoint(_)) => {}
             }
         }

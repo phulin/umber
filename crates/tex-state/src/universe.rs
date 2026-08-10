@@ -1509,8 +1509,9 @@ impl Universe {
 
     /// Live typed projection of TeX82's `save_ptr` for §1334 accounting.
     #[must_use]
-    pub fn live_save_stack_words(&self, save_group_source_lines: bool) -> usize {
-        self.stores.live_save_stack_words(save_group_source_lines)
+    pub fn checked_save_stack_words(&self, save_group_source_lines: bool) -> usize {
+        self.stores
+            .checked_save_stack_words(save_group_source_lines)
     }
 
     /// Records completed TeX82 `make_string` allocations owned outside the

@@ -399,14 +399,74 @@ impl EnvSnapshot {
 
 impl Env {
     /// Returns the live TeX82 `save_ptr` represented by the typed group
-    /// journal. This is diagnostic accounting only: the journal updates its
-    /// derived projection at the same append/truncate boundary that owns the
-    /// underlying records, and §1334's high-water mark remains outside it.
+    /// journal. This is diagnostic accounting only: the journal owns the
+    /// rollback-coupled word projection, and §1334's high-water mark remains
+    /// outside it.
+    #[cfg(test)]
     pub(crate) fn canonical_save_stack_words(&self, save_group_source_lines: bool) -> usize {
+        self.canonical_save_stack_projection(save_group_source_lines)
+            .0
+    }
+
+    pub(crate) fn canonical_save_stack_projection(
+        &self,
+        save_group_source_lines: bool,
+    ) -> (usize, Option<(usize, usize)>) {
+        // TeX82 §§273/275 update max_save_stack before pushing the newest
+        // physical record. Return both the completed live depth and that
+        // record's (journal-end position, word count), so the aggregate owner
+        // can reconstruct the checked depth across split typed stores.
         let mut words = self
             .journal
             .canonical_save_stack_words()
             .saturating_add(self.aftergroup.len());
+        let mut latest_push = None;
+        let mut locally_saved = Vec::<AHashSet<CellId>>::new();
+        for index in 0..self.journal.len() {
+            match self.journal.entry(index) {
+                Entry::Marker(Marker::Group { .. }) => {
+                    latest_push = Some((index.saturating_add(1), 1));
+                    locally_saved.push(AHashSet::new());
+                }
+                Entry::Undo(rec) => {
+                    let Some(saved) = locally_saved.last_mut() else {
+                        continue;
+                    };
+                    let cell = rec.cell().without_assignment_scope();
+                    if rec.cell().is_global() {
+                        saved.remove(&cell);
+                    } else if saved.insert(cell) {
+                        // TeX82 §§275--276 represents `restore_zero` in one
+                        // word, while `restore_old_value` occupies two.
+                        let restore_words = if crate::journal::is_canonical_restore_zero(
+                            cell,
+                            rec.old(),
+                        ) {
+                            1
+                        } else {
+                            2
+                        };
+                        latest_push = Some((index.saturating_add(1), restore_words));
+                    }
+                }
+                Entry::BoxUndo(id) => {
+                    let Some(saved) = locally_saved.last_mut() else {
+                        continue;
+                    };
+                    let rec = self.journal.box_undo(id);
+                    let cell = CellId::new(BankTag::Box, u32::from(rec.index()));
+                    if rec.is_global() {
+                        saved.remove(&cell);
+                    } else if saved.insert(cell) {
+                        latest_push = Some((index.saturating_add(1), 2));
+                    }
+                }
+                Entry::Marker(Marker::Aftergroup) => {
+                    latest_push = Some((index.saturating_add(1), 1));
+                }
+                Entry::Marker(Marker::Checkpoint(_)) => {}
+            }
+        }
         if save_group_source_lines {
             // e-TeX [19.274] stores one source-line word before each level
             // boundary. TeX82 §273 samples `save_ptr` before the innermost
@@ -414,7 +474,7 @@ impl Env {
             // line words to this checked high-water projection.
             words = words.saturating_add(self.group_boundaries.len().saturating_sub(1));
         }
-        words
+        (words, latest_push)
     }
 
     /// Opens a journal slice whose first write cannot coalesce with work that
@@ -611,6 +671,7 @@ impl Env {
     pub(crate) fn push_aftergroup_traced(&mut self, payload: TracedTokenWord) {
         if self.group_depth != 0 {
             self.aftergroup.push(payload);
+            self.journal.push_marker(Marker::Aftergroup);
         }
     }
 
@@ -930,7 +991,7 @@ impl Env {
                         }
                     }
                 }
-                Entry::Marker(Marker::Checkpoint(_)) => {}
+                Entry::Marker(Marker::Aftergroup | Marker::Checkpoint(_)) => {}
                 Entry::Marker(Marker::Group { .. }) => {
                     unreachable!("group slice starts after the marker")
                 }

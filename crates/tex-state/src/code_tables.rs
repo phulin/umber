@@ -388,11 +388,24 @@ impl CodeTables {
     }
 
     /// TeX82 §275 save-stack words owned by live code-table assignments.
+    #[cfg(test)]
     pub(crate) fn canonical_save_stack_words(&self) -> usize {
-        self.group_roots
+        self.canonical_save_stack_projection().0
+    }
+
+    pub(crate) fn canonical_save_stack_projection(&self) -> (usize, Option<(usize, usize)>) {
+        let latest = self
+            .group_roots
+            .iter()
+            .flat_map(|frame| &frame.saved)
+            .map(|record| (record.save_position, 2))
+            .max_by_key(|record| record.0);
+        let words = self
+            .group_roots
             .iter()
             .map(|frame| frame.saved.len().saturating_mul(2))
-            .fold(0_usize, usize::saturating_add)
+            .fold(0_usize, usize::saturating_add);
+        (words, latest)
     }
 
     /// Returns the generation vector for all code tables.

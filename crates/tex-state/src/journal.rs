@@ -125,6 +125,8 @@ pub(crate) enum Marker {
         aftergroup_start: u32,
         kind: GroupKind,
     },
+    /// Ordering-only marker for §276's separately stored one-word payload.
+    Aftergroup,
     #[allow(dead_code)]
     Checkpoint(SnapshotId),
 }
@@ -213,7 +215,7 @@ impl SaveStackProjection {
     }
 }
 
-fn is_canonical_restore_zero(cell: CellId, old: u64) -> bool {
+pub(crate) fn is_canonical_restore_zero(cell: CellId, old: u64) -> bool {
     match cell.bank() {
         BankTag::Meaning => old == Meaning::Undefined.encode(),
         // TeX82 §240 initializes token-list parameters to

@@ -576,10 +576,22 @@ impl Clone for Stores {
 }
 
 impl Stores {
-    pub(crate) fn live_save_stack_words(&self, save_group_source_lines: bool) -> usize {
-        self.env
-            .canonical_save_stack_words(save_group_source_lines)
-            .saturating_add(self.code_tables.canonical_save_stack_words())
+    /// TeX82 §§273/275's save depth immediately before the newest checked
+    /// push, merged across the Env and CodeTables physical owners.
+    pub(crate) fn checked_save_stack_words(&self, save_group_source_lines: bool) -> usize {
+        let (env_words, env_latest) = self
+            .env
+            .canonical_save_stack_projection(save_group_source_lines);
+        let (code_words, code_latest) = self.code_tables.canonical_save_stack_projection();
+        let latest_words = match (env_latest, code_latest) {
+            (Some(env), Some(code)) if code.0 >= env.0 => code.1,
+            (Some(env), _) => env.1,
+            (None, Some(code)) => code.1,
+            (None, None) => 0,
+        };
+        env_words
+            .saturating_add(code_words)
+            .saturating_sub(latest_words)
     }
 
     pub(crate) fn record_engine_stack_usage(&mut self, usage: EngineStackUsage) {
