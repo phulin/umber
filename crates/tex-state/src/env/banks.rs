@@ -290,6 +290,9 @@ impl IntParam {
     /// boundaries.
     pub const PAR_TOKEN_CONTEXT: Self = Self::new(110);
 
+    /// TeX Live Web2C [54/SyncTeX]'s synchronization integer parameter.
+    pub const SYNCTEX: Self = Self::new(111);
+
     /// Current hyphenation language.
     pub const LANGUAGE: Self = Self::new(50);
 

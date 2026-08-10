@@ -293,10 +293,10 @@ fn etex_string_pool_profile_selects_the_static_web_vocabulary_once() {
 
     assert_eq!(selected.strings, before.strings);
     assert_eq!(selected.string_characters, before.string_characters);
-    assert_eq!(before.string_capacity - selected.string_capacity, 53);
+    assert_eq!(before.string_capacity - selected.string_capacity, 52);
     assert_eq!(
         before.string_character_capacity - selected.string_character_capacity,
-        889
+        882
     );
 
     universe.select_string_pool_profile(crate::StringPoolProfile::Etex26);

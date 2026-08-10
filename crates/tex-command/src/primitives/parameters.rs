@@ -100,7 +100,7 @@ fn tex82_parameters() -> Vec<PrimitiveParameterView> {
 }
 
 fn etex_parameters() -> Vec<PrimitiveParameterView> {
-    let mut rows = Vec::with_capacity(11);
+    let mut rows = Vec::with_capacity(12);
     rows.push(parameter_view(
         "everyeof",
         PrimitiveProfile::Etex26,
@@ -253,6 +253,7 @@ const ETEX_INT_PARAMETERS: &[(&str, IntParam)] = &[
     ("savingvdiscards", IntParam::SAVING_V_DISCARDS),
     ("lastlinefit", IntParam::LAST_LINE_FIT),
     ("savinghyphcodes", IntParam::SAVING_HYPH_CODES),
+    ("synctex", IntParam::SYNCTEX),
 ];
 
 fn pdftex_parameters() -> Vec<PrimitiveParameterView> {

@@ -343,11 +343,12 @@ impl StringPoolProfile {
             Self::Tex82 => (1_027, 106_808),
             // TeX82 §§47 and 50 load every multi-character WEB literal before
             // input. The merged e-TeX program adds literals that are not all
-            // represented by its typed primitive names, while two repeated
-            // spellings reuse existing pool strings. The profile offset makes
+            // represented by its typed primitive names, while three repeated
+            // spellings (including Web2C [54/SyncTeX]'s parameter) reuse
+            // existing pool strings. The profile offset makes
             // the completed typed registry land exactly 119 strings and 1621
             // characters above the pinned TeX82 `init_prim` coordinate.
-            Self::Etex26 => (1_080, 107_697),
+            Self::Etex26 => (1_079, 107_690),
         }
     }
 }
@@ -355,7 +356,7 @@ impl StringPoolProfile {
 impl Default for StringPoolAccounting {
     fn default() -> Self {
         Self {
-            profile_version: 10,
+            profile_version: 11,
             // TeX82's INITEX profile begins after `get_strings_started` has
             // installed the character strings and tex.pool vocabulary. These
             // are profile coordinates, not job usage or fixture totals.
@@ -482,7 +483,7 @@ impl StringPoolAccounting {
     }
 
     pub(crate) const fn has_current_profile(&self) -> bool {
-        self.profile_version == 10
+        self.profile_version == 11
     }
 }
 

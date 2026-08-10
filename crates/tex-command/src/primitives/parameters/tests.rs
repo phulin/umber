@@ -12,9 +12,9 @@ fn profile_parameter_views_have_exact_counts_and_order() {
     assert_eq!(tex82.last().map(|row| row.name), Some("errhelp"));
 
     let etex = primitive_parameter_views(PrimitiveProfile::Etex26);
-    assert_eq!(etex.len(), 11);
+    assert_eq!(etex.len(), 12);
     assert_eq!(etex.first().map(|row| row.name), Some("everyeof"));
-    assert_eq!(etex.last().map(|row| row.name), Some("savinghyphcodes"));
+    assert_eq!(etex.last().map(|row| row.name), Some("synctex"));
 
     let pdftex = primitive_parameter_views(PrimitiveProfile::Pdftex14029);
     assert_eq!(pdftex.len(), 57);
@@ -25,6 +25,32 @@ fn profile_parameter_views_have_exact_counts_and_order() {
     );
     assert_eq!(pdftex.get(39).map(|row| row.name), Some("partokencontext"));
     assert_eq!(pdftex.last().map(|row| row.name), Some("pdfpkmode"));
+}
+
+#[test]
+fn web2c_synctex_parameter_is_extended_profile_only() {
+    let etex = primitive_parameter_views(PrimitiveProfile::Etex26);
+    let synctex = etex
+        .iter()
+        .find(|row| row.name == "synctex")
+        .expect("pinned Web2C parameter");
+    assert_eq!(
+        synctex.cell,
+        ParameterCell {
+            class: ParameterBankClass::Integer,
+            index: IntParam::SYNCTEX.raw(),
+        }
+    );
+    assert_eq!(synctex.meaning, Meaning::IntParam(IntParam::SYNCTEX.raw()));
+    assert_eq!(synctex.default, ParameterDefault::Integer(0));
+
+    // The TeX82 oracle's change stack does not apply Web2C [54/SyncTeX].
+    // Compatibility mode must therefore retain its exact primitive surface.
+    assert!(
+        primitive_parameter_views(PrimitiveProfile::Tex82)
+            .iter()
+            .all(|row| row.name != "synctex")
+    );
 }
 
 #[test]

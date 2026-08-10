@@ -326,6 +326,38 @@ mod tests {
     }
 
     #[test]
+    fn web2c_synctex_parameter_survives_extended_format_round_trip() {
+        let mut compatibility = Universe::new();
+        install_tex82_expandable_primitives(&mut compatibility);
+        install_tex82_unexpandable_primitives(&mut compatibility);
+        assert_eq!(compatibility.symbol("synctex"), None);
+
+        let mut extended = Universe::new();
+        install_tex82_expandable_primitives(&mut extended);
+        install_tex82_unexpandable_primitives(&mut extended);
+        install_etex_expandable_primitives(&mut extended);
+        install_etex_unexpandable_primitives(&mut extended);
+        let synctex = extended.symbol("synctex").expect("Web2C parameter symbol");
+        assert_eq!(
+            extended.meaning(synctex),
+            Meaning::IntParam(tex_state::env::banks::IntParam::SYNCTEX.raw())
+        );
+        extended.set_int_param_global(tex_state::env::banks::IntParam::SYNCTEX, 7);
+        let count = extended.engine_usage_statistics().control_sequences;
+
+        let image = extended.dump_format().expect("extended format dumps");
+        let mut loaded = Universe::from_format(tex_state::World::default(), &image)
+            .expect("extended format reloads");
+        let loaded_synctex = loaded.symbol("synctex").expect("restored parameter symbol");
+        assert_eq!(loaded.meaning(loaded_synctex), extended.meaning(synctex));
+        assert_eq!(
+            loaded.int_param(tex_state::env::banks::IntParam::SYNCTEX),
+            7
+        );
+        assert_eq!(loaded.engine_usage_statistics().control_sequences, count);
+    }
+
+    #[test]
     fn etex_initex_profile_includes_the_merged_web_string_pool() {
         fn install_tex82(universe: &mut Universe) {
             install_tex82_expandable_primitives(universe);

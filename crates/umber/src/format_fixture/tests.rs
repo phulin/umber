@@ -143,15 +143,15 @@ fn recipe_identity_invalidates_every_fixture_input_class() {
 }
 
 #[test]
-fn producer_contract_thirteen_rejects_per_exception_scratch_entries() {
+fn producer_contract_fourteen_rejects_pre_synctex_pool_profiles() {
     let recipe = FormatRecipe::raw_tex82();
-    let stale = producer_contract(12, &recipe.format_name, &recipe.format_ident_name);
+    let stale = producer_contract(13, &recipe.format_name, &recipe.format_ident_name);
     let current = producer_contract(
         PRODUCER_CONTRACT_VERSION,
         &recipe.format_name,
         &recipe.format_ident_name,
     );
-    assert_eq!(PRODUCER_CONTRACT_VERSION, 13);
+    assert_eq!(PRODUCER_CONTRACT_VERSION, 14);
     assert_ne!(current, stale);
 }
 

@@ -85,6 +85,12 @@ state. `\tracingassigns`, `\tracinggroups`, `\tracingifs`, and
 `\tracingnesting` are implemented as group-scoped integer parameters, and
 three of the four render `etex.ch`'s exact rendered trace text:
 
+The pinned TeX Live Web2C [54/SyncTeX] layer also installs `\synctex` as a
+group-scoped integer parameter in the extended engine profile. Its default is
+zero, assignments and format persistence use the ordinary integer-parameter
+path, and TeX82 compatibility mode omits it because that oracle's change stack
+does not apply the SyncTeX layer.
+
 - `\tracinggroups` renders `etex.ch` [19.274/19.281]'s `group_trace`
   `{entering ...}`/`{leaving ...}` lines from `Universe::enter_group_with_kind_at_line`/
   `leave_group_with_kind` (`crates/tex-state/src/etex_tracing.rs`), so every
