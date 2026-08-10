@@ -440,7 +440,9 @@ instrumented pdfTeX 1.40.29 build. The
 script delegates regeneration to `scripts/regen-fixtures.sh`; TRIP uses its
 two-phase pdfTeX workload and never copies `third_party/trip/trip.dvi`.
 e-TRIP reuses the pinned `trip.tfm` directly and requires exact DVI parity;
-its broader official transcript and output-artifact gate remains separate.
+the same gate also compares the pinned official V2 INITEX log, loaded log,
+terminal photo, DVItype projection, and exact generated output under the
+bounded contract in `docs/trip.md`.
 
 Other, non-directory corpus families retain the flat
 `<case>.expected.<kind>` convention.
@@ -575,7 +577,7 @@ the same preamble-comment-only, byte-identical final-DVI assertion used by
 Story and Gentle. They never invoke an Umber subprocess.
 Run TRIP with
 `cargo test -p umber --test it e2e_conformance_trip_canonical -- --ignored --nocapture`.
-Run the required e-TRIP DVI gate with
+Run the required official e-TRIP artifact gate with
 `cargo test -p umber --test it e2e_conformance_etrip -- --nocapture`.
 
 ## Proptest Budgets

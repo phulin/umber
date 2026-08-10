@@ -8,10 +8,11 @@ The behavioral contract is the [e-TeX manual](https://tex.org.uk/systems/doc/ete
 as its introductory companion.
 The official `etex.ch` change file supplies implementation-level algorithms
 where the manual does not specify them. Focused tests cite the relevant manual
-section and compare observable behavior with e-TeX/pdfTeX. Per the 2026-07-14
-project scope decision, the repository's focused tests and existing in-process
-two-phase e-TRIP DVI fixture are the conformance gates; a separate official
-text-artifact harness is not planned.
+section and compare observable behavior with e-TeX/pdfTeX. The official
+two-phase e-TRIP gate additionally binds the exact e-TeX 2.6 semantic/text/DVI
+oracle to the pinned V2 terminal, log, DVItype, and generated-output masters;
+its narrow normalization and profile-adaptation contract is documented in
+[TRIP](trip.md).
 
 Status values are **done**, **partial**, and **missing**. A family is done only
 after its focused parity fixtures and compatibility-mode visibility checks

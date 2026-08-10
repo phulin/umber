@@ -1859,6 +1859,17 @@ detection remains ordinary focused unit coverage, not a separate parity gate.
 Regeneration executes the two-phase workload from `trip.tex` and
 `trip.tfm` and never copies the official `third_party/trip/trip.dvi`.
 
+The e-TRIP gate also consumes the pinned official V2 `etripin.log`,
+`etrip.log`, `etrip.fot`, `etrip.typ`, and `etrip.out` masters. The exact e-TeX
+2.6 oracle comparisons run first. The official text layer then applies the
+bounded contract documented in [TRIP](trip.md): platform framing and the
+manual-listed numeric allowances, the licensed two-line source adaptation,
+and three explicit V2-to-2.6 profile bridges. The output file remains byte
+exact. A typed DVItype projection compares every integer framing/page field
+while excluding only the tool banner, option rendering, floating-point
+pixels-per-unit value, and preamble comment; no host `dvitype` executable runs
+inside Cargo tests.
+
 Official `trip.typ` is identity-pinned diagnostic input. It is DVItype output,
 not an Umber artifact, and the upstream Web2C comparison applies
 platform-numeric tolerance filtering. It is not a second acceptance oracle for

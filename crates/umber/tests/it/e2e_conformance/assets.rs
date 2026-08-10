@@ -93,6 +93,11 @@ pub const GATES: &[ConformanceGate] = &[
         name: "etrip",
         inputs: &[
             "third_party/trip/etrip.tex",
+            "third_party/trip/etripin.log",
+            "third_party/trip/etrip.log",
+            "third_party/trip/etrip.fot",
+            "third_party/trip/etrip.typ",
+            "third_party/trip/etrip.out",
             "third_party/trip/trip.tfm",
             "third_party/trip/tripos.tex",
         ],

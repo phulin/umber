@@ -124,17 +124,38 @@ after preamble-comment normalization it is
 Regenerate it with `scripts/regen-fixtures.sh --case e2e/trip`, setting
 `UMBER_REF_PDFTEX` when pdfTeX is not on `PATH`.
 
-## e-TRIP DVI Conformance
+## Official e-TRIP Artifact Conformance
 
-The same pinned manifest and acquisition path also fetch the official e-TeX
-V2 e-TRIP sources and expected artifacts. The harness reuses `trip.tfm`
-directly, as the e-TRIP manual states that `etrip.pl` is a copy of `trip.pl`.
+The same pinned manifest and acquisition path fetches the official e-TeX V2
+e-TRIP source and the `etripin.log`, `etrip.log`, `etrip.fot`, `etrip.typ`, and
+`etrip.out` masters. The harness reuses `trip.tfm` directly, as the e-TRIP
+manual states that `etrip.pl` is a copy of `trip.pl`.
 `scripts/regen-fixtures.sh --case e2e/etrip` creates a renamed local e-TeX 2.6
 adaptation of the official 2.0 source and generates the gitignored DVI oracle
-with pdfTeX. The `e2e_conformance_etrip` Cargo test requires Umber to match
-that DVI byte-for-byte after the standard preamble-comment normalization.
-Official transcript, terminal-photo, DVItype, and output-file comparisons
-remain part of the broader e-TRIP harness task.
+with pdfTeX. The `e2e_conformance_etrip` Cargo test first requires Umber to
+match the pinned e-TeX 2.6 semantic, terminal, log, and DVI channels exactly;
+the DVI comparison still normalizes only its preamble comment.
+
+The same test then binds that exact run to the official V2 masters. It
+requires exact `etrip.out` bytes. It projects the official DVItype master and
+Umber DVI into numerator, denominator, magnification, page/count-register,
+EOP, postamble, maximum-dimension, stack-depth, and page-count fields. This
+omits only the DVItype executable banner, selected-option rendering,
+floating-point pixels-per-unit value, and DVI preamble comment that the e-TRIP
+manual declares platform-dependent; Cargo tests never invoke host TeXware.
+
+Text comparison converts CTAN CRLF to LF, removes engine/startup framing and
+local `./` path spelling, accounts exactly for the two licensing comments
+inserted ahead of the renamed source, and applies only the e-TRIP manual's
+listed date, glue-set rounding, string/control-sequence/capacity, and memory
+statistics allowances. The V2 master is additionally bridged to the selected
+e-TeX 2.6 profile at three explicit sites: version announcements, the changed
+`this will begin denominator of:` diagnostic, and the sparse-token-register
+reassignment trace. Those profile bridges cannot hide an Umber divergence:
+the unnormalized e-TeX 2.6 oracle channels gate first. Any other byte differs
+actionably. Focused negative controls perturb an output byte and a DVItype
+page offset and require both comparisons to fail with the channel and first
+offset.
 
 The special reference engine comes from the TeX Live 2026 source snapshot
 `texlive-20250308-source.tar.xz`, fetched from the University of Utah historic

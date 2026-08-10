@@ -28,6 +28,8 @@ use umber::{
 
 #[path = "e2e_conformance/assets.rs"]
 mod assets;
+#[path = "e2e_conformance/etrip_official.rs"]
+mod etrip_official;
 
 use assets::GateAssets;
 
@@ -613,7 +615,7 @@ fn two_phase_trip_helper_forbids_private_format_paths() {
         ".prepare(&recipe)",
         ".construction_evidence()",
         "PreparedFormatJob {",
-        "let loaded_run = provider",
+        "let mut loaded_run = provider",
         ".run(",
     ] {
         assert!(
@@ -2049,7 +2051,7 @@ fn run_two_phase_fixture(
         },
     ];
     let mut observers = TripObservers::default();
-    let loaded_run = provider
+    let mut loaded_run = provider
         .run(
             &prepared,
             PreparedFormatJob {
@@ -2116,6 +2118,38 @@ fn run_two_phase_fixture(
     fs::write(&actual, dvi).expect("write conformance artifact");
     let expected_dvi = fs::read(fixture).expect("read conformance DVI oracle");
     let actual_dvi = fs::read(&actual).expect("read conformance DVI artifact");
+    if profile == TripEngineProfile::ETex {
+        let effect_pos = loaded_run.universe.world().effect_pos();
+        loaded_run
+            .universe
+            .commit_effects(effect_pos)
+            .expect("commit e-TRIP output effects");
+        let output = loaded_run
+            .universe
+            .world()
+            .memory_outputs()
+            .expect("e-TRIP uses a memory World")
+            .find(|output| output.path() == Path::new("etrip.out"))
+            .map(|output| output.bytes().to_vec())
+            .expect("e-TRIP produced etrip.out");
+        let initex_log = fs::read(
+            target_dir(root)
+                .join("trip-oracles/etrip")
+                .join("initex.log"),
+        )
+        .expect("read exact e-TeX 2.6 INITEX log oracle");
+        etrip_official::compare(
+            root,
+            etrip_official::OfficialEtripRun {
+                initex_log: &initex_log,
+                terminal: &terminal,
+                log: &log,
+                dvi: &actual_dvi,
+                output: &output,
+            },
+        )
+        .unwrap_or_else(|error| panic!("official e-TRIP artifact parity failed: {error}"));
+    }
     let expected_normalized =
         normalized_dvi_for_comparison(&expected_dvi).expect("normalize conformance DVI oracle");
     let expected_identity = format!("sha256:{:x}", Sha256::digest(&expected_normalized));
