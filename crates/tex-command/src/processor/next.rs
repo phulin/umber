@@ -1878,11 +1878,11 @@ impl CommandProcessor<'_> {
     /// and §374 clears it only around `\csname`'s `id_lookup`, so a raw
     /// `get_next` may not enter a new name into the hash table: §259's
     /// `id_lookup` hands it §222's dummy `undefined_control_sequence`
-    /// instead. Section 356 sends every control word to the hash, including a
-    /// one-letter word; §354 resolves a control symbol to `single_base+c` and
-    /// an escape at line end to `null_cs`, and §351 gives a blank line's
-    /// `\par` `par_loc`, all permanent eqtb locations that exist before any
-    /// scan.
+    /// instead. Section 356 sends only multiletter control words to the hash;
+    /// it resolves a one-letter word or control symbol to `single_base+c` and
+    /// an escape at line end to `null_cs`. Section 372 applies the same length
+    /// split to `\csname`, and §351 gives a blank line's `\par` `par_loc`;
+    /// all of those fixed eqtb locations exist before any scan.
     fn source_spelling(
         &mut self,
         source_token: &SourceToken,
@@ -1902,7 +1902,7 @@ impl CommandProcessor<'_> {
                 | SourceControlSequenceKind::Symbol
                 | SourceControlSequenceKind::Paragraph
                 | SourceControlSequenceKind::Null => {
-                    let hashed = *kind == SourceControlSequenceKind::Word;
+                    let hashed = *kind == SourceControlSequenceKind::Word && name.len() > 1;
                     name.with_text(|name| {
                         if hashed && !allow_control_sequence_creation {
                             self.state

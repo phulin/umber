@@ -193,6 +193,7 @@ fn string_pool_ownership_distinguishes_physical_and_fixed_names() {
     let second = loaded.intern_retained_pool_string("FONT?");
     assert_eq!(first, second);
     let retained = loaded.engine_usage_statistics();
+    assert_eq!(retained.control_sequences, baseline.control_sequences);
     assert_eq!(retained.strings - baseline.strings, 2);
     assert_eq!(retained.string_characters - baseline.string_characters, 10);
 
@@ -291,7 +292,8 @@ fn memory_usage_counts_reachable_lists_without_immutable_store_history() {
 fn format_round_trip_preserves_multiletter_hash_accounting() {
     let mut source = Universe::new();
     source.intern("");
-    // TeX82 §§259/356 count a one-letter control word as a hash entry.
+    // TeX82 §§356/372 route one-character spellings to fixed `eqtb` slots;
+    // §259 owns only the multiletter negative control.
     source.intern_hash_control_sequence("x");
     source.intern_active_character('x');
     source.intern("format-control");
@@ -299,12 +301,12 @@ fn format_round_trip_preserves_multiletter_hash_accounting() {
 
     let mut loaded = Universe::from_format(World::default(), &image).expect("format loads");
     loaded.intern_internal_control_sequence("nullfont");
-    assert_eq!(loaded.engine_usage_statistics().control_sequences, 2);
+    assert_eq!(loaded.engine_usage_statistics().control_sequences, 1);
 
     loaded.intern("y");
     loaded.intern_active_character('y');
     loaded.intern("job-control");
-    assert_eq!(loaded.engine_usage_statistics().control_sequences, 3);
+    assert_eq!(loaded.engine_usage_statistics().control_sequences, 2);
 }
 
 #[test]

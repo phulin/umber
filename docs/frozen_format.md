@@ -167,9 +167,12 @@ valid UTF-8, active names contain exactly one Unicode scalar, namespace/name
 pairs are unique, and semantic atoms are recomputed during validation. The
 dense record index is the local interner slot used by other frozen sections.
 The hash-occupancy bit preserves §259's monotonic allocator coordinate across
-format load, including one-letter control words and names later used by fixed
-internal aliases. Its addition is covered by the container ABI fingerprint,
-so caches with the formerly reserved zero byte are not reused.
+format load. TeX82 §§356/372 route null and one-character spellings to fixed
+`eqtb` slots, so they never set this bit; §1252's retained active/null font
+identifier strings likewise share the pool without entering the hash. A
+multiletter name that reaches §259 remains occupied even if a fixed internal
+alias later reuses its spelling. The bit's addition is covered by the container
+ABI fingerprint, so caches with the formerly reserved zero byte are not reused.
 
 ### Token lists (kind 272)
 

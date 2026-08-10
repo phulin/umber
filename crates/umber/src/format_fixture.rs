@@ -26,8 +26,9 @@ use crate::{
 };
 
 const IDENTITY_DOMAIN: &[u8] = b"umber.loaded-format-fixture.v2\0";
-// Version 9 carries the canonical TeX82 string-pool construction lifecycle;
-// version 8 carries TeX82 §§125--130 allocator-coordinate extents; version 7
+// Version 11 carries TeX82 §§259/356/372 hash occupancy; version 10 carries
+// §§125--130 allocator-coordinate extents; version 9 carries the canonical
+// string-pool construction lifecycle; version 7
 // carried the earlier §200 token-list-head approximation; version 6
 // introduced the serialized baseline field; version 5
 // includes §§785/1038's raw character-loop delivery inside alignment cells;
@@ -37,7 +38,7 @@ const IDENTITY_DOMAIN: &[u8] = b"umber.loaded-format-fixture.v2\0";
 // change. Persistent entries contain both the format image and the evidence
 // produced by that exact construction episode; accepting an entry from an
 // older producer would bypass the current engine entirely.
-const PRODUCER_CONTRACT_VERSION: u32 = 10;
+const PRODUCER_CONTRACT_VERSION: u32 = 11;
 // Version 2 carries the producing source identity on geometry observations.
 const COMMAND_OBSERVATION_SCHEMA_VERSION: u32 = 2;
 

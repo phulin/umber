@@ -143,7 +143,7 @@ fn recipe_identity_invalidates_every_fixture_input_class() {
 }
 
 #[test]
-fn producer_contract_ten_rejects_pre_memory_projection_entries() {
+fn producer_contract_eleven_rejects_pre_hash_occupancy_entries() {
     let recipe = FormatRecipe::raw_tex82();
     let stale = producer_contract(8, &recipe.format_name, &recipe.format_ident_name);
     let current = producer_contract(
@@ -151,7 +151,7 @@ fn producer_contract_ten_rejects_pre_memory_projection_entries() {
         &recipe.format_name,
         &recipe.format_ident_name,
     );
-    assert_eq!(PRODUCER_CONTRACT_VERSION, 10);
+    assert_eq!(PRODUCER_CONTRACT_VERSION, 11);
     assert_ne!(current, stale);
 }
 

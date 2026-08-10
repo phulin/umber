@@ -1276,7 +1276,7 @@ impl Stores {
     pub(crate) fn intern_retained_pool_string(&mut self, value: &str) -> SymbolId {
         let symbol = self
             .interner
-            .intern(value)
+            .intern_retained_string(value)
             .expect("control-sequence symbol capacity exceeded");
         self.make_pool_string(value);
         symbol
@@ -1358,8 +1358,8 @@ impl Stores {
     pub(crate) fn try_intern_hash(&mut self, name: &str) -> Result<SymbolId, InternerError> {
         let before = self.interner.len();
         let symbol = self.interner.intern_hash(name)?;
-        // Web2C recycles the preloaded one-character pool string even when
-        // §356 sends the control word through §259's hash.
+        // §§356/372 use the preloaded one-character string and its fixed
+        // `eqtb` slot; multiletter names allocate through §259's hash.
         if self.interner.len() != before && name.chars().nth(1).is_some() {
             self.make_pool_string(name);
         }

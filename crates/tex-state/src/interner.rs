@@ -278,10 +278,26 @@ impl Interner {
         Ok(symbol)
     }
 
+    /// Interns a spelling used only as a retained TeX string.
+    ///
+    /// TeX82 §1252 stores active/null font identifiers in `font_id_text`,
+    /// which shares the string pool with control-sequence names but does not
+    /// call §259's `id_lookup` or occupy a hash-table entry.
+    pub(crate) fn intern_retained_string(&mut self, name: &str) -> Result<SymbolId, InternerError> {
+        if let Some(symbol) = self.get_key(ControlSequenceKind::Internal, name) {
+            return Ok(symbol);
+        }
+        self.intern_key(named_kind(name), name)
+    }
+
     /// Interns a name through TeX82 §259's hash-table path.
     pub(crate) fn intern_hash(&mut self, name: &str) -> Result<SymbolId, InternerError> {
         let symbol = self.intern(name)?;
-        self.hash_entries[symbol.raw() as usize] = true;
+        // §§356/372 use fixed `eqtb` slots for null and one-character
+        // spellings; only a multiletter name reaches §259's `id_lookup`.
+        if self.kind_id(symbol) == ControlSequenceKind::Named {
+            self.hash_entries[symbol.raw() as usize] = true;
+        }
         Ok(symbol)
     }
 
