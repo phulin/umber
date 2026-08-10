@@ -2713,6 +2713,7 @@ impl Stores {
     }
 
     pub(crate) fn leave_group_observing_dependencies(&mut self) -> GroupExitObservation {
+        self.observe_main_memory(None);
         let box_trace_texts = self.capture_current_group_box_restore_texts();
         self.account_current_group_box_refs();
         let (payloads, _meaning_changed, changed_cells, mut restores) =
@@ -2741,6 +2742,7 @@ impl Stores {
         if actual != expected {
             return Err(GroupMismatch::new(expected, actual));
         }
+        self.observe_main_memory(None);
         let box_trace_texts = self.capture_current_group_box_restore_texts();
         self.account_current_group_box_refs();
         let (payloads, _meaning_changed, changed_cells, mut restores) = self

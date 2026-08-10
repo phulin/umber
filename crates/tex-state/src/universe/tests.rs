@@ -63,6 +63,38 @@ fn engine_usage_statistics_retain_one_word_extent_across_rollback() {
 }
 
 #[test]
+fn main_memory_extent_samples_reachable_state_before_group_restore() {
+    let mut positive = Universe::new();
+    positive.enter_group();
+    let tokens = positive.intern_token_list(&vec![
+        Token::Char {
+            ch: 'x',
+            cat: Catcode::Other,
+        };
+        600
+    ]);
+    positive.set_toks(0, tokens);
+    let _ = positive.leave_group();
+    // TeX82 §§283/1334: `unsave` releases the local token list, but the
+    // one-word allocator coordinate reached before restoration survives.
+    assert_eq!(positive.engine_usage_statistics().memory_words, 1_646);
+
+    let mut negative = Universe::new();
+    negative.enter_group();
+    negative.intern_token_list(&vec![
+        Token::Char {
+            ch: 'x',
+            cat: Catcode::Other,
+        };
+        600
+    ]);
+    let _ = negative.leave_group();
+    // An immutable host-store allocation that never became reachable TeX
+    // state does not occupy TeX's allocator and must not move the coordinate.
+    assert_eq!(negative.engine_usage_statistics().memory_words, 1_045);
+}
+
+#[test]
 fn main_memory_projection_separates_variable_and_character_nodes() {
     let mut variable = Universe::new();
     let penalties = variable.freeze_node_list(&vec![Node::Penalty(0); 501]);
