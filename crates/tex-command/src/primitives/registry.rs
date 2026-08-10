@@ -341,10 +341,20 @@ mod tests {
         }
 
         let mut etex = Universe::new();
+        let mut tex82 = Universe::new();
+        install_tex82(&mut tex82);
+        let tex82_capacity = loaded_capacity(&tex82);
         install_tex82(&mut etex);
         install_etex_expandable_primitives(&mut etex);
         install_etex_unexpandable_primitives(&mut etex);
         let once = loaded_capacity(&etex);
+
+        // TeX82 §§47/50 and e-TeX [1.2] define the merged static pool and
+        // primitive spellings. Pinned `init_prim` stops prove the e-TeX image
+        // is exactly 119 strings and 1621 characters beyond TeX82; the typed
+        // registry must preserve both physical coordinates.
+        assert_eq!(tex82_capacity.0 - once.0, 119);
+        assert_eq!(tex82_capacity.1 - once.1, 1_621);
 
         // Selecting the profile explicitly is a no-op because each installer
         // already selected TeX82 §§47/50's merged e-TeX WEB vocabulary.

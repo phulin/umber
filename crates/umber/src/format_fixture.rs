@@ -38,7 +38,7 @@ const IDENTITY_DOMAIN: &[u8] = b"umber.loaded-format-fixture.v2\0";
 // change. Persistent entries contain both the format image and the evidence
 // produced by that exact construction episode; accepting an entry from an
 // older producer would bypass the current engine entirely.
-const PRODUCER_CONTRACT_VERSION: u32 = 11;
+const PRODUCER_CONTRACT_VERSION: u32 = 12;
 // Version 2 carries the producing source identity on geometry observations.
 const COMMAND_OBSERVATION_SCHEMA_VERSION: u32 = 2;
 
