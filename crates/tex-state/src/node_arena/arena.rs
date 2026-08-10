@@ -89,10 +89,6 @@ impl Default for NodeArena {
     }
 }
 impl NodeArena {
-    #[must_use]
-    pub(crate) fn word_count(&self) -> usize {
-        self.storage.len()
-    }
     pub(crate) fn new() -> Self {
         Self::default()
     }

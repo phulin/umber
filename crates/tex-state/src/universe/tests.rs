@@ -38,7 +38,7 @@ fn engine_usage_statistics_retain_one_word_extent_across_rollback() {
     let mut universe = Universe::new();
     let baseline = universe.snapshot();
     let before = universe.engine_usage_statistics();
-    assert_eq!(before.memory_words, 1_020);
+    assert_eq!(before.memory_words, 1_045);
     assert_eq!(before.memory_word_capacity, 250_000);
     universe.intern("allocator-high-water-probe");
     let tokens = universe.intern_token_list(&[Token::Char {
@@ -60,6 +60,30 @@ fn engine_usage_statistics_retain_one_word_extent_across_rollback() {
         rolled_back.memory_word_capacity,
         before.memory_word_capacity
     );
+}
+
+#[test]
+fn main_memory_projection_separates_variable_and_character_nodes() {
+    let mut variable = Universe::new();
+    let penalties = variable.freeze_node_list(&vec![Node::Penalty(0); 501]);
+    variable.set_box_reg_global(0, penalties);
+    // TeX82 §§127/157 allocate two low-memory words per penalty. The 1002
+    // live words cross §127's initial 1000-word free block exactly once.
+    assert_eq!(variable.engine_usage_statistics().memory_words, 2_045);
+
+    let mut characters = Universe::new();
+    let chars = characters.freeze_node_list(&vec![
+        Node::Char {
+            font: NULL_FONT,
+            ch: 'x',
+            origin: OriginId::UNKNOWN,
+        };
+        501
+    ]);
+    characters.set_box_reg_global(0, chars);
+    // Section 135's character nodes come from §125's one-word arena, so the
+    // same logical node count must not grow the variable-size low arena.
+    assert_eq!(characters.engine_usage_statistics().memory_words, 1_546);
 }
 
 #[test]

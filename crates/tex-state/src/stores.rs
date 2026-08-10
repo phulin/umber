@@ -243,6 +243,9 @@ pub struct EngineStackUsage {
 /// Web2C TeX82's configured main-memory arena profile.
 const TEX82_MEMORY_WORD_CAPACITY: usize = 250_000;
 const TEX82_LOW_MEMORY_GROWTH: usize = 1_000;
+const TEX82_STATIC_LOW_MEMORY_WORDS: usize = 21;
+const TEX82_INITIAL_LOW_MEMORY_EXTENT: usize =
+    TEX82_STATIC_LOW_MEMORY_WORDS + TEX82_LOW_MEMORY_GROWTH;
 const TEX82_INITIAL_HIGH_MEMORY_EXTENT: usize = 20;
 
 /// TeX82's string-pool counters and format-relative reporting profile.
@@ -348,7 +351,7 @@ impl StringPoolProfile {
 impl Default for StringPoolAccounting {
     fn default() -> Self {
         Self {
-            profile_version: 7,
+            profile_version: 8,
             // TeX82's INITEX profile begins after `get_strings_started` has
             // installed the character strings and tex.pool vocabulary. These
             // are profile coordinates, not job usage or fixture totals.
@@ -356,7 +359,7 @@ impl Default for StringPoolAccounting {
             characters: 106_808,
             init_str_ptr: 1_027,
             init_pool_ptr: 106_808,
-            memory_low_extent: TEX82_LOW_MEMORY_GROWTH,
+            memory_low_extent: TEX82_INITIAL_LOW_MEMORY_EXTENT,
             memory_high_extent: TEX82_INITIAL_HIGH_MEMORY_EXTENT,
             // Web2C's TeX82 profile used by the pinned canonical oracle.
             max_strings: 15_000,
@@ -474,7 +477,7 @@ impl StringPoolAccounting {
     }
 
     pub(crate) const fn has_current_profile(&self) -> bool {
-        self.profile_version == 7
+        self.profile_version == 8
     }
 }
 
@@ -617,15 +620,21 @@ impl Stores {
     }
 
     fn observe_main_memory(&mut self, extra_node: Option<&Node>) -> usize {
-        let node_words = self.nodes.word_count();
-        let low_extent = node_words
+        let usage = format::main_memory_usage(self, extra_node);
+        let variable_usage = usage
+            .as_ref()
+            .map_or(TEX82_STATIC_LOW_MEMORY_WORDS, |usage| usage.variable);
+        let low_extent = variable_usage
+            .saturating_sub(TEX82_STATIC_LOW_MEMORY_WORDS)
             .max(1)
             .div_ceil(TEX82_LOW_MEMORY_GROWTH)
-            .saturating_mul(TEX82_LOW_MEMORY_GROWTH);
+            .saturating_mul(TEX82_LOW_MEMORY_GROWTH)
+            .saturating_add(TEX82_STATIC_LOW_MEMORY_WORDS);
         self.memory_low_extent = self.memory_low_extent.max(low_extent);
-        let dynamic_usage =
-            format::dynamic_memory_usage(self, extra_node).unwrap_or(self.memory_high_extent);
-        self.memory_high_extent = self.memory_high_extent.max(dynamic_usage);
+        let (dynamic_usage, dynamic_extent) = usage
+            .map(|usage| (usage.dynamic, usage.dynamic_extent))
+            .unwrap_or((self.memory_high_extent, self.memory_high_extent));
+        self.memory_high_extent = self.memory_high_extent.max(dynamic_extent);
         dynamic_usage
     }
 
@@ -638,7 +647,11 @@ impl Stores {
     /// and after releasing the shipped box.
     pub(crate) fn shipout_memory_usage(&mut self, shipped_node: Option<&Node>) -> (usize, usize) {
         let dynamic_usage = self.observe_main_memory(shipped_node);
-        (self.glue.len() + self.nodes.word_count(), dynamic_usage)
+        (
+            format::main_memory_usage(self, shipped_node)
+                .map_or(TEX82_STATIC_LOW_MEMORY_WORDS, |usage| usage.variable),
+            dynamic_usage,
+        )
     }
     pub(crate) fn loaded_fonts(&self) -> impl Iterator<Item = &LoadedFont> {
         self.fonts.iter()
@@ -747,7 +760,7 @@ impl Stores {
                 format::ExactIdentityCache::default(),
             )),
             usage_high_water: EngineUsageStatistics::default(),
-            memory_low_extent: TEX82_LOW_MEMORY_GROWTH,
+            memory_low_extent: TEX82_INITIAL_LOW_MEMORY_EXTENT,
             memory_high_extent: TEX82_INITIAL_HIGH_MEMORY_EXTENT,
         };
         stores.set_int_param(IntParam::MAG, 1000);
@@ -1303,16 +1316,16 @@ impl Stores {
     }
 
     pub(crate) fn mark_string_pool_format_baseline(&mut self) -> Result<(), StoreFormatError> {
-        self.memory_low_extent = self.memory_low_extent.max(
-            self.nodes
-                .word_count()
-                .max(1)
-                .div_ceil(TEX82_LOW_MEMORY_GROWTH)
-                .saturating_mul(TEX82_LOW_MEMORY_GROWTH),
-        );
-        self.memory_high_extent = self
-            .memory_high_extent
-            .max(format::dynamic_memory_usage(self, None)?);
+        let usage = format::main_memory_usage(self, None)?;
+        let variable_usage = usage.variable;
+        let low_extent = variable_usage
+            .saturating_sub(TEX82_STATIC_LOW_MEMORY_WORDS)
+            .max(1)
+            .div_ceil(TEX82_LOW_MEMORY_GROWTH)
+            .saturating_mul(TEX82_LOW_MEMORY_GROWTH)
+            .saturating_add(TEX82_STATIC_LOW_MEMORY_WORDS);
+        self.memory_low_extent = self.memory_low_extent.max(low_extent);
+        self.memory_high_extent = self.memory_high_extent.max(usage.dynamic_extent);
         self.string_pool
             .mark_format_baseline(self.memory_low_extent, self.memory_high_extent);
         Ok(())

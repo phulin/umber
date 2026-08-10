@@ -102,15 +102,18 @@ format identifier is part of the serialized baseline. These transitions are
 independent of semantic-name deduplication.
 TeX82 §1334's main-memory statistic reports the allocator's low/high coordinate
 extent under the pinned Web2C capacity profile (tex.web §§125--130), not typed
-store occupancy. The low arena grows in 1000-word blocks. The one-word arena is
-derived from the reachable semantic closure; §200 token-list reference heads
-and §384 macro-definition `end_match` words are mapped back from Umber's split,
-hash-consed representation. The format persists both INITEX extents, so loading
-does not reinterpret immutable backing history as live TeX memory. The dense
-canonical empty-list identity does not consume a TeX word.
-Immutable glue-value interning is deliberately outside that projection: it is
-not a third WEB allocator and remains ordinary store state across format
-dump/load.
+store occupancy. The low arena begins with §133's 21 static words and a
+1000-word free block, then grows in 1000-word increments. The reachable format
+closure maps each typed node back to §§135--157, 683, and 790's variable-size
+or one-word allocation; §200 token-list reference heads and §384
+macro-definition `end_match` words are likewise mapped back from Umber's split,
+hash-consed representation. Diagnostic-only physical children are excluded
+from live use but their largest directly mutated branch remains in the
+allocator extent. The format persists both INITEX extents, so loading does not
+reinterpret immutable backing history as live TeX memory. The dense canonical
+empty-list identity does not consume a TeX word. Immutable glue-value interning
+is projected through the reachable closure rather than treated as a third host
+arena.
 The PDF DTO retains allocation counters, raw objects, forms, external images,
 and ToUnicode mappings; token lists and node graphs are embedded as validated
 handle-free semantic envelopes. It contains no store or environment data.

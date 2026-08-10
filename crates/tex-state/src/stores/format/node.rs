@@ -97,6 +97,113 @@ pub(super) enum FormatNode {
     },
 }
 
+impl FormatNode {
+    pub(super) fn diagnostic_children(&self) -> Option<FormatListKey> {
+        match self {
+            Self::HList(node) | Self::VList(node) => node.diagnostic_children,
+            Self::Glue {
+                leader: Some(FormatLeaderPayload::HList(node) | FormatLeaderPayload::VList(node)),
+                ..
+            } => node.diagnostic_children,
+            _ => None,
+        }
+    }
+
+    pub(super) fn semantic_children(&self) -> [Option<FormatListKey>; 4] {
+        let mut children = [None; 4];
+        match self {
+            Self::HList(node) | Self::VList(node) => children[0] = Some(node.children),
+            Self::Glue {
+                leader: Some(FormatLeaderPayload::HList(node) | FormatLeaderPayload::VList(node)),
+                ..
+            } => children[0] = Some(node.children),
+            Self::Unset(node) => children[0] = Some(node.children),
+            Self::Disc {
+                pre, post, replace, ..
+            } => {
+                children[0] = Some(*pre);
+                children[1] = Some(*post);
+                children[2] = Some(*replace);
+            }
+            Self::Ins { content, .. } => children[0] = Some(*content),
+            Self::MathNoad(noad) => {
+                children[0] = math_field_child(&noad.nucleus);
+                children[1] = math_field_child(&noad.subscript);
+                children[2] = math_field_child(&noad.superscript);
+            }
+            Self::FractionNoad(fraction) => {
+                children[0] = Some(fraction.numerator);
+                children[1] = Some(fraction.denominator);
+            }
+            Self::MathChoice(choice) => {
+                children[0] = Some(choice.display);
+                children[1] = Some(choice.text);
+                children[2] = Some(choice.script);
+                children[3] = Some(choice.script_script);
+            }
+            Self::MathList(list) => children[0] = Some(list.content),
+            Self::Adjust { content, .. } => children[0] = Some(*content),
+            _ => {}
+        }
+        children
+    }
+
+    /// Returns this node's allocation in TeX's `(low, high)` `mem` arenas.
+    ///
+    /// Umber's frozen format closure stores every logical node in one typed
+    /// row. TeX82 §§135--157, 683, and 790 instead give variable-size nodes
+    /// their declared word size and allocate character nodes from §125's
+    /// one-word arena. A ligature's §143 `lig_ptr` keeps its source character
+    /// nodes live alongside the two-word ligature node.
+    pub(super) fn tex82_memory_words(&self) -> (usize, usize) {
+        let low = match self {
+            Self::Char { .. } => return (0, 1),
+            Self::Lig { orig, .. } => return (2, orig.len()),
+            Self::HList(_) | Self::VList(_) | Self::Unset(_) => 7,
+            Self::Rule { .. } => 4,
+            Self::Ins { .. } => 5,
+            Self::MathNoad(noad) => match noad.kind {
+                NoadKind::Radical { .. } | NoadKind::Accent { .. } => 5,
+                _ => 4,
+            },
+            Self::FractionNoad(_) => 6,
+            Self::MathStyle(_) | Self::MathChoice(_) => 3,
+            Self::MarginKern { .. } => 3,
+            Self::Whatsit(FormatWhatsit::OpenOut { .. }) => 3,
+            Self::Whatsit(
+                FormatWhatsit::PdfAnnotation { .. }
+                | FormatWhatsit::PdfLinkStart { .. }
+                | FormatWhatsit::PdfDestination { .. }
+                | FormatWhatsit::PdfThread { .. },
+            ) => 7,
+            Self::Whatsit(
+                FormatWhatsit::PdfRefXForm { .. } | FormatWhatsit::PdfRefXImage { .. },
+            ) => 5,
+            Self::Whatsit(FormatWhatsit::PdfColorStack { .. }) => 3,
+            Self::Kern { .. }
+            | Self::Glue { .. }
+            | Self::Penalty(_)
+            | Self::Disc { .. }
+            | Self::Mark { .. }
+            | Self::Whatsit(_)
+            | Self::MathOn(_)
+            | Self::MathOff(_)
+            | Self::Direction(_)
+            | Self::MathList(_)
+            | Self::Nonscript
+            | Self::Adjust { .. } => 2,
+        };
+        (low, 0)
+    }
+}
+
+fn math_field_child(field: &FormatMathField) -> Option<FormatListKey> {
+    match field {
+        FormatMathField::SubBox(key) | FormatMathField::SubMlist(key) => Some(*key),
+        _ => None,
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub(super) enum FormatLeaderPayload {
     HList(FormatBoxNode),

@@ -131,16 +131,25 @@ struct StoreFormat {
     last_loaded_font: u32,
 }
 
-/// TeX82 §§125/130/200/384's live one-word-memory use.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) struct MainMemoryUsage {
+    pub(super) variable: usize,
+    pub(super) dynamic: usize,
+    pub(super) dynamic_extent: usize,
+}
+
+const TEX82_UNTYPED_ONE_WORD_SCRATCH_EXTENT: usize = 4;
+
+/// TeX82 §§125--130/200/384's live main-memory use.
 ///
-/// Umber's immutable token and macro stores retain unreachable history, so
-/// their backing lengths are not WEB allocator coordinates. The format
-/// closure is the single existing owner of semantic reachability across
-/// meanings, token registers, macro bodies, and node-held token lists.
-pub(super) fn dynamic_memory_usage(
+/// Umber's immutable token, macro, glue, and node stores retain unreachable
+/// history, so their backing lengths are not WEB allocator coordinates. The
+/// format closure is the single existing owner of semantic reachability
+/// across meanings, registers, macro bodies, and node-held lists.
+pub(super) fn main_memory_usage(
     stores: &Stores,
     extra_node: Option<&Node>,
-) -> Result<usize, StoreFormatError> {
+) -> Result<MainMemoryUsage, StoreFormatError> {
     let format = StoreFormat::capture_with_extra_node(stores, extra_node)?;
     let mut macro_token_lists = vec![false; format.token_lists.len()];
     let mut macro_words = 0_usize;
@@ -172,9 +181,108 @@ pub(super) fn dynamic_memory_usage(
     // pdfTeX §130 reserves 15 static high-memory words. Its merged e-TeX
     // runtime keeps five additional one-word allocator positions outside the
     // typed token closure; these are profile coordinates, not host objects.
-    Ok(20_usize
+    // Diagnostic replacement children preserve §182 display after the live
+    // list has been directly mutated; they are not a second allocation of the
+    // same TeX nodes for §§125/127 live accounting. The largest detached
+    // physical branch did occupy the allocator before direct mutation, so it
+    // remains part of §1334's coordinate extent.
+    let lists_by_key = format
+        .node_lists
+        .iter()
+        .map(|list| (list.key, list))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    let mut semantic_lists = std::collections::BTreeSet::new();
+    let mut stack = format
+        .env
+        .iter()
+        .filter_map(|entry| match entry.value {
+            FormatEnvValue::Box(key) => Some(key),
+            FormatEnvValue::Raw(_) => None,
+        })
+        .collect::<Vec<_>>();
+    stack.extend(
+        lists_by_key
+            .keys()
+            .filter(|key| key.start == u32::MAX)
+            .copied(),
+    );
+    while let Some(key) = stack.pop() {
+        if !semantic_lists.insert(key) {
+            continue;
+        }
+        if let Some(list) = lists_by_key.get(&key) {
+            stack.extend(
+                list.nodes
+                    .iter()
+                    .flat_map(FormatNode::semantic_children)
+                    .flatten(),
+            );
+        }
+    }
+    let (node_low_words, node_high_words) = format
+        .node_lists
+        .iter()
+        .filter(|list| semantic_lists.contains(&list.key))
+        .flat_map(|list| &list.nodes)
+        .fold((0_usize, 0_usize), |(low, high), node| {
+            let (node_low, node_high) = node.tex82_memory_words();
+            (low.saturating_add(node_low), high.saturating_add(node_high))
+        });
+    let diagnostic_roots = format
+        .node_lists
+        .iter()
+        .flat_map(|list| &list.nodes)
+        .filter_map(FormatNode::diagnostic_children);
+    let detached_dynamic_extent = diagnostic_roots
+        .map(|root| {
+            let mut words = 0_usize;
+            let mut seen = std::collections::BTreeSet::new();
+            let mut stack = vec![root];
+            while let Some(key) = stack.pop() {
+                if semantic_lists.contains(&key) || !seen.insert(key) {
+                    continue;
+                }
+                if let Some(list) = lists_by_key.get(&key) {
+                    words = words.saturating_add(
+                        list.nodes
+                            .iter()
+                            .map(|node| node.tex82_memory_words().1)
+                            .sum::<usize>(),
+                    );
+                    stack.extend(
+                        list.nodes
+                            .iter()
+                            .flat_map(FormatNode::semantic_children)
+                            .flatten(),
+                    );
+                }
+            }
+            words
+        })
+        .max()
+        .unwrap_or(0);
+    // Section 133's five fixed glue specifications occupy the 21 static low
+    // words. Every additional reachable §150 glue specification owns four
+    // variable-size words independently of its two-word glue node.
+    let variable = 21_usize
+        .saturating_add(format.glue.len().saturating_sub(5).saturating_mul(4))
+        .saturating_add(node_low_words);
+    let dynamic = 20_usize
         .saturating_add(ordinary_token_words)
-        .saturating_add(macro_words))
+        .saturating_add(macro_words)
+        .saturating_add(node_high_words);
+    // Section 125's coordinate survives the engine's four one-word scratch
+    // allocations outside the retained typed closure. They may be returned to
+    // `avail`, but §1334 reports the smallest coordinate ever reached, not
+    // live occupancy.
+    let dynamic_extent = dynamic
+        .saturating_add(detached_dynamic_extent)
+        .saturating_add(TEX82_UNTYPED_ONE_WORD_SCRATCH_EXTENT);
+    Ok(MainMemoryUsage {
+        variable,
+        dynamic,
+        dynamic_extent,
+    })
 }
 
 struct ImmutableStoreIdentity {
