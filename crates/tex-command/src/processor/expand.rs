@@ -888,6 +888,27 @@ impl CommandProcessor<'_> {
                 self.push_rendered_text(&size, command.origin());
                 Ok(())
             }
+            // pdftex.web §470 scans e-TeX's extended box-register domain,
+            // then queries typed hlist state for the first non-skipable node
+            // at the requested edge.
+            Meaning::ExpandablePrimitive(
+                primitive @ (ExpandablePrimitive::LeftMarginKern
+                | ExpandablePrimitive::RightMarginKern),
+            ) => {
+                let index = self.scan_extended_register_index()?;
+                let side = match primitive {
+                    ExpandablePrimitive::LeftMarginKern => tex_state::node::MarginKernSide::Left,
+                    ExpandablePrimitive::RightMarginKern => tex_state::node::MarginKernSide::Right,
+                    _ => unreachable!("the dispatch pattern admits only margin-kern enquiries"),
+                };
+                let Some(amount) = self.state.box_margin_kern(index, side) else {
+                    return Err(CommandError::PdfNavigation(
+                        "pdfTeX error (marginkern): a non-empty hbox expected",
+                    ));
+                };
+                self.push_rendered_text(&format_scaled(amount), command.origin());
+                Ok(())
+            }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::Input) => self.expand_input(command),
             Meaning::ExpandablePrimitive(ExpandablePrimitive::EndInput) => self.expand_endinput(),
             Meaning::ExpandablePrimitive(ExpandablePrimitive::JobName) => {

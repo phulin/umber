@@ -17,7 +17,10 @@ use crate::math::{
     MathStyle, NoadClass, NoadKind,
 };
 use crate::meaning::{Meaning, MeaningFlags, RawMeaning};
-use crate::node::{BoxNode, BoxNodeFields, GlueKind, KernKind, LeaderPayload, Node, Sign};
+use crate::node::{
+    AdjustNode, BoxLr, BoxNode, BoxNodeFields, GlueKind, KernKind, LeaderPayload, MarginKernSide,
+    Node, PdfLiteralMode, Sign, Whatsit,
+};
 use crate::page::{PageDimension, PageInteger, PageMark};
 use crate::provenance::{
     InsertedOriginKind, OriginRecord, SourceOrigin, SynthesizedOriginKind, SyntheticOriginKind,
@@ -1432,6 +1435,169 @@ fn format_roundtrip_complete_math_graph() {
         restored.dump_format().expect("complete math graph redumps"),
         image
     );
+}
+
+#[test]
+fn pdftex_margin_kern_query_owns_the_complete_skipable_edge_rule() {
+    fn hbox(universe: &mut Universe, children: Vec<Node>) -> NodeListId {
+        let children = universe.freeze_node_list(&children);
+        universe.freeze_node_list(&[Node::HList(BoxNode::new(BoxNodeFields {
+            width: Scaled::from_raw(0),
+            height: Scaled::from_raw(0),
+            depth: Scaled::from_raw(0),
+            shift: Scaled::from_raw(0),
+            box_lr: BoxLr::Normal,
+            glue_set: GlueSetRatio::ZERO,
+            glue_sign: Sign::Normal,
+            glue_order: Order::Normal,
+            children,
+        }))])
+    }
+
+    // pdftex.web §470's `cp_skipable` predicate is typed list policy: the
+    // command layer must not duplicate compact-node classification details.
+    let mut universe = Universe::new();
+    let empty = universe.freeze_node_list(&[]);
+    let replacement = universe.freeze_node_list(&[Node::Penalty(1)]);
+    let zero_glue = universe.intern_glue(GlueSpec::ZERO);
+    let nonzero_glue = universe.intern_glue(GlueSpec {
+        width: Scaled::from_raw(Scaled::UNITY),
+        ..GlueSpec::ZERO
+    });
+    let empty_hlist = Node::HList(BoxNode::new(BoxNodeFields {
+        width: Scaled::from_raw(0),
+        height: Scaled::from_raw(0),
+        depth: Scaled::from_raw(0),
+        shift: Scaled::from_raw(0),
+        box_lr: BoxLr::Normal,
+        glue_set: GlueSetRatio::ZERO,
+        glue_sign: Sign::Normal,
+        glue_order: Order::Normal,
+        children: empty,
+    }));
+    let expected = Scaled::from_raw(-3 * Scaled::UNITY);
+    let skipable = vec![
+        Node::Ins {
+            class: 0,
+            size: Scaled::from_raw(0),
+            split_top_skip: zero_glue,
+            split_max_depth: Scaled::from_raw(0),
+            floating_penalty: 0,
+            content: empty,
+        },
+        Node::Mark {
+            class: 0,
+            tokens: TokenListId::EMPTY,
+        },
+        Node::Adjust(AdjustNode::ordinary(empty)),
+        Node::Penalty(1),
+        Node::Whatsit(Whatsit::PdfLiteral {
+            mode: PdfLiteralMode::Origin,
+            payload: Vec::new(),
+        }),
+        Node::Disc {
+            kind: crate::node::DiscKind::Discretionary,
+            pre: empty,
+            post: empty,
+            replace: empty,
+            physical_replace_count: 0,
+        },
+        Node::MathOn(Scaled::from_raw(0)),
+        Node::MathOff(Scaled::from_raw(0)),
+        Node::Kern {
+            amount: Scaled::from_raw(0),
+            kind: KernKind::Explicit,
+        },
+        Node::Kern {
+            amount: Scaled::from_raw(Scaled::UNITY),
+            kind: KernKind::Font,
+        },
+        Node::Kern {
+            amount: Scaled::from_raw(Scaled::UNITY),
+            kind: KernKind::Auto,
+        },
+        Node::Glue {
+            spec: zero_glue,
+            kind: GlueKind::Normal,
+            leader: None,
+        },
+        empty_hlist,
+        Node::Glue {
+            spec: nonzero_glue,
+            kind: GlueKind::LeftSkip,
+            leader: None,
+        },
+        Node::MarginKern {
+            amount: expected,
+            side: MarginKernSide::Left,
+            font: NULL_FONT,
+            ch: b'x',
+        },
+    ];
+    let root = hbox(&mut universe, skipable);
+    universe.set_box_reg(0, root);
+    assert_eq!(
+        universe.box_margin_kern(0, MarginKernSide::Left),
+        Some(expected)
+    );
+
+    let blockers = [
+        Node::Whatsit(Whatsit::PdfRefXImage {
+            object: 1,
+            width: Scaled::from_raw(0),
+            height: Scaled::from_raw(0),
+            depth: Scaled::from_raw(0),
+        }),
+        Node::Disc {
+            kind: crate::node::DiscKind::Discretionary,
+            pre: empty,
+            post: empty,
+            replace: replacement,
+            physical_replace_count: 1,
+        },
+        Node::MathOn(Scaled::from_raw(1)),
+        Node::Kern {
+            amount: Scaled::from_raw(1),
+            kind: KernKind::Explicit,
+        },
+        Node::Glue {
+            spec: nonzero_glue,
+            kind: GlueKind::Normal,
+            leader: None,
+        },
+        Node::HList(BoxNode::new(BoxNodeFields {
+            width: Scaled::from_raw(1),
+            height: Scaled::from_raw(0),
+            depth: Scaled::from_raw(0),
+            shift: Scaled::from_raw(0),
+            box_lr: BoxLr::Normal,
+            glue_set: GlueSetRatio::ZERO,
+            glue_sign: Sign::Normal,
+            glue_order: Order::Normal,
+            children: empty,
+        })),
+    ];
+    for (offset, blocker) in blockers.into_iter().enumerate() {
+        let root = hbox(
+            &mut universe,
+            vec![
+                blocker,
+                Node::MarginKern {
+                    amount: expected,
+                    side: MarginKernSide::Left,
+                    font: NULL_FONT,
+                    ch: b'x',
+                },
+            ],
+        );
+        let index = u16::try_from(offset + 1).expect("small test register");
+        universe.set_box_reg(index, root);
+        assert_eq!(
+            universe.box_margin_kern(index, MarginKernSide::Left),
+            Some(Scaled::from_raw(0)),
+            "blocker {offset} must terminate the edge scan"
+        );
+    }
 }
 
 #[test]

@@ -914,6 +914,17 @@ impl CommandContext<'_> {
         self.universe.box_dimension(index, dimension)
     }
 
+    /// Reads one pdfTeX margin-kern enquiry through typed box-list state.
+    #[must_use]
+    pub fn box_margin_kern(
+        &mut self,
+        index: u16,
+        side: crate::node::MarginKernSide,
+    ) -> Option<crate::scaled::Scaled> {
+        self.observe_cell(BankTag::Box, u32::from(index));
+        self.universe.box_margin_kern(index, side)
+    }
+
     /// Reads one token register for direct `\\the` insertion.
     #[must_use]
     pub fn toks(&mut self, index: u16) -> TokenListId {

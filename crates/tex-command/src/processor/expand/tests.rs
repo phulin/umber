@@ -388,6 +388,36 @@ fn install_expandable(
     symbol
 }
 
+fn set_margin_kern_test_box(
+    universe: &mut Universe,
+    index: u16,
+    horizontal: bool,
+    children: Vec<tex_state::node::Node>,
+) {
+    use tex_state::glue::Order;
+    use tex_state::node::{BoxLr, BoxNode, BoxNodeFields, Node, Sign};
+    use tex_state::scaled::GlueSetRatio;
+
+    let children = universe.freeze_node_list(&children);
+    let boxed = BoxNode::new(BoxNodeFields {
+        width: Scaled::from_raw(0),
+        height: Scaled::from_raw(0),
+        depth: Scaled::from_raw(0),
+        shift: Scaled::from_raw(0),
+        box_lr: BoxLr::Normal,
+        glue_set: GlueSetRatio::ZERO,
+        glue_sign: Sign::Normal,
+        glue_order: Order::Normal,
+        children,
+    });
+    let root = universe.freeze_node_list(&[if horizontal {
+        Node::HList(boxed)
+    } else {
+        Node::VList(boxed)
+    }]);
+    universe.set_box_reg(index, root);
+}
+
 #[test]
 fn frozen_end_template_delivers_endv_fresh_and_after_format_load() {
     // TeX82 §§375, 780: both `endtemplate` control sequences are inaccessible
@@ -682,6 +712,143 @@ fn pdftex_escape_string_expands_and_escapes_only_pdf_literal_bytes() {
                 .len(),
             r"\(\\\)\200\040A!~".len(),
         );
+    }
+}
+
+#[test]
+fn pdftex_margin_kern_enquiries_use_typed_box_edges_fresh_and_loaded() {
+    use tex_state::font::NULL_FONT;
+    use tex_state::glue::GlueSpec;
+    use tex_state::node::{GlueKind, MarginKernSide, Node, Whatsit};
+
+    // pdftex.web §470 scans the extended register range and walks only the
+    // requested hlist edge. The loaded case proves that both primitive
+    // identities retain the same typed state query across a format boundary.
+    let mut fresh = crate::test_harness::universe_with_plain_catcodes();
+    crate::primitives::install_pdftex_expandable_primitives(&mut fresh);
+    let format = fresh.dump_format().expect("quiescent pdfTeX format");
+    let mut loaded = Universe::from_format(World::default(), &format).expect("format loads");
+    crate::primitives::register_pdftex_expandable_primitives(&mut loaded);
+
+    for mut universe in [fresh, loaded] {
+        let nonzero_glue = universe.intern_glue(GlueSpec {
+            width: Scaled::from_raw(Scaled::UNITY),
+            ..GlueSpec::ZERO
+        });
+        set_margin_kern_test_box(
+            &mut universe,
+            32_767,
+            true,
+            vec![
+                Node::Penalty(10_000),
+                Node::Glue {
+                    spec: nonzero_glue,
+                    kind: GlueKind::LeftSkip,
+                    leader: None,
+                },
+                Node::MarginKern {
+                    amount: Scaled::from_raw(-5 * Scaled::UNITY),
+                    side: MarginKernSide::Left,
+                    font: NULL_FONT,
+                    ch: b'L',
+                },
+                Node::Char {
+                    font: NULL_FONT,
+                    ch: 'x',
+                    origin: tex_state::token::OriginId::UNKNOWN,
+                },
+                Node::MarginKern {
+                    amount: Scaled::from_raw(-7 * Scaled::UNITY),
+                    side: MarginKernSide::Right,
+                    font: NULL_FONT,
+                    ch: b'R',
+                },
+                Node::Glue {
+                    spec: nonzero_glue,
+                    kind: GlueKind::RightSkip,
+                    leader: None,
+                },
+                Node::Penalty(10_000),
+            ],
+        );
+        // The opposite edge's line skip and a referenced form are both
+        // deliberate blockers, not members of pdfTeX's skipable set.
+        set_margin_kern_test_box(
+            &mut universe,
+            1,
+            true,
+            vec![
+                Node::Glue {
+                    spec: nonzero_glue,
+                    kind: GlueKind::RightSkip,
+                    leader: None,
+                },
+                Node::MarginKern {
+                    amount: Scaled::from_raw(-Scaled::UNITY),
+                    side: MarginKernSide::Left,
+                    font: NULL_FONT,
+                    ch: b'L',
+                },
+            ],
+        );
+        set_margin_kern_test_box(
+            &mut universe,
+            2,
+            true,
+            vec![
+                Node::MarginKern {
+                    amount: Scaled::from_raw(-Scaled::UNITY),
+                    side: MarginKernSide::Right,
+                    font: NULL_FONT,
+                    ch: b'R',
+                },
+                Node::Whatsit(Whatsit::PdfRefXForm {
+                    object: 1,
+                    width: Scaled::from_raw(0),
+                    height: Scaled::from_raw(0),
+                    depth: Scaled::from_raw(0),
+                }),
+            ],
+        );
+        set_margin_kern_test_box(&mut universe, 3, true, vec![]);
+        set_margin_kern_test_box(&mut universe, 4, false, vec![]);
+
+        let mut command = CommandState::new(crate::CommandProfile::PDFTEX14029);
+        let source = command
+            .register_source(SourceRegistration::new(
+                RegisteredSourceKind::Generated,
+                br"\leftmarginkern32767/\rightmarginkern32767/\leftmarginkern1/\rightmarginkern2/\leftmarginkern3%".as_slice(),
+            ))
+            .expect("source registers");
+        command
+            .open_registered_source(source)
+            .expect("source opens");
+        let mut capabilities = CommandHostCapabilities::default();
+        {
+            let mut processor = processor(&mut command, &mut universe, &mut capabilities);
+            assert_eq!(rendered(&mut processor), "-5.0pt/-7.0pt/0.0pt/0.0pt/0.0pt");
+        }
+
+        for source in [br"\leftmarginkern4%".as_slice(), br"\rightmarginkern5%"] {
+            let mut command = CommandState::new(crate::CommandProfile::PDFTEX14029);
+            let source = command
+                .register_source(SourceRegistration::new(
+                    RegisteredSourceKind::Generated,
+                    source,
+                ))
+                .expect("invalid source registers");
+            command
+                .open_registered_source(source)
+                .expect("invalid source opens");
+            let mut processor = processor(&mut command, &mut universe, &mut capabilities);
+            let error = processor
+                .get_x_token()
+                .expect_err("void and non-hlist boxes are rejected");
+            assert_eq!(
+                error.to_string(),
+                "pdfTeX error (marginkern): a non-empty hbox expected"
+            );
+        }
     }
 }
 

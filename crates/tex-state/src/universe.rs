@@ -33,7 +33,7 @@ use crate::interner::{ControlSequenceKind, Symbol, SymbolId};
 use crate::macro_store::{MacroDefinitionProvenance, MacroMeaning};
 use crate::math::MathFontSize;
 use crate::meaning::Meaning;
-use crate::node::Node;
+use crate::node::{GlueKind, KernKind, MarginKernSide, Node, Whatsit};
 use crate::node_arena::{NodeList, NodeListBuilder};
 use crate::page::{
     PageBreak, PageBuilderState, PageContents, PageDimension, PageFireUp, PageHashCache,
@@ -7787,6 +7787,41 @@ impl Universe {
         box_dimension_from_nodes(self.nodes(id), dimension)
     }
 
+    /// Reads pdfTeX's character-protrusion kern at one edge of an hbox.
+    ///
+    /// `None` distinguishes a void or non-horizontal box from a valid hbox
+    /// whose queried edge has no margin kern (which returns zero).
+    #[must_use]
+    pub fn box_margin_kern(&self, index: u16, side: MarginKernSide) -> Option<Scaled> {
+        let id = self.box_reg(index)?;
+        let nodes = self.nodes(id);
+        let box_node = match (nodes.len(), nodes.first()) {
+            (1, Some(crate::node_arena::NodeRef::HList(box_node))) => box_node,
+            _ => return None,
+        };
+        let children = self.nodes(box_node.children);
+        let mut edge = children.iter();
+        let mut next = || match side {
+            MarginKernSide::Left => edge.next(),
+            MarginKernSide::Right => edge.next_back(),
+        };
+        let candidate = loop {
+            let candidate = next();
+            match candidate {
+                Some(node) if margin_kern_enquiry_skipable(self, &node, side) => {}
+                _ => break candidate,
+            }
+        };
+        Some(match candidate {
+            Some(crate::node_arena::NodeRef::MarginKern {
+                amount,
+                side: candidate_side,
+                ..
+            }) if candidate_side == side => amount,
+            _ => Scaled::from_raw(0),
+        })
+    }
+
     pub fn set_box_dimension(&mut self, index: u16, dimension: BoxDimension, value: Scaled) {
         self.set_box_dimension_impl(index, dimension, value);
     }
@@ -8308,6 +8343,54 @@ fn box_dimension_from_nodes(nodes: NodeList<'_>, dimension: BoxDimension) -> Opt
         BoxDimension::Height => box_node.height,
         BoxDimension::Depth => box_node.depth,
     })
+}
+
+/// pdftex.web §470's edge traversal, using its `cp_skipable` predicate.
+fn margin_kern_enquiry_skipable(
+    universe: &Universe,
+    node: &crate::node_arena::NodeRef<'_>,
+    side: MarginKernSide,
+) -> bool {
+    use crate::node_arena::NodeRef;
+
+    match node {
+        NodeRef::Ins { .. } | NodeRef::Mark { .. } | NodeRef::Adjust(_) | NodeRef::Penalty(_) => {
+            true
+        }
+        NodeRef::Whatsit(Whatsit::PdfRefXImage { .. } | Whatsit::PdfRefXForm { .. }) => false,
+        NodeRef::Whatsit(_) => true,
+        NodeRef::Disc {
+            pre,
+            post,
+            replace,
+            physical_replace_count,
+            ..
+        } => {
+            *physical_replace_count == 0
+                && universe.nodes(*pre).is_empty()
+                && universe.nodes(*post).is_empty()
+                && universe.nodes(*replace).is_empty()
+        }
+        NodeRef::MathOn(width) | NodeRef::MathOff(width) => width.raw() == 0,
+        NodeRef::Kern { amount, kind } => {
+            amount.raw() == 0 || matches!(kind, KernKind::Font | KernKind::Auto)
+        }
+        NodeRef::Glue { spec, kind, .. } => {
+            universe.glue(*spec) == GlueSpec::ZERO
+                || matches!(
+                    (side, kind),
+                    (MarginKernSide::Left, GlueKind::LeftSkip)
+                        | (MarginKernSide::Right, GlueKind::RightSkip)
+                )
+        }
+        NodeRef::HList(box_node) => {
+            box_node.width.raw() == 0
+                && box_node.height.raw() == 0
+                && box_node.depth.raw() == 0
+                && universe.nodes(box_node.children).is_empty()
+        }
+        _ => false,
+    }
 }
 
 fn set_box_dimension_in_node(node: &mut Node, dimension: BoxDimension, value: Scaled) -> bool {
