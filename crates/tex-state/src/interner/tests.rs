@@ -96,12 +96,12 @@ fn multiletter_count_is_the_tex82_hash_namespace() {
 }
 
 #[test]
-fn hash_occupancy_survives_one_letter_words_and_internal_aliasing() {
+fn hash_occupancy_excludes_one_letter_names_and_survives_internal_aliasing() {
     let mut interner = Interner::new();
 
-    // TeX82 §356 sends a control word to §259's `id_lookup` even when it has
-    // one letter. Section 1334 reports that hash entry, and the ordinary
-    // `nullfont` entry remains counted after §222 installs its frozen alias.
+    // TeX82 §§356/372 route a one-character spelling to its fixed eqtb slot,
+    // outside §259's hash. The ordinary multiletter `nullfont` entry remains
+    // counted after §222 installs its frozen alias.
     let x = interner.intern_hash("x").expect("one-letter hash name");
     let nullfont = interner
         .intern_hash("nullfont")
@@ -113,10 +113,10 @@ fn hash_occupancy_survives_one_letter_words_and_internal_aliasing() {
         .intern_internal("inaccessible")
         .expect("unhashed fixed alias");
 
-    assert!(interner.is_hash_entry(x.symbol()));
+    assert!(!interner.is_hash_entry(x.symbol()));
     assert!(interner.is_hash_entry(nullfont.symbol()));
     assert!(!interner.is_hash_entry(inaccessible.symbol()));
-    assert_eq!(interner.multiletter_len(), 2);
+    assert_eq!(interner.multiletter_len(), 1);
 }
 
 #[test]
