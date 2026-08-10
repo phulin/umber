@@ -113,6 +113,31 @@ pub(crate) enum ParameterReplayError {
 }
 
 impl CommandState {
+    pub(crate) fn transient_dynamic_words(&self) -> usize {
+        let arguments = self
+            .parameters
+            .activations
+            .iter()
+            .map(|activation| activation.arguments.buffer.words().len())
+            .sum::<usize>();
+        self.input.levels.iter().fold(arguments, |words, level| {
+            let InputLevel::Tokens(cursor) = level else {
+                return words;
+            };
+            let owned = cursor
+                .payload
+                .transient_words()
+                .map_or(0, |words| words.len())
+                .saturating_add(
+                    cursor
+                        .payload
+                        .backed_up_words()
+                        .map_or(0, |words| words.len()),
+                );
+            words.saturating_add(owned)
+        })
+    }
+
     pub(crate) fn top_input_level_identity(&self) -> Option<InputLevelId> {
         self.input.levels.last().map(input_level_identity)
     }

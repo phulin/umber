@@ -54,6 +54,57 @@ fn push_activation(
 }
 
 #[test]
+fn transient_dynamic_words_count_owned_buffers_once() {
+    let mut state = CommandState::default();
+    let arguments = Arc::from([traced('a'), traced('b'), traced('c')]);
+    push_activation(
+        &mut state,
+        1,
+        Arc::clone(&arguments),
+        [
+            MacroArgumentRange::new(0, 3),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        ],
+    );
+    state.push_token_level(
+        TokenPayload::ArgumentRange {
+            buffer: SharedTokenBuffer::new(arguments),
+            range: MacroArgumentRange::new(0, 3).expect("valid range"),
+        },
+        TokenBehavior::Parameter,
+        RetirementBehavior::Pop,
+        ReplayTrace::MacroParameter { slot: 1 },
+    );
+    state.push_token_level(
+        transient_payload(&[traced('x'), traced('y')]),
+        TokenBehavior::Recovery,
+        RetirementBehavior::Pop,
+        ReplayTrace::Inserted,
+    );
+    state.push_token_level(
+        TokenPayload::Stored {
+            tokens: TokenListId::EMPTY,
+            origins: OriginListId::EMPTY,
+        },
+        TokenBehavior::Ordinary,
+        RetirementBehavior::Pop,
+        ReplayTrace::Stored(StoredReplayReason::EveryJob),
+    );
+
+    // TeX82 §§357/390: the argument-range cursor shares its activation's
+    // three token nodes, the recovery list owns two more, and a stored replay
+    // only adds a reference. Neither shared nor stored tokens are duplicated.
+    assert_eq!(state.transient_dynamic_words(), 5);
+}
+
+#[test]
 fn each_popped_level_retires_exactly_once_with_its_trace() {
     let mut state = CommandState::default();
     let identity = state.push_token_level(

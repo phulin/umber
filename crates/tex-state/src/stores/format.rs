@@ -161,6 +161,19 @@ pub(super) fn main_memory_usage_with_extra_nodes(
     main_memory_usage_inner(stores, extra_nodes, false)
 }
 
+pub(super) fn main_memory_usage_with_extra_dynamic_words(
+    stores: &Stores,
+    extra_words: usize,
+) -> Result<MainMemoryUsage, StoreFormatError> {
+    let usage = main_memory_usage_inner(stores, &[], false)?;
+    let dynamic = usage.dynamic.saturating_add(extra_words);
+    Ok(MainMemoryUsage {
+        variable: usage.variable,
+        dynamic,
+        dynamic_extent: usage.dynamic_extent.max(dynamic),
+    })
+}
+
 fn main_memory_usage_inner(
     stores: &Stores,
     extra_nodes: &[Node],

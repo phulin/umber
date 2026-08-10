@@ -642,10 +642,17 @@ impl Stores {
         self.record_main_memory_usage(format::main_memory_usage(self, extra_node))
     }
 
-    fn observe_main_memory_nodes(&mut self, extra_nodes: &[Node]) -> usize {
+    pub(crate) fn observe_main_memory_nodes(&mut self, extra_nodes: &[Node]) -> usize {
         self.record_main_memory_usage(format::main_memory_usage_with_extra_nodes(
             self,
             extra_nodes,
+        ))
+    }
+
+    pub(crate) fn observe_main_memory_dynamic_words(&mut self, extra_words: usize) -> usize {
+        self.record_main_memory_usage(format::main_memory_usage_with_extra_dynamic_words(
+            self,
+            extra_words,
         ))
     }
 

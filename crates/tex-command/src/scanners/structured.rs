@@ -2525,6 +2525,7 @@ impl CommandProcessor<'_> {
         &mut self,
         tokens: TracedTokenList,
     ) -> Result<ExpandedWriteText, CommandError> {
+        let write_words = self.state.tokens(tokens.token_list()).len();
         let endwrite = self
             .state
             .primitive_token("endwrite")
@@ -2583,6 +2584,18 @@ impl CommandProcessor<'_> {
 
         self.outer_recovered_while_absorbing = false;
         let expanded = self.scan_balanced_text(true)?.tokens;
+        let transient_words = self.command.transient_dynamic_words();
+        let expanded_words = self.state.tokens(expanded.token_list()).len();
+        // TeX82 §1370 keeps the original write list, its expanded scan result,
+        // the command-owned transient input nodes, and the three artificial
+        // brace/`endwrite` nodes live on the same `write_out` call stack. The
+        // expanded list also owns §200's reference-count head.
+        self.state.observe_transient_token_words(
+            write_words
+                .saturating_add(expanded_words)
+                .saturating_add(transient_words)
+                .saturating_add(4),
+        );
         let mut stopper = self.get_token()?.ok_or(CommandError::input_invariant())?;
         let unbalanced =
             self.outer_recovered_while_absorbing || stopper.spelling().semantic_token() != endwrite;

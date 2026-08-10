@@ -142,6 +142,26 @@ fn main_memory_extent_observes_transient_frozen_node_lists() {
 }
 
 #[test]
+fn main_memory_extent_observes_scanner_owned_token_words() {
+    let mut positive = Universe::new();
+    positive.observe_transient_token_words(600);
+    // TeX82 §§200/384 allocate scanner results from the one-word arena even
+    // before a semantic owner installs the completed token list.
+    assert_eq!(positive.engine_usage_statistics().memory_words, 1_641);
+
+    let mut negative = Universe::new();
+    negative.intern_token_list(&vec![
+        Token::Char {
+            ch: 'x',
+            cat: Catcode::Other,
+        };
+        600
+    ]);
+    // Unbound immutable host-store history is not a TeX allocation owner.
+    assert_eq!(negative.engine_usage_statistics().memory_words, 1_045);
+}
+
+#[test]
 fn string_pool_accounting_keeps_control_sequences_and_typed_allocations_distinct() {
     let mut universe = Universe::new();
     universe.intern("control-name");

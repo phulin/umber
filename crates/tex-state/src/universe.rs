@@ -1565,6 +1565,12 @@ impl Universe {
     pub fn shipout_memory_usage(&mut self, shipped_node: Option<&Node>) -> (usize, usize) {
         self.stores.shipout_memory_usage(shipped_node)
     }
+
+    /// Records scanner-owned one-word nodes before their typed token list is
+    /// interned or installed in semantic state.
+    pub fn observe_transient_token_words(&mut self, words: usize) {
+        self.stores.observe_main_memory_dynamic_words(words);
+    }
     /// Removes an ordered suffix from committed artifact/PDF publication.
     pub fn prepare_page_suffix(&mut self, start: usize) -> PreparedPageSuffix {
         let effect_base = self.world.effect_pos().raw()

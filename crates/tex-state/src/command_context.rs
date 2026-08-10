@@ -462,6 +462,11 @@ impl CommandContext<'_> {
         self.universe.finish_traced_token_list(tokens)
     }
 
+    /// Records a command-scanner token allocation at its completed boundary.
+    pub fn observe_transient_token_words(&mut self, words: usize) {
+        self.universe.observe_transient_token_words(words);
+    }
+
     /// Reads the immutable spelling of a control sequence.
     #[must_use]
     pub fn resolve(&self, symbol: Symbol) -> &str {
