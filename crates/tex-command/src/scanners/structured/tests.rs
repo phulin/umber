@@ -2339,6 +2339,137 @@ fn alignment_preamble_tabskip_assignment_preserves_the_prior_boundary() {
 }
 
 #[test]
+fn alignment_preamble_classifies_parameter_and_tab_aliases_by_resolved_command() {
+    let mut command = CommandState::default();
+    let alignment = crate::AlignmentIdentity::new(1);
+    command.begin_alignment(alignment);
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
+    let sharp = universe.intern("sharp").symbol();
+    let tab = universe.intern("tab").symbol();
+    let cr = universe.intern("cr").symbol();
+    universe.set_meaning(
+        sharp,
+        Meaning::CharToken {
+            ch: '#',
+            cat: Catcode::Parameter,
+        },
+    );
+    universe.set_meaning(
+        tab,
+        Meaning::CharToken {
+            ch: '&',
+            cat: Catcode::AlignmentTab,
+        },
+    );
+    universe.set_meaning(
+        cr,
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Cr),
+    );
+    push(
+        &mut command,
+        [
+            Token::Char {
+                ch: '{',
+                cat: Catcode::BeginGroup,
+            },
+            Token::Cs(sharp),
+            Token::Cs(tab),
+            Token::Cs(sharp),
+            Token::Cs(sharp),
+            Token::Cs(cr),
+        ],
+    );
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut recorder = Recorder::default();
+    {
+        let mut processor =
+            processor(&mut command, &mut universe, &mut capabilities).with_observer(&mut recorder);
+        processor
+            .scan_alignment_preamble_opening()
+            .expect("scan_spec consumes the opening brace");
+        processor
+            .begin_alignment_preamble_scan(None)
+            .expect("aliased command codes form the preamble");
+    }
+
+    let preamble = command
+        .take_completed_alignment_preamble(alignment)
+        .expect("frozen preamble is available");
+    assert_eq!(preamble.columns.len(), 2);
+    assert!(preamble.columns.iter().all(|column| {
+        column
+            .u_template
+            .is_some_and(|template| universe.tokens(template.token_list()).is_empty())
+            && universe.tokens(column.v_template.token_list()).is_empty()
+    }));
+    assert_eq!(
+        recorder
+            .0
+            .iter()
+            .filter(|observation| matches!(
+                observation,
+                CommandObservation::Alignment(record) if record.transition == "extra_parameter"
+            ))
+            .count(),
+        1,
+        "TeX82 §24 and 760 discard an extra resolved mac_param command"
+    );
+    assert!(!recorder.0.iter().any(|observation| matches!(
+        observation,
+        CommandObservation::Alignment(record) if record.transition == "missing_parameter"
+    )));
+}
+
+#[test]
+fn alignment_preamble_does_not_treat_an_ordinary_character_alias_as_a_parameter() {
+    let mut command = CommandState::default();
+    let alignment = crate::AlignmentIdentity::new(1);
+    command.begin_alignment(alignment);
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
+    let ordinary = universe.intern("ordinary").symbol();
+    let cr = universe.intern("cr").symbol();
+    universe.set_meaning(
+        ordinary,
+        Meaning::CharToken {
+            ch: 'x',
+            cat: Catcode::Other,
+        },
+    );
+    universe.set_meaning(
+        cr,
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Cr),
+    );
+    push(
+        &mut command,
+        [
+            Token::Char {
+                ch: '{',
+                cat: Catcode::BeginGroup,
+            },
+            Token::Cs(ordinary),
+            Token::Cs(cr),
+        ],
+    );
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut recorder = Recorder::default();
+    {
+        let mut processor =
+            processor(&mut command, &mut universe, &mut capabilities).with_observer(&mut recorder);
+        processor
+            .scan_alignment_preamble_opening()
+            .expect("scan_spec consumes the opening brace");
+        processor
+            .begin_alignment_preamble_scan(None)
+            .expect("missing parameter recovers");
+    }
+
+    assert!(recorder.0.iter().any(|observation| matches!(
+        observation,
+        CommandObservation::Alignment(record) if record.transition == "missing_parameter"
+    )));
+}
+
+#[test]
 fn alignment_preamble_missing_parameter_before_tab_replays_the_delimiter_into_v_template() {
     assert_missing_preamble_parameter(
         [

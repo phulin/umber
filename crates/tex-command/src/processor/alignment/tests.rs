@@ -169,6 +169,26 @@ fn cell_template_delivery_matrix() {
     );
     assert_eq!(state.align_state, CELL_ALIGN_STATE);
 
+    let mut aliased_tab_state = state.clone();
+    let tab_alias = stores.intern("tab-alias").symbol();
+    stores.set_meaning(
+        tab_alias,
+        Meaning::CharToken {
+            ch: '&',
+            cat: Catcode::AlignmentTab,
+        },
+    );
+    let mut tab_alias = resolve(&mut stores, Token::Cs(tab_alias));
+    assert_eq!(
+        aliased_tab_state.classify_delivery(&mut tab_alias),
+        AlignmentDeliveryAdjustment::Delimiter(AlignmentDelimiter::Tab),
+        "TeX82 §§24 and 342 classify a delimiter by resolved cur_cmd"
+    );
+    assert_eq!(
+        tab_alias.meaning(),
+        Meaning::ExpandablePrimitive(ExpandablePrimitive::EndTemplate)
+    );
+
     let mut tab = resolve(
         &mut stores,
         Token::Char {

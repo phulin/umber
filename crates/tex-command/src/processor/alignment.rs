@@ -17,6 +17,18 @@ use tex_state::token::{Catcode, Token, TracedTokenWord};
 use crate::CurrentCommand;
 use crate::input::InputLevelId;
 
+/// Whether TeX82 §24 has resolved this delivery to the given character
+/// command code.
+///
+/// This deliberately examines `cur_cmd` (the effective [`Meaning`]), not the
+/// token spelling. Control-sequence aliases therefore participate in §§342 and
+/// 760's command-code tests, while the separate spelling match in
+/// [`AlignmentDeliveryState::classify_delivery`] keeps literal-brace
+/// `align_state` accounting physical.
+pub(crate) fn is_character_command(command: &CurrentCommand, cat: Catcode) -> bool {
+    matches!(command.meaning(), Meaning::CharToken { cat: actual, .. } if actual == cat)
+}
+
 pub(crate) const PREAMBLE_ALIGN_STATE: i32 = -1_000_000;
 pub(crate) const TEMPLATE_ALIGN_STATE: i32 = 1_000_000;
 pub(crate) const CELL_ALIGN_STATE: i32 = 0;
@@ -688,10 +700,10 @@ impl AlignmentDeliveryState {
                 self.align_state -= 1;
                 AlignmentDeliveryAdjustment::EndGroup
             }
-            Token::Char {
-                cat: Catcode::AlignmentTab,
-                ..
-            } if self.active_cell.is_some() && self.align_state == CELL_ALIGN_STATE => {
+            _ if self.active_cell.is_some()
+                && self.align_state == CELL_ALIGN_STATE
+                && is_character_command(command, Catcode::AlignmentTab) =>
+            {
                 self.intercept_delimiter(command, AlignmentDelimiter::Tab)
             }
             _ if self.active_cell.is_some()

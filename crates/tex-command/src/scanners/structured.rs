@@ -21,7 +21,7 @@ use crate::input::{
     BackupTreatment, InputLevelId, ReplayTrace, RetirementBehavior, StoredReplayReason,
     TokenBehavior, TokenPayload,
 };
-use crate::processor::alignment::PREAMBLE_ALIGN_STATE;
+use crate::processor::alignment::{PREAMBLE_ALIGN_STATE, is_character_command};
 use crate::processor::status::{
     AlignmentId, AlignmentScanContext, ScannerStatus, ScannerStatusVisibility, ScannerWarning,
     TokenBuilderId,
@@ -3275,23 +3275,10 @@ impl CommandProcessor<'_> {
                     // completed-column path appends below.
                     continue;
                 }
-                let token = command.spelling().semantic_token();
-                if matches!(
-                    token,
-                    Token::Char {
-                        cat: Catcode::Parameter,
-                        ..
-                    }
-                ) {
+                if is_character_command(&command, Catcode::Parameter) {
                     break;
                 }
-                let tab = matches!(
-                    token,
-                    Token::Char {
-                        cat: Catcode::AlignmentTab,
-                        ..
-                    }
-                );
+                let tab = is_character_command(&command, Catcode::AlignmentTab);
                 let terminator = tab
                     || matches!(
                         command.meaning(),
@@ -3370,14 +3357,7 @@ impl CommandProcessor<'_> {
                     // the following boundary.
                     continue;
                 }
-                let token = command.spelling().semantic_token();
-                let ends_column = matches!(
-                    token,
-                    Token::Char {
-                        cat: Catcode::AlignmentTab,
-                        ..
-                    }
-                );
+                let ends_column = is_character_command(&command, Catcode::AlignmentTab);
                 let ends_preamble = matches!(
                     command.meaning(),
                     Meaning::UnexpandablePrimitive(
@@ -3391,13 +3371,7 @@ impl CommandProcessor<'_> {
                 }
                 // §760 reports and discards extra parameter markers in a
                 // v-template; it then resumes this same loop.
-                if matches!(
-                    token,
-                    Token::Char {
-                        cat: Catcode::Parameter,
-                        ..
-                    }
-                ) {
+                if is_character_command(&command, Catcode::Parameter) {
                     observe!(
                         self,
                         crate::CommandObservation::Alignment(crate::AlignmentRecord {
