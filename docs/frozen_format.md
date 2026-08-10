@@ -286,6 +286,13 @@ forward or self references, cycles, invalid store indices, malformed enum
 values, bad section geometry, reserved bytes, count mismatches, and semantic
 identities that do not recompute from the validated graph.
 
+Capture discovers every list edge that the DTO serializes, including detached
+physical box children used to represent TeX82 §§115/162 replacement nodes for
+§182 diagnostics. Those diagnostic-only edges do not enter semantic identity,
+but they remain part of the self-contained frozen graph and of §638 shipout
+memory observation; capture and decode therefore require their targets exactly
+like semantic child targets.
+
 After validation, all lists are installed into one immutable survivor-backed
 arena root with their precomputed semantic spans. No legacy key map, graph
 promotion, or semantic reseal runs on the load path. The job epoch arena starts

@@ -1846,9 +1846,12 @@ fn capture_node_list(
                 let nodes = stores.nodes(id);
                 for node in nodes.iter().rev() {
                     // TeX82 §§135 and 1307 dump the complete reachable
-                    // memory graph behind every box list pointer. Format DTOs
-                    // likewise retain diagnostic-only physical children even
-                    // though semantic traversal deliberately excludes them.
+                    // memory graph behind every box list pointer. The frozen
+                    // DTO likewise retains detached physical projections of
+                    // §§115/162 replacement nodes for §182 diagnostics even
+                    // though semantic traversal excludes them. Discovery must
+                    // follow every edge capture serializes; §638 can observe
+                    // this graph while accounting a shipped box.
                     for child in node.physical_children().rev() {
                         stack.push(Visit::Enter(child));
                     }
