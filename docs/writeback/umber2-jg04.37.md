@@ -19,6 +19,7 @@ At commit `89b73e7ae`, the focused `tex-state` suite, official e-TRIP, routine
 workspace tests, and all four repository checks pass. Fresh-cache TeX82 TRIP no
 longer panics; command events, geometry, and normalized DVI are exact. Its first
 remaining difference is a log-only §283 restore trace caused by the independent
-page-builder §993 `box_error` mutation boundary, filed observed-only as
-`umber2-jg04.38`. The exact compatibility gate and therefore this issue remain
-open pending that child.
+page-builder §993 `box_error` mutation boundary, filed as `umber2-jg04.38` and
+fixed through the existing same-level register mutation seam. The graph-panic
+scope is exact and may close. Compatibility TRIP now reaches the independent
+final-statistics front tracked by `umber2-jg04.39`.

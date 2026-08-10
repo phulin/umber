@@ -23,7 +23,8 @@ changes fail with a named channel and first offset.
 Fresh e-TRIP and routine gates pass. The separately required fresh-cache TeX82
 compatibility run no longer panics after `umber2-jg04.37` made frozen graph
 discovery include serialized physical diagnostic edges. Its semantic events,
-geometry, and normalized DVI are exact, but its first remaining difference is
-a log-only restore trace caused by the independent TeX82 §993 page-builder box
-mutation boundary. That observed-only divergence is `umber2-jg04.38`; this
-issue cannot close until the exact compatibility gate passes.
+geometry, and normalized DVI are exact. The independent TeX82 §993 page-builder
+box mutation divergence `umber2-jg04.38` is fixed; compatibility TRIP now first
+differs only in its final string/statistics report. That observed-only successor
+is `umber2-jg04.39`; this issue cannot close until the exact compatibility gate
+passes.
