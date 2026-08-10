@@ -1852,11 +1852,11 @@ hash table at all — the interner is that hash table, and interning during raw
 delivery is not a diagnostic convenience but a semantic mutation, because the
 name becomes findable by every later scan.
 
-Only §356's multiletter branch (`k>loc+1`) consults the hash. §354 resolves a
-control symbol to `single_base+c` and an escape at normalized line end to
-`null_cs`, and §351 gives a blank line's `\par` `par_loc`; those are permanent
-`eqtb` locations that exist before any scan, so the creation policy never
-applies to them. For a multiletter name the hash table has never held, §259's
+Section 356 sends every control word to the hash, including a one-letter word;
+§354 resolves a control symbol to `single_base+c` and an escape at normalized
+line end to `null_cs`, and §351 gives a blank line's `\par` `par_loc`; those
+are permanent `eqtb` locations that exist before any scan, so the creation
+policy never applies to them. For a hash name the table has never held, §259's
 `id_lookup` returns §222's single dummy `undefined_control_sequence` location.
 Umber models that location as an inaccessible frozen token rather than an
 interned spelling, exactly because it is not a hash entry: it carries §222's

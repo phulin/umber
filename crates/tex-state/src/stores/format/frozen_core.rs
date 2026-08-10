@@ -130,6 +130,7 @@ fn encode_names(names: &[FormatName]) -> Result<Vec<u8>, StoreFormatError> {
     for (index, name) in names.iter().enumerate() {
         let record = NAMES_HEADER + index * NAME_RECORD;
         out[record] = u8::from(name.active);
+        out[record + 1] = u8::from(name.hash_occupied);
         put_u32(
             &mut out,
             record + 4,
@@ -176,7 +177,8 @@ fn decode_names(
     for index in 0..count {
         let record = NAMES_HEADER + index * NAME_RECORD;
         if bytes[record] > 1
-            || bytes[record + 1..record + 4].iter().any(|byte| *byte != 0)
+            || bytes[record + 1] > 1
+            || bytes[record + 2..record + 4].iter().any(|byte| *byte != 0)
             || read_u32(bytes, record + 12) != 0
         {
             return Err(StoreFormatError::Invalid("invalid frozen name record"));
@@ -209,6 +211,7 @@ fn decode_names(
         }
         rows.push(FormatName {
             active,
+            hash_occupied: bytes[record + 1] == 1,
             text: text.to_owned(),
         });
         spans.push((start, len));
@@ -222,7 +225,8 @@ fn decode_names(
         .validate_targets(&rows.iter().map(name_key).collect::<Vec<_>>())
         .and_then(|()| lookup.spot_check(checksum))
         .map_err(StoreFormatError::Invalid)?;
-    let interner = Interner::from_frozen(arena, spans, kinds, atoms, lookup)
+    let hash_entries = rows.iter().map(|name| name.hash_occupied).collect();
+    let interner = Interner::from_frozen(arena, spans, kinds, hash_entries, atoms, lookup)
         .map_err(StoreFormatError::Invalid)?;
     Ok((interner, rows))
 }

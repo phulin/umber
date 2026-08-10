@@ -1863,10 +1863,11 @@ impl CommandProcessor<'_> {
     /// and §374 clears it only around `\csname`'s `id_lookup`, so a raw
     /// `get_next` may not enter a new name into the hash table: §259's
     /// `id_lookup` hands it §222's dummy `undefined_control_sequence`
-    /// instead. Only §356's multiletter branch (`k>loc+1`) consults the hash
-    /// at all -- §354 resolves a control symbol to `single_base+c` and an
-    /// escape at line end to `null_cs`, and §351 gives a blank line's `\par`
-    /// `par_loc`, all permanent eqtb locations that exist before any scan.
+    /// instead. Section 356 sends every control word to the hash, including a
+    /// one-letter word; §354 resolves a control symbol to `single_base+c` and
+    /// an escape at line end to `null_cs`, and §351 gives a blank line's
+    /// `\par` `par_loc`, all permanent eqtb locations that exist before any
+    /// scan.
     fn source_spelling(
         &mut self,
         source_token: &SourceToken,
@@ -1886,12 +1887,14 @@ impl CommandProcessor<'_> {
                 | SourceControlSequenceKind::Symbol
                 | SourceControlSequenceKind::Paragraph
                 | SourceControlSequenceKind::Null => {
-                    let hashed = *kind == SourceControlSequenceKind::Word && name.len() > 1;
+                    let hashed = *kind == SourceControlSequenceKind::Word;
                     name.with_text(|name| {
                         if hashed && !allow_control_sequence_creation {
                             self.state
                                 .known_control_sequence(name)
                                 .map_or_else(Token::undefined_control_sequence, Token::Cs)
+                        } else if hashed {
+                            Token::Cs(self.state.intern_hash_control_sequence(name))
                         } else {
                             Token::Cs(self.state.intern_control_sequence(name))
                         }

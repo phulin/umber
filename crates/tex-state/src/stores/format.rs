@@ -324,6 +324,7 @@ fn exact_name_leaf(stores: &Stores, raw: usize) -> Result<u64, StoreFormatError>
         b"umber-exact-name-v1",
         &FormatName {
             active: stores.interner.kind(symbol) == ControlSequenceKind::ActiveCharacter,
+            hash_occupied: stores.interner.is_hash_entry(symbol),
             text: stores.interner.resolve(symbol).to_owned(),
         },
     )
@@ -449,6 +450,7 @@ enum FormatEnvValue {
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 struct FormatName {
     active: bool,
+    hash_occupied: bool,
     text: String,
 }
 
@@ -784,6 +786,7 @@ impl Stores {
                     .expect("captured interner slot should be live");
                 FormatName {
                     active: self.interner.kind(symbol) == ControlSequenceKind::ActiveCharacter,
+                    hash_occupied: self.interner.is_hash_entry(symbol),
                     text: self.interner.resolve(symbol).to_owned(),
                 }
             })
@@ -892,6 +895,9 @@ impl Stores {
                     return Err(StoreFormatError::Invalid("multi-character active name"));
                 }
                 self.intern_active_character(ch)
+            } else if name.hash_occupied {
+                self.try_intern_hash(&name.text)
+                    .map_err(|_| StoreFormatError::Invalid("memo control-sequence capacity"))?
             } else {
                 self.intern(&name.text)
             };
@@ -964,6 +970,7 @@ impl Stores {
                 .expect("font identifier symbol should be live");
             FormatName {
                 active: self.interner.kind(symbol) == ControlSequenceKind::ActiveCharacter,
+                hash_occupied: self.interner.is_hash_entry(symbol),
                 text: self.interner.resolve(symbol).to_owned(),
             }
         });
@@ -988,6 +995,9 @@ impl Stores {
                         ));
                     }
                     self.intern_active_character(ch)
+                } else if name.hash_occupied {
+                    self.try_intern_hash(&name.text)
+                        .map_err(|_| StoreFormatError::Invalid("memo control-sequence capacity"))?
                 } else {
                     self.intern(&name.text)
                 };
@@ -1337,6 +1347,7 @@ impl ImmutableStoreIdentity {
                     .expect("captured interner slot should be live");
                 FormatName {
                     active: stores.interner.kind(symbol) == ControlSequenceKind::ActiveCharacter,
+                    hash_occupied: stores.interner.is_hash_entry(symbol),
                     text: stores.interner.resolve(symbol).to_owned(),
                 }
             })

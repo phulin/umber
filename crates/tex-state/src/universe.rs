@@ -5332,6 +5332,13 @@ impl Universe {
         self.stores.intern(name)
     }
 
+    /// Interns a spelling through TeX82 §259's hash-table path.
+    pub fn intern_hash_control_sequence(&mut self, name: &str) -> SymbolId {
+        self.stores
+            .try_intern_hash(name)
+            .expect("control-sequence symbol capacity exceeded")
+    }
+
     /// Interns an active-character control sequence in its TeX82 namespace.
     pub fn intern_active_character(&mut self, ch: char) -> SymbolId {
         self.stores.intern_active_character(ch)

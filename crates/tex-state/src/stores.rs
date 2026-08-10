@@ -961,7 +961,9 @@ impl Stores {
         &mut self,
         name: &str,
     ) -> (SymbolId, Option<CellMutationReceipt>) {
-        let symbol = self.intern(name);
+        let symbol = self
+            .try_intern_hash(name)
+            .expect("control-sequence symbol capacity exceeded");
         let receipt = (self.meaning(symbol) == Meaning::Undefined)
             .then(|| self.set_meaning(symbol, Meaning::Relax));
         (symbol, receipt)
@@ -1246,6 +1248,22 @@ impl Stores {
             } else {
                 // TeX82 §§341/372 select the direct single-character
                 // namespace without constructing a pool string.
+                self.string_pool.account_direct_character_name(name.len());
+            }
+        }
+        Ok(symbol)
+    }
+
+    /// Interns a spelling through TeX82 §259's hash-table path.
+    pub(crate) fn try_intern_hash(&mut self, name: &str) -> Result<SymbolId, InternerError> {
+        let before = self.interner.len();
+        let symbol = self.interner.intern_hash(name)?;
+        if self.interner.len() != before {
+            if name.len() > 1 {
+                self.string_pool.make_string(name);
+            } else {
+                // Web2C recycles the preloaded one-character pool string even
+                // when §356 sends the control word through §259's hash.
                 self.string_pool.account_direct_character_name(name.len());
             }
         }

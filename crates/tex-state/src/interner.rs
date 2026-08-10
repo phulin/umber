@@ -137,6 +137,7 @@ pub struct Interner {
     arena: String,
     spans: Vec<(u32, u32)>,
     kinds: Vec<ControlSequenceKind>,
+    hash_entries: Vec<bool>,
     semantic_atoms: Vec<u64>,
     semantic_identities: Vec<ContentHash>,
     symbols: Vec<Symbol>,
@@ -154,6 +155,7 @@ impl Clone for Interner {
             arena: self.arena.clone(),
             spans: self.spans.clone(),
             kinds: self.kinds.clone(),
+            hash_entries: self.hash_entries.clone(),
             semantic_atoms: self.semantic_atoms.clone(),
             semantic_identities: self.semantic_identities.clone(),
             symbols: self.symbols.clone(),
@@ -181,6 +183,7 @@ impl Interner {
             arena: String::new(),
             spans: Vec::new(),
             kinds: Vec::new(),
+            hash_entries: Vec::new(),
             semantic_atoms: Vec::new(),
             semantic_identities: Vec::new(),
             symbols: Vec::new(),
@@ -200,10 +203,14 @@ impl Interner {
         arena: String,
         spans: Vec<(u32, u32)>,
         kinds: Vec<ControlSequenceKind>,
+        hash_entries: Vec<bool>,
         semantic_atoms: Vec<u64>,
         frozen_lookup: crate::frozen_lookup::FrozenLookup,
     ) -> Result<Self, &'static str> {
-        if spans.len() != kinds.len() || spans.len() != semantic_atoms.len() {
+        if spans.len() != kinds.len()
+            || spans.len() != hash_entries.len()
+            || spans.len() != semantic_atoms.len()
+        {
             return Err("frozen interner column length mismatch");
         }
         let count = u32::try_from(spans.len()).map_err(|_| "frozen interner capacity")?;
@@ -245,6 +252,7 @@ impl Interner {
             arena,
             spans,
             kinds,
+            hash_entries,
             semantic_atoms,
             semantic_identities,
             symbols,
@@ -262,7 +270,19 @@ impl Interner {
         if let Some(symbol) = self.get_key(ControlSequenceKind::Internal, name) {
             return Ok(symbol);
         }
-        self.intern_key(named_kind(name), name)
+        let kind = named_kind(name);
+        let symbol = self.intern_key(kind, name)?;
+        if kind == ControlSequenceKind::Named {
+            self.hash_entries[symbol.raw() as usize] = true;
+        }
+        Ok(symbol)
+    }
+
+    /// Interns a name through TeX82 §259's hash-table path.
+    pub(crate) fn intern_hash(&mut self, name: &str) -> Result<SymbolId, InternerError> {
+        let symbol = self.intern(name)?;
+        self.hash_entries[symbol.raw() as usize] = true;
+        Ok(symbol)
     }
 
     /// Interns an active-character control sequence.
@@ -326,6 +346,7 @@ impl Interner {
         self.arena.push_str(name);
         self.spans.push((start, len));
         self.kinds.push(kind);
+        self.hash_entries.push(false);
         self.semantic_atoms.push(semantic_atom(kind, name));
         self.semantic_identities.push(semantic_identity(kind, name));
         self.symbols.push(stored);
@@ -341,6 +362,15 @@ impl Interner {
     pub fn get(&self, name: &str) -> Option<SymbolId> {
         self.get_key(named_kind(name), name)
             .or_else(|| self.get_key(ControlSequenceKind::Internal, name))
+    }
+
+    /// Returns whether this exact live symbol owns a TeX82 §259 hash entry.
+    #[must_use]
+    pub(crate) fn is_hash_entry(&self, symbol: Symbol) -> bool {
+        self.resolve_stored(symbol)
+            .and_then(|symbol| self.hash_entries.get(symbol.raw() as usize))
+            .copied()
+            .unwrap_or(false)
     }
 
     /// Returns the live symbol for an active character without mutating.
@@ -456,15 +486,15 @@ impl Interner {
 
     /// Returns TeX82's occupied `hash` entries for the §1334 usage summary.
     ///
-    /// TeX's active, single-character, and null control sequences have fixed
-    /// `eqtb` slots (§222); only §259's multiletter names occupy `hash`.
-    /// Engine-owned frozen sentinels are represented by [`crate::token::Token::Frozen`]
-    /// and consequently cannot enter this count.
+    /// TeX's active, control-symbol, and null control sequences have fixed
+    /// `eqtb` slots (§222), while §356 sends control words of every length to
+    /// §259's hash. Occupancy is retained separately from the runtime name
+    /// kind because TeX never removes a hash entry (§256).
     #[must_use]
     pub(crate) fn multiletter_len(&self) -> usize {
-        self.kinds
+        self.hash_entries
             .iter()
-            .filter(|&&kind| kind == ControlSequenceKind::Named)
+            .filter(|&&occupied| occupied)
             .count()
     }
 
@@ -479,6 +509,7 @@ impl Interner {
     pub(crate) fn watermark(&self) -> InternerMark {
         debug_assert_eq!(self.symbols.len(), self.spans.len());
         debug_assert_eq!(self.kinds.len(), self.spans.len());
+        debug_assert_eq!(self.hash_entries.len(), self.spans.len());
         debug_assert_eq!(self.semantic_atoms.len(), self.spans.len());
         debug_assert_eq!(self.semantic_identities.len(), self.spans.len());
         InternerMark {
@@ -512,6 +543,7 @@ impl Interner {
             .expect("interner mark is not an ancestor");
         self.spans.truncate(spans);
         self.kinds.truncate(spans);
+        self.hash_entries.truncate(spans);
         self.semantic_atoms.truncate(spans);
         self.semantic_identities.truncate(spans);
         for symbol in self.symbols.drain(spans..) {
@@ -519,6 +551,7 @@ impl Interner {
         }
         self.arena.truncate(bytes);
         debug_assert_eq!(self.kinds.len(), self.spans.len());
+        debug_assert_eq!(self.hash_entries.len(), self.spans.len());
         debug_assert_eq!(self.semantic_atoms.len(), self.spans.len());
         debug_assert_eq!(self.semantic_identities.len(), self.spans.len());
         debug_assert_eq!(self.symbols.len(), self.spans.len());

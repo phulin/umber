@@ -240,19 +240,20 @@ fn memory_usage_counts_reachable_lists_without_immutable_store_history() {
 fn format_round_trip_preserves_multiletter_hash_accounting() {
     let mut source = Universe::new();
     source.intern("");
-    source.intern("x");
+    // TeX82 §§259/356 count a one-letter control word as a hash entry.
+    source.intern_hash_control_sequence("x");
     source.intern_active_character('x');
     source.intern("format-control");
     let image = source.dump_format().expect("format dumps");
 
     let mut loaded = Universe::from_format(World::default(), &image).expect("format loads");
     loaded.intern_internal_control_sequence("nullfont");
-    assert_eq!(loaded.engine_usage_statistics().control_sequences, 1);
+    assert_eq!(loaded.engine_usage_statistics().control_sequences, 2);
 
     loaded.intern("y");
     loaded.intern_active_character('y');
     loaded.intern("job-control");
-    assert_eq!(loaded.engine_usage_statistics().control_sequences, 2);
+    assert_eq!(loaded.engine_usage_statistics().control_sequences, 3);
 }
 
 #[test]

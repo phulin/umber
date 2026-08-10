@@ -392,13 +392,18 @@ impl CommandContext<'_> {
         self.universe.penalty_array_value(kind, index)
     }
 
-    /// Interns a control-sequence spelling without assigning it a meaning.
-    ///
-    /// This is TeX82 §259's `id_lookup` with `no_new_control_sequence` clear:
-    /// an absent name is entered into the hash table.
+    /// Interns a fixed-namespace control-sequence spelling without assigning
+    /// it a meaning. Section 259 hash entries use the explicit neighboring
+    /// method so their allocator occupancy remains observable.
     #[must_use]
     pub fn intern_control_sequence(&mut self, name: &str) -> Symbol {
         self.universe.intern(name).symbol()
+    }
+
+    /// Interns a spelling through TeX82 §259's hash-table path.
+    #[must_use]
+    pub fn intern_hash_control_sequence(&mut self, name: &str) -> Symbol {
+        self.universe.intern_hash_control_sequence(name).symbol()
     }
 
     /// Interns an inaccessible engine-owned fixed `eqtb` control sequence.

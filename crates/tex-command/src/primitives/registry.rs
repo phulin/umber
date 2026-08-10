@@ -203,6 +203,9 @@ fn configure_specials(
 }
 
 fn configure_nullfont(universe: &mut Universe, install: bool, meaning: Meaning) {
+    // TeX82 §§259/1334 count the ordinary primitive's hash entry even though
+    // §222 also gives `frozen_null_font` a fixed alias with the same spelling.
+    let _ = universe.intern_hash_control_sequence("nullfont");
     let symbol = universe.intern_internal_control_sequence("nullfont");
     universe.register_primitive_meaning("nullfont", meaning);
     if install {

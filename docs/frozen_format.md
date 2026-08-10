@@ -144,7 +144,8 @@ strings_length, reserved)` as six `u32` values. `records_offset` is 24. Each
 | Offset | Type  | Field                                    |
 | -----: | ----- | ---------------------------------------- |
 |      0 | `u8`  | namespace: 0 named, 1 active character   |
-|      1 | 3 B   | reserved                                 |
+|      1 | `u8`  | occupied TeX82 §259 hash entry: 0 or 1   |
+|      2 | 2 B   | reserved                                 |
 |      4 | `u32` | offset in the section string byte region |
 |      8 | `u32` | UTF-8 byte length                        |
 |     12 | `u32` | reserved                                 |
@@ -154,6 +155,10 @@ String spans are contiguous in record order with no unused bytes. Names are
 valid UTF-8, active names contain exactly one Unicode scalar, namespace/name
 pairs are unique, and semantic atoms are recomputed during validation. The
 dense record index is the local interner slot used by other frozen sections.
+The hash-occupancy bit preserves §259's monotonic allocator coordinate across
+format load, including one-letter control words and names later used by fixed
+internal aliases. Its addition is covered by the container ABI fingerprint,
+so caches with the formerly reserved zero byte are not reused.
 
 ### Token lists (kind 272)
 
