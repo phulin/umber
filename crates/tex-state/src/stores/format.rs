@@ -179,34 +179,97 @@ fn main_memory_usage_inner(
     extra_nodes: &[Node],
     include_scratch_extent: bool,
 ) -> Result<MainMemoryUsage, StoreFormatError> {
-    let format = StoreFormat::capture_with_extra_nodes(stores, extra_nodes)?;
-    let mut macro_token_lists = vec![false; format.token_lists.len()];
+    let (env, mut node_lists) = capture_memory_roots(stores, extra_nodes)?;
+    let token_count = stores.tokens.watermark().spans as usize;
+    let macro_count = stores.macros.watermark().definitions as usize;
+    let mut live_macros = vec![false; macro_count];
+    let mut live_tokens = vec![false; token_count];
+    if let Some(empty) = live_tokens.first_mut() {
+        *empty = true;
+    }
+    for entry in &env {
+        let cell = crate::cell::CellId::from_raw(entry.cell)
+            .ok_or(StoreFormatError::Invalid("unknown environment cell"))?;
+        let FormatEnvValue::Raw(raw) = entry.value else {
+            continue;
+        };
+        match cell.bank() {
+            crate::cell::BankTag::Meaning => {
+                if let crate::meaning::Meaning::Macro { definition, .. } =
+                    crate::meaning::Meaning::decode_stored(raw)
+                {
+                    let definition = stores
+                        .macros
+                        .resolve_stored(definition)
+                        .ok_or(StoreFormatError::Invalid("environment macro"))?;
+                    mark_reachable(&mut live_macros, definition.raw(), "environment macro")?;
+                }
+            }
+            crate::cell::BankTag::Toks => {
+                let raw = u32::try_from(raw)
+                    .map_err(|_| StoreFormatError::Invalid("environment token list"))?;
+                let id = stores.resolve_stored_token_list(TokenListId::new(raw));
+                mark_reachable(&mut live_tokens, id.raw(), "environment token list")?;
+            }
+            crate::cell::BankTag::TokParam if raw != 0 => {
+                let raw = u32::try_from(raw - 1)
+                    .map_err(|_| StoreFormatError::Invalid("environment token list"))?;
+                let id = stores.resolve_stored_token_list(TokenListId::new(raw));
+                mark_reachable(&mut live_tokens, id.raw(), "environment token list")?;
+            }
+            _ => {}
+        }
+    }
+
+    let mut macro_token_lists = vec![false; token_count];
     let mut macro_words = 0_usize;
-    for definition in &format.macros {
-        for raw in [definition.parameter_text, definition.replacement_text] {
-            let index = usize::try_from(raw)
-                .map_err(|_| StoreFormatError::Invalid("macro token-list index"))?;
-            let list = format
-                .token_lists
-                .get(index)
-                .ok_or(StoreFormatError::Invalid("macro token-list index"))?;
+    let mut live_macro_count = 0_usize;
+    for (raw, &live) in live_macros.iter().enumerate() {
+        if !live {
+            continue;
+        }
+        live_macro_count = live_macro_count.saturating_add(1);
+        let id = stores
+            .macros
+            .resolve_stored(MacroDefinitionId::new(raw as u32))
+            .ok_or(StoreFormatError::Invalid("macro definition"))?;
+        let definition = stores.macros.get(id);
+        for list_id in [definition.parameter_text(), definition.replacement_text()] {
+            let list_id = stores.resolve_stored_token_list(list_id);
+            let index = list_id.raw() as usize;
+            let list = stores.tokens.get(list_id);
             macro_token_lists[index] = true;
+            live_tokens[index] = true;
             macro_words = macro_words.saturating_add(list.len());
         }
     }
-    let ordinary_token_words = format
-        .token_lists
+    for list in &mut node_lists {
+        for node in &mut list.nodes {
+            let mut invalid = false;
+            node.visit_token_list_refs(|raw| {
+                let id = stores.resolve_stored_token_list(TokenListId::new(*raw));
+                invalid |= mark_reachable(&mut live_tokens, id.raw(), "node token list").is_err();
+            });
+            if invalid {
+                return Err(StoreFormatError::Invalid("node token-list reference"));
+            }
+        }
+    }
+    let ordinary_token_words = live_tokens
         .iter()
         .enumerate()
-        .filter(|(index, _)| *index != 0 && !macro_token_lists[*index])
-        .map(|(_, list)| list.len().saturating_add(1))
+        .filter(|(index, live)| **live && *index != 0 && !macro_token_lists[*index])
+        .map(|(index, _)| {
+            let id = stores.resolve_stored_token_list(TokenListId::new(index as u32));
+            stores.tokens.get(id).len().saturating_add(1)
+        })
         .sum::<usize>();
     // §§200/384 allocate one reference-count head and one `end_match` word
     // around each macro definition. Umber stores its parameter and
     // replacement sequences as separate hash-consed lists, so counting those
     // host list heads (or eqtb aliases of the definition) would report the
     // representation rather than TeX's one-word allocator.
-    let macro_words = macro_words.saturating_add(format.macros.len().saturating_mul(2));
+    let macro_words = macro_words.saturating_add(live_macro_count.saturating_mul(2));
     // pdfTeX §130 reserves 15 static high-memory words. Its merged e-TeX
     // runtime keeps five additional one-word allocator positions outside the
     // typed token closure; these are profile coordinates, not host objects.
@@ -215,14 +278,12 @@ fn main_memory_usage_inner(
     // same TeX nodes for §§125/127 live accounting. The largest detached
     // physical branch did occupy the allocator before direct mutation, so it
     // remains part of §1334's coordinate extent.
-    let lists_by_key = format
-        .node_lists
+    let lists_by_key = node_lists
         .iter()
         .map(|list| (list.key, list))
         .collect::<std::collections::BTreeMap<_, _>>();
     let mut semantic_lists = std::collections::BTreeSet::new();
-    let mut stack = format
-        .env
+    let mut stack = env
         .iter()
         .filter_map(|entry| match entry.value {
             FormatEnvValue::Box(key) => Some(key),
@@ -248,8 +309,7 @@ fn main_memory_usage_inner(
             );
         }
     }
-    let (node_low_words, node_high_words) = format
-        .node_lists
+    let (node_low_words, node_high_words) = node_lists
         .iter()
         .filter(|list| semantic_lists.contains(&list.key))
         .flat_map(|list| &list.nodes)
@@ -257,8 +317,7 @@ fn main_memory_usage_inner(
             let (node_low, node_high) = node.tex82_memory_words();
             (low.saturating_add(node_low), high.saturating_add(node_high))
         });
-    let diagnostic_roots = format
-        .node_lists
+    let diagnostic_roots = node_lists
         .iter()
         .flat_map(|list| &list.nodes)
         .filter_map(FormatNode::diagnostic_children);
@@ -294,7 +353,11 @@ fn main_memory_usage_inner(
     // words. Every additional reachable §150 glue specification owns four
     // variable-size words independently of its two-word glue node.
     let variable = 21_usize
-        .saturating_add(format.glue.len().saturating_sub(5).saturating_mul(4))
+        .saturating_add(
+            (stores.glue.watermark().specs as usize)
+                .saturating_sub(5)
+                .saturating_mul(4),
+        )
         .saturating_add(node_low_words);
     let dynamic = 20_usize
         .saturating_add(ordinary_token_words)
@@ -319,6 +382,96 @@ fn main_memory_usage_inner(
         dynamic,
         dynamic_extent,
     })
+}
+
+/// Captures only the live typed roots needed for TeX82 allocator accounting.
+///
+/// Unlike a format image, this diagnostic projection does not clone names,
+/// fonts, code tables, hyphenation state, or unreachable immutable history.
+fn capture_memory_roots(
+    stores: &Stores,
+    extra_nodes: &[Node],
+) -> Result<(Vec<FormatEnvEntry>, Vec<FormatNodeList>), StoreFormatError> {
+    let mut env_words = Vec::new();
+    stores.env.for_each_main_memory_root_word(|cell, word| {
+        env_words.push(capture_env_word(stores, cell, word));
+    });
+    let roots = env_words.iter().filter_map(|&(cell, word)| {
+        (cell.bank() == crate::cell::BankTag::Box)
+            .then(|| NodeListId::decode_box_word(word))
+            .flatten()
+    });
+    let mut seen = std::collections::BTreeSet::new();
+    let mut visiting = std::collections::BTreeSet::new();
+    let mut survivor_roots = std::collections::BTreeMap::new();
+    let mut node_lists = Vec::new();
+    for root in roots {
+        capture_node_list(
+            stores,
+            root,
+            &mut seen,
+            &mut visiting,
+            &mut survivor_roots,
+            &mut node_lists,
+            None,
+        )?;
+    }
+    let mut env = env_words
+        .into_iter()
+        .map(|(cell, word)| {
+            let value = if cell.bank() == crate::cell::BankTag::Box {
+                let id = NodeListId::decode_box_word(word)
+                    .expect("non-default box memory entry should contain a list");
+                FormatEnvValue::Box(FormatListKey::capture(stores, id, &mut survivor_roots))
+            } else {
+                FormatEnvValue::Raw(word)
+            };
+            FormatEnvEntry {
+                cell: cell.raw(),
+                value,
+            }
+        })
+        .collect::<Vec<_>>();
+    canonicalize_node_list_keys(&mut node_lists, &mut env);
+
+    if !extra_nodes.is_empty() {
+        let mut seen = std::collections::BTreeSet::new();
+        let mut visiting = std::collections::BTreeSet::new();
+        let mut survivor_roots = std::collections::BTreeMap::new();
+        for node in extra_nodes {
+            for child in crate::node_arena::NodeRef::from(node).physical_children() {
+                capture_node_list(
+                    stores,
+                    child,
+                    &mut seen,
+                    &mut visiting,
+                    &mut survivor_roots,
+                    &mut node_lists,
+                    None,
+                )?;
+            }
+        }
+        node_lists.push(FormatNodeList {
+            key: FormatListKey {
+                survivor_root: None,
+                start: u32::MAX,
+                len: u32::try_from(extra_nodes.len())
+                    .map_err(|_| StoreFormatError::Invalid("extra node-list length"))?,
+            },
+            semantic_id: 0,
+            nodes: extra_nodes
+                .iter()
+                .map(|node| {
+                    FormatNode::capture(
+                        stores,
+                        crate::node_arena::NodeRef::from(node),
+                        &mut survivor_roots,
+                    )
+                })
+                .collect(),
+        });
+    }
+    Ok((env, node_lists))
 }
 
 struct ImmutableStoreIdentity {

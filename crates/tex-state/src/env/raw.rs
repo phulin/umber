@@ -254,6 +254,34 @@ impl Env {
         }
     }
 
+    /// Visits only environment cells that root TeX82 main-memory objects.
+    ///
+    /// Numeric, glue, font, and pdfTeX font-code banks do not own token,
+    /// macro, or node-list reachability. Keeping this diagnostic traversal
+    /// separate avoids scanning those large typed banks at every transient
+    /// node allocation.
+    pub(crate) fn for_each_main_memory_root_word(&self, mut f: impl FnMut(CellId, u64)) {
+        for (segment_index, segment) in self.meaning_cells.iter().enumerate() {
+            let Some(segment) = segment else {
+                continue;
+            };
+            for (offset, &meaning) in segment.iter().enumerate() {
+                if meaning != crate::meaning::Meaning::Undefined {
+                    let index = ((segment_index as u32) << super::SEGMENT_BITS) | offset as u32;
+                    f(CellId::new(BankTag::Meaning, index), meaning.encode());
+                }
+            }
+        }
+        self.toks.for_each_non_default_word(BankTag::Toks, &mut f);
+        self.boxes.for_each_non_default_word(|index, word| {
+            f(CellId::new(BankTag::Box, u32::from(index)), word)
+        });
+        self.overflow_toks
+            .for_each_non_default_word(BankTag::Toks, &mut f);
+        self.tok_params
+            .for_each_non_default_word(BankTag::TokParam, &mut f);
+    }
+
     pub(super) fn meaning_value(&self, index: u32) -> Option<crate::meaning::Meaning> {
         let segment = segment_index(index);
         let offset = segment_offset(index);
