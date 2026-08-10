@@ -1524,6 +1524,12 @@ impl Universe {
         self.stores.make_pool_string(value);
     }
 
+    /// Interns one semantic name while retaining every canonical
+    /// `make_string` result, including duplicate spellings.
+    pub fn intern_retained_pool_string(&mut self, value: &str) -> SymbolId {
+        self.stores.intern_retained_pool_string(value)
+    }
+
     /// Records Web2C tex.ch [29.517]'s recycling `slow_make_string` result.
     pub fn slow_make_string_pool_string(&mut self, value: &str) {
         self.stores.slow_make_pool_string(value);

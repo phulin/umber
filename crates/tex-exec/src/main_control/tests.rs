@@ -9417,6 +9417,7 @@ fn initex_dump_owns_identifier_but_waits_for_publication_receipt() {
         .capabilities_mut()
         .set_startup_job_name("bounded-dump.tex");
     register_source(&mut control, br"\dump");
+    let before = stores.engine_usage_statistics();
 
     run_to_end(&mut control, &mut stores);
 
@@ -9424,11 +9425,18 @@ fn initex_dump_owns_identifier_but_waits_for_publication_receipt() {
     assert_eq!(terminal_text(&stores), "");
     let mut receipt = control.format_dump_receipt().expect("dump receipt").clone();
     assert_eq!(receipt.format_ident.format_name, "bounded-dump");
+    let retained = stores.engine_usage_statistics();
+    assert_eq!(retained.strings - before.strings, 1);
+    assert_eq!(
+        retained.string_characters - before.string_characters,
+        receipt.pool_string().len()
+    );
     crate::confirm_format_dump_publication(&mut stores, &mut receipt, "alternate-name.fmt");
     assert_eq!(
         terminal_text(&stores),
         "Beginning to dump on file alternate-name.fmt\n (preloaded format=bounded-dump 2026.7.9)"
     );
+    assert_eq!(stores.engine_usage_statistics(), retained);
 }
 
 #[test]

@@ -92,6 +92,14 @@ low/high main-memory allocator extents, and the profile's
 `max_strings`/`pool_size`; typed
 control-sequence, filename, hyphenation, and token-list owners retain their own
 bytes and publish only their TeX-style accounting transitions to this record.
+The TeX82 profile projects §§47/50/226's engine-owned static and primitive
+vocabulary onto the typed registry, then records runtime ownership at the
+canonical boundaries: §§341/372's direct-character and §1215's fixed internal
+control sequences allocate no pool string; §§516--537 retain startup/opened/log
+names; Web2C `slow_make_string` recycles an existing spelling; §1252 may retain
+physically distinct font-identifier strings with the same spelling; and §1328's
+format identifier is part of the serialized baseline. These transitions are
+independent of semantic-name deduplication.
 TeX82 §1334's main-memory statistic reports the allocator's low/high coordinate
 extent under the pinned Web2C capacity profile (tex.web §§125--130), not typed
 store occupancy. The low arena grows in 1000-word blocks. The one-word arena is

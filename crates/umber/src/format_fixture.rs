@@ -26,7 +26,8 @@ use crate::{
 };
 
 const IDENTITY_DOMAIN: &[u8] = b"umber.loaded-format-fixture.v2\0";
-// Version 8 carries TeX82 §§125--130 allocator-coordinate extents; version 7
+// Version 9 carries the canonical TeX82 string-pool construction lifecycle;
+// version 8 carries TeX82 §§125--130 allocator-coordinate extents; version 7
 // carried the earlier §200 token-list-head approximation; version 6
 // introduced the serialized baseline field; version 5
 // includes §§785/1038's raw character-loop delivery inside alignment cells;
@@ -36,7 +37,7 @@ const IDENTITY_DOMAIN: &[u8] = b"umber.loaded-format-fixture.v2\0";
 // change. Persistent entries contain both the format image and the evidence
 // produced by that exact construction episode; accepting an entry from an
 // older producer would bypass the current engine entirely.
-const PRODUCER_CONTRACT_VERSION: u32 = 8;
+const PRODUCER_CONTRACT_VERSION: u32 = 9;
 // Version 2 carries the producing source identity on geometry observations.
 const COMMAND_OBSERVATION_SCHEMA_VERSION: u32 = 2;
 
@@ -609,9 +610,14 @@ pub(crate) fn construct_format_in_worker(
     let mut session =
         EngineSession::prepared_initex(&mut universe, recipe.engine.command_profile());
     session.set_fuel_limit(recipe.guards.command_fuel)?;
-    let root = session.register_authored_job(
+    let root = session.register_retained_root_with_invocation(
         &recipe.construction_source_name,
-        Arc::clone(&recipe.construction_source),
+        &recipe.construction_source_name,
+        SourceRegistration::new(
+            RegisteredSourceKind::Generated,
+            Arc::clone(&recipe.construction_source),
+        )
+        .with_name(format!("./{}", recipe.construction_source_name)),
     )?;
     let mut observer = LiveSessionTranslator::for_root(
         SchemaVersion::V3,

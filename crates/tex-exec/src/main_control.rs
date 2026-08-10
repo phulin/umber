@@ -1646,6 +1646,17 @@ impl MainControl {
         requested_name: &str,
         resolved_name: Option<&str>,
     ) {
+        if self.initex
+            && let Some(stem) = std::path::Path::new(requested_name)
+                .file_stem()
+                .and_then(|value| value.to_str())
+        {
+            // §§534--536 retain the startup name component as `job_name`
+            // and the transcript's opened name before §537 retains the
+            // requested and host-resolved input names below.
+            stores.make_string_pool_string(stem);
+            stores.make_string_pool_string(&format!("{stem}.log"));
+        }
         stores.make_string_pool_string(requested_name);
         if let Some(resolved_name) = resolved_name
             && resolved_name != requested_name
@@ -4724,12 +4735,17 @@ impl MainControl {
             pointer_sources[usize::from(index)] = Some((physical, source_identity));
         }
         if result.is_ok() && self.initex && matches!(scanned, ScannedStep::End { dump: true, .. }) {
-            self.dumped_format = Some(crate::job::FormatDumpReceipt::new(
+            let receipt = crate::job::FormatDumpReceipt::new(
                 self.capabilities.job_name().to_owned(),
                 stores.int_param(IntParam::YEAR),
                 stores.int_param(IntParam::MONTH),
                 stores.int_param(IntParam::DAY),
-            ));
+            );
+            // TeX82 §1328 builds and retains `format_ident` before §1309
+            // serializes the string pool. The host publication filename is
+            // made only for display and immediately flushed.
+            stores.make_string_pool_string(&receipt.pool_string());
+            self.dumped_format = Some(receipt);
         }
         if let (
             Ok(ReplayStep::End),
@@ -13819,7 +13835,6 @@ fn apply_scanned_step(
                 }
                 Err(error) => return Err(error),
             };
-            let font_would_allocate = stores.font_would_allocate(&loaded);
             let id = match stores.try_intern_font_with_identifier(loaded, identifier) {
                 Ok(id) => id,
                 Err(
@@ -13842,11 +13857,9 @@ fn apply_scanned_step(
                 }
                 Err(error) => return Err(error.into()),
             };
-            // §1254 flushes the last `cur_name` string when an already-loaded
-            // extensionless font is selected again.
-            if !font_would_allocate && !request.name.contains('.') {
-                stores.flush_string_pool_allocations(1, request.name.len());
-            }
+            // Web2C tex.ch [49.1260] removes TeX82 §1254's `flush_string`:
+            // [29.517]'s `slow_make_string` may have returned an older pool
+            // string, so flushing it would retire an unrelated allocation.
             let record =
                 font_definition_mutation(stores, request.target, global, observe_font_definition);
             let receipt = AssignmentCommitter::new(stores).unscoped(record, |stores| {
@@ -17669,14 +17682,21 @@ fn report_font_parameter_recovery(
 
 /// Returns TeX82 §1257's string `t` for a new font definition.
 fn font_identifier_for_definition(stores: &mut Universe, target: Symbol) -> SymbolId {
-    let text = match stores.control_sequence_kind(target) {
-        ControlSequenceKind::ActiveCharacter => format!("FONT{}", stores.resolve(target)),
-        ControlSequenceKind::Null => "FONT".to_owned(),
+    let (text, always_retained) = match stores.control_sequence_kind(target) {
+        ControlSequenceKind::ActiveCharacter => (format!("FONT{}", stores.resolve(target)), true),
+        ControlSequenceKind::Null => ("FONT".to_owned(), true),
         ControlSequenceKind::SingleCharacter
         | ControlSequenceKind::Named
-        | ControlSequenceKind::Internal => stores.resolve(target).to_owned(),
+        | ControlSequenceKind::Internal => (stores.resolve(target).to_owned(), false),
     };
-    stores.intern(&text)
+    if always_retained {
+        // TeX82 §1252 constructs a fresh `FONT<char>`/`FONT` string for each
+        // active or null target; semantic-name interning must not deduplicate
+        // that physical pool allocation.
+        stores.intern_retained_pool_string(&text)
+    } else {
+        stores.intern(&text)
+    }
 }
 
 /// Reports TeX82 §433-§437's `print_err`/`help2`/`int_error` recovery text.

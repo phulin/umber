@@ -239,6 +239,14 @@ impl FormatDumpReceipt {
             publication_confirmed: false,
         }
     }
+
+    pub(crate) fn pool_string(&self) -> String {
+        let ident = &self.format_ident;
+        format!(
+            " (preloaded format={} {}.{}.{})",
+            ident.format_name, ident.year, ident.month, ident.day
+        )
+    }
 }
 
 /// tex.web §61's `format_ident` as it reaches the *terminal*.
@@ -375,6 +383,11 @@ pub(crate) fn begin_job_with_terminal_banner(
         // TeX82 §§525/536 retain `a_make_name_string(log_file)` for the
         // loaded job. INITEX construction accounting is sealed separately
         // into the format baseline.
+        stores.make_string_pool_string(&log_name);
+    } else if initex {
+        // TeX82 §§534--537 retain the scanned job-name component and the
+        // opened transcript name before INITEX reaches §1328's format dump.
+        stores.make_string_pool_string(capabilities.job_name());
         stores.make_string_pool_string(&log_name);
     }
 

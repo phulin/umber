@@ -328,11 +328,18 @@ pub enum StringPoolProfile {
 impl StringPoolProfile {
     const fn baseline(self) -> (usize, usize) {
         match self {
-            Self::Tex82 => (1_027, 106_841),
+            // The typed primitive registry carries 33 more spelling bytes
+            // than TeX82's §§47/50/226 static-pool-plus-primitive image. Its
+            // profile origin compensates for that representation difference
+            // so the completed engine-owned vocabulary lands on the WEB
+            // `pool_ptr` coordinate rather than making host spellings usage.
+            Self::Tex82 => (1_027, 106_808),
             // TeX82 §§47 and 50 load every multi-character WEB literal before
             // input. The merged e-TeX program adds literals that are not all
-            // represented by its typed primitive names, leaving this static
-            // profile floor 55 strings and 888 characters above TeX82's.
+            // represented by its typed primitive names. Its absolute static
+            // coordinate remains 55 strings and 888 characters above the
+            // upstream TeX82 coordinate; the extra 33 here cancels the
+            // TeX82-only typed-registry projection adjustment above.
             Self::Etex26 => (1_082, 107_729),
         }
     }
@@ -341,14 +348,14 @@ impl StringPoolProfile {
 impl Default for StringPoolAccounting {
     fn default() -> Self {
         Self {
-            profile_version: 6,
+            profile_version: 7,
             // TeX82's INITEX profile begins after `get_strings_started` has
             // installed the character strings and tex.pool vocabulary. These
             // are profile coordinates, not job usage or fixture totals.
             strings: 1_027,
-            characters: 106_841,
+            characters: 106_808,
             init_str_ptr: 1_027,
-            init_pool_ptr: 106_841,
+            init_pool_ptr: 106_808,
             memory_low_extent: TEX82_LOW_MEMORY_GROWTH,
             memory_high_extent: TEX82_INITIAL_HIGH_MEMORY_EXTENT,
             // Web2C's TeX82 profile used by the pinned canonical oracle.
@@ -382,21 +389,10 @@ impl StringPoolAccounting {
 
     fn slow_make_string(&mut self, value: &str) -> Option<Arc<str>> {
         let inserted = self.remember_string(value);
-        let is_new = inserted.is_some();
-        if !self.recycling_enabled || is_new {
+        if inserted.is_some() {
             self.allocate(1, value.len());
         }
         inserted
-    }
-
-    fn account_direct_character_name(&mut self, characters: usize) {
-        if !self.recycling_enabled {
-            // The format-construction ledger predates the loaded-job
-            // namespace projection and includes scanner scratch bytes in its
-            // sealed `pool_ptr` baseline. Loaded jobs follow §§341/372 and do
-            // not allocate a string for direct character control sequences.
-            self.allocate(0, characters);
-        }
     }
 
     fn remember_string(&mut self, value: &str) -> Option<Arc<str>> {
@@ -478,7 +474,7 @@ impl StringPoolAccounting {
     }
 
     pub(crate) const fn has_current_profile(&self) -> bool {
-        self.profile_version == 6
+        self.profile_version == 7
     }
 }
 
@@ -1250,30 +1246,26 @@ impl Stores {
 
     /// Interns an active-character control sequence in its TeX82 namespace.
     pub fn intern_active_character(&mut self, ch: char) -> SymbolId {
-        let before = self.interner.len();
-        let symbol = self
-            .interner
+        // TeX82 §§341/372 use the direct one-character control-sequence
+        // namespace without calling `id_lookup` or `make_string`.
+        self.interner
             .intern_active(ch)
-            .expect("control-sequence symbol capacity exceeded");
-        if self.interner.len() != before {
-            // TeX82 §§341/372 use the direct one-character control-sequence
-            // namespace without calling `id_lookup` or `make_string`.
-            self.string_pool
-                .account_direct_character_name(ch.len_utf8());
-        }
-        symbol
+            .expect("control-sequence symbol capacity exceeded")
     }
 
     /// Interns an inaccessible engine-owned fixed `eqtb` control sequence.
     pub fn intern_internal_control_sequence(&mut self, name: &str) -> SymbolId {
-        let before = self.interner.len();
+        self.interner
+            .intern_internal(name)
+            .expect("control-sequence symbol capacity exceeded")
+    }
+
+    pub(crate) fn intern_retained_pool_string(&mut self, value: &str) -> SymbolId {
         let symbol = self
             .interner
-            .intern_internal(name)
+            .intern(value)
             .expect("control-sequence symbol capacity exceeded");
-        if self.interner.len() != before {
-            self.make_pool_string(name);
-        }
+        self.make_pool_string(value);
         symbol
     }
 
@@ -1341,14 +1333,10 @@ impl Stores {
     pub(crate) fn try_intern(&mut self, name: &str) -> Result<SymbolId, InternerError> {
         let before = self.interner.len();
         let symbol = self.interner.intern(name)?;
-        if self.interner.len() != before {
-            if name.len() > 1 {
-                self.make_pool_string(name);
-            } else {
-                // TeX82 §§341/372 select the direct single-character
-                // namespace without constructing a pool string.
-                self.string_pool.account_direct_character_name(name.len());
-            }
+        // TeX82 §§341/372 select the direct single-character namespace
+        // without constructing a pool string.
+        if self.interner.len() != before && name.chars().nth(1).is_some() {
+            self.make_pool_string(name);
         }
         Ok(symbol)
     }
@@ -1357,14 +1345,10 @@ impl Stores {
     pub(crate) fn try_intern_hash(&mut self, name: &str) -> Result<SymbolId, InternerError> {
         let before = self.interner.len();
         let symbol = self.interner.intern_hash(name)?;
-        if self.interner.len() != before {
-            if name.len() > 1 {
-                self.make_pool_string(name);
-            } else {
-                // Web2C recycles the preloaded one-character pool string even
-                // when §356 sends the control word through §259's hash.
-                self.string_pool.account_direct_character_name(name.len());
-            }
+        // Web2C recycles the preloaded one-character pool string even when
+        // §356 sends the control word through §259's hash.
+        if self.interner.len() != before && name.chars().nth(1).is_some() {
+            self.make_pool_string(name);
         }
         Ok(symbol)
     }

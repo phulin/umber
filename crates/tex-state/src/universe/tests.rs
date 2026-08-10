@@ -87,10 +87,10 @@ fn string_pool_format_baselines_and_capacities_round_trip() {
     let initially_used = loaded.engine_usage_statistics();
     assert_eq!(initially_used.strings, 0);
     assert_eq!(initially_used.string_characters, 0);
-    assert_eq!(initially_used.string_capacity, 15_000 - (1_027 + 4));
+    assert_eq!(initially_used.string_capacity, 15_000 - (1_027 + 3));
     assert_eq!(
         initially_used.string_character_capacity,
-        125_000 - (106_841 + "format-control".len() + "nullfont".len() + 9)
+        125_000 - (106_808 + "format-control".len() + 9)
     );
 
     loaded.intern("job-control");
@@ -158,6 +158,33 @@ fn loaded_string_pool_recycles_components_but_retains_fresh_strings() {
 }
 
 #[test]
+fn string_pool_ownership_distinguishes_physical_and_fixed_names() {
+    let image = Universe::new().dump_format().expect("empty format");
+    let mut loaded = Universe::from_format(World::memory(), &image).expect("loaded string pool");
+    let baseline = loaded.engine_usage_statistics();
+
+    // TeX82 §1252 calls `make_string` for every active/null font identifier,
+    // even when two physical strings have the same spelling.
+    let first = loaded.intern_retained_pool_string("FONT?");
+    let second = loaded.intern_retained_pool_string("FONT?");
+    assert_eq!(first, second);
+    let retained = loaded.engine_usage_statistics();
+    assert_eq!(retained.strings - baseline.strings, 2);
+    assert_eq!(retained.string_characters - baseline.string_characters, 10);
+
+    // TeX82 §1215's `inaccessible` slot and §§341/372's one-character
+    // namespace are fixed eqtb identities, not string-pool allocations. A
+    // multi-character hash spelling remains the negative control.
+    loaded.intern_internal_control_sequence("inaccessible");
+    loaded.intern("»");
+    assert_eq!(loaded.engine_usage_statistics(), retained);
+    loaded.intern("ab");
+    let hashed = loaded.engine_usage_statistics();
+    assert_eq!(hashed.strings - retained.strings, 1);
+    assert_eq!(hashed.string_characters - retained.string_characters, 2);
+}
+
+#[test]
 fn etex_string_pool_profile_selects_the_static_web_vocabulary_once() {
     let mut universe = Universe::new();
     let before = universe.engine_usage_statistics();
@@ -169,7 +196,7 @@ fn etex_string_pool_profile_selects_the_static_web_vocabulary_once() {
     assert_eq!(before.string_capacity - selected.string_capacity, 55);
     assert_eq!(
         before.string_character_capacity - selected.string_character_capacity,
-        888
+        921
     );
 
     universe.select_string_pool_profile(crate::StringPoolProfile::Etex26);
