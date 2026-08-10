@@ -130,9 +130,11 @@ expected_receipt="${tmp_root}/expected.inputs"
 expected_index="${tmp_root}/expected.index"
 closure_index="${tmp_root}/input-closure.index"
 source_index="${tmp_root}/sources.index"
+identity_index="${tmp_root}/input-identities.index"
 : > "$expected_index"
 : > "$closure_index"
 : > "$source_index"
+: > "$identity_index"
 
 while read -r kind relative expected_bytes expected_hash extra; do
   [[ -z "${kind:-}" || "$kind" == \#* ]] && continue
@@ -164,13 +166,16 @@ while read -r kind relative expected_bytes expected_hash extra; do
   [[ "$request_name" =~ ^[A-Za-z0-9._/-]+$ ]] || \
     fail "source lock path has no canonical request key: $relative"
   if [[ "$request_name" == *.tfm ]]; then
-    printf 'tfm:%s\n' "$request_name" >> "$closure_index"
+    request_key="tfm:${request_name}"
   else
-    printf 'tex:%s\n' "$request_name" >> "$closure_index"
+    request_key="tex:${request_name}"
   fi
+  printf '%s\n' "$request_key" >> "$closure_index"
+  printf '%s\t%s\t%s\n' "$request_key" "$expected_hash" "$expected_bytes" >> "$identity_index"
 done < "$lock_file"
 LC_ALL=C sort -k1,1 "$expected_index" | awk -F '\t' '{ print $2 "\t" $1 }' | LC_ALL=C sort > "$expected_receipt"
 LC_ALL=C sort -u "$closure_index" -o "$closure_index"
+LC_ALL=C sort -k1,1 "$identity_index" -o "$identity_index"
 
 prefetch_source_closure() {
   local source expected_bytes expected_hash actual_bytes actual_hash
@@ -190,7 +195,7 @@ prefetch_source_closure() {
     "$(wc -l < "$source_index" | tr -d ' ')" >&2
 }
 
-texinputs="${repo_root}/tests/latex:${texmf_dist}/tex/latex/base:${texmf_dist}/tex/latex/l3kernel:${texmf_dist}/tex/latex/l3backend:${texmf_dist}/tex/latex/atveryend:${texmf_dist}/tex/latex-dev/firstaid:${texmf_dist}/tex/generic/unicode-data:${texmf_dist}/tex/generic/atbegshi:${texmf_dist}/tex/generic/babel:${texmf_dist}/tex/generic/hyphen:${texmf_dist}/tex/generic/knuth-lib:${texmf_dist}/tex/generic/pdftex"
+texinputs="${repo_root}/tests/latex:${texmf_dist}/tex/latex/base:${texmf_dist}/tex/latex-dev/l3kernel:${texmf_dist}/tex/latex/l3backend:${texmf_dist}/tex/latex/atveryend:${texmf_dist}/tex/latex-dev/firstaid:${texmf_dist}/tex/generic/unicode-data:${texmf_dist}/tex/generic/atbegshi:${texmf_dist}/tex/generic/babel:${texmf_dist}/tex/generic/hyphen:${texmf_dist}/tex/generic/knuth-lib:${texmf_dist}/tex/generic/pdftex"
 texfonts="${texmf_dist}/fonts/tfm/public/cm:${texmf_dist}/fonts/tfm/public/latex-fonts:${texmf_dist}/fonts/tfm/jknappen/ec"
 latex_ltx="${texmf_dist}/tex/latex/base/latex.ltx"
 
@@ -362,6 +367,14 @@ if [[ "$publish_input_closure" -eq 1 ]]; then
     END { print "\n    ]" }
   ' "$closure_index")"
   closure_metadata="$(printf ',\n  "inputClosure": {\n    "schema": 1,\n%s\n  }' "$input_closure_json")"
+  awk -F '\t' '
+    BEGIN { print "{\n  \"schema\": 1,\n  \"inputs\": [" }
+    {
+      if (NR > 1) printf ",\n"
+      printf "    {\"key\": \"%s\", \"sha256\": \"%s\", \"bytes\": %s}", $1, $2, $3
+    }
+    END { print "\n  ]\n}" }
+  ' "$identity_index" > "${tmp_root}/${format_name}-input-identities.json"
 fi
 
 cat > "${tmp_root}/${format_name}-format.json" <<EOF
@@ -385,6 +398,11 @@ if [[ "$check_only" -eq 1 ]]; then
     fail "published ${format_name}.fmt differs from the reproducible cache entry"
   cmp "${tmp_root}/${format_name}-format.json" "${output_dir}/${format_name}-format.json" || \
     fail "published ${format_name}-format.json is stale"
+  if [[ "$publish_input_closure" -eq 1 ]]; then
+    cmp "${tmp_root}/${format_name}-input-identities.json" \
+      "${output_dir}/${format_name}-input-identities.json" || \
+      fail "published ${format_name}-input-identities.json is stale"
+  fi
 else
   mkdir -p "$output_dir"
   staged_format="$(mktemp "${output_dir}/.${format_name}.fmt.XXXXXX")"
@@ -393,6 +411,11 @@ else
   cp "${tmp_root}/${format_name}-format.json" "$staged_metadata"
   mv -f "$staged_format" "${output_dir}/${format_name}.fmt"
   mv -f "$staged_metadata" "${output_dir}/${format_name}-format.json"
+  if [[ "$publish_input_closure" -eq 1 ]]; then
+    staged_identities="$(mktemp "${output_dir}/.${format_name}-input-identities.json.XXXXXX")"
+    cp "${tmp_root}/${format_name}-input-identities.json" "$staged_identities"
+    mv -f "$staged_identities" "${output_dir}/${format_name}-input-identities.json"
+  fi
 fi
 
 printf 'Umber %s format: sha256=%s bytes=%s schema=%s source=%s\n' \

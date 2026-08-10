@@ -14,6 +14,7 @@ pub(crate) struct Candidate {
     pub(crate) relative: String,
     pub(crate) source: PathBuf,
     pub(crate) sha256: String,
+    pub(crate) bytes: u64,
 }
 
 impl Candidate {
@@ -58,6 +59,7 @@ pub(crate) fn scan_roots(roots: &[RootConfig]) -> Result<Vec<Candidate>> {
                 relative,
                 source,
                 sha256: hex_sha256(&bytes),
+                bytes: u64::try_from(bytes.len()).context("source object length exceeds u64")?,
             });
         }
     }

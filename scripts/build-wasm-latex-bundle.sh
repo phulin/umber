@@ -87,7 +87,8 @@ trap cleanup EXIT
 format_dir="${tmp_root}/format"
 runtime_root="${tmp_root}/texmf-dist"
 mkdir -p "$runtime_root"
-"${repo_root}/scripts/build-latex-format.sh" --texmf-dist "$texmf_dist" --output-dir "$format_dir"
+"${repo_root}/scripts/build-latex-format.sh" --publish-input-closure \
+  --texmf-dist "$texmf_dist" --output-dir "$format_dir"
 
 distribution="$(awk '$1 == "distribution" { print $2 }' "$runtime_lock")"
 [[ -n "$distribution" ]] || fail "runtime closure is missing its distribution"
@@ -123,7 +124,8 @@ tree_hash="$($publisher --tree-sha256 "$runtime_root")"
 config="${tmp_root}/publish.json"
 "${repo_root}/scripts/write-latex-wasm-publish-config.sh" \
   "$config" "$distribution" "$objects_base_url" "$runtime_root" "$tree_hash" \
-  "${format_dir}/latex.fmt" "${format_dir}/latex-format.json"
+  "${format_dir}/latex.fmt" "${format_dir}/latex-format.json" \
+  "${format_dir}/latex-input-identities.json"
 
 first="${tmp_root}/first"
 second="${tmp_root}/second"

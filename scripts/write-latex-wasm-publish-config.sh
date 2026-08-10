@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ $# -ne 7 ]]; then
+if [[ $# -ne 8 ]]; then
   printf '%s\n' \
-    'usage: write-latex-wasm-publish-config.sh OUTPUT DISTRIBUTION OBJECTS-BASE-URL RUNTIME-ROOT TREE-SHA256 FORMAT METADATA' >&2
+    'usage: write-latex-wasm-publish-config.sh OUTPUT DISTRIBUTION OBJECTS-BASE-URL RUNTIME-ROOT TREE-SHA256 FORMAT METADATA INPUT-IDENTITIES' >&2
   exit 2
 fi
 
@@ -14,6 +14,7 @@ runtime_root="$4"
 tree_sha256="$5"
 format_path="$6"
 metadata_path="$7"
+input_identities_path="$8"
 
 # Keep the focused LaTeX bundle on the measured production distribution layout.
 # docs/distribution_manifest.md records the 256-shard selection evidence.
@@ -41,7 +42,8 @@ cat > "$output" <<EOF
   "formats": [
     {
       "path": "${format_path}",
-      "metadata": "${metadata_path}"
+      "metadata": "${metadata_path}",
+      "inputIdentities": "${input_identities_path}"
     }
   ]
 }

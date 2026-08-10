@@ -379,7 +379,11 @@ def build_snapshot(args: argparse.Namespace, repo_root: Path) -> None:
             ],
             "inventory": {"minimumLogicalFiles": 100000, "minimumObjects": 50000, "minimumBytes": 1000000000},
             "formats": [
-                {"path": str(format_root / engine / f"{engine}.fmt"), "metadata": str(format_root / engine / f"{engine}-format.json")}
+                {
+                    "path": str(format_root / engine / f"{engine}.fmt"),
+                    "metadata": str(format_root / engine / f"{engine}-format.json"),
+                    "inputIdentities": str(format_root / engine / f"{engine}-input-identities.json"),
+                }
                 for engine in ("latex", "pdflatex")
             ],
         }

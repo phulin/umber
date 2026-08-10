@@ -100,6 +100,23 @@ pub struct RootConfig {
 pub struct FormatConfig {
     pub path: PathBuf,
     pub metadata: PathBuf,
+    #[serde(default)]
+    pub input_identities: Option<PathBuf>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct FormatInputIdentities {
+    schema: u32,
+    inputs: Vec<FormatInputIdentity>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct FormatInputIdentity {
+    key: String,
+    sha256: String,
+    bytes: u64,
 }
 
 struct PreparedPublication {
@@ -146,8 +163,20 @@ fn prepare_full(config: &PublishConfig) -> Result<PreparedPublication> {
     let dependencies = publication_dependencies(config, &winners)?;
     validate_dependencies(&dependencies, &winners)?;
 
-    let mut files = BTreeMap::new();
     let mut objects = BTreeMap::new();
+    let mut formats = BTreeMap::new();
+    for format in &config.formats {
+        let (name, manifest_format, bytes) = load_format(format, &winners)?;
+        if formats
+            .insert(name.clone(), manifest_format.clone())
+            .is_some()
+        {
+            bail!("duplicate published format name {name:?}");
+        }
+        objects.entry(manifest_format.object).or_insert(bytes);
+    }
+
+    let mut files = BTreeMap::new();
     for (key, candidate) in winners {
         let bytes = fs::read(&candidate.source)
             .with_context(|| format!("read {}", candidate.source.display()))?;
@@ -163,17 +192,6 @@ fn prepare_full(config: &PublishConfig) -> Result<PreparedPublication> {
                 dependencies: dependencies.get(&key).cloned().unwrap_or_default(),
             },
         );
-    }
-    let mut formats = BTreeMap::new();
-    for format in &config.formats {
-        let (name, manifest_format, bytes) = load_format(format)?;
-        if formats
-            .insert(name.clone(), manifest_format.clone())
-            .is_some()
-        {
-            bail!("duplicate published format name {name:?}");
-        }
-        objects.entry(manifest_format.object).or_insert(bytes);
     }
     let published_bytes = objects.values().try_fold(0_u64, |total, bytes| {
         total
@@ -213,7 +231,7 @@ fn prepare_html(config: &PublishConfig) -> Result<PreparedPublication> {
         bail!("HTML runtimeFileKeys contains duplicate keys");
     }
     for format in &config.formats {
-        let (name, manifest_format, bytes) = load_format(format)?;
+        let (name, manifest_format, bytes) = load_format(format, &winners)?;
         let closure = manifest_format.input_closure.as_ref().with_context(|| {
             format!("HTML format {name:?} must carry an authenticated input closure")
         })?;
@@ -480,7 +498,10 @@ fn validate_inventory(
     Ok(())
 }
 
-fn load_format(config: &FormatConfig) -> Result<(String, ManifestFormat, Vec<u8>)> {
+fn load_format(
+    config: &FormatConfig,
+    winners: &BTreeMap<String, Candidate>,
+) -> Result<(String, ManifestFormat, Vec<u8>)> {
     let metadata_text = fs::read_to_string(&config.metadata)
         .with_context(|| format!("read format metadata {}", config.metadata.display()))?;
     let named = NamedFormat::parse(&metadata_text).context("parse format metadata")?;
@@ -504,7 +525,76 @@ fn load_format(config: &FormatConfig) -> Result<(String, ManifestFormat, Vec<u8>
     if schema != metadata.format_schema {
         bail!("format image schema does not match its metadata");
     }
+    if let Some(closure) = &metadata.input_closure {
+        validate_format_input_identities(&named.name, config, &closure.keys, winners)?;
+    } else if config.input_identities.is_some() {
+        bail!(
+            "format {:?} supplies input identities without an authenticated input closure",
+            named.name
+        );
+    }
     Ok((named.name, metadata, bytes))
+}
+
+fn validate_format_input_identities(
+    format_name: &str,
+    config: &FormatConfig,
+    closure_keys: &[String],
+    winners: &BTreeMap<String, Candidate>,
+) -> Result<()> {
+    let path = config.input_identities.as_ref().with_context(|| {
+        format!("format {format_name:?} must pin the identities of its construction inputs")
+    })?;
+    let text = fs::read_to_string(path)
+        .with_context(|| format!("read format input identities {}", path.display()))?;
+    let receipt: FormatInputIdentities = serde_json::from_str(&text)
+        .with_context(|| format!("parse format input identities {}", path.display()))?;
+    if receipt.schema != 1 {
+        bail!(
+            "unsupported format input identity schema {}; expected 1",
+            receipt.schema
+        );
+    }
+    let mut identities = BTreeMap::new();
+    for input in receipt.inputs {
+        let key = input.key.clone();
+        FileRequestKey::from_manifest_key(&input.key)
+            .with_context(|| format!("invalid format input identity key {:?}", input.key))?;
+        if input.sha256.len() != 64
+            || !input.sha256.bytes().all(|byte| byte.is_ascii_hexdigit())
+            || input.sha256.bytes().any(|byte| byte.is_ascii_uppercase())
+        {
+            bail!(
+                "format input identity {:?} must use a lowercase SHA-256 digest",
+                input.key
+            );
+        }
+        if identities.insert(key.clone(), input).is_some() {
+            bail!("duplicate format input identity key {key:?}");
+        }
+    }
+    let identity_keys = identities.keys().cloned().collect::<Vec<_>>();
+    if identity_keys != closure_keys {
+        bail!(
+            "format {format_name:?} input identity keys do not exactly match its authenticated closure"
+        );
+    }
+    for (key, expected) in identities {
+        let winner = winners.get(&key).with_context(|| {
+            format!("format {format_name:?} input {key:?} is absent from pinned roots")
+        })?;
+        if winner.sha256 != expected.sha256 || winner.bytes != expected.bytes {
+            bail!(
+                "format {format_name:?} was constructed from {key:?} sha256={} bytes={}, but the published runtime winner {} has sha256={} bytes={}",
+                expected.sha256,
+                expected.bytes,
+                winner.relative,
+                winner.sha256,
+                winner.bytes
+            );
+        }
+    }
+    Ok(())
 }
 
 fn remove_stale_objects(objects: &Path, expected: &BTreeSet<String>) -> Result<()> {

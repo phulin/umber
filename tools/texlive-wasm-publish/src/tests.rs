@@ -24,6 +24,32 @@ fn digest(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
 
+fn write_input_identities(
+    fixture: &TempDir,
+    name: &str,
+    inputs: &[(&str, &[u8])],
+) -> Result<std::path::PathBuf> {
+    let path = fixture.path().join(name);
+    let records = inputs
+        .iter()
+        .map(|(key, bytes)| {
+            serde_json::json!({
+                "key": key,
+                "sha256": digest(bytes),
+                "bytes": bytes.len(),
+            })
+        })
+        .collect::<Vec<_>>();
+    fs::write(
+        &path,
+        serde_json::to_vec_pretty(&serde_json::json!({
+            "schema": 1,
+            "inputs": records,
+        }))?,
+    )?;
+    Ok(path)
+}
+
 fn html_config(fixture: &TempDir) -> Result<PublishConfig> {
     let root_path = fixture.path().join("html-root");
     fs::create_dir_all(&root_path)?;
@@ -64,6 +90,11 @@ fn html_config(fixture: &TempDir) -> Result<PublishConfig> {
             "sourceDateEpoch": 1,
             "inputClosure": {"schema": 1, "keys": ["tex:plain.tex", "tfm:cmr10.tfm"]}
         }))?,
+    )?;
+    let input_identities = write_input_identities(
+        fixture,
+        "plain-input-identities.json",
+        &[("tex:plain.tex", b"plain runtime"), ("tfm:cmr10.tfm", tfm_bytes)],
     )?;
 
     let font_bytes = b"fixture woff2";
@@ -148,6 +179,7 @@ fn html_config(fixture: &TempDir) -> Result<PublishConfig> {
         formats: vec![FormatConfig {
             path: format_path,
             metadata: format_metadata,
+            input_identities: Some(input_identities),
         }],
         package_database: None,
         inventory: None,
@@ -213,6 +245,7 @@ fn latex_wasm_script_emits_current_sharded_publisher_config() -> Result<()> {
         .arg("0".repeat(64))
         .arg("/fixture/latex.fmt")
         .arg("/fixture/latex-format.json")
+        .arg("/fixture/latex-input-identities.json")
         .status()?;
     assert!(status.success());
 
@@ -221,6 +254,10 @@ fn latex_wasm_script_emits_current_sharded_publisher_config() -> Result<()> {
     assert_eq!(config.shard_bits, 8);
     assert_eq!(config.roots.len(), 1);
     assert_eq!(config.formats.len(), 1);
+    assert_eq!(
+        config.formats[0].input_identities,
+        Some("/fixture/latex-input-identities.json".into())
+    );
     Ok(())
 }
 
@@ -242,6 +279,7 @@ fn fixture_publication_is_byte_stable_and_content_addressed() -> Result<()> {
     config.formats.push(FormatConfig {
         path: assets.join("plain.fmt"),
         metadata: assets.join("plain-format.json"),
+        input_identities: None,
     });
     let output_a = fixture.path().join("out-a");
     let output_b = fixture.path().join("out-b");
@@ -304,6 +342,11 @@ fn format_input_closures_are_canonical_and_verified() -> Result<()> {
     config.formats.push(FormatConfig {
         path: assets.join("plain.fmt"),
         metadata: metadata_path,
+        input_identities: Some(write_input_identities(
+            &fixture,
+            "plain-input-identities.json",
+            &[("tex:plain.tex", b"plain"), ("tfm:cmr10.tfm", b"tfm")],
+        )?),
     });
 
     let output = fixture.path().join("out");
@@ -353,6 +396,61 @@ fn format_input_closures_are_canonical_and_verified() -> Result<()> {
 }
 
 #[test]
+fn rejects_format_built_from_a_shadowed_runtime_input() -> Result<()> {
+    let fixture = TempDir::new()?;
+    let root_path = fixture.path().join("root");
+    fs::create_dir_all(&root_path)?;
+    let stable = b"stable l3 kernel";
+    let development = b"development l3 kernel";
+    write(
+        &root_path,
+        "tex/latex/l3kernel/expl3-code.tex",
+        stable,
+    )?;
+    write(
+        &root_path,
+        "tex/latex-dev/l3kernel/expl3-code.tex",
+        development,
+    )?;
+
+    let assets = test_support::repository_root().join("crates/umber-wasm/assets");
+    let mut metadata: serde_json::Value =
+        serde_json::from_slice(&fs::read(assets.join("plain-format.json"))?)?;
+    metadata["schema"] = 2.into();
+    metadata["inputClosure"] = serde_json::json!({
+        "schema": 1,
+        "keys": ["tex:expl3-code.tex"]
+    });
+    let metadata_path = fixture.path().join("format.json");
+    fs::write(&metadata_path, serde_json::to_vec_pretty(&metadata)?)?;
+
+    let mut config = config(vec![root("runtime", &root_path)?]);
+    config.dependencies.clear();
+    config.formats.push(FormatConfig {
+        path: assets.join("plain.fmt"),
+        metadata: metadata_path,
+        input_identities: Some(write_input_identities(
+            &fixture,
+            "stable-identities.json",
+            &[("tex:expl3-code.tex", stable)],
+        )?),
+    });
+    let error = publish(&config, &fixture.path().join("mismatched"))
+        .expect_err("shadowed format construction input must fail publication");
+    let message = format!("{error:#}");
+    assert!(message.contains("constructed from \"tex:expl3-code.tex\""));
+    assert!(message.contains("tex/latex-dev/l3kernel/expl3-code.tex"));
+
+    config.formats[0].input_identities = Some(write_input_identities(
+        &fixture,
+        "development-identities.json",
+        &[("tex:expl3-code.tex", development)],
+    )?);
+    publish(&config, &fixture.path().join("coherent"))?;
+    Ok(())
+}
+
+#[test]
 fn rejects_duplicate_and_oversized_format_input_closures() -> Result<()> {
     let fixture = TempDir::new()?;
     let root_path = fixture.path().join("root");
@@ -380,6 +478,7 @@ fn rejects_duplicate_and_oversized_format_input_closures() -> Result<()> {
         config.formats.push(FormatConfig {
             path: assets.join("plain.fmt"),
             metadata: metadata_path,
+            input_identities: None,
         });
         assert!(publish(&config, &fixture.path().join(format!("out-{label}"))).is_err());
     }

@@ -101,8 +101,10 @@ jq -n \
   --arg local_hash "$local_tree_hash" \
   --arg latex "$format_dir/latex/latex.fmt" \
   --arg latex_meta "$format_dir/latex/latex-format.json" \
+  --arg latex_inputs "$format_dir/latex/latex-input-identities.json" \
   --arg pdflatex "$format_dir/pdflatex/pdflatex.fmt" \
   --arg pdflatex_meta "$format_dir/pdflatex/pdflatex-format.json" \
+  --arg pdflatex_inputs "$format_dir/pdflatex/pdflatex-input-identities.json" \
   --arg catalog "$repo_root/tools/texlive-wasm-publish/catalog/html-mvp-v1.json" \
   --arg cmu "$repo_root/crates/umber-wasm/assets/cmu-serif-500-roman.woff2" \
   --arg cmu_license "$repo_root/crates/umber-wasm/assets/CMU-OFL.txt" \
@@ -120,8 +122,8 @@ jq -n \
       {name: "format-local-inputs", path: $local, treeSha256: $local_hash}
     ],
     formats: [
-      {path: $latex, metadata: $latex_meta},
-      {path: $pdflatex, metadata: $pdflatex_meta}
+      {path: $latex, metadata: $latex_meta, inputIdentities: $latex_inputs},
+      {path: $pdflatex, metadata: $pdflatex_meta, inputIdentities: $pdflatex_inputs}
     ],
     html: {
       runtimeFileKeys: [],
