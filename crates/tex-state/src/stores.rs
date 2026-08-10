@@ -490,8 +490,8 @@ impl Clone for Stores {
 }
 
 impl Stores {
-    pub(crate) fn live_save_stack_words(&self) -> usize {
-        self.env.canonical_save_stack_words()
+    pub(crate) fn live_save_stack_words(&self, save_group_source_lines: bool) -> usize {
+        self.env.canonical_save_stack_words(save_group_source_lines)
     }
 
     pub(crate) fn record_engine_stack_usage(&mut self, usage: EngineStackUsage) {

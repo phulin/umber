@@ -237,29 +237,15 @@ pub(crate) struct LineBackingRegistry<'a> {
     pub(crate) next_identity: &'a mut u64,
     pub(crate) usage: crate::state::CommandUsageTracker,
     pub(crate) buffer_start: usize,
+    pub(crate) name_class: Option<SourceNameClass>,
 }
 
 impl LineBackingRegistry<'_> {
     pub(crate) fn record_line_usage(&self, cursor: &SourceCursor) {
-        let Some(line) = cursor.line.as_ref() else {
-            return;
-        };
-        let backing = cursor.current_backing();
-        let start = usize::try_from(line.physical.content_range().start()).unwrap_or(usize::MAX);
-        let end = usize::try_from(line.retained_end).unwrap_or(usize::MAX);
-        let len = match backing.mode {
-            CharacterMode::EightBitExact => end.saturating_sub(start),
-            CharacterMode::UnicodeExtended => backing
-                .bytes
-                .get(start..end)
-                .and_then(|bytes| std::str::from_utf8(bytes).ok())
-                .map_or(usize::MAX, |text| text.chars().count()),
-        };
-        if len > 0 {
-            // §31 updates max_buf_stack for each stored character; §1334
-            // prints that greatest index plus one.
-            self.usage
-                .record_buffer_usage(self.buffer_start.saturating_add(len).saturating_add(1));
+        if let Some(positions) =
+            source_line_buffer_high_water(cursor, self.name_class, self.buffer_start)
+        {
+            self.usage.record_buffer_usage(positions);
         }
     }
 
@@ -274,6 +260,47 @@ impl LineBackingRegistry<'_> {
                 .ok()?;
         *self.next_identity += 1;
         Some(source)
+    }
+}
+
+/// Returns the §1334 buffer-stack projection reached while acquiring one line.
+///
+/// Ordinary tex.web §31 `input_ln` records every physical character before
+/// stripping trailing spaces. e-TeX §53a's `pseudo_input` instead copies each
+/// `\scantokens` line in padded four-byte blocks and updates `max_buf_stack`
+/// before removing that padding. A §363 terminal replacement has ordinary
+/// `input_ln` storage even when it replaces a pseudo-file line.
+pub(crate) fn source_line_buffer_high_water(
+    cursor: &SourceCursor,
+    name_class: Option<SourceNameClass>,
+    buffer_start: usize,
+) -> Option<usize> {
+    let line = cursor.line.as_ref()?;
+    let backing = cursor.current_backing();
+    let start = usize::try_from(line.physical.content_range().start()).unwrap_or(usize::MAX);
+    let end = usize::try_from(line.physical.content_range().end()).unwrap_or(usize::MAX);
+    let len = match backing.mode {
+        CharacterMode::EightBitExact => end.saturating_sub(start),
+        CharacterMode::UnicodeExtended => backing
+            .bytes
+            .get(start..end)
+            .and_then(|bytes| std::str::from_utf8(bytes).ok())
+            .map_or(usize::MAX, |text| text.chars().count()),
+    };
+    let pseudo_input =
+        cursor.line_backing.is_none() && matches!(name_class, Some(SourceNameClass::Scantokens(_)));
+    if pseudo_input {
+        let occupied = len.max(1);
+        let padded = occupied.saturating_add((4 - occupied % 4) % 4);
+        // e-TeX §53a sets max_buf_stack to `last+1`; §1334 prints one
+        // further position. This differs deliberately from §31's update.
+        Some(buffer_start.saturating_add(padded).saturating_add(2))
+    } else if len > 0 {
+        // §31 updates max_buf_stack for each stored character; §1334
+        // prints that greatest index plus one.
+        Some(buffer_start.saturating_add(len).saturating_add(1))
+    } else {
+        None
     }
 }
 

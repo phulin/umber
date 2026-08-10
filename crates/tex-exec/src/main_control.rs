@@ -2506,7 +2506,7 @@ impl MainControl {
         // two additional canonical save-stack words to project.
         let box_spec_words = self.boxes.active_boxes.len().saturating_mul(2);
         let live = stores
-            .live_save_stack_words()
+            .live_save_stack_words(self.command_profile().capabilities().supports_etex())
             .saturating_add(box_spec_words);
         self.max_save_stack = self.max_save_stack.max(live);
     }

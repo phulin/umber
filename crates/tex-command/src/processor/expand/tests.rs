@@ -805,6 +805,11 @@ fn etex_scantokens_retokenizes_balanced_text_as_nested_lines() {
         output.push(delivery.spelling().semantic_token());
     }
     assert_eq!(
+        processor.command.stack_usage().buffer_stack,
+        7,
+        "e-TeX §53a counts the four-byte pseudo_input block and both §1334 margins"
+    );
+    assert_eq!(
         output.first(),
         Some(&Token::Char {
             ch: 'a',

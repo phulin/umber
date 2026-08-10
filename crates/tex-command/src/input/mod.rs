@@ -16,7 +16,9 @@ pub(crate) use levels::{
     SharedBackedUpBuffer, SharedTokenBuffer, SourceLevel, SourceOpenDepths, SourceRetirement,
     StoredReplayReason, TokenBehavior, TokenCursor, TokenPayload,
 };
-pub(crate) use source::{LineBackingRegistry, RegisteredSource, SourceCursor};
+pub(crate) use source::{
+    LineBackingRegistry, RegisteredSource, SourceCursor, source_line_buffer_high_water,
+};
 #[allow(unused_imports)] // consumed by the ordered raw-delivery implementation issues
 pub(crate) use stack::{
     InputRetirement, InputRetirementAction, InputRetirementError, InputRetirementReason,

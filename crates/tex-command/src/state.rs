@@ -1731,24 +1731,27 @@ impl CommandState {
     /// buffer; token-list levels consume no buffer positions.
     fn record_active_buffer_line_usage(&self) {
         let mut lines = self.active_buffer_lines();
-        let Some((active_len, _)) = lines.pop() else {
+        let Some(_) = lines.pop() else {
             return;
         };
-        if active_len > 0 {
-            let outer_slots = lines.into_iter().fold(0_usize, |total, (len, endline)| {
-                total
-                    .saturating_add(len)
-                    .saturating_add(usize::from(endline))
-                    .saturating_add(1)
-            });
-            // §331 starts the buffer at one; §1334 prints max_buf_stack+1.
-            self.usage.record_buffer_usage(
-                self.usage
-                    .terminal_buffer_slots()
-                    .saturating_add(outer_slots)
-                    .saturating_add(active_len)
-                    .saturating_add(2),
-            );
+        let outer_slots = lines.into_iter().fold(0_usize, |total, (len, endline)| {
+            total
+                .saturating_add(len)
+                .saturating_add(usize::from(endline))
+                .saturating_add(1)
+        });
+        let Some(InputLevel::Source(active)) = self.input.levels.last() else {
+            return;
+        };
+        let buffer_start = 1_usize
+            .saturating_add(self.usage.terminal_buffer_slots())
+            .saturating_add(outer_slots);
+        if let Some(positions) = crate::input::source_line_buffer_high_water(
+            &active.cursor,
+            Some(active.name_class),
+            buffer_start,
+        ) {
+            self.usage.record_buffer_usage(positions);
         }
     }
 
@@ -1959,12 +1962,17 @@ impl CommandState {
                         .saturating_add(1)
                 },
             ));
+        let name_class = self.input.levels.last().and_then(|level| match level {
+            InputLevel::Source(source) => Some(source.name_class),
+            InputLevel::Tokens(_) => None,
+        });
         let input = &mut self.input;
         let lines = crate::input::LineBackingRegistry {
             profile,
             next_identity: &mut input.next_source_identity,
             usage: self.usage.clone(),
             buffer_start,
+            name_class,
         };
         let cursor = match input.levels.last_mut() {
             Some(InputLevel::Source(level)) => Some(&mut level.cursor),

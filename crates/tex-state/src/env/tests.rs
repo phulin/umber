@@ -92,6 +92,21 @@ fn meaning_level_projection_follows_live_local_and_global_ownership() {
 }
 
 #[test]
+fn etex_save_stack_projection_counts_only_enclosing_group_line_words() {
+    // TeX82 §273 checks `save_ptr` before §274 installs the new boundary.
+    // e-TeX [19.274] has one saved source-line word below every already-live
+    // boundary, so the innermost boundary in the typed post-entry state names
+    // the checkpoint and only its two enclosing groups add line words.
+    let mut env = Env::new();
+    for line in 1..=3 {
+        env.enter_group_with_kind_at_line(GroupKind::Simple, line);
+    }
+
+    assert_eq!(env.canonical_save_stack_words(false), 3);
+    assert_eq!(env.canonical_save_stack_words(true), 5);
+}
+
+#[test]
 fn lower_meaning_write_preserves_allocated_higher_segments() {
     let mut env = Env::new();
     let low = Symbol::new(7);

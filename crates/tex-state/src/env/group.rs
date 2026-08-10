@@ -402,7 +402,7 @@ impl Env {
     /// Reconstructs the live TeX82 `save_ptr` represented by the typed group
     /// journal. This is diagnostic accounting only: journal storage remains
     /// the semantic owner, and §1334's high-water mark is kept outside it.
-    pub(crate) fn canonical_save_stack_words(&self) -> usize {
+    pub(crate) fn canonical_save_stack_words(&self, save_group_source_lines: bool) -> usize {
         let mut words = 0_usize;
         let mut locally_saved = Vec::<AHashSet<CellId>>::new();
         for index in 0..self.journal.len() {
@@ -445,6 +445,13 @@ impl Env {
                 }
                 Entry::Marker(Marker::Checkpoint(_)) => {}
             }
+        }
+        if save_group_source_lines {
+            // e-TeX [19.274] stores one source-line word before each level
+            // boundary. TeX82 §273 samples `save_ptr` before the innermost
+            // boundary is installed, so only its enclosing groups contribute
+            // line words to this checked high-water projection.
+            words = words.saturating_add(self.group_boundaries.len().saturating_sub(1));
         }
         words.saturating_add(self.aftergroup.len())
     }
