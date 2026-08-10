@@ -371,6 +371,20 @@ impl CommandProcessor<'_> {
                 return Err(CommandError::MacroPrefixMismatch);
             }
         }
+        // TeX82 §394 corrects the final matched left brace in a `#{`
+        // parameter delimiter when the following pattern token is
+        // `end_match`: definition scanning saves that same brace at the end
+        // of the replacement, so only the replayed copy may contribute to
+        // `align_state`. With no numbered parameters the brace lives in the
+        // compulsory leading pattern rather than an argument delimiter.
+        if pattern.parameter_count() == 0
+            && pattern
+                .leading()
+                .last()
+                .is_some_and(|token| is_begin_group(*token))
+        {
+            self.undo_delimiter_begin_group_delivery();
+        }
 
         let mut arguments = MacroArgumentBuilder::default();
         for parameter in 0..pattern.parameter_count() {

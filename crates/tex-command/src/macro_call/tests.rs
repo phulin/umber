@@ -318,6 +318,70 @@ fn scalar_matcher_consumes_compulsory_prefix_before_undelimited_argument() {
 }
 
 #[test]
+fn hash_brace_compulsory_prefix_counts_only_the_replayed_brace() {
+    let (command, outcome) = run_macro_call(
+        b"\\m{body}",
+        MeaningFlags::EMPTY,
+        &[Token::Char {
+            ch: '{',
+            cat: Catcode::BeginGroup,
+        }],
+        false,
+    )
+    .expect("hash-brace compulsory prefix matches");
+
+    assert_eq!(outcome, MacroCallOutcome::Activated);
+    assert_eq!(
+        command.alignment.align_state,
+        crate::processor::TOP_LEVEL_ALIGN_STATE,
+        "TeX82 §394 cancels the matched brace before its saved copy replays"
+    );
+}
+
+#[test]
+fn ordinary_compulsory_prefix_does_not_change_brace_accounting() {
+    let (command, outcome) = run_macro_call(
+        b"\\m[body]",
+        MeaningFlags::EMPTY,
+        &[Token::Char {
+            ch: '[',
+            cat: Catcode::Other,
+        }],
+        false,
+    )
+    .expect("ordinary compulsory prefix matches");
+
+    assert_eq!(outcome, MacroCallOutcome::Activated);
+    assert_eq!(
+        command.alignment.align_state,
+        crate::processor::TOP_LEVEL_ALIGN_STATE
+    );
+}
+
+#[test]
+fn hash_brace_after_numbered_parameter_keeps_delimiter_correction() {
+    let (command, outcome) = run_macro_call(
+        b"\\m value{body}",
+        MeaningFlags::EMPTY,
+        &[
+            Token::param(1),
+            Token::Char {
+                ch: '{',
+                cat: Catcode::BeginGroup,
+            },
+        ],
+        false,
+    )
+    .expect("numbered argument and hash-brace delimiter match");
+
+    assert_eq!(outcome, MacroCallOutcome::Activated);
+    assert_eq!(
+        command.alignment.align_state,
+        crate::processor::TOP_LEVEL_ALIGN_STATE
+    );
+}
+
+#[test]
 fn parameterless_macro_pushes_replacement_without_matching_status() {
     let mut command = CommandState::default();
     let source = command
