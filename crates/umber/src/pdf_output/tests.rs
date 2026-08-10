@@ -5,6 +5,7 @@ use tex_state::{InteractionMode, Universe};
 
 use super::{
     DEFAULT_PDF_PK_RESOLUTION, is_pdf_sfnt_program, pdf_finalization_input,
+    pdf_from_accepted_artifacts_with_virtual_fonts,
     pdf_from_committed_artifacts_with_virtual_fonts,
 };
 use crate::{
@@ -18,6 +19,82 @@ fn sfnt_program_classification_includes_supported_containers() {
         assert!(is_pdf_sfnt_program(name));
     }
     assert!(!is_pdf_sfnt_program(b"font.pfb"));
+}
+
+#[test]
+fn accepted_pdf_finalization_includes_the_unpublished_page_suffix() {
+    fn setup() -> (Universe, RunResult) {
+        let mut stores = Universe::default();
+        stores.set_interaction_mode(InteractionMode::Nonstop);
+        prepare_pdftex_run_stores(&mut stores);
+        let mut host =
+            FileSessionResolvers::new(Path::new("prepared-pages.tex"), Vec::new(), Vec::new());
+        let run = run_input_collecting_artifacts_with_profile(
+            &mut stores,
+            RetainedRootRequest::authored_job(
+                "prepared-pages",
+                concat!(
+                    "\\pdfoutput=1\\pdfcompresslevel=0\\pdfobjcompresslevel=0",
+                    "\\shipout\\vbox{\\hrule width1pt height1pt}",
+                    "\\shipout\\vbox{\\hrule width2pt height2pt}",
+                    "\\shipout\\vbox{\\hrule width3pt height3pt}\\end",
+                )
+                .as_bytes(),
+                tex_command::CommandProfile::PDFTEX14029,
+            ),
+            &mut host,
+            tex_command::CommandProfile::PDFTEX14029,
+        )
+        .expect("three package-independent pages ship");
+        (stores, run)
+    }
+
+    // Negative control: the ordinary non-prepared ledger remains complete.
+    let (mut direct_stores, direct_run) = setup();
+    let direct_pdf = pdf_from_committed_artifacts_with_virtual_fonts(
+        &mut direct_stores,
+        &direct_run.committed_artifacts,
+        &crate::PdfVirtualFontResources::default(),
+    )
+    .expect("direct three-page PDF finalizes");
+    let direct_query = test_support::pdf_query::PdfQuery::new(
+        &direct_pdf,
+        test_support::pdf_query::QueryLimits::default(),
+    )
+    .expect("independent parser accepts direct PDF");
+    assert_eq!(direct_query.pages().expect("direct page tree").len(), 3);
+
+    // Positive control: the accepted ledger is one live page followed by two
+    // unpublished pages. The live-only input proves the boundary, while the
+    // accepted adapter must serialize the complete ordered page tree.
+    let (mut prepared_stores, _prepared_run) = setup();
+    let prepared = prepared_stores.prepare_page_suffix(1);
+    assert_eq!(prepared_stores.pdf_pages().len(), 1);
+    assert_eq!(prepared.pdf_pages().len(), 2);
+    let mut accepted_artifacts = prepared_stores.world().committed_artifacts().to_vec();
+    accepted_artifacts.extend_from_slice(prepared.artifacts());
+    let live_only = pdf_finalization_input(
+        &mut prepared_stores,
+        &accepted_artifacts,
+        DEFAULT_PDF_PK_RESOLUTION,
+        &crate::PdfVirtualFontResources::default(),
+    )
+    .expect("live prefix finalization input");
+    assert_eq!(live_only.pages.len(), 1);
+
+    let accepted_pdf = pdf_from_accepted_artifacts_with_virtual_fonts(
+        &mut prepared_stores,
+        &accepted_artifacts,
+        Some(&prepared),
+        &crate::PdfVirtualFontResources::default(),
+    )
+    .expect("accepted three-page PDF finalizes");
+    let accepted_query = test_support::pdf_query::PdfQuery::new(
+        &accepted_pdf,
+        test_support::pdf_query::QueryLimits::default(),
+    )
+    .expect("independent parser accepts prepared PDF");
+    assert_eq!(accepted_query.pages().expect("accepted page tree").len(), 3);
 }
 
 #[test]

@@ -3,7 +3,9 @@
 mod finalization_input;
 
 pub use finalization_input::pdf_finalization_input;
-use finalization_input::reserve_virtual_font_resources;
+use finalization_input::{
+    pdf_finalization_input_with_page_records, reserve_virtual_font_resources,
+};
 
 use tex_out::pdf::{
     PdfModelError, PdfObjectCompression, PdfSerializationOptions, PdfSerializeError,
@@ -78,9 +80,37 @@ pub fn pdf_from_committed_artifacts_with_virtual_fonts(
     artifacts: &[CommittedArtifact],
     virtual_fonts: &crate::PdfVirtualFontResources,
 ) -> Result<Vec<u8>, PdfBuildError> {
-    pdf_from_committed_artifacts_at_dpi_with_virtual_fonts(
+    let page_records = stores.pdf_pages().to_vec();
+    pdf_from_artifacts_and_page_records_at_dpi_with_virtual_fonts(
         stores,
         artifacts,
+        &page_records,
+        DEFAULT_PDF_PK_RESOLUTION,
+        virtual_fonts,
+    )
+}
+
+/// Finalizes an accepted native run while its fallible page suffix remains
+/// unpublished.
+///
+/// Prepared pages must remain outside the live universe until their effects
+/// commit, but they are already part of the accepted document. This adapter
+/// presents the ordered live prefix and prepared suffix as one PDF page ledger
+/// without publishing either effects or artifacts early.
+pub fn pdf_from_accepted_artifacts_with_virtual_fonts(
+    stores: &mut Universe,
+    artifacts: &[CommittedArtifact],
+    prepared_pages: Option<&tex_state::PreparedPageSuffix>,
+    virtual_fonts: &crate::PdfVirtualFontResources,
+) -> Result<Vec<u8>, PdfBuildError> {
+    let mut page_records = stores.pdf_pages().to_vec();
+    if let Some(prepared_pages) = prepared_pages {
+        page_records.extend_from_slice(prepared_pages.pdf_pages());
+    }
+    pdf_from_artifacts_and_page_records_at_dpi_with_virtual_fonts(
+        stores,
+        artifacts,
+        &page_records,
         DEFAULT_PDF_PK_RESOLUTION,
         virtual_fonts,
     )
@@ -91,29 +121,37 @@ pub fn pdf_from_committed_artifacts_at_dpi(
     artifacts: &[CommittedArtifact],
     driver_dpi: i32,
 ) -> Result<Vec<u8>, PdfBuildError> {
-    pdf_from_committed_artifacts_at_dpi_with_virtual_fonts(
+    let page_records = stores.pdf_pages().to_vec();
+    pdf_from_artifacts_and_page_records_at_dpi_with_virtual_fonts(
         stores,
         artifacts,
+        &page_records,
         driver_dpi,
         &crate::PdfVirtualFontResources::default(),
     )
 }
 
 #[allow(clippy::disallowed_methods)] // Process telemetry; PDF content never observes it.
-fn pdf_from_committed_artifacts_at_dpi_with_virtual_fonts(
+fn pdf_from_artifacts_and_page_records_at_dpi_with_virtual_fonts(
     stores: &mut Universe,
     artifacts: &[CommittedArtifact],
+    page_records: &[tex_state::PdfPageRecord],
     driver_dpi: i32,
     virtual_fonts: &crate::PdfVirtualFontResources,
 ) -> Result<Vec<u8>, PdfBuildError> {
-    let input = pdf_finalization_input(stores, artifacts, driver_dpi, virtual_fonts)?;
+    let input = pdf_finalization_input_with_page_records(
+        stores,
+        artifacts,
+        page_records,
+        driver_dpi,
+        virtual_fonts,
+    )?;
     let include_info = input.document.metadata.include_info_dictionary;
     let output = tex_out::pdf::finalize_pdf(&input).map_err(map_finalization_error)?;
 
     // Replay only the allocation receipt proven by detached finalization. No
     // output lowering or serialization is repeated against live engine state.
-    let page_records = stores.pdf_pages().to_vec();
-    reserve_virtual_font_resources(stores, artifacts, &page_records, virtual_fonts)?;
+    reserve_virtual_font_resources(stores, artifacts, page_records, virtual_fonts)?;
     stores
         .finalize_pdf_document_objects(include_info)
         .map_err(|_| PdfBuildError::ObjectCapacity)?;

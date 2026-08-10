@@ -1045,6 +1045,52 @@ fn pdftex_rule_page_is_published_only_to_an_explicit_distinct_pdf_path() {
 
 #[test]
 #[allow(clippy::disallowed_methods)] // host-side temporary files and command execution.
+fn pdftex_cli_keeps_deferred_effect_pages_in_the_published_page_tree() {
+    let temp_dir = tempfile::tempdir().expect("create prepared PDF output temp dir");
+    let source = temp_dir.path().join("prepared-pages.tex");
+    let pdf = temp_dir.path().join("prepared-pages.pdf");
+    fs::write(
+        &source,
+        concat!(
+            "\\pdfoutput=1\\pdfcompresslevel=0\\pdfobjcompresslevel=0",
+            "\\shipout\\vbox{\\hrule width1pt height1pt}",
+            "\\shipout\\vbox{\\openout0=side-effect.txt",
+            "\\write0{page-two}\\hrule width2pt height2pt}\\end\n",
+        ),
+    )
+    .expect("write prepared PDF fixture");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_umber"))
+        .env("SOURCE_DATE_EPOCH", PINNED_SOURCE_DATE_EPOCH)
+        .current_dir(temp_dir.path())
+        .arg("run")
+        .arg("--pdftex")
+        .arg("--pdf")
+        .arg(&pdf)
+        .arg(&source)
+        .output()
+        .expect("run prepared PDF fixture");
+    assert!(
+        output.status.success(),
+        "prepared PDF run failed:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        fs::read_to_string(temp_dir.path().join("side-effect.txt"))
+            .expect("deferred page effect committed"),
+        "page-two\n"
+    );
+    let pdf = fs::read(pdf).expect("read prepared PDF");
+    let parsed = test_support::pdf_query::PdfQuery::new(
+        &pdf,
+        test_support::pdf_query::QueryLimits::default(),
+    )
+    .expect("independent parser accepts prepared PDF");
+    assert_eq!(parsed.pages().expect("prepared page tree").len(), 2);
+}
+
+#[test]
+#[allow(clippy::disallowed_methods)] // host-side temporary files and command execution.
 #[ignore = "manual compatibility/parity tier: not a cutover closure gate"]
 fn pdflatex_mode_composes_latex_compatibility_with_pdf_output() {
     let temp_dir = tempfile::tempdir().expect("create pdfLaTeX output temp dir");

@@ -426,9 +426,10 @@ fn finalize_run(
             eprintln!("pdfTeX warning: \\pdfdraftmode enabled, not changing output pdf");
         } else {
             let pdf_started = std::time::Instant::now();
-            let pdf = umber::pdf_from_committed_artifacts_with_virtual_fonts(
+            let pdf = umber::pdf_from_accepted_artifacts_with_virtual_fonts(
                 &mut stores,
                 &committed_artifacts,
+                prepared_pages.as_ref(),
                 &virtual_font_resources,
             )?;
             if env::var_os("UMBER_RESOURCE_TELEMETRY").is_some_and(|value| value == "1") {

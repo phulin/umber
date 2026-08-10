@@ -373,6 +373,15 @@ impl PreparedPageSuffix {
         &mut self.artifacts
     }
 
+    /// Returns the ordered PDF page records detached with the artifacts.
+    ///
+    /// Native drivers use this read-only view while constructing fallible
+    /// output. Publication remains deferred until every effect commits.
+    #[must_use]
+    pub fn pdf_pages(&self) -> &[crate::PdfPageRecord] {
+        &self.pdf_pages
+    }
+
     #[must_use]
     pub fn effects(&self) -> &[(EffectPos, EffectRecord)] {
         &self.effects

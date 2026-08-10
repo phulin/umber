@@ -19,7 +19,8 @@ use tex_state::env::banks::{IntParam, TokParam};
 use tex_state::{
     CommittedArtifact, PdfActionIdentifier, PdfActionRecord, PdfActionSpec, PdfActionTarget,
     PdfActionWindow, PdfAnnotationDimensions, PdfDestinationIdentity, PdfDocumentFragmentKind,
-    PdfExternalImageMetadata, PdfOutputParameters, PdfRasterColorSpace, PdfRasterFormat, Universe,
+    PdfExternalImageMetadata, PdfOutputParameters, PdfPageRecord, PdfRasterColorSpace,
+    PdfRasterFormat, Universe,
 };
 
 use super::{
@@ -39,12 +40,28 @@ pub fn pdf_finalization_input(
     driver_dpi: i32,
     virtual_fonts: &crate::PdfVirtualFontResources,
 ) -> Result<PdfFinalizationInput, PdfBuildError> {
+    let page_records = stores.pdf_pages().to_vec();
+    pdf_finalization_input_with_page_records(
+        stores,
+        artifacts,
+        &page_records,
+        driver_dpi,
+        virtual_fonts,
+    )
+}
+
+pub(super) fn pdf_finalization_input_with_page_records(
+    stores: &mut Universe,
+    artifacts: &[CommittedArtifact],
+    page_records: &[PdfPageRecord],
+    driver_dpi: i32,
+    virtual_fonts: &crate::PdfVirtualFontResources,
+) -> Result<PdfFinalizationInput, PdfBuildError> {
     let parameters = output_parameters(stores);
     if parameters.output <= 0 {
         return Err(PdfBuildError::PdfOutputDisabled);
     }
     let version = pdf_version(parameters)?;
-    let page_records = stores.pdf_pages().to_vec();
     let pages = page_records
         .iter()
         .copied()
@@ -110,7 +127,7 @@ pub fn pdf_finalization_input(
     let virtual_positioned = reserve_virtual_font_resources(
         &mut detached_stores,
         artifacts,
-        &page_records,
+        page_records,
         virtual_fonts,
     )?;
 
