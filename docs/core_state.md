@@ -95,6 +95,13 @@ survives group compaction without changing the group-exit value. Box ownership
 and survivor accounting remain attached to the box write outcome but do not
 replace this semantic receipt.
 
+The journal also owns an incremental projection of TeX82 §§273--280's physical
+save-stack words for §1334's diagnostic high-water accounting. Appending a
+group marker, local save, global supersession, or box save updates that derived
+projection with the journal entry; ordinary reads are constant-time and do not
+rescan the growing journal. Rollback truncation rebuilds the projection from
+the retained prefix, keeping it coupled to the journal's authoritative state.
+
 Local writes restore at group exit. Global writes survive and supersede older
 local restoration. Sparse e-TeX registers obey the same rules as dense cells.
 Meaning caches are owned above the environment but invalidate through exact
