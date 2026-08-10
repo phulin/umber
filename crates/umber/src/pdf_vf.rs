@@ -42,12 +42,24 @@ impl Default for PdfVfLimits {
     }
 }
 
+#[cfg(test)]
 pub(crate) fn lower_pages(
     stores: &mut Universe,
     pages: &mut [PositionedPage],
     resources: &PdfVirtualFontResources,
     limits: PdfVfLimits,
 ) -> Result<(), PdfBuildError> {
+    lower_pages_with_resource_receipt(stores, pages, resources, limits).map(|_| ())
+}
+
+/// Replays packet-local font selection and returns every exact live font
+/// whose PDF resource identity was reserved by that walk.
+pub(crate) fn lower_pages_with_resource_receipt(
+    stores: &mut Universe,
+    pages: &mut [PositionedPage],
+    resources: &PdfVirtualFontResources,
+    limits: PdfVfLimits,
+) -> Result<BTreeSet<FontId>, PdfBuildError> {
     if resources.virtual_fonts.is_empty() {
         if std::env::var_os("UMBER_RESOURCE_TELEMETRY").is_some_and(|value| value == "1") {
             let events = pages.iter().map(|page| page.events.len()).sum::<usize>();
@@ -58,7 +70,7 @@ pub(crate) fn lower_pages(
                 events
             );
         }
-        return Ok(());
+        return Ok(BTreeSet::new());
     }
     let mut lowerer = Lowerer {
         stores,
@@ -101,7 +113,7 @@ pub(crate) fn lower_pages(
             lowerer.local_instances
         );
     }
-    Ok(())
+    Ok(lowerer.instances.into_values().collect())
 }
 
 struct Lowerer<'a> {

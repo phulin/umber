@@ -60,12 +60,18 @@ positive-width rules become positioned PDF rectangles; other rules only
 retain the `set_rule` advance.
 
 The same module's `output_one_char` fragment classifies the selected local
-font recursively and reaches PDF font selection only for a real leaf. The
-Umber adapter privately replays first use to reserve exact leaf identities and
-PDF resource numbers; `tex-out` then instantiates retained local TFM bytes at
-the declared size and computes glyph usage from the expanded positioned
-stream. Virtual TFM names never become emitted PDF font resources merely
-because their source artifact contained characters.
+font recursively and reaches PDF font selection only for a real leaf. Before
+detaching, the Umber adapter privately replays first use and returns a typed
+receipt for every exact packet-selected local instance whose PDF resource was
+reserved. That includes section 32e's default local font selected before the
+first packet command, even when a font command switches away before painting
+a glyph. The finalization handoff projects the complete receipt, rather than
+reconstructing it from emitted positioned fonts or filtering it by virtual
+classification. `tex-out` then instantiates retained local TFM bytes at the
+declared size and computes glyph usage from the expanded positioned stream.
+Local definitions that no reached packet selects remain acquisition inputs,
+not output resources. Virtual TFM names never become emitted PDF font
+resources merely because their source artifact contained characters.
 
 Positioned interword spaces carry extraction/accessibility state but do not
 execute a VF packet. During lowering `tex-out` rebinds those spaces to an adjacent

@@ -124,7 +124,7 @@ pub(super) fn pdf_finalization_input_with_page_records(
     // discarded: tex-out repeats lowering from the committed artifacts using
     // only the detached closure captured below.
     let mut detached_stores = stores.clone();
-    let virtual_positioned = reserve_virtual_font_resources(
+    let (virtual_positioned, reserved_virtual_fonts) = reserve_virtual_font_resources(
         &mut detached_stores,
         artifacts,
         page_records,
@@ -144,24 +144,24 @@ pub(super) fn pdf_finalization_input_with_page_records(
                 .iter()
                 .flat_map(|positioned| positioned.fonts.iter().cloned()),
         )
-        .chain(detached_stores.pdf_font_resources().filter_map(|resource| {
+        .chain(reserved_virtual_fonts.into_iter().map(|font_id| {
+            let resource = detached_stores
+                .pdf_font_resource(font_id)
+                .expect("VF reservation receipt names a checkpointed resource");
             let font = detached_stores.font(resource.font());
-            virtual_fonts
-                .virtual_fonts
-                .contains_key(font.name())
-                .then(|| tex_out::FontResource {
-                    font_id: resource.resource_number(),
-                    name: font.name().to_owned(),
-                    tfm_content_hash: tex_out::ContentIdentity::new(font.content_hash()),
-                    tfm_checksum: font.checksum(),
-                    design_size: font.design_size(),
-                    at_size: font.size(),
-                    layout_policy: font.layout_policy(),
-                    mapping_fallback: font.mapping_fallback(),
-                    opentype: None,
-                    semantic_identity: font.source_identity(),
-                    construction: tex_out::FontResourceConstruction::Loaded,
-                })
+            tex_out::FontResource {
+                font_id: resource.resource_number(),
+                name: font.name().to_owned(),
+                tfm_content_hash: tex_out::ContentIdentity::new(font.content_hash()),
+                tfm_checksum: font.checksum(),
+                design_size: font.design_size(),
+                at_size: font.size(),
+                layout_policy: font.layout_policy(),
+                mapping_fallback: font.mapping_fallback(),
+                opentype: None,
+                semantic_identity: font.source_identity(),
+                construction: tex_out::FontResourceConstruction::Loaded,
+            }
         }))
         .map(|font| (font.semantic_identity, font))
         .collect::<BTreeMap<_, _>>();
@@ -437,20 +437,26 @@ pub(crate) fn reserve_virtual_font_resources(
     artifacts: &[CommittedArtifact],
     page_records: &[tex_state::PdfPageRecord],
     virtual_fonts: &crate::PdfVirtualFontResources,
-) -> Result<Vec<tex_out::positioned::PositionedPage>, PdfBuildError> {
+) -> Result<
+    (
+        Vec<tex_out::positioned::PositionedPage>,
+        BTreeSet<tex_state::ids::FontId>,
+    ),
+    PdfBuildError,
+> {
     let mut positioned = super::positioned_pages(stores, artifacts, page_records)?;
     positioned.extend(
         super::positioned_forms(stores)?
             .into_iter()
             .map(|(_, positioned)| positioned),
     );
-    crate::pdf_vf::lower_pages(
+    let reserved = crate::pdf_vf::lower_pages_with_resource_receipt(
         stores,
         &mut positioned,
         virtual_fonts,
         crate::pdf_vf::PdfVfLimits::default(),
     )?;
-    Ok(positioned)
+    Ok((positioned, reserved))
 }
 
 fn detached_font_program(

@@ -279,6 +279,123 @@ fn detached_nested_vf_preserves_exact_local_tfm_identity_and_resources() {
     assert_eq!(parsed.pages().expect("nested VF page").len(), 1);
 }
 
+#[test]
+fn detached_vf_retains_selected_default_resource_but_not_unreached_definitions() {
+    const FIX_ONE: i32 = 1 << 20;
+    const CMR10: &[u8] = include_bytes!("../../../tex-fonts/tests/fixtures/cm/cmr10.tfm");
+    const CMSY10: &[u8] = include_bytes!("../../../tex-fonts/tests/fixtures/cm/cmsy10.tfm");
+    const CMEX10: &[u8] = include_bytes!("../../../tex-fonts/tests/fixtures/cm/cmex10.tfm");
+
+    fn vf() -> Vec<u8> {
+        let mut bytes = vec![247, 202, 0];
+        bytes.extend_from_slice(&0u32.to_be_bytes());
+        bytes.extend_from_slice(&(10 * FIX_ONE).to_be_bytes());
+        for (number, name) in [
+            (7, b"cmsy10".as_slice()),
+            (9, b"cmex10".as_slice()),
+            (11, b"unused10".as_slice()),
+        ] {
+            bytes.extend_from_slice(&[243, number]);
+            bytes.extend_from_slice(&0u32.to_be_bytes());
+            bytes.extend_from_slice(&FIX_ONE.to_be_bytes());
+            bytes.extend_from_slice(&(10 * FIX_ONE).to_be_bytes());
+            bytes.extend_from_slice(&[0, name.len() as u8]);
+            bytes.extend_from_slice(name);
+        }
+        // pdfTeX.web §32e do_vf_packet selects the first definition before
+        // executing the packet. The packet immediately switches to font 9,
+        // so font 7 is selected and checkpointed without painting a glyph.
+        let commands = [235, 9, b'A'];
+        bytes.extend_from_slice(&[commands.len() as u8, b'A', 8, 0, 0]);
+        bytes.extend_from_slice(&commands);
+        bytes.push(248);
+        while !bytes.len().is_multiple_of(4) {
+            bytes.push(248);
+        }
+        bytes
+    }
+
+    let mut stores = Universe::default();
+    stores.set_interaction_mode(InteractionMode::Nonstop);
+    prepare_pdftex_run_stores(&mut stores);
+    stores
+        .world_mut()
+        .set_memory_file("cmr10.tfm", CMR10.to_vec())
+        .expect("seed root TFM");
+    stores
+        .provide_pdf_type1_program(
+            b"cmr10.pfb".to_vec(),
+            include_bytes!("../../../../tests/corpus/pdf/embedded_type1/cmr10.pfb"),
+        )
+        .expect("seed leaf program");
+    let mut host = FileSessionResolvers::new(Path::new("pdf-test.tex"), Vec::new(), Vec::new());
+    let run = run_input_collecting_artifacts_with_profile(
+        &mut stores,
+        RetainedRootRequest::authored_job(
+            "pdf-test",
+            concat!(
+                "\\pdfoutput=1\\pdfcompresslevel=0\\pdfobjcompresslevel=0",
+                "\\pdfmapline{=cmsy10 CMR10 <cmr10.pfb}",
+                "\\pdfmapline{=cmex10 CMR10 <cmr10.pfb}",
+                "\\font\\f=cmr10 at 12pt ",
+                "\\shipout\\hbox{\\f A}\\end",
+            )
+            .as_bytes(),
+            tex_command::CommandProfile::PDFTEX14029,
+        ),
+        &mut host,
+        tex_command::CommandProfile::PDFTEX14029,
+    )
+    .expect("VF root page ships");
+    let root_vf = vf();
+    let mut resources = crate::PdfVirtualFontResources::default();
+    resources.virtual_fonts.insert(
+        "cmr10".to_owned(),
+        crate::CachedVirtualFont {
+            content_id: umber_vfs::FileContentId::for_bytes(&root_vf),
+            program: tex_fonts::VfProgram::parse(&root_vf).expect("test VF"),
+        },
+    );
+    for (name, bytes) in [("cmsy10", CMSY10), ("cmex10", CMEX10), ("unused10", CMSY10)] {
+        resources.local_tfms.insert(
+            name.to_owned(),
+            crate::CachedLocalTfm {
+                content_id: umber_vfs::FileContentId::for_bytes(bytes),
+                bytes: bytes.to_vec(),
+                font: tex_fonts::TfmFont::parse(bytes).expect("test local TFM"),
+            },
+        );
+    }
+
+    let input = pdf_finalization_input(
+        &mut stores,
+        &run.committed_artifacts,
+        DEFAULT_PDF_PK_RESOLUTION,
+        &resources,
+    )
+    .expect("selected default font is retained at the detached boundary");
+    let names = input
+        .fonts
+        .values()
+        .map(|font| font.artifact_resource.name.as_str())
+        .collect::<std::collections::BTreeSet<_>>();
+    assert!(names.contains("cmsy10"), "selected default is checkpointed");
+    assert!(names.contains("cmex10"), "painted leaf is checkpointed");
+    assert!(
+        !names.contains("unused10"),
+        "an unselected VF definition is not an output resource"
+    );
+
+    let pdf = pdf_from_committed_artifacts_with_virtual_fonts(
+        &mut stores,
+        &run.committed_artifacts,
+        &resources,
+    )
+    .expect("selected-default VF finalizes");
+    test_support::pdf_query::PdfQuery::new(&pdf, test_support::pdf_query::QueryLimits::default())
+        .expect("independent parser accepts selected-default PDF");
+}
+
 fn pt(value: i32) -> Scaled {
     Scaled::from_raw(value * 65_536)
 }
