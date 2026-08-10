@@ -38,13 +38,14 @@ fn engine_usage_statistics_retain_one_word_extent_across_rollback() {
     let mut universe = Universe::new();
     let baseline = universe.snapshot();
     let before = universe.engine_usage_statistics();
-    assert_eq!(before.memory_words, 17);
+    assert_eq!(before.memory_words, 1_020);
     assert_eq!(before.memory_word_capacity, 250_000);
     universe.intern("allocator-high-water-probe");
-    universe.intern_token_list(&[Token::Char {
+    let tokens = universe.intern_token_list(&[Token::Char {
         ch: 'x',
         cat: crate::token::Catcode::Other,
     }]);
+    universe.set_toks_global(0, tokens);
     let peak = universe.engine_usage_statistics();
     assert!(peak.strings > before.strings);
     assert!(peak.string_characters > before.string_characters);
@@ -52,10 +53,9 @@ fn engine_usage_statistics_retain_one_word_extent_across_rollback() {
     let rolled_back = universe.engine_usage_statistics();
     assert_eq!(rolled_back.strings, peak.strings);
     assert_eq!(rolled_back.string_characters, peak.string_characters);
-    // tex.web §125 returns the freed token node to `avail`, but §1334's
-    // `mem_end-hi_mem_min` extent does not shrink with the live token body.
-    assert_eq!(rolled_back.memory_words, before.memory_words + 1);
-    assert!(rolled_back.memory_words < peak.memory_words);
+    // §§125/1334 return the token words to `avail`, but the allocator's
+    // low/high coordinate extent survives the rollback.
+    assert_eq!(rolled_back.memory_words, peak.memory_words);
     assert_eq!(
         rolled_back.memory_word_capacity,
         before.memory_word_capacity
@@ -177,7 +177,7 @@ fn etex_string_pool_profile_selects_the_static_web_vocabulary_once() {
 }
 
 #[test]
-fn memory_usage_counts_token_list_heads_relative_to_the_format_baseline() {
+fn memory_usage_counts_reachable_lists_without_immutable_store_history() {
     let mut source = Universe::new();
     let format_tokens = source.intern_token_list(&[
         Token::Char {
@@ -198,7 +198,7 @@ fn memory_usage_counts_token_list_heads_relative_to_the_format_baseline() {
     let mut loaded = Universe::from_format(World::default(), &image).expect("format loads");
     let baseline = loaded.engine_usage_statistics().memory_words;
 
-    loaded.intern_token_list(&[
+    let job_tokens = loaded.intern_token_list(&[
         Token::Char {
             ch: 'j',
             cat: crate::token::Catcode::Other,
@@ -227,9 +227,13 @@ fn memory_usage_counts_token_list_heads_relative_to_the_format_baseline() {
         },
     ]);
 
-    // The first list reuses the format allocator's one freed head; the second
-    // extends it by tex.web §200's reference-count word.
-    assert_eq!(loaded.engine_usage_statistics().memory_words, baseline + 7);
+    // Hash-consed immutable history is not a WEB allocator coordinate. Neither
+    // unattached list is live, so it cannot affect §1334's extent.
+    assert_eq!(loaded.engine_usage_statistics().memory_words, baseline);
+
+    loaded.set_toks_global(1, job_tokens);
+    // The reachable three-token list owns its §200 reference-count head.
+    assert_eq!(loaded.engine_usage_statistics().memory_words, baseline + 4);
 }
 
 #[test]

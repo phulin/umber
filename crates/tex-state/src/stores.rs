@@ -203,6 +203,8 @@ pub struct Stores {
     exact_env_identity: exact_identity::ExactEnvIdentity,
     exact_identity_cache: Arc<std::sync::Mutex<format::ExactIdentityCache>>,
     usage_high_water: EngineUsageStatistics,
+    memory_low_extent: usize,
+    memory_high_extent: usize,
 }
 
 /// TeX82-shaped projection of allocation use over Umber's typed stores.
@@ -237,16 +239,9 @@ pub struct EngineStackUsage {
 }
 
 /// Web2C TeX82's configured main-memory arena profile.
-///
-/// The typed node and token stores are the two owners corresponding to WEB's
-/// variable-size and one-word regions. `GlueStore` is an immutable value
-/// interner, not a third WEB arena; counting its entries would make host
-/// representation choices observable in §1334. The fixed adjustment is the
-/// allocator's profile-owned boundary/sentinel extent after the typed owners'
-/// permanently represented heads are removed. These coordinates come from
-/// tex.web §§125--126; they are independent of any document's totals.
 const TEX82_MEMORY_WORD_CAPACITY: usize = 250_000;
-const TEX82_MEMORY_ARENA_FIXED_EXTENT: usize = 17;
+const TEX82_LOW_MEMORY_GROWTH: usize = 1_000;
+const TEX82_INITIAL_HIGH_MEMORY_EXTENT: usize = 20;
 
 /// TeX82's string-pool counters and format-relative reporting profile.
 ///
@@ -260,7 +255,8 @@ pub struct StringPoolAccounting {
     characters: usize,
     init_str_ptr: usize,
     init_pool_ptr: usize,
-    init_token_lists: usize,
+    memory_low_extent: usize,
+    memory_high_extent: usize,
     max_strings: usize,
     pool_size: usize,
     /// Strings available to Web2C's `search_string` recycling extension.
@@ -294,7 +290,7 @@ impl StringPoolProfile {
 impl Default for StringPoolAccounting {
     fn default() -> Self {
         Self {
-            profile_version: 5,
+            profile_version: 6,
             // TeX82's INITEX profile begins after `get_strings_started` has
             // installed the character strings and tex.pool vocabulary. These
             // are profile coordinates, not job usage or fixture totals.
@@ -302,7 +298,8 @@ impl Default for StringPoolAccounting {
             characters: 106_841,
             init_str_ptr: 1_027,
             init_pool_ptr: 106_841,
-            init_token_lists: 0,
+            memory_low_extent: TEX82_LOW_MEMORY_GROWTH,
+            memory_high_extent: TEX82_INITIAL_HIGH_MEMORY_EXTENT,
             // Web2C's TeX82 profile used by the pinned canonical oracle.
             max_strings: 15_000,
             pool_size: 125_000,
@@ -358,11 +355,15 @@ impl StringPoolAccounting {
         self.characters = self.characters.saturating_sub(characters);
     }
 
-    fn mark_format_baseline(&mut self, token_lists: usize) {
+    fn mark_format_baseline(&mut self, memory_low_extent: usize, memory_high_extent: usize) {
         self.init_str_ptr = self.strings;
         self.init_pool_ptr = self.characters;
-        if self.init_token_lists == 0 {
-            self.init_token_lists = token_lists;
+        // A loaded format retains INITEX's serialized allocator coordinates
+        // when it is re-dumped; job-local high-water observations are not a
+        // new format-construction baseline.
+        if !self.recycling_enabled {
+            self.memory_low_extent = memory_low_extent;
+            self.memory_high_extent = memory_high_extent;
         }
     }
 
@@ -386,12 +387,12 @@ impl StringPoolAccounting {
         self.pool_size.saturating_sub(self.init_pool_ptr)
     }
 
-    pub(crate) const fn token_list_baseline(&self) -> usize {
-        self.init_token_lists
+    pub(crate) const fn memory_extents(&self) -> (usize, usize) {
+        (self.memory_low_extent, self.memory_high_extent)
     }
 
     pub(crate) const fn has_current_profile(&self) -> bool {
-        self.profile_version == 5
+        self.profile_version == 6
     }
 }
 
@@ -482,6 +483,8 @@ impl Clone for Stores {
             exact_env_identity: self.exact_env_identity.clone(),
             exact_identity_cache: Arc::clone(&self.exact_identity_cache),
             usage_high_water: self.usage_high_water,
+            memory_low_extent: self.memory_low_extent,
+            memory_high_extent: self.memory_high_extent,
         }
     }
 }
@@ -506,20 +509,15 @@ impl Stores {
         let font_mark = self.fonts.watermark();
         let fonts = font_mark.len as usize;
         let font_info_words = self.font_info_words();
+        self.observe_main_memory(None);
         let current = EngineUsageStatistics {
             strings: self.string_pool.used_strings(),
             string_capacity: self.string_pool.string_capacity(),
             string_characters: self.string_pool.used_characters(),
             string_character_capacity: self.string_pool.character_capacity(),
             memory_words: self
-                .tokens
-                .token_count()
-                .saturating_add(
-                    self.tokens
-                        .job_list_head_words(self.string_pool.token_list_baseline()),
-                )
-                .saturating_add(self.nodes.word_count())
-                .saturating_add(TEX82_MEMORY_ARENA_FIXED_EXTENT),
+                .memory_low_extent
+                .saturating_add(self.memory_high_extent),
             memory_word_capacity: TEX82_MEMORY_WORD_CAPACITY,
             // TeX82 §1334 reports occupied §259 hash entries, not the whole
             // control-sequence `eqtb` namespace described by §222.
@@ -535,6 +533,19 @@ impl Stores {
         high_water
     }
 
+    fn observe_main_memory(&mut self, extra_node: Option<&Node>) -> usize {
+        let node_words = self.nodes.word_count();
+        let low_extent = node_words
+            .max(1)
+            .div_ceil(TEX82_LOW_MEMORY_GROWTH)
+            .saturating_mul(TEX82_LOW_MEMORY_GROWTH);
+        self.memory_low_extent = self.memory_low_extent.max(low_extent);
+        let dynamic_usage =
+            format::dynamic_memory_usage(self, extra_node).unwrap_or(self.memory_high_extent);
+        self.memory_high_extent = self.memory_high_extent.max(dynamic_usage);
+        dynamic_usage
+    }
+
     /// TeX82 §638's live `var_used`/`dyn_used` projection.
     ///
     /// TeX's variable-size arena owns glue specifications and multiword
@@ -542,11 +553,9 @@ impl Stores {
     /// [`Self::engine_usage_statistics`], this is a live observation rather
     /// than a high-water mark, because `ship_out` compares the values before
     /// and after releasing the shipped box.
-    pub(crate) fn shipout_memory_usage(&self) -> (usize, usize) {
-        (
-            self.glue.len() + self.nodes.word_count(),
-            self.tokens.token_count(),
-        )
+    pub(crate) fn shipout_memory_usage(&mut self, shipped_node: Option<&Node>) -> (usize, usize) {
+        let dynamic_usage = self.observe_main_memory(shipped_node);
+        (self.glue.len() + self.nodes.word_count(), dynamic_usage)
     }
     pub(crate) fn loaded_fonts(&self) -> impl Iterator<Item = &LoadedFont> {
         self.fonts.iter()
@@ -653,6 +662,8 @@ impl Stores {
                 format::ExactIdentityCache::default(),
             )),
             usage_high_water: EngineUsageStatistics::default(),
+            memory_low_extent: TEX82_LOW_MEMORY_GROWTH,
+            memory_high_extent: TEX82_INITIAL_HIGH_MEMORY_EXTENT,
         };
         stores.set_int_param(IntParam::MAG, 1000);
         stores.set_int_param(IntParam::TOLERANCE, 10_000);
@@ -1199,16 +1210,26 @@ impl Stores {
         self.string_pool.clone()
     }
 
-    pub(crate) fn mark_string_pool_format_baseline(&mut self) {
+    pub(crate) fn mark_string_pool_format_baseline(&mut self) -> Result<(), StoreFormatError> {
+        self.memory_low_extent = self.memory_low_extent.max(
+            self.nodes
+                .word_count()
+                .max(1)
+                .div_ceil(TEX82_LOW_MEMORY_GROWTH)
+                .saturating_mul(TEX82_LOW_MEMORY_GROWTH),
+        );
+        self.memory_high_extent = self
+            .memory_high_extent
+            .max(format::dynamic_memory_usage(self, None)?);
         self.string_pool
-            .mark_format_baseline(self.tokens.list_head_extent_words());
+            .mark_format_baseline(self.memory_low_extent, self.memory_high_extent);
+        Ok(())
     }
 
     pub(crate) fn restore_string_pool_accounting(&mut self, mut accounting: StringPoolAccounting) {
-        let token_list_baseline = accounting.token_list_baseline();
         accounting.recycling_enabled = true;
+        (self.memory_low_extent, self.memory_high_extent) = accounting.memory_extents();
         self.string_pool = accounting;
-        self.tokens.restore_format_head_reserve(token_list_baseline);
     }
 
     pub(crate) fn select_string_pool_profile(&mut self, profile: StringPoolProfile) {

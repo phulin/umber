@@ -1546,8 +1546,8 @@ impl Universe {
 
     /// Returns TeX82 §638's live `(var_used, dyn_used)` projection.
     #[must_use]
-    pub fn shipout_memory_usage(&self) -> (usize, usize) {
-        self.stores.shipout_memory_usage()
+    pub fn shipout_memory_usage(&mut self, shipped_node: Option<&Node>) -> (usize, usize) {
+        self.stores.shipout_memory_usage(shipped_node)
     }
     /// Removes an ordered suffix from committed artifact/PDF publication.
     pub fn prepare_page_suffix(&mut self, start: usize) -> PreparedPageSuffix {
@@ -2751,7 +2751,9 @@ impl Universe {
             return Err(FormatError::NonEmptyPdfDocument);
         };
         let mut stores = self.stores.clone();
-        stores.mark_string_pool_format_baseline();
+        stores
+            .mark_string_pool_format_baseline()
+            .map_err(map_store_format_error)?;
         let string_pool = stores.string_pool_accounting();
         let stores = stores
             .encode_frozen_format()

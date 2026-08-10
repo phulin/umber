@@ -236,8 +236,6 @@ impl TokenListBuilder {
 pub struct TokenStore {
     arena: Vec<Token>,
     spans: Vec<(u32, u32)>,
-    head_extent: u32,
-    reusable_format_heads: u32,
     semantic_ids: Vec<TokenSemanticId>,
     frozen_lookup: FrozenTokenLookup,
     frozen_len: u32,
@@ -252,8 +250,6 @@ impl Clone for TokenStore {
         Self {
             arena: self.arena.clone(),
             spans: self.spans.clone(),
-            head_extent: self.head_extent,
-            reusable_format_heads: self.reusable_format_heads,
             semantic_ids: self.semantic_ids.clone(),
             frozen_lookup: self.frozen_lookup.clone(),
             frozen_len: self.frozen_len,
@@ -266,39 +262,6 @@ impl Clone for TokenStore {
 }
 
 impl TokenStore {
-    #[must_use]
-    pub(crate) fn token_count(&self) -> usize {
-        self.arena.len()
-    }
-    #[must_use]
-    pub(crate) fn job_list_head_words(&self, format_baseline: usize) -> usize {
-        // tex.web §200 stores one reference-count word immediately before
-        // each token list. The canonical empty list has no corresponding
-        // allocation, and format construction can leave allocator extent from
-        // lists that semantic compaction does not freeze.
-        (self.head_extent.saturating_sub(1) as usize)
-            .saturating_sub(format_baseline)
-            .saturating_sub(self.reusable_format_heads as usize)
-    }
-
-    #[must_use]
-    pub(crate) const fn list_head_extent_words(&self) -> usize {
-        self.head_extent.saturating_sub(1) as usize
-    }
-
-    pub(crate) fn restore_format_head_reserve(&mut self, format_baseline: usize) {
-        let live_frozen_heads = self.spans.len().saturating_sub(1);
-        // The dense frozen column retains the canonical empty semantic list,
-        // while tex.web §200 allocates no reference-count word for it. Carry
-        // that identity slot as one additional reusable allocator position.
-        let empty_identity_slot = usize::from(format_baseline != 0);
-        self.reusable_format_heads = u32_len(
-            format_baseline
-                .saturating_sub(live_frozen_heads)
-                .saturating_add(empty_identity_slot),
-            "format token-list reserve exceeds u32 entries",
-        );
-    }
     #[must_use]
     pub(crate) fn requires_legacy_frozen_key(&self) -> bool {
         matches!(self.frozen_lookup, FrozenTokenLookup::Legacy(_))
@@ -320,8 +283,6 @@ impl TokenStore {
         let mut store = Self {
             arena: Vec::new(),
             spans: vec![(0, 0)],
-            head_extent: 1,
-            reusable_format_heads: 0,
             semantic_ids: vec![TokenSemanticIdBuilder::new().finish()],
             frozen_lookup: FrozenTokenLookup::Direct(
                 crate::frozen_lookup::DirectFrozenLookup::empty(),
@@ -360,8 +321,6 @@ impl TokenStore {
         Ok(Self {
             arena,
             spans,
-            head_extent: count,
-            reusable_format_heads: 0,
             semantic_ids,
             frozen_lookup,
             frozen_len: count,
@@ -693,10 +652,6 @@ impl TokenStore {
             .allocate()
             .expect("token-list identity capacity exhausted");
         assert_eq!(identity.slot() as usize, self.spans.len());
-        self.head_extent = self.head_extent.max(u32_len(
-            self.spans.len() + 1,
-            "token-list spans exceed u32 entries",
-        ));
         TokenListId::from_identity(identity)
     }
 

@@ -88,16 +88,18 @@ Section kind 1 retains the historical directory name
 Universe-level interaction mode, TeX82 allocation-reporting metadata, and a
 versioned pdfTeX INITEX resource DTO. The reporting record carries
 `str_ptr`/`pool_ptr`, the format-relative `init_str_ptr`/`init_pool_ptr`, the
-token-list-head baseline, and the profile's `max_strings`/`pool_size`; typed
+low/high main-memory allocator extents, and the profile's
+`max_strings`/`pool_size`; typed
 control-sequence, filename, hyphenation, and token-list owners retain their own
 bytes and publish only their TeX-style accounting transitions to this record.
-TeX82 §1334's main-memory statistic projects the typed node and token arenas
-under the pinned Web2C capacity profile (tex.web §§125--126). Each token list
-also contributes tex.web §200's one-word reference-count head. The format records the INITEX
-head extent, and loading derives the reusable head reserve left when semantic
-compaction removes unreachable lists. The dense canonical empty-list identity
-does not consume a TeX word. Post-format allocation consumes that reserve
-before extending the reported one-word arena.
+TeX82 §1334's main-memory statistic reports the allocator's low/high coordinate
+extent under the pinned Web2C capacity profile (tex.web §§125--130), not typed
+store occupancy. The low arena grows in 1000-word blocks. The one-word arena is
+derived from the reachable semantic closure; §200 token-list reference heads
+and §384 macro-definition `end_match` words are mapped back from Umber's split,
+hash-consed representation. The format persists both INITEX extents, so loading
+does not reinterpret immutable backing history as live TeX memory. The dense
+canonical empty-list identity does not consume a TeX word.
 Immutable glue-value interning is deliberately outside that projection: it is
 not a third WEB allocator and remains ordinary store state across format
 dump/load.

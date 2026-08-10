@@ -131,6 +131,52 @@ struct StoreFormat {
     last_loaded_font: u32,
 }
 
+/// TeX82 §§125/130/200/384's live one-word-memory use.
+///
+/// Umber's immutable token and macro stores retain unreachable history, so
+/// their backing lengths are not WEB allocator coordinates. The format
+/// closure is the single existing owner of semantic reachability across
+/// meanings, token registers, macro bodies, and node-held token lists.
+pub(super) fn dynamic_memory_usage(
+    stores: &Stores,
+    extra_node: Option<&Node>,
+) -> Result<usize, StoreFormatError> {
+    let format = StoreFormat::capture_with_extra_node(stores, extra_node)?;
+    let mut macro_token_lists = vec![false; format.token_lists.len()];
+    let mut macro_words = 0_usize;
+    for definition in &format.macros {
+        for raw in [definition.parameter_text, definition.replacement_text] {
+            let index = usize::try_from(raw)
+                .map_err(|_| StoreFormatError::Invalid("macro token-list index"))?;
+            let list = format
+                .token_lists
+                .get(index)
+                .ok_or(StoreFormatError::Invalid("macro token-list index"))?;
+            macro_token_lists[index] = true;
+            macro_words = macro_words.saturating_add(list.len());
+        }
+    }
+    let ordinary_token_words = format
+        .token_lists
+        .iter()
+        .enumerate()
+        .filter(|(index, _)| *index != 0 && !macro_token_lists[*index])
+        .map(|(_, list)| list.len().saturating_add(1))
+        .sum::<usize>();
+    // §§200/384 allocate one reference-count head and one `end_match` word
+    // around each macro definition. Umber stores its parameter and
+    // replacement sequences as separate hash-consed lists, so counting those
+    // host list heads (or eqtb aliases of the definition) would report the
+    // representation rather than TeX's one-word allocator.
+    let macro_words = macro_words.saturating_add(format.macros.len().saturating_mul(2));
+    // pdfTeX §130 reserves 15 static high-memory words. Its merged e-TeX
+    // runtime keeps five additional one-word allocator positions outside the
+    // typed token closure; these are profile coordinates, not host objects.
+    Ok(20_usize
+        .saturating_add(ordinary_token_words)
+        .saturating_add(macro_words))
+}
+
 struct ImmutableStoreIdentity {
     names: Vec<FormatName>,
     token_lists: Vec<Vec<FormatToken>>,
@@ -955,8 +1001,44 @@ impl Stores {
 
 impl StoreFormat {
     fn capture(stores: &Stores) -> Result<Self, StoreFormatError> {
+        Self::capture_with_extra_node(stores, None)
+    }
+
+    fn capture_with_extra_node(
+        stores: &Stores,
+        extra_node: Option<&Node>,
+    ) -> Result<Self, StoreFormatError> {
         let immutable = ImmutableStoreIdentity::capture(stores);
-        let mutable = MutableStoreIdentity::capture(stores)?;
+        let mut mutable = MutableStoreIdentity::capture(stores)?;
+        if let Some(extra_node) = extra_node {
+            let mut seen = std::collections::BTreeSet::new();
+            let mut visiting = std::collections::BTreeSet::new();
+            let mut survivor_roots = std::collections::BTreeMap::new();
+            for child in crate::node_arena::NodeRef::from(extra_node).children() {
+                capture_node_list(
+                    stores,
+                    child,
+                    &mut seen,
+                    &mut visiting,
+                    &mut survivor_roots,
+                    &mut mutable.node_lists,
+                    None,
+                )?;
+            }
+            mutable.node_lists.push(FormatNodeList {
+                key: FormatListKey {
+                    survivor_root: None,
+                    start: u32::MAX,
+                    len: 1,
+                },
+                semantic_id: 0,
+                nodes: vec![FormatNode::capture(
+                    stores,
+                    crate::node_arena::NodeRef::from(extra_node),
+                    &mut survivor_roots,
+                )],
+            });
+        }
         let mut format = Self {
             names: immutable.names,
             token_lists: immutable.token_lists,
@@ -982,7 +1064,6 @@ impl StoreFormat {
         if let Some(empty) = live_tokens.first_mut() {
             *empty = true;
         }
-
         for entry in &self.env {
             let cell = crate::cell::CellId::from_raw(entry.cell)
                 .ok_or(StoreFormatError::Invalid("unknown environment cell"))?;

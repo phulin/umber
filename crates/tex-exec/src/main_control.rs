@@ -11441,7 +11441,7 @@ fn shipout_replay_box(
     // is replayed, because replaying it is what changes them.
     let tracing_output = stores.int_param(IntParam::TRACING_OUTPUT);
     let tracing_stats = stores.int_param(IntParam::TRACING_STATS);
-    let memory_before = (tracing_stats > 1).then(|| stores.shipout_memory_usage());
+    let memory_before = (tracing_stats > 1).then(|| stores.shipout_memory_usage(Some(&node)));
     let counts: [i32; 10] =
         std::array::from_fn(|index| stores.count(u16::try_from(index).expect("0..=9 fits u16")));
     let traced_node = (tracing_output > 0).then(|| node.clone());
@@ -11613,7 +11613,7 @@ fn shipout_replay_box(
             .claim_effect_publication(publication.effects.clone(), publication.artifact.effect());
     }
     if let Some(before) = memory_before {
-        let after = stores.shipout_memory_usage();
+        let after = stores.shipout_memory_usage(None);
         print_shipout_memory_usage(stores, command.state.profile(), before, after);
     }
     // The closing bracket prints after `shipout_node_with_input_summary`'s
