@@ -233,12 +233,17 @@ impl CurrentCommand {
 
     /// Replaces the effective meaning while retaining the exact delivered
     /// spelling and stamp. This is solely TeX82's one-delivery `\\noexpand`
-    /// treatment in `get_next` (TeX.web §379).
+    /// treatment in `get_next` (TeX82 §25). `\endcsname` is represented as
+    /// an expandable primitive so the expansion loop can own its dedicated
+    /// boundary, but TeX82 §15 assigns `end_cs_name` a command code at or
+    /// below `max_command`; §25 therefore preserves it through `\noexpand`.
     pub(crate) fn suppress_expandable(&mut self) {
-        if matches!(
-            self.meaning,
-            Meaning::Undefined | Meaning::Macro { .. } | Meaning::ExpandablePrimitive(_)
-        ) {
+        if !matches!(self.identity, CommandIdentity::EndCsName)
+            && matches!(
+                self.meaning,
+                Meaning::Undefined | Meaning::Macro { .. } | Meaning::ExpandablePrimitive(_)
+            )
+        {
             self.meaning = Meaning::Relax;
             self.identity = CommandIdentity::NoExpandFrozenRelax;
         }

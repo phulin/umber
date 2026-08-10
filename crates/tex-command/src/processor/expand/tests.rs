@@ -3856,6 +3856,48 @@ fn noexpand_suppresses_an_undefined_control_sequence() {
     );
 }
 
+/// TeX82 §15 assigns `end_cs_name` a command code below `max_command`, so
+/// §25's one-shot suppression marker must preserve the collector boundary.
+/// §372 can then finish the name even when `\noexpand` immediately precedes
+/// `\endcsname`.
+#[test]
+fn noexpand_preserves_endcsname_as_the_csname_collector_boundary() {
+    let mut command = CommandState::default();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
+    let csname = install_expandable(&mut universe, "csname", ExpandablePrimitive::CsName);
+    let noexpand = install_expandable(&mut universe, "noexpand", ExpandablePrimitive::NoExpand);
+    let endcsname = install_expandable(&mut universe, "endcsname", ExpandablePrimitive::EndCsName);
+    command.push_token_level(
+        TokenPayload::Transient(SharedTokenBuffer::new(vec![
+            traced(Token::Cs(csname)),
+            traced(Token::Char {
+                ch: 'a',
+                cat: Catcode::Letter,
+            }),
+            traced(Token::Cs(noexpand)),
+            traced(Token::Cs(endcsname)),
+        ])),
+        TokenBehavior::Ordinary,
+        RetirementBehavior::Pop,
+        ReplayTrace::BackedUp,
+    );
+    let mut capabilities = CommandHostCapabilities::default();
+    let constructed = {
+        let mut processor = processor(&mut command, &mut universe, &mut capabilities);
+        processor
+            .get_x_token()
+            .expect("csname expansion completes")
+            .expect("constructed control sequence")
+    };
+
+    let Token::Cs(symbol) = constructed.spelling().semantic_token() else {
+        panic!("csname must inject a control sequence");
+    };
+    assert_eq!(universe.resolve(symbol), "a");
+    assert_eq!(universe.meaning(symbol), Meaning::Relax);
+    assert!(command.expansion.pending_diagnostics.is_empty());
+}
+
 #[test]
 fn expandafter_expands_second_token_before_replaying_first() {
     let mut command = CommandState::default();
