@@ -305,6 +305,7 @@ impl Journal {
 
     /// Returns the live TeX82 save-stack words represented by this journal.
     #[must_use]
+    #[cfg(test)]
     pub(crate) const fn canonical_save_stack_words(&self) -> usize {
         self.save_stack.words
     }
