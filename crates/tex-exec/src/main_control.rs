@@ -4481,6 +4481,7 @@ impl MainControl {
                     self.modes.current_list().display_eq_no().is_some(),
                     &mut self.shown_mode,
                     &mut diagnostics,
+                    None,
                     self.set_box_forbidden_depth == 0,
                 )?,
                 OperationDelivery::Replay(None) if display_alignment_tail => match processor
@@ -4508,6 +4509,7 @@ impl MainControl {
                                 false,
                                 &mut self.shown_mode,
                                 &mut diagnostics,
+                                None,
                                 false,
                             )?
                         }
@@ -6657,6 +6659,7 @@ fn scan_noalign_body(
             false,
             shown_mode,
             diagnostics,
+            None,
             true,
         ),
     }
@@ -6776,27 +6779,44 @@ fn scan_alignment_delivery_step(
                 false,
                 shown_mode,
                 diagnostics,
+                Some(alignment),
                 true,
             )
         }
         Some(AlignmentDelivery::Event(event)) => {
-            match event {
-                tex_command::AlignmentDeliveryEvent::EndTemplate(_) => {
-                    processor
-                        .begin_alignment_v_template(alignment, event)
-                        .map_err(command_error)?;
-                    Ok(ScannedStep::AlignmentTemplateEntered)
-                }
-                tex_command::AlignmentDeliveryEvent::ClosingBrace(_) => {
-                    // TeX82 §1132 selects this executor-owned align_group
-                    // branch. Raw brace backup/correction and frozen-\cr
-                    // insertion remain entirely command-owned.
-                    processor
-                        .recover_alignment_closing_brace(event)
-                        .map_err(command_error)?;
-                    Ok(ScannedStep::MissingAlignmentCr)
-                }
-            }
+            scan_alignment_delivery_event(processor, alignment, event)
+        }
+    }
+}
+
+/// Applies a raw-delivery alignment boundary surfaced while TeX82 main
+/// control owns an active entry.
+///
+/// Most boundaries come from `scan_alignment_delivery_step`'s initial
+/// `get_x_token`, but §1045's `\ignorespaces` performs another expanded fetch
+/// before returning to `reswitch`. TeX82 §342 still inserts the v-template at
+/// that nested fetch, so the split executor must receive the same typed event
+/// instead of dispatching the resulting frozen `\endv` as ordinary content.
+fn scan_alignment_delivery_event(
+    processor: &mut CommandProcessor<'_>,
+    alignment: AlignmentIdentity,
+    event: tex_command::AlignmentDeliveryEvent,
+) -> Result<ScannedStep, ExecError> {
+    match event {
+        tex_command::AlignmentDeliveryEvent::EndTemplate(_) => {
+            processor
+                .begin_alignment_v_template(alignment, event)
+                .map_err(command_error)?;
+            Ok(ScannedStep::AlignmentTemplateEntered)
+        }
+        tex_command::AlignmentDeliveryEvent::ClosingBrace(_) => {
+            // TeX82 §1132 selects this executor-owned align_group branch. Raw
+            // brace backup/correction and frozen-\cr insertion remain entirely
+            // command-owned.
+            processor
+                .recover_alignment_closing_brace(event)
+                .map_err(command_error)?;
+            Ok(ScannedStep::MissingAlignmentCr)
         }
     }
 }
@@ -6869,6 +6889,7 @@ fn scan_step(
         display_eq_no,
         shown_mode,
         diagnostics,
+        None,
         true,
     )
 }
@@ -6907,6 +6928,7 @@ fn dispatch_main_control_command(
     display_eq_no: bool,
     shown_mode: &mut Option<Mode>,
     diagnostics: &mut Vec<PendingDiagnostic>,
+    alignment: Option<AlignmentIdentity>,
     set_box_allowed: bool,
 ) -> Result<ScannedStep, ExecError> {
     let origin = command.origin();
@@ -6920,6 +6942,7 @@ fn dispatch_main_control_command(
         display_eq_no,
         shown_mode,
         diagnostics,
+        alignment,
         set_box_allowed,
     )
     .map_err(|error| error.capture_command_origin(origin))
@@ -6936,6 +6959,7 @@ fn dispatch_main_control_command_inner(
     display_eq_no: bool,
     shown_mode: &mut Option<Mode>,
     diagnostics: &mut Vec<PendingDiagnostic>,
+    alignment: Option<AlignmentIdentity>,
     set_box_allowed: bool,
 ) -> Result<ScannedStep, ExecError> {
     // TeX82 §1078 fetches the command following a completed leader payload
@@ -7033,8 +7057,35 @@ fn dispatch_main_control_command_inner(
             command.meaning(),
             Meaning::UnexpandablePrimitive(UnexpandablePrimitive::IgnoreSpaces)
         ) {
-            let Some(next) = processor.next_non_blank_x_token().map_err(command_error)? else {
-                return Ok(ScannedStep::EndOfInput);
+            let next = if let Some(alignment) = alignment {
+                loop {
+                    match processor
+                        .get_x_alignment_delivery(false)
+                        .map_err(command_error)?
+                    {
+                        None => return Ok(ScannedStep::EndOfInput),
+                        Some(AlignmentDelivery::Completed(episode)) => {
+                            return Ok(ScannedStep::ReplayCompleted(episode));
+                        }
+                        Some(AlignmentDelivery::Event(event)) => {
+                            return scan_alignment_delivery_event(processor, alignment, event);
+                        }
+                        Some(AlignmentDelivery::Command(next))
+                            if matches!(
+                                next.meaning(),
+                                Meaning::CharToken {
+                                    cat: Catcode::Space,
+                                    ..
+                                }
+                            ) => {}
+                        Some(AlignmentDelivery::Command(next)) => break next,
+                    }
+                }
+            } else {
+                let Some(next) = processor.next_non_blank_x_token().map_err(command_error)? else {
+                    return Ok(ScannedStep::EndOfInput);
+                };
+                next
             };
             command = next;
             report_command_trace(processor, mode, &command, shown_mode);

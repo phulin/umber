@@ -2490,6 +2490,64 @@ fn align_peek_full_branch_prefix_recovery_and_nesting_matrix() {
 }
 
 #[test]
+fn ignorespaces_surfaces_an_alignment_delimiter_before_fin_col() {
+    // TeX82 §1045 implements `\ignorespaces` by §406's in-place expanded
+    // fetch. When that fetch reaches `&`, §§342/789 must install the
+    // v-template before §791 `fin_col` advances the structural column. The
+    // split executor therefore has to see the typed delimiter event; letting
+    // the scalar helper consume it can dispatch frozen `\endv` in the same
+    // operation and lose this canonical boundary.
+    fn column_at_v_template(source: &[u8]) -> usize {
+        let mut stores = Universe::new_with_plain_catcodes();
+        let mut control = MainControl::tex82_initex(&mut stores);
+        register_source(&mut control, source);
+        let mut observations = ObservationRecorder::default();
+        loop {
+            let before = observations.0.len();
+            match control
+                .step_with_observer(&mut stores, &mut observations)
+                .expect("alignment operation executes")
+            {
+                MainControlStep::Continue => {}
+                MainControlStep::End | MainControlStep::EndOfInput => {
+                    panic!("input ended before the first v-template")
+                }
+            }
+            if observations.0[before..].iter().any(|observation| {
+                matches!(
+                    observation,
+                    CommandObservation::Alignment(record)
+                        if record.transition == "v_template_push"
+                )
+            }) {
+                let column = active_alignment_runtime_snapshot(&control)
+                    .expect("fin_col has not advanced the active entry")
+                    .column;
+                run_to_end_observed(&mut control, &mut stores, &mut observations);
+                assert!(
+                    terminal_text(&stores).is_empty(),
+                    "{}",
+                    terminal_text(&stores)
+                );
+                return column;
+            }
+        }
+    }
+
+    let direct = column_at_v_template(br"\setbox0=\vbox{\halign{#&#\cr X&Y\cr}}\end");
+    let ignored =
+        column_at_v_template(br"\setbox0=\vbox{\halign{#&#\cr X\ignorespaces  &Y\cr}}\end");
+    assert_eq!(
+        direct, 0,
+        "a direct delimiter leaves fin_col for the next step"
+    );
+    assert_eq!(
+        ignored, direct,
+        "the nested §406 fetch must preserve the direct-delimiter boundary"
+    );
+}
+
+#[test]
 fn init_row_halign_valign_leading_tabskip_template_span_and_aux_matrix() {
     // TeX82 §786: first and later rows use one fresh semantic row/cell
     // level, the leading tabskip, the selected first alignrecord, and the
