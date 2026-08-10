@@ -180,12 +180,11 @@ impl SaveStackProjection {
         } else if !saved.contains_key(&cell) {
             // TeX82 §§275--276 represents `restore_zero` in one word,
             // while `restore_old_value` occupies two.
-            let words =
-                if cell.bank() == BankTag::Meaning && rec.old() == Meaning::Undefined.encode() {
-                    1
-                } else {
-                    2
-                };
+            let words = if is_canonical_restore_zero(cell, rec.old()) {
+                1
+            } else {
+                2
+            };
             saved.insert(cell, words);
             self.words = self.words.saturating_add(words);
         }
@@ -211,6 +210,18 @@ impl SaveStackProjection {
             self.words = self.words.saturating_add(1);
             self.groups.push(AHashMap::new());
         }
+    }
+}
+
+fn is_canonical_restore_zero(cell: CellId, old: u64) -> bool {
+    match cell.bank() {
+        BankTag::Meaning => old == Meaning::Undefined.encode(),
+        // TeX82 §240 initializes token-list parameters to
+        // `undefined_control_sequence` at `level_zero`; the typed optional
+        // codec preserves that null value as zero, distinct from a defined
+        // empty list. Sections 275--276 save the null case in one word.
+        BankTag::TokParam => old == 0,
+        _ => false,
     }
 }
 

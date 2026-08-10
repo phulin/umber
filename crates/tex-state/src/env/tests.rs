@@ -107,6 +107,24 @@ fn etex_save_stack_projection_counts_only_enclosing_group_line_words() {
 }
 
 #[test]
+fn save_stack_projection_distinguishes_null_and_defined_token_parameters() {
+    // TeX82 §§240/275--276 use a one-word restore_zero record for a token-list
+    // parameter whose outer value is null. OptionalTokenListIdCodec preserves
+    // defined-empty as a different word, so that case remains the ordinary
+    // two-word restore_old_value negative control.
+    let mut null_outer = Env::new();
+    null_outer.enter_group();
+    null_outer.set_tok_param(TokParam::EVERY_DISPLAY, TokenListId::new(7));
+    assert_eq!(null_outer.canonical_save_stack_words(false), 2);
+
+    let mut defined_empty_outer = Env::new();
+    defined_empty_outer.set_tok_param(TokParam::EVERY_DISPLAY, TokenListId::EMPTY);
+    defined_empty_outer.enter_group();
+    defined_empty_outer.set_tok_param(TokParam::EVERY_DISPLAY, TokenListId::new(7));
+    assert_eq!(defined_empty_outer.canonical_save_stack_words(false), 3);
+}
+
+#[test]
 fn lower_meaning_write_preserves_allocated_higher_segments() {
     let mut env = Env::new();
     let low = Symbol::new(7);
