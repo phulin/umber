@@ -686,6 +686,109 @@ fn pdftex_escape_string_expands_and_escapes_only_pdf_literal_bytes() {
 }
 
 #[test]
+fn pdftex_color_stack_init_scans_canonical_modes_and_allocates_job_state() {
+    // pdftex.web §495: the first optional `page` selects page-start
+    // restoration, the independent `direct`/`page` keyword selects framing,
+    // and an omitted mode means origin framing. The general-text operand is
+    // expanded before allocation and the conversion returns the stack ID.
+    // Fresh and loaded universes are the format-registration negative control.
+    let mut fresh = crate::test_harness::universe_with_plain_catcodes();
+    crate::primitives::install_pdftex_expandable_primitives(&mut fresh);
+    let format = fresh.dump_format().expect("quiescent pdfTeX format");
+    let mut loaded = Universe::from_format(World::default(), &format).expect("format loads");
+    crate::primitives::register_pdftex_expandable_primitives(&mut loaded);
+
+    for mut universe in [fresh, loaded] {
+        let init = universe
+            .symbol("pdfcolorstackinit")
+            .expect("pdfTeX spelling is installed");
+        assert_eq!(
+            universe.meaning(init.symbol()),
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfColorStackInit),
+        );
+        install_macro(
+            &mut universe,
+            "payload",
+            Token::Char {
+                ch: 'D',
+                cat: Catcode::Letter,
+            },
+        );
+        let mut command = CommandState::new(crate::CommandProfile::PDFTEX14029);
+        let source = command
+            .register_source(SourceRegistration::new(
+                RegisteredSourceKind::Generated,
+                br"\pdfcolorstackinit{O}\pdfcolorstackinit page direct{\payload}\pdfcolorstackinit page page{P}\pdfcolorstackinit page{R}%".as_slice(),
+            ))
+            .expect("source registers");
+        command
+            .open_registered_source(source)
+            .expect("source opens");
+        let mut capabilities = CommandHostCapabilities::default();
+
+        {
+            let mut processor = processor(&mut command, &mut universe, &mut capabilities);
+            assert_eq!(rendered(&mut processor), "1234");
+        }
+
+        let origin = universe
+            .apply_pdf_color_stack(
+                1,
+                tex_state::PdfColorStackTarget::Page,
+                &tex_state::PdfColorStackAction::Current,
+            )
+            .expect("origin stack exists");
+        assert_eq!(origin.mode, tex_state::PdfColorStackMode::Origin);
+        assert_eq!(origin.payload, b"O");
+        let direct = universe
+            .apply_pdf_color_stack(
+                2,
+                tex_state::PdfColorStackTarget::Page,
+                &tex_state::PdfColorStackAction::Current,
+            )
+            .expect("direct stack exists");
+        assert_eq!(direct.mode, tex_state::PdfColorStackMode::Direct);
+        assert_eq!(direct.payload, b"D");
+        let page = universe
+            .apply_pdf_color_stack(
+                3,
+                tex_state::PdfColorStackTarget::Page,
+                &tex_state::PdfColorStackAction::Current,
+            )
+            .expect("page stack exists");
+        assert_eq!(page.mode, tex_state::PdfColorStackMode::Page);
+        assert_eq!(page.payload, b"P");
+        let single_page_keyword = universe
+            .apply_pdf_color_stack(
+                4,
+                tex_state::PdfColorStackTarget::Page,
+                &tex_state::PdfColorStackAction::Current,
+            )
+            .expect("single-page-keyword stack exists");
+        assert_eq!(
+            single_page_keyword.mode,
+            tex_state::PdfColorStackMode::Origin,
+            "one `page` keyword is the restoration flag, not the framing mode",
+        );
+        assert_eq!(single_page_keyword.payload, b"R");
+
+        universe.enable_pdf_output();
+        let restorations = universe.pdf_page_color_stack_restorations();
+        assert_eq!(
+            restorations
+                .into_iter()
+                .map(|emission| (emission.mode, emission.payload))
+                .collect::<Vec<_>>(),
+            [
+                (tex_state::PdfColorStackMode::Direct, b"D".to_vec()),
+                (tex_state::PdfColorStackMode::Page, b"P".to_vec()),
+                (tex_state::PdfColorStackMode::Origin, b"R".to_vec()),
+            ],
+        );
+    }
+}
+
+#[test]
 fn creation_date_uses_each_jobs_tracked_clock_fresh_and_after_format_load() {
     // pdftex.web §1590: `pdf_creation_date_code` inserts the immutable
     // job-start timestamp. The LaTeX compatibility spelling and pdfTeX

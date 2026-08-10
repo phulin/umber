@@ -43,6 +43,10 @@ use crate::observation::{
 /// inserted` recovery. Rendering belongs to the diagnostic milestone.
 pub(crate) const MISSING_ENDCSNAME_DIAGNOSTIC: u64 = 0x6373_6e61_6d65_0001;
 
+/// Stable pending-diagnostic identity for pdftex.web §495's color-stack
+/// capacity recovery.
+pub(crate) const TOO_MANY_COLOR_STACKS_DIAGNOSTIC: u64 = 0x7064_6663_7300_0495;
+
 /// TeX82's decimal rendering for a scaled quantity, including its `pt` unit.
 fn format_scaled(value: Scaled) -> String {
     let mut output = String::new();
@@ -948,6 +952,9 @@ impl CommandProcessor<'_> {
             Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfEscapeString) => {
                 self.expand_pdf_escape_string(command)
             }
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfColorStackInit) => {
+                self.expand_pdf_color_stack_init(command)
+            }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfMatch) => {
                 self.expand_pdf_match(command)
             }
@@ -1578,6 +1585,39 @@ impl CommandProcessor<'_> {
         self.state
             .set_pdf_match_state(haystack, captures, subcount, matched);
         self.push_rendered_text(if matched { "1" } else { "0" }, opener.origin());
+        Ok(())
+    }
+
+    /// pdftex.web §495's `pdf_colorstack_init_code` conversion.
+    fn expand_pdf_color_stack_init(&mut self, opener: CurrentCommand) -> Result<(), CommandError> {
+        let restore_at_page_start = self.scan_keyword("page")?.value;
+        let mode = if self.scan_keyword("direct")?.value {
+            tex_state::PdfColorStackMode::Direct
+        } else if self.scan_keyword("page")?.value {
+            tex_state::PdfColorStackMode::Page
+        } else {
+            tex_state::PdfColorStackMode::Origin
+        };
+        let initial = self.scan_balanced_text(true)?.tokens.token_list();
+        let initial = pdftex_token_bytes(&mut self.state, initial);
+        let id = match self
+            .state
+            .allocate_pdf_color_stack(mode, restore_at_page_start, initial)
+        {
+            Ok(id) => id,
+            Err(_) => {
+                self.report_recoverable(
+                    TOO_MANY_COLOR_STACKS_DIAGNOSTIC,
+                    "Too many color stacks".to_owned(),
+                    &[
+                        "The number of color stacks is limited to 32768.",
+                        "I'll use the default color stack 0 here.",
+                    ],
+                );
+                0
+            }
+        };
+        self.push_rendered_text(&id.to_string(), opener.origin());
         Ok(())
     }
 

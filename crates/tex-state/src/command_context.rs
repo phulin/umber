@@ -514,6 +514,18 @@ impl CommandContext<'_> {
         self.universe.pdf_normal_deviate()
     }
 
+    /// Allocates one checkpointed pdfTeX color stack and returns its numeric
+    /// identity for the expandable `\pdfcolorstackinit` conversion.
+    pub fn allocate_pdf_color_stack(
+        &mut self,
+        mode: crate::PdfColorStackMode,
+        restore_at_page_start: bool,
+        initial: Vec<u8>,
+    ) -> Result<u32, crate::PdfColorStackCapacityError> {
+        self.universe
+            .allocate_pdf_color_stack(mode, restore_at_page_start, initial)
+    }
+
     /// Replaces pdfTeX's ungrouped, checkpointed last-match state.
     pub fn set_pdf_match_state(
         &mut self,
