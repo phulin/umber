@@ -150,7 +150,23 @@ pub(super) fn main_memory_usage(
     stores: &Stores,
     extra_node: Option<&Node>,
 ) -> Result<MainMemoryUsage, StoreFormatError> {
-    let format = StoreFormat::capture_with_extra_node(stores, extra_node)?;
+    let extra_nodes = extra_node.map_or(&[][..], std::slice::from_ref);
+    main_memory_usage_inner(stores, extra_nodes, true)
+}
+
+pub(super) fn main_memory_usage_with_extra_nodes(
+    stores: &Stores,
+    extra_nodes: &[Node],
+) -> Result<MainMemoryUsage, StoreFormatError> {
+    main_memory_usage_inner(stores, extra_nodes, false)
+}
+
+fn main_memory_usage_inner(
+    stores: &Stores,
+    extra_nodes: &[Node],
+    include_scratch_extent: bool,
+) -> Result<MainMemoryUsage, StoreFormatError> {
+    let format = StoreFormat::capture_with_extra_nodes(stores, extra_nodes)?;
     let mut macro_token_lists = vec![false; format.token_lists.len()];
     let mut macro_words = 0_usize;
     for definition in &format.macros {
@@ -274,10 +290,16 @@ pub(super) fn main_memory_usage(
     // Section 125's coordinate survives the engine's four one-word scratch
     // allocations outside the retained typed closure. They may be returned to
     // `avail`, but §1334 reports the smallest coordinate ever reached, not
-    // live occupancy.
+    // live occupancy. A construction-time extra list is itself a separate
+    // allocator observation, so it must not charge those historical scratch
+    // positions again.
     let dynamic_extent = dynamic
         .saturating_add(detached_dynamic_extent)
-        .saturating_add(TEX82_UNTYPED_ONE_WORD_SCRATCH_EXTENT);
+        .saturating_add(
+            include_scratch_extent
+                .then_some(TEX82_UNTYPED_ONE_WORD_SCRATCH_EXTENT)
+                .unwrap_or(0),
+        );
     Ok(MainMemoryUsage {
         variable,
         dynamic,
@@ -1119,42 +1141,50 @@ impl Stores {
 
 impl StoreFormat {
     fn capture(stores: &Stores) -> Result<Self, StoreFormatError> {
-        Self::capture_with_extra_node(stores, None)
+        Self::capture_with_extra_nodes(stores, &[])
     }
 
-    fn capture_with_extra_node(
+    fn capture_with_extra_nodes(
         stores: &Stores,
-        extra_node: Option<&Node>,
+        extra_nodes: &[Node],
     ) -> Result<Self, StoreFormatError> {
         let immutable = ImmutableStoreIdentity::capture(stores);
         let mut mutable = MutableStoreIdentity::capture(stores)?;
-        if let Some(extra_node) = extra_node {
+        if !extra_nodes.is_empty() {
             let mut seen = std::collections::BTreeSet::new();
             let mut visiting = std::collections::BTreeSet::new();
             let mut survivor_roots = std::collections::BTreeMap::new();
-            for child in crate::node_arena::NodeRef::from(extra_node).physical_children() {
-                capture_node_list(
-                    stores,
-                    child,
-                    &mut seen,
-                    &mut visiting,
-                    &mut survivor_roots,
-                    &mut mutable.node_lists,
-                    None,
-                )?;
+            for node in extra_nodes {
+                for child in crate::node_arena::NodeRef::from(node).physical_children() {
+                    capture_node_list(
+                        stores,
+                        child,
+                        &mut seen,
+                        &mut visiting,
+                        &mut survivor_roots,
+                        &mut mutable.node_lists,
+                        None,
+                    )?;
+                }
             }
             mutable.node_lists.push(FormatNodeList {
                 key: FormatListKey {
                     survivor_root: None,
                     start: u32::MAX,
-                    len: 1,
+                    len: u32::try_from(extra_nodes.len())
+                        .map_err(|_| StoreFormatError::Invalid("extra node-list length"))?,
                 },
                 semantic_id: 0,
-                nodes: vec![FormatNode::capture(
-                    stores,
-                    crate::node_arena::NodeRef::from(extra_node),
-                    &mut survivor_roots,
-                )],
+                nodes: extra_nodes
+                    .iter()
+                    .map(|node| {
+                        FormatNode::capture(
+                            stores,
+                            crate::node_arena::NodeRef::from(node),
+                            &mut survivor_roots,
+                        )
+                    })
+                    .collect(),
             });
         }
         let mut format = Self {

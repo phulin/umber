@@ -639,7 +639,20 @@ impl Stores {
     }
 
     fn observe_main_memory(&mut self, extra_node: Option<&Node>) -> usize {
-        let usage = format::main_memory_usage(self, extra_node);
+        self.record_main_memory_usage(format::main_memory_usage(self, extra_node))
+    }
+
+    fn observe_main_memory_nodes(&mut self, extra_nodes: &[Node]) -> usize {
+        self.record_main_memory_usage(format::main_memory_usage_with_extra_nodes(
+            self,
+            extra_nodes,
+        ))
+    }
+
+    fn record_main_memory_usage(
+        &mut self,
+        usage: Result<format::MainMemoryUsage, format::StoreFormatError>,
+    ) -> usize {
         let variable_usage = usage
             .as_ref()
             .map_or(TEX82_STATIC_LOW_MEMORY_WORDS, |usage| usage.variable);
@@ -2622,6 +2635,7 @@ impl Stores {
     /// Appends and freezes a node list in the owned epoch arena.
     pub fn freeze_node_list(&mut self, nodes: &[Node]) -> NodeListId {
         let (semantic_id, needs) = self.validate_and_plan_node_list(nodes);
+        self.observe_main_memory_nodes(nodes);
         self.nodes
             .append_preflighted_with_semantic_id(nodes, semantic_id, needs)
     }
@@ -2629,6 +2643,7 @@ impl Stores {
     /// Freezes an owned decoded node vector and clears it for allocation reuse.
     pub fn freeze_node_list_owned(&mut self, nodes: &mut Vec<Node>) -> NodeListId {
         let (semantic_id, needs) = self.validate_and_plan_node_list(nodes);
+        self.observe_main_memory_nodes(nodes);
         self.nodes
             .append_owned_preflighted_with_semantic_id(nodes, semantic_id, needs)
     }
@@ -2636,6 +2651,7 @@ impl Stores {
     /// Freezes the current node-list builder value and clears it for reuse.
     pub fn finish_node_list(&mut self, builder: &mut NodeListBuilder) -> NodeListId {
         let (semantic_id, needs) = self.validate_and_plan_node_list(builder.as_slice());
+        self.observe_main_memory_nodes(builder.as_slice());
         let id =
             self.nodes
                 .append_preflighted_with_semantic_id(builder.as_slice(), semantic_id, needs);

@@ -119,6 +119,29 @@ fn main_memory_projection_separates_variable_and_character_nodes() {
 }
 
 #[test]
+fn main_memory_extent_observes_transient_frozen_node_lists() {
+    let mut variable = Universe::new();
+    variable.freeze_node_list(&vec![Node::Penalty(0); 501]);
+    // TeX82 §§127/157: conversion allocates these two-word nodes before a
+    // completed list is installed in any semantic owner. The §1334 low-arena
+    // coordinate survives even if the temporary result is never retained.
+    assert_eq!(variable.engine_usage_statistics().memory_words, 2_045);
+
+    let mut dynamic = Universe::new();
+    dynamic.freeze_node_list(&vec![
+        Node::Char {
+            font: NULL_FONT,
+            ch: 'x',
+            origin: OriginId::UNKNOWN,
+        };
+        501
+    ]);
+    // Section 135's character nodes use the one-word high arena, so the same
+    // transient list must not invent a low-memory growth block.
+    assert_eq!(dynamic.engine_usage_statistics().memory_words, 1_542);
+}
+
+#[test]
 fn string_pool_accounting_keeps_control_sequences_and_typed_allocations_distinct() {
     let mut universe = Universe::new();
     universe.intern("control-name");
