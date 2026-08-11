@@ -2,7 +2,9 @@
 
 mod finalization_input;
 
-pub use finalization_input::pdf_finalization_input;
+pub use finalization_input::{
+    pdf_finalization_input, pdf_finalization_input_with_raw_object_files,
+};
 use finalization_input::{
     pdf_finalization_input_with_page_records, reserve_virtual_font_resources,
 };
@@ -87,6 +89,7 @@ pub fn pdf_from_committed_artifacts_with_virtual_fonts(
         &page_records,
         DEFAULT_PDF_PK_RESOLUTION,
         virtual_fonts,
+        &crate::PdfRawObjectFileReceipt::default(),
     )
 }
 
@@ -102,6 +105,7 @@ pub fn pdf_from_accepted_artifacts_with_virtual_fonts(
     artifacts: &[CommittedArtifact],
     prepared_pages: Option<&tex_state::PreparedPageSuffix>,
     virtual_fonts: &crate::PdfVirtualFontResources,
+    raw_object_files: &crate::PdfRawObjectFileReceipt,
 ) -> Result<Vec<u8>, PdfBuildError> {
     let mut page_records = stores.pdf_pages().to_vec();
     if let Some(prepared_pages) = prepared_pages {
@@ -113,6 +117,7 @@ pub fn pdf_from_accepted_artifacts_with_virtual_fonts(
         &page_records,
         DEFAULT_PDF_PK_RESOLUTION,
         virtual_fonts,
+        raw_object_files,
     )
 }
 
@@ -128,6 +133,7 @@ pub fn pdf_from_committed_artifacts_at_dpi(
         &page_records,
         driver_dpi,
         &crate::PdfVirtualFontResources::default(),
+        &crate::PdfRawObjectFileReceipt::default(),
     )
 }
 
@@ -138,6 +144,7 @@ fn pdf_from_artifacts_and_page_records_at_dpi_with_virtual_fonts(
     page_records: &[tex_state::PdfPageRecord],
     driver_dpi: i32,
     virtual_fonts: &crate::PdfVirtualFontResources,
+    raw_object_files: &crate::PdfRawObjectFileReceipt,
 ) -> Result<Vec<u8>, PdfBuildError> {
     let input = pdf_finalization_input_with_page_records(
         stores,
@@ -145,6 +152,7 @@ fn pdf_from_artifacts_and_page_records_at_dpi_with_virtual_fonts(
         page_records,
         driver_dpi,
         virtual_fonts,
+        raw_object_files,
     )?;
     let include_info = input.document.metadata.include_info_dictionary;
     let output = tex_out::pdf::finalize_pdf(&input).map_err(map_finalization_error)?;
@@ -309,7 +317,7 @@ fn serialization_options(
     })
 }
 
-fn token_list_bytes(stores: &Universe, id: TokenListId) -> Vec<u8> {
+pub(crate) fn token_list_bytes(stores: &Universe, id: TokenListId) -> Vec<u8> {
     let mut text = String::new();
     for &token in stores.tokens(id) {
         append_token_string_text(stores, token, &mut text);
@@ -342,7 +350,8 @@ pub enum PdfBuildError {
     FormCycle(u32),
     FormTraversalDepthExceeded(usize),
     FormTraversalWorkExceeded(usize),
-    InvalidRawObjectFileName(u32),
+    MissingRawObjectFilePayload(u32),
+    RawObjectFilePayloadMismatch(u32),
     MissingPositionedFont(u32),
     MissingFontProgram(Vec<u8>),
     MissingFontResource(String),
@@ -422,9 +431,13 @@ impl std::fmt::Display for PdfBuildError {
             Self::FormTraversalWorkExceeded(limit) => {
                 write!(f, "PDF form traversal exceeds {limit} references")
             }
-            Self::InvalidRawObjectFileName(id) => {
-                write!(f, "PDF stream object {id} has a non-UTF-8 file name")
+            Self::MissingRawObjectFilePayload(id) => {
+                write!(f, "PDF stream object {id} has no accepted file payload")
             }
+            Self::RawObjectFilePayloadMismatch(id) => write!(
+                f,
+                "PDF stream object {id} file payload does not match its accepted identity"
+            ),
             Self::MissingPositionedFont(font) => {
                 write!(f, "positioned text references missing font resource {font}")
             }

@@ -260,6 +260,7 @@ fn finalize_run(
         );
     }
     let virtual_font_resources = finalization.virtual_font_resources;
+    let pdf_raw_object_file_receipt = finalization.pdf_raw_object_file_receipt;
     let mut stores = finalization.stores;
     let prepared_pages = finalization.prepared_pages;
     let dumped_format = finalization.dumped_format;
@@ -434,6 +435,7 @@ fn finalize_run(
                 &committed_artifacts,
                 prepared_pages.as_ref(),
                 &virtual_font_resources,
+                &pdf_raw_object_file_receipt,
             )?;
             if env::var_os("UMBER_RESOURCE_TELEMETRY").is_some_and(|value| value == "1") {
                 eprintln!(

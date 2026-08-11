@@ -80,9 +80,9 @@ pub use memory_output::{
     collect_final_memory_output_from_commits, collect_final_memory_output_from_plans,
 };
 pub use pdf_output::{
-    PdfBuildError, pdf_finalization_input, pdf_from_accepted_artifacts_with_virtual_fonts,
-    pdf_from_committed_artifacts, pdf_from_committed_artifacts_at_dpi,
-    pdf_from_committed_artifacts_with_virtual_fonts,
+    PdfBuildError, pdf_finalization_input, pdf_finalization_input_with_raw_object_files,
+    pdf_from_accepted_artifacts_with_virtual_fonts, pdf_from_committed_artifacts,
+    pdf_from_committed_artifacts_at_dpi, pdf_from_committed_artifacts_with_virtual_fonts,
 };
 #[cfg(not(target_arch = "wasm32"))]
 pub use prepared_format::{PreparedFormatJob, PreparedFormatProvider};
@@ -248,6 +248,7 @@ pub use virtual_compile::{
     CompileDiagnostic, CompileError, CompileSourceLocation, CompileTelemetry, EngineMode, FileKind,
     FileRequest, FileRequestKey, NeedResources, OutputCapability, OutputCapabilitySet,
     PdfFontClosureReceipt, PdfFontClosureReceiptEntry, PdfFontClosureResourceOutcome,
+    PdfRawObjectFileReceipt, PdfRawObjectFileReceiptEntry, PdfRawObjectFileSource,
     PdfVirtualFontResources, RenderedSourceLocation, RenderedSourceResult, RequestKeyError,
     ResolvedFile, ResolvedPkFont, ResourceDomain, ResourceRequest, ResourceResponse,
     RetentionMetrics, SessionLimits, SessionOptions, SourcePatch, VfsLimitError, VfsLimitKind,

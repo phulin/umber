@@ -2,6 +2,7 @@ use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::path::Path;
+use std::sync::Arc;
 use std::time::Duration;
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::Instant;
@@ -30,10 +31,10 @@ mod resolvers;
 pub use pdf_resources::{CachedLocalTfm, CachedVirtualFont, PdfVirtualFontResources};
 pub(crate) use resolvers::parse_image;
 
-use path::user_path_for_key;
+use path::{RequestedFile, user_path_for_key};
 use resolvers::{FontResolutionPolicy, VirtualRunResolvers};
 use umber_vfs::{
-    AdmissionError, FileOrigin, FileRequestBatch, ProjectWorkspace, ProvisionError,
+    AdmissionError, FileContentId, FileOrigin, FileRequestBatch, ProjectWorkspace, ProvisionError,
     ProvisionOutcome, ResourceLifecycle, TransactionError, UserRegistrationError, VirtualRoot,
 };
 pub use umber_vfs::{
@@ -570,6 +571,32 @@ pub struct AcceptedFinalization {
     pub expansion_stats: tex_incr::ExpansionStats,
     pub virtual_font_resources: PdfVirtualFontResources,
     pub pdf_font_closure_receipt: PdfFontClosureReceipt,
+    pub pdf_raw_object_file_receipt: PdfRawObjectFileReceipt,
+}
+
+/// Identity-pinned file payloads owned by accepted raw PDF objects.
+///
+/// The object number and exact source spelling bind each immutable VFS payload
+/// to the engine ledger that requested it. Detached finalization therefore
+/// never reconstructs a host filename or performs a second read.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct PdfRawObjectFileReceipt {
+    pub entries: BTreeMap<u32, PdfRawObjectFileReceiptEntry>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PdfRawObjectFileReceiptEntry {
+    pub source_name: String,
+    pub source: PdfRawObjectFileSource,
+    pub virtual_path: String,
+    pub content_id: FileContentId,
+    pub bytes: Arc<[u8]>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum PdfRawObjectFileSource {
+    User(VirtualPath),
+    Resolved(FileRequestKey),
 }
 
 /// Complete typed PDF classic-font request closure retained by an accepted
@@ -1126,6 +1153,7 @@ impl VirtualCompileSession {
         } = session
             .into_accepted_universe()
             .map_err(|error| CompileError::Incremental(error.to_string()))?;
+        let pdf_raw_object_file_receipt = pdf_raw_object_file_receipt(&stores, &self.workspace)?;
         Ok(AcceptedFinalization {
             stores,
             prepared_pages,
@@ -1134,6 +1162,7 @@ impl VirtualCompileSession {
             expansion_stats,
             virtual_font_resources: self.virtual_font_resources,
             pdf_font_closure_receipt,
+            pdf_raw_object_file_receipt,
         })
     }
 
@@ -2276,7 +2305,14 @@ impl VirtualCompileSession {
                     .expect("a completed drive exposes its candidate universe"),
             };
             let unavailable_pk_fonts = self.unavailable_pk_font_keys();
-            let discovery = pdf_resources::discover(
+            let raw_object_files =
+                discover_pdf_raw_object_files(stores, &self.workspace).map_err(|message| {
+                    CompileError::OutputCapability {
+                        capability: OutputCapability::Pdf,
+                        message,
+                    }
+                })?;
+            let mut discovery = pdf_resources::discover(
                 stores,
                 &self.workspace,
                 &mut self.virtual_font_resources,
@@ -2287,6 +2323,13 @@ impl VirtualCompileSession {
                 capability: OutputCapability::Pdf,
                 message,
             })?;
+            discovery
+                .required
+                .extend(raw_object_files.into_iter().map(ResourceRequest::File));
+            discovery.required.sort_by_key(resource_sort_key);
+            discovery
+                .required
+                .dedup_by(|left, right| resource_request_key(left) == resource_request_key(right));
             self.pdf_font_closure_requests.extend(
                 discovery
                     .observed_files
@@ -3013,6 +3056,135 @@ fn discover_html_paint_resources(
     }
     required.sort_by_key(resource_sort_key);
     Ok(required)
+}
+
+enum PdfRawObjectFileLookup {
+    Bound(PdfRawObjectFileReceiptEntry),
+    Missing(FileRequest),
+    Unavailable,
+}
+
+fn discover_pdf_raw_object_files(
+    stores: &Universe,
+    workspace: &ProjectWorkspace,
+) -> Result<Vec<FileRequest>, String> {
+    let mut required = BTreeMap::new();
+    for record in stores.pdf_raw_objects() {
+        let Some(data) = record
+            .data()
+            .filter(|data| data.is_stream() && data.is_file())
+        else {
+            continue;
+        };
+        let source = crate::pdf_output::token_list_bytes(stores, data.data());
+        let name = std::str::from_utf8(&source).map_err(|_| {
+            format!(
+                "PDF stream object {} has a non-UTF-8 file name",
+                record.id().raw()
+            )
+        })?;
+        match lookup_pdf_raw_object_file(workspace, name)? {
+            PdfRawObjectFileLookup::Bound(_) => {}
+            PdfRawObjectFileLookup::Missing(request) => {
+                required.entry(request.key().clone()).or_insert(request);
+            }
+            PdfRawObjectFileLookup::Unavailable => {
+                return Err(format!(
+                    "PDF stream object {} file {name:?} is unavailable",
+                    record.id().raw()
+                ));
+            }
+        }
+    }
+    Ok(required.into_values().collect())
+}
+
+fn pdf_raw_object_file_receipt(
+    stores: &Universe,
+    workspace: &ProjectWorkspace,
+) -> Result<PdfRawObjectFileReceipt, CompileError> {
+    let mut entries = BTreeMap::new();
+    for record in stores.pdf_raw_objects() {
+        let Some(data) = record
+            .data()
+            .filter(|data| data.is_stream() && data.is_file())
+        else {
+            continue;
+        };
+        let source = crate::pdf_output::token_list_bytes(stores, data.data());
+        let name = std::str::from_utf8(&source).map_err(|_| CompileError::OutputCapability {
+            capability: OutputCapability::Pdf,
+            message: format!(
+                "PDF stream object {} has a non-UTF-8 file name",
+                record.id().raw()
+            ),
+        })?;
+        let PdfRawObjectFileLookup::Bound(entry) = lookup_pdf_raw_object_file(workspace, name)
+            .map_err(|message| CompileError::OutputCapability {
+                capability: OutputCapability::Pdf,
+                message,
+            })?
+        else {
+            return Err(CompileError::Incremental(format!(
+                "accepted PDF stream object {} has no bound file payload",
+                record.id().raw()
+            )));
+        };
+        entries.insert(record.id().raw(), entry);
+    }
+    Ok(PdfRawObjectFileReceipt { entries })
+}
+
+fn lookup_pdf_raw_object_file(
+    workspace: &ProjectWorkspace,
+    name: &str,
+) -> Result<PdfRawObjectFileLookup, String> {
+    let requested = RequestedFile::parse(FileKind::TexInput, name)
+        .map_err(|error| format!("invalid PDF stream file name {name:?}: {error}"))?;
+    let snapshot = workspace.snapshot();
+    let entry = match requested {
+        RequestedFile::UserOnly(path) => {
+            let Some(file) = snapshot.get(&path).map_err(|error| error.to_string())? else {
+                return Ok(PdfRawObjectFileLookup::Unavailable);
+            };
+            PdfRawObjectFileReceiptEntry {
+                source_name: name.to_owned(),
+                source: PdfRawObjectFileSource::User(path),
+                virtual_path: file.path().as_str().to_owned(),
+                content_id: file.content_id(),
+                bytes: file.shared_bytes(),
+            }
+        }
+        RequestedFile::Remote { user_path, key } => {
+            if let Some(path) = user_path {
+                if let Some(file) = snapshot.get(&path).map_err(|error| error.to_string())? {
+                    return Ok(PdfRawObjectFileLookup::Bound(
+                        PdfRawObjectFileReceiptEntry {
+                            source_name: name.to_owned(),
+                            source: PdfRawObjectFileSource::User(path),
+                            virtual_path: file.path().as_str().to_owned(),
+                            content_id: file.content_id(),
+                            bytes: file.shared_bytes(),
+                        },
+                    ));
+                }
+            }
+            if let Some(file) = workspace.get(&key) {
+                PdfRawObjectFileReceiptEntry {
+                    source_name: name.to_owned(),
+                    source: PdfRawObjectFileSource::Resolved(key),
+                    virtual_path: file.path().as_str().to_owned(),
+                    content_id: file.content_id(),
+                    bytes: file.shared_bytes(),
+                }
+            } else if workspace.is_unavailable(&key) {
+                return Ok(PdfRawObjectFileLookup::Unavailable);
+            } else {
+                return Ok(PdfRawObjectFileLookup::Missing(FileRequest::new(key, name)));
+            }
+        }
+    };
+    Ok(PdfRawObjectFileLookup::Bound(entry))
 }
 
 fn register_classic_html_paint_font(

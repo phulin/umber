@@ -87,6 +87,7 @@ fn accepted_pdf_finalization_includes_the_unpublished_page_suffix() {
         &accepted_artifacts,
         Some(&prepared),
         &crate::PdfVirtualFontResources::default(),
+        &crate::PdfRawObjectFileReceipt::default(),
     )
     .expect("accepted three-page PDF finalizes");
     let accepted_query = test_support::pdf_query::PdfQuery::new(

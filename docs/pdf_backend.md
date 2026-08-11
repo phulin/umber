@@ -58,6 +58,17 @@ handle-free semantic codecs, so loaded objects keep their observable numbers
 without embedding process-local handles. Any committed PDF page or other
 job-only document state still makes the format ineligible.
 
+Raw `\pdfobj stream file` payloads cross the same accepted-resource barrier as
+other output resources. Once engine execution completes, PDF closure discovery
+normalizes each file spelling as a typed TeX-input request. Acceptance retains
+a separate receipt keyed by raw-object identity with the exact source spelling,
+VFS path, content identity, and immutable shared bytes. Detached finalization
+requires that receipt and verifies its spelling and content identity; it never
+reconstructs or reopens a host filename. An unavailable payload fails PDF
+closure before the candidate and its effects are accepted. This receipt is
+independent from the complete classic-font closure receipt: raw object files do
+not become font materialization keys, even when a package uses a `.cmap` name.
+
 Each page receipt also captures the page-local `\pdfhorigin`, `\pdfvorigin`,
 `\pdfpagewidth`, `\pdfpageheight`, `\pdfpageattr`, and
 `\pdfpageresources` values. Finalization reads `\pdfpagesattr` from the final

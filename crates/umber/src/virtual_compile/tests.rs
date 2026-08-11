@@ -1690,6 +1690,165 @@ fn fixture_pfb() -> Vec<u8> {
     bytes
 }
 
+fn pdf_raw_object_file_session() -> VirtualCompileSession {
+    let mut session = VirtualCompileSession::new(SessionOptions {
+        engine: EngineMode::PdfTex,
+        outputs: OutputCapabilitySet::PDF,
+        ..SessionOptions::default()
+    })
+    .expect("PDF session");
+    session
+        .add_user_file(
+            "main.tex",
+            concat!(
+                "\\pdfoutput=1 ",
+                "\\pdfcompresslevel=0 ",
+                "\\pdfobjcompresslevel=0 ",
+                "\\immediate\\pdfobj stream file {t1.cmap} ",
+                "\\shipout\\hbox{}\\end",
+            )
+            .as_bytes()
+            .to_vec(),
+        )
+        .expect("main source");
+    session
+}
+
+#[test]
+fn pdf_raw_object_file_uses_an_identity_pinned_accepted_payload() {
+    const T1_CMAP: &[u8] =
+        b"/CIDInit /ProcSet findresource begin\n12 dict begin\nbegincmap\nendcmap\nend\nend\n";
+    let mut session = pdf_raw_object_file_session();
+    let requested = requests(session.compile_attempt());
+    let [request] = requested.as_slice() else {
+        panic!("expected one raw-object file request, got {requested:?}");
+    };
+    assert_eq!(request.key().kind(), FileKind::TexInput);
+    assert_eq!(request.key().name(), "t1.cmap");
+    assert_eq!(request.original_name(), "t1.cmap");
+    session
+        .provide_resolved_file(
+            request.key().clone(),
+            "/texlive/tex/latex/cmap/t1.cmap",
+            T1_CMAP.to_vec(),
+        )
+        .expect("typed cmap-like payload");
+    assert!(matches!(
+        session.compile_attempt(),
+        CompileAttemptResult::Complete(_)
+    ));
+
+    let accepted = session
+        .into_accepted_finalization()
+        .expect("accepted PDF finalization");
+    let entry = accepted
+        .pdf_raw_object_file_receipt
+        .entries
+        .values()
+        .next()
+        .expect("raw-object file receipt");
+    assert_eq!(entry.source_name, "t1.cmap");
+    assert_eq!(entry.virtual_path, "/texlive/tex/latex/cmap/t1.cmap");
+    assert_eq!(entry.content_id, FileContentId::for_bytes(T1_CMAP));
+    assert_eq!(entry.bytes.as_ref(), T1_CMAP);
+    assert!(matches!(
+        &entry.source,
+        PdfRawObjectFileSource::Resolved(key) if key == request.key()
+    ));
+
+    let mut stores = accepted.stores;
+    let mut artifacts = stores.world().committed_artifacts().to_vec();
+    if let Some(prepared) = &accepted.prepared_pages {
+        artifacts.extend_from_slice(prepared.artifacts());
+    }
+    let pdf = crate::pdf_from_accepted_artifacts_with_virtual_fonts(
+        &mut stores,
+        &artifacts,
+        accepted.prepared_pages.as_ref(),
+        &accepted.virtual_font_resources,
+        &accepted.pdf_raw_object_file_receipt,
+    )
+    .expect("detached finalization uses accepted bytes");
+    assert!(
+        pdf.windows(T1_CMAP.len()).any(|window| window == T1_CMAP),
+        "uncompressed PDF must contain the exact accepted cmap-like payload"
+    );
+}
+
+#[test]
+fn unavailable_pdf_raw_object_file_blocks_acceptance() {
+    let mut session = pdf_raw_object_file_session();
+    let requested = requests(session.compile_attempt());
+    let [request] = requested.as_slice() else {
+        panic!("expected one raw-object file request");
+    };
+    session
+        .provide_resources(vec![ResourceResponse::FileUnavailable(
+            request.key().clone(),
+        )])
+        .expect("authoritative unavailable payload");
+    assert!(matches!(
+        session.compile_attempt(),
+        CompileAttemptResult::Error(CompileError::OutputCapability {
+            capability: OutputCapability::Pdf,
+            ref message,
+        }) if message.contains("t1.cmap") && message.contains("unavailable")
+    ));
+    assert_eq!(
+        session.revision(),
+        None,
+        "failed output closure is not accepted"
+    );
+    assert!(
+        session.into_accepted_finalization().is_err(),
+        "failed raw-object closure cannot cross the effect boundary"
+    );
+}
+
+#[test]
+fn detached_pdf_rejects_a_stale_raw_object_payload_identity() {
+    let mut session = pdf_raw_object_file_session();
+    let requested = requests(session.compile_attempt());
+    let request = requested.first().expect("raw-object request");
+    session
+        .provide_resolved_file(
+            request.key().clone(),
+            "/texlive/t1.cmap",
+            b"accepted cmap bytes".to_vec(),
+        )
+        .expect("raw-object payload");
+    assert!(matches!(
+        session.compile_attempt(),
+        CompileAttemptResult::Complete(_)
+    ));
+    let mut accepted = session
+        .into_accepted_finalization()
+        .expect("accepted finalization");
+    accepted
+        .pdf_raw_object_file_receipt
+        .entries
+        .values_mut()
+        .next()
+        .expect("receipt entry")
+        .bytes = Arc::from(b"changed after acceptance".as_slice());
+    let mut artifacts = accepted.stores.world().committed_artifacts().to_vec();
+    if let Some(prepared) = &accepted.prepared_pages {
+        artifacts.extend_from_slice(prepared.artifacts());
+    }
+    let error = crate::pdf_from_accepted_artifacts_with_virtual_fonts(
+        &mut accepted.stores,
+        &artifacts,
+        accepted.prepared_pages.as_ref(),
+        &accepted.virtual_font_resources,
+        &accepted.pdf_raw_object_file_receipt,
+    )
+    .expect_err("stale payload identity must fail before serialization");
+    assert!(matches!(
+        error,
+        crate::PdfBuildError::RawObjectFilePayloadMismatch(_)
+    ));
+}
+
 #[test]
 fn pdf_virtual_font_closure_uses_typed_bounded_retries() {
     let mut session = VirtualCompileSession::new(SessionOptions {

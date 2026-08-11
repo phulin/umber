@@ -31,14 +31,32 @@ use super::{
 /// Freezes the accepted engine ledger and host-owned resources into the sole
 /// input contract consumed by `tex-out` PDF finalization.
 ///
-/// This is intentionally the last Umber-owned step: artifact and raw-object
-/// file reads, token expansion, engine identifiers, and diagnostics remain on
-/// this side of the boundary.
+/// This is intentionally the last Umber-owned step: artifact lookup, accepted
+/// raw-object payload binding, token expansion, engine identifiers, and
+/// diagnostics remain on this side of the boundary.
 pub fn pdf_finalization_input(
     stores: &mut Universe,
     artifacts: &[CommittedArtifact],
     driver_dpi: i32,
     virtual_fonts: &crate::PdfVirtualFontResources,
+) -> Result<PdfFinalizationInput, PdfBuildError> {
+    pdf_finalization_input_with_raw_object_files(
+        stores,
+        artifacts,
+        driver_dpi,
+        virtual_fonts,
+        &crate::PdfRawObjectFileReceipt::default(),
+    )
+}
+
+/// Freezes finalization input using immutable raw-object file payloads captured
+/// by the accepted resource session.
+pub fn pdf_finalization_input_with_raw_object_files(
+    stores: &mut Universe,
+    artifacts: &[CommittedArtifact],
+    driver_dpi: i32,
+    virtual_fonts: &crate::PdfVirtualFontResources,
+    raw_object_files: &crate::PdfRawObjectFileReceipt,
 ) -> Result<PdfFinalizationInput, PdfBuildError> {
     let page_records = stores.pdf_pages().to_vec();
     pdf_finalization_input_with_page_records(
@@ -47,6 +65,7 @@ pub fn pdf_finalization_input(
         &page_records,
         driver_dpi,
         virtual_fonts,
+        raw_object_files,
     )
 }
 
@@ -56,6 +75,7 @@ pub(super) fn pdf_finalization_input_with_page_records(
     page_records: &[PdfPageRecord],
     driver_dpi: i32,
     virtual_fonts: &crate::PdfVirtualFontResources,
+    raw_object_files: &crate::PdfRawObjectFileReceipt,
 ) -> Result<PdfFinalizationInput, PdfBuildError> {
     let parameters = output_parameters(stores);
     if parameters.output <= 0 {
@@ -298,9 +318,17 @@ pub(super) fn pdf_finalization_input_with_page_records(
             Some(data) if data.is_stream() => {
                 let source = token_list_bytes(stores, data.data());
                 let bytes = if data.is_file() {
-                    let name = std::str::from_utf8(&source)
-                        .map_err(|_| PdfBuildError::InvalidRawObjectFileName(record.id().raw()))?;
-                    Arc::from(stores.world_mut().read_file(name)?.bytes())
+                    let entry = raw_object_files.entries.get(&record.id().raw()).ok_or(
+                        PdfBuildError::MissingRawObjectFilePayload(record.id().raw()),
+                    )?;
+                    if entry.source_name.as_bytes() != source
+                        || crate::FileContentId::for_bytes(&entry.bytes) != entry.content_id
+                    {
+                        return Err(PdfBuildError::RawObjectFilePayloadMismatch(
+                            record.id().raw(),
+                        ));
+                    }
+                    Arc::clone(&entry.bytes)
                 } else {
                     Arc::from(source)
                 };
