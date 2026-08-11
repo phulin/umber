@@ -552,7 +552,7 @@ struct StepSnapshot {
     /// `open_parens` roll back with it too, or a later `\end` would close a
     /// paren that was never really opened.
     job: crate::job::JobFraming,
-    universe: tex_state::Snapshot,
+    universe: tex_state::LocalRetrySnapshot,
 }
 
 impl StepSnapshot {
@@ -579,7 +579,7 @@ impl StepSnapshot {
             end_job_ejection_pending: control.end_job_ejection_pending,
             first_causal_context: control.first_causal_context.clone(),
             job: control.job.clone(),
-            universe: stores.snapshot(),
+            universe: stores.snapshot_for_local_retry(),
         };
         #[cfg(feature = "profiling")]
         crate::step_snapshot_measurement::record_step_snapshot(
@@ -594,7 +594,7 @@ impl StepSnapshot {
         // may contain OriginIds allocated from that owner. No intermediate
         // state with a restored command and a newer provenance timeline is
         // observable outside this method.
-        stores.rollback_for_local_retry(&self.universe);
+        stores.rollback_local_retry_snapshot(self.universe);
         control
             .command
             .rollback(self.command)
@@ -623,7 +623,7 @@ impl StepSnapshot {
     }
 
     fn can_rollback(&self, stores: &Universe) -> bool {
-        stores.can_rollback_to(&self.universe)
+        stores.can_rollback_to_local_retry(&self.universe)
     }
 
     fn commit(self, control: &mut MainControl) {
@@ -2129,6 +2129,7 @@ impl MainControl {
             stores,
             OperationDelivery::Alignment(alignment),
             OperationTransaction::Alignment,
+            1,
             None,
         )? {
             StepResult::Progress(step) => Ok(step),
@@ -2544,6 +2545,7 @@ impl MainControl {
         stores: &mut Universe,
         delivery: OperationDelivery,
         transaction: OperationTransaction,
+        max_operations: usize,
         mut tracked_region: Option<&mut Option<Result<TrackedRegionRecord, TrackedRegionError>>>,
     ) -> Result<StepResult, ExecError> {
         self.record_save_stack_usage(stores);
@@ -2582,8 +2584,47 @@ impl MainControl {
             } else {
                 None
             };
-        let mut applied = self.apply_operation(stores, delivery);
-        self.record_save_stack_usage(stores);
+        // TeX82 §§1030--1038 keep fetching and dispatching commands inside
+        // `main_control`; a host retry point is not a TeX command boundary.
+        // Keep one bounded rollback root across the same 256-command chunk
+        // documented by the stepwise execution contract. Stop earlier at a
+        // named boundary, group-lineage change, terminal result, observation
+        // boundary, or World effect. Effects return to the host immediately:
+        // a later command may read same-run output and hard limits are checked
+        // at this boundary. A resource miss can then
+        // replay at most this bounded prefix while successful delivery avoids
+        // cloning the aggregate command state once per command.
+        let batch_enabled = max_operations > 1
+            && matches!(transaction, OperationTransaction::Advance)
+            && tracked_region.is_none()
+            && self.operation_observations.is_none();
+        let initial_group_depth = stores.group_depth();
+        let initial_boundaries = self.completed_boundaries.len();
+        let initial_effect_pos = stores.world().effect_pos();
+        let mut operations = 0_usize;
+        let mut next_delivery = Some(delivery);
+        let mut applied = loop {
+            let applied = self.apply_operation(
+                stores,
+                next_delivery
+                    .take()
+                    .expect("each batched operation has one delivery policy"),
+            );
+            operations += 1;
+            self.record_save_stack_usage(stores);
+            let continue_batch = matches!(applied, Ok(ReplayStep::Continue))
+                && batch_enabled
+                && operations < max_operations
+                && self.fatal.is_none()
+                && stores.group_depth() == initial_group_depth
+                && self.completed_boundaries.len() == initial_boundaries
+                && stores.world().effect_pos() == initial_effect_pos
+                && snapshot.can_rollback(stores);
+            if !continue_batch {
+                break applied;
+            }
+            next_delivery = Some(OperationDelivery::Replay(None));
+        };
         if let Ok(step) = &applied {
             let termination = self.fatal.map_or_else(
                 || match step {
@@ -2816,6 +2857,31 @@ impl MainControl {
             stores,
             OperationDelivery::Replay(None),
             OperationTransaction::Advance,
+            1,
+            None,
+        )
+    }
+
+    /// Advances one production driver chunk under a single bounded retry
+    /// point. The public one-operation [`Self::advance`] contract remains
+    /// available to diagnostic and focused-test callers.
+    pub(crate) fn advance_batch(&mut self, stores: &mut Universe) -> Result<StepResult, ExecError> {
+        if !self.pure_memo_initialized {
+            let runtime = stores.take_pure_memo_config().map_or_else(
+                tex_state::PureMemoRuntime::default,
+                tex_state::PureMemoRuntime::new,
+            );
+            self.install_pure_memo_runtime(runtime);
+        }
+        stores.attach_pure_memo_capability(&self.pure_memo);
+        if self.fatal.is_some() {
+            return Ok(StepResult::Progress(MainControlStep::End));
+        }
+        self.execute_operation(
+            stores,
+            OperationDelivery::Replay(None),
+            OperationTransaction::Advance,
+            256,
             None,
         )
     }
@@ -2849,6 +2915,7 @@ impl MainControl {
             stores,
             OperationDelivery::Replay(None),
             OperationTransaction::Advance,
+            1,
             Some(&mut region),
         )?;
         Ok(TrackedStepResult { step, region })
@@ -2885,6 +2952,7 @@ impl MainControl {
                     stores,
                     OperationDelivery::Replay(Some(command)),
                     OperationTransaction::Nested,
+                    1,
                     None,
                 )?;
                 Ok(DiagnosticStep::Assignment)
@@ -2955,6 +3023,7 @@ impl MainControl {
             stores,
             OperationDelivery::Replay(redispatch),
             OperationTransaction::Nested,
+            1,
             None,
         )? {
             StepResult::Progress(step) => Ok(step),
@@ -4302,6 +4371,7 @@ impl MainControl {
             stores,
             OperationDelivery::Replay(None),
             OperationTransaction::Advance,
+            1,
             None,
         );
         let mut pending = self.operation_observations.take().unwrap_or_default();

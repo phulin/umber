@@ -300,6 +300,19 @@ pub struct Snapshot {
     state_hash_base: StateHashBase,
 }
 
+/// One private executor-step rollback point.
+///
+/// Unlike [`Snapshot`], this capability does not publish or advance a
+/// semantic checkpoint identity. TeX82 §§1030--1038 deliver and dispatch
+/// commands without creating an observable checkpoint at every command; the
+/// executor retains this rollback-only state solely so a resource suspension
+/// can replay that bounded operation atomically.
+#[doc(hidden)]
+#[derive(Debug)]
+pub struct LocalRetrySnapshot {
+    rollback: ScopedRollback,
+}
+
 /// One immutable accepted-generation state substrate shared by O(1) snapshots.
 #[derive(Debug)]
 pub struct GenerationSubstrate {
@@ -413,6 +426,7 @@ struct ScopedRollback {
     state_hash_base: StateHashBase,
     state_hash_projection_cache: StateHashProjectionCache,
     dependency_tracker: DependencyTrackerSnapshot,
+    geometry_observations_len: usize,
 }
 
 #[derive(serde::Deserialize, serde::Serialize)]
@@ -3008,6 +3022,25 @@ impl Universe {
             && self.world.snapshot_is_retained(&snapshot.world)
     }
 
+    /// Captures a private bounded-operation rollback point without computing
+    /// a durable checkpoint hash.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn snapshot_for_local_retry(&mut self) -> LocalRetrySnapshot {
+        LocalRetrySnapshot {
+            rollback: self.capture_scoped_rollback(),
+        }
+    }
+
+    /// Returns whether `snapshot` still names a valid private retry point.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn can_rollback_to_local_retry(&self, snapshot: &LocalRetrySnapshot) -> bool {
+        snapshot.rollback.owner == self.owner.snapshot_owner()
+            && self.stores.can_restore_snapshot(&snapshot.rollback.store)
+            && self.world.snapshot_is_retained(&snapshot.rollback.world)
+    }
+
     #[must_use]
     pub fn freeze_generation(self) -> GenerationSubstrate {
         GenerationSubstrate::new(self)
@@ -3051,6 +3084,7 @@ impl Universe {
                 .lock()
                 .expect("dependency runtime mutex is not poisoned")
                 .snapshot_tracker(),
+            geometry_observations_len: self.geometry_observations.len(),
         }
     }
 
@@ -3074,6 +3108,8 @@ impl Universe {
             .get_mut()
             .expect("dependency runtime mutex is not poisoned")
             .restore_tracker(&rollback.dependency_tracker);
+        self.geometry_observations
+            .truncate(rollback.geometry_observations_len);
     }
 
     fn checkpoint_from_hash_base(&mut self, hash_base: StateHashBase, exact: bool) -> Snapshot {
@@ -3214,6 +3250,34 @@ impl Universe {
             .restore_tracker(&snapshot.dependency_tracker);
         self.geometry_observations
             .truncate(snapshot.geometry_observations_len);
+    }
+
+    /// Restores a private executor-step rollback point while retaining only
+    /// provenance identities verified for immediate same-step replay.
+    #[doc(hidden)]
+    pub fn rollback_local_retry_snapshot(&mut self, snapshot: LocalRetrySnapshot) {
+        let rollback = snapshot.rollback;
+        assert_eq!(
+            rollback.owner,
+            self.owner.snapshot_owner(),
+            "local retry snapshot belongs to a different Universe instance"
+        );
+        self.world.assert_snapshot_retained(&rollback.world);
+        let receipts = self.stores.rollback_for_retry(&rollback.store);
+        self.consume_env_mutations(receipts);
+        self.world.rollback(&rollback.world);
+        self.input_summary = rollback.input_summary;
+        self.interaction_mode = rollback.interaction_mode;
+        self.page = rollback.page;
+        self.pdf.rollback(rollback.pdf);
+        self.state_hash_base = rollback.state_hash_base;
+        self.state_hash_projection_cache = rollback.state_hash_projection_cache;
+        self.dependencies
+            .get_mut()
+            .expect("dependency runtime mutex is not poisoned")
+            .restore_tracker(&rollback.dependency_tracker);
+        self.geometry_observations
+            .truncate(rollback.geometry_observations_len);
     }
 
     fn rollback_generation_fork(&mut self, snapshot: &Snapshot) {

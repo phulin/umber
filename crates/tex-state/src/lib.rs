@@ -164,7 +164,7 @@ pub use stores::{FontParameterError, GroupFrame, GroupKind, GroupMismatch, Prepa
 pub use universe::{
     BoxBuildTransaction, BoxDimension, EngineBoundaryHasher, FormatError, GenerationForkError,
     GenerationSubstrate, GeometryObservation, InputOpenContext, InputOpenState, InputReadState,
-    InteractionMode, ParagraphShapeLine, PenaltyArrayKind, PreparedPageSuffix,
+    InteractionMode, LocalRetrySnapshot, ParagraphShapeLine, PenaltyArrayKind, PreparedPageSuffix,
     ReplayProbeTransaction, ShipoutTransaction, Snapshot, TakeUnboxResult, TrackedEnvironmentWrite,
     TrackedRegionError, TrackedRegionMark, TrackedRegionRecord, UnboxKind, Universe, WorldMut,
 };

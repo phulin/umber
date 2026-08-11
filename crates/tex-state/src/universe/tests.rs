@@ -1,5 +1,6 @@
 use super::{
-    FormatError, GenerationForkError, TakeUnboxResult, UnboxKind, Universe, utf8_scalar_len_at,
+    FormatError, GenerationForkError, GeometryObservation, TakeUnboxResult, UnboxKind, Universe,
+    utf8_scalar_len_at,
 };
 use crate::env::banks::{IntParam, TokParam};
 use crate::font::{FONT_INFO_CAPACITY, MAX_FONT_DIMEN, NULL_FONT, WEB2C_FONT_INFO_CAPACITY};
@@ -3615,6 +3616,63 @@ fn local_retry_reuses_only_an_identical_provenance_allocation_sequence() {
     universe.rollback_for_local_retry(&snapshot);
     let divergent = universe.source_origin(crate::input::SourceId::new(8), 80, 9, 10);
     assert_ne!(divergent, first);
+}
+
+#[test]
+fn private_local_retry_snapshot_does_not_add_a_checkpoint_hash_boundary() {
+    let mut with_retry_point = Universe::new();
+    let mut without_retry_point = Universe::new();
+
+    with_retry_point.set_count(0, 11);
+    without_retry_point.set_count(0, 11);
+    let snapshot_serial = with_retry_point.next_snapshot_serial;
+    let checkpoint_hash = with_retry_point.state_hash_base.checkpoint_hash;
+    let retry_point = with_retry_point.snapshot_for_local_retry();
+    drop(retry_point);
+    assert_eq!(with_retry_point.next_snapshot_serial, snapshot_serial);
+    assert_eq!(
+        with_retry_point.state_hash_base.checkpoint_hash,
+        checkpoint_hash
+    );
+    with_retry_point.set_count(1, 22);
+    without_retry_point.set_count(1, 22);
+
+    assert_eq!(
+        with_retry_point.snapshot().state_hash(),
+        without_retry_point.snapshot().state_hash(),
+        "TeX82 §§1030--1038 private command delivery must not alter the named checkpoint schedule"
+    );
+}
+
+#[test]
+fn private_local_retry_snapshot_restores_state_and_provenance_for_replay() {
+    let mut retried = Universe::new();
+    let mut untouched = Universe::new();
+    retried.enable_geometry_observation();
+    untouched.enable_geometry_observation();
+    let retry_point = retried.snapshot_for_local_retry();
+
+    retried.set_count(0, 42);
+    let first = retried.source_origin(crate::input::SourceId::new(7), 70, 8, 9);
+    retried.record_geometry_observation(GeometryObservation::Hpack {
+        width_sp: 1,
+        height_sp: 2,
+        depth_sp: 3,
+        line: 4,
+        source: None,
+    });
+    retried.rollback_local_retry_snapshot(retry_point);
+
+    assert_eq!(retried.count(0), 0);
+    assert!(retried.geometry_observations_since(0).is_empty());
+    assert_eq!(
+        retried.source_origin(crate::input::SourceId::new(7), 70, 8, 9),
+        first,
+        "an identical immediate retry preserves its provenance allocation identity"
+    );
+    let retried_hash = retried.snapshot().state_hash();
+    let _ = untouched.source_origin(crate::input::SourceId::new(7), 70, 8, 9);
+    assert_eq!(retried_hash, untouched.snapshot().state_hash());
 }
 
 #[test]

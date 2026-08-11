@@ -4168,6 +4168,73 @@ fn bare_macro_parameter_commit_survives_later_input_retry_without_duplication() 
 }
 
 #[test]
+fn production_batch_uses_one_retry_point_for_multiple_ordinary_commands() {
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
+    let mut control = MainControl::tex82_initex(&mut stores);
+    register_source(&mut control, br"\count0=11 \count1=22 \end");
+
+    assert_eq!(
+        control.advance_batch(&mut stores).expect("batch completes"),
+        StepResult::Progress(ReplayStep::End)
+    );
+    assert_eq!(stores.count(0), 11);
+    assert_eq!(stores.count(1), 22);
+    assert_eq!(control.advance_telemetry().attempts, 1);
+    assert_eq!(control.advance_telemetry().commits, 1);
+}
+
+#[test]
+fn production_batch_rolls_back_its_bounded_prefix_on_resource_need() {
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
+    let mut control = MainControl::tex82_initex(&mut stores);
+    register_source(&mut control, br"\count0=11 \input child\end");
+
+    assert!(matches!(
+        control.advance_batch(&mut stores).expect("batch suspends"),
+        StepResult::Suspended(ResourceNeed::Input { name, .. }) if name == "child.tex"
+    ));
+    assert_eq!(stores.count(0), 0, "the whole bounded prefix rolls back");
+    assert_eq!(control.advance_telemetry().rollbacks, 1);
+
+    control.capabilities_mut().register_input(
+        "child.tex",
+        SourceRegistration::new(RegisteredSourceKind::Generated, Arc::<[u8]>::from(&b""[..])),
+    );
+    let mut retried = control.advance_batch(&mut stores).expect("retry resumes");
+    for _ in 0..8 {
+        if retried == StepResult::Progress(ReplayStep::End) {
+            break;
+        }
+        retried = control
+            .advance_batch(&mut stores)
+            .expect("effect-bounded retry continues");
+    }
+    assert_eq!(retried, StepResult::Progress(ReplayStep::End));
+    assert_eq!(stores.count(0), 11);
+    let telemetry = control.advance_telemetry();
+    assert_eq!(telemetry.rollbacks, 1);
+    assert_eq!(telemetry.attempts, telemetry.commits + telemetry.rollbacks);
+}
+
+#[test]
+fn production_batch_returns_after_a_world_effect() {
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
+    let mut control = MainControl::tex82_initex(&mut stores);
+    register_source(&mut control, br"\message{effect}\count0=11 \end");
+
+    assert_eq!(
+        control.advance_batch(&mut stores).expect("effect commits"),
+        StepResult::Progress(ReplayStep::Continue)
+    );
+    assert_eq!(
+        stores.count(0),
+        0,
+        "later input remains for the next host step"
+    );
+    assert_eq!(control.advance_telemetry().attempts, 1);
+}
+
+#[test]
 fn extra_endcsname_reports_once_and_continues_with_observer_parity_in_every_mode() {
     // TeX82 §1135: `cs_error` diagnoses and ignores one stray `\endcsname`.
     for mode in [

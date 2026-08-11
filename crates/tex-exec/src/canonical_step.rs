@@ -283,7 +283,7 @@ impl<'a> CanonicalStepRunner<'a> {
         }
         let result = match observer {
             Some(observer) => self.control.advance_with_observer(self.universe, observer),
-            None => self.control.advance(self.universe),
+            None => self.control.advance_batch(self.universe),
         };
         let step = match result {
             Ok(StepResult::Progress(step)) => step,

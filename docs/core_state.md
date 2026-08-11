@@ -373,6 +373,17 @@ group. Rollback may unwind descendant groups entered after capture, while an
 exited-and-replaced enclosing group invalidates the snapshot even if the live
 stack later returns to the same depth and journal position.
 
+The executor's private bounded retry point uses `LocalRetrySnapshot`. It
+captures the same rollback substrate and group-lineage capability, but it does
+not publish, compute, or advance the durable semantic state identity. TeX82
+§§1030--1038 dispatch commands within `main_control`; only the named checkpoint
+schedule is a semantic hashing boundary. The unobserved production driver
+therefore reuses one private retry point across at most 256 operations and
+stops earlier at a named boundary, group-lineage change, terminal result,
+observation boundary, or world effect. Returning after an effect preserves the
+host boundary at which same-run output becomes readable and effect budgets are
+enforced.
+
 The string-pool store follows the same bound. TeX82 §44's pool coordinates and
 Web2C tex.ch [29.517]'s `search_string` membership are semantic state, but a
 snapshot retains only their scalar coordinates and the position in an

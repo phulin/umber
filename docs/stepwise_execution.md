@@ -230,7 +230,7 @@ Immediately before a candidate step, the run captures `StepSavepoint`:
 
 ```text
 StepSavepoint {
-    universe: Snapshot,
+    universe: LocalRetrySnapshot,
     command: CommandStateSnapshot,
     modes: ModeNest rollback root,
     control: execution rollback roots,
@@ -241,6 +241,16 @@ StepSavepoint {
     next_step and end flags,
 }
 ```
+
+`LocalRetrySnapshot` retains the rollback roots but does not construct or
+advance a semantic state hash. Only a named checkpoint asks `Universe` for the
+durable `Snapshot` identity described in the core-state contract. The
+unobserved production runner holds one local retry snapshot across its bounded
+256-operation chunk; diagnostic one-operation and observed-delivery entry
+points retain their narrower boundary.
+The chunk also returns after a world effect so the host can publish same-run
+output before a later command probes it and can enforce the pending-effect
+budget at the first exceeding operation.
 
 The savepoint excludes cumulative accounting and the cancellation latch. A
 candidate accumulates named checkpoints, read-recorder observations, and
