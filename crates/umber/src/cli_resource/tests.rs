@@ -273,6 +273,95 @@ fn verified_shard_absence_returns_typed_unavailable() {
 }
 
 #[test]
+fn distribution_tex_input_uses_web2c_ordered_appended_tex_fallback() {
+    let directory = TempDir::new().expect("distribution tempdir");
+    let objects = directory.path().join("objects");
+    std::fs::create_dir_all(&objects).expect("objects directory");
+    let exact = b"exact file wins";
+    let shadow = b"appended shadow loses";
+    let fallback = b"appended fallback";
+    let wrong_kind = b"not a font-program fallback";
+    let entries = [
+        ("tex:exact.ltd", "/texlive/exact.ltd", exact.as_slice()),
+        (
+            "tex:exact.ltd.tex",
+            "/texlive/exact.ltd.tex",
+            shadow.as_slice(),
+        ),
+        (
+            "tex:fallback.ltd.tex",
+            "/texlive/fallback.ltd.tex",
+            fallback.as_slice(),
+        ),
+        (
+            "tex:program.pfb.tex",
+            "/texlive/program.pfb.tex",
+            wrong_kind.as_slice(),
+        ),
+    ];
+    let mut files = Vec::new();
+    for (key, virtual_path, bytes) in entries {
+        let digest = hex_digest(bytes);
+        std::fs::write(objects.join(format!("sha256-{digest}")), bytes)
+            .expect("distribution object");
+        files.push(format!(
+            "\"{key}\":{{\"virtualPath\":\"{virtual_path}\",\"object\":\"sha256-{digest}\",\"sha256\":\"{digest}\",\"bytes\":{}}}",
+            bytes.len()
+        ));
+    }
+    let shard = format!(
+        "{{\"schema\":1,\"distribution\":\"appended-tex\",\"index\":0,\"files\":{{{}}}}}\n",
+        files.join(",")
+    );
+    write_sharded_root(
+        directory.path(),
+        "appended-tex",
+        0,
+        &[(shard.as_str(), true)],
+    );
+    let program = FileRequest::new(
+        crate::FileRequestKey::new(FileKind::PdfFontProgram, "program.pfb")
+            .expect("program request"),
+        "program.pfb",
+    );
+    let mut resolver = DistributionResolver::new(
+        ObjectCache::new(directory.path().join("cache")),
+        Some(directory.path().to_string_lossy().into_owned()),
+        None,
+        true,
+    );
+
+    let responses = resolver
+        .resolve_batch(
+            &local_resolver(directory.path()),
+            &needs(vec![
+                file_request("exact.ltd"),
+                file_request("fallback.ltd"),
+                ResourceRequest::File(program),
+            ]),
+            &FetchCancellation::new(),
+        )
+        .expect("ordered distribution lookup");
+    assert!(responses.iter().any(|response| matches!(
+        response,
+        ResourceResponse::File(file)
+            if file.request.name() == "exact.ltd" && file.bytes == exact
+    )));
+    assert!(responses.iter().any(|response| matches!(
+        response,
+        ResourceResponse::File(file)
+            if file.request.name() == "fallback.ltd"
+                && file.virtual_path == "/texlive/fallback.ltd.tex"
+                && file.bytes == fallback
+    )));
+    assert!(responses.iter().any(|response| matches!(
+        response,
+        ResourceResponse::FileUnavailable(key)
+            if key.kind() == FileKind::PdfFontProgram && key.name() == "program.pfb"
+    )));
+}
+
+#[test]
 fn offline_local_distribution_reports_a_missing_object_distinctly_from_a_missing_key() {
     let directory = TempDir::new().expect("distribution tempdir");
     let bytes = b"object deliberately absent from mirror";

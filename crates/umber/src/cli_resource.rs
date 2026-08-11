@@ -25,10 +25,10 @@ use umber_fetch::{
 
 use crate::{
     AcceptedFinalization, CompileAttemptResult, CompileError, CompileTelemetry, EngineMode,
-    FileContentId, FileKind, FileRequest, MemoryRunOutput, NeedResources, OutputCapability,
-    OutputCapabilitySet, ResolvedFile, ResolvedPkFont, ResourceRequest, ResourceResponse,
-    SessionLimits, SessionOptions, SourcePatch, TexFontSearchPath, TexInputSearchPath,
-    VirtualCompileSession,
+    FileContentId, FileKind, FileRequest, FileRequestKey, MemoryRunOutput, NeedResources,
+    OutputCapability, OutputCapabilitySet, ResolvedFile, ResolvedPkFont, ResourceRequest,
+    ResourceResponse, SessionLimits, SessionOptions, SourcePatch, TexFontSearchPath,
+    TexInputSearchPath, VirtualCompileSession,
 };
 
 pub const DEFAULT_DISTRIBUTION_URL: &str =
@@ -935,13 +935,16 @@ impl DistributionResolver {
         telemetry.manifest_lookup_time = telemetry
             .manifest_lookup_time
             .saturating_add(manifest_started.elapsed());
-        let mut original_files = BTreeMap::new();
+        let mut original_files = BTreeMap::<String, Vec<FileRequestKey>>::new();
         for request in &unresolved {
             let Some(key) = distribution_file_key(request)? else {
                 responses.push(ResourceResponse::FileUnavailable(request.key().clone()));
                 continue;
             };
-            original_files.insert(key.manifest_key().to_string(), request.key().clone());
+            original_files
+                .entry(key.manifest_key().to_string())
+                .or_default()
+                .push(request.key().clone());
         }
         let mut keys_by_shard = BTreeMap::<u32, Vec<String>>::new();
         for key in original_files.keys() {
@@ -974,65 +977,60 @@ impl DistributionResolver {
         }
         let mut required = BTreeMap::<String, ShardFile>::new();
         let mut hints = BTreeMap::<String, DependencyHint>::new();
-        for (index, keys) in keys_by_shard {
-            let manifest_started = Instant::now();
-            telemetry.manifest_lookups = telemetry.manifest_lookups.saturating_add(1);
-            if self
-                .loaded
-                .as_ref()
-                .is_some_and(|loaded| loaded.shards.contains_key(&index))
-            {
-                telemetry.manifest_cache_hits = telemetry.manifest_cache_hits.saturating_add(1);
-            }
-            let shard = self.load_shard(index, cancellation)?;
-            telemetry.manifest_lookup_time = telemetry
-                .manifest_lookup_time
-                .saturating_add(manifest_started.elapsed());
-            let requests = keys
-                .iter()
-                .map(|key| {
-                    DistributionFileRequestKey::from_manifest_key(key)
-                        .map(ManifestRequest::File)
-                        .map_err(|error| NativeRunError::Selection(error.to_string()))
-                })
-                .collect::<Result<Vec<_>, _>>()?;
-            let selection = select_shard(shard, &requests);
-            for miss in selection.misses {
-                let ManifestMiss::File(key) = miss else {
-                    unreachable!("native distribution batch selects only files")
-                };
-                let key = key.manifest_key().to_string();
-                let original = original_files
-                    .remove(&key)
-                    .expect("requested key has an original file request");
-                responses.push(ResourceResponse::FileUnavailable(original));
-            }
-            for job in selection.jobs {
-                let key = job.manifest_key.to_string();
-                match job.requirement {
-                    JobRequirement::Required => {
-                        let entry = shard
-                            .files
-                            .get(&key)
-                            .expect("shared shard selection returns the selected file");
-                        required.insert(key, entry.clone());
-                    }
-                    JobRequirement::DependencyHint => {
-                        hints.entry(key.clone()).or_insert_with(|| DependencyHint {
-                            key,
-                            virtual_path: job
-                                .virtual_path
-                                .expect("file dependency hints carry a virtual path"),
-                            object: job.object.object,
-                            sha256: job.object.sha256,
-                            bytes: job.object.bytes,
-                        });
-                    }
+        let mut fallback_files = BTreeMap::<String, Vec<FileRequestKey>>::new();
+        let exact_misses = self.select_required_manifest_files(
+            keys_by_shard,
+            &mut hinted_keys,
+            cancellation,
+            telemetry,
+            &mut required,
+            &mut hints,
+        )?;
+        for key in exact_misses {
+            let originals = original_files
+                .remove(&key)
+                .expect("requested key has an original file request");
+            for original in originals {
+                if let Some(fallback) = appended_tex_distribution_key(&original)? {
+                    fallback_files
+                        .entry(fallback.manifest_key().to_string())
+                        .or_default()
+                        .push(original);
+                } else {
+                    responses.push(ResourceResponse::FileUnavailable(original));
                 }
             }
-            if let Some(keys) = hinted_keys.remove(&index) {
-                collect_closure_hints(shard, keys, &required, &mut hints);
-            }
+        }
+        let mut fallback_keys_by_shard = BTreeMap::<u32, Vec<String>>::new();
+        for key in fallback_files.keys() {
+            fallback_keys_by_shard
+                .entry(
+                    shard_index_for_key(key, shard_bits)
+                        .map_err(|error| NativeRunError::Selection(error.to_string()))?,
+                )
+                .or_default()
+                .push(key.clone());
+        }
+        let fallback_misses = self.select_required_manifest_files(
+            fallback_keys_by_shard,
+            &mut hinted_keys,
+            cancellation,
+            telemetry,
+            &mut required,
+            &mut hints,
+        )?;
+        for key in fallback_misses {
+            let originals = fallback_files
+                .remove(&key)
+                .expect("fallback key has an original file request");
+            responses.extend(originals.into_iter().map(ResourceResponse::FileUnavailable));
+        }
+        for (manifest_key, originals) in fallback_files {
+            original_hints.remove(&manifest_key);
+            original_files
+                .entry(manifest_key)
+                .or_default()
+                .extend(originals);
         }
         for (index, keys) in hinted_keys {
             let manifest_started = Instant::now();
@@ -1143,7 +1141,7 @@ impl DistributionResolver {
             let data = bytes
                 .remove(&manifest_key)
                 .expect("fetched required object");
-            let key = original_files
+            let keys = original_files
                 .remove(&manifest_key)
                 .expect("original file request");
             let hash_started = Instant::now();
@@ -1151,12 +1149,14 @@ impl DistributionResolver {
             telemetry.content_hash_time = telemetry
                 .content_hash_time
                 .saturating_add(hash_started.elapsed());
-            responses.push(ResourceResponse::File(ResolvedFile {
-                request: key,
-                expected_digest: Some(expected_digest),
-                virtual_path: entry.virtual_path,
-                bytes: data,
-            }));
+            for key in keys {
+                responses.push(ResourceResponse::File(ResolvedFile {
+                    request: key,
+                    expected_digest: Some(expected_digest),
+                    virtual_path: entry.virtual_path.clone(),
+                    bytes: data.clone(),
+                }));
+            }
         }
         for (manifest_key, key) in original_hints {
             let Some(data) = bytes.remove(&manifest_key) else {
@@ -1184,6 +1184,76 @@ impl DistributionResolver {
                 .saturating_sub(telemetry.content_hash_time.saturating_sub(hash_before)),
         );
         Ok(ResolvedDistributionBatch { responses })
+    }
+
+    #[allow(clippy::disallowed_methods)] // Process telemetry; TeX state never observes it.
+    fn select_required_manifest_files(
+        &mut self,
+        keys_by_shard: BTreeMap<u32, Vec<String>>,
+        hinted_keys: &mut BTreeMap<u32, Vec<String>>,
+        cancellation: &FetchCancellation,
+        telemetry: &mut ResolverTelemetry,
+        required: &mut BTreeMap<String, ShardFile>,
+        hints: &mut BTreeMap<String, DependencyHint>,
+    ) -> Result<Vec<String>, NativeRunError> {
+        let mut misses = Vec::new();
+        for (index, keys) in keys_by_shard {
+            let manifest_started = Instant::now();
+            telemetry.manifest_lookups = telemetry.manifest_lookups.saturating_add(1);
+            if self
+                .loaded
+                .as_ref()
+                .is_some_and(|loaded| loaded.shards.contains_key(&index))
+            {
+                telemetry.manifest_cache_hits = telemetry.manifest_cache_hits.saturating_add(1);
+            }
+            let shard = self.load_shard(index, cancellation)?;
+            telemetry.manifest_lookup_time = telemetry
+                .manifest_lookup_time
+                .saturating_add(manifest_started.elapsed());
+            let requests = keys
+                .iter()
+                .map(|key| {
+                    DistributionFileRequestKey::from_manifest_key(key)
+                        .map(ManifestRequest::File)
+                        .map_err(|error| NativeRunError::Selection(error.to_string()))
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            let selection = select_shard(shard, &requests);
+            misses.extend(selection.misses.into_iter().map(|miss| {
+                let ManifestMiss::File(key) = miss else {
+                    unreachable!("native distribution batch selects only files")
+                };
+                key.manifest_key().to_string()
+            }));
+            for job in selection.jobs {
+                let key = job.manifest_key.to_string();
+                match job.requirement {
+                    JobRequirement::Required => {
+                        let entry = shard
+                            .files
+                            .get(&key)
+                            .expect("shared shard selection returns the selected file");
+                        required.insert(key, entry.clone());
+                    }
+                    JobRequirement::DependencyHint => {
+                        hints.entry(key.clone()).or_insert_with(|| DependencyHint {
+                            key,
+                            virtual_path: job
+                                .virtual_path
+                                .expect("file dependency hints carry a virtual path"),
+                            object: job.object.object,
+                            sha256: job.object.sha256,
+                            bytes: job.object.bytes,
+                        });
+                    }
+                }
+            }
+            if let Some(keys) = hinted_keys.remove(&index) {
+                collect_closure_hints(shard, keys, required, hints);
+            }
+        }
+        Ok(misses)
     }
 
     fn resolve_generic_asset(
@@ -1593,6 +1663,30 @@ fn distribution_file_key(
         _ => return Ok(None),
     };
     DistributionFileRequestKey::new(kind, request.key().name())
+        .map(Some)
+        .map_err(|error| NativeRunError::Selection(error.to_string()))
+}
+
+/// Web2C `tex.ch` [29.537] asks Kpathsea to try both an input name as written
+/// and the same name with `.tex` appended, even when the written name already
+/// has an extension. The local resolver performs the same ordered fallback;
+/// this returns only the second candidate for a remote manifest miss.
+fn appended_tex_distribution_key(
+    request: &FileRequestKey,
+) -> Result<Option<DistributionFileRequestKey>, NativeRunError> {
+    if request.kind() != FileKind::TexInput {
+        return Ok(None);
+    }
+    let path = Path::new(request.name());
+    if path.extension().is_none_or(|extension| extension == "tex") {
+        return Ok(None);
+    }
+    let mut name = path.as_os_str().to_os_string();
+    name.push(".tex");
+    let name = name
+        .to_str()
+        .ok_or_else(|| NativeRunError::Selection("TeX input name is not valid UTF-8".into()))?;
+    DistributionFileRequestKey::new(DistributionFileKind::Tex, name)
         .map(Some)
         .map_err(|error| NativeRunError::Selection(error.to_string()))
 }
