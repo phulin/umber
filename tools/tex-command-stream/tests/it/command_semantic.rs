@@ -380,13 +380,13 @@ fn loaded_projection_distinguishes_explicit_end_from_nested_source_exhaustion() 
 #[test]
 fn v2_identity_capture_policy_and_resolved_channels_match_the_migrated_corpus() {
     let cases = load_suite().expect("valid command-semantic corpus");
-    assert_eq!(cases.len(), 207);
+    assert_eq!(cases.len(), 208);
     assert_eq!(
         cases
             .iter()
             .map(|declared| declared.case.expected.len())
             .sum::<usize>(),
-        1_319
+        1_320
     );
 
     let selected_raw: Vec<_> = cases
@@ -469,7 +469,7 @@ fn v2_identity_capture_policy_and_resolved_channels_match_the_migrated_corpus() 
 
     // One compact identity replaces the former 467-line census while pinning
     // every resolved field, including routes, projections, xfails, channels,
-    // statuses, host inputs, and interaction policy for all 207 cases.
+    // statuses, host inputs, and interaction policy for all 208 cases.
     let mut digest = Sha256::new();
     for declared in &cases {
         assert_eq!(
@@ -493,7 +493,7 @@ fn v2_identity_capture_policy_and_resolved_channels_match_the_migrated_corpus() 
     }
     assert_eq!(
         format!("{:x}", digest.finalize()),
-        "0fcff26cdf3629934c4bea9ef872d5a3bb898831f0ddd75bda56c112b3948989"
+        "3ebc10c974cce6e69d458b27a804c8a1df57a1015df84419dcf2f4e3b75caedb"
     );
 }
 

@@ -1,0 +1,25 @@
+{
+  "channels": {
+    "events": 79
+  },
+  "expected": [
+    "count:30=-328910"
+  ],
+  "profile": "production",
+  "projection": {
+    "count_registers": [
+      30
+    ],
+    "kind": "state"
+  },
+  "property_id": "tex82.scanner.dimension-internal-relative-infinite-units",
+  "provenance": {
+    "authority": "pdftex.web",
+    "manifest": "tests/pdftex14029-oracle-manifest.txt",
+    "sections": [
+      32,
+      455
+    ]
+  },
+  "schema": 2
+}

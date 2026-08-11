@@ -1,5 +1,6 @@
 //! Executor-facing canonical scalar scanners.
 
+use tex_state::env::banks::DimenParam;
 use tex_state::glue::{GlueSpec, Order};
 use tex_state::ids::{FontId, TokenListId};
 use tex_state::interner::Symbol;
@@ -1506,6 +1507,18 @@ impl CommandProcessor<'_> {
                     self.scan_optional_space()?;
                     return Ok((DimensionUnit::Internal(unit), None));
                 }
+            }
+            // pdfTeX 1.40.29 §455 extends TeX82's internal-dimension-unit
+            // branch after `em` and `ex` with `px`, whose live scale is the
+            // assignable `\pdfpxdimen` parameter initialized in §32a. This
+            // belongs to the installed pdfTeX command profile, like the
+            // additional physical units in §458 below.
+            if self.command.profile().capabilities().supports_pdftex()
+                && self.scan_keyword("px")?.value
+            {
+                let unit = self.state.dimen_param(DimenParam::PDF_PX_DIMEN.raw());
+                self.scan_optional_space()?;
+                return Ok((DimensionUnit::Internal(unit), None));
             }
         }
         // §456: a mu dimension admits only the `mu` unit, and `true` is never

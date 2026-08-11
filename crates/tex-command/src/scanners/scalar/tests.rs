@@ -1,4 +1,5 @@
 use tex_state::Universe;
+use tex_state::env::banks::DimenParam;
 use tex_state::meaning::Meaning;
 use tex_state::token::{Catcode, Token};
 use tex_state::{EffectRecord, PenaltyArrayKind, PrintSink};
@@ -4545,6 +4546,76 @@ fn dimension_font_relative_units_cover_em_ex_fraction_and_optional_space_boundar
 }
 
 #[test]
+fn pdftex_px_unit_uses_live_pdfpxdimen() {
+    // pdfTeX 1.40.29 §455 recognizes `px` beside `em` and `ex`, scales it
+    // through the live §32a `\pdfpxdimen`, and takes the same internal-unit
+    // exit with one optional trailing space.
+    let mut universe = crate::test_harness::universe();
+    universe.set_dimen_param(
+        DimenParam::PDF_PX_DIMEN,
+        Scaled::from_raw(3 * Scaled::UNITY),
+    );
+    let mut command = CommandState::new(CommandProfile::PDFTEX14029);
+    push(&mut command, scanner_tokens("-2.5px 7"));
+    let mut capabilities = CommandHostCapabilities::default();
+    let (pixels, following) = {
+        let mut processor = CommandProcessor::new(
+            &mut command,
+            universe.command_context(),
+            CommandHostContext::new(&mut capabilities),
+        );
+        (
+            processor
+                .scan_dimension()
+                .expect("pdfTeX px unit scans")
+                .value
+                .raw(),
+            processor
+                .scan_integer()
+                .expect("following integer scans")
+                .value,
+        )
+    };
+
+    assert_eq!(pixels, -(7 * Scaled::UNITY + Scaled::UNITY / 2));
+    assert_eq!(following, 7);
+    assert!(!diagnostic_text(&universe).contains("Illegal unit of measure"));
+}
+
+#[test]
+fn non_pdftex_profiles_reject_px_without_consuming_the_suffix() {
+    // TeX82 §455 and e-TeX have no `px` branch. Their §459 recovery
+    // assumes points and restores the unknown unit for the caller.
+    for profile in [CommandProfile::TEX82, CommandProfile::ETEX26] {
+        let mut universe = crate::test_harness::universe();
+        let mut command = CommandState::new(profile);
+        push(&mut command, scanner_tokens("2px"));
+        let mut capabilities = CommandHostCapabilities::default();
+        let (value, suffix) = {
+            let mut processor = CommandProcessor::new(
+                &mut command,
+                universe.command_context(),
+                CommandHostContext::new(&mut capabilities),
+            );
+            let value = processor
+                .scan_dimension()
+                .expect("unknown unit recovers as points")
+                .value
+                .raw();
+            let suffix = processor.scan_keyword("px").expect("suffix scans").value;
+            (value, suffix)
+        };
+
+        assert_eq!(value, 2 * Scaled::UNITY, "profile={profile:?}");
+        assert!(suffix, "profile={profile:?}");
+        assert!(
+            diagnostic_text(&universe).contains("Illegal unit of measure"),
+            "profile={profile:?}"
+        );
+    }
+}
+
+#[test]
 fn dimension_mu_units_cover_success_nonmu_and_mixed_internal_units() {
     let mut universe = crate::test_harness::universe();
     assert_eq!(
@@ -6137,7 +6208,9 @@ fn pdftex_dimension_units_do_not_enter_tex82_keyword_probes() {
     let (pdftex_sp, pdftex_backups) = scan(pdftex, "1sp=");
     assert_eq!(tex82_sp.raw(), 1);
     assert_eq!(pdftex_sp.raw(), 1);
-    assert_eq!(pdftex_backups, tex82_backups + 2);
+    // pdfTeX §455 probes its added `px` internal unit before §458's
+    // physical-unit list, then §458 adds `nd` and `nc` before `sp`.
+    assert_eq!(pdftex_backups, tex82_backups + 3);
     assert_eq!(scan(pdftex, "1nd=").0.raw(), 69_925);
     assert_eq!(scan(pdftex, "1nc=").0.raw(), 839_105);
 }
