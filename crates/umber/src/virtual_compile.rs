@@ -569,6 +569,38 @@ pub struct AcceptedFinalization {
     pub format_dump_receipt: Option<tex_exec::FormatDumpReceipt>,
     pub expansion_stats: tex_incr::ExpansionStats,
     pub virtual_font_resources: PdfVirtualFontResources,
+    pub pdf_font_closure_receipt: PdfFontClosureReceipt,
+}
+
+/// Complete typed PDF classic-font request closure retained by an accepted
+/// session. Resolved entries carry immutable payload evidence; authoritative
+/// VF absence remains part of the receipt without becoming a materialization
+/// key.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct PdfFontClosureReceipt {
+    pub entries: Vec<PdfFontClosureReceiptEntry>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum PdfFontClosureReceiptEntry {
+    File {
+        request: FileRequestKey,
+        outcome: PdfFontClosureResourceOutcome,
+    },
+    PkFont {
+        request: PdfPkFontRequest,
+        outcome: PdfFontClosureResourceOutcome,
+    },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum PdfFontClosureResourceOutcome {
+    Resolved {
+        virtual_path: String,
+        bytes: usize,
+        sha256: [u8; 32],
+    },
+    Unavailable,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -759,6 +791,7 @@ pub struct VirtualCompileSession {
     candidate: Option<RetainedCandidate>,
     response_generation: u64,
     virtual_font_resources: PdfVirtualFontResources,
+    pdf_font_closure_requests: BTreeSet<ResourceRequestKey>,
     last_reuse: Option<tex_incr::ReuseMetrics>,
     last_stabilization_required: bool,
     initial_revision: tex_incr::RevisionId,
@@ -1031,6 +1064,7 @@ impl VirtualCompileSession {
             candidate: None,
             response_generation: 0,
             virtual_font_resources: PdfVirtualFontResources::default(),
+            pdf_font_closure_requests: BTreeSet::new(),
             last_reuse: None,
             last_stabilization_required: false,
             initial_revision,
@@ -1079,6 +1113,7 @@ impl VirtualCompileSession {
                 "the session has no completed accepted output to finalize".to_owned(),
             ));
         }
+        let pdf_font_closure_receipt = self.pdf_font_closure_receipt()?;
         let session = self.incremental.ok_or_else(|| {
             CompileError::Incremental("the accepted incremental session is missing".to_owned())
         })?;
@@ -1098,7 +1133,59 @@ impl VirtualCompileSession {
             format_dump_receipt,
             expansion_stats,
             virtual_font_resources: self.virtual_font_resources,
+            pdf_font_closure_receipt,
         })
+    }
+
+    fn pdf_font_closure_receipt(&self) -> Result<PdfFontClosureReceipt, CompileError> {
+        let mut entries = Vec::with_capacity(self.pdf_font_closure_requests.len());
+        for request in &self.pdf_font_closure_requests {
+            let entry = match request {
+                ResourceRequestKey::File(request) => {
+                    let outcome = if let Some(file) = self.workspace.get(request) {
+                        PdfFontClosureResourceOutcome::Resolved {
+                            virtual_path: file.path().as_str().to_owned(),
+                            bytes: file.bytes().len(),
+                            sha256: Sha256::digest(file.bytes()).into(),
+                        }
+                    } else if self.workspace.is_unavailable(request) {
+                        PdfFontClosureResourceOutcome::Unavailable
+                    } else {
+                        return Err(CompileError::Incremental(format!(
+                            "accepted PDF font closure has an unbound file request {}",
+                            request.name()
+                        )));
+                    };
+                    PdfFontClosureReceiptEntry::File {
+                        request: request.clone(),
+                        outcome,
+                    }
+                }
+                ResourceRequestKey::PkFont(request) => {
+                    let outcome = if let Some(font) = self.resolved_pk_fonts.get(request) {
+                        PdfFontClosureResourceOutcome::Resolved {
+                            virtual_path: font.virtual_path.clone(),
+                            bytes: font.bytes.len(),
+                            sha256: Sha256::digest(&font.bytes).into(),
+                        }
+                    } else if self.unavailable_pk_font_keys().contains(request) {
+                        PdfFontClosureResourceOutcome::Unavailable
+                    } else {
+                        return Err(CompileError::Incremental(format!(
+                            "accepted PDF font closure has an unbound PK request {}",
+                            String::from_utf8_lossy(&request.logical_name())
+                        )));
+                    };
+                    PdfFontClosureReceiptEntry::PkFont {
+                        request: request.clone(),
+                        outcome,
+                    }
+                }
+                ResourceRequestKey::Font(_) => continue,
+            };
+            entries.push(entry);
+        }
+        Ok(PdfFontClosureReceipt { entries })
     }
 
     pub fn add_user_file(&mut self, path: &str, bytes: Vec<u8>) -> Result<(), CompileError> {
@@ -2200,6 +2287,19 @@ impl VirtualCompileSession {
                 capability: OutputCapability::Pdf,
                 message,
             })?;
+            self.pdf_font_closure_requests.extend(
+                discovery
+                    .observed_files
+                    .iter()
+                    .map(|request| ResourceRequestKey::File(request.key().clone())),
+            );
+            self.pdf_font_closure_requests.extend(
+                discovery
+                    .observed_pk_fonts
+                    .iter()
+                    .cloned()
+                    .map(ResourceRequestKey::PkFont),
+            );
             if !discovery.required.is_empty() || !discovery.probes.is_empty() {
                 generated_transaction.discard();
                 let required = discovery.required;

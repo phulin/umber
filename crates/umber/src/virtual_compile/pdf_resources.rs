@@ -32,6 +32,8 @@ pub struct PdfVirtualFontResources {
 pub(super) struct Discovery {
     pub required: Vec<ResourceRequest>,
     pub probes: Vec<ResourceRequest>,
+    pub observed_files: Vec<FileRequest>,
+    pub observed_pk_fonts: Vec<tex_fonts::PdfPkFontRequest>,
 }
 
 pub(super) fn discover(
@@ -43,6 +45,8 @@ pub(super) fn discover(
 ) -> Result<Discovery, String> {
     let mut required = BTreeMap::<FileRequestKey, FileRequest>::new();
     let mut probes = BTreeMap::<FileRequestKey, FileRequest>::new();
+    let mut observed_files = BTreeMap::<FileRequestKey, FileRequest>::new();
+    let mut observed_pk_fonts = BTreeSet::new();
     let mut fonts = stores
         .pdf_font_resources()
         .filter_map(|resource| {
@@ -56,6 +60,8 @@ pub(super) fn discover(
         return Ok(Discovery {
             required: Vec::new(),
             probes: Vec::new(),
+            observed_files: Vec::new(),
+            observed_pk_fonts: Vec::new(),
         });
     }
     let mut real_fonts = BTreeSet::new();
@@ -66,6 +72,7 @@ pub(super) fn discover(
             continue;
         }
         let vf_request = request(FileKind::VirtualFont, &name, "vf")?;
+        observed_files.insert(vf_request.key().clone(), vf_request.clone());
         if files.is_unavailable(vf_request.key()) {
             real_fonts.insert(name);
             continue;
@@ -94,6 +101,7 @@ pub(super) fn discover(
             let logical = String::from_utf8(local.logical_name())
                 .map_err(|_| format!("virtual font {name} has a non-UTF-8 local font name"))?;
             let tfm_request = request(FileKind::Tfm, &logical, "tfm")?;
+            observed_files.insert(tfm_request.key().clone(), tfm_request.clone());
             if files.is_unavailable(tfm_request.key()) {
                 return Err(format!(
                     "virtual font {name} requires unavailable TFM {logical}"
@@ -123,6 +131,8 @@ pub(super) fn discover(
         return Ok(Discovery {
             required: required.into_values().map(ResourceRequest::File).collect(),
             probes: probes.into_values().map(ResourceRequest::File).collect(),
+            observed_files: observed_files.into_values().collect(),
+            observed_pk_fonts: observed_pk_fonts.into_iter().collect(),
         });
     }
 
@@ -141,6 +151,7 @@ pub(super) fn discover(
             continue;
         }
         let map_request = request(FileKind::PdfFontMap, name, "map")?;
+        observed_files.insert(map_request.key().clone(), map_request.clone());
         if files.is_unavailable(map_request.key()) {
             return Err(format!("required PDF font map {name} is unavailable"));
         }
@@ -164,6 +175,7 @@ pub(super) fn discover(
     if implicit_default && !real_fonts.is_subset(&covered_names) {
         let name = "pdftex.map";
         let map_request = request(FileKind::PdfFontMap, name, "map")?;
+        observed_files.insert(map_request.key().clone(), map_request.clone());
         if files.is_unavailable(map_request.key()) {
             return Err(format!("required PDF font map {name} is unavailable"));
         }
@@ -190,6 +202,7 @@ pub(super) fn discover(
                     stores,
                     files,
                     &mut required,
+                    &mut observed_files,
                     FileKind::PdfEncoding,
                     name,
                     |stores, bytes| {
@@ -213,6 +226,7 @@ pub(super) fn discover(
                     stores,
                     files,
                     &mut required,
+                    &mut observed_files,
                     FileKind::PdfFontProgram,
                     name,
                     |stores, bytes| {
@@ -258,6 +272,7 @@ pub(super) fn discover(
         .collect::<Result<BTreeSet<_>, _>>()?;
     let mut pk_required = Vec::new();
     for request in pk_requests {
+        observed_pk_fonts.insert(request.clone());
         if stores.pdf_pk_font(&request).is_some() {
             continue;
         }
@@ -282,6 +297,8 @@ pub(super) fn discover(
             .chain(pk_required)
             .collect(),
         probes: probes.into_values().map(ResourceRequest::File).collect(),
+        observed_files: observed_files.into_values().collect(),
+        observed_pk_fonts: observed_pk_fonts.into_iter().collect(),
     })
 }
 
@@ -289,11 +306,13 @@ fn acquire_parsed(
     stores: &mut Universe,
     files: &ProjectWorkspace,
     required: &mut BTreeMap<FileRequestKey, FileRequest>,
+    observed: &mut BTreeMap<FileRequestKey, FileRequest>,
     kind: FileKind,
     name: &str,
     parse: impl FnOnce(&mut Universe, &[u8]) -> Result<(), String>,
 ) -> Result<(), String> {
     let request = request(kind, name, "")?;
+    observed.insert(request.key().clone(), request.clone());
     if files.is_unavailable(request.key()) {
         return Err(format!("required {} {name} is unavailable", kind));
     }

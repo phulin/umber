@@ -27,6 +27,11 @@ with tempfile.TemporaryDirectory() as temporary:
     keyed_command=["python3",str(fixture),"materialize","--root-url",base+"manifest-v3.json","--root-sha256",sha(manifest),"--output-dir",str(keyed_destination),"--keys-from",str(key_file)]
     subprocess.run(keyed_command,check=True,capture_output=True,text=True)
     assert (keyed_destination/"texmf-dist"/"tex"/"fixture.tex").read_bytes()==payload
+    receipt=work/"font-closure.tsv"; receipt.write_text("umber-pdf-font-closure-v1\n"+f"unavailable\tvf\tmissing.vf\ttex:missing.vf\nresolved\tfont-program\tfixture.tex\t{key}\t/texlive/tex/fixture.tex\t{len(payload)}\t{payload_digest}\n")
+    receipt_destination=work/"receipt-mirror"
+    receipt_command=["python3",str(fixture),"materialize","--root-url",base+"manifest-v3.json","--root-sha256",sha(manifest),"--output-dir",str(receipt_destination),"--keys-from",str(receipt)]
+    subprocess.run(receipt_command,check=True,capture_output=True,text=True); subprocess.run(receipt_command+["--offline"],check=True,capture_output=True,text=True)
+    assert (receipt_destination/"texmf-dist"/"tex"/"fixture.tex").read_bytes()==payload
     (destination/"objects"/payload_name).write_bytes(b"corrupt"); failed=subprocess.run(command+["--offline"],capture_output=True,text=True)
     assert failed.returncode != 0 and "cached snapshot object" in failed.stderr; server.shutdown()
 print("provision.py materialize contract: PASS")

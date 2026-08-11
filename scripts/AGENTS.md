@@ -13,7 +13,8 @@ Read the repository-root `AGENTS.md` first. This file adds the directory map for
 
 - `texlive.py`: import-only authenticated TeX Live 2026 source/runtime library;
   it owns source extraction, linked-worktree source symlinks, selective hosted
-  snapshot materialization, and locked runtime staging.
+  snapshot materialization from bare keys, source locks, or accepted PDF font
+  closure receipts, and locked runtime staging.
 - `provision.py`: the sole provisioning CLI for primary/linked worktrees,
   TeX Live source, reference oracles, hosted subsets, and publisher snapshots.
 - `test-provision.py`: hermetic source acquisition, replacement, offline, and

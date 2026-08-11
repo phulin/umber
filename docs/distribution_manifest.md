@@ -306,6 +306,15 @@ same selection. Add canonical `kind:name` records with `--key` or a one-key-per-
 line file with `--keys-from`; repository lock records of the form
 `source KIND PATH BYTES SHA256` are also accepted.
 
+An accepted native PDF run may write the engine-owned classic-font closure with
+`--pdf-font-closure-out`. Its schema-1 TSV retains the semantic request kind,
+canonical manifest key, virtual path, size, SHA-256, and authoritative
+unavailable VF probes. `materialize --keys-from` consumes resolved rows
+directly, pins their recorded identities against the authenticated shard, and
+ignores unavailable rows. Consequently a closure receipt can be materialized
+online and then repeated with `--offline` without transcribing or guessing
+font names.
+
 The builder additionally verifies `tests/texlive-snapshot.lock` before it
 publishes anything. That lock fixes the publisher-visible tree digest and the
 exact 2026-03-01 LaTeX kernel, latex-dev `array.sty` v2.7a, and pdfTeX map

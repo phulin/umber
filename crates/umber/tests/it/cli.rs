@@ -1166,6 +1166,7 @@ fn fatal_pdf_finalization_does_not_replace_the_requested_output() {
     let temp_dir = tempfile::tempdir().expect("create fatal-finalization output temp dir");
     let source = temp_dir.path().join("fatal-finalization.tex");
     let pdf = temp_dir.path().join("fatal-finalization.pdf");
+    let closure = temp_dir.path().join("fatal-finalization.font-closure");
     fs::write(
         &source,
         "\\pdfoutput=1\\pdfobj reserveobjnum\\pdfrefobj 1\\end\n",
@@ -1180,6 +1181,8 @@ fn fatal_pdf_finalization_does_not_replace_the_requested_output() {
             .arg("--pdftex")
             .arg("--pdf")
             .arg(&pdf)
+            .arg("--pdf-font-closure-out")
+            .arg(&closure)
             .arg(&source)
             .output()
             .expect("run fatal-finalization fixture")
@@ -1198,6 +1201,11 @@ fn fatal_pdf_finalization_does_not_replace_the_requested_output() {
         fs::read(&pdf).expect("read preserved output"),
         b"existing output\n",
         "fatal detached finalization must publish no partial artifact"
+    );
+    assert_eq!(
+        fs::read(&closure).expect("read accepted font closure"),
+        b"umber-pdf-font-closure-v1\n",
+        "accepted resource evidence survives a later detached-driver failure"
     );
 }
 

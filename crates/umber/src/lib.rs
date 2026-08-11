@@ -247,6 +247,7 @@ pub use virtual_compile::{
     AcceptedFinalization, CachedLocalTfm, CachedVirtualFont, CompileAttemptResult,
     CompileDiagnostic, CompileError, CompileSourceLocation, CompileTelemetry, EngineMode, FileKind,
     FileRequest, FileRequestKey, NeedResources, OutputCapability, OutputCapabilitySet,
+    PdfFontClosureReceipt, PdfFontClosureReceiptEntry, PdfFontClosureResourceOutcome,
     PdfVirtualFontResources, RenderedSourceLocation, RenderedSourceResult, RequestKeyError,
     ResolvedFile, ResolvedPkFont, ResourceDomain, ResourceRequest, ResourceResponse,
     RetentionMetrics, SessionLimits, SessionOptions, SourcePatch, VfsLimitError, VfsLimitKind,

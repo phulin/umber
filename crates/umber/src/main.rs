@@ -161,6 +161,9 @@ fn run_tex(opts: &RunCliOptions) -> Result<(), CliError> {
             offline: opts.offline,
             expansion_fuel: opts.expansion_fuel,
         })?;
+    if let Some(path) = &opts.pdf_font_closure_out {
+        accepted.write_pdf_font_closure_receipt(path)?;
+    }
     if env::var_os("UMBER_RESOURCE_TELEMETRY").is_some_and(|value| value == "1") {
         eprintln!(
             "RESOURCE_ENGINE_ACCEPTED accepted_wall_ns={}",
@@ -535,6 +538,7 @@ struct RunCliOptions {
     format: Option<PathBuf>,
     format_out: Option<PathBuf>,
     input_records_out: Option<PathBuf>,
+    pdf_font_closure_out: Option<PathBuf>,
     initial_prefetch_keys: Vec<String>,
     engine: RunEngine,
     distribution: Option<String>,
@@ -556,6 +560,7 @@ impl RunCliOptions {
         let mut format = None;
         let mut format_out = None;
         let mut input_records_out = None;
+        let mut pdf_font_closure_out = None;
         let mut initial_prefetch_keys = Vec::new();
         let mut engine = RunEngine::Tex82;
         let mut distribution = None;
@@ -707,6 +712,19 @@ impl RunCliOptions {
                     };
                     input_records_out = Some(PathBuf::from(path));
                 }
+                "--pdf-font-closure-out" => {
+                    if pdf_font_closure_out.is_some() {
+                        return Err(CliError::Usage(
+                            "run accepts at most one --pdf-font-closure-out path",
+                        ));
+                    }
+                    let Some(path) = args.next() else {
+                        return Err(CliError::Usage(
+                            "missing output path for --pdf-font-closure-out",
+                        ));
+                    };
+                    pdf_font_closure_out = Some(PathBuf::from(path));
+                }
                 "--prefetch-input" => initial_prefetch_keys.push(args.next().ok_or(
                     CliError::Usage("missing distribution request key for --prefetch-input"),
                 )?),
@@ -744,6 +762,9 @@ impl RunCliOptions {
         if html_assets.is_some() && html.is_none() {
             return Err(CliError::Usage("--html-assets requires --html"));
         }
+        if pdf_font_closure_out.is_some() && pdf.is_none() {
+            return Err(CliError::Usage("--pdf-font-closure-out requires --pdf"));
+        }
         if dvi
             .as_ref()
             .zip(html.as_ref())
@@ -772,6 +793,7 @@ impl RunCliOptions {
             format,
             format_out,
             input_records_out,
+            pdf_font_closure_out,
             initial_prefetch_keys,
             engine,
             distribution,

@@ -58,6 +58,10 @@ pub enum NativeRunError {
         path: PathBuf,
         source: std::io::Error,
     },
+    Publish {
+        path: PathBuf,
+        source: tex_state::WorldError,
+    },
     Cache(String),
     ManifestFetch(String),
     ManifestDigestMismatch {
@@ -83,6 +87,9 @@ impl fmt::Display for NativeRunError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Io { path, source } => write!(f, "failed to read {}: {source}", path.display()),
+            Self::Publish { path, source } => {
+                write!(f, "failed to publish {}: {source}", path.display())
+            }
             Self::Cache(message) => write!(f, "distribution cache error: {message}"),
             Self::ManifestFetch(message) => write!(f, "distribution manifest error: {message}"),
             Self::ManifestDigestMismatch { expected, actual } => write!(
@@ -212,6 +219,20 @@ impl NativeAcceptedRun {
         .map_err(NativeRunError::Compile)
     }
 
+    /// Publishes the accepted engine-owned PDF classic-font closure as a
+    /// deterministic, identity-pinned receipt. Resolved rows are accepted
+    /// directly by `scripts/provision.py materialize --keys-from`; unavailable
+    /// VF probes remain evidence but are not materialization requests.
+    pub fn write_pdf_font_closure_receipt(&self, path: &Path) -> Result<(), NativeRunError> {
+        let bytes = pdf_font_closure_receipt_bytes(&self.finalization.pdf_font_closure_receipt)?;
+        World::real()
+            .publish_files(vec![(path.to_owned(), bytes)])
+            .map_err(|source| NativeRunError::Publish {
+                path: path.to_owned(),
+                source,
+            })
+    }
+
     #[must_use]
     pub fn into_parts(self) -> NativeAcceptedParts {
         (
@@ -224,6 +245,92 @@ impl NativeAcceptedRun {
             self.host_telemetry,
         )
     }
+}
+
+fn pdf_font_closure_receipt_bytes(
+    receipt: &crate::PdfFontClosureReceipt,
+) -> Result<Vec<u8>, NativeRunError> {
+    let mut output = b"umber-pdf-font-closure-v1\n".to_vec();
+    for entry in &receipt.entries {
+        let (semantic_kind, request_name, manifest_key, outcome) = match entry {
+            crate::PdfFontClosureReceiptEntry::File { request, outcome } => {
+                let logical = distribution_file_key(&FileRequest::new(
+                    request.clone(),
+                    request.name().to_owned(),
+                ))?
+                .ok_or_else(|| {
+                    NativeRunError::Selection(format!(
+                        "PDF font closure request {} has no distribution key",
+                        request.name()
+                    ))
+                })?;
+                (
+                    request.kind().wire_name(),
+                    request.name().to_owned(),
+                    logical.manifest_key().to_string(),
+                    outcome,
+                )
+            }
+            crate::PdfFontClosureReceiptEntry::PkFont { request, outcome } => {
+                let request_name = std::str::from_utf8(&request.logical_name())
+                    .map_err(|_| {
+                        NativeRunError::Selection(
+                            "PDF PK font closure name is not valid UTF-8".to_owned(),
+                        )
+                    })?
+                    .to_owned();
+                let logical =
+                    DistributionFileRequestKey::new(DistributionFileKind::Tex, &request_name)
+                        .map_err(|error| NativeRunError::Selection(error.to_string()))?;
+                (
+                    "pk-font",
+                    request_name,
+                    logical.manifest_key().to_string(),
+                    outcome,
+                )
+            }
+        };
+        for field in [semantic_kind, request_name.as_str(), manifest_key.as_str()] {
+            validate_receipt_field(field)?;
+        }
+        match outcome {
+            crate::PdfFontClosureResourceOutcome::Resolved {
+                virtual_path,
+                bytes,
+                sha256,
+            } => {
+                validate_receipt_field(virtual_path)?;
+                output.extend_from_slice(
+                    format!(
+                        "resolved\t{semantic_kind}\t{request_name}\t{manifest_key}\t{virtual_path}\t{bytes}\t{}\n",
+                        encode_hex(sha256)
+                    )
+                    .as_bytes(),
+                );
+            }
+            crate::PdfFontClosureResourceOutcome::Unavailable => {
+                output.extend_from_slice(
+                    format!("unavailable\t{semantic_kind}\t{request_name}\t{manifest_key}\n")
+                        .as_bytes(),
+                );
+            }
+        }
+    }
+    Ok(output)
+}
+
+fn validate_receipt_field(field: &str) -> Result<(), NativeRunError> {
+    if field.contains(['\t', '\n', '\r']) {
+        Err(NativeRunError::Selection(
+            "PDF font closure receipt field contains a TSV delimiter".to_owned(),
+        ))
+    } else {
+        Ok(())
+    }
+}
+
+fn encode_hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
 #[allow(clippy::disallowed_methods)] // Process telemetry; TeX state never observes it.

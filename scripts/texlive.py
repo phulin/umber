@@ -314,10 +314,29 @@ def read_runtime_sources(path: Path, require_destinations: bool = False) -> list
 
 
 def read_runtime_requests(path: Path) -> tuple[set[str], dict[str, Identity]]:
-    """Read bare request keys or identity-pinned runtime source records."""
+    """Read bare keys, source locks, or accepted PDF font-closure receipts."""
     requested: set[str] = set()
     expected: dict[str, Identity] = {}
     for number, raw_line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+        if raw_line == "umber-pdf-font-closure-v1":
+            continue
+        if raw_line.startswith(("resolved\t", "unavailable\t")):
+            fields = raw_line.split("\t")
+            if fields[0] == "unavailable" and len(fields) == 4:
+                continue
+            if fields[0] != "resolved" or len(fields) != 7:
+                raise TexliveError(f"{path}:{number}: invalid PDF font closure receipt record")
+            key = fields[3]
+            if ":" not in key or not valid_digest(fields[6], 64):
+                raise TexliveError(f"{path}:{number}: invalid PDF font closure identity")
+            identity = Identity(int(fields[5]), fields[6])
+            previous = expected.setdefault(key, identity)
+            if previous != identity:
+                raise TexliveError(f"{path}:{number}: conflicting identity for {key}")
+            if key in requested:
+                raise TexliveError(f"{path}:{number}: duplicate runtime request key {key}")
+            requested.add(key)
+            continue
         fields = raw_line.split()
         if not fields or fields[0].startswith("#") or fields[0] == "distribution":
             continue

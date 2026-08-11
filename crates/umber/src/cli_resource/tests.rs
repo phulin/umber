@@ -8,6 +8,41 @@ use tex_incr::RevisionId;
 use super::*;
 
 #[test]
+fn pdf_font_closure_receipt_preserves_typed_outcomes_and_manifest_keys() {
+    let vf = FileRequestKey::new(FileKind::VirtualFont, "root.vf").expect("VF request");
+    let program =
+        FileRequestKey::new(FileKind::PdfFontProgram, "leaf.pfb").expect("program request");
+    let receipt = crate::PdfFontClosureReceipt {
+        entries: vec![
+            crate::PdfFontClosureReceiptEntry::File {
+                request: vf,
+                outcome: crate::PdfFontClosureResourceOutcome::Unavailable,
+            },
+            crate::PdfFontClosureReceiptEntry::File {
+                request: program,
+                outcome: crate::PdfFontClosureResourceOutcome::Resolved {
+                    virtual_path: "/texlive/fonts/type1/leaf.pfb".to_owned(),
+                    bytes: 3,
+                    sha256: [0xab; 32],
+                },
+            },
+        ],
+    };
+
+    assert_eq!(
+        pdf_font_closure_receipt_bytes(&receipt).expect("render receipt"),
+        concat!(
+            "umber-pdf-font-closure-v1\n",
+            "unavailable\tvf\troot.vf\ttex:root.vf\n",
+            "resolved\tfont-program\tleaf.pfb\ttex:leaf.pfb\t",
+            "/texlive/fonts/type1/leaf.pfb\t3\t",
+            "abababababababababababababababababababababababababababababababab\n",
+        )
+        .as_bytes()
+    );
+}
+
+#[test]
 fn native_session_allows_the_hard_bounded_resource_attempt_count() {
     let directory = TempDir::new().expect("temporary project");
     let input = directory.path().join("main.tex");

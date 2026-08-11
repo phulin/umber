@@ -1827,6 +1827,23 @@ fn pdf_virtual_font_closure_uses_typed_bounded_retries() {
             .pdf_type1_program(b"fixture.pfb")
             .is_some()
     );
+    let receipt = &finalization.pdf_font_closure_receipt.entries;
+    for (kind, name, resolved) in [
+        (FileKind::VirtualFont, "cmr10.vf", true),
+        (FileKind::Tfm, "cmsy10.tfm", true),
+        (FileKind::VirtualFont, "cmsy10.vf", false),
+        (FileKind::PdfFontMap, "pdftex.map", true),
+        (FileKind::PdfEncoding, "fixture.enc", true),
+        (FileKind::PdfFontProgram, "fixture.pfb", true),
+    ] {
+        assert!(receipt.iter().any(|entry| matches!(
+            entry,
+            PdfFontClosureReceiptEntry::File { request, outcome }
+                if request.kind() == kind
+                    && request.name() == name
+                    && matches!(outcome, PdfFontClosureResourceOutcome::Resolved { .. }) == resolved
+        )), "missing {kind:?} receipt for {name}");
+    }
 }
 
 #[test]

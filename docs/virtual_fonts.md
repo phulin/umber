@@ -121,6 +121,15 @@ logical local TFM to be instantiated at each size declared by its containing
 virtual-font instance without another host read. Recursive packet execution
 then occurs only in PDF finalization and does not alter DVI construction.
 
+The accepted-finalization boundary also retains one sorted cumulative receipt
+of every typed request observed during that closure. Resolved VF, local TFM,
+map, encoding, outline-program, and PK rows carry their virtual path, byte
+length, and SHA-256; authoritative VF absence remains a typed unavailable row.
+The native `--pdf-font-closure-out` diagnostic publishes this receipt as soon
+as the engine and resource closure are accepted, so a later detached PDF error
+cannot erase provisioning evidence. This is observation only: it neither adds
+requests nor changes the bounded retry order.
+
 The native post-acceptance compatibility loader excludes every positively
 classified virtual root from its legacy real-font PK fallback. Map, encoding,
 and outline resources for reached real leaves are already owned by the typed
