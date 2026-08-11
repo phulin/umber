@@ -19,8 +19,8 @@ use umber_distribution::{
 };
 
 pub use sharded::{
-    ShardedPublication, prune_unreferenced_objects, shard_index, verify_sharded_snapshot,
-    write_html_sharded_manifest, write_sharded_manifest,
+    ShardedPublication, prune_unreferenced_objects, read_sharded_catalog, shard_index,
+    verify_sharded_snapshot, write_html_sharded_manifest, write_sharded_manifest,
 };
 
 pub use scan::tree_sha256;
@@ -157,6 +157,210 @@ pub fn publish(config: &PublishConfig, output: &Path) -> Result<ShardedPublicati
     verify_sharded_snapshot(output).context("verify staged sharded snapshot")
 }
 
+/// Publish a sparse successor to an authenticated complete sharded catalog.
+///
+/// The base directory must contain the canonical root and every authenticated
+/// shard, but need not duplicate unchanged content-addressed payloads. Roots
+/// in `config` are an ordered overlay and may replace or add logical keys. The
+/// output contains every successor shard plus exactly the changed payload and
+/// format objects.
+pub fn publish_successor(
+    base: &Path,
+    base_sha256: &str,
+    config: &PublishConfig,
+    output: &Path,
+) -> Result<ShardedPublication> {
+    validate_config(config)?;
+    if config.profile != PublicationProfile::Full {
+        bail!("sparse successors support only the full publication profile");
+    }
+    if config.package_database.is_some() || !config.dependencies.is_empty() {
+        bail!("sparse successors preserve the base dependency graph");
+    }
+    verify_base_root(base, base_sha256)?;
+    let base = read_sharded_catalog(base).context("authenticate successor base catalog")?;
+    if config.distribution != base.root.distribution
+        || config.objects_base_url != base.root.objects_base_url
+        || config.shard_bits != base.root.shard_bits
+    {
+        bail!("successor distribution, object base URL, and shard policy must match the base");
+    }
+    let replacements = flatten_candidates(scan_roots(&config.roots)?)?;
+    let mut files = base.files.clone();
+    let mut winners = base
+        .files
+        .iter()
+        .map(|(key, file)| {
+            (
+                key.clone(),
+                Candidate {
+                    kind: if key.starts_with("tfm:") {
+                        "tfm"
+                    } else {
+                        "tex"
+                    },
+                    relative: file
+                        .virtual_path
+                        .strip_prefix("/texlive/")
+                        .unwrap_or(&file.virtual_path)
+                        .to_owned(),
+                    source: PathBuf::new(),
+                    sha256: file.sha256.clone(),
+                    bytes: file.bytes,
+                },
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+    let mut objects = BTreeMap::new();
+    for (key, replacement) in replacements {
+        let dependencies = files
+            .get(&key)
+            .map(|prior| prior.dependencies.clone())
+            .unwrap_or_default();
+        let bytes = fs::read(&replacement.source)
+            .with_context(|| format!("read successor object {}", replacement.source.display()))?;
+        let object = format!("sha256-{}", replacement.sha256);
+        files.insert(
+            key.clone(),
+            ManifestFile {
+                virtual_path: format!("/texlive/{}", replacement.relative),
+                object: object.clone(),
+                sha256: replacement.sha256.clone(),
+                bytes: replacement.bytes,
+                dependencies,
+            },
+        );
+        winners.insert(key, replacement);
+        objects.entry(object).or_insert(bytes);
+    }
+
+    let mut formats = BTreeMap::new();
+    for format in &config.formats {
+        let (name, metadata, bytes) = load_format(format, &winners)?;
+        if formats.insert(name.clone(), metadata.clone()).is_some() {
+            bail!("duplicate published format name {name:?}");
+        }
+        objects.entry(metadata.object).or_insert(bytes);
+    }
+    if formats.keys().collect::<Vec<_>>() != base.formats.keys().collect::<Vec<_>>() {
+        bail!("sparse successor must replace exactly the base format names");
+    }
+    let manifest = Manifest {
+        schema: umber_distribution::MANIFEST_SCHEMA,
+        distribution: config.distribution.clone(),
+        objects_base_url: config.objects_base_url.clone(),
+        files,
+        fonts: BTreeMap::new(),
+        formats,
+    };
+    let publication = write_sharded_manifest(&manifest, config.shard_bits, output)?;
+    let referenced_payloads = objects.keys().cloned().collect::<BTreeSet<_>>();
+    let object_dir = output.join("objects");
+    for (object, bytes) in objects {
+        fs::write(object_dir.join(&object), bytes)
+            .with_context(|| format!("write successor payload {object}"))?;
+    }
+    verify_sparse_successor(&base, &publication, output, &referenced_payloads)?;
+    Ok(publication)
+}
+
+/// Verify a sparse successor staging directory against its authenticated base.
+pub fn verify_successor(
+    base: &Path,
+    base_sha256: &str,
+    output: &Path,
+) -> Result<ShardedPublication> {
+    verify_base_root(base, base_sha256)?;
+    let base = read_sharded_catalog(base).context("authenticate successor base catalog")?;
+    let successor = read_sharded_catalog(output).context("authenticate successor catalog")?;
+    if successor.root.distribution != base.root.distribution
+        || successor.root.objects_base_url != base.root.objects_base_url
+        || successor.root.shard_bits != base.root.shard_bits
+    {
+        bail!("successor distribution, object base URL, and shard policy differ from the base");
+    }
+    if !base
+        .files
+        .keys()
+        .all(|key| successor.files.contains_key(key))
+    {
+        bail!("successor removed a base logical key");
+    }
+    if successor.formats.keys().collect::<Vec<_>>() != base.formats.keys().collect::<Vec<_>>() {
+        bail!("successor must replace exactly the base format names");
+    }
+    let changed_payloads = successor
+        .files
+        .iter()
+        .filter(|(key, file)| base.files.get(*key) != Some(*file))
+        .map(|(_, file)| file.object.clone())
+        .chain(
+            successor
+                .formats
+                .values()
+                .map(|format| format.object.clone()),
+        )
+        .collect::<BTreeSet<_>>();
+    verify_sparse_successor(&base, &successor, output, &changed_payloads)?;
+    Ok(successor)
+}
+
+fn verify_base_root(base: &Path, expected: &str) -> Result<()> {
+    if expected.len() != 64
+        || !expected.bytes().all(|byte| byte.is_ascii_hexdigit())
+        || expected.bytes().any(|byte| byte.is_ascii_uppercase())
+    {
+        bail!("successor base SHA-256 must contain 64 lowercase hexadecimal characters");
+    }
+    let bytes = fs::read(base.join("manifest.json")).context("read successor base root")?;
+    if format!("{:x}", Sha256::digest(bytes)) != expected {
+        bail!("successor base root does not match its pinned SHA-256");
+    }
+    Ok(())
+}
+
+fn verify_sparse_successor(
+    base: &ShardedPublication,
+    successor: &ShardedPublication,
+    output: &Path,
+    changed_payloads: &BTreeSet<String>,
+) -> Result<()> {
+    let reread = read_sharded_catalog(output).context("verify successor root and shards")?;
+    if &reread != successor {
+        bail!("successor catalog changed after serialization");
+    }
+    for (key, file) in &successor.files {
+        if base.files.get(key).is_some_and(|prior| file == prior) {
+            continue;
+        }
+        if !changed_payloads.contains(&file.object) {
+            bail!("changed successor key {key:?} has no staged payload");
+        }
+        read_verified_successor_object(output, &file.object_entry(), key)?;
+    }
+    for (name, format) in &successor.formats {
+        if !changed_payloads.contains(&format.object) {
+            bail!("successor format {name:?} has no staged payload");
+        }
+        read_verified_successor_object(output, &format.object_entry(), name)?;
+    }
+    Ok(())
+}
+
+fn read_verified_successor_object(
+    output: &Path,
+    entry: &umber_distribution::ObjectEntry,
+    label: &str,
+) -> Result<()> {
+    let bytes = fs::read(output.join("objects").join(&entry.object))
+        .with_context(|| format!("read successor object for {label}"))?;
+    if bytes.len() as u64 != entry.bytes || format!("{:x}", Sha256::digest(&bytes)) != entry.sha256
+    {
+        bail!("successor object for {label} does not match declared digest and length");
+    }
+    Ok(())
+}
+
 fn prepare_full(config: &PublishConfig) -> Result<PreparedPublication> {
     let candidates = scan_roots(&config.roots)?;
     let winners = flatten_candidates(candidates)?;
@@ -242,7 +446,9 @@ fn prepare_html(config: &PublishConfig) -> Result<PreparedPublication> {
         {
             bail!("duplicate published format name {name:?}");
         }
-        objects.entry(manifest_format.object.clone()).or_insert(bytes);
+        objects
+            .entry(manifest_format.object.clone())
+            .or_insert(bytes);
     }
     if formats.is_empty() {
         bail!("HTML publication profile requires at least one selected format");

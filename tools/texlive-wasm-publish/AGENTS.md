@@ -6,6 +6,13 @@ All accepted source paths are normalized relative POSIX paths. Reject symlinks, 
 
 Object names are derived solely from SHA-256. Manifest serialization uses ordered maps and one trailing newline. Dependency entries are hints and must refer to valid logical keys, but are not required to be transitively complete.
 
+Sparse schema-3 successors authenticate the complete base root and all base
+shards, preserve its distribution, object base URL, and shard policy, and
+stage every derived successor shard plus every changed payload. They may add
+or replace lookup keys but must not remove a base key, and must replace exactly
+the base format-name set. Verification must not require duplicating unchanged
+payloads from the immutable content-addressed base.
+
 Schema-3 format entries may carry schema-1 input closures. Canonicalize their
 request keys, enforce the shared count/key-size bounds, reject duplicates, and
 verify every key against the complete published file map before writing. Keep

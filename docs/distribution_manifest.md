@@ -279,13 +279,39 @@ that the default map, encoding, and font-program path no longer depends on a
 host font tree. The authored browser resolver exports the identical production
 URL and digest.
 
+### 2026-08-11 LaTeX coherence successor staging receipt
+
+An authenticated sparse successor was derived from production root
+`43a31da364e4607957a38da10dabff227657d607d1845d502204adfd5d002e4b`
+without copying or weakening its unchanged content-addressed payloads. The
+publisher authenticated all 256 base shards, overlaid the complete locked
+format-construction root, and emitted every successor shard plus each changed
+payload. Two clean publications were byte-identical. The schema-3 successor
+root is `61b8d665e492662b18c8beb70ab8cd8a8f73d9bd7e4d9aeb2f958ea8613f8883`;
+its sparse staging set contains 322 objects totaling 102,653,889 bytes.
+
+The successor binds source-manifest identity
+`ba49b8698d222b16afc26811c03d52125b632545c963ad8b506a6939e91925db`
+to LaTeX format
+`9ea2783f3000423606a274974145f7b07580753bbd53682a10c3a55b3f4b9fd9`
+and pdfLaTeX format
+`1dce7159b8c974ebfd896a74edff4c3f6870497ccb28fc3979b2cdf5ef773a6f`.
+The intended unique hosted key is
+`manifest-v3-latex-dev-20260601.json`. Hosted defaults must not move to this
+identity until manifest-last publication and public digest/CORS verification
+complete; the prior default remains unambiguous in the meantime.
+
 `python3 scripts/provision.py snapshot` performs verified builds for both
 `latex.fmt` and `pdflatex.fmt`. It derives their 61-key common and 64-key PDF
-closures from `tests/latex-source.lock`, stages the two repository-local
-configuration inputs as a pinned auxiliary TEXMF root, and publishes both
-format closures in the schema-3 root. Two clean publications must still be
-byte-identical. `scripts/publish-texlive-r2.sh` reserves `manifest-v3.json` for
-this new immutable contract and retains the manifest-last upload order.
+closures from `tests/latex-source.lock`, stages the complete authenticated
+construction closure as the highest-precedence TEXMF root, and publishes both
+format closures in the schema-3 root. This prevents a basename winner from a
+different LaTeX release line from drifting away from the frozen format's input
+receipt. Two clean publications must still be byte-identical.
+`scripts/publish-texlive-r2.sh` retains manifest-last upload order for full
+snapshots and authenticated sparse successors; a successor must use a unique
+schema-3 root key and may reuse only the base's immutable content-addressed
+object namespace.
 
 When the pinned source tree is unavailable, materialize an authenticated local
 subset directly from the immutable hosted publication:

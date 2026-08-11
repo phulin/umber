@@ -16,7 +16,9 @@ Read the repository-root `AGENTS.md` first. This file adds the directory map for
   snapshot materialization from bare keys, source locks, or accepted PDF font
   closure receipts, and locked runtime staging.
 - `provision.py`: the sole provisioning CLI for primary/linked worktrees,
-  TeX Live source, reference oracles, hosted subsets, and publisher snapshots.
+  TeX Live source, reference oracles, hosted subsets, and publisher snapshots;
+  snapshot publication stages the complete locked format-construction closure
+  as the highest-precedence runtime root.
 - `test-provision.py`: hermetic source acquisition, replacement, offline, and
   ordered TRIP-locator coverage for the shared library and CLI.
 - `measure-wasm-editor-memory.mjs`: deterministic self-contained retained-editor
@@ -25,8 +27,13 @@ Read the repository-root `AGENTS.md` first. This file adds the directory map for
 - `select-recent-arxiv.py`: first-submission date filtering and reproducibly random, hash-shuffled candidate selection from the arXiv OAI metadata snapshot ZIP.
 - `materialize-recent-arxiv-sample.sh`: parallel source acquisition followed by random-order live-LaTeX filtering and optional durable exclusions for a recent candidate TSV.
 - `measure-sharded-manifest.py`: read-only replay of normalized pdfTeX file traces over candidate schema-v2 shard counts.
-- `publish-texlive-r2.sh`: verified staged full or HTML-profile publication to distinct immutable Cloudflare R2 prefixes; HTML requires an explicit root pin and publishes `manifest-v4.json`; browser CORS policy lives beside it in `texlive-r2-cors.json`.
-- `test-publish-texlive-r2.sh`: hermetic mock-rclone/curl contract test for resumable, manifest-last R2 publication.
+- `publish-texlive-r2.sh`: verified staged full, sparse schema-3 successor, or
+  HTML-profile publication to Cloudflare R2. Sparse successors reuse an
+  authenticated content-addressed base and require a unique root key; HTML
+  requires an explicit root pin and publishes `manifest-v4.json`. Browser CORS
+  policy lives beside it in `texlive-r2-cors.json`.
+- `test-publish-texlive-r2.sh`: hermetic mock-rclone/curl contract test for
+  resumable, manifest-last full and sparse-successor R2 publication.
 - `test-native-test-assets.py`: hermetic linked-worktree coverage for asset
   identity, source symlinking, isolation, idempotence, and unsafe-input
   rejection through `provision.py`.

@@ -10,7 +10,8 @@ use umber_distribution::{FontRequestKey, LegacyMappingRequestKey};
 
 use super::{
     FormatConfig, HtmlInventoryConfig, HtmlProfileConfig, InventoryConfig, PublicationProfile,
-    PublishConfig, RootConfig, publish, shard_index, tree_sha256, verify_sharded_snapshot,
+    PublishConfig, RootConfig, publish, publish_successor, shard_index, tree_sha256,
+    verify_sharded_snapshot, verify_successor,
 };
 
 fn write(root: &Path, relative: &str, bytes: &[u8]) -> Result<()> {
@@ -94,7 +95,10 @@ fn html_config(fixture: &TempDir) -> Result<PublishConfig> {
     let input_identities = write_input_identities(
         fixture,
         "plain-input-identities.json",
-        &[("tex:plain.tex", b"plain runtime"), ("tfm:cmr10.tfm", tfm_bytes)],
+        &[
+            ("tex:plain.tex", b"plain runtime"),
+            ("tfm:cmr10.tfm", tfm_bytes),
+        ],
     )?;
 
     let font_bytes = b"fixture woff2";
@@ -234,8 +238,7 @@ fn config(roots: Vec<RootConfig>) -> PublishConfig {
 fn latex_wasm_script_emits_current_sharded_publisher_config() -> Result<()> {
     let fixture = TempDir::new()?;
     let output = fixture.path().join("publish.json");
-    let script = test_support::repository_root()
-        .join("scripts/write-latex-wasm-publish-config.sh");
+    let script = test_support::repository_root().join("scripts/write-latex-wasm-publish-config.sh");
     let status = Command::new("bash")
         .arg(script)
         .arg(&output)
@@ -321,6 +324,72 @@ fn fixture_publication_is_byte_stable_and_content_addressed() -> Result<()> {
 }
 
 #[test]
+fn sparse_successor_reuses_an_authenticated_base_and_stages_only_changes() -> Result<()> {
+    let fixture = TempDir::new()?;
+    let base_root = fixture.path().join("base-root");
+    fs::create_dir_all(&base_root)?;
+    write(&base_root, "tex/plain/base/plain.tex", b"old plain\n")?;
+    write(&base_root, "tex/other.tex", b"unchanged\n")?;
+    let assets = test_support::repository_root().join("crates/umber-wasm/assets");
+    let mut base_config = config(vec![root("base", &base_root)?]);
+    base_config.dependencies.clear();
+    base_config.formats.push(FormatConfig {
+        path: assets.join("plain.fmt"),
+        metadata: assets.join("plain-format.json"),
+        input_identities: None,
+    });
+    let base_output = fixture.path().join("base-output");
+    let base = publish(&base_config, &base_output)?;
+    let base_sha256 = digest(&fs::read(base_output.join("manifest.json"))?);
+    let payloads = base
+        .files
+        .values()
+        .map(|file| &file.object)
+        .chain(base.formats.values().map(|format| &format.object))
+        .collect::<std::collections::BTreeSet<_>>();
+    for object in payloads {
+        fs::remove_file(base_output.join("objects").join(object))?;
+    }
+
+    let overlay = fixture.path().join("overlay");
+    write(&overlay, "tex/plain/base/plain.tex", b"new plain\n")?;
+    let mut successor_config = config(vec![root("overlay", &overlay)?]);
+    successor_config.dependencies.clear();
+    successor_config.formats = base_config.formats;
+    let successor_output = fixture.path().join("successor-output");
+    let successor = publish_successor(
+        &base_output,
+        &base_sha256,
+        &successor_config,
+        &successor_output,
+    )?;
+    verify_successor(&base_output, &base_sha256, &successor_output)?;
+    assert!(verify_successor(&base_output, &"0".repeat(64), &successor_output).is_err());
+
+    assert_eq!(
+        successor.files["tex:other.tex"],
+        base.files["tex:other.tex"]
+    );
+    assert_eq!(
+        successor.files["tex:plain.tex"].sha256,
+        digest(b"new plain\n")
+    );
+    assert!(
+        successor_output
+            .join("objects")
+            .join(&successor.files["tex:plain.tex"].object)
+            .is_file()
+    );
+    assert!(
+        !successor_output
+            .join("objects")
+            .join(&successor.files["tex:other.tex"].object)
+            .exists()
+    );
+    Ok(())
+}
+
+#[test]
 fn format_input_closures_are_canonical_and_verified() -> Result<()> {
     let fixture = TempDir::new()?;
     let root_path = fixture.path().join("root");
@@ -377,9 +446,8 @@ fn format_input_closures_are_canonical_and_verified() -> Result<()> {
     );
 
     let root_bytes = fs::read(output.join("manifest.json"))?;
-    let mut corrupt_root = umber_distribution::ShardedManifestRoot::parse(std::str::from_utf8(
-        &root_bytes,
-    )?)?;
+    let mut corrupt_root =
+        umber_distribution::ShardedManifestRoot::parse(std::str::from_utf8(&root_bytes)?)?;
     corrupt_root
         .formats
         .get_mut("plain")
@@ -402,11 +470,7 @@ fn rejects_format_built_from_a_shadowed_runtime_input() -> Result<()> {
     fs::create_dir_all(&root_path)?;
     let stable = b"stable l3 kernel";
     let development = b"development l3 kernel";
-    write(
-        &root_path,
-        "tex/latex/l3kernel/expl3-code.tex",
-        stable,
-    )?;
+    write(&root_path, "tex/latex/l3kernel/expl3-code.tex", stable)?;
     write(
         &root_path,
         "tex/latex-dev/l3kernel/expl3-code.tex",

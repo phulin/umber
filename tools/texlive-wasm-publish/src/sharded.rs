@@ -62,10 +62,7 @@ pub fn write_html_sharded_manifest(
     write_publication(publication, output)
 }
 
-fn write_publication(
-    publication: ShardedPublication,
-    output: &Path,
-) -> Result<ShardedPublication> {
+fn write_publication(publication: ShardedPublication, output: &Path) -> Result<ShardedPublication> {
     let objects = output.join("objects");
     fs::create_dir_all(&objects)
         .with_context(|| format!("create output directory {}", objects.display()))?;
@@ -75,15 +72,23 @@ fn write_publication(
         fs::write(objects.join(&object), &bytes)
             .with_context(|| format!("write index shard {object}"))?;
     }
-    fs::write(
-        output.join("manifest.json"),
-        publication.root.to_json(),
-    )
-    .context("write root manifest")?;
+    fs::write(output.join("manifest.json"), publication.root.to_json())
+        .context("write root manifest")?;
     Ok(publication)
 }
 
 pub fn verify_sharded_snapshot(output: &Path) -> Result<ShardedPublication> {
+    let publication = read_sharded_catalog(output)?;
+    verify_catalog_objects(output, &publication)?;
+    Ok(publication)
+}
+
+/// Authenticate a complete root and all of its shards without requiring the
+/// payload objects. This is the trust boundary used when an immutable
+/// content-addressed publication is succeeded in place: unchanged payloads
+/// remain authenticated by their records, while the successor stages only
+/// changed payloads and the newly derived index objects.
+pub fn read_sharded_catalog(output: &Path) -> Result<ShardedPublication> {
     let root_bytes = fs::read(output.join("manifest.json")).context("read root manifest")?;
     let root_text = std::str::from_utf8(&root_bytes).context("root manifest is not UTF-8")?;
     let root = ShardedManifestRoot::parse(root_text).context("parse root manifest")?;
@@ -105,7 +110,10 @@ pub fn verify_sharded_snapshot(output: &Path) -> Result<ShardedPublication> {
         }
         shards.push(parsed);
     }
-    let publication = assemble_sharded_catalog(root, shards)?;
+    assemble_sharded_catalog(root, shards).map_err(Into::into)
+}
+
+fn verify_catalog_objects(output: &Path, publication: &ShardedPublication) -> Result<()> {
     for (key, file) in &publication.files {
         read_verified_object(output, &file.object_entry(), key)?;
     }
@@ -128,7 +136,7 @@ pub fn verify_sharded_snapshot(output: &Path) -> Result<ShardedPublication> {
             &format!("license for {key}"),
         )?;
     }
-    Ok(publication)
+    Ok(())
 }
 
 pub fn shard_index(key: &str, shard_bits: u8) -> usize {

@@ -6,7 +6,8 @@ use std::path::Path;
 
 use anyhow::{Context, Result, bail};
 use texlive_wasm_publish::{
-    PublishConfig, publish, tree_sha256, verify_sharded_snapshot,
+    PublishConfig, publish, publish_successor, tree_sha256, verify_sharded_snapshot,
+    verify_successor,
 };
 use umber_distribution::Manifest;
 
@@ -64,8 +65,59 @@ fn main() -> Result<()> {
         verify_sharded_snapshot(Path::new(&staging))?;
         return Ok(());
     }
+    if config_path == "--verify-successor" {
+        let Some(base) = arguments.next() else {
+            bail!("missing BASE after --verify-successor");
+        };
+        let Some(flag) = arguments.next() else {
+            bail!("missing --base-sha256 after --verify-successor BASE");
+        };
+        if flag != "--base-sha256" {
+            bail!("expected --base-sha256 after --verify-successor BASE");
+        }
+        let Some(base_sha256) = arguments.next() else {
+            bail!("missing SHA256 after --base-sha256");
+        };
+        let Some(staging) = arguments.next() else {
+            bail!("missing STAGING after --base-sha256 SHA256");
+        };
+        if arguments.next().is_some() {
+            bail!("unexpected argument after --verify-successor BASE STAGING");
+        }
+        verify_successor(
+            Path::new(&base),
+            &base_sha256.to_string_lossy(),
+            Path::new(&staging),
+        )?;
+        return Ok(());
+    }
+    let successor_base = if config_path == "--successor" {
+        let Some(base) = arguments.next() else {
+            bail!("missing BASE after --successor");
+        };
+        let Some(flag) = arguments.next() else {
+            bail!("missing --base-sha256 after --successor BASE");
+        };
+        if flag != "--base-sha256" {
+            bail!("expected --base-sha256 after --successor BASE");
+        }
+        let Some(base_sha256) = arguments.next() else {
+            bail!("missing SHA256 after --base-sha256");
+        };
+        Some((base, base_sha256))
+    } else {
+        None
+    };
+    let config_path = if successor_base.is_some() {
+        let Some(config) = arguments.next() else {
+            bail!("missing CONFIG.json after --successor BASE");
+        };
+        config
+    } else {
+        config_path
+    };
     let Some(output_path) = arguments.next() else {
-        bail!("usage: texlive-wasm-publish CONFIG.json OUTPUT-DIRECTORY");
+        bail!("usage: texlive-wasm-publish [--successor BASE] CONFIG.json OUTPUT-DIRECTORY");
     };
     if arguments.next().is_some() {
         bail!("usage: texlive-wasm-publish CONFIG.json OUTPUT-DIRECTORY");
@@ -87,6 +139,11 @@ fn main() -> Result<()> {
         if format.metadata.is_relative() {
             format.metadata = parent.join(&format.metadata);
         }
+        if let Some(input_identities) = &mut format.input_identities
+            && input_identities.is_relative()
+        {
+            *input_identities = parent.join(&*input_identities);
+        }
     }
     if let Some(html) = &mut config.html {
         if html.catalog.is_relative() {
@@ -103,6 +160,15 @@ fn main() -> Result<()> {
     {
         *package_database = parent.join(&*package_database);
     }
-    publish(&config, Path::new(&output_path))?;
+    if let Some((base, base_sha256)) = successor_base {
+        publish_successor(
+            Path::new(&base),
+            &base_sha256.to_string_lossy(),
+            &config,
+            Path::new(&output_path),
+        )?;
+    } else {
+        publish(&config, Path::new(&output_path))?;
+    }
     Ok(())
 }

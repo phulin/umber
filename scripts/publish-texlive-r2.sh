@@ -18,6 +18,9 @@ retries=5
 expected_objects=152560
 expected_bytes=3520195192
 expected_manifest_sha256="43a31da364e4607957a38da10dabff227657d607d1845d502204adfd5d002e4b"
+successor_base=""
+successor_base_sha256=""
+manifest_name="manifest-v3.json"
 dry_run=0
 profile="full"
 root_pin_explicit=0
@@ -44,6 +47,9 @@ options:
   --expected-objects N          exact staged/remote object count
   --expected-bytes N            exact staged/remote object bytes
   --expected-manifest-sha256 H  exact manifest digest
+  --successor-base PATH         authenticated root/shards reused by a sparse successor
+  --successor-base-sha256 H     exact immutable base root digest
+  --manifest-name NAME          unique schema-3 root key for a sparse successor
   --root-sha256 H               alias for --expected-manifest-sha256; required for HTML
   --rclone PATH                 rclone executable
   --rclone-remote NAME          existing configured rclone remote
@@ -110,6 +116,9 @@ while [[ $# -gt 0 ]]; do
     --expected-bytes) expected_bytes="${2:-}"; shift 2 ;;
     --expected-manifest-sha256) expected_manifest_sha256="${2:-}"; root_pin_explicit=1; shift 2 ;;
     --root-sha256) expected_manifest_sha256="${2:-}"; root_pin_explicit=1; shift 2 ;;
+    --successor-base) successor_base="${2:-}"; shift 2 ;;
+    --successor-base-sha256) successor_base_sha256="${2:-}"; shift 2 ;;
+    --manifest-name) manifest_name="${2:-}"; shift 2 ;;
     --dry-run) dry_run=1; shift ;;
     --rclone) rclone="${2:-}"; shift 2 ;;
     --rclone-remote) rclone_remote="${2:-}"; use_configured_remote=1; shift 2 ;;
@@ -121,11 +130,22 @@ while [[ $# -gt 0 ]]; do
 done
 
 [[ "$profile" == full || "$profile" == html ]] || fail "--profile must be full or html"
-manifest_name="manifest-v3.json"
 if [[ "$profile" == html ]]; then
+  [[ -z "$successor_base" ]] || fail "HTML publication does not support sparse successors"
+  [[ "$manifest_name" == manifest-v3.json ]] || fail "HTML publication does not accept --manifest-name"
   (( root_pin_explicit == 1 )) || fail "HTML publication requires an explicit --root-sha256 pin"
   [[ "$snapshot" == html/* ]] || fail "HTML publication requires a distinct html/ immutable prefix"
   manifest_name="manifest-v4.json"
+fi
+if [[ -n "$successor_base" ]]; then
+  [[ "$profile" == full ]] || fail "sparse successor requires the full profile"
+  [[ -d "$successor_base/objects" && -f "$successor_base/manifest.json" ]] || fail "invalid successor base: $successor_base"
+  [[ "$successor_base_sha256" =~ ^[0-9a-f]{64}$ ]] || fail "sparse successor requires --successor-base-sha256"
+  [[ "$manifest_name" =~ ^manifest-v3-[a-z0-9][a-z0-9.-]*\.json$ ]] || fail "sparse successor requires a unique manifest-v3-NAME.json key"
+elif [[ "$manifest_name" != manifest-v3.json && "$profile" == full ]]; then
+  fail "--manifest-name requires --successor-base"
+elif [[ -n "$successor_base_sha256" ]]; then
+  fail "--successor-base-sha256 requires --successor-base"
 fi
 
 [[ -d "$staging/objects" ]] || fail "missing staged objects directory: $staging/objects"
@@ -145,7 +165,11 @@ command -v "$curl" >/dev/null 2>&1 || fail "curl executable not found: $curl"
 [[ -x "$publisher" ]] || fail "publisher/verifier executable not found: $publisher"
 [[ "$rclone_remote" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || fail "invalid rclone remote name"
 
-"$publisher" --verify-sharded "$staging" || fail "staged sharded manifest verification failed"
+if [[ -n "$successor_base" ]]; then
+  "$publisher" --verify-successor "$successor_base" --base-sha256 "$successor_base_sha256" "$staging" || fail "staged sparse successor verification failed"
+else
+  "$publisher" --verify-sharded "$staging" || fail "staged sharded manifest verification failed"
+fi
 
 if (( use_configured_remote == 0 )); then
   [[ -f "$env_file" ]] || fail "credential file not found: $env_file"
@@ -228,8 +252,10 @@ remote_inventory="$tmp_root/remote-inventory"
   --format sp --separator $'\t' > "$remote_inventory"
 remote_count="$(wc -l < "$remote_inventory" | tr -d ' ')"
 remote_bytes="$(awk -F $'\t' '{ total += $1 } END { printf "%.0f", total }' "$remote_inventory")"
-[[ "$remote_count" == "$expected_objects" ]] || fail "remote object count $remote_count does not match expected $expected_objects"
-[[ "$remote_bytes" == "$expected_bytes" ]] || fail "remote object bytes $remote_bytes does not match expected $expected_bytes"
+if [[ -z "$successor_base" ]]; then
+  [[ "$remote_count" == "$expected_objects" ]] || fail "remote object count $remote_count does not match expected $expected_objects"
+  [[ "$remote_bytes" == "$expected_bytes" ]] || fail "remote object bytes $remote_bytes does not match expected $expected_bytes"
+fi
 
 # This is intentionally the first manifest write in the script.
 "$rclone" copyto "$staging/manifest.json" "$remote_manifest" \
