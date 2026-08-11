@@ -1241,6 +1241,27 @@ fn tracingrestores_reports_retained_box_after_global_assignment() {
 }
 
 #[test]
+fn tracingrestores_uses_live_value_after_refiling_a_global_box_save() {
+    // TeX82 §§275/283 retain and display the effective global eqtb value.
+    // The global save record refiled into the outer group also carries an
+    // internal `old` redo word whose box has been retired with the inner
+    // group's local assignment; that word is not a TeX save-stack value.
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = MainControl::tex82_initex(&mut stores);
+    register_source(
+        &mut control,
+        b"\\tracingrestores=1\\tracingonline=1{{\\setbox7=\\vbox{}\\global\\setbox7=\\hbox{X}}}\\end",
+    );
+
+    run_to_end(&mut control, &mut stores);
+
+    assert_eq!(
+        pending_sink_text(&stores, true),
+        "{retaining \\box7=\n\\hbox(0.0+0.0)x0.0}\n"
+    );
+}
+
+#[test]
 fn tracingrestores_reports_retained_globals_and_obeys_routing_and_zero_suppression() {
     let mut stores = Universe::new_with_plain_catcodes();
     let mut control = MainControl::tex82_initex(&mut stores);

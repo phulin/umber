@@ -329,6 +329,35 @@ fn box_root_changes_reuse_the_allocator_base() {
 }
 
 #[test]
+fn refiled_global_box_restore_keeps_the_allocator_projection_live() {
+    let mut universe = Universe::new();
+    let baseline = universe.freeze_node_list(&[Node::Penalty(1)]);
+    universe.set_box_reg_global(0, baseline);
+    universe.observe_transient_token_words(0);
+    assert_eq!(universe.testing_transient_memory_base_projections(), 1);
+
+    universe.enter_group();
+    universe.enter_group();
+    let local = universe.freeze_node_list(&[Node::Penalty(2), Node::Penalty(3)]);
+    universe.set_box_reg(0, local);
+    let retained = universe.freeze_node_list(&[Node::Penalty(4)]);
+    universe.set_box_reg_global(0, retained);
+    let retained = universe.box_reg(0).expect("global box remains installed");
+
+    // TeX82 §§275/283 refile the global save into the outer group while the
+    // inner local value retires. Both exits update the retained root in the
+    // allocator projection without rebuilding unrelated roots or reading the
+    // refiled record's non-owning old handle.
+    let _ = universe.leave_group();
+    universe.observe_transient_token_words(0);
+    assert_eq!(universe.testing_transient_memory_base_projections(), 1);
+    let _ = universe.leave_group();
+    universe.observe_transient_token_words(0);
+    assert_eq!(universe.testing_transient_memory_base_projections(), 1);
+    assert_eq!(universe.box_reg(0), Some(retained));
+}
+
+#[test]
 fn string_pool_accounting_keeps_control_sequences_and_typed_allocations_distinct() {
     let mut universe = Universe::new();
     universe.intern("control-name");

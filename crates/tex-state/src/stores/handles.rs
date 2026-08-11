@@ -14,39 +14,19 @@ use crate::token::{OriginId, Token};
 use crate::world::World;
 
 impl Stores {
-    /// Captures TeX82 §§252/283's box display while the save-stack-owned value
-    /// is live. Group reference accounting may retire an intermediate value
-    /// before the caller emits the deferred diagnostic.
-    pub(super) fn capture_current_group_box_restore_texts(&self) -> ahash::AHashMap<u64, String> {
-        let Some(pos) = self.env.last_group_marker_pos() else {
-            return ahash::AHashMap::new();
-        };
-        self.env
-            .journal_entries_since(pos)
-            .iter()
-            .filter_map(|entry| match entry {
-                crate::journal::Entry::BoxUndo(id) => Some(self.env.box_undo(*id)),
-                _ => None,
-            })
-            .flat_map(|record| [record.old().value(), record.new_value().value()])
-            .map(|word| {
-                let text = NodeListId::decode_box_word(word)
-                    .map_or_else(|| "void".to_owned(), |id| self.box_restore_trace_text(id));
-                (word, text)
-            })
-            .collect()
-    }
-
-    pub(super) fn attach_box_restore_texts(
+    /// Detaches TeX82 §§252/283's display from the effective value selected by
+    /// `unsave`, while group ownership still keeps that value live. Journal
+    /// redo words are replay metadata, not TeX save-stack values: in
+    /// particular, a global assignment's discarded `old` word may already be
+    /// retired by the time the group ends.
+    pub(super) fn capture_box_restore_texts(
+        &self,
         restores: &mut [crate::env::group::RestoreRecord],
-        texts: &ahash::AHashMap<u64, String>,
     ) {
         for record in restores {
             if record.cell().bank() == crate::cell::BankTag::Box {
-                let text = texts
-                    .get(&record.old())
-                    .cloned()
-                    .unwrap_or_else(|| "void".to_owned());
+                let text = NodeListId::decode_box_word(record.old())
+                    .map_or_else(|| "void".to_owned(), |id| self.box_restore_trace_text(id));
                 record.capture_box_trace_text(text);
             }
         }
@@ -533,13 +513,12 @@ impl Stores {
         }
     }
 
-    pub(super) fn account_current_group_box_refs(&mut self) {
+    pub(super) fn current_group_box_refs_to_release(&self) -> Vec<NodeListId> {
         let Some(pos) = self.env.last_group_marker_pos() else {
-            return;
+            return Vec::new();
         };
         let leaving_depth = self.env.group_depth();
-        let dropped: Vec<_> = self
-            .env
+        self.env
             .journal_entries_since(pos)
             .iter()
             .rev()
@@ -547,13 +526,16 @@ impl Stores {
                 crate::journal::Entry::BoxUndo(id)
                     if !self.env.box_undo(*id).survives_group(leaving_depth) =>
                 {
-                    Some(self.env.box_undo(*id).new_value().value())
+                    NodeListId::decode_box_word(self.env.box_undo(*id).new_value().value())
                 }
                 _ => None,
             })
-            .collect();
-        for word in dropped {
-            self.dec_survivor_ref_opt(NodeListId::decode_box_word(word));
+            .collect()
+    }
+
+    pub(super) fn release_box_refs(&mut self, dropped: Vec<NodeListId>) {
+        for id in dropped {
+            self.dec_survivor_ref(id);
         }
     }
 

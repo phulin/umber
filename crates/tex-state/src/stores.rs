@@ -2820,11 +2820,11 @@ impl Stores {
     }
 
     pub(crate) fn leave_group_observing_dependencies(&mut self) -> GroupExitObservation {
-        let box_trace_texts = self.capture_current_group_box_restore_texts();
-        self.account_current_group_box_refs();
+        let box_refs_to_release = self.current_group_box_refs_to_release();
         let (payloads, _meaning_changed, changed_cells, mut restores) =
             self.env.leave_group_observing_meanings();
-        Self::attach_box_restore_texts(&mut restores, &box_trace_texts);
+        self.capture_box_restore_texts(&mut restores);
+        self.release_box_refs(box_refs_to_release);
         let code_before = self.code_tables.generations();
         let code_restores = self.code_tables.leave_group();
         let code_after = self.code_tables.generations();
@@ -2848,12 +2848,12 @@ impl Stores {
         if actual != expected {
             return Err(GroupMismatch::new(expected, actual));
         }
-        let box_trace_texts = self.capture_current_group_box_restore_texts();
-        self.account_current_group_box_refs();
+        let box_refs_to_release = self.current_group_box_refs_to_release();
         let (payloads, _meaning_changed, changed_cells, mut restores) = self
             .env
             .leave_group_with_kind_observing_meanings(expected)?;
-        Self::attach_box_restore_texts(&mut restores, &box_trace_texts);
+        self.capture_box_restore_texts(&mut restores);
+        self.release_box_refs(box_refs_to_release);
         let code_before = self.code_tables.generations();
         let code_restores = self.code_tables.leave_group();
         let code_after = self.code_tables.generations();

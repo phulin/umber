@@ -1578,6 +1578,18 @@ fn box_write_rejects_stale_epoch_list_after_equal_reallocation() {
 }
 
 #[test]
+#[should_panic(expected = "node list is not live in this Universe timeline")]
+fn box_restore_text_rejects_a_genuinely_stale_timeline_handle() {
+    let mut stores = Stores::new();
+    let snapshot = stores.checkpoint();
+    let stale = one_char(&mut stores, 'x');
+
+    stores.rollback(&snapshot);
+    let _replacement = one_char(&mut stores, 'y');
+    let _ = stores.box_restore_trace_text(stale);
+}
+
+#[test]
 #[should_panic(expected = "child node-list id is not live in this Universe timeline")]
 fn finish_node_list_rejects_foreign_child_node_list() {
     let mut stores = Stores::new();
