@@ -3156,18 +3156,18 @@ fn lookup_pdf_raw_object_file(
             }
         }
         RequestedFile::Remote { user_path, key } => {
-            if let Some(path) = user_path {
-                if let Some(file) = snapshot.get(&path).map_err(|error| error.to_string())? {
-                    return Ok(PdfRawObjectFileLookup::Bound(
-                        PdfRawObjectFileReceiptEntry {
-                            source_name: name.to_owned(),
-                            source: PdfRawObjectFileSource::User(path),
-                            virtual_path: file.path().as_str().to_owned(),
-                            content_id: file.content_id(),
-                            bytes: file.shared_bytes(),
-                        },
-                    ));
-                }
+            if let Some(path) = user_path
+                && let Some(file) = snapshot.get(&path).map_err(|error| error.to_string())?
+            {
+                return Ok(PdfRawObjectFileLookup::Bound(
+                    PdfRawObjectFileReceiptEntry {
+                        source_name: name.to_owned(),
+                        source: PdfRawObjectFileSource::User(path),
+                        virtual_path: file.path().as_str().to_owned(),
+                        content_id: file.content_id(),
+                        bytes: file.shared_bytes(),
+                    },
+                ));
             }
             if let Some(file) = workspace.get(&key) {
                 PdfRawObjectFileReceiptEntry {
