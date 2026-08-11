@@ -115,6 +115,15 @@ fn escape_pdf_literal_string(text: &str) -> String {
     escaped
 }
 
+/// pdfTeX's `utils.c` `escapehex` projection for a PDF hexadecimal string.
+fn escape_pdf_hex(bytes: &[u8]) -> String {
+    let mut escaped = String::with_capacity(bytes.len().saturating_mul(2));
+    for byte in bytes {
+        write!(escaped, "{byte:02X}").expect("writing to String cannot fail");
+    }
+    escaped
+}
+
 fn append_format_glue(value: GlueSpec, unit: &str, output: &mut String) {
     append_scaled_with_unit(value.width, unit, output);
     for (label, component, order) in [
@@ -985,6 +994,9 @@ impl CommandProcessor<'_> {
             Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfEscapeString) => {
                 self.expand_pdf_escape_string(command)
             }
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfEscapeHex) => {
+                self.expand_pdf_escape_hex(command)
+            }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfColorStackInit) => {
                 self.expand_pdf_color_stack_init(command)
             }
@@ -1278,6 +1290,39 @@ impl CommandProcessor<'_> {
             CommandObservation::TokenList(TokenListRecord {
                 transition: "complete",
                 purpose: "pdf_escape_string",
+                tokens: escaped
+                    .chars()
+                    .map(|ch| {
+                        self.observed_token(TracedTokenWord::pack(
+                            Token::Char {
+                                ch,
+                                cat: Catcode::Other,
+                            },
+                            OriginId::UNKNOWN,
+                        ))
+                    })
+                    .collect(),
+            }),
+        );
+        self.push_rendered_text(&escaped, opener.origin());
+        Ok(())
+    }
+
+    /// pdftex.web §§494 and 496--497's `pdf_escape_hex_code` conversion.
+    ///
+    /// The operand is one expanded general-text token list. `tokens_to_string`
+    /// projects that list to pdfTeX bytes, then `escapehex` writes exactly two
+    /// uppercase hexadecimal digits for every byte, without angle brackets.
+    /// TeX82 §464's `str_toks` returns those digits as category-12 characters.
+    fn expand_pdf_escape_hex(&mut self, opener: CurrentCommand) -> Result<(), CommandError> {
+        let scanned = self.scan_toks(crate::scan_toks::ScanToksMode::General { expanded: true })?;
+        let bytes = pdftex_token_bytes(&mut self.state, scanned.replacement_text.token_list());
+        let escaped = escape_pdf_hex(&bytes);
+        observe!(
+            self,
+            CommandObservation::TokenList(TokenListRecord {
+                transition: "complete",
+                purpose: "pdf_escape_hex",
                 tokens: escaped
                     .chars()
                     .map(|ch| {

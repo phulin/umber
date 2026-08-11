@@ -716,6 +716,105 @@ fn pdftex_escape_string_expands_and_escapes_only_pdf_literal_bytes() {
 }
 
 #[test]
+fn pdftex_escape_hex_expands_bytes_as_uppercase_other_character_pairs() {
+    // pdftex.web §§494 and 496--497: `\pdfescapehex` scans one expanded
+    // balanced operand and returns two uppercase hexadecimal digits per byte
+    // through TeX82 §464's `str_toks`. Fresh and loaded universes prove both
+    // INITEX installation and format-registry reconstruction.
+    let mut fresh = crate::test_harness::universe_with_plain_catcodes();
+    crate::primitives::install_pdftex_expandable_primitives(&mut fresh);
+    let format = fresh.dump_format().expect("quiescent pdfTeX format");
+    let mut loaded = Universe::from_format(World::default(), &format).expect("format loads");
+    crate::primitives::register_pdftex_expandable_primitives(&mut loaded);
+
+    for mut universe in [fresh, loaded] {
+        let escape = universe
+            .symbol("pdfescapehex")
+            .expect("pdfTeX spelling is installed");
+        assert_eq!(
+            universe.meaning(escape.symbol()),
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfEscapeHex),
+        );
+        for (name, ch) in [
+            ("backslash", '\\'),
+            ("zero", '\0'),
+            ("delete", '\u{7f}'),
+            ("highbyte", '\u{80}'),
+            ("maxbyte", '\u{ff}'),
+        ] {
+            install_macro(
+                &mut universe,
+                name,
+                Token::Char {
+                    ch,
+                    cat: Catcode::Other,
+                },
+            );
+        }
+        let mut command = CommandState::new(crate::CommandProfile::PDFTEX14029);
+        let source = command
+            .register_source(SourceRegistration::new(
+                RegisteredSourceKind::Generated,
+                br"\pdfescapehex{A (\backslash)\zero\delete\highbyte\maxbyte}\pdfescapehex{}X%"
+                    .as_slice(),
+            ))
+            .expect("source registers");
+        command
+            .open_registered_source(source)
+            .expect("source opens");
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut recorder = Recorder::default();
+        let mut processor =
+            processor(&mut command, &mut universe, &mut capabilities).with_observer(&mut recorder);
+        let mut tokens = Vec::new();
+        while let Some(delivery) = processor.get_x_token().expect("hex escaping expands") {
+            tokens.push(delivery.spelling().semantic_token());
+        }
+
+        assert_eq!(
+            tokens.pop(),
+            Some(Token::Char {
+                ch: 'X',
+                cat: Catcode::Letter,
+            }),
+            "both balanced operands are consumed and the sentinel remains",
+        );
+        assert_eq!(
+            tokens
+                .iter()
+                .map(|token| match token {
+                    Token::Char { ch, .. } => *ch,
+                    _ => panic!("hex conversion returned a non-character token"),
+                })
+                .collect::<String>(),
+            "4120285C29007F80FF",
+        );
+        assert!(tokens.iter().all(|token| matches!(
+            token,
+            Token::Char {
+                cat: Catcode::Other,
+                ..
+            }
+        )));
+        let returned_lengths = recorder
+            .0
+            .iter()
+            .filter_map(|record| match record {
+                CommandObservation::TokenList(record) if record.purpose == "pdf_escape_hex" => {
+                    Some(record.tokens.len())
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            returned_lengths,
+            vec![18, 0],
+            "the empty operand emits no bytes but still completes its conversion",
+        );
+    }
+}
+
+#[test]
 fn pdftex_margin_kern_enquiries_use_typed_box_edges_fresh_and_loaded() {
     use tex_state::font::NULL_FONT;
     use tex_state::glue::GlueSpec;
