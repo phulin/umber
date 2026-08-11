@@ -1763,7 +1763,8 @@ fn distribution_file_key(
         FileKind::ClassicBibData => DistributionFileKind::ClassicBib,
         FileKind::BibStyle => DistributionFileKind::BibStyle,
         FileKind::GenericAsset => DistributionFileKind::Tex,
-        FileKind::VirtualFont
+        FileKind::Image
+        | FileKind::VirtualFont
         | FileKind::PdfFontMap
         | FileKind::PdfEncoding
         | FileKind::PdfFontProgram => DistributionFileKind::Tex,

@@ -186,6 +186,13 @@ fn file_request(name: &str) -> ResourceRequest {
     ))
 }
 
+fn image_request(name: &str) -> ResourceRequest {
+    ResourceRequest::File(FileRequest::new(
+        crate::FileRequestKey::new(FileKind::Image, name).expect("image request key"),
+        name,
+    ))
+}
+
 fn needs(required: Vec<ResourceRequest>) -> NeedResources {
     NeedResources {
         required,
@@ -281,6 +288,154 @@ fn write_sharded_root(
     .into_bytes();
     std::fs::write(directory.join("manifest-v2.json"), &root).expect("root manifest");
     (root, digests)
+}
+
+fn write_single_file_distribution(
+    directory: &Path,
+    distribution: &str,
+    manifest_key: &str,
+    virtual_path: &str,
+    bytes: &[u8],
+) {
+    let objects = directory.join("objects");
+    std::fs::create_dir_all(&objects).expect("distribution objects directory");
+    let digest = hex_digest(bytes);
+    let object = format!("sha256-{digest}");
+    std::fs::write(objects.join(&object), bytes).expect("distribution object");
+    let shard = format!(
+        "{{\"schema\":1,\"distribution\":\"{distribution}\",\"index\":0,\"files\":{{\"{manifest_key}\":{{\"virtualPath\":\"{virtual_path}\",\"object\":\"{object}\",\"sha256\":\"{digest}\",\"bytes\":{}}}}}}}\n",
+        bytes.len()
+    );
+    write_sharded_root(directory, distribution, 0, &[(shard.as_str(), true)]);
+}
+
+#[test]
+fn native_distribution_image_preserves_typed_identity_and_authenticated_bytes() {
+    let directory = TempDir::new().expect("distribution tempdir");
+    let bytes = b"authenticated image payload";
+    write_single_file_distribution(
+        directory.path(),
+        "image",
+        "tex:figure.pdf",
+        "/texlive/tex/images/figure.pdf",
+        bytes,
+    );
+    let project = TempDir::new().expect("isolated project");
+    let mut resolver = DistributionResolver::new(
+        ObjectCache::new(directory.path().join("cache")),
+        Some(directory.path().to_string_lossy().into_owned()),
+        None,
+        true,
+    );
+
+    let responses = resolver
+        .resolve_batch(
+            &local_resolver(project.path()),
+            &needs(vec![image_request("figure.pdf")]),
+            &FetchCancellation::new(),
+        )
+        .expect("offline image resolution");
+    let [ResourceResponse::File(file)] = responses.as_slice() else {
+        panic!("typed image response: {responses:?}");
+    };
+    assert_eq!(file.request.kind(), FileKind::Image);
+    assert_eq!(file.request.name(), "figure.pdf");
+    assert_eq!(file.virtual_path, "/texlive/tex/images/figure.pdf");
+    assert_eq!(file.bytes, bytes);
+    assert_eq!(file.expected_digest, Some(FileContentId::for_bytes(bytes)));
+}
+
+#[test]
+fn native_image_resolution_preserves_local_precedence() {
+    let directory = TempDir::new().expect("distribution tempdir");
+    write_single_file_distribution(
+        directory.path(),
+        "image-shadow",
+        "tex:figure.pdf",
+        "/texlive/tex/images/figure.pdf",
+        b"distribution image",
+    );
+    let project = TempDir::new().expect("isolated project");
+    std::fs::write(project.path().join("figure.pdf"), b"local image").expect("local image");
+    let mut resolver = DistributionResolver::new(
+        ObjectCache::new(directory.path().join("cache")),
+        Some(directory.path().to_string_lossy().into_owned()),
+        None,
+        true,
+    );
+
+    let responses = resolver
+        .resolve_batch(
+            &local_resolver(project.path()),
+            &needs(vec![image_request("figure.pdf")]),
+            &FetchCancellation::new(),
+        )
+        .expect("local image resolution");
+    let [ResourceResponse::File(file)] = responses.as_slice() else {
+        panic!("typed local image response: {responses:?}");
+    };
+    assert_eq!(file.request.kind(), FileKind::Image);
+    assert_eq!(file.bytes, b"local image");
+    assert_eq!(file.virtual_path, "/texlive/local/image/figure.pdf");
+    assert!(
+        resolver.loaded.is_none(),
+        "local hit must not load distribution"
+    );
+}
+
+#[test]
+fn native_distribution_non_image_payload_reaches_malformed_image_diagnostic() {
+    let directory = TempDir::new().expect("distribution tempdir");
+    write_single_file_distribution(
+        directory.path(),
+        "malformed-image",
+        "tex:figure.pdf",
+        "/texlive/tex/images/figure.pdf",
+        b"not an image",
+    );
+    let project = TempDir::new().expect("isolated project");
+    let mut resolver = DistributionResolver::new(
+        ObjectCache::new(directory.path().join("cache")),
+        Some(directory.path().to_string_lossy().into_owned()),
+        None,
+        true,
+    );
+    let mut session = VirtualCompileSession::new(SessionOptions {
+        engine: EngineMode::PdfTex,
+        outputs: OutputCapabilitySet::PDF,
+        ..SessionOptions::default()
+    })
+    .expect("PDF session");
+    session
+        .add_user_file(
+            "main.tex",
+            b"\\pdfoutput=1 \\pdfximage figure.pdf \\end".to_vec(),
+        )
+        .expect("main file");
+    let CompileAttemptResult::NeedResources(batch) = session.compile_attempt() else {
+        panic!("image request");
+    };
+
+    let responses = resolver
+        .resolve_batch(
+            &local_resolver(project.path()),
+            &batch,
+            &FetchCancellation::new(),
+        )
+        .expect("malformed image bytes remain an available resource");
+    assert!(matches!(
+        responses.as_slice(),
+        [ResourceResponse::File(file)] if file.request.kind() == FileKind::Image
+    ));
+    session
+        .provide_resources(responses)
+        .expect("provision authenticated image bytes");
+    assert!(matches!(
+        session.compile_attempt(),
+        CompileAttemptResult::Error(CompileError::Diagnostic(diagnostic))
+            if diagnostic.message.contains("image type is not PDF, PNG, or JPEG")
+                && !diagnostic.message.contains("image is unavailable")
+    ));
 }
 
 #[test]
