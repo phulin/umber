@@ -1009,6 +1009,120 @@ fn candidate_retries_staged_missing_input_without_losing_state() {
 }
 
 #[test]
+fn cold_candidate_prunes_speculative_history_before_acceptance_without_changing_output() {
+    let text = multi_page_source(32);
+    let mut bounded = Session::start(
+        template(),
+        "bounded-candidate",
+        RevisionId::new(1),
+        text.clone(),
+        0,
+    )
+    .expect("bounded session starts");
+    let mut bounded_candidate = bounded
+        .start_cold_candidate()
+        .expect("bounded candidate starts");
+    assert!(matches!(
+        bounded_candidate
+            .drive_with_resource_resolvers(&mut StagedResourceHost::default(), &Cancellation::new())
+            .expect("bounded candidate completes"),
+        RevisionCandidateResult::Complete
+    ));
+    let CandidateSink::Cold(bounded_sink) = &bounded_candidate.sink else {
+        panic!("cold candidate retains a cold history sink");
+    };
+    assert_eq!(bounded_sink.records.len(), 2);
+    assert_eq!(
+        bounded_sink.records[0].key().boundary,
+        EngineBoundary::JobStart
+    );
+    assert_eq!(
+        bounded_sink.records[1].key().boundary,
+        EngineBoundary::ShipoutComplete
+    );
+    let bounded_output = bounded
+        .accept_cold_candidate(bounded_candidate)
+        .expect("bounded candidate accepts");
+
+    let mut unbounded = Session::start(
+        template(),
+        "bounded-candidate",
+        RevisionId::new(1),
+        text,
+        usize::MAX,
+    )
+    .expect("unbounded session starts");
+    let mut unbounded_candidate = unbounded
+        .start_cold_candidate()
+        .expect("unbounded candidate starts");
+    assert!(matches!(
+        unbounded_candidate
+            .drive_with_resource_resolvers(&mut StagedResourceHost::default(), &Cancellation::new())
+            .expect("unbounded candidate completes"),
+        RevisionCandidateResult::Complete
+    ));
+    let CandidateSink::Cold(unbounded_sink) = &unbounded_candidate.sink else {
+        panic!("cold candidate retains a cold history sink");
+    };
+    assert_eq!(unbounded_sink.records.len(), 33);
+    let unbounded_output = unbounded
+        .accept_cold_candidate(unbounded_candidate)
+        .expect("unbounded candidate accepts");
+
+    assert_eq!(bounded_output.dvi_pages, unbounded_output.dvi_pages);
+    assert_eq!(bounded_output.artifacts, unbounded_output.artifacts);
+    assert_eq!(bounded_output.effects, unbounded_output.effects);
+}
+
+#[test]
+fn suspended_candidate_keeps_only_protected_history_under_budget() {
+    let mut text = multi_page_source(16);
+    text.truncate(text.len() - "\\end".len());
+    text.push_str("\\input child \\end");
+    let mut session = Session::start(
+        template_without_preinstalled_primitives(),
+        "bounded-suspension",
+        RevisionId::new(1),
+        text,
+        0,
+    )
+    .expect("session starts");
+    let mut inputs = StagedInputResolver::default();
+    let mut candidate = session.start_cold_candidate().expect("cold candidate");
+    assert!(matches!(
+        candidate
+            .drive_with_resource_resolvers(
+                &mut DecliningStagedResourceHost::new(&mut inputs),
+                &Cancellation::new(),
+            )
+            .expect("candidate suspends"),
+        RevisionCandidateResult::AwaitingResources(ResourceNeed::Input { ref name, .. })
+            if name == "child.tex"
+    ));
+    let CandidateSink::Cold(sink) = &candidate.sink else {
+        panic!("cold candidate retains a cold history sink");
+    };
+    assert_eq!(sink.records.len(), 2);
+    assert_eq!(sink.records[0].key().boundary, EngineBoundary::JobStart);
+
+    inputs
+        .files
+        .insert("child".to_owned(), "\\relax".to_owned());
+    assert!(matches!(
+        candidate
+            .drive_with_resource_resolvers(
+                &mut DecliningStagedResourceHost::new(&mut inputs),
+                &Cancellation::new(),
+            )
+            .expect("provisioned retry completes"),
+        RevisionCandidateResult::Complete
+    ));
+    session
+        .accept_cold_candidate(candidate)
+        .expect("completed retry accepts");
+}
+
+#[test]
 fn initex_session_installs_everybox_hooks_for_its_profile() {
     let mut session = Session::start(
         template_without_preinstalled_primitives(),

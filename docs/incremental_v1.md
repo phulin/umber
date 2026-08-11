@@ -527,6 +527,12 @@ restart roots in this deterministic order:
 2. oldest non-final `ShipoutComplete` records next; and
 3. never `JobStart` or the newest boundary while that generation is accepted.
 
+Cold and replacement candidates apply the same policy as each named boundary
+is published. The live generation charge is the opaque lower bound until the
+completed generation is frozen and charged precisely at acceptance. This
+prevents a long candidate from retaining an unbounded speculative checkpoint
+timeline only to discard those same roots during acceptance.
+
 Artifact ids and detached artifact bytes needed to assemble the accepted
 output are revision output metadata and survive checkpoint-root eviction.
 Eviction removes the complete restart record and asks one aggregate session

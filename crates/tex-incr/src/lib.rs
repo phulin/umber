@@ -682,6 +682,7 @@ impl RevisionCandidate {
             self.output_ledger
                 .commit_job_start(&self.control, &mut self.universe, sink)?;
         }
+        self.prune_cold_history_at_boundary();
         // A fulfilled or authoritatively unavailable capability must make the
         // replayed aggregate operation pass that same suspension boundary.
         // Keep this list only until a committed main-control step: encountering
@@ -707,6 +708,7 @@ impl RevisionCandidate {
                 )
                 .step(sink, cancellation)
             };
+            self.prune_cold_history_at_boundary();
             match step_result {
                 CanonicalStepResult::Progress(step) => {
                     answered_needs.clear();
@@ -766,6 +768,21 @@ impl RevisionCandidate {
                 CanonicalStepResult::Failed(error) => return Err(map_step_failure(error)),
             }
         }
+    }
+
+    fn prune_cold_history_at_boundary(&mut self) {
+        let needs_pruning = matches!(
+            &self.sink,
+            CandidateSink::Cold(sink) if sink.has_unpruned_boundary()
+        );
+        if !needs_pruning {
+            return;
+        }
+        let generation_bytes = self.universe.live_generation_charged_bytes();
+        let CandidateSink::Cold(sink) = &mut self.sink else {
+            unreachable!("only cold candidates request cold-history pruning");
+        };
+        sink.prune(generation_bytes);
     }
 
     fn finish_committed_step(&mut self, step: MainControlStep) -> Result<bool, SessionError> {
@@ -1344,7 +1361,7 @@ impl Session {
         Ok(RevisionCandidate {
             universe,
             control,
-            sink: CandidateSink::Cold(HistorySink::default()),
+            sink: CandidateSink::Cold(HistorySink::new(self.checkpoint_budget)),
             completed: None,
             output_ledger: OutputLedger::new(CheckpointIdentity::Exact),
             delivered_commands: 0,
@@ -1607,7 +1624,7 @@ impl Session {
         Ok(RevisionCandidate {
             universe,
             control,
-            sink: CandidateSink::Cold(HistorySink::default()),
+            sink: CandidateSink::Cold(HistorySink::new(self.checkpoint_budget)),
             completed: None,
             output_ledger: OutputLedger::new(CheckpointIdentity::Exact),
             delivered_commands: 0,
@@ -1661,6 +1678,7 @@ impl Session {
         } = stats;
         let pages_retyped = output_patch.artifacts().artifacts().len();
         let substrate = candidate.universe.freeze_generation();
+        let executed_paragraphs = sink.paragraphs;
         let history = retain_restorable_history(sink.records, &substrate)?;
         let reuse = ReuseMetrics {
             execution_path: setup.execution_path,
@@ -1671,10 +1689,7 @@ impl Session {
             reexecuted_commands: main_control_dispatches,
             reexecuted_macro_text_span_tokens: 0,
             reexecuted_source_text_span_tokens: 0,
-            reexecuted_paragraphs: history
-                .iter()
-                .filter(|record| record.key.boundary == EngineBoundary::OuterParagraphEnd)
-                .count(),
+            reexecuted_paragraphs: executed_paragraphs,
             revision_setup_latency: setup.revision_setup_latency,
             ..ReuseMetrics::default()
         };
@@ -2545,11 +2560,7 @@ fn finish_cold_candidate(
         return Err(SessionError::CandidateKindMismatch);
     };
     let memo = candidate.control.take_pure_memo_runtime();
-    let executed_paragraphs = sink
-        .records
-        .iter()
-        .filter(|record| record.key.boundary == EngineBoundary::OuterParagraphEnd)
-        .count();
+    let executed_paragraphs = sink.paragraphs;
     let CandidateCompletion {
         output_patch,
         dumped_format,
@@ -2595,10 +2606,38 @@ fn finish_cold_candidate(
     })
 }
 
-#[derive(Default)]
 struct HistorySink {
     records: Vec<BoundaryRecord>,
     occurrences: HashMap<(usize, EngineBoundary), u32>,
+    checkpoint_budget: usize,
+    paragraphs: usize,
+    has_unpruned_boundary: bool,
+}
+
+impl HistorySink {
+    fn new(checkpoint_budget: usize) -> Self {
+        Self {
+            records: Vec::new(),
+            occurrences: HashMap::new(),
+            checkpoint_budget,
+            paragraphs: 0,
+            has_unpruned_boundary: false,
+        }
+    }
+
+    const fn has_unpruned_boundary(&self) -> bool {
+        self.has_unpruned_boundary
+    }
+
+    fn prune(&mut self, generation_bytes: usize) {
+        self.has_unpruned_boundary = false;
+        prune_optional_history(
+            &mut self.records,
+            self.checkpoint_budget,
+            generation_bytes,
+            0,
+        );
+    }
 }
 
 impl CheckpointSink for HistorySink {
@@ -2607,7 +2646,11 @@ impl CheckpointSink for HistorySink {
     }
 
     fn checkpoint(&mut self, checkpoint: EngineCheckpoint) {
+        if checkpoint.boundary() == EngineBoundary::OuterParagraphEnd {
+            self.paragraphs = self.paragraphs.saturating_add(1);
+        }
         push_checkpoint(&mut self.records, &mut self.occurrences, checkpoint);
+        self.has_unpruned_boundary = true;
     }
 }
 
@@ -2997,21 +3040,33 @@ fn prune_history(
     diagnostic_bytes: usize,
     output_bytes: usize,
 ) -> (Vec<BoundaryRecord>, RetentionMetrics) {
+    prune_optional_history(&mut history, budget, substrate_bytes, diagnostic_bytes);
+    let checkpoint_root_bytes = charged_bytes(&history, substrate_bytes);
+    let charged = checkpoint_root_bytes.saturating_add(diagnostic_bytes);
+    let overage = charged.saturating_sub(budget);
+    (
+        history,
+        RetentionMetrics {
+            checkpoint_root_bytes,
+            memo_result_bytes: 0,
+            diagnostic_bytes,
+            output_bytes,
+            protected_overage_bytes: overage,
+        },
+    )
+}
+
+fn prune_optional_history(
+    history: &mut Vec<BoundaryRecord>,
+    budget: usize,
+    generation_bytes: usize,
+    diagnostic_bytes: usize,
+) {
     loop {
-        let checkpoint_root_bytes = charged_bytes(&history, substrate_bytes);
+        let checkpoint_root_bytes = charged_bytes(history, generation_bytes);
         let charged = checkpoint_root_bytes.saturating_add(diagnostic_bytes);
         if charged <= budget || history.len() <= 2 {
-            let overage = charged.saturating_sub(budget);
-            return (
-                history,
-                RetentionMetrics {
-                    checkpoint_root_bytes,
-                    memo_result_bytes: 0,
-                    diagnostic_bytes,
-                    output_bytes,
-                    protected_overage_bytes: overage,
-                },
-            );
+            return;
         }
         let newest = history.len() - 1;
         let victim = history
@@ -3031,18 +3086,7 @@ fn prune_history(
             })
             .map(|(index, _)| index);
         let Some(victim) = victim else {
-            let checkpoint_root_bytes = charged_bytes(&history, substrate_bytes);
-            let charged = checkpoint_root_bytes.saturating_add(diagnostic_bytes);
-            return (
-                history,
-                RetentionMetrics {
-                    checkpoint_root_bytes,
-                    memo_result_bytes: 0,
-                    diagnostic_bytes,
-                    output_bytes,
-                    protected_overage_bytes: charged.saturating_sub(budget),
-                },
-            );
+            return;
         };
         history.remove(victim);
     }
