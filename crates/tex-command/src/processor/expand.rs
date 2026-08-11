@@ -930,6 +930,18 @@ impl CommandProcessor<'_> {
                 self.push_rendered_text("27", command.origin());
                 Ok(())
             }
+            // pdftex.web §§494 and 496--498 install `\pdftexbanner` as an
+            // operand-free `convert`: `conv_toks` prints the process banner,
+            // then returns it through the ordinary `str_toks`/`ins_list`
+            // conversion path. `utils.c::makepdftexbanner` appends the pinned
+            // TeX Live and kpathsea identities to pdftex.web §2's banner.
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfTeXBanner) => {
+                self.push_rendered_text(
+                    "This is pdfTeX, Version 3.141592653-2.6-1.40.29 (TeX Live 2026) kpathsea version 6.4.2",
+                    command.origin(),
+                );
+                Ok(())
+            }
             // pdftex.web §§1587--1588 use the ordinary integer scanner for
             // the signed uniform bound, then advance the single checkpointed
             // MetaPost-derived stream shared with the operand-free normal

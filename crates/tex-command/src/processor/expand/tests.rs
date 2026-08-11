@@ -2852,6 +2852,80 @@ fn etex_revision_uses_the_canonical_conversion_token_path() {
 }
 
 #[test]
+fn pdftex_banner_is_operand_free_conversion_text_fresh_and_loaded() {
+    // pdftex.web §§494 and 496--498: `\pdftexbanner` scans no operand and
+    // returns `pdftex_banner` through `str_toks`, whose spaces are category 10
+    // and whose other bytes are category 12. `utils.c::makepdftexbanner`
+    // appends the pinned TeX Live and kpathsea identities. Exercise both
+    // INITEX installation and post-format registry reconstruction.
+    const BANNER: &str =
+        "This is pdfTeX, Version 3.141592653-2.6-1.40.29 (TeX Live 2026) kpathsea version 6.4.2";
+
+    let mut fresh = crate::test_harness::universe_with_plain_catcodes();
+    crate::primitives::install_pdftex_expandable_primitives(&mut fresh);
+    let format = fresh.dump_format().expect("quiescent pdfTeX format");
+    let mut loaded = Universe::from_format(World::default(), &format).expect("format loads");
+    crate::primitives::register_pdftex_expandable_primitives(&mut loaded);
+
+    for mut universe in [fresh, loaded] {
+        let banner = universe
+            .symbol("pdftexbanner")
+            .expect("pdfTeX banner spelling is installed");
+        assert_eq!(
+            universe.meaning(banner),
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfTeXBanner),
+        );
+
+        let mut command = CommandState::new(crate::CommandProfile::PDFTEX14029);
+        let source = command
+            .register_source(SourceRegistration::new(
+                RegisteredSourceKind::Generated,
+                br"\pdftexbanner X%".as_slice(),
+            ))
+            .expect("source registers");
+        command
+            .open_registered_source(source)
+            .expect("source opens");
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut processor = processor(&mut command, &mut universe, &mut capabilities);
+        let mut tokens = Vec::new();
+        while let Some(delivery) = processor.get_x_token().expect("banner expands") {
+            tokens.push(delivery.spelling().semantic_token());
+        }
+
+        assert_eq!(
+            tokens.pop(),
+            Some(Token::Char {
+                ch: 'X',
+                cat: Catcode::Letter,
+            }),
+            "the sentinel remains because the conversion scans no operand",
+        );
+        assert_eq!(
+            tokens
+                .iter()
+                .map(|token| match token {
+                    Token::Char { ch, .. } => *ch,
+                    _ => panic!("banner conversion returned a non-character token"),
+                })
+                .collect::<String>(),
+            BANNER,
+        );
+        assert!(tokens.iter().all(|token| match token {
+            Token::Char {
+                ch: ' ',
+                cat: Catcode::Space,
+            } => true,
+            Token::Char {
+                ch,
+                cat: Catcode::Other,
+            } => *ch != ' ',
+            _ => false,
+        }));
+    }
+}
+
+#[test]
 fn scalar_conversions_render_immutable_other_character_tokens() {
     let mut command = CommandState::default();
     let mut universe = crate::test_harness::universe_with_plain_catcodes();
