@@ -7035,7 +7035,7 @@ fn scan_step(
 #[allow(clippy::too_many_arguments)] // carries command-owned replay facts
 fn dispatch_main_control_command(
     processor: &mut CommandProcessor<'_>,
-    command: tex_command::CurrentCommand,
+    mut command: tex_command::CurrentCommand,
     mode: Mode,
     boxes: &ReplayBoxes,
     innermost_group: Option<GroupKind>,
@@ -7046,6 +7046,26 @@ fn dispatch_main_control_command(
     alignment: Option<AlignmentIdentity>,
     set_box_allowed: bool,
 ) -> Result<ScannedStep, ExecError> {
+    // TeX82 §1078 uses §404's non-blank, non-relax fetch after every leader
+    // payload. Constructed boxes close in a separate replay step, so the first
+    // token after the box has already reached this dispatcher. Finish §404
+    // here without exposing its filler to main control or command tracing.
+    if boxes.pending_leader.is_some()
+        && matches!(
+            command.meaning(),
+            Meaning::CharToken {
+                cat: Catcode::Space,
+                ..
+            } | Meaning::Relax
+        )
+    {
+        command = processor
+            .next_non_blank_non_relax_x_token()
+            .map_err(command_error)?
+            .ok_or(ExecError::MissingToken {
+                context: "leader glue",
+            })?;
+    }
     let origin = command.origin();
     dispatch_main_control_command_inner(
         processor,
@@ -7362,13 +7382,12 @@ fn scan_leaders_step(
             Ok(ScannedStep::BeginLeaderBox { construction, kind })
         }
         ScannedLeaderPayload::Rule(rule) => {
-            let glue_command =
-                processor
-                    .get_x_token()
-                    .map_err(command_error)?
-                    .ok_or(ExecError::MissingToken {
-                        context: "leader glue",
-                    })?;
+            let glue_command = processor
+                .next_non_blank_non_relax_x_token()
+                .map_err(command_error)?
+                .ok_or(ExecError::MissingToken {
+                    context: "leader glue",
+                })?;
             let Some(glue) = scan_leader_glue_command(processor, glue_command, mode)? else {
                 return Ok(ScannedStep::LeadersNotFollowedByGlue);
             };
@@ -7387,13 +7406,12 @@ fn scan_leaders_step(
         // replay time.  Keep the command scanner's completed glue read, then
         // use the regular typed box read path to obtain the node.
         ScannedLeaderPayload::BoxRegister { index, copy } => {
-            let glue_command =
-                processor
-                    .get_x_token()
-                    .map_err(command_error)?
-                    .ok_or(ExecError::MissingToken {
-                        context: "leader glue",
-                    })?;
+            let glue_command = processor
+                .next_non_blank_non_relax_x_token()
+                .map_err(command_error)?
+                .ok_or(ExecError::MissingToken {
+                    context: "leader glue",
+                })?;
             let Some(glue) = scan_leader_glue_command(processor, glue_command, mode)? else {
                 return Ok(ScannedStep::LeadersNotFollowedByGlue);
             };

@@ -757,6 +757,69 @@ fn tracingcommands_does_not_trace_constructed_leader_glue_internal_fetch() {
 }
 
 #[test]
+fn leaders_skip_section_404_filler_and_preserve_non_glue_recovery() {
+    // TeX82 §1078 fetches the glue after every payload with §404's shared
+    // non-blank, non-relax loop. Cover rule, constructed-box, and register
+    // payloads; soul terminates its rule specification with exactly this
+    // explicit `\relax` before `\hskip`.
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = MainControl::tex82_initex(&mut stores);
+    register_source(
+        &mut control,
+        br"\nonstopmode
+\setbox1=\hbox{\kern1pt}
+\setbox0=\hbox{
+  \leaders\hrule height1pt\relax \hskip3pt
+  \cleaders\hbox{\kern1pt} \relax\hskip4pt
+  \xleaders\copy1\relax \hskip5pt}
+\end",
+    );
+
+    run_to_end(&mut control, &mut stores);
+
+    let children = box_child_nodes(&stores, 0);
+    assert_eq!(
+        children
+            .iter()
+            .filter(|node| matches!(
+                node,
+                Node::Glue {
+                    leader: Some(_),
+                    ..
+                }
+            ))
+            .count(),
+        3,
+        "all leader payload forms retain their glue: {children:?}"
+    );
+    assert!(
+        !pending_sink_text(&stores, true).contains("Leaders not followed"),
+        "valid §1078 filler is silent"
+    );
+
+    let mut recovery_stores = Universe::new_with_plain_catcodes();
+    let mut recovery = MainControl::tex82_initex(&mut recovery_stores);
+    register_source(
+        &mut recovery,
+        br"\nonstopmode\setbox0=\hbox{\leaders\hbox{} \relax\kern2pt}\end",
+    );
+
+    run_to_end(&mut recovery, &mut recovery_stores);
+
+    let recovered = box_child_nodes(&recovery_stores, 0);
+    assert_eq!(
+        pending_sink_text(&recovery_stores, true)
+            .matches("Leaders not followed by proper glue")
+            .count(),
+        1
+    );
+    assert!(
+        matches!(recovered.as_slice(), [Node::Kern { amount, .. }] if amount.raw() == 2 * Scaled::UNITY),
+        "§1078 back_error retains the first substantive non-glue command: {recovered:?}"
+    );
+}
+
+#[test]
 fn tracingcommands_does_not_trace_output_routine_scanner_brace() {
     // TeX82 §§1025/1030: `scan_left_brace` consumes the output routine's
     // opening brace before `big_switch`. The first body command therefore
