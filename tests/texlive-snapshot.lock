@@ -3,7 +3,8 @@
 # files; source records make compatibility-critical selections reviewable.
 distribution texlive-20260301-texmf
 tree_sha256 3b3c5c503d363c652996f17e3af831a79972054727a44a557143fd908be8fad8
-source tex/latex/base/latex.ltx 765547 95c2ef02c2d92aa29e4a77a5e5a7d9f25b5589143d1e879fb80ffa0b20be1e6d
+source tex/latex-dev/base/latex.ltx 768514 d3362038dc2c0e1af921065473b5baac03b49d2763ad85d7337fe2384d5d04ae
+source tex/latex-dev/firstaid/latex2e-first-aid-for-external-files.ltx 14019 da3142f2495d4b2106eb74263f0ce86771e3a84d26048b0d30c23aafe185eeed
 source tex/latex-dev/tools/array.sty 17686 dfbd0638fed1cc21180bd9b3ebd91afd2049827a1491dfea8e5d2d95410459c1
 source tex/latex-dev/l3kernel/expl3-code.tex 1363416 58f9d7d453fbae369db0f07140ebc83677530fd4fe32c7f742db0690464a5ee3
 source tex/latex-dev/l3kernel/expl3.ltx 5632 1f4f24f4f3a990aca849814c3e5c182e4a9b044e060a6a52d91e2417a03a1df0

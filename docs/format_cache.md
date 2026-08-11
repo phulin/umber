@@ -158,6 +158,17 @@ Available format tiers were checked as follows:
 | LaTeX         | repeated clean TeX Live 2026-03-01 builds and cache `--check`/`--force` reproduced the 1,661,211-byte image `8e3823737079626c669fa4140f24c63db09779243e9ab2851c35f75aa3fa4a99` | exact 61-input closure and byte-identical source-versus-loaded DVI/AUX artifacts passed |
 | pdfLaTeX      | repeated clean TeX Live 2026-03-01 builds reproduced the 1,711,258-byte image `f640624c160500d6faafd88be3c381e94390e7edb4a547d82a4350eef73a96f4`                               | exact 64-input closure and byte-identical source-versus-loaded PDF/AUX artifacts passed |
 
+The 2026-08-11 coherence rebuild selected the single LaTeX
+`2026-06-01` pre-release line already present in the pinned TeX Live tree,
+including its paired first-aid file. Two clean builds reproduced LaTeX format
+`9ea2783f3000423606a274974145f7b07580753bbd53682a10c3a55b3f4b9fd9`
+(1,987,908 bytes) and pdfLaTeX format
+`1dce7159b8c974ebfd896a74edff4c3f6870497ccb28fc3979b2cdf5ef773a6f`
+(2,030,265 bytes). Both source-loaded equivalence gates passed against source
+manifest `ba49b8698d222b16afc26811c03d52125b632545c963ad8b506a6939e91925db`.
+The smoke input asserts every kernel-owned control captured by the frozen
+first-aid file, including `\newcounteralias`.
+
 `scripts/check-wasm.sh` passed the wasm32 build, JavaScript resource-cache
 suite, Firefox `wasm-pack` tests, browser integration, and package inventory.
 The historical packaged Plain test loaded the same schema-10 bytes and rejected

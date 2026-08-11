@@ -223,7 +223,10 @@ owns acquisition under gitignored `third_party/latex2e-parity/`; do not copy or
 modify individual upstream LPPL files in the repository.
 
 `tests/latex/` contains committed, compact LaTeX-DVI inputs used by explicit
-format and corpus gates. `format-equivalence.tex` must remain deterministic
+format and corpus gates. `firstaid-coherence.tex` enumerates the kernel-side
+controls captured by the pinned first-aid hooks and is loaded by both format
+equivalence fixtures; package-owned controls are checked only after their
+owning package loads. `format-equivalence.tex` must remain deterministic
 and is run both from source-initialized kernel state and the serialized format.
 `pdflatex-smoke.tex` provides the corresponding font-independent PDF format
 equivalence gate, while `pdftexconfig.tex` pins pdfLaTeX's output policy without

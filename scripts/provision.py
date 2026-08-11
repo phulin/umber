@@ -258,6 +258,41 @@ def _trees_equal(left: Path, right: Path) -> bool:
     return all(_trees_equal(left / name, right / name) for name in comparison.common_dirs)
 
 
+def _stage_format_input_root(
+    repo_root: Path, texmf_dist: Path, destination: Path
+) -> int:
+    """Stage the exact locked format closure as the publisher's first root."""
+    lock = repo_root / "tests/latex-source.lock"
+    staged: set[Path] = set()
+    for number, raw_line in enumerate(lock.read_text(encoding="utf-8").splitlines(), 1):
+        fields = raw_line.split()
+        if not fields or fields[0].startswith("#"):
+            continue
+        kind = fields[0]
+        if kind not in ("source", "local", "pdflatex-source", "pdflatex-local"):
+            continue
+        if len(fields) != 4:
+            raise ProvisionError(f"{lock}:{number}: malformed format input record")
+        relative = texlive._safe_relative(fields[1], label="format input path")
+        identity = texlive.Identity(int(fields[2]), fields[3])
+        if kind in ("source", "pdflatex-source"):
+            source = texmf_dist / relative
+            staged_relative = relative
+        else:
+            source = repo_root / relative
+            staged_relative = Path("tex") / relative.name
+        texlive.verify_file(source, identity, "sha256", "locked format input")
+        if staged_relative in staged:
+            raise ProvisionError(f"duplicate staged format input path: {staged_relative}")
+        staged.add(staged_relative)
+        output = destination / staged_relative
+        output.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source, output)
+    if not staged:
+        raise ProvisionError(f"{lock}: no format inputs to stage")
+    return len(staged)
+
+
 def provision_oracles(
     repo_root: Path,
     requested: tuple[str, ...],
@@ -336,12 +371,8 @@ def build_snapshot(args: argparse.Namespace, repo_root: Path) -> None:
                 repo_root,
                 environment,
             )
-        local_root = temporary / "local-format-inputs/tex"
-        local_root.mkdir(parents=True)
-        for raw_line in (repo_root / "tests/latex-source.lock").read_text().splitlines():
-            fields = raw_line.split()
-            if fields and fields[0] in ("local", "pdflatex-local"):
-                shutil.copyfile(repo_root / fields[1], local_root / Path(fields[1]).name)
+        format_input_root = temporary / "format-construction-inputs"
+        _stage_format_input_root(repo_root, texmf_dist, format_input_root)
         generated_root = temporary / "generated-runtime"
         generated_map = generated_root / "fonts/map/pdftex/updmap/pdftex.map"
         generated_map.parent.mkdir(parents=True)
@@ -373,8 +404,12 @@ def build_snapshot(args: argparse.Namespace, repo_root: Path) -> None:
             "objectsBaseUrl": args.objects_base_url,
             "shardBits": args.shard_bits,
             "roots": [
+                {
+                    "name": "format-construction-inputs",
+                    "path": str(format_input_root),
+                    "treeSha256": tree_hash(format_input_root),
+                },
                 {"name": "texlive-runtime", "path": str(texmf_dist), "treeSha256": actual_tree},
-                {"name": "format-local-inputs", "path": str(local_root.parent), "treeSha256": tree_hash(local_root.parent)},
                 {"name": "texlive-generated-runtime", "path": str(generated_root), "treeSha256": tree_hash(generated_root)},
             ],
             "inventory": {"minimumLogicalFiles": 100000, "minimumObjects": 50000, "minimumBytes": 1000000000},

@@ -1,0 +1,19 @@
+% Kernel-side controls captured by the pinned 2026-01-18 first-aid file.
+% Package-owned controls are exercised after their owning hooks by the paired
+% amsthm theorem declarations in both format gates.
+\begingroup
+\def\AssertFirstAidDependency#1{%
+  \ifcsname#1\endcsname\else
+    \errmessage{Frozen first-aid dependency #1 is undefined}%
+  \fi}
+\AssertFirstAidDependency{FirstAidNeededT}
+\AssertFirstAidDependency{@amsthm@reset@ynthm}
+\AssertFirstAidDependency{@firstoftwo}
+\AssertFirstAidDependency{@gobble}
+\AssertFirstAidDependency{@nocounterr}
+\AssertFirstAidDependency{@thm}
+\AssertFirstAidDependency{@xthm}
+\AssertFirstAidDependency{@ynthm}
+\AssertFirstAidDependency{newcounteralias}
+\AssertFirstAidDependency{toks@}
+\endgroup
