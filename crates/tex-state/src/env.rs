@@ -54,6 +54,8 @@ pub(crate) struct CellMutationReceipt {
     cell: CellId,
     old_word: u64,
     new_word: u64,
+    // Stores may project a box handoff before releasing its old survivor.
+    main_memory_roots_updated: bool,
     disposition: CellMutationDisposition,
 }
 
@@ -81,6 +83,7 @@ impl CellMutationReceipt {
             cell: cell.without_assignment_scope(),
             old_word: old,
             new_word: new,
+            main_memory_roots_updated: false,
             disposition: if old == new {
                 CellMutationDisposition::Unchanged
             } else {
@@ -94,6 +97,7 @@ impl CellMutationReceipt {
             cell: cell.without_assignment_scope(),
             old_word: old,
             new_word: new,
+            main_memory_roots_updated: false,
             disposition: if old != new {
                 CellMutationDisposition::Changed
             } else if retained {
@@ -114,6 +118,15 @@ impl CellMutationReceipt {
 
     pub(crate) const fn words(self) -> (u64, u64) {
         (self.old_word, self.new_word)
+    }
+
+    pub(crate) const fn with_main_memory_roots_updated(mut self) -> Self {
+        self.main_memory_roots_updated = true;
+        self
+    }
+
+    pub(crate) const fn main_memory_roots_updated(self) -> bool {
+        self.main_memory_roots_updated
     }
 
     #[cfg(test)]

@@ -145,6 +145,8 @@ pub(super) struct MainMemoryProjection {
     token_refs: Vec<u32>,
     macro_token_refs: Vec<u32>,
     live_node_lists: std::collections::BTreeSet<NodeListId>,
+    live_survivor_roots: std::collections::BTreeSet<crate::ids::SurvivorRootId>,
+    box_graphs: std::collections::BTreeMap<NodeListId, BoxMemoryProjection>,
     detached_dynamic_extent: usize,
 }
 
@@ -152,6 +154,7 @@ struct CapturedMemoryRoots {
     env: Vec<FormatEnvEntry>,
     node_lists: Vec<FormatNodeList>,
     live_node_lists: std::collections::BTreeSet<NodeListId>,
+    box_roots: Vec<NodeListId>,
 }
 
 const TEX82_UNTYPED_ONE_WORD_SCRATCH_EXTENT: usize = 4;
@@ -206,6 +209,7 @@ fn main_memory_projection_inner(
         env,
         mut node_lists,
         live_node_lists,
+        box_roots,
     } = capture_memory_roots(stores, extra_nodes)?;
     let token_count = stores.tokens.watermark().spans as usize;
     let macro_count = stores.macros.watermark().definitions as usize;
@@ -358,6 +362,14 @@ fn main_memory_projection_inner(
         token_refs,
         macro_token_refs,
         live_node_lists,
+        live_survivor_roots: box_roots
+            .into_iter()
+            .filter_map(|id| match id.arena() {
+                crate::ids::ArenaRef::Survivor(root) => Some(root),
+                crate::ids::ArenaRef::Epoch => None,
+            })
+            .collect(),
+        box_graphs: std::collections::BTreeMap::new(),
         detached_dynamic_extent,
     })
 }
@@ -450,8 +462,12 @@ impl MainMemoryProjection {
         if extra_nodes.is_empty() {
             return Ok(self.usage);
         }
-        let mut node_lists =
-            capture_extra_memory_nodes(stores, extra_nodes, &self.live_node_lists)?;
+        let mut node_lists = capture_extra_memory_nodes(
+            stores,
+            extra_nodes,
+            &self.live_node_lists,
+            &self.live_survivor_roots,
+        )?;
         let mut extra_tokens = std::collections::BTreeSet::new();
         for node in node_lists.iter_mut().flat_map(|list| &mut list.nodes) {
             node.visit_token_list_refs(|raw| {
@@ -515,8 +531,118 @@ impl MainMemoryProjection {
                 self.adjust_token(stores, old_word, true, false)?;
                 self.adjust_token(stores, new_word, true, true)?;
             }
-            crate::cell::BankTag::Box => return Ok(false),
+            crate::cell::BankTag::Box => {
+                return self.update_box_root(
+                    stores,
+                    NodeListId::decode_box_word(old_word),
+                    NodeListId::decode_box_word(new_word),
+                    false,
+                );
+            }
             _ => return Ok(true),
+        }
+        self.usage.dynamic_extent = self
+            .usage
+            .dynamic
+            .saturating_add(self.detached_dynamic_extent);
+        Ok(true)
+    }
+
+    pub(super) fn update_box_root(
+        &mut self,
+        stores: &Stores,
+        old: Option<NodeListId>,
+        new: Option<NodeListId>,
+        capture_missing: bool,
+    ) -> Result<bool, StoreFormatError> {
+        if old == new {
+            return Ok(true);
+        }
+
+        // The environment already contains `new`, while direct writes keep
+        // `old` live until Stores accounts the handoff. Group restoration can
+        // reuse the small graph contribution retained by the original write
+        // even after its displaced survivor graph has been released.
+        let mut old_roots = 0_usize;
+        let mut new_roots = 0_usize;
+        stores.env.for_each_main_memory_root_word(|cell, word| {
+            if cell.bank() != crate::cell::BankTag::Box {
+                return;
+            }
+            let root = NodeListId::decode_box_word(word);
+            if let Some(old) = old {
+                old_roots += usize::from(root == Some(old));
+            }
+            if let Some(new) = new {
+                new_roots += usize::from(root == Some(new));
+            }
+        });
+        let remove_old = old.is_some() && old_roots == 0;
+        let add_new = new.is_some() && new_roots == 1;
+        let old_graph = if remove_old {
+            let old = old.expect("checked old box root");
+            match self.box_graphs.get(&old).cloned() {
+                Some(graph) => Some(graph),
+                None if capture_missing => {
+                    let graph = box_memory_projection(stores, old)?;
+                    self.box_graphs.insert(old, graph.clone());
+                    Some(graph)
+                }
+                None => return Ok(false),
+            }
+        } else {
+            None
+        };
+        let new_graph = if add_new {
+            let new = new.expect("checked new box root");
+            match self.box_graphs.get(&new).cloned() {
+                Some(graph) => Some(graph),
+                None if capture_missing => {
+                    let graph = box_memory_projection(stores, new)?;
+                    self.box_graphs.insert(new, graph.clone());
+                    Some(graph)
+                }
+                None => return Ok(false),
+            }
+        } else {
+            None
+        };
+        let old_low_words = old_graph.as_ref().map_or(0, |graph| graph.low_words);
+        let old_high_words = old_graph.as_ref().map_or(0, |graph| graph.high_words);
+        let new_low_words = new_graph.as_ref().map_or(0, |graph| graph.low_words);
+        let new_high_words = new_graph.as_ref().map_or(0, |graph| graph.high_words);
+        self.usage.variable = self
+            .usage
+            .variable
+            .saturating_sub(old_low_words)
+            .saturating_add(new_low_words);
+        self.usage.dynamic = self
+            .usage
+            .dynamic
+            .saturating_sub(old_high_words)
+            .saturating_add(new_high_words);
+        if let Some(old_graph) = old_graph {
+            for raw in old_graph.token_refs.iter().copied() {
+                self.adjust_token(stores, u64::from(raw), false, false)?;
+            }
+            if let Some(old) = old
+                && let crate::ids::ArenaRef::Survivor(root) = old.arena()
+            {
+                self.live_survivor_roots.remove(&root);
+            }
+        }
+        if let Some(new_graph) = new_graph {
+            for raw in new_graph.token_refs.iter().copied() {
+                self.adjust_token(stores, u64::from(raw), false, true)?;
+            }
+            if let Some(new) = new
+                && let crate::ids::ArenaRef::Survivor(root) = new.arena()
+            {
+                self.live_survivor_roots.insert(root);
+            }
+            self.detached_dynamic_extent = self
+                .detached_dynamic_extent
+                .max(new_graph.detached_dynamic_extent);
         }
         self.usage.dynamic_extent = self
             .usage
@@ -647,6 +773,45 @@ impl MainMemoryProjection {
     }
 }
 
+#[derive(Clone, Debug)]
+struct BoxMemoryProjection {
+    token_refs: std::sync::Arc<[u32]>,
+    low_words: usize,
+    high_words: usize,
+    detached_dynamic_extent: usize,
+}
+
+fn box_memory_projection(
+    stores: &Stores,
+    root: NodeListId,
+) -> Result<BoxMemoryProjection, StoreFormatError> {
+    let mut node_lists = Vec::new();
+    let mut seen = std::collections::BTreeSet::new();
+    let mut visiting = std::collections::BTreeSet::new();
+    let mut survivor_roots = std::collections::BTreeMap::new();
+    capture_node_list(
+        stores,
+        root,
+        &mut seen,
+        &mut visiting,
+        &mut survivor_roots,
+        &mut node_lists,
+        None,
+    )?;
+    let root = FormatListKey::capture(stores, root, &mut survivor_roots);
+    let mut token_refs = Vec::new();
+    for node in node_lists.iter_mut().flat_map(|list| &mut list.nodes) {
+        node.visit_token_list_refs(|raw| token_refs.push(*raw));
+    }
+    let (low_words, high_words, detached_dynamic_extent) = node_memory_words(&node_lists, [root]);
+    Ok(BoxMemoryProjection {
+        token_refs: token_refs.into(),
+        low_words,
+        high_words,
+        detached_dynamic_extent,
+    })
+}
+
 /// Captures only the live typed roots needed for TeX82 allocator accounting.
 ///
 /// Unlike a format image, this diagnostic projection does not clone names,
@@ -659,16 +824,19 @@ fn capture_memory_roots(
     stores.env.for_each_main_memory_root_word(|cell, word| {
         env_words.push(capture_env_word(stores, cell, word));
     });
-    let roots = env_words.iter().filter_map(|&(cell, word)| {
-        (cell.bank() == crate::cell::BankTag::Box)
-            .then(|| NodeListId::decode_box_word(word))
-            .flatten()
-    });
+    let box_roots = env_words
+        .iter()
+        .filter_map(|&(cell, word)| {
+            (cell.bank() == crate::cell::BankTag::Box)
+                .then(|| NodeListId::decode_box_word(word))
+                .flatten()
+        })
+        .collect::<Vec<_>>();
     let mut seen = std::collections::BTreeSet::new();
     let mut visiting = std::collections::BTreeSet::new();
     let mut survivor_roots = std::collections::BTreeMap::new();
     let mut node_lists = Vec::new();
-    for root in roots {
+    for &root in &box_roots {
         capture_node_list(
             stores,
             root,
@@ -739,6 +907,7 @@ fn capture_memory_roots(
         env,
         node_lists,
         live_node_lists,
+        box_roots,
     })
 }
 
@@ -746,6 +915,7 @@ fn capture_extra_memory_nodes(
     stores: &Stores,
     extra_nodes: &[Node],
     live_node_lists: &std::collections::BTreeSet<NodeListId>,
+    live_survivor_roots: &std::collections::BTreeSet<crate::ids::SurvivorRootId>,
 ) -> Result<Vec<FormatNodeList>, StoreFormatError> {
     let mut seen = live_node_lists.clone();
     let mut visiting = std::collections::BTreeSet::new();
@@ -753,6 +923,12 @@ fn capture_extra_memory_nodes(
     let mut node_lists = Vec::new();
     for node in extra_nodes {
         for child in crate::node_arena::NodeRef::from(node).physical_children() {
+            if matches!(
+                child.arena(),
+                crate::ids::ArenaRef::Survivor(root) if live_survivor_roots.contains(&root)
+            ) {
+                continue;
+            }
             capture_node_list(
                 stores,
                 child,

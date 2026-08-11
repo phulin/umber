@@ -463,6 +463,11 @@ impl Stores {
         } else {
             self.env.set_box_reg(index, value)
         };
+        let receipt = if receipt.changed() && self.update_main_memory_box_root(old, value) {
+            receipt.with_main_memory_roots_updated()
+        } else {
+            receipt
+        };
         self.account_box_write(old, rec);
         receipt
     }
@@ -479,6 +484,11 @@ impl Stores {
             None => None,
         };
         let (receipt, rec) = self.env.set_box_reg_same_level(index, value);
+        let receipt = if receipt.changed() && self.update_main_memory_box_root(old, value) {
+            receipt.with_main_memory_roots_updated()
+        } else {
+            receipt
+        };
         self.account_box_write(old, rec);
         receipt
     }

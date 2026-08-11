@@ -1,6 +1,6 @@
 use super::{
-    FormatError, GenerationForkError, GeometryObservation, TakeUnboxResult, UnboxKind, Universe,
-    utf8_scalar_len_at,
+    BoxDimension, FormatError, GenerationForkError, GeometryObservation, TakeUnboxResult,
+    UnboxKind, Universe, utf8_scalar_len_at,
 };
 use crate::env::banks::{IntParam, TokParam};
 use crate::font::{FONT_INFO_CAPACITY, MAX_FONT_DIMEN, NULL_FONT, WEB2C_FONT_INFO_CAPACITY};
@@ -252,6 +252,80 @@ fn transient_node_allocations_reuse_roots_and_preserve_the_high_water() {
     // the live macro/token/box closure.
     assert_eq!(universe.testing_transient_memory_base_projections(), 1);
     assert_eq!(universe.engine_usage_statistics().memory_words, 2_045);
+}
+
+#[test]
+fn shape_preserving_box_rewrites_reuse_roots_and_preserve_the_high_water() {
+    let mut universe = Universe::new();
+    let children = universe.freeze_node_list(&vec![Node::Penalty(0); 494]);
+    let root = universe.freeze_node_list(&[Node::HList(BoxNode::new(BoxNodeFields {
+        width: Scaled::from_raw(1),
+        height: Scaled::from_raw(2),
+        depth: Scaled::from_raw(3),
+        shift: Scaled::from_raw(0),
+        box_lr: BoxLr::Normal,
+        glue_set: GlueSetRatio::ZERO,
+        glue_sign: Sign::Normal,
+        glue_order: Order::Normal,
+        children,
+    }))]);
+    universe.set_box_reg_global(0, root);
+    assert_eq!(universe.engine_usage_statistics().memory_words, 1_045);
+    universe.observe_transient_token_words(0);
+    assert_eq!(universe.testing_transient_memory_base_projections(), 1);
+
+    universe.set_box_dimension(0, BoxDimension::Width, Scaled::from_raw(4));
+    universe.set_box_dimension(0, BoxDimension::Height, Scaled::from_raw(5));
+    // Each immutable rewrite allocates a temporary replacement while the old
+    // box is live, so §§125--130/1334 still retain the crossed 1,000-word
+    // low-arena boundary without rebuilding unrelated roots.
+    assert_eq!(universe.testing_transient_memory_base_projections(), 1);
+    assert_eq!(universe.engine_usage_statistics().memory_words, 2_045);
+}
+
+#[test]
+fn box_root_changes_reuse_the_allocator_base() {
+    let mut universe = Universe::new();
+    let root = universe.freeze_node_list(&[Node::Penalty(1)]);
+    universe.set_box_reg_global(0, root);
+    universe.observe_transient_token_words(0);
+    assert_eq!(universe.testing_transient_memory_base_projections(), 1);
+
+    let replacement = universe.freeze_node_list(&[Node::Penalty(2), Node::Penalty(3)]);
+    universe.set_box_reg_global(0, replacement);
+    universe.observe_transient_token_words(0);
+    // The generic graph delta handles a sole-root replacement regardless of
+    // shape.
+    assert_eq!(universe.testing_transient_memory_base_projections(), 1);
+
+    universe.enter_group();
+    let local = universe.freeze_node_list(&[Node::Penalty(5), Node::Penalty(6), Node::Penalty(7)]);
+    universe.set_box_reg(0, local);
+    universe.observe_transient_token_words(0);
+    let _ = universe.leave_group();
+    universe.observe_transient_token_words(0);
+    assert_eq!(universe.testing_transient_memory_base_projections(), 1);
+
+    let taken = universe.take_box_reg(0).expect("box is present");
+    universe.observe_transient_token_words(0);
+    assert_eq!(universe.testing_transient_memory_base_projections(), 1);
+    universe.set_box_reg_global(0, taken);
+    universe.observe_transient_token_words(0);
+    assert_eq!(universe.testing_transient_memory_base_projections(), 1);
+
+    let alias = universe.box_reg(0).expect("replacement box");
+    universe.set_box_reg_global(1, alias);
+    universe.observe_transient_token_words(0);
+    assert_eq!(universe.testing_transient_memory_base_projections(), 1);
+
+    let snapshot = universe.snapshot();
+    universe.freeze_node_list(&[Node::Penalty(4)]);
+    universe.rollback(&snapshot);
+    universe.observe_transient_token_words(0);
+    // A timeline rollback can invalidate every cached handle at its
+    // watermark, so it deliberately retains the conservative reconstruction
+    // path instead of reusing a graph contribution from the discarded epoch.
+    assert_eq!(universe.testing_transient_memory_base_projections(), 2);
 }
 
 #[test]

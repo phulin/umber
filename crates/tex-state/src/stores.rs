@@ -695,6 +695,9 @@ impl Stores {
     /// Invalidates the cached TeX82 allocator base after a canonical root
     /// changes. Immutable store appends are deliberately not roots.
     pub(crate) fn update_main_memory_roots(&mut self, receipt: crate::env::CellMutationReceipt) {
+        if receipt.main_memory_roots_updated() {
+            return;
+        }
         let cell = receipt.cell();
         let (old_word, new_word) = receipt.words();
         let Some((_, mut projection)) = self.transient_memory_base.take() else {
@@ -705,6 +708,27 @@ impl Stores {
             .is_ok_and(|updated| updated)
         {
             self.transient_memory_base = Some((self.glue.watermark().specs, projection));
+        }
+    }
+
+    /// Updates one box-register root while direct-write survivor graphs are
+    /// still live. TeX82 §§125--130 mutate allocator ownership at the root;
+    /// replacing or restoring Umber's immutable graph must not force the next
+    /// allocation event to reconstruct every unrelated root before §1334.
+    fn update_main_memory_box_root(
+        &mut self,
+        old: Option<NodeListId>,
+        new: Option<NodeListId>,
+    ) -> bool {
+        let Some((_, mut projection)) = self.transient_memory_base.take() else {
+            return false;
+        };
+        let update = projection.update_box_root(self, old, new, true);
+        if update.is_ok_and(|updated| updated) {
+            self.transient_memory_base = Some((self.glue.watermark().specs, projection));
+            true
+        } else {
+            false
         }
     }
 
@@ -2992,6 +3016,11 @@ impl Stores {
         index: u16,
     ) -> (Option<NodeListId>, crate::env::CellMutationReceipt) {
         let (old, receipt, rec) = self.env.take_box_reg(index);
+        let receipt = if receipt.changed() && self.update_main_memory_box_root(old, None) {
+            receipt.with_main_memory_roots_updated()
+        } else {
+            receipt
+        };
         self.account_box_write(old, rec);
         (old, receipt)
     }
@@ -3006,6 +3035,11 @@ impl Stores {
         index: u16,
     ) -> (Option<NodeListId>, crate::env::CellMutationReceipt) {
         let (old, receipt, rec) = self.env.take_box_reg_same_level(index);
+        let receipt = if receipt.changed() && self.update_main_memory_box_root(old, None) {
+            receipt.with_main_memory_roots_updated()
+        } else {
+            receipt
+        };
         self.account_box_write(old, rec);
         (old, receipt)
     }
