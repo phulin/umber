@@ -2437,6 +2437,20 @@ fn token_parameter_presence_is_grouped_checkpointed_and_format_stable() {
 
     universe.set_tok_param_global(parameter, TokenListId::EMPTY);
     universe.enter_group();
+    universe.set_tok_param_option(parameter, None);
+    assert_eq!(
+        universe.tok_param_option(parameter),
+        None,
+        "a null pointer is distinct from the outer present-empty pointer"
+    );
+    let _ = universe.leave_group();
+    assert_eq!(
+        universe.tok_param_option(parameter),
+        Some(TokenListId::EMPTY),
+        "TeX82 §§275--283 restore the exact saved token-list pointer"
+    );
+
+    universe.enter_group();
     let nonempty = universe.intern_token_list(&[Token::Char {
         ch: 'x',
         cat: Catcode::Letter,

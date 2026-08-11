@@ -802,15 +802,24 @@ impl Env {
         self.tok_params.get(param.raw())
     }
 
-    /// Sets a local token-list parameter value.
+    #[cfg(test)]
     pub(crate) fn set_tok_param(
         &mut self,
         param: TokParam,
         value: TokenListId,
     ) -> CellMutationReceipt {
+        self.set_tok_param_option(param, Some(value))
+    }
+
+    /// Sets a local token-list parameter, preserving TeX's null pointer.
+    pub(crate) fn set_tok_param_option(
+        &mut self,
+        param: TokParam,
+        value: Option<TokenListId>,
+    ) -> CellMutationReceipt {
         self.tok_params.set(
             param.raw(),
-            Some(value),
+            value,
             BankSetContext {
                 journal: &mut self.journal,
                 #[cfg(feature = "shadow")]
@@ -822,15 +831,24 @@ impl Env {
         )
     }
 
-    /// Sets a global token-list parameter value.
+    #[cfg(test)]
     pub(crate) fn set_tok_param_global(
         &mut self,
         param: TokParam,
         value: TokenListId,
     ) -> CellMutationReceipt {
+        self.set_tok_param_option_global(param, Some(value))
+    }
+
+    /// Sets a global token-list parameter, preserving TeX's null pointer.
+    pub(crate) fn set_tok_param_option_global(
+        &mut self,
+        param: TokParam,
+        value: Option<TokenListId>,
+    ) -> CellMutationReceipt {
         self.tok_params.set(
             param.raw(),
-            Some(value),
+            value,
             BankSetContext {
                 journal: &mut self.journal,
                 #[cfg(feature = "shadow")]

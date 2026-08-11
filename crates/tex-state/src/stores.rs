@@ -3159,13 +3159,15 @@ impl Stores {
         self.env.set_glue_param_global(param, value)
     }
 
-    pub fn set_tok_param(
+    pub fn set_tok_param_option(
         &mut self,
         param: TokParam,
-        value: TokenListId,
+        value: Option<TokenListId>,
     ) -> crate::env::CellMutationReceipt {
-        self.assert_live_token_list(value);
-        self.env.set_tok_param(param, value)
+        if let Some(value) = value {
+            self.assert_live_token_list(value);
+        }
+        self.env.set_tok_param_option(param, value)
     }
 
     #[must_use]
@@ -3181,13 +3183,15 @@ impl Stores {
             .map(|value| self.resolve_stored_token_list(value))
     }
 
-    pub fn set_tok_param_global(
+    pub fn set_tok_param_option_global(
         &mut self,
         param: TokParam,
-        value: TokenListId,
+        value: Option<TokenListId>,
     ) -> crate::env::CellMutationReceipt {
-        self.assert_live_token_list(value);
-        self.env.set_tok_param_global(param, value)
+        if let Some(value) = value {
+            self.assert_live_token_list(value);
+        }
+        self.env.set_tok_param_option_global(param, value)
     }
 
     /// Takes a checkpoint for the rollback-coupled store tuple.

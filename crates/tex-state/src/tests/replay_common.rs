@@ -139,9 +139,9 @@ impl TestCell {
             Self::TokParam(index) => {
                 let value = TokenListId::testing_new(word as u32);
                 if global {
-                    stores.set_tok_param_global(TokParam::new(index), value);
+                    stores.set_tok_param_option_global(TokParam::new(index), Some(value));
                 } else {
-                    stores.set_tok_param(TokParam::new(index), value);
+                    stores.set_tok_param_option(TokParam::new(index), Some(value));
                 }
             }
         }

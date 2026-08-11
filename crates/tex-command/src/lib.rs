@@ -136,7 +136,8 @@ pub use scanners::{
     ScannedMathCharacter, ScannedMathDelimiter, ScannedMathFamily, ScannedMathFraction,
     ScannedMathMuMaterial, ScannedMathScript, ScannedPackingSpec, ScannedRegisterDefinition,
     ScannedRuleSpec, ScannedScalar, ScannedSetBoxAssignment, ScannedSetBoxPath,
-    ScannedTokenRegisterAssignment, ScannedVSplit, StructuredProvenance, WriteStreamSelector,
+    ScannedTokenParameterAssignment, ScannedTokenRegisterAssignment, ScannedVSplit,
+    StructuredProvenance, WriteStreamSelector,
 };
 pub use snapshot::{CommandStateSnapshot, CommandSummary, CommandSummaryError};
 pub use state::{

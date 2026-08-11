@@ -77,6 +77,8 @@ fn source_token_list_assignments_preserve_macros_but_expanded_collection_expands
             processor
                 .scan_token_parameter_assignment(tex_state::env::banks::TokParam::OUTPUT, owner)
                 .expect("output assignment scans")
+                .tokens
+                .expect("nonempty output has a token-list pointer")
         } else {
             let owner = processor.state.intern_control_sequence("toks");
             processor
@@ -123,6 +125,57 @@ fn source_token_list_assignments_preserve_macros_but_expanded_collection_expands
             ch: 'X',
             cat: Catcode::Letter,
         }]
+    );
+}
+
+#[test]
+fn token_parameter_scan_preserves_null_and_present_empty_pointers() {
+    // TeX82 §1226 tests `link(def_ref)=null` for a braced scan, so `{}`
+    // becomes the null pointer. Its direct-token-parameter branch instead
+    // tests the source pointer `q`: null stays null, while a present pointer
+    // to an empty list remains present.
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
+    let every_math = universe.intern("everymath").symbol();
+    universe.set_meaning(
+        every_math,
+        Meaning::TokParam(tex_state::env::banks::TokParam::EVERY_MATH.raw()),
+    );
+
+    let scan = |bytes, universe: &mut tex_state::Universe| {
+        let mut command = CommandState::default();
+        source(&mut command, bytes);
+        let mut capabilities = CommandHostCapabilities::default();
+        let owner = universe.intern("everypar").symbol();
+        CommandProcessor::new(
+            &mut command,
+            universe.command_context(),
+            CommandHostContext::new(&mut capabilities),
+        )
+        .scan_token_parameter_assignment(tex_state::env::banks::TokParam::EVERY_PAR, owner)
+        .expect("token-parameter assignment scans")
+        .tokens
+    };
+
+    assert_eq!(scan(br"={}", &mut universe), None);
+    let nonempty = scan(br"={A}", &mut universe).expect("nonempty braces define a pointer");
+    assert_eq!(
+        universe.tokens(nonempty.token_list()),
+        &[Token::Char {
+            ch: 'A',
+            cat: Catcode::Letter,
+        }]
+    );
+
+    assert_eq!(scan(br"=\everymath", &mut universe), None);
+    universe.set_tok_param(
+        tex_state::env::banks::TokParam::EVERY_MATH,
+        tex_state::ids::TokenListId::EMPTY,
+    );
+    assert_eq!(
+        scan(br"=\everymath", &mut universe)
+            .expect("present-empty source pointer is copied")
+            .token_list(),
+        tex_state::ids::TokenListId::EMPTY
     );
 }
 

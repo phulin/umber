@@ -281,20 +281,26 @@ impl<'a> AssignmentCommitter<'a> {
     pub(crate) fn token_parameter(
         &mut self,
         index: u16,
-        value: TokenListId,
+        value: Option<TokenListId>,
         observed: ObservationValue,
         key: String,
         global: bool,
     ) -> MutationReceipt {
         let parameter = TokParam::new(index);
-        let old = self.stores.tok_param(parameter);
+        let old = self.stores.tok_param_option(parameter);
         let redundant = !global && self.redundant_word(old, value);
         if global {
-            self.stores.set_tok_param_global(parameter, value);
+            self.stores.set_tok_param_option_global(parameter, value);
         } else if !redundant {
-            self.stores.set_tok_param(parameter, value);
+            self.stores.set_tok_param_option(parameter, value);
         }
-        tracing::trace_tok_param(self.stores, index, global, old, value);
+        tracing::trace_tok_param(
+            self.stores,
+            index,
+            global,
+            old.unwrap_or(TokenListId::EMPTY),
+            value.unwrap_or(TokenListId::EMPTY),
+        );
         if redundant {
             MutationReceipt::SILENT
         } else {

@@ -5972,7 +5972,7 @@ enum ScannedStep {
     },
     TokParam {
         index: u16,
-        tokens: TracedTokenList,
+        tokens: Option<TracedTokenList>,
         global: bool,
     },
     GlueParam {
@@ -8377,7 +8377,7 @@ fn scan_command(
                 .map_err(command_error)?;
             Ok(ScannedStep::TokParam {
                 index,
-                tokens,
+                tokens: tokens.tokens,
                 global,
             })
         }
@@ -13487,10 +13487,10 @@ fn apply_scanned_step(
             tokens,
             global,
         } => {
-            let new = tokens.token_list();
+            let new = tokens.map(TracedTokenList::token_list);
             let observed = ObservationValue::Tokens(
                 stores
-                    .tokens(new)
+                    .tokens(new.unwrap_or(TokenListId::EMPTY))
                     .iter()
                     .copied()
                     .map(|token| observed_macro_token(token, stores))

@@ -25,6 +25,22 @@ pub struct ScannedTokenRegisterAssignment {
     pub tokens: TracedTokenList,
 }
 
+/// A completed TeX token-parameter assignment operand.
+///
+/// `None` is tex.web's null token-list pointer. `Some` deliberately does not
+/// imply a nonempty list: §1226 copies a present source pointer even when its
+/// list is empty, while a newly scanned empty braced list becomes null.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ScannedTokenParameterAssignment {
+    pub tokens: Option<TracedTokenList>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct ScannedTokenListRightHandSide {
+    tokens: TracedTokenList,
+    pointer_present: bool,
+}
+
 impl CommandProcessor<'_> {
     /// Scans the operand sequence of TeX82's `\toks` assignment.
     ///
@@ -39,7 +55,7 @@ impl CommandProcessor<'_> {
     ) -> Result<ScannedTokenRegisterAssignment, CommandError> {
         let index = self.scan_profile_register_index()?;
         let _ = self.scan_optional_equals()?;
-        let tokens = self.scan_token_list_right_hand_side(owner, false)?;
+        let tokens = self.scan_token_list_right_hand_side(owner, false)?.tokens;
         Ok(ScannedTokenRegisterAssignment { index, tokens })
     }
 
@@ -52,7 +68,7 @@ impl CommandProcessor<'_> {
         owner: Symbol,
     ) -> Result<TracedTokenList, CommandError> {
         let _ = self.scan_optional_equals()?;
-        self.scan_token_list_right_hand_side(owner, false)
+        Ok(self.scan_token_list_right_hand_side(owner, false)?.tokens)
     }
 
     /// Scans a token-parameter assignment such as `\everypar={...}`.
@@ -74,16 +90,22 @@ impl CommandProcessor<'_> {
         &mut self,
         parameter: TokParam,
         owner: Symbol,
-    ) -> Result<TracedTokenList, CommandError> {
+    ) -> Result<ScannedTokenParameterAssignment, CommandError> {
         let _ = self.scan_optional_equals()?;
-        self.scan_token_list_right_hand_side(owner, parameter == TokParam::OUTPUT)
+        let right_hand_side =
+            self.scan_token_list_right_hand_side(owner, parameter == TokParam::OUTPUT)?;
+        Ok(ScannedTokenParameterAssignment {
+            tokens: right_hand_side
+                .pointer_present
+                .then_some(right_hand_side.tokens),
+        })
     }
 
     fn scan_token_list_right_hand_side(
         &mut self,
         owner: Symbol,
         enclose_collected: bool,
-    ) -> Result<TracedTokenList, CommandError> {
+    ) -> Result<ScannedTokenListRightHandSide, CommandError> {
         let command = self
             .next_non_blank_non_relax_x_token()?
             .ok_or_else(CommandError::input_invariant)?;
@@ -93,16 +115,35 @@ impl CommandProcessor<'_> {
                 // [49.1226]'s assignment target; both select the same sparse
                 // token-register namespace.
                 let index = self.scan_profile_register_index()?;
-                return Ok(TracedTokenList::synthetic(self.state.toks(index)));
+                let tokens = self.state.toks(index);
+                return Ok(ScannedTokenListRightHandSide {
+                    tokens: TracedTokenList::synthetic(tokens),
+                    pointer_present: !self.state.tokens(tokens).is_empty(),
+                });
             }
             Meaning::ToksRegister(index) => {
-                return Ok(TracedTokenList::synthetic(self.state.toks(index)));
+                let tokens = self.state.toks(index);
+                return Ok(ScannedTokenListRightHandSide {
+                    tokens: TracedTokenList::synthetic(tokens),
+                    pointer_present: !self.state.tokens(tokens).is_empty(),
+                });
             }
             Meaning::TokParam(index) => {
-                return Ok(TracedTokenList::synthetic(
-                    self.state
-                        .tok_param(tex_state::env::banks::TokParam::new(index)),
-                ));
+                return Ok(
+                    match self
+                        .state
+                        .tok_param_option(tex_state::env::banks::TokParam::new(index))
+                    {
+                        Some(tokens) => ScannedTokenListRightHandSide {
+                            tokens: TracedTokenList::synthetic(tokens),
+                            pointer_present: true,
+                        },
+                        None => ScannedTokenListRightHandSide {
+                            tokens: TracedTokenList::synthetic(tex_state::ids::TokenListId::EMPTY),
+                            pointer_present: false,
+                        },
+                    },
+                );
             }
             Meaning::CharToken {
                 cat: Catcode::BeginGroup,
@@ -131,8 +172,17 @@ impl CommandProcessor<'_> {
                 .replacement_text
             }
         };
-        if !enclose_collected || self.state.tokens(collected.token_list()).is_empty() {
-            return Ok(collected);
+        if self.state.tokens(collected.token_list()).is_empty() {
+            return Ok(ScannedTokenListRightHandSide {
+                tokens: collected,
+                pointer_present: false,
+            });
+        }
+        if !enclose_collected {
+            return Ok(ScannedTokenListRightHandSide {
+                tokens: collected,
+                pointer_present: true,
+            });
         }
         let mut tokens = Vec::new();
         tokens.push(TracedTokenWord::pack(
@@ -156,7 +206,10 @@ impl CommandProcessor<'_> {
             },
             OriginId::UNKNOWN,
         ));
-        Ok(self.state.finish_traced_token_list(&tokens))
+        Ok(ScannedTokenListRightHandSide {
+            tokens: self.state.finish_traced_token_list(&tokens),
+            pointer_present: true,
+        })
     }
 }
 

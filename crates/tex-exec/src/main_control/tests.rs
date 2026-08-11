@@ -7787,6 +7787,63 @@ fn etex_dense_token_list_reassignments_use_eq_define_shortcut() {
 }
 
 #[test]
+fn braced_token_parameter_assignment_normalizes_empty_to_null_and_restores_scope() {
+    // TeX82 §1226 maps a braced scan with `link(def_ref)=null` to
+    // `undefined_cs,null`, while a nonempty scan installs `call,def_ref`.
+    // Sections 275--283 then restore the exact outer pointer at group exit.
+    let mut empty_stores = Universe::new_with_plain_catcodes();
+    let mut empty_control = MainControl::tex82_initex(&mut empty_stores);
+    register_source(&mut empty_control, br"\everypar={}\end");
+    assert_eq!(
+        empty_control
+            .step(&mut empty_stores)
+            .expect("empty assignment executes"),
+        MainControlStep::Continue
+    );
+    assert_eq!(
+        empty_stores.tok_param_option(TokParam::EVERY_PAR),
+        None,
+        "a braced empty assignment must store TeX's null pointer"
+    );
+
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = MainControl::tex82_initex(&mut stores);
+    register_source(&mut control, br"\everypar={A}{\everypar={}}\end");
+    assert_eq!(
+        control
+            .step(&mut stores)
+            .expect("nonempty assignment executes"),
+        MainControlStep::Continue
+    );
+    let outer = stores
+        .tok_param_option(TokParam::EVERY_PAR)
+        .expect("nonempty assignment stores a pointer");
+    assert_eq!(
+        stores.tokens(outer),
+        &[Token::Char {
+            ch: 'A',
+            cat: Catcode::Letter,
+        }]
+    );
+    assert_eq!(
+        control.step(&mut stores).expect("group opens"),
+        MainControlStep::Continue
+    );
+    assert_eq!(
+        control
+            .step(&mut stores)
+            .expect("scoped empty assignment executes"),
+        MainControlStep::Continue
+    );
+    assert_eq!(stores.tok_param_option(TokParam::EVERY_PAR), None);
+    assert_eq!(
+        control.step(&mut stores).expect("group closes"),
+        MainControlStep::Continue
+    );
+    assert_eq!(stores.tok_param_option(TokParam::EVERY_PAR), Some(outer));
+}
+
+#[test]
 fn etex_sparse_setbox_observes_delayed_and_immediate_commits() {
     // TeX82 §§1077/1085 commits a constructed box only after its box group is
     // unsaved. e-TeX 2.6 [47.1077] sends targets above 255 through [53a]'s

@@ -30,4 +30,4 @@ pub use structured::{
     ScannedPackingSpec, ScannedRegisterDefinition, ScannedRuleSpec, ScannedSetBoxAssignment,
     ScannedSetBoxPath, ScannedVSplit, StructuredProvenance, WriteStreamSelector,
 };
-pub use token_list::ScannedTokenRegisterAssignment;
+pub use token_list::{ScannedTokenParameterAssignment, ScannedTokenRegisterAssignment};

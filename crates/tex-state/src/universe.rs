@@ -8006,7 +8006,13 @@ impl Universe {
     }
 
     pub fn set_tok_param(&mut self, param: TokParam, value: TokenListId) {
-        let receipt = self.stores.set_tok_param(param, value);
+        self.set_tok_param_option(param, Some(value));
+    }
+
+    /// Sets a token-list parameter without conflating TeX's null pointer with
+    /// a present pointer to an empty list.
+    pub fn set_tok_param_option(&mut self, param: TokParam, value: Option<TokenListId>) {
+        let receipt = self.stores.set_tok_param_option(param, value);
         self.consume_env_mutation(receipt);
     }
 
@@ -8024,7 +8030,12 @@ impl Universe {
     }
 
     pub fn set_tok_param_global(&mut self, param: TokParam, value: TokenListId) {
-        let receipt = self.stores.set_tok_param_global(param, value);
+        self.set_tok_param_option_global(param, Some(value));
+    }
+
+    /// Globally sets a token-list parameter while preserving a null pointer.
+    pub fn set_tok_param_option_global(&mut self, param: TokParam, value: Option<TokenListId>) {
+        let receipt = self.stores.set_tok_param_option_global(param, value);
         self.consume_env_mutation(receipt);
     }
 
