@@ -1590,6 +1590,11 @@ impl Universe {
     fn testing_transient_memory_base_projections(&self) -> usize {
         self.stores.testing_transient_memory_base_projections()
     }
+
+    #[cfg(test)]
+    fn testing_main_memory_root_traversals(&self) -> usize {
+        self.stores.testing_main_memory_root_traversals()
+    }
     /// Removes an ordered suffix from committed artifact/PDF publication.
     pub fn prepare_page_suffix(&mut self, start: usize) -> PreparedPageSuffix {
         let effect_base = self.world.effect_pos().raw()

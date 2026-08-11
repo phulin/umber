@@ -329,6 +329,44 @@ fn box_root_changes_reuse_the_allocator_base() {
 }
 
 #[test]
+fn box_alias_handoffs_do_not_revisit_unrelated_allocator_roots() {
+    let mut universe = Universe::new();
+    for index in 0..1_000 {
+        let symbol = universe.intern(&format!("unrelated-root-{index}"));
+        universe.set_meaning_global(symbol, Meaning::Relax);
+    }
+    let root = universe.freeze_node_list(&[Node::Penalty(1)]);
+    universe.set_box_reg_global(0, root);
+    universe.observe_transient_token_words(0);
+    assert_eq!(universe.testing_main_memory_root_traversals(), 1);
+
+    let alias = universe.box_reg(0).expect("box root");
+    universe.set_box_reg_global(1, alias);
+    universe.clear_box_reg_global(0);
+    universe.clear_box_reg_global(1);
+    universe.observe_transient_token_words(0);
+
+    // TeX82 §§125--130 update the allocator owner at each box handoff.
+    // Alias multiplicities belong to that retained projection, so §638's
+    // later observation does not rescan unrelated environment roots.
+    assert_eq!(universe.testing_main_memory_root_traversals(), 1);
+    assert_eq!(universe.testing_transient_memory_base_projections(), 1);
+
+    let snapshot = universe.snapshot();
+    universe.freeze_node_list(&[Node::Penalty(2)]);
+    let traversals_before_rollback = universe.testing_main_memory_root_traversals();
+    universe.rollback(&snapshot);
+    universe.observe_transient_token_words(0);
+    // Timeline rollback is the negative control: it first observes the live
+    // pre-rollback high-water, then invalidates handles and makes the next
+    // allocation rebuild the complete projection.
+    assert_eq!(
+        universe.testing_main_memory_root_traversals(),
+        traversals_before_rollback + 2
+    );
+}
+
+#[test]
 fn refiled_global_box_restore_keeps_the_allocator_projection_live() {
     let mut universe = Universe::new();
     let baseline = universe.freeze_node_list(&[Node::Penalty(1)]);

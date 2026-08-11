@@ -146,6 +146,7 @@ pub(super) struct MainMemoryProjection {
     macro_token_refs: Vec<u32>,
     live_node_lists: std::collections::BTreeSet<NodeListId>,
     live_survivor_roots: std::collections::BTreeSet<crate::ids::SurvivorRootId>,
+    box_root_counts: std::collections::BTreeMap<NodeListId, u32>,
     box_graphs: std::collections::BTreeMap<NodeListId, BoxMemoryProjection>,
     detached_dynamic_extent: usize,
 }
@@ -352,6 +353,11 @@ fn main_memory_projection_inner(
     let dynamic_extent = dynamic
         .saturating_add(detached_dynamic_extent)
         .saturating_add(scratch_extent);
+    let mut box_root_counts = std::collections::BTreeMap::new();
+    for root in box_roots {
+        let count = box_root_counts.entry(root).or_insert(0_u32);
+        *count = count.saturating_add(1);
+    }
     Ok(MainMemoryProjection {
         usage: MainMemoryUsage {
             variable,
@@ -362,13 +368,14 @@ fn main_memory_projection_inner(
         token_refs,
         macro_token_refs,
         live_node_lists,
-        live_survivor_roots: box_roots
-            .into_iter()
+        live_survivor_roots: box_root_counts
+            .keys()
             .filter_map(|id| match id.arena() {
                 crate::ids::ArenaRef::Survivor(root) => Some(root),
                 crate::ids::ArenaRef::Epoch => None,
             })
             .collect(),
+        box_root_counts,
         box_graphs: std::collections::BTreeMap::new(),
         detached_dynamic_extent,
     })
@@ -559,26 +566,32 @@ impl MainMemoryProjection {
             return Ok(true);
         }
 
-        // The environment already contains `new`, while direct writes keep
-        // `old` live until Stores accounts the handoff. Group restoration can
-        // reuse the small graph contribution retained by the original write
-        // even after its displaced survivor graph has been released.
-        let mut old_roots = 0_usize;
-        let mut new_roots = 0_usize;
-        stores.env.for_each_main_memory_root_word(|cell, word| {
-            if cell.bank() != crate::cell::BankTag::Box {
-                return;
+        // The projection already owns the exact box-root multiplicities from
+        // the preceding environment state. Update those counts at the same
+        // handoff as the graph contribution instead of rescanning unrelated
+        // meaning and token roots for every box assignment.
+        let remove_old = if let Some(old) = old {
+            let Some(count) = self.box_root_counts.get_mut(&old) else {
+                return Ok(false);
+            };
+            *count = count.saturating_sub(1);
+            if *count == 0 {
+                self.box_root_counts.remove(&old);
+                true
+            } else {
+                false
             }
-            let root = NodeListId::decode_box_word(word);
-            if let Some(old) = old {
-                old_roots += usize::from(root == Some(old));
-            }
-            if let Some(new) = new {
-                new_roots += usize::from(root == Some(new));
-            }
-        });
-        let remove_old = old.is_some() && old_roots == 0;
-        let add_new = new.is_some() && new_roots == 1;
+        } else {
+            false
+        };
+        let add_new = if let Some(new) = new {
+            let count = self.box_root_counts.entry(new).or_insert(0);
+            let add = *count == 0;
+            *count = count.saturating_add(1);
+            add
+        } else {
+            false
+        };
         let old_graph = if remove_old {
             let old = old.expect("checked old box root");
             match self.box_graphs.get(&old).cloned() {
@@ -821,7 +834,7 @@ fn capture_memory_roots(
     extra_nodes: &[Node],
 ) -> Result<CapturedMemoryRoots, StoreFormatError> {
     let mut env_words = Vec::new();
-    stores.env.for_each_main_memory_root_word(|cell, word| {
+    stores.for_each_main_memory_root_word(|cell, word| {
         env_words.push(capture_env_word(stores, cell, word));
     });
     let box_roots = env_words

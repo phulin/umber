@@ -210,6 +210,8 @@ pub struct Stores {
     transient_memory_base: Option<(u32, format::MainMemoryProjection)>,
     #[cfg(test)]
     transient_memory_base_projections: usize,
+    #[cfg(test)]
+    main_memory_root_traversals: std::sync::atomic::AtomicUsize,
 }
 
 /// TeX82-shaped projection of allocation use over Umber's typed stores.
@@ -583,6 +585,11 @@ impl Clone for Stores {
             transient_memory_base: self.transient_memory_base.clone(),
             #[cfg(test)]
             transient_memory_base_projections: self.transient_memory_base_projections,
+            #[cfg(test)]
+            main_memory_root_traversals: std::sync::atomic::AtomicUsize::new(
+                self.main_memory_root_traversals
+                    .load(std::sync::atomic::Ordering::Relaxed),
+            ),
         }
     }
 }
@@ -692,6 +699,13 @@ impl Stores {
         format::main_memory_usage_without_scratch(self)
     }
 
+    pub(crate) fn for_each_main_memory_root_word(&self, f: impl FnMut(crate::cell::CellId, u64)) {
+        #[cfg(test)]
+        self.main_memory_root_traversals
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.env.for_each_main_memory_root_word(f);
+    }
+
     /// Invalidates the cached TeX82 allocator base after a canonical root
     /// changes. Immutable store appends are deliberately not roots.
     pub(crate) fn update_main_memory_roots(&mut self, receipt: crate::env::CellMutationReceipt) {
@@ -735,6 +749,12 @@ impl Stores {
     #[cfg(test)]
     pub(crate) const fn testing_transient_memory_base_projections(&self) -> usize {
         self.transient_memory_base_projections
+    }
+
+    #[cfg(test)]
+    pub(crate) fn testing_main_memory_root_traversals(&self) -> usize {
+        self.main_memory_root_traversals
+            .load(std::sync::atomic::Ordering::Relaxed)
     }
 
     fn record_main_memory_usage(
@@ -885,6 +905,8 @@ impl Stores {
             transient_memory_base: None,
             #[cfg(test)]
             transient_memory_base_projections: 0,
+            #[cfg(test)]
+            main_memory_root_traversals: std::sync::atomic::AtomicUsize::new(0),
         };
         stores.set_int_param(IntParam::MAG, 1000);
         stores.set_int_param(IntParam::TOLERANCE, 10_000);
