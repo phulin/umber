@@ -815,6 +815,114 @@ fn pdftex_escape_hex_expands_bytes_as_uppercase_other_character_pairs() {
 }
 
 #[test]
+fn pdftex_unescape_hex_expands_and_decodes_valid_nibbles_fresh_and_loaded() {
+    // pdftex.web §§494 and 496--497 plus utils.c `unescapehex`: scan one
+    // expanded balanced operand, ignore invalid bytes without breaking a
+    // nibble pair, decode either hex case, and zero-pad a final high nibble.
+    // TeX82 §464 makes a decoded space category 10 and every other byte
+    // category 12. Fresh and loaded universes cover both registry paths.
+    let mut fresh = crate::test_harness::universe_with_plain_catcodes();
+    crate::primitives::install_pdftex_expandable_primitives(&mut fresh);
+    let format = fresh.dump_format().expect("quiescent pdfTeX format");
+    let mut loaded = Universe::from_format(World::default(), &format).expect("format loads");
+    crate::primitives::register_pdftex_expandable_primitives(&mut loaded);
+
+    for mut universe in [fresh, loaded] {
+        let unescape = universe
+            .symbol("pdfunescapehex")
+            .expect("pdfTeX spelling is installed");
+        assert_eq!(
+            universe.meaning(unescape.symbol()),
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfUnescapeHex),
+        );
+        install_macro(
+            &mut universe,
+            "one",
+            Token::Char {
+                ch: '1',
+                cat: Catcode::Other,
+            },
+        );
+        install_macro(
+            &mut universe,
+            "invalidbyte",
+            Token::Char {
+                ch: '\u{80}',
+                cat: Catcode::Other,
+            },
+        );
+        let mut command = CommandState::new(crate::CommandProfile::PDFTEX14029);
+        let source = command
+            .register_source(SourceRegistration::new(
+                RegisteredSourceKind::Generated,
+                br"\pdfunescapehex{4\invalidbyte\one 2?0aF0G0f}\pdfunescapehex{}\pdfunescapehex{xyz!?}X%"
+                    .as_slice(),
+            ))
+            .expect("source registers");
+        command
+            .open_registered_source(source)
+            .expect("source opens");
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut recorder = Recorder::default();
+        let mut processor =
+            processor(&mut command, &mut universe, &mut capabilities).with_observer(&mut recorder);
+        let mut tokens = Vec::new();
+        while let Some(delivery) = processor.get_x_token().expect("hex unescaping expands") {
+            tokens.push(delivery.spelling().semantic_token());
+        }
+
+        assert_eq!(
+            tokens.pop(),
+            Some(Token::Char {
+                ch: 'X',
+                cat: Catcode::Letter,
+            }),
+            "all three balanced operands are consumed and the sentinel remains",
+        );
+        assert_eq!(
+            tokens,
+            vec![
+                Token::Char {
+                    ch: 'A',
+                    cat: Catcode::Other,
+                },
+                Token::Char {
+                    ch: ' ',
+                    cat: Catcode::Space,
+                },
+                Token::Char {
+                    ch: '\u{af}',
+                    cat: Catcode::Other,
+                },
+                Token::Char {
+                    ch: '\0',
+                    cat: Catcode::Other,
+                },
+                Token::Char {
+                    ch: '\u{f0}',
+                    cat: Catcode::Other,
+                },
+            ],
+        );
+        let returned_lengths = recorder
+            .0
+            .iter()
+            .filter_map(|record| match record {
+                CommandObservation::TokenList(record) if record.purpose == "pdf_unescape_hex" => {
+                    Some(record.tokens.len())
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            returned_lengths,
+            vec![5, 0, 0],
+            "empty and all-invalid operands return empty inserted lists",
+        );
+    }
+}
+
+#[test]
 fn pdftex_margin_kern_enquiries_use_typed_box_edges_fresh_and_loaded() {
     use tex_state::font::NULL_FONT;
     use tex_state::glue::GlueSpec;

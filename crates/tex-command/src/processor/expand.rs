@@ -124,6 +124,29 @@ fn escape_pdf_hex(bytes: &[u8]) -> String {
     escaped
 }
 
+/// pdfTeX's `utils.c` `unescapehex` projection for a PDF hexadecimal string.
+fn unescape_pdf_hex(bytes: &[u8]) -> String {
+    let mut unescaped = String::with_capacity(bytes.len().div_ceil(2));
+    let mut high_nibble = None;
+    for byte in bytes {
+        let nibble = match byte {
+            b'0'..=b'9' => byte - b'0',
+            b'A'..=b'F' => byte - b'A' + 10,
+            b'a'..=b'f' => byte - b'a' + 10,
+            _ => continue,
+        };
+        if let Some(high) = high_nibble.take() {
+            unescaped.push(char::from(high | nibble));
+        } else {
+            high_nibble = Some(nibble << 4);
+        }
+    }
+    if let Some(high) = high_nibble {
+        unescaped.push(char::from(high));
+    }
+    unescaped
+}
+
 fn append_format_glue(value: GlueSpec, unit: &str, output: &mut String) {
     append_scaled_with_unit(value.width, unit, output);
     for (label, component, order) in [
@@ -997,6 +1020,9 @@ impl CommandProcessor<'_> {
             Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfEscapeHex) => {
                 self.expand_pdf_escape_hex(command)
             }
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfUnescapeHex) => {
+                self.expand_pdf_unescape_hex(command)
+            }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfColorStackInit) => {
                 self.expand_pdf_color_stack_init(command)
             }
@@ -1338,6 +1364,44 @@ impl CommandProcessor<'_> {
             }),
         );
         self.push_rendered_text(&escaped, opener.origin());
+        Ok(())
+    }
+
+    /// pdftex.web §§494 and 496--497's `pdf_unescape_hex_code` conversion.
+    ///
+    /// After one expanded general-text operand is projected to pdfTeX bytes,
+    /// `unescapehex` ignores non-hexadecimal bytes, combines each pair of
+    /// remaining digits case-insensitively, and pads a final high nibble with
+    /// zero. TeX82 §464's `str_toks` makes a decoded space category 10 and
+    /// every other decoded byte category 12.
+    fn expand_pdf_unescape_hex(&mut self, opener: CurrentCommand) -> Result<(), CommandError> {
+        let scanned = self.scan_toks(crate::scan_toks::ScanToksMode::General { expanded: true })?;
+        let bytes = pdftex_token_bytes(&mut self.state, scanned.replacement_text.token_list());
+        let unescaped = unescape_pdf_hex(&bytes);
+        observe!(
+            self,
+            CommandObservation::TokenList(TokenListRecord {
+                transition: "complete",
+                purpose: "pdf_unescape_hex",
+                tokens: unescaped
+                    .chars()
+                    .map(|ch| {
+                        self.observed_token(TracedTokenWord::pack(
+                            Token::Char {
+                                ch,
+                                cat: if ch == ' ' {
+                                    Catcode::Space
+                                } else {
+                                    Catcode::Other
+                                },
+                            },
+                            OriginId::UNKNOWN,
+                        ))
+                    })
+                    .collect(),
+            }),
+        );
+        self.push_rendered_text(&unescaped, opener.origin());
         Ok(())
     }
 
