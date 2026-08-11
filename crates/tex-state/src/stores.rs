@@ -207,6 +207,9 @@ pub struct Stores {
     usage_high_water: EngineUsageStatistics,
     memory_low_extent: usize,
     memory_high_extent: usize,
+    transient_memory_base: Option<(u32, format::MainMemoryProjection)>,
+    #[cfg(test)]
+    transient_memory_base_projections: usize,
 }
 
 /// TeX82-shaped projection of allocation use over Umber's typed stores.
@@ -577,6 +580,9 @@ impl Clone for Stores {
             usage_high_water: self.usage_high_water,
             memory_low_extent: self.memory_low_extent,
             memory_high_extent: self.memory_high_extent,
+            transient_memory_base: self.transient_memory_base.clone(),
+            #[cfg(test)]
+            transient_memory_base_projections: self.transient_memory_base_projections,
         }
     }
 }
@@ -644,17 +650,67 @@ impl Stores {
     }
 
     pub(crate) fn observe_main_memory_nodes(&mut self, extra_nodes: &[Node]) -> usize {
-        self.record_main_memory_usage(format::main_memory_usage_with_extra_nodes(
-            self,
-            extra_nodes,
-        ))
+        let projection = self.take_transient_memory_base();
+        let Ok(projection) = projection else {
+            return self.record_main_memory_usage(projection.map(|value| value.usage()));
+        };
+        let usage = projection.usage_with_extra_nodes(self, extra_nodes);
+        self.transient_memory_base = Some((self.glue.watermark().specs, projection));
+        self.record_main_memory_usage(usage)
     }
 
     pub(crate) fn observe_main_memory_dynamic_words(&mut self, extra_words: usize) -> usize {
-        self.record_main_memory_usage(format::main_memory_usage_with_extra_dynamic_words(
-            self,
+        // TeX82 §§125--130 retain the allocator base between actual owner
+        // changes; §1334 only observes that allocator state. Scanner-owned
+        // transient words therefore extend one reusable live-root base rather
+        // than requiring the macro/token closure to be rebuilt per sample.
+        let projection = self.take_transient_memory_base();
+        let Ok(projection) = projection else {
+            return self.record_main_memory_usage(projection.map(|value| value.usage()));
+        };
+        let base = projection.usage();
+        self.transient_memory_base = Some((self.glue.watermark().specs, projection));
+        self.record_main_memory_usage(Ok(format::main_memory_usage_with_extra_dynamic_words(
+            base,
             extra_words,
-        ))
+        )))
+    }
+
+    fn take_transient_memory_base(
+        &mut self,
+    ) -> Result<format::MainMemoryProjection, format::StoreFormatError> {
+        let glue_specs = self.glue.watermark().specs;
+        if let Some((cached_glue_specs, mut projection)) = self.transient_memory_base.take() {
+            projection.update_glue_specs(cached_glue_specs, glue_specs);
+            return Ok(projection);
+        }
+        #[cfg(test)]
+        {
+            self.transient_memory_base_projections =
+                self.transient_memory_base_projections.saturating_add(1);
+        }
+        format::main_memory_usage_without_scratch(self)
+    }
+
+    /// Invalidates the cached TeX82 allocator base after a canonical root
+    /// changes. Immutable store appends are deliberately not roots.
+    pub(crate) fn update_main_memory_roots(&mut self, receipt: crate::env::CellMutationReceipt) {
+        let cell = receipt.cell();
+        let (old_word, new_word) = receipt.words();
+        let Some((_, mut projection)) = self.transient_memory_base.take() else {
+            return;
+        };
+        if projection
+            .update_cell(self, cell, old_word, new_word)
+            .is_ok_and(|updated| updated)
+        {
+            self.transient_memory_base = Some((self.glue.watermark().specs, projection));
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn testing_transient_memory_base_projections(&self) -> usize {
+        self.transient_memory_base_projections
     }
 
     fn record_main_memory_usage(
@@ -802,6 +858,9 @@ impl Stores {
             usage_high_water: EngineUsageStatistics::default(),
             memory_low_extent: TEX82_INITIAL_LOW_MEMORY_EXTENT,
             memory_high_extent: TEX82_INITIAL_HIGH_MEMORY_EXTENT,
+            transient_memory_base: None,
+            #[cfg(test)]
+            transient_memory_base_projections: 0,
         };
         stores.set_int_param(IntParam::MAG, 1000);
         stores.set_int_param(IntParam::TOLERANCE, 10_000);
@@ -3185,6 +3244,7 @@ impl Stores {
         );
         self.release_survivor_pins_to(mark.survivor_pin_mark);
         self.nodes.truncate_to(mark.node_mark);
+        self.transient_memory_base = None;
     }
 
     /// Rolls all stores back to `snapshot` as one atomic tuple.
@@ -3240,6 +3300,7 @@ impl Stores {
         // journal slice instead of adding it to the O(1) snapshot tuple.
         self.semantic_hash_cache.clear();
         self.semantic_hash_cache.projections = snapshot.exact_projection_cache.clone();
+        self.transient_memory_base = None;
         receipts
     }
 

@@ -1585,6 +1585,11 @@ impl Universe {
     pub fn observe_transient_token_words(&mut self, words: usize) {
         self.stores.observe_main_memory_dynamic_words(words);
     }
+
+    #[cfg(test)]
+    fn testing_transient_memory_base_projections(&self) -> usize {
+        self.stores.testing_transient_memory_base_projections()
+    }
     /// Removes an ordered suffix from committed artifact/PDF publication.
     pub fn prepare_page_suffix(&mut self, start: usize) -> PreparedPageSuffix {
         let effect_base = self.world.effect_pos().raw()
@@ -2567,6 +2572,7 @@ impl Universe {
             return;
         }
         let cell = receipt.cell();
+        self.stores.update_main_memory_roots(receipt);
         let index = cell.index();
         match cell.bank() {
             BankTag::Meaning

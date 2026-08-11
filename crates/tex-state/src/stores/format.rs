@@ -138,6 +138,22 @@ pub(super) struct MainMemoryUsage {
     pub(super) dynamic_extent: usize,
 }
 
+#[derive(Clone, Debug)]
+pub(super) struct MainMemoryProjection {
+    usage: MainMemoryUsage,
+    macro_refs: Vec<u32>,
+    token_refs: Vec<u32>,
+    macro_token_refs: Vec<u32>,
+    live_node_lists: std::collections::BTreeSet<NodeListId>,
+    detached_dynamic_extent: usize,
+}
+
+struct CapturedMemoryRoots {
+    env: Vec<FormatEnvEntry>,
+    node_lists: Vec<FormatNodeList>,
+    live_node_lists: std::collections::BTreeSet<NodeListId>,
+}
+
 const TEX82_UNTYPED_ONE_WORD_SCRATCH_EXTENT: usize = 4;
 
 /// TeX82 §§125--130/200/384's live main-memory use.
@@ -154,24 +170,22 @@ pub(super) fn main_memory_usage(
     main_memory_usage_inner(stores, extra_nodes, true)
 }
 
-pub(super) fn main_memory_usage_with_extra_nodes(
-    stores: &Stores,
-    extra_nodes: &[Node],
-) -> Result<MainMemoryUsage, StoreFormatError> {
-    main_memory_usage_inner(stores, extra_nodes, false)
+pub(super) fn main_memory_usage_with_extra_dynamic_words(
+    base: MainMemoryUsage,
+    extra_words: usize,
+) -> MainMemoryUsage {
+    let dynamic = base.dynamic.saturating_add(extra_words);
+    MainMemoryUsage {
+        variable: base.variable,
+        dynamic,
+        dynamic_extent: base.dynamic_extent.max(dynamic),
+    }
 }
 
-pub(super) fn main_memory_usage_with_extra_dynamic_words(
+pub(super) fn main_memory_usage_without_scratch(
     stores: &Stores,
-    extra_words: usize,
-) -> Result<MainMemoryUsage, StoreFormatError> {
-    let usage = main_memory_usage_inner(stores, &[], false)?;
-    let dynamic = usage.dynamic.saturating_add(extra_words);
-    Ok(MainMemoryUsage {
-        variable: usage.variable,
-        dynamic,
-        dynamic_extent: usage.dynamic_extent.max(dynamic),
-    })
+) -> Result<MainMemoryProjection, StoreFormatError> {
+    main_memory_projection_inner(stores, &[], false)
 }
 
 fn main_memory_usage_inner(
@@ -179,13 +193,26 @@ fn main_memory_usage_inner(
     extra_nodes: &[Node],
     include_scratch_extent: bool,
 ) -> Result<MainMemoryUsage, StoreFormatError> {
-    let (env, mut node_lists) = capture_memory_roots(stores, extra_nodes)?;
+    main_memory_projection_inner(stores, extra_nodes, include_scratch_extent)
+        .map(|projection| projection.usage)
+}
+
+fn main_memory_projection_inner(
+    stores: &Stores,
+    extra_nodes: &[Node],
+    include_scratch_extent: bool,
+) -> Result<MainMemoryProjection, StoreFormatError> {
+    let CapturedMemoryRoots {
+        env,
+        mut node_lists,
+        live_node_lists,
+    } = capture_memory_roots(stores, extra_nodes)?;
     let token_count = stores.tokens.watermark().spans as usize;
     let macro_count = stores.macros.watermark().definitions as usize;
-    let mut live_macros = vec![false; macro_count];
-    let mut live_tokens = vec![false; token_count];
-    if let Some(empty) = live_tokens.first_mut() {
-        *empty = true;
+    let mut macro_refs = vec![0_u32; macro_count];
+    let mut token_refs = vec![0_u32; token_count];
+    if let Some(empty) = token_refs.first_mut() {
+        *empty = 1;
     }
     for entry in &env {
         let cell = crate::cell::CellId::from_raw(entry.cell)
@@ -202,30 +229,30 @@ fn main_memory_usage_inner(
                         .macros
                         .resolve_stored(definition)
                         .ok_or(StoreFormatError::Invalid("environment macro"))?;
-                    mark_reachable(&mut live_macros, definition.raw(), "environment macro")?;
+                    increment_reachable(&mut macro_refs, definition.raw(), "environment macro")?;
                 }
             }
             crate::cell::BankTag::Toks => {
                 let raw = u32::try_from(raw)
                     .map_err(|_| StoreFormatError::Invalid("environment token list"))?;
                 let id = stores.resolve_stored_token_list(TokenListId::new(raw));
-                mark_reachable(&mut live_tokens, id.raw(), "environment token list")?;
+                increment_reachable(&mut token_refs, id.raw(), "environment token list")?;
             }
             crate::cell::BankTag::TokParam if raw != 0 => {
                 let raw = u32::try_from(raw - 1)
                     .map_err(|_| StoreFormatError::Invalid("environment token list"))?;
                 let id = stores.resolve_stored_token_list(TokenListId::new(raw));
-                mark_reachable(&mut live_tokens, id.raw(), "environment token list")?;
+                increment_reachable(&mut token_refs, id.raw(), "environment token list")?;
             }
             _ => {}
         }
     }
 
-    let mut macro_token_lists = vec![false; token_count];
+    let mut macro_token_refs = vec![0_u32; token_count];
     let mut macro_words = 0_usize;
     let mut live_macro_count = 0_usize;
-    for (raw, &live) in live_macros.iter().enumerate() {
-        if !live {
+    for (raw, &refs) in macro_refs.iter().enumerate() {
+        if refs == 0 {
             continue;
         }
         live_macro_count = live_macro_count.saturating_add(1);
@@ -238,8 +265,7 @@ fn main_memory_usage_inner(
             let list_id = stores.resolve_stored_token_list(list_id);
             let index = list_id.raw() as usize;
             let list = stores.tokens.get(list_id);
-            macro_token_lists[index] = true;
-            live_tokens[index] = true;
+            macro_token_refs[index] = macro_token_refs[index].saturating_add(1);
             macro_words = macro_words.saturating_add(list.len());
         }
     }
@@ -248,17 +274,18 @@ fn main_memory_usage_inner(
             let mut invalid = false;
             node.visit_token_list_refs(|raw| {
                 let id = stores.resolve_stored_token_list(TokenListId::new(*raw));
-                invalid |= mark_reachable(&mut live_tokens, id.raw(), "node token list").is_err();
+                invalid |=
+                    increment_reachable(&mut token_refs, id.raw(), "node token list").is_err();
             });
             if invalid {
                 return Err(StoreFormatError::Invalid("node token-list reference"));
             }
         }
     }
-    let ordinary_token_words = live_tokens
+    let ordinary_token_words = token_refs
         .iter()
         .enumerate()
-        .filter(|(index, live)| **live && *index != 0 && !macro_token_lists[*index])
+        .filter(|(index, refs)| **refs != 0 && *index != 0 && macro_token_refs[*index] == 0)
         .map(|(index, _)| {
             let id = stores.resolve_stored_token_list(TokenListId::new(index as u32));
             stores.tokens.get(id).len().saturating_add(1)
@@ -278,77 +305,21 @@ fn main_memory_usage_inner(
     // same TeX nodes for §§125/127 live accounting. The largest detached
     // physical branch did occupy the allocator before direct mutation, so it
     // remains part of §1334's coordinate extent.
-    let lists_by_key = node_lists
-        .iter()
-        .map(|list| (list.key, list))
-        .collect::<std::collections::BTreeMap<_, _>>();
-    let mut semantic_lists = std::collections::BTreeSet::new();
-    let mut stack = env
+    let mut node_roots = env
         .iter()
         .filter_map(|entry| match entry.value {
             FormatEnvValue::Box(key) => Some(key),
             FormatEnvValue::Raw(_) => None,
         })
         .collect::<Vec<_>>();
-    stack.extend(
-        lists_by_key
-            .keys()
-            .filter(|key| key.start == u32::MAX)
-            .copied(),
+    node_roots.extend(
+        node_lists
+            .iter()
+            .map(|list| list.key)
+            .filter(|key| key.start == u32::MAX),
     );
-    while let Some(key) = stack.pop() {
-        if !semantic_lists.insert(key) {
-            continue;
-        }
-        if let Some(list) = lists_by_key.get(&key) {
-            stack.extend(
-                list.nodes
-                    .iter()
-                    .flat_map(FormatNode::semantic_children)
-                    .flatten(),
-            );
-        }
-    }
-    let (node_low_words, node_high_words) = node_lists
-        .iter()
-        .filter(|list| semantic_lists.contains(&list.key))
-        .flat_map(|list| &list.nodes)
-        .fold((0_usize, 0_usize), |(low, high), node| {
-            let (node_low, node_high) = node.tex82_memory_words();
-            (low.saturating_add(node_low), high.saturating_add(node_high))
-        });
-    let diagnostic_roots = node_lists
-        .iter()
-        .flat_map(|list| &list.nodes)
-        .filter_map(FormatNode::diagnostic_children);
-    let detached_dynamic_extent = diagnostic_roots
-        .map(|root| {
-            let mut words = 0_usize;
-            let mut seen = std::collections::BTreeSet::new();
-            let mut stack = vec![root];
-            while let Some(key) = stack.pop() {
-                if semantic_lists.contains(&key) || !seen.insert(key) {
-                    continue;
-                }
-                if let Some(list) = lists_by_key.get(&key) {
-                    words = words.saturating_add(
-                        list.nodes
-                            .iter()
-                            .map(|node| node.tex82_memory_words().1)
-                            .sum::<usize>(),
-                    );
-                    stack.extend(
-                        list.nodes
-                            .iter()
-                            .flat_map(FormatNode::semantic_children)
-                            .flatten(),
-                    );
-                }
-            }
-            words
-        })
-        .max()
-        .unwrap_or(0);
+    let (node_low_words, node_high_words, detached_dynamic_extent) =
+        node_memory_words(&node_lists, node_roots);
     // Section 133's five fixed glue specifications occupy the 21 static low
     // words. Every additional reachable §150 glue specification owns four
     // variable-size words independently of its two-word glue node.
@@ -377,11 +348,303 @@ fn main_memory_usage_inner(
     let dynamic_extent = dynamic
         .saturating_add(detached_dynamic_extent)
         .saturating_add(scratch_extent);
-    Ok(MainMemoryUsage {
-        variable,
-        dynamic,
-        dynamic_extent,
+    Ok(MainMemoryProjection {
+        usage: MainMemoryUsage {
+            variable,
+            dynamic,
+            dynamic_extent,
+        },
+        macro_refs,
+        token_refs,
+        macro_token_refs,
+        live_node_lists,
+        detached_dynamic_extent,
     })
+}
+
+fn node_memory_words(
+    node_lists: &[FormatNodeList],
+    roots: impl IntoIterator<Item = FormatListKey>,
+) -> (usize, usize, usize) {
+    let lists_by_key = node_lists
+        .iter()
+        .map(|list| (list.key, list))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    let mut semantic_lists = std::collections::BTreeSet::new();
+    let mut stack = roots.into_iter().collect::<Vec<_>>();
+    while let Some(key) = stack.pop() {
+        if !semantic_lists.insert(key) {
+            continue;
+        }
+        if let Some(list) = lists_by_key.get(&key) {
+            stack.extend(
+                list.nodes
+                    .iter()
+                    .flat_map(FormatNode::semantic_children)
+                    .flatten(),
+            );
+        }
+    }
+    let (low_words, high_words) = node_lists
+        .iter()
+        .filter(|list| semantic_lists.contains(&list.key))
+        .flat_map(|list| &list.nodes)
+        .fold((0_usize, 0_usize), |(low, high), node| {
+            let (node_low, node_high) = node.tex82_memory_words();
+            (low.saturating_add(node_low), high.saturating_add(node_high))
+        });
+    let detached_extent = node_lists
+        .iter()
+        .flat_map(|list| &list.nodes)
+        .filter_map(FormatNode::diagnostic_children)
+        .map(|root| {
+            let mut words = 0_usize;
+            let mut seen = std::collections::BTreeSet::new();
+            let mut stack = vec![root];
+            while let Some(key) = stack.pop() {
+                if semantic_lists.contains(&key) || !seen.insert(key) {
+                    continue;
+                }
+                if let Some(list) = lists_by_key.get(&key) {
+                    words = words.saturating_add(
+                        list.nodes
+                            .iter()
+                            .map(|node| node.tex82_memory_words().1)
+                            .sum::<usize>(),
+                    );
+                    stack.extend(
+                        list.nodes
+                            .iter()
+                            .flat_map(FormatNode::semantic_children)
+                            .flatten(),
+                    );
+                }
+            }
+            words
+        })
+        .max()
+        .unwrap_or(0);
+    (low_words, high_words, detached_extent)
+}
+
+impl MainMemoryProjection {
+    pub(super) const fn usage(&self) -> MainMemoryUsage {
+        self.usage
+    }
+
+    pub(super) fn update_glue_specs(&mut self, old_specs: u32, new_specs: u32) {
+        let old_words = (old_specs as usize).saturating_sub(5).saturating_mul(4);
+        let new_words = (new_specs as usize).saturating_sub(5).saturating_mul(4);
+        self.usage.variable = self
+            .usage
+            .variable
+            .saturating_sub(old_words)
+            .saturating_add(new_words);
+    }
+
+    pub(super) fn usage_with_extra_nodes(
+        &self,
+        stores: &Stores,
+        extra_nodes: &[Node],
+    ) -> Result<MainMemoryUsage, StoreFormatError> {
+        if extra_nodes.is_empty() {
+            return Ok(self.usage);
+        }
+        let mut node_lists =
+            capture_extra_memory_nodes(stores, extra_nodes, &self.live_node_lists)?;
+        let mut extra_tokens = std::collections::BTreeSet::new();
+        for node in node_lists.iter_mut().flat_map(|list| &mut list.nodes) {
+            node.visit_token_list_refs(|raw| {
+                let id = stores.resolve_stored_token_list(TokenListId::new(*raw));
+                let index = id.raw() as usize;
+                if index != 0
+                    && self.token_refs.get(index).copied().unwrap_or(0) == 0
+                    && self.macro_token_refs.get(index).copied().unwrap_or(0) == 0
+                {
+                    extra_tokens.insert(id);
+                }
+            });
+        }
+        let extra_token_words = extra_tokens
+            .into_iter()
+            .map(|id| stores.tokens.get(id).len().saturating_add(1))
+            .sum::<usize>();
+
+        let roots = node_lists
+            .iter()
+            .map(|list| list.key)
+            .filter(|key| key.start == u32::MAX);
+        let (node_low_words, node_high_words, detached_dynamic_extent) =
+            node_memory_words(&node_lists, roots);
+        let variable = self.usage.variable.saturating_add(node_low_words);
+        let dynamic = self
+            .usage
+            .dynamic
+            .saturating_add(extra_token_words)
+            .saturating_add(node_high_words);
+        Ok(MainMemoryUsage {
+            variable,
+            dynamic,
+            dynamic_extent: dynamic
+                .saturating_add(self.detached_dynamic_extent.max(detached_dynamic_extent)),
+        })
+    }
+
+    pub(super) fn update_cell(
+        &mut self,
+        stores: &Stores,
+        cell: crate::cell::CellId,
+        old_word: u64,
+        new_word: u64,
+    ) -> Result<bool, StoreFormatError> {
+        self.macro_refs
+            .resize(stores.macros.watermark().definitions as usize, 0);
+        let token_count = stores.tokens.watermark().spans as usize;
+        self.token_refs.resize(token_count, 0);
+        self.macro_token_refs.resize(token_count, 0);
+        match cell.bank() {
+            crate::cell::BankTag::Meaning => {
+                self.adjust_meaning(stores, old_word, false)?;
+                self.adjust_meaning(stores, new_word, true)?;
+            }
+            crate::cell::BankTag::Toks => {
+                self.adjust_token(stores, old_word, false, false)?;
+                self.adjust_token(stores, new_word, false, true)?;
+            }
+            crate::cell::BankTag::TokParam => {
+                self.adjust_token(stores, old_word, true, false)?;
+                self.adjust_token(stores, new_word, true, true)?;
+            }
+            crate::cell::BankTag::Box => return Ok(false),
+            _ => return Ok(true),
+        }
+        self.usage.dynamic_extent = self
+            .usage
+            .dynamic
+            .saturating_add(self.detached_dynamic_extent);
+        Ok(true)
+    }
+
+    fn adjust_meaning(
+        &mut self,
+        stores: &Stores,
+        word: u64,
+        add: bool,
+    ) -> Result<(), StoreFormatError> {
+        let crate::meaning::Meaning::Macro { definition, .. } =
+            crate::meaning::Meaning::decode_stored(word)
+        else {
+            return Ok(());
+        };
+        let definition = stores
+            .macros
+            .resolve_stored(definition)
+            .ok_or(StoreFormatError::Invalid("environment macro"))?;
+        let index = definition.raw() as usize;
+        let refs = *self
+            .macro_refs
+            .get(index)
+            .ok_or(StoreFormatError::Invalid("environment macro"))?;
+        if add {
+            if refs == 0 {
+                self.adjust_macro_words(stores, definition, true)?;
+            }
+            self.macro_refs[index] = refs.saturating_add(1);
+        } else {
+            if refs == 0 {
+                return Err(StoreFormatError::Invalid("environment macro refcount"));
+            }
+            let refs = refs.saturating_sub(1);
+            self.macro_refs[index] = refs;
+            if refs == 0 {
+                self.adjust_macro_words(stores, definition, false)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn adjust_macro_words(
+        &mut self,
+        stores: &Stores,
+        definition: MacroDefinitionId,
+        add: bool,
+    ) -> Result<(), StoreFormatError> {
+        let definition = stores.macros.get(definition);
+        let mut words = 2_usize;
+        for list_id in [definition.parameter_text(), definition.replacement_text()] {
+            let list_id = stores.resolve_stored_token_list(list_id);
+            let index = list_id.raw() as usize;
+            let list_words = stores.tokens.get(list_id).len();
+            words = words.saturating_add(list_words);
+            let refs = self
+                .macro_token_refs
+                .get_mut(index)
+                .ok_or(StoreFormatError::Invalid("macro token-list index"))?;
+            if add {
+                if *refs == 0 && index != 0 && self.token_refs[index] != 0 {
+                    self.usage.dynamic = self
+                        .usage
+                        .dynamic
+                        .saturating_sub(list_words.saturating_add(1));
+                }
+                *refs = refs.saturating_add(1);
+            } else {
+                if *refs == 0 {
+                    return Err(StoreFormatError::Invalid("macro token-list refcount"));
+                }
+                *refs = refs.saturating_sub(1);
+                if *refs == 0 && index != 0 && self.token_refs[index] != 0 {
+                    self.usage.dynamic = self
+                        .usage
+                        .dynamic
+                        .saturating_add(list_words.saturating_add(1));
+                }
+            }
+        }
+        if add {
+            self.usage.dynamic = self.usage.dynamic.saturating_add(words);
+        } else {
+            self.usage.dynamic = self.usage.dynamic.saturating_sub(words);
+        }
+        Ok(())
+    }
+
+    fn adjust_token(
+        &mut self,
+        stores: &Stores,
+        word: u64,
+        optional: bool,
+        add: bool,
+    ) -> Result<(), StoreFormatError> {
+        if optional && word == 0 {
+            return Ok(());
+        }
+        let raw = if optional { word - 1 } else { word };
+        let raw =
+            u32::try_from(raw).map_err(|_| StoreFormatError::Invalid("environment token list"))?;
+        let id = stores.resolve_stored_token_list(TokenListId::new(raw));
+        let index = id.raw() as usize;
+        let refs = self
+            .token_refs
+            .get_mut(index)
+            .ok_or(StoreFormatError::Invalid("environment token list"))?;
+        let words = stores.tokens.get(id).len().saturating_add(1);
+        if add {
+            if *refs == 0 && index != 0 && self.macro_token_refs[index] == 0 {
+                self.usage.dynamic = self.usage.dynamic.saturating_add(words);
+            }
+            *refs = refs.saturating_add(1);
+        } else {
+            if *refs == 0 {
+                return Err(StoreFormatError::Invalid("environment token-list refcount"));
+            }
+            *refs = refs.saturating_sub(1);
+            if *refs == 0 && index != 0 && self.macro_token_refs[index] == 0 {
+                self.usage.dynamic = self.usage.dynamic.saturating_sub(words);
+            }
+        }
+        Ok(())
+    }
 }
 
 /// Captures only the live typed roots needed for TeX82 allocator accounting.
@@ -391,7 +654,7 @@ fn main_memory_usage_inner(
 fn capture_memory_roots(
     stores: &Stores,
     extra_nodes: &[Node],
-) -> Result<(Vec<FormatEnvEntry>, Vec<FormatNodeList>), StoreFormatError> {
+) -> Result<CapturedMemoryRoots, StoreFormatError> {
     let mut env_words = Vec::new();
     stores.env.for_each_main_memory_root_word(|cell, word| {
         env_words.push(capture_env_word(stores, cell, word));
@@ -416,6 +679,7 @@ fn capture_memory_roots(
             None,
         )?;
     }
+    let live_node_lists = seen;
     let mut env = env_words
         .into_iter()
         .map(|(cell, word)| {
@@ -471,7 +735,55 @@ fn capture_memory_roots(
                 .collect(),
         });
     }
-    Ok((env, node_lists))
+    Ok(CapturedMemoryRoots {
+        env,
+        node_lists,
+        live_node_lists,
+    })
+}
+
+fn capture_extra_memory_nodes(
+    stores: &Stores,
+    extra_nodes: &[Node],
+    live_node_lists: &std::collections::BTreeSet<NodeListId>,
+) -> Result<Vec<FormatNodeList>, StoreFormatError> {
+    let mut seen = live_node_lists.clone();
+    let mut visiting = std::collections::BTreeSet::new();
+    let mut survivor_roots = std::collections::BTreeMap::new();
+    let mut node_lists = Vec::new();
+    for node in extra_nodes {
+        for child in crate::node_arena::NodeRef::from(node).physical_children() {
+            capture_node_list(
+                stores,
+                child,
+                &mut seen,
+                &mut visiting,
+                &mut survivor_roots,
+                &mut node_lists,
+                None,
+            )?;
+        }
+    }
+    node_lists.push(FormatNodeList {
+        key: FormatListKey {
+            survivor_root: None,
+            start: u32::MAX,
+            len: u32::try_from(extra_nodes.len())
+                .map_err(|_| StoreFormatError::Invalid("extra node-list length"))?,
+        },
+        semantic_id: 0,
+        nodes: extra_nodes
+            .iter()
+            .map(|node| {
+                FormatNode::capture(
+                    stores,
+                    crate::node_arena::NodeRef::from(node),
+                    &mut survivor_roots,
+                )
+            })
+            .collect(),
+    });
+    Ok(node_lists)
 }
 
 struct ImmutableStoreIdentity {
@@ -1598,6 +1910,18 @@ fn mark_reachable(
         .get_mut(raw as usize)
         .ok_or(StoreFormatError::Invalid(message))?;
     *slot = true;
+    Ok(())
+}
+
+fn increment_reachable(
+    reachable: &mut [u32],
+    raw: u32,
+    message: &'static str,
+) -> Result<(), StoreFormatError> {
+    let slot = reachable
+        .get_mut(raw as usize)
+        .ok_or(StoreFormatError::Invalid(message))?;
+    *slot = slot.saturating_add(1);
     Ok(())
 }
 

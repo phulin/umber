@@ -169,6 +169,92 @@ fn main_memory_extent_observes_scanner_owned_token_words() {
 }
 
 #[test]
+fn transient_memory_observations_reuse_the_unchanged_allocator_base() {
+    let mut universe = Universe::new();
+    universe.observe_transient_token_words(600);
+    universe.observe_transient_token_words(601);
+    assert_eq!(universe.testing_transient_memory_base_projections(), 1);
+    assert_eq!(universe.engine_usage_statistics().memory_words, 1_642);
+
+    let unowned = universe.intern_token_list(&vec![
+        Token::Char {
+            ch: 'x',
+            cat: Catcode::Other,
+        };
+        100
+    ]);
+    universe.observe_transient_token_words(602);
+    // Immutable store history is not an allocator owner, so it neither
+    // invalidates nor enters the cached live-root base.
+    assert_eq!(universe.testing_transient_memory_base_projections(), 1);
+    assert_eq!(universe.engine_usage_statistics().memory_words, 1_643);
+
+    universe.intern_glue(GlueSpec {
+        width: Scaled::from_raw(123),
+        stretch: Scaled::from_raw(0),
+        stretch_order: Order::Normal,
+        shrink: Scaled::from_raw(0),
+        shrink_order: Order::Normal,
+    });
+    universe.observe_transient_token_words(602);
+    // Glue allocation advances its TeX82 low-arena projection in O(1), but
+    // immutable glue-store growth is not a reason to rebuild unrelated roots.
+    assert_eq!(universe.testing_transient_memory_base_projections(), 1);
+
+    universe.set_toks_global(0, unowned);
+    universe.observe_transient_token_words(603);
+    // Installing the list as a canonical root updates that allocator base
+    // incrementally; it does not reconstruct unrelated macro/token roots.
+    assert_eq!(universe.testing_transient_memory_base_projections(), 1);
+    assert_eq!(universe.engine_usage_statistics().memory_words, 1_745);
+
+    let body = universe.intern_token_list(&vec![
+        Token::Char {
+            ch: 'y',
+            cat: Catcode::Other,
+        };
+        50
+    ]);
+    let symbol = universe.intern("cached-allocator-macro");
+    universe.set_macro_meaning_global(
+        symbol,
+        MacroMeaning::new(MeaningFlags::EMPTY, TokenListId::EMPTY, body),
+    );
+    universe.observe_transient_token_words(604);
+    assert_eq!(universe.testing_transient_memory_base_projections(), 1);
+    assert_eq!(universe.engine_usage_statistics().memory_words, 1_798);
+
+    universe.set_meaning_global(symbol, Meaning::Relax);
+    universe.observe_transient_token_words(700);
+    // Removing the macro releases its definition words from the live base;
+    // the later transient allocation still advances the canonical high-water.
+    assert_eq!(universe.testing_transient_memory_base_projections(), 1);
+    assert_eq!(universe.engine_usage_statistics().memory_words, 1_842);
+}
+
+#[test]
+fn transient_node_allocations_reuse_roots_and_preserve_the_high_water() {
+    let mut universe = Universe::new();
+    universe.observe_transient_token_words(0);
+    assert_eq!(universe.testing_transient_memory_base_projections(), 1);
+
+    universe.intern_token_list(&vec![
+        Token::Char {
+            ch: 'x',
+            cat: Catcode::Other,
+        };
+        600
+    ]);
+    universe.freeze_node_list(&vec![Node::Penalty(0); 501]);
+    // The frozen list is a real §§127/157 allocation event, so it advances
+    // §1334's low-arena high-water even while no semantic root owns it. The
+    // unrelated unowned token history is absent, and neither event rebuilds
+    // the live macro/token/box closure.
+    assert_eq!(universe.testing_transient_memory_base_projections(), 1);
+    assert_eq!(universe.engine_usage_statistics().memory_words, 2_045);
+}
+
+#[test]
 fn string_pool_accounting_keeps_control_sequences_and_typed_allocations_distinct() {
     let mut universe = Universe::new();
     universe.intern("control-name");

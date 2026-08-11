@@ -52,6 +52,8 @@ type StampSegment = Box<[Epoch; SEGMENT_LEN]>;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct CellMutationReceipt {
     cell: CellId,
+    old_word: u64,
+    new_word: u64,
     disposition: CellMutationDisposition,
 }
 
@@ -77,6 +79,8 @@ impl CellMutationReceipt {
     pub(crate) fn write(cell: CellId, old: u64, new: u64) -> Self {
         Self {
             cell: cell.without_assignment_scope(),
+            old_word: old,
+            new_word: new,
             disposition: if old == new {
                 CellMutationDisposition::Unchanged
             } else {
@@ -88,6 +92,8 @@ impl CellMutationReceipt {
     pub(crate) fn restore(cell: CellId, old: u64, new: u64, retained: bool) -> Self {
         Self {
             cell: cell.without_assignment_scope(),
+            old_word: old,
+            new_word: new,
             disposition: if old != new {
                 CellMutationDisposition::Changed
             } else if retained {
@@ -104,6 +110,10 @@ impl CellMutationReceipt {
 
     pub(crate) const fn changed(self) -> bool {
         matches!(self.disposition, CellMutationDisposition::Changed)
+    }
+
+    pub(crate) const fn words(self) -> (u64, u64) {
+        (self.old_word, self.new_word)
     }
 
     #[cfg(test)]
