@@ -796,19 +796,15 @@ impl CommandProcessor<'_> {
         flags: MeaningFlags,
         partial: &[TracedTokenWord],
     ) -> Result<(), CommandError> {
-        if matches!(
-            command.meaning(),
-            Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Par)
-        ) && !flags.contains(MeaningFlags::LONG)
-        {
-            if self.eof_recovered_while_matching {
-                // TeX82 §23 calls `check_outer_validity` after source EOF;
-                // §394 then aborts this match on its inserted `\par`.
-                // That terminator is consumed by the failed expansion, unlike
-                // a user-supplied paragraph which `back_error` must replay.
-                self.set_runaway_partial(crate::processor::RUNAWAY_SCAN_DIAGNOSTIC, partial);
-                return Err(CommandError::ParagraphInMacroArgument);
-            }
+        if self.eof_recovered_while_matching && is_paragraph_command(command) {
+            // TeX82 §23 calls `check_outer_validity` after source EOF and
+            // changes `long_state` to `outer_call`, even for a `\long` macro.
+            // Its inserted frozen `\par` terminates the match but is consumed
+            // by the failed expansion instead of being replayed by §396.
+            self.set_runaway_partial(crate::processor::RUNAWAY_SCAN_DIAGNOSTIC, partial);
+            return Err(CommandError::ParagraphInMacroArgument);
+        }
+        if self.is_par_token(command) && !flags.contains(MeaningFlags::LONG) {
             // TeX82 §394 reports this through `back_error` while the macro
             // matcher is still live.  The caller will then restore its
             // enclosing scanner status, so retain the exact `\par` input
@@ -821,6 +817,17 @@ impl CommandProcessor<'_> {
             return Err(CommandError::ParagraphInMacroArgument);
         }
         Ok(())
+    }
+
+    /// TeX82 §394 tests `cur_tok=par_token`, not `cur_cmd=par_end`.
+    /// A control sequence aliased to `\par` therefore remains ordinary
+    /// argument material, while the `\par` token remains forbidden even if
+    /// its mutable meaning cell has subsequently been reassigned.
+    fn is_par_token(&self, command: &crate::CurrentCommand) -> bool {
+        let Some(par) = self.state.symbol("par") else {
+            return false;
+        };
+        command.spelling().semantic_token() == Token::Cs(par)
     }
 }
 

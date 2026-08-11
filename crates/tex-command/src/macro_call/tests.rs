@@ -795,6 +795,96 @@ fn macro_argument_recovery_emits_exact_extra_brace_and_runaway_reports() {
 }
 
 #[test]
+fn non_long_argument_rejection_uses_par_token_identity_not_meaning() {
+    fn call_with_bindings(
+        source: &[u8],
+        par_meaning: Meaning,
+        alias_meaning: Meaning,
+    ) -> (
+        CommandState,
+        Result<MacroCallOutcome, CommandError>,
+        tex_state::interner::Symbol,
+    ) {
+        let mut command = CommandState::default();
+        let source = command
+            .register_source(SourceRegistration::new(
+                RegisteredSourceKind::Generated,
+                Arc::<[u8]>::from(source),
+            ))
+            .expect("source registers");
+        command
+            .open_registered_source(source)
+            .expect("source opens");
+        let mut universe = Universe::new_with_plain_catcodes();
+        universe.install_primitive_meaning(
+            "par",
+            Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Par),
+        );
+        let par = universe.intern("par").symbol();
+        universe.set_meaning(par, par_meaning);
+        let alias = universe.intern("alias").symbol();
+        universe.set_meaning(alias, alias_meaning);
+        let name = universe.intern("m").symbol();
+        let parameters = universe.intern_token_list(&[Token::param(1)]);
+        let replacement = universe.intern_token_list(&[Token::param(1)]);
+        let definition = universe.intern_macro(MacroMeaning::new(
+            MeaningFlags::EMPTY,
+            parameters,
+            replacement,
+        ));
+        universe.set_meaning(
+            name,
+            Meaning::Macro {
+                flags: MeaningFlags::EMPTY,
+                definition,
+            },
+        );
+        let mut capabilities = CommandHostCapabilities::default();
+        let outcome = {
+            let mut processor = CommandProcessor::new(
+                &mut command,
+                universe.command_context(),
+                CommandHostContext::new(&mut capabilities),
+            );
+            let call = processor
+                .get_next()
+                .expect("macro call delivery")
+                .expect("macro token");
+            processor.macro_call(call)
+        };
+        (command, outcome, alias)
+    }
+
+    let par_meaning = Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Par);
+    let (aliased, outcome, alias) = call_with_bindings(b"\\m\\alias", par_meaning, par_meaning);
+    assert_eq!(outcome, Ok(MacroCallOutcome::Activated));
+    assert!(aliased.semantic_diagnostics.is_empty());
+    assert_eq!(
+        aliased
+            .parameters
+            .activations
+            .last()
+            .expect("alias argument activates")
+            .arguments
+            .buffer
+            .get(0)
+            .expect("alias argument token")
+            .semantic_token(),
+        Token::Cs(alias)
+    );
+
+    let (reassigned, outcome, _) = call_with_bindings(b"\\m\\par", Meaning::Relax, Meaning::Relax);
+    assert_eq!(outcome, Err(CommandError::ParagraphInMacroArgument));
+    assert!(matches!(
+        reassigned.semantic_diagnostics.as_slice(),
+        [crate::CommandSemanticDiagnostic::Recoverable {
+            identity: crate::macro_call::RUNAWAY_ARGUMENT_DIAGNOSTIC,
+            ..
+        }]
+    ));
+}
+
+#[test]
 fn delimited_argument_reports_top_level_extra_right_brace_before_runaway() {
     let (command, outcome, _) = run_observed_macro_call_with_parameters(
         b"\\m}",
@@ -1572,13 +1662,10 @@ fn delimiter_opening_brace_does_not_leave_literal_brace_accounting() {
 
 #[test]
 fn delimited_argument_eof_consumes_matching_recovery_before_failing() {
-    assert_eq!(
-        run_macro(
-            b"\\m x",
-            MeaningFlags::EMPTY,
-            &[Token::param(1), other(',')],
-            false,
-        ),
-        Err(CommandError::ParagraphInMacroArgument)
-    );
+    for flags in [MeaningFlags::EMPTY, MeaningFlags::LONG] {
+        assert_eq!(
+            run_macro(b"\\m x", flags, &[Token::param(1), other(',')], false,),
+            Err(CommandError::ParagraphInMacroArgument)
+        );
+    }
 }
