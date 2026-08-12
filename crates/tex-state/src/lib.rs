@@ -85,6 +85,8 @@ pub mod print;
 pub mod provenance;
 mod provenance_resolver;
 mod pure_memo;
+#[allow(dead_code)] // Shared substrate is consumed as each value family migrates.
+mod reachable_value;
 mod read_observation;
 mod resource;
 pub mod scaled;

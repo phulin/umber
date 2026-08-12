@@ -109,6 +109,10 @@ All production mutation of live TeX state should pass through `Universe` or simi
   contract shared across engine layers.
 - `src/read_observation.rs`: State-owned read-recorder contract, detached
   transactional batches, and deterministic dependency-set recorder.
+- `src/reachable_value.rs` and `src/reachable_value/tests.rs`: reusable weak
+  slots, evictable collision-safe candidate indexing, strong immutable value
+  references, fork isolation, and plateau controls shared by token, macro, and
+  glue migrations.
 - `src/pure_memo/tests.rs`: Collision, eviction, retention-release, and disabled-cache tests.
 - `src/scaled.rs`: Compatibility re-export for shared TeX scaled-point arithmetic.
 - `src/source_map.rs`: Rollback-coupled logical source regions, validated positions/spans, and immutable World/generated backing identities.
