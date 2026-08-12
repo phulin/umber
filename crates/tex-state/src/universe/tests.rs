@@ -1012,6 +1012,63 @@ fn absent_internal_parshape_restore_is_not_traced() {
 }
 
 #[test]
+fn exact_environment_identity_tracks_null_parshape_representation_rewrite() {
+    let mut universe = Universe::new();
+    let baseline = universe.stores.exact_env_identity();
+    assert_eq!(
+        baseline,
+        universe.stores.testing_recomputed_exact_env_identity()
+    );
+
+    // Paragraph completion canonically clears `par_shape_ptr`. The already
+    // null case still materializes Umber's private empty-list representation
+    // without a TeX save-stack word, so the aggregate raw-restore seam must
+    // update the exact Env treap and retain only snapshot-rollback history.
+    universe.set_paragraph_shape(&[], false);
+    assert_eq!(universe.paragraph_shape_len(), 0);
+    assert_ne!(universe.stores.exact_env_identity(), baseline);
+    assert_eq!(
+        universe.stores.exact_env_identity(),
+        universe.stores.testing_recomputed_exact_env_identity()
+    );
+
+    universe.set_paragraph_shape(
+        &[super::ParagraphShapeLine {
+            indent: Scaled::from_raw(Scaled::UNITY),
+            width: Scaled::from_raw(10 * Scaled::UNITY),
+        }],
+        false,
+    );
+    let _ = universe.snapshot_with_exact_identity();
+    universe.set_paragraph_shape(&[], false);
+    let _ = universe.snapshot_with_exact_identity();
+    assert_eq!(universe.paragraph_shape_len(), 0);
+    assert_eq!(
+        universe.stores.exact_env_identity(),
+        universe.stores.testing_recomputed_exact_env_identity(),
+        "nonnull-to-null paragraph completion must converge through the journaled path"
+    );
+}
+
+#[test]
+fn exact_environment_identity_tracks_loaded_format_null_parshape_rewrite() {
+    let initex = Universe::new();
+    let format = initex.dump_format().expect("empty format serializes");
+    let mut loaded = Universe::from_format(World::memory(), &format).expect("format loads");
+    assert_eq!(
+        loaded.stores.exact_env_identity(),
+        loaded.stores.testing_recomputed_exact_env_identity()
+    );
+
+    loaded.set_paragraph_shape(&[], false);
+    assert_eq!(loaded.paragraph_shape_len(), 0);
+    assert_eq!(
+        loaded.stores.exact_env_identity(),
+        loaded.stores.testing_recomputed_exact_env_identity()
+    );
+}
+
+#[test]
 fn format_round_trip_preserves_profile_state_but_not_pending_transients() {
     // TeX82 §§1299--1329 serialize the semantic tables, not the live job's
     // input, page-building, diagnostic, or host-effect machinery.  e-TeX's

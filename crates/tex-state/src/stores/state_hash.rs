@@ -534,7 +534,7 @@ impl Stores {
 
         for &(cell, _, old_word) in &first_old {
             let new_word = self.env.semantic_word(cell);
-            self.update_exact_env_cell(cell, new_word);
+            self.synchronize_exact_env_cell(cell, new_word);
             let current_hash = self.cell_value_hash(cell, new_word);
             let baseline_hash = cache.cells.get(&cell).map_or_else(
                 || self.cell_value_hash(cell, old_word),
@@ -696,21 +696,39 @@ impl Stores {
         })
     }
 
-    fn update_exact_env_cell(&mut self, cell: CellId, word: u64) {
+    pub(super) fn update_exact_env_cell(&mut self, cell: CellId, word: u64) {
         let semantic_key = self.semantic_cell_key(cell);
         let key = self.exact_cell_key(&semantic_key);
         let value = (word != 0).then(|| self.exact_cell_value(cell, word));
         self.exact_env_identity.update(key, value);
     }
 
-    pub(crate) fn initialize_exact_env_identity(&mut self) {
-        let mut words = Vec::new();
-        self.env
-            .for_each_semantic_non_default_word(|cell, word| words.push((cell, word)));
-        self.exact_env_identity = super::exact_identity::ExactEnvIdentity::default();
-        for (cell, word) in words {
-            self.update_exact_env_cell(cell, word);
+    fn synchronize_exact_env_cell(&mut self, cell: CellId, word: u64) {
+        let semantic_key = self.semantic_cell_key(cell);
+        let key = self.exact_cell_key(&semantic_key);
+        let value = (word != 0).then(|| self.exact_cell_value(cell, word));
+        if !self.exact_env_identity.contains(key, value) {
+            self.exact_env_identity.update(key, value);
         }
+    }
+
+    pub(crate) fn initialize_exact_env_identity(&mut self) {
+        self.exact_env_identity = self.recomputed_exact_env_identity();
+    }
+
+    fn recomputed_exact_env_identity(&self) -> super::exact_identity::ExactEnvIdentity {
+        let mut cells = Vec::new();
+        self.env
+            .for_each_semantic_non_default_word(|cell, word| cells.push((cell, word)));
+        let mut identity = super::exact_identity::ExactEnvIdentity::default();
+        for (cell, word) in cells {
+            let semantic_key = self.semantic_cell_key(cell);
+            identity.update(
+                self.exact_cell_key(&semantic_key),
+                Some(self.exact_cell_value(cell, word)),
+            );
+        }
+        identity
     }
 
     pub(crate) fn exact_env_identity(&self) -> u64 {
@@ -720,6 +738,11 @@ impl Stores {
     #[cfg(test)]
     pub(crate) const fn testing_exact_env_updates(&self) -> usize {
         self.exact_env_identity.testing_updates()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn testing_recomputed_exact_env_identity(&self) -> u64 {
+        self.recomputed_exact_env_identity().identity()
     }
 
     fn hash_cell_value(&self, cell: CellId, word: u64, hasher: &mut StateHasher) {

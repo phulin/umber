@@ -12,6 +12,34 @@ use crate::epoch::Epoch;
 use crate::ids::NodeListId;
 
 impl Env {
+    /// Applies one hidden semantic write that persists across group exit while
+    /// remaining rollback-visible to aggregate checkpoints.
+    ///
+    /// This is not a TeX assignment and creates no save-stack word. Encoding
+    /// it as a global undo record reuses the journal's established ordering,
+    /// group-refiling, and snapshot rollback semantics without manufacturing a
+    /// local restoration edge. Stores must atomically fold the returned value
+    /// into its aggregate exact-identity owner.
+    pub(crate) fn restore_raw_global(
+        &mut self,
+        cell: CellId,
+        word: u64,
+    ) -> super::CellMutationReceipt {
+        let cell = cell.without_assignment_scope();
+        let old = self.semantic_word(cell);
+        let receipt = super::CellMutationReceipt::restore(cell, old, word, false);
+        if old == word {
+            return receipt;
+        }
+        self.journal.push_undo(crate::journal::UndoRec::new(
+            CellId::new_global(cell.bank(), cell.index()),
+            old,
+            word,
+        ));
+        self.restore_raw(cell, word);
+        receipt
+    }
+
     /// Restore-only raw write primitive for journal rollback and group walks.
     ///
     /// This deliberately bypasses the write barrier and does not append to the

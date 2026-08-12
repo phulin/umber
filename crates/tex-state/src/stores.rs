@@ -950,17 +950,46 @@ impl Stores {
         self.env.semantic_word(cell)
     }
 
-    pub(crate) fn rewrite_null_parshape_representation(&mut self, value: TokenListId) {
+    /// Rewrites one semantic environment cell outside TeX assignment policy.
+    ///
+    /// Env owns the raw typed storage, while Stores owns exact identity because
+    /// canonical values resolve aggregate token, macro, glue, font, and node
+    /// handles. Every raw semantic write therefore crosses this seam exactly
+    /// once. Env records a save-stack-neutral global undo so group refiling and
+    /// aggregate rollback preserve ordering; Stores updates the treap now, and
+    /// the later journal hash observes that it is already synchronized rather
+    /// than folding it twice.
+    fn restore_env_word_with_exact_identity(
+        &mut self,
+        cell: crate::cell::CellId,
+        word: u64,
+    ) -> CellMutationReceipt {
+        let receipt = self.env.restore_raw_global(cell, word);
+        if receipt.changed() {
+            let cell = receipt.cell();
+            self.update_exact_env_cell(cell, self.env.semantic_word(cell));
+        }
+        receipt
+    }
+
+    pub(crate) fn rewrite_null_parshape_representation(
+        &mut self,
+        value: TokenListId,
+    ) -> CellMutationReceipt {
         let cell = crate::cell::CellId::new(
             crate::cell::BankTag::TokParam,
             u32::from(TokParam::PAR_SHAPE_INTERNAL.raw()),
         );
-        self.env.restore_raw(cell, u64::from(value.raw()) + 1);
+        self.restore_env_word_with_exact_identity(cell, u64::from(value.raw()) + 1)
     }
 
     #[cfg(test)]
-    pub(crate) fn testing_restore_env_word(&mut self, cell: crate::cell::CellId, word: u64) {
-        self.env.restore_raw(cell, word);
+    pub(crate) fn testing_restore_env_word(
+        &mut self,
+        cell: crate::cell::CellId,
+        word: u64,
+    ) -> CellMutationReceipt {
+        self.restore_env_word_with_exact_identity(cell, word)
     }
 
     /// Returns the current code-table generation vector.
@@ -2329,7 +2358,16 @@ impl Stores {
                 self.interner.resolve_id(symbol),
             )),
         );
-        self.fonts.set_identifier(id, symbol, complete);
+        if self.fonts.set_identifier(id, symbol, complete) {
+            // Font-bank cells are keyed by the font's allocation-independent
+            // complete identity. TeX82 §1257 may assign or replace
+            // `font_id_text` without writing any of those Env words, so no
+            // journal receipt can remove their former semantic keys. The
+            // identifier mutation owns that rekey: rebuild the persistent Env
+            // projection from live words and discard derived cell-key caches.
+            self.initialize_exact_env_identity();
+            self.semantic_hash_cache.clear();
+        }
     }
 
     #[must_use]

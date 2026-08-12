@@ -35,10 +35,28 @@ impl ExactEnvIdentity {
         };
     }
 
+    pub(super) fn contains(&self, key: u64, value: Option<u64>) -> bool {
+        lookup(self.root.as_deref(), key) == value
+    }
+
     #[cfg(test)]
     pub(super) const fn testing_updates(&self) -> usize {
         self.updates
     }
+}
+
+fn lookup(mut node: Option<&Node>, key: u64) -> Option<u64> {
+    while let Some(current) = node {
+        if key == current.key {
+            return Some(current.value);
+        }
+        node = if key < current.key {
+            current.left.as_deref()
+        } else {
+            current.right.as_deref()
+        };
+    }
+    None
 }
 
 #[derive(Debug)]

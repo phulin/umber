@@ -8143,7 +8143,8 @@ impl Universe {
         }
         let id = self.intern_token_list(&tokens);
         if representation_only_null {
-            self.stores.rewrite_null_parshape_representation(id);
+            let receipt = self.stores.rewrite_null_parshape_representation(id);
+            self.consume_env_mutation(receipt);
         } else if global {
             self.set_tok_param_global(TokParam::PAR_SHAPE_INTERNAL, id);
         } else {

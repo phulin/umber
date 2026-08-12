@@ -355,7 +355,7 @@ impl FontStore {
         id: FontId,
         symbol: SymbolId,
         complete_hash_fragment: StateHashFragment,
-    ) {
+    ) -> bool {
         assert!(
             self.contains(id),
             "font id is not live in this Universe timeline"
@@ -373,6 +373,9 @@ impl FontStore {
                 .push((id, *identifier, self.complete_hash_fragments[index]));
             *identifier = Some(symbol);
             self.complete_hash_fragments[index] = complete_hash_fragment;
+            true
+        } else {
+            false
         }
     }
 

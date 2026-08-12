@@ -614,6 +614,132 @@ fn exact_environment_identity_updates_distinct_journal_cells_and_rolls_back() {
 }
 
 #[test]
+fn exact_environment_identity_raw_scalar_restore_is_atomic_and_noop_is_free() {
+    let mut stores = Stores::new();
+    let cell = crate::cell::CellId::new(crate::cell::BankTag::Count, 7);
+    let baseline_cursor = stores.state_hash_cursor();
+    let baseline = stores.exact_env_identity();
+    let baseline_updates = stores.testing_exact_env_updates();
+
+    let receipt = stores.testing_restore_env_word(cell, 17);
+    assert!(receipt.changed());
+    assert_ne!(stores.exact_env_identity(), baseline);
+    assert_eq!(
+        stores.exact_env_identity(),
+        stores.testing_recomputed_exact_env_identity()
+    );
+    assert_eq!(stores.testing_exact_env_updates(), baseline_updates + 1);
+
+    let updates = stores.testing_exact_env_updates();
+    let mut checkpoint = stores.checkpoint();
+    let _ = stores.state_hash_slice(&baseline_cursor, &mut checkpoint);
+    assert_eq!(
+        stores.testing_exact_env_updates(),
+        updates,
+        "journal hashing must not fold the atomically synchronized raw write twice"
+    );
+
+    let updates = stores.testing_exact_env_updates();
+    let receipt = stores.testing_restore_env_word(cell, 17);
+    assert!(!receipt.changed());
+    assert_eq!(stores.testing_exact_env_updates(), updates);
+    assert_eq!(
+        stores.exact_env_identity(),
+        stores.testing_recomputed_exact_env_identity()
+    );
+}
+
+#[test]
+fn exact_environment_identity_raw_restore_and_journal_rollback_have_one_owner() {
+    let mut stores = Stores::new();
+    let baseline_cursor = stores.state_hash_cursor();
+    let mut baseline = stores.checkpoint();
+    let _ = stores.state_hash_slice(&baseline_cursor, &mut baseline);
+    let baseline_identity = stores.exact_env_identity();
+
+    let raw = crate::cell::CellId::new(crate::cell::BankTag::Count, 9);
+    let _ = stores.testing_restore_env_word(raw, 23);
+    let raw_identity = stores.exact_env_identity();
+    assert_ne!(raw_identity, baseline_identity);
+    assert_eq!(raw_identity, stores.testing_recomputed_exact_env_identity());
+
+    stores.enter_group();
+    let _ = stores.set_count(7, 11);
+    let _ = stores.set_count_global(8, 13);
+    let _ = stores.leave_group();
+    let mut changed = stores.checkpoint();
+    let _ = stores.state_hash_slice(&baseline_cursor, &mut changed);
+    assert_eq!(
+        stores.exact_env_identity(),
+        stores.testing_recomputed_exact_env_identity(),
+        "group restoration and global retention must fold from the journal once"
+    );
+
+    stores.rollback(&baseline);
+    assert_eq!(stores.exact_env_identity(), baseline_identity);
+    assert_eq!(
+        stores.exact_env_identity(),
+        stores.testing_recomputed_exact_env_identity(),
+        "aggregate rollback restores the snapshot-owned treap rather than replay-folding it"
+    );
+}
+
+#[test]
+fn exact_environment_identity_rekeys_font_banks_when_identifier_changes() {
+    let mut stores = Stores::new();
+    let baseline = stores.checkpoint();
+    let unnamed = stores.exact_env_identity();
+    let first = stores.intern("nullfont-first");
+
+    stores.set_font_identifier_symbol(NULL_FONT, first);
+    let named = stores.exact_env_identity();
+    assert_ne!(named, unnamed);
+    assert_eq!(named, stores.testing_recomputed_exact_env_identity());
+
+    let updates = stores.testing_exact_env_updates();
+    stores.set_font_identifier_symbol(NULL_FONT, first);
+    assert_eq!(stores.exact_env_identity(), named);
+    assert_eq!(
+        stores.testing_exact_env_updates(),
+        updates,
+        "an identical identifier assignment must not rebuild the Env treap"
+    );
+
+    let second = stores.intern("nullfont-second");
+    stores.set_font_identifier_symbol(NULL_FONT, second);
+    assert_ne!(stores.exact_env_identity(), named);
+    assert_eq!(
+        stores.exact_env_identity(),
+        stores.testing_recomputed_exact_env_identity()
+    );
+
+    stores.rollback(&baseline);
+    assert_eq!(stores.font_identifier_symbol(NULL_FONT), None);
+    assert_eq!(stores.exact_env_identity(), unnamed);
+    assert_eq!(
+        stores.exact_env_identity(),
+        stores.testing_recomputed_exact_env_identity()
+    );
+}
+
+#[test]
+fn exact_environment_identity_excludes_empty_save_stack_representation() {
+    let mut stores = Stores::new();
+    let baseline = stores.exact_env_identity();
+
+    stores.enter_group();
+    let _ = stores.leave_group();
+    let _ = stores.checkpoint();
+
+    assert_eq!(stores.exact_env_identity(), baseline);
+    assert_eq!(
+        stores.exact_env_identity(),
+        stores.testing_recomputed_exact_env_identity(),
+        "group markers, epochs, and checkpoint baselines are representation metadata"
+    );
+}
+
+#[test]
 fn initex_string_pool_counts_one_unfinished_current_string_across_exceptions() {
     // TeX82 §38 exposes exactly one current string at pool_ptr. Section 934
     // makes each exception word (including its language byte), but multiple
