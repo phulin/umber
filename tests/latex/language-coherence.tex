@@ -1,0 +1,19 @@
+% The repository-owned language.dat must preserve TeX's frozen English slot
+% and the complete US English synonym closure expected by Babel 26.3.
+\begingroup
+\def\AssertEnglishLanguage#1{%
+  \ifcsname l@#1\endcsname
+    \ifnum\csname l@#1\endcsname=\csname l@english\endcsname\relax
+    \else
+      \errmessage{Frozen language alias #1 does not select English}%
+    \fi
+  \else
+    \errmessage{Frozen language alias #1 is undefined}%
+  \fi}
+\ifcsname l@english\endcsname\else
+  \errmessage{Frozen English language slot is undefined}%
+\fi
+\AssertEnglishLanguage{usenglish}
+\AssertEnglishLanguage{USenglish}
+\AssertEnglishLanguage{american}
+\endgroup

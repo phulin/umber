@@ -195,7 +195,7 @@ prefetch_source_closure() {
     "$(wc -l < "$source_index" | tr -d ' ')" >&2
 }
 
-texinputs="${repo_root}/tests/latex:${texmf_dist}/tex/latex-dev/base:${texmf_dist}/tex/latex-dev/l3kernel:${texmf_dist}/tex/latex/l3backend:${texmf_dist}/tex/latex/atveryend:${texmf_dist}/tex/latex-dev/firstaid:${texmf_dist}/tex/generic/unicode-data:${texmf_dist}/tex/generic/atbegshi:${texmf_dist}/tex/generic/babel:${texmf_dist}/tex/generic/hyphen:${texmf_dist}/tex/generic/knuth-lib:${texmf_dist}/tex/generic/pdftex"
+texinputs="${repo_root}/tests/latex:${texmf_dist}/tex/latex-dev/base:${texmf_dist}/tex/latex-dev/l3kernel:${texmf_dist}/tex/latex/l3backend:${texmf_dist}/tex/latex/atveryend:${texmf_dist}/tex/latex-dev/firstaid:${texmf_dist}/tex/generic/unicode-data:${texmf_dist}/tex/generic/atbegshi:${texmf_dist}/tex/generic/babel:${texmf_dist}/tex/generic/babel-english:${texmf_dist}/tex/generic/hyphen:${texmf_dist}/tex/generic/knuth-lib:${texmf_dist}/tex/generic/pdftex"
 texfonts="${texmf_dist}/fonts/tfm/public/cm:${texmf_dist}/fonts/tfm/public/latex-fonts:${texmf_dist}/fonts/tfm/jknappen/ec"
 latex_ltx="${texmf_dist}/tex/latex-dev/base/latex.ltx"
 

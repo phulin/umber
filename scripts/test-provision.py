@@ -101,7 +101,10 @@ def main() -> None:
         (texmf_dist / "fonts/tfm/public/cm").mkdir(parents=True)
         (texmf_dist / "fonts/tfm/public/cm/cmr10.tfm").write_bytes(b"metric\n")
         (tests / "latex").mkdir()
-        (tests / "latex/language.dat").write_bytes(b"english\n")
+        language_configuration = (
+            b"english hyphen.tex\n=usenglish\n=USenglish\n=american\n"
+        )
+        (tests / "latex/language.dat").write_bytes(language_configuration)
         format_lock = tests / "latex-source.lock"
         format_lock.write_text(
             "distribution fixture-runtime\n"
@@ -111,15 +114,15 @@ def main() -> None:
             f"{hashlib.sha256(b'dev kernel\n').hexdigest()}\n"
             "source fonts/tfm/public/cm/cmr10.tfm 7 "
             f"{hashlib.sha256(b'metric\n').hexdigest()}\n"
-            "local tests/latex/language.dat 8 "
-            f"{hashlib.sha256(b'english\n').hexdigest()}\n",
+            f"local tests/latex/language.dat {len(language_configuration)} "
+            f"{hashlib.sha256(language_configuration).hexdigest()}\n",
             encoding="utf-8",
         )
         staged = root / "staged-format-inputs"
         assert provision._stage_format_input_root(root, texmf_dist, staged) == 3
         assert (staged / "tex/latex-dev/base/latex.ltx").read_bytes() == b"dev kernel\n"
         assert (staged / "fonts/tfm/public/cm/cmr10.tfm").read_bytes() == b"metric\n"
-        assert (staged / "tex/language.dat").read_bytes() == b"english\n"
+        assert (staged / "tex/language.dat").read_bytes() == language_configuration
         server.shutdown()
     print("test-provision: PASS")
 

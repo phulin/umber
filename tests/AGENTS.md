@@ -197,9 +197,12 @@ closure and construction-input identities consumed by the schema-3 TeX Live
 snapshot publisher. Publication rejects a format whose input identity differs
 from the runtime basename winner; LaTeX has 61
 keys and pdfLaTeX has those same keys plus its three mode-specific records.
-`tests/latex/language.dat` keeps the
-format's English language slot and hyphenation minima deterministic without
-depending on generated TeX Live `texmf-var` state.
+`tests/latex/language.dat` keeps the format's English language slot and
+hyphenation minima deterministic without depending on generated TeX Live
+`texmf-var` state. Its `usenglish`, `USenglish`, and `american` synonyms are
+the complete upstream US English alias closure required by the paired Babel
+runtime. Both source-loaded and frozen-format equivalence fixtures assert that
+the aliases select the English slot and exercise Babel's `USenglish` option.
 
 `tests/texlive-snapshot.lock` pins the complete publisher-visible runtime-tree
 digest for the 2026-03-01 snapshot plus compatibility-critical LaTeX kernel,

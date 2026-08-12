@@ -515,6 +515,72 @@ fn rejects_format_built_from_a_shadowed_runtime_input() -> Result<()> {
 }
 
 #[test]
+fn format_language_configuration_is_the_published_runtime_winner() -> Result<()> {
+    const LANGUAGE_CONFIGURATION: &[u8] =
+        b"english hyphen.tex\n=usenglish\n=USenglish\n=american\n";
+
+    let fixture = TempDir::new()?;
+    let format_root = fixture.path().join("format-construction-inputs");
+    let runtime_root = fixture.path().join("texlive-runtime");
+    fs::create_dir_all(&format_root)?;
+    fs::create_dir_all(&runtime_root)?;
+    write(&format_root, "tex/language.dat", LANGUAGE_CONFIGURATION)?;
+    write(
+        &runtime_root,
+        "tex/generic/config/language.dat",
+        b"generated runtime language configuration\n",
+    )?;
+
+    let assets = test_support::repository_root().join("crates/umber-wasm/assets");
+    let mut metadata: serde_json::Value =
+        serde_json::from_slice(&fs::read(assets.join("plain-format.json"))?)?;
+    metadata["schema"] = 2.into();
+    metadata["inputClosure"] = serde_json::json!({
+        "schema": 1,
+        "keys": ["tex:language.dat"]
+    });
+    let metadata_path = fixture.path().join("format.json");
+    fs::write(&metadata_path, serde_json::to_vec_pretty(&metadata)?)?;
+    let format = FormatConfig {
+        path: assets.join("plain.fmt"),
+        metadata: metadata_path,
+        input_identities: Some(write_input_identities(
+            &fixture,
+            "language-input-identities.json",
+            &[("tex:language.dat", LANGUAGE_CONFIGURATION)],
+        )?),
+    };
+
+    let mut coherent = config(vec![
+        root("format-construction-inputs", &format_root)?,
+        root("texlive-runtime", &runtime_root)?,
+    ]);
+    coherent.dependencies.clear();
+    coherent.formats.push(format.clone());
+    let output = fixture.path().join("coherent");
+    let publication = publish(&coherent, &output)?;
+    let language = &publication.files["tex:language.dat"];
+    assert_eq!(language.virtual_path, "/texlive/tex/language.dat");
+    assert_eq!(
+        fs::read(output.join("objects").join(&language.object))?,
+        LANGUAGE_CONFIGURATION
+    );
+
+    let mut incoherent = config(vec![
+        root("texlive-runtime", &runtime_root)?,
+        root("format-construction-inputs", &format_root)?,
+    ]);
+    incoherent.dependencies.clear();
+    incoherent.formats.push(format);
+    let error = publish(&incoherent, &fixture.path().join("incoherent"))
+        .expect_err("runtime language.dat must match the format construction identity");
+    let message = format!("{error:#}");
+    assert!(message.contains("constructed from \"tex:language.dat\""));
+    assert!(message.contains("tex/generic/config/language.dat"));
+    Ok(())
+}
+
+#[test]
 fn rejects_duplicate_and_oversized_format_input_closures() -> Result<()> {
     let fixture = TempDir::new()?;
     let root_path = fixture.path().join("root");
