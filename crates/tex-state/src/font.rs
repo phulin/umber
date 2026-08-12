@@ -144,7 +144,6 @@ pub(crate) struct FontStore {
     hash_fragments_by_key: BTreeMap<FontHashFragmentKey, usize>,
     font_hash_fragments: Vec<usize>,
     complete_hash_fragments: Vec<StateHashFragment>,
-    exact_immutable_identities: Vec<ContentHash>,
     identities: IdentityAllocator,
 }
 
@@ -161,25 +160,12 @@ impl Clone for FontStore {
             hash_fragments_by_key: self.hash_fragments_by_key.clone(),
             font_hash_fragments: self.font_hash_fragments.clone(),
             complete_hash_fragments: self.complete_hash_fragments.clone(),
-            exact_immutable_identities: self.exact_immutable_identities.clone(),
             identities: self.identities.fork(),
         }
     }
 }
 
 impl FontStore {
-    pub(crate) fn retains_mark(&self, mark: FontStoreMark) -> bool {
-        self.identities.retains(mark.identities) && mark.len as usize <= self.fonts.len()
-    }
-
-    /// Strong immutable identity computed from the loaded font record. This
-    /// deliberately excludes the rollback-coupled identifier and expansion
-    /// settings, which the exact-store projection composes separately.
-    pub(crate) fn immutable_exact_identity(&self, id: FontId) -> ContentHash {
-        assert!(self.contains(id), "font id is not live");
-        self.exact_immutable_identities[id.raw() as usize]
-    }
-
     #[must_use]
     pub(crate) fn new() -> Self {
         let null = LoadedFont::new(
@@ -195,7 +181,6 @@ impl FontStore {
         let hash_fragment_key = FontHashFragmentKey::from(&null);
         let hash_fragment = font_hash_fragment(&null);
         let complete_hash_fragment = complete_font_hash_fragment(hash_fragment, None);
-        let exact_immutable_identity = exact_immutable_font_identity(&null);
         Self {
             fonts: vec![null],
             identifiers: vec![None],
@@ -207,7 +192,6 @@ impl FontStore {
             hash_fragments_by_key: BTreeMap::from([(hash_fragment_key, 0)]),
             font_hash_fragments: vec![0],
             complete_hash_fragments: vec![complete_hash_fragment],
-            exact_immutable_identities: vec![exact_immutable_identity],
             identities: IdentityAllocator::new(1),
         }
     }
@@ -229,7 +213,6 @@ impl FontStore {
         let mut hash_fragments_by_key = BTreeMap::new();
         let mut font_hash_fragments = Vec::with_capacity(rows.len());
         let mut complete_hash_fragments = Vec::with_capacity(rows.len());
-        let mut exact_immutable_identities = Vec::with_capacity(rows.len());
         for (raw, (font, identifier, expansion)) in rows.into_iter().enumerate() {
             if expansion.is_some()
                 && matches!(font.construction(), FontConstruction::Expanded { .. })
@@ -257,7 +240,6 @@ impl FontStore {
                 hash_fragments[fragment],
                 identifier_text,
             ));
-            exact_immutable_identities.push(exact_immutable_font_identity(&font));
             if raw != 0 && matches!(font.construction(), FontConstruction::Loaded) {
                 let key = FontKey {
                     name: font.name().to_owned(),
@@ -289,7 +271,6 @@ impl FontStore {
             hash_fragments_by_key,
             font_hash_fragments,
             complete_hash_fragments,
-            exact_immutable_identities,
             identities,
         })
     }
@@ -316,7 +297,6 @@ impl FontStore {
         if self.fonts.len() >= MAX_FONT_COUNT {
             return Err(FontStoreCapacityError);
         }
-        let exact_immutable_identity = exact_immutable_font_identity(&font);
         let hash_fragment_key = FontHashFragmentKey::from(&font);
         let hash_fragment = match self.hash_fragments_by_key.get(&hash_fragment_key) {
             Some(&fragment) => fragment,
@@ -342,8 +322,6 @@ impl FontStore {
                 self.hash_fragments[hash_fragment],
                 None,
             ));
-        self.exact_immutable_identities
-            .push(exact_immutable_identity);
         if deduplicate {
             self.by_key.insert(key, id);
         }
@@ -415,7 +393,7 @@ impl FontStore {
         &mut self,
         id: FontId,
         expansion: FontExpansion,
-    ) -> Result<(), FontExpansionConfigError> {
+    ) -> Result<bool, FontExpansionConfigError> {
         if matches!(
             self.get(id).construction(),
             FontConstruction::Expanded { .. }
@@ -435,11 +413,11 @@ impl FontStore {
             if existing.auto_expand != expansion.auto_expand {
                 return Err(FontExpansionConfigError::DifferentAutoExpand);
             }
-            return Ok(());
+            return Ok(false);
         }
         self.expansion_writes.push((id, None));
         self.expansion_specs[id.raw() as usize] = Some(expansion);
-        Ok(())
+        Ok(true)
     }
 
     #[must_use]
@@ -470,13 +448,6 @@ impl FontStore {
             "font id is not live in this Universe timeline"
         );
         &self.complete_hash_fragments[id.raw() as usize]
-    }
-
-    /// Resolves a live or stored font handle and returns its cached complete
-    /// semantic fragment with a single identity lookup.
-    pub(crate) fn resolve_complete_hash_fragment(&self, id: FontId) -> Option<&StateHashFragment> {
-        let id = self.resolve_stored(id)?;
-        self.complete_hash_fragments.get(id.raw() as usize)
     }
 
     #[must_use]
@@ -542,7 +513,6 @@ impl FontStore {
         self.expansion_specs.truncate(mark.len as usize);
         self.font_hash_fragments.truncate(mark.len as usize);
         self.complete_hash_fragments.truncate(mark.len as usize);
-        self.exact_immutable_identities.truncate(mark.len as usize);
         self.by_key.retain(|_, id| id.raw() < mark.len);
     }
 
@@ -567,70 +537,6 @@ impl From<&LoadedFont> for FontHashFragmentKey {
             construction: font.construction().clone(),
         }
     }
-}
-
-#[derive(serde::Serialize)]
-struct ExactImmutableFont<'a> {
-    name: &'a str,
-    content_hash: FontContentHash,
-    checksum: u32,
-    design_size: i32,
-    size: i32,
-    parameters: Vec<i32>,
-    source_parameters: Vec<i32>,
-    characters: &'a [Option<CharMetrics>],
-    lig_kern_program: &'a [LigKernInstruction],
-    right_boundary_char: Option<u8>,
-    left_boundary_program: Option<u16>,
-    extensible_recipes: &'a [ExtensibleRecipe],
-    construction: ExactFontConstruction,
-}
-
-#[derive(serde::Serialize)]
-enum ExactFontConstruction {
-    Loaded,
-    Copied([u8; 32]),
-    Letterspaced([u8; 32], i16, bool),
-    Expanded([u8; 32], i16),
-}
-
-fn exact_immutable_font_identity(font: &LoadedFont) -> ContentHash {
-    let construction = match font.construction() {
-        FontConstruction::Loaded => ExactFontConstruction::Loaded,
-        FontConstruction::Copied { source } => ExactFontConstruction::Copied(source.bytes()),
-        FontConstruction::Letterspaced {
-            source,
-            amount,
-            no_ligatures,
-        } => ExactFontConstruction::Letterspaced(source.bytes(), *amount, *no_ligatures),
-        FontConstruction::Expanded { source, ratio } => {
-            ExactFontConstruction::Expanded(source.bytes(), *ratio)
-        }
-    };
-    let projection = ExactImmutableFont {
-        name: font.name(),
-        content_hash: font.content_hash(),
-        checksum: font.checksum(),
-        design_size: font.design_size().raw(),
-        size: font.size().raw(),
-        parameters: font.parameters().iter().map(|value| value.raw()).collect(),
-        source_parameters: font
-            .source_parameters()
-            .iter()
-            .map(|value| value.raw())
-            .collect(),
-        characters: font.metrics().characters(),
-        lig_kern_program: font.metrics().lig_kern_program(),
-        right_boundary_char: font.metrics().right_boundary_char(),
-        left_boundary_program: font.metrics().left_boundary_program(),
-        extensible_recipes: font.metrics().extensible_recipes(),
-        construction,
-    };
-    let encoded = bincode::serialize(&projection).expect("immutable font projection serializes");
-    let mut framed = Vec::with_capacity(32 + encoded.len());
-    framed.extend_from_slice(b"umber-exact-immutable-font-v1");
-    framed.extend_from_slice(&encoded);
-    crate::state_hash::semantic_identity_bytes(b"umber-exact-immutable-font-v2", &framed)
 }
 
 fn font_hash_fragment(font: &LoadedFont) -> StateHashFragment {
@@ -722,7 +628,7 @@ mod tests {
                 FontExpansion {
                     step: 10,
                     ..expansion
-                }
+                },
             ),
             Err(FontExpansionConfigError::DifferentStep)
         );

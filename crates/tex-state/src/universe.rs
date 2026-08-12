@@ -619,13 +619,13 @@ impl Snapshot {
         self.epoch
     }
 
-    /// Returns the semantic convergence hash captured by this snapshot.
+    /// Returns the schedule-relative convergence lineage captured by this snapshot.
     ///
     /// The hash is a fold of semantic slice hashes over the checkpoint
     /// timeline (`combine(previous_checkpoint_hash, slice_hash)`), so it is
-    /// checkpoint-schedule-relative: it witnesses "same semantic history
-    /// observed at the same checkpoint boundaries", not a canonical
-    /// fingerprint of the reached state. Compare hashes only between runs
+    /// checkpoint-schedule-relative: it witnesses "same lineage observed at
+    /// the same checkpoint boundaries", not a canonical fingerprint of the
+    /// reached state. Compare hashes only between runs
     /// that take checkpoints at the same positions under the same policy;
     /// see `docs/core_state.md` §9 (convergence detection).
     #[must_use]

@@ -276,9 +276,11 @@ impl EngineCheckpoint {
     }
 
     /// Returns true when both checkpoints carry matching authoritative
-    /// session-local 64-bit aHash projections and the remaining explicit roots
-    /// compare exactly. The projection is probabilistic: a rare collision may
-    /// cause incorrect suffix reuse.
+    /// session-local 64-bit aHash projections of reachable live state and the
+    /// remaining explicit roots compare exactly. Physical handles,
+    /// append-store lineages, provenance, and caches are excluded. The
+    /// projection is probabilistic: a rare collision may cause incorrect
+    /// suffix reuse.
     #[must_use]
     pub fn exact_future_state_matches(&self, other: &Self) -> bool {
         self.boundary == other.boundary

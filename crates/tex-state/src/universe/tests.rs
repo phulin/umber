@@ -3,7 +3,9 @@ use super::{
     UnboxKind, Universe, utf8_scalar_len_at,
 };
 use crate::env::banks::{IntParam, TokParam};
-use crate::font::{FONT_INFO_CAPACITY, MAX_FONT_DIMEN, NULL_FONT, WEB2C_FONT_INFO_CAPACITY};
+use crate::font::{
+    FONT_INFO_CAPACITY, FontExpansion, MAX_FONT_DIMEN, NULL_FONT, WEB2C_FONT_INFO_CAPACITY,
+};
 use crate::glue::{GlueSpec, Order};
 use crate::hyphenation::{ExceptionSpec, PatternSpec};
 use crate::ids::{ArenaRef, FontId, NodeListId, TokenListId};
@@ -4912,29 +4914,76 @@ fn snapshot_state_hash_is_deterministic_for_same_program() {
 }
 
 #[test]
-fn exact_snapshots_reuse_immutable_store_projection_across_forks() {
-    let mut universe = Universe::new();
-    universe.intern("cached-name");
+fn live_state_identity_ignores_dead_allocation_history_and_preserves_future_append() {
+    let mut direct = Universe::new();
+    let mut noisy = Universe::new();
 
-    assert!(
-        universe
-            .snapshot_with_exact_identity()
-            .has_exact_state_identity()
-    );
-    universe.set_count(0, 42);
-    let checkpoint = universe.snapshot();
-    let substrate = universe.freeze_generation();
-    let mut fork = substrate.fork_at(&checkpoint).expect("retained fork");
-    assert!(
-        fork.snapshot_with_exact_identity()
-            .has_exact_state_identity()
-    );
+    for index in 0..64 {
+        let dead_name = noisy.intern(&format!("dead-{index}"));
+        let dead_tokens = noisy.intern_token_list(&[
+            Token::Cs(dead_name.symbol()),
+            Token::Char {
+                ch: char::from(b'a' + (index % 26) as u8),
+                cat: Catcode::Letter,
+            },
+        ]);
+        noisy.intern_macro(MacroMeaning::new(
+            MeaningFlags::LONG,
+            crate::ids::TokenListId::EMPTY,
+            dead_tokens,
+        ));
+        noisy.intern_glue(glue(index));
+        noisy.freeze_node_list(&[Node::Kern {
+            amount: Scaled::from_raw(index),
+            kind: KernKind::Explicit,
+        }]);
+    }
 
+    fn install_live_root(universe: &mut Universe) {
+        let name = universe.intern("live-root");
+        let replacement = universe.intern_token_list(&[
+            Token::Cs(name.symbol()),
+            Token::Char {
+                ch: 'x',
+                cat: Catcode::Letter,
+            },
+        ]);
+        let definition = universe.intern_macro(MacroMeaning::new(
+            MeaningFlags::PROTECTED,
+            crate::ids::TokenListId::EMPTY,
+            replacement,
+        ));
+        universe.set_meaning(
+            name,
+            Meaning::Macro {
+                flags: MeaningFlags::PROTECTED,
+                definition,
+            },
+        );
+        universe.set_toks(0, replacement);
+        let skip = universe.intern_glue(glue(7));
+        universe.set_skip(0, skip);
+    }
+
+    install_live_root(&mut direct);
+    install_live_root(&mut noisy);
     assert_eq!(
-        fork.stores.testing_exact_immutable_encodes(),
-        1,
-        "related forks must not reserialize interned content"
+        direct.snapshot().state_hash(),
+        noisy.snapshot().state_hash()
     );
+    assert_eq!(identity_of(&mut direct), identity_of(&mut noisy));
+    noisy.testing_clear_state_hash_caches();
+    assert_eq!(identity_of(&mut direct), identity_of(&mut noisy));
+
+    let direct_future = direct.intern("future-root");
+    let noisy_future = noisy.intern("future-root");
+    direct.set_meaning(direct_future, Meaning::CharGiven('z'));
+    noisy.set_meaning(noisy_future, Meaning::CharGiven('z'));
+    assert_eq!(
+        direct.snapshot().state_hash(),
+        noisy.snapshot().state_hash()
+    );
+    assert_eq!(identity_of(&mut direct), identity_of(&mut noisy));
 }
 
 #[test]
@@ -4977,52 +5026,7 @@ fn retained_snapshot_restores_exact_component_projections_into_forks() {
 }
 
 #[test]
-fn exact_immutable_store_growth_hashes_only_new_append_entries() {
-    let mut universe = Universe::new();
-    let _ = universe.snapshot_with_exact_identity();
-    let before = universe.stores.testing_exact_immutable_leaves();
-
-    universe.intern("one-new-name");
-    let _ = universe.snapshot_with_exact_identity();
-
-    assert_eq!(
-        universe.stores.testing_exact_immutable_leaves(),
-        before + 1,
-        "one append must hash one leaf instead of recapturing every immutable store"
-    );
-}
-
-#[test]
-fn exact_immutable_store_cache_tracks_live_accepted_and_scratch_lineages() {
-    let mut universe = Universe::new();
-    let anchor = universe.snapshot_with_exact_identity();
-    let accepted_before = universe.stores.testing_exact_immutable_leaves();
-    for index in 0..8 {
-        universe.intern(&format!("accepted-{index}"));
-        let _ = universe.snapshot_with_exact_identity();
-    }
-    assert_eq!(
-        universe.stores.testing_exact_immutable_leaves() - accepted_before,
-        8,
-        "live accepted boundaries must hash each new append entry once"
-    );
-
-    let substrate = universe.freeze_generation();
-    let mut scratch = substrate.fork_at(&anchor).expect("scratch fork");
-    let scratch_before = scratch.stores.testing_exact_immutable_leaves();
-    for index in 0..8 {
-        scratch.intern(&format!("scratch-{index}"));
-        let _ = scratch.snapshot_with_exact_identity();
-    }
-    assert_eq!(
-        scratch.stores.testing_exact_immutable_leaves() - scratch_before,
-        8,
-        "live scratch boundaries must hash each new append entry once"
-    );
-}
-
-#[test]
-fn exact_immutable_store_root_survives_format_reconstruction() {
+fn exact_reachable_store_root_survives_format_reconstruction() {
     let mut original = Universe::new();
     let name = original.intern("format-root-name");
     let tokens = original.intern_token_list(&[Token::Cs(name.symbol())]);
@@ -5078,6 +5082,7 @@ fn format_dump_preserves_names_but_compacts_macro_and_token_closure() {
             definition: live_macro,
         },
     );
+    let live_identity = identity_of(&mut universe);
 
     let image = universe.dump_format().expect("compact format dump");
     let container = crate::format_container::decode(&image).expect("decode compact format");
@@ -5095,7 +5100,9 @@ fn format_dump_preserves_names_but_compacts_macro_and_token_closure() {
     assert_eq!(count(crate::stores::TOKEN_LISTS_SECTION), 2);
     assert_eq!(count(crate::stores::MACROS_SECTION), 1);
 
-    let restored = Universe::from_format(World::memory(), &image).expect("restore compact format");
+    let mut restored =
+        Universe::from_format(World::memory(), &image).expect("restore compact format");
+    assert_eq!(identity_of(&mut restored), live_identity);
     let restored_live = restored
         .symbol("live-format-root")
         .expect("reachable name remains interned");
@@ -5110,7 +5117,7 @@ fn format_dump_preserves_names_but_compacts_macro_and_token_closure() {
 }
 
 #[test]
-fn exact_immutable_store_root_rebuilds_after_divergent_rollback_allocation() {
+fn exact_reachable_store_root_ignores_divergent_rollback_allocation() {
     let mut replayed = Universe::new();
     let baseline = replayed.snapshot();
     replayed.intern("discarded-branch-name");
@@ -5124,7 +5131,7 @@ fn exact_immutable_store_root_rebuilds_after_divergent_rollback_allocation() {
 }
 
 #[test]
-fn exact_immutable_font_collection_ignores_allocation_order() {
+fn exact_reachable_font_identity_ignores_allocation_order() {
     let mut first = Universe::new();
     let first_target_name = first.intern("target-font");
     first.intern_font(test_font("filler", b"filler"));
@@ -5160,7 +5167,21 @@ fn exact_checkpoint_identity_composes_every_future_state_root() {
     }
 
     assert_change(|universe| {
-        universe.intern("immutable-component");
+        let live = universe.intern("live-immutable-component");
+        universe.set_meaning(live, Meaning::Relax);
+    });
+    assert_change(|universe| {
+        universe
+            .configure_font_expansion(
+                NULL_FONT,
+                FontExpansion {
+                    stretch: 20,
+                    shrink: 10,
+                    step: 5,
+                    auto_expand: true,
+                },
+            )
+            .expect("null font accepts one expansion configuration");
     });
     assert_change(|universe| universe.set_count(0, 1));
     assert_change(|universe| universe.set_catcode('x', Catcode::Active));

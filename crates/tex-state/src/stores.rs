@@ -80,7 +80,6 @@ use crate::token_store::{
 use std::mem;
 use std::sync::Arc;
 
-mod exact_collection;
 mod exact_identity;
 mod format;
 mod handles;
@@ -203,7 +202,6 @@ pub struct Stores {
     font_info_capacity: usize,
     semantic_hash_cache: state_hash::SemanticHashCache,
     exact_env_identity: exact_identity::ExactEnvIdentity,
-    exact_identity_cache: Arc<std::sync::Mutex<format::ExactIdentityCache>>,
     usage_high_water: EngineUsageStatistics,
     memory_low_extent: usize,
     memory_high_extent: usize,
@@ -578,7 +576,6 @@ impl Clone for Stores {
             font_info_capacity: self.font_info_capacity,
             semantic_hash_cache: self.semantic_hash_cache.clone(),
             exact_env_identity: self.exact_env_identity.clone(),
-            exact_identity_cache: Arc::clone(&self.exact_identity_cache),
             usage_high_water: self.usage_high_water,
             memory_low_extent: self.memory_low_extent,
             memory_high_extent: self.memory_high_extent,
@@ -896,9 +893,6 @@ impl Stores {
             font_info_capacity: crate::font::FONT_INFO_CAPACITY,
             semantic_hash_cache: state_hash::SemanticHashCache::default(),
             exact_env_identity: exact_identity::ExactEnvIdentity::default(),
-            exact_identity_cache: Arc::new(std::sync::Mutex::new(
-                format::ExactIdentityCache::default(),
-            )),
             usage_high_water: EngineUsageStatistics::default(),
             memory_low_extent: TEX82_INITIAL_LOW_MEMORY_EXTENT,
             memory_high_extent: TEX82_INITIAL_HIGH_MEMORY_EXTENT,
@@ -2257,7 +2251,11 @@ impl Stores {
         expansion: FontExpansion,
     ) -> Result<(), FontExpansionConfigError> {
         self.assert_live_font(font);
-        self.fonts.set_expansion(font, expansion)
+        if self.fonts.set_expansion(font, expansion)? {
+            self.initialize_exact_env_identity();
+            self.semantic_hash_cache.clear();
+        }
+        Ok(())
     }
 
     #[must_use]

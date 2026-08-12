@@ -23,6 +23,7 @@ const CODE_TABLES_DOMAIN: u64 = 0x636f_6465_7461_626c;
 const HYPHENATION_DOMAIN: u64 = 0x6879_7068_656e_6174;
 const PREPARED_MAG_DOMAIN: u64 = 0x7072_6570_5f6d_6167;
 const FONT_SELECTION_DOMAIN: u64 = 0x666f_6e74_5f73_656c;
+const FONT_STATE_DOMAIN: u64 = 0x666f_6e74_5f73_7461;
 const CELL_VALUE_DOMAIN: u64 = 0x6365_6c6c_7661_6c75;
 const CELL_ORDER_DOMAIN: u64 = 0x6365_6c6c_5f6f_7264;
 const EXACT_CELL_KEY_DOMAIN: u64 = 0x6578_6163_745f_6b79;
@@ -480,10 +481,7 @@ impl Stores {
 
     #[cfg(test)]
     pub(crate) fn testing_font_semantic_fingerprint(&self, id: FontId) -> u64 {
-        self.fonts
-            .resolve_complete_hash_fragment(id)
-            .expect("stored font slot is not live")
-            .fingerprint()
+        self.font_state_fragment(id).fingerprint()
     }
 
     fn assert_valid_hash_cursor(&self, cursor: &StoreStateHashCursor) {
@@ -1397,10 +1395,27 @@ impl Stores {
 
     fn hash_font(&self, font: FontId, hasher: &mut StateHasher) {
         hasher.tag(0x68);
-        self.fonts
-            .resolve_complete_hash_fragment(font)
-            .expect("stored font slot is not live")
-            .apply(hasher);
+        self.font_state_fragment(font).apply(hasher);
+    }
+
+    fn font_state_fragment(&self, font: FontId) -> StateHashFragment {
+        let font = self
+            .fonts
+            .resolve_stored(font)
+            .expect("stored font slot is not live");
+        StateHashFragment::from_exact_builder(FONT_STATE_DOMAIN, |fragment| {
+            self.fonts.complete_hash_fragment(font).apply(fragment);
+            match self.fonts.expansion(font) {
+                Some(expansion) => {
+                    fragment.bool(true);
+                    fragment.i32(i32::from(expansion.stretch));
+                    fragment.i32(i32::from(expansion.shrink));
+                    fragment.i32(i32::from(expansion.step));
+                    fragment.bool(expansion.auto_expand);
+                }
+                None => fragment.bool(false),
+            }
+        })
     }
 
     fn font_semantic_key(&self, font: FontId) -> FontSemanticKey {
@@ -1414,7 +1429,7 @@ impl Stores {
                 self.interner.resolve_id(symbol).to_owned(),
             )
         });
-        let complete_hash = self.fonts.complete_hash_fragment(font).identity();
+        let complete_hash = self.font_state_fragment(font).identity();
         let font = self.fonts.get(font);
         FontSemanticKey {
             name: font.name().to_owned(),
