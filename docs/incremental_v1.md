@@ -6,9 +6,9 @@ document remains authoritative for incremental restart and acceptance.
 
 > **Status:** this document remains authoritative for restartable named
 > checkpoints, retained editor-session effects/artifacts, edit mapping,
-> generation substrates, and pruning. Its canonical live boundary identity
-> drives the fast full-state suffix splice; the folded `state_hash` remains
-> schedule-relative telemetry. Changed-document work resumes ordinary command
+> generation substrates, and pruning. Its canonical reachable live-state
+> identity drives the fast full-state suffix splice; the folded `state_hash`
+> remains schedule-relative lineage telemetry. Changed-document work resumes ordinary command
 > execution from an accepted checkpoint's `CommandSummary`, or from `JobStart`
 > when no checkpoint is eligible. The deleted paragraph-replay design is
 > recorded only as history in
@@ -93,7 +93,9 @@ whether to retain a checkpoint after receiving it, but cannot request capture
 at another instruction or relabel a checkpoint.
 
 A logical revision has one ordered schedule. The schedule is part of the
-meaning of its `state_hash`; it is not diagnostic telemetry.
+meaning of its `state_hash`; it is lineage telemetry rather than semantic
+state equality. Canonical live-state equality is the separate optional identity
+captured from current reachable roots.
 
 ### `JobStart`
 
@@ -184,7 +186,7 @@ BoundaryRecord {
     restartable EngineCheckpoint,
     ordered committed-artifact prefix position,
     schedule-relative state_hash,
-    canonical future-state identity,
+    canonical reachable future-state identity,
 }
 ```
 
@@ -249,19 +251,15 @@ stored with the checkpoint and preserved by record clones and revision
 rehoming. A later comparison reads both retained identities directly; it never
 forks or rolls the accepted substrate back to materialize an old boundary.
 Ordinary non-incremental snapshot consumers still use the bounded snapshot
-path without requesting this optional projection. Canonical store identity
-separates append-only interned content from mutable checkpoint state. Stable
-font data keeps its durable identity from load, and new token-list, macro,
-name, glue, and font entries add only canonical leaves and prefix roots to
-bounded per-store lineage caches shared by related forks. Accepted and scratch
-lineages extend independently; allocator ancestry prevents a divergent
-post-rollback suffix from reusing the wrong derived root. Fixed-size component
-projection roots are retained with each snapshot and restored on rollback,
-while journal scratch remains transient. This cache is not
-semantic state and does not change rollback or exact-match results. Mutable
-environment state contributes its journal-maintained persistent Merkle root;
-code-table, hyphenation, page, input, World, interaction, and PDF components
-contribute cached canonical roots or rolling semantic fingerprints. A single
+path without requesting this optional projection. Mutable environment state
+contributes its journal-maintained persistent Merkle root. Each live value
+resolves referenced token, macro, glue, font, and node handles into canonical
+content, so unreferenced append-store entries never enter the identity.
+Code-table, hyphenation, page, input, World, interaction, and PDF components
+contribute cached canonical roots or rolling semantic fingerprints. Fixed-size
+component projection roots are retained with each snapshot and restored on
+rollback, while journal scratch remains transient. These caches are not
+semantic state and do not change rollback or exact-match results. A single
 versioned, domain-separated, fixed-seed 64-bit aHash checkpoint identity
 composes those components. Equality is authoritative for suffix adoption, with
 no SHA-256 or structural fallback; the accepted rare collision risk is confined
@@ -562,18 +560,19 @@ A newly emitted checkpoint is a convergence candidate only when:
 1. its occurrence key equals the prior revision's key after revision mapping;
 2. every named boundary from the restart anchor through the candidate has the
    same mapped key in the same order; and
-3. its live-captured canonical future-state identity equals the identity
+3. its live-captured canonical reachable future-state identity equals the identity
    retained on the prior record.
 
-The second rule is required because the inexpensive `state_hash` remains a
-fold over checkpoint slices, not a canonical fingerprint of state at an
-arbitrary instruction. It remains telemetry and a schedule-relative
-accelerator; suffix adoption uses the authoritative session-local 64-bit aHash
-identity over canonical projections, with the accepted collision risk described
-above, so changed content may probabilistically rejoin when the projections of
-every future-relevant root hash equally. A changed boundary partition still
-causes missed reuse, never permission to reinterpret a hash. Parity tests remain
-the observed correctness oracle.
+The second rule is required because `state_hash` remains a fold over checkpoint
+slices, not a canonical fingerprint of state at an arbitrary instruction. It
+records schedule-relative lineage; suffix adoption uses the authoritative
+session-local 64-bit aHash identity over current reachable roots, with the
+accepted collision risk described above, so changed content may
+probabilistically rejoin when the projections of every future-relevant root
+hash equally. Append cursors, physical handles, dead immutable entries,
+provenance, and cache membership cannot create or prevent a match. A changed
+boundary partition still causes missed reuse, never permission to reinterpret
+a hash. Parity tests remain the observed correctness oracle.
 
 The first matching candidate wins. For a no-op edit this is the first eligible
 named boundary emitted after the selected restart anchor. On a match the

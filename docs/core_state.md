@@ -257,6 +257,14 @@ external content-verification contract. Execution-transient token flows stay in
 pooled lexer buffers and enter the token store only when crossing a durable
 boundary.
 
+An immutable store entry does not become semantic state merely because it was
+allocated. A live environment cell, input frame, page root, node edge, PDF
+record, or other future-relevant root contributes the referenced value's
+canonical identity recursively. Unreferenced token lists, macro definitions,
+glue specifications, fonts, node lists, and provenance do not contribute.
+Their watermarks, dense slots, generation tags, capacities, interning tables,
+and derived identity caches are physical retention or acceleration metadata.
+
 Schema-11 format loading installs names, token lists, macro definitions, glue,
 fonts, sparse code-table roots, and hyphenation tries as validated frozen
 bases. It attaches fresh runtime identity tags and builds ordinary lookup and
@@ -352,11 +360,32 @@ source-addressable without becoming external cache dependencies.
 
 ### 9.1 Canonical semantic-state contract
 
-A semantic state hash is versioned and allocation-independent. It covers every
-future-relevant root, cell, input summary, mode/page root, effect position, and
-immutable content identity required by the named boundary. It excludes
-diagnostic provenance, host paths, allocation capacities, and derived output
-caches.
+A live-state identity is versioned and allocation-independent. It covers every
+future-relevant root, cell, input summary, mode/page root, virtual stream, and
+immutable content identity reachable from the named boundary. Referenced
+values contribute canonical content recursively; append-store watermarks,
+vector positions, capacities, dead definitions, abandoned provenance,
+physical handles, generation tags, cache membership, and revision ids do not.
+
+The identity has no authority over reachability. Reachability is established by
+the typed live roots and validated child traversal; neither a probabilistic set
+nor a cache hit may make an otherwise dead value semantic. The session-local
+identity retains the existing versioned, domain-separated 64-bit aHash
+collision contract. Durable files, formats, resources, and artifacts continue
+to use their cryptographic `ContentHash` identities.
+
+Live engine identity, revision lineage, and published output are separate
+coordinates:
+
+- the optional exact checkpoint projection identifies future live engine state;
+- `state_hash` is the schedule-relative rolling lineage token used for replay
+  telemetry and checkpoint-schedule validation; and
+- detached effect and artifact prefixes identify observable output and are
+  compared or spliced in order by their owning output ledger.
+
+No one coordinate substitutes for another. In particular, output cache
+membership never enters live-state equality, and matching live state does not
+authorize adopting output without the explicit ordered-prefix checks.
 
 Hash equality is useful only under the checkpoint schedule and validation
 contract that produced it. It is not permission to resume arbitrary Rust
@@ -397,33 +426,20 @@ optional for ordinary snapshots. Incremental accepted-history sinks request it
 while every retained named boundary's `Universe` is live, and the resulting
 identity is stored with that checkpoint. Later convergence compares the two
 retained identities directly. It never forks or rolls an accepted generation
-back merely to reconstruct an earlier identity. Its store projection separates
-append-only interned content from mutable state. Names, token lists, macros,
-glue, and fonts contribute canonical leaf identities to per-store probabilistic
-set fingerprints. A membership set suppresses duplicates, while independently
-mixed commutative accumulators make the fingerprint depend only on the set of
-content identities, never runtime slot or insertion order. The current append
-watermark retains this derived set fingerprint, so growth hashes each new leaf
-and updates the collection in expected O(1) time. Token leaves bind canonical control-sequence-name identities,
-macro leaves bind parameter and replacement token-list identities, and font
-annotations bind canonical identifier-name identities rather than runtime
-handles.
-Loaded fonts retain their immutable durable identity at load, while the small
-rollback-coupled identifier and expansion projection is composed separately.
-The derived collection caches are shared across related generation forks. Each
-immutable store kind retains a small bounded set of allocator lineages, so the
-accepted generation and its scratch fork can extend independent fingerprints
-instead of evicting one another. A reusable lineage cache is moved into its
-successor rather than cloned. Every extension validates allocator ancestry
-and falls back to canonical reconstruction after divergent rollback allocation.
-The caches are not semantic state. Environment
-cells also maintain a persistent deterministic Merkle treap keyed by canonical
-semantic cell identity. The same `CellId` assignment-scope stripping operation
-canonicalizes dependency keys and Merkle keys. At a checkpoint, the existing
-mutation-journal slice identifies the distinct dirty cells; only those Merkle
-paths are replaced, and the root is retained in the store snapshot so rollback
-and generation forks restore it in O(1). A full environment walk seeds the root
-only when a fresh store or format image is loaded.
+back merely to reconstruct an earlier identity.
+
+Environment cells maintain a persistent deterministic Merkle treap keyed by
+canonical semantic cell identity. Each value projection resolves token, macro,
+glue, font, and node handles into canonical referenced content, so the treap is
+also the root of the live immutable closure. The same `CellId`
+assignment-scope stripping operation canonicalizes dependency keys and Merkle
+keys. At a checkpoint, the existing mutation-journal slice identifies the
+distinct dirty cells; only those Merkle paths are replaced, and the root is
+retained in the store snapshot so rollback and generation forks restore it in
+O(1). A full environment walk seeds the root only when a fresh store or format
+image is loaded. Input, page, PDF, and mode projections likewise traverse only
+their referenced content. Append-only store lineages and their derived
+membership caches are absent from the composed identity.
 
 The session-local aHash comparison composes that environment root with cached
 canonical roots for code tables, hyphenation, magnification/font selection, page-builder
