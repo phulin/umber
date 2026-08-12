@@ -313,6 +313,35 @@ snapshots and authenticated sparse successors; a successor must use a unique
 schema-3 root key and may reuse only the base's immutable content-addressed
 object namespace.
 
+### 2026-08-12 Babel language successor staging receipt
+
+The format-local language configuration retains Knuth's English patterns in
+slot zero and now carries the `usenglish`, `USenglish`, and `american`
+synonyms from the beginning of the pinned TeX Live `language.dat`. This
+51-byte configuration is SHA-256
+`0cf9b22368f29227d8ac86036bc65611b42ae5ef5f04b448a0b0609fd395c42d`.
+It is both an authenticated format-construction input and the published
+`tex:language.dat` winner, so Babel 26.3 creates every US English selector
+that its paired runtime may request without changing the deterministic
+English hyphenation slot.
+
+Both formats were regenerated twice under the standard format guards and
+passed source-loaded equivalence while exercising Babel's `USenglish` option.
+LaTeX is
+`45cd47858a905db3bce9ab333e664883fa530801eae09b81d86000dffd328727`
+(1,988,314 bytes), and pdfLaTeX is
+`32ae8a46f86ecc3520b48ff6739fa413170f7b34c2263560d7d589abe1466a7b`
+(2,030,553 bytes). Both name source manifest
+`6b00b710b60d4fcf21b792abfb5446963ee58a55d654574248b0c8d62027098b`.
+
+Two authenticated sparse publications derived from root
+`61b8d665e492662b18c8beb70ab8cd8a8f73d9bd7e4d9aeb2f958ea8613f8883`
+were byte-identical. The successor root is
+`560ab65f2a4933879b05e47554a9d94434ec1e94ff8f6caa163d26cde7fe35bd`;
+its sparse staging contains 322 objects totaling 102,654,615 bytes. This is an
+issue-local staging receipt only. No hosted root, application default, or R2
+object was changed.
+
 When the pinned source tree is unavailable, materialize an authenticated local
 subset directly from the immutable hosted publication:
 
