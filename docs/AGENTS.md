@@ -64,6 +64,10 @@ Its README records the exact interpretation and partial-capture status.
 retention, edit mapping, pruning, and schedule-relative convergence contract
 for the first incremental engine.
 
+`patch_allocation_domains.md` defines private-revision allocation ownership,
+single-operation marks, exact rollback, explicit root transfer, and rejection
+without compaction or historical-domain registries.
+
 `tracked_region_coverage.md` defines the exact ordinary main-control operation
 covered by generic dependency recording, its begin/finish and fail-closed
 ownership, the exhaustive semantic read/barrier matrix, the command/execution
