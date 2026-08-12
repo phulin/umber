@@ -149,8 +149,8 @@ All production mutation of live TeX state should pass through `Universe` or simi
   named parameters through the installed primitive registry rather than a
   state-local spelling table.
 - `src/universe/tests.rs`: Unit tests for `Universe` mutation, snapshots, contexts, effects, and boundary behavior.
-- `src/world.rs`: External-effect boundary for files, atomic downstream file-set publication, streams, clocks, randomness, shell policy, printing, effect records, and field/key-specific allocation-independent dependency projections.
-- `src/world/tests.rs`: Unit tests for world snapshots, file records, streams, printing, randomness, shell escape, and effect replay.
+- `src/world.rs`: External-effect boundary for files, atomic downstream file-set publication, streams, clocks, randomness, shell policy, printing, effect records, weak snapshot-root mounts, and field/key-specific allocation-independent dependency projections.
+- `src/world/tests.rs`: Unit tests for world snapshots, file records, streams, printing, randomness, shell escape, effect replay, and snapshot-owned effect-root reclamation.
 - `tests/it.rs`: Integration test harness that includes capability-boundary and live-boundary test modules.
 - `tests/it/capability_boundaries.rs`: Compile-fail integration tests asserting restricted input and transaction capabilities fail to compile.
 - `tests/it/handle_serialization.rs`: Downstream compile-fail probe proving serde and private constructors cannot mint live handles or handle-bearing nodes.

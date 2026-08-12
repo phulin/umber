@@ -18,8 +18,8 @@ use std::fmt;
 use std::fs::OpenOptions;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Weak};
 #[cfg(feature = "profiling")]
 use std::time::{Duration, Instant};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -1136,24 +1136,37 @@ pub enum EffectRecord {
     ShellEscape(ShellEscapeRecord),
 }
 
-/// Opaque identity of one immutable effect-store root.
+/// Non-owning identity of one immutable effect-store root.
+///
+/// A durable [`WorldSnapshot`] is the strong owner of a displaced root. The
+/// live [`World`] records only weak mounts so observing the root cannot extend
+/// the snapshot's lifetime.
 #[doc(hidden)]
 #[derive(Clone, Debug)]
-pub struct EffectRootIdentity(Arc<Vec<EffectRecord>>);
+pub struct EffectRootIdentity(Weak<Vec<EffectRecord>>);
 
 impl PartialEq for EffectRootIdentity {
     fn eq(&self, other: &Self) -> bool {
-        Arc::ptr_eq(&self.0, &other.0)
+        Weak::ptr_eq(&self.0, &other.0)
     }
 }
 
 impl Eq for EffectRootIdentity {}
 
 impl EffectRootIdentity {
+    fn upgrade(&self) -> Option<Arc<Vec<EffectRecord>>> {
+        self.0.upgrade()
+    }
+
     #[must_use]
     pub fn is_mounted_in(&self, world: &World) -> bool {
-        Arc::ptr_eq(&self.0, &world.effects)
-            || world.effect_root_ancestry.iter().any(|root| self == root)
+        self.upgrade().is_some_and(|root| {
+            Arc::ptr_eq(&root, &world.effects)
+                || world
+                    .effect_root_ancestry
+                    .iter()
+                    .any(|mounted| self == mounted && mounted.upgrade().is_some())
+        })
     }
 }
 
@@ -2317,6 +2330,82 @@ impl World {
                     .map(|event| event.message.capacity())
                     .sum::<usize>(),
             )
+    }
+
+    #[cfg(test)]
+    fn effect_retention_stats(&self) -> EffectRetentionStats {
+        let mut roots = Vec::new();
+        let mut seen = BTreeSet::new();
+        let mut push_root = |root: Arc<Vec<EffectRecord>>| {
+            let identity = Arc::as_ptr(&root) as usize;
+            if seen.insert(identity) {
+                roots.push(root);
+            }
+        };
+        push_root(Arc::clone(&self.effects));
+        let mut live_mounts = 0;
+        for mount in self.effect_root_ancestry.iter() {
+            if let Some(root) = mount.upgrade() {
+                live_mounts += 1;
+                push_root(root);
+            }
+        }
+
+        EffectRetentionStats {
+            live_records: self.effects.len(),
+            live_record_capacity_bytes: self
+                .effects
+                .capacity()
+                .saturating_mul(std::mem::size_of::<EffectRecord>()),
+            live_payload_capacity_bytes: self.effects.iter().map(effect_payload_capacity).sum(),
+            ancestry_mounts: self.effect_root_ancestry.len(),
+            ancestry_live_mounts: live_mounts,
+            unique_roots: roots.len(),
+            unique_records: roots.iter().map(|root| root.len()).sum(),
+            unique_record_capacity_bytes: roots
+                .iter()
+                .map(|root| {
+                    root.capacity()
+                        .saturating_mul(std::mem::size_of::<EffectRecord>())
+                })
+                .sum(),
+            unique_payload_capacity_bytes: roots
+                .iter()
+                .flat_map(|root| root.iter())
+                .map(effect_payload_capacity)
+                .sum(),
+            metadata_capacity_bytes: self
+                .effect_sequences
+                .capacity()
+                .saturating_mul(std::mem::size_of::<EffectSequence>())
+                .saturating_add(
+                    self.effect_publications
+                        .capacity()
+                        .saturating_mul(std::mem::size_of::<Option<EffectPublicationId>>()),
+                )
+                .saturating_add(
+                    self.effect_publication_record_ordinals
+                        .capacity()
+                        .saturating_mul(
+                            std::mem::size_of::<Option<EffectPublicationRecordOrdinal>>(),
+                        ),
+                )
+                .saturating_add(
+                    self.effect_domains
+                        .capacity()
+                        .saturating_mul(std::mem::size_of::<EffectDomain>()),
+                )
+                .saturating_add(
+                    self.effect_semantic_record_ordinals
+                        .capacity()
+                        .saturating_mul(std::mem::size_of::<EffectSemanticRecordOrdinal>()),
+                )
+                .saturating_add(
+                    self.effect_placement_intra_orders
+                        .capacity()
+                        .saturating_mul(std::mem::size_of::<EffectPlacementIntraOrder>()),
+                ),
+        }
     }
 
     /// Creates a deterministic in-memory world for tests and hermetic runs.
@@ -4372,7 +4461,7 @@ impl World {
     #[doc(hidden)]
     #[must_use]
     pub fn effect_root_identity(&self) -> EffectRootIdentity {
-        EffectRootIdentity(Arc::clone(&self.effects))
+        EffectRootIdentity(Arc::downgrade(&self.effects))
     }
 
     /// Effects already accepted before a generation fork's restart anchor.
@@ -4998,7 +5087,13 @@ impl World {
             next_effect_semantic_record_ordinals: self.next_effect_semantic_record_ordinals.clone(),
             next_effect_placement_intra_order: self.next_effect_placement_intra_order,
             next_terminal_publication_identity: self.next_terminal_publication_identity,
-            effect_root_ancestry: Arc::clone(&self.effect_root_ancestry),
+            effect_root_ancestry: Arc::new(
+                self.effect_root_ancestry
+                    .iter()
+                    .filter(|root| root.upgrade().is_some())
+                    .cloned()
+                    .collect(),
+            ),
             effect_pos: self.effect_pos(),
             stream_bufs: self.stream_bufs.clone(),
             rng: self.rng,
@@ -5089,7 +5184,14 @@ impl World {
             Arc::clone(&snapshot.provisional_page_output_receipts);
         self.active_artifact_publication_group = snapshot.active_artifact_publication_group;
         self.active_terminal_publication = snapshot.active_terminal_publication;
-        self.effect_root_ancestry = Arc::clone(&snapshot.effect_root_ancestry);
+        self.effect_root_ancestry = Arc::new(
+            snapshot
+                .effect_root_ancestry
+                .iter()
+                .filter(|root| root.upgrade().is_some())
+                .cloned()
+                .collect(),
+        );
         self.stream_bufs = snapshot.stream_bufs.clone();
         self.rng = snapshot.rng;
         self.pdf_rng = snapshot.pdf_rng.clone();
@@ -5217,8 +5319,13 @@ impl World {
         self.next_effect_semantic_record_ordinals =
             snapshot.next_effect_semantic_record_ordinals.clone();
         self.next_effect_placement_intra_order = snapshot.next_effect_placement_intra_order;
-        let mut ancestry = snapshot.effect_root_ancestry.as_ref().clone();
-        let snapshot_root = EffectRootIdentity(Arc::clone(&snapshot.effects));
+        let mut ancestry = snapshot
+            .effect_root_ancestry
+            .iter()
+            .filter(|root| root.upgrade().is_some())
+            .cloned()
+            .collect::<Vec<_>>();
+        let snapshot_root = EffectRootIdentity(Arc::downgrade(&snapshot.effects));
         if !ancestry.iter().any(|root| root == &snapshot_root) {
             ancestry.push(snapshot_root);
         }
@@ -5373,14 +5480,12 @@ impl World {
     }
 
     fn effects_mut(&mut self) -> &mut Vec<EffectRecord> {
-        if Arc::strong_count(&self.effects) > 1
-            && !self
-                .effect_root_ancestry
-                .iter()
-                .any(|root| Arc::ptr_eq(&root.0, &self.effects))
-        {
-            Arc::make_mut(&mut self.effect_root_ancestry)
-                .push(EffectRootIdentity(Arc::clone(&self.effects)));
+        let current_root = EffectRootIdentity(Arc::downgrade(&self.effects));
+        let shared = Arc::strong_count(&self.effects) > 1;
+        let ancestry = Arc::make_mut(&mut self.effect_root_ancestry);
+        ancestry.retain(|root| root.upgrade().is_some());
+        if shared && !ancestry.iter().any(|root| root == &current_root) {
+            ancestry.push(current_root);
         }
         Arc::make_mut(&mut self.effects)
     }
@@ -5765,6 +5870,36 @@ fn effect_retained_bytes(effect: &EffectRecord) -> usize {
             EffectRecord::PdfObjectPlaceholder { label } => label.len(),
             EffectRecord::ShellEscape(record) => record.command.len(),
         }
+}
+
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct EffectRetentionStats {
+    live_records: usize,
+    live_record_capacity_bytes: usize,
+    live_payload_capacity_bytes: usize,
+    ancestry_mounts: usize,
+    ancestry_live_mounts: usize,
+    unique_roots: usize,
+    unique_records: usize,
+    unique_record_capacity_bytes: usize,
+    unique_payload_capacity_bytes: usize,
+    metadata_capacity_bytes: usize,
+}
+
+#[cfg(test)]
+fn effect_payload_capacity(effect: &EffectRecord) -> usize {
+    match effect {
+        EffectRecord::StreamOpen { target, .. } => target.path.as_os_str().len(),
+        EffectRecord::StreamClose { .. } | EffectRecord::DeferredWrite { .. } => 0,
+        EffectRecord::StreamWrite { text, .. } => text.capacity(),
+        EffectRecord::StreamWriteBytes { bytes, .. } => bytes.capacity(),
+        EffectRecord::Special { class, payload } => {
+            class.capacity().saturating_add(payload.capacity())
+        }
+        EffectRecord::PdfObjectPlaceholder { label } => label.capacity(),
+        EffectRecord::ShellEscape(record) => record.command.capacity(),
+    }
 }
 
 fn real_job_clock() -> JobClock {
