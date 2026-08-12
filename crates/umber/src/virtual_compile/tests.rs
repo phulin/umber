@@ -4267,6 +4267,83 @@ fn format_macro_reads_same_run_output_after_an_authoritative_missing_probe() {
 }
 
 #[test]
+fn generated_output_reopens_after_a_negative_probe_and_unrelated_suspension() {
+    let mut initex = Universe::with_world(World::memory());
+    prepare_run_stores(&mut initex);
+    crate::run_memory_with_stores(
+        "\\long\\def\\GenerateAfterProbe#1{\\openin1=\"#1\" \\ifeof1 \\message{OPTIONAL-MISSING}\\else \\errmessage{unexpected existing input}\\fi \\immediate\\openout15=#1 \\immediate\\write15{SNR, AWGN}\\immediate\\closeout15}\\dump",
+        &mut initex,
+    )
+    .expect("create format with optional-input generator");
+    let format = initex.dump_format().expect("dump format");
+    let mut session = VirtualCompileSession::new(SessionOptions {
+        format: Some(format),
+        ..SessionOptions::default()
+    })
+    .expect("formatted session");
+    session
+        .add_user_file(
+            "main.tex",
+            concat!(
+                "\\GenerateAfterProbe{roundtrip.csv}",
+                "\\input unrelated.cfg ",
+                "\\openin0=roundtrip.csv ",
+                "\\ifeof0 \\message{BARE-REOPEN-EOF}",
+                "\\else \\read0 to\\bareline \\message{BARE-FIRST-LINE:[\\meaning\\bareline]}\\fi ",
+                "\\closein0 ",
+                "\\openin0=./roundtrip.csv ",
+                "\\ifeof0 \\message{DOT-REOPEN-EOF}",
+                "\\else \\read0 to\\dotline \\message{DOT-FIRST-LINE:[\\meaning\\dotline]}\\fi ",
+                "\\closein0\\end"
+            )
+            .as_bytes()
+            .to_vec(),
+        )
+        .expect("main source");
+
+    let missing = probes(session.compile_attempt());
+    assert_eq!(missing.len(), 1);
+    assert_eq!(missing[0].key().name(), "roundtrip.csv");
+    session
+        .provide_resources(vec![ResourceResponse::FileUnavailable(
+            missing[0].key().clone(),
+        )])
+        .expect("negative file response");
+
+    let unrelated = requests(session.compile_attempt());
+    assert_eq!(unrelated.len(), 1);
+    assert_eq!(unrelated[0].key().name(), "unrelated.cfg");
+    session
+        .provide_resources(vec![ResourceResponse::File(ResolvedFile {
+            request: unrelated[0].key().clone(),
+            virtual_path: "/texlive/unrelated.cfg".to_owned(),
+            bytes: b"\\endinput".to_vec(),
+            expected_digest: None,
+        })])
+        .expect("unrelated resource response");
+
+    let CompileAttemptResult::Complete(output) = session.compile_attempt() else {
+        panic!("same-run output should reopen after the unrelated resource suspension");
+    };
+    assert!(
+        output
+            .terminal
+            .windows(b"BARE-FIRST-LINE:[macro:->SNR, AWGN ]".len())
+            .any(|window| window == b"BARE-FIRST-LINE:[macro:->SNR, AWGN ]"),
+        "same-run output must override the earlier authoritative probe absence: {}",
+        String::from_utf8_lossy(&output.terminal)
+    );
+    assert!(
+        output
+            .terminal
+            .windows(b"DOT-FIRST-LINE:[macro:->SNR, AWGN ]".len())
+            .any(|window| window == b"DOT-FIRST-LINE:[macro:->SNR, AWGN ]"),
+        "the equivalent current-directory spelling must read the same output: {}",
+        String::from_utf8_lossy(&output.terminal)
+    );
+}
+
+#[test]
 fn legacy_platform_openin_probes_are_not_found_without_weakening_vfs_paths() {
     let mut bracket = session(
         "\\openin0=[]texsys.aux \\ifeof0 \\message{BRACKET-MISSING}\\else \\errmessage{unexpected bracket file}\\fi \\end",

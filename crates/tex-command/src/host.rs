@@ -260,6 +260,22 @@ impl CommandHostCapabilities {
         self.unavailable_input_probes.insert(name);
     }
 
+    /// Invalidates retained absence for a path created by this TeX run.
+    ///
+    /// TeX82 §1275 attempts every `\openin` against the current filename
+    /// namespace. An earlier failed probe therefore cannot settle a later
+    /// open after §1375 has executed an immediate `\openout` for that path.
+    /// Leading current-directory spellings are equivalent at this boundary;
+    /// unrelated negative acquisitions remain authoritative.
+    pub fn invalidate_input_unavailability_for_output(&mut self, name: &str) {
+        self.unavailable_input
+            .retain(|candidate| !same_current_directory_name(candidate, name));
+        self.unavailable_input_requests
+            .retain(|candidate| !same_current_directory_name(candidate, name));
+        self.unavailable_input_probes
+            .retain(|candidate| !same_current_directory_name(candidate, name));
+    }
+
     /// Registers a host-acquired immutable font resource for one request path.
     pub fn register_font(&mut self, path: impl Into<PathBuf>, resource: FontResource) {
         self.fonts.insert(path.into(), resource);
@@ -424,6 +440,17 @@ pub(crate) fn input_lookup_candidates(packed_name: &str, has_area: bool) -> Vec<
     candidates
 }
 
+fn same_current_directory_name(left: &str, right: &str) -> bool {
+    trim_current_directory_prefix(left) == trim_current_directory_prefix(right)
+}
+
+fn trim_current_directory_prefix(mut name: &str) -> &str {
+    while let Some(rest) = name.strip_prefix("./") {
+        name = rest;
+    }
+    name
+}
+
 /// A non-owning host-capability boundary for one command-processor operation.
 ///
 /// The mutable borrow makes the capability scope explicit and prevents the
@@ -562,5 +589,21 @@ mod tests {
         assert!(capabilities.input_probe_is_unavailable("probe.tex"));
         assert!(!capabilities.input_resource_is_unavailable("probe.tex"));
         assert!(!capabilities.input_probe_is_unavailable("TeXinputs:probe.tex"));
+    }
+
+    #[test]
+    fn same_run_output_invalidates_only_equivalent_input_absence() {
+        let mut capabilities = CommandHostCapabilities::default();
+        capabilities.mark_input_unavailable("generated.csv");
+        capabilities.mark_input_probe_unavailable("./generated.csv");
+        capabilities.mark_input_probe_unavailable("unchanged.csv");
+
+        capabilities.invalidate_input_unavailability_for_output("././generated.csv");
+
+        assert!(!capabilities.input_resource_is_unavailable("generated.csv"));
+        assert!(!capabilities.input_probe_is_unavailable("generated.csv"));
+        assert!(!capabilities.input_probe_is_unavailable("./generated.csv"));
+        assert!(capabilities.input_probe_is_unavailable("unchanged.csv"));
+        assert!(capabilities.input_resource_is_unavailable("TeXinputs:generated.csv"));
     }
 }

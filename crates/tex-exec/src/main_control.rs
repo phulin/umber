@@ -14937,6 +14937,9 @@ fn apply_scanned_step(
                 ImmediateExtension::OpenOut { stream, file_name } => {
                     let target = replay_openout_target(file_name.packed());
                     stores.open_output_stream(StreamSlot::new(stream), target.clone());
+                    command
+                        .capabilities
+                        .invalidate_input_unavailability_for_output(&target);
                     if command.state.engine_semantics().supports_pdftex() {
                         crate::diagnostics::report_openout(stores, stream, &target);
                     }
