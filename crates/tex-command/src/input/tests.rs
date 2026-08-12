@@ -1,6 +1,7 @@
 use tex_state::print::{ErrorContextLevel, ErrorContextWidths, render_error_context};
 
 use crate::CommandState;
+use crate::input::levels::TransientReplayReason;
 use crate::input::{
     InputLevel, InputState, RegisteredSourceKind, ReplayTrace, RetirementBehavior,
     SharedTokenBuffer, SourceRegistration, TokenBehavior, TokenPayload,
@@ -62,7 +63,8 @@ fn source_context_pseudoprints_synthetic_endline_on_the_live_cursor_side() {
     line.byte_cursor = 4;
 
     let context =
-        InputState::source_context_level(level, true, None, None).expect("source context");
+        InputState::source_context_level(level, true, None, None, ErrorContextWidths::default())
+            .expect("source context");
     assert_eq!(
         render_error_context(&[context], ErrorContextWidths::default(), 5),
         "\nl.1 left\n        }--^^M"
@@ -75,14 +77,21 @@ fn source_context_pseudoprints_synthetic_endline_on_the_live_cursor_side() {
         .expect("loaded line")
         .endline_delivered = true;
     let context =
-        InputState::source_context_level(level, true, None, None).expect("consumed context");
+        InputState::source_context_level(level, true, None, None, ErrorContextWidths::default())
+            .expect("consumed context");
     assert_eq!(
         render_error_context(&[context], ErrorContextWidths::default(), 5),
         "\nl.1 left^^M\n           }--"
     );
 
-    let context = InputState::source_context_level(level, true, Some('\r'), None)
-        .expect("matching live sentinel context");
+    let context = InputState::source_context_level(
+        level,
+        true,
+        Some('\r'),
+        None,
+        ErrorContextWidths::default(),
+    )
+    .expect("matching live sentinel context");
     assert_eq!(
         render_error_context(&[context], ErrorContextWidths::default(), 5),
         "\nl.1 left\n        }--"
@@ -111,8 +120,14 @@ fn source_context_prints_physical_characters_through_live_newlinechar() {
     };
     level.cursor.line.as_mut().expect("loaded line").byte_cursor = 5;
 
-    let context =
-        InputState::source_context_level(level, true, None, Some('Y')).expect("source context");
+    let context = InputState::source_context_level(
+        level,
+        true,
+        None,
+        Some('Y'),
+        ErrorContextWidths::default(),
+    )
+    .expect("source context");
     assert_eq!(
         render_error_context(&[context], ErrorContextWidths::default(), 5),
         "\nl.1 left\n\n         right^^M"
@@ -151,7 +166,8 @@ fn source_context_projects_recursive_superscript_reductions_from_live_buffer() {
         panic!("source level expected");
     };
     let context =
-        InputState::source_context_level(level, true, None, None).expect("source context");
+        InputState::source_context_level(level, true, None, None, ErrorContextWidths::default())
+            .expect("source context");
     assert_eq!(
         render_error_context(&[context], ErrorContextWidths::default(), 5),
         "\nl.1 left^^M\n           right^^M"
@@ -185,8 +201,14 @@ fn control_word_lookahead_does_not_cross_the_pseudoprint_cursor() {
     let InputLevel::Source(level) = command.input.levels.last().expect("source level") else {
         panic!("source level expected");
     };
-    let context =
-        InputState::source_context_level(level, true, None, Some('Y')).expect("source context");
+    let context = InputState::source_context_level(
+        level,
+        true,
+        None,
+        Some('Y'),
+        ErrorContextWidths::default(),
+    )
+    .expect("source context");
     assert_eq!(
         render_error_context(&[context], ErrorContextWidths::default(), 5),
         "\nl.1 \\foo\n        ^^\ntail^^M"
@@ -308,5 +330,155 @@ fn noexpand_backup_context_projects_frozen_marker() {
     assert_eq!(
         command.output_open_context(&universe.command_context()),
         "\n<to be read again> \n                   \\notexpanded: \\expandafter "
+    );
+}
+
+#[test]
+fn large_unread_token_context_has_bounded_eager_projection() {
+    const TOKEN_COUNT: usize = 65_536;
+    let mut command = CommandState::default();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
+    let token = tex_state::token::TracedTokenWord::pack(
+        tex_state::token::Token::Char {
+            ch: 'x',
+            cat: tex_state::token::Catcode::Other,
+        },
+        tex_state::token::OriginId::UNKNOWN,
+    );
+    command.push_token_level(
+        TokenPayload::Transient(SharedTokenBuffer::new(std::sync::Arc::from(
+            vec![token; TOKEN_COUNT],
+        ))),
+        TokenBehavior::Ordinary,
+        RetirementBehavior::Pop,
+        ReplayTrace::Transient(TransientReplayReason::ExpandedTokenList),
+    );
+
+    super::reset_token_context_projection_stats();
+    let context = command.output_open_context(&universe.command_context());
+    let stats = super::token_context_projection_stats();
+
+    assert_eq!(
+        context,
+        format!("\n<token list> \n{}{}...", " ".repeat(13), "x".repeat(63))
+    );
+    assert_eq!(stats.visited_tokens, 67);
+    assert_eq!(stats.peak_temporary_string_capacity, 66);
+    assert!(
+        stats.visited_tokens <= ErrorContextWidths::default().error_line()
+            && stats.peak_temporary_string_capacity <= 256,
+        "bounded unread projection visited {} of {TOKEN_COUNT} tokens and retained a peak temporary String capacity of {} bytes",
+        stats.visited_tokens,
+        stats.peak_temporary_string_capacity,
+    );
+}
+
+#[test]
+fn short_multibyte_control_sequence_context_is_byte_exact() {
+    let mut command = CommandState::default();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
+    universe.set_int_param(tex_state::env::banks::IntParam::NEWLINE_CHAR, -1);
+    let symbol = universe.intern("β\0").symbol();
+    command.push_token_level(
+        TokenPayload::Transient(SharedTokenBuffer::new(std::sync::Arc::from([
+            tex_state::token::TracedTokenWord::pack(
+                tex_state::token::Token::Cs(symbol),
+                tex_state::token::OriginId::UNKNOWN,
+            ),
+            tex_state::token::TracedTokenWord::pack(
+                tex_state::token::Token::Char {
+                    ch: 'λ',
+                    cat: tex_state::token::Catcode::Other,
+                },
+                tex_state::token::OriginId::UNKNOWN,
+            ),
+        ]))),
+        TokenBehavior::Ordinary,
+        RetirementBehavior::Pop,
+        ReplayTrace::Transient(TransientReplayReason::ExpandedTokenList),
+    );
+
+    super::reset_token_context_projection_stats();
+    assert_eq!(
+        command.output_open_context(&universe.command_context()),
+        "\n<token list> \n             \\β^^@ λ"
+    );
+    assert_eq!(super::token_context_projection_stats().visited_tokens, 2);
+}
+
+#[test]
+fn large_file_source_context_is_bounded_and_preserves_coordinates() {
+    let mut command = CommandState::default();
+    let mut bytes = b"left".to_vec();
+    bytes.extend(std::iter::repeat_n(b'x', 65_536));
+    let source = command
+        .register_source(SourceRegistration::new(
+            RegisteredSourceKind::Generated,
+            bytes,
+        ))
+        .expect("source registers");
+    command
+        .open_registered_source(source)
+        .expect("source opens");
+    command
+        .prepare_started_input(13)
+        .expect("opening line is acquired");
+    let InputLevel::Source(level) = command.input.levels.last_mut().expect("source level") else {
+        panic!("source level expected");
+    };
+    level.cursor.line.as_mut().expect("loaded line").byte_cursor = 4;
+
+    let context =
+        InputState::source_context_level(level, true, None, None, ErrorContextWidths::default())
+            .expect("source context");
+    assert_eq!(
+        render_error_context(&[context], ErrorContextWidths::default(), 5),
+        format!("\nl.1 left\n{}{}...", " ".repeat(8), "x".repeat(68))
+    );
+}
+
+#[test]
+fn context_projection_is_snapshot_neutral_and_rollback_exact() {
+    let mut command = CommandState::default();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
+    let words = ['a', 'b'].map(|ch| {
+        tex_state::token::TracedTokenWord::pack(
+            tex_state::token::Token::Char {
+                ch,
+                cat: tex_state::token::Catcode::Other,
+            },
+            tex_state::token::OriginId::UNKNOWN,
+        )
+    });
+    command.push_token_level(
+        TokenPayload::Transient(SharedTokenBuffer::new(std::sync::Arc::from(words))),
+        TokenBehavior::Ordinary,
+        RetirementBehavior::Pop,
+        ReplayTrace::Transient(TransientReplayReason::ExpandedTokenList),
+    );
+    let snapshot = command.snapshot();
+    let before = command.output_open_context(&universe.command_context());
+    let InputLevel::Tokens(cursor) = command.input.levels.last_mut().expect("token level") else {
+        panic!("token level expected");
+    };
+    cursor.index = 1;
+    let advanced = command.output_open_context(&universe.command_context());
+    assert_ne!(advanced, before);
+    command.rollback(snapshot).expect("snapshot rolls back");
+    assert_eq!(
+        command.output_open_context(&universe.command_context()),
+        before
+    );
+}
+
+#[test]
+fn silent_state_operations_do_not_project_token_context() {
+    let command = CommandState::default();
+    super::reset_token_context_projection_stats();
+    let snapshot = command.snapshot();
+    drop(snapshot);
+    assert_eq!(
+        super::token_context_projection_stats(),
+        super::TokenContextProjectionStats::default()
     );
 }

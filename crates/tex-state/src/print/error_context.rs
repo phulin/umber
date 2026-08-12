@@ -31,6 +31,8 @@ pub struct ErrorContextLevel {
     label: String,
     before: String,
     after: String,
+    before_chars: usize,
+    after_chars: usize,
 }
 
 impl ErrorContextLevel {
@@ -40,10 +42,40 @@ impl ErrorContextLevel {
         before: impl Into<String>,
         after: impl Into<String>,
     ) -> Self {
+        let label = label.into();
+        let before = before.into();
+        let after = after.into();
+        let before_chars = before.chars().count();
+        let after_chars = after.chars().count();
+        Self {
+            label,
+            before,
+            after,
+            before_chars,
+            after_chars,
+        }
+    }
+
+    /// Builds a level from an eagerly captured bounded pseudoprint projection.
+    ///
+    /// `before` is the retained tail of a read half whose full character count
+    /// is `before_chars`. `after` is the retained head of an unread half whose
+    /// capped character count is `after_chars`; callers need only count one
+    /// character beyond the largest possible displayed window.
+    #[must_use]
+    pub fn from_bounded_projection(
+        label: impl Into<String>,
+        before: impl Into<String>,
+        before_chars: usize,
+        after: impl Into<String>,
+        after_chars: usize,
+    ) -> Self {
         Self {
             label: label.into(),
             before: before.into(),
             after: after.into(),
+            before_chars,
+            after_chars,
         }
     }
 
@@ -56,7 +88,7 @@ impl ErrorContextLevel {
     /// `... \setbox0=`.
     fn render(&self, widths: ErrorContextWidths) -> String {
         let label_width = self.label.chars().count();
-        let read = self.before.chars().count();
+        let read = self.before_chars;
         // §318's `if l+first_count<=half_error_line`, whose else branch fixes
         // line 1's width `n` at `half_error_line` rather than at whatever the
         // cropped text happens to measure.
@@ -81,7 +113,7 @@ impl ErrorContextLevel {
         };
         // §318's `if m+n<=error_line then p:=first_count+m else
         // p:=first_count+(error_line-n-3)`, then its trailing `print("...")`.
-        let unread = self.after.chars().count();
+        let unread = self.after_chars;
         let available = widths.error_line().saturating_sub(indent);
         let rest = if unread <= available {
             self.after.clone()

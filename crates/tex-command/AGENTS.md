@@ -93,7 +93,8 @@ print channel of its own outside the borrowed
   and focused conformance tests.
 - `src/input/levels.rs`, `src/input/levels/tests.rs`: dense source/token-list
   levels, stored/transient/argument payload ownership, orthogonal delivery and
-  retirement behavior, replay explanations, and focused ownership tests. A
+  retirement behavior, bounded eager TeX82 error-context projection, replay
+  explanations, and focused ownership tests. A
   source level's `open_depths` field is `\tracingnesting`'s own record; see
   `src/tracing_nesting.rs`.
 - `src/input/stack.rs`, `src/input/stack/tests.rs`: exact input retirement,

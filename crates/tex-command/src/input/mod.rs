@@ -1,6 +1,10 @@
 //! Private input state machines.
 
 use std::collections::BTreeMap;
+use std::collections::VecDeque;
+
+#[cfg(test)]
+use std::cell::Cell;
 
 mod levels;
 mod lines;
@@ -61,6 +65,160 @@ pub(crate) struct InputState {
     pub(crate) next_source_identity: u64,
     /// TeX82 §362's process-global `force_eof`.
     pub(crate) force_eof: bool,
+}
+
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) struct TokenContextProjectionStats {
+    pub(crate) visited_tokens: usize,
+    pub(crate) peak_temporary_string_capacity: usize,
+}
+
+#[cfg(test)]
+thread_local! {
+    static TOKEN_CONTEXT_PROJECTION_STATS: Cell<TokenContextProjectionStats> =
+        const { Cell::new(TokenContextProjectionStats {
+            visited_tokens: 0,
+            peak_temporary_string_capacity: 0,
+        }) };
+}
+
+#[cfg(test)]
+fn note_token_context_projection(raw: &String, rendered: &String) {
+    TOKEN_CONTEXT_PROJECTION_STATS.with(|stats| {
+        let mut current = stats.get();
+        current.visited_tokens = current.visited_tokens.saturating_add(1);
+        current.peak_temporary_string_capacity = current
+            .peak_temporary_string_capacity
+            .max(raw.capacity())
+            .max(rendered.capacity());
+        stats.set(current);
+    });
+}
+
+#[cfg(test)]
+fn note_token_context_capacity(capacity: usize) {
+    TOKEN_CONTEXT_PROJECTION_STATS.with(|stats| {
+        let mut current = stats.get();
+        current.peak_temporary_string_capacity =
+            current.peak_temporary_string_capacity.max(capacity);
+        stats.set(current);
+    });
+}
+
+#[cfg(test)]
+pub(crate) fn reset_token_context_projection_stats() {
+    TOKEN_CONTEXT_PROJECTION_STATS.set(TokenContextProjectionStats::default());
+}
+
+#[cfg(test)]
+#[must_use]
+pub(crate) fn token_context_projection_stats() -> TokenContextProjectionStats {
+    TOKEN_CONTEXT_PROJECTION_STATS.get()
+}
+
+struct ContextTail {
+    chars: VecDeque<char>,
+    total: usize,
+    limit: usize,
+}
+
+impl ContextTail {
+    fn new(limit: usize) -> Self {
+        Self {
+            chars: VecDeque::with_capacity(limit),
+            total: 0,
+            limit,
+        }
+    }
+
+    fn push_str(&mut self, text: &str) {
+        for ch in text.chars() {
+            self.total = self.total.saturating_add(1);
+            if self.limit == 0 {
+                continue;
+            }
+            if self.chars.len() == self.limit {
+                let _ = self.chars.pop_front();
+            }
+            self.chars.push_back(ch);
+        }
+    }
+
+    fn prepend_str(&mut self, text: &str) {
+        for ch in text.chars().rev() {
+            self.total = self
+                .total
+                .saturating_add(1)
+                .min(self.limit.saturating_add(1));
+            if self.total > self.limit {
+                break;
+            }
+            self.chars.push_front(ch);
+        }
+    }
+
+    fn is_complete(&self) -> bool {
+        self.total > self.limit
+    }
+
+    fn finish(self) -> (String, usize) {
+        (self.chars.into_iter().collect(), self.total)
+    }
+}
+
+struct ContextHead {
+    text: String,
+    chars: usize,
+    limit: usize,
+}
+
+enum ContextSink<'a> {
+    Tail(&'a mut ContextTail),
+    Head(&'a mut ContextHead),
+}
+
+impl ContextSink<'_> {
+    fn push_str(&mut self, text: &str) {
+        match self {
+            Self::Tail(tail) => tail.push_str(text),
+            Self::Head(head) => head.push_str(text),
+        }
+    }
+
+    fn is_complete(&self) -> bool {
+        matches!(self, Self::Head(head) if head.is_complete())
+    }
+}
+
+impl ContextHead {
+    fn new(limit: usize) -> Self {
+        Self {
+            text: String::with_capacity(limit.min(256)),
+            chars: 0,
+            limit,
+        }
+    }
+
+    fn push_str(&mut self, text: &str) {
+        for ch in text.chars() {
+            self.chars = self.chars.saturating_add(1);
+            if self.chars <= self.limit {
+                self.text.push(ch);
+            }
+            if self.is_complete() {
+                break;
+            }
+        }
+    }
+
+    fn is_complete(&self) -> bool {
+        self.chars > self.limit
+    }
+
+    fn finish(self) -> (String, usize) {
+        (self.text, self.chars)
+    }
 }
 
 /// Versioned, allocation-independent projection of command input state.
@@ -335,20 +493,23 @@ impl InputState {
         stores: &tex_state::CommandContext<'_>,
         parameters: &crate::macro_call::ParameterState,
     ) -> bool {
+        let widths = stores.error_context_widths();
         for (index, level) in self.levels.iter().enumerate().rev() {
             let current = index + 1 == self.levels.len();
             match level {
                 InputLevel::Source(source) => {
                     let bottom = index == 0
                         || matches!(source.name_class, crate::input::SourceNameClass::File);
-                    if Self::source_context_level(source, index == 0, None, None).is_some()
+                    if Self::source_context_level(source, index == 0, None, None, widths).is_some()
                         || bottom
                     {
                         return false;
                     }
                 }
                 InputLevel::Tokens(tokens) => {
-                    if Self::token_context_level(stores, tokens, current, parameters).is_some() {
+                    if Self::token_context_level(stores, tokens, current, parameters, widths)
+                        .is_some()
+                    {
                         // §314's backed-up family uses `print_nl` for both
                         // `<recently read>` and `<to be read again>`; every
                         // other token-list kind begins with `print_ln`.
@@ -404,9 +565,10 @@ impl InputState {
         stores: &tex_state::CommandContext<'_>,
         parameters: &crate::macro_call::ParameterState,
     ) -> String {
+        let widths = stores.error_context_widths();
         tex_state::print::render_error_context(
-            &self.error_context_levels_for(levels, stores, parameters),
-            stores.error_context_widths(),
+            &self.error_context_levels_for(levels, stores, parameters, widths),
+            widths,
             stores.untracked_int_param(tex_state::env::banks::IntParam::new(54)),
         )
     }
@@ -422,6 +584,7 @@ impl InputState {
         input_levels: &[InputLevel],
         stores: &tex_state::CommandContext<'_>,
         parameters: &crate::macro_call::ParameterState,
+        widths: tex_state::print::ErrorContextWidths,
     ) -> Vec<tex_state::print::ErrorContextLevel> {
         let mut levels = Vec::new();
         let newlinechar = char::from_u32(
@@ -442,6 +605,7 @@ impl InputState {
                         index == 0,
                         live_endlinechar,
                         newlinechar,
+                        widths,
                     ) else {
                         // A source level with no live line has nothing to
                         // pseudoprint, but §310 still stops here.
@@ -459,7 +623,7 @@ impl InputState {
                 }
                 InputLevel::Tokens(tokens) => {
                     if let Some(rendered) =
-                        Self::token_context_level(stores, tokens, current, parameters)
+                        Self::token_context_level(stores, tokens, current, parameters, widths)
                     {
                         levels.push(rendered);
                     }
@@ -467,11 +631,26 @@ impl InputState {
             }
         }
         if !reached_bottom_source && let Some(line) = &self.terminal_context_line {
+            let mut before = ContextTail::new(widths.half_error_line());
+            let mut raw = String::new();
             let mut rendered = String::new();
-            stores.append_selector_string_text(line, &mut rendered);
-            levels.push(tex_state::print::ErrorContextLevel::new(
-                "<*> ", rendered, "",
-            ));
+            for ch in line.chars() {
+                raw.clear();
+                raw.push(ch);
+                rendered.clear();
+                stores.append_selector_string_text(&raw, &mut rendered);
+                before.push_str(&rendered);
+            }
+            let (before, before_chars) = before.finish();
+            levels.push(
+                tex_state::print::ErrorContextLevel::from_bounded_projection(
+                    "<*> ",
+                    before,
+                    before_chars,
+                    "",
+                    0,
+                ),
+            );
         }
         levels
     }
@@ -482,31 +661,49 @@ impl InputState {
         bottom_of_stack: bool,
         live_endlinechar: Option<char>,
         newlinechar: Option<char>,
+        widths: tex_state::print::ErrorContextWidths,
     ) -> Option<tex_state::print::ErrorContextLevel> {
         use crate::input::SourceNameClass;
 
-        fn print_source_text(text: &str, newlinechar: Option<char>) -> String {
-            let mut rendered = String::new();
+        fn append_source_text(
+            text: &str,
+            newlinechar: Option<char>,
+            sink: &mut ContextSink<'_>,
+            scratch: &mut String,
+        ) {
             for character in text.chars() {
                 if Some(character) == newlinechar {
-                    rendered.push('\n');
+                    sink.push_str("\n");
                 } else {
-                    tex_state::token_show::append_tex_print_char(character, &mut rendered);
+                    scratch.clear();
+                    tex_state::token_show::append_tex_print_char(character, scratch);
+                    sink.push_str(scratch);
+                }
+                if sink.is_complete() {
+                    break;
                 }
             }
-            rendered
         }
 
-        fn print_source_code(
+        fn append_source_code(
             code: crate::profile::CharacterCode,
             newlinechar: Option<char>,
-        ) -> Option<String> {
+            sink: &mut ContextSink<'_>,
+            scratch: &mut String,
+        ) -> Option<()> {
             let character = if code.is_byte() {
                 char::from(code.to_byte().ok()?)
             } else {
                 code.to_char().ok()?
             };
-            Some(print_source_text(&character.to_string(), newlinechar))
+            scratch.clear();
+            if Some(character) == newlinechar {
+                scratch.push('\n');
+            } else {
+                tex_state::token_show::append_tex_print_char(character, scratch);
+            }
+            sink.push_str(scratch);
+            Some(())
         }
 
         let line = source.cursor.line.as_ref()?;
@@ -537,10 +734,16 @@ impl InputState {
         // §313 pseudoprints each buffer character through §59's `print`, so
         // both the live `new_line_char` and TeX's printable character-string
         // spelling apply to physical source text just as they do to tokens.
-        let render_range = |range_start: usize, range_end: usize| -> Option<String> {
-            let mut rendered = String::new();
+        let render_range = |range_start: usize,
+                            range_end: usize,
+                            sink: &mut ContextSink<'_>,
+                            scratch: &mut String|
+         -> Option<()> {
             let mut position = range_start;
             for spelling in &line.reduced_spellings {
+                if sink.is_complete() {
+                    break;
+                }
                 let spelling_start = usize::try_from(spelling.range.start()).ok()?;
                 let spelling_end = usize::try_from(spelling.range.end()).ok()?;
                 if spelling_end <= range_start || spelling_start >= range_end {
@@ -549,21 +752,33 @@ impl InputState {
                 if spelling_start < position || spelling_end > range_end {
                     return None;
                 }
-                rendered.push_str(&print_source_text(
+                append_source_text(
                     &String::from_utf8_lossy(&bytes[position..spelling_start]),
                     newlinechar,
-                ));
-                rendered.push_str(&print_source_code(spelling.code, newlinechar)?);
+                    sink,
+                    scratch,
+                );
+                append_source_code(spelling.code, newlinechar, sink, scratch)?;
                 position = spelling_end;
             }
-            rendered.push_str(&print_source_text(
-                &String::from_utf8_lossy(&bytes[position..range_end]),
-                newlinechar,
-            ));
-            Some(rendered)
+            if !sink.is_complete() {
+                append_source_text(
+                    &String::from_utf8_lossy(&bytes[position..range_end]),
+                    newlinechar,
+                    sink,
+                    scratch,
+                );
+            }
+            Some(())
         };
-        let mut before = render_range(start, cursor)?;
-        let mut after = render_range(cursor, end)?;
+        let mut scratch = String::new();
+        let mut before = ContextTail::new(widths.half_error_line());
+        render_range(
+            start,
+            cursor,
+            &mut ContextSink::Tail(&mut before),
+            &mut scratch,
+        )?;
         if let Some(endline) = line.endline {
             let character = if endline.is_byte() {
                 char::from(endline.to_byte().ok()?)
@@ -573,24 +788,59 @@ impl InputState {
             // §313 sets `j:=limit` when the stored buffer sentinel still
             // equals the live `end_line_char`, excluding it from pseudoprint;
             // otherwise `j:=limit+1` and the stale character is visible.
-            if Some(character) != live_endlinechar {
-                let rendered = if Some(character) == newlinechar {
-                    "\n".to_owned()
+            if Some(character) != live_endlinechar && line.endline_delivered {
+                scratch.clear();
+                if Some(character) == newlinechar {
+                    scratch.push('\n');
                 } else {
-                    let mut rendered = String::new();
-                    tex_state::token_show::append_tex_print_char(character, &mut rendered);
-                    rendered
-                };
-                if line.endline_delivered {
-                    before.push_str(&rendered);
-                } else {
-                    after.push_str(&rendered);
+                    tex_state::token_show::append_tex_print_char(character, &mut scratch);
                 }
+                before.push_str(&scratch);
             }
         }
-        Some(tex_state::print::ErrorContextLevel::new(
-            label, before, after,
-        ))
+        let (before, before_chars) = before.finish();
+        let label_chars = label.chars().count();
+        let indent = if label_chars.saturating_add(before_chars) <= widths.half_error_line() {
+            label_chars.saturating_add(before_chars)
+        } else {
+            widths.half_error_line()
+        };
+        let mut after = ContextHead::new(widths.error_line().saturating_sub(indent));
+        render_range(
+            cursor,
+            end,
+            &mut ContextSink::Head(&mut after),
+            &mut scratch,
+        )?;
+        if !after.is_complete()
+            && let Some(endline) = line.endline
+            && !line.endline_delivered
+        {
+            let character = if endline.is_byte() {
+                char::from(endline.to_byte().ok()?)
+            } else {
+                endline.to_char().ok()?
+            };
+            if Some(character) != live_endlinechar {
+                scratch.clear();
+                if Some(character) == newlinechar {
+                    scratch.push('\n');
+                } else {
+                    tex_state::token_show::append_tex_print_char(character, &mut scratch);
+                }
+                after.push_str(&scratch);
+            }
+        }
+        let (after, after_chars) = after.finish();
+        Some(
+            tex_state::print::ErrorContextLevel::from_bounded_projection(
+                label,
+                before,
+                before_chars,
+                after,
+                after_chars,
+            ),
+        )
     }
 
     /// §314's `<Print type of token list>` and §315's pseudoprint.
@@ -599,152 +849,67 @@ impl InputState {
         tokens: &TokenCursor,
         current: bool,
         parameters: &crate::macro_call::ParameterState,
+        widths: tex_state::print::ErrorContextWidths,
     ) -> Option<tex_state::print::ErrorContextLevel> {
-        fn token_text(
-            stores: &tex_state::CommandContext<'_>,
-            tokens: impl Iterator<Item = tex_state::token::Token>,
-        ) -> String {
-            // TeX82 §§59/262/315 pseudoprint through the active selector;
-            // unlike a `new_string` result, control bytes in both character
-            // and control-sequence tokens therefore use canonical `^^`
-            // notation (and the live `\newlinechar` remains a newline).
-            let mut rendered = String::new();
-            for token in tokens {
-                let raw = crate::processor::expand::token_list_token_text(stores, token);
-                stores.append_selector_string_text(&raw, &mut rendered);
+        fn payload_len(stores: &tex_state::CommandContext<'_>, tokens: &TokenCursor) -> usize {
+            match &tokens.payload {
+                TokenPayload::Stored { tokens, .. } => stores.tokens(*tokens).len(),
+                TokenPayload::Transient(words) => words.len(),
+                TokenPayload::InlineTransient(_) | TokenPayload::InlineBackedUp(_) => 1,
+                TokenPayload::BackedUp(words) => words.words().len(),
+                TokenPayload::ArgumentRange { range, .. } => {
+                    range.end().saturating_sub(range.start())
+                }
             }
-            rendered
         }
 
-        let (mut before, mut after) = match &tokens.payload {
-            TokenPayload::Stored { tokens: list, .. } => {
-                let words = stores.tokens(*list);
-                let split = tokens.index.min(words.len());
-                (
-                    token_text(stores, words[..split].iter().copied()),
-                    token_text(stores, words[split..].iter().copied()),
-                )
-            }
-            TokenPayload::Transient(words) => {
-                let split = tokens.index.min(words.len());
-                (
-                    token_text(
-                        stores,
-                        (0..split).filter_map(|index| words.get(index).map(|w| w.semantic_token())),
-                    ),
-                    token_text(
-                        stores,
-                        (split..words.len())
-                            .filter_map(|index| words.get(index).map(|w| w.semantic_token())),
-                    ),
-                )
-            }
-            TokenPayload::InlineTransient(word) => {
-                let (before, after) = if tokens.index == 0 {
-                    (None, Some(word.semantic_token()))
-                } else {
-                    (Some(word.semantic_token()), None)
-                };
-                (
-                    token_text(stores, before.into_iter()),
-                    token_text(stores, after.into_iter()),
-                )
-            }
-            TokenPayload::BackedUp(words) => {
-                let before = (0..tokens.index)
-                    .filter_map(|index| words.get(index))
-                    .map(|word| word.spelling.semantic_token());
-                let after = (tokens.index..)
-                    .map_while(|index| words.get(index))
-                    .map(|word| word.spelling.semantic_token());
-                (token_text(stores, before), token_text(stores, after))
-            }
-            TokenPayload::InlineBackedUp(word) => {
-                let (before, after) = if tokens.index == 0 {
-                    (None, Some(word.spelling.semantic_token()))
-                } else {
-                    (Some(word.spelling.semantic_token()), None)
-                };
-                (
-                    token_text(stores, before.into_iter()),
-                    token_text(stores, after.into_iter()),
-                )
-            }
-            TokenPayload::ArgumentRange { buffer, range } => {
-                let start = range.start();
-                let end = range.end();
-                let split = start.saturating_add(tokens.index).min(end);
-                (
-                    token_text(
-                        stores,
-                        (start..split)
-                            .filter_map(|index| buffer.get(index).map(|w| w.semantic_token())),
-                    ),
-                    token_text(
-                        stores,
-                        (split..end)
-                            .filter_map(|index| buffer.get(index).map(|w| w.semantic_token())),
-                    ),
-                )
-            }
-        };
-        // TeX82 §358 implements `\noexpand` by putting the inaccessible
-        // `frozen_dont_expand` token immediately before the backed-up operand.
-        // Umber keeps that marker structural as the level's one-delivery
-        // treatment, so §315's token-list pseudoprint must project its §258
-        // spelling before the operand even though no physical token stores it.
-        if matches!(
-            tokens.behavior,
-            TokenBehavior::BackedUp(BackupTreatment::SuppressExpandableControlSequence)
-        ) {
-            let marker = format!(
-                "{} ",
-                crate::processor::expand::print_esc_text(stores, "notexpanded:")
-            );
-            let mut rendered = String::new();
-            stores.append_selector_string_text(&marker, &mut rendered);
-            if tokens.index == 0 {
-                after.insert_str(0, &rendered);
-            } else {
-                before.insert_str(0, &rendered);
-            }
-        }
-        // tex.web §§354/390 leave `loc=null` on the exhausted v-template
-        // while returning its stored `frozen_end_template`. Umber represents
-        // that sentinel structurally instead of appending it to every stored
-        // template. Before §375 expansion it is the current token and belongs
-        // on §315's unread side; after §375 replaces it with a backed-up
-        // `frozen_endv`, the retained template has advanced past it.
-        if matches!(tokens.behavior, TokenBehavior::VTemplate)
-            && matches!(
-                tokens.retirement,
-                RetirementBehavior::RetainExhaustedVTemplate
-                    | RetirementBehavior::AwaitingVTemplateRetirement
-            )
-        {
-            let sentinel = crate::processor::expand::token_list_token_text(
-                stores,
-                stores.frozen_end_template_token(),
-            );
-            match tokens.retirement {
-                // TeX82 §760 stores `end_template_token` at the physical end
-                // of every v-part. Umber keeps it structural, so §319's
-                // pseudoprint must project it after all still-unread v-part
-                // tokens, not only once the ordinary payload is exhausted.
-                RetirementBehavior::RetainExhaustedVTemplate => after.push_str(&sentinel),
-                RetirementBehavior::AwaitingVTemplateRetirement => {
-                    debug_assert!(after.is_empty());
-                    before.push_str(&sentinel);
+        fn payload_token(
+            stores: &tex_state::CommandContext<'_>,
+            tokens: &TokenCursor,
+            index: usize,
+        ) -> Option<tex_state::token::Token> {
+            match &tokens.payload {
+                TokenPayload::Stored { tokens, .. } => stores.tokens(*tokens).get(index).copied(),
+                TokenPayload::Transient(words) => {
+                    words.get(index).map(|word| word.semantic_token())
                 }
-                _ => unreachable!("matched retained v-template retirement above"),
+                TokenPayload::InlineTransient(word) => (index == 0).then(|| word.semantic_token()),
+                TokenPayload::BackedUp(words) => {
+                    words.get(index).map(|word| word.spelling.semantic_token())
+                }
+                TokenPayload::InlineBackedUp(word) => {
+                    (index == 0).then(|| word.spelling.semantic_token())
+                }
+                TokenPayload::ArgumentRange { buffer, range } => buffer
+                    .get(range.start().saturating_add(index))
+                    .map(|word| word.semantic_token()),
             }
         }
-        // §314's macro arm is `print_ln; print_cs(name)` -- the control
-        // sequence being expanded, not a bracketed type name -- and §319
-        // pseudoprints `link(start)`, the whole macro text, so the parameter
-        // text and the `->` that §294 renders for `end_match` precede the
-        // replacement the cursor is inside.
-        if let ReplayTrace::MacroReplacement = tokens.trace {
+
+        fn render_token(
+            stores: &tex_state::CommandContext<'_>,
+            token: tex_state::token::Token,
+            raw: &mut String,
+            rendered: &mut String,
+        ) {
+            raw.clear();
+            rendered.clear();
+            crate::processor::expand::append_token_list_token_text(stores, token, raw);
+            stores.append_selector_string_text(raw, rendered);
+            #[cfg(test)]
+            note_token_context_projection(raw, rendered);
+        }
+
+        fn render_selector_text(
+            stores: &tex_state::CommandContext<'_>,
+            text: &str,
+            rendered: &mut String,
+        ) {
+            rendered.clear();
+            stores.append_selector_string_text(text, rendered);
+        }
+
+        let macro_context = if let ReplayTrace::MacroReplacement = tokens.trace {
             let TokenBehavior::MacroBody(activation) = tokens.behavior else {
                 return None;
             };
@@ -752,66 +917,165 @@ impl InputState {
                 .activations
                 .iter()
                 .find(|candidate| candidate.identity == activation)?;
-            let label = crate::processor::expand::token_list_token_text(
-                stores,
-                tex_state::token::Token::Cs(activation.name),
-            );
-            let parameter_text = token_text(
-                stores,
+            Some((
+                crate::processor::expand::token_list_token_text(
+                    stores,
+                    tex_state::token::Token::Cs(activation.name),
+                ),
                 stores
-                    .tokens(
-                        stores
-                            .macro_definition(activation.definition)
-                            .parameter_text(),
-                    )
-                    .iter()
-                    .copied(),
-            );
-            return Some(tex_state::print::ErrorContextLevel::new(
-                label,
-                format!("{parameter_text}->{before}"),
-                after,
-            ));
+                    .macro_definition(activation.definition)
+                    .parameter_text(),
+            ))
+        } else {
+            None
+        };
+        let count = payload_len(stores, tokens);
+        let split = tokens.index.min(count);
+        let noexpand_marker = matches!(
+            tokens.behavior,
+            TokenBehavior::BackedUp(BackupTreatment::SuppressExpandableControlSequence)
+        )
+        .then(|| {
+            format!(
+                "{} ",
+                crate::processor::expand::print_esc_text(stores, "notexpanded:")
+            )
+        });
+        let v_sentinel = matches!(tokens.behavior, TokenBehavior::VTemplate).then(|| {
+            crate::processor::expand::token_list_token_text(
+                stores,
+                stores.frozen_end_template_token(),
+            )
+        });
+        let mut raw = String::new();
+        let mut rendered = String::new();
+        let mut before = ContextTail::new(widths.half_error_line());
+        if matches!(
+            tokens.retirement,
+            RetirementBehavior::AwaitingVTemplateRetirement
+        ) && let Some(sentinel) = v_sentinel.as_deref()
+        {
+            before.prepend_str(sentinel);
         }
-        // §314's `loc=null` test, which only the `backed_up` family consults.
-        let exhausted = after.is_empty();
-        let label = match tokens.trace {
-            ReplayTrace::MacroParameter { .. } => "<argument> ",
-            ReplayTrace::MacroReplacement => unreachable!("handled above"),
-            ReplayTrace::BackedUp => {
-                // §312 omits a `backed_up` list that has already been read
-                // through, unless it is the level the error happened on.
-                if exhausted && !current {
-                    return None;
-                }
-                if exhausted {
-                    "<recently read> "
-                } else {
-                    "<to be read again> "
-                }
+        for index in (0..split).rev() {
+            if before.is_complete() {
+                break;
             }
-            ReplayTrace::Inserted => "<inserted text> ",
-            ReplayTrace::UTemplate | ReplayTrace::VTemplate | ReplayTrace::OmitTemplate => {
-                "<template> "
+            if let Some(token) = payload_token(stores, tokens, index) {
+                render_token(stores, token, &mut raw, &mut rendered);
+                before.prepend_str(&rendered);
             }
-            ReplayTrace::Stored(StoredReplayReason::OutputRoutine) => "<output> ",
-            ReplayTrace::Stored(StoredReplayReason::EveryPar) => "<everypar> ",
-            ReplayTrace::Stored(StoredReplayReason::EveryMath) => "<everymath> ",
-            ReplayTrace::Stored(StoredReplayReason::EveryDisplay) => "<everydisplay> ",
-            ReplayTrace::Stored(StoredReplayReason::EveryHBox) => "<everyhbox> ",
-            ReplayTrace::Stored(StoredReplayReason::EveryVBox) => "<everyvbox> ",
-            ReplayTrace::Stored(StoredReplayReason::EveryJob) => "<everyjob> ",
-            ReplayTrace::Stored(StoredReplayReason::EveryCr) => "<everycr> ",
-            ReplayTrace::Stored(StoredReplayReason::EveryEof) => "<everyeof> ",
-            ReplayTrace::Stored(StoredReplayReason::Mark) => "<mark> ",
-            ReplayTrace::Stored(StoredReplayReason::Write) => "<write> ",
-            ReplayTrace::Stored(StoredReplayReason::Discretionary) | ReplayTrace::Transient(_) => {
-                "<token list> "
+        }
+        if let Some((_, parameter_text)) = &macro_context {
+            if !before.is_complete() {
+                before.prepend_str("->");
+            }
+            for &token in stores.tokens(*parameter_text).iter().rev() {
+                if before.is_complete() {
+                    break;
+                }
+                render_token(stores, token, &mut raw, &mut rendered);
+                before.prepend_str(&rendered);
+            }
+        }
+        if split > 0
+            && !before.is_complete()
+            && let Some(marker) = noexpand_marker.as_deref()
+        {
+            render_selector_text(stores, marker, &mut rendered);
+            before.prepend_str(&rendered);
+        }
+        let (before, before_chars) = before.finish();
+        let label = if let Some((label, _)) = &macro_context {
+            label.clone()
+        } else {
+            match tokens.trace {
+                ReplayTrace::MacroParameter { .. } => "<argument> ".to_owned(),
+                ReplayTrace::MacroReplacement => unreachable!("handled above"),
+                ReplayTrace::BackedUp => String::new(),
+                ReplayTrace::Inserted => "<inserted text> ".to_owned(),
+                ReplayTrace::UTemplate | ReplayTrace::VTemplate | ReplayTrace::OmitTemplate => {
+                    "<template> ".to_owned()
+                }
+                ReplayTrace::Stored(StoredReplayReason::OutputRoutine) => "<output> ".to_owned(),
+                ReplayTrace::Stored(StoredReplayReason::EveryPar) => "<everypar> ".to_owned(),
+                ReplayTrace::Stored(StoredReplayReason::EveryMath) => "<everymath> ".to_owned(),
+                ReplayTrace::Stored(StoredReplayReason::EveryDisplay) => {
+                    "<everydisplay> ".to_owned()
+                }
+                ReplayTrace::Stored(StoredReplayReason::EveryHBox) => "<everyhbox> ".to_owned(),
+                ReplayTrace::Stored(StoredReplayReason::EveryVBox) => "<everyvbox> ".to_owned(),
+                ReplayTrace::Stored(StoredReplayReason::EveryJob) => "<everyjob> ".to_owned(),
+                ReplayTrace::Stored(StoredReplayReason::EveryCr) => "<everycr> ".to_owned(),
+                ReplayTrace::Stored(StoredReplayReason::EveryEof) => "<everyeof> ".to_owned(),
+                ReplayTrace::Stored(StoredReplayReason::Mark) => "<mark> ".to_owned(),
+                ReplayTrace::Stored(StoredReplayReason::Write) => "<write> ".to_owned(),
+                ReplayTrace::Stored(StoredReplayReason::Discretionary)
+                | ReplayTrace::Transient(_) => "<token list> ".to_owned(),
             }
         };
-        Some(tex_state::print::ErrorContextLevel::new(
-            label, before, after,
-        ))
+        let indent =
+            if label.chars().count().saturating_add(before_chars) <= widths.half_error_line() {
+                label.chars().count().saturating_add(before_chars)
+            } else {
+                widths.half_error_line()
+            };
+        let available = widths.error_line().saturating_sub(indent);
+        let mut after = ContextHead::new(available);
+        if split == 0
+            && let Some(marker) = noexpand_marker.as_deref()
+        {
+            render_selector_text(stores, marker, &mut rendered);
+            after.push_str(&rendered);
+        }
+        for index in split..count {
+            if after.is_complete() {
+                break;
+            }
+            if let Some(token) = payload_token(stores, tokens, index) {
+                render_token(stores, token, &mut raw, &mut rendered);
+                after.push_str(&rendered);
+            }
+        }
+        if !after.is_complete()
+            && matches!(
+                tokens.retirement,
+                RetirementBehavior::RetainExhaustedVTemplate
+            )
+            && let Some(sentinel) = v_sentinel.as_deref()
+        {
+            after.push_str(sentinel);
+        }
+        let (after, after_chars) = after.finish();
+        if matches!(tokens.trace, ReplayTrace::BackedUp) && after_chars == 0 && !current {
+            return None;
+        }
+        let label = if matches!(tokens.trace, ReplayTrace::BackedUp) {
+            if after_chars == 0 {
+                "<recently read> ".to_owned()
+            } else {
+                "<to be read again> ".to_owned()
+            }
+        } else {
+            label
+        };
+        #[cfg(test)]
+        note_token_context_capacity(
+            before
+                .capacity()
+                .max(after.capacity())
+                .max(raw.capacity())
+                .max(rendered.capacity()),
+        );
+        Some(
+            tex_state::print::ErrorContextLevel::from_bounded_projection(
+                label,
+                before,
+                before_chars,
+                after,
+                after_chars,
+            ),
+        )
     }
 
     /// TeX82's current `line` value for e-TeX's `\inputlineno`.
