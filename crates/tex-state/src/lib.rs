@@ -79,6 +79,7 @@ pub mod node;
 pub mod node_arena;
 pub mod node_sequence;
 pub mod page;
+mod patch_domain;
 mod pdf;
 pub mod print;
 pub mod provenance;
@@ -148,6 +149,8 @@ pub use page::{
     AWFUL_BAD, DEPLORABLE, EJECT_PENALTY, INF_PENALTY, PageBreak, PageContents, PageDimension,
     PageFireUp, PageInteger,
 };
+#[cfg(any(test, feature = "testing"))]
+pub use patch_domain::TestingPrivateRevisionDomainProbe;
 pub use provenance_resolver::{
     DetachedGeneratedSourceSpan, ProvenanceResolver, ResolvedSourceLocation,
 };
@@ -165,8 +168,9 @@ pub use universe::{
     BoxBuildTransaction, BoxDimension, EngineBoundaryHasher, FormatError, GenerationForkError,
     GenerationSubstrate, GeometryObservation, InputOpenContext, InputOpenState, InputReadState,
     InteractionMode, LocalRetrySnapshot, ParagraphShapeLine, PenaltyArrayKind, PreparedPageSuffix,
-    ReplayProbeTransaction, ShipoutTransaction, Snapshot, TakeUnboxResult, TrackedEnvironmentWrite,
-    TrackedRegionError, TrackedRegionMark, TrackedRegionRecord, UnboxKind, Universe, WorldMut,
+    PrivateRevisionAcceptanceError, ReplayProbeTransaction, ShipoutTransaction, Snapshot,
+    TakeUnboxResult, TrackedEnvironmentWrite, TrackedRegionError, TrackedRegionMark,
+    TrackedRegionRecord, UnboxKind, Universe, WorldMut,
 };
 #[cfg(feature = "profiling")]
 pub use world::ProfilingTimer;

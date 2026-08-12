@@ -980,6 +980,10 @@ fn candidate_retries_staged_missing_input_without_losing_state() {
     .expect("session starts");
     let mut inputs = StagedInputResolver::default();
     let mut candidate = session.start_cold_candidate().expect("cold candidate");
+    assert_eq!(
+        candidate.universe.testing_private_revision_domain_stats(),
+        Some((0, 0, 0, false))
+    );
     let awaiting = candidate
         .drive_with_resource_resolvers(
             &mut DecliningStagedResourceHost::new(&mut inputs),
@@ -991,6 +995,11 @@ fn candidate_retries_staged_missing_input_without_losing_state() {
         RevisionCandidateResult::AwaitingResources(ResourceNeed::Input { ref name, .. })
             if name == "child.tex"
     ));
+    assert_eq!(
+        candidate.universe.testing_private_revision_domain_stats(),
+        Some((0, 0, 0, false)),
+        "NeedResource closes and truncates only its failed operation"
+    );
     inputs
         .files
         .insert("child".to_owned(), "\\relax".to_owned());
@@ -1003,9 +1012,194 @@ fn candidate_retries_staged_missing_input_without_losing_state() {
             .expect("provisioned retry completes"),
         RevisionCandidateResult::Complete
     ));
+    assert_eq!(
+        candidate.universe.testing_private_revision_domain_stats(),
+        Some((0, 0, 0, false))
+    );
     session
         .accept_cold_candidate(candidate)
         .expect("completed retry accepts");
+    assert_eq!(
+        session
+            .substrate
+            .as_ref()
+            .expect("accepted cold substrate")
+            .testing_private_revision_domain_stats(),
+        None
+    );
+}
+
+#[test]
+fn dropping_private_candidate_releases_its_complete_domain() {
+    let session = Session::start(
+        template_without_preinstalled_primitives(),
+        "rejected-domain",
+        RevisionId::new(1),
+        "\\message{committed}\\input child \\end",
+        usize::MAX,
+    )
+    .expect("session starts");
+    let mut inputs = StagedInputResolver::default();
+    let mut candidate = session.start_cold_candidate().expect("cold candidate");
+    let probe = candidate
+        .universe
+        .testing_private_revision_domain_probe()
+        .expect("candidate owns one domain");
+    assert!(probe.is_live());
+    candidate
+        .universe
+        .testing_arm_next_private_revision_operation_allocation(64);
+    assert!(matches!(
+        candidate
+            .drive_with_resource_resolvers(
+                &mut DecliningStagedResourceHost::new(&mut inputs),
+                &Cancellation::new(),
+            )
+            .expect("candidate suspends after the committed message"),
+        RevisionCandidateResult::AwaitingResources(ResourceNeed::Input { ref name, .. })
+            if name == "child.tex"
+    ));
+    let retained = candidate
+        .universe
+        .testing_private_revision_domain_stats()
+        .expect("candidate domain remains live across suspension");
+    assert_eq!((retained.0, retained.1, retained.3), (1, 64, false));
+    inputs
+        .files
+        .insert("child".to_owned(), "\\relax".to_owned());
+    assert!(matches!(
+        candidate
+            .drive_with_resource_resolvers(
+                &mut DecliningStagedResourceHost::new(&mut inputs),
+                &Cancellation::new(),
+            )
+            .expect("candidate completes after resource fulfillment"),
+        RevisionCandidateResult::Complete
+    ));
+    assert_eq!(
+        candidate.universe.testing_private_revision_domain_stats(),
+        Some(retained),
+        "successful private work is retained exactly once across retry"
+    );
+
+    drop(candidate);
+
+    assert!(!probe.is_live());
+    assert!(session.substrate.is_none());
+}
+
+#[test]
+fn accepted_replacement_closes_domain_and_unrooted_replacement_is_refused_atomically() {
+    let original = "\\end";
+    let edited = "\\relax \\end";
+    let mut session = Session::start(
+        template_without_preinstalled_primitives(),
+        "replacement-domain",
+        RevisionId::new(1),
+        original,
+        usize::MAX,
+    )
+    .expect("session starts");
+    session.cold().expect("initial revision accepts");
+    assert_eq!(
+        session
+            .substrate
+            .as_ref()
+            .expect("accepted initial substrate")
+            .testing_private_revision_domain_stats(),
+        None
+    );
+
+    let replacement_edit = || Edit {
+        base_revision: RevisionId::new(1),
+        expected_hash: ContentHash::from_bytes(original.as_bytes()),
+        range: 0..original.len(),
+        replacement: edited.to_owned(),
+    };
+    let mut accepted_candidate = session
+        .start_advance_candidate_from_job_start(RevisionId::new(2), replacement_edit())
+        .expect("replacement candidate starts");
+    assert!(matches!(
+        &accepted_candidate.kind,
+        RevisionCandidateKind::Replacement { .. }
+    ));
+    assert!(matches!(
+        accepted_candidate
+            .drive_with_resource_resolvers(&mut StagedResourceHost::default(), &Cancellation::new())
+            .expect("replacement completes"),
+        RevisionCandidateResult::Complete
+    ));
+    let accepted_pending = session
+        .prepare_revision_candidate(accepted_candidate)
+        .expect("replacement prepares");
+    let TransactionSubstrate::Replaced {
+        substrate: pending_substrate,
+        ..
+    } = &accepted_pending.substrate
+    else {
+        panic!("forced job-start revision replaces its substrate");
+    };
+    assert_eq!(
+        pending_substrate.testing_private_revision_domain_stats(),
+        Some((0, 0, 0, false))
+    );
+    session
+        .accept_revision(accepted_pending)
+        .expect("empty private domain closes on acceptance");
+    assert_eq!(session.revision, RevisionId::new(2));
+    assert_eq!(
+        session
+            .substrate
+            .as_ref()
+            .expect("accepted replacement substrate")
+            .testing_private_revision_domain_stats(),
+        None
+    );
+
+    let refused_original = session.source.clone();
+    let refused_edit = Edit {
+        base_revision: RevisionId::new(2),
+        expected_hash: session.content_hash,
+        range: 0..refused_original.len(),
+        replacement: "\\relax \\relax \\end".to_owned(),
+    };
+    let mut refused_candidate = session
+        .start_advance_candidate_from_job_start(RevisionId::new(3), refused_edit)
+        .expect("second replacement candidate starts");
+    let refused_probe = refused_candidate
+        .universe
+        .testing_private_revision_domain_probe()
+        .expect("replacement owns a domain");
+    assert!(matches!(
+        refused_candidate
+            .drive_with_resource_resolvers(&mut StagedResourceHost::default(), &Cancellation::new())
+            .expect("second replacement completes"),
+        RevisionCandidateResult::Complete
+    ));
+    refused_candidate
+        .completed_universe_mut()
+        .expect("completed candidate exposes its universe")
+        .testing_commit_private_revision_allocation(4_096);
+    let refused_pending = session
+        .prepare_revision_candidate(refused_candidate)
+        .expect("second replacement prepares");
+    assert!(matches!(
+        session.accept_revision(refused_pending),
+        Err(SessionError::PrivateRevisionAcceptance(
+            tex_state::PrivateRevisionAcceptanceError::UnrootedAllocations
+        ))
+    ));
+    assert!(!refused_probe.is_live());
+    assert_eq!(session.revision, RevisionId::new(2));
+    assert_eq!(session.source, refused_original);
+    assert_eq!(
+        session
+            .substrate
+            .as_ref()
+            .expect("previous accepted substrate remains")
+            .testing_private_revision_domain_stats(),
+        None
+    );
 }
 
 #[test]

@@ -41,6 +41,18 @@ ownership. It does not permit untracked mutation or host I/O for performance.
 Only aggregate APIs on `Universe` and its owned `Stores` facade may coordinate
 changes across these stores.
 
+A private incremental revision additionally owns one disposable allocation
+domain. The domain is absent from templates and accepted generations at rest.
+Each aggregate executor operation opens one owner- and serial-exact mark;
+success retains that suffix once inside the private revision, while ordinary
+failure or resource suspension truncates it exactly. Revision rejection drops
+the complete domain. Acceptance consumes an explicit typed root set and moves
+only those individually reference-counted immutable payloads into accepted
+ownership; an unrooted nonempty domain is an ownership error. The generic
+domain is implemented before the typed stores migrate to it, so current legacy
+store roots retain their existing owners. See
+[Private revision allocation domains](patch_allocation_domains.md).
+
 The same boundary owns TeX82-shaped allocator diagnostics:
 `Universe::engine_usage_statistics` combines live usage from the interner,
 token, glue, node, font, and hyphenation stores. End-of-job code consumes this
@@ -404,7 +416,13 @@ stack later returns to the same depth and journal position.
 
 The executor's private bounded retry point uses `LocalRetrySnapshot`. It
 captures the same rollback substrate and group-lineage capability, but it does
-not publish, compute, or advance the durable semantic state identity. TeX82
+not publish, compute, or advance the durable semantic state identity. When a
+private revision domain is active, the same opaque snapshot owns its single
+allocation-operation mark. Rollback truncates that domain suffix before the
+restored command and mode roots become observable; commit closes the mark
+without copying the retained prefix. Canonical partial-state error paths may
+retain their specified semantic scalars but still discard allocations owned
+by the failed operation. TeX82
 §§1030--1038 dispatch commands within `main_control`; only the named checkpoint
 schedule is a semantic hashing boundary. The unobserved production driver
 therefore reuses one private retry point across at most 256 operations and

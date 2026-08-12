@@ -626,11 +626,20 @@ impl StepSnapshot {
         stores.can_rollback_to_local_retry(&self.universe)
     }
 
-    fn commit(self, control: &mut MainControl) {
+    fn commit(self, control: &mut MainControl, stores: &mut Universe) {
         control
             .modes
             .commit_journal(self.mode_savepoint)
             .expect("step owns the innermost mode savepoint");
+        stores.commit_local_retry_snapshot(self.universe);
+    }
+
+    fn commit_failed(self, control: &mut MainControl, stores: &mut Universe) {
+        control
+            .modes
+            .commit_journal(self.mode_savepoint)
+            .expect("step owns the innermost mode savepoint");
+        stores.discard_local_retry_allocations(self.universe);
     }
 }
 
@@ -1820,8 +1829,12 @@ impl MainControl {
         StepSnapshot::capture(self, stores)
     }
 
-    fn commit_step(&mut self, snapshot: StepSnapshot) {
-        snapshot.commit(self);
+    fn commit_step(&mut self, snapshot: StepSnapshot, stores: &mut Universe) {
+        snapshot.commit(self, stores);
+    }
+
+    fn commit_failed_step(&mut self, snapshot: StepSnapshot, stores: &mut Universe) {
+        snapshot.commit_failed(self, stores);
     }
 
     /// Lends the whole command machine at once, for helpers that build their
@@ -1910,12 +1923,12 @@ impl MainControl {
         // suspensions and all other failed operations retain atomic rollback.
         if preserve_pdf_xform_reservations {
             let _ = self.admit_observed_receipt(stores, OperationTermination::Failed);
-            self.commit_step(snapshot);
+            self.commit_failed_step(snapshot, stores);
             return Err(error);
         }
         if !snapshot.can_rollback(stores) {
             let _ = self.admit_observed_receipt(stores, OperationTermination::Failed);
-            self.commit_step(snapshot);
+            self.commit_failed_step(snapshot, stores);
             Self::publish_pdf_fatal_error(stores, &error)?;
             return Err(error);
         }
@@ -2641,7 +2654,7 @@ impl MainControl {
         match applied {
             Ok(step) => {
                 let tracked_result = tracked_mark.map(|mark| stores.finish_tracked_region(mark));
-                self.commit_step(snapshot);
+                self.commit_step(snapshot, stores);
                 if tracks_telemetry {
                     self.advance_telemetry.live_savepoints -= 1;
                     self.advance_telemetry.commits += 1;
@@ -2654,12 +2667,12 @@ impl MainControl {
                 Ok(StepResult::Progress(step))
             }
             Err(error) if matches!(transaction, OperationTransaction::Alignment) => {
-                if error.as_fatal().is_some() || !snapshot.can_rollback(stores) {
-                    let termination = error
-                        .as_fatal()
-                        .map_or(OperationTermination::Failed, OperationTermination::Fatal);
-                    let _ = self.admit_observed_receipt(stores, termination);
-                    self.commit_step(snapshot);
+                if let Some(fatal) = error.as_fatal() {
+                    let _ = self.admit_observed_receipt(stores, OperationTermination::Fatal(fatal));
+                    self.commit_step(snapshot, stores);
+                } else if !snapshot.can_rollback(stores) {
+                    let _ = self.admit_observed_receipt(stores, OperationTermination::Failed);
+                    self.commit_failed_step(snapshot, stores);
                 } else {
                     self.rollback_step(snapshot, stores);
                 }
@@ -2706,7 +2719,7 @@ impl MainControl {
                         stores.poison_tracked_region(TrackedRegionBarrier::FatalPartialCommit);
                         stores.finish_tracked_region(mark)
                     });
-                    self.commit_step(snapshot);
+                    self.commit_step(snapshot, stores);
                     self.finish_operation_telemetry(false);
                     let terminal = self.succumb(fatal);
                     if let (Some(outcome), Some(result)) =
@@ -2967,7 +2980,7 @@ impl MainControl {
         })();
         match operation {
             Ok(step) => {
-                self.commit_step(snapshot);
+                self.commit_step(snapshot, stores);
                 Ok(DiagnosticStepResult::Progress(step))
             }
             Err(error) => match self.finish_failed_step(snapshot, stores, error)? {

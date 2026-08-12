@@ -91,7 +91,7 @@ provenance migration, but it grants no exception to patch-domain truncation.
 Domain payloads are individually reference-counted immutable objects. Runtime
 handles are non-owning, owner-checked coordinates. Acceptance receives an
 explicit deterministic root list from the aggregate owners, validates every
-root before transfer, clones ownership only for the distinct listed payloads,
+root before transfer, moves ownership only for the distinct listed payloads,
 and consumes the domain. Unlisted payloads are released with the domain.
 
 An accepted payload may structurally own other immutable payloads. That

@@ -199,6 +199,7 @@ impl EngineCheckpoint {
             })
             .map_err(EditorRestoreError::Fork)?;
         let fork_latency = fork_started.elapsed();
+        universe.begin_private_revision();
         let mut rebound = self.clone();
         universe
             .install_editor_fragments(fragments, layout)

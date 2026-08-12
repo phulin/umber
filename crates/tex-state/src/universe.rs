@@ -39,6 +39,7 @@ use crate::page::{
     PageBreak, PageBuilderState, PageContents, PageDimension, PageFireUp, PageHashCache,
     PageInsertion, PageInteger, PageMark, PageMemoState, PageStateHashCursor,
 };
+use crate::patch_domain::{PatchAllocationDomain, PatchOperationMark};
 use crate::pdf::{
     PdfDocumentFragmentKind, PdfDocumentObjectIds, PdfExternalImageId, PdfExternalImageMetadata,
     PdfExternalImageRegistrationError, PdfFontResourceRecord, PdfFormatState,
@@ -311,6 +312,7 @@ pub struct Snapshot {
 #[derive(Debug)]
 pub struct LocalRetrySnapshot {
     rollback: ScopedRollback,
+    patch_operation: Option<PatchOperationMark>,
 }
 
 /// One immutable accepted-generation state substrate shared by O(1) snapshots.
@@ -333,6 +335,27 @@ pub enum GenerationForkError {
     RootRevisionMismatch,
     ChangedRootInterval,
 }
+
+/// A private revision cannot become accepted until every domain allocation is
+/// named by an explicit typed semantic or detached-output root.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PrivateRevisionAcceptanceError {
+    ActiveOperation,
+    UnrootedAllocations,
+}
+
+impl std::fmt::Display for PrivateRevisionAcceptanceError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(match self {
+            Self::ActiveOperation => "private revision still owns an active allocation operation",
+            Self::UnrootedAllocations => {
+                "private revision has allocations without explicit accepted roots"
+            }
+        })
+    }
+}
+
+impl std::error::Error for PrivateRevisionAcceptanceError {}
 
 impl std::fmt::Display for GenerationForkError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -701,6 +724,26 @@ impl GenerationSubstrate {
         self.charged_bytes
     }
 
+    /// Completes the private-revision ownership transition before this
+    /// substrate becomes accepted session state.
+    #[doc(hidden)]
+    pub fn accept_private_revision(&mut self) -> Result<(), PrivateRevisionAcceptanceError> {
+        self.universe.accept_private_revision()?;
+        self.charged_bytes = generation_charged_bytes(
+            &self.universe,
+            &self.retained_origin_locations,
+            &self.retained_origin_spans,
+        );
+        Ok(())
+    }
+
+    /// Exact private-domain ownership for cross-crate lifecycle tests.
+    #[cfg(any(test, feature = "testing"))]
+    #[must_use]
+    pub fn testing_private_revision_domain_stats(&self) -> Option<(usize, usize, usize, bool)> {
+        self.universe.testing_private_revision_domain_stats()
+    }
+
     #[must_use]
     pub const fn world(&self) -> &World {
         self.universe.world()
@@ -973,6 +1016,12 @@ fn generation_charged_bytes(
     universe
         .stores
         .generation_retained_bytes()
+        .saturating_add(
+            universe
+                .private_revision_domain
+                .as_ref()
+                .map_or(0, PatchAllocationDomain::retained_bytes),
+        )
         .saturating_add(std::mem::size_of::<Universe>())
         .saturating_add(universe.input_summary.retained_bytes())
         .saturating_add(universe.page.retained_bytes())
@@ -1146,6 +1195,9 @@ struct StateHashProjectionCache {
 #[derive(Debug)]
 pub struct Universe {
     owner: UniverseOwner,
+    /// Disposable allocations owned by one private incremental revision.
+    /// Absent from templates and accepted generations at rest.
+    private_revision_domain: Option<PatchAllocationDomain>,
     stores: Stores,
     world: World,
     interaction_mode: InteractionMode,
@@ -1447,6 +1499,10 @@ impl PenaltyArrayKind {
 
 impl Clone for Universe {
     fn clone(&self) -> Self {
+        assert!(
+            self.private_revision_domain.is_none(),
+            "a private revision allocation domain cannot be cloned"
+        );
         let stores = self.stores.clone();
         let state_hash_base = StateHashBase {
             store: stores.retarget_state_hash_cursor(&self.state_hash_base.store),
@@ -1460,6 +1516,7 @@ impl Clone for Universe {
         };
         Self {
             owner: UniverseOwner::new(),
+            private_revision_domain: None,
             stores,
             world: self.world.clone(),
             interaction_mode: self.interaction_mode,
@@ -1744,6 +1801,7 @@ impl Universe {
         };
         Self {
             owner: UniverseOwner::new(),
+            private_revision_domain: None,
             stores,
             world,
             interaction_mode: InteractionMode::default(),
@@ -2939,6 +2997,7 @@ impl Universe {
         };
         let mut universe = Self {
             owner: UniverseOwner::new(),
+            private_revision_domain: None,
             stores,
             world,
             interaction_mode: mode,
@@ -3038,8 +3097,14 @@ impl Universe {
     #[doc(hidden)]
     #[must_use]
     pub fn snapshot_for_local_retry(&mut self) -> LocalRetrySnapshot {
+        let patch_operation = self.private_revision_domain.as_mut().map(|domain| {
+            domain
+                .begin_operation()
+                .expect("private revision owns one aggregate operation mark")
+        });
         LocalRetrySnapshot {
             rollback: self.capture_scoped_rollback(),
+            patch_operation,
         }
     }
 
@@ -3047,9 +3112,99 @@ impl Universe {
     #[doc(hidden)]
     #[must_use]
     pub fn can_rollback_to_local_retry(&self, snapshot: &LocalRetrySnapshot) -> bool {
-        snapshot.rollback.owner == self.owner.snapshot_owner()
+        let patch_operation_is_live =
+            match (&self.private_revision_domain, &snapshot.patch_operation) {
+                (Some(domain), Some(mark)) => domain.can_close_operation(mark),
+                (None, None) => true,
+                _ => false,
+            };
+        patch_operation_is_live
+            && snapshot.rollback.owner == self.owner.snapshot_owner()
             && self.stores.can_restore_snapshot(&snapshot.rollback.store)
             && self.world.snapshot_is_retained(&snapshot.rollback.world)
+    }
+
+    /// Installs one fresh allocation owner for a private revision.
+    ///
+    /// This is an engine/session lifecycle hook, not a store or host
+    /// capability. Templates and accepted generations must not carry it.
+    #[doc(hidden)]
+    pub fn begin_private_revision(&mut self) {
+        assert!(
+            self.private_revision_domain.is_none(),
+            "Universe already owns a private revision allocation domain"
+        );
+        self.private_revision_domain = Some(PatchAllocationDomain::new());
+    }
+
+    /// Closes an accepted private revision after its typed owners have
+    /// transferred every explicit root.
+    ///
+    /// The foundation has no migrated stores yet, so a nonempty domain is an
+    /// ownership defect rather than permission to retain the domain wholesale.
+    fn accept_private_revision(&mut self) -> Result<(), PrivateRevisionAcceptanceError> {
+        let Some(domain) = self.private_revision_domain.as_ref() else {
+            return Ok(());
+        };
+        let stats = domain.stats();
+        if stats.operation_active {
+            return Err(PrivateRevisionAcceptanceError::ActiveOperation);
+        }
+        if stats.allocations != 0 {
+            return Err(PrivateRevisionAcceptanceError::UnrootedAllocations);
+        }
+        let domain = self
+            .private_revision_domain
+            .take()
+            .expect("private domain was validated above");
+        let accepted = domain
+            .accept(Vec::new())
+            .expect("empty explicit root transfer is valid");
+        debug_assert_eq!(accepted.len(), 0);
+        Ok(())
+    }
+
+    /// Commits the private allocation suffix paired with one successful
+    /// executor operation.
+    #[doc(hidden)]
+    pub fn commit_local_retry_snapshot(&mut self, snapshot: LocalRetrySnapshot) {
+        let LocalRetrySnapshot {
+            rollback: _,
+            patch_operation,
+        } = snapshot;
+        match (&mut self.private_revision_domain, patch_operation) {
+            (Some(domain), Some(mark)) => domain
+                .commit_operation(mark)
+                .expect("local retry owns the active patch operation"),
+            (None, None) => {}
+            _ => panic!("local retry patch operation does not match its Universe"),
+        }
+    }
+
+    /// Discards only allocations made by a failed private operation while
+    /// retaining its canonical partial semantic state.
+    ///
+    /// TeX has a small number of nonfatal paths whose save-stack timeline can
+    /// no longer roll back, plus pdfTeX's reserved-object error. Those paths
+    /// still do not acquire ownership of failed patch allocations.
+    #[doc(hidden)]
+    pub fn discard_local_retry_allocations(&mut self, snapshot: LocalRetrySnapshot) {
+        let LocalRetrySnapshot {
+            rollback,
+            patch_operation,
+        } = snapshot;
+        assert_eq!(
+            rollback.owner,
+            self.owner.snapshot_owner(),
+            "local retry snapshot belongs to a different Universe instance"
+        );
+        match (&mut self.private_revision_domain, patch_operation) {
+            (Some(domain), Some(mark)) => domain
+                .rollback_operation(mark)
+                .expect("local retry owns the active patch operation"),
+            (None, None) => {}
+            _ => panic!("local retry patch operation does not match its Universe"),
+        }
     }
 
     #[must_use]
@@ -3267,7 +3422,10 @@ impl Universe {
     /// provenance identities verified for immediate same-step replay.
     #[doc(hidden)]
     pub fn rollback_local_retry_snapshot(&mut self, snapshot: LocalRetrySnapshot) {
-        let rollback = snapshot.rollback;
+        let LocalRetrySnapshot {
+            rollback,
+            patch_operation,
+        } = snapshot;
         assert_eq!(
             rollback.owner,
             self.owner.snapshot_owner(),
@@ -3289,6 +3447,13 @@ impl Universe {
             .restore_tracker(&rollback.dependency_tracker);
         self.geometry_observations
             .truncate(rollback.geometry_observations_len);
+        match (&mut self.private_revision_domain, patch_operation) {
+            (Some(domain), Some(mark)) => domain
+                .rollback_operation(mark)
+                .expect("local retry owns the active patch operation"),
+            (None, None) => {}
+            _ => panic!("local retry patch operation does not match its Universe"),
+        }
     }
 
     fn rollback_generation_fork(&mut self, snapshot: &Snapshot) {
@@ -8294,6 +8459,71 @@ impl Universe {
     #[must_use]
     pub fn testing_survivor_pin_retained_bytes(&self) -> usize {
         self.stores.testing_survivor_pin_retained_bytes()
+    }
+
+    /// Exact private-domain ownership used by cross-crate operation controls.
+    #[cfg(any(test, feature = "testing"))]
+    #[must_use]
+    pub fn testing_private_revision_domain_stats(&self) -> Option<(usize, usize, usize, bool)> {
+        self.private_revision_domain.as_ref().map(|domain| {
+            let stats = domain.stats();
+            (
+                stats.allocations,
+                stats.logical_bytes,
+                stats.slot_capacity_bytes,
+                stats.operation_active,
+            )
+        })
+    }
+
+    /// Returns a non-owning liveness probe for candidate rejection tests.
+    #[cfg(any(test, feature = "testing"))]
+    #[must_use]
+    pub fn testing_private_revision_domain_probe(
+        &self,
+    ) -> Option<crate::TestingPrivateRevisionDomainProbe> {
+        self.private_revision_domain
+            .as_ref()
+            .map(PatchAllocationDomain::testing_probe)
+    }
+
+    /// Arms one exact allocation inside the next real aggregate operation.
+    #[cfg(any(test, feature = "testing"))]
+    pub fn testing_arm_next_private_revision_operation_allocation(&mut self, bytes: usize) {
+        self.private_revision_domain
+            .as_mut()
+            .expect("testing allocation requires a private revision")
+            .testing_arm_next_operation_allocation(bytes);
+    }
+
+    /// Allocates exact charged bytes in the active private operation. The
+    /// payload has no semantic consumer and exists only to prove aggregate
+    /// operation and candidate lifecycle behavior.
+    #[cfg(any(test, feature = "testing"))]
+    pub fn testing_allocate_private_revision_bytes(&mut self, bytes: usize) {
+        self.private_revision_domain
+            .as_mut()
+            .expect("testing allocation requires a private revision")
+            .allocate(vec![0_u8; bytes].into_boxed_slice(), bytes)
+            .expect("testing allocation requires an active operation");
+    }
+
+    /// Commits one synthetic allocation as earlier successful private work.
+    #[cfg(any(test, feature = "testing"))]
+    pub fn testing_commit_private_revision_allocation(&mut self, bytes: usize) {
+        let domain = self
+            .private_revision_domain
+            .as_mut()
+            .expect("testing allocation requires a private revision");
+        let mark = domain
+            .begin_operation()
+            .expect("testing allocation requires no active operation");
+        domain
+            .allocate(vec![0_u8; bytes].into_boxed_slice(), bytes)
+            .expect("testing allocation belongs to the synthetic operation");
+        domain
+            .commit_operation(mark)
+            .expect("synthetic allocation operation commits");
     }
 
     /// Computes allocator-payload accounting for all compact node storage.

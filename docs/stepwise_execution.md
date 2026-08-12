@@ -231,6 +231,7 @@ Immediately before a candidate step, the run captures `StepSavepoint`:
 ```text
 StepSavepoint {
     universe: LocalRetrySnapshot,
+    private-revision allocation operation mark,
     command: CommandStateSnapshot,
     modes: ModeNest rollback root,
     control: execution rollback roots,
@@ -248,6 +249,13 @@ durable `Snapshot` identity described in the core-state contract. The
 unobserved production runner holds one local retry snapshot across its bounded
 256-operation chunk; diagnostic one-operation and observed-delivery entry
 points retain their narrower boundary.
+For an incremental candidate it also owns the only active mark in that
+revision's disposable allocation domain. A successful step closes the mark
+and keeps its suffix once. A resource need, cancellation, hard failure, or
+ordinary error truncates every allocation after the mark; earlier committed
+private work stays owned by the same candidate across suspension. TeX paths
+whose semantic save-stack state must partially commit still discard the failed
+allocation suffix.
 The chunk also returns after a world effect so the host can publish same-run
 output before a later command probes it and can enforce the pending-effect
 budget at the first exceeding operation.

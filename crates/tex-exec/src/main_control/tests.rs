@@ -32,6 +32,45 @@ fn register_source(control: &mut MainControl, bytes: &[u8]) {
 }
 
 #[test]
+fn aggregate_step_marks_commit_private_work_and_truncate_failed_suffixes_exactly() {
+    let mut stores = Universe::new();
+    stores.begin_private_revision();
+    let mut control = MainControl::default();
+
+    let committed_step = control.snapshot_step(&mut stores);
+    assert_eq!(
+        stores.testing_private_revision_domain_stats(),
+        Some((0, 0, 0, true))
+    );
+    stores.testing_allocate_private_revision_bytes(64);
+    control.commit_step(committed_step, &mut stores);
+    let committed = stores
+        .testing_private_revision_domain_stats()
+        .expect("private revision domain remains live");
+    assert_eq!((committed.0, committed.1, committed.3), (1, 64, false));
+
+    for _ in 0..1_024 {
+        let failed_step = control.snapshot_step(&mut stores);
+        stores.testing_allocate_private_revision_bytes(8_192);
+        control.rollback_step(failed_step, &mut stores);
+        assert_eq!(
+            stores.testing_private_revision_domain_stats(),
+            Some(committed),
+            "failed operation retains only the earlier committed suffix"
+        );
+    }
+
+    let failed_partial_commit = control.snapshot_step(&mut stores);
+    stores.testing_allocate_private_revision_bytes(16_384);
+    control.commit_failed_step(failed_partial_commit, &mut stores);
+    assert_eq!(
+        stores.testing_private_revision_domain_stats(),
+        Some(committed),
+        "a canonical partial semantic commit still discards failed allocations"
+    );
+}
+
+#[test]
 fn tracked_advance_records_command_and_execution_reads_after_commit() {
     let mut stores = Universe::new_with_plain_catcodes();
     let mut control = MainControl::tex82_initex(&mut stores);

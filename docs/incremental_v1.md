@@ -493,6 +493,16 @@ Dropping it is rollback; accepting it performs the existing pruning and
 generation transition once. This is the boundary used to compose editor
 acceptance with VFS build transactions.
 
+The private candidate and prepared transaction also own one disposable
+allocation domain. Resource suspension retains the same domain after rolling
+back only the blocked operation. Dropping either owner rejects the complete
+domain. Acceptance asks the aggregate state owners for explicit typed roots,
+moves only the distinct immutable payloads named by those roots, and then
+drops the domain; it never preserves an arena or searches a graph because one
+payload survived. Store-specific root projections land with their dedicated
+representation migrations under the generic contract in
+[Private revision allocation domains](patch_allocation_domains.md).
+
 Within an accepted generation, records are ordered by schedule and their
 restart roots, canonical comparison identities, and revision metadata are
 never mutated in place. Rehoming creates a new accepted record wrapper rather

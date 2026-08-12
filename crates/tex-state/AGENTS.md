@@ -88,6 +88,7 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/node_arena/view.rs`: Zero-allocation node references, list spans, raw tag predicates, character runs, and iterators.
 - `src/node_arena/tests.rs`: Unit tests for node-list allocation, lookup, rollback, and arena liveness.
 - `src/page.rs`: Snapshot-owned page-builder state, page dimensions/integers, contribution/current-page queues, and fire-up records.
+- `src/patch_domain.rs` and `src/patch_domain/tests.rs`: private-revision allocation ownership, exact single-operation marks, explicit immutable-root transfer, and focused lifecycle controls.
 - `src/pdf.rs`: Checkpointed pdfTeX document mode, deterministic object allocation, and committed-page ledger.
 - `src/pdf/action.rs`: Typed, checkpointed PDF action model shared by catalog, link, and outline scanners.
 - `src/pdf/annotation.rs`: Checkpointed general-annotation reservations, running dimension specs, and logical-link records.

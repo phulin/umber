@@ -1339,6 +1339,7 @@ impl Session {
     pub fn start_cold_candidate(&self) -> Result<RevisionCandidate, SessionError> {
         let mut universe = self.template.clone();
         universe.begin_retained_session()?;
+        universe.begin_private_revision();
         universe.install_editor_fragments(&self.fragments, &self.layout)?;
         universe.set_root_editor_content_hash(ContentHash::from_bytes(self.source.as_bytes()));
         let mut control = candidate_control(
@@ -1603,6 +1604,7 @@ impl Session {
     ) -> Result<RevisionCandidate, SessionError> {
         let mut universe = self.template.clone();
         universe.begin_retained_session()?;
+        universe.begin_private_revision();
         universe.install_editor_fragments(&setup.fragments, &setup.next_layout)?;
         universe.set_root_editor_content_hash(ContentHash::from_bytes(setup.next.as_bytes()));
         let mut control = candidate_control(
@@ -2371,6 +2373,7 @@ impl Session {
                     &fragments,
                     &layout,
                 );
+                substrate.accept_private_revision()?;
                 self.substrate = Some(substrate);
             }
         }
@@ -3189,6 +3192,7 @@ pub enum SessionError {
     World(WorldError),
     Restore(Box<EditorRestoreError>),
     Fork(GenerationForkError),
+    PrivateRevisionAcceptance(tex_state::PrivateRevisionAcceptanceError),
     Fragment(tex_state::source_map::SourceMapError),
     Layout(EditorLayoutError),
     RenderSource(String),
@@ -3242,6 +3246,12 @@ impl fmt::Display for SessionError {
             Self::World(error) => write!(f, "incremental world failed: {error}"),
             Self::Restore(error) => write!(f, "incremental restart failed: {error}"),
             Self::Fork(error) => write!(f, "incremental generation retarget failed: {error}"),
+            Self::PrivateRevisionAcceptance(error) => {
+                write!(
+                    f,
+                    "incremental private revision cannot be accepted: {error}"
+                )
+            }
             Self::Fragment(error) => write!(f, "editor fragment allocation failed: {error}"),
             Self::Layout(error) => write!(f, "editor layout update failed: {error}"),
             Self::RenderSource(error) => write!(f, "rendered source query failed: {error}"),
@@ -3313,6 +3323,12 @@ impl From<EditorRestoreError> for SessionError {
 impl From<GenerationForkError> for SessionError {
     fn from(value: GenerationForkError) -> Self {
         Self::Fork(value)
+    }
+}
+
+impl From<tex_state::PrivateRevisionAcceptanceError> for SessionError {
+    fn from(value: tex_state::PrivateRevisionAcceptanceError) -> Self {
+        Self::PrivateRevisionAcceptance(value)
     }
 }
 
