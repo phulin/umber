@@ -128,6 +128,24 @@ pub struct ModeList {
 }
 
 impl ModeList {
+    fn visit_node_lists_mut(&mut self, mut visit: impl FnMut(&mut NodeListId)) {
+        self.sequence.visit_node_lists_mut(&mut visit);
+        if let Some(fraction) = &mut self.incomplete_fraction {
+            visit(&mut fraction.numerator);
+        }
+        if let Some(interrupt) = &mut self.display_interrupt
+            && let Some(prototype) = &mut interrupt.prototype
+        {
+            visit(&mut prototype.children);
+            if let Some(children) = &mut prototype.diagnostic_children {
+                visit(children);
+            }
+        }
+        if let Some(eq_no) = &mut self.display_eq_no {
+            visit(&mut eq_no.display);
+        }
+    }
+
     #[must_use]
     pub fn nodes(&self) -> &[Node] {
         self.sequence.semantic()
@@ -923,6 +941,7 @@ impl ModeLevelSummary {
 #[derive(Clone, Debug, PartialEq)]
 pub struct ModeNestSummary {
     levels: Arc<Vec<ModeLevelSummary>>,
+    node_owners: tex_state::survivor::SurvivorOwners,
 }
 
 impl ModeNestSummary {
@@ -1104,6 +1123,7 @@ fn hash_optional_u32(value: Option<u32>, projection: &mut EngineBoundaryHasher<'
 pub struct ModeNest {
     levels: Arc<Vec<ModeLevelSummary>>,
     journal: journal::ModeJournal,
+    node_owners: tex_state::survivor::SurvivorOwners,
     /// TeX82 §216's maximum pre-push `nest_ptr`. This runtime diagnostic is
     /// intentionally absent from summaries, semantic equality, and hashes.
     max_nest_stack: usize,
@@ -1114,6 +1134,7 @@ impl Clone for ModeNest {
         Self {
             levels: self.levels.clone(),
             journal: journal::ModeJournal::enabled(self.levels.len()),
+            node_owners: self.node_owners.clone(),
             max_nest_stack: self.max_nest_stack,
         }
     }
@@ -1155,6 +1176,7 @@ impl ModeNest {
         Self {
             levels: Arc::new(levels),
             journal: journal::ModeJournal::enabled(1),
+            node_owners: tex_state::survivor::SurvivorOwners::default(),
             max_nest_stack: 0,
         }
     }
@@ -1173,6 +1195,7 @@ impl ModeNest {
         Ok(Self {
             journal: journal::ModeJournal::enabled(summary.levels.len()),
             levels: summary.levels,
+            node_owners: summary.node_owners,
             max_nest_stack: 0,
         })
     }
@@ -1181,7 +1204,24 @@ impl ModeNest {
     pub fn summary(&self) -> ModeNestSummary {
         ModeNestSummary {
             levels: self.levels.clone(),
+            node_owners: self.node_owners.clone(),
         }
+    }
+
+    pub(crate) fn promote_node_roots(
+        &mut self,
+        stores: &mut Universe,
+        snapshot: &mut tex_state::LocalRetrySnapshot,
+    ) {
+        let mut roots = Vec::new();
+        for level in Arc::make_mut(&mut self.levels) {
+            level.list.visit_node_lists_mut(|id| {
+                *id = stores.promote_node_list_for_commit(snapshot, *id);
+                roots.push(*id);
+            });
+        }
+        self.node_owners =
+            tex_state::survivor::SurvivorOwners::new(stores.committed_node_owners(&roots));
     }
 
     #[must_use]

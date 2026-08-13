@@ -34,7 +34,7 @@ use crate::macro_store::{MacroDefinitionProvenance, MacroDefinitionRef, MacroMea
 use crate::math::MathFontSize;
 use crate::meaning::Meaning;
 use crate::node::{GlueKind, KernKind, MarginKernSide, Node, Whatsit};
-use crate::node_arena::{NodeList, NodeListBuilder};
+use crate::node_arena::{NodeArenaMark, NodeList, NodeListBuilder};
 use crate::page::{
     PageBreak, PageBuilderState, PageContents, PageDimension, PageFireUp, PageHashCache,
     PageInsertion, PageInteger, PageMark, PageMemoState, PageStateHashCursor,
@@ -316,6 +316,8 @@ pub struct Snapshot {
 pub struct LocalRetrySnapshot {
     rollback: ScopedRollback,
     patch_operation: Option<PatchOperationMark>,
+    node_mark: NodeArenaMark,
+    node_promotions: HashMap<NodeListId, (NodeListId, crate::survivor::SurvivorOwner)>,
 }
 
 /// One immutable accepted-generation state substrate shared by O(1) snapshots.
@@ -3049,6 +3051,7 @@ impl Universe {
     #[doc(hidden)]
     #[must_use]
     pub fn snapshot_for_local_retry(&mut self) -> LocalRetrySnapshot {
+        let node_mark = self.stores.node_arena_mark();
         let patch_operation = self.private_revision_domain.as_mut().map(|domain| {
             domain
                 .begin_operation()
@@ -3057,7 +3060,61 @@ impl Universe {
         LocalRetrySnapshot {
             rollback: self.capture_scoped_rollback(),
             patch_operation,
+            node_mark,
+            node_promotions: HashMap::new(),
         }
+    }
+
+    /// Promotes one explicit operation root while preserving sharing between
+    /// repeated references to the same unfinished list.
+    #[doc(hidden)]
+    pub fn promote_node_list_for_commit(
+        &mut self,
+        snapshot: &mut LocalRetrySnapshot,
+        id: NodeListId,
+    ) -> NodeListId {
+        if let Some((promoted, _)) = snapshot.node_promotions.get(&id) {
+            return *promoted;
+        }
+        let Some((promoted, owner)) = self
+            .stores
+            .promote_operation_node_list(snapshot.node_mark, id)
+        else {
+            return id;
+        };
+        snapshot.node_promotions.insert(id, (promoted, owner));
+        promoted
+    }
+
+    /// Captures structural owners for a typed set of committed direct roots.
+    #[doc(hidden)]
+    pub fn committed_node_owners(
+        &self,
+        roots: &[NodeListId],
+    ) -> Vec<crate::survivor::SurvivorOwner> {
+        let mut by_root = std::collections::BTreeMap::new();
+        for &id in roots {
+            let crate::ids::ArenaRef::Survivor(root) = id.arena() else {
+                continue;
+            };
+            by_root.entry(root.raw()).or_insert_with(|| {
+                self.stores
+                    .survivor_owner(id)
+                    .expect("survivor root is live")
+            });
+        }
+        by_root.into_values().collect()
+    }
+
+    fn promote_page_node_roots(&mut self, snapshot: &mut LocalRetrySnapshot) {
+        let mut page = std::mem::take(&mut self.page);
+        let mut roots = Vec::new();
+        page.visit_node_lists_mut(|id| {
+            *id = self.promote_node_list_for_commit(snapshot, *id);
+            roots.push(*id);
+        });
+        page.replace_node_owners(self.committed_node_owners(&roots));
+        self.page = page;
     }
 
     /// Returns whether `snapshot` still names a valid private retry point.
@@ -3119,10 +3176,13 @@ impl Universe {
     /// Commits the private allocation suffix paired with one successful
     /// executor operation.
     #[doc(hidden)]
-    pub fn commit_local_retry_snapshot(&mut self, snapshot: LocalRetrySnapshot) {
+    pub fn commit_local_retry_snapshot(&mut self, mut snapshot: LocalRetrySnapshot) {
+        self.promote_page_node_roots(&mut snapshot);
         let LocalRetrySnapshot {
             rollback,
             patch_operation,
+            node_mark,
+            mut node_promotions,
         } = snapshot;
         // A generation fork may later retarget every retained prefix record at
         // or before its anchor onto this timeline. `fork_origin` is that live
@@ -3142,6 +3202,8 @@ impl Universe {
             (None, None) => {}
             _ => panic!("local retry patch operation does not match its Universe"),
         }
+        node_promotions.clear();
+        self.stores.finish_operation_nodes(node_mark);
     }
 
     /// Discards only allocations made by a failed private operation while
@@ -3151,10 +3213,13 @@ impl Universe {
     /// no longer roll back, plus pdfTeX's reserved-object error. Those paths
     /// still do not acquire ownership of failed patch allocations.
     #[doc(hidden)]
-    pub fn discard_local_retry_allocations(&mut self, snapshot: LocalRetrySnapshot) {
+    pub fn discard_local_retry_allocations(&mut self, mut snapshot: LocalRetrySnapshot) {
+        self.promote_page_node_roots(&mut snapshot);
         let LocalRetrySnapshot {
             rollback,
             patch_operation,
+            node_mark,
+            mut node_promotions,
         } = snapshot;
         assert_eq!(
             rollback.owner,
@@ -3168,6 +3233,8 @@ impl Universe {
             (None, None) => {}
             _ => panic!("local retry patch operation does not match its Universe"),
         }
+        node_promotions.clear();
+        self.stores.finish_operation_nodes(node_mark);
     }
 
     #[must_use]
@@ -3388,6 +3455,8 @@ impl Universe {
         let LocalRetrySnapshot {
             rollback,
             patch_operation,
+            node_mark: _,
+            node_promotions: _,
         } = snapshot;
         assert_eq!(
             rollback.owner,

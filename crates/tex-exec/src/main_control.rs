@@ -99,6 +99,9 @@ pub struct MainControl {
     /// PDF driver. Virtual multi-output sessions set this explicitly.
     emit_dvi_override: Option<bool>,
     modes: ModeNest,
+    /// Structural owners for survivor chunks referenced by replay/control
+    /// fields outside the mode nest. Excluded from semantic state.
+    node_owners: tex_state::survivor::SurvivorOwners,
     /// Maximum typed §273/§275 checked pre-push save-stack projection. Runtime
     /// diagnostics do not participate in rollback, identity, or formats.
     max_save_stack: usize,
@@ -626,7 +629,8 @@ impl StepSnapshot {
         stores.can_rollback_to_local_retry(&self.universe)
     }
 
-    fn commit(self, control: &mut MainControl, stores: &mut Universe) {
+    fn commit(mut self, control: &mut MainControl, stores: &mut Universe) {
+        control.promote_node_roots(stores, &mut self.universe);
         control
             .modes
             .commit_journal(self.mode_savepoint)
@@ -634,7 +638,8 @@ impl StepSnapshot {
         stores.commit_local_retry_snapshot(self.universe);
     }
 
-    fn commit_failed(self, control: &mut MainControl, stores: &mut Universe) {
+    fn commit_failed(mut self, control: &mut MainControl, stores: &mut Universe) {
+        control.promote_node_roots(stores, &mut self.universe);
         control
             .modes
             .commit_journal(self.mode_savepoint)
@@ -903,6 +908,58 @@ fn command_processor<'a>(
 }
 
 impl MainControl {
+    fn promote_node_roots(
+        &mut self,
+        stores: &mut Universe,
+        snapshot: &mut tex_state::LocalRetrySnapshot,
+    ) {
+        fn visit_leader(leader: &mut LeaderPayload, mut visit: impl FnMut(&mut NodeListId)) {
+            if let LeaderPayload::HList(node) | LeaderPayload::VList(node) = leader {
+                visit(&mut node.children);
+                if let Some(children) = &mut node.diagnostic_children {
+                    visit(children);
+                }
+            }
+        }
+
+        fn visit_alignment(
+            alignment: &mut ActiveReplayAlignment,
+            mut visit: impl FnMut(&mut NodeListId),
+        ) {
+            for row in &mut alignment.captured_rows {
+                for list in row {
+                    visit(list);
+                }
+            }
+            for node in &mut alignment.row_migrations {
+                node.visit_node_lists_mut(&mut visit);
+            }
+        }
+
+        let mut roots = Vec::new();
+        let mut promote = |id: &mut NodeListId| {
+            *id = stores.promote_node_list_for_commit(snapshot, *id);
+            roots.push(*id);
+        };
+        if let Some(alignment) = &mut self.active_alignment {
+            visit_alignment(alignment, &mut promote);
+        }
+        if let Some((_, leader)) = &mut self.boxes.pending_leader {
+            visit_leader(leader, &mut promote);
+        }
+        for alignment in &mut self.boxes.suspended_alignments {
+            visit_alignment(alignment, &mut promote);
+        }
+        for discretionary in &mut self.active_discretionaries {
+            for part in &mut discretionary.parts {
+                promote(part);
+            }
+        }
+        self.node_owners =
+            tex_state::survivor::SurvivorOwners::new(stores.committed_node_owners(&roots));
+        self.modes.promote_node_roots(stores, snapshot);
+    }
+
     /// Replaces the execution-owned memo service between candidate runs.
     pub fn install_pure_memo_runtime(&mut self, runtime: tex_state::PureMemoRuntime) {
         self.pure_memo = Arc::new(std::sync::Mutex::new(runtime));

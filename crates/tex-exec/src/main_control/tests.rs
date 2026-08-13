@@ -71,6 +71,32 @@ fn aggregate_step_marks_commit_private_work_and_truncate_failed_suffixes_exactly
 }
 
 #[test]
+fn private_box_construction_promotes_only_committed_lists() {
+    let mut stores = Universe::new_with_plain_catcodes();
+    stores.begin_private_revision();
+    let baseline = stores.testing_epoch_node_count();
+    let mut control = MainControl::tex82_initex(&mut stores);
+    register_source(&mut control, br"\setbox0=\hbox{\kern1pt}");
+
+    run_to_end(&mut control, &mut stores);
+
+    assert_eq!(stores.testing_epoch_node_count(), baseline);
+    let boxed = stores.box_reg(0).expect("completed box is committed");
+    assert!(matches!(
+        boxed.arena(),
+        tex_state::ids::ArenaRef::Survivor(_)
+    ));
+    let children = match stores.nodes(boxed).first() {
+        Some(tex_state::node_arena::NodeRef::HList(node)) => node.children,
+        other => panic!("expected committed hbox, got {other:?}"),
+    };
+    assert!(matches!(
+        stores.nodes(children).first(),
+        Some(tex_state::node_arena::NodeRef::Kern { .. })
+    ));
+}
+
+#[test]
 fn tracked_advance_records_command_and_execution_reads_after_commit() {
     let mut stores = Universe::new_with_plain_catcodes();
     let mut control = MainControl::tex82_initex(&mut stores);

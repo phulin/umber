@@ -75,6 +75,7 @@ use crate::source_map::{
     SourcePos, SourceRegion, SourceSpan,
 };
 use crate::survivor::SurvivorArena;
+use crate::survivor::SurvivorOwner;
 use crate::token::{Catcode, OriginId, Token, TracedTokenWord};
 use crate::token_store::{
     TokenListBuilder, TokenListRef, TokenSemanticId, TokenSemanticIdBuilder, TokenStore,
@@ -3206,6 +3207,10 @@ impl Stores {
         NodeArena::builder()
     }
 
+    pub(crate) fn node_arena_mark(&self) -> NodeArenaMark {
+        self.nodes.watermark()
+    }
+
     /// Appends and freezes a node list in the owned epoch arena.
     pub fn freeze_node_list(&mut self, nodes: &[Node]) -> NodeListId {
         let (semantic_id, needs) = self.validate_and_plan_node_list(nodes);
@@ -3231,6 +3236,26 @@ impl Stores {
                 .append_preflighted_with_semantic_id(builder.as_slice(), semantic_id, needs);
         builder.clear();
         id
+    }
+
+    pub(crate) fn promote_operation_node_list(
+        &mut self,
+        mark: NodeArenaMark,
+        id: NodeListId,
+    ) -> Option<(NodeListId, SurvivorOwner)> {
+        if !self.nodes.allocated_since(mark, id) {
+            return None;
+        }
+        Some(self.survivors.promote_owned(id, &self.nodes))
+    }
+
+    pub(crate) fn survivor_owner(&self, id: NodeListId) -> Option<SurvivorOwner> {
+        matches!(id.arena(), crate::ids::ArenaRef::Survivor(_)).then(|| self.survivors.owner(id))
+    }
+
+    pub(crate) fn finish_operation_nodes(&mut self, mark: NodeArenaMark) {
+        self.nodes.truncate_to(mark);
+        self.survivors.release_zero_root_chunks();
     }
 
     /// Reads a live frozen node list.

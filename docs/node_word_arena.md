@@ -128,16 +128,23 @@ restore a subset.
 Builder finish is transactional with respect to logical state: validate child
 handles and capacity, reserve all required columns, append sidecar rows, and
 publish words last. Bottom-up construction requires epoch children to end
-before their parent span. Retained vector capacity after rollback is allocator
+before their parent span. During one executor operation, these epoch spans are
+patch-local construction storage. A successful operation enumerates its typed
+mode, page, control, and Env roots, promotes only newly referenced graphs, and
+then truncates the complete epoch suffix. Retry or rejection truncates the same
+suffix without promotion. Retained vector capacity after rollback is allocator
 state only and is reported separately from live logical bytes.
 
 ## Survivor roots and sharing
 
-Every survivor root payload owns a complete immutable `NodeStorage`. The local
-root slot holds that payload through `Arc`, its refcount, and an optional
-diagnostic-origin overlay. Promotion iteratively decodes a mixed epoch/survivor
-DAG, memoizes source spans, appends logical nodes to the destination, and
-rewrites child handles to the new root. No sidecar index crosses a root.
+Every survivor root payload owns a complete immutable `NodeStorage`. Env box
+words and timeline pins use the local root refcount. Mode, page, control, and
+checkpoint roots instead carry a structural `Arc` owner beside their ordinary
+`NodeListId`; that owner is nonsemantic and follows the aggregate root through
+copy-on-write snapshots and forks. Promotion iteratively decodes a mixed
+epoch/survivor DAG, memoizes source spans, appends logical nodes to the
+destination, and rewrites child handles to the new root. No sidecar index
+crosses a root.
 
 Live box registers and retained undo records own survivor references. Publishing
 a box into nest or page state adds one aggregate root pin; one pin covers every
@@ -155,9 +162,12 @@ construction transfers a live box pointer through `box_end`, and pdftex.web
 §1546, where `\pdfxform` clears the register but stores that pointer in the form
 object for later recursive traversal (§§773--775).
 
-At local refcount zero the root slot is removed. Its vectors enter the recycled
-pool only if `Arc::try_unwrap` proves that no related Universe still shares the
-payload; otherwise teardown is an O(1) shared-payload drop.
+At local refcount zero with no structural owner, the root slot is removed. Its
+vectors enter the recycled pool only if `Arc::try_unwrap` proves that no related
+Universe still shares the payload; otherwise teardown is an O(1) shared-payload
+drop. Operation commit also reaps registry-only zero-root chunks after replacing
+the typed owner projections, so a list that ceases to be reachable does not need
+a post-hoc arena scan.
 
 ## Access boundary
 

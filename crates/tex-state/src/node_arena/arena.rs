@@ -118,6 +118,12 @@ impl NodeArena {
             identities: self.identities.watermark(),
         }
     }
+    pub(crate) fn allocated_since(&self, mark: NodeArenaMark, id: NodeListId) -> bool {
+        matches!(id.arena(), ArenaRef::Epoch)
+            && !id.is_format_reference()
+            && self.contains(id)
+            && (id.epoch_identity().slot() as usize) >= mark.identities.len()
+    }
     pub(crate) fn truncate_to(&mut self, mark: NodeArenaMark) {
         self.identities
             .rollback(mark.identities)

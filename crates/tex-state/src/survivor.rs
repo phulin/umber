@@ -132,6 +132,55 @@ struct SurvivorRoot {
     refcount: u32,
 }
 
+/// Structural ownership of one immutable survivor chunk.
+///
+/// The list coordinate remains in the owned node value.  This sidecar keeps
+/// the chunk containing it alive across mode/page snapshots and generation
+/// forks without adding a historical root registry.
+#[derive(Clone, Debug)]
+pub struct SurvivorOwner {
+    id: NodeListId,
+    payload: Arc<SurvivorPayload>,
+}
+
+impl SurvivorOwner {
+    #[must_use]
+    pub const fn id(&self) -> NodeListId {
+        self.id
+    }
+}
+
+impl PartialEq for SurvivorOwner {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id && Arc::ptr_eq(&self.payload, &other.payload)
+    }
+}
+
+impl Eq for SurvivorOwner {}
+
+/// Nonsemantic structural owners attached to an aggregate node root.
+#[derive(Clone, Debug, Default)]
+pub struct SurvivorOwners {
+    _owners: Arc<Vec<SurvivorOwner>>,
+}
+
+impl SurvivorOwners {
+    #[must_use]
+    pub fn new(owners: Vec<SurvivorOwner>) -> Self {
+        Self {
+            _owners: Arc::new(owners),
+        }
+    }
+}
+
+impl PartialEq for SurvivorOwners {
+    fn eq(&self, _other: &Self) -> bool {
+        true
+    }
+}
+
+impl Eq for SurvivorOwners {}
+
 #[derive(Debug)]
 struct SurvivorPayload {
     storage: NodeStorage,
@@ -170,7 +219,7 @@ impl SurvivorArena {
                 semantic_id,
             })
             .collect();
-        self.allocate_root(root, storage, spans);
+        let _ = self.allocate_root(root, storage, spans, 1);
     }
 
     pub(crate) fn retained_payload_bytes(&self) -> usize {
@@ -224,6 +273,31 @@ impl SurvivorArena {
 
     /// Promotes an epoch list into one survivor root with refcount 1.
     pub(crate) fn promote(&mut self, id: NodeListId, epoch: &NodeArena) -> NodeListId {
+        self.promote_with_refcount(id, epoch, 1).0
+    }
+
+    /// Promotes an operation-local list into a structurally owned chunk.
+    pub(crate) fn promote_owned(
+        &mut self,
+        id: NodeListId,
+        epoch: &NodeArena,
+    ) -> (NodeListId, SurvivorOwner) {
+        let (promoted, payload) = self.promote_with_refcount(id, epoch, 0);
+        (
+            promoted,
+            SurvivorOwner {
+                id: promoted,
+                payload,
+            },
+        )
+    }
+
+    fn promote_with_refcount(
+        &mut self,
+        id: NodeListId,
+        epoch: &NodeArena,
+        refcount: u32,
+    ) -> (NodeListId, Arc<SurvivorPayload>) {
         #[cfg(feature = "profiling")]
         let started = measurement::start_timer();
         assert!(
@@ -248,7 +322,7 @@ impl SurvivorArena {
         }
         self.promotion_remap = copied.remapped;
         self.promotion_pending = copied.pending;
-        self.allocate_root(root, copied.storage, copied.semantic_spans);
+        let payload = self.allocate_root(root, copied.storage, copied.semantic_spans, refcount);
         self.debug_assert_no_epoch_ids(copied.promoted);
         #[cfg(feature = "profiling")]
         {
@@ -261,7 +335,48 @@ impl SurvivorArena {
                 measurement::FRESH_NANOS.fetch_add(nanos, Ordering::Relaxed);
             }
         }
-        copied.promoted
+        (copied.promoted, payload)
+    }
+
+    /// Acquires structural ownership for an already-live survivor span.
+    pub(crate) fn owner(&self, id: NodeListId) -> SurvivorOwner {
+        SurvivorOwner {
+            id,
+            payload: Arc::clone(
+                &self
+                    .root(match id.arena() {
+                        ArenaRef::Survivor(root) => root,
+                        ArenaRef::Epoch => panic!("structural node owner requires a survivor list"),
+                    })
+                    .payload,
+            ),
+        }
+    }
+
+    /// Releases registry-only zero-root chunks after structural owners drop.
+    pub(crate) fn release_zero_root_chunks(&mut self) {
+        let dead = self
+            .root_slots
+            .iter()
+            .filter_map(|(&root, &index)| {
+                self.slots[index].as_ref().and_then(|slot| {
+                    (slot.refcount == 0 && Arc::strong_count(&slot.payload) == 1).then_some(root)
+                })
+            })
+            .collect::<Vec<_>>();
+        for root in dead {
+            let index = self
+                .root_slots
+                .remove(&root)
+                .expect("zero-root survivor lookup exists");
+            let root = self.slots[index]
+                .take()
+                .expect("zero-root survivor slot exists");
+            if let Ok(mut payload) = Arc::try_unwrap(root.payload) {
+                payload.storage.clear();
+                self.recycled.push(payload.storage);
+            }
+        }
     }
 
     /// Reads a live survivor span.
@@ -502,13 +617,15 @@ impl SurvivorArena {
         root: SurvivorRootId,
         storage: NodeStorage,
         semantic_spans: Vec<SurvivorSemanticSpan>,
-    ) {
+        refcount: u32,
+    ) -> Arc<SurvivorPayload> {
+        let payload = Arc::new(SurvivorPayload {
+            storage,
+            semantic_spans,
+        });
         let slot = SurvivorRoot {
-            payload: Arc::new(SurvivorPayload {
-                storage,
-                semantic_spans,
-            }),
-            refcount: 1,
+            payload: Arc::clone(&payload),
+            refcount,
         };
         let index = self.slots.len();
         assert!(
@@ -516,6 +633,7 @@ impl SurvivorArena {
             "survivor root identity was already published"
         );
         self.slots.push(Some(slot));
+        payload
     }
 
     fn root(&self, root: SurvivorRootId) -> &SurvivorRoot {

@@ -148,6 +148,80 @@ pub enum Node {
     Adjust(AdjustNode),
 }
 
+impl Node {
+    /// Visits every direct child-list handle carried by this owned node.
+    ///
+    /// The visitor does not recurse into frozen lists.  It is the typed root
+    /// projection used when an operation publishes its still-owned nodes.
+    pub fn visit_node_lists_mut(&mut self, mut visit: impl FnMut(&mut NodeListId)) {
+        fn field(field: &mut crate::math::MathField, visit: &mut impl FnMut(&mut NodeListId)) {
+            if let crate::math::MathField::SubBox(list) | crate::math::MathField::SubMlist(list) =
+                field
+            {
+                visit(list);
+            }
+        }
+
+        match self {
+            Self::HList(node) | Self::VList(node) => {
+                visit(&mut node.children);
+                if let Some(children) = &mut node.diagnostic_children {
+                    visit(children);
+                }
+            }
+            Self::Unset(node) => visit(&mut node.children),
+            Self::Glue {
+                leader: Some(LeaderPayload::HList(node) | LeaderPayload::VList(node)),
+                ..
+            } => {
+                visit(&mut node.children);
+                if let Some(children) = &mut node.diagnostic_children {
+                    visit(children);
+                }
+            }
+            Self::Disc {
+                pre, post, replace, ..
+            } => {
+                visit(pre);
+                visit(post);
+                visit(replace);
+            }
+            Self::Ins { content, .. } => visit(content),
+            Self::MathNoad(noad) => {
+                field(&mut noad.nucleus, &mut visit);
+                field(&mut noad.subscript, &mut visit);
+                field(&mut noad.superscript, &mut visit);
+            }
+            Self::FractionNoad(fraction) => {
+                visit(&mut fraction.numerator);
+                visit(&mut fraction.denominator);
+            }
+            Self::MathChoice(choice) => {
+                visit(&mut choice.display);
+                visit(&mut choice.text);
+                visit(&mut choice.script);
+                visit(&mut choice.script_script);
+            }
+            Self::MathList(list) => visit(&mut list.content),
+            Self::Adjust(adjustment) => visit(&mut adjustment.content),
+            Self::Char { .. }
+            | Self::Lig { .. }
+            | Self::Kern { .. }
+            | Self::MarginKern { .. }
+            | Self::Glue { .. }
+            | Self::Penalty(_)
+            | Self::Rule { .. }
+            | Self::Mark { .. }
+            | Self::Whatsit(_)
+            | Self::MathOn(_)
+            | Self::MathOff(_)
+            | Self::Direction(_)
+            | Self::MathStyle(_)
+            | Self::Nonscript => {}
+        }
+    }
+}
+
 impl PartialEq for Node {
     fn eq(&self, other: &Self) -> bool {
         crate::node_arena::NodeRef::from(self) == crate::node_arena::NodeRef::from(other)

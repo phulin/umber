@@ -142,6 +142,17 @@ impl NodeSequence {
         self.physical_boundaries = Arc::new((0..=self.semantic.len()).collect());
     }
 
+    /// Rewrites direct child-list handles while preserving the diagnostic
+    /// physical channel and its semantic-boundary projection.
+    pub fn visit_node_lists_mut(&mut self, mut visit: impl FnMut(&mut crate::ids::NodeListId)) {
+        for node in Arc::make_mut(&mut self.semantic) {
+            node.visit_node_lists_mut(&mut visit);
+        }
+        for node in Arc::make_mut(&mut self.physical) {
+            node.visit_node_lists_mut(&mut visit);
+        }
+    }
+
     /// Mutates semantic nodes and atomically resets the physical channel to
     /// the resulting topology. Callers that perform a topology-aware rewrite
     /// replace both channels explicitly instead.

@@ -40,6 +40,79 @@ use crate::world::{
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;
 
+fn zero_box(children: NodeListId) -> BoxNode {
+    BoxNode::new(BoxNodeFields {
+        width: Scaled::from_raw(0),
+        height: Scaled::from_raw(0),
+        depth: Scaled::from_raw(0),
+        shift: Scaled::from_raw(0),
+        box_lr: BoxLr::Normal,
+        glue_set: GlueSetRatio::ZERO,
+        glue_sign: Sign::Normal,
+        glue_order: Order::Normal,
+        children,
+    })
+}
+
+#[test]
+fn rejected_operation_discards_page_node_builders_exactly() {
+    let mut universe = Universe::new();
+    universe.begin_private_revision();
+    let epoch_baseline = universe.testing_epoch_node_count();
+    let survivor_baseline = universe.testing_live_survivor_slot_count();
+
+    let retry = universe.snapshot_for_local_retry();
+    let children = universe.freeze_node_list(&[Node::Penalty(17)]);
+    universe.append_page_contribution(Node::HList(zero_box(children)));
+    assert!(universe.testing_epoch_node_count() > epoch_baseline);
+    universe.rollback_local_retry_snapshot(retry);
+
+    assert_eq!(universe.testing_epoch_node_count(), epoch_baseline);
+    assert_eq!(
+        universe.testing_live_survivor_slot_count(),
+        survivor_baseline
+    );
+    assert!(universe.page_contributions().is_empty());
+}
+
+#[test]
+fn committed_page_nodes_promote_and_checkpoint_owners_release_at_zero_roots() {
+    let mut universe = Universe::new();
+    universe.begin_private_revision();
+    let epoch_baseline = universe.testing_epoch_node_count();
+
+    let operation = universe.snapshot_for_local_retry();
+    let children = universe.freeze_node_list(&[Node::Penalty(23)]);
+    universe.append_page_contribution(Node::HList(zero_box(children)));
+    universe.commit_local_retry_snapshot(operation);
+
+    assert_eq!(universe.testing_epoch_node_count(), epoch_baseline);
+    let promoted = match universe.page_contribution_front() {
+        Some(Node::HList(node)) => node.children,
+        other => panic!("expected committed page hlist, got {other:?}"),
+    };
+    assert!(matches!(promoted.arena(), ArenaRef::Survivor(_)));
+    assert_eq!(universe.nodes(promoted).to_vec(), [Node::Penalty(23)]);
+    assert_eq!(universe.testing_live_survivor_slot_count(), 1);
+
+    let checkpoint = universe.snapshot();
+    let operation = universe.snapshot_for_local_retry();
+    let _ = universe.pop_page_contribution_front();
+    universe.commit_local_retry_snapshot(operation);
+    assert_eq!(universe.testing_live_survivor_slot_count(), 1);
+
+    universe.rollback(&checkpoint);
+    assert_eq!(universe.nodes(promoted).to_vec(), [Node::Penalty(23)]);
+    let operation = universe.snapshot_for_local_retry();
+    let _ = universe.pop_page_contribution_front();
+    universe.commit_local_retry_snapshot(operation);
+    drop(checkpoint);
+
+    let operation = universe.snapshot_for_local_retry();
+    universe.commit_local_retry_snapshot(operation);
+    assert_eq!(universe.testing_live_survivor_slot_count(), 0);
+}
+
 #[test]
 fn committed_level_zero_operations_retire_journal_history_at_a_bounded_baseline() {
     let mut universe = Universe::new();

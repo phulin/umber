@@ -334,16 +334,20 @@ derived from validated OpenType data and remains separate from host paths or
 transport policy.
 
 Node lists live in compact word arenas with typed sidecars. `NodeListId`
-contains owner/generation identity and a span. Epoch nodes are cheap to build
-and roll back; survivor promotion preserves immutable content that escapes a
-transaction or checkpoint. Each frozen list has a canonical semantic identity
-composed from decoded node values and child identities, excluding provenance.
+contains owner/generation identity and a span. Epoch nodes are operation-local
+builders: successful operations explicitly project live mode, page, control,
+and Env roots into immutable survivor chunks before truncating the builder
+suffix; failed and retried operations truncate it directly. Each frozen list
+has a canonical semantic identity composed from decoded node values and child
+identities, excluding provenance.
 
 Survivor roots separate immutable payload ownership from one Universe's local
-root/refcount table. Related Universe forks share payloads through `Arc`;
-dropping a fork recycles storage only when it is the last payload owner.
-Survivors preserve checkpoint-owned node graphs; they are not cross-revision
-finished-paragraph mounts.
+root/refcount table. Env box words retain refcount ownership; mode, page,
+control, and checkpoint aggregates carry nonsemantic structural owners beside
+their handles. Related Universe forks share payloads through `Arc`; dropping a
+fork recycles storage only when it is the last payload owner. Survivors preserve
+exact checkpoint-owned node graphs without retaining discarded operation
+arenas or mounting historical finished paragraphs.
 
 ## 8. External effects: the virtualized world
 

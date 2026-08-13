@@ -40,10 +40,12 @@ session-wide registry records old domains.
 
 `Stores` and `World` remain reachable only through `Universe`. Their current
 watermarks, persistent roots, effect positions, and journals stay the semantic
-rollback substrate. Store families migrate their new immutable allocations to
-the revision domain in the separately tracked representation issues. The
-domain does not traverse those stores, reconstruct their indexes, or compact
-their historical allocations.
+rollback substrate. Reachability-owned value stores allocate immutable payloads
+in the revision domain. Node construction uses the operation's existing compact
+arena suffix as its patch-local builder: commit promotes explicitly projected
+mode, page, control, and Env roots into immutable survivor chunks and truncates
+the suffix, while retry truncates it directly. The domain does not traverse
+stores, reconstruct indexes, or compact historical allocations.
 
 `tex-command::CommandStateSnapshot` continues to own command cursors and
 transient replay. It contains no allocation-domain control. `tex-exec::MainControl`
@@ -131,9 +133,7 @@ weaken memory guards or use a corpus/profile run as a substitute.
 
 ## Deliberate exclusions
 
-This foundation does not migrate token lists, macro definitions, glue specs,
-provenance, environment journals, node builders, output ledgers, or caches.
-Those stores retain their existing representations until their dedicated
-issues install typed domain allocations and root projections. This issue adds
-no copying compactor, post-hoc graph traversal, historical-generation
-registry, cache budget, or document-specific reclamation rule.
+Output ledgers and caches remain outside this contract. Node commit promotion
+adds no copying compactor, post-hoc live-state graph traversal,
+historical-generation registry, cache budget, or document-specific reclamation
+rule: it walks only the explicitly named roots of the operation being closed.
