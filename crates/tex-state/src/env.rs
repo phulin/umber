@@ -30,6 +30,7 @@ use crate::math::{MATH_FAMILY_COUNT, MathFontSize};
 use crate::meaning::Meaning;
 use crate::scaled::Scaled;
 use crate::token::Token;
+use crate::token_store::TokenListRef;
 #[cfg(feature = "shadow")]
 use ahash::AHashMap;
 use std::collections::BTreeMap;
@@ -153,10 +154,11 @@ impl Default for WordStamp {
 pub(crate) use group::EnvSnapshot;
 
 /// One validated cell in the immutable environment installed by a format.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct FormatBaseCell {
     pub(crate) cell: CellId,
     pub(crate) word: u64,
+    pub(crate) token_root: Option<TokenListRef>,
 }
 
 macro_rules! register_accessors {
@@ -236,6 +238,8 @@ macro_rules! register_accessors {
 #[derive(Clone, Debug)]
 pub struct Env {
     format_base: Arc<[FormatBaseCell]>,
+    empty_token_root: Option<TokenListRef>,
+    token_roots: BTreeMap<CellId, TokenListRef>,
     meaning_cells: Vec<Option<MeaningSegment>>,
     meaning_stamps: Vec<Option<StampSegment>>,
     counts: FixedBank<I32Codec, DENSE_REGISTER_COUNT>,
@@ -290,6 +294,8 @@ impl Env {
     pub(crate) fn new() -> Self {
         Self {
             format_base: Arc::from([]),
+            empty_token_root: None,
+            token_roots: BTreeMap::new(),
             meaning_cells: Vec::new(),
             meaning_stamps: Vec::new(),
             counts: FixedBank::new(),
@@ -336,6 +342,15 @@ impl Env {
         }
     }
 
+    /// Installs the canonical empty token owner shared by default token cells.
+    pub(crate) fn install_empty_token_root(&mut self, root: TokenListRef) {
+        assert_eq!(root.id(), TokenListId::EMPTY);
+        if let Some(existing) = &self.empty_token_root {
+            assert_eq!(existing.id(), TokenListId::EMPTY);
+        }
+        self.empty_token_root = Some(root);
+    }
+
     /// Installs a validated immutable format base into a fresh environment.
     ///
     /// The ordinary banks are the mutable job overlay. Seeding them here does
@@ -345,7 +360,7 @@ impl Env {
         debug_assert_eq!(self.group_depth, 0);
         debug_assert!(self.format_base.is_empty());
         for entry in &cells {
-            self.restore_raw(entry.cell, entry.word);
+            self.restore_raw_with_token_owner(entry.cell, entry.word, entry.token_root.clone());
         }
         self.format_base = cells.into();
     }
@@ -511,15 +526,54 @@ impl Env {
         muskips,
         overflow_muskips
     );
-    register_accessors!(
-        toks,
-        set_toks,
-        set_toks_global,
-        TokenListId,
-        Toks,
-        toks,
-        overflow_toks
-    );
+    /// Returns a token register coordinate.
+    #[must_use]
+    pub fn toks(&self, index: u16) -> TokenListId {
+        if is_dense_register(index) {
+            self.toks.get(index)
+        } else {
+            self.overflow_toks.get(index)
+        }
+    }
+
+    pub(crate) fn set_toks(&mut self, index: u16, root: TokenListRef) -> CellMutationReceipt {
+        self.set_toks_with_scope(index, root, false)
+    }
+
+    pub(crate) fn set_toks_global(
+        &mut self,
+        index: u16,
+        root: TokenListRef,
+    ) -> CellMutationReceipt {
+        self.set_toks_with_scope(index, root, true)
+    }
+
+    fn set_toks_with_scope(
+        &mut self,
+        index: u16,
+        root: TokenListRef,
+        global: bool,
+    ) -> CellMutationReceipt {
+        let cell = CellId::new(BankTag::Toks, u32::from(index));
+        let old_root = self.token_root(cell);
+        let mark = self.journal.pos();
+        let value = root.id();
+        let context = BankSetContext {
+            journal: &mut self.journal,
+            #[cfg(feature = "shadow")]
+            shadow: &mut self.shadow,
+            epoch: self.epoch,
+            bank: BankTag::Toks,
+            global,
+        };
+        let receipt = if is_dense_register(index) {
+            self.toks.set(index, value, context)
+        } else {
+            self.overflow_toks.set(index, value, context)
+        };
+        self.finish_token_write(mark, cell, old_root, Some(root));
+        receipt
+    }
     /// Returns a box register value; `None` is TeX's void box.
     #[must_use]
     pub fn box_reg(&self, index: u16) -> Option<NodeListId> {
@@ -815,51 +869,35 @@ impl Env {
         self.tok_params.get(param.raw())
     }
 
-    #[cfg(test)]
-    pub(crate) fn set_tok_param(
-        &mut self,
-        param: TokParam,
-        value: TokenListId,
-    ) -> CellMutationReceipt {
-        self.set_tok_param_option(param, Some(value))
-    }
-
     /// Sets a local token-list parameter, preserving TeX's null pointer.
     pub(crate) fn set_tok_param_option(
         &mut self,
         param: TokParam,
-        value: Option<TokenListId>,
+        value: Option<TokenListRef>,
     ) -> CellMutationReceipt {
-        self.tok_params.set(
-            param.raw(),
-            value,
-            BankSetContext {
-                journal: &mut self.journal,
-                #[cfg(feature = "shadow")]
-                shadow: &mut self.shadow,
-                epoch: self.epoch,
-                bank: BankTag::TokParam,
-                global: false,
-            },
-        )
-    }
-
-    #[cfg(test)]
-    pub(crate) fn set_tok_param_global(
-        &mut self,
-        param: TokParam,
-        value: TokenListId,
-    ) -> CellMutationReceipt {
-        self.set_tok_param_option_global(param, Some(value))
+        self.set_tok_param_option_with_scope(param, value, false)
     }
 
     /// Sets a global token-list parameter, preserving TeX's null pointer.
     pub(crate) fn set_tok_param_option_global(
         &mut self,
         param: TokParam,
-        value: Option<TokenListId>,
+        value: Option<TokenListRef>,
     ) -> CellMutationReceipt {
-        self.tok_params.set(
+        self.set_tok_param_option_with_scope(param, value, true)
+    }
+
+    fn set_tok_param_option_with_scope(
+        &mut self,
+        param: TokParam,
+        root: Option<TokenListRef>,
+        global: bool,
+    ) -> CellMutationReceipt {
+        let cell = CellId::new(BankTag::TokParam, u32::from(param.raw()));
+        let old_root = self.token_root(cell);
+        let mark = self.journal.pos();
+        let value = root.as_ref().map(TokenListRef::id);
+        let receipt = self.tok_params.set(
             param.raw(),
             value,
             BankSetContext {
@@ -868,9 +906,58 @@ impl Env {
                 shadow: &mut self.shadow,
                 epoch: self.epoch,
                 bank: BankTag::TokParam,
-                global: true,
+                global,
             },
-        )
+        );
+        self.finish_token_write(mark, cell, old_root, root);
+        receipt
+    }
+
+    fn finish_token_write(
+        &mut self,
+        mark: crate::journal::JournalPos,
+        cell: CellId,
+        old_root: Option<TokenListRef>,
+        new_root: Option<TokenListRef>,
+    ) {
+        if self.journal.pos() != mark {
+            self.journal.attach_token_undo_roots(
+                mark,
+                crate::journal::TokenUndoRoots::new(old_root, new_root.clone()),
+            );
+        }
+        self.set_token_root(cell, new_root);
+    }
+
+    pub(crate) fn token_root(&self, cell: CellId) -> Option<TokenListRef> {
+        let cell = cell.without_assignment_scope();
+        debug_assert!(matches!(cell.bank(), BankTag::Toks | BankTag::TokParam));
+        self.token_roots.get(&cell).cloned().or_else(|| {
+            let word = self.semantic_word(cell);
+            let is_empty = match cell.bank() {
+                BankTag::Toks => word == u64::from(TokenListId::EMPTY.raw()),
+                BankTag::TokParam => word == u64::from(TokenListId::EMPTY.raw()) + 1,
+                _ => false,
+            };
+            is_empty.then(|| self.empty_token_root.clone()).flatten()
+        })
+    }
+
+    pub(crate) fn set_token_root(&mut self, cell: CellId, root: Option<TokenListRef>) {
+        let cell = cell.without_assignment_scope();
+        debug_assert!(matches!(cell.bank(), BankTag::Toks | BankTag::TokParam));
+        match root {
+            Some(root) if root.id() != TokenListId::EMPTY => {
+                self.token_roots.insert(cell, root);
+            }
+            Some(root) => {
+                assert_eq!(root.id(), TokenListId::EMPTY);
+                self.token_roots.remove(&cell);
+            }
+            None => {
+                self.token_roots.remove(&cell);
+            }
+        }
     }
 
     #[must_use]

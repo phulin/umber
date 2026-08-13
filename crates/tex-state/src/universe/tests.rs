@@ -49,7 +49,10 @@ fn private_token_roots_retry_and_accept_through_the_aggregate_boundary() {
         ch: 'k',
         cat: Catcode::Letter,
     }]);
+    universe.set_toks(7, retained);
     universe.commit_local_retry_snapshot(first_operation);
+    let retained_hash = universe.snapshot().state_hash();
+    let retained_effects = universe.world.effect_records().len();
     let retained_stats = universe
         .testing_private_revision_domain_stats()
         .expect("private domain is live");
@@ -66,12 +69,17 @@ fn private_token_roots_retry_and_accept_through_the_aggregate_boundary() {
             cat: Catcode::Letter,
         },
     ]);
+    universe.set_toks(7, failed);
+    assert_eq!(universe.toks(7), failed);
     universe.rollback_local_retry_snapshot(failed_operation);
     assert_eq!(
         universe.testing_private_revision_domain_stats(),
         Some(retained_stats)
     );
     assert_eq!(universe.tokens(retained).len(), 1);
+    assert_eq!(universe.toks(7), retained);
+    assert_eq!(universe.snapshot().state_hash(), retained_hash);
+    assert_eq!(universe.world.effect_records().len(), retained_effects);
     assert!(catch_unwind(AssertUnwindSafe(|| universe.tokens(failed))).is_err());
 
     universe

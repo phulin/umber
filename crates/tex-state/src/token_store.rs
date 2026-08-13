@@ -249,8 +249,13 @@ impl TokenListRef {
     }
 
     #[cfg(test)]
-    fn ptr_eq(&self, other: &Self) -> bool {
+    pub(crate) fn ptr_eq(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.shared(), &other.shared())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn strong_count(&self) -> usize {
+        Arc::strong_count(&self.shared()).saturating_sub(1)
     }
 }
 

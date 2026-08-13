@@ -1,9 +1,10 @@
 use super::{PrepareMagDiagnostic, Stores};
+use crate::cell::{BankTag, CellId};
 use crate::env::banks::{DimenParam, GlueParam, IntParam};
 use crate::font::NULL_FONT;
 use crate::glue::{GlueSpec, Order};
 use crate::hyphenation::{ExceptionSpec, PatternSpec};
-use crate::ids::{ArenaRef, GlueId, NodeListId, OriginListId};
+use crate::ids::{ArenaRef, GlueId, MacroDefinitionId, NodeListId, OriginListId};
 use crate::macro_store::{MacroDefinitionProvenance, MacroMeaning};
 use crate::math::{
     FractionThickness, MathChoice, MathField, MathFraction, MathListNode, MathNoad, MathStyle,
@@ -805,6 +806,120 @@ fn exact_environment_identity_ignores_intern_allocation_order() {
         build(false).exact_env_identity(),
         build(true).exact_env_identity()
     );
+}
+
+#[test]
+fn env_token_roots_follow_save_stack_rollback_and_generation_fork() {
+    let mut stores = Stores::new();
+    let outer = stores.intern_token_list(&[Token::Char {
+        ch: 'o',
+        cat: Catcode::Other,
+    }]);
+    let local = stores.intern_token_list(&[Token::Char {
+        ch: 'l',
+        cat: Catcode::Other,
+    }]);
+    let global = stores.intern_token_list(&[Token::Char {
+        ch: 'g',
+        cat: Catcode::Other,
+    }]);
+    let outer_root = stores.tokens.owner(outer).expect("outer root");
+    let local_root = stores.tokens.owner(local).expect("local root");
+    let global_root = stores.tokens.owner(global).expect("global root");
+
+    stores.set_toks_global(0, outer);
+    let outer_current = outer_root.strong_count();
+    stores.enter_group();
+    stores.set_toks(0, local);
+    assert_eq!(stores.toks(0), local);
+    assert_eq!(
+        outer_root.strong_count(),
+        outer_current,
+        "open-group undo replaces the displaced current owner exactly"
+    );
+    let local_current_and_redo = local_root.strong_count();
+
+    // An equal local assignment still creates a save-stack edge at the new
+    // epoch. Its old/new owners must be real even though the word is equal.
+    stores.enter_group();
+    stores.set_toks(0, local);
+    assert_eq!(local_root.strong_count(), local_current_and_redo + 2);
+    let _ = stores.leave_group();
+    assert_eq!(local_root.strong_count(), local_current_and_redo);
+
+    // A later global supersession refiles the first outer owner and keeps the
+    // surviving global owner when the group journal is compacted.
+    stores.set_toks_global(0, global);
+    let global_live = global_root.strong_count();
+    let _ = stores.leave_group();
+    assert_eq!(stores.toks(0), global);
+    assert_eq!(global_root.strong_count(), global_live);
+    assert_eq!(
+        local_root.strong_count(),
+        local_current_and_redo - 2,
+        "superseded current and redo owners are released at group exit"
+    );
+
+    let snapshot = stores.checkpoint();
+    let outer_before_rollback_write = outer_root.strong_count();
+    stores.set_toks(0, outer);
+    assert_eq!(stores.toks(0), outer);
+    assert_eq!(
+        outer_root.strong_count(),
+        outer_before_rollback_write + 2,
+        "current cell and undo redo edge both own the post-checkpoint value"
+    );
+    stores.rollback(&snapshot);
+    assert_eq!(stores.toks(0), global);
+    assert_eq!(
+        outer_root.strong_count(),
+        outer_before_rollback_write,
+        "journal truncation releases the rolled-back current and redo roots"
+    );
+
+    let fork = stores.clone();
+    assert_eq!(fork.toks(0), global);
+    assert!(
+        fork.env
+            .token_root(CellId::new(BankTag::Toks, 0))
+            .expect("forked Env token root")
+            .ptr_eq(&global_root),
+        "generation forks share exact immutable payloads"
+    );
+}
+
+#[test]
+fn macro_definitions_own_parameter_and_replacement_token_children() {
+    let mut stores = Stores::new();
+    let parameter = stores.intern_token_list(&[Token::param(1)]);
+    let replacement = stores.intern_token_list(&[Token::Char {
+        ch: 'r',
+        cat: Catcode::Other,
+    }]);
+    let parameter_root = stores.tokens.owner(parameter).expect("parameter root");
+    let replacement_root = stores.tokens.owner(replacement).expect("replacement root");
+    let parameter_before = parameter_root.strong_count();
+    let replacement_before = replacement_root.strong_count();
+
+    let definition = stores.intern_macro(MacroMeaning::new(
+        MeaningFlags::from_bits(0),
+        parameter,
+        replacement,
+    ));
+    let (stored_parameter, stored_replacement) = stores.macros.testing_token_roots(definition);
+    assert!(stored_parameter.ptr_eq(&parameter_root));
+    assert!(stored_replacement.ptr_eq(&replacement_root));
+    assert_eq!(parameter_root.strong_count(), parameter_before + 1);
+    assert_eq!(replacement_root.strong_count(), replacement_before + 1);
+
+    let fork = stores.clone();
+    let fork_definition = fork
+        .macros
+        .resolve_stored(MacroDefinitionId::new(definition.raw()))
+        .expect("forked macro definition");
+    let (fork_parameter, fork_replacement) = fork.macros.testing_token_roots(fork_definition);
+    assert!(fork_parameter.ptr_eq(&parameter_root));
+    assert!(fork_replacement.ptr_eq(&replacement_root));
 }
 
 #[test]

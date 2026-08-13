@@ -10,6 +10,7 @@ use crate::env::banks::{
 };
 use crate::epoch::Epoch;
 use crate::ids::NodeListId;
+use crate::token_store::TokenListRef;
 
 impl Env {
     /// Applies one hidden semantic write that persists across group exit while
@@ -24,6 +25,7 @@ impl Env {
         &mut self,
         cell: CellId,
         word: u64,
+        token_root: Option<TokenListRef>,
     ) -> super::CellMutationReceipt {
         let cell = cell.without_assignment_scope();
         let old = self.semantic_word(cell);
@@ -31,12 +33,23 @@ impl Env {
         if old == word {
             return receipt;
         }
-        self.journal.push_undo(crate::journal::UndoRec::new(
+        let pos = self.journal.push_undo(crate::journal::UndoRec::new(
             CellId::new_global(cell.bank(), cell.index()),
             old,
             word,
         ));
-        self.restore_raw(cell, word);
+        if matches!(cell.bank(), BankTag::Toks | BankTag::TokParam) {
+            self.journal.attach_token_undo_roots(
+                pos,
+                crate::journal::TokenUndoRoots::new(self.token_root(cell), token_root.clone()),
+            );
+        } else {
+            assert!(
+                token_root.is_none(),
+                "non-token raw write carried token owner"
+            );
+        }
+        self.restore_raw_with_token_owner(cell, word, token_root);
         receipt
     }
 
@@ -48,6 +61,15 @@ impl Env {
     /// single write path records history.
     #[allow(dead_code)]
     pub(crate) fn restore_raw(&mut self, cell: CellId, word: u64) {
+        self.restore_raw_with_token_owner(cell, word, None);
+    }
+
+    pub(crate) fn restore_raw_with_token_owner(
+        &mut self,
+        cell: CellId,
+        word: u64,
+        token_root: Option<TokenListRef>,
+    ) {
         match cell.bank() {
             BankTag::Meaning => self.restore_meaning_word(cell.index(), word),
             BankTag::Count => self.restore_register(cell.index(), word, RegisterBank::Count),
@@ -106,6 +128,25 @@ impl Env {
             BankTag::MathFamilyFont => self
                 .math_family_fonts
                 .restore_word(u16_index(cell.index()), word),
+        }
+        if matches!(cell.bank(), BankTag::Toks | BankTag::TokParam) {
+            let expected = match cell.bank() {
+                BankTag::Toks => Some(word as u32),
+                BankTag::TokParam if word != 0 => Some((word - 1) as u32),
+                BankTag::TokParam => None,
+                _ => unreachable!(),
+            };
+            assert_eq!(
+                token_root.as_ref().map(|root| root.id().raw()),
+                expected,
+                "raw token word and strong owner diverged"
+            );
+            self.set_token_root(cell, token_root);
+        } else {
+            assert!(
+                token_root.is_none(),
+                "non-token raw write carried token owner"
+            );
         }
         #[cfg(feature = "shadow")]
         shadow_set(

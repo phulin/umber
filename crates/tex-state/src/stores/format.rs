@@ -1972,6 +1972,12 @@ fn install_frozen_sections(
     let mut stores = Stores::new();
     stores.interner = frozen.interner;
     stores.tokens = frozen.tokens;
+    stores.env.install_empty_token_root(
+        stores
+            .tokens
+            .owner(TokenListId::EMPTY)
+            .expect("frozen token store owns canonical empty list"),
+    );
     stores.macros = frozen.macros;
     stores.glue = frozen.glue;
     stores.fonts = non_node.fonts;
@@ -2071,7 +2077,33 @@ fn install_frozen_sections(
                 return Err(StoreFormatError::Invalid("box value in non-box bank"));
             }
         };
-        base.push(crate::env::FormatBaseCell { cell, word });
+        let token_root = match cell.bank() {
+            crate::cell::BankTag::Toks => Some(
+                stores
+                    .tokens
+                    .resolve_stored(TokenListId::new(word as u32))
+                    .and_then(|id| stores.tokens.owner(id))
+                    .ok_or(StoreFormatError::Invalid(
+                        "frozen environment token-register owner",
+                    ))?,
+            ),
+            crate::cell::BankTag::TokParam if word != 0 => Some(
+                stores
+                    .tokens
+                    .resolve_stored(TokenListId::new((word - 1) as u32))
+                    .and_then(|id| stores.tokens.owner(id))
+                    .ok_or(StoreFormatError::Invalid(
+                        "frozen environment token-parameter owner",
+                    ))?,
+            ),
+            crate::cell::BankTag::TokParam => None,
+            _ => None,
+        };
+        base.push(crate::env::FormatBaseCell {
+            cell,
+            word,
+            token_root,
+        });
     }
     stores.env.install_format_base(base);
     Ok(stores)

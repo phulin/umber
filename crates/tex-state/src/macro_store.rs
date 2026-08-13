@@ -12,6 +12,7 @@ use crate::identity::{IdentityAllocator, IdentityMark};
 use crate::ids::{MacroDefinitionId, OriginListId, TokenListId};
 use crate::meaning::MeaningFlags;
 use crate::token::{OriginId, Token};
+use crate::token_store::TokenListRef;
 
 const MACRO_PARAMETER_SLOTS: usize = 9;
 
@@ -219,6 +220,8 @@ pub(crate) struct MacroStoreMark {
 #[derive(Debug)]
 pub struct MacroStore {
     definitions: Vec<MacroMeaning>,
+    parameter_roots: Vec<TokenListRef>,
+    replacement_roots: Vec<TokenListRef>,
     parameter_patterns: Vec<MacroParameterPattern>,
     provenance: Vec<Option<MacroDefinitionProvenance>>,
     observation_operands: Vec<i64>,
@@ -230,6 +233,8 @@ impl Clone for MacroStore {
     fn clone(&self) -> Self {
         Self {
             definitions: self.definitions.clone(),
+            parameter_roots: self.parameter_roots.clone(),
+            replacement_roots: self.replacement_roots.clone(),
             parameter_patterns: self.parameter_patterns.clone(),
             provenance: self.provenance.clone(),
             observation_operands: self.observation_operands.clone(),
@@ -244,6 +249,8 @@ impl MacroStore {
     pub(crate) fn new() -> Self {
         Self {
             definitions: Vec::new(),
+            parameter_roots: Vec::new(),
+            replacement_roots: Vec::new(),
             parameter_patterns: Vec::new(),
             provenance: Vec::new(),
             observation_operands: Vec::new(),
@@ -256,10 +263,14 @@ impl MacroStore {
     /// token-list ids. Diagnostic provenance is job-local and starts absent.
     pub(crate) fn from_frozen(
         definitions: Vec<MacroMeaning>,
+        parameter_roots: Vec<TokenListRef>,
+        replacement_roots: Vec<TokenListRef>,
         parameter_patterns: Vec<MacroParameterPattern>,
         observation_widths: Vec<u32>,
     ) -> Result<Self, &'static str> {
         if definitions.len() != parameter_patterns.len()
+            || definitions.len() != parameter_roots.len()
+            || definitions.len() != replacement_roots.len()
             || definitions.len() != observation_widths.len()
         {
             return Err("frozen macro column length mismatch");
@@ -269,6 +280,8 @@ impl MacroStore {
         Ok(Self {
             provenance: vec![None; definitions.len()],
             definitions,
+            parameter_roots,
+            replacement_roots,
             parameter_patterns,
             observation_operands,
             observation_widths,
@@ -279,16 +292,22 @@ impl MacroStore {
     pub(crate) fn intern_with_provenance(
         &mut self,
         meaning: MacroMeaning,
+        parameter_root: TokenListRef,
+        replacement_root: TokenListRef,
         parameter_pattern: MacroParameterPattern,
         provenance: Option<MacroDefinitionProvenance>,
         observation_width: u32,
     ) -> MacroDefinitionId {
+        assert_eq!(parameter_root.id(), meaning.parameter_text());
+        assert_eq!(replacement_root.id(), meaning.replacement_text());
         let id = MacroDefinitionId::from_identity(
             self.identities
                 .allocate()
                 .expect("macro definition table exceeds u32 entries"),
         );
         self.definitions.push(meaning);
+        self.parameter_roots.push(parameter_root);
+        self.replacement_roots.push(replacement_root);
         self.parameter_patterns.push(parameter_pattern);
         self.provenance.push(provenance);
         // TeX82 §1221 installs §473's `def_ref` list head as the macro
@@ -383,10 +402,24 @@ impl MacroStore {
             .rollback(mark.identities)
             .expect("macro-store mark is not an ancestor");
         self.definitions.truncate(definitions);
+        self.parameter_roots.truncate(definitions);
+        self.replacement_roots.truncate(definitions);
         self.parameter_patterns.truncate(definitions);
         self.provenance.truncate(definitions);
         self.observation_operands.truncate(definitions);
         self.observation_widths.truncate(definitions);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn testing_token_roots(
+        &self,
+        id: MacroDefinitionId,
+    ) -> (&TokenListRef, &TokenListRef) {
+        assert!(self.contains(id), "macro definition id is not live");
+        (
+            &self.parameter_roots[id.raw() as usize],
+            &self.replacement_roots[id.raw() as usize],
+        )
     }
 }
 

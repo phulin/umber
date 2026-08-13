@@ -902,6 +902,12 @@ impl Stores {
             #[cfg(test)]
             main_memory_root_traversals: std::sync::atomic::AtomicUsize::new(0),
         };
+        stores.env.install_empty_token_root(
+            stores
+                .tokens
+                .owner(TokenListId::EMPTY)
+                .expect("token store owns canonical empty list"),
+        );
         stores.set_int_param(IntParam::MAG, 1000);
         stores.set_int_param(IntParam::TOLERANCE, 10_000);
         stores.set_int_param(IntParam::HANG_AFTER, 1);
@@ -958,7 +964,22 @@ impl Stores {
         cell: crate::cell::CellId,
         word: u64,
     ) -> CellMutationReceipt {
-        let receipt = self.env.restore_raw_global(cell, word);
+        let token_root = match cell.bank() {
+            crate::cell::BankTag::Toks => self.tokens.owner(TokenListId::new(word as u32)),
+            crate::cell::BankTag::TokParam if word != 0 => {
+                self.tokens.owner(TokenListId::new((word - 1) as u32))
+            }
+            crate::cell::BankTag::TokParam => None,
+            _ => None,
+        };
+        if matches!(
+            cell.bank(),
+            crate::cell::BankTag::Toks | crate::cell::BankTag::TokParam
+        ) && word != 0
+        {
+            assert!(token_root.is_some(), "raw token word has no live owner");
+        }
+        let receipt = self.env.restore_raw_global(cell, word, token_root);
         if receipt.changed() {
             let cell = receipt.cell();
             self.update_exact_env_cell(cell, self.env.semantic_word(cell));
@@ -1285,6 +1306,12 @@ impl Stores {
         .expect("macro token list length exceeds u32");
         self.macros.intern_with_provenance(
             macro_meaning,
+            self.tokens
+                .owner(macro_meaning.parameter_text())
+                .expect("macro parameter tokens have a live owner"),
+            self.tokens
+                .owner(macro_meaning.replacement_text())
+                .expect("macro replacement tokens have a live owner"),
             parameter_pattern,
             provenance,
             observation_width,
@@ -3050,7 +3077,12 @@ impl Stores {
 
     pub fn set_toks(&mut self, index: u16, value: TokenListId) -> crate::env::CellMutationReceipt {
         self.assert_live_token_list(value);
-        self.env.set_toks(index, value)
+        self.env.set_toks(
+            index,
+            self.tokens
+                .owner(value)
+                .expect("validated token list has a live owner"),
+        )
     }
 
     #[must_use]
@@ -3064,7 +3096,12 @@ impl Stores {
         value: TokenListId,
     ) -> crate::env::CellMutationReceipt {
         self.assert_live_token_list(value);
-        self.env.set_toks_global(index, value)
+        self.env.set_toks_global(
+            index,
+            self.tokens
+                .owner(value)
+                .expect("validated token list has a live owner"),
+        )
     }
 
     pub fn set_box_reg(
@@ -3300,10 +3337,13 @@ impl Stores {
         param: TokParam,
         value: Option<TokenListId>,
     ) -> crate::env::CellMutationReceipt {
-        if let Some(value) = value {
+        let root = value.map(|value| {
             self.assert_live_token_list(value);
-        }
-        self.env.set_tok_param_option(param, value)
+            self.tokens
+                .owner(value)
+                .expect("validated token list has a live owner")
+        });
+        self.env.set_tok_param_option(param, root)
     }
 
     #[must_use]
@@ -3324,10 +3364,13 @@ impl Stores {
         param: TokParam,
         value: Option<TokenListId>,
     ) -> crate::env::CellMutationReceipt {
-        if let Some(value) = value {
+        let root = value.map(|value| {
             self.assert_live_token_list(value);
-        }
-        self.env.set_tok_param_option_global(param, value)
+            self.tokens
+                .owner(value)
+                .expect("validated token list has a live owner")
+        });
+        self.env.set_tok_param_option_global(param, root)
     }
 
     /// Takes a checkpoint for the rollback-coupled store tuple.

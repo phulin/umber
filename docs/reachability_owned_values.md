@@ -73,6 +73,29 @@ that coordinate before the legacy successful-history arena is retired.
 | Formats and memos                     | `StoreFormat`, frozen-core DTOs, PDF format DTOs, node DTO token tables, and `DetachedMemoValue` own handle-free semantic content while detached.                                                                                   | Capture enumerates the already-known typed closure. Load/import validates and interns exact content, then installs the returned owner immediately; malformed or rejected DTOs publish no runtime root.                                            |
 | Private patch domain                  | A private revision domain owns each newly allocated token object in addition to any typed private destination.                                                                                                                      | Failed operation and `NeedResource` restore destinations then truncate the operation suffix; candidate rejection drops the domain; acceptance validates a deterministic typed root list and transfers only distinct selected payloads.            |
 
+### Implemented Env and macro token-root stratum
+
+`umber2-3v8z.3.1.2.2` installs the environment and macro-child rows above. The
+compact token words remain unchanged, but ownership is now explicit and moves
+at the same boundary as each word:
+
+| Transition                     | Current-cell owner                                                                   | Undo or child owner                                                                                           | Release boundary                                                                                       |
+| ------------------------------ | ------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| Dense or sparse token write    | `Env` replaces the cell's `TokenListRef` after the typed bank write succeeds.        | A newly appended token-valued undo receives cloned old and new roots, including equal local assignments.      | Replacing the current cell drops its former root; journal truncation drops both recorded roots.        |
+| Token-parameter write          | Null owns no value; present empty and nonempty values carry their exact strong root. | The optional encoding and strong roots are attached to the same `TokParam` undo position.                     | Replacement, group exit, or rollback drops the displaced optional owner at that typed boundary.        |
+| Later global supersession      | The surviving global value becomes the current owner.                                | Group compaction moves the global redo owner and refiles the first outer owner into the enclosing undo slice. | Truncating the compacted group releases superseded local old/new roots without scanning store slots.   |
+| Group exit or rollback         | Restoration installs the undo record's old root before publishing the restored word. | Refiled global records retain their exact old/new roots; ordinary removed records are dropped with the slice. | The journal suffix and its owners are truncated only after the destination root has been restored.     |
+| Raw or frozen format install   | Each token-valued immutable `FormatBaseCell` owns its validated decoded token value. | The mutable overlay receives the same owner; later raw-global undo records receive exact old/new roots.       | Overlay restoration exposes the still-owned immutable base; replacing a base is not a job operation.   |
+| Macro construction and loading | The macro row retains its compact child ids.                                         | Parallel parameter and replacement `TokenListRef` columns own both immutable children.                        | Macro rollback/truncation drops both child columns with the definition; a fork clones the strong refs. |
+| Generation fork                | Cloned Env current and format-base owners share immutable payloads.                  | Cloned journal records and macro child columns share payloads while their stores mint fork-local coordinates. | Dropping either generation releases only that generation's roots.                                      |
+
+Snapshots remain O(1) journal positions: they do not clone the entire Env.
+Their rollback authority is the current Env plus the still-live journal
+prefix, whose token-valued records now own every value they may restore.
+Canonical identity continues to resolve exact token content and ignores root
+counts, slot generations, and journal representation. No compaction or graph
+scan was added.
+
 Read-only accessors, hashing callbacks, token printers, shipout expanders, and
 format encoders are borrows, not roots. A scanner result is a root only for the
 interval in which it is an owned completed request awaiting application.

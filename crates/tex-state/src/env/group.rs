@@ -1,7 +1,8 @@
 use super::{Env, cell_key, checked_aftergroup_start, u32_len};
 use crate::cell::{BankTag, CellId};
-use crate::journal::{BoxUndoRec, Entry, JournalPos, Marker, UndoRec};
+use crate::journal::{BoxUndoRec, Entry, JournalPos, Marker, TokenUndoRoots, UndoRec};
 use crate::token::{Token, TracedTokenWord};
+use crate::token_store::TokenListRef;
 use ahash::AHashMap;
 use ahash::AHashSet;
 use smallvec::SmallVec;
@@ -163,6 +164,12 @@ struct GlobalCompactionState<T> {
     first_old: T,
     has_later_global: bool,
     refiled: bool,
+}
+
+#[derive(Clone, Debug)]
+struct OwnedWord {
+    word: u64,
+    token_root: Option<TokenListRef>,
 }
 
 impl<T> GlobalCompactionState<T> {
@@ -808,7 +815,11 @@ impl Env {
             for index in (marker_index + 1..group_end).rev() {
                 if let Entry::Undo(rec) = self.journal.entry(index) {
                     meaning_changed |= rec.cell().bank() == BankTag::Meaning;
-                    self.restore_raw(rec.cell(), rec.old());
+                    let root = self
+                        .journal
+                        .token_undo_roots(index)
+                        .and_then(TokenUndoRoots::old);
+                    self.restore_raw_with_token_owner(rec.cell(), rec.old(), root);
                     if traced_local_entries.contains(&index) {
                         restores.push(RestoreRecord::restoring(self, index, rec.cell(), rec.old()));
                     }
@@ -875,9 +886,15 @@ impl Env {
 
         for index in marker_index + 1..group_end {
             if let Entry::Undo(rec) = self.journal.entry(index) {
-                cell_states
-                    .entry(cell_key(rec.cell()))
-                    .or_insert_with(|| GlobalCompactionState::new(rec.old()));
+                cell_states.entry(cell_key(rec.cell())).or_insert_with(|| {
+                    GlobalCompactionState::new(OwnedWord {
+                        word: rec.old(),
+                        token_root: self
+                            .journal
+                            .token_undo_roots(index)
+                            .and_then(TokenUndoRoots::old),
+                    })
+                });
             } else if let Entry::BoxUndo(id) = self.journal.entry(index) {
                 let rec = self.journal.box_undo(id);
                 box_states
@@ -894,7 +911,7 @@ impl Env {
                         .get_mut(&cell_key(rec.cell()))
                         .expect("journal cell was indexed before group compaction")
                         .has_later_global = true;
-                    globals.push(rec);
+                    globals.push((rec, self.journal.token_undo_roots(index).cloned()));
                 }
                 Entry::Undo(rec) => {
                     let state = cell_states
@@ -902,7 +919,11 @@ impl Env {
                         .expect("journal cell was indexed before group compaction");
                     if !state.has_later_global {
                         meaning_changed |= rec.cell().bank() == BankTag::Meaning;
-                        self.restore_raw(rec.cell(), rec.old());
+                        let root = self
+                            .journal
+                            .token_undo_roots(index)
+                            .and_then(TokenUndoRoots::old);
+                        self.restore_raw_with_token_owner(rec.cell(), rec.old(), root);
                         if traced_local_entries.contains(&index) {
                             restores.push(RestoreRecord::restoring(
                                 self,
@@ -951,21 +972,30 @@ impl Env {
 
         self.journal.truncate_to(JournalPos::from_raw(marker_index));
         self.journal.truncate_box_undos(box_undo_len);
-        for rec in globals.into_iter().rev() {
+        for (rec, roots) in globals.into_iter().rev() {
             meaning_changed |= rec.cell().bank() == BankTag::Meaning;
-            self.restore_raw(rec.cell(), rec.new_value());
+            let new_root = roots.as_ref().and_then(TokenUndoRoots::new_value);
+            self.restore_raw_with_token_owner(rec.cell(), rec.new_value(), new_root.clone());
             let key = cell_key(rec.cell());
             let state = cell_states
                 .get_mut(&key)
                 .expect("journal cell was indexed before group compaction");
             let old = if state.refiled {
-                rec.old()
+                OwnedWord {
+                    word: rec.old(),
+                    token_root: roots.as_ref().and_then(TokenUndoRoots::old),
+                }
             } else {
                 state.refiled = true;
-                state.first_old
+                state.first_old.clone()
             };
-            self.journal
-                .push_undo(UndoRec::new(rec.cell(), old, rec.new_value()));
+            let pos = self
+                .journal
+                .push_undo(UndoRec::new(rec.cell(), old.word, rec.new_value()));
+            if matches!(rec.cell().bank(), BankTag::Toks | BankTag::TokParam) {
+                self.journal
+                    .attach_token_undo_roots(pos, TokenUndoRoots::new(old.token_root, new_root));
+            }
         }
         for rec in box_globals.into_iter().rev() {
             self.boxes.restore(rec.index(), rec.new_value());
@@ -1010,7 +1040,11 @@ impl Env {
             .collect::<AHashMap<_, _>>();
         for index in (snapshot_index..rollback_end).rev() {
             if let Entry::Undo(rec) = self.journal.entry(index) {
-                self.restore_raw(rec.cell(), rec.old());
+                let root = self
+                    .journal
+                    .token_undo_roots(index)
+                    .and_then(TokenUndoRoots::old);
+                self.restore_raw_with_token_owner(rec.cell(), rec.old(), root);
             } else if let Entry::BoxUndo(id) = self.journal.entry(index) {
                 let rec = self.journal.box_undo(id);
                 self.boxes.restore(rec.index(), rec.old());

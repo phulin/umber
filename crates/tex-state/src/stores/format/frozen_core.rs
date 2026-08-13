@@ -656,6 +656,8 @@ fn decode_macros(
     }
     let mut rows = Vec::with_capacity(count);
     let mut definitions = Vec::with_capacity(count);
+    let mut parameter_roots = Vec::with_capacity(count);
+    let mut replacement_roots = Vec::with_capacity(count);
     let mut patterns = Vec::with_capacity(count);
     let mut observation_widths = Vec::with_capacity(count);
     for index in 0..count {
@@ -686,6 +688,16 @@ fn decode_macros(
             parameter_text,
             replacement_text,
         ));
+        parameter_roots.push(
+            tokens
+                .owner(parameter_text)
+                .ok_or(StoreFormatError::Invalid("frozen macro parameter owner"))?,
+        );
+        replacement_roots.push(
+            tokens
+                .owner(replacement_text)
+                .ok_or(StoreFormatError::Invalid("frozen macro replacement owner"))?,
+        );
         patterns.push(MacroParameterPattern::from_tokens(
             tokens.get(parameter_text),
         ));
@@ -700,8 +712,14 @@ fn decode_macros(
         );
         rows.push(row);
     }
-    let macros = MacroStore::from_frozen(definitions, patterns, observation_widths)
-        .map_err(StoreFormatError::Invalid)?;
+    let macros = MacroStore::from_frozen(
+        definitions,
+        parameter_roots,
+        replacement_roots,
+        patterns,
+        observation_widths,
+    )
+    .map_err(StoreFormatError::Invalid)?;
     Ok((macros, rows))
 }
 

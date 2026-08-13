@@ -1,7 +1,11 @@
 use super::{FrozenCoreSections, FrozenNodeSection, FrozenNonNodeSections};
-use crate::env::banks::IntParam;
+use crate::cell::{BankTag, CellId};
+use crate::env::banks::{IntParam, TokParam};
 use crate::glue::GlueSpec;
 use crate::glue::Order;
+use crate::ids::MacroDefinitionId;
+use crate::macro_store::MacroMeaning;
+use crate::meaning::{Meaning, MeaningFlags};
 use crate::node::{BoxLr, BoxNode, BoxNodeFields, DiscKind, GlueKind, LeaderPayload, Node, Sign};
 use crate::node_arena::NodeRef;
 use crate::scaled::{GlueSetRatio, Scaled};
@@ -203,6 +207,105 @@ fn format_round_trip_preserves_every_extended_register_family_at_boundaries() {
             matches!(restored.nodes(list).first(), Some(NodeRef::Penalty(found)) if found == value)
         );
     }
+}
+
+#[test]
+fn frozen_environment_and_macro_rows_install_exact_token_owners() {
+    let mut stores = Stores::new();
+    let register = stores.intern_token_list(&[Token::Char {
+        ch: 'R',
+        cat: Catcode::Other,
+    }]);
+    let parameter = stores.intern_token_list(&[Token::param(1)]);
+    let replacement = stores.intern_token_list(&[Token::Char {
+        ch: 'M',
+        cat: Catcode::Other,
+    }]);
+    stores.set_toks_global(300, register);
+    stores.set_tok_param_option_global(TokParam::EVERY_JOB, Some(replacement));
+    let definition = stores.intern_macro(MacroMeaning::new(
+        MeaningFlags::from_bits(0),
+        parameter,
+        replacement,
+    ));
+    let macro_symbol = stores.intern("owned-macro");
+    stores.set_meaning_global(
+        macro_symbol,
+        Meaning::Macro {
+            flags: MeaningFlags::from_bits(0),
+            definition,
+        },
+    );
+    assert_eq!(definition.raw(), 0);
+    assert_eq!(stores.macros.watermark().definitions, 1);
+    let encoded = stores.encode_frozen_format().expect("encode macro format");
+    assert_eq!(
+        u32::from_le_bytes(encoded.macros[4..8].try_into().expect("macro count field")),
+        1
+    );
+
+    let mut restored = frozen_round_trip(&stores);
+    assert_eq!(restored.macros.watermark().definitions, 1);
+    for (cell, id) in [
+        (CellId::new(BankTag::Toks, 300), restored.toks(300)),
+        (
+            CellId::new(BankTag::TokParam, u32::from(TokParam::EVERY_JOB.raw())),
+            restored.tok_param(TokParam::EVERY_JOB),
+        ),
+    ] {
+        let env_root = restored
+            .env
+            .token_root(cell)
+            .expect("format Env token owner");
+        let store_root = restored.tokens.owner(id).expect("loaded token owner");
+        assert!(env_root.ptr_eq(&store_root));
+        let base = restored
+            .env
+            .testing_format_base()
+            .iter()
+            .find(|entry| entry.cell == cell)
+            .expect("token cell is installed in immutable format base");
+        assert!(
+            base.token_root
+                .as_ref()
+                .is_some_and(|root| root.ptr_eq(&store_root))
+        );
+    }
+
+    let definition = restored
+        .macros
+        .resolve_stored(MacroDefinitionId::new(0))
+        .expect("loaded macro definition");
+    let (macro_parameter, macro_replacement) = restored.macros.testing_token_roots(definition);
+    let loaded_meaning = restored.macros.get(definition);
+    let loaded_parameter = loaded_meaning.parameter_text();
+    let loaded_replacement = loaded_meaning.replacement_text();
+    assert!(
+        macro_parameter.ptr_eq(
+            &restored
+                .tokens
+                .owner(loaded_parameter)
+                .expect("parameter owner")
+        )
+    );
+    assert!(
+        macro_replacement.ptr_eq(
+            &restored
+                .tokens
+                .owner(loaded_replacement)
+                .expect("replacement owner")
+        )
+    );
+
+    let overlay = restored.intern_token_list(&[Token::Char {
+        ch: 'O',
+        cat: Catcode::Other,
+    }]);
+    restored.enter_group();
+    restored.set_toks(300, overlay);
+    assert_eq!(restored.toks(300), overlay);
+    let _ = restored.leave_group();
+    assert_eq!(restored.tokens(restored.toks(300)), stores.tokens(register));
 }
 
 #[test]

@@ -87,7 +87,7 @@ fn all_roots_live_negative_control_grows_exactly() {
     assert_eq!(free, 0);
     assert_eq!(
         roots.iter().map(|root| *root.value()).sum::<u64>(),
-        (0..2_048_u64).sum()
+        (0..2_048_u64).sum::<u64>()
     );
 }
 

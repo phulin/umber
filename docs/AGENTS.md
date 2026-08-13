@@ -68,6 +68,11 @@ for the first incremental engine.
 single-operation marks, exact rollback, explicit root transfer, and rejection
 without compaction or historical-domain registries.
 
+`reachability_owned_values.md` defines strong immutable token, macro, and glue
+roots, the audited owner/transition matrix, weak non-authoritative indexes,
+private-patch transfer, and the implemented Env/save-stack and macro-token
+child ownership stratum.
+
 `tracked_region_coverage.md` defines the exact ordinary main-control operation
 covered by generic dependency recording, its begin/finish and fail-closed
 ownership, the exhaustive semantic read/barrier matrix, the command/execution

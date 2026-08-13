@@ -8,7 +8,23 @@ use crate::journal::{Entry, UndoRec};
 use crate::meaning::Meaning;
 use crate::scaled::Scaled;
 use crate::token::{Catcode, Token};
+use crate::token_store::{TokenListRef, TokenStore};
 use ahash::AHashMap;
+
+fn env_with_tokens() -> (Env, TokenStore) {
+    let tokens = TokenStore::new();
+    let mut env = Env::new();
+    env.install_empty_token_root(tokens.owner(TokenListId::EMPTY).expect("empty token root"));
+    (env, tokens)
+}
+
+fn token_root(tokens: &mut TokenStore, ch: char) -> TokenListRef {
+    let id = tokens.intern(&[Token::Char {
+        ch,
+        cat: Catcode::Other,
+    }]);
+    tokens.owner(id).expect("interned token root")
+}
 
 #[test]
 fn default_get_before_any_set_is_undefined() {
@@ -112,15 +128,24 @@ fn save_stack_projection_distinguishes_null_and_defined_token_parameters() {
     // parameter whose outer value is null. OptionalTokenListIdCodec preserves
     // defined-empty as a different word, so that case remains the ordinary
     // two-word restore_old_value negative control.
-    let mut null_outer = Env::new();
+    let (mut null_outer, mut null_tokens) = env_with_tokens();
+    let value = token_root(&mut null_tokens, 'n');
     null_outer.enter_group();
-    null_outer.set_tok_param(TokParam::EVERY_DISPLAY, TokenListId::new(7));
+    null_outer.set_tok_param_option(TokParam::EVERY_DISPLAY, Some(value));
     assert_eq!(null_outer.canonical_save_stack_words(false), 2);
 
-    let mut defined_empty_outer = Env::new();
-    defined_empty_outer.set_tok_param(TokParam::EVERY_DISPLAY, TokenListId::EMPTY);
+    let (mut defined_empty_outer, mut defined_tokens) = env_with_tokens();
+    defined_empty_outer.set_tok_param_option(
+        TokParam::EVERY_DISPLAY,
+        Some(
+            defined_tokens
+                .owner(TokenListId::EMPTY)
+                .expect("empty token root"),
+        ),
+    );
     defined_empty_outer.enter_group();
-    defined_empty_outer.set_tok_param(TokParam::EVERY_DISPLAY, TokenListId::new(7));
+    let value = token_root(&mut defined_tokens, 'd');
+    defined_empty_outer.set_tok_param_option(TokParam::EVERY_DISPLAY, Some(value));
     assert_eq!(defined_empty_outer.canonical_save_stack_words(false), 3);
 }
 
@@ -396,20 +421,22 @@ fn cloned_box_slots_and_journals_diverge_without_cross_timeline_cursors() {
 
 #[test]
 fn dense_register_typed_api_round_trips_boundary_and_signed_values() {
-    let mut env = Env::new();
+    let (mut env, mut tokens) = env_with_tokens();
+    let token_root = token_root(&mut tokens, 't');
+    let token_id = token_root.id();
 
     env.set_count(255, i32::MIN);
     env.set_dimen(255, Scaled::MIN);
     env.set_skip(255, GlueId::new(u32::MAX));
     env.set_muskip(255, GlueId::new(u32::MAX - 3));
-    env.set_toks(255, TokenListId::new(u32::MAX - 1));
+    env.set_toks(255, token_root);
     env.set_box_reg(255, Some(NodeListId::testing_survivor(7, 3, 0)));
 
     assert_eq!(env.count(255), i32::MIN);
     assert_eq!(env.dimen(255), Scaled::MIN);
     assert_eq!(env.skip(255), GlueId::new(u32::MAX));
     assert_eq!(env.muskip(255), GlueId::new(u32::MAX - 3));
-    assert_eq!(env.toks(255), TokenListId::new(u32::MAX - 1));
+    assert_eq!(env.toks(255).raw(), token_id.raw());
     assert_eq!(
         env.box_reg(255),
         Some(NodeListId::testing_survivor(7, 3, 0))
@@ -418,14 +445,16 @@ fn dense_register_typed_api_round_trips_boundary_and_signed_values() {
 
 #[test]
 fn dense_register_journal_records_use_bank_tags_and_encoded_words() {
-    let mut env = Env::new();
+    let (mut env, mut tokens) = env_with_tokens();
+    let token_root = token_root(&mut tokens, 'j');
+    let token_raw = u64::from(token_root.id().raw());
     let start = env.journal_pos();
 
     env.set_count(1, -1);
     env.set_dimen(2, Scaled::from_raw(-2));
     env.set_skip(3, GlueId::new(33));
     env.set_muskip(4, GlueId::new(34));
-    env.set_toks(5, TokenListId::new(44));
+    env.set_toks(5, token_root);
     env.set_box_reg(6, Some(NodeListId::testing_survivor(8, 55, 0)));
 
     let entries = env.journal_entries_since(start);
@@ -436,7 +465,7 @@ fn dense_register_journal_records_use_bank_tags_and_encoded_words() {
             undo(BankTag::Dimen, 2, 0, u64::from((-2_i32) as u32)),
             undo(BankTag::Skip, 3, 0, 33),
             undo(BankTag::Muskip, 4, 0, 34),
-            undo(BankTag::Toks, 5, 0, 44),
+            undo(BankTag::Toks, 5, 0, token_raw),
         ]
     );
     let Entry::BoxUndo(id) = entries[5] else {
@@ -471,28 +500,32 @@ fn dense_register_global_sets_tag_journal_records() {
 
 #[test]
 fn parameter_typed_api_round_trips_values() {
-    let mut env = Env::new();
+    let (mut env, mut tokens) = env_with_tokens();
+    let token_root = token_root(&mut tokens, 'p');
+    let token_id = token_root.id();
 
     env.set_int_param(IntParam::new(127), i32::MIN);
     env.set_dimen_param(DimenParam::new(127), Scaled::MIN);
     env.set_glue_param(GlueParam::new(127), GlueId::new(77));
-    env.set_tok_param(TokParam::new(127), TokenListId::new(88));
+    env.set_tok_param_option(TokParam::new(127), Some(token_root));
 
     assert_eq!(env.int_param(IntParam::new(127)), i32::MIN);
     assert_eq!(env.dimen_param(DimenParam::new(127)), Scaled::MIN);
     assert_eq!(env.glue_param(GlueParam::new(127)), GlueId::new(77));
-    assert_eq!(env.tok_param(TokParam::new(127)), TokenListId::new(88));
+    assert_eq!(env.tok_param(TokParam::new(127)).raw(), token_id.raw());
 }
 
 #[test]
 fn parameter_journal_records_use_parameter_bank_tags() {
-    let mut env = Env::new();
+    let (mut env, mut tokens) = env_with_tokens();
+    let token_root = token_root(&mut tokens, 'q');
+    let encoded_token = u64::from(token_root.id().raw()) + 1;
     let start = env.journal_pos();
 
     env.set_int_param(IntParam::new(1), -9);
     env.set_dimen_param(DimenParam::new(2), Scaled::from_raw(-10));
     env.set_glue_param(GlueParam::new(3), GlueId::new(90));
-    env.set_tok_param(TokParam::new(4), TokenListId::new(100));
+    env.set_tok_param_option(TokParam::new(4), Some(token_root));
 
     assert_eq!(
         env.journal_entries_since(start),
@@ -500,7 +533,7 @@ fn parameter_journal_records_use_parameter_bank_tags() {
             undo(BankTag::IntParam, 1, 0, u64::from((-9_i32) as u32)),
             undo(BankTag::DimenParam, 2, 0, u64::from((-10_i32) as u32)),
             undo(BankTag::GlueParam, 3, 0, 90),
-            undo(BankTag::TokParam, 4, 0, 101),
+            undo(BankTag::TokParam, 4, 0, encoded_token),
         ]
     );
 }
@@ -527,17 +560,19 @@ fn first_same_value_local_write_at_new_group_level_is_restored() {
 
 #[test]
 fn parameter_global_sets_tag_journal_records() {
-    let mut env = Env::new();
+    let (mut env, mut tokens) = env_with_tokens();
+    let token_root = token_root(&mut tokens, 'g');
+    let encoded_token = u64::from(token_root.id().raw()) + 1;
     let start = env.journal_pos();
 
-    env.set_tok_param_global(TokParam::new(7), TokenListId::new(11));
+    env.set_tok_param_option_global(TokParam::new(7), Some(token_root));
 
     assert_eq!(
         env.journal_entries_since(start),
         &[Entry::Undo(UndoRec::new(
             CellId::new_global(BankTag::TokParam, 7),
             0,
-            12,
+            encoded_token,
         ))]
     );
 }
