@@ -6,6 +6,7 @@ use crate::node::{
     BoxNode, Direction, DiscKind, GlueKind, KernKind, LeaderPayload, MarginKernSide, Node,
     NodeKind, UnsetNode, UnsetNodeFields, Whatsit,
 };
+use crate::provenance::OriginRef;
 use crate::scaled::Scaled;
 use crate::token::OriginId;
 use crate::token_store::TokenListRef;
@@ -17,12 +18,14 @@ pub enum NodeRef<'a> {
         font: crate::ids::FontId,
         ch: char,
         origin: OriginId,
+        origin_root: &'a OriginRef,
     },
     Lig {
         font: crate::ids::FontId,
         ch: char,
         orig: &'a [char],
         origins: &'a [OriginId],
+        origin_roots: &'a [OriginRef],
         left_hit: bool,
         right_hit: bool,
     },
@@ -120,7 +123,8 @@ impl<'a> From<&'a Node> for NodeRef<'a> {
             Node::Char { font, ch, origin } => Self::Char {
                 font: *font,
                 ch: *ch,
-                origin: *origin,
+                origin: origin.id(),
+                origin_root: origin,
             },
             Node::Lig {
                 font,
@@ -133,7 +137,8 @@ impl<'a> From<&'a Node> for NodeRef<'a> {
                 font: *font,
                 ch: *ch,
                 orig,
-                origins,
+                origins: &[],
+                origin_roots: origins,
                 left_hit: *left_hit,
                 right_hit: *right_hit,
             },
@@ -264,23 +269,29 @@ impl NodeRef<'_> {
     #[must_use]
     pub fn to_owned(&self) -> Node {
         match self {
-            Self::Char { font, ch, origin } => Node::Char {
+            Self::Char {
+                font,
+                ch,
+                origin_root,
+                ..
+            } => Node::Char {
                 font: *font,
                 ch: *ch,
-                origin: *origin,
+                origin: (*origin_root).clone(),
             },
             Self::Lig {
                 font,
                 ch,
                 orig,
-                origins,
+                origin_roots,
                 left_hit,
                 right_hit,
+                ..
             } => Node::Lig {
                 font: *font,
                 ch: *ch,
                 orig: orig.to_vec(),
-                origins: origins.to_vec(),
+                origins: origin_roots.to_vec(),
                 left_hit: *left_hit,
                 right_hit: *right_hit,
             },
@@ -642,6 +653,7 @@ impl<'a> NodeList<'a> {
         Some(CharRun {
             words: &self.storage.words[self.start + index..end],
             origins: &self.storage.origins[self.start + index..end],
+            origin_roots: &self.storage.origin_roots[self.start + index..end],
             font,
         })
     }
@@ -717,6 +729,7 @@ impl Iterator for CharCodes<'_> {
 pub struct CharRun<'a> {
     words: &'a [NodeWord],
     origins: &'a [OriginId],
+    origin_roots: &'a [Option<OriginRef>],
     font: crate::ids::FontId,
 }
 
@@ -738,6 +751,11 @@ impl<'a> CharRun<'a> {
     }
     pub fn origins(self) -> impl ExactSizeIterator<Item = OriginId> + 'a {
         self.origins.iter().copied()
+    }
+    pub fn origin_roots(self) -> impl ExactSizeIterator<Item = &'a OriginRef> + 'a {
+        self.origin_roots
+            .iter()
+            .map(|root| root.as_ref().expect("character origin root is missing"))
     }
 }
 
@@ -859,12 +877,16 @@ impl NodeStorage {
                 font: crate::ids::FontId::new((payload >> 21) as u32),
                 ch: char::from_u32((payload & 0x1f_ffff) as u32).expect("invalid stored scalar"),
                 origin: self.origins[index],
+                origin_root: self.origin_roots[index]
+                    .as_ref()
+                    .expect("character origin root is missing"),
             },
             1 => NodeRef::Lig {
                 font: self.ligatures[side].font,
                 ch: self.ligatures[side].ch,
                 orig: &self.ligatures[side].orig,
                 origins: &self.ligatures[side].origins,
+                origin_roots: &self.ligatures[side].origin_roots,
                 left_hit: self.ligatures[side].left_hit,
                 right_hit: self.ligatures[side].right_hit,
             },

@@ -203,7 +203,7 @@ mod tests {
                     orig: vec!['a', 'b', 'c'],
                     left_hit: false,
                     right_hit: false,
-                    origins: vec![crate::token::OriginId::UNKNOWN; 3],
+                    origins: vec![crate::provenance::OriginRef::unknown(); 3],
                 },
                 Node::Penalty(0),
             ],

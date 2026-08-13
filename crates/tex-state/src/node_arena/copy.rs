@@ -114,6 +114,7 @@ impl NodeStorage {
         self.words.reserve(source_words.len());
         self.glue_roots.reserve(source_words.len());
         self.origins.reserve(source_words.len());
+        self.origin_roots.reserve(source_words.len());
         self.reserve_sidecars(needs);
 
         for (offset, &word) in source_words.iter().enumerate() {
@@ -248,6 +249,8 @@ impl NodeStorage {
                 .push(source.storage.glue_roots[source.start + offset].clone());
             self.origins
                 .push(source.storage.origins[source.start + offset]);
+            self.origin_roots
+                .push(source.storage.origin_roots[source.start + offset].clone());
         }
 
         #[cfg(feature = "profiling")]

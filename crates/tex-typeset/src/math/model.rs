@@ -168,7 +168,7 @@ pub enum MathNode {
         /// Exact glyph selected by OpenType MATH, including `ssty`.
         glyph_id: Option<u16>,
         metrics: CharMetrics,
-        origin: tex_state::token::OriginId,
+        origin: tex_state::provenance::OriginRef,
     },
     Kern {
         amount: Scaled,

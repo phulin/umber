@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use super::{NodeStorageObservation, PeakNodeStorageRecorder};
-use crate::ids::{FontId, GlueId};
+use crate::ids::FontId;
 use crate::node::{Node, PdfDestinationKind, PdfDestinationNode, Whatsit};
 use crate::node_arena::{NodeArena, NodeStorage};
 use crate::token::OriginId;
@@ -104,7 +104,9 @@ fn newer_whatsit_payloads_are_exhaustively_measured() {
         },
         Whatsit::PdfSavePos,
         Whatsit::PdfSnapRefPoint,
-        Whatsit::PdfSnapY { glue: GlueId::ZERO },
+        Whatsit::PdfSnapY {
+            glue: crate::glue::testing_zero_glue_ref(),
+        },
         Whatsit::PdfSnapYComp { ratio: 1 },
         Whatsit::PdfDestination(Box::new(crate::node::PdfDestinationNode {
             identifier: crate::PdfActionIdentifier::Number(1),
@@ -145,7 +147,10 @@ fn owned_ligature_payloads_participate_in_totals_and_columns() {
         font: FontId::new(1),
         ch: 'f',
         orig: vec!['f', 'i'],
-        origins: vec![OriginId::from_raw(1), OriginId::from_raw(2)],
+        origins: vec![
+            crate::provenance::OriginRef::direct(OriginId::from_raw(1)),
+            crate::provenance::OriginRef::direct(OriginId::from_raw(2)),
+        ],
         left_hit: false,
         right_hit: false,
     }]);
@@ -180,7 +185,10 @@ fn incremental_nested_payload_totals_follow_compact_copy_and_rollback() {
             font: FontId::new(1),
             ch: 'f',
             orig: vec!['f', 'i'],
-            origins: vec![OriginId::from_raw(1), OriginId::from_raw(2)],
+            origins: vec![
+                crate::provenance::OriginRef::direct(OriginId::from_raw(1)),
+                crate::provenance::OriginRef::direct(OriginId::from_raw(2)),
+            ],
             left_hit: false,
             right_hit: false,
         },

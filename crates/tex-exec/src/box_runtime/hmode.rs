@@ -6,8 +6,8 @@ use tex_state::ids::FontId;
 use tex_state::math::{MathField, MathNoad, NoadClass, NoadKind};
 use tex_state::meaning::UnexpandablePrimitive;
 use tex_state::node::{BoxNode, BoxNodeFields, DiscKind, GlueKind, KernKind, Node, Sign};
+use tex_state::provenance::OriginRef;
 use tex_state::scaled::{GlueSetRatio, Scaled};
-use tex_state::token::OriginId;
 
 use crate::mode::{PendingHChar, PendingHRunChar};
 use crate::{ExecError, Mode, ModeNest};
@@ -16,7 +16,7 @@ pub(crate) fn append_character_with_fuel(
     nest: &mut ModeNest,
     stores: &mut Universe,
     ch: char,
-    origin: OriginId,
+    origin: OriginRef,
     etex_extended: bool,
     fuel: &mut tex_command::CommandFuel,
 ) -> Result<(), ExecError> {
@@ -293,7 +293,7 @@ pub(crate) fn append_hchar_with_fuel(
     nest: &mut ModeNest,
     stores: &mut Universe,
     ch: char,
-    origin: OriginId,
+    origin: OriginRef,
     etex_extended: bool,
     fuel: &mut tex_command::CommandFuel,
 ) -> Result<(), ExecError> {
@@ -458,7 +458,7 @@ pub(crate) fn append_pending_hchar(
     font: FontId,
     font_is_ltr_shaping: bool,
     ch: char,
-    origin: OriginId,
+    origin: OriginRef,
 ) {
     let Some(mut pending) = list.take_pending_hchars() else {
         list.begin_pending_hchars(font, ch, origin);
@@ -472,16 +472,20 @@ pub(crate) fn append_pending_hchar(
         if is_strong_script(script) {
             pending.script = script;
         }
-        pending
-            .source
-            .push(crate::mode::PendingHChar { font, ch, origin });
+        pending.source.push(crate::mode::PendingHChar {
+            font,
+            ch,
+            origin: origin.clone(),
+        });
         pending.current = PendingHRunChar::new(font, ch, origin);
         list.set_pending_hchars(pending);
         return;
     }
-    pending
-        .source
-        .push(crate::mode::PendingHChar { font, ch, origin });
+    pending.source.push(crate::mode::PendingHChar {
+        font,
+        ch,
+        origin: origin.clone(),
+    });
     pending.current = PendingHRunChar::new(font, ch, origin);
     list.set_pending_hchars(pending);
 }
@@ -582,7 +586,7 @@ pub(crate) fn shape_open_type_chars(
         nodes.push(Node::Char {
             font: entry.font,
             ch: entry.ch,
-            origin: entry.origin,
+            origin: entry.origin.clone(),
         });
         if adjustment.raw() != 0 {
             nodes.push(Node::Kern {
@@ -602,22 +606,26 @@ pub(crate) fn shape_open_type_chars(
 pub(crate) fn reshape_open_type_runs(stores: &Universe, nodes: &mut Vec<Node>) {
     let mut index = 0;
     while index < nodes.len() {
-        let Node::Char { font, ch, origin } = nodes[index] else {
+        let Node::Char { font, ch, origin } = &nodes[index] else {
             index += 1;
             continue;
         };
-        if !is_ltr_shaping_font(stores, font)
-            || !is_supported_script(tex_fonts::character_script(ch))
+        if !is_ltr_shaping_font(stores, *font)
+            || !is_supported_script(tex_fonts::character_script(*ch))
         {
             index += 1;
             continue;
         }
-        let mut chars = vec![crate::mode::PendingHChar { font, ch, origin }];
-        let mut script = tex_fonts::character_script(ch);
+        let mut chars = vec![crate::mode::PendingHChar {
+            font: *font,
+            ch: *ch,
+            origin: origin.clone(),
+        }];
+        let mut script = tex_fonts::character_script(*ch);
         let start = index;
         index += 1;
         while index < nodes.len() {
-            match nodes[index] {
+            match &nodes[index] {
                 Node::Kern {
                     kind: KernKind::Font,
                     ..
@@ -627,16 +635,16 @@ pub(crate) fn reshape_open_type_runs(stores: &Universe, nodes: &mut Vec<Node>) {
                     ch: next_ch,
                     origin: next_origin,
                 } if next_font == font
-                    && scripts_compatible(script, tex_fonts::character_script(next_ch)) =>
+                    && scripts_compatible(script, tex_fonts::character_script(*next_ch)) =>
                 {
-                    let next_script = tex_fonts::character_script(next_ch);
+                    let next_script = tex_fonts::character_script(*next_ch);
                     if is_strong_script(next_script) {
                         script = next_script;
                     }
                     chars.push(crate::mode::PendingHChar {
-                        font,
-                        ch: next_ch,
-                        origin: next_origin,
+                        font: *font,
+                        ch: *next_ch,
+                        origin: next_origin.clone(),
                     });
                     index += 1;
                 }
@@ -804,7 +812,7 @@ pub(crate) fn run_tfm_ligature_machine(
         work.push_back(LigatureWorkItem::Glyph(PendingHRunChar::new(
             entry.font,
             entry.ch,
-            entry.origin,
+            entry.origin.clone(),
         )));
     }
     if !suppress_right_boundary {
@@ -1133,8 +1141,8 @@ pub(crate) fn rechar_node(current: PendingHRunChar) -> Node {
             origin: current
                 .origins
                 .first()
-                .copied()
-                .unwrap_or(OriginId::UNKNOWN),
+                .cloned()
+                .unwrap_or_else(OriginRef::unknown),
         }
     }
 }

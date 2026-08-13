@@ -75,7 +75,7 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/memo.rs`: Opaque schema-versioned detached memo envelopes, handle-free transition/effect/result DTOs, and aggregate token/glue/macro/node/font import APIs.
 - `src/memo/tests.rs`: Cold/fork/rollback Cross-Universe memo import, provenance stripping, corruption, bounds, kind, and semantic round-trip tests.
 - `src/measurement.rs`: `profiling-stats` process-local allocation-owner counters used by dedicated profiling builds.
-- `src/node.rs`: Immutable TeX node, box, strongly rooted glue, kern, penalty, rule, strongly token-rooted whatsit/mark/PDF payloads, math-list, discretionary, and list-field model.
+- `src/node.rs`: Immutable TeX node, box, strongly rooted character/ligature provenance and glue, kern, penalty, rule, strongly token-rooted whatsit/mark/PDF payloads, math-list, discretionary, and list-field model.
 - `src/node_sequence.rs`: Paired semantic and TeX-physical transient node sequences with semantic-only equality.
 - `src/node_arena.rs`: Compact-node module boundary and deliberately narrow re-exports.
 - `src/node_arena/arena.rs`: Epoch arena facade and reusable owned node-list builder.
@@ -85,7 +85,7 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/node_arena/mutation.rs`: Private shape-preserving compact-row replacement operations.
 - `src/node_arena/schema.rs`: Exhaustive allocation-free logical node descriptors, typed handle policies, origins, and ordered child traversal.
 - `src/node_arena/semantic.rs`: Versioned, allocation-independent semantic identity for immutable node-list aggregates.
-- `src/node_arena/storage.rs`: Canonical node words, strong token/glue sidecar coordination, encoding, aggregate watermarks, rollback, and survivor-transfer support.
+- `src/node_arena/storage.rs`: Canonical node words, aligned strong provenance/token/glue sidecar coordination, encoding, aggregate watermarks, rollback, and survivor-transfer support.
 - `src/node_arena/tables.rs`: Typed structure-of-arrays sidecar tables for boxes, unsets, insertions, and noads.
 - `src/node_arena/view.rs`: Zero-allocation node references, list spans, raw tag predicates, character runs, and iterators.
 - `src/node_arena/tests.rs`: Unit tests for node-list allocation, lookup, rollback, and arena liveness.

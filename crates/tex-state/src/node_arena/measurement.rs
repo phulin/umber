@@ -265,10 +265,14 @@ impl NodeStorage {
             .last()
             .expect("a ligature payload was just appended");
         self.nested_payload_logical += (ligature.orig.len() * core::mem::size_of::<char>()) as u64
-            + (ligature.origins.len() * core::mem::size_of::<crate::token::OriginId>()) as u64;
+            + (ligature.origins.len() * core::mem::size_of::<crate::token::OriginId>()) as u64
+            + (ligature.origin_roots.len() * core::mem::size_of::<crate::provenance::OriginRef>())
+                as u64;
         self.nested_payload_retained += (ligature.orig.capacity() * core::mem::size_of::<char>())
             as u64
-            + (ligature.origins.capacity() * core::mem::size_of::<crate::token::OriginId>()) as u64;
+            + (ligature.origins.capacity() * core::mem::size_of::<crate::token::OriginId>()) as u64
+            + (ligature.origin_roots.capacity()
+                * core::mem::size_of::<crate::provenance::OriginRef>()) as u64;
     }
 
     #[cfg(feature = "profiling")]
@@ -300,6 +304,12 @@ impl NodeStorage {
             logical += (origins.len() * core::mem::size_of::<crate::token::OriginId>()) as u64;
             retained +=
                 (origins.capacity() * core::mem::size_of::<crate::token::OriginId>()) as u64;
+            logical += (ligature.origin_roots.len()
+                * core::mem::size_of::<crate::provenance::OriginRef>())
+                as u64;
+            retained += (ligature.origin_roots.capacity()
+                * core::mem::size_of::<crate::provenance::OriginRef>())
+                as u64;
         }
         for whatsit in &self.whatsits[whatsit_start..] {
             let owned = whatsit_owned_payloads(whatsit);
@@ -326,10 +336,16 @@ impl NodeStorage {
             let ligature = &self.ligatures[index];
             self.nested_payload_logical += (ligature.orig.len() * core::mem::size_of::<char>())
                 as u64
-                + (ligature.origins.len() * core::mem::size_of::<crate::token::OriginId>()) as u64;
+                + (ligature.origins.len() * core::mem::size_of::<crate::token::OriginId>()) as u64
+                + (ligature.origin_roots.len()
+                    * core::mem::size_of::<crate::provenance::OriginRef>())
+                    as u64;
             self.nested_payload_retained += (ligature.orig.capacity()
                 * core::mem::size_of::<char>()) as u64
                 + (ligature.origins.capacity() * core::mem::size_of::<crate::token::OriginId>())
+                    as u64
+                + (ligature.origin_roots.capacity()
+                    * core::mem::size_of::<crate::provenance::OriginRef>())
                     as u64;
         }
         for index in 0..self.whatsits.len() {
@@ -403,6 +419,7 @@ impl NodeStorage {
         add!(self.words);
         add!(self.glue_roots);
         add!(self.origins);
+        add!(self.origin_roots);
         add!(self.ligatures);
         add!(self.boxes.rows);
         add!(self.unsets.kind);
@@ -443,6 +460,12 @@ impl NodeStorage {
             logical += (origins.len() * core::mem::size_of::<crate::token::OriginId>()) as u64;
             retained +=
                 (origins.capacity() * core::mem::size_of::<crate::token::OriginId>()) as u64;
+            logical += (ligature.origin_roots.len()
+                * core::mem::size_of::<crate::provenance::OriginRef>())
+                as u64;
+            retained += (ligature.origin_roots.capacity()
+                * core::mem::size_of::<crate::provenance::OriginRef>())
+                as u64;
         }
         #[cfg(not(feature = "profiling"))]
         for whatsit in &self.whatsits {
@@ -474,6 +497,7 @@ impl NodeStorage {
         column!("words", &self.words);
         column!("glue_roots", &self.glue_roots);
         column!("origins", &self.origins);
+        column!("origin_roots", &self.origin_roots);
         column!("ligatures", &self.ligatures);
         column!("boxes.rows", &self.boxes.rows);
         column!("unsets.kind", &self.unsets.kind);
@@ -534,6 +558,23 @@ impl NodeStorage {
                 .iter()
                 .map(|ligature| {
                     ligature.origins.capacity() * core::mem::size_of::<crate::token::OriginId>()
+                })
+                .sum(),
+        ));
+        out.push(NodeMemoryColumn::byte_payload(
+            format!("{prefix}.ligatures.owned_origin_roots"),
+            self.ligatures
+                .iter()
+                .map(|ligature| {
+                    ligature.origin_roots.len()
+                        * core::mem::size_of::<crate::provenance::OriginRef>()
+                })
+                .sum(),
+            self.ligatures
+                .iter()
+                .map(|ligature| {
+                    ligature.origin_roots.capacity()
+                        * core::mem::size_of::<crate::provenance::OriginRef>()
                 })
                 .sum(),
         ));

@@ -3,8 +3,8 @@
 use crate::glue::{GlueSpecRef, Order};
 use crate::ids::{FontId, NodeListId};
 use crate::math::{MathChoice, MathFraction, MathListNode, MathNoad, MathStyle};
+use crate::provenance::OriginRef;
 use crate::scaled::{GlueSetRatio, Scaled};
-use crate::token::OriginId;
 use crate::token_store::TokenListRef;
 use crate::world::{PrintSink, StreamSlot};
 
@@ -79,7 +79,7 @@ pub enum Node {
         font: FontId,
         ch: char,
         /// Diagnostic-only source provenance; excluded from semantic identity.
-        origin: OriginId,
+        origin: OriginRef,
     },
     Lig {
         font: FontId,
@@ -88,7 +88,7 @@ pub enum Node {
         left_hit: bool,
         right_hit: bool,
         /// One origin per original character consumed by the ligature.
-        origins: Vec<OriginId>,
+        origins: Vec<OriginRef>,
     },
     Kern {
         amount: Scaled,

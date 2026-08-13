@@ -46,7 +46,7 @@ Command operands are scanned by `tex-command` into typed request and result valu
 - `src/execution_receipt.rs`: crate-private typed operation receipts assembled
   and consumed by the unified executor's optional append-bounded evidence
   publication seam; every allocating category closes before operation commit.
-- `src/mode.rs` and `src/mode/`: mode nest, strongly glue-rooted paragraph/alignment metadata, pending horizontal characters, summaries, and rollback journal. Alignment brace depth belongs only to `tex-command`.
+- `src/mode.rs` and `src/mode/`: mode nest, strongly glue-rooted paragraph/alignment metadata, strongly provenance-rooted pending horizontal characters, summaries, and rollback journal. Alignment brace depth belongs only to `tex-command`.
 - `src/job.rs` and `src/job_output.rs`: TeX job framing, terminal continuation, final cleanup, and lazy DVI/transcript output. See `docs/job_framing.md`.
 - `src/page_builder.rs`, `src/splitting.rs`, `src/vertical.rs`, `src/packing_params.rs`, and `src/pack_report.rs`: page accounting, vertical splitting/contribution, packing snapshots, and box diagnostics.
 - `src/host_api.rs`, `src/retained_resource.rs`, and `src/session_api.rs`: host resource contracts, retained fulfillment, execution budgets, cancellation, and interrupts.

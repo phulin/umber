@@ -14,7 +14,6 @@ use tex_state::node::{
 };
 use tex_state::page::{PageBreak, PageInteger};
 use tex_state::scaled::GlueSetRatio;
-use tex_state::token::OriginId;
 
 fn s(raw: i32) -> Scaled {
     Scaled::from_raw(raw)
@@ -431,13 +430,13 @@ fn page_builder_rejects_impossible_contribution_nodes_with_page_confusion() {
         Node::Char {
             font: FontId::testing_new(0),
             ch: 'x',
-            origin: OriginId::UNKNOWN,
+            origin: tex_state::provenance::OriginRef::unknown(),
         },
         Node::Lig {
             font: FontId::testing_new(0),
             ch: 'x',
             orig: vec!['x'],
-            origins: vec![OriginId::UNKNOWN],
+            origins: vec![tex_state::provenance::OriginRef::unknown()],
             left_hit: false,
             right_hit: false,
         },

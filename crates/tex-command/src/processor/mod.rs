@@ -207,6 +207,17 @@ impl CommandProcessor<'_> {
         self.command.profile()
     }
 
+    /// Returns the rooted expansion frame for the innermost live macro body.
+    ///
+    /// Executor-owned material uses this at its construction boundary so a
+    /// rendered character retains the invocation that produced it after the
+    /// command input level itself retires. Direct source delivery has no
+    /// active frame and returns `None`.
+    #[must_use]
+    pub fn active_macro_origin(&self) -> Option<tex_state::provenance::OriginRef> {
+        self.command.parameters.active_invocation_origin()
+    }
+
     /// Returns the glue node retained by the most recent glue scan when the
     /// result is still pointer-identical to an internal source quantity.
     #[must_use]

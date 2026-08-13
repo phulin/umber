@@ -2015,7 +2015,7 @@ fn insert_and_vadjust_aftergroup_closure_provenance_order_and_once() {
         .testing_decoded()
         .iter()
         .filter_map(|node| match node {
-            Node::Char { ch, origin, .. } => Some((*ch, *origin)),
+            Node::Char { ch, origin, .. } => Some((*ch, origin.clone())),
             _ => None,
         })
         .collect::<Vec<_>>();
@@ -2023,7 +2023,7 @@ fn insert_and_vadjust_aftergroup_closure_provenance_order_and_once() {
         insert_chars.iter().map(|(ch, _)| *ch).collect::<String>(),
         "AB"
     );
-    assert!(stores.origin_is_inserted_kind(insert_chars[0].1, InsertedOriginKind::AfterGroup));
+    assert!(stores.origin_is_inserted_kind(insert_chars[0].1.id(), InsertedOriginKind::AfterGroup));
 
     let adjust_box = register_box(&stores, 9);
     let adjust_children = stores.nodes(adjust_box.children).testing_decoded();
@@ -2046,7 +2046,7 @@ fn insert_and_vadjust_aftergroup_closure_provenance_order_and_once() {
         .testing_decoded()
         .iter()
         .filter_map(|node| match node {
-            Node::Char { ch, origin, .. } => Some((*ch, *origin)),
+            Node::Char { ch, origin, .. } => Some((*ch, origin.clone())),
             _ => None,
         })
         .collect::<Vec<_>>();
@@ -2055,7 +2055,7 @@ fn insert_and_vadjust_aftergroup_closure_provenance_order_and_once() {
         "ABC",
         "aftergroup token precedes the following source token"
     );
-    assert!(stores.origin_is_inserted_kind(line_chars[1].1, InsertedOriginKind::AfterGroup));
+    assert!(stores.origin_is_inserted_kind(line_chars[1].1.id(), InsertedOriginKind::AfterGroup));
 }
 
 #[test]

@@ -2487,7 +2487,7 @@ impl MainControl {
     /// Executes TeX82 §1113's `append_discretionary` shorthand for `\-`.
     fn apply_discretionary_hyphen(
         &mut self,
-        origin: tex_state::token::OriginId,
+        origin: tex_state::provenance::OriginRef,
         stores: &mut Universe,
     ) -> Result<ReplayStep, ExecError> {
         if matches!(
@@ -3093,6 +3093,17 @@ impl MainControl {
             return Ok(ReplayStep::Continue);
         };
         let base = self.do_assignments_then_accent_base(stores)?;
+        let accent_origin = stores
+            .origin_ref(scanned.accent_provenance.primary)
+            .unwrap_or_else(|| {
+                tex_state::provenance::OriginRef::direct(scanned.accent_provenance.primary)
+            });
+        let base = base.map(|(character, origin)| {
+            let root = stores
+                .origin_ref(origin)
+                .unwrap_or_else(|| tex_state::provenance::OriginRef::direct(origin));
+            (character, root)
+        });
         let etex_extended = self.command_profile() == CommandProfile::ETEX26;
         apply_accent_nodes(
             &mut self.modes,
@@ -3102,7 +3113,7 @@ impl MainControl {
                 accent,
                 accent_font,
                 accent_metrics,
-                accent_origin: scanned.accent_provenance.primary,
+                accent_origin,
                 base,
             },
         )
@@ -5826,7 +5837,7 @@ enum ScannedStep {
     },
     CharacterCode {
         value: i32,
-        origin: tex_state::token::OriginId,
+        origin: tex_state::provenance::OriginRef,
         suppress_left_boundary: bool,
     },
     /// TeX82 §1105's `any_mode(remove_item): delete_last` -- `\unpenalty`,
@@ -6446,14 +6457,14 @@ enum ScannedStep {
     Character {
         ch: char,
         cat: Catcode,
-        origin: tex_state::token::OriginId,
+        origin: tex_state::provenance::OriginRef,
         suppress_left_boundary: bool,
     },
     Accent(ScannedAccent),
     DiscretionaryOpening(ScannedDiscretionaryOpening),
     DiscretionaryPartEnd,
     DiscretionaryHyphen {
-        origin: tex_state::token::OriginId,
+        origin: tex_state::provenance::OriginRef,
     },
 }
 
@@ -7580,6 +7591,15 @@ fn starts_paragraph_in_vertical_mode(meaning: Meaning) -> bool {
     }
 }
 
+fn material_origin(
+    processor: &CommandProcessor<'_>,
+    command: &tex_command::CurrentCommand,
+) -> tex_state::provenance::OriginRef {
+    processor
+        .active_macro_origin()
+        .unwrap_or_else(|| command.origin_ref().clone())
+}
+
 #[allow(clippy::too_many_arguments)] // mirrors TeX main-control dispatch inputs
 fn scan_command(
     processor: &mut CommandProcessor<'_>,
@@ -8176,10 +8196,11 @@ fn scan_command(
             Ok(ScannedStep::PrevGraf { value })
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Char) => {
+            let origin = material_origin(processor, &command);
             let value = processor.scan_integer().map_err(command_error)?.value;
             Ok(ScannedStep::CharacterCode {
                 value,
-                origin: command.spelling().origin(),
+                origin,
                 suppress_left_boundary: false,
             })
         }
@@ -8195,7 +8216,7 @@ fn scan_command(
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::DiscretionaryHyphen) => {
             Ok(ScannedStep::DiscretionaryHyphen {
-                origin: command.origin(),
+                origin: material_origin(processor, &command),
             })
         }
         Meaning::UnexpandablePrimitive(
@@ -9533,7 +9554,7 @@ fn scan_command(
         } => Ok(ScannedStep::Character {
             ch,
             cat,
-            origin: command.spelling().origin(),
+            origin: material_origin(processor, &command),
             suppress_left_boundary: false,
         }),
         // TeX82 §1105's `any_mode(remove_item): delete_last`. No operand of
@@ -10274,7 +10295,7 @@ fn scan_unclassified_meaning(
         // no `scan_char_num`.
         Meaning::CharGiven(ch) => Ok(ScannedStep::CharacterCode {
             value: ch as i32,
-            origin: command.spelling().origin(),
+            origin: material_origin(processor, &command),
             suppress_left_boundary: false,
         }),
         // TeX82 §1046's `non_math(math_given): insert_dollar_sign`, the same
@@ -13218,7 +13239,7 @@ fn apply_scanned_step(
                 // `mmode+letter`/`mmode+other_char`/`mmode+char_given` cases:
                 // it appends a math-char noad and never begins or continues
                 // a horizontal list from math mode.
-                set_math_char(ch, origin, stores, modes, command)?;
+                set_math_char(ch, origin.id(), stores, modes, command)?;
                 return Ok(ReplayStep::Continue);
             }
             if matches!(
@@ -16250,7 +16271,7 @@ fn apply_scanned_step(
                 if !matches!(cat, Catcode::Space) {
                     // TeX82 §1154's `mmode+letter,mmode+other_char:
                     // set_math_char(ho(math_code(cur_chr)))`.
-                    set_math_char(ch, origin, stores, modes, command)?;
+                    set_math_char(ch, origin.id(), stores, modes, command)?;
                 }
                 return Ok(ReplayStep::Continue);
             }
@@ -17102,9 +17123,9 @@ struct AccentPlacement {
     accent: u8,
     accent_font: tex_state::ids::FontId,
     accent_metrics: tex_state::font::CharMetrics,
-    accent_origin: tex_state::token::OriginId,
+    accent_origin: tex_state::provenance::OriginRef,
     /// §1124's `q`: the base character and its origin, or `null`.
-    base: Option<(u8, tex_state::token::OriginId)>,
+    base: Option<(u8, tex_state::provenance::OriginRef)>,
 }
 
 /// Appends §1123's `link(tail):=p; tail:=p; space_factor:=1000`, preceded by

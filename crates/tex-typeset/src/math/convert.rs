@@ -904,7 +904,11 @@ pub(crate) fn clean_box(
                 // same finalized dimensions after the trivial italic-kern
                 // simplification, but its construction alone does not cross
                 // §651's observable hpack return seam.
-                let boxed = char_box(ctx, fetched, ch.origin);
+                let boxed = char_box(
+                    ctx,
+                    fetched,
+                    tex_state::provenance::OriginRef::direct(ch.origin),
+                );
                 // The shortcut stands in for two distinct TeX82 package
                 // calls: the temporary one-noad mlist's §724 dimensions
                 // check, followed by §720's common clean-box hpack.
@@ -970,7 +974,7 @@ pub(crate) fn make_character_nucleus<S: MathTypesetState>(
         ch: fetched.ch,
         glyph_id: fetched.glyph_id,
         metrics: fetched.metrics,
-        origin: ch.origin,
+        origin: tex_state::provenance::OriginRef::direct(ch.origin),
     };
     if matches!(subscript, MathField::Empty) && delta.raw() != 0 {
         let kern = MathNode::Kern {
@@ -987,7 +991,7 @@ pub(crate) fn make_character_nucleus<S: MathTypesetState>(
 pub(crate) fn char_box(
     ctx: &mut Context<'_, impl MathTypesetState>,
     fetched: FetchedChar,
-    origin: tex_state::token::OriginId,
+    origin: tex_state::provenance::OriginRef,
 ) -> MathBox {
     // AppG rule 17
     let list = ctx.layout.hlist([MathNode::Char {

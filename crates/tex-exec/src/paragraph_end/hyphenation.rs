@@ -183,7 +183,7 @@ fn project_physical_pre_break_spans(
         }
 
         let (font, chars, origins) = match &nodes[index - 1] {
-            Node::Char { font, ch, origin } => (*font, vec![*ch], vec![*origin]),
+            Node::Char { font, ch, origin } => (*font, vec![*ch], vec![origin.clone()]),
             Node::Lig {
                 font,
                 orig,
@@ -195,7 +195,7 @@ fn project_physical_pre_break_spans(
         let Some(hyphen) = usable_hyphen_char(stores, font) else {
             continue;
         };
-        let last_origin = origins.last().copied().unwrap_or(OriginId::UNKNOWN);
+        let last_origin = origins.last().cloned().unwrap_or_else(OriginRef::unknown);
         let mut pending = chars
             .into_iter()
             .zip(origins)
@@ -370,7 +370,7 @@ fn find_hyphenation_candidate(
                     font,
                     ch: *ch,
                     lower,
-                    origin: *origin,
+                    origin: origin.clone(),
                 });
                 index += 1;
             }
@@ -396,7 +396,7 @@ fn find_hyphenation_candidate(
                 else {
                     break;
                 };
-                for ((ch, lower), origin) in normalized.into_iter().zip(origins.iter().copied()) {
+                for ((ch, lower), origin) in normalized.into_iter().zip(origins.iter().cloned()) {
                     word.push(WordChar {
                         font,
                         ch,
@@ -660,7 +660,7 @@ fn discretionary_through_node(
         pre_pending.push(PendingHChar {
             font,
             ch,
-            origin: word[position - 1].origin,
+            origin: word[position - 1].origin.clone(),
         });
     }
     let pre =
@@ -830,7 +830,7 @@ fn discretionary_hyphen(
             stores.freeze_node_list(&[Node::Char {
                 font,
                 ch,
-                origin: OriginId::UNKNOWN,
+                origin: OriginRef::unknown(),
             }])
         });
     let replace = replacement.as_ref().map_or(empty, |node| {
@@ -876,12 +876,12 @@ fn automatic_hyphen_char(
     None
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct WordChar {
     font: tex_state::ids::FontId,
     ch: char,
     lower: char,
-    origin: OriginId,
+    origin: OriginRef,
 }
 
 impl WordChar {
@@ -889,7 +889,7 @@ impl WordChar {
         PendingHChar {
             font: self.font,
             ch: self.ch,
-            origin: self.origin,
+            origin: self.origin.clone(),
         }
     }
 }
@@ -897,7 +897,7 @@ use tex_state::Universe;
 use tex_state::env::banks::IntParam;
 use tex_state::hyphenation::{ExceptionSpec, PatternSpec};
 use tex_state::node::{DiscKind, KernKind, Node};
-use tex_state::token::OriginId;
+use tex_state::provenance::OriginRef;
 
 use crate::ExecError;
 use crate::mode::PendingHChar;
@@ -910,7 +910,7 @@ mod tests {
         Node::Char {
             font,
             ch,
-            origin: OriginId::UNKNOWN,
+            origin: OriginRef::unknown(),
         }
     }
 

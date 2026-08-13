@@ -67,7 +67,7 @@ fn glyph_box(
             glyph_id: Some(glyph.glyph_id),
             top_accent_attachment: glyph.top_accent_attachment,
         },
-        origin,
+        tex_state::provenance::OriginRef::direct(origin),
     )
 }
 
@@ -194,7 +194,7 @@ fn horizontal_assembly(
             ch,
             glyph_id: Some(part.glyph.glyph_id),
             metrics: part.glyph.metrics,
-            origin,
+            origin: tex_state::provenance::OriginRef::direct(origin),
         });
         let overlap = overlaps.get(index).copied().unwrap_or(Scaled::from_raw(0));
         nodes.push(MathNode::Kern {

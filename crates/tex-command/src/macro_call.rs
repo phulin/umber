@@ -196,6 +196,12 @@ impl ParameterState {
             .map(|activation| activation.invocation.as_origin().clone())
             .unwrap_or_else(OriginRef::unknown)
     }
+
+    pub(crate) fn active_invocation_origin(&self) -> Option<OriginRef> {
+        self.activations
+            .last()
+            .map(|activation| activation.invocation.as_origin().clone())
+    }
 }
 
 pub(crate) fn macro_arguments_semantic_eq(left: &MacroArguments, right: &MacroArguments) -> bool {

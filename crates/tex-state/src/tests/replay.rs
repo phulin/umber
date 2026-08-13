@@ -343,7 +343,7 @@ fn build_nodes(
         Node::Char {
             font: FontId::testing_new(0),
             ch: seed.ch,
-            origin: crate::token::OriginId::UNKNOWN,
+            origin: crate::provenance::OriginRef::unknown(),
         },
         Node::Kern {
             amount: Scaled::from_raw(seed.amount),

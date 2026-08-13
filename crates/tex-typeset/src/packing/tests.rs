@@ -133,13 +133,13 @@ fn compact_char_runs_differentially_match_scalar_mixed_lists() {
                 0 => nodes.push(Node::Char {
                     font,
                     ch: '\u{100}',
-                    origin: tex_state::token::OriginId::UNKNOWN,
+                    origin: tex_state::provenance::OriginRef::unknown(),
                 }),
                 1 => nodes.push(Node::Lig {
                     font,
                     ch: char::from(code),
                     orig: vec!['a', 'b'],
-                    origins: vec![tex_state::token::OriginId::UNKNOWN; 2],
+                    origins: vec![tex_state::provenance::OriginRef::unknown(); 2],
                     left_hit: false,
                     right_hit: false,
                 }),
@@ -156,7 +156,7 @@ fn compact_char_runs_differentially_match_scalar_mixed_lists() {
                 _ => nodes.push(Node::Char {
                     font,
                     ch: char::from(code),
-                    origin: tex_state::token::OriginId::UNKNOWN,
+                    origin: tex_state::provenance::OriginRef::unknown(),
                 }),
             }
         }

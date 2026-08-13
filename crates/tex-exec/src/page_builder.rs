@@ -83,8 +83,8 @@ fn build_page_impl(stores: &mut Universe, error_context: Option<&str>) -> Result
                     usize::try_from(*ordinal)
                         .ok()
                         .and_then(|ordinal| input_origins.get(ordinal))
-                        .copied()
-                        .unwrap_or(tex_state::token::OriginId::UNKNOWN)
+                        .cloned()
+                        .unwrap_or_else(tex_state::provenance::OriginRef::unknown)
                 })
                 .collect::<Vec<_>>()
         });

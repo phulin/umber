@@ -6,7 +6,7 @@ use tex_command::{
 };
 use tex_state::hyphenation::PatternSpec;
 use tex_state::page::PageMark;
-use tex_state::token::{Catcode, OriginId, Token};
+use tex_state::token::{Catcode, Token};
 
 use super::*;
 mod etex_diagnostic_tracing;
@@ -4550,7 +4550,7 @@ fn recursive_test_box(stores: &mut Universe) -> tex_state::ids::NodeListId {
     let pre = stores.freeze_node_list(&[Node::Char {
         font: NULL_FONT,
         ch: 'p',
-        origin: OriginId::UNKNOWN,
+        origin: tex_state::provenance::OriginRef::unknown(),
     }]);
     let post = stores.freeze_node_list(&[Node::Kern {
         amount: Scaled::from_raw(401),
@@ -4560,7 +4560,7 @@ fn recursive_test_box(stores: &mut Universe) -> tex_state::ids::NodeListId {
         font: NULL_FONT,
         ch: 'L',
         orig: vec!['f', 'i'],
-        origins: vec![OriginId::UNKNOWN; 2],
+        origins: vec![tex_state::provenance::OriginRef::unknown(); 2],
         left_hit: false,
         right_hit: false,
     }]);
@@ -4596,7 +4596,7 @@ fn recursive_test_box(stores: &mut Universe) -> tex_state::ids::NodeListId {
             font: NULL_FONT,
             ch: 'L',
             orig: vec!['f', 'i'],
-            origins: vec![OriginId::UNKNOWN; 2],
+            origins: vec![tex_state::provenance::OriginRef::unknown(); 2],
             left_hit: false,
             right_hit: false,
         },

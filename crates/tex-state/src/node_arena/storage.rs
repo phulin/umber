@@ -5,6 +5,7 @@ use crate::identity::IdentityMark;
 use crate::ids::NodeListId;
 use crate::math::MathStyle;
 use crate::node::{DiscKind, GlueKind, KernKind, MarginKernSide, Node};
+use crate::provenance::OriginRef;
 use crate::scaled::Scaled;
 use crate::token::OriginId;
 use crate::token_store::TokenListRef;
@@ -167,6 +168,7 @@ pub(super) struct LigatureSidecar {
     pub(super) ch: char,
     pub(super) orig: Vec<char>,
     pub(super) origins: Vec<OriginId>,
+    pub(super) origin_roots: Vec<OriginRef>,
     pub(super) left_hit: bool,
     pub(super) right_hit: bool,
 }
@@ -179,6 +181,9 @@ pub(crate) struct NodeStorage {
     pub(super) glue_roots: Vec<Option<crate::glue::GlueSpecRef>>,
     /// Diagnostic-only provenance aligned one-for-one with `words`.
     pub(super) origins: Vec<OriginId>,
+    /// Strong character provenance aligned one-for-one with `words`.
+    /// Ligature roots live in their ragged sidecar row.
+    pub(super) origin_roots: Vec<Option<OriginRef>>,
     pub(super) ligatures: Vec<LigatureSidecar>,
     pub(super) boxes: BoxTable,
     pub(super) unsets: UnsetTable,
@@ -250,6 +255,7 @@ impl NodeStorage {
         // Validate the entire tuple before mutating any stream.
         assert!(mark.words as usize <= self.words.len());
         assert!(mark.words as usize <= self.origins.len());
+        assert!(mark.words as usize <= self.origin_roots.len());
         assert!(mark.words as usize <= self.glue_roots.len());
         assert!(mark.ligatures as usize <= self.ligatures.len());
         assert!(mark.boxes as usize <= self.boxes.len());
@@ -269,6 +275,7 @@ impl NodeStorage {
         self.remove_nested_payloads_from(mark.ligatures as usize, mark.whatsits as usize);
         self.words.truncate(mark.words as usize);
         self.origins.truncate(mark.words as usize);
+        self.origin_roots.truncate(mark.words as usize);
         self.glue_roots.truncate(mark.words as usize);
         self.ligatures.truncate(mark.ligatures as usize);
         self.boxes.truncate(mark.boxes as usize);
@@ -312,6 +319,7 @@ impl NodeStorage {
         }
         self.words.reserve(nodes.len());
         self.origins.reserve(nodes.len());
+        self.origin_roots.reserve(nodes.len());
         self.glue_roots.reserve(nodes.len());
         if needs.any {
             self.reserve_sidecars(needs);
@@ -326,9 +334,15 @@ impl NodeStorage {
                 _ => None,
             });
             self.origins.push(match node {
-                Node::Char { origin, .. } => *origin,
-                Node::Lig { origins, .. } => origins.first().copied().unwrap_or(OriginId::UNKNOWN),
+                Node::Char { origin, .. } => origin.id(),
+                Node::Lig { origins, .. } => {
+                    origins.first().map_or(OriginId::UNKNOWN, OriginRef::id)
+                }
                 _ => OriginId::UNKNOWN,
+            });
+            self.origin_roots.push(match node {
+                Node::Char { origin, .. } => Some(origin.clone()),
+                _ => None,
             });
         }
         #[cfg(feature = "profiling")]
@@ -369,6 +383,7 @@ impl NodeStorage {
         }
         self.words.reserve(nodes.len());
         self.origins.reserve(nodes.len());
+        self.origin_roots.reserve(nodes.len());
         self.glue_roots.reserve(nodes.len());
         if needs.any {
             self.reserve_sidecars(needs);
@@ -381,14 +396,21 @@ impl NodeStorage {
                 _ => None,
             };
             let origin = match &node {
-                Node::Char { origin, .. } => *origin,
-                Node::Lig { origins, .. } => origins.first().copied().unwrap_or(OriginId::UNKNOWN),
+                Node::Char { origin, .. } => origin.id(),
+                Node::Lig { origins, .. } => {
+                    origins.first().map_or(OriginId::UNKNOWN, OriginRef::id)
+                }
                 _ => OriginId::UNKNOWN,
+            };
+            let origin_root = match &node {
+                Node::Char { origin, .. } => Some(origin.clone()),
+                _ => None,
             };
             let word = self.encode_owned(node);
             self.words.push(word);
             self.glue_roots.push(glue_root);
             self.origins.push(origin);
+            self.origin_roots.push(origin_root);
         }
         #[cfg(feature = "profiling")]
         {
@@ -486,7 +508,8 @@ impl NodeStorage {
                         font,
                         ch: *ch,
                         orig: orig.clone(),
-                        origins: origins.clone(),
+                        origins: origins.iter().map(OriginRef::id).collect(),
+                        origin_roots: origins.clone(),
                         left_hit: *left_hit,
                         right_hit: *right_hit,
                     },
@@ -602,7 +625,8 @@ impl NodeStorage {
                         font,
                         ch,
                         orig,
-                        origins,
+                        origins: origins.iter().map(OriginRef::id).collect(),
+                        origin_roots: origins,
                         left_hit,
                         right_hit,
                     },

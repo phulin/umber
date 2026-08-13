@@ -196,7 +196,7 @@ fn line_trace_projection_renders_detached_replacement_content() {
             .map(|ch| Node::Char {
                 font,
                 ch,
-                origin: tex_state::token::OriginId::UNKNOWN,
+                origin: tex_state::provenance::OriginRef::unknown(),
             })
             .collect::<Vec<_>>()
     };
@@ -230,7 +230,7 @@ fn frozen_line_diagnostic_renders_both_disc_branches_then_skips_replacement() {
             .map(|ch| Node::Char {
                 font,
                 ch,
-                origin: tex_state::token::OriginId::UNKNOWN,
+                origin: tex_state::provenance::OriginRef::unknown(),
             })
             .collect::<Vec<_>>()
     };
@@ -355,7 +355,7 @@ fn short_display_renderer_retains_font_across_fragments_until_reset() {
     let fragment = [Node::Char {
         font,
         ch: 'A',
-        origin: tex_state::token::OriginId::UNKNOWN,
+        origin: tex_state::provenance::OriginRef::unknown(),
     }];
     let identifier = crate::node_dump::font_identifier(&stores, font);
     let mut renderer = ShortDisplayRenderer::new();
@@ -381,14 +381,14 @@ fn short_display_uses_print_ascii_for_eight_bit_character_codes() {
             font,
             ch: '\u{82}',
             orig: vec!['C', 'A'],
-            origins: vec![tex_state::token::OriginId::UNKNOWN; 2],
+            origins: vec![tex_state::provenance::OriginRef::unknown(); 2],
             left_hit: false,
             right_hit: false,
         },
         Node::Char {
             font,
             ch: '\u{82}',
-            origin: tex_state::token::OriginId::UNKNOWN,
+            origin: tex_state::provenance::OriginRef::unknown(),
         },
     ];
 
@@ -412,7 +412,7 @@ fn short_display_honors_live_newline_character() {
     let nodes = [Node::Char {
         font,
         ch: '\n',
-        origin: tex_state::token::OriginId::UNKNOWN,
+        origin: tex_state::provenance::OriginRef::unknown(),
     }];
 
     assert_eq!(
@@ -451,7 +451,7 @@ fn short_display_renders_byte_zero_in_a_font_identifier_through_print() {
     let nodes = [Node::Char {
         font,
         ch: '-',
-        origin: tex_state::token::OriginId::UNKNOWN,
+        origin: tex_state::provenance::OriginRef::unknown(),
     }];
 
     stores.set_int_param(IntParam::NEWLINE_CHAR, 0);
@@ -493,12 +493,12 @@ fn short_display_compares_restored_fonts_by_tex_number() {
         Node::Char {
             font,
             ch: 'A',
-            origin: tex_state::token::OriginId::UNKNOWN,
+            origin: tex_state::provenance::OriginRef::unknown(),
         },
         Node::Char {
             font: restored_font,
             ch: 'B',
-            origin: tex_state::token::OriginId::UNKNOWN,
+            origin: tex_state::provenance::OriginRef::unknown(),
         },
     ];
 

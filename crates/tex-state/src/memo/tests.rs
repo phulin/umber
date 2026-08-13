@@ -155,7 +155,7 @@ fn nested_node_graph_round_trips_across_owners_and_respects_budget_atomically() 
         Node::Char {
             font: source.current_font(),
             ch: 'x',
-            origin: crate::token::OriginId::UNKNOWN,
+            origin: crate::provenance::OriginRef::unknown(),
         },
         Node::Glue {
             spec: glue,
@@ -240,7 +240,7 @@ fn detached_nodes_drop_absolute_origins() {
     let root = source.freeze_node_list(&[Node::Char {
         font: source.current_font(),
         ch: 'x',
-        origin: crate::token::OriginId::from_raw(37),
+        origin: crate::provenance::OriginRef::direct(crate::token::OriginId::from_raw(37)),
     }]);
     let detached = source
         .detach_node_list(root)

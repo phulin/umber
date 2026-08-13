@@ -1271,7 +1271,7 @@ impl Stores {
     pub(crate) fn encode_memo_node_list_with_origins(
         &self,
         root: NodeListId,
-    ) -> Result<(Vec<u8>, Vec<crate::token::OriginId>), StoreFormatError> {
+    ) -> Result<(Vec<u8>, Vec<crate::provenance::OriginRef>), StoreFormatError> {
         let names = (0..self.interner.len())
             .map(|raw| {
                 let symbol = self
@@ -1346,7 +1346,7 @@ impl Stores {
         max_nodes: usize,
         max_tokens: usize,
         max_string_bytes: usize,
-        origins: &[crate::token::OriginId],
+        origins: &[crate::provenance::OriginRef],
     ) -> Result<NodeListId, StoreFormatError> {
         let bundle: MemoNodeBundle = bincode::deserialize(bytes)
             .map_err(|error| StoreFormatError::Codec(error.to_string()))?;
@@ -1435,7 +1435,7 @@ impl Stores {
             token_lists: &token_ids,
         };
         let mut node_ids = std::collections::BTreeMap::new();
-        let mut origins = origins.iter().copied();
+        let mut origins = origins.iter().cloned();
         for list in bundle.node_lists {
             let nodes = list
                 .nodes
@@ -2417,7 +2417,7 @@ fn capture_node_list(
     visiting: &mut std::collections::BTreeSet<NodeListId>,
     survivor_roots: &mut std::collections::BTreeMap<crate::ids::SurvivorRootId, u32>,
     out: &mut Vec<FormatNodeList>,
-    mut origins: Option<&mut Vec<crate::token::OriginId>>,
+    mut origins: Option<&mut Vec<crate::provenance::OriginRef>>,
 ) -> Result<(), StoreFormatError> {
     enum Visit {
         Enter(NodeListId),

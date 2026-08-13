@@ -6,7 +6,6 @@ use tex_state::font::FontExpansion;
 use tex_state::glue::{GlueSpec, Order};
 use tex_state::node::{DiscKind, GlueKind, KernKind, Node, Whatsit};
 use tex_state::scaled::Scaled;
-use tex_state::token::OriginId;
 use tex_state::token::{Catcode, Token};
 
 fn sp(raw: i32) -> Scaled {
@@ -468,7 +467,7 @@ fn microtype_char(font: tex_state::ids::FontId, ch: char) -> Node {
     Node::Char {
         font,
         ch,
-        origin: OriginId::UNKNOWN,
+        origin: tex_state::provenance::OriginRef::unknown(),
     }
 }
 

@@ -968,7 +968,7 @@ fn pdftex_margin_kern_enquiries_use_typed_box_edges_fresh_and_loaded() {
                 Node::Char {
                     font: NULL_FONT,
                     ch: 'x',
-                    origin: tex_state::token::OriginId::UNKNOWN,
+                    origin: tex_state::provenance::OriginRef::unknown(),
                 },
                 Node::MarginKern {
                     amount: Scaled::from_raw(-7 * Scaled::UNITY),

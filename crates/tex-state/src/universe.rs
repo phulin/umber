@@ -7945,7 +7945,7 @@ impl Universe {
     #[doc(hidden)]
     pub fn detach_page_memo_transition(
         &mut self,
-    ) -> Result<(crate::DetachedMemoValue, Vec<OriginId>), crate::MemoValueError> {
+    ) -> Result<(crate::DetachedMemoValue, Vec<OriginRef>), crate::MemoValueError> {
         let (nodes, state) = self.page.memo_parts();
         let root = self.freeze_node_list(&nodes);
         let (payload, origins) = self
@@ -7970,7 +7970,7 @@ impl Universe {
 
     /// Captures the current page graph's provenance sequence in detached-codec order.
     #[doc(hidden)]
-    pub fn page_memo_origins(&mut self) -> Result<Vec<OriginId>, crate::MemoValueError> {
+    pub fn page_memo_origins(&mut self) -> Result<Vec<OriginRef>, crate::MemoValueError> {
         let (nodes, _) = self.page.memo_parts();
         let root = self.freeze_node_list(&nodes);
         self.stores
@@ -7984,7 +7984,7 @@ impl Universe {
     pub fn node_memo_origins(
         &mut self,
         node: &Node,
-    ) -> Result<Vec<OriginId>, crate::MemoValueError> {
+    ) -> Result<Vec<OriginRef>, crate::MemoValueError> {
         let root = self.freeze_node_list(std::slice::from_ref(node));
         self.stores
             .encode_memo_node_list_with_origins(root)
@@ -8038,7 +8038,7 @@ impl Universe {
         &mut self,
         value: &crate::DetachedMemoValue,
         limits: crate::MemoValueLimits,
-        origins: &[OriginId],
+        origins: &[OriginRef],
     ) -> Result<(), crate::MemoValueError> {
         let transition = value.page_transition(limits)?;
         if transition.transition_schema != 1 {

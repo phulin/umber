@@ -998,6 +998,12 @@ impl PartialEq for OriginRef {
 
 impl Eq for OriginRef {}
 
+impl Default for OriginRef {
+    fn default() -> Self {
+        Self::unknown()
+    }
+}
+
 impl Hash for OriginRef {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.id.hash(state);

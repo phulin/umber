@@ -5,8 +5,8 @@ use tex_state::ids::FontId;
 use tex_state::ids::NodeListId;
 use tex_state::math::FractionThickness;
 use tex_state::node::{BoxNode, Node};
+use tex_state::provenance::OriginRef;
 use tex_state::scaled::Scaled;
-use tex_state::token::OriginId;
 use tex_state::token_store::TokenListRef;
 use tex_state::{EngineBoundaryHasher, EngineMode, Universe};
 
@@ -202,7 +202,7 @@ impl ModeList {
         });
     }
 
-    pub(crate) fn begin_pending_hchars(&mut self, font: FontId, ch: char, origin: OriginId) {
+    pub(crate) fn begin_pending_hchars(&mut self, font: FontId, ch: char, origin: OriginRef) {
         debug_assert!(self.pending_hchars.is_none());
         self.pending_hchars = Some(PendingHRun::new(font, ch, origin, self.nodes().len()));
     }
@@ -498,7 +498,7 @@ impl ModeListMutation<'_> {
             .push_reconstituted(insertion, first, second, third);
     }
 
-    pub(crate) fn begin_pending_hchars(&mut self, font: FontId, ch: char, origin: OriginId) {
+    pub(crate) fn begin_pending_hchars(&mut self, font: FontId, ch: char, origin: OriginRef) {
         self.list.begin_pending_hchars(font, ch, origin);
     }
 
@@ -781,11 +781,11 @@ impl AlignState {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PendingHChar {
     pub font: FontId,
     pub ch: char,
-    pub origin: OriginId,
+    pub origin: OriginRef,
 }
 
 /// Streaming state for the unresolved tail of one horizontal character run.
@@ -800,10 +800,14 @@ pub(crate) struct PendingHRun {
 }
 
 impl PendingHRun {
-    pub(crate) fn new(font: FontId, ch: char, origin: OriginId, insertion_index: usize) -> Self {
+    pub(crate) fn new(font: FontId, ch: char, origin: OriginRef, insertion_index: usize) -> Self {
         Self {
-            first: PendingHChar { font, ch, origin },
-            current: PendingHRunChar::new(font, ch, origin),
+            first: PendingHChar {
+                font,
+                ch,
+                origin: origin.clone(),
+            },
+            current: PendingHRunChar::new(font, ch, origin.clone()),
             insertion_index,
             source: vec![PendingHChar { font, ch, origin }],
             script: tex_fonts::character_script(ch),
@@ -817,14 +821,14 @@ pub(crate) struct PendingHRunChar {
     pub(crate) font: FontId,
     pub(crate) ch: char,
     pub(crate) orig: SmallVec<[char; 4]>,
-    pub(crate) origins: SmallVec<[OriginId; 4]>,
+    pub(crate) origins: SmallVec<[OriginRef; 4]>,
     pub(crate) ligature_present: bool,
     pub(crate) left_hit: bool,
     pub(crate) right_hit: bool,
 }
 
 impl PendingHRunChar {
-    pub(crate) fn new(font: FontId, ch: char, origin: OriginId) -> Self {
+    pub(crate) fn new(font: FontId, ch: char, origin: OriginRef) -> Self {
         Self {
             font,
             ch,

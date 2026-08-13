@@ -5,11 +5,15 @@ use super::{
     packed_origin_successor,
 };
 use crate::Universe;
+use crate::font::NULL_FONT;
 use crate::ids::OriginListId;
 use crate::input::{SourceId, TokenListReplayKind};
 use crate::macro_store::MacroMeaning;
 use crate::meaning::MeaningFlags;
+use crate::node::Node;
+use crate::node_arena::NodeArena;
 use crate::source_map::SourceDescriptor;
+use crate::survivor::SurvivorArena;
 use crate::token::{Catcode, OriginId, Token};
 use std::sync::Arc;
 use std::sync::Barrier;
@@ -664,4 +668,107 @@ fn rooted_provenance_plateaus_for_dead_work_and_grows_exactly_for_live_work() {
         )
     );
     assert_eq!(lists.len(), OPERATIONS as usize);
+}
+
+#[test]
+fn node_owners_plateau_for_10k_released_roots_and_retain_10k_live_roots() {
+    const OPERATIONS: u64 = 10_000;
+    let mut bounded = ProvenanceStore::new();
+    let mut arena = NodeArena::new();
+    let mark = arena.watermark();
+    for serial in 0..OPERATIONS {
+        let root = bounded.allocate_rooted(
+            OriginRecord::MacroInvocation(MacroInvocationOrigin::from_nonowning_operand(
+                serial,
+                OriginId::UNKNOWN,
+                OriginId::UNKNOWN,
+                OriginId::UNKNOWN,
+            )),
+            [],
+        );
+        let id = root.id();
+        arena.append(&[Node::Char {
+            font: NULL_FONT,
+            ch: 'x',
+            origin: root,
+        }]);
+        assert!(bounded.origin_ref(id).is_some());
+        arena.truncate_to(mark);
+        assert!(bounded.origin_ref(id).is_none());
+    }
+    assert_eq!(bounded.rooted_record_shape(), (0, 1));
+
+    let mut all_live = ProvenanceStore::new();
+    let roots = (0..OPERATIONS)
+        .map(|serial| {
+            all_live.allocate_rooted(
+                OriginRecord::MacroInvocation(MacroInvocationOrigin::from_nonowning_operand(
+                    serial,
+                    OriginId::UNKNOWN,
+                    OriginId::UNKNOWN,
+                    OriginId::UNKNOWN,
+                )),
+                [],
+            )
+        })
+        .collect::<Vec<_>>();
+    let nodes = roots
+        .iter()
+        .cloned()
+        .map(|origin| Node::Char {
+            font: NULL_FONT,
+            ch: 'x',
+            origin,
+        })
+        .collect::<Vec<_>>();
+    let mut live_arena = NodeArena::new();
+    live_arena.append(&nodes);
+    drop(nodes);
+    drop(roots);
+    assert_eq!(
+        all_live.rooted_record_shape(),
+        (OPERATIONS as usize, OPERATIONS as usize)
+    );
+}
+
+#[test]
+fn survivor_and_committed_artifact_release_their_exact_node_roots() {
+    let mut store = ProvenanceStore::new();
+    let root = store.allocate_rooted(
+        OriginRecord::Synthetic(SyntheticOrigin::new(SyntheticOriginKind::Test)),
+        [],
+    );
+    let id = root.id();
+    let mut epoch = NodeArena::new();
+    let mark = epoch.watermark();
+    let list = epoch.append(&[Node::Char {
+        font: NULL_FONT,
+        ch: 'x',
+        origin: root,
+    }]);
+    let mut survivors = SurvivorArena::new();
+    let survivor = survivors.promote(list, &epoch);
+    epoch.truncate_to(mark);
+    assert!(store.origin_ref(id).is_some());
+
+    let survivor_root = survivors.get(survivor).first().expect("survivor character");
+    let crate::node_arena::NodeRef::Char { origin_root, .. } = survivor_root else {
+        panic!("survivor character")
+    };
+    let mut builder = crate::RenderProvenanceBuilder::default();
+    builder.push_root(origin_root.clone());
+    builder.push_deferred(&crate::OutputProvenanceRecipe::default(), 0..0);
+    let verified = crate::VerifiedArtifact::new(b"artifact".to_vec())
+        .with_built_render_origins(vec![1], builder);
+    let (bytes, render_provenance, occurrences) = verified.into_parts();
+    let artifact = crate::CommittedArtifact::new(
+        crate::ContentHash::for_domain(crate::ContentDomain::Artifact, &bytes),
+        bytes,
+        render_provenance,
+        occurrences,
+    );
+    survivors.dec_ref(survivor);
+    assert!(store.origin_ref(id).is_some());
+    drop(artifact);
+    assert!(store.origin_ref(id).is_none());
 }

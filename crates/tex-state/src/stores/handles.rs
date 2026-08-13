@@ -563,7 +563,7 @@ impl NodeSchemaVisitor for LiveHandleValidator<'_> {
             NodeHandle::Glue(id) => self.0.assert_live_glue(id),
             NodeHandle::TokenList(id) => self.0.assert_live_token_list(id),
             NodeHandle::NodeList(id) => self.0.assert_live_child_node_list(id),
-            NodeHandle::Origin(_) | NodeHandle::Origins(_) => {
+            NodeHandle::Origin(_) | NodeHandle::Origins(_) | NodeHandle::OriginRefs(_) => {
                 unreachable!("semantic node handles cannot contain origins")
             }
         }

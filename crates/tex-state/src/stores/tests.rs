@@ -146,18 +146,18 @@ fn owned_and_borrowed_semantic_hash_paths_match_every_node_variant() {
         Node::Char {
             font: NULL_FONT,
             ch: 'x',
-            origin: crate::token::OriginId::UNKNOWN,
+            origin: crate::provenance::OriginRef::unknown(),
         },
         Node::Char {
             font: NULL_FONT,
             ch: 'y',
-            origin: crate::token::OriginId::UNKNOWN,
+            origin: crate::provenance::OriginRef::unknown(),
         },
         Node::Lig {
             font: NULL_FONT,
             ch: 'f',
             orig: vec!['f', 'i'],
-            origins: vec![crate::token::OriginId::UNKNOWN; 2],
+            origins: vec![crate::provenance::OriginRef::unknown(); 2],
             left_hit: true,
             right_hit: true,
         },
@@ -372,7 +372,7 @@ fn frozen_font_semantics_exclude_mutable_identifier_names() {
     let list = stores.freeze_node_list(&[Node::Char {
         font: NULL_FONT,
         ch: 'x',
-        origin: crate::token::OriginId::UNKNOWN,
+        origin: crate::provenance::OriginRef::unknown(),
     }]);
     let semantic_id = stores.node_semantic_id(list);
     let late = stores.intern("late-font-name");
@@ -463,12 +463,12 @@ fn node_semantic_ids_exclude_token_provenance() {
         ch: 'x',
         cat: Catcode::Other,
     };
-    let first_origin = stores.synthetic_origin(SyntheticOriginKind::Test);
-    let second_origin = stores.synthetic_origin(SyntheticOriginKind::Engine);
+    let first_origin = stores.synthetic_origin_ref(SyntheticOriginKind::Test);
+    let second_origin = stores.synthetic_origin_ref(SyntheticOriginKind::Engine);
     let first_tokens =
-        stores.finish_traced_token_list(&[TracedTokenWord::pack(token, first_origin)]);
+        stores.finish_traced_token_list(&[TracedTokenWord::pack(token, first_origin.id())]);
     let second_tokens =
-        stores.finish_traced_token_list(&[TracedTokenWord::pack(token, second_origin)]);
+        stores.finish_traced_token_list(&[TracedTokenWord::pack(token, second_origin.id())]);
     assert_ne!(first_tokens.origin_list(), second_tokens.origin_list());
 
     let first = stores.freeze_node_list(&[Node::Mark {
@@ -489,17 +489,17 @@ fn node_semantic_ids_exclude_token_provenance() {
 #[test]
 fn character_origins_are_retained_but_excluded_from_node_semantics() {
     let mut stores = Stores::new();
-    let first_origin = stores.synthetic_origin(SyntheticOriginKind::Test);
-    let second_origin = stores.synthetic_origin(SyntheticOriginKind::Engine);
+    let first_origin = stores.synthetic_origin_ref(SyntheticOriginKind::Test);
+    let second_origin = stores.synthetic_origin_ref(SyntheticOriginKind::Engine);
     let first = stores.freeze_node_list(&[Node::Char {
         font: NULL_FONT,
         ch: 'x',
-        origin: first_origin,
+        origin: first_origin.clone(),
     }]);
     let second = stores.freeze_node_list(&[Node::Char {
         font: NULL_FONT,
         ch: 'x',
-        origin: second_origin,
+        origin: second_origin.clone(),
     }]);
 
     assert_eq!(
@@ -520,15 +520,15 @@ fn character_origins_are_retained_but_excluded_from_node_semantics() {
     else {
         panic!("second character")
     };
-    assert_eq!(retained_first, first_origin);
-    assert_eq!(retained_second, second_origin);
+    assert_eq!(retained_first, first_origin.id());
+    assert_eq!(retained_second, second_origin.id());
 
     let first_math = stores.freeze_node_list(&[Node::MathNoad(MathNoad::new(
         NoadKind::Normal(NoadClass::Ord),
         MathField::MathChar(crate::math::MathChar {
             family: 1,
             character: 'x',
-            origin: first_origin,
+            origin: first_origin.id(),
         }),
     ))]);
     let second_math = stores.freeze_node_list(&[Node::MathNoad(MathNoad::new(
@@ -536,7 +536,7 @@ fn character_origins_are_retained_but_excluded_from_node_semantics() {
         MathField::MathChar(crate::math::MathChar {
             family: 1,
             character: 'x',
-            origin: second_origin,
+            origin: second_origin.id(),
         }),
     ))]);
     assert_eq!(
@@ -1771,7 +1771,7 @@ fn node_list_builder_finishes_through_stores_boundary() {
     builder.push(Node::Char {
         font: NULL_FONT,
         ch: 'x',
-        origin: crate::token::OriginId::UNKNOWN,
+        origin: crate::provenance::OriginRef::unknown(),
     });
     let reused = stores.finish_node_list(&mut builder);
     assert_eq!(
@@ -1779,7 +1779,7 @@ fn node_list_builder_finishes_through_stores_boundary() {
         &[Node::Char {
             font: NULL_FONT,
             ch: 'x',
-            origin: crate::token::OriginId::UNKNOWN,
+            origin: crate::provenance::OriginRef::unknown(),
         }]
     );
 }
@@ -2597,7 +2597,7 @@ fn same_value_local_box_assignment_preserves_live_register_owner() {
         &[Node::Char {
             font: NULL_FONT,
             ch: 'a',
-            origin: crate::token::OriginId::UNKNOWN,
+            origin: crate::provenance::OriginRef::unknown(),
         }]
     );
 }
@@ -2675,7 +2675,7 @@ fn promoted_nested_box_remaps_children_to_same_survivor_root() {
         &[Node::Char {
             font: NULL_FONT,
             ch: 'x',
-            origin: crate::token::OriginId::UNKNOWN,
+            origin: crate::provenance::OriginRef::unknown(),
         }]
     );
 }
@@ -2723,7 +2723,7 @@ fn promotion_canonicalizes_shared_survivor_children_into_new_root() {
         &[Node::Char {
             font: NULL_FONT,
             ch: 'x',
-            origin: crate::token::OriginId::UNKNOWN,
+            origin: crate::provenance::OriginRef::unknown(),
         }]
     );
 }
@@ -2823,7 +2823,7 @@ fn promotion_patches_every_child_bearing_compact_row() {
                 &[Node::Char {
                     font: NULL_FONT,
                     ch: 'c',
-                    origin: crate::token::OriginId::UNKNOWN,
+                    origin: crate::provenance::OriginRef::unknown(),
                 }]
             );
             child_count += 1;
@@ -2959,7 +2959,7 @@ fn promotion_handles_pathologically_deep_box_nesting() {
         &[Node::Char {
             font: NULL_FONT,
             ch: 'x',
-            origin: crate::token::OriginId::UNKNOWN,
+            origin: crate::provenance::OriginRef::unknown(),
         }]
     );
 }
@@ -2978,7 +2978,7 @@ fn one_char(stores: &mut Stores, ch: char) -> NodeListId {
     stores.freeze_node_list(&[Node::Char {
         font: NULL_FONT,
         ch,
-        origin: crate::token::OriginId::UNKNOWN,
+        origin: crate::provenance::OriginRef::unknown(),
     }])
 }
 

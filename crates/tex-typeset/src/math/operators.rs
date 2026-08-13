@@ -158,7 +158,11 @@ fn operator_nucleus(
                 variant
             } else {
                 (
-                    char_box(ctx, fetched, ch.origin),
+                    char_box(
+                        ctx,
+                        fetched,
+                        tex_state::provenance::OriginRef::direct(ch.origin),
+                    ),
                     fetched.metrics.italic_correction,
                 )
             };

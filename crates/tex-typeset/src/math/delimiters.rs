@@ -396,6 +396,6 @@ fn char_box_for(
             glyph_id: None,
             top_accent_attachment: None,
         },
-        tex_state::token::OriginId::UNKNOWN,
+        tex_state::provenance::OriginRef::unknown(),
     ))
 }

@@ -139,6 +139,13 @@ hashing, and artifact lowering borrow roots. A raw `OriginId`,
 `OriginListId`, source-map position, macro operand, or node ordinal is never a
 strong owner.
 
+For character material delivered from a macro body, construction captures the
+innermost live `ExpansionFrameRef`, not merely the macro-definition token's raw
+position. The pending horizontal run keeps that root through shaping and
+ligature formation. Direct shipout then appends the roots borrowed from the
+char or ligature node to the artifact sidecar. It neither upgrades raw ids nor
+scans the provenance graph after page traversal.
+
 ## Demand policy
 
 Source registration and direct scalar coordinates are required for exact

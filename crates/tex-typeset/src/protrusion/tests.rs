@@ -4,7 +4,6 @@ use tex_fonts::{CharMetrics, FontMetrics, LoadedFont};
 use tex_state::Universe;
 use tex_state::glue::GlueSpec;
 use tex_state::node::KernKind;
-use tex_state::token::OriginId;
 
 fn sp(raw: i32) -> Scaled {
     Scaled::from_raw(raw)
@@ -39,7 +38,7 @@ fn character(font: tex_state::ids::FontId, ch: char) -> Node {
     Node::Char {
         font,
         ch,
-        origin: OriginId::UNKNOWN,
+        origin: tex_state::provenance::OriginRef::unknown(),
     }
 }
 

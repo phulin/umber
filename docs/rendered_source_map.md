@@ -4,11 +4,13 @@ Status: authoritative contract for producer-bound per-page render source maps,
 typed current/deleted/stale/cross-producer results, and retention accounting.
 
 Builds on the edit-stable fragment-backed coordinates of
-`edit_stable_source_coordinates.md` (umber2-hwtp): the map stores opaque
-`OriginId`s, an edit never touches it, and all resolution goes through the
-layout-aware resolver, which returns current-document offsets or a typed
-`Deleted` result — never a stale offset. Source-coordinate caches are keyed
-by `LayoutGeneration`, not revision.
+`edit_stable_source_coordinates.md` (umber2-hwtp): the public map projects
+opaque `OriginId`s, while each live committed-artifact slot owns the aligned
+`OriginRef` that keeps that id resolvable. An edit never touches either
+column, and all resolution goes through the layout-aware resolver, which
+returns current-document offsets or a typed `Deleted` result — never a stale
+offset. Source-coordinate caches are keyed by `LayoutGeneration`, not
+revision.
 
 ## 1. Problem
 
@@ -25,10 +27,11 @@ by `LayoutGeneration`, not revision.
    `OriginId`.
 
 The retained sidecar is a packed ragged table: one shared `u32` end offset per
-artifact node and one shared flat `OriginId` buffer. Fresh shipout appends to
-those two buffers directly, so artifact nodes do not allocate or retain
-individual provenance vectors. Artifact clones remain O(1) through the two
-shared buffers, and indexed lookup still returns the origin slice for one node.
+artifact node, one shared flat `OriginId` projection, and one aligned flat
+`OriginRef` owner buffer. Fresh shipout appends node-owned roots directly;
+it does not recover ownership from ids after lowering. Artifact nodes allocate
+no individual provenance vectors. Artifact clones remain O(1) through the
+shared buffers, and indexed lookup still returns the id slice for one node.
 
 Two structural defects:
 

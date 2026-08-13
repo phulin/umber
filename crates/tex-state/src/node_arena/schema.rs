@@ -316,6 +316,7 @@ pub enum NodeHandle<'a> {
     NodeList(NodeListId),
     Origin(OriginId),
     Origins(&'a [OriginId]),
+    OriginRefs(&'a [crate::provenance::OriginRef]),
 }
 
 impl NodeHandle<'_> {
@@ -326,7 +327,7 @@ impl NodeHandle<'_> {
             Self::Glue(_) => NodeHandleKind::Glue,
             Self::TokenList(_) => NodeHandleKind::TokenList,
             Self::NodeList(_) => NodeHandleKind::NodeList,
-            Self::Origin(_) | Self::Origins(_) => NodeHandleKind::Origin,
+            Self::Origin(_) | Self::Origins(_) | Self::OriginRefs(_) => NodeHandleKind::Origin,
         }
     }
 }
@@ -382,20 +383,24 @@ impl NodeRef<'_> {
     pub fn visit_schema(&self, visitor: &mut impl NodeSchemaVisitor) {
         visitor.descriptor(self.kind().descriptor());
         match self {
-            Self::Char { font, origin, .. } => {
+            Self::Char {
+                font, origin_root, ..
+            } => {
                 content(visitor, NodeHandleRole::Font, NodeHandle::Font(*font));
                 diagnostic_handle(
                     visitor,
                     NodeHandleRole::CharOrigin,
-                    NodeHandle::Origin(*origin),
+                    NodeHandle::Origin(origin_root.id()),
                 );
             }
-            Self::Lig { font, origins, .. } => {
+            Self::Lig {
+                font, origin_roots, ..
+            } => {
                 content(visitor, NodeHandleRole::Font, NodeHandle::Font(*font));
                 diagnostic_handle(
                     visitor,
                     NodeHandleRole::LigatureOrigins,
-                    NodeHandle::Origins(origins),
+                    NodeHandle::OriginRefs(origin_roots),
                 );
             }
             Self::MarginKern { font, .. } => {
@@ -804,12 +809,12 @@ mod tests {
             shrink_order: Order::Normal,
             children: empty,
         });
-        let origin = OriginId::from_raw(17);
+        let origin = crate::provenance::OriginRef::direct(OriginId::from_raw(17));
         let nodes = vec![
             Node::Char {
                 font: FontId::testing_new(1),
                 ch: 'a',
-                origin,
+                origin: origin.clone(),
             },
             Node::Lig {
                 font: FontId::testing_new(2),
@@ -1009,7 +1014,7 @@ mod tests {
         let node = Node::Char {
             font: FontId::testing_new(9),
             ch: 'z',
-            origin: OriginId::from_raw(23),
+            origin: crate::provenance::OriginRef::direct(OriginId::from_raw(23)),
         };
         let mut visitor = FixedVisitor {
             descriptors: 0,

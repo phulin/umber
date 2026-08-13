@@ -10,7 +10,7 @@ use tex_state::node::{
     Sign, UnsetKind, UnsetNode, UnsetNodeFields, Whatsit,
 };
 use tex_state::scaled::{GlueSetRatio, Scaled};
-use tex_state::token::{Catcode, OriginId, Token};
+use tex_state::token::{Catcode, Token};
 
 /// TeX82 §§696--697 print and test the four packed delimiter quarters.
 /// The scanner's upper math-class bits are outside that field, so they neither
@@ -202,7 +202,7 @@ fn ligature_dump_includes_original_character_list() {
         font: tex_state::font::NULL_FONT,
         ch: 'X',
         orig: vec!['a', 'b'],
-        origins: vec![OriginId::UNKNOWN; 2],
+        origins: vec![tex_state::provenance::OriginRef::unknown(); 2],
         left_hit: false,
         right_hit: false,
     };
@@ -235,7 +235,7 @@ fn node_dump_honors_live_newline_character_in_ligature_components() {
         font: tex_state::font::NULL_FONT,
         ch: '-',
         orig: vec!['[', '\n', ']'],
-        origins: vec![OriginId::UNKNOWN; 3],
+        origins: vec![tex_state::provenance::OriginRef::unknown(); 3],
         left_hit: false,
         right_hit: false,
     };
@@ -265,13 +265,13 @@ fn physical_character_nodes_use_tex_eight_bit_print_ascii_spelling() {
     let character = Node::Char {
         font: tex_state::font::NULL_FONT,
         ch: '\u{82}',
-        origin: OriginId::UNKNOWN,
+        origin: tex_state::provenance::OriginRef::unknown(),
     };
     let ligature = Node::Lig {
         font: tex_state::font::NULL_FONT,
         ch: '\u{82}',
         orig: vec!['C', 'A'],
-        origins: vec![OriginId::UNKNOWN; 2],
+        origins: vec![tex_state::provenance::OriginRef::unknown(); 2],
         left_hit: false,
         right_hit: false,
     };
@@ -296,7 +296,7 @@ fn ligature_semantic_equality_ignores_original_character_provenance() {
         font: tex_state::font::NULL_FONT,
         ch: 'X',
         orig: vec!['a', 'b'],
-        origins: vec![OriginId::UNKNOWN; 2],
+        origins: vec![tex_state::provenance::OriginRef::unknown(); 2],
         left_hit: false,
         right_hit: false,
     };
@@ -321,7 +321,7 @@ fn ligature_dump_marks_left_and_right_boundaries() {
         font: tex_state::font::NULL_FONT,
         ch: 'X',
         orig: vec!['a', 'b'],
-        origins: vec![OriginId::UNKNOWN; 2],
+        origins: vec![tex_state::provenance::OriginRef::unknown(); 2],
         left_hit: true,
         right_hit: true,
     };
@@ -1306,7 +1306,7 @@ fn diagnostic_box_reorders_boundary_disc_and_retains_multi_disc_spans() {
         font,
         ch: 'A',
         orig: vec!['A', 'A'],
-        origins: vec![OriginId::UNKNOWN; 2],
+        origins: vec![tex_state::provenance::OriginRef::unknown(); 2],
         left_hit: false,
         right_hit: false,
     };

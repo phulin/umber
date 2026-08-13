@@ -98,6 +98,7 @@ enum ArtifactRenderSources {
     Deferred(crate::OutputProvenanceRecipe),
     Mixed {
         live: Arc<[OriginId]>,
+        roots: Arc<[crate::provenance::OriginRef]>,
         refs: Arc<[u64]>,
         recipes: Arc<[crate::OutputProvenanceRecipe]>,
     },
@@ -136,6 +137,7 @@ impl ArtifactRenderProvenance {
             assert_eq!(flat_len, refs.len());
             ArtifactRenderSources::Mixed {
                 live: live.into(),
+                roots: roots.into(),
                 refs: refs.into(),
                 recipes: recipes.into(),
             }
@@ -173,7 +175,7 @@ pub struct RenderProvenanceBuilder {
 }
 
 impl RenderProvenanceBuilder {
-    pub fn push_live(&mut self, origin: OriginId) {
+    fn push_live_id(&mut self, origin: OriginId) {
         let index = self.live.len();
         self.live.push(origin);
         if self.mixed {
@@ -186,19 +188,8 @@ impl RenderProvenanceBuilder {
 
     pub fn push_root(&mut self, origin: crate::provenance::OriginRef) {
         let id = origin.id();
-        self.push_live(id);
+        self.push_live_id(id);
         self.roots.push(origin);
-    }
-
-    #[doc(hidden)]
-    pub fn attach_roots(&mut self, roots: Vec<crate::provenance::OriginRef>) {
-        self.roots = roots;
-    }
-
-    #[doc(hidden)]
-    #[must_use]
-    pub fn live_origins_for_rooting(&self) -> &[OriginId] {
-        &self.live
     }
 
     pub fn push_deferred(
@@ -604,6 +595,7 @@ impl CommittedArtifact {
                 live,
                 refs,
                 recipes,
+                ..
             } => {
                 let Some(&reference) = refs.get(flat) else {
                     return ArtifactOrigin::Unknown;
@@ -646,17 +638,23 @@ impl CommittedArtifact {
                 ArtifactRenderSources::Deferred(recipe) => provenance_recipe_bytes(recipe),
                 ArtifactRenderSources::Mixed {
                     live,
+                    roots,
                     refs,
                     recipes,
                 } => live
                     .len()
                     .saturating_mul(std::mem::size_of::<OriginId>())
+                    .saturating_add(
+                        roots
+                            .len()
+                            .saturating_mul(std::mem::size_of::<crate::provenance::OriginRef>()),
+                    )
                     .saturating_add(refs.len().saturating_mul(std::mem::size_of::<u64>()))
                     .saturating_add(recipes.iter().map(provenance_recipe_bytes).sum::<usize>()),
             })
     }
 
-    fn new(
+    pub(crate) fn new(
         hash: ContentHash,
         bytes: Vec<u8>,
         render_provenance: ArtifactRenderProvenance,

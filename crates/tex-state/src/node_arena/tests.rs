@@ -44,7 +44,7 @@ fn nested_lists_build_bottom_up_and_read_back() {
     inner.push(Node::Char {
         font: FontId::testing_new(1),
         ch: 'x',
-        origin: crate::token::OriginId::UNKNOWN,
+        origin: crate::provenance::OriginRef::unknown(),
     });
     let inner_id = inner.finish(&mut arena);
 
@@ -81,7 +81,7 @@ fn nested_lists_build_bottom_up_and_read_back() {
         &[Node::Char {
             font: FontId::testing_new(1),
             ch: 'x',
-            origin: crate::token::OriginId::UNKNOWN,
+            origin: crate::provenance::OriginRef::unknown(),
         }]
     );
     let Some(NodeRef::HList(middle_box)) = arena.get(middle_id, &survivors).first() else {
@@ -130,14 +130,15 @@ fn watermark_truncation_drops_exactly_the_suffix() {
         !arena.contains(dropped),
         "reallocation must not revive stale id"
     );
-    assert_eq!(
+    assert!(matches!(
         arena.get(replacement, &survivors).first(),
         Some(NodeRef::Char {
-            font: FontId::testing_new(1),
+            font,
             ch: 'c',
             origin: crate::token::OriginId::UNKNOWN,
-        })
-    );
+            ..
+        }) if font == FontId::testing_new(1)
+    ));
 }
 
 #[test]
@@ -224,13 +225,13 @@ fn every_inline_kind_uses_only_one_word_and_no_sidecar() {
         Node::Char {
             font: FontId::testing_new(u32::MAX),
             ch: '\u{10ffff}',
-            origin: crate::token::OriginId::UNKNOWN,
+            origin: crate::provenance::OriginRef::unknown(),
         },
         Node::Lig {
             font: FontId::testing_new(7),
             ch: '\u{ff}',
             orig: vec!['\0', '\u{fe}'],
-            origins: vec![crate::token::OriginId::UNKNOWN; 2],
+            origins: vec![crate::provenance::OriginRef::unknown(); 2],
             left_hit: false,
             right_hit: false,
         },
@@ -276,13 +277,13 @@ fn ligature_and_character_fonts_share_the_same_dense_identity() {
         Node::Char {
             font: tagged,
             ch: 'A',
-            origin: crate::token::OriginId::UNKNOWN,
+            origin: crate::provenance::OriginRef::unknown(),
         },
         Node::Lig {
             font: tagged,
             ch: 'B',
             orig: vec!['A', 'A'],
-            origins: vec![crate::token::OriginId::UNKNOWN; 2],
+            origins: vec![crate::provenance::OriginRef::unknown(); 2],
             left_hit: false,
             right_hit: false,
         },
@@ -333,33 +334,33 @@ fn byte_char_runs_stop_at_fonts_unicode_ligatures_and_other_nodes() {
         Node::Char {
             font: f1,
             ch: 'a',
-            origin: crate::token::OriginId::UNKNOWN,
+            origin: crate::provenance::OriginRef::unknown(),
         },
         Node::Char {
             font: f1,
             ch: '\u{ff}',
-            origin: crate::token::OriginId::UNKNOWN,
+            origin: crate::provenance::OriginRef::unknown(),
         },
         Node::Char {
             font: f2,
             ch: 'b',
-            origin: crate::token::OriginId::UNKNOWN,
+            origin: crate::provenance::OriginRef::unknown(),
         },
         Node::Char {
             font: f2,
             ch: '\u{100}',
-            origin: crate::token::OriginId::UNKNOWN,
+            origin: crate::provenance::OriginRef::unknown(),
         },
         Node::Char {
             font: f2,
             ch: 'c',
-            origin: crate::token::OriginId::UNKNOWN,
+            origin: crate::provenance::OriginRef::unknown(),
         },
         Node::Lig {
             font: f2,
             ch: 'd',
             orig: vec!['c', 'd'],
-            origins: vec![crate::token::OriginId::UNKNOWN; 2],
+            origins: vec![crate::provenance::OriginRef::unknown(); 2],
             left_hit: false,
             right_hit: false,
         },
@@ -677,7 +678,7 @@ fn late_invalid_ligature_leaves_complete_arena_state_unchanged() {
         Node::Char {
             font: FontId::testing_new(1),
             ch: 'a',
-            origin: crate::token::OriginId::UNKNOWN,
+            origin: crate::provenance::OriginRef::unknown(),
         },
         Node::Rule {
             width: Some(scaled(1)),
@@ -696,14 +697,14 @@ fn late_invalid_ligature_leaves_complete_arena_state_unchanged() {
             Node::Char {
                 font: FontId::testing_new(2),
                 ch: 'b',
-                origin: crate::token::OriginId::UNKNOWN,
+                origin: crate::provenance::OriginRef::unknown(),
             },
             Node::Adjust(crate::node::AdjustNode::ordinary(baseline)),
             Node::Lig {
                 font: FontId::testing_new(2),
                 ch: 'c',
                 orig: vec!['b', '\u{100}'],
-                origins: vec![crate::token::OriginId::UNKNOWN; 2],
+                origins: vec![crate::provenance::OriginRef::unknown(); 2],
                 left_hit: false,
                 right_hit: false,
             },
@@ -736,7 +737,7 @@ fn builder_late_invalid_ligature_does_not_publish_valid_prefix_or_sidecar() {
             font: FontId::testing_new(0),
             ch,
             orig: vec![orig.0, orig.1],
-            origins: vec![crate::token::OriginId::UNKNOWN; 2],
+            origins: vec![crate::provenance::OriginRef::unknown(); 2],
             left_hit: false,
             right_hit: false,
         });
@@ -757,7 +758,7 @@ fn one_char(arena: &mut NodeArena, ch: char) -> NodeListId {
     builder.push(Node::Char {
         font: FontId::testing_new(1),
         ch,
-        origin: crate::token::OriginId::UNKNOWN,
+        origin: crate::provenance::OriginRef::unknown(),
     });
     builder.finish(arena)
 }

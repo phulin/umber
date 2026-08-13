@@ -103,17 +103,20 @@ complete `BoxNode` values.
 
 The storage includes:
 
-- one diagnostic origin aligned with every word, plus consumed-character
-  origins for ligatures;
+- one raw diagnostic-origin projection and one optional strong origin root
+  aligned with every word, plus raw projections and strong roots aligned with
+  every consumed character in a ligature;
 - boxes, unsets, rules, leader glues, discretionaries, marks, insertions, and
   adjustments whose sidecar retains the pdfTeX pre-migration marker;
 - detached whatsit payloads, including owned strings and bytes;
 - noads, fractions, choices, and math lists; and
 - child-list and shared-content handles required by each logical row.
 
-Origins move and roll back with storage but do not participate in node equality
-or semantic identity. Small nested sum types may remain packed columns when
-splitting them would increase size or branching.
+Origin roots move and roll back with their projections, including compact
+survivor promotion, but do not participate in node equality or semantic
+identity. Profiling accounts for both the aligned root column and the ragged
+ligature-root allocations. Small nested sum types may remain packed columns
+when splitting them would increase size or branching.
 
 ## Publication and rollback
 

@@ -141,9 +141,9 @@ fn mixed_artifact_provenance_decodes_only_the_requested_source() {
     let first = OriginId::from_raw(11);
     let last = OriginId::from_raw(12);
     let mut provenance = RenderProvenanceBuilder::default();
-    provenance.push_live(first);
+    provenance.push_root(crate::provenance::OriginRef::direct(first));
     provenance.push_deferred(&recipe, 0..1);
-    provenance.push_live(last);
+    provenance.push_root(crate::provenance::OriginRef::direct(last));
     let verified = VerifiedArtifact::new(b"page artifact".to_vec())
         .with_built_render_origins(vec![1, 2, 3], provenance);
     let (bytes, render_provenance, open_out_occurrences) = verified.into_parts();

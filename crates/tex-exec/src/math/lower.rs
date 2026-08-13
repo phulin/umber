@@ -190,7 +190,7 @@ impl<'a> LoweredMathSink<'a> {
                 } => scratch.push(Node::Char {
                     font: *font,
                     ch: *ch,
-                    origin: *origin,
+                    origin: origin.clone(),
                 }),
                 MathNode::Kern { amount, kind } => scratch.push(Node::Kern {
                     amount: *amount,

@@ -16,7 +16,8 @@ use tex_state::node::{
     MarginKernSide as StateMarginKernSide, Node, Sign, Whatsit,
 };
 use tex_state::node_arena::{NodeList, NodeRef};
-use tex_state::token::{Catcode, OriginId, Token};
+use tex_state::provenance::OriginRef;
+use tex_state::token::{Catcode, Token};
 use tex_state::{EffectRecord, PrintSink, Universe, VerifiedArtifact};
 
 use crate::ExecError;
@@ -297,13 +298,6 @@ pub(crate) fn stage_shipout(
     let render_origin_ends = emission
         .render_origin_ends
         .expect("page shipout must record render provenance");
-    let render_roots = emission
-        .render_origins
-        .live_origins_for_rooting()
-        .iter()
-        .filter_map(|origin| stores.origin_ref(*origin))
-        .collect();
-    emission.render_origins.attach_roots(render_roots);
     Ok(StagedShipout {
         artifact: VerifiedArtifact::new(artifact_bytes)
             .with_built_render_origins(render_origin_ends, emission.render_origins)
@@ -462,13 +456,13 @@ struct EmissionState {
 }
 
 impl EmissionState {
-    fn node(&mut self, origins: impl IntoIterator<Item = OriginId>) {
+    fn node(&mut self, origins: impl IntoIterator<Item = OriginRef>) {
         let Some(ends) = &mut self.render_origin_ends else {
             return;
         };
         let mut len = 0_u32;
         for origin in origins {
-            self.render_origins.push_live(origin);
+            self.render_origins.push_root(origin);
             len = len
                 .checked_add(1)
                 .expect("artifact render provenance exceeds u32 entries");
@@ -546,20 +540,20 @@ fn emit_char_run(
         tex_fonts::FontConstruction::Letterspaced { .. }
     ) {
         let font_id = font_resource_id(stores, font, emission);
-        for (code, origin) in run.codes().zip(run.origins()) {
+        for (code, origin) in run.codes().zip(run.origin_roots()) {
             let width = loaded
                 .character_metrics(char::from(code))
                 .map(|metrics| metrics.width)
                 .ok_or(ExecError::UnsupportedShipoutNode {
                     node: "missing character metrics",
                 })?;
-            emission.node([origin]);
+            emission.node([origin.clone()]);
             output.char(font_id, u32::from(code), width)?;
         }
         return Ok(());
     }
 
-    for (code, origin) in run.codes().zip(run.origins()) {
+    for (code, origin) in run.codes().zip(run.origin_roots()) {
         let width = stores
             .font_character_metrics(font, char::from(code))
             .map(|metrics| metrics.width)
@@ -571,7 +565,7 @@ fn emit_char_run(
             font,
             u32::from(code),
             width,
-            [origin],
+            [origin.clone()],
             output,
             emission,
         )?;
@@ -609,15 +603,28 @@ fn emit_index(
         .get(index)
         .expect("emission index belongs to the frozen list");
     match node {
-        NodeRef::Char { font, ch, origin } => {
+        NodeRef::Char {
+            font,
+            ch,
+            origin_root,
+            ..
+        } => {
             let (code, width) = glyph(stores, font, ch)?;
-            emit_glyph(stores, font, code, width, [origin], output, emission)?;
+            emit_glyph(
+                stores,
+                font,
+                code,
+                width,
+                [origin_root.clone()],
+                output,
+                emission,
+            )?;
         }
         NodeRef::Lig {
             font,
             ch,
             orig,
-            origins,
+            origin_roots,
             ..
         } => {
             let (code, width) = glyph(stores, font, ch)?;
@@ -627,7 +634,7 @@ fn emit_index(
                 code,
                 orig,
                 width,
-                origins.iter().copied(),
+                origin_roots.iter().cloned(),
                 output,
                 emission,
             )?;
@@ -1015,7 +1022,7 @@ fn emit_glyph(
     font: FontId,
     ch: u32,
     logical_width: tex_state::scaled::Scaled,
-    origins: impl IntoIterator<Item = OriginId>,
+    origins: impl IntoIterator<Item = OriginRef>,
     output: &mut ArtifactNodeListEmitter<'_>,
     emission: &mut EmissionState,
 ) -> Result<(), ExecError> {
@@ -1033,7 +1040,7 @@ fn emit_ligature(
     ch: u32,
     source: &[char],
     logical_width: tex_state::scaled::Scaled,
-    origins: impl IntoIterator<Item = OriginId>,
+    origins: impl IntoIterator<Item = OriginRef>,
     output: &mut ArtifactNodeListEmitter<'_>,
     emission: &mut EmissionState,
 ) -> Result<(), ExecError> {

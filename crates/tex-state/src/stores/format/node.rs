@@ -463,14 +463,14 @@ impl FormatNode {
         stores: &Stores,
         node: NodeRef<'_>,
         roots: &mut SurvivorRoots,
-        origins: &mut Vec<crate::token::OriginId>,
+        origins: &mut Vec<crate::provenance::OriginRef>,
     ) -> Self {
         match &node {
-            NodeRef::Char { origin, .. } => origins.push(*origin),
+            NodeRef::Char { origin_root, .. } => origins.push((*origin_root).clone()),
             NodeRef::Lig {
-                origins: ligature_origins,
+                origin_roots: ligature_origins,
                 ..
-            } => origins.extend(ligature_origins.iter().copied()),
+            } => origins.extend(ligature_origins.iter().cloned()),
             _ => {}
         }
         Self::capture(stores, node, roots)
@@ -599,13 +599,15 @@ impl FormatNode {
         self,
         content_ids: &FormatContentIds<'_>,
         ids: &NodeIds,
-        origins: &mut impl Iterator<Item = crate::token::OriginId>,
+        origins: &mut impl Iterator<Item = crate::provenance::OriginRef>,
     ) -> Result<Node, StoreFormatError> {
         Ok(match self {
             Self::Char { font, ch } => Node::Char {
                 font: font_id(content_ids, font)?,
                 ch,
-                origin: origins.next().unwrap_or(crate::token::OriginId::UNKNOWN),
+                origin: origins
+                    .next()
+                    .unwrap_or_else(crate::provenance::OriginRef::unknown),
             },
             Self::Lig {
                 font,
@@ -615,7 +617,11 @@ impl FormatNode {
                 right_hit,
             } => {
                 let node_origins = (0..orig.len())
-                    .map(|_| origins.next().unwrap_or(crate::token::OriginId::UNKNOWN))
+                    .map(|_| {
+                        origins
+                            .next()
+                            .unwrap_or_else(crate::provenance::OriginRef::unknown)
+                    })
                     .collect();
                 Node::Lig {
                     font: font_id(content_ids, font)?,
