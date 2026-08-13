@@ -125,10 +125,11 @@ pub(super) enum DeliveryEvent {
     ReplayCompleted(crate::CommandReplayEpisode),
     Alignment(AlignmentDeliveryEvent),
 }
+pub(crate) use status::ConditionId;
 #[cfg(test)]
 pub(crate) use status::{
-    AbsorbingContext, AlignmentId, AlignmentScanContext, ArgumentBuilderId, ConditionId,
-    DefinitionContext, MatchingContext, ScannerWarning, SkippingContext, TokenBuilderId,
+    AbsorbingContext, AlignmentId, AlignmentScanContext, ArgumentBuilderId, DefinitionContext,
+    MatchingContext, ScannerWarning, SkippingContext, TokenBuilderId,
 };
 pub(crate) use status::{ScannerState, ScannerStatus};
 

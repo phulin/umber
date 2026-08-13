@@ -228,9 +228,10 @@ print channel of its own outside the borrowed
 - `src/snapshot.rs` and `src/snapshot/tests.rs`: command snapshot, quiescent
   summary ownership, canonical detached-continuation materialization, and
   focused internal roundtrip/rejection tests.
-- `src/continuation.rs`: handle-free command-continuation detachment and
-  destination-generation materialization of strong token and macro-definition
-  roots, symbols, and non-owning provenance operands.
+- `src/continuation.rs` and `src/continuation/`: handle-free command-summary
+  DTOs, recursive schema audit, logical detachment, and staged atomic
+  destination-generation materialization of source, symbol, token, macro,
+  origin-list, and expansion-frame roots.
 - `tests/`: external dependency, visibility, and capability-boundary tests.
   Character/input integration coverage binds the exact shared-domain tokenizer
   to the pinned TeX82 fixture and compile-fail gates profile immutability.

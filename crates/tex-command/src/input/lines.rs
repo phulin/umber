@@ -200,6 +200,22 @@ pub struct PhysicalLine {
 }
 
 impl PhysicalLine {
+    pub(crate) const fn from_detached_parts(
+        source: SourceId,
+        number: u64,
+        content: SourceRange,
+        terminator: SourceRange,
+        terminator_kind: LineTerminator,
+    ) -> Self {
+        Self {
+            source,
+            number,
+            content,
+            terminator,
+            terminator_kind,
+        }
+    }
+
     pub(crate) const fn with_number(mut self, number: u64) -> Self {
         self.number = number;
         self

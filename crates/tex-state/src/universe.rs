@@ -1562,6 +1562,16 @@ impl Default for Universe {
 }
 
 impl Universe {
+    /// Creates an isolated staging generation for atomic detached import.
+    ///
+    /// Private revision allocations cannot cross a generation fork, so an
+    /// active private domain rejects staging instead of panicking in `Clone`.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn stage_detached_import(&self) -> Option<Self> {
+        self.private_revision_domain.is_none().then(|| self.clone())
+    }
+
     /// Applies the process-selected Web2C font-memory bound.
     ///
     /// This operational limit is intentionally excluded from formats,
@@ -6080,6 +6090,86 @@ impl Universe {
     /// Validates a half-open logical source span.
     pub fn source_span(&self, lo: SourcePos, hi: SourcePos) -> Result<SourceSpan, SourceMapError> {
         self.stores.source_span(lo, hi)
+    }
+
+    /// Copies the logical registration recipe for detached command state.
+    ///
+    /// The returned descriptor owns semantic backing data, never the live
+    /// source-map registration root.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn detached_source_descriptor(&self, source: SourceId) -> Option<SourceDescriptor> {
+        self.stores.source_descriptor(source)
+    }
+
+    /// Copies a World input record into allocation-independent detached data.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn detached_world_input(
+        &self,
+        input_record: crate::InputRecordId,
+    ) -> Option<(
+        std::path::PathBuf,
+        Vec<u8>,
+        Option<crate::FileModificationDate>,
+        crate::InputOrigin,
+    )> {
+        let content = self.world.recorded_input_content(input_record)?;
+        Some((
+            content.path().to_owned(),
+            content.bytes().to_vec(),
+            content.modification_date(),
+            content.origin(),
+        ))
+    }
+
+    /// Installs one detached World backing with a destination-local input id.
+    #[doc(hidden)]
+    pub fn install_detached_world_source(
+        &mut self,
+        source: SourceId,
+        path: std::path::PathBuf,
+        bytes: std::sync::Arc<[u8]>,
+        modification_date: Option<crate::FileModificationDate>,
+        origin: crate::InputOrigin,
+    ) -> Result<SourcePos, SourceMapError> {
+        if let Some(descriptor) = self.stores.source_descriptor(source) {
+            let SourceDescriptor::World { input_record, .. } = descriptor else {
+                return Err(SourceMapError::ConflictingRegistration);
+            };
+            let Some(existing) = self.world.recorded_input_content(input_record) else {
+                return Err(SourceMapError::MissingWorldInput);
+            };
+            if existing.path() != path
+                || existing.bytes() != bytes.as_ref()
+                || existing.modification_date() != modification_date
+                || existing.origin() != origin
+            {
+                return Err(SourceMapError::ConflictingRegistration);
+            }
+            return self.register_source(source, descriptor);
+        }
+        let byte_len =
+            u64::try_from(bytes.len()).map_err(|_| SourceMapError::WorldInputLengthMismatch)?;
+        let input_record =
+            self.world
+                .register_detached_input_content(path, bytes, modification_date, origin);
+        self.register_source(source, SourceDescriptor::world(input_record, byte_len))
+    }
+
+    /// Converts an allocation-local logical span to a source-relative recipe.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn detached_source_span(&self, span: SourceSpan) -> Option<(SourceId, u64, u64)> {
+        let region = self.stores.source_region_at_position(span.lo())?;
+        if span.hi().raw() > region.anchor().raw() {
+            return None;
+        }
+        Some((
+            region.source,
+            span.lo().raw().checked_sub(region.start.raw())?,
+            span.hi().raw().checked_sub(region.start.raw())?,
+        ))
     }
 
     pub(crate) fn source_region(&self, source: SourceId) -> Option<SourceRegion> {

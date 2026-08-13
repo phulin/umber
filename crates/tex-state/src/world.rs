@@ -2821,6 +2821,22 @@ impl World {
         content
     }
 
+    pub(crate) fn register_detached_input_content(
+        &mut self,
+        path: PathBuf,
+        bytes: Arc<[u8]>,
+        modification_date: Option<FileModificationDate>,
+        origin: InputOrigin,
+    ) -> InputRecordId {
+        if let WorldBackend::Memory(memory) = &mut self.backend {
+            Arc::make_mut(memory)
+                .files
+                .insert(path.clone(), Arc::clone(&bytes));
+        }
+        self.register_input_content(&path, bytes, modification_date, origin)
+            .record()
+    }
+
     /// Replays the uncommitted stream suffix for one path without publishing
     /// it to the host. TeX may close an immediate output and read it again in
     /// the same job (LaTeX does this with its main aux file), while retained

@@ -72,7 +72,7 @@ mod tracing_nesting;
 mod test_harness;
 
 pub use command::{CurrentCommand, DeliveryStamp};
-pub use continuation::OwnedCommandContinuation;
+pub use continuation::{CommandContinuationError, OwnedCommandContinuation};
 pub use error::{CommandError, DimensionDiagnostic, InsertedUnit};
 pub use fatal::{FATAL_SEVERITY, FatalError};
 pub use fuel::{

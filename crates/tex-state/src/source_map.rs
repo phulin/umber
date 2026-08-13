@@ -585,6 +585,14 @@ impl SourceMap {
             .cloned()
     }
 
+    pub(crate) fn descriptor_for_source(&self, source: SourceId) -> Option<SourceDescriptor> {
+        let region = self.region_for_source(source)?;
+        self.registration_roots
+            .get(region.identity.slot() as usize)
+            .filter(|registration| registration.region() == region)
+            .map(|registration| registration.0.descriptor.clone())
+    }
+
     pub(crate) fn contains_registration(
         &self,
         source: SourceId,

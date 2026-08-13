@@ -1,554 +1,693 @@
-//! Generation-independent ownership for retained command continuations.
+//! Handle-free transport for retained command continuations.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap};
+use std::fmt;
+use std::path::PathBuf;
+use std::sync::Arc;
 
 use tex_state::Universe;
 use tex_state::ids::{MacroDefinitionId, OriginListId, TokenListId};
+use tex_state::input::SourceId;
 use tex_state::interner::{ControlSequenceKind, Symbol};
-use tex_state::macro_store::{MacroDefinitionProvenance, MacroDefinitionRef, MacroMeaning};
-use tex_state::provenance::{ExpansionFrameRef, OriginListRef, OriginRecord, OriginRef};
+use tex_state::macro_store::{MacroDefinitionRef, MacroMeaning};
+use tex_state::provenance::{
+    ExpansionFrameRef, InsertedOriginKind, OriginListRef, OriginRecord, OriginRef,
+    SynthesizedOriginKind, SyntheticOriginKind,
+};
+use tex_state::source_map::{SourceDescriptor, SourceMapError};
 use tex_state::token::{OriginId, Token, TracedTokenWord};
 use tex_state::token_store::TokenListRef;
 
+use crate::conditionals::{ConditionFrame, ConditionStack, ConditionalKind, IfLimit};
 use crate::input::{
-    BackedUpToken, InputLevel, SharedBackedUpBuffer, SharedTokenBuffer, TokenPayload,
+    BackedUpToken, InputLevel, InputLevelId, InputState, RegisteredSource, RegisteredSourceKind,
+    ReplayTrace, RetirementBehavior, SharedBackedUpBuffer, SharedTokenBuffer, SourceFramingPolicy,
+    SourceLevel, SourceNameClass, SourceOpenDepths, SourceProvenance, SourceRetirement,
+    TokenBehavior, TokenCursor, TokenPayload,
 };
+use crate::macro_call::{
+    MacroActivation, MacroActivationId, MacroArgumentRange, MacroArguments, ParameterState,
+};
+use crate::processor::{ConditionId, ExpansionState};
+use crate::profile::{CharacterMode, CommandProfile};
 use crate::snapshot::CommandSummary;
 
-#[derive(Clone, Debug)]
+macro_rules! recipe_id {
+    ($name:ident) => {
+        #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+        struct $name(usize);
+    };
+}
+
+recipe_id!(SourceRecipeId);
+recipe_id!(SymbolRecipeId);
+recipe_id!(TokenListRecipeId);
+recipe_id!(OriginRecipeId);
+recipe_id!(OriginListRecipeId);
+recipe_id!(MacroRecipeId);
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum OwnedSourceDescriptor {
+    World {
+        path: PathBuf,
+        bytes: Vec<u8>,
+        modification_date: Option<tex_state::FileModificationDate>,
+        origin: tex_state::InputOrigin,
+    },
+    Generated {
+        logical_path: Option<String>,
+        bytes: Vec<u8>,
+    },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct OwnedSourceRecipe {
+    id: SourceId,
+    descriptor: OwnedSourceDescriptor,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct OwnedRegisteredSource {
+    source: SourceRecipeId,
+    kind: RegisteredSourceKind,
+    mode: CharacterMode,
+    bytes: Vec<u8>,
+    name: Option<String>,
+    framing_name: Option<String>,
+    framing: SourceFramingPolicy,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 struct OwnedSymbol {
     kind: ControlSequenceKind,
     spelling: String,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 enum OwnedToken {
-    Plain(Token),
-    ControlSequence(OwnedSymbol),
+    Character {
+        ch: char,
+        cat: tex_state::token::Catcode,
+    },
+    Parameter(u8),
+    Frozen(tex_state::token::FrozenToken),
+    ControlSequence(SymbolRecipeId),
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct OwnedWord {
+    token: OwnedToken,
+    origin: OriginRecipeId,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct OwnedSourceProvenance {
+    source: SourceRecipeId,
+    start: u64,
+    end: u64,
+    location: u64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct OwnedBackedUpToken {
+    spelling: OwnedWord,
+    source_provenance: Option<OwnedSourceProvenance>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum OwnedOrigin {
+    Unknown,
+    Source {
+        source: SourceRecipeId,
+        input_record: Option<tex_state::InputRecordId>,
+        byte_offset: u64,
+        line: u32,
+        column: u32,
+    },
+    SourceSpan {
+        source: SourceRecipeId,
+        start: u64,
+        end: u64,
+    },
+    Synthetic(SyntheticOriginKind),
+    Synthesized {
+        kind: SynthesizedOriginKind,
+        parent: OriginRecipeId,
+    },
+    Inserted {
+        kind: InsertedOriginKind,
+        token: OwnedToken,
+        parent: OriginRecipeId,
+    },
+    ExpansionFrame {
+        definition: Option<MacroRecipeId>,
+        detached_operand: u64,
+        invocation: OriginRecipeId,
+        definition_origin: OriginRecipeId,
+        parent: OriginRecipeId,
+    },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 struct OwnedMacro {
     flags: tex_state::meaning::MeaningFlags,
-    parameters: Vec<OwnedToken>,
-    replacement: Vec<OwnedToken>,
-    provenance: MacroDefinitionProvenance,
+    parameters: TokenListRecipeId,
+    replacement: TokenListRecipeId,
+    definition_origin: OriginRecipeId,
+    parameter_origins: OriginListRecipeId,
+    replacement_origins: OriginListRecipeId,
 }
 
-#[derive(Clone, Copy, Debug)]
-enum OwnedOrigin {
-    Record(OriginRecord),
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum OwnedTokenPayload {
+    Stored {
+        tokens: TokenListRecipeId,
+        origins: OriginListRecipeId,
+    },
+    Transient(Vec<OwnedWord>),
+    InlineTransient(OwnedWord),
+    BackedUp(Vec<OwnedBackedUpToken>),
+    InlineBackedUp(OwnedBackedUpToken),
+    ArgumentRange {
+        buffer: Vec<OwnedWord>,
+        range: MacroArgumentRange,
+    },
 }
 
-/// A command summary plus the complete arena-backed closure it reaches.
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct OwnedTokenCursor {
+    payload: OwnedTokenPayload,
+    behavior: TokenBehavior,
+    retirement: RetirementBehavior,
+    trace: ReplayTrace,
+    index: usize,
+    identity: InputLevelId,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct OwnedSourceCursor {
+    backing: OwnedRegisteredSource,
+    line_backing: Option<OwnedRegisteredSource>,
+    pending_acquired_line: bool,
+    next_physical_offset: u64,
+    next_line_number: u64,
+    line: Option<OwnedSourceLineState>,
+    lexer_state: crate::LexerState,
+    end_after_line: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct OwnedSourceRange {
+    source: SourceRecipeId,
+    start: u64,
+    end: u64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct OwnedSourceLineState {
+    number: u64,
+    content: OwnedSourceRange,
+    terminator: OwnedSourceRange,
+    terminator_kind: crate::LineTerminator,
+    retained_end: u64,
+    byte_cursor: u64,
+    scalar_cursor: u64,
+    endline: Option<crate::CharacterCode>,
+    endline_delivered: bool,
+    reduced_spellings: Vec<(OwnedSourceRange, crate::CharacterCode)>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct OwnedSourceLevel {
+    identity: InputLevelId,
+    cursor: OwnedSourceCursor,
+    name_class: SourceNameClass,
+    retirement: SourceRetirement,
+    every_eof: Option<(TokenListRecipeId, OriginListRecipeId)>,
+    open_depths: Option<OwnedSourceOpenDepths>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct OwnedSourceOpenDepths {
+    group_lineages: Vec<u64>,
+    conditional_identities: Vec<u64>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum OwnedInputLevel {
+    Source(Box<OwnedSourceLevel>),
+    Tokens(OwnedTokenCursor),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct OwnedInputState {
+    levels: Vec<OwnedInputLevel>,
+    terminal_context_line: Option<String>,
+    pending_sources: BTreeMap<u32, OwnedRegisteredSource>,
+    next_level_identity: u64,
+    next_source_identity: u64,
+    force_eof: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct OwnedActivation {
+    identity: MacroActivationId,
+    name: SymbolRecipeId,
+    definition: MacroRecipeId,
+    arguments: Vec<OwnedWord>,
+    ranges: [Option<MacroArgumentRange>; 9],
+    invocation: OriginRecipeId,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct OwnedParameterState {
+    activations: Vec<OwnedActivation>,
+    next_activation_identity: u64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct OwnedConditionState {
+    frames: Vec<OwnedConditionFrame>,
+    next_identity: u64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct OwnedConditionFrame {
+    identity: ConditionId,
+    kind: ConditionalKind,
+    limit: IfLimit,
+    source_line: u32,
+    inverted: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct OwnedExpansionState {
+    cumulative_expansions: u64,
+    next_resource_resolution: u64,
+    pending_diagnostics: Vec<u64>,
+    observed_dependencies: Vec<u64>,
+    semantic_barriers: Vec<u64>,
+    profile: CommandProfile,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct OwnedCommandSummary {
+    input: OwnedInputState,
+    parameters: OwnedParameterState,
+    conditions: OwnedConditionState,
+    align_state: i32,
+    expansion: OwnedExpansionState,
+    next_builder_identity: u64,
+}
+
+/// A canonical command continuation containing recipes and portable state.
 ///
-/// The copied summary is only a structural template. Every token-list,
-/// origin-list, macro, origin and symbol reachable from it is represented by
-/// owned semantic data and replaced before the summary is returned.
-#[derive(Clone, Debug)]
+/// Runtime roots and store coordinates exist only in the detacher's temporary
+/// maps. The retained value uses dense DTO-local recipe indices.
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct OwnedCommandContinuation {
-    summary: CommandSummary,
-    token_lists: HashMap<TokenListId, Vec<OwnedToken>>,
-    origin_lists: HashMap<OriginListId, Vec<OriginId>>,
-    macros: HashMap<MacroDefinitionId, OwnedMacro>,
-    origins: HashMap<OriginId, OwnedOrigin>,
-    symbols: HashMap<Symbol, OwnedSymbol>,
+    summary: OwnedCommandSummary,
+    sources: Vec<OwnedSourceRecipe>,
+    symbols: Vec<OwnedSymbol>,
+    token_lists: Vec<Vec<OwnedToken>>,
+    origins: Vec<OwnedOrigin>,
+    origin_lists: Vec<Vec<OriginRecipeId>>,
+    macros: Vec<OwnedMacro>,
 }
+
+/// A detached continuation could not be validated or installed.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CommandContinuationError {
+    InvalidRecipe(&'static str),
+    DestinationBusy,
+    SourceMap(SourceMapError),
+    SourceRegistration(crate::SourceRegistrationError),
+}
+
+impl fmt::Display for CommandContinuationError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidRecipe(message) => {
+                write!(formatter, "invalid command continuation: {message}")
+            }
+            Self::DestinationBusy => formatter
+                .write_str("cannot materialize a command continuation during a private revision"),
+            Self::SourceMap(error) => {
+                write!(formatter, "could not install continuation source: {error}")
+            }
+            Self::SourceRegistration(error) => {
+                write!(formatter, "could not rebuild continuation source: {error}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for CommandContinuationError {}
 
 impl OwnedCommandContinuation {
     #[must_use]
     pub fn detach(summary: &CommandSummary, universe: &Universe) -> Self {
-        let mut owned = Self {
-            summary: summary.clone(),
-            token_lists: HashMap::new(),
-            origin_lists: HashMap::new(),
-            macros: HashMap::new(),
-            origins: HashMap::new(),
-            symbols: HashMap::new(),
-        };
-        owned.collect_summary(universe);
-        owned
+        Detacher::new(universe).finish(summary)
     }
 
-    #[must_use]
-    pub fn materialize(&self, universe: &mut Universe) -> CommandSummary {
-        let mut summary = self.summary.clone();
-        let mut remap = Materializer::new(self, universe);
-        remap.materialize_summary(&mut summary);
-        summary
+    /// Validates every recipe before installing any destination root.
+    pub fn materialize(
+        &self,
+        universe: &mut Universe,
+    ) -> Result<CommandSummary, CommandContinuationError> {
+        self.validate()?;
+        let mut staged = universe
+            .stage_detached_import()
+            .ok_or(CommandContinuationError::DestinationBusy)?;
+        let summary = Materializer::new(self, &mut staged).finish()?;
+        *universe = staged;
+        Ok(summary)
     }
 
-    fn collect_summary(&mut self, universe: &Universe) {
-        let input = self.summary.input.clone();
-        self.collect_input(&input, universe);
-        let parameters = self.summary.parameters.clone();
-        self.collect_parameters(&parameters, universe);
-    }
-
-    fn collect_parameters(
-        &mut self,
-        parameters: &crate::macro_call::ParameterState,
-        universe: &Universe,
-    ) {
-        let activations = parameters.activations.clone();
-        for activation in &activations {
-            self.collect_symbol(activation.name, universe);
-            self.collect_macro(activation.definition.id(), universe);
-            self.collect_words(activation.arguments.buffer.words(), universe);
-            self.collect_origin_ref(activation.invocation.as_origin(), universe);
-        }
-    }
-
-    fn collect_input(&mut self, input: &crate::input::InputState, universe: &Universe) {
-        let levels = input.levels.clone();
-        for level in &levels {
-            self.collect_level(level, universe);
-        }
-    }
-
-    fn collect_level(&mut self, level: &InputLevel, universe: &Universe) {
-        match level {
-            InputLevel::Source(source) => {
-                if let Some(list) = &source.every_eof {
-                    self.collect_token_root(list.token_ref(), universe);
-                    self.collect_origin_list(list.origin_ref(), universe);
-                }
-            }
-            InputLevel::Tokens(cursor) => match &cursor.payload {
-                TokenPayload::Stored { tokens, origins } => {
-                    self.collect_token_root(tokens, universe);
-                    self.collect_origin_list(origins, universe);
-                }
-                TokenPayload::Transient(words) => self.collect_words(words.words(), universe),
-                TokenPayload::InlineTransient(word) => self.collect_word(*word, universe),
-                TokenPayload::BackedUp(words) => {
-                    for word in words.words() {
-                        self.collect_word(word.spelling, universe);
+    fn validate(&self) -> Result<(), CommandContinuationError> {
+        let invalid = |message| Err(CommandContinuationError::InvalidRecipe(message));
+        for source in &self.sources {
+            match &source.descriptor {
+                OwnedSourceDescriptor::World { bytes, .. } => {
+                    if u64::try_from(bytes.len()).is_err() {
+                        return invalid("World source is too large");
                     }
                 }
-                TokenPayload::InlineBackedUp(word) => self.collect_word(word.spelling, universe),
-                TokenPayload::ArgumentRange { buffer, .. } => {
-                    self.collect_words(buffer.words(), universe);
+                OwnedSourceDescriptor::Generated { bytes, .. } => {
+                    if u64::try_from(bytes.len()).is_err() {
+                        return invalid("generated source is too large");
+                    }
                 }
-            },
-        }
-    }
-
-    fn collect_token_root(&mut self, root: &TokenListRef, universe: &Universe) {
-        let id = root.id();
-        if self.token_lists.contains_key(&id) {
-            return;
-        }
-        let tokens = root.tokens().to_vec();
-        self.token_lists.insert(id, Vec::new());
-        let detached = tokens
-            .into_iter()
-            .map(|token| self.own_token(token, universe))
-            .collect();
-        self.token_lists.insert(id, detached);
-    }
-
-    fn collect_origin_list(&mut self, root: &OriginListRef, universe: &Universe) {
-        let id = root.id();
-        if self.origin_lists.contains_key(&id) {
-            return;
-        }
-        let origins = root.origins().to_vec();
-        self.origin_lists.insert(id, origins.clone());
-        for origin in root.roots() {
-            self.collect_origin_ref(origin, universe);
-        }
-    }
-
-    fn collect_words(&mut self, words: &[TracedTokenWord], universe: &Universe) {
-        for &word in words {
-            self.collect_word(word, universe);
-        }
-    }
-
-    fn collect_word(&mut self, word: TracedTokenWord, universe: &Universe) {
-        let _ = self.own_token(word.semantic_token(), universe);
-        self.collect_origin(word.origin(), universe);
-    }
-
-    fn collect_symbol(&mut self, symbol: Symbol, universe: &Universe) {
-        self.symbols.entry(symbol).or_insert_with(|| OwnedSymbol {
-            kind: universe.control_sequence_kind(symbol),
-            spelling: universe.resolve(symbol).to_owned(),
-        });
-    }
-
-    fn own_token(&mut self, token: Token, universe: &Universe) -> OwnedToken {
-        match token {
-            Token::Cs(symbol) => {
-                self.collect_symbol(symbol, universe);
-                OwnedToken::ControlSequence(self.symbols[&symbol].clone())
             }
-            token => OwnedToken::Plain(token),
         }
-    }
-
-    fn collect_macro(&mut self, id: MacroDefinitionId, universe: &Universe) {
-        if self.macros.contains_key(&id) {
-            return;
-        }
-        let meaning = universe.macro_definition(id);
-        let provenance = universe.macro_definition_provenance(id);
-        self.macros.insert(
-            id,
-            OwnedMacro {
-                flags: meaning.flags(),
-                parameters: Vec::new(),
-                replacement: Vec::new(),
-                provenance,
-            },
-        );
-        let parameters = universe.tokens(meaning.parameter_text()).to_vec();
-        let replacement = universe.tokens(meaning.replacement_text()).to_vec();
-        let parameters = parameters
-            .into_iter()
-            .map(|token| self.own_token(token, universe))
-            .collect();
-        let replacement = replacement
-            .into_iter()
-            .map(|token| self.own_token(token, universe))
-            .collect();
-        self.macros
-            .get_mut(&id)
-            .expect("macro placeholder")
-            .parameters = parameters;
-        self.macros
-            .get_mut(&id)
-            .expect("macro placeholder")
-            .replacement = replacement;
-        self.collect_origin(provenance.definition_origin(), universe);
-        let (definition, parameters, replacement) = universe
-            .macro_definition_provenance_roots(id)
-            .expect("live macro provenance has typed roots");
-        self.collect_origin_ref(&definition, universe);
-        self.collect_origin_list(&parameters, universe);
-        self.collect_origin_list(&replacement, universe);
-    }
-
-    fn collect_origin_ref(&mut self, root: &OriginRef, universe: &Universe) {
-        let id = root.id();
-        if id == OriginId::UNKNOWN || self.origins.contains_key(&id) {
-            return;
-        }
-        let record = root
-            .record()
-            .or_else(|| universe.origin_if_live(id))
-            .expect("command continuation origin is live");
-        self.origins.insert(id, OwnedOrigin::Record(record));
-        for child in root.children() {
-            self.collect_origin_ref(child, universe);
-        }
-    }
-
-    fn collect_origin(&mut self, id: OriginId, universe: &Universe) {
-        if id == OriginId::UNKNOWN || self.origins.contains_key(&id) {
-            return;
-        }
-        let record = universe
-            .origin_if_live(id)
-            .expect("command continuation origin is live");
-        self.origins.insert(id, OwnedOrigin::Record(record));
-        match record {
-            OriginRecord::MacroInvocation(origin) => {
-                self.collect_origin(origin.invocation(), universe);
-                self.collect_origin(origin.definition_origin(), universe);
-                self.collect_origin(origin.parent_invocation(), universe);
+        for symbol in &self.symbols {
+            if symbol.kind == ControlSequenceKind::ActiveCharacter
+                && symbol.spelling.chars().count() != 1
+            {
+                return invalid("active control-sequence recipe is not one scalar");
             }
-            OriginRecord::Inserted(origin) => {
-                let _ = self.own_token(origin.token(), universe);
-                self.collect_origin(origin.parent(), universe);
+        }
+        for tokens in &self.token_lists {
+            for token in tokens {
+                self.validate_token(token)?;
             }
-            OriginRecord::Synthesized(origin) => self.collect_origin(origin.parent(), universe),
-            OriginRecord::UnknownBootstrap
-            | OriginRecord::Source(_)
-            | OriginRecord::SourceSpan(_)
-            | OriginRecord::Synthetic(_) => {}
         }
-    }
-}
-
-struct Materializer<'a> {
-    owned: &'a OwnedCommandContinuation,
-    universe: &'a mut Universe,
-    tokens: HashMap<TokenListId, TokenListRef>,
-    origin_lists: HashMap<OriginListId, OriginListRef>,
-    macros: HashMap<MacroDefinitionId, MacroDefinitionRef>,
-    origins: HashMap<OriginId, OriginRef>,
-    macro_provenance_done: HashSet<MacroDefinitionId>,
-}
-
-impl<'a> Materializer<'a> {
-    fn new(owned: &'a OwnedCommandContinuation, universe: &'a mut Universe) -> Self {
-        Self {
-            owned,
-            universe,
-            tokens: HashMap::new(),
-            origin_lists: HashMap::new(),
-            macros: HashMap::new(),
-            origins: HashMap::new(),
-            macro_provenance_done: HashSet::new(),
+        let mut marks = vec![0_u8; self.origins.len()];
+        for index in 0..self.origins.len() {
+            self.validate_origin(OriginRecipeId(index), &mut marks)?;
         }
-    }
-
-    fn token(&mut self, token: &OwnedToken) -> Token {
-        match token {
-            OwnedToken::Plain(token) => *token,
-            OwnedToken::ControlSequence(symbol) => Token::Cs(match symbol.kind {
-                ControlSequenceKind::ActiveCharacter => self
-                    .universe
-                    .intern_active_character(
-                        symbol.spelling.chars().next().expect("active spelling"),
-                    )
-                    .symbol(),
-                ControlSequenceKind::Null
-                | ControlSequenceKind::SingleCharacter
-                | ControlSequenceKind::Named => self.universe.intern(&symbol.spelling).symbol(),
-                ControlSequenceKind::Internal => self
-                    .universe
-                    .intern_internal_control_sequence(&symbol.spelling)
-                    .symbol(),
-            }),
+        for list in &self.origin_lists {
+            if list.iter().any(|id| id.0 >= self.origins.len()) {
+                return invalid("origin-list recipe references a missing origin");
+            }
         }
-    }
-
-    fn token_list(&mut self, old: TokenListId) -> TokenListRef {
-        if let Some(root) = self.tokens.get(&old) {
-            return root.clone();
+        for mac in &self.macros {
+            if mac.parameters.0 >= self.token_lists.len()
+                || mac.replacement.0 >= self.token_lists.len()
+                || mac.definition_origin.0 >= self.origins.len()
+                || mac.parameter_origins.0 >= self.origin_lists.len()
+                || mac.replacement_origins.0 >= self.origin_lists.len()
+            {
+                return invalid("macro recipe references missing content");
+            }
         }
-        let owned = self
-            .owned
-            .token_lists
-            .get(&old)
-            .expect("detached token list")
-            .clone();
-        let tokens = owned
-            .iter()
-            .map(|token| self.token(token))
-            .collect::<Vec<_>>();
-        let root = self.universe.intern_token_list_ref(&tokens);
-        self.tokens.insert(old, root.clone());
-        root
-    }
-
-    fn macro_id(&mut self, old: MacroDefinitionId) -> MacroDefinitionId {
-        if let Some(root) = self.macros.get(&old) {
-            return root.id();
+        for level in &self.summary.input.levels {
+            self.validate_level(level)?;
         }
-        let owned = self.owned.macros.get(&old).expect("detached macro").clone();
-        let parameters = owned
+        for source in self.summary.input.pending_sources.values() {
+            self.validate_registered_source(source)?;
+        }
+        let activation_ids = self
+            .summary
             .parameters
+            .activations
             .iter()
-            .map(|token| self.token(token))
+            .map(|activation| activation.identity)
             .collect::<Vec<_>>();
-        let replacement = owned
-            .replacement
-            .iter()
-            .map(|token| self.token(token))
-            .collect::<Vec<_>>();
-        let parameters = self.universe.intern_token_list_ref(&parameters);
-        let replacement = self.universe.intern_token_list_ref(&replacement);
-        let root = self.universe.intern_macro(MacroMeaning::new(
-            owned.flags,
-            parameters.id(),
-            replacement.id(),
-        ));
-        let id = root.id();
-        self.macros.insert(old, root);
-        id
-    }
-
-    fn finish_macro_provenance(&mut self, old: MacroDefinitionId) {
-        if !self.macro_provenance_done.insert(old) {
-            return;
-        }
-        let id = self.macro_id(old);
-        let provenance = self.owned.macros[&old].provenance;
-        let definition = self.origin(provenance.definition_origin());
-        let parameters = self.origin_list(provenance.parameter_origins());
-        let replacement = self.origin_list(provenance.replacement_origins());
-        self.universe.set_macro_definition_provenance(
-            id,
-            MacroDefinitionProvenance::new(definition.id(), parameters.id(), replacement.id()),
-        );
-    }
-
-    fn origin(&mut self, old: OriginId) -> OriginRef {
-        if old == OriginId::UNKNOWN {
-            return OriginRef::unknown();
-        }
-        if let Some(id) = self.origins.get(&old) {
-            return id.clone();
-        }
-        let record = self.owned.origins[&old];
-        let id = match record {
-            OwnedOrigin::Record(record) => match record {
-                OriginRecord::UnknownBootstrap => OriginRef::unknown(),
-                OriginRecord::Source(source) => {
-                    let id = self.universe.source_origin_with_input_record(
-                        source.source(),
-                        source.input_record(),
-                        source.byte_offset(),
-                        source.line(),
-                        source.column(),
-                    );
-                    self.universe
-                        .origin_ref(id)
-                        .unwrap_or_else(|| OriginRef::direct(id))
-                }
-                OriginRecord::SourceSpan(span) => self.universe.source_span_origin_ref(span),
-                OriginRecord::Synthetic(origin) => {
-                    self.universe.synthetic_origin_ref(origin.kind())
-                }
-                OriginRecord::Synthesized(origin) => {
-                    let parent = self.origin(origin.parent());
-                    self.universe.synthesized_origin_ref(origin.kind(), parent)
-                }
-                OriginRecord::Inserted(origin) => {
-                    let token = self.token(&self.owned_token(origin.token()));
-                    let parent = self.origin(origin.parent());
-                    self.universe
-                        .inserted_origin_ref(origin.kind(), token, parent)
-                }
-                OriginRecord::MacroInvocation(origin) => {
-                    let invocation = self.origin(origin.invocation());
-                    let definition_origin = self.origin(origin.definition_origin());
-                    let parent = self.origin(origin.parent_invocation());
-                    self.universe
-                        .macro_invocation_frame_from_nonowning_operand(
-                            origin.definition_operand(),
-                            invocation,
-                            definition_origin,
-                            parent,
-                        )
-                        .into_origin()
-                }
-            },
-        };
-        self.origins.insert(old, id.clone());
-        id
-    }
-
-    fn owned_token(&self, token: Token) -> OwnedToken {
-        match token {
-            Token::Cs(symbol) => OwnedToken::ControlSequence(self.owned.symbols[&symbol].clone()),
-            token => OwnedToken::Plain(token),
-        }
-    }
-
-    fn origin_list(&mut self, old: OriginListId) -> OriginListRef {
-        if let Some(id) = self.origin_lists.get(&old) {
-            return id.clone();
-        }
-        let origins = self
-            .owned
-            .origin_lists
-            .get(&old)
-            .expect("detached origin list")
-            .clone()
-            .into_iter()
-            .map(|origin| self.origin(origin))
-            .collect::<Vec<_>>();
-        let id = self.universe.allocate_origin_list_ref(&origins);
-        self.origin_lists.insert(old, id.clone());
-        id
-    }
-
-    fn word(&mut self, word: TracedTokenWord) -> TracedTokenWord {
-        let token = self.token(&self.owned_token(word.semantic_token()));
-        TracedTokenWord::pack(token, self.origin(word.origin()).id())
-    }
-
-    fn materialize_summary(&mut self, summary: &mut CommandSummary) {
-        self.materialize_input(&mut summary.input);
-        self.materialize_parameters(&mut summary.parameters);
-    }
-
-    fn materialize_parameters(&mut self, parameters: &mut crate::macro_call::ParameterState) {
-        for activation in &mut parameters.activations {
-            activation.name = match self.token(&OwnedToken::ControlSequence(
-                self.owned.symbols[&activation.name].clone(),
-            )) {
-                Token::Cs(symbol) => symbol,
-                _ => unreachable!(),
-            };
-            let old = activation.definition.id();
-            let id = self.macro_id(old);
-            activation.definition = self.universe.macro_definition_ref(id);
-            activation.arguments.buffer = SharedTokenBuffer::new(
-                activation
-                    .arguments
-                    .buffer
-                    .words()
-                    .iter()
-                    .copied()
-                    .map(|word| self.word(word))
-                    .collect::<Vec<_>>(),
-            );
-            activation.invocation =
-                ExpansionFrameRef::from_origin(self.origin(activation.invocation.id()));
-            self.finish_macro_provenance(old);
-        }
-    }
-
-    fn materialize_input(&mut self, input: &mut crate::input::InputState) {
-        for level in &mut input.levels {
-            match level {
-                InputLevel::Source(source) => {
-                    if let Some(list) = &mut source.every_eof {
-                        *list = tex_state::TracedTokenList::new(
-                            self.token_list(list.token_list()),
-                            self.origin_list(list.origin_list()),
-                        );
-                    }
-                }
-                InputLevel::Tokens(cursor) => match &mut cursor.payload {
-                    TokenPayload::Stored { tokens, origins } => {
-                        *tokens = self.token_list(tokens.id());
-                        *origins = self.origin_list(origins.id());
-                    }
-                    TokenPayload::Transient(words) => {
-                        *words = SharedTokenBuffer::new(
-                            words
-                                .words()
-                                .iter()
-                                .copied()
-                                .map(|word| self.word(word))
-                                .collect::<Vec<_>>(),
-                        )
-                    }
-                    TokenPayload::InlineTransient(word) => *word = self.word(*word),
-                    TokenPayload::BackedUp(words) => {
-                        *words = SharedBackedUpBuffer::new(
-                            words
-                                .words()
-                                .iter()
-                                .map(|word| BackedUpToken {
-                                    spelling: self.word(word.spelling),
-                                    source_provenance: word.source_provenance,
-                                })
-                                .collect::<Vec<_>>(),
-                        )
-                    }
-                    TokenPayload::InlineBackedUp(word) => {
-                        word.spelling = self.word(word.spelling);
-                    }
-                    TokenPayload::ArgumentRange { buffer, .. } => {
-                        *buffer = SharedTokenBuffer::new(
-                            buffer
-                                .words()
-                                .iter()
-                                .copied()
-                                .map(|word| self.word(word))
-                                .collect::<Vec<_>>(),
-                        )
-                    }
-                },
+        for activation in &self.summary.parameters.activations {
+            if activation.name.0 >= self.symbols.len()
+                || activation.definition.0 >= self.macros.len()
+                || activation.invocation.0 >= self.origins.len()
+            {
+                return invalid("macro activation references a missing recipe");
             }
+            for word in &activation.arguments {
+                self.validate_word(word)?;
+            }
+            for range in activation.ranges.iter().flatten() {
+                if range.end() > activation.arguments.len() {
+                    return invalid("macro argument range exceeds its buffer");
+                }
+            }
+        }
+        for level in &self.summary.input.levels {
+            if let OwnedInputLevel::Tokens(cursor) = level
+                && let TokenBehavior::MacroBody(identity) = cursor.behavior
+                && !activation_ids.contains(&identity)
+            {
+                return invalid("macro-body input references a missing activation");
+            }
+        }
+        Ok(())
+    }
+
+    fn validate_token(&self, token: &OwnedToken) -> Result<(), CommandContinuationError> {
+        if matches!(token, OwnedToken::ControlSequence(id) if id.0 >= self.symbols.len()) {
+            return Err(CommandContinuationError::InvalidRecipe(
+                "token references a missing symbol",
+            ));
+        }
+        Ok(())
+    }
+
+    fn validate_word(&self, word: &OwnedWord) -> Result<(), CommandContinuationError> {
+        self.validate_token(&word.token)?;
+        if word.origin.0 >= self.origins.len() {
+            return Err(CommandContinuationError::InvalidRecipe(
+                "word references a missing origin",
+            ));
+        }
+        Ok(())
+    }
+
+    fn validate_origin(
+        &self,
+        id: OriginRecipeId,
+        marks: &mut [u8],
+    ) -> Result<(), CommandContinuationError> {
+        if id.0 >= self.origins.len() {
+            return Err(CommandContinuationError::InvalidRecipe(
+                "missing origin recipe",
+            ));
+        }
+        if marks[id.0] == 2 {
+            return Ok(());
+        }
+        if marks[id.0] == 1 {
+            return Err(CommandContinuationError::InvalidRecipe(
+                "cyclic origin recipe",
+            ));
+        }
+        marks[id.0] = 1;
+        let mut child = |child| self.validate_origin(child, marks);
+        match &self.origins[id.0] {
+            OwnedOrigin::Unknown | OwnedOrigin::Synthetic(_) => {}
+            OwnedOrigin::Source { source, .. } | OwnedOrigin::SourceSpan { source, .. } => {
+                if source.0 >= self.sources.len() {
+                    return Err(CommandContinuationError::InvalidRecipe(
+                        "origin references a missing source",
+                    ));
+                }
+                let limit = self.source_len(*source);
+                match &self.origins[id.0] {
+                    OwnedOrigin::Source { byte_offset, .. } if *byte_offset > limit => {
+                        return Err(CommandContinuationError::InvalidRecipe(
+                            "source origin exceeds its backing",
+                        ));
+                    }
+                    OwnedOrigin::SourceSpan { start, end, .. } if start > end || *end > limit => {
+                        return Err(CommandContinuationError::InvalidRecipe(
+                            "source-span origin exceeds its backing",
+                        ));
+                    }
+                    _ => {}
+                }
+            }
+            OwnedOrigin::Synthesized { parent, .. } => child(*parent)?,
+            OwnedOrigin::Inserted { token, parent, .. } => {
+                self.validate_token(token)?;
+                child(*parent)?;
+            }
+            OwnedOrigin::ExpansionFrame {
+                definition,
+                invocation,
+                definition_origin,
+                parent,
+                ..
+            } => {
+                if definition.is_some_and(|definition| definition.0 >= self.macros.len()) {
+                    return Err(CommandContinuationError::InvalidRecipe(
+                        "expansion frame references a missing macro",
+                    ));
+                }
+                child(*invocation)?;
+                child(*definition_origin)?;
+                child(*parent)?;
+            }
+        }
+        marks[id.0] = 2;
+        Ok(())
+    }
+
+    fn validate_registered_source(
+        &self,
+        source: &OwnedRegisteredSource,
+    ) -> Result<(), CommandContinuationError> {
+        let Some(recipe) = self.sources.get(source.source.0) else {
+            return Err(CommandContinuationError::InvalidRecipe(
+                "input backing references a missing source",
+            ));
+        };
+        let descriptor_len = match &recipe.descriptor {
+            OwnedSourceDescriptor::World { bytes, .. }
+            | OwnedSourceDescriptor::Generated { bytes, .. } => bytes.len() as u64,
+        };
+        if descriptor_len != source.bytes.len() as u64
+            || source.mode != self.summary.expansion.profile.character_mode()
+        {
+            return Err(CommandContinuationError::InvalidRecipe(
+                "input backing disagrees with its source recipe",
+            ));
+        }
+        Ok(())
+    }
+
+    fn source_len(&self, source: SourceRecipeId) -> u64 {
+        match &self.sources[source.0].descriptor {
+            OwnedSourceDescriptor::World { bytes, .. }
+            | OwnedSourceDescriptor::Generated { bytes, .. } => bytes.len() as u64,
+        }
+    }
+
+    fn validate_source_range(
+        &self,
+        range: &OwnedSourceRange,
+    ) -> Result<(), CommandContinuationError> {
+        if range.source.0 >= self.sources.len()
+            || range.start > range.end
+            || range.end > self.source_len(range.source)
+        {
+            return Err(CommandContinuationError::InvalidRecipe(
+                "source cursor range is invalid",
+            ));
+        }
+        Ok(())
+    }
+
+    fn validate_level(&self, level: &OwnedInputLevel) -> Result<(), CommandContinuationError> {
+        match level {
+            OwnedInputLevel::Source(source) => {
+                self.validate_registered_source(&source.cursor.backing)?;
+                if let Some(line) = &source.cursor.line_backing {
+                    self.validate_registered_source(line)?;
+                }
+                if let Some((tokens, origins)) = source.every_eof
+                    && (tokens.0 >= self.token_lists.len() || origins.0 >= self.origin_lists.len())
+                {
+                    return Err(CommandContinuationError::InvalidRecipe(
+                        "every-eof references missing content",
+                    ));
+                }
+                if let Some(line) = &source.cursor.line {
+                    self.validate_source_range(&line.content)?;
+                    self.validate_source_range(&line.terminator)?;
+                    for (range, _) in &line.reduced_spellings {
+                        self.validate_source_range(range)?;
+                    }
+                    if line.byte_cursor > self.source_len(line.content.source)
+                        || line.retained_end > self.source_len(line.content.source)
+                    {
+                        return Err(CommandContinuationError::InvalidRecipe(
+                            "source line cursor exceeds its backing",
+                        ));
+                    }
+                }
+            }
+            OwnedInputLevel::Tokens(cursor) => {
+                let len = match &cursor.payload {
+                    OwnedTokenPayload::Stored { tokens, origins } => {
+                        if tokens.0 >= self.token_lists.len()
+                            || origins.0 >= self.origin_lists.len()
+                        {
+                            return Err(CommandContinuationError::InvalidRecipe(
+                                "stored input references missing content",
+                            ));
+                        }
+                        self.token_lists[tokens.0].len()
+                    }
+                    OwnedTokenPayload::Transient(words) => {
+                        for word in words {
+                            self.validate_word(word)?;
+                        }
+                        words.len()
+                    }
+                    OwnedTokenPayload::InlineTransient(word) => {
+                        self.validate_word(word)?;
+                        1
+                    }
+                    OwnedTokenPayload::BackedUp(words) => {
+                        for word in words {
+                            self.validate_word(&word.spelling)?;
+                            if let Some(source) = &word.source_provenance
+                                && (source.source.0 >= self.sources.len()
+                                    || source.start > source.end
+                                    || source.end > self.source_len(source.source)
+                                    || source.location > self.source_len(source.source))
+                            {
+                                return Err(CommandContinuationError::InvalidRecipe(
+                                    "backup provenance references a missing source",
+                                ));
+                            }
+                        }
+                        words.len()
+                    }
+                    OwnedTokenPayload::InlineBackedUp(word) => {
+                        self.validate_word(&word.spelling)?;
+                        1
+                    }
+                    OwnedTokenPayload::ArgumentRange { buffer, range } => {
+                        for word in buffer {
+                            self.validate_word(word)?;
+                        }
+                        if range.end() > buffer.len() {
+                            return Err(CommandContinuationError::InvalidRecipe(
+                                "input argument range exceeds its buffer",
+                            ));
+                        }
+                        range.end().saturating_sub(range.start())
+                    }
+                };
+                if cursor.index > len {
+                    return Err(CommandContinuationError::InvalidRecipe(
+                        "input cursor exceeds its payload",
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn corrupt_first_token_recipe_for_test(&mut self) {
+        if let Some(tokens) = self.token_lists.first_mut() {
+            tokens.push(OwnedToken::ControlSequence(SymbolRecipeId(usize::MAX)));
         }
     }
 }
+
+mod detach;
+mod materialize;
+mod schema;
+
+use detach::Detacher;
+use materialize::Materializer;

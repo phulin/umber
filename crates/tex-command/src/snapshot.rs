@@ -32,10 +32,10 @@ pub struct CommandStateSnapshot {
 pub struct CommandSummary {
     pub(crate) input: InputState,
     pub(crate) parameters: ParameterState,
-    conditions: ConditionStack,
-    align_state: i32,
-    expansion: ExpansionState,
-    next_builder_identity: u64,
+    pub(crate) conditions: ConditionStack,
+    pub(crate) align_state: i32,
+    pub(crate) expansion: ExpansionState,
+    pub(crate) next_builder_identity: u64,
 }
 
 impl CommandStateSnapshot {

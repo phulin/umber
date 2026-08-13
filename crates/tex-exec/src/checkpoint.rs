@@ -202,12 +202,14 @@ impl EngineCheckpoint {
             })
             .map_err(EditorRestoreError::Fork)?;
         let fork_latency = fork_started.elapsed();
-        universe.begin_private_revision();
         let mut rebound = self.clone();
+        *rebound.command = owned
+            .materialize(&mut universe)
+            .map_err(EditorRestoreError::CommandContinuation)?;
+        universe.begin_private_revision();
         universe
             .install_editor_fragments(fragments, layout)
             .map_err(EditorRestoreError::Layout)?;
-        *rebound.command = owned.materialize(&mut universe);
         if !rebound.command.rebind_root_source(old_source, new_source) {
             return Err(EditorRestoreError::RootRevisionMismatch);
         }
@@ -457,6 +459,7 @@ pub enum EditorRestoreError {
     RootRevisionMismatch,
     Checkpoint(CheckpointRestoreError),
     ChangedRootPrefix,
+    CommandContinuation(tex_command::CommandContinuationError),
     Mode(ExecError),
 }
 
@@ -471,6 +474,9 @@ impl fmt::Display for EditorRestoreError {
             Self::Checkpoint(error) => write!(f, "could not restore checkpoint: {error}"),
             Self::ChangedRootPrefix => {
                 f.write_str("edited source changed bytes before the restart anchor")
+            }
+            Self::CommandContinuation(error) => {
+                write!(f, "could not materialize command continuation: {error}")
             }
             Self::Mode(error) => write!(f, "could not restore checkpoint mode nest: {error}"),
         }

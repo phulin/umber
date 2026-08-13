@@ -4,7 +4,7 @@ use std::hash::{Hash, Hasher};
 use crate::CommandState;
 use crate::conditionals::{ConditionFrame, ConditionalKind, IfLimit};
 use crate::input::{
-    BackedUpToken, BackupTreatment, ReplayTrace, RetirementBehavior, SharedTokenBuffer,
+    BackedUpToken, BackupTreatment, InputLevel, ReplayTrace, RetirementBehavior, SharedTokenBuffer,
     TokenBehavior, TokenPayload,
 };
 use crate::macro_call::{MacroActivation, MacroActivationId, MacroArgumentRange, MacroArguments};
@@ -18,6 +18,9 @@ use crate::state::LiveTokenBuilder;
 use crate::{RegisteredSourceKind, SourceRegistration};
 use tex_state::ids::TokenListId;
 use tex_state::input::TracedTokenList;
+use tex_state::macro_store::{MacroDefinitionProvenance, MacroMeaning};
+use tex_state::meaning::MeaningFlags;
+use tex_state::provenance::InsertedOriginKind;
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 
 use super::{CommandSummary, CommandSummaryError};
@@ -60,7 +63,9 @@ fn durable_continuation_roundtrip_preserves_inline_payloads() {
     let universe = tex_state::Universe::new();
     let owned = crate::OwnedCommandContinuation::detach(&summary, &universe);
     let mut restored_universe = tex_state::Universe::new();
-    let restored = owned.materialize(&mut restored_universe);
+    let restored = owned
+        .materialize(&mut restored_universe)
+        .expect("valid detached continuation");
 
     let mut payloads = restored
         .input
@@ -104,7 +109,9 @@ fn durable_continuation_materializes_canonical_stored_content_into_new_roots() {
         ch: 'x',
         cat: Catcode::Other,
     }]);
-    let restored = owned.materialize(&mut restored_universe);
+    let restored = owned
+        .materialize(&mut restored_universe)
+        .expect("valid detached continuation");
     let crate::input::InputLevel::Tokens(cursor) =
         restored.input.levels.last().expect("materialized level")
     else {
@@ -122,6 +129,269 @@ fn durable_continuation_materializes_canonical_stored_content_into_new_roots() {
         panic!("stored control sequence did not materialize");
     };
     assert_eq!(restored_universe.resolve(*restored_symbol), "detached-root");
+}
+
+#[test]
+fn durable_continuation_roundtrips_source_macro_and_frame_recipes() {
+    let mut world = tex_state::World::memory();
+    world
+        .set_memory_file("/job/main.tex", b"abc\n".to_vec())
+        .expect("World source backing installs");
+    let mut universe = tex_state::Universe::with_world(world);
+    let content = universe
+        .world_mut()
+        .read_file("/job/main.tex")
+        .expect("World source backing reads");
+    let mut state = CommandState::default();
+    let source_id = state
+        .register_source(SourceRegistration::world(content).with_name("/job/main.tex"))
+        .expect("source recipe is valid");
+    state
+        .open_registered_source(source_id)
+        .expect("registered source opens");
+    let InputLevel::Source(source_level) = state.input.levels.last().expect("source level") else {
+        panic!("wrong input level");
+    };
+    universe
+        .register_source(source_id, source_level.cursor.backing.source_descriptor())
+        .expect("aggregate source registration");
+
+    let invocation = universe.source_range_origin_ref(source_id, 0, 1);
+    let definition = universe.source_range_origin_ref(source_id, 1, 2);
+    let parameter_origins = universe.allocate_origin_list_ref(&[]);
+    let replacement_origins = universe.allocate_origin_list_ref(std::slice::from_ref(&definition));
+    let parameter_tokens = universe.intern_token_list_ref(&[]);
+    let macro_name = universe.intern("detached-macro").symbol();
+    let replacement_tokens = universe.intern_token_list_ref(&[Token::Cs(macro_name)]);
+    let macro_root = universe.intern_macro(MacroMeaning::new(
+        MeaningFlags::from_bits(0),
+        parameter_tokens.id(),
+        replacement_tokens.id(),
+    ));
+    universe.set_macro_definition_provenance(
+        macro_root.id(),
+        MacroDefinitionProvenance::new(
+            definition.id(),
+            parameter_origins.id(),
+            replacement_origins.id(),
+        ),
+    );
+    let frame = universe.macro_invocation_frame(
+        macro_root.id(),
+        invocation.clone(),
+        definition.clone(),
+        tex_state::provenance::OriginRef::unknown(),
+    );
+    let inserted = universe.inserted_origin_ref(
+        InsertedOriginKind::AfterAssignment,
+        Token::Cs(macro_name),
+        frame.as_origin().clone(),
+    );
+    state.parameters.activations.push(MacroActivation {
+        identity: MacroActivationId(7),
+        name: macro_name,
+        definition: macro_root,
+        arguments: MacroArguments {
+            buffer: SharedTokenBuffer::new([TracedTokenWord::pack(
+                Token::Cs(macro_name),
+                inserted.id(),
+            )]),
+            ranges: [
+                MacroArgumentRange::new(0, 1),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+            ],
+        },
+        invocation: frame,
+    });
+    state.parameters.next_activation_identity = 11;
+    let stored_origins = universe.allocate_origin_list_ref(&[inserted]);
+    state.push_token_level(
+        TokenPayload::Stored {
+            tokens: replacement_tokens,
+            origins: stored_origins,
+        },
+        TokenBehavior::MacroBody(MacroActivationId(7)),
+        RetirementBehavior::Pop,
+        ReplayTrace::MacroReplacement,
+    );
+    state.conditions.frames.push(ConditionFrame {
+        identity: ConditionId(13),
+        kind: ConditionalKind::IfTrue,
+        limit: IfLimit::Fi,
+        source_line: 1,
+        inverted: false,
+    });
+    state.expansion.cumulative_expansions = 17;
+    let summary = state.publish_summary().expect("state is quiescent");
+    let source_invocations = universe.macro_invocation_provenance_stats();
+    assert_eq!(source_invocations.invocations(), 1);
+    let owned = crate::OwnedCommandContinuation::detach(&summary, &universe);
+
+    let mut destination = tex_state::Universe::new();
+    let foreign_symbol = destination.intern("foreign").symbol();
+    let foreign_tokens = destination.intern_token_list_ref(&[Token::Cs(foreign_symbol)]);
+    let restored = owned
+        .materialize(&mut destination)
+        .expect("complete recipes materialize");
+
+    assert_eq!(restored.conditions, summary.conditions);
+    assert_eq!(restored.align_state, summary.align_state);
+    assert_eq!(restored.expansion, summary.expansion);
+    assert_eq!(restored.parameters.next_activation_identity, 11);
+    let restored_activation = restored.parameters.activations.last().expect("activation");
+    assert_eq!(
+        destination.macro_invocation_provenance_stats(),
+        source_invocations,
+        "detached active frames must preserve exact invocation accounting"
+    );
+    assert_ne!(
+        restored_activation.definition.id(),
+        summary.parameters.activations[0].definition.id()
+    );
+    assert_eq!(
+        destination.resolve(restored_activation.name),
+        "detached-macro"
+    );
+    let restored_macro = destination.macro_definition(restored_activation.definition.id());
+    assert_eq!(
+        destination.tokens(restored_macro.replacement_text()),
+        [Token::Cs(restored_activation.name)]
+    );
+    let tex_state::provenance::OriginRecord::MacroInvocation(restored_frame) =
+        destination.origin(restored_activation.invocation.id())
+    else {
+        panic!("activation did not materialize an expansion frame");
+    };
+    assert_eq!(
+        restored_frame.definition_operand(),
+        destination.macro_definition_observation_operand(restored_activation.definition.id())
+            as u64,
+        "frame definition operand must be destination-local"
+    );
+    let resolved = tex_state::ProvenanceResolver::new(&destination)
+        .resolve_origin(restored_activation.invocation.id())
+        .expect("frame resolves through its invocation recipe");
+    assert_eq!(resolved.path, "/job/main.tex");
+    assert_eq!((resolved.start, resolved.end), (0, 1));
+    assert_ne!(
+        restored
+            .input
+            .levels
+            .iter()
+            .find_map(|level| match level {
+                InputLevel::Tokens(cursor) => match &cursor.payload {
+                    TokenPayload::Stored { tokens, .. } => Some(tokens.id()),
+                    _ => None,
+                },
+                InputLevel::Source(_) => None,
+            })
+            .expect("stored level"),
+        foreign_tokens.id()
+    );
+
+    let mut restored_state = CommandState::default();
+    restored_state
+        .restore_summary(restored)
+        .expect("materialized summary restarts");
+    assert_eq!(restored_state.parameters.activations.len(), 1);
+    assert_eq!(restored_state.conditions.frames.len(), 1);
+    assert_eq!(
+        destination.macro_invocation_provenance_stats(),
+        source_invocations,
+        "installing the restored command must keep its typed frame root live"
+    );
+}
+
+#[test]
+fn invalid_continuation_recipe_rejects_before_publishing_roots() {
+    let mut universe = tex_state::Universe::new();
+    let symbol = universe.intern("invalid-recipe").symbol();
+    let tokens = universe.intern_token_list_ref(&[Token::Cs(symbol)]);
+    let mut state = CommandState::default();
+    state.push_token_level(
+        TokenPayload::Stored {
+            tokens,
+            origins: tex_state::provenance::OriginListRef::empty(),
+        },
+        TokenBehavior::Ordinary,
+        RetirementBehavior::Pop,
+        ReplayTrace::Inserted,
+    );
+    let summary = state.publish_summary().expect("state is quiescent");
+    let mut owned = crate::OwnedCommandContinuation::detach(&summary, &universe);
+    owned.corrupt_first_token_recipe_for_test();
+
+    let mut destination = tex_state::Universe::new();
+    let before = destination.provenance_stats();
+    assert!(matches!(
+        owned.materialize(&mut destination),
+        Err(crate::CommandContinuationError::InvalidRecipe(_))
+    ));
+    assert_eq!(destination.provenance_stats(), before);
+}
+
+#[test]
+fn continuation_destination_conflict_is_atomic_and_retryable() {
+    let mut state = CommandState::default();
+    let source_id = state
+        .register_source(SourceRegistration::new(
+            RegisteredSourceKind::Generated,
+            b"source".to_vec(),
+        ))
+        .expect("source recipe");
+    state
+        .open_registered_source(source_id)
+        .expect("registered source opens");
+    let InputLevel::Source(source) = state.input.levels.last().expect("source level") else {
+        panic!("wrong level kind");
+    };
+    let mut universe = tex_state::Universe::new();
+    universe
+        .register_source(source_id, source.cursor.backing.source_descriptor())
+        .expect("source map registration");
+    let summary = state.publish_summary().expect("source state is quiescent");
+    let owned = crate::OwnedCommandContinuation::detach(&summary, &universe);
+
+    let mut conflicting = tex_state::Universe::new();
+    let foreign =
+        tex_state::source_map::SourceDescriptor::generated(std::sync::Arc::from(&b"foreign"[..]));
+    conflicting
+        .register_source(source_id, foreign.clone())
+        .expect("foreign registration");
+    let before = conflicting.provenance_stats();
+    assert_eq!(
+        owned.materialize(&mut conflicting),
+        Err(crate::CommandContinuationError::SourceMap(
+            tex_state::source_map::SourceMapError::ConflictingRegistration
+        ))
+    );
+    assert_eq!(conflicting.provenance_stats(), before);
+    assert_eq!(
+        conflicting.detached_source_descriptor(source_id),
+        Some(foreign)
+    );
+
+    let mut busy = tex_state::Universe::new();
+    busy.begin_private_revision();
+    let before_busy = busy.provenance_stats();
+    assert_eq!(
+        owned.materialize(&mut busy),
+        Err(crate::CommandContinuationError::DestinationBusy)
+    );
+    assert_eq!(busy.provenance_stats(), before_busy);
+
+    let mut retry = tex_state::Universe::new();
+    let restored = owned
+        .materialize(&mut retry)
+        .expect("same detached value retries in a compatible destination");
+    assert_eq!(restored.root_source_anchor(), Some(0));
 }
 
 fn templates() -> AlignmentCellTemplates {

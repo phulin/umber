@@ -2441,6 +2441,10 @@ impl Stores {
         self.source_map.region_for_position(position)
     }
 
+    pub(crate) fn source_descriptor(&self, source: SourceId) -> Option<SourceDescriptor> {
+        self.source_map.descriptor_for_source(source)
+    }
+
     pub(crate) fn source_line_starts(&self, region: SourceRegion) -> Option<&[usize]> {
         self.source_map.line_starts(region)
     }
