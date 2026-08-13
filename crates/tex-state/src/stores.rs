@@ -1570,6 +1570,14 @@ impl Stores {
 
     /// Interns a frozen token-list value in the owned token store.
     pub fn intern_token_list(&mut self, tokens: &[Token]) -> TokenListId {
+        self.intern_token_list_in_domain(tokens, None)
+    }
+
+    pub(crate) fn intern_token_list_in_domain(
+        &mut self,
+        tokens: &[Token],
+        domain: Option<&mut crate::patch_domain::PatchAllocationDomain>,
+    ) -> TokenListId {
         let semantic_id = self.token_list_semantic_id(tokens.iter().copied());
         let frozen_hash = self
             .tokens
@@ -1584,11 +1592,21 @@ impl Stores {
             semantic_id,
             frozen_hash.unwrap_or(0),
             legacy_key.as_deref(),
+            domain,
         )
     }
 
     /// Interns the current token-list builder value and clears it for reuse.
+    #[cfg(test)]
     pub fn finish_token_list(&mut self, builder: &mut TokenListBuilder) -> TokenListId {
+        self.finish_token_list_in_domain(builder, None)
+    }
+
+    pub(crate) fn finish_token_list_in_domain(
+        &mut self,
+        builder: &mut TokenListBuilder,
+        domain: Option<&mut crate::patch_domain::PatchAllocationDomain>,
+    ) -> TokenListId {
         let semantic_id = self.token_list_semantic_id(builder.as_slice().iter().copied());
         let frozen_hash = self
             .tokens
@@ -1603,6 +1621,7 @@ impl Stores {
             semantic_id,
             frozen_hash.unwrap_or(0),
             legacy_key.as_deref(),
+            domain,
         );
         builder.clear();
         id
@@ -1610,7 +1629,16 @@ impl Stores {
 
     /// Freezes semantic tokens and per-instance origins directly from their
     /// packed traced representation.
+    #[cfg(test)]
     pub fn finish_traced_token_list(&mut self, traced: &[TracedTokenWord]) -> TracedTokenList {
+        self.finish_traced_token_list_in_domain(traced, None)
+    }
+
+    pub(crate) fn finish_traced_token_list_in_domain(
+        &mut self,
+        traced: &[TracedTokenWord],
+        domain: Option<&mut crate::patch_domain::PatchAllocationDomain>,
+    ) -> TracedTokenList {
         let semantic_id = self.traced_token_list_semantic_id(traced);
         let frozen_hash = self.tokens.has_frozen_lists().then(|| {
             self.frozen_token_lookup_hash(traced.iter().map(|word| {
@@ -1632,6 +1660,7 @@ impl Stores {
             semantic_id,
             frozen_hash.unwrap_or(0),
             legacy_key.as_deref(),
+            domain,
         );
         let origin_list = self.provenance.allocate_traced_list(traced);
         TracedTokenList::new(token_list, origin_list)
@@ -1658,6 +1687,21 @@ impl Stores {
     pub(crate) fn testing_token_semantic_id(&self, id: TokenListId) -> TokenSemanticId {
         let id = self.resolve_stored_token_list(id);
         self.tokens.semantic_id(id)
+    }
+
+    pub(crate) fn token_compatibility_patch_roots(
+        &self,
+        domain: &crate::patch_domain::PatchAllocationDomain,
+    ) -> Vec<crate::patch_domain::PatchRoot> {
+        self.tokens.compatibility_patch_roots(domain)
+    }
+
+    pub(crate) fn token_patch_allocation_count(&self) -> usize {
+        self.tokens.patch_allocation_count()
+    }
+
+    pub(crate) fn clear_token_patch_allocations(&mut self) {
+        self.tokens.clear_patch_allocations();
     }
 
     fn token_list_semantic_id(&self, tokens: impl IntoIterator<Item = Token>) -> TokenSemanticId {

@@ -114,7 +114,6 @@ pub(crate) enum IdentityError {
 /// that slot receives a fresh generation. Fixed prefix slots are retained for
 /// built-in or loaded-format values and cannot be released.
 #[derive(Debug)]
-#[allow(dead_code)] // First consumer lands in the token-list representation slice.
 pub(crate) struct ReusableIdentityAllocator {
     active_namespace: NonZeroU64,
     next_generation: NonZeroU32,
@@ -123,19 +122,38 @@ pub(crate) struct ReusableIdentityAllocator {
     fixed_slots: u32,
 }
 
-#[allow(dead_code)] // First consumer lands in the token-list representation slice.
 impl ReusableIdentityAllocator {
     /// Creates an allocator with `fixed_slots` already-live immutable slots.
     pub(crate) fn new(fixed_slots: u32) -> Self {
+        Self::from_fixed_len(0, fixed_slots)
+    }
+
+    /// Creates an allocator whose validated immutable prefix is already live.
+    ///
+    /// The first `builtin_slots` use universal built-in identities. Remaining
+    /// fixed slots receive timeline-local identities and cannot be released.
+    pub(crate) fn from_fixed_len(builtin_slots: u32, fixed_slots: u32) -> Self {
+        assert!(
+            builtin_slots <= fixed_slots,
+            "fixed value prefix omits built-in slots"
+        );
         let active_namespace = fresh_namespace();
         let active = AllocationTag {
             namespace: active_namespace,
             generation: FIRST_GENERATION,
         };
+        let mut slots = Vec::with_capacity(fixed_slots as usize);
+        for slot in 0..fixed_slots {
+            slots.push(Some(if slot < builtin_slots {
+                HandleIdentity::builtin(slot).tag()
+            } else {
+                active
+            }));
+        }
         Self {
             active_namespace,
             next_generation: FIRST_GENERATION,
-            slots: vec![Some(active); fixed_slots as usize],
+            slots,
             free: Vec::new(),
             fixed_slots,
         }
@@ -211,6 +229,16 @@ impl ReusableIdentityAllocator {
     /// Returns whether `identity` names the currently live use of its slot.
     pub(crate) fn contains(&self, identity: HandleIdentity) -> bool {
         self.slots.get(identity.slot as usize).copied().flatten() == Some(identity.tag())
+    }
+
+    /// Returns the live identity occupying one physical slot.
+    pub(crate) fn identity_at(&self, slot: u32) -> Option<HandleIdentity> {
+        let tag = self.slots.get(slot as usize).copied().flatten()?;
+        Some(HandleIdentity {
+            namespace: tag.namespace,
+            generation: tag.generation,
+            slot,
+        })
     }
 
     /// Returns physical slot and reusable-entry counts for ownership tests.

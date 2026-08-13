@@ -40,6 +40,54 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;
 
 #[test]
+fn private_token_roots_retry_and_accept_through_the_aggregate_boundary() {
+    let mut universe = Universe::new();
+    universe.begin_private_revision();
+
+    let first_operation = universe.snapshot_for_local_retry();
+    let retained = universe.intern_token_list(&[Token::Char {
+        ch: 'k',
+        cat: Catcode::Letter,
+    }]);
+    universe.commit_local_retry_snapshot(first_operation);
+    let retained_stats = universe
+        .testing_private_revision_domain_stats()
+        .expect("private domain is live");
+    assert_eq!(retained_stats.0, 1);
+
+    let failed_operation = universe.snapshot_for_local_retry();
+    let failed = universe.intern_token_list(&[
+        Token::Char {
+            ch: 'x',
+            cat: Catcode::Letter,
+        },
+        Token::Char {
+            ch: 'y',
+            cat: Catcode::Letter,
+        },
+    ]);
+    universe.rollback_local_retry_snapshot(failed_operation);
+    assert_eq!(
+        universe.testing_private_revision_domain_stats(),
+        Some(retained_stats)
+    );
+    assert_eq!(universe.tokens(retained).len(), 1);
+    assert!(catch_unwind(AssertUnwindSafe(|| universe.tokens(failed))).is_err());
+
+    universe
+        .accept_private_revision()
+        .expect("typed compatibility root transfers");
+    assert!(universe.testing_private_revision_domain_stats().is_none());
+    assert_eq!(
+        universe.tokens(retained)[0],
+        Token::Char {
+            ch: 'k',
+            cat: Catcode::Letter,
+        }
+    );
+}
+
+#[test]
 fn engine_usage_statistics_retain_one_word_extent_across_rollback() {
     let mut universe = Universe::new();
     let baseline = universe.snapshot();

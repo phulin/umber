@@ -4,17 +4,16 @@
 //! the aggregate `Universe` boundary.
 
 use crate::ContentHash;
-use crate::identity::{IdentityAllocator, IdentityMark};
 use crate::ids::TokenListId;
+use crate::patch_domain::{PatchAllocationDomain, PatchHandle, PatchRoot};
+use crate::reachable_value::{ReachableValuePool, ReachableValueRef};
 use crate::state_hash::{StateHashFragment, StateHasher};
 use crate::token::{Token, TracedTokenWord};
 #[cfg(test)]
 use ahash::RandomState;
 use std::collections::HashMap;
-use std::hash::{BuildHasherDefault, Hash, Hasher};
-
-type TokenIndex =
-    HashMap<TokenSemanticId, Vec<TokenListId>, BuildHasherDefault<PrehashedU64Hasher>>;
+use std::hash::{Hash, Hasher};
+use std::sync::Arc;
 
 #[derive(Clone, Debug)]
 pub(crate) enum FrozenTokenLookup {
@@ -138,37 +137,12 @@ impl TokenSemanticIdBuilder {
     }
 }
 
-/// Identity hasher for an index key that is already a keyed content hash.
-#[derive(Default)]
-struct PrehashedU64Hasher(u64);
-
-impl Hasher for PrehashedU64Hasher {
-    fn finish(&self) -> u64 {
-        self.0
-    }
-
-    fn write(&mut self, bytes: &[u8]) {
-        // `TokenIndex` has only u64 keys, whose `Hash` implementation calls
-        // `write_u64`. Keep a valid fallback for the general Hasher contract.
-        let mut value = 0xcbf2_9ce4_8422_2325_u64;
-        for &byte in bytes {
-            value ^= u64::from(byte);
-            value = value.wrapping_mul(0x0000_0100_0000_01b3);
-        }
-        self.0 = value;
-    }
-
-    fn write_u64(&mut self, value: u64) {
-        self.0 = value;
-    }
-}
-
 /// A rollback watermark for the token store.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct TokenStoreMark {
     pub(crate) spans: u32,
-    tokens: u32,
-    identities: IdentityMark,
+    compatibility_roots: u32,
+    patch_allocations: u32,
 }
 
 /// An owned scratch buffer for building a token list before freezing it.
@@ -231,32 +205,104 @@ impl TokenListBuilder {
     }
 }
 
-/// Hash-consed immutable token-list arena.
+#[derive(Debug, Eq, PartialEq)]
+struct TokenListValue {
+    tokens: Box<[Token]>,
+    semantic_id: TokenSemanticId,
+}
+
+impl TokenListValue {
+    fn logical_bytes(&self) -> usize {
+        core::mem::size_of::<Self>().saturating_add(
+            self.tokens
+                .len()
+                .saturating_mul(core::mem::size_of::<Token>()),
+        )
+    }
+}
+
+/// One strong exact-content owner paired with its timeline-local coordinate.
+#[derive(Clone, Debug)]
+pub struct TokenListRef {
+    value: ReachableValueRef<TokenListValue>,
+}
+
+impl TokenListRef {
+    /// Returns the compact physical coordinate carried beside this owner.
+    #[must_use]
+    pub fn id(&self) -> TokenListId {
+        TokenListId::from_identity(self.value.identity())
+    }
+
+    /// Borrows the immutable semantic token sequence.
+    #[must_use]
+    pub fn tokens(&self) -> &[Token] {
+        &self.value.value().tokens
+    }
+
+    fn semantic_id(&self) -> TokenSemanticId {
+        self.value.value().semantic_id
+    }
+
+    fn shared(&self) -> Arc<TokenListValue> {
+        self.value.shared()
+    }
+
+    #[cfg(test)]
+    fn ptr_eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.shared(), &other.shared())
+    }
+}
+
+impl PartialEq for TokenListRef {
+    fn eq(&self, other: &Self) -> bool {
+        self.id() == other.id()
+    }
+}
+
+impl Eq for TokenListRef {}
+
+impl Hash for TokenListRef {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.id().hash(state);
+    }
+}
+
+/// Reachability-owned immutable token values plus temporary legacy roots.
 #[derive(Debug)]
 pub struct TokenStore {
-    arena: Vec<Token>,
-    spans: Vec<(u32, u32)>,
-    semantic_ids: Vec<TokenSemanticId>,
+    pool: ReachableValuePool<TokenSemanticId, TokenListValue>,
+    frozen_roots: Arc<[TokenListRef]>,
     frozen_lookup: FrozenTokenLookup,
     frozen_len: u32,
-    index: TokenIndex,
+    // Temporary migration bridge. Each still-unmigrated bare-id owner is
+    // conservatively represented here until the owner strata carry
+    // `TokenListRef` directly. The final wiring child removes this table.
+    compatibility_roots: Vec<Option<TokenListRef>>,
+    compatibility_order: Vec<TokenListId>,
+    patch_handles: HashMap<TokenListId, PatchHandle<TokenListValue>>,
+    patch_order: Vec<TokenListId>,
     #[cfg(test)]
     hash_state: RandomState,
-    identities: IdentityAllocator,
 }
 
 impl Clone for TokenStore {
     fn clone(&self) -> Self {
+        debug_assert!(
+            self.patch_handles.is_empty(),
+            "private token allocations cannot cross a generation fork"
+        );
         Self {
-            arena: self.arena.clone(),
-            spans: self.spans.clone(),
-            semantic_ids: self.semantic_ids.clone(),
+            pool: self.pool.clone(),
+            frozen_roots: Arc::clone(&self.frozen_roots),
             frozen_lookup: self.frozen_lookup.clone(),
             frozen_len: self.frozen_len,
-            index: self.index.clone(),
+            compatibility_roots: self.compatibility_roots.clone(),
+            compatibility_order: self.compatibility_order.clone(),
+            patch_handles: HashMap::new(),
+            patch_order: Vec::new(),
             #[cfg(test)]
             hash_state: self.hash_state.clone(),
-            identities: self.identities.fork(),
         }
     }
 }
@@ -266,37 +312,44 @@ impl TokenStore {
     pub(crate) fn requires_legacy_frozen_key(&self) -> bool {
         matches!(self.frozen_lookup, FrozenTokenLookup::Legacy(_))
     }
+
     #[must_use]
     pub(crate) const fn has_frozen_lists(&self) -> bool {
         self.frozen_len != 0
     }
 
-    /// Creates a token store containing the canonical empty list.
+    /// Creates a token store containing the immortal canonical empty list.
     #[must_use]
     pub(crate) fn new() -> Self {
-        let mut store = Self {
-            arena: Vec::new(),
-            spans: vec![(0, 0)],
-            semantic_ids: vec![TokenSemanticIdBuilder::new().finish()],
+        let (pool, roots) = ReachableValuePool::from_fixed_values(
+            vec![TokenListValue {
+                tokens: Box::new([]),
+                semantic_id: TokenSemanticIdBuilder::new().finish(),
+            }],
+            1,
+        );
+        Self {
+            pool,
+            frozen_roots: Arc::from(
+                roots
+                    .into_iter()
+                    .map(|value| TokenListRef { value })
+                    .collect::<Vec<_>>(),
+            ),
             frozen_lookup: FrozenTokenLookup::Direct(
                 crate::frozen_lookup::DirectFrozenLookup::empty(),
             ),
             frozen_len: 0,
-            index: TokenIndex::default(),
+            compatibility_roots: vec![None],
+            compatibility_order: Vec::new(),
+            patch_handles: HashMap::new(),
+            patch_order: Vec::new(),
             #[cfg(test)]
             hash_state: RandomState::new(),
-            identities: IdentityAllocator::new(1),
-        };
-        store
-            .index
-            .entry(store.semantic_id(TokenStore::empty_id()))
-            .or_default()
-            .push(Self::empty_id());
-        store
+        }
     }
 
-    /// Installs a validated frozen token arena and its canonical dense list
-    /// ids directly, preserving ordinary hash-cons lookup for later additions.
+    /// Installs a validated frozen token arena as one explicit immutable base.
     pub(crate) fn from_frozen(
         arena: Vec<Token>,
         spans: Vec<(u32, u32)>,
@@ -310,18 +363,42 @@ impl TokenStore {
             return Err("missing frozen canonical empty token list");
         }
         let count = u32::try_from(spans.len()).map_err(|_| "frozen token-list capacity")?;
-        let identities = IdentityAllocator::from_frozen_len(1, count);
-        let index = TokenIndex::default();
+        let mut values = Vec::with_capacity(spans.len());
+        let mut cursor = 0_u32;
+        for ((start, len), semantic_id) in spans.into_iter().zip(semantic_ids) {
+            if start != cursor {
+                return Err("non-canonical frozen token-list span");
+            }
+            cursor = start
+                .checked_add(len)
+                .ok_or("frozen token-list span overflow")?;
+            let tokens = arena
+                .get(start as usize..cursor as usize)
+                .ok_or("frozen token-list span out of bounds")?;
+            values.push(TokenListValue {
+                tokens: tokens.into(),
+                semantic_id,
+            });
+        }
+        if cursor as usize != arena.len() {
+            return Err("unused frozen token words");
+        }
+        let (pool, roots) = ReachableValuePool::from_fixed_values(values, 1);
+        let roots = roots
+            .into_iter()
+            .map(|value| TokenListRef { value })
+            .collect::<Vec<_>>();
         Ok(Self {
-            arena,
-            spans,
-            semantic_ids,
+            pool,
+            frozen_roots: Arc::from(roots),
             frozen_lookup,
             frozen_len: count,
-            index,
+            compatibility_roots: vec![None; count as usize],
+            compatibility_order: Vec::new(),
+            patch_handles: HashMap::new(),
+            patch_order: Vec::new(),
             #[cfg(test)]
             hash_state: RandomState::new(),
-            identities,
         })
     }
 
@@ -337,11 +414,11 @@ impl TokenStore {
         TokenListId::EMPTY
     }
 
-    /// Interns `tokens`, returning a dense id for the live token-list content.
+    /// Interns `tokens` and retains the temporary compatibility owner.
     #[cfg(test)]
     pub(crate) fn intern(&mut self, tokens: &[Token]) -> TokenListId {
         let hash = self.content_hash(tokens);
-        self.intern_with_semantic_id(tokens, TokenSemanticId::testing(hash), 0, None)
+        self.intern_with_semantic_id(tokens, TokenSemanticId::testing(hash), 0, None, None)
     }
 
     /// Interns tokens using their aggregate-computed canonical semantic identity.
@@ -351,196 +428,214 @@ impl TokenStore {
         semantic_id: TokenSemanticId,
         frozen_hash: u64,
         legacy_key: Option<&[u8]>,
+        domain: Option<&mut PatchAllocationDomain>,
     ) -> TokenListId {
-        #[cfg(feature = "profiling")]
-        let capacity_before = self.arena.capacity();
-        #[cfg(feature = "profiling")]
-        let semantic_capacity_before = self.semantic_ids.capacity();
+        let root = self.intern_owned_with_semantic_id(
+            tokens,
+            semantic_id,
+            frozen_hash,
+            legacy_key,
+            domain,
+        );
+        self.retain_compatibility_root(root.clone());
+        root.id()
+    }
+
+    fn intern_owned_with_semantic_id(
+        &mut self,
+        tokens: &[Token],
+        semantic_id: TokenSemanticId,
+        frozen_hash: u64,
+        legacy_key: Option<&[u8]>,
+        domain: Option<&mut PatchAllocationDomain>,
+    ) -> TokenListRef {
         if tokens.is_empty() {
             #[cfg(feature = "profiling")]
+            crate::measurement::record_token_intern(0, true, 0, 0);
+            return self.frozen_roots[0].clone();
+        }
+        if let Some(root) = self.find_frozen(tokens, frozen_hash, legacy_key) {
+            #[cfg(feature = "profiling")]
             crate::measurement::record_token_intern(tokens.len(), true, 0, 0);
-            return Self::empty_id();
+            return root;
+        }
+        if let Some(value) = self.pool.find_exact(&semantic_id, |candidate| {
+            candidate.tokens.as_ref() == tokens
+        }) {
+            #[cfg(feature = "profiling")]
+            crate::measurement::record_token_intern(tokens.len(), true, 0, 0);
+            return TokenListRef { value };
         }
 
-        match &self.frozen_lookup {
-            FrozenTokenLookup::Legacy(lookup) => {
-                if let Some(raw) = legacy_key.and_then(|key| lookup.get(key)) {
-                    let id = self.id_at(raw);
-                    if self.get(id) == tokens {
-                        return id;
-                    }
-                }
-            }
-            FrozenTokenLookup::Direct(lookup) => {
-                for raw in lookup.candidates(frozen_hash) {
-                    let id = self.id_at(raw);
-                    if self.get(id) == tokens {
-                        return id;
-                    }
-                }
-            }
-        }
-        if let Some(candidates) = self.index.get(&semantic_id) {
-            for &id in candidates {
-                // Hash collisions are safe because the candidate span is
-                // compared by content before the id is reused.
-                if self.get(id) == tokens {
-                    #[cfg(feature = "profiling")]
-                    crate::measurement::record_token_intern(tokens.len(), true, 0, 0);
-                    return id;
-                }
-            }
-        }
-
-        let start = u32_len(self.arena.len(), "token arena exceeds u32 entries");
-        let len = u32_len(tokens.len(), "token list exceeds u32 entries");
-        let id = self.allocate_id();
-
-        self.arena.extend_from_slice(tokens);
-        self.spans.push((start, len));
-        self.semantic_ids.push(semantic_id);
-        self.insert_index_id(semantic_id, id);
+        let value = self.pool.insert_new(
+            semantic_id,
+            TokenListValue {
+                tokens: tokens.into(),
+                semantic_id,
+            },
+        );
+        let root = TokenListRef { value };
+        self.attach_patch_allocation(&root, domain);
         #[cfg(feature = "profiling")]
         crate::measurement::record_token_intern(
             tokens.len(),
             false,
-            self.arena.capacity().saturating_sub(capacity_before) * core::mem::size_of::<Token>(),
-            self.semantic_ids
-                .capacity()
-                .saturating_sub(semantic_capacity_before)
-                * core::mem::size_of::<TokenSemanticId>(),
+            root.tokens()
+                .len()
+                .saturating_mul(core::mem::size_of::<Token>()),
+            core::mem::size_of::<TokenSemanticId>(),
         );
-        id
+        root
     }
 
-    /// Interns the semantic projection of an already-validated traced slice.
-    ///
-    /// The caller owns aggregate token/origin liveness validation. Keeping the
-    /// projection borrowed avoids materializing a second token vector on both
-    /// hash-cons hits and misses.
-    #[cfg(test)]
-    pub(crate) fn intern_traced(&mut self, traced: &[TracedTokenWord]) -> TokenListId {
-        let hash = self.hash_state.hash_one(TracedTokenProjection(traced));
-        self.intern_traced_with_semantic_id(traced, TokenSemanticId::testing(hash), 0, None)
-    }
-
-    /// Interns traced tokens using their aggregate-computed canonical semantic identity.
+    /// Interns traced tokens using their aggregate-computed canonical identity.
     pub(crate) fn intern_traced_with_semantic_id(
         &mut self,
         traced: &[TracedTokenWord],
         semantic_id: TokenSemanticId,
         frozen_hash: u64,
         legacy_key: Option<&[u8]>,
+        domain: Option<&mut PatchAllocationDomain>,
     ) -> TokenListId {
-        #[cfg(feature = "profiling")]
-        let capacity_before = self.arena.capacity();
-        #[cfg(feature = "profiling")]
-        let semantic_capacity_before = self.semantic_ids.capacity();
-        if traced.is_empty() {
-            #[cfg(feature = "profiling")]
-            crate::measurement::record_token_intern(0, true, 0, 0);
-            return Self::empty_id();
-        }
+        let tokens = traced
+            .iter()
+            .map(|word| {
+                word.token()
+                    .expect("validated traced token became invalid during interning")
+            })
+            .collect::<Vec<_>>();
+        self.intern_with_semantic_id(&tokens, semantic_id, frozen_hash, legacy_key, domain)
+    }
 
-        let matches = |store: &Self, raw| {
-            let candidate = store.get(store.id_at(raw));
-            candidate.len() == traced.len()
-                && candidate
-                    .iter()
-                    .zip(traced)
-                    .all(|(&token, &word)| word.token() == Some(token))
+    #[cfg(test)]
+    pub(crate) fn intern_traced(&mut self, traced: &[TracedTokenWord]) -> TokenListId {
+        let hash = self.hash_state.hash_one(TracedTokenProjection(traced));
+        self.intern_traced_with_semantic_id(traced, TokenSemanticId::testing(hash), 0, None, None)
+    }
+
+    fn find_frozen(
+        &self,
+        tokens: &[Token],
+        frozen_hash: u64,
+        legacy_key: Option<&[u8]>,
+    ) -> Option<TokenListRef> {
+        let matches = |raw| {
+            self.frozen_roots
+                .get(raw as usize)
+                .filter(|root| root.tokens() == tokens)
+                .cloned()
         };
         match &self.frozen_lookup {
             FrozenTokenLookup::Legacy(lookup) => {
-                if let Some(raw) = legacy_key.and_then(|key| lookup.get(key))
-                    && matches(self, raw)
-                {
-                    return self.id_at(raw);
-                }
+                legacy_key.and_then(|key| lookup.get(key)).and_then(matches)
             }
-            FrozenTokenLookup::Direct(lookup) => {
-                for raw in lookup.candidates(frozen_hash) {
-                    if matches(self, raw) {
-                        return self.id_at(raw);
-                    }
-                }
-            }
+            FrozenTokenLookup::Direct(lookup) => lookup.candidates(frozen_hash).find_map(matches),
         }
-        if let Some(candidates) = self.index.get(&semantic_id) {
-            for &id in candidates {
-                let candidate = self.get(id);
-                if candidate.len() == traced.len()
-                    && candidate
-                        .iter()
-                        .zip(traced)
-                        .all(|(&token, &word)| word.token() == Some(token))
-                {
-                    #[cfg(feature = "profiling")]
-                    crate::measurement::record_token_intern(traced.len(), true, 0, 0);
-                    return id;
-                }
-            }
-        }
-
-        let start = u32_len(self.arena.len(), "token arena exceeds u32 entries");
-        let len = u32_len(traced.len(), "token list exceeds u32 entries");
-        let id = self.allocate_id();
-
-        self.arena.reserve(traced.len());
-        self.spans.reserve(1);
-        self.arena.extend(traced.iter().map(|word| {
-            word.token()
-                .expect("validated traced token became invalid during interning")
-        }));
-        self.spans.push((start, len));
-        self.semantic_ids.push(semantic_id);
-        self.insert_index_id(semantic_id, id);
-        #[cfg(feature = "profiling")]
-        crate::measurement::record_token_intern(
-            traced.len(),
-            false,
-            self.arena.capacity().saturating_sub(capacity_before) * core::mem::size_of::<Token>(),
-            self.semantic_ids
-                .capacity()
-                .saturating_sub(semantic_capacity_before)
-                * core::mem::size_of::<TokenSemanticId>(),
-        );
-        id
     }
 
-    /// Reads a live frozen token list.
+    fn attach_patch_allocation(
+        &mut self,
+        root: &TokenListRef,
+        domain: Option<&mut PatchAllocationDomain>,
+    ) {
+        let Some(domain) = domain else {
+            return;
+        };
+        let handle = domain
+            .allocate_shared(root.shared(), root.value.value().logical_bytes())
+            .expect("private token allocation belongs to the active operation");
+        assert!(
+            self.patch_handles.insert(root.id(), handle).is_none(),
+            "new token value already has patch allocation metadata"
+        );
+        self.patch_order.push(root.id());
+    }
+
+    fn retain_compatibility_root(&mut self, root: TokenListRef) {
+        let raw = root.id().raw() as usize;
+        if raw < self.frozen_roots.len() {
+            return;
+        }
+        if self.compatibility_roots.len() <= raw {
+            self.compatibility_roots.resize(raw + 1, None);
+        }
+        match &self.compatibility_roots[raw] {
+            Some(existing) => assert_eq!(existing.id(), root.id()),
+            None => {
+                self.compatibility_order.push(root.id());
+                self.compatibility_roots[raw] = Some(root);
+            }
+        }
+    }
+
+    /// Reads a value through the temporary bare-coordinate compatibility root.
     #[must_use]
     pub(crate) fn get(&self, id: TokenListId) -> &[Token] {
-        assert!(
-            self.identities.contains(id.identity()),
-            "token list id is not live"
-        );
-        let index = id.raw() as usize;
-        assert!(index < self.spans.len(), "token list id is not live");
-        let (start, len) = self.spans[index];
-        let start = start as usize;
-        let end = start + len as usize;
-        assert!(end <= self.arena.len(), "token-list span exceeds arena");
-        &self.arena[start..end]
+        if let Some(root) = self.frozen_root(id) {
+            return root.tokens();
+        }
+        let root = self
+            .compatibility_roots
+            .get(id.raw() as usize)
+            .and_then(Option::as_ref)
+            .filter(|root| root.id() == id)
+            .expect("bare token-list id has no live compatibility owner");
+        root.tokens()
+    }
+
+    /// Returns the compatibility serialization row at one stored coordinate.
+    ///
+    /// Reusable physical slots may contain holes after exact rollback.  The
+    /// legacy frozen-format table is still positional, so an unreachable hole
+    /// is serialized as the canonical empty value while live coordinates keep
+    /// their exact row number.  No semantic owner can refer to such a hole.
+    #[must_use]
+    pub(crate) fn stored_slot_tokens(&self, raw: u32) -> &[Token] {
+        if let Some(root) = self.frozen_roots.get(raw as usize) {
+            return root.tokens();
+        }
+        self.compatibility_roots
+            .get(raw as usize)
+            .and_then(Option::as_ref)
+            .map_or_else(|| self.frozen_roots[0].tokens(), TokenListRef::tokens)
+    }
+
+    /// Clones a strong owner for one currently-live coordinate.
+    pub(crate) fn owner(&self, id: TokenListId) -> Option<TokenListRef> {
+        self.frozen_root(id).cloned().or_else(|| {
+            self.compatibility_roots
+                .get(id.raw() as usize)
+                .and_then(Option::as_ref)
+                .filter(|root| root.id() == id)
+                .cloned()
+                .or_else(|| {
+                    self.pool
+                        .resolve(id.identity())
+                        .map(|value| TokenListRef { value })
+                })
+        })
+    }
+
+    fn frozen_root(&self, id: TokenListId) -> Option<&TokenListRef> {
+        self.frozen_roots
+            .get(id.raw() as usize)
+            .filter(|root| root.id() == id)
     }
 
     /// Returns the canonical semantic identity stored with a live token list.
     pub(crate) fn semantic_id(&self, id: TokenListId) -> TokenSemanticId {
-        assert!(
-            self.identities.contains(id.identity()),
-            "token list id is not live"
-        );
-        self.semantic_ids[id.raw() as usize]
+        self.owner(id)
+            .expect("token list id is not live")
+            .semantic_id()
     }
 
     /// Returns whether `id` names a currently-live token-list slot.
     #[must_use]
     pub(crate) fn contains(&self, id: TokenListId) -> bool {
-        self.identities.contains(id.identity())
+        self.owner(id).is_some()
     }
 
     #[must_use]
-    #[allow(dead_code)]
     pub(crate) fn resolve_stored(&self, id: TokenListId) -> Option<TokenListId> {
         if self.contains(id) {
             return Some(id);
@@ -548,91 +643,70 @@ impl TokenStore {
         if !id.is_stored() {
             return None;
         }
-        self.identities
-            .identity_at(id.raw())
-            .map(TokenListId::from_identity)
+        self.id_at(id.raw())
     }
 
-    /// Takes a rollback watermark for aggregate snapshots.
+    /// Takes a rollback watermark over typed compatibility and patch roots.
     #[must_use]
     pub(crate) fn watermark(&self) -> TokenStoreMark {
         TokenStoreMark {
-            spans: u32_len(self.spans.len(), "token-list spans exceed u32 entries"),
-            tokens: u32_len(self.arena.len(), "token arena exceeds u32 entries"),
-            identities: self.identities.watermark(),
+            spans: u32_len(
+                self.compatibility_roots.len(),
+                "token-list slots exceed u32 entries",
+            ),
+            compatibility_roots: u32_len(
+                self.compatibility_order.len(),
+                "token-list compatibility roots exceed u32 entries",
+            ),
+            patch_allocations: u32_len(
+                self.patch_order.len(),
+                "token-list patch allocations exceed u32 entries",
+            ),
         }
     }
 
-    /// Truncates to a previously-taken aggregate snapshot watermark.
+    /// Restores exact typed roots; dead weak slots are reclaimed on next intern.
     pub(crate) fn truncate_to(&mut self, mark: TokenStoreMark) {
-        let spans = mark.spans as usize;
-        let tokens = mark.tokens as usize;
-        assert!(spans >= 1, "token-store mark removes the empty list");
-        assert!(
-            spans <= self.spans.len(),
-            "token-store mark has too many spans"
-        );
-        assert!(
-            tokens <= self.arena.len(),
-            "token-store mark has too many tokens"
-        );
-        assert!(
-            self.spans[..spans]
-                .last()
-                .is_some_and(|&(start, len)| start + len == mark.tokens),
-            "token-store mark does not point to a span boundary"
-        );
-
-        // tex.web §§200, 203, and 291 release only token lists whose final
-        // owner disappears; §§275--283 restore definitions and their token-list
-        // ownership through the save stack. `TokenStore` replaces those mutable
-        // reference-counted lists with immutable hash-consed spans. Rollback must
-        // therefore remove precisely the attempt-owned suffix from the derived
-        // index while leaving format-owned prefix entries in place. Clearing the
-        // whole index here would be semantically harmless but would make every
-        // host-driven resource retry rebuild the large format-derived prefix.
-        for raw in (spans..self.spans.len()).rev() {
-            let id = self.id_at(u32_len(raw, "token-list spans exceed u32 entries"));
-            self.remove_index_id(self.semantic_ids[raw], id);
+        assert!(mark.spans as usize >= self.frozen_roots.len());
+        assert!(mark.spans as usize <= self.compatibility_roots.len());
+        while self.compatibility_order.len() > mark.compatibility_roots as usize {
+            let id = self
+                .compatibility_order
+                .pop()
+                .expect("compatibility-root order is nonempty");
+            let removed = self.compatibility_roots[id.raw() as usize].take();
+            assert_eq!(removed.as_ref().map(TokenListRef::id), Some(id));
         }
-
-        self.identities
-            .rollback(mark.identities)
-            .expect("token identity mark must name a retained ancestor");
-        self.spans.truncate(spans);
-        self.semantic_ids.truncate(spans);
-        self.arena.truncate(tokens);
+        self.compatibility_roots.truncate(mark.spans as usize);
+        while self.patch_order.len() > mark.patch_allocations as usize {
+            let id = self.patch_order.pop().expect("patch order is nonempty");
+            assert!(self.patch_handles.remove(&id).is_some());
+        }
     }
 
-    fn insert_index_id(&mut self, semantic_id: TokenSemanticId, id: TokenListId) {
-        let candidates = self.index.entry(semantic_id).or_default();
-        assert!(
-            !candidates.contains(&id),
-            "token-list id is already present in its semantic index bucket"
-        );
-        candidates.push(id);
+    pub(crate) fn compatibility_patch_roots(
+        &self,
+        domain: &PatchAllocationDomain,
+    ) -> Vec<PatchRoot> {
+        self.compatibility_roots
+            .iter()
+            .flatten()
+            .filter_map(|root| self.patch_handles.get(&root.id()))
+            .map(|handle| {
+                domain
+                    .root(handle)
+                    .expect("compatibility token root belongs to the private domain")
+            })
+            .collect()
     }
 
-    fn remove_index_id(&mut self, semantic_id: TokenSemanticId, id: TokenListId) {
-        let remove_bucket = {
-            let candidates = self
-                .index
-                .get_mut(&semantic_id)
-                .expect("live token-list id is missing from its semantic index bucket");
-            let position = candidates
-                .iter()
-                .position(|&candidate| candidate == id)
-                .expect("live token-list id is missing from its semantic index bucket");
-            candidates.swap_remove(position);
-            assert!(
-                !candidates.contains(&id),
-                "token-list id appears more than once in its semantic index bucket"
-            );
-            candidates.is_empty()
-        };
-        if remove_bucket {
-            self.index.remove(&semantic_id);
-        }
+    pub(crate) fn patch_allocation_count(&self) -> usize {
+        self.patch_handles.len()
+    }
+
+    pub(crate) fn clear_patch_allocations(&mut self) {
+        self.patch_handles.clear();
+        self.patch_order.clear();
     }
 
     #[cfg(test)]
@@ -640,21 +714,42 @@ impl TokenStore {
         self.hash_state.hash_one(tokens)
     }
 
-    fn allocate_id(&mut self) -> TokenListId {
-        let identity = self
-            .identities
-            .allocate()
-            .expect("token-list identity capacity exhausted");
-        assert_eq!(identity.slot() as usize, self.spans.len());
-        TokenListId::from_identity(identity)
+    fn id_at(&self, raw: u32) -> Option<TokenListId> {
+        self.frozen_roots
+            .get(raw as usize)
+            .map(TokenListRef::id)
+            .or_else(|| {
+                self.compatibility_roots
+                    .get(raw as usize)
+                    .and_then(Option::as_ref)
+                    .map(TokenListRef::id)
+            })
     }
 
-    fn id_at(&self, raw: u32) -> TokenListId {
-        TokenListId::from_identity(
-            self.identities
-                .identity_at(raw)
-                .expect("token-list slot is not live"),
-        )
+    #[cfg(test)]
+    fn testing_pool_shape(&self) -> (usize, usize, usize, usize, usize, usize) {
+        self.pool.testing_shape()
+    }
+
+    #[cfg(test)]
+    fn testing_owned(
+        &mut self,
+        tokens: &[Token],
+        semantic_id: TokenSemanticId,
+        domain: Option<&mut PatchAllocationDomain>,
+    ) -> TokenListRef {
+        self.intern_owned_with_semantic_id(tokens, semantic_id, 0, None, domain)
+    }
+
+    #[cfg(test)]
+    fn testing_patch_root(&self, root: &TokenListRef, domain: &PatchAllocationDomain) -> PatchRoot {
+        domain
+            .root(
+                self.patch_handles
+                    .get(&root.id())
+                    .expect("token root has patch metadata"),
+            )
+            .expect("token root belongs to domain")
     }
 }
 

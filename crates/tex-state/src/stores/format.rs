@@ -1828,7 +1828,7 @@ impl ImmutableStoreIdentity {
             .map(|raw| {
                 stores
                     .tokens
-                    .get(stores.resolve_stored_token_list(TokenListId::new(raw)))
+                    .stored_slot_tokens(raw)
                     .iter()
                     .copied()
                     .map(|token| FormatToken::capture(stores, token))

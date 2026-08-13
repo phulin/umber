@@ -20,23 +20,23 @@ ownership. It does not permit untracked mutation or host I/O for performance.
 
 `Universe` owns the complete live engine substrate:
 
-| Store                | Contents                                            | History model            |
-| -------------------- | --------------------------------------------------- | ------------------------ |
-| Interner             | control-sequence names and semantic atoms           | append-only watermark    |
-| String pool          | TeX/Web2C allocation coordinates and recycled names | append-only position     |
-| Environment          | meanings, parameters, registers, current fonts      | journaled writes         |
-| Sparse registers     | e-TeX register overflow                             | journaled map/page roots |
-| Code tables          | cat/lc/uc/sf/math/del codes                         | copy-on-write pages      |
-| Token store          | durable token lists and semantic identities         | frozen + watermark       |
-| Provenance           | origins and origin-list spans                       | append-only watermark    |
-| Source fragments/map | immutable bytes and current editor layout           | roots + watermarks       |
-| Glue store           | canonical immutable glue specs                      | frozen + watermark       |
-| Node arenas          | compact node words, sidecars, semantic identities   | epoch + survivors        |
-| Fonts                | immutable TFM/OpenType selections                   | frozen + watermark       |
-| Hyphenation          | patterns, exceptions, language state                | snapshot-owned roots     |
-| Page state           | contribution queue, marks, insertions, best break   | copy-on-write roots      |
-| Journal              | undo entries, group and checkpoint markers          | append-only position     |
-| World/effects        | inputs, streams, output, clock, randomness          | snapshot/effect log      |
+| Store                | Contents                                            | History model             |
+| -------------------- | --------------------------------------------------- | ------------------------- |
+| Interner             | control-sequence names and semantic atoms           | append-only watermark     |
+| String pool          | TeX/Web2C allocation coordinates and recycled names | append-only position      |
+| Environment          | meanings, parameters, registers, current fonts      | journaled writes          |
+| Sparse registers     | e-TeX register overflow                             | journaled map/page roots  |
+| Code tables          | cat/lc/uc/sf/math/del codes                         | copy-on-write pages       |
+| Token store          | exact immutable token lists and semantic identities | strong roots + weak slots |
+| Provenance           | origins and origin-list spans                       | append-only watermark     |
+| Source fragments/map | immutable bytes and current editor layout           | roots + watermarks        |
+| Glue store           | canonical immutable glue specs                      | frozen + watermark        |
+| Node arenas          | compact node words, sidecars, semantic identities   | epoch + survivors         |
+| Fonts                | immutable TFM/OpenType selections                   | frozen + watermark        |
+| Hyphenation          | patterns, exceptions, language state                | snapshot-owned roots      |
+| Page state           | contribution queue, marks, insertions, best break   | copy-on-write roots       |
+| Journal              | undo entries, group and checkpoint markers          | append-only position      |
+| World/effects        | inputs, streams, output, clock, randomness          | snapshot/effect log       |
 
 Only aggregate APIs on `Universe` and its owned `Stores` facade may coordinate
 changes across these stores.
@@ -48,9 +48,9 @@ success retains that suffix once inside the private revision, while ordinary
 failure or resource suspension truncates it exactly. Revision rejection drops
 the complete domain. Acceptance consumes an explicit typed root set and moves
 only those individually reference-counted immutable payloads into accepted
-ownership; an unrooted nonempty domain is an ownership error. The generic
-domain is implemented before the typed stores migrate to it, so current legacy
-store roots retain their existing owners. See
+ownership; an unrooted nonempty domain is an ownership error. Token-list
+allocation is wired into that domain; the remaining immutable families retain
+their existing owners until their corresponding migrations. See
 [Private revision allocation domains](patch_allocation_domains.md).
 
 The same boundary owns TeX82-shaped allocator diagnostics:
@@ -259,15 +259,16 @@ Immutable content follows builder-then-freeze. Builders are private to the
 owning boundary, validate all child handles, compute canonical identity, and
 publish only complete values.
 
-Durable token lists are hash-consed and carry one canonical semantic identity.
-Control sequences contribute interner semantic atoms, so allocation order does
-not affect identity. Token and node semantic identities use versioned,
-domain-separated, fixed-seed 64-bit aHash. Equality is probabilistic and a rare
-collision may alias immutable engine content; this is the same explicitly
-accepted performance tradeoff as session convergence, not a cryptographic or
-external content-verification contract. Execution-transient token flows stay in
-pooled lexer buffers and enter the token store only when crossing a durable
-boundary.
+Durable token lists are exact immutable values and carry one canonical semantic
+identity. Control sequences contribute interner semantic atoms, so allocation
+order does not affect identity. Strong typed roots own each live value; the
+candidate index and reusable slot table hold only weak references. Candidate
+hash matches are followed by exact token comparison, so a collision may cost
+lookup work but cannot alias token content. Token semantic identities and node
+semantic identities remain versioned and domain-separated; their compact hash
+projections are convergence evidence rather than an external cryptographic
+content-verification contract. Execution-transient token flows stay in pooled
+lexer buffers and enter the token store only when crossing a durable boundary.
 
 An immutable store entry does not become semantic state merely because it was
 allocated. A live environment cell, input frame, page root, node edge, PDF
@@ -279,12 +280,13 @@ and derived identity caches are physical retention or acceleration metadata.
 
 Schema-11 format loading installs names, token lists, macro definitions, glue,
 fonts, sparse code-table roots, and hyphenation tries as validated frozen
-bases. It attaches fresh runtime identity tags and builds ordinary lookup and
+bases. Every loaded token row has an explicit strong immutable root. Loading
+attaches fresh runtime identity tags and builds ordinary weak lookup and
 semantic-hash indexes in bulk rather than replaying semantic interning or
-assignment APIs. Dense record indices remain the canonical raw ids. Job-created
-content and code-table/hyphenation mutations extend those bases and follow the
-same lookup, snapshot, generation, and rollback rules as a cold store; no
-format byte is mutated.
+assignment APIs. Dense record indices remain the canonical raw ids.
+Job-created token content uses reusable generation-safe dynamic slots while
+code-table/hyphenation mutations extend their bases; both follow the same
+snapshot and rollback rules as a cold store, and no format byte is mutated.
 
 Schema-11 kind 528 installs validated environment cells directly as an
 immutable format base, including references into kind 512's frozen node arena.

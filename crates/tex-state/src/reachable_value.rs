@@ -47,6 +47,10 @@ impl<T> ReachableValueRef<T> {
         &self.value
     }
 
+    pub(crate) fn shared(&self) -> Arc<T> {
+        Arc::clone(&self.value)
+    }
+
     #[cfg(test)]
     fn ptr_eq(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.value, &other.value)
@@ -102,6 +106,41 @@ where
         Self::with_index_key_budget(DEFAULT_INDEX_KEY_BUDGET)
     }
 
+    /// Installs a validated immutable prefix and returns its explicit owners.
+    ///
+    /// Fixed values participate in coordinate resolution but not in the
+    /// bounded dynamic candidate index. A family-specific frozen lookup can
+    /// select them without making weak index membership authoritative.
+    pub(crate) fn from_fixed_values(
+        values: Vec<T>,
+        builtin_slots: u32,
+    ) -> (Self, Vec<ReachableValueRef<T>>) {
+        let fixed_slots = u32::try_from(values.len()).expect("fixed value count exceeds u32");
+        let identities = ReusableIdentityAllocator::from_fixed_len(builtin_slots, fixed_slots);
+        let mut slots = Vec::with_capacity(values.len());
+        let mut roots = Vec::with_capacity(values.len());
+        for (raw, value) in values.into_iter().enumerate() {
+            let identity = identities
+                .identity_at(raw as u32)
+                .expect("fixed value identity is live");
+            let value = Arc::new(value);
+            slots.push(Some(WeakSlot {
+                identity,
+                value: Arc::downgrade(&value),
+            }));
+            roots.push(ReachableValueRef { identity, value });
+        }
+        (
+            Self {
+                identities,
+                slots,
+                index: HashMap::new(),
+                index_key_budget: DEFAULT_INDEX_KEY_BUDGET,
+            },
+            roots,
+        )
+    }
+
     fn with_index_key_budget(index_key_budget: usize) -> Self {
         Self {
             identities: ReusableIdentityAllocator::new(0),
@@ -118,8 +157,31 @@ where
         value: T,
         exact_eq: impl Fn(&T, &T) -> bool,
     ) -> ReachableValueRef<T> {
+        self.intern_with_status(key, value, exact_eq).0
+    }
+
+    /// Reuses one exact live object or returns a newly installed object plus
+    /// the fact that the caller must attach its typed ownership metadata.
+    pub(crate) fn intern_with_status(
+        &mut self,
+        key: K,
+        value: T,
+        exact_eq: impl Fn(&T, &T) -> bool,
+    ) -> (ReachableValueRef<T>, bool) {
+        if let Some(value) = self.find_exact(&key, |candidate| exact_eq(candidate, &value)) {
+            return (value, false);
+        }
+        (self.insert_new(key, value), true)
+    }
+
+    /// Finds an exactly matching live candidate after reclaiming dead slots.
+    pub(crate) fn find_exact(
+        &mut self,
+        key: &K,
+        exact_eq: impl Fn(&T) -> bool,
+    ) -> Option<ReachableValueRef<T>> {
         self.reclaim_dead_slots();
-        if let Some(candidates) = self.index.get(&key) {
+        if let Some(candidates) = self.index.get(key) {
             for &raw in candidates {
                 let Some(slot) = self.slots.get(raw as usize).and_then(Option::as_ref) else {
                     continue;
@@ -127,15 +189,19 @@ where
                 let Some(candidate) = slot.value.upgrade() else {
                     continue;
                 };
-                if exact_eq(&candidate, &value) {
-                    return ReachableValueRef {
+                if exact_eq(&candidate) {
+                    return Some(ReachableValueRef {
                         identity: slot.identity,
                         value: candidate,
-                    };
+                    });
                 }
             }
         }
+        None
+    }
 
+    /// Installs a value after the caller has performed exact candidate lookup.
+    pub(crate) fn insert_new(&mut self, key: K, value: T) -> ReachableValueRef<T> {
         let identity = self
             .identities
             .allocate()
@@ -183,7 +249,10 @@ where
     }
 
     fn reclaim_dead_slots(&mut self) {
-        for slot in &mut self.slots {
+        // Release high slots first so the allocator's stack returns the
+        // lowest reusable coordinate. This is nonsemantic, but it keeps the
+        // temporary dense compatibility prefix gap-free during migration.
+        for slot in self.slots.iter_mut().rev() {
             let Some(occupied) = slot else {
                 continue;
             };
@@ -203,7 +272,7 @@ where
     }
 
     #[cfg(test)]
-    fn testing_shape(&self) -> (usize, usize, usize, usize, usize, usize) {
+    pub(crate) fn testing_shape(&self) -> (usize, usize, usize, usize, usize, usize) {
         let (identity_slots, identity_capacity, free) = self.identities.testing_shape();
         debug_assert_eq!(identity_slots, self.slots.len());
         (

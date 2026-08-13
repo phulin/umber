@@ -225,12 +225,25 @@ impl PatchAllocationDomain {
     where
         T: Any + Send + Sync + RefUnwindSafe,
     {
+        self.allocate_shared(Arc::new(value), logical_bytes)
+    }
+
+    /// Records domain ownership of an immutable payload already shared with
+    /// its typed private destination.
+    pub(crate) fn allocate_shared<T>(
+        &mut self,
+        value: Arc<T>,
+        logical_bytes: usize,
+    ) -> Result<PatchHandle<T>, PatchDomainError>
+    where
+        T: Any + Send + Sync + RefUnwindSafe,
+    {
         if self.active_operation.is_none() {
             return Err(PatchDomainError::AllocationOutsideOperation);
         }
         let slot = self.slots.len();
         self.slots.push(AllocationSlot {
-            payload: Arc::new(value),
+            payload: value,
             logical_bytes,
         });
         self.logical_bytes = self.logical_bytes.saturating_add(logical_bytes);

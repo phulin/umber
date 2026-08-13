@@ -1063,7 +1063,15 @@ fn dropping_private_candidate_releases_its_complete_domain() {
         .universe
         .testing_private_revision_domain_stats()
         .expect("candidate domain remains live across suspension");
-    assert_eq!((retained.0, retained.1, retained.3), (1, 64, false));
+    assert_eq!(
+        retained.0, 2,
+        "message tokens and the synthetic probe are owned"
+    );
+    assert!(
+        retained.1 > 64,
+        "the exact token payload charge accompanies the synthetic probe"
+    );
+    assert!(!retained.3);
     inputs
         .files
         .insert("child".to_owned(), "\\relax".to_owned());

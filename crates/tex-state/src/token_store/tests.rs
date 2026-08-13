@@ -1,6 +1,7 @@
 use super::{FrozenTokenLookup, TokenListBuilder, TokenSemanticId, TokenStore, TokenStoreMark};
 use crate::ids::TokenListId;
 use crate::interner::Symbol;
+use crate::patch_domain::PatchAllocationDomain;
 use crate::token::{Catcode, OriginId, Token, TracedTokenWord};
 use ahash::AHashMap;
 use proptest::prelude::*;
@@ -9,7 +10,13 @@ use proptest::prelude::*;
 fn semantic_identity_carries_a_strong_digest_per_token_list() {
     assert_eq!(core::mem::size_of::<TokenSemanticId>(), 40);
     let store = TokenStore::new();
-    assert_eq!(store.semantic_ids.len(), store.spans.len());
+    assert_eq!(
+        store
+            .owner(TokenListId::EMPTY)
+            .expect("empty owner")
+            .tokens(),
+        []
+    );
 }
 
 #[test]
@@ -23,8 +30,8 @@ fn empty_list_is_canonical_and_allocates_no_tokens() {
     assert_eq!(first, TokenStore::empty_id());
     assert_eq!(second, TokenStore::empty_id());
     assert_eq!(store.get(first), &[]);
-    assert!(store.arena.is_empty());
-    assert_eq!(store.spans, vec![(0, 0)]);
+    assert_eq!(store.watermark().spans, 1);
+    assert_eq!(store.testing_pool_shape().0, 1);
 }
 
 #[test]
@@ -38,7 +45,7 @@ fn fresh_initex_store_skips_frozen_prefix_lookup() {
     let loaded = TokenStore::from_frozen(
         Vec::new(),
         vec![(0, 0)],
-        vec![fresh.semantic_ids[0]],
+        vec![fresh.semantic_id(TokenListId::EMPTY)],
         FrozenTokenLookup::Direct(crate::frozen_lookup::DirectFrozenLookup::empty()),
     )
     .expect("canonical empty frozen prefix");
@@ -77,6 +84,12 @@ fn hash_consing_same_content_twice_returns_same_id() {
     let second = store.intern(&tokens);
 
     assert_eq!(first, second);
+    assert!(
+        store
+            .owner(first)
+            .expect("first owner")
+            .ptr_eq(&store.owner(second).expect("second owner"))
+    );
 }
 
 #[test]
@@ -191,7 +204,7 @@ fn truncate_then_reintern_reuses_dense_token_list_id() {
 }
 
 #[test]
-fn repeated_retry_rollback_preserves_prefix_index_and_bounded_capacity() {
+fn repeated_retry_rollback_preserves_roots_and_bounded_weak_pool_capacity() {
     const FORMAT_LISTS: u32 = 2_048;
     const ATTEMPT_LISTS: u32 = 256;
     const RETRIES: usize = 32;
@@ -207,7 +220,6 @@ fn repeated_retry_rollback_preserves_prefix_index_and_bounded_capacity() {
         store.intern(&token_list(raw));
     }
     let retained = store.intern(&[char_token('k')]);
-    let retained_semantic_id = store.semantic_id(retained);
     let mark = store.watermark();
 
     // Warm the append-only arenas and index to the attempt high-water mark.
@@ -217,17 +229,7 @@ fn repeated_retry_rollback_preserves_prefix_index_and_bounded_capacity() {
         store.intern(&token_list(raw));
     }
     store.truncate_to(mark);
-    let warmed_capacities = (
-        store.arena.capacity(),
-        store.spans.capacity(),
-        store.semantic_ids.capacity(),
-        store.index.capacity(),
-    );
-    let retained_bucket = store
-        .index
-        .get(&retained_semantic_id)
-        .expect("retained format list remains indexed")
-        .as_ptr();
+    let warmed_shape = store.testing_pool_shape();
 
     for _ in 0..RETRIES {
         let first_attempt = store.intern(&token_list(FORMAT_LISTS));
@@ -240,35 +242,17 @@ fn repeated_retry_rollback_preserves_prefix_index_and_bounded_capacity() {
         assert!(!store.contains(first_attempt));
         assert_eq!(store.get(retained), &[char_token('k')]);
         assert_eq!(store.intern(&[char_token('k')]), retained);
-        assert_eq!(
-            store.index.values().map(Vec::len).sum::<usize>(),
-            store.spans.len(),
-            "the index contains exactly one entry for every live token list"
-        );
-        assert_eq!(
-            store
-                .index
-                .get(&retained_semantic_id)
-                .expect("retained format list remains indexed")
-                .as_ptr(),
-            retained_bucket,
-            "retry rollback must not discard and rebuild retained index buckets"
-        );
-        assert_eq!(
-            (
-                store.arena.capacity(),
-                store.spans.capacity(),
-                store.semantic_ids.capacity(),
-                store.index.capacity(),
-            ),
-            warmed_capacities,
-            "repeated equal-sized retries retain only their high-water capacity"
-        );
+        let shape = store.testing_pool_shape();
+        assert_eq!(shape.0, warmed_shape.0);
+        assert_eq!(shape.1, warmed_shape.1);
+        assert!(shape.2 <= 1_024);
+        assert!(shape.3 <= warmed_shape.3.max(2_048));
+        assert!(shape.4 <= 64);
     }
 }
 
 #[test]
-#[should_panic(expected = "token list id is not live")]
+#[should_panic(expected = "bare token-list id has no live compatibility owner")]
 fn stale_token_list_panics_after_truncation() {
     let mut store = TokenStore::new();
     let mark = store.watermark();
@@ -284,20 +268,125 @@ fn same_hash_bucket_still_compares_token_list_content() {
     let mut store = TokenStore::new();
     let existing = [char_token('a')];
     let distinct = [char_token('b')];
-    let existing_id = store.intern(&existing);
-    let distinct_hash = store.content_hash(&distinct);
-
-    store
-        .index
-        .entry(TokenSemanticId::testing(distinct_hash))
-        .or_default()
-        .push(existing_id);
-
-    let distinct_id = store.intern(&distinct);
+    let collision = TokenSemanticId::testing(7);
+    let existing_id = store.intern_with_semantic_id(&existing, collision, 0, None, None);
+    let distinct_id = store.intern_with_semantic_id(&distinct, collision, 0, None, None);
 
     assert_ne!(distinct_id, existing_id);
     assert_eq!(store.get(existing_id), existing);
     assert_eq!(store.get(distinct_id), distinct);
+}
+
+#[test]
+fn loaded_base_owns_exact_content_and_future_append_uses_dynamic_slots() {
+    let frozen = [char_token('f')];
+    let hashes = [0, 17];
+    let lookup = crate::frozen_lookup::decode_direct(
+        &crate::frozen_lookup::encode_direct(&hashes).expect("lookup encodes"),
+        &hashes,
+    )
+    .expect("lookup decodes");
+    let mut store = TokenStore::from_frozen(
+        frozen.to_vec(),
+        vec![(0, 0), (0, 1)],
+        vec![TokenSemanticId::testing(0), TokenSemanticId::testing(1)],
+        FrozenTokenLookup::Direct(lookup),
+    )
+    .expect("frozen base installs");
+
+    let frozen_id =
+        store.intern_with_semantic_id(&frozen, TokenSemanticId::testing(99), 17, None, None);
+    assert_eq!(frozen_id.raw(), 1);
+    assert_eq!(store.get(frozen_id), frozen);
+
+    let appended = store.intern(&[char_token('n')]);
+    assert_eq!(appended.raw(), 2);
+    assert_eq!(store.get(appended), &[char_token('n')]);
+    assert_eq!(store.get(frozen_id), frozen);
+}
+
+#[test]
+fn owned_dynamic_value_dies_and_reuses_its_slot_with_a_fresh_generation() {
+    let mut store = TokenStore::new();
+    let first = store.testing_owned(&[char_token('a')], TokenSemanticId::testing(1), None);
+    let stale = first.id();
+    assert_eq!(first.tokens(), &[char_token('a')]);
+    drop(first);
+
+    let second = store.testing_owned(&[char_token('b')], TokenSemanticId::testing(2), None);
+    assert_eq!(second.id().raw(), stale.raw());
+    assert_ne!(second.id(), stale);
+    assert!(!store.contains(stale));
+    assert_eq!(second.tokens(), &[char_token('b')]);
+}
+
+#[test]
+fn private_token_operation_rollback_releases_only_its_exact_suffix() {
+    let mut store = TokenStore::new();
+    let mut domain = PatchAllocationDomain::new();
+
+    let first_operation = domain.begin_operation().expect("operation begins");
+    let retained = store.testing_owned(
+        &[char_token('k')],
+        TokenSemanticId::testing(1),
+        Some(&mut domain),
+    );
+    domain
+        .commit_operation(first_operation)
+        .expect("operation commits");
+    let mark = store.watermark();
+    let retained_stats = domain.stats();
+
+    let failed_operation = domain.begin_operation().expect("operation begins");
+    let failed = store.testing_owned(
+        &[char_token('x'), char_token('y')],
+        TokenSemanticId::testing(2),
+        Some(&mut domain),
+    );
+    let failed_id = failed.id();
+    drop(failed);
+    store.truncate_to(mark);
+    domain
+        .rollback_operation(failed_operation)
+        .expect("operation rolls back");
+
+    assert_eq!(domain.stats(), retained_stats);
+    assert_eq!(retained.tokens(), &[char_token('k')]);
+    assert!(!store.contains(failed_id));
+}
+
+#[test]
+fn private_token_acceptance_selects_exact_roots_and_drops_unselected_payloads() {
+    let mut store = TokenStore::new();
+    let mut domain = PatchAllocationDomain::new();
+    let operation = domain.begin_operation().expect("operation begins");
+    let selected = store.testing_owned(
+        &[char_token('s')],
+        TokenSemanticId::testing(1),
+        Some(&mut domain),
+    );
+    let unselected = store.testing_owned(
+        &[char_token('u'), char_token('u')],
+        TokenSemanticId::testing(2),
+        Some(&mut domain),
+    );
+    let unselected_id = unselected.id();
+    let selected_root = store.testing_patch_root(&selected, &domain);
+    domain
+        .commit_operation(operation)
+        .expect("operation commits");
+    drop(unselected);
+
+    let accepted = domain
+        .accept(vec![selected_root])
+        .expect("selected root transfers");
+    assert_eq!(accepted.len(), 1);
+    assert_eq!(
+        accepted.logical_bytes(),
+        core::mem::size_of::<super::TokenListValue>() + core::mem::size_of::<Token>()
+    );
+    assert_eq!(selected.tokens(), &[char_token('s')]);
+    assert!(!store.contains(unselected_id));
 }
 
 #[derive(Clone, Debug)]
@@ -357,7 +446,7 @@ proptest! {
                 }
             }
 
-            prop_assert_eq!(store.spans.len(), model.len());
+            prop_assert_eq!(store.watermark().spans as usize, model.len());
             for (raw, expected) in model.iter().enumerate() {
                 let id = store
                     .resolve_stored(TokenListId::new(raw as u32))

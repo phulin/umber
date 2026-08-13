@@ -3139,9 +3139,6 @@ impl Universe {
 
     /// Closes an accepted private revision after its typed owners have
     /// transferred every explicit root.
-    ///
-    /// The foundation has no migrated stores yet, so a nonempty domain is an
-    /// ownership defect rather than permission to retain the domain wholesale.
     fn accept_private_revision(&mut self) -> Result<(), PrivateRevisionAcceptanceError> {
         let Some(domain) = self.private_revision_domain.as_ref() else {
             return Ok(());
@@ -3150,17 +3147,20 @@ impl Universe {
         if stats.operation_active {
             return Err(PrivateRevisionAcceptanceError::ActiveOperation);
         }
-        if stats.allocations != 0 {
+        if stats.allocations != self.stores.token_patch_allocation_count() {
             return Err(PrivateRevisionAcceptanceError::UnrootedAllocations);
         }
+        let roots = self.stores.token_compatibility_patch_roots(domain);
         let domain = self
             .private_revision_domain
             .take()
             .expect("private domain was validated above");
         let accepted = domain
-            .accept(Vec::new())
-            .expect("empty explicit root transfer is valid");
-        debug_assert_eq!(accepted.len(), 0);
+            .accept(roots)
+            .expect("typed token roots were validated against the private domain");
+        debug_assert!(accepted.len() <= stats.allocations);
+        self.stores.clear_token_patch_allocations();
+        drop(accepted);
         Ok(())
     }
 
@@ -5641,17 +5641,20 @@ impl Universe {
     }
 
     pub fn intern_token_list(&mut self, tokens: &[Token]) -> TokenListId {
-        self.stores.intern_token_list(tokens)
+        self.stores
+            .intern_token_list_in_domain(tokens, self.private_revision_domain.as_mut())
     }
 
     pub fn finish_token_list(&mut self, builder: &mut TokenListBuilder) -> TokenListId {
-        self.stores.finish_token_list(builder)
+        self.stores
+            .finish_token_list_in_domain(builder, self.private_revision_domain.as_mut())
     }
 
     /// Freezes paired semantic tokens and diagnostic origins through the
     /// aggregate state boundary.
     pub fn finish_traced_token_list(&mut self, tokens: &[TracedTokenWord]) -> TracedTokenList {
-        self.stores.finish_traced_token_list(tokens)
+        self.stores
+            .finish_traced_token_list_in_domain(tokens, self.private_revision_domain.as_mut())
     }
 
     #[must_use]
