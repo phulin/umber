@@ -331,11 +331,13 @@ impl<'a> Materializer<'a> {
             .iter()
             .map(|token| self.token(token))
             .collect::<Vec<_>>();
-        let parameters = self.universe.intern_token_list(&parameters);
-        let replacement = self.universe.intern_token_list(&replacement);
-        let id =
-            self.universe
-                .intern_macro(MacroMeaning::new(owned.flags, parameters, replacement));
+        let parameters = self.universe.intern_token_list_ref(&parameters);
+        let replacement = self.universe.intern_token_list_ref(&replacement);
+        let id = self.universe.intern_macro(MacroMeaning::new(
+            owned.flags,
+            parameters.id(),
+            replacement.id(),
+        ));
         self.macros.insert(old, id);
         id
     }

@@ -136,7 +136,7 @@ canonical token content rather than owner counts or process-local pointers.
 | Alignment command-to-mode transfer   | Completed u/v templates move from command-owned traced values into `AlignColumn` roots. Mode summary and inverse journal entries share those roots.                                                                  | Destructive alignment-state removal followed by rollback restores the exact u/v content after all live destination owners are dropped.                                                                                                             |
 | Durable command continuation         | Detachment copies token semantics and control-sequence spellings. The embedded live summary is temporary; materialization interns content in the destination and replaces every stored/every-eof root before return. | Materialization into a Universe with deliberately different coordinates produces destination-local ids and the same token and symbol content.                                                                                                      |
 | Aggregate checkpoint                 | The command and mode summaries nested in the checkpoint own their reachable token values independently of live command/mode destinations. Restore clones those summaries before switching Universe state.            | A retained checkpoint restores both a retired command cursor and removed alignment templates, then delivers identical command and mode content.                                                                                                    |
-| Typed release                        | Input retirement, scanner/request consumption, alignment completion, journal truncation, summary/checkpoint eviction, and continuation replacement drop their exact owner fields.                                    | The weak immutable pool remains non-authoritative. The temporary compatibility root is retained only for traced values that can still flow into the deferred node/page/effect migration; its retirement belongs to `.4`/`.5`.                      |
+| Typed release                        | Input retirement, scanner/request consumption, alignment completion, journal truncation, summary/checkpoint eviction, and continuation replacement drop their exact owner fields.                                    | The weak immutable pool remains non-authoritative. Traced values move directly into typed node, page, or effect owners without a successful-history compatibility root.                                                                            |
 
 The ordinary operation lifecycle still restores destinations before private
 patch truncation on `NeedResource` or scanner failure. No new root walk,
@@ -219,9 +219,53 @@ proves that the weak token-store slot is no longer live.
 Node memo detachment reads canonical content through the compact owners and
 materialization publishes destination-local roots only after validation.
 Final PDF detachment borrows token coordinates from the still-owning records
-and emits handle-free bytes. This stratum adds no graph compaction, changes no
-portable format, and does not retire the temporary compatibility roots; those
-remain work for the final compatibility/plateau child.
+and emits handle-free bytes. This stratum adds no graph compaction and changes
+no portable format.
+
+### Completed format, memo, and acceptance closure
+
+`umber2-3v8z.3.1.2.5` removes the temporary successful-history token owner.
+The token store now retains only the immutable frozen base, weak reusable
+dynamic slots, bounded weak candidate buckets, test-only detached fixture
+owners, and private-domain handles. A bare `TokenListId` can resolve only
+while a typed owner keeps its exact object live.
+
+Format capture projects the current weak slot extent, represents dead physical
+holes as empty only until the existing dense reachable-closure pass removes
+them, and serializes exactly the Env, macro-child, and node roots already
+known to the typed format boundary. Loading publishes the validated frozen
+base before installing Env, macro, and node owners; later append and
+redefinition use ordinary weak-slot interning. Memo token import returns an
+owning `TokenListRef`; macro and node materialization install their child roots
+before publishing the containing value. Detached DTOs remain handle-free.
+
+Private acceptance walks the deterministic token allocation order, not the
+state graph. Each newly allocated private token value receives a weak
+acceptance lease whose strong half exists only in the initially returned typed
+owner and its descendants. Resolving a domain-only payload cannot mint a
+lease, and an unrelated payload `Arc` clone therefore cannot select an
+unrooted allocation. Operation rollback removes exact handle/lease suffixes;
+rejection drops the domain; acceptance transfers only allocations whose typed
+lease is live, then clears all private metadata.
+
+The final production `TokenListId` audit classifies every remaining bare use
+as one of these non-owning cases:
+
+- an API parameter, accessor result, observation operand, printer/expander
+  input, semantic-hash projection, or compact Env/node word whose containing
+  typed structure owns the parallel `TokenListRef`;
+- a handle-free format, memo, continuation, or PDF detachment coordinate that
+  is validated and immediately materialized into a typed owner; or
+- `MacroMeaning`'s parameter/replacement coordinate, whose current
+  `MacroStore` row owns parallel strong child references and whose containing
+  macro-body representation is deliberately reserved for `.3.2`.
+
+No production aggregate retains a bare authoritative token id. No graph scan,
+compactor, accepted-generation registry, or successful-history owner remains.
+Focused controls cover weak-index eviction and collisions, stale coordinates,
+format/source/future append and redefinition, memo import, operation rollback,
+resource retry, rejection, selected acceptance, a live unrelated payload clone,
+10,000 bounded-live redefinitions, and exact all-roots-live growth.
 
 ## Object and slot representation
 

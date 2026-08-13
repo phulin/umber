@@ -223,8 +223,12 @@ fn configure_write_stopper(universe: &mut Universe) {
         universe.register_primitive_meaning("endwrite", meaning);
         return;
     }
-    let empty = universe.intern_token_list(&[]);
-    let definition = universe.intern_macro(MacroMeaning::new(MeaningFlags::OUTER, empty, empty));
+    let empty = universe.intern_token_list_ref(&[]);
+    let definition = universe.intern_macro(MacroMeaning::new(
+        MeaningFlags::OUTER,
+        empty.id(),
+        empty.id(),
+    ));
     universe.register_primitive_meaning(
         "endwrite",
         Meaning::Macro {

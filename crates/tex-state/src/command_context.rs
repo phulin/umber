@@ -435,7 +435,7 @@ impl CommandContext<'_> {
 
     /// Returns the immutable semantic words of one stored token list.
     #[must_use]
-    pub fn tokens(&self, id: TokenListId) -> &[Token] {
+    pub fn tokens(&self, id: TokenListId) -> TokenListRef {
         self.universe.tokens(id)
     }
 

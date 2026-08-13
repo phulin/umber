@@ -70,8 +70,7 @@ without compaction or historical-domain registries.
 
 `reachability_owned_values.md` defines strong immutable token, macro, and glue
 roots, the audited owner/transition matrix, weak non-authoritative indexes,
-private-patch transfer, and the implemented Env/save-stack and macro-token
-child ownership stratum.
+private-patch transfer, and the completed token-list ownership migration.
 
 `tracked_region_coverage.md` defines the exact ordinary main-control operation
 covered by generic dependency recording, its begin/finish and fail-closed

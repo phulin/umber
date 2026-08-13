@@ -573,7 +573,7 @@ fn append_whatsit_effect(
             let identity = match identifier {
                 tex_state::PdfActionIdentifier::Name(tokens) => {
                     let mut text = String::new();
-                    for &token in stores.tokens(tokens.id()) {
+                    for &token in stores.tokens(tokens.id()).iter() {
                         tex_state::token_show::append_token_string_text(stores, token, &mut text);
                     }
                     tex_state::PdfDestinationIdentity::Name(text.into_bytes())
@@ -662,7 +662,7 @@ fn append_whatsit_effect(
             let identity = match identifier {
                 tex_state::PdfActionIdentifier::Name(tokens) => {
                     let mut text = String::new();
-                    for &token in stores.tokens(tokens.id()) {
+                    for &token in stores.tokens(tokens.id()).iter() {
                         tex_state::token_show::append_token_string_text(stores, token, &mut text);
                     }
                     tex_state::PdfDestinationIdentity::Name(text.into_bytes())
@@ -686,7 +686,7 @@ fn append_whatsit_effect(
                 }
             };
             let mut attribute_bytes = String::new();
-            for &token in stores.tokens(attributes.id()) {
+            for &token in stores.tokens(attributes.id()).iter() {
                 tex_state::token_show::append_token_string_text(
                     stores,
                     token,

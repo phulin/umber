@@ -1160,8 +1160,8 @@ fn format_round_trip_preserves_profile_state_but_not_pending_transients() {
     assert_eq!(restored.int_param(IntParam::TEX_XET_STATE), 0);
     let restored_every_job = restored.take_pending_every_job();
     assert_eq!(
-        restored.tokens(restored_every_job),
-        universe.tokens(every_job)
+        restored.tokens(restored_every_job).tokens(),
+        universe.tokens(every_job).tokens()
     );
     assert_eq!(restored.take_pending_every_job(), TokenListId::EMPTY);
     assert_eq!(restored.current_input_line(), 0);
@@ -3151,10 +3151,17 @@ fn generation_fork_retargets_page_pdf_and_effect_token_roots() {
 
     assert_eq!(fork.page_mark(PageMark::Bot), id);
     assert_eq!(fork.page_mark_class(PageMark::SplitBot, 11), id);
-    assert!(matches!(
-        fork.world().effect_records(),
-        [EffectRecord::DeferredWrite { tokens, .. }] if tokens.tokens() == [Token::param(8)]
-    ));
+    assert!(
+        fork.world()
+            .page_effect_prefix()
+            .iter()
+            .any(|effect| matches!(
+                effect,
+                EffectRecord::DeferredWrite { tokens, .. } if tokens.tokens() == [Token::param(8)]
+            )),
+        "{:?}",
+        fork.world().page_effect_prefix()
+    );
     assert_eq!(
         fork.pdf_document_fragments(PdfDocumentFragmentKind::Names)
             .collect::<Vec<_>>(),

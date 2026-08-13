@@ -723,8 +723,8 @@ fn emit_index(
         NodeRef::Mark { class, tokens } => {
             emission.node([]);
             output.mark_stream(class, |tokens_out| {
-                for token in stores.tokens(tokens.id()) {
-                    match *token {
+                for &token in stores.tokens(tokens.id()).iter() {
+                    match token {
                         Token::Char { ch, cat } => {
                             tokens_out.char(ch as u32, lower_token_catcode(cat))?;
                         }

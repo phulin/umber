@@ -870,8 +870,8 @@ impl Stores {
         let tokens = self.tokens.get(id);
         hasher.tag(0x50);
         hasher.usize(tokens.len());
-        for token in tokens {
-            match *token {
+        for &token in tokens.iter() {
+            match token {
                 Token::Char { ch, cat } => {
                     hasher.tag(0);
                     hasher.u32(ch as u32);

@@ -20,8 +20,8 @@ fn tokens_round_trip_into_independent_universe_without_origin_or_handle_identity
     let imported = target
         .import_memo_token_list(&detached, MemoValueLimits::default())
         .expect("token import");
-    assert_eq!(target.tokens(imported).len(), 4);
-    let Token::Cs(symbol) = target.tokens(imported)[0] else {
+    assert_eq!(target.tokens(imported.id()).len(), 4);
+    let Token::Cs(symbol) = target.tokens(imported.id())[0] else {
         panic!("expected imported control sequence");
     };
     assert_eq!(target.resolve(symbol), "memo-name");
@@ -41,7 +41,7 @@ fn token_values_import_after_fork_and_rollback_without_reusing_source_handles() 
     let fork_list = fork
         .import_memo_token_list(&detached, MemoValueLimits::default())
         .expect("fork token import");
-    let Token::Cs(fork_symbol) = fork.tokens(fork_list)[0] else {
+    let Token::Cs(fork_symbol) = fork.tokens(fork_list.id())[0] else {
         panic!("expected fork-imported control sequence");
     };
     assert_eq!(fork.resolve(fork_symbol), "forked-memo-name");
@@ -54,7 +54,7 @@ fn token_values_import_after_fork_and_rollback_without_reusing_source_handles() 
     let imported = rolled_back
         .import_memo_token_list(&detached, MemoValueLimits::default())
         .expect("rollback token import");
-    let Token::Cs(imported_symbol) = rolled_back.tokens(imported)[0] else {
+    let Token::Cs(imported_symbol) = rolled_back.tokens(imported.id())[0] else {
         panic!("expected rollback-imported control sequence");
     };
     assert_eq!(rolled_back.resolve(imported_symbol), "forked-memo-name");
@@ -401,7 +401,7 @@ fn detached_values_survive_target_rollback_and_generation_fork() {
         .import_memo_token_list(&detached, MemoValueLimits::default())
         .expect("fork import");
     assert_eq!(
-        fork.tokens(forked)[0],
+        fork.tokens(forked.id())[0],
         Token::Char {
             ch: 'q',
             cat: Catcode::Letter
@@ -417,9 +417,9 @@ fn detached_values_survive_target_rollback_and_generation_fork() {
     let imported = target
         .import_memo_token_list(&detached, MemoValueLimits::default())
         .expect("post-rollback target import");
-    assert_ne!(stale, imported);
+    assert!(stale.ptr_eq(&imported));
     assert_eq!(
-        target.tokens(imported)[0],
+        target.tokens(imported.id())[0],
         Token::Char {
             ch: 'q',
             cat: Catcode::Letter

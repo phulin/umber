@@ -698,9 +698,8 @@ fn decode_macros(
                 .owner(replacement_text)
                 .ok_or(StoreFormatError::Invalid("frozen macro replacement owner"))?,
         );
-        patterns.push(MacroParameterPattern::from_tokens(
-            tokens.get(parameter_text),
-        ));
+        let parameter_tokens = tokens.get(parameter_text);
+        patterns.push(MacroParameterPattern::from_tokens(&parameter_tokens));
         // TeX82 §§289/294/473 store one `end_match` word between parameter
         // and replacement text. Umber represents that separator structurally,
         // but §341's observed `def_ref` still advances across its memory word.

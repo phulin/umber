@@ -425,7 +425,7 @@ fn append_escaped_name(stores: &Universe, name: &str, out: &mut String) {
 
 fn dump_token_list(stores: &Universe, tokens: TokenListId, out: &mut String) {
     out.push('{');
-    for &token in stores.tokens(tokens) {
+    for &token in stores.tokens(tokens).iter() {
         // §1356 delegates write-node contents to §262 `show_token_list`,
         // including `print_cs`'s control-word separator.
         append_token_show_text(stores, token, out);
@@ -849,7 +849,7 @@ fn dump_mark(stores: &Universe, class: u16, tokens: TokenListId, out: &mut Strin
         append_escaped_name(stores, "marks", out);
         let _ = write!(out, "{class}{{");
     }
-    for &token in stores.tokens(tokens) {
+    for &token in stores.tokens(tokens).iter() {
         out.push_str(&token_text(stores, token));
     }
     out.push_str("}\n");

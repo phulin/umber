@@ -1297,8 +1297,8 @@ impl Stores {
                 provenance.replacement_origins(),
             );
         }
-        let parameter_pattern =
-            MacroParameterPattern::from_tokens(self.tokens(macro_meaning.parameter_text()));
+        let parameter_tokens = self.tokens(macro_meaning.parameter_text());
+        let parameter_pattern = MacroParameterPattern::from_tokens(&parameter_tokens);
         let observation_width = u32::try_from(
             1_usize
                 + self.tokens(macro_meaning.parameter_text()).len()
@@ -1602,6 +1602,7 @@ impl Stores {
         self.intern_token_list_in_domain(tokens, None)
     }
 
+    #[cfg(any(test, feature = "testing"))]
     pub(crate) fn intern_token_list_in_domain(
         &mut self,
         tokens: &[Token],
@@ -1616,7 +1617,7 @@ impl Stores {
             .tokens
             .requires_legacy_frozen_key()
             .then(|| self.legacy_frozen_token_lookup_key(tokens.iter().copied()));
-        self.tokens.intern_with_semantic_id(
+        self.tokens.testing_intern_with_semantic_id(
             tokens,
             semantic_id,
             frozen_hash.unwrap_or(0),
@@ -1654,6 +1655,7 @@ impl Stores {
         self.finish_token_list_in_domain(builder, None)
     }
 
+    #[cfg(any(test, feature = "testing"))]
     pub(crate) fn finish_token_list_in_domain(
         &mut self,
         builder: &mut TokenListBuilder,
@@ -1668,7 +1670,7 @@ impl Stores {
             .tokens
             .requires_legacy_frozen_key()
             .then(|| self.legacy_frozen_token_lookup_key(builder.as_slice().iter().copied()));
-        let id = self.tokens.intern_with_semantic_id(
+        let id = self.tokens.testing_intern_with_semantic_id(
             builder.as_slice(),
             semantic_id,
             frozen_hash.unwrap_or(0),
@@ -1725,7 +1727,7 @@ impl Stores {
 
     /// Reads a live frozen token list.
     #[must_use]
-    pub fn tokens(&self, id: TokenListId) -> &[Token] {
+    pub fn tokens(&self, id: TokenListId) -> TokenListRef {
         let id = self.resolve_stored_token_list(id);
         self.tokens.get(id)
     }
@@ -1746,11 +1748,11 @@ impl Stores {
         self.tokens.semantic_id(id)
     }
 
-    pub(crate) fn token_compatibility_patch_roots(
+    pub(crate) fn selected_token_patch_roots(
         &self,
         domain: &crate::patch_domain::PatchAllocationDomain,
     ) -> Vec<crate::patch_domain::PatchRoot> {
-        self.tokens.compatibility_patch_roots(domain)
+        self.tokens.selected_patch_roots(domain)
     }
 
     pub(crate) fn token_patch_allocation_count(&self) -> usize {

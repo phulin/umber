@@ -143,6 +143,11 @@ pub(super) struct MainMemoryProjection {
     macro_refs: Vec<u32>,
     token_refs: Vec<u32>,
     macro_token_refs: Vec<u32>,
+    /// Cached TeX allocator words by physical token slot. Mutation receipts
+    /// arrive after `Env` has transferred its typed root, so the removed
+    /// coordinate may already be dead even though this projection still has
+    /// to subtract its previously measured allocation exactly.
+    token_words: Vec<usize>,
     live_node_lists: std::collections::BTreeSet<NodeListId>,
     live_survivor_roots: std::collections::BTreeSet<crate::ids::SurvivorRootId>,
     box_root_counts: std::collections::BTreeMap<NodeListId, u32>,
@@ -211,7 +216,7 @@ fn main_memory_projection_inner(
         live_node_lists,
         box_roots,
     } = capture_memory_roots(stores, extra_nodes)?;
-    let token_count = stores.tokens.watermark().spans as usize;
+    let token_count = stores.tokens.slot_len() as usize;
     let macro_count = stores.macros.watermark().definitions as usize;
     let mut macro_refs = vec![0_u32; macro_count];
     let mut token_refs = vec![0_u32; token_count];
@@ -253,6 +258,14 @@ fn main_memory_projection_inner(
     }
 
     let mut macro_token_refs = vec![0_u32; token_count];
+    let mut token_words = vec![0_usize; token_count];
+    if let Some(empty) = token_words.first_mut() {
+        *empty = stores
+            .tokens
+            .get(TokenListId::EMPTY)
+            .len()
+            .saturating_add(1);
+    }
     let mut macro_words = 0_usize;
     let mut live_macro_count = 0_usize;
     for (raw, &refs) in macro_refs.iter().enumerate() {
@@ -269,6 +282,7 @@ fn main_memory_projection_inner(
             let list_id = stores.resolve_stored_token_list(list_id);
             let index = list_id.raw() as usize;
             let list = stores.tokens.get(list_id);
+            token_words[index] = list.len().saturating_add(1);
             macro_token_refs[index] = macro_token_refs[index].saturating_add(1);
             macro_words = macro_words.saturating_add(list.len());
         }
@@ -292,7 +306,9 @@ fn main_memory_projection_inner(
         .filter(|(index, refs)| **refs != 0 && *index != 0 && macro_token_refs[*index] == 0)
         .map(|(index, _)| {
             let id = stores.resolve_stored_token_list(TokenListId::new(index as u32));
-            stores.tokens.get(id).len().saturating_add(1)
+            let words = stores.tokens.get(id).len().saturating_add(1);
+            token_words[index] = words;
+            words
         })
         .sum::<usize>();
     // §§200/384 allocate one reference-count head and one `end_match` word
@@ -366,6 +382,7 @@ fn main_memory_projection_inner(
         macro_refs,
         token_refs,
         macro_token_refs,
+        token_words,
         live_node_lists,
         live_survivor_roots: box_root_counts
             .keys()
@@ -521,9 +538,10 @@ impl MainMemoryProjection {
     ) -> Result<bool, StoreFormatError> {
         self.macro_refs
             .resize(stores.macros.watermark().definitions as usize, 0);
-        let token_count = stores.tokens.watermark().spans as usize;
+        let token_count = stores.tokens.slot_len() as usize;
         self.token_refs.resize(token_count, 0);
         self.macro_token_refs.resize(token_count, 0);
+        self.token_words.resize(token_count, 0);
         match cell.bank() {
             crate::cell::BankTag::Meaning => {
                 self.adjust_meaning(stores, old_word, false)?;
@@ -713,6 +731,7 @@ impl MainMemoryProjection {
             let list_id = stores.resolve_stored_token_list(list_id);
             let index = list_id.raw() as usize;
             let list_words = stores.tokens.get(list_id).len();
+            self.token_words[index] = list_words.saturating_add(1);
             words = words.saturating_add(list_words);
             let refs = self
                 .macro_token_refs
@@ -760,13 +779,25 @@ impl MainMemoryProjection {
         let raw = if optional { word - 1 } else { word };
         let raw =
             u32::try_from(raw).map_err(|_| StoreFormatError::Invalid("environment token list"))?;
-        let id = stores.resolve_stored_token_list(TokenListId::new(raw));
-        let index = id.raw() as usize;
+        let index = raw as usize;
         let refs = self
             .token_refs
             .get_mut(index)
             .ok_or(StoreFormatError::Invalid("environment token list"))?;
-        let words = stores.tokens.get(id).len().saturating_add(1);
+        let words = if add {
+            let id = stores.resolve_stored_token_list(TokenListId::new(raw));
+            let words = stores.tokens.get(id).len().saturating_add(1);
+            self.token_words[index] = words;
+            words
+        } else {
+            let words = self.token_words[index];
+            if words == 0 {
+                return Err(StoreFormatError::Invalid(
+                    "environment token-list allocation",
+                ));
+            }
+            words
+        };
         if add {
             if *refs == 0 && index != 0 && self.macro_token_refs[index] == 0 {
                 self.usage.dynamic = self.usage.dynamic.saturating_add(words);
@@ -1254,8 +1285,7 @@ impl Stores {
                 }
             })
             .collect();
-        let token_mark = self.tokens.watermark();
-        let token_lists = (0..token_mark.spans)
+        let token_lists = (0..self.tokens.slot_len())
             .map(|raw| {
                 self.tokens
                     .get(self.resolve_stored_token_list(TokenListId::new(raw)))
@@ -1823,8 +1853,7 @@ impl ImmutableStoreIdentity {
                 }
             })
             .collect();
-        let token_mark = stores.tokens.watermark();
-        let token_lists = (0..token_mark.spans)
+        let token_lists = (0..stores.tokens.slot_len())
             .map(|raw| {
                 stores
                     .tokens

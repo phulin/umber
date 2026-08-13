@@ -5237,7 +5237,7 @@ fn etex_showgroups_detaches_nested_save_and_mode_diagnostics() {
     assert_eq!(stores.group_depth(), 6, "diagnostic mutated the save stack");
 }
 
-fn macro_tokens<'a>(stores: &'a Universe, name: &str) -> &'a [Token] {
+fn macro_tokens(stores: &Universe, name: &str) -> tex_state::token_store::TokenListRef {
     let meaning = stores
         .macro_meaning(stores.symbol(name).expect("macro target"))
         .expect("macro is defined");
@@ -9013,7 +9013,7 @@ fn case_shift_preserves_raw_token_structure_at_code_table_boundaries() {
     );
     run_to_end(&mut control, &mut stores);
     assert!(matches!(
-        macro_tokens(&stores, "up"),
+        macro_tokens(&stores, "up").tokens(),
         [
             Token::Char {
                 ch: 'Z',
@@ -9023,7 +9023,7 @@ fn case_shift_preserves_raw_token_structure_at_code_table_boundaries() {
         ]
     ));
     assert!(matches!(
-        macro_tokens(&stores, "down"),
+        macro_tokens(&stores, "down").tokens(),
         [
             Token::Char {
                 ch: 'y',
@@ -9033,14 +9033,14 @@ fn case_shift_preserves_raw_token_structure_at_code_table_boundaries() {
         ]
     ));
     assert!(matches!(
-        macro_tokens(&stores, "active"),
+        macro_tokens(&stores, "active").tokens(),
         [Token::Char {
             ch: 'X',
             cat: Catcode::Active
         }]
     ));
     assert!(matches!(
-        macro_tokens(&stores, "zero"),
+        macro_tokens(&stores, "zero").tokens(),
         [Token::Char { ch: '@', .. }]
     ));
 }

@@ -23,6 +23,7 @@ pub(crate) struct DomainOwnerToken {
 struct AllocationSlot {
     payload: Arc<ErasedPayload>,
     logical_bytes: usize,
+    typed_root: Option<Weak<PatchTypedRootToken>>,
 }
 
 impl fmt::Debug for AllocationSlot {
@@ -88,6 +89,30 @@ pub(crate) struct PatchHandle<T> {
     owner: Weak<DomainOwnerToken>,
     slot: usize,
     marker: PhantomData<fn() -> T>,
+}
+
+/// Acceptance authority carried only by typed semantic owners.
+#[derive(Clone, Debug)]
+pub(crate) struct PatchRootLease(Arc<PatchTypedRootToken>);
+
+#[derive(Clone, Debug)]
+pub(crate) struct PatchRootWeak(Weak<PatchTypedRootToken>);
+
+impl PatchRootLease {
+    pub(crate) fn downgrade(&self) -> PatchRootWeak {
+        PatchRootWeak(Arc::downgrade(&self.0))
+    }
+}
+
+impl PatchRootWeak {
+    pub(crate) fn upgrade(&self) -> Option<PatchRootLease> {
+        self.0.upgrade().map(PatchRootLease)
+    }
+}
+
+#[derive(Debug)]
+struct PatchTypedRootToken {
+    _identity: u8,
 }
 
 impl<T> Clone for PatchHandle<T> {
@@ -245,6 +270,7 @@ impl PatchAllocationDomain {
         self.slots.push(AllocationSlot {
             payload: value,
             logical_bytes,
+            typed_root: None,
         });
         self.logical_bytes = self.logical_bytes.saturating_add(logical_bytes);
         Ok(PatchHandle {
@@ -252,6 +278,40 @@ impl PatchAllocationDomain {
             slot,
             marker: PhantomData,
         })
+    }
+
+    pub(crate) fn install_root_lease<T>(
+        &mut self,
+        handle: &PatchHandle<T>,
+    ) -> Result<PatchRootLease, PatchDomainError>
+    where
+        T: Any + Send + Sync + RefUnwindSafe,
+    {
+        let _ = self.get(handle)?;
+        let lease = PatchRootLease(Arc::new(PatchTypedRootToken { _identity: 0 }));
+        self.slots[handle.slot].typed_root = Some(Arc::downgrade(&lease.0));
+        Ok(lease)
+    }
+
+    /// Returns an acceptance root only while a typed owner exists in addition
+    /// to the domain's private allocation authority.
+    pub(crate) fn root_if_typed<T>(
+        &self,
+        handle: &PatchHandle<T>,
+    ) -> Result<Option<PatchRoot>, PatchDomainError>
+    where
+        T: Any + Send + Sync + RefUnwindSafe,
+    {
+        let _ = self.get(handle)?;
+        if self.slots[handle.slot]
+            .typed_root
+            .as_ref()
+            .and_then(Weak::upgrade)
+            .is_none()
+        {
+            return Ok(None);
+        }
+        self.root(handle).map(Some)
     }
 
     #[allow(dead_code)] // Typed store migrations consume this generic hook in later epic children.
@@ -317,6 +377,7 @@ impl PatchAllocationDomain {
                 AllocationSlot {
                     payload: root.payload,
                     logical_bytes: root.logical_bytes,
+                    typed_root: None,
                 },
             ));
         }

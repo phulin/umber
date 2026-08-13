@@ -144,7 +144,7 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/token.rs`: Token and catcode value definitions, constructors, and classification helpers.
 - `src/token/tests.rs`: Unit tests for token constructors, catcodes, parameter tokens, and display/debug behavior.
 - `src/token_show.rs`: tex.web §§49/262--294's printable token spellings -- `show_token_list`, `print_cs`, and `\string` rendering over the interner, catcodes, and `\escapechar`.
-- `src/token_store.rs`: Reachability-owned immutable token-list values, explicit loaded-format roots, collision-safe weak lookup, reusable generation-safe slots, temporary bare-id compatibility roots, and rollback/private-patch coordination.
+- `src/token_store.rs`: Reachability-owned immutable token-list values, explicit loaded-format roots, collision-safe weak lookup, reusable generation-safe slots, typed private-acceptance leases, and rollback/private-patch coordination.
 - `src/token_store/tests.rs`: Unit tests for exact token-list interning, loaded-base ownership, weak-slot reclamation/reuse, builder reuse, collision handling, rollback, and private-patch transfer.
 - `src/universe.rs`: Top-level TeX state timeline and sole state API, with
   snapshots, effect commits, execution-side dependency-aware getters and

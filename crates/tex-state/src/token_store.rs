@@ -5,7 +5,9 @@
 
 use crate::ContentHash;
 use crate::ids::TokenListId;
-use crate::patch_domain::{PatchAllocationDomain, PatchHandle, PatchRoot};
+use crate::patch_domain::{
+    PatchAllocationDomain, PatchHandle, PatchRoot, PatchRootLease, PatchRootWeak,
+};
 use crate::reachable_value::{ReachableValuePool, ReachableValueRef};
 use crate::state_hash::{StateHashFragment, StateHasher};
 use crate::token::{Token, TracedTokenWord};
@@ -140,9 +142,9 @@ impl TokenSemanticIdBuilder {
 /// A rollback watermark for the token store.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct TokenStoreMark {
-    pub(crate) spans: u32,
-    compatibility_roots: u32,
     patch_allocations: u32,
+    #[cfg(any(test, feature = "testing"))]
+    testing_detached_roots: u32,
 }
 
 /// An owned scratch buffer for building a token list before freezing it.
@@ -192,6 +194,7 @@ impl TokenListBuilder {
 
     /// Borrows the unfinished semantic token sequence for aggregate validation.
     #[must_use]
+    #[cfg_attr(not(any(test, feature = "testing")), allow(dead_code))]
     pub(crate) fn as_slice(&self) -> &[Token] {
         &self.buf
     }
@@ -225,6 +228,7 @@ impl TokenListValue {
 #[derive(Clone, Debug)]
 pub struct TokenListRef {
     value: ReachableValueRef<TokenListValue>,
+    patch_root: Option<PatchRootLease>,
 }
 
 #[cfg(test)]
@@ -262,7 +266,45 @@ impl TokenListRef {
 
     #[cfg(test)]
     pub(crate) fn strong_count(&self) -> usize {
-        Arc::strong_count(&self.shared()).saturating_sub(1)
+        self.value.strong_count()
+    }
+}
+
+impl std::ops::Deref for TokenListRef {
+    type Target = [Token];
+
+    fn deref(&self) -> &Self::Target {
+        self.tokens()
+    }
+}
+
+impl PartialEq<&[Token]> for TokenListRef {
+    fn eq(&self, other: &&[Token]) -> bool {
+        self.tokens() == *other
+    }
+}
+
+impl<const N: usize> PartialEq<[Token; N]> for TokenListRef {
+    fn eq(&self, other: &[Token; N]) -> bool {
+        self.tokens() == other
+    }
+}
+
+impl<const N: usize> PartialEq<&[Token; N]> for TokenListRef {
+    fn eq(&self, other: &&[Token; N]) -> bool {
+        self.tokens() == *other
+    }
+}
+
+impl PartialEq<Vec<Token>> for TokenListRef {
+    fn eq(&self, other: &Vec<Token>) -> bool {
+        self.tokens() == other
+    }
+}
+
+impl PartialEq<&Vec<Token>> for TokenListRef {
+    fn eq(&self, other: &&Vec<Token>) -> bool {
+        self.tokens() == other.as_slice()
     }
 }
 
@@ -280,20 +322,20 @@ impl Hash for TokenListRef {
     }
 }
 
-/// Reachability-owned immutable token values plus temporary legacy roots.
+/// Reachability-owned immutable token values.
 #[derive(Debug)]
 pub struct TokenStore {
     pool: ReachableValuePool<TokenSemanticId, TokenListValue>,
     frozen_roots: Arc<[TokenListRef]>,
     frozen_lookup: FrozenTokenLookup,
     frozen_len: u32,
-    // Temporary migration bridge. Each still-unmigrated bare-id owner is
-    // conservatively represented here until the owner strata carry
-    // `TokenListRef` directly. The final wiring child removes this table.
-    compatibility_roots: Vec<Option<TokenListRef>>,
-    compatibility_order: Vec<TokenListId>,
     patch_handles: HashMap<TokenListId, PatchHandle<TokenListValue>>,
+    patch_root_leases: HashMap<TokenListId, PatchRootWeak>,
     patch_order: Vec<TokenListId>,
+    /// Explicit detached owners used only by legacy test construction APIs.
+    /// Production interning returns `TokenListRef` and never enters this row.
+    #[cfg(any(test, feature = "testing"))]
+    testing_detached_roots: Vec<TokenListRef>,
     #[cfg(test)]
     hash_state: RandomState,
 }
@@ -309,10 +351,11 @@ impl Clone for TokenStore {
             frozen_roots: Arc::clone(&self.frozen_roots),
             frozen_lookup: self.frozen_lookup.clone(),
             frozen_len: self.frozen_len,
-            compatibility_roots: self.compatibility_roots.clone(),
-            compatibility_order: self.compatibility_order.clone(),
             patch_handles: HashMap::new(),
+            patch_root_leases: HashMap::new(),
             patch_order: Vec::new(),
+            #[cfg(any(test, feature = "testing"))]
+            testing_detached_roots: self.testing_detached_roots.clone(),
             #[cfg(test)]
             hash_state: self.hash_state.clone(),
         }
@@ -345,17 +388,21 @@ impl TokenStore {
             frozen_roots: Arc::from(
                 roots
                     .into_iter()
-                    .map(|value| TokenListRef { value })
+                    .map(|value| TokenListRef {
+                        value,
+                        patch_root: None,
+                    })
                     .collect::<Vec<_>>(),
             ),
             frozen_lookup: FrozenTokenLookup::Direct(
                 crate::frozen_lookup::DirectFrozenLookup::empty(),
             ),
             frozen_len: 0,
-            compatibility_roots: vec![None],
-            compatibility_order: Vec::new(),
             patch_handles: HashMap::new(),
+            patch_root_leases: HashMap::new(),
             patch_order: Vec::new(),
+            #[cfg(any(test, feature = "testing"))]
+            testing_detached_roots: Vec::new(),
             #[cfg(test)]
             hash_state: RandomState::new(),
         }
@@ -398,17 +445,21 @@ impl TokenStore {
         let (pool, roots) = ReachableValuePool::from_fixed_values(values, 1);
         let roots = roots
             .into_iter()
-            .map(|value| TokenListRef { value })
+            .map(|value| TokenListRef {
+                value,
+                patch_root: None,
+            })
             .collect::<Vec<_>>();
         Ok(Self {
             pool,
             frozen_roots: Arc::from(roots),
             frozen_lookup,
             frozen_len: count,
-            compatibility_roots: vec![None; count as usize],
-            compatibility_order: Vec::new(),
             patch_handles: HashMap::new(),
+            patch_root_leases: HashMap::new(),
             patch_order: Vec::new(),
+            #[cfg(any(test, feature = "testing"))]
+            testing_detached_roots: Vec::new(),
             #[cfg(test)]
             hash_state: RandomState::new(),
         })
@@ -426,15 +477,16 @@ impl TokenStore {
         TokenListId::EMPTY
     }
 
-    /// Interns `tokens` and retains the temporary compatibility owner.
+    /// Interns `tokens` for legacy tests and publishes an explicit detached
+    /// test owner. Production paths use `intern_owned_with_semantic_identity`.
     #[cfg(test)]
     pub(crate) fn intern(&mut self, tokens: &[Token]) -> TokenListId {
         let hash = self.content_hash(tokens);
-        self.intern_with_semantic_id(tokens, TokenSemanticId::testing(hash), 0, None, None)
+        self.testing_intern_with_semantic_id(tokens, TokenSemanticId::testing(hash), 0, None, None)
     }
 
-    /// Interns tokens using their aggregate-computed canonical semantic identity.
-    pub(crate) fn intern_with_semantic_id(
+    #[cfg(any(test, feature = "testing"))]
+    pub(crate) fn testing_intern_with_semantic_id(
         &mut self,
         tokens: &[Token],
         semantic_id: TokenSemanticId,
@@ -449,7 +501,7 @@ impl TokenStore {
             legacy_key,
             domain,
         );
-        self.retain_compatibility_root(root.clone());
+        self.testing_detached_roots.push(root.clone());
         root.id()
     }
 
@@ -488,7 +540,10 @@ impl TokenStore {
         }) {
             #[cfg(feature = "profiling")]
             crate::measurement::record_token_intern(tokens.len(), true, 0, 0);
-            return TokenListRef { value };
+            return TokenListRef {
+                value,
+                patch_root: None,
+            };
         }
 
         let value = self.pool.insert_new(
@@ -498,8 +553,11 @@ impl TokenStore {
                 semantic_id,
             },
         );
-        let root = TokenListRef { value };
-        self.attach_patch_allocation(&root, domain);
+        let mut root = TokenListRef {
+            value,
+            patch_root: None,
+        };
+        self.attach_patch_allocation(&mut root, domain);
         #[cfg(feature = "profiling")]
         crate::measurement::record_token_intern(
             tokens.len(),
@@ -529,7 +587,7 @@ impl TokenStore {
                     .expect("validated traced token became invalid during interning")
             })
             .collect::<Vec<_>>();
-        self.intern_with_semantic_id(&tokens, semantic_id, frozen_hash, legacy_key, domain)
+        self.testing_intern_with_semantic_id(&tokens, semantic_id, frozen_hash, legacy_key, domain)
     }
 
     /// Interns traced tokens and returns the strong exact-content owner.
@@ -548,17 +606,7 @@ impl TokenStore {
                     .expect("validated traced token became invalid during interning")
             })
             .collect::<Vec<_>>();
-        let root = self.intern_owned_with_semantic_id(
-            &tokens,
-            semantic_id,
-            frozen_hash,
-            legacy_key,
-            domain,
-        );
-        // Traced lists also feed the still-ID-backed node/page/effect strata.
-        // Keep their compatibility bridge until those owners migrate in .4/.5.
-        self.retain_compatibility_root(root.clone());
-        root
+        self.intern_owned_with_semantic_id(&tokens, semantic_id, frozen_hash, legacy_key, domain)
     }
 
     #[cfg(test)]
@@ -589,7 +637,7 @@ impl TokenStore {
 
     fn attach_patch_allocation(
         &mut self,
-        root: &TokenListRef,
+        root: &mut TokenListRef,
         domain: Option<&mut PatchAllocationDomain>,
     ) {
         let Some(domain) = domain else {
@@ -602,71 +650,54 @@ impl TokenStore {
             self.patch_handles.insert(root.id(), handle).is_none(),
             "new token value already has patch allocation metadata"
         );
+        let lease = domain
+            .install_root_lease(&self.patch_handles[&root.id()])
+            .expect("new private token root belongs to the active domain");
+        assert!(
+            self.patch_root_leases
+                .insert(root.id(), lease.downgrade())
+                .is_none()
+        );
+        root.patch_root = Some(lease);
         self.patch_order.push(root.id());
     }
 
-    fn retain_compatibility_root(&mut self, root: TokenListRef) {
-        let raw = root.id().raw() as usize;
-        if raw < self.frozen_roots.len() {
-            return;
-        }
-        if self.compatibility_roots.len() <= raw {
-            self.compatibility_roots.resize(raw + 1, None);
-        }
-        match &self.compatibility_roots[raw] {
-            Some(existing) => assert_eq!(existing.id(), root.id()),
-            None => {
-                self.compatibility_order.push(root.id());
-                self.compatibility_roots[raw] = Some(root);
-            }
-        }
-    }
-
-    /// Reads a value through the temporary bare-coordinate compatibility root.
+    /// Reads a value while a typed owner keeps its weak slot live.
     #[must_use]
-    pub(crate) fn get(&self, id: TokenListId) -> &[Token] {
-        if let Some(root) = self.frozen_root(id) {
-            return root.tokens();
-        }
-        let root = self
-            .compatibility_roots
-            .get(id.raw() as usize)
-            .and_then(Option::as_ref)
-            .filter(|root| root.id() == id)
-            .expect("bare token-list id has no live compatibility owner");
-        root.tokens()
+    pub(crate) fn get(&self, id: TokenListId) -> TokenListRef {
+        self.owner(id)
+            .expect("token list id has no live typed owner")
     }
 
-    /// Returns the compatibility serialization row at one stored coordinate.
+    /// Returns the serialization projection at one compact slot.
     ///
-    /// Reusable physical slots may contain holes after exact rollback.  The
-    /// legacy frozen-format table is still positional, so an unreachable hole
-    /// is serialized as the canonical empty value while live coordinates keep
-    /// their exact row number.  No semantic owner can refer to such a hole.
+    /// Dead slots project as the canonical empty list and are removed by the
+    /// format closure pass. Live slots upgrade only because a typed owner
+    /// already exists.
     #[must_use]
-    pub(crate) fn stored_slot_tokens(&self, raw: u32) -> &[Token] {
+    pub(crate) fn stored_slot_tokens(&self, raw: u32) -> TokenListRef {
         if let Some(root) = self.frozen_roots.get(raw as usize) {
-            return root.tokens();
+            return root.clone();
         }
-        self.compatibility_roots
-            .get(raw as usize)
-            .and_then(Option::as_ref)
-            .map_or_else(|| self.frozen_roots[0].tokens(), TokenListRef::tokens)
+        self.pool.resolve_slot(raw).map_or_else(
+            || self.frozen_roots[0].clone(),
+            |value| TokenListRef {
+                value,
+                patch_root: None,
+            },
+        )
     }
 
     /// Clones a strong owner for one currently-live coordinate.
     pub(crate) fn owner(&self, id: TokenListId) -> Option<TokenListRef> {
         self.frozen_root(id).cloned().or_else(|| {
-            self.compatibility_roots
-                .get(id.raw() as usize)
-                .and_then(Option::as_ref)
-                .filter(|root| root.id() == id)
-                .cloned()
-                .or_else(|| {
-                    self.pool
-                        .resolve(id.identity())
-                        .map(|value| TokenListRef { value })
-                })
+            self.pool.resolve(id.identity()).map(|value| TokenListRef {
+                value,
+                patch_root: self
+                    .patch_root_leases
+                    .get(&id)
+                    .and_then(PatchRootWeak::upgrade),
+            })
         })
     }
 
@@ -700,56 +731,46 @@ impl TokenStore {
         self.id_at(id.raw())
     }
 
-    /// Takes a rollback watermark over typed compatibility and patch roots.
+    /// Takes a rollback watermark over weak slots and private metadata.
     #[must_use]
     pub(crate) fn watermark(&self) -> TokenStoreMark {
         TokenStoreMark {
-            spans: u32_len(
-                self.compatibility_roots.len(),
-                "token-list slots exceed u32 entries",
-            ),
-            compatibility_roots: u32_len(
-                self.compatibility_order.len(),
-                "token-list compatibility roots exceed u32 entries",
-            ),
             patch_allocations: u32_len(
                 self.patch_order.len(),
                 "token-list patch allocations exceed u32 entries",
             ),
+            #[cfg(any(test, feature = "testing"))]
+            testing_detached_roots: u32_len(
+                self.testing_detached_roots.len(),
+                "testing detached token roots exceed u32",
+            ),
         }
     }
 
-    /// Restores exact typed roots; dead weak slots are reclaimed on next intern.
+    /// Restores private metadata; dead weak slots are reclaimed on next intern.
     pub(crate) fn truncate_to(&mut self, mark: TokenStoreMark) {
-        assert!(mark.spans as usize >= self.frozen_roots.len());
-        assert!(mark.spans as usize <= self.compatibility_roots.len());
-        while self.compatibility_order.len() > mark.compatibility_roots as usize {
-            let id = self
-                .compatibility_order
-                .pop()
-                .expect("compatibility-root order is nonempty");
-            let removed = self.compatibility_roots[id.raw() as usize].take();
-            assert_eq!(removed.as_ref().map(TokenListRef::id), Some(id));
-        }
-        self.compatibility_roots.truncate(mark.spans as usize);
+        #[cfg(any(test, feature = "testing"))]
+        self.testing_detached_roots
+            .truncate(mark.testing_detached_roots as usize);
         while self.patch_order.len() > mark.patch_allocations as usize {
             let id = self.patch_order.pop().expect("patch order is nonempty");
             assert!(self.patch_handles.remove(&id).is_some());
+            assert!(self.patch_root_leases.remove(&id).is_some());
         }
     }
 
-    pub(crate) fn compatibility_patch_roots(
-        &self,
-        domain: &PatchAllocationDomain,
-    ) -> Vec<PatchRoot> {
-        self.compatibility_roots
+    pub(crate) fn slot_len(&self) -> u32 {
+        u32_len(self.pool.slot_len(), "token-list slots exceed u32 entries")
+    }
+
+    pub(crate) fn selected_patch_roots(&self, domain: &PatchAllocationDomain) -> Vec<PatchRoot> {
+        self.patch_order
             .iter()
-            .flatten()
-            .filter_map(|root| self.patch_handles.get(&root.id()))
-            .map(|handle| {
+            .filter_map(|id| self.patch_handles.get(id))
+            .filter_map(|handle| {
                 domain
-                    .root(handle)
-                    .expect("compatibility token root belongs to the private domain")
+                    .root_if_typed(handle)
+                    .expect("typed token root belongs to the private domain")
             })
             .collect()
     }
@@ -760,6 +781,7 @@ impl TokenStore {
 
     pub(crate) fn clear_patch_allocations(&mut self) {
         self.patch_handles.clear();
+        self.patch_root_leases.clear();
         self.patch_order.clear();
     }
 
@@ -773,16 +795,20 @@ impl TokenStore {
             .get(raw as usize)
             .map(TokenListRef::id)
             .or_else(|| {
-                self.compatibility_roots
-                    .get(raw as usize)
-                    .and_then(Option::as_ref)
-                    .map(TokenListRef::id)
+                self.pool
+                    .resolve_slot(raw)
+                    .map(|value| TokenListId::from_identity(value.identity()))
             })
     }
 
     #[cfg(test)]
     fn testing_pool_shape(&self) -> (usize, usize, usize, usize, usize, usize) {
         self.pool.testing_shape()
+    }
+
+    #[cfg(test)]
+    fn testing_live_totals(&self) -> (usize, usize) {
+        self.pool.testing_live_totals(TokenListValue::logical_bytes)
     }
 
     #[cfg(test)]
@@ -793,17 +819,6 @@ impl TokenStore {
         domain: Option<&mut PatchAllocationDomain>,
     ) -> TokenListRef {
         self.intern_owned_with_semantic_id(tokens, semantic_id, 0, None, domain)
-    }
-
-    #[cfg(test)]
-    fn testing_patch_root(&self, root: &TokenListRef, domain: &PatchAllocationDomain) -> PatchRoot {
-        domain
-            .root(
-                self.patch_handles
-                    .get(&root.id())
-                    .expect("token root has patch metadata"),
-            )
-            .expect("token root belongs to domain")
     }
 }
 

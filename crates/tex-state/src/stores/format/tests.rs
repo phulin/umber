@@ -305,7 +305,10 @@ fn frozen_environment_and_macro_rows_install_exact_token_owners() {
     restored.set_toks(300, overlay);
     assert_eq!(restored.toks(300), overlay);
     let _ = restored.leave_group();
-    assert_eq!(restored.tokens(restored.toks(300)), stores.tokens(register));
+    assert_eq!(
+        restored.tokens(restored.toks(300)).tokens(),
+        stores.tokens(register).tokens()
+    );
 }
 
 #[test]

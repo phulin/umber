@@ -250,11 +250,10 @@ fn base_whatsit_line_visitation_is_zero_width_and_never_a_breakpoint() {
     // measuring, breaking, executing, or reordering them. Language-state
     // interpretation belongs to the executor's pre-hyphenation visit.
     let mut universe = Universe::new();
-    let tokens = universe.intern_token_list(&[Token::Char {
+    let tokens = universe.intern_token_list_ref(&[Token::Char {
         ch: 'w',
         cat: Catcode::Letter,
     }]);
-    let tokens = universe.token_list_ref(tokens);
     let whatsits = vec![
         Node::Whatsit(Whatsit::OpenOut {
             slot: tex_state::StreamSlot::new(15),
@@ -2461,11 +2460,10 @@ fn post_line_break_keeps_migrating_nodes_for_execution_layer() {
     let mut universe = Universe::new();
     let empty_glue = universe.intern_glue(GlueSpec::ZERO);
     let empty = universe.freeze_node_list(&[]);
-    let mark_tokens = universe.intern_token_list(&[Token::Char {
+    let mark_tokens = universe.intern_token_list_ref(&[Token::Char {
         ch: 'm',
         cat: Catcode::Letter,
     }]);
-    let mark_tokens = universe.token_list_ref(mark_tokens);
     let adjust_content = universe.freeze_node_list(&[kern(7)]);
     let nodes = vec![
         rule(10),

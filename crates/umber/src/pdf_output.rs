@@ -318,7 +318,7 @@ fn serialization_options(
 
 pub(crate) fn token_list_bytes(stores: &Universe, id: TokenListId) -> Vec<u8> {
     let mut text = String::new();
-    for &token in stores.tokens(id) {
+    for &token in stores.tokens(id).iter() {
         append_token_string_text(stores, token, &mut text);
     }
     text.into_bytes()

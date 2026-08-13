@@ -415,7 +415,7 @@ pub(crate) fn trace_penalty_array(
 
 fn tokens_text(stores: &Universe, id: TokenListId) -> String {
     let mut text = String::new();
-    for &token in stores.tokens(id) {
+    for &token in stores.tokens(id).iter() {
         crate::diagnostics::append_token_show_text(stores, token, &mut text);
     }
     text

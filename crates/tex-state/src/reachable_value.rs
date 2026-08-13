@@ -15,6 +15,10 @@ const INDEX_BUCKET_ENTRY_BUDGET: usize = 64;
 
 /// One owning reference to an immutable exact-content value.
 pub(crate) struct ReachableValueRef<T> {
+    object: Arc<ReachableValueObject<T>>,
+}
+
+struct ReachableValueObject<T> {
     identity: HandleIdentity,
     value: Arc<T>,
 }
@@ -22,8 +26,7 @@ pub(crate) struct ReachableValueRef<T> {
 impl<T> Clone for ReachableValueRef<T> {
     fn clone(&self) -> Self {
         Self {
-            identity: self.identity,
-            value: Arc::clone(&self.value),
+            object: Arc::clone(&self.object),
         }
     }
 }
@@ -32,35 +35,40 @@ impl<T: fmt::Debug> fmt::Debug for ReachableValueRef<T> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("ReachableValueRef")
-            .field("identity", &self.identity)
-            .field("value", &self.value)
+            .field("identity", &self.object.identity)
+            .field("value", &self.object.value)
             .finish()
     }
 }
 
 impl<T> ReachableValueRef<T> {
-    pub(crate) const fn identity(&self) -> HandleIdentity {
-        self.identity
+    pub(crate) fn identity(&self) -> HandleIdentity {
+        self.object.identity
     }
 
     pub(crate) fn value(&self) -> &T {
-        &self.value
+        &self.object.value
     }
 
     pub(crate) fn shared(&self) -> Arc<T> {
-        Arc::clone(&self.value)
+        Arc::clone(&self.object.value)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn strong_count(&self) -> usize {
+        Arc::strong_count(&self.object)
     }
 
     #[cfg(test)]
     fn ptr_eq(&self, other: &Self) -> bool {
-        Arc::ptr_eq(&self.value, &other.value)
+        Arc::ptr_eq(&self.object, &other.object)
     }
 }
 
 #[derive(Debug)]
 struct WeakSlot<T> {
     identity: HandleIdentity,
-    value: Weak<T>,
+    value: Weak<ReachableValueObject<T>>,
 }
 
 /// Weak reusable slots plus a bounded candidate index.
@@ -123,12 +131,15 @@ where
             let identity = identities
                 .identity_at(raw as u32)
                 .expect("fixed value identity is live");
-            let value = Arc::new(value);
+            let value = Arc::new(ReachableValueObject {
+                identity,
+                value: Arc::new(value),
+            });
             slots.push(Some(WeakSlot {
                 identity,
                 value: Arc::downgrade(&value),
             }));
-            roots.push(ReachableValueRef { identity, value });
+            roots.push(ReachableValueRef { object: value });
         }
         (
             Self {
@@ -189,11 +200,8 @@ where
                 let Some(candidate) = slot.value.upgrade() else {
                     continue;
                 };
-                if exact_eq(&candidate) {
-                    return Some(ReachableValueRef {
-                        identity: slot.identity,
-                        value: candidate,
-                    });
+                if exact_eq(&candidate.value) {
+                    return Some(ReachableValueRef { object: candidate });
                 }
             }
         }
@@ -206,7 +214,10 @@ where
             .identities
             .allocate()
             .expect("reachable-value identity capacity exhausted");
-        let shared = Arc::new(value);
+        let shared = Arc::new(ReachableValueObject {
+            identity,
+            value: Arc::new(value),
+        });
         let raw = identity.slot() as usize;
         if raw == self.slots.len() {
             self.slots.push(None);
@@ -227,10 +238,7 @@ where
             }
             bucket.push(identity.slot());
         }
-        ReachableValueRef {
-            identity,
-            value: shared,
-        }
+        ReachableValueRef { object: shared }
     }
 
     /// Resolves one exact live coordinate without making the index authority.
@@ -243,9 +251,24 @@ where
             return None;
         }
         Some(ReachableValueRef {
-            identity,
-            value: slot.value.upgrade()?,
+            object: slot.value.upgrade()?,
         })
+    }
+
+    /// Resolves the currently live value in one physical slot.
+    ///
+    /// This is a compact-coordinate projection, not an ownership query: the
+    /// weak slot upgrades only while a typed semantic owner already exists.
+    pub(crate) fn resolve_slot(&self, raw: u32) -> Option<ReachableValueRef<T>> {
+        let slot = self.slots.get(raw as usize)?.as_ref()?;
+        Some(ReachableValueRef {
+            object: slot.value.upgrade()?,
+        })
+    }
+
+    /// Returns the physical slot-table extent used by compact projections.
+    pub(crate) fn slot_len(&self) -> usize {
+        self.slots.len()
     }
 
     fn reclaim_dead_slots(&mut self) {
@@ -283,6 +306,22 @@ where
             self.index.values().map(Vec::capacity).max().unwrap_or(0),
             free,
         )
+    }
+
+    #[cfg(test)]
+    pub(crate) fn testing_live_totals(
+        &self,
+        logical_bytes: impl Fn(&T) -> usize,
+    ) -> (usize, usize) {
+        self.slots
+            .iter()
+            .filter_map(|slot| slot.as_ref()?.value.upgrade())
+            .fold((0, 0), |(objects, bytes), value| {
+                (
+                    objects + 1,
+                    bytes.saturating_add(logical_bytes(&value.value)),
+                )
+            })
     }
 }
 

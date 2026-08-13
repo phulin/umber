@@ -14087,9 +14087,12 @@ fn apply_scanned_step(
                     tokens,
                     ..
                 } => {
-                    let parameters = stores.intern_token_list(&[]);
-                    let meaning =
-                        MacroMeaning::new(MeaningFlags::EMPTY, parameters, tokens.token_list());
+                    let parameters = stores.intern_token_list_ref(&[]);
+                    let meaning = MacroMeaning::new(
+                        MeaningFlags::EMPTY,
+                        parameters.id(),
+                        tokens.token_list(),
+                    );
                     // TeX82 §1225 installs `read_toks`'s freshly allocated
                     // macro through `define(p,call,cur_val)`, so e-TeX
                     // [17.687-750] traces the same pre/post eqtb write as a
@@ -17676,7 +17679,7 @@ fn report_font_size_recovery(
 
 /// TeX82 §1279's `token_show(def_ref)` into `new_string`.
 fn message_text(stores: &Universe, tokens: tex_state::ids::TokenListId) -> String {
-    message_tokens_text(stores, stores.tokens(tokens))
+    message_tokens_text(stores, &stores.tokens(tokens))
 }
 
 fn message_tokens_text(stores: &Universe, tokens: &[Token]) -> String {
@@ -17690,7 +17693,7 @@ fn message_tokens_text(stores: &Universe, tokens: &[Token]) -> String {
 /// TeX82 §1297's `token_show(temp_head)` through the active selector.
 #[cfg(test)]
 fn show_tokens_text(stores: &Universe, tokens: tex_state::ids::TokenListId) -> String {
-    show_tokens_tokens_text(stores, stores.tokens(tokens))
+    show_tokens_tokens_text(stores, &stores.tokens(tokens))
 }
 
 fn show_tokens_tokens_text(stores: &Universe, tokens: &[Token]) -> String {

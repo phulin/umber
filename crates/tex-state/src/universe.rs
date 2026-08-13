@@ -1292,7 +1292,7 @@ fn format_restore_tokens(
 
 /// Decodes an environment token-parameter word and rebinds its stored handle
 /// to this Universe's live token store.
-fn restored_tok_param_tokens(universe: &Universe, stored: u64) -> Option<&[Token]> {
+fn restored_tok_param_tokens(universe: &Universe, stored: u64) -> Option<TokenListRef> {
     use crate::env::banks::{BankCodec, OptionalTokenListIdCodec};
 
     OptionalTokenListIdCodec::decode(stored).map(|id| universe.tokens(id))
@@ -1301,7 +1301,8 @@ fn restored_tok_param_tokens(universe: &Universe, stored: u64) -> Option<&[Token
 /// Merged etex.web [17.233]'s `show_eqtb` representation for one of the four
 /// penalty-array locations, decoded from Umber's internal token-list payload.
 fn format_restore_penalty_array(universe: &Universe, stored: u64, escape_char: i32) -> String {
-    let tokens = restored_tok_param_tokens(universe, stored).unwrap_or_default();
+    let tokens = restored_tok_param_tokens(universe, stored);
+    let tokens = tokens.as_deref().unwrap_or_default();
     assert_eq!(tokens.len() % 4, 0, "restored penalty array is truncated");
     let count = tokens.len() / 4;
     let mut value = count.to_string();
@@ -3038,9 +3039,9 @@ impl Universe {
                     let tokens = universe
                         .import_memo_token_list(&value, crate::MemoValueLimits::default())
                         .map_err(|error| format!("{error:?}"))?;
-                    let semantic_id = universe.stores.token_list_semantic_fragment(tokens);
+                    let semantic_id = universe.stores.token_list_semantic_fragment(tokens.id());
                     Ok(PdfTokenParameter {
-                        tokens: universe.stores.token_list_ref(tokens),
+                        tokens,
                         semantic_id,
                     })
                 },
@@ -3150,7 +3151,7 @@ impl Universe {
         if stats.allocations != self.stores.token_patch_allocation_count() {
             return Err(PrivateRevisionAcceptanceError::UnrootedAllocations);
         }
-        let roots = self.stores.token_compatibility_patch_roots(domain);
+        let roots = self.stores.selected_token_patch_roots(domain);
         let domain = self
             .private_revision_domain
             .take()
@@ -5643,6 +5644,7 @@ impl Universe {
         self.stores.token_list_builder()
     }
 
+    #[cfg(any(test, feature = "testing"))]
     pub fn intern_token_list(&mut self, tokens: &[Token]) -> TokenListId {
         self.stores
             .intern_token_list_in_domain(tokens, self.private_revision_domain.as_mut())
@@ -5654,6 +5656,7 @@ impl Universe {
             .intern_token_list_ref_in_domain(tokens, self.private_revision_domain.as_mut())
     }
 
+    #[cfg(any(test, feature = "testing"))]
     pub fn finish_token_list(&mut self, builder: &mut TokenListBuilder) -> TokenListId {
         self.stores
             .finish_token_list_in_domain(builder, self.private_revision_domain.as_mut())
@@ -5667,7 +5670,7 @@ impl Universe {
     }
 
     #[must_use]
-    pub fn tokens(&self, id: TokenListId) -> &[Token] {
+    pub fn tokens(&self, id: TokenListId) -> TokenListRef {
         self.stores.tokens(id)
     }
 
@@ -8309,7 +8312,9 @@ impl Universe {
                 u32::from(TokParam::PAR_SHAPE_INTERNAL.raw()),
             );
             let effective = self.stores.effective_restored_env_word(cell);
-            restored_tok_param_tokens(self, effective).is_none_or(<[Token]>::is_empty)
+            restored_tok_param_tokens(self, effective)
+                .as_deref()
+                .is_none_or(<[Token]>::is_empty)
         } else {
             false
         };
@@ -8324,7 +8329,8 @@ impl Universe {
                     .map(Token::Param),
             );
         }
-        let id = self.intern_token_list(&tokens);
+        let root = self.intern_token_list_ref(&tokens);
+        let id = root.id();
         if representation_only_null {
             let receipt = self.stores.rewrite_null_parshape_representation(id);
             self.consume_env_mutation(receipt);
@@ -8393,7 +8399,8 @@ impl Universe {
         for value in values {
             tokens.extend(value.to_le_bytes().into_iter().map(Token::Param));
         }
-        let id = self.intern_token_list(&tokens);
+        let root = self.intern_token_list_ref(&tokens);
+        let id = root.id();
         if global {
             self.set_tok_param_global(kind.storage(), id);
         } else {
@@ -8608,7 +8615,8 @@ fn append_bounded_macro_body(
     text: &mut String,
 ) {
     let mut tally = 0;
-    let mut parameter = universe.tokens(parameter_text).iter();
+    let parameter_tokens = universe.tokens(parameter_text);
+    let mut parameter = parameter_tokens.iter();
     while tally < 32
         && let Some(&token) = parameter.next()
     {
@@ -8621,7 +8629,8 @@ fn append_bounded_macro_body(
         if tally < 32 {
             text.push_str("->");
             tally += 2;
-            let mut replacement = universe.tokens(replacement_text).iter();
+            let replacement_tokens = universe.tokens(replacement_text);
+            let mut replacement = replacement_tokens.iter();
             while tally < 32
                 && let Some(&token) = replacement.next()
             {

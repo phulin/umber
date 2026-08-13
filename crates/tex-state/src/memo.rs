@@ -12,6 +12,7 @@ use crate::interner::ControlSequenceKind;
 use crate::macro_store::MacroMeaning;
 use crate::meaning::MeaningFlags;
 use crate::token::{Catcode, Token};
+use crate::token_store::TokenListRef;
 use crate::world::ContentHash;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -418,14 +419,14 @@ impl Universe {
         &mut self,
         value: &DetachedMemoValue,
         limits: MemoValueLimits,
-    ) -> Result<TokenListId, MemoValueError> {
+    ) -> Result<TokenListRef, MemoValueError> {
         let detached: Vec<DetachedToken> = value.decode(MemoValueKind::Tokens)?;
         validate_tokens(&detached, limits)?;
         let mut tokens = Vec::with_capacity(detached.len());
         for token in detached {
             tokens.push(import_token(self, token)?);
         }
-        Ok(self.intern_token_list(&tokens))
+        Ok(self.intern_token_list_ref(&tokens))
     }
 
     pub fn detach_glue(&self, id: GlueId) -> Result<DetachedMemoValue, MemoValueError> {
@@ -499,12 +500,12 @@ impl Universe {
             .into_iter()
             .map(|token| import_token(self, token))
             .collect::<Result<Vec<_>, _>>()?;
-        let parameters = self.intern_token_list(&parameters);
-        let replacement = self.intern_token_list(&replacement);
+        let parameters = self.intern_token_list_ref(&parameters);
+        let replacement = self.intern_token_list_ref(&replacement);
         Ok(self.intern_macro(MacroMeaning::new(
             MeaningFlags::from_bits(detached.flags),
-            parameters,
-            replacement,
+            parameters.id(),
+            replacement.id(),
         )))
     }
 }

@@ -30,7 +30,7 @@ fn empty_list_is_canonical_and_allocates_no_tokens() {
     assert_eq!(first, TokenStore::empty_id());
     assert_eq!(second, TokenStore::empty_id());
     assert_eq!(store.get(first), &[]);
-    assert_eq!(store.watermark().spans, 1);
+    assert_eq!(store.slot_len(), 1);
     assert_eq!(store.testing_pool_shape().0, 1);
 }
 
@@ -252,7 +252,7 @@ fn repeated_retry_rollback_preserves_roots_and_bounded_weak_pool_capacity() {
 }
 
 #[test]
-#[should_panic(expected = "bare token-list id has no live compatibility owner")]
+#[should_panic(expected = "token list id has no live typed owner")]
 fn stale_token_list_panics_after_truncation() {
     let mut store = TokenStore::new();
     let mark = store.watermark();
@@ -269,8 +269,8 @@ fn same_hash_bucket_still_compares_token_list_content() {
     let existing = [char_token('a')];
     let distinct = [char_token('b')];
     let collision = TokenSemanticId::testing(7);
-    let existing_id = store.intern_with_semantic_id(&existing, collision, 0, None, None);
-    let distinct_id = store.intern_with_semantic_id(&distinct, collision, 0, None, None);
+    let existing_id = store.testing_intern_with_semantic_id(&existing, collision, 0, None, None);
+    let distinct_id = store.testing_intern_with_semantic_id(&distinct, collision, 0, None, None);
 
     assert_ne!(distinct_id, existing_id);
     assert_eq!(store.get(existing_id), existing);
@@ -294,8 +294,13 @@ fn loaded_base_owns_exact_content_and_future_append_uses_dynamic_slots() {
     )
     .expect("frozen base installs");
 
-    let frozen_id =
-        store.intern_with_semantic_id(&frozen, TokenSemanticId::testing(99), 17, None, None);
+    let frozen_id = store.testing_intern_with_semantic_id(
+        &frozen,
+        TokenSemanticId::testing(99),
+        17,
+        None,
+        None,
+    );
     assert_eq!(frozen_id.raw(), 1);
     assert_eq!(store.get(frozen_id), frozen);
 
@@ -371,14 +376,23 @@ fn private_token_acceptance_selects_exact_roots_and_drops_unselected_payloads() 
         Some(&mut domain),
     );
     let unselected_id = unselected.id();
-    let selected_root = store.testing_patch_root(&selected, &domain);
+    // Neither a typed clone that disappears before enumeration nor a raw
+    // payload clone can manufacture acceptance authority after the real root
+    // disappears.
+    let temporary_typed_clone = store
+        .owner(unselected_id)
+        .expect("temporary typed clone resolves while its owner is live");
+    let unrelated_transient = unselected.shared();
     domain
         .commit_operation(operation)
         .expect("operation commits");
     drop(unselected);
+    drop(temporary_typed_clone);
 
+    let selected_roots = store.selected_patch_roots(&domain);
+    assert_eq!(selected_roots.len(), 1);
     let accepted = domain
-        .accept(vec![selected_root])
+        .accept(selected_roots)
         .expect("selected root transfers");
     assert_eq!(accepted.len(), 1);
     assert_eq!(
@@ -387,6 +401,71 @@ fn private_token_acceptance_selects_exact_roots_and_drops_unselected_payloads() 
     );
     assert_eq!(selected.tokens(), &[char_token('s')]);
     assert!(!store.contains(unselected_id));
+    assert_eq!(
+        unrelated_transient.tokens.as_ref(),
+        [char_token('u'), char_token('u')]
+    );
+}
+
+#[test]
+fn ten_thousand_bounded_live_redefinitions_plateau_every_pool_dimension() {
+    let mut store = TokenStore::new();
+    let mut current = store.testing_owned(
+        &[char_token(char::from_u32(0x1_0000).expect("valid scalar"))],
+        TokenSemanticId::testing(0),
+        None,
+    );
+    for value in 1..=10_000_u32 {
+        current = store.testing_owned(
+            &[char_token(
+                char::from_u32(0x1_0000 + value).expect("valid scalar"),
+            )],
+            TokenSemanticId::testing(u64::from(value)),
+            None,
+        );
+    }
+    let (slots, slot_capacity, index_keys, index_capacity, bucket_capacity, free) =
+        store.testing_pool_shape();
+    let (live_objects, _) = store.testing_live_totals();
+
+    assert_eq!(current.tokens().len(), 1);
+    assert_eq!(live_objects, 2, "only empty and current values remain live");
+    assert!(slots <= 3, "weak slots did not plateau: {slots}");
+    assert!(
+        slot_capacity <= 4,
+        "slot capacity did not plateau: {slot_capacity}"
+    );
+    assert!(index_keys <= 1_024);
+    assert!(index_capacity <= 2_048);
+    assert!(bucket_capacity <= 4);
+    assert!(free <= 1);
+}
+
+#[test]
+fn all_token_roots_live_grow_by_exact_objects_and_logical_bytes() {
+    const ROOTS: usize = 2_048;
+    let mut store = TokenStore::new();
+    let baseline = store.testing_live_totals();
+    let roots = (0..ROOTS)
+        .map(|value| {
+            store.testing_owned(
+                &[
+                    char_token(char::from_u32(0x1_0000 + value as u32).expect("valid scalar")),
+                    char_token('!'),
+                ],
+                TokenSemanticId::testing(value as u64 + 1),
+                None,
+            )
+        })
+        .collect::<Vec<_>>();
+    let grown = store.testing_live_totals();
+    let bytes_per_root =
+        core::mem::size_of::<super::TokenListValue>() + 2 * core::mem::size_of::<Token>();
+
+    assert_eq!(grown.0 - baseline.0, ROOTS);
+    assert_eq!(grown.1 - baseline.1, ROOTS * bytes_per_root);
+    assert_eq!(store.testing_pool_shape().0 - baseline.0, ROOTS);
+    assert_eq!(roots.len(), ROOTS);
 }
 
 #[derive(Clone, Debug)]
@@ -412,16 +491,18 @@ proptest! {
         ops in prop::collection::vec(op_strategy(), 0..256)
     ) {
         let mut store = TokenStore::new();
-        let mut model: Vec<Vec<Token>> = vec![Vec::new()];
-        let mut model_index: AHashMap<Vec<Token>, usize> = AHashMap::from([(Vec::new(), 0)]);
+        let mut model: Vec<(Vec<Token>, TokenListId)> =
+            vec![(Vec::new(), TokenListId::EMPTY)];
+        let mut model_index: AHashMap<Vec<Token>, TokenListId> =
+            AHashMap::from([(Vec::new(), TokenListId::EMPTY)]);
         let mut marks: Vec<(TokenStoreMark, usize)> = vec![(store.watermark(), model.len())];
 
         for op in ops {
             match op {
                 Op::Intern(tokens) => {
                     let id = store.intern(&tokens);
-                    let expected = model_id(&mut model, &mut model_index, &tokens);
-                    prop_assert_eq!(id.raw() as usize, expected);
+                    let expected = model_id(&mut model, &mut model_index, &tokens, id);
+                    prop_assert_eq!(id, expected);
                 }
                 Op::Build(tokens) => {
                     let mut builder = TokenListBuilder::new();
@@ -429,8 +510,8 @@ proptest! {
                         builder.push(*token);
                     }
                     let id = builder.finish(&mut store);
-                    let expected = model_id(&mut model, &mut model_index, &tokens);
-                    prop_assert_eq!(id.raw() as usize, expected);
+                    let expected = model_id(&mut model, &mut model_index, &tokens, id);
+                    prop_assert_eq!(id, expected);
                     prop_assert!(builder.is_empty());
                 }
                 Op::Mark => {
@@ -446,40 +527,34 @@ proptest! {
                 }
             }
 
-            prop_assert_eq!(store.watermark().spans as usize, model.len());
-            for (raw, expected) in model.iter().enumerate() {
+            for (expected, id) in &model {
                 let id = store
-                    .resolve_stored(TokenListId::new(raw as u32))
+                    .resolve_stored(*id)
                     .expect("model slot should resolve to a live token-list identity");
                 prop_assert_eq!(store.get(id), expected.as_slice());
-                prop_assert_eq!(store.intern(expected).raw() as usize, raw);
+                prop_assert_eq!(store.intern(expected), id);
             }
         }
     }
 }
 
 fn model_id(
-    model: &mut Vec<Vec<Token>>,
-    index: &mut AHashMap<Vec<Token>, usize>,
+    model: &mut Vec<(Vec<Token>, TokenListId)>,
+    index: &mut AHashMap<Vec<Token>, TokenListId>,
     tokens: &[Token],
-) -> usize {
+    actual: TokenListId,
+) -> TokenListId {
     if let Some(&id) = index.get(tokens) {
         return id;
     }
-    let id = model.len();
     let tokens = tokens.to_vec();
-    model.push(tokens.clone());
-    index.insert(tokens, id);
-    id
+    model.push((tokens.clone(), actual));
+    index.insert(tokens, actual);
+    actual
 }
 
-fn rebuild_model_index(model: &[Vec<Token>]) -> AHashMap<Vec<Token>, usize> {
-    model
-        .iter()
-        .cloned()
-        .enumerate()
-        .map(|(id, tokens)| (tokens, id))
-        .collect()
+fn rebuild_model_index(model: &[(Vec<Token>, TokenListId)]) -> AHashMap<Vec<Token>, TokenListId> {
+    model.iter().cloned().collect()
 }
 
 fn token_vec() -> impl Strategy<Value = Vec<Token>> {
