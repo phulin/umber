@@ -133,14 +133,12 @@ impl CommandSummary {
             let crate::input::InputLevel::Source(source) = level else {
                 return None;
             };
-            usize::try_from(
-                source
-                    .cursor
-                    .line
-                    .as_ref()
-                    .map_or(source.cursor.next_physical_offset, |line| line.byte_cursor),
-            )
-            .ok()
+            // A loaded physical line owns its complete normalized image,
+            // including unread bytes after the command that published this
+            // checkpoint. The next refill offset is therefore the earliest
+            // safe edit boundary both while a line is active and between
+            // lines; the token cursor would admit a stale line suffix.
+            usize::try_from(source.cursor.next_physical_offset).ok()
         })
     }
 

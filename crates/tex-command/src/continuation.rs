@@ -69,6 +69,7 @@ struct OwnedSourceRecipe {
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct OwnedRegisteredSource {
     source: SourceRecipeId,
+    rebound_registration: bool,
     kind: RegisteredSourceKind,
     mode: CharacterMode,
     bytes: Vec<u8>,
@@ -411,11 +412,14 @@ impl OwnedCommandContinuation {
                 return invalid("macro recipe references missing content");
             }
         }
+        let mut root_source_seen = false;
         for level in &self.summary.input.levels {
-            self.validate_level(level)?;
+            let is_root_source = matches!(level, OwnedInputLevel::Source(_)) && !root_source_seen;
+            root_source_seen |= matches!(level, OwnedInputLevel::Source(_));
+            self.validate_level(level, is_root_source)?;
         }
         for source in self.summary.input.pending_sources.values() {
-            self.validate_registered_source(source)?;
+            self.validate_registered_source(source, false)?;
         }
         let activation_ids = self
             .summary
@@ -542,17 +546,28 @@ impl OwnedCommandContinuation {
     fn validate_registered_source(
         &self,
         source: &OwnedRegisteredSource,
+        allow_rebound_editor_root: bool,
     ) -> Result<(), CommandContinuationError> {
         let Some(recipe) = self.sources.get(source.source.0) else {
             return Err(CommandContinuationError::InvalidRecipe(
                 "input backing references a missing source",
             ));
         };
-        let descriptor_len = match &recipe.descriptor {
-            OwnedSourceDescriptor::World { bytes, .. }
-            | OwnedSourceDescriptor::Generated { bytes, .. } => bytes.len() as u64,
+        let (descriptor_len, rebound_editor_root) = match &recipe.descriptor {
+            OwnedSourceDescriptor::World { bytes, .. } => (bytes.len() as u64, false),
+            OwnedSourceDescriptor::Generated {
+                logical_path,
+                bytes,
+            } => (
+                bytes.len() as u64,
+                source.rebound_registration
+                    && allow_rebound_editor_root
+                    && source.kind == RegisteredSourceKind::Generated
+                    && logical_path.as_deref() == source.name.as_deref(),
+            ),
         };
-        if descriptor_len != source.bytes.len() as u64
+        if (source.rebound_registration || descriptor_len != source.bytes.len() as u64)
+            && !rebound_editor_root
             || source.mode != self.summary.expansion.profile.character_mode()
         {
             return Err(CommandContinuationError::InvalidRecipe(
@@ -569,13 +584,27 @@ impl OwnedCommandContinuation {
         }
     }
 
+    fn command_source_len(&self, source: SourceRecipeId) -> u64 {
+        self.summary
+            .input
+            .levels
+            .iter()
+            .find_map(|level| match level {
+                OwnedInputLevel::Source(level) if level.cursor.backing.source == source => {
+                    Some(level.cursor.backing.bytes.len() as u64)
+                }
+                OwnedInputLevel::Source(_) | OwnedInputLevel::Tokens(_) => None,
+            })
+            .unwrap_or_else(|| self.source_len(source))
+    }
+
     fn validate_source_range(
         &self,
         range: &OwnedSourceRange,
     ) -> Result<(), CommandContinuationError> {
         if range.source.0 >= self.sources.len()
             || range.start > range.end
-            || range.end > self.source_len(range.source)
+            || range.end > self.command_source_len(range.source)
         {
             return Err(CommandContinuationError::InvalidRecipe(
                 "source cursor range is invalid",
@@ -584,12 +613,16 @@ impl OwnedCommandContinuation {
         Ok(())
     }
 
-    fn validate_level(&self, level: &OwnedInputLevel) -> Result<(), CommandContinuationError> {
+    fn validate_level(
+        &self,
+        level: &OwnedInputLevel,
+        is_root_source: bool,
+    ) -> Result<(), CommandContinuationError> {
         match level {
             OwnedInputLevel::Source(source) => {
-                self.validate_registered_source(&source.cursor.backing)?;
+                self.validate_registered_source(&source.cursor.backing, is_root_source)?;
                 if let Some(line) = &source.cursor.line_backing {
-                    self.validate_registered_source(line)?;
+                    self.validate_registered_source(line, false)?;
                 }
                 if let Some((tokens, origins)) = source.every_eof
                     && (tokens.0 >= self.token_lists.len() || origins.0 >= self.origin_lists.len())
@@ -604,8 +637,8 @@ impl OwnedCommandContinuation {
                     for (range, _) in &line.reduced_spellings {
                         self.validate_source_range(range)?;
                     }
-                    if line.byte_cursor > self.source_len(line.content.source)
-                        || line.retained_end > self.source_len(line.content.source)
+                    if line.byte_cursor > self.command_source_len(line.content.source)
+                        || line.retained_end > self.command_source_len(line.content.source)
                     {
                         return Err(CommandContinuationError::InvalidRecipe(
                             "source line cursor exceeds its backing",
@@ -641,8 +674,8 @@ impl OwnedCommandContinuation {
                             if let Some(source) = &word.source_provenance
                                 && (source.source.0 >= self.sources.len()
                                     || source.start > source.end
-                                    || source.end > self.source_len(source.source)
-                                    || source.location > self.source_len(source.source))
+                                    || source.end > self.command_source_len(source.source)
+                                    || source.location > self.command_source_len(source.source))
                             {
                                 return Err(CommandContinuationError::InvalidRecipe(
                                     "backup provenance references a missing source",

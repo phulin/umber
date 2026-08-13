@@ -79,6 +79,7 @@ schema_struct!(OwnedSourceRecipe {
 });
 schema_struct!(OwnedRegisteredSource {
     source: SourceRecipeId,
+    rebound_registration: bool,
     kind: RegisteredSourceKind,
     mode: CharacterMode,
     bytes: Vec<u8>,

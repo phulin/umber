@@ -1825,6 +1825,142 @@ fn adopted_old_suffix_remains_restartable_on_the_next_edit() {
 }
 
 #[test]
+fn restored_suffix_resource_candidate_retries_once_and_rejects_atomically() {
+    let original = "\\def\\live#1{#1}\\count0=1\\begingroup\\def\\live#1{#1#1}\\skip0=1pt plus 1fil\\message{group}\\endgroup\\shipout\\vbox{\\hrule height1pt width10pt}\n\\end";
+    let value_offset = original.find("\\count0=1").expect("count assignment") + "\\count0=".len();
+    let mut accepted_source = original.to_owned();
+    accepted_source.replace_range(value_offset..value_offset + 1, "2");
+    let mut session = Session::start(
+        template(),
+        "restored-resource-suffix",
+        RevisionId::new(1),
+        original,
+        usize::MAX,
+    )
+    .expect("session starts");
+    session.cold().expect("cold execution succeeds");
+    let adopted = session
+        .advance(
+            RevisionId::new(2),
+            Edit {
+                base_revision: RevisionId::new(1),
+                expected_hash: ContentHash::from_bytes(original.as_bytes()),
+                range: value_offset..value_offset + 1,
+                replacement: "2".to_owned(),
+            },
+        )
+        .expect("partial revision accepts");
+    assert_eq!(
+        adopted.reuse.execution_path,
+        RevisionExecutionPath::SlowEdit
+    );
+
+    let before_retention = session.retention_metrics().expect("accepted retention");
+    let before_output = session.output(ReuseMetrics::default(), before_retention);
+    let before_state_hash = session
+        .history()
+        .last()
+        .expect("accepted checkpoint")
+        .state_hash();
+    let before_owners = session
+        .substrate
+        .as_ref()
+        .expect("accepted substrate")
+        .testing_ownership_census();
+    let before_layout_generation = session.layout.generation();
+    let before_layout_pieces = session.layout.pieces().to_vec();
+    let before_layout_doc_starts = session.layout.doc_starts().to_vec();
+    let end = accepted_source.rfind("\\end").expect("terminal end");
+    let mut candidate = session
+        .start_advance_candidate(
+            RevisionId::new(3),
+            Edit {
+                base_revision: RevisionId::new(2),
+                expected_hash: ContentHash::from_bytes(accepted_source.as_bytes()),
+                range: end..accepted_source.len(),
+                replacement: "\\input missing \\end".to_owned(),
+            },
+        )
+        .expect("restored suffix candidate starts");
+    let RevisionCandidateKind::Incremental { setup, restart, .. } = &candidate.kind else {
+        panic!("suffix edit must restore an accepted checkpoint");
+    };
+    assert_eq!(
+        setup.execution_path,
+        RevisionExecutionPath::SlowEdit,
+        "the regression must use checkpoint restore, not forced JobStart replacement"
+    );
+    assert_eq!(
+        setup.old_history[*restart].key.boundary,
+        EngineBoundary::ShipoutComplete
+    );
+
+    let mut inputs = StagedInputResolver::default();
+    let first_attempt = candidate
+        .drive_with_resource_resolvers(
+            &mut DecliningStagedResourceHost::new(&mut inputs),
+            &Cancellation::new(),
+        )
+        .expect("missing resource suspends");
+    assert!(
+        matches!(
+            first_attempt,
+        RevisionCandidateResult::AwaitingResources(ResourceNeed::Input { ref name, .. })
+            if name == "missing.tex"
+        ),
+        "unexpected first attempt: {first_attempt:?}"
+    );
+    assert_eq!(candidate.execution_telemetry().suspensions, 1);
+    inputs
+        .files
+        .insert("missing".to_owned(), "\\relax".to_owned());
+    assert!(matches!(
+        candidate
+            .drive_with_resource_resolvers(
+                &mut DecliningStagedResourceHost::new(&mut inputs),
+                &Cancellation::new(),
+            )
+            .expect("fulfilled candidate completes"),
+        RevisionCandidateResult::Complete
+    ));
+    let telemetry = candidate.execution_telemetry();
+    assert_eq!(telemetry.suspensions, 1);
+    assert_eq!(candidate.suspension_serial(), 1);
+    drop(candidate);
+
+    assert_eq!(session.revision(), RevisionId::new(2));
+    assert_eq!(session.source(), accepted_source);
+    assert_eq!(session.layout.generation(), before_layout_generation);
+    assert_eq!(session.layout.pieces(), before_layout_pieces);
+    assert_eq!(session.layout.doc_starts(), before_layout_doc_starts);
+    assert_eq!(session.retention_metrics(), Some(before_retention));
+    assert_eq!(
+        session
+            .history()
+            .last()
+            .expect("accepted checkpoint")
+            .state_hash(),
+        before_state_hash
+    );
+    assert_eq!(
+        session
+            .substrate
+            .as_ref()
+            .expect("accepted substrate")
+            .testing_ownership_census(),
+        before_owners
+    );
+    let after_output = session.output(ReuseMetrics::default(), before_retention);
+    assert_eq!(after_output.effects, before_output.effects);
+    assert_eq!(after_output.artifacts, before_output.artifacts);
+    assert_eq!(after_output.dvi_pages, before_output.dvi_pages);
+    assert_eq!(
+        after_output.dvi_bytes().expect("output DVI"),
+        before_output.dvi_bytes().expect("accepted DVI")
+    );
+}
+
+#[test]
 fn edited_output_is_byte_identical_to_a_fresh_cold_session() {
     let original = source("a");
     let replacement = source("longer");
@@ -1848,7 +1984,7 @@ fn edited_output_is_byte_identical_to_a_fresh_cold_session() {
             },
         )
         .expect("edit succeeds");
-    assert_eq!(edited.reuse.execution_path, RevisionExecutionPath::SlowEdit);
+    assert_eq!(edited.reuse.execution_path, RevisionExecutionPath::FastEdit);
 
     let mut cold = Session::start(
         template(),

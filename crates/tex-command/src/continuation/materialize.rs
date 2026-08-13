@@ -291,7 +291,21 @@ impl<'a> Materializer<'a> {
                 .universe
                 .detached_source_descriptor(self.source_ids[source.source.0])
                 .expect("installed World source has a destination-local descriptor"),
-            OwnedSourceDescriptor::Generated { .. } => Self::generated_source_descriptor(recipe),
+            // The source recipe owns the stable source-map registration. A
+            // rebound editor cursor can legitimately own newer bytes under
+            // that same coordinate identity, so rebuild its input descriptor
+            // from the cursor backing rather than conflating the two roots.
+            OwnedSourceDescriptor::Generated { logical_path, .. } => {
+                logical_path.as_ref().map_or_else(
+                    || SourceDescriptor::generated(Arc::from(source.bytes.clone())),
+                    |path| {
+                        SourceDescriptor::named_generated(
+                            path.clone(),
+                            Arc::from(source.bytes.clone()),
+                        )
+                    },
+                )
+            }
         };
         RegisteredSource::from_detached_parts(crate::input::DetachedRegisteredSourceParts {
             id: self.source_ids[source.source.0],

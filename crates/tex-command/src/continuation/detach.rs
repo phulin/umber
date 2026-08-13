@@ -132,8 +132,26 @@ impl<'a> Detacher<'a> {
     }
 
     fn registered_source(&mut self, source: &RegisteredSource) -> OwnedRegisteredSource {
+        // An editor-root cursor may have been rebound onto newer revision
+        // bytes while its stable source-map coordinate registration remains
+        // the one retained by the accepted substrate. Keep those two recipes
+        // distinct: the source recipe describes the structural registration,
+        // while this value's bytes describe the live cursor backing.
+        let live_descriptor = source.source_descriptor();
+        let retained_descriptor = self.universe.detached_source_descriptor(source.id);
+        let rebound_registration = retained_descriptor
+            .as_ref()
+            .is_some_and(|descriptor| descriptor != &live_descriptor);
+        let source_recipe = if let Some(descriptor) = retained_descriptor {
+            self.source_descriptor(source.id, descriptor)
+        } else {
+            // JobStart precedes first delivery and therefore may not have
+            // published the root registration yet.
+            self.source_descriptor(source.id, source.source_descriptor())
+        };
         OwnedRegisteredSource {
-            source: self.source_descriptor(source.id, source.source_descriptor()),
+            source: source_recipe,
+            rebound_registration,
             kind: source.kind,
             mode: source.mode,
             bytes: source.bytes.to_vec(),

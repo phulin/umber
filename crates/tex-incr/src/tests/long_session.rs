@@ -85,7 +85,7 @@ struct PlateauMilestone {
 fn long_session_source(value: u8) -> String {
     assert!(matches!(value, b'1' | b'2'));
     format!(
-        "\\def\\live#1{{#1}}\\count0={}\\begingroup\\def\\live#1{{#1#1}}\\skip0=1pt plus 1fil\\message{{group}}\\endgroup\\shipout\\vbox{{\\hrule height1pt width10pt}}\\end",
+        "\\def\\live#1{{#1}}\\count0={}\\begingroup\\def\\live#1{{#1#1}}\\skip0=1pt plus 1fil\\message{{group}}\\endgroup\\shipout\\vbox{{\\hrule height1pt width10pt}}\n\\end",
         char::from(value)
     )
 }
@@ -149,7 +149,7 @@ fn complete_retried_rejected_patch(session: &Session, receipt: &mut WorkReceipt)
     let source = session.source.clone();
     let end = source.rfind("\\end").expect("terminal end");
     let mut candidate = session
-        .start_advance_candidate_from_job_start(
+        .start_advance_candidate(
             RevisionId::new(session.revision().raw() + 1),
             Edit {
                 base_revision: session.revision(),
@@ -159,6 +159,11 @@ fn complete_retried_rejected_patch(session: &Session, receipt: &mut WorkReceipt)
             },
         )
         .expect("rejected patch candidate starts");
+    assert!(matches!(
+        &candidate.kind,
+        RevisionCandidateKind::Incremental { setup, .. }
+            if setup.execution_path == RevisionExecutionPath::SlowEdit
+    ));
     let mut inputs = StagedInputResolver::default();
     assert!(matches!(
         candidate

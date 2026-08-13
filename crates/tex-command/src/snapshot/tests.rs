@@ -394,6 +394,70 @@ fn continuation_destination_conflict_is_atomic_and_retryable() {
     assert_eq!(restored.root_source_anchor(), Some(0));
 }
 
+#[test]
+fn continuation_keeps_rebound_cursor_bytes_separate_from_source_registration() {
+    let original = b"source";
+    let rebound = b"edited source";
+    let mut state = CommandState::default();
+    let source_id = state
+        .register_source(SourceRegistration::new(
+            RegisteredSourceKind::Generated,
+            original.to_vec(),
+        ))
+        .expect("source recipe");
+    state
+        .open_registered_source(source_id)
+        .expect("registered source opens");
+    let InputLevel::Source(source) = state.input.levels.last().expect("source level") else {
+        panic!("wrong level kind");
+    };
+    let original_descriptor = source.cursor.backing.source_descriptor();
+    let mut retained = tex_state::Universe::new();
+    retained
+        .register_source(source_id, original_descriptor.clone())
+        .expect("stable coordinate registration");
+    let mut summary = state.publish_summary().expect("source state is quiescent");
+    assert!(summary.rebind_root_source(original, std::sync::Arc::from(&rebound[..])));
+    let owned = crate::OwnedCommandContinuation::detach(&summary, &retained);
+
+    let mut destination = tex_state::Universe::new();
+    destination
+        .register_source(source_id, original_descriptor.clone())
+        .expect("destination keeps the coordinate registration");
+    let before = destination.provenance_stats();
+    let restored = owned
+        .materialize(&mut destination)
+        .expect("rebound cursor materializes over its retained registration");
+
+    assert!(restored.root_source_matches(rebound));
+    assert_eq!(destination.provenance_stats(), before);
+    assert_eq!(
+        destination.detached_source_descriptor(source_id),
+        Some(original_descriptor)
+    );
+}
+
+#[test]
+fn root_anchor_rounds_past_the_complete_loaded_physical_line() {
+    let mut state = CommandState::default();
+    let source = state
+        .register_source(SourceRegistration::new(
+            RegisteredSourceKind::Generated,
+            b"first\nsecond".to_vec(),
+        ))
+        .expect("source registers");
+    state
+        .open_registered_source(source)
+        .expect("registered source opens");
+    state.load_next_source_line(13).expect("first line loads");
+    state
+        .next_source_character()
+        .expect("one scalar is consumed");
+
+    let summary = state.publish_summary().expect("source state is quiescent");
+    assert_eq!(summary.root_source_anchor(), Some(b"first\n".len()));
+}
+
 fn templates() -> AlignmentCellTemplates {
     let universe = tex_state::Universe::new();
     AlignmentCellTemplates {
