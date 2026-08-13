@@ -19,7 +19,7 @@ use crate::{CommandError, CommandProcessor};
 /// The register number follows the active profile: TeX82's eight-bit bound or
 /// e-TeX's 15-bit sparse-register bound. The token list is already frozen by
 /// the command-owned collector or copied from an internal token-list value.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ScannedTokenRegisterAssignment {
     pub index: u16,
     pub tokens: TracedTokenList,
@@ -30,12 +30,12 @@ pub struct ScannedTokenRegisterAssignment {
 /// `None` is tex.web's null token-list pointer. `Some` deliberately does not
 /// imply a nonempty list: §1226 copies a present source pointer even when its
 /// list is empty, while a newly scanned empty braced list becomes null.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ScannedTokenParameterAssignment {
     pub tokens: Option<TracedTokenList>,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 struct ScannedTokenListRightHandSide {
     tokens: TracedTokenList,
     pointer_present: bool,
@@ -117,14 +117,14 @@ impl CommandProcessor<'_> {
                 let index = self.scan_profile_register_index()?;
                 let tokens = self.state.toks(index);
                 return Ok(ScannedTokenListRightHandSide {
-                    tokens: TracedTokenList::synthetic(tokens),
+                    tokens: TracedTokenList::synthetic(self.state.token_list_ref(tokens)),
                     pointer_present: !self.state.tokens(tokens).is_empty(),
                 });
             }
             Meaning::ToksRegister(index) => {
                 let tokens = self.state.toks(index);
                 return Ok(ScannedTokenListRightHandSide {
-                    tokens: TracedTokenList::synthetic(tokens),
+                    tokens: TracedTokenList::synthetic(self.state.token_list_ref(tokens)),
                     pointer_present: !self.state.tokens(tokens).is_empty(),
                 });
             }
@@ -135,11 +135,14 @@ impl CommandProcessor<'_> {
                         .tok_param_option(tex_state::env::banks::TokParam::new(index))
                     {
                         Some(tokens) => ScannedTokenListRightHandSide {
-                            tokens: TracedTokenList::synthetic(tokens),
+                            tokens: TracedTokenList::synthetic(self.state.token_list_ref(tokens)),
                             pointer_present: true,
                         },
                         None => ScannedTokenListRightHandSide {
-                            tokens: TracedTokenList::synthetic(tex_state::ids::TokenListId::EMPTY),
+                            tokens: TracedTokenList::synthetic(
+                                self.state
+                                    .token_list_ref(tex_state::ids::TokenListId::EMPTY),
+                            ),
                             pointer_present: false,
                         },
                     },
@@ -172,7 +175,7 @@ impl CommandProcessor<'_> {
                 .replacement_text
             }
         };
-        if self.state.tokens(collected.token_list()).is_empty() {
+        if collected.token_ref().tokens().is_empty() {
             return Ok(ScannedTokenListRightHandSide {
                 tokens: collected,
                 pointer_present: false,
@@ -193,8 +196,9 @@ impl CommandProcessor<'_> {
             OriginId::UNKNOWN,
         ));
         tokens.extend(
-            self.state
-                .tokens(collected.token_list())
+            collected
+                .token_ref()
+                .tokens()
                 .iter()
                 .copied()
                 .map(|token| TracedTokenWord::pack(token, OriginId::UNKNOWN)),

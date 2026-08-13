@@ -56,6 +56,7 @@ fn push_activation(
 #[test]
 fn transient_dynamic_words_count_owned_buffers_once() {
     let mut state = CommandState::default();
+    let universe = Universe::new();
     let arguments = Arc::from([traced('a'), traced('b'), traced('c')]);
     push_activation(
         &mut state,
@@ -90,7 +91,7 @@ fn transient_dynamic_words_count_owned_buffers_once() {
     );
     state.push_token_level(
         TokenPayload::Stored {
-            tokens: TokenListId::EMPTY,
+            tokens: universe.token_list_ref(TokenListId::EMPTY),
             origins: OriginListId::EMPTY,
         },
         TokenBehavior::Ordinary,
@@ -107,9 +108,10 @@ fn transient_dynamic_words_count_owned_buffers_once() {
 #[test]
 fn each_popped_level_retires_exactly_once_with_its_trace() {
     let mut state = CommandState::default();
+    let universe = Universe::new();
     let identity = state.push_token_level(
         TokenPayload::Stored {
-            tokens: TokenListId::EMPTY,
+            tokens: universe.token_list_ref(TokenListId::EMPTY),
             origins: OriginListId::EMPTY,
         },
         TokenBehavior::Ordinary,
@@ -609,7 +611,7 @@ fn stored_token_reference_lifetime_survives_redefinition_and_replay() {
     let mut universe = Universe::new();
     let symbol = universe.intern("stable-reference").symbol();
     universe.set_meaning(symbol, Meaning::CharGiven('A'));
-    let list = universe.intern_token_list(&[Token::Cs(symbol)]);
+    let list = universe.intern_token_list_ref(&[Token::Cs(symbol)]);
     let mut state = CommandState::default();
     let level = state.push_token_level(
         TokenPayload::Stored {
@@ -631,10 +633,10 @@ fn stored_token_reference_lifetime_survives_redefinition_and_replay() {
     else {
         panic!("stored replay changed level kind");
     };
-    let TokenPayload::Stored { tokens, .. } = cursor.payload else {
+    let TokenPayload::Stored { tokens, .. } = &cursor.payload else {
         panic!("stored replay changed payload kind");
     };
-    assert_eq!(universe.tokens(tokens), &[Token::Cs(symbol)]);
+    assert_eq!(tokens.tokens(), &[Token::Cs(symbol)]);
     assert_eq!(universe.meaning(symbol), Meaning::CharGiven('B'));
     assert_eq!(
         state
@@ -642,6 +644,46 @@ fn stored_token_reference_lifetime_survives_redefinition_and_replay() {
             .expect("replay retires")
             .reason,
         InputRetirementReason::TokenList(StoredReplayReason::Mark)
+    );
+}
+
+#[test]
+fn snapshot_restores_strong_stored_root_after_live_cursor_retires() {
+    let mut universe = Universe::new();
+    let root = universe.intern_token_list_ref(&[Token::Char {
+        ch: 'R',
+        cat: Catcode::Other,
+    }]);
+    let mut state = CommandState::default();
+    let level = state.push_token_level(
+        TokenPayload::Stored {
+            tokens: root,
+            origins: OriginListId::EMPTY,
+        },
+        TokenBehavior::Ordinary,
+        RetirementBehavior::Pop,
+        ReplayTrace::Stored(StoredReplayReason::Mark),
+    );
+    let snapshot = state.snapshot();
+
+    state
+        .retire_exhausted_input(level)
+        .expect("live stored cursor retires");
+    drop(universe);
+    state.rollback(snapshot).expect("snapshot restores");
+
+    let InputLevel::Tokens(cursor) = state.input.levels.last().expect("restored cursor") else {
+        panic!("snapshot restored the wrong level kind");
+    };
+    let TokenPayload::Stored { tokens, .. } = &cursor.payload else {
+        panic!("snapshot restored the wrong payload kind");
+    };
+    assert_eq!(
+        tokens.tokens(),
+        &[Token::Char {
+            ch: 'R',
+            cat: Catcode::Other,
+        }]
     );
 }
 
@@ -780,6 +822,7 @@ fn token_list_retirement_reports_no_name_classification() {
 
 #[test]
 fn token_list_kind_reference_and_parameter_stack_lifecycle_matrix() {
+    let universe = Universe::new();
     for (behavior, trace, expected_reason) in [
         (
             TokenBehavior::Ordinary,
@@ -800,7 +843,7 @@ fn token_list_kind_reference_and_parameter_stack_lifecycle_matrix() {
         let mut state = CommandState::default();
         let identity = state.push_token_level(
             TokenPayload::Stored {
-                tokens: TokenListId::EMPTY,
+                tokens: universe.token_list_ref(TokenListId::EMPTY),
                 origins: OriginListId::EMPTY,
             },
             behavior,

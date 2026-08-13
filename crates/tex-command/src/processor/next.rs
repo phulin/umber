@@ -472,7 +472,12 @@ impl CommandProcessor<'_> {
         saved_delimiter: crate::AlignmentCellDelimiter,
     ) -> Result<(), CommandError> {
         self.command
-            .begin_alignment_v_template(alignment, saved_delimiter)
+            .begin_alignment_v_template(
+                alignment,
+                saved_delimiter,
+                self.state
+                    .token_list_ref(tex_state::ids::TokenListId::EMPTY),
+            )
             .map_err(|_| CommandError::input_invariant())?;
         if let Some(input) = self
             .command
@@ -1010,11 +1015,12 @@ impl CommandProcessor<'_> {
     /// §1054's `its_all_over` never starts it directly, it only appends the
     /// end-job contribution trio and lets §994's `build_page` decide.
     pub fn begin_selected_output_routine(&mut self) -> Result<(), CommandError> {
-        let output = TracedTokenList::synthetic(self.state.tok_param(TokParam::OUTPUT));
+        let output_id = self.state.tok_param(TokParam::OUTPUT);
+        let output = TracedTokenList::synthetic(self.state.token_list_ref(output_id));
         self.report_named_token_list("output", output.token_list());
         let level = self.command.push_token_level(
             TokenPayload::Stored {
-                tokens: output.token_list(),
+                tokens: output.token_ref().clone(),
                 origins: output.origin_list(),
             },
             TokenBehavior::Ordinary,
@@ -1957,7 +1963,7 @@ impl CommandProcessor<'_> {
             .flatten()
             .map(|spelling| (spelling, None)),
             TokenPayload::Stored { tokens, origins } => {
-                let token = *self.state.tokens(*tokens).get(cursor.index)?;
+                let token = *tokens.tokens().get(cursor.index)?;
                 let origin = self
                     .state
                     .origin_list(*origins)
@@ -2695,10 +2701,11 @@ mod tests {
     }
 
     fn templates() -> crate::AlignmentCellTemplates {
+        let universe = Universe::new();
         crate::AlignmentCellTemplates {
             u_template: None,
             v_template: tex_state::input::TracedTokenList::synthetic(
-                tex_state::ids::TokenListId::EMPTY,
+                universe.token_list_ref(tex_state::ids::TokenListId::EMPTY),
             ),
         }
     }
@@ -3651,7 +3658,7 @@ mod tests {
         )]);
         command.push_token_level(
             TokenPayload::Stored {
-                tokens: stored.token_list(),
+                tokens: stored.token_ref().clone(),
                 origins: stored.origin_list(),
             },
             TokenBehavior::Ordinary,
@@ -3972,7 +3979,7 @@ mod tests {
         let alignment = crate::AlignmentIdentity::new(19);
         let mut universe = Universe::new_with_plain_catcodes();
         let v_template =
-            tex_state::input::TracedTokenList::synthetic(universe.intern_token_list(&[
+            tex_state::input::TracedTokenList::synthetic(universe.intern_token_list_ref(&[
                 Token::Char {
                     ch: 'v',
                     cat: Catcode::Letter,
@@ -4158,14 +4165,14 @@ mod tests {
         );
         let mut universe = Universe::new_with_plain_catcodes();
         let u_template =
-            tex_state::input::TracedTokenList::synthetic(universe.intern_token_list(&[
+            tex_state::input::TracedTokenList::synthetic(universe.intern_token_list_ref(&[
                 Token::Char {
                     ch: 'u',
                     cat: Catcode::Letter,
                 },
             ]));
         let v_template =
-            tex_state::input::TracedTokenList::synthetic(universe.intern_token_list(&[
+            tex_state::input::TracedTokenList::synthetic(universe.intern_token_list_ref(&[
                 Token::Char {
                     ch: 'v',
                     cat: Catcode::Letter,
@@ -4379,14 +4386,14 @@ mod tests {
         );
         let mut universe = Universe::new_with_plain_catcodes();
         let u_template =
-            tex_state::input::TracedTokenList::synthetic(universe.intern_token_list(&[
+            tex_state::input::TracedTokenList::synthetic(universe.intern_token_list_ref(&[
                 Token::Char {
                     ch: 'u',
                     cat: Catcode::Letter,
                 },
             ]));
         let v_template =
-            tex_state::input::TracedTokenList::synthetic(universe.intern_token_list(&[
+            tex_state::input::TracedTokenList::synthetic(universe.intern_token_list_ref(&[
                 Token::Char {
                     ch: 'v',
                     cat: Catcode::Letter,

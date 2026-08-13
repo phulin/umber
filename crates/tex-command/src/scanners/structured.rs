@@ -56,7 +56,7 @@ pub struct StructuredProvenance {
 }
 
 /// A balanced token list frozen through the aggregate token store.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ScannedBalancedText {
     pub tokens: TracedTokenList,
     pub provenance: StructuredProvenance,
@@ -72,7 +72,7 @@ pub struct ExpandedWriteText {
 }
 
 /// The two immutable lists collected for a macro definition.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ScannedMacroDefinition {
     /// The raw control-sequence (or active-character) target accepted by
     /// TeX82's `prefixed_command`.  Target delivery is command-owned so the
@@ -2258,8 +2258,11 @@ impl CommandProcessor<'_> {
         let page = if self.scan_keyword("named")?.value {
             let tokens = self.scan_balanced_text(true)?.tokens;
             PdfImagePageSelection::Named(
-                crate::processor::token_list_string_text(&mut self.state, tokens.token_list())
-                    .into_bytes(),
+                crate::processor::token_slice_string_text(
+                    &mut self.state,
+                    tokens.token_ref().tokens(),
+                )
+                .into_bytes(),
             )
         } else if self.scan_keyword("page")?.value {
             PdfImagePageSelection::Number(self.scan_integer()?.value)
@@ -2525,7 +2528,7 @@ impl CommandProcessor<'_> {
         &mut self,
         tokens: TracedTokenList,
     ) -> Result<ExpandedWriteText, CommandError> {
-        let write_words = self.state.tokens(tokens.token_list()).len();
+        let write_words = tokens.token_ref().tokens().len();
         let endwrite = self
             .state
             .primitive_token("endwrite")
@@ -2545,7 +2548,7 @@ impl CommandProcessor<'_> {
         let stopper_level = self.push_write_recovery([right_brace, endwrite], right_brace);
         let write_level = self.command.push_token_level(
             TokenPayload::Stored {
-                tokens: tokens.token_list(),
+                tokens: tokens.token_ref().clone(),
                 origins: tokens.origin_list(),
             },
             TokenBehavior::Ordinary,
@@ -2565,7 +2568,7 @@ impl CommandProcessor<'_> {
             let mut text = String::new();
             crate::processor::expand::append_print_esc_text(&self.state, "write", &mut text);
             text.push_str("->");
-            for token in self.state.tokens(tokens.token_list()).to_vec() {
+            for token in tokens.token_ref().tokens().iter().copied() {
                 crate::processor::expand::append_token_list_token_text(
                     &self.state,
                     token,
@@ -2585,7 +2588,7 @@ impl CommandProcessor<'_> {
         self.outer_recovered_while_absorbing = false;
         let expanded = self.scan_balanced_text(true)?.tokens;
         let transient_words = self.command.transient_dynamic_words();
-        let expanded_words = self.state.tokens(expanded.token_list()).len();
+        let expanded_words = expanded.token_ref().tokens().len();
         // TeX82 §1370 keeps the original write list, its expanded scan result,
         // the command-owned transient input nodes, and the three artificial
         // brace/`endwrite` nodes live on the same `write_out` call stack. The
@@ -2774,7 +2777,7 @@ impl CommandProcessor<'_> {
             | InternalValue::Dimension(_)
             | InternalValue::Glue(_)
             | InternalValue::MuGlue(_)) => {
-                render_the_value(value).expect("non-token values render")
+                render_the_value(&value).expect("non-token values render")
             }
             // TeX82 §§262/1297: `the_toks` turns an `ident_val` into a
             // control-sequence token, then `token_show` uses `print_cs`.
@@ -2782,7 +2785,7 @@ impl CommandProcessor<'_> {
             InternalValue::Font(symbol) => print_cs_text(&mut self.state, symbol),
             InternalValue::Tokens { tokens, .. } => {
                 let mut text = String::new();
-                for &token in self.state.tokens(tokens) {
+                for &token in tokens.tokens() {
                     self.state.append_token_selector_text(token, &mut text);
                 }
                 text
@@ -2805,9 +2808,10 @@ impl CommandProcessor<'_> {
         let scanned = self.scan_toks(ScanToksMode::GeneralText {
             purpose: "detokenize",
         })?;
+        let provenance = provenance(&scanned);
         Ok(ScannedBalancedText {
             tokens: scanned.replacement_text,
-            provenance: provenance(&scanned),
+            provenance,
         })
     }
 
@@ -3538,9 +3542,10 @@ impl CommandProcessor<'_> {
         // TeX really does look the brace up first, §1227's token-list
         // assignment, states that explicitly through `GeneralAfterOpening`.
         let scanned = self.scan_toks(ScanToksMode::General { expanded })?;
+        let provenance = provenance(&scanned);
         Ok(ScannedBalancedText {
             tokens: scanned.replacement_text,
-            provenance: provenance(&scanned),
+            provenance,
         })
     }
 
@@ -3563,13 +3568,13 @@ impl CommandProcessor<'_> {
         // and leaves the `cmd` alone; a zero `\uccode`/`\lccode` entry means
         // "no change".  Multiletter control sequences and frozen tokens are
         // above that bound and are never rewritten.
-        let token_count = self.state.tokens(scanned.token_list()).len();
+        let token_count = scanned.token_ref().tokens().len();
         let mut shifted = Vec::with_capacity(token_count);
         for index in 0..token_count {
             // Copy one immutable word at a time so the source interned lists
             // remain in place while the case-code lookup records its mutable
             // dependency read. Only the rewritten backup list needs storage.
-            let token = self.state.tokens(scanned.token_list())[index];
+            let token = scanned.token_ref().tokens()[index];
             let origin = self
                 .state
                 .origin_list(scanned.origin_list())
@@ -3643,11 +3648,12 @@ impl CommandProcessor<'_> {
             self.scan_definition_target()?
         };
         let scanned = self.scan_toks(ScanToksMode::MacroDefinitionFor { expanded, target })?;
+        let provenance = provenance(&scanned);
         Ok(ScannedMacroDefinition {
             target,
             parameter_text: scanned.parameter_text,
             replacement_text: scanned.replacement_text,
-            provenance: provenance(&scanned),
+            provenance,
         })
     }
 

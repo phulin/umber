@@ -75,7 +75,8 @@ use crate::source_map::{
 use crate::survivor::SurvivorArena;
 use crate::token::{Catcode, OriginId, Token, TracedTokenWord};
 use crate::token_store::{
-    TokenListBuilder, TokenSemanticId, TokenSemanticIdBuilder, TokenStore, TokenStoreMark,
+    TokenListBuilder, TokenListRef, TokenSemanticId, TokenSemanticIdBuilder, TokenStore,
+    TokenStoreMark,
 };
 use std::mem;
 use std::sync::Arc;
@@ -1623,6 +1624,29 @@ impl Stores {
         )
     }
 
+    pub(crate) fn intern_token_list_ref_in_domain(
+        &mut self,
+        tokens: &[Token],
+        domain: Option<&mut crate::patch_domain::PatchAllocationDomain>,
+    ) -> TokenListRef {
+        let semantic_id = self.token_list_semantic_id(tokens.iter().copied());
+        let frozen_hash = self
+            .tokens
+            .has_frozen_lists()
+            .then(|| self.frozen_token_lookup_hash(tokens.iter().copied()));
+        let legacy_key = self
+            .tokens
+            .requires_legacy_frozen_key()
+            .then(|| self.legacy_frozen_token_lookup_key(tokens.iter().copied()));
+        self.tokens.intern_owned_with_semantic_identity(
+            tokens,
+            semantic_id,
+            frozen_hash.unwrap_or(0),
+            legacy_key.as_deref(),
+            domain,
+        )
+    }
+
     /// Interns the current token-list builder value and clears it for reuse.
     #[cfg(test)]
     pub fn finish_token_list(&mut self, builder: &mut TokenListBuilder) -> TokenListId {
@@ -1682,7 +1706,7 @@ impl Stores {
 
         #[cfg(feature = "profiling")]
         crate::measurement::record_traced_list_finish(traced.len(), 0, 0);
-        let token_list = self.tokens.intern_traced_with_semantic_id(
+        let token_list = self.tokens.intern_traced_owned_with_semantic_id(
             traced,
             semantic_id,
             frozen_hash.unwrap_or(0),
@@ -1691,6 +1715,11 @@ impl Stores {
         );
         let origin_list = self.provenance.allocate_traced_list(traced);
         TracedTokenList::new(token_list, origin_list)
+    }
+
+    pub(crate) fn token_list_ref(&self, id: TokenListId) -> TokenListRef {
+        let id = self.resolve_stored_token_list(id);
+        self.tokens.owner(id).expect("token list id is not live")
     }
 
     /// Reads a live frozen token list.
@@ -3077,6 +3106,7 @@ impl Stores {
 
     pub fn set_toks(&mut self, index: u16, value: TokenListId) -> crate::env::CellMutationReceipt {
         self.assert_live_token_list(value);
+        let value = self.resolve_stored_token_list(value);
         self.env.set_toks(
             index,
             self.tokens
@@ -3096,6 +3126,7 @@ impl Stores {
         value: TokenListId,
     ) -> crate::env::CellMutationReceipt {
         self.assert_live_token_list(value);
+        let value = self.resolve_stored_token_list(value);
         self.env.set_toks_global(
             index,
             self.tokens
@@ -3339,6 +3370,7 @@ impl Stores {
     ) -> crate::env::CellMutationReceipt {
         let root = value.map(|value| {
             self.assert_live_token_list(value);
+            let value = self.resolve_stored_token_list(value);
             self.tokens
                 .owner(value)
                 .expect("validated token list has a live owner")
@@ -3366,6 +3398,7 @@ impl Stores {
     ) -> crate::env::CellMutationReceipt {
         let root = value.map(|value| {
             self.assert_live_token_list(value);
+            let value = self.resolve_stored_token_list(value);
             self.tokens
                 .owner(value)
                 .expect("validated token list has a live owner")

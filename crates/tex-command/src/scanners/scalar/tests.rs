@@ -2807,16 +2807,18 @@ fn internal_equality_table_sources_scan_each_code_family_and_character_boundary(
 #[test]
 fn internal_token_sources_preserve_empty_nonempty_and_identifier_values() {
     use tex_state::font::NULL_FONT;
-    use tex_state::ids::TokenListId;
 
     let mut universe = crate::test_harness::universe();
     let nonempty = universe.intern_token_list(&[char_token('x'), char_token(' ')]);
+    let nonempty_ref = universe.token_list_ref(nonempty);
     universe.set_toks(7, nonempty);
     let toks = universe.intern("saved").symbol();
     universe.set_meaning(toks, Meaning::ToksRegister(7));
     assert_eq!(
         scan_internal_with(&mut universe, vec![Token::Cs(toks)], |_| {}),
-        InternalValue::Tokens { tokens: nonempty }
+        InternalValue::Tokens {
+            tokens: nonempty_ref,
+        }
     );
 
     let empty = universe.intern("empty").symbol();
@@ -2824,7 +2826,7 @@ fn internal_token_sources_preserve_empty_nonempty_and_identifier_values() {
     assert_eq!(
         scan_internal_with(&mut universe, vec![Token::Cs(empty)], |_| {}),
         InternalValue::Tokens {
-            tokens: TokenListId::EMPTY
+            tokens: universe.token_list_ref(tex_state::ids::TokenListId::EMPTY),
         }
     );
 
@@ -2855,6 +2857,7 @@ fn internal_token_sources_recover_illegal_requested_levels_and_indexes() {
     assert_eq!(scanned.recovery, ScalarRecovery::None);
 
     let zero = universe.intern_token_list(&[char_token('z')]);
+    let zero_ref = universe.token_list_ref(zero);
     universe.set_toks(0, zero);
     for selector in ["-1", "256"] {
         let toks = internal_primitive(&mut universe, "toks", P::Toks);
@@ -2863,7 +2866,9 @@ fn internal_token_sources_recover_illegal_requested_levels_and_indexes() {
             .collect();
         assert_eq!(
             scan_internal_with(&mut universe, tokens, |_| {}),
-            InternalValue::Tokens { tokens: zero }
+            InternalValue::Tokens {
+                tokens: zero_ref.clone(),
+            }
         );
     }
 }
@@ -2875,6 +2880,7 @@ fn tex82_scanner_conditionals_observes_token_list_internal_results() {
     let mut command = CommandState::default();
     let mut universe = crate::test_harness::universe();
     let saved = universe.intern_token_list(&[char_token('x'), char_token(' ')]);
+    let saved_ref = universe.token_list_ref(saved);
     universe.set_toks(7, saved);
     let toks = internal_primitive(&mut universe, "observed-toks", P::Toks);
     push(&mut command, vec![toks, char_token('7')]);
@@ -2897,7 +2903,7 @@ fn tex82_scanner_conditionals_observes_token_list_internal_results() {
             .expect("token-list primitive is internal")
     };
 
-    assert_eq!(value, InternalValue::Tokens { tokens: saved });
+    assert_eq!(value, InternalValue::Tokens { tokens: saved_ref });
     assert_eq!(scanner_kinds(&recorder), vec!["integer", "internal"]);
     let selector = recorder
         .0

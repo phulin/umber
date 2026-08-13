@@ -2056,7 +2056,7 @@ fn rule_spec_starts_v_template_when_scalar_lookahead_hits_cell_delimiters() {
             }
         };
         let v_template =
-            tex_state::input::TracedTokenList::synthetic(universe.intern_token_list(&[
+            tex_state::input::TracedTokenList::synthetic(universe.intern_token_list_ref(&[
                 Token::Char {
                     ch: 'v',
                     cat: Catcode::Letter,
@@ -2237,7 +2237,10 @@ fn alignment_preamble_discards_leading_spaces_from_each_u_template_only() {
         .expect("frozen preamble is available");
     assert_eq!(preamble.columns.len(), 2);
     for column in &preamble.columns {
-        let template = column.u_template.expect("u-template remains nonempty");
+        let template = column
+            .u_template
+            .as_ref()
+            .expect("u-template remains nonempty");
         assert_eq!(universe.tokens(template.token_list()), &[Token::Cs(hfil)]);
     }
     assert_eq!(
@@ -2399,6 +2402,7 @@ fn alignment_preamble_classifies_parameter_and_tab_aliases_by_resolved_command()
     assert!(preamble.columns.iter().all(|column| {
         column
             .u_template
+            .as_ref()
             .is_some_and(|template| universe.tokens(template.token_list()).is_empty())
             && universe.tokens(column.v_template.token_list()).is_empty()
     }));

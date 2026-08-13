@@ -3,8 +3,9 @@
 
 use std::sync::Arc;
 
-use tex_state::ids::{OriginListId, TokenListId};
+use tex_state::ids::OriginListId;
 use tex_state::token::TracedTokenWord;
+use tex_state::token_store::TokenListRef;
 
 use crate::macro_call::{MacroActivationId, MacroArgumentRange};
 
@@ -93,7 +94,7 @@ pub(crate) struct TokenCursor {
 pub(crate) enum TokenPayload {
     /// Immutable semantic tokens and their parallel immutable origins.
     Stored {
-        tokens: TokenListId,
+        tokens: TokenListRef,
         origins: OriginListId,
     },
     /// Tokens materialized for a bounded insertion or scanner operation.

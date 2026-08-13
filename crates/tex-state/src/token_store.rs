@@ -446,6 +446,18 @@ impl TokenStore {
         root.id()
     }
 
+    /// Interns tokens and returns the strong exact-content owner directly.
+    pub(crate) fn intern_owned_with_semantic_identity(
+        &mut self,
+        tokens: &[Token],
+        semantic_id: TokenSemanticId,
+        frozen_hash: u64,
+        legacy_key: Option<&[u8]>,
+        domain: Option<&mut PatchAllocationDomain>,
+    ) -> TokenListRef {
+        self.intern_owned_with_semantic_id(tokens, semantic_id, frozen_hash, legacy_key, domain)
+    }
+
     fn intern_owned_with_semantic_id(
         &mut self,
         tokens: &[Token],
@@ -494,6 +506,7 @@ impl TokenStore {
     }
 
     /// Interns traced tokens using their aggregate-computed canonical identity.
+    #[cfg(test)]
     pub(crate) fn intern_traced_with_semantic_id(
         &mut self,
         traced: &[TracedTokenWord],
@@ -510,6 +523,35 @@ impl TokenStore {
             })
             .collect::<Vec<_>>();
         self.intern_with_semantic_id(&tokens, semantic_id, frozen_hash, legacy_key, domain)
+    }
+
+    /// Interns traced tokens and returns the strong exact-content owner.
+    pub(crate) fn intern_traced_owned_with_semantic_id(
+        &mut self,
+        traced: &[TracedTokenWord],
+        semantic_id: TokenSemanticId,
+        frozen_hash: u64,
+        legacy_key: Option<&[u8]>,
+        domain: Option<&mut PatchAllocationDomain>,
+    ) -> TokenListRef {
+        let tokens = traced
+            .iter()
+            .map(|word| {
+                word.token()
+                    .expect("validated traced token became invalid during interning")
+            })
+            .collect::<Vec<_>>();
+        let root = self.intern_owned_with_semantic_id(
+            &tokens,
+            semantic_id,
+            frozen_hash,
+            legacy_key,
+            domain,
+        );
+        // Traced lists also feed the still-ID-backed node/page/effect strata.
+        // Keep their compatibility bridge until those owners migrate in .4/.5.
+        self.retain_compatibility_root(root.clone());
+        root
     }
 
     #[cfg(test)]

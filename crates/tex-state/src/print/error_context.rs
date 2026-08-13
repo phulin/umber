@@ -99,14 +99,17 @@ impl ErrorContextLevel {
                 .half_error_line()
                 .saturating_sub(label_width)
                 .saturating_sub(3);
+            // A bounded projection has already discarded the prefix before
+            // `self.before`. Translate the full pseudoprint offset into that
+            // retained tail before cropping to §318's final window.
+            let retained = self.before.chars().count();
+            let omitted = read.saturating_sub(retained);
+            let skip = read.saturating_sub(kept).saturating_sub(omitted);
             (
                 format!(
                     "{}...{}",
                     self.label,
-                    self.before
-                        .chars()
-                        .skip(read.saturating_sub(kept))
-                        .collect::<String>()
+                    self.before.chars().skip(skip).collect::<String>()
                 ),
                 widths.half_error_line(),
             )

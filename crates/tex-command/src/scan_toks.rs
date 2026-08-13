@@ -292,13 +292,15 @@ impl CommandProcessor<'_> {
         let result = self.scan_toks_inner(config, &episode);
         if let Ok(result) = &result {
             let mut partial = if matches!(config.grammar, ScanToksGrammar::MacroDefinition) {
-                parameter_text_for_runaway(result, &self.state)
+                parameter_text_for_runaway(result)
             } else {
                 Vec::new()
             };
             partial.extend(
-                self.state
-                    .tokens(result.replacement_text.token_list())
+                result
+                    .replacement_text
+                    .token_ref()
+                    .tokens()
                     .iter()
                     .copied()
                     .map(|token| TracedTokenWord::pack(token, OriginId::UNKNOWN)),
@@ -310,9 +312,9 @@ impl CommandProcessor<'_> {
         let completed_tokens = if !self.is_observed() {
             Vec::new()
         } else if config.purpose.renders_detokenized_result() {
-            crate::processor::expand::token_list_string_text(
+            crate::processor::expand::token_slice_string_text(
                 &mut self.state,
-                result.replacement_text.token_list(),
+                result.replacement_text.token_ref().tokens(),
             )
             .chars()
             .map(|ch| {
@@ -330,8 +332,10 @@ impl CommandProcessor<'_> {
             })
             .collect()
         } else {
-            self.state
-                .tokens(result.replacement_text.token_list())
+            result
+                .replacement_text
+                .token_ref()
+                .tokens()
                 .iter()
                 .copied()
                 .map(|token| self.observed_token(TracedTokenWord::pack(token, OriginId::UNKNOWN)))
@@ -901,14 +905,13 @@ impl CommandProcessor<'_> {
             crate::InternalValue::Font(symbol) => {
                 vec![TracedTokenWord::pack(Token::Cs(symbol), OriginId::UNKNOWN)]
             }
-            crate::InternalValue::Tokens { tokens, .. } => self
-                .state
-                .tokens(tokens)
+            crate::InternalValue::Tokens { tokens, .. } => tokens
+                .tokens()
                 .iter()
                 .copied()
                 .map(|token| TracedTokenWord::pack(token, OriginId::UNKNOWN))
                 .collect::<Vec<_>>(),
-            value => crate::processor::render_the_value(value)
+            value => crate::processor::render_the_value(&value)
                 .expect("non-token internal values render")
                 .chars()
                 .map(|ch| {
@@ -1002,9 +1005,9 @@ impl CommandProcessor<'_> {
         let scanned = self.scan_toks(ScanToksMode::GeneralText {
             purpose: "detokenize",
         })?;
-        let text = crate::processor::expand::token_list_string_text(
+        let text = crate::processor::expand::token_slice_string_text(
             &mut self.state,
-            scanned.replacement_text.token_list(),
+            scanned.replacement_text.token_ref().tokens(),
         );
         let tokens = text
             .chars()
@@ -1050,14 +1053,15 @@ impl CommandProcessor<'_> {
         let scanned = self.scan_toks(ScanToksMode::GeneralText {
             purpose: "unexpanded",
         })?;
-        let first = self
-            .state
-            .tokens(scanned.replacement_text.token_list())
+        let first = scanned
+            .replacement_text
+            .token_ref()
+            .tokens()
             .first()
             .copied();
         self.insert_expansion_list(
             TokenPayload::Stored {
-                tokens: scanned.replacement_text.token_list(),
+                tokens: scanned.replacement_text.token_ref().clone(),
                 origins: scanned.replacement_text.origin_list(),
             },
             first,
@@ -1066,7 +1070,7 @@ impl CommandProcessor<'_> {
     }
 
     fn traced_words(&self, list: TracedTokenList) -> Vec<TracedTokenWord> {
-        let tokens = self.state.tokens(list.token_list());
+        let tokens = list.token_ref().tokens();
         let origins = self.state.origin_list(list.origin_list());
         tokens
             .iter()
@@ -1080,12 +1084,11 @@ impl CommandProcessor<'_> {
     }
 }
 
-fn parameter_text_for_runaway(
-    result: &ScannedToks,
-    state: &tex_state::CommandContext<'_>,
-) -> Vec<TracedTokenWord> {
-    let mut tokens: Vec<_> = state
-        .tokens(result.parameter_text.token_list())
+fn parameter_text_for_runaway(result: &ScannedToks) -> Vec<TracedTokenWord> {
+    let mut tokens: Vec<_> = result
+        .parameter_text
+        .token_ref()
+        .tokens()
         .iter()
         .copied()
         .map(|token| TracedTokenWord::pack(token, OriginId::UNKNOWN))

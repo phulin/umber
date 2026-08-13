@@ -150,6 +150,29 @@ fn render_error_context_respects_width_and_context_line_limits() {
     );
 }
 
+#[test]
+fn bounded_error_context_tail_renders_like_the_full_projection() {
+    let widths = ErrorContextWidths::new(64, 32).expect("valid TeX82 context widths");
+    let before = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+    let retained = before
+        .chars()
+        .skip(before.chars().count() - widths.half_error_line())
+        .collect::<String>();
+    let full = ErrorContextLevel::new("l.1 ", before, "after");
+    let bounded = ErrorContextLevel::from_bounded_projection(
+        "l.1 ",
+        retained,
+        before.chars().count(),
+        "after",
+        "after".chars().count(),
+    );
+
+    assert_eq!(
+        render_error_context(&[bounded], widths, -1),
+        render_error_context(&[full], widths, -1)
+    );
+}
+
 fn terminal_text(universe: &Universe) -> String {
     universe
         .world()

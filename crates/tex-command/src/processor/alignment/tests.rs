@@ -17,11 +17,11 @@ fn resolve(stores: &mut Universe, token: Token) -> CurrentCommand {
 }
 
 fn templates(stores: &mut Universe) -> AlignmentCellTemplates {
-    let u_template = stores.intern_token_list(&[Token::Char {
+    let u_template = stores.intern_token_list_ref(&[Token::Char {
         ch: 'u',
         cat: Catcode::Letter,
     }]);
-    let v_template = stores.intern_token_list(&[Token::Char {
+    let v_template = stores.intern_token_list_ref(&[Token::Char {
         ch: 'v',
         cat: Catcode::Letter,
     }]);
@@ -60,7 +60,7 @@ fn push_pop_alignment_restores_all_tex82_fields() {
     assert_eq!(state.align_stack, [17]);
     assert_eq!(state.align_state, PREAMBLE_ALIGN_STATE);
     state
-        .begin_cell(outer, outer_templates)
+        .begin_cell(outer, outer_templates.clone())
         .expect("alignment test precondition");
     state
         .mark_u_template_installed(outer)
@@ -112,12 +112,12 @@ fn cell_template_delivery_matrix() {
 
     state.begin_alignment(alignment);
     state
-        .begin_cell(alignment, templates)
+        .begin_cell(alignment, templates.clone())
         .expect("alignment test precondition");
     assert_eq!(state.align_state, TEMPLATE_ALIGN_STATE);
     assert_eq!(
         state.active_cell_template(alignment),
-        Ok(templates.u_template)
+        Ok(templates.u_template.clone())
     );
 
     let u_level = InputLevelId(7);
@@ -210,7 +210,13 @@ fn cell_template_delivery_matrix() {
     state
         .begin_v_template(alignment, v_level, AlignmentCellDelimiter::Tab)
         .expect("alignment test precondition");
-    assert_eq!(state.v_template(alignment), Ok(templates.v_template));
+    assert_eq!(
+        state.v_template(
+            alignment,
+            stores.token_list_ref(tex_state::ids::TokenListId::EMPTY),
+        ),
+        Ok(templates.v_template.clone()),
+    );
     let finished = state
         .finish_cell(alignment, v_level)
         .expect("alignment test precondition");
@@ -245,7 +251,7 @@ fn cell_template_delivery_matrix() {
         ),
     ] {
         state
-            .begin_cell(alignment, templates)
+            .begin_cell(alignment, templates.clone())
             .expect("alignment test precondition");
         let u_level = InputLevelId(raw);
         state
@@ -276,7 +282,7 @@ fn cell_template_delivery_matrix() {
     let mut command = CommandState::default();
     command.begin_alignment(omitted);
     command
-        .begin_alignment_cell(omitted, templates)
+        .begin_alignment_cell(omitted, templates.clone())
         .expect("alignment test precondition");
     command
         .prepare_alignment_cell_lookahead()
@@ -287,9 +293,12 @@ fn cell_template_delivery_matrix() {
 
     assert_eq!(command.alignment.align_state, CELL_ALIGN_STATE);
     assert_eq!(
-        command.alignment.v_template(omitted),
+        command.alignment.v_template(
+            omitted,
+            stores.token_list_ref(tex_state::ids::TokenListId::EMPTY),
+        ),
         Ok(TracedTokenList::synthetic(
-            tex_state::ids::TokenListId::EMPTY
+            stores.token_list_ref(tex_state::ids::TokenListId::EMPTY)
         ))
     );
     assert_eq!(
@@ -365,7 +374,9 @@ fn alignment_close_inserts_frozen_cr_before_brace_replay() {
     let alignment = AlignmentIdentity::new(61);
     let templates = AlignmentCellTemplates {
         u_template: None,
-        v_template: TracedTokenList::synthetic(tex_state::ids::TokenListId::EMPTY),
+        v_template: TracedTokenList::synthetic(
+            stores.token_list_ref(tex_state::ids::TokenListId::EMPTY),
+        ),
     };
     let mut state = AlignmentDeliveryState::default();
     state.begin_alignment(alignment);

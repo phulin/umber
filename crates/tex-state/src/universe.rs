@@ -66,7 +66,7 @@ use crate::stores::{
     StoreFormatError, StoreSnapshot, Stores,
 };
 use crate::token::{Catcode, OriginId, Token, TracedTokenWord};
-use crate::token_store::TokenListBuilder;
+use crate::token_store::{TokenListBuilder, TokenListRef};
 use crate::world::{
     CommittedArtifact, ContentHash, EffectPos, EffectRecord, JobClock, PrintSink,
     ShellEscapePolicy, ShellEscapeRecord, StreamBufState, StreamSlot, World, WorldCommitMode,
@@ -5645,6 +5645,12 @@ impl Universe {
             .intern_token_list_in_domain(tokens, self.private_revision_domain.as_mut())
     }
 
+    /// Interns a token list and returns its strong exact-content owner.
+    pub fn intern_token_list_ref(&mut self, tokens: &[Token]) -> TokenListRef {
+        self.stores
+            .intern_token_list_ref_in_domain(tokens, self.private_revision_domain.as_mut())
+    }
+
     pub fn finish_token_list(&mut self, builder: &mut TokenListBuilder) -> TokenListId {
         self.stores
             .finish_token_list_in_domain(builder, self.private_revision_domain.as_mut())
@@ -5660,6 +5666,12 @@ impl Universe {
     #[must_use]
     pub fn tokens(&self, id: TokenListId) -> &[Token] {
         self.stores.tokens(id)
+    }
+
+    /// Clones the strong exact-content owner for a live token coordinate.
+    #[must_use]
+    pub fn token_list_ref(&self, id: TokenListId) -> TokenListRef {
+        self.stores.token_list_ref(id)
     }
 
     /// Returns the reserved unknown/bootstrap provenance origin.
@@ -9011,7 +9023,7 @@ fn hash_input_summary_fields(
                 ..
             } => {
                 hasher.tag(1);
-                stores.hash_token_list_semantic(*token_list, hasher);
+                stores.hash_token_list_semantic(token_list.id(), hasher);
                 hash_token_list_replay_kind(*replay_kind, hasher);
                 hasher.usize(*index);
                 for slot in 1..=crate::input::MACRO_ARGUMENT_SLOTS as u8 {

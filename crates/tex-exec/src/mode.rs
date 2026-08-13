@@ -3,11 +3,11 @@ use std::sync::Arc;
 use tex_state::ids::FontId;
 use tex_state::ids::GlueId;
 use tex_state::ids::NodeListId;
-use tex_state::ids::TokenListId;
 use tex_state::math::FractionThickness;
 use tex_state::node::{BoxNode, Node};
 use tex_state::scaled::Scaled;
 use tex_state::token::OriginId;
+use tex_state::token_store::TokenListRef;
 use tex_state::{EngineBoundaryHasher, EngineMode, Universe};
 
 use crate::ExecError;
@@ -624,10 +624,10 @@ pub enum AlignmentPackSpec {
     Spread(Scaled),
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AlignColumn {
-    pub u_template: TokenListId,
-    pub v_template: TokenListId,
+    pub u_template: TokenListRef,
+    pub v_template: TokenListRef,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -973,8 +973,8 @@ fn hash_mode_list(list: &ModeList, projection: &mut EngineBoundaryHasher<'_>) {
             }
             projection.usize(align.columns.len());
             for column in &align.columns {
-                projection.token_list(column.u_template);
-                projection.token_list(column.v_template);
+                projection.token_list(column.u_template.id());
+                projection.token_list(column.v_template.id());
             }
             projection.usize(align.tabskips.len());
             for &tabskip in &align.tabskips {

@@ -80,10 +80,57 @@ fn durable_continuation_roundtrip_preserves_inline_payloads() {
     ));
 }
 
+#[test]
+fn durable_continuation_materializes_canonical_stored_content_into_new_roots() {
+    let mut universe = tex_state::Universe::new();
+    let symbol = universe.intern("detached-root").symbol();
+    let source_root = universe.intern_token_list_ref(&[Token::Cs(symbol)]);
+    let source_id = source_root.id();
+    let mut state = CommandState::default();
+    state.push_token_level(
+        TokenPayload::Stored {
+            tokens: source_root,
+            origins: tex_state::ids::OriginListId::EMPTY,
+        },
+        TokenBehavior::Ordinary,
+        RetirementBehavior::Pop,
+        ReplayTrace::Inserted,
+    );
+    let summary = state.publish_summary().expect("stored state is quiescent");
+    let owned = crate::OwnedCommandContinuation::detach(&summary, &universe);
+
+    let mut restored_universe = tex_state::Universe::new();
+    let _different_first_coordinate = restored_universe.intern_token_list_ref(&[Token::Char {
+        ch: 'x',
+        cat: Catcode::Other,
+    }]);
+    let restored = owned.materialize(&mut restored_universe);
+    let crate::input::InputLevel::Tokens(cursor) =
+        restored.input.levels.last().expect("materialized level")
+    else {
+        panic!("materialized the wrong level kind");
+    };
+    let TokenPayload::Stored { tokens, .. } = &cursor.payload else {
+        panic!("materialized the wrong payload kind");
+    };
+    assert_ne!(
+        tokens.id(),
+        source_id,
+        "destination coordinate must be local"
+    );
+    let [Token::Cs(restored_symbol)] = tokens.tokens() else {
+        panic!("stored control sequence did not materialize");
+    };
+    assert_eq!(restored_universe.resolve(*restored_symbol), "detached-root");
+}
+
 fn templates() -> AlignmentCellTemplates {
+    let universe = tex_state::Universe::new();
     AlignmentCellTemplates {
-        u_template: Some(TracedTokenList::synthetic(TokenListId::EMPTY)),
-        v_template: TracedTokenList::synthetic(TokenListId::EMPTY),
+        u_template: Some(TracedTokenList::synthetic(
+            universe.token_list_ref(TokenListId::EMPTY),
+        )),
+        v_template: TracedTokenList::synthetic(universe.token_list_ref(TokenListId::EMPTY)),
     }
 }
 

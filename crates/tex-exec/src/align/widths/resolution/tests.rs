@@ -51,13 +51,15 @@ fn row(stores: &mut Universe, cells: &[Node]) -> Node {
 }
 
 fn state(columns: usize, tabskips: Vec<GlueId>) -> AlignState {
+    let universe = Universe::new();
+    let empty = universe.token_list_ref(TokenListId::EMPTY);
     AlignState::new(
         AlignmentKind::HAlign,
         AlignmentPackSpec::Natural,
         vec![
             AlignColumn {
-                u_template: TokenListId::EMPTY,
-                v_template: TokenListId::EMPTY,
+                u_template: empty.clone(),
+                v_template: empty,
             };
             columns
         ],

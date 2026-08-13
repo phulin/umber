@@ -107,7 +107,7 @@ pub struct CommandState {
     pub(crate) named_token_list_pushes: Vec<(
         InputLevelId,
         StoredReplayReason,
-        tex_state::ids::TokenListId,
+        tex_state::token_store::TokenListRef,
     )>,
     /// tex.web §537/§362 file-bracketing transitions, in the order they
     /// happened, waiting for the engine to render them as `(name`/`)`.
@@ -535,7 +535,7 @@ impl CommandState {
     ) -> CommandReplayEpisode {
         let identity = self.push_token_level(
             TokenPayload::Stored {
-                tokens: tokens.token_list(),
+                tokens: tokens.token_ref().clone(),
                 origins: tokens.origin_list(),
             },
             TokenBehavior::Ordinary,
@@ -666,9 +666,10 @@ impl CommandState {
     /// and its eventual retirement report that identity rather than the one
     /// token-list class every stored level used to share.
     fn push_named_token_list(&mut self, tokens: TracedTokenList, reason: StoredReplayReason) {
+        let token_root = tokens.token_ref().clone();
         let level = self.push_token_level(
             TokenPayload::Stored {
-                tokens: tokens.token_list(),
+                tokens: token_root.clone(),
                 origins: tokens.origin_list(),
             },
             TokenBehavior::Ordinary,
@@ -676,7 +677,7 @@ impl CommandState {
             ReplayTrace::Stored(reason),
         );
         self.named_token_list_pushes
-            .push((level, reason, tokens.token_list()));
+            .push((level, reason, token_root));
     }
 
     /// Takes the pushes of executor-requested named token lists, in order.
@@ -705,7 +706,7 @@ impl CommandState {
                         &mut text,
                     );
                     text.push_str("->");
-                    for token in state.tokens(tokens).to_vec() {
+                    for token in tokens.tokens().to_vec() {
                         crate::processor::expand::append_token_list_token_text(
                             state, token, &mut text,
                         );
@@ -1123,8 +1124,9 @@ impl CommandState {
         &mut self,
         alignment: AlignmentIdentity,
         delimiter: AlignmentCellDelimiter,
+        empty: tex_state::token_store::TokenListRef,
     ) -> Result<(), AlignmentLifecycleError> {
-        let template = self.alignment.v_template(alignment)?;
+        let template = self.alignment.v_template(alignment, empty)?;
         // tex.web §789: `if cur_cmd=omit then begin_token_list(omit_template,
         // v_template) else begin_token_list(v_part(cur_align),v_template)`.
         // Both levels are `token_type=v_template`; only the list differs, and
@@ -1562,7 +1564,7 @@ impl CommandState {
         }
         Some(self.push_token_level(
             TokenPayload::Stored {
-                tokens: every_eof.token_list(),
+                tokens: every_eof.token_ref().clone(),
                 origins: every_eof.origin_list(),
             },
             TokenBehavior::Ordinary,
@@ -1698,7 +1700,7 @@ impl CommandState {
     ) -> InputLevelId {
         self.push_token_level(
             TokenPayload::Stored {
-                tokens: template.token_list(),
+                tokens: template.token_ref().clone(),
                 origins: template.origin_list(),
             },
             behavior,

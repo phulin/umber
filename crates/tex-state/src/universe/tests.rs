@@ -2445,7 +2445,7 @@ fn semantic_format_rejects_live_input_page_and_job_only_pdf_state() {
     let mut with_input = Universe::new();
     with_input.set_input_summary(InputSummary::new(
         vec![InputFrameSummary::TokenList {
-            token_list: crate::ids::TokenListId::EMPTY,
+            token_list: with_input.token_list_ref(crate::ids::TokenListId::EMPTY),
             origin_list: crate::ids::OriginListId::EMPTY,
             replay_kind: TokenListReplayKind::Inserted,
             index: 0,
@@ -3676,7 +3676,7 @@ fn input_summary_validation_is_recursive_and_atomic_after_reuse() {
     };
     let token_frame = |traced: TracedTokenList, arguments: MacroArguments, invocation| {
         InputFrameSummary::TokenList {
-            token_list: traced.token_list(),
+            token_list: traced.token_ref().clone(),
             origin_list: traced.origin_list(),
             replay_kind: TokenListReplayKind::MacroBody,
             index: 0,
@@ -3707,12 +3707,16 @@ fn input_summary_validation_is_recursive_and_atomic_after_reuse() {
             None,
         ),
         InputSummary::new(
-            vec![token_frame(list, stale_argument, OriginId::UNKNOWN)],
+            vec![token_frame(list.clone(), stale_argument, OriginId::UNKNOWN)],
             None,
             None,
         ),
         InputSummary::new(
-            vec![token_frame(list, MacroArguments::new(), stale_origin)],
+            vec![token_frame(
+                list.clone(),
+                MacroArguments::new(),
+                stale_origin,
+            )],
             None,
             None,
         ),
@@ -3865,8 +3869,15 @@ fn snapshot_reuses_hash_base_for_origin_only_input_summary_changes() {
         universe.macro_invocation_origin(definition, left_origin, left_origin, OriginId::UNKNOWN);
     let right_invocation =
         universe.macro_invocation_origin(definition, right_origin, right_origin, OriginId::UNKNOWN);
-    let left_summary = macro_replay_summary(body, left_origins, left_invocation, left_origin);
-    let right_summary = macro_replay_summary(body, right_origins, right_invocation, right_origin);
+    let body_root = universe.token_list_ref(body);
+    let left_summary = macro_replay_summary(
+        body_root.clone(),
+        left_origins,
+        left_invocation,
+        left_origin,
+    );
+    let right_summary =
+        macro_replay_summary(body_root, right_origins, right_invocation, right_origin);
     assert_eq!(left_summary, right_summary);
 
     universe.set_input_summary(left_summary);
@@ -6774,7 +6785,7 @@ fn source_summary_with_identity(
 }
 
 fn macro_replay_summary(
-    body: crate::ids::TokenListId,
+    body: crate::token_store::TokenListRef,
     origins: crate::ids::OriginListId,
     invocation: OriginId,
     argument_origin: OriginId,

@@ -3,7 +3,7 @@ use crate::env::EnvSnapshot;
 use crate::ids::{
     ArenaRef, FontId, GlueId, MacroDefinitionId, NodeListId, OriginListId, TokenListId,
 };
-use crate::input::{InputFrameSummary, InputSummary, SourceFrameSummary, TracedTokenList};
+use crate::input::{InputFrameSummary, InputSummary, SourceFrameSummary};
 use crate::interner::{Symbol, SymbolId, SymbolReference};
 use crate::meaning::Meaning;
 use crate::node::Node;
@@ -109,12 +109,10 @@ impl Stores {
                     parent_macro_invocation,
                     ..
                 } => {
-                    self.assert_live_traced_token_list(TracedTokenList::new(
-                        *token_list,
-                        *origin_list,
-                    ));
+                    self.assert_live_token_list(token_list.id());
+                    self.assert_live_origin_list(*origin_list);
                     assert!(
-                        *index <= self.tokens(*token_list).len(),
+                        *index <= token_list.tokens().len(),
                         "input token-list frame index exceeds its live token list"
                     );
                     for &word in macro_arguments.tokens().iter() {
@@ -231,15 +229,6 @@ impl Stores {
         }
         for &word in source.pending() {
             self.assert_live_traced_token_word(word);
-        }
-    }
-
-    fn assert_live_traced_token_list(&self, list: TracedTokenList) {
-        self.assert_live_token_list(list.token_list());
-        self.assert_live_origin_list(list.origin_list());
-        self.assert_origin_list_len_matches(list.token_list(), list.origin_list());
-        for &origin in self.origin_list(list.origin_list()) {
-            self.assert_live_origin(origin);
         }
     }
 

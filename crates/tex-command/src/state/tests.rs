@@ -87,10 +87,11 @@ fn traced_token_scratch_pool_bounds_slots_and_capacity() {
 }
 
 fn templates() -> AlignmentCellTemplates {
+    let universe = tex_state::Universe::new();
     AlignmentCellTemplates {
         u_template: None,
         v_template: tex_state::input::TracedTokenList::synthetic(
-            tex_state::ids::TokenListId::EMPTY,
+            universe.token_list_ref(tex_state::ids::TokenListId::EMPTY),
         ),
     }
 }
@@ -235,7 +236,7 @@ fn nested_alignment_suspension_restores_the_outer_cell_identity_and_templates() 
 
     state.begin_alignment(outer);
     state
-        .begin_alignment_cell(outer, outer_templates)
+        .begin_alignment_cell(outer, outer_templates.clone())
         .expect("outer cell begins");
     state.suspend_alignment(outer).expect("outer cell suspends");
     assert_eq!(

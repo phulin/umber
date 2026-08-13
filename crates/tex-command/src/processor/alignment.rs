@@ -9,7 +9,6 @@
 mod tests;
 
 use tex_state::glue::GlueSpec;
-use tex_state::ids::TokenListId;
 use tex_state::input::TracedTokenList;
 use tex_state::meaning::{Meaning, UnexpandablePrimitive};
 use tex_state::token::{Catcode, Token, TracedTokenWord};
@@ -59,7 +58,7 @@ impl AlignmentIdentity {
 }
 
 /// Exact identities of the templates selected for one cell.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct AlignmentCellTemplates {
     /// Prefix replayed before the cell body. `None` is TeX's `\omit` path.
     pub u_template: Option<TracedTokenList>,
@@ -80,7 +79,7 @@ pub enum AlignmentCellDelimiter {
 }
 
 /// Template data and the saved `fin_col` delimiter returned by `do_endv`.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct FinishedAlignmentCell {
     pub templates: AlignmentCellTemplates,
     pub delimiter: AlignmentCellDelimiter,
@@ -108,7 +107,7 @@ pub struct AlignmentPreamble {
 /// or delimiter kind.  `tex-exec` owns row/cell packaging and asks for these
 /// lifecycle changes; canonical raw delivery remains the only place that can
 /// decide that a delivered command is an alignment delimiter.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub enum AlignmentRequest {
     /// Start scanning an alignment preamble.
     Begin(AlignmentIdentity),
@@ -144,7 +143,7 @@ pub enum AlignmentRequest {
 }
 
 /// Result material returned by a structural alignment request.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub enum AlignmentRequestResult {
     /// The request changed lifecycle state without returning template data.
     Applied,
@@ -466,6 +465,7 @@ impl AlignmentDeliveryState {
         if self.active_cell.is_some() {
             return Err(AlignmentLifecycleError::CellAlreadyActive);
         }
+        let has_u_template = templates.u_template.is_some();
         self.active_cell = Some(ActiveCellDelivery {
             alignment,
             templates,
@@ -476,7 +476,7 @@ impl AlignmentDeliveryState {
             omit: false,
             omit_previous_align_state: None,
         });
-        self.align_state = if templates.u_template.is_some() {
+        self.align_state = if has_u_template {
             TEMPLATE_ALIGN_STATE
         } else {
             CELL_ALIGN_STATE
@@ -506,7 +506,7 @@ impl AlignmentDeliveryState {
         if cell.u_template_installed {
             return Err(AlignmentLifecycleError::UTemplateAlreadyInstalled);
         }
-        Ok(cell.templates.u_template)
+        Ok(cell.templates.u_template.clone())
     }
 
     pub(crate) fn mark_u_template_installed(
@@ -555,6 +555,7 @@ impl AlignmentDeliveryState {
     pub(crate) fn v_template(
         &self,
         alignment: AlignmentIdentity,
+        empty: tex_state::token_store::TokenListRef,
     ) -> Result<TracedTokenList, AlignmentLifecycleError> {
         let cell = self.active_cell_ref(alignment)?;
         if cell.u_level.is_some() {
@@ -565,9 +566,9 @@ impl AlignmentDeliveryState {
         // retained end-template boundary, represented by an empty replay
         // level in the command machine.
         Ok(if cell.omit {
-            TracedTokenList::synthetic(TokenListId::EMPTY)
+            TracedTokenList::synthetic(empty)
         } else {
-            cell.templates.v_template
+            cell.templates.v_template.clone()
         })
     }
 

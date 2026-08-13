@@ -108,12 +108,13 @@ fn activation_boundary_owns_arguments_before_exposing_its_body() {
         .complete(1, [traced('x')])
         .expect("argument completes");
     let mut state = CommandState::default();
+    let universe = tex_state::Universe::new();
     let body = state.push_macro_activation(
         tex_state::interner::Symbol::testing_new(1),
         MacroDefinitionId::testing_new(4),
         builder.finish(),
         OriginId::UNKNOWN,
-        TokenListId::EMPTY,
+        universe.token_list_ref(TokenListId::EMPTY),
         OriginListId::EMPTY,
     );
 
@@ -432,6 +433,82 @@ fn parameterless_macro_pushes_replacement_without_matching_status() {
         observation,
         CommandObservation::ScannerStatus(status) if status.to == "matching"
     )));
+}
+
+#[test]
+fn active_macro_delivery_keeps_original_replacement_after_redefinition() {
+    let mut command = CommandState::default();
+    let source = command
+        .register_source(SourceRegistration::new(
+            RegisteredSourceKind::Generated,
+            Arc::<[u8]>::from(&b"\\m"[..]),
+        ))
+        .expect("source registers");
+    command
+        .open_registered_source(source)
+        .expect("source opens");
+    let mut universe = Universe::new_with_plain_catcodes();
+    let name = universe.intern("m").symbol();
+    let empty = universe.intern_token_list(&[]);
+    let original = universe.intern_token_list(&[Token::Char {
+        ch: 'A',
+        cat: Catcode::Other,
+    }]);
+    let original_definition =
+        universe.intern_macro(MacroMeaning::new(MeaningFlags::EMPTY, empty, original));
+    universe.set_meaning(
+        name,
+        Meaning::Macro {
+            flags: MeaningFlags::EMPTY,
+            definition: original_definition,
+        },
+    );
+    let mut capabilities = CommandHostCapabilities::default();
+    {
+        let mut processor = CommandProcessor::new(
+            &mut command,
+            universe.command_context(),
+            CommandHostContext::new(&mut capabilities),
+        );
+        let call = processor
+            .get_next()
+            .expect("macro call delivery")
+            .expect("macro token");
+        processor
+            .macro_call(call)
+            .expect("original macro activates");
+    }
+
+    let replacement = universe.intern_token_list(&[Token::Char {
+        ch: 'B',
+        cat: Catcode::Other,
+    }]);
+    let replacement_definition =
+        universe.intern_macro(MacroMeaning::new(MeaningFlags::EMPTY, empty, replacement));
+    universe.set_meaning(
+        name,
+        Meaning::Macro {
+            flags: MeaningFlags::EMPTY,
+            definition: replacement_definition,
+        },
+    );
+
+    let mut processor = CommandProcessor::new(
+        &mut command,
+        universe.command_context(),
+        CommandHostContext::new(&mut capabilities),
+    );
+    let delivered = processor
+        .get_next()
+        .expect("active replacement delivery")
+        .expect("original replacement token");
+    assert_eq!(
+        delivered.meaning(),
+        Meaning::CharToken {
+            ch: 'A',
+            cat: Catcode::Other,
+        }
+    );
 }
 
 #[test]

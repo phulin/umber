@@ -380,7 +380,7 @@ fn project_token_cursor(
     });
     match &cursor.payload {
         TokenPayload::Stored { tokens, .. } => {
-            for &token in state.tokens(*tokens) {
+            for &token in tokens.tokens() {
                 project_token(hash, token, state)?;
             }
         }
@@ -851,9 +851,9 @@ impl InputState {
         parameters: &crate::macro_call::ParameterState,
         widths: tex_state::print::ErrorContextWidths,
     ) -> Option<tex_state::print::ErrorContextLevel> {
-        fn payload_len(stores: &tex_state::CommandContext<'_>, tokens: &TokenCursor) -> usize {
+        fn payload_len(_stores: &tex_state::CommandContext<'_>, tokens: &TokenCursor) -> usize {
             match &tokens.payload {
-                TokenPayload::Stored { tokens, .. } => stores.tokens(*tokens).len(),
+                TokenPayload::Stored { tokens, .. } => tokens.tokens().len(),
                 TokenPayload::Transient(words) => words.len(),
                 TokenPayload::InlineTransient(_) | TokenPayload::InlineBackedUp(_) => 1,
                 TokenPayload::BackedUp(words) => words.words().len(),
@@ -864,12 +864,12 @@ impl InputState {
         }
 
         fn payload_token(
-            stores: &tex_state::CommandContext<'_>,
+            _stores: &tex_state::CommandContext<'_>,
             tokens: &TokenCursor,
             index: usize,
         ) -> Option<tex_state::token::Token> {
             match &tokens.payload {
-                TokenPayload::Stored { tokens, .. } => stores.tokens(*tokens).get(index).copied(),
+                TokenPayload::Stored { tokens, .. } => tokens.tokens().get(index).copied(),
                 TokenPayload::Transient(words) => {
                     words.get(index).map(|word| word.semantic_token())
                 }

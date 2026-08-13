@@ -3,6 +3,7 @@
 use crate::ids::{OriginListId, TokenListId};
 use crate::source_map::RegisteredSource;
 use crate::token::{OriginId, Token, TracedTokenWord};
+use crate::token_store::TokenListRef;
 use crate::world::InputRecordId;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
@@ -76,16 +77,16 @@ impl AlignmentScannerPhase {
 
 /// A frozen semantic token list paired with the per-instance origins that
 /// should be used when replaying it.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct TracedTokenList {
-    token_list: TokenListId,
+    token_list: TokenListRef,
     origin_list: OriginListId,
 }
 
 impl TracedTokenList {
     /// Creates a token-list replay pair.
     #[must_use]
-    pub const fn new(token_list: TokenListId, origin_list: OriginListId) -> Self {
+    pub fn new(token_list: TokenListRef, origin_list: OriginListId) -> Self {
         Self {
             token_list,
             origin_list,
@@ -94,7 +95,7 @@ impl TracedTokenList {
 
     /// Creates a replay pair with no origin-list home.
     #[must_use]
-    pub const fn synthetic(token_list: TokenListId) -> Self {
+    pub fn synthetic(token_list: TokenListRef) -> Self {
         Self {
             token_list,
             origin_list: OriginListId::EMPTY,
@@ -102,12 +103,18 @@ impl TracedTokenList {
     }
 
     #[must_use]
-    pub const fn token_list(self) -> TokenListId {
-        self.token_list
+    pub fn token_list(&self) -> TokenListId {
+        self.token_list.id()
+    }
+
+    /// Borrows the strong exact-content token owner.
+    #[must_use]
+    pub fn token_ref(&self) -> &TokenListRef {
+        &self.token_list
     }
 
     #[must_use]
-    pub const fn origin_list(self) -> OriginListId {
+    pub const fn origin_list(&self) -> OriginListId {
         self.origin_list
     }
 }
@@ -206,15 +213,15 @@ fn argument_index(slot: u8) -> usize {
 }
 
 /// Immutable location of a token delivered from macro-body replay.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct MacroReplaySite {
-    token_list: TokenListId,
+    token_list: TokenListRef,
     token_index: usize,
 }
 
 impl MacroReplaySite {
     #[must_use]
-    pub const fn new(token_list: TokenListId, token_index: usize) -> Self {
+    pub fn new(token_list: TokenListRef, token_index: usize) -> Self {
         Self {
             token_list,
             token_index,
@@ -222,18 +229,18 @@ impl MacroReplaySite {
     }
 
     #[must_use]
-    pub const fn token_list(self) -> TokenListId {
-        self.token_list
+    pub fn token_list(&self) -> TokenListId {
+        self.token_list.id()
     }
 
     #[must_use]
-    pub const fn token_index(self) -> usize {
+    pub const fn token_index(&self) -> usize {
         self.token_index
     }
 }
 
 /// One traced input delivery with expansion-control and replay metadata.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TracedExpansionToken {
     token: Token,
     origin: OriginId,
@@ -265,33 +272,33 @@ impl TracedExpansionToken {
     }
 
     #[must_use]
-    pub fn traced_token(self) -> TracedTokenWord {
+    pub fn traced_token(&self) -> TracedTokenWord {
         TracedTokenWord::pack(self.token, self.origin)
     }
 
     #[must_use]
-    pub const fn token(self) -> Token {
+    pub const fn token(&self) -> Token {
         self.token
     }
 
     #[must_use]
-    pub const fn origin(self) -> OriginId {
+    pub const fn origin(&self) -> OriginId {
         self.origin
     }
 
     #[must_use]
-    pub const fn suppress_expansion(self) -> bool {
+    pub const fn suppress_expansion(&self) -> bool {
         self.suppress_expansion
     }
 
     #[must_use]
-    pub const fn expand_in_ordinary_context(self) -> bool {
+    pub const fn expand_in_ordinary_context(&self) -> bool {
         self.expand_in_ordinary_context
     }
 
     #[must_use]
-    pub const fn macro_replay_site(self) -> Option<MacroReplaySite> {
-        self.macro_replay_site
+    pub const fn macro_replay_site(&self) -> Option<&MacroReplaySite> {
+        self.macro_replay_site.as_ref()
     }
 }
 
@@ -714,7 +721,7 @@ impl InputSummary {
                     index,
                     ..
                 } => {
-                    let tokens = stores.tokens(*token_list);
+                    let tokens = token_list.tokens();
                     let split = (*index).min(tokens.len());
                     let exhausted = split >= tokens.len();
                     if position != 0 && exhausted && backed_up(*replay_kind) {
@@ -1100,7 +1107,7 @@ pub enum InputFrameSummary {
         source: SourceFrameSummary,
     },
     TokenList {
-        token_list: TokenListId,
+        token_list: TokenListRef,
         origin_list: OriginListId,
         replay_kind: TokenListReplayKind,
         index: usize,

@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use tex_state::Universe;
 use tex_state::ids::{OriginListId, TokenListId};
 use tex_state::provenance::SyntheticOriginKind;
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
@@ -23,9 +24,10 @@ fn traced(ch: char) -> TracedTokenWord {
 
 #[test]
 fn token_cursor_classifies_orthogonal_ownership_domains() {
+    let universe = Universe::new();
     let cursor = TokenCursor {
         payload: TokenPayload::Stored {
-            tokens: TokenListId::EMPTY,
+            tokens: universe.token_list_ref(TokenListId::EMPTY),
             origins: OriginListId::EMPTY,
         },
         behavior: TokenBehavior::BackedUp(BackupTreatment::SuppressExpandableControlSequence),

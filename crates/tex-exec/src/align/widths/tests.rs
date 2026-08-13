@@ -9,10 +9,12 @@ fn sp(raw: i32) -> Scaled {
 }
 
 fn columns(count: usize) -> Vec<AlignColumn> {
+    let universe = Universe::new();
+    let empty = universe.token_list_ref(TokenListId::EMPTY);
     vec![
         AlignColumn {
-            u_template: TokenListId::EMPTY,
-            v_template: TokenListId::EMPTY,
+            u_template: empty.clone(),
+            v_template: empty,
         };
         count
     ]

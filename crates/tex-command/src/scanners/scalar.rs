@@ -2,7 +2,7 @@
 
 use tex_state::env::banks::DimenParam;
 use tex_state::glue::{GlueSpec, Order};
-use tex_state::ids::{FontId, TokenListId};
+use tex_state::ids::FontId;
 use tex_state::interner::Symbol;
 use tex_state::meaning::{InternalInteger, Meaning, UnexpandablePrimitive};
 use tex_state::scaled::{
@@ -10,6 +10,7 @@ use tex_state::scaled::{
     scaled_from_decimal_parts, xn_over_d,
 };
 use tex_state::token::{Catcode, OriginId, Token};
+use tex_state::token_store::TokenListRef;
 use tex_state::{BoxDimension, PenaltyArrayKind, PrepareMagDiagnostic};
 
 use crate::observation::canonical_names::glue_order_name;
@@ -128,7 +129,7 @@ pub struct ScannedScalar<T> {
 }
 
 /// A value accepted by TeX's internal-quantity scanner.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum InternalValue {
     Integer(i32),
     Dimension(Scaled),
@@ -140,7 +141,7 @@ pub enum InternalValue {
     /// which slot it came from is not part of the value: `\\the` installs the
     /// copy through §467's `ins_list` either way.
     Tokens {
-        tokens: TokenListId,
+        tokens: TokenListRef,
     },
 }
 
@@ -150,7 +151,7 @@ impl InternalValue {
     /// The six levels are totally ordered (`int_val` < `dimen_val` <
     /// `glue_val` < `mu_val` < `ident_val` < `tok_val`), which is what makes
     /// §413's `while cur_val_level>level` coercion loop well defined.
-    const fn level(self) -> InternalLevel {
+    const fn level(&self) -> InternalLevel {
         match self {
             Self::Integer(_) => InternalLevel::Integer,
             Self::Dimension(_) => InternalLevel::Dimension,
@@ -166,7 +167,7 @@ impl InternalValue {
 ///
 /// §413 distinguishes an internal result from a token that never entered its
 /// case table. §416 recovery is itself an ordinary committed internal result.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 enum InternalScan {
     /// The command is not an internal quantity: `cur_cmd` is outside §413's
     /// `min_internal..max_internal` range, so TeX never enters §413 at all and
@@ -2029,7 +2030,7 @@ impl CommandProcessor<'_> {
                     | UnexpandablePrimitive::MuToGlue
             )
         ) {
-            self.observe_internal_value(value);
+            self.observe_internal_value(value.clone());
         }
         Ok(InternalScan::Value(value))
     }
@@ -2047,7 +2048,7 @@ impl CommandProcessor<'_> {
         let value = self
             .coerce_internal_value(InternalValue::Dimension(Scaled::from_raw(0)), level)?
             .expect("TeX82 §429 always lowers §416's dimen_val zero");
-        self.observe_internal_value(value);
+        self.observe_internal_value(value.clone());
         Ok(InternalScan::Value(value))
     }
 
@@ -2093,8 +2094,9 @@ impl CommandProcessor<'_> {
             }
             Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Toks) => {
                 let index = self.scan_profile_register_index()?;
+                let tokens = self.state.toks(index);
                 InternalValue::Tokens {
-                    tokens: self.state.toks(index),
+                    tokens: self.state.token_list_ref(tokens),
                 }
             }
             // TeX82 §424's `scan_something_internal` treats `\wd`, `\ht`,
@@ -2407,14 +2409,20 @@ impl CommandProcessor<'_> {
                 self.scanned_glue_identity = Some(identity);
                 InternalValue::MuGlue(self.state.glue(identity))
             }
-            Meaning::ToksRegister(index) => InternalValue::Tokens {
-                tokens: self.state.toks(index),
-            },
-            Meaning::TokParam(index) => InternalValue::Tokens {
-                tokens: self
+            Meaning::ToksRegister(index) => {
+                let tokens = self.state.toks(index);
+                InternalValue::Tokens {
+                    tokens: self.state.token_list_ref(tokens),
+                }
+            }
+            Meaning::TokParam(index) => {
+                let tokens = self
                     .state
-                    .tok_param(tex_state::env::banks::TokParam::new(index)),
-            },
+                    .tok_param(tex_state::env::banks::TokParam::new(index));
+                InternalValue::Tokens {
+                    tokens: self.state.token_list_ref(tokens),
+                }
+            }
             Meaning::InternalInteger(integer) => {
                 let value = self.fetch_internal_integer(integer);
                 // e-TeX 2.6 etex.ch [17.4750--4790] observes each current
@@ -2592,8 +2600,8 @@ impl CommandProcessor<'_> {
                 ObservationValue::Name(self.state.resolve(symbol).to_owned())
             }
             InternalValue::Tokens { tokens, .. } => ObservationValue::Tokens(
-                self.state
-                    .tokens(tokens)
+                tokens
+                    .tokens()
                     .iter()
                     .copied()
                     .map(|token| {

@@ -189,7 +189,7 @@ pub enum SessionError {
         name: String,
     },
     UnexpectedFulfillment {
-        need: ResourceNeed,
+        need: Box<ResourceNeed>,
         fulfillment: Box<ResourceFulfillment>,
     },
     NoProgress {
@@ -610,13 +610,13 @@ impl<'a> EngineSession<'a> {
                 } = fulfillment
                 else {
                     return Err(SessionError::UnexpectedFulfillment {
-                        need,
+                        need: Box::new(need),
                         fulfillment: Box::new(fulfillment),
                     });
                 };
                 if fulfilled_name != name {
                     return Err(SessionError::UnexpectedFulfillment {
-                        need,
+                        need: Box::new(need),
                         fulfillment: Box::new(ResourceFulfillment::Input {
                             name: fulfilled_name,
                             source,
@@ -811,7 +811,7 @@ impl<'a> EngineSession<'a> {
         self.output_ledger
             .fulfill(&mut self.control, need, fulfillment)
             .map_err(|fulfillment| SessionError::UnexpectedFulfillment {
-                need: need.clone(),
+                need: Box::new(need.clone()),
                 fulfillment,
             })
     }

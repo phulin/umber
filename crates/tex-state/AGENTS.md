@@ -59,7 +59,7 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/identity/tests.rs`: Property and boundary tests for rollback, fork, exhaustion, and foreign-handle rejection.
 - `src/ids.rs`: Opaque ids for token lists, origin lists, macros, glue, fonts, snapshots, survivor roots, and node-list spans.
 - `src/ids/tests.rs`: Unit tests for opaque id raw values and node/origin-list span metadata.
-- `src/input.rs`: Snapshot-ready lexer/input stack summaries, macro argument slots, source ids, and generic checkpoint future-state comparison.
+- `src/input.rs`: Snapshot-ready lexer/input stack summaries with strong token-list roots, macro replay sites and argument slots, source ids, and generic checkpoint future-state comparison.
 - `src/input/tests.rs`: Structural-sharing tests for frozen input-summary roots and source payloads.
 - `src/interner.rs`: Control-sequence name interner with dense symbols, lookup, hashing, and rollback marks.
 - `src/interner/tests.rs`: Unit tests for symbol interning, resolution, rollback, and content hashing.

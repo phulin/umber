@@ -129,7 +129,7 @@ fn replay_completion_survives_a_descendant_macro_across_processor_episodes() {
     universe.set_meaning(relax, Meaning::Relax);
     let final_macro = install_macro(&mut universe, "finalmacro", Token::Cs(relax));
     let replay = command.push_discretionary_episode(tex_state::input::TracedTokenList::synthetic(
-        universe.intern_token_list(&[Token::Cs(final_macro)]),
+        universe.intern_token_list_ref(&[Token::Cs(final_macro)]),
     ));
     let mut capabilities = CommandHostCapabilities::default();
 
@@ -3341,7 +3341,7 @@ fn the_toks_pushes_immutable_stored_input_without_reading_beyond_target() {
     processor.expand(opener).expect("the inserts stored list");
     assert!(
         matches!(processor.command.input.levels.last(), Some(crate::input::InputLevel::Tokens(cursor))
-        if matches!(cursor.payload, TokenPayload::Stored { tokens, .. } if tokens == stored))
+        if matches!(&cursor.payload, TokenPayload::Stored { tokens, .. } if tokens.id() == stored))
     );
     // TeX82 §467 hands §465's copy to `ins_list`, so the level carries
     // §307's `inserted` token type and retires as a recovery, never as an
@@ -4513,7 +4513,7 @@ fn meaning_reads_immutable_replacement_after_nested_macro_retirement() {
         definition,
         MacroArguments::default(),
         OriginId::UNKNOWN,
-        empty,
+        universe.token_list_ref(empty),
         OriginListId::EMPTY,
     );
     command.push_macro_activation(
@@ -4521,7 +4521,7 @@ fn meaning_reads_immutable_replacement_after_nested_macro_retirement() {
         definition,
         MacroArguments::default(),
         OriginId::UNKNOWN,
-        empty,
+        universe.token_list_ref(empty),
         OriginListId::EMPTY,
     );
 

@@ -10554,7 +10554,7 @@ fn tex_byte_text(text: &str) -> Vec<u8> {
 
 fn pdf_graphics_text(tokens: TracedTokenList, stores: &Universe) -> Vec<u8> {
     let mut text = String::new();
-    for &token in stores.tokens(tokens.token_list()) {
+    for &token in tokens.token_ref().tokens() {
         tex_state::token_show::append_token_string_text(stores, token, &mut text);
     }
     tex_byte_text(&text)
@@ -10568,12 +10568,18 @@ fn pdf_navigation_identity(
         tex_state::PdfActionIdentifier::Number(number) => {
             tex_state::PdfDestinationIdentity::Number(number)
         }
-        tex_state::PdfActionIdentifier::Name(tokens) => tex_state::PdfDestinationIdentity::Name(
-            pdf_graphics_text(TracedTokenList::synthetic(tokens), stores),
-        ),
-        tex_state::PdfActionIdentifier::Raw(tokens) => tex_state::PdfDestinationIdentity::Name(
-            pdf_graphics_text(TracedTokenList::synthetic(tokens), stores),
-        ),
+        tex_state::PdfActionIdentifier::Name(tokens) => {
+            tex_state::PdfDestinationIdentity::Name(pdf_graphics_text(
+                TracedTokenList::synthetic(stores.token_list_ref(tokens)),
+                stores,
+            ))
+        }
+        tex_state::PdfActionIdentifier::Raw(tokens) => {
+            tex_state::PdfDestinationIdentity::Name(pdf_graphics_text(
+                TracedTokenList::synthetic(stores.token_list_ref(tokens)),
+                stores,
+            ))
+        }
     }
 }
 
@@ -11137,7 +11143,7 @@ fn replay_text(
         .expect("shipout replay preserves the command profile");
     let expanded = expanded?;
     let mut text = String::new();
-    for &token in stores.tokens(expanded.token_list()) {
+    for &token in expanded.token_ref().tokens() {
         match kind {
             crate::shipout::ReplayTextKind::Special => {
                 tex_state::token_show::append_token_string_text(stores, token, &mut text);
@@ -11206,7 +11212,7 @@ fn replay_write(
         )?;
     }
     let mut text = String::new();
-    for &token in stores.tokens(expanded.tokens.token_list()) {
+    for &token in expanded.tokens.token_ref().tokens() {
         tex_state::token_show::append_token_string_text(stores, token, &mut text);
     }
     let mut text = crate::diagnostics::print_text_with_newlinechar(stores, &text);
@@ -11457,15 +11463,18 @@ fn applied_effect_observation(scanned: &ScannedStep, stores: &Universe) -> Optio
             // expansion through `\noexpand` and must retain `print_cs`'s
             // spelling and separator.
             channel: "terminal".into(),
-            value: ObservationValue::Bytes(message_text(stores, tokens.token_list()).into_bytes()),
+            value: ObservationValue::Bytes(
+                message_tokens_text(stores, tokens.token_ref().tokens()).into_bytes(),
+            ),
             source: None,
         }),
         ScannedStep::ShowTokens { tokens } => Some(EffectRecord {
             kind: ObservationEffectKind::ShowTokens,
             channel: "showtokens".into(),
             value: ObservationValue::Tokens(
-                stores
-                    .tokens(tokens.token_list())
+                tokens
+                    .token_ref()
+                    .tokens()
                     .iter()
                     .copied()
                     .map(|token| observed_macro_token(token, stores))
@@ -11493,8 +11502,9 @@ fn applied_effect_observation(scanned: &ScannedStep, stores: &Universe) -> Optio
                 kind: ObservationEffectKind::Write,
                 channel: format!("stream:{}", stream.normalized_number()),
                 value: ObservationValue::Tokens(
-                    stores
-                        .tokens(tokens.token_list())
+                    tokens
+                        .token_ref()
+                        .tokens()
                         .iter()
                         .copied()
                         .map(|token| observed_macro_token(token, stores))
@@ -11747,8 +11757,10 @@ fn shipout_replay_box(
                     kind: ObservationEffectKind::Write,
                     channel: write_effect_channel(sink),
                     value: ObservationValue::Tokens(
-                        stores
-                            .tokens(expanded.tokens.token_list())
+                        expanded
+                            .tokens
+                            .token_ref()
+                            .tokens()
                             .iter()
                             .copied()
                             .map(|token| observed_macro_token(token, stores))
@@ -11775,7 +11787,7 @@ fn shipout_replay_box(
                 )?;
             }
             let mut text = String::new();
-            for &token in stores.tokens(expanded.tokens.token_list()) {
+            for &token in expanded.tokens.token_ref().tokens() {
                 tex_state::token_show::append_token_string_text(stores, token, &mut text);
             }
             let mut text = crate::diagnostics::print_text_with_newlinechar(stores, &text);
@@ -12139,7 +12151,7 @@ fn begin_next_replay_alignment_cell(
     let templates = active
         .columns
         .get(active.column)
-        .copied()
+        .cloned()
         .ok_or(ExecError::MissingToken {
             context: "next alignment preamble column",
         })?;
@@ -12465,9 +12477,11 @@ fn finish_replay_alignment_with_origin(
         .map(|templates| AlignColumn {
             u_template: templates
                 .u_template
+                .as_ref()
                 .expect("alignment columns retain u templates")
-                .token_list(),
-            v_template: templates.v_template.token_list(),
+                .token_ref()
+                .clone(),
+            v_template: templates.v_template.token_ref().clone(),
         })
         .collect();
     let state = AlignState::new(
@@ -13518,7 +13532,7 @@ fn apply_scanned_step(
             tokens,
             global,
         } => {
-            let new = tokens.map(TracedTokenList::token_list);
+            let new = tokens.as_ref().map(TracedTokenList::token_list);
             let observed = ObservationValue::Tokens(
                 stores
                     .tokens(new.unwrap_or(TokenListId::EMPTY))
@@ -14469,7 +14483,7 @@ fn apply_scanned_step(
             tokens,
         } => {
             let mut text = String::new();
-            for &token in stores.tokens(tokens.token_list()) {
+            for &token in tokens.token_ref().tokens() {
                 tex_state::token_show::append_token_string_text(stores, token, &mut text);
             }
             crate::box_runtime::append_whatsit(
@@ -14851,7 +14865,7 @@ fn apply_scanned_step(
             // TeX82 §1279's `issue_message` renders the scanned list through
             // `token_show` into one string and then hands it to §1280 or
             // §1283; neither branch formats or routes its own output.
-            let text = message_text(stores, tokens.token_list());
+            let text = message_tokens_text(stores, tokens.token_ref().tokens());
             if error {
                 let context = command.state.output_open_context(&stores.command_context());
                 issue_error_message(stores, &text, context)?;
@@ -14891,7 +14905,7 @@ fn apply_scanned_step(
             // §1297 prints `token_show(temp_head)` and takes the common
             // `\show` completion path.
             let context = command.state.output_open_context(&stores.command_context());
-            let text = show_tokens_text(stores, tokens.token_list());
+            let text = show_tokens_tokens_text(stores, tokens.token_ref().tokens());
             // §1297 opens with §62's `print_nl(">␣")`, whose break is
             // conditional on a selected sink already having an open column.
             // An unconditional newline here left a blank line above the
@@ -14958,7 +14972,7 @@ fn apply_scanned_step(
                     }
                 }
                 ImmediateExtension::Write { stream, tokens } => {
-                    let text = write_text(stores.tokens(tokens.token_list()), stores);
+                    let text = write_text(tokens.token_ref().tokens(), stores);
                     if let Some(sink) = immediate_write_sink(stream, stores) {
                         write_immediate_text(stores, sink, &text);
                     }
@@ -16020,7 +16034,7 @@ fn apply_scanned_step(
                 active
                     .columns
                     .get(active.column)
-                    .copied()
+                    .cloned()
                     .ok_or(ExecError::MissingToken {
                         context: "next alignment preamble column",
                     })?;
@@ -17664,21 +17678,30 @@ fn report_font_size_recovery(
 
 /// TeX82 §1279's `token_show(def_ref)` into `new_string`.
 fn message_text(stores: &Universe, tokens: tex_state::ids::TokenListId) -> String {
+    message_tokens_text(stores, stores.tokens(tokens))
+}
+
+fn message_tokens_text(stores: &Universe, tokens: &[Token]) -> String {
     let mut text = String::new();
-    for &token in stores.tokens(tokens) {
+    for &token in tokens {
         tex_state::token_show::append_token_string_text(stores, token, &mut text);
     }
     text
 }
 
 /// TeX82 §1297's `token_show(temp_head)` through the active selector.
+#[cfg(test)]
 fn show_tokens_text(stores: &Universe, tokens: tex_state::ids::TokenListId) -> String {
+    show_tokens_tokens_text(stores, stores.tokens(tokens))
+}
+
+fn show_tokens_tokens_text(stores: &Universe, tokens: &[Token]) -> String {
     let newlinechar = u32::try_from(stores.int_param(IntParam::NEWLINE_CHAR))
         .ok()
         .filter(|&code| code <= u8::MAX.into())
         .and_then(char::from_u32);
     let mut text = String::new();
-    for &token in stores.tokens(tokens) {
+    for &token in tokens {
         tex_state::token_show::append_token_selector_text(stores, token, newlinechar, &mut text);
     }
     text

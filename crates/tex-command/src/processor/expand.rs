@@ -1173,8 +1173,10 @@ impl CommandProcessor<'_> {
         let scanned = self.scan_toks(crate::scan_toks::ScanToksMode::GeneralText {
             purpose: "scantokens",
         })?;
-        let mut text =
-            token_list_string_text(&mut self.state, scanned.replacement_text.token_list());
+        let mut text = token_slice_string_text(
+            &mut self.state,
+            scanned.replacement_text.token_ref().tokens(),
+        );
         let newline = self.state.int_param(IntParam::NEWLINE_CHAR);
         if let Some(newline) = char::from_u32(u32::try_from(newline).unwrap_or(u32::MAX))
             && newline != '\n'
@@ -1191,7 +1193,7 @@ impl CommandProcessor<'_> {
         let every_eof = self
             .state
             .tok_param_option(tex_state::env::banks::TokParam::EVERY_EOF)
-            .map(tex_state::TracedTokenList::synthetic);
+            .map(|id| tex_state::TracedTokenList::synthetic(self.state.token_list_ref(id)));
         let tracing_scantokens = self.state.int_param(IntParam::TRACING_SCAN_TOKENS);
         let level = self
             .command
@@ -1255,7 +1257,10 @@ impl CommandProcessor<'_> {
         let scanned = self.scan_toks(crate::scan_toks::ScanToksMode::GeneralText {
             purpose: "detokenize",
         })?;
-        let text = token_list_string_text(&mut self.state, scanned.replacement_text.token_list());
+        let text = token_slice_string_text(
+            &mut self.state,
+            scanned.replacement_text.token_ref().tokens(),
+        );
         self.push_rendered_text(&text, opener.origin());
         Ok(())
     }
@@ -1269,10 +1274,10 @@ impl CommandProcessor<'_> {
     fn expand_expanded(&mut self) -> Result<(), CommandError> {
         let scanned = self.scan_toks(crate::scan_toks::ScanToksMode::General { expanded: true })?;
         let replacement = scanned.replacement_text;
-        let first = self.state.tokens(replacement.token_list()).first().copied();
+        let first = replacement.token_ref().tokens().first().copied();
         self.insert_expansion_list(
             TokenPayload::Stored {
-                tokens: replacement.token_list(),
+                tokens: replacement.token_ref().clone(),
                 origins: replacement.origin_list(),
             },
             first,
@@ -1288,9 +1293,11 @@ impl CommandProcessor<'_> {
     /// preserves that ordering for Umber's extended scalar domain as well.
     fn expand_string_compare(&mut self, opener: CurrentCommand) -> Result<(), CommandError> {
         let left = self.scan_toks(crate::scan_toks::ScanToksMode::General { expanded: true })?;
-        let left = token_list_string_text(&mut self.state, left.replacement_text.token_list());
+        let left =
+            token_slice_string_text(&mut self.state, left.replacement_text.token_ref().tokens());
         let right = self.scan_toks(crate::scan_toks::ScanToksMode::General { expanded: true })?;
-        let right = token_list_string_text(&mut self.state, right.replacement_text.token_list());
+        let right =
+            token_slice_string_text(&mut self.state, right.replacement_text.token_ref().tokens());
         let value = match left.as_bytes().cmp(right.as_bytes()) {
             std::cmp::Ordering::Less => -1,
             std::cmp::Ordering::Equal => 0,
@@ -1309,7 +1316,10 @@ impl CommandProcessor<'_> {
     /// digits. The result reenters expansion as category-12 characters.
     fn expand_pdf_escape_string(&mut self, opener: CurrentCommand) -> Result<(), CommandError> {
         let scanned = self.scan_toks(crate::scan_toks::ScanToksMode::General { expanded: true })?;
-        let text = token_list_string_text(&mut self.state, scanned.replacement_text.token_list());
+        let text = token_slice_string_text(
+            &mut self.state,
+            scanned.replacement_text.token_ref().tokens(),
+        );
         let escaped = escape_pdf_literal_string(&text);
         observe!(
             self,
@@ -1342,7 +1352,10 @@ impl CommandProcessor<'_> {
     /// TeX82 §464's `str_toks` returns those digits as category-12 characters.
     fn expand_pdf_escape_hex(&mut self, opener: CurrentCommand) -> Result<(), CommandError> {
         let scanned = self.scan_toks(crate::scan_toks::ScanToksMode::General { expanded: true })?;
-        let bytes = pdftex_token_bytes(&mut self.state, scanned.replacement_text.token_list());
+        let bytes = pdftex_token_slice_bytes(
+            &mut self.state,
+            scanned.replacement_text.token_ref().tokens(),
+        );
         let escaped = escape_pdf_hex(&bytes);
         observe!(
             self,
@@ -1376,7 +1389,10 @@ impl CommandProcessor<'_> {
     /// every other decoded byte category 12.
     fn expand_pdf_unescape_hex(&mut self, opener: CurrentCommand) -> Result<(), CommandError> {
         let scanned = self.scan_toks(crate::scan_toks::ScanToksMode::General { expanded: true })?;
-        let bytes = pdftex_token_bytes(&mut self.state, scanned.replacement_text.token_list());
+        let bytes = pdftex_token_slice_bytes(
+            &mut self.state,
+            scanned.replacement_text.token_ref().tokens(),
+        );
         let unescaped = unescape_pdf_hex(&bytes);
         observe!(
             self,
@@ -1562,7 +1578,7 @@ impl CommandProcessor<'_> {
         opener: OriginId,
         value: crate::InternalValue,
     ) -> Result<(), CommandError> {
-        if let Some(text) = render_the_value(value) {
+        if let Some(text) = render_the_value(&value) {
             self.push_rendered_text(&text, opener);
         } else {
             match value {
@@ -1570,7 +1586,7 @@ impl CommandProcessor<'_> {
                 // reference, which Umber's immutable stored list already is:
                 // reassigning the register cannot mutate this payload.
                 crate::InternalValue::Tokens { tokens } => {
-                    let first = self.state.tokens(tokens).first().copied();
+                    let first = tokens.tokens().first().copied();
                     self.insert_expansion_list(
                         TokenPayload::Stored {
                             tokens,
@@ -1693,10 +1709,16 @@ impl CommandProcessor<'_> {
                 break;
             }
         }
-        let pattern = self.scan_balanced_text(true)?.tokens.token_list();
-        let haystack = self.scan_balanced_text(true)?.tokens.token_list();
-        let pattern = pdftex_c_string(pdftex_token_bytes(&mut self.state, pattern));
-        let haystack = pdftex_c_string(pdftex_token_bytes(&mut self.state, haystack));
+        let pattern = self.scan_balanced_text(true)?.tokens;
+        let haystack = self.scan_balanced_text(true)?.tokens;
+        let pattern = pdftex_c_string(pdftex_token_slice_bytes(
+            &mut self.state,
+            pattern.token_ref().tokens(),
+        ));
+        let haystack = pdftex_c_string(pdftex_token_slice_bytes(
+            &mut self.state,
+            haystack.token_ref().tokens(),
+        ));
         let regex = match PosixRegexBuilder::new(&pattern)
             .with_default_classes()
             .extended(true)
@@ -1740,8 +1762,8 @@ impl CommandProcessor<'_> {
         } else {
             tex_state::PdfColorStackMode::Origin
         };
-        let initial = self.scan_balanced_text(true)?.tokens.token_list();
-        let initial = pdftex_token_bytes(&mut self.state, initial);
+        let initial = self.scan_balanced_text(true)?.tokens;
+        let initial = pdftex_token_slice_bytes(&mut self.state, initial.token_ref().tokens());
         let id = match self
             .state
             .allocate_pdf_color_stack(mode, restore_at_page_start, initial)
@@ -1807,8 +1829,8 @@ impl CommandProcessor<'_> {
                 length = 0;
             }
         }
-        let name = self.scan_balanced_text(true)?.tokens.token_list();
-        let name = pdftex_token_bytes(&mut self.state, name)
+        let name = self.scan_balanced_text(true)?.tokens;
+        let name = pdftex_token_slice_bytes(&mut self.state, name.token_ref().tokens())
             .into_iter()
             .map(char::from)
             .collect::<String>();
@@ -1841,8 +1863,8 @@ impl CommandProcessor<'_> {
 
     /// pdftex.web §1590's `pdf_file_size_code` conversion.
     fn expand_pdf_file_size(&mut self, opener: CurrentCommand) -> Result<(), CommandError> {
-        let name = self.scan_balanced_text(true)?.tokens.token_list();
-        let name = pdftex_token_bytes(&mut self.state, name)
+        let name = self.scan_balanced_text(true)?.tokens;
+        let name = pdftex_token_slice_bytes(&mut self.state, name.token_ref().tokens())
             .into_iter()
             .map(char::from)
             .collect::<String>();
@@ -1892,8 +1914,8 @@ impl CommandProcessor<'_> {
     fn expand_pdf_md_five_sum(&mut self, opener: CurrentCommand) -> Result<(), CommandError> {
         use md5::{Digest, Md5};
         let file = self.scan_keyword("file")?.value;
-        let tokens = self.scan_balanced_text(true)?.tokens.token_list();
-        let mut bytes = pdftex_token_bytes(&mut self.state, tokens);
+        let tokens = self.scan_balanced_text(true)?.tokens;
+        let mut bytes = pdftex_token_slice_bytes(&mut self.state, tokens.token_ref().tokens());
         if file {
             let name = bytes.iter().copied().map(char::from).collect::<String>();
             self.state.unsupported_host_capability();
@@ -1918,11 +1940,13 @@ impl CommandProcessor<'_> {
     }
 
     fn scan_pdf_file_name(&mut self) -> Result<String, CommandError> {
-        let tokens = self.scan_balanced_text(true)?.tokens.token_list();
-        Ok(pdftex_token_bytes(&mut self.state, tokens)
-            .into_iter()
-            .map(char::from)
-            .collect())
+        let tokens = self.scan_balanced_text(true)?.tokens;
+        Ok(
+            pdftex_token_slice_bytes(&mut self.state, tokens.token_ref().tokens())
+                .into_iter()
+                .map(char::from)
+                .collect(),
+        )
     }
 
     /// pdftex.web §1590's `pdf_insert_ht_code` conversion reads the height
@@ -1971,7 +1995,7 @@ impl CommandProcessor<'_> {
     fn push_mark_text(&mut self, tokens: TokenListId) {
         let level = self.command.push_token_level(
             TokenPayload::Stored {
-                tokens,
+                tokens: self.state.token_list_ref(tokens),
                 origins: OriginListId::EMPTY,
             },
             TokenBehavior::Ordinary,
@@ -2129,7 +2153,7 @@ impl CommandProcessor<'_> {
             definition,
             arguments,
             invocation,
-            replacement_tokens,
+            self.state.token_list_ref(replacement_tokens),
             replacement_origins,
         )
     }
@@ -2145,12 +2169,12 @@ fn scantokens_numeric_name(tracing_scantokens: i32) -> u8 {
     if tracing_scantokens > 0 { 19 } else { 18 }
 }
 
-pub(crate) fn render_the_value(value: crate::InternalValue) -> Option<String> {
+pub(crate) fn render_the_value(value: &crate::InternalValue) -> Option<String> {
     match value {
         crate::InternalValue::Integer(value) => Some(value.to_string()),
-        crate::InternalValue::Dimension(value) => Some(format_scaled(value)),
-        crate::InternalValue::Glue(value) => Some(format_glue(value, "pt")),
-        crate::InternalValue::MuGlue(value) => Some(format_glue(value, "mu")),
+        crate::InternalValue::Dimension(value) => Some(format_scaled(*value)),
+        crate::InternalValue::Glue(value) => Some(format_glue(*value, "pt")),
+        crate::InternalValue::MuGlue(value) => Some(format_glue(*value, "mu")),
         crate::InternalValue::Font(_) => None,
         crate::InternalValue::Tokens { .. } => None,
     }
@@ -2767,29 +2791,16 @@ fn append_selector_token_list_text(
 /// character and catcode table. The returned value owns no token-list handle,
 /// so it remains stable when an aggregate resource suspension rolls back and
 /// rescans the command.
-pub(crate) fn token_list_string_text(
+pub(crate) fn token_slice_string_text(
     state: &mut tex_state::CommandContext<'_>,
-    tokens: TokenListId,
+    tokens: &[Token],
 ) -> String {
     let mut text = String::new();
-    append_token_list_string_text(state, tokens, &mut text);
-    text
-}
-
-pub(crate) fn append_token_list_string_text(
-    state: &mut tex_state::CommandContext<'_>,
-    tokens: TokenListId,
-    text: &mut String,
-) {
-    // Preserve the dependency read once for the whole rendered list; the
-    // shared token-show helper then uses the same live value without adding
-    // one observation per control sequence.
     let _ = state.int_param(IntParam::ESCAPE_CHAR);
-    let token_count = state.tokens(tokens).len();
-    for index in 0..token_count {
-        let token = state.tokens(tokens)[index];
-        state.append_token_string_text(token, text);
+    for &token in tokens {
+        state.append_token_string_text(token, &mut text);
     }
+    text
 }
 
 /// TeX82's `show_token_list` representation used by `\\meaning` distinguishes
@@ -2842,8 +2853,11 @@ pub(crate) fn append_token_list_token_text(
     }
 }
 
-fn pdftex_token_bytes(state: &mut tex_state::CommandContext<'_>, tokens: TokenListId) -> Vec<u8> {
-    token_list_string_text(state, tokens)
+fn pdftex_token_slice_bytes(
+    state: &mut tex_state::CommandContext<'_>,
+    tokens: &[Token],
+) -> Vec<u8> {
+    token_slice_string_text(state, tokens)
         .chars()
         .map(|ch| {
             u8::try_from(u32::from(ch))

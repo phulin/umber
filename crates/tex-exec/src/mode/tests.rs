@@ -396,6 +396,58 @@ fn journal_destructive_node_reconstitution_alignment_and_transfers_restore() {
 }
 
 #[test]
+fn alignment_template_roots_survive_destructive_journal_rollback() {
+    let mut universe = Universe::new();
+    let u_template = universe.intern_token_list_ref(&[tex_state::token::Token::Char {
+        ch: 'u',
+        cat: tex_state::token::Catcode::Other,
+    }]);
+    let v_template = universe.intern_token_list_ref(&[tex_state::token::Token::Char {
+        ch: 'v',
+        cat: tex_state::token::Catcode::Other,
+    }]);
+    let mut nest = ModeNest::new();
+    nest.current_list_mutation()
+        .set_align_state(AlignState::new(
+            AlignmentKind::HAlign,
+            AlignmentPackSpec::Natural,
+            vec![super::AlignColumn {
+                u_template,
+                v_template,
+            }],
+            vec![GlueId::ZERO],
+            GlueId::ZERO,
+            None,
+        ));
+    nest.reset_journal_for_test();
+    let cursor = nest.begin_journal();
+
+    drop(nest.current_list_mutation().take_align_state());
+    drop(universe);
+    nest.rollback_journal(cursor).expect("alignment rollback");
+
+    let column = &nest
+        .current_list()
+        .align_state()
+        .expect("alignment restored")
+        .columns()[0];
+    assert_eq!(
+        column.u_template.tokens(),
+        &[tex_state::token::Token::Char {
+            ch: 'u',
+            cat: tex_state::token::Catcode::Other,
+        }]
+    );
+    assert_eq!(
+        column.v_template.tokens(),
+        &[tex_state::token::Token::Char {
+            ch: 'v',
+            cat: tex_state::token::Catcode::Other,
+        }]
+    );
+}
+
+#[test]
 fn journal_math_and_display_ownership_transfers_restore() {
     let mut nest = ModeNest::new();
     {

@@ -8,6 +8,7 @@ use tex_state::interner::{ControlSequenceKind, Symbol};
 use tex_state::macro_store::{MacroDefinitionProvenance, MacroMeaning};
 use tex_state::provenance::OriginRecord;
 use tex_state::token::{OriginId, Token, TracedTokenWord};
+use tex_state::token_store::TokenListRef;
 
 use crate::input::{
     BackedUpToken, InputLevel, SharedBackedUpBuffer, SharedTokenBuffer, TokenPayload,
@@ -108,14 +109,14 @@ impl OwnedCommandContinuation {
     fn collect_level(&mut self, level: &InputLevel, universe: &Universe) {
         match level {
             InputLevel::Source(source) => {
-                if let Some(list) = source.every_eof {
-                    self.collect_token_list(list.token_list(), universe);
+                if let Some(list) = &source.every_eof {
+                    self.collect_token_root(list.token_ref(), universe);
                     self.collect_origin_list(list.origin_list(), universe);
                 }
             }
             InputLevel::Tokens(cursor) => match &cursor.payload {
                 TokenPayload::Stored { tokens, origins } => {
-                    self.collect_token_list(*tokens, universe);
+                    self.collect_token_root(tokens, universe);
                     self.collect_origin_list(*origins, universe);
                 }
                 TokenPayload::Transient(words) => self.collect_words(words.words(), universe),
@@ -133,11 +134,12 @@ impl OwnedCommandContinuation {
         }
     }
 
-    fn collect_token_list(&mut self, id: TokenListId, universe: &Universe) {
+    fn collect_token_root(&mut self, root: &TokenListRef, universe: &Universe) {
+        let id = root.id();
         if self.token_lists.contains_key(&id) {
             return;
         }
-        let tokens = universe.tokens(id).to_vec();
+        let tokens = root.tokens().to_vec();
         self.token_lists.insert(id, Vec::new());
         let detached = tokens
             .into_iter()
@@ -254,7 +256,7 @@ impl OwnedCommandContinuation {
 struct Materializer<'a> {
     owned: &'a OwnedCommandContinuation,
     universe: &'a mut Universe,
-    tokens: HashMap<TokenListId, TokenListId>,
+    tokens: HashMap<TokenListId, TokenListRef>,
     origin_lists: HashMap<OriginListId, OriginListId>,
     macros: HashMap<MacroDefinitionId, MacroDefinitionId>,
     origins: HashMap<OriginId, OriginId>,
@@ -295,9 +297,9 @@ impl<'a> Materializer<'a> {
         }
     }
 
-    fn token_list(&mut self, old: TokenListId) -> TokenListId {
-        if let Some(&id) = self.tokens.get(&old) {
-            return id;
+    fn token_list(&mut self, old: TokenListId) -> TokenListRef {
+        if let Some(root) = self.tokens.get(&old) {
+            return root.clone();
         }
         let owned = self
             .owned
@@ -309,9 +311,9 @@ impl<'a> Materializer<'a> {
             .iter()
             .map(|token| self.token(token))
             .collect::<Vec<_>>();
-        let id = self.universe.intern_token_list(&tokens);
-        self.tokens.insert(old, id);
-        id
+        let root = self.universe.intern_token_list_ref(&tokens);
+        self.tokens.insert(old, root.clone());
+        root
     }
 
     fn macro_id(&mut self, old: MacroDefinitionId) -> MacroDefinitionId {
@@ -473,7 +475,7 @@ impl<'a> Materializer<'a> {
                 }
                 InputLevel::Tokens(cursor) => match &mut cursor.payload {
                     TokenPayload::Stored { tokens, origins } => {
-                        *tokens = self.token_list(*tokens);
+                        *tokens = self.token_list(tokens.id());
                         *origins = self.origin_list(*origins);
                     }
                     TokenPayload::Transient(words) => {

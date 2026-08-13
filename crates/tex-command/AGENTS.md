@@ -92,9 +92,9 @@ print channel of its own outside the borrowed
   superscript notation, invalid-character recovery steps, byte/scalar ranges,
   and focused conformance tests.
 - `src/input/levels.rs`, `src/input/levels/tests.rs`: dense source/token-list
-  levels, stored/transient/argument payload ownership, orthogonal delivery and
-  retirement behavior, bounded eager TeX82 error-context projection, replay
-  explanations, and focused ownership tests. A
+  levels, strong stored-token roots plus transient/argument payload ownership,
+  orthogonal delivery and retirement behavior, bounded eager TeX82
+  error-context projection, replay explanations, and focused ownership tests. A
   source level's `open_depths` field is `\tracingnesting`'s own record; see
   `src/tracing_nesting.rs`.
 - `src/input/stack.rs`, `src/input/stack/tests.rs`: exact input retirement,
@@ -225,7 +225,11 @@ print channel of its own outside the borrowed
   conversion selectors. Never classify an observed command through a
   profile-free dialect approximation.
 - `src/snapshot.rs` and `src/snapshot/tests.rs`: command snapshot, quiescent
-  summary ownership, and focused internal roundtrip/rejection tests.
+  summary ownership, canonical detached-continuation materialization, and
+  focused internal roundtrip/rejection tests.
+- `src/continuation.rs`: handle-free command-continuation detachment and
+  destination-generation materialization of strong token roots, symbols,
+  macros, and provenance.
 - `tests/`: external dependency, visibility, and capability-boundary tests.
   Character/input integration coverage binds the exact shared-domain tokenizer
   to the pinned TeX82 fixture and compile-fail gates profile immutability.

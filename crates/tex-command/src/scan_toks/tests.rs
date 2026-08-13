@@ -175,7 +175,7 @@ fn origin_list_budget_fallback_preserves_section_478_splice_semantics() {
             cat: Catcode::Other,
         },
     ];
-    let token_list = universe.intern_token_list(&tokens);
+    let token_list = universe.intern_token_list_ref(&tokens);
     let list = TracedTokenList::synthetic(token_list);
     let mut capabilities = CommandHostCapabilities::default();
     let processor = processor(&mut command, &mut universe, &mut capabilities);
@@ -2608,7 +2608,7 @@ fn readline_exact_bytes_nested_in_scantokens_replay_after_rollback() {
     let mut command = CommandState::new(crate::CommandProfile::ETEX26);
     let mut universe = crate::test_harness::universe_with_plain_catcodes();
     universe.set_int_param(tex_state::env::banks::IntParam::END_LINE_CHAR, -1);
-    let empty = TracedTokenList::synthetic(universe.intern_token_list(&[]));
+    let empty = TracedTokenList::synthetic(universe.intern_token_list_ref(&[]));
     let scantokens = command
         .open_scantokens(
             SourceRegistration::new(RegisteredSourceKind::Generated, b"q\n".to_vec()),

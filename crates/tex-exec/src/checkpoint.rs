@@ -10,6 +10,9 @@ use tex_state::{
 
 use crate::{ExecError, ModeNest, ModeNestSummary};
 
+#[cfg(test)]
+mod tests;
+
 /// In-memory schema version for aggregate engine checkpoints.
 ///
 /// Version 7 makes the command summary the only continuation representation.

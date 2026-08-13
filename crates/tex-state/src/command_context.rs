@@ -21,6 +21,7 @@ use crate::{
     provenance::SynthesizedOriginKind,
     source_map::{SourceDescriptor, SourceMapError, SourcePos},
     token::{Catcode, OriginId, Token, TracedTokenWord},
+    token_store::TokenListRef,
 };
 
 /// Borrow-scoped aggregate access to live TeX state.
@@ -436,6 +437,12 @@ impl CommandContext<'_> {
     #[must_use]
     pub fn tokens(&self, id: TokenListId) -> &[Token] {
         self.universe.tokens(id)
+    }
+
+    /// Clones the strong owner for a token list crossing the processor borrow.
+    #[must_use]
+    pub fn token_list_ref(&self, id: TokenListId) -> TokenListRef {
+        self.universe.token_list_ref(id)
     }
 
     /// Returns TeX82's inaccessible frozen end-v sentinel for canonical

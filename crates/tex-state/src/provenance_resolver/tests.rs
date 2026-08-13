@@ -206,7 +206,7 @@ fn resolver_renders_bounded_live_macro_trace() {
     );
     stores.set_input_summary(InputSummary::new(
         vec![InputFrameSummary::TokenList {
-            token_list: replacement_text,
+            token_list: stores.token_list_ref(replacement_text),
             origin_list: OriginListId::EMPTY,
             replay_kind: TokenListReplayKind::MacroBody,
             index: 0,
