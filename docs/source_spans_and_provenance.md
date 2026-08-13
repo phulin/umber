@@ -3,6 +3,12 @@
 Status: authoritative contract for the adopted compact source-map, source-span,
 and derived-provenance representation.
 
+The ownership and lifetime of these values is governed by
+[Structural and demand-driven provenance](structural_provenance.md). Where this
+document describes append-only arena retention or convergence-time graph
+import, the structural ownership contract supersedes that representation while
+preserving the packed coordinate and resolver behavior specified here.
+
 ## 1. Purpose
 
 Umber follows the source-location pattern used by production compilers:

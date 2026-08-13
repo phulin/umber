@@ -139,6 +139,11 @@ including store ownership, reclamation, hashing, rollout, and validation.
 `source_spans_and_provenance.md` specifies the adopted compact source-map,
 source-span, derived-provenance, packing, capacity, and validation contract.
 
+`structural_provenance.md` defines the reachability-owned source-registration,
+token-position, origin-list, expansion-frame, diagnostic, node, artifact,
+retry, and private-revision ownership model which supersedes append-history
+retention without changing packed ids or rendered results.
+
 `node_word_arena.md` is the authoritative compact node-word arena document: it
 defines the adopted word encoding, generation-tagged identities, sidecar and
 survivor ownership, access boundary, hashing, and validation. Do not create a separate
