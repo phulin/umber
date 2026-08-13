@@ -89,7 +89,7 @@ fn registered_editor_root_coordinates_resolve_to_piece_identity() {
         &fragments,
     )
     .expect("split editor layout");
-    let mut installed = fragments.metadata_snapshot_for_layout(&layout);
+    let mut installed = fragments.metadata_snapshot_for_layout(&layout, true);
     let wrong = GeneratedSource::named("root.tex", Arc::from(&b"leftWRONG"[..]));
     let registration = RegisteredSource::new(SourcePos::from_raw_for_store(10_000), 9);
     installed.bind_generated_root_registration(registration, &wrong);

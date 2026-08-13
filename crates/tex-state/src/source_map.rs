@@ -309,6 +309,14 @@ impl SourceRegistrationRef {
     pub(crate) fn region(&self) -> SourceRegion {
         self.0.region
     }
+
+    pub(crate) fn descriptor(&self) -> &SourceDescriptor {
+        &self.0.descriptor
+    }
+
+    pub(crate) fn line_starts(&self) -> &[usize] {
+        &self.0.line_starts
+    }
 }
 
 impl SourceRegion {
@@ -583,6 +591,11 @@ impl SourceMap {
             .get(region.identity.slot() as usize)
             .filter(|registration| registration.region() == region)
             .cloned()
+    }
+
+    pub(crate) fn registered_source(&self, source: SourceId) -> Option<RegisteredSource> {
+        let region = self.region_for_source(source)?;
+        Some(RegisteredSource::new(region.start, region.byte_len))
     }
 
     pub(crate) fn descriptor_for_source(&self, source: SourceId) -> Option<SourceDescriptor> {

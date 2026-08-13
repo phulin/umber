@@ -474,8 +474,15 @@ impl FragmentStore {
         }
     }
 
-    pub(crate) fn metadata_snapshot_for_layout(&self, layout: &EditorLayout) -> Self {
+    pub(crate) fn metadata_snapshot_for_layout(
+        &self,
+        layout: &EditorLayout,
+        retain_rendered_source: bool,
+    ) -> Self {
         let mut snapshot = self.metadata_snapshot();
+        if retain_rendered_source {
+            snapshot.sources = Arc::clone(&self.sources);
+        }
         let mut bytes = Vec::with_capacity(usize::try_from(layout.byte_len).unwrap_or(0));
         for piece in layout.pieces.iter() {
             let source = self
@@ -512,6 +519,16 @@ impl FragmentStore {
         }
         Arc::make_mut(&mut root.registrations).push(registration);
         root.backing = Some(source.backing());
+    }
+
+    pub(crate) fn bind_rebound_root_registration(&mut self, registration: RegisteredSource) {
+        let Some(root) = self.root_coordinates.as_mut() else {
+            return;
+        };
+        if root.registrations.contains(&registration) {
+            return;
+        }
+        Arc::make_mut(&mut root.registrations).push(registration);
     }
 
     /// Measurement-only access to the exact immutable view installed in an
@@ -660,6 +677,9 @@ impl FragmentStore {
     }
 
     pub(crate) fn root_span_for_source_span(&self, span: SourceSpan) -> Option<RootSpanId> {
+        if let Some(span) = self.root_span_for_registered_span(span) {
+            return Some(span);
+        }
         let (fragment_id, fragment) = self.fragment_at(span.lo())?;
         if span.hi().raw() < span.lo().raw() || span.hi().raw() > fragment.anchor() {
             return None;
@@ -679,16 +699,24 @@ impl FragmentStore {
     }
 
     fn root_span_for_registered_position(&self, position: SourcePos) -> Option<RootSpanId> {
+        self.root_span_for_registered_span(SourceSpan::new(
+            position,
+            SourcePos::from_raw_for_store(position.raw().checked_add(1)?),
+        ))
+    }
+
+    fn root_span_for_registered_span(&self, span: SourceSpan) -> Option<RootSpanId> {
         let root = self.root_coordinates.as_ref()?;
         let registration = root.registrations.iter().find(|registration| {
-            registration.start() <= position
+            registration.start() <= span.lo()
                 && registration
                     .start()
                     .raw()
                     .checked_add(registration.byte_len())
-                    .is_some_and(|end| position.raw() < end)
+                    .is_some_and(|end| span.hi().raw() <= end)
         })?;
-        let offset = position.raw().checked_sub(registration.start().raw())?;
+        let offset = span.lo().raw().checked_sub(registration.start().raw())?;
+        let offset_end = span.hi().raw().checked_sub(registration.start().raw())?;
         let piece_index = root
             .doc_starts
             .partition_point(|&start| start <= offset)
@@ -696,12 +724,20 @@ impl FragmentStore {
         let piece = root.pieces.get(piece_index)?;
         let piece_offset = u32::try_from(offset.checked_sub(root.doc_starts[piece_index])?).ok()?;
         let start = piece.start().checked_add(piece_offset)?;
-        let end = start.checked_add(1)?;
+        let span_len = u32::try_from(offset_end.checked_sub(offset)?).ok()?;
+        let end = start.checked_add(span_len)?;
         if end > piece.end() {
             return None;
         }
-        let offset = usize::try_from(offset).ok()?;
-        let content = ContentHash::from_bytes(root.backing.as_deref()?.get(offset..offset + 1)?);
+        let content = self
+            .bytes(piece.fragment())
+            .and_then(|bytes| bytes.get(start as usize..end as usize))
+            .or_else(|| {
+                let offset = usize::try_from(offset).ok()?;
+                let offset_end = usize::try_from(offset_end).ok()?;
+                root.backing.as_deref()?.get(offset..offset_end)
+            })
+            .map(ContentHash::from_bytes)?;
         Some(RootSpanId {
             piece: piece.id(),
             start,

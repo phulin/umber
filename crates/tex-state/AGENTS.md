@@ -103,9 +103,9 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/print.rs`: tex.web §54's print `selector`, §§57--65's print primitives, §73's `print_err`, and §82's `error` report channel.
 - `src/print/error_context.rs`: tex.web §§310--318's `show_context` two-line pseudoprint, bounded eager before/after projections captured at the live input seam, §314's token-list labels, and §310's `\errorcontextlines` elision, shared by every input-stack owner.
 - `src/print/tests.rs`: Unit tests for context widths, selector routing, help routing, and error-report completion.
-- `src/provenance.rs`: Exact structural origin-record and origin-list sharing,
-  chunked packed-key storage, candidate indexes, retry leases, and rollback
-  watermarks pending the reachability-owned representation cutover.
+- `src/provenance.rs`: Reachability-owned structural origin records and lists,
+  bounded weak candidate/slot indexes, packed-key compatibility storage,
+  demand policy, explicit provenance budgets, and retry leases.
 - `src/provenance/tests.rs`: Structural sharing, collision, packed-key,
   allocation, readback, retry, fork, and rollback provenance controls.
 - `src/pure_memo.rs`: Optional bounded pure-query caches for pretolerance, page-breaking, and shipout results plus stable output-provenance recipes.
@@ -122,7 +122,9 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/scaled.rs`: Compatibility re-export for shared TeX scaled-point arithmetic.
 - `src/source_map.rs`: Rollback-coupled logical source regions, validated positions/spans, and immutable World/generated backing identities.
 - `src/source_map/tests.rs`: Source-region anchors, validation, overflow, rollback/reuse, and O(1)-mark tests.
-- `src/source_fragments.rs`: Session-scoped immutable source fragments, editor piece tables, and layout-aware coordinate resolution.
+- `src/source_fragments.rs`: Session-scoped immutable source fragments, editor
+  piece tables, demand-selected generation backing, rebound root registration,
+  and layout-aware stable-recipe resolution.
 - `src/source_fragments/layout_index.rs`: Fragment-and-offset index for logarithmic current/deleted piece resolution across repeated views.
 - `src/source_fragments/tests.rs`: Fragment range, deletion, fork-liveness, anchor, allocator, snapshot, and line-index cache tests.
 - `src/state_hash.rs`: Deterministic semantic state hasher used by snapshots and replay convergence checks.
@@ -154,11 +156,16 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/universe.rs`: Top-level TeX state timeline and sole state API, with
   snapshots, effect commits, execution-side dependency-aware getters and
   barriers, precise World mutation-guard stamping, the strong frozen-macro
-  primitive-registry sidecar, and the input-open capability context. Restoration traces resolve
+  primitive-registry sidecar, immutable provenance demand/budgets, direct
+  artifact-root resolution, and the input-open capability context. Restoration traces resolve
   named parameters through the installed primitive registry rather than a
   state-local spelling table.
 - `src/universe/tests.rs`: Unit tests for `Universe` mutation, snapshots, contexts, effects, and boundary behavior.
-- `src/world.rs`: External-effect boundary for files, atomic downstream file-set publication, streams, clocks, randomness, shell policy, printing, strongly rooted deferred-write effects, weak snapshot-root mounts, and field/key-specific allocation-independent dependency projections.
+- `src/world.rs`: External-effect boundary for files, atomic downstream
+  file-set publication, streams, clocks, randomness, shell policy, printing,
+  strongly rooted deferred-write effects, artifact-owned rendered-source
+  roots/recipes, weak snapshot-root mounts, and field/key-specific
+  allocation-independent dependency projections.
 - `src/world/tests.rs`: Unit tests for world snapshots, file records, streams, printing, randomness, shell escape, effect replay, and snapshot-owned effect-root reclamation.
 - `tests/it.rs`: Integration test harness that includes capability-boundary and live-boundary test modules.
 - `tests/it/capability_boundaries.rs`: Compile-fail integration tests asserting restricted input and transaction capabilities fail to compile.

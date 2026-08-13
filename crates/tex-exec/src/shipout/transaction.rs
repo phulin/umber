@@ -256,9 +256,9 @@ pub(crate) fn shipout_node_with_input_summary(
             artifact_schema: 10,
             payload: artifact_bytes,
         })
+        && let Some(render_provenance) =
+            crate::output_provenance::provenance_recipe_for_origins(stores, render_origins)
     {
-        let render_provenance =
-            crate::output_provenance::provenance_recipe_for_origins(stores, render_origins);
         stores.with_pure_memo(|memo| {
             memo.insert_shipout(
                 key,

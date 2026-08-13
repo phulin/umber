@@ -16,7 +16,11 @@ long-lived editor-session strategy over executor-named checkpoints.
 ## File Map
 
 - `Cargo.toml`: incremental driver dependencies and workspace lint policy.
-- `src/lib.rs`: revision/edit model, host-supplied resolver execution, immutable resource retry overlays, terminal recognition of complete-job and explicit-fragment outcomes, candidate acceptance, named boundaries, pruning, convergence, and non-consuming accepted output views.
+- `src/lib.rs`: revision/edit model, host-supplied resolver execution,
+  immutable resource retry overlays, rendered-source demand selection and lazy
+  artifact-root/recipe queries, terminal recognition of complete-job and
+  explicit-fragment outcomes, candidate acceptance, named boundaries,
+  pruning, scan-free convergence, and non-consuming accepted output views.
 - `src/trace.rs`: derived ordered leaf/parent trace summaries, dependency reduction, and atomic replay.
 - `src/trace/tests.rs`: parent composition, leaf-equivalence, ordering, and atomic-miss coverage.
 - `src/tests.rs`: synthetic edit, convergence, retention, and cold-parity tests.

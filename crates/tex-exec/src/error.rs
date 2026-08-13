@@ -8,6 +8,7 @@ use tex_state::WorldError;
 use tex_state::meaning::ExpandablePrimitive;
 use tex_state::meaning::UnexpandablePrimitive;
 use tex_state::provenance::DiagnosticSite;
+use tex_state::provenance::OriginRef;
 use tex_state::token::{OriginId, Token, TracedTokenWord};
 
 use crate::Mode;
@@ -836,6 +837,26 @@ impl ExecError {
                 inherited.related().iter().copied(),
                 inherited.expansion_head(),
             ),
+            frozen: None,
+        }
+    }
+
+    /// Captures the triggering delivery's structural root. Formatting still
+    /// walks and renders it only when a diagnostic consumer requests text.
+    pub(crate) fn capture_command_origin_ref(self, origin: OriginRef) -> Self {
+        if matches!(
+            self,
+            Self::NeedResource(_) | Self::MissingFont { .. } | Self::MissingPdfImage { .. }
+        ) {
+            return self;
+        }
+        let inherited = self.diagnostic_site();
+        if inherited.primary_origin().is_some() {
+            return self;
+        }
+        Self::Captured {
+            error: Box::new(self),
+            site: DiagnosticSite::rooted(Some(origin), [], None),
             frozen: None,
         }
     }

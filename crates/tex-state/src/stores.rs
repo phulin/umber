@@ -595,6 +595,13 @@ impl Clone for Stores {
 }
 
 impl Stores {
+    pub(crate) fn configure_provenance_budgets(
+        &mut self,
+        budgets: crate::provenance::ProvenanceBudgets,
+    ) {
+        self.provenance.configure_budgets(budgets);
+    }
+
     #[cfg(test)]
     pub(crate) fn testing_macro_store(&self) -> &MacroStore {
         &self.macros
@@ -809,6 +816,14 @@ impl Stores {
 
     pub(crate) fn install_source_fragments(&mut self, fragments: FragmentStore) {
         self.source_fragments = fragments;
+    }
+
+    pub(crate) fn bind_rebound_root_registration(&mut self, source: SourceId) {
+        let Some(registration) = self.source_map.registered_source(source) else {
+            return;
+        };
+        self.source_fragments
+            .bind_rebound_root_registration(registration);
     }
 
     pub(crate) fn direct_root_span_id(

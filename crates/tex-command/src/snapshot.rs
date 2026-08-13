@@ -47,6 +47,19 @@ impl CommandStateSnapshot {
 }
 
 impl CommandSummary {
+    /// Returns the root source coordinate capability retained by this
+    /// continuation, when the root input is still live.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn root_source_id(&self) -> Option<tex_state::SourceId> {
+        self.input.levels.iter().find_map(|level| {
+            let InputLevel::Source(source) = level else {
+                return None;
+            };
+            Some(source.cursor.backing.id)
+        })
+    }
+
     /// Compares future command semantics while normalizing allocation-local
     /// provenance handles on backed-up tokens through their captured source
     /// provenance.

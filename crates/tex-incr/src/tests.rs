@@ -122,9 +122,8 @@ fn live_retention_charges_query_caches_to_their_owners() {
     let event = (0..32)
         .find(|&event| {
             session
-                .rendered_origin(1, event, Some(0))
+                .has_rendered_origin(1, event, Some(0))
                 .expect("render lookup")
-                .is_some()
         })
         .expect("source-backed text event");
     let output_id = session.output_id();
@@ -185,9 +184,8 @@ fn rendered_source_queries_reject_another_revision_one_session() {
     let first_event = (0..32)
         .find(|&event| {
             first
-                .rendered_origin(1, event, Some(0))
+                .has_rendered_origin(1, event, Some(0))
                 .expect("first render lookup")
-                .is_some()
         })
         .expect("first source-backed event");
 
@@ -632,9 +630,8 @@ fn convergent_adopted_char_artifact_keeps_current_and_deleted_provenance() {
     let event = (0..32)
         .find(|&event| {
             session
-                .rendered_origin(1, event, None)
+                .has_rendered_origin(1, event, None)
                 .expect("render lookup")
-                .is_some()
         })
         .expect("char text event");
     assert_eq!(
@@ -669,13 +666,12 @@ fn convergent_adopted_char_artifact_keeps_current_and_deleted_provenance() {
     let b_event = (0..32)
         .find(|&event| {
             session
-                .rendered_origin(2, event, None)
+                .has_rendered_origin(2, event, None)
                 .expect("render lookup")
-                .is_some()
         })
         .expect("reused B text event");
     let b_origin = session
-        .rendered_origin(2, b_event, None)
+        .rendered_artifact_origin(2, b_event, None)
         .expect("render lookup")
         .expect("B render origin");
     let b_offset = session.source.find("{B}").expect("B box") + 1;
@@ -717,12 +713,23 @@ fn convergent_adopted_char_artifact_keeps_current_and_deleted_provenance() {
     assert!(fourth.reuse.convergence_boundary.is_some());
     assert!(fourth.reuse.pages_reused > 0);
     assert_eq!(session.page_lowerings(2), 0, "accept drops old page maps");
-    assert_eq!(
-        session
+    let resolved = match b_origin {
+        ArtifactOrigin::Rooted(origin) => session
             .substrate
             .as_ref()
             .expect("retained substrate")
-            .resolve_layout_origin(b_origin, &session.fragments, &session.layout),
+            .resolve_layout_rooted_origin(&origin, &session.fragments, &session.layout),
+        ArtifactOrigin::Stable(span) => session
+            .substrate
+            .as_ref()
+            .expect("retained substrate")
+            .resolve_stable_layout_origin(span, &session.fragments, &session.layout),
+        ArtifactOrigin::Live(_) | ArtifactOrigin::Unknown => {
+            panic!("direct shipout must publish an artifact-owned root or recipe")
+        }
+    };
+    assert_eq!(
+        resolved,
         LayoutResolvedOrigin::Deleted { minted_revision: 1 }
     );
     assert_eq!(

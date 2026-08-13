@@ -154,9 +154,15 @@ fn mixed_artifact_provenance_decodes_only_the_requested_source() {
         open_out_occurrences,
     );
 
-    assert_eq!(artifact.render_origin(0, 0), ArtifactOrigin::Live(first));
+    assert_eq!(
+        artifact.render_origin(0, 0),
+        ArtifactOrigin::Rooted(crate::provenance::OriginRef::direct(first))
+    );
     assert_eq!(artifact.render_origin(1, 0), ArtifactOrigin::Stable(span));
-    assert_eq!(artifact.render_origin(2, 0), ArtifactOrigin::Live(last));
+    assert_eq!(
+        artifact.render_origin(2, 0),
+        ArtifactOrigin::Rooted(crate::provenance::OriginRef::direct(last))
+    );
     assert_eq!(artifact.render_origin(1, 1), ArtifactOrigin::Unknown);
     assert!(artifact.render_origins().is_none());
 }

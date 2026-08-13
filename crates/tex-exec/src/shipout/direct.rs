@@ -255,16 +255,10 @@ pub(crate) fn stage_shipout(
     // Phase B holds only an immutable state view. One compact-list walk emits
     // the canonical artifact; every downstream driver consumes those bytes.
     let mut encoder = ArtifactEmitter::new(job, counts, &root, vertical);
-    let mut emission = EmissionState {
-        fonts: Vec::new(),
-        live_fonts: Vec::new(),
-        font_slots: Vec::new(),
-        // The artifact root is a synthetic box header preceding its children.
-        render_origin_ends: Some(vec![0]),
-        render_origins: tex_state::RenderProvenanceBuilder::default(),
-        anchor: u32::try_from(overlay.pending_effect_count)
-            .map_err(|_| ExecError::ArithmeticOverflow)?,
-    };
+    let mut emission = EmissionState::page(
+        stores.provenance_demand().rendered_source(),
+        u32::try_from(overlay.pending_effect_count).map_err(|_| ExecError::ArithmeticOverflow)?,
+    );
     encoder.stream_root_nodes(|output| {
         emit_node_list(stores, &overlay, children, output, &mut emission, false, 1)
     })?;
@@ -295,13 +289,14 @@ pub(crate) fn stage_shipout(
     stores.set_input_summary(input_summary);
     let effect_pos = stores.world().effect_pos();
     let retained_diagnostics = overlay.diagnostics.clone();
-    let render_origin_ends = emission
-        .render_origin_ends
-        .expect("page shipout must record render provenance");
-    Ok(StagedShipout {
-        artifact: VerifiedArtifact::new(artifact_bytes)
+    let artifact = if let Some(render_origin_ends) = emission.render_origin_ends {
+        VerifiedArtifact::new(artifact_bytes)
             .with_built_render_origins(render_origin_ends, emission.render_origins)
-            .with_open_out_occurrences(overlay.open_out_occurrences),
+    } else {
+        VerifiedArtifact::new(artifact_bytes)
+    };
+    Ok(StagedShipout {
+        artifact: artifact.with_open_out_occurrences(overlay.open_out_occurrences),
         dvi_plan,
         effect_pos,
         retained_diagnostics,
@@ -438,6 +433,8 @@ pub(super) fn compile_dvi_plan(
 mod lower;
 pub(crate) use lower::page_counts;
 mod normalize;
+#[cfg(test)]
+mod tests;
 
 use lower::*;
 use normalize::{PageOverlay, normalize_page};
@@ -456,13 +453,30 @@ struct EmissionState {
 }
 
 impl EmissionState {
-    fn node(&mut self, origins: impl IntoIterator<Item = OriginRef>) {
+    fn page(rendered_source: bool, anchor: u32) -> Self {
+        Self {
+            fonts: Vec::new(),
+            live_fonts: Vec::new(),
+            font_slots: Vec::new(),
+            // The artifact root is a synthetic box header preceding its children.
+            // Batch jobs retain no column at all; editor sessions select it once.
+            render_origin_ends: rendered_source.then(|| vec![0]),
+            render_origins: tex_state::RenderProvenanceBuilder::default(),
+            anchor,
+        }
+    }
+
+    fn node(&mut self, stores: &Universe, origins: impl IntoIterator<Item = OriginRef>) {
         let Some(ends) = &mut self.render_origin_ends else {
             return;
         };
         let mut len = 0_u32;
         for origin in origins {
-            self.render_origins.push_root(origin);
+            if let Some(span) = stores.root_span_for_origin(origin.id()) {
+                self.render_origins.push_stable_span(span);
+            } else {
+                self.render_origins.push_root(origin);
+            }
             len = len
                 .checked_add(1)
                 .expect("artifact render provenance exceeds u32 entries");
@@ -474,6 +488,13 @@ impl EmissionState {
                 .checked_add(len)
                 .expect("artifact render provenance exceeds u32 entries"),
         );
+    }
+
+    fn node_empty(&mut self) {
+        let Some(ends) = &mut self.render_origin_ends else {
+            return;
+        };
+        ends.push(ends.last().copied().unwrap_or(0));
     }
 }
 
@@ -547,7 +568,7 @@ fn emit_char_run(
                 .ok_or(ExecError::UnsupportedShipoutNode {
                     node: "missing character metrics",
                 })?;
-            emission.node([origin.clone()]);
+            emission.node(stores, [origin.clone()]);
             output.char(font_id, u32::from(code), width)?;
         }
         return Ok(());
@@ -640,7 +661,7 @@ fn emit_index(
             )?;
         }
         NodeRef::Kern { amount, kind } => {
-            emission.node([]);
+            emission.node(stores, []);
             output.kern(amount, lower_kern_kind(kind))?;
         }
         NodeRef::MarginKern {
@@ -651,7 +672,7 @@ fn emit_index(
         } => {
             let (code, width) = glyph(stores, font, char::from(ch))?;
             let projection = glyph_projection(stores, font, code, width, emission)?;
-            emission.node([]);
+            emission.node(stores, []);
             output.margin_kern(amount, lower_margin_kern_side(side), projection.font_id, ch)?;
         }
         NodeRef::Glue { spec, kind, leader } => {
@@ -661,7 +682,7 @@ fn emit_index(
             emit_glue(stores, overlay, output, emission, spec, kind, leader, depth)?;
         }
         NodeRef::Penalty(value) => {
-            emission.node([]);
+            emission.node(stores, []);
             output.penalty(value)?;
         }
         NodeRef::Rule {
@@ -669,7 +690,7 @@ fn emit_index(
             height,
             depth,
         } => {
-            emission.node([]);
+            emission.node(stores, []);
             output.rule(width, height, depth)?;
         }
         NodeRef::HList(box_node) | NodeRef::VList(box_node) => {
@@ -697,7 +718,7 @@ fn emit_index(
             replace,
             ..
         } => {
-            emission.node([]);
+            emission.node(stores, []);
             output.disc(lower_disc_kind(kind), |disc| {
                 disc.pre(|nodes| {
                     emit_node_list(
@@ -735,7 +756,7 @@ fn emit_index(
             })?;
         }
         NodeRef::Mark { class, tokens } => {
-            emission.node([]);
+            emission.node(stores, []);
             output.mark_stream(class, |tokens_out| {
                 for &token in stores.tokens(tokens.id()).iter() {
                     match token {
@@ -755,7 +776,7 @@ fn emit_index(
             })?;
         }
         NodeRef::Ins { class, content, .. } => {
-            emission.node([]);
+            emission.node(stores, []);
             output.insert(class, |nodes| {
                 emit_node_list(
                     stores,
@@ -772,21 +793,21 @@ fn emit_index(
             if let Some(effect_index) =
                 anchor_for_whatsit(whatsit, suppress_deferred_streams, &mut emission.anchor)?
             {
-                emission.node([]);
+                emission.node(stores, []);
                 output.whatsit_anchor(effect_index)?;
             }
         }
         NodeRef::MathOn(width) => {
-            emission.node([]);
+            emission.node(stores, []);
             output.math_on(width)?;
         }
         NodeRef::MathOff(width) => {
-            emission.node([]);
+            emission.node(stores, []);
             output.math_off(width)?;
         }
         NodeRef::Direction(_) => {}
         NodeRef::Adjust(content) => {
-            emission.node([]);
+            emission.node(stores, []);
             output.adjust(|nodes| {
                 emit_node_list(
                     stores,
@@ -823,7 +844,7 @@ fn emit_box(
     depth: usize,
 ) -> Result<(), ExecError> {
     let fields = lower_box_header(&box_node);
-    emission.node([]);
+    emission.node_empty();
     output.box_node(vertical, &fields, |nodes| {
         emit_node_list(
             stores,
@@ -851,7 +872,7 @@ fn emit_glue(
 ) -> Result<(), ExecError> {
     match leader {
         None => {
-            emission.node([]);
+            emission.node(stores, []);
             output.glue(spec, kind)?;
         }
         Some(StateLeaderPayload::Rule {
@@ -859,13 +880,13 @@ fn emit_glue(
             height,
             depth,
         }) => {
-            emission.node([]);
+            emission.node(stores, []);
             output.glue_rule_leader(spec, kind, width, height, depth)?;
         }
         Some(StateLeaderPayload::HList(box_node)) | Some(StateLeaderPayload::VList(box_node)) => {
             let vertical = matches!(leader, Some(StateLeaderPayload::VList(_)));
             let fields = lower_box_header(&box_node);
-            emission.node([]);
+            emission.node(stores, []);
             output.glue_box_leader(spec, kind, vertical, &fields, |nodes| {
                 emit_node_list(
                     stores,
@@ -1028,7 +1049,7 @@ fn emit_glyph(
 ) -> Result<(), ExecError> {
     let projection = glyph_projection(stores, font, ch, logical_width, emission)?;
     emit_projection_kern(projection.left, output, emission)?;
-    emission.node(origins);
+    emission.node(stores, origins);
     output.char(projection.font_id, ch, projection.width)?;
     emit_projection_kern(projection.right, output, emission)
 }
@@ -1046,7 +1067,7 @@ fn emit_ligature(
 ) -> Result<(), ExecError> {
     let projection = glyph_projection(stores, font, ch, logical_width, emission)?;
     emit_projection_kern(projection.left, output, emission)?;
-    emission.node(origins);
+    emission.node(stores, origins);
     output.lig(
         projection.font_id,
         ch,
@@ -1064,7 +1085,7 @@ fn emit_projection_kern(
     if amount.raw() == 0 {
         return Ok(());
     }
-    emission.node([]);
+    emission.node_empty();
     output.kern(amount, PageKernKind::Explicit)?;
     Ok(())
 }

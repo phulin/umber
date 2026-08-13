@@ -51,7 +51,9 @@ use crate::provenance::{
     ExpansionFrameRef, InsertedOriginKind, OriginListBuilder, OriginListRef, OriginRecord,
     OriginRef, SynthesizedOriginKind, SyntheticOriginKind,
 };
-use crate::provenance::{MacroInvocationProvenanceStats, ProvenanceStats};
+use crate::provenance::{
+    MacroInvocationProvenanceStats, ProvenanceBudgets, ProvenanceDemand, ProvenanceStats,
+};
 use crate::scaled::Scaled;
 use crate::source_map::{
     GeneratedSource, RegisteredSource, SourceBacking, SourceDescriptor, SourceMapError, SourcePos,
@@ -321,8 +323,6 @@ pub struct LocalRetrySnapshot {
 pub struct GenerationSubstrate {
     universe: Universe,
     charged_bytes: usize,
-    retained_origin_locations: HashMap<OriginId, crate::ResolvedSourceLocation>,
-    retained_origin_spans: HashMap<OriginId, crate::RootSpanId>,
 }
 
 /// Rejection from the narrow validated generation-fork/retarget operations.
@@ -704,18 +704,10 @@ impl GenerationSubstrate {
     /// Freezes one completed mutable timeline as an accepted generation.
     #[must_use]
     pub fn new(universe: Universe) -> Self {
-        let retained_origin_locations = HashMap::new();
-        let retained_origin_spans = HashMap::new();
-        let charged_bytes = generation_charged_bytes(
-            &universe,
-            &retained_origin_locations,
-            &retained_origin_spans,
-        );
+        let charged_bytes = generation_charged_bytes(&universe);
         Self {
             universe,
             charged_bytes,
-            retained_origin_locations,
-            retained_origin_spans,
         }
     }
 
@@ -730,11 +722,7 @@ impl GenerationSubstrate {
     #[doc(hidden)]
     pub fn accept_private_revision(&mut self) -> Result<(), PrivateRevisionAcceptanceError> {
         self.universe.accept_private_revision()?;
-        self.charged_bytes = generation_charged_bytes(
-            &self.universe,
-            &self.retained_origin_locations,
-            &self.retained_origin_spans,
-        );
+        self.charged_bytes = generation_charged_bytes(&self.universe);
         Ok(())
     }
 
@@ -756,9 +744,17 @@ impl GenerationSubstrate {
         &self,
         origin: crate::token::OriginId,
     ) -> Option<crate::ResolvedSourceLocation> {
-        crate::ProvenanceResolver::new(&self.universe)
-            .resolve_origin(origin)
-            .or_else(|| self.retained_origin_locations.get(&origin).cloned())
+        crate::ProvenanceResolver::new(&self.universe).resolve_origin(origin)
+    }
+
+    /// Resolves an artifact-owned structural root without importing it into
+    /// this generation's provenance index.
+    #[must_use]
+    pub fn resolve_rooted_origin(
+        &self,
+        origin: &crate::provenance::OriginRef,
+    ) -> Option<crate::ResolvedSourceLocation> {
+        crate::ProvenanceResolver::new(&self.universe).resolve_origin_ref(origin)
     }
 
     /// Resolves one retained origin against the session's current editor layout.
@@ -769,18 +765,21 @@ impl GenerationSubstrate {
         fragments: &crate::FragmentStore,
         layout: &crate::EditorLayout,
     ) -> crate::LayoutResolvedOrigin {
-        if let Some(&span) = self.retained_origin_spans.get(&origin) {
-            return self.resolve_stable_layout_origin(span, fragments, layout);
-        }
-        let resolved = crate::ProvenanceResolver::new(&self.universe)
-            .resolve_layout_origin(origin, fragments, layout);
-        if resolved == crate::LayoutResolvedOrigin::Unknown
-            && self.retained_origin_locations.contains_key(&origin)
-        {
-            crate::LayoutResolvedOrigin::Foreign
-        } else {
-            resolved
-        }
+        crate::ProvenanceResolver::new(&self.universe)
+            .resolve_layout_origin(origin, fragments, layout)
+    }
+
+    /// Resolves an artifact-owned structural root against the live editor
+    /// layout without convergence-time origin import.
+    #[must_use]
+    pub fn resolve_layout_rooted_origin(
+        &self,
+        origin: &crate::provenance::OriginRef,
+        fragments: &crate::FragmentStore,
+        layout: &crate::EditorLayout,
+    ) -> crate::LayoutResolvedOrigin {
+        crate::ProvenanceResolver::new(&self.universe)
+            .resolve_layout_origin_ref(origin, fragments, layout)
     }
 
     /// Resolves a stable paragraph recipe span directly at the diagnostic
@@ -798,100 +797,6 @@ impl GenerationSubstrate {
                 crate::source_fragments::resolve_fragment_span(span, fragments, layout)
             })
             .unwrap_or(crate::LayoutResolvedOrigin::Unknown)
-    }
-
-    /// Detaches diagnostic locations needed by artifacts adopted from a
-    /// related scratch fork. Artifact typed roots retain structural origins;
-    /// semantic state and source stores remain on the accepted generation.
-    pub fn retain_artifact_origins_from_fork(
-        &mut self,
-        fork: &Universe,
-        roots: &[OriginId],
-    ) -> Result<(), GenerationForkError> {
-        let origin = fork.fork_origin.ok_or(GenerationForkError::UnrelatedFork)?;
-        if origin.source_owner != self.universe.owner.snapshot_owner() {
-            return Err(GenerationForkError::UnrelatedFork);
-        }
-        let resolver = crate::ProvenanceResolver::new(fork);
-        for &root in roots {
-            if let Some(span) = fork.root_span_for_origin(root) {
-                self.retained_origin_spans.entry(root).or_insert(span);
-            }
-            if let Some(location) = resolver.resolve_origin(root) {
-                self.retained_origin_locations
-                    .entry(root)
-                    .or_insert(location);
-            }
-        }
-        self.charged_bytes = generation_charged_bytes(
-            &self.universe,
-            &self.retained_origin_locations,
-            &self.retained_origin_spans,
-        );
-        Ok(())
-    }
-
-    /// Retains fork-owned origins, detaching editor-backed source records
-    /// against the candidate layout while it is still available.
-    pub fn retain_artifact_origins_from_fork_with_layout(
-        &mut self,
-        fork: &Universe,
-        roots: &[OriginId],
-        fragments: &crate::FragmentStore,
-        layout: &crate::EditorLayout,
-    ) -> Result<(), GenerationForkError> {
-        let origin = fork.fork_origin.ok_or(GenerationForkError::UnrelatedFork)?;
-        if origin.source_owner != self.universe.owner.snapshot_owner() {
-            return Err(GenerationForkError::UnrelatedFork);
-        }
-        let resolver = crate::ProvenanceResolver::new(fork);
-        for &root in roots {
-            let location = resolver.resolve_origin(root);
-            if let Some(span) = fork.root_span_for_origin(root).or_else(|| {
-                let location = location.as_ref()?;
-                (location.path == layout.path()).then_some(())?;
-                fragments.root_span_for_layout_range(layout, location.start..location.end)
-            }) {
-                self.retained_origin_spans.entry(root).or_insert(span);
-            }
-            if let Some(location) = location {
-                self.retained_origin_locations
-                    .entry(root)
-                    .or_insert(location);
-            }
-        }
-        self.charged_bytes = generation_charged_bytes(
-            &self.universe,
-            &self.retained_origin_locations,
-            &self.retained_origin_spans,
-        );
-        Ok(())
-    }
-
-    /// Detaches live artifact origins owned by this accepted generation to
-    /// stable editor-piece spans before the session layout changes.
-    pub fn retain_artifact_origin_spans(
-        &mut self,
-        roots: &[OriginId],
-        fragments: &crate::FragmentStore,
-        layout: &crate::EditorLayout,
-    ) {
-        let resolver = crate::ProvenanceResolver::new(&self.universe);
-        for &root in roots {
-            let span = self.universe.root_span_for_origin(root).or_else(|| {
-                let location = resolver.resolve_origin(root)?;
-                (location.path == layout.path()).then_some(())?;
-                fragments.root_span_for_layout_range(layout, location.start..location.end)
-            });
-            if let Some(span) = span {
-                self.retained_origin_spans.entry(root).or_insert(span);
-            }
-        }
-        self.charged_bytes = generation_charged_bytes(
-            &self.universe,
-            &self.retained_origin_locations,
-            &self.retained_origin_spans,
-        );
     }
 
     #[doc(hidden)]
@@ -1003,11 +908,7 @@ impl GenerationSubstrate {
     }
 }
 
-fn generation_charged_bytes(
-    universe: &Universe,
-    retained_origin_locations: &HashMap<OriginId, crate::ResolvedSourceLocation>,
-    retained_origin_spans: &HashMap<OriginId, crate::RootSpanId>,
-) -> usize {
+fn generation_charged_bytes(universe: &Universe) -> usize {
     universe
         .stores
         .generation_retained_bytes()
@@ -1021,22 +922,6 @@ fn generation_charged_bytes(
         .saturating_add(universe.input_summary.retained_bytes())
         .saturating_add(universe.page.retained_bytes())
         .saturating_add(universe.world.generation_retained_bytes())
-        .saturating_add(
-            retained_origin_locations
-                .capacity()
-                .saturating_mul(std::mem::size_of::<(OriginId, crate::ResolvedSourceLocation)>()),
-        )
-        .saturating_add(
-            retained_origin_locations
-                .values()
-                .map(|location| location.path.capacity())
-                .sum::<usize>(),
-        )
-        .saturating_add(
-            retained_origin_spans
-                .capacity()
-                .saturating_mul(std::mem::size_of::<(OriginId, crate::RootSpanId)>()),
-        )
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1202,6 +1087,10 @@ pub struct Universe {
     /// Absent from templates and accepted generations at rest.
     private_revision_domain: Option<PatchAllocationDomain>,
     stores: Stores,
+    /// Immutable job-level selection and admission limits for optional
+    /// provenance consumers. Excluded from semantic state and formats.
+    provenance_demand: ProvenanceDemand,
+    provenance_budgets: ProvenanceBudgets,
     world: World,
     interaction_mode: InteractionMode,
     /// Process-selected §79 context layout; excluded from formats, snapshots,
@@ -1522,6 +1411,8 @@ impl Clone for Universe {
             owner: UniverseOwner::new(),
             private_revision_domain: None,
             stores,
+            provenance_demand: self.provenance_demand,
+            provenance_budgets: self.provenance_budgets,
             world: self.world.clone(),
             interaction_mode: self.interaction_mode,
             error_context_widths: self.error_context_widths,
@@ -1562,6 +1453,40 @@ impl Default for Universe {
 }
 
 impl Universe {
+    /// Selects optional provenance consumers and their independent limits for
+    /// subsequent job execution.
+    ///
+    /// This is operational configuration: it is cloned into revision forks,
+    /// but excluded from formats, checkpoints, and semantic hashes.
+    #[must_use]
+    pub fn with_provenance_config(
+        mut self,
+        demand: ProvenanceDemand,
+        budgets: ProvenanceBudgets,
+    ) -> Self {
+        self.provenance_demand = demand;
+        self.provenance_budgets = budgets;
+        self.stores.configure_provenance_budgets(budgets);
+        self
+    }
+
+    /// Selects optional provenance consumers while retaining current limits.
+    #[must_use]
+    pub fn with_provenance_demand(self, demand: ProvenanceDemand) -> Self {
+        let budgets = self.provenance_budgets;
+        self.with_provenance_config(demand, budgets)
+    }
+
+    #[must_use]
+    pub const fn provenance_demand(&self) -> ProvenanceDemand {
+        self.provenance_demand
+    }
+
+    #[must_use]
+    pub const fn provenance_budgets(&self) -> ProvenanceBudgets {
+        self.provenance_budgets
+    }
+
     /// Creates an isolated staging generation for atomic detached import.
     ///
     /// Private revision allocations cannot cross a generation fork, so an
@@ -1817,6 +1742,8 @@ impl Universe {
             owner: UniverseOwner::new(),
             private_revision_domain: None,
             stores,
+            provenance_demand: ProvenanceDemand::default(),
+            provenance_budgets: ProvenanceBudgets::default(),
             world,
             interaction_mode: InteractionMode::default(),
             error_context_widths: crate::print::ErrorContextWidths::default(),
@@ -3022,6 +2949,8 @@ impl Universe {
             owner: UniverseOwner::new(),
             private_revision_domain: None,
             stores,
+            provenance_demand: ProvenanceDemand::default(),
+            provenance_budgets: ProvenanceBudgets::default(),
             world,
             interaction_mode: mode,
             error_context_widths: crate::print::ErrorContextWidths::default(),
@@ -4031,7 +3960,7 @@ impl Universe {
     /// before any additional accepted diagnostic-origin map is installed.
     #[must_use]
     pub fn live_generation_charged_bytes(&self) -> usize {
-        generation_charged_bytes(self, &HashMap::new(), &HashMap::new())
+        generation_charged_bytes(self)
     }
 
     /// Rehomes the stable root editor frame without registering a document-sized backing.
@@ -4061,9 +3990,18 @@ impl Universe {
         layout: &crate::EditorLayout,
     ) -> Result<(), crate::EditorLayoutError> {
         layout.validate_store(fragments)?;
-        self.stores
-            .install_source_fragments(fragments.metadata_snapshot_for_layout(layout));
+        self.stores.install_source_fragments(
+            fragments
+                .metadata_snapshot_for_layout(layout, self.provenance_demand.rendered_source()),
+        );
         Ok(())
+    }
+
+    /// Binds a command continuation's rebound root coordinate capability to
+    /// the currently installed editor piece table.
+    #[doc(hidden)]
+    pub fn bind_rebound_editor_root_registration(&mut self, source: SourceId) {
+        self.stores.bind_rebound_root_registration(source);
     }
 
     /// Resolves the root editor piece consumed by a token, following bounded

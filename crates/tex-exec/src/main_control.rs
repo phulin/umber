@@ -7093,7 +7093,7 @@ fn dispatch_main_control_command(
                 context: "leader glue",
             })?;
     }
-    let origin = command.origin();
+    let origin = command.origin_ref().clone();
     dispatch_main_control_command_inner(
         processor,
         command,
@@ -7107,7 +7107,7 @@ fn dispatch_main_control_command(
         alignment,
         set_box_allowed,
     )
-    .map_err(|error| error.capture_command_origin(origin))
+    .map_err(|error| error.capture_command_origin_ref(origin))
 }
 
 #[allow(clippy::too_many_arguments)] // carries command-owned replay facts

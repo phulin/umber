@@ -153,6 +153,7 @@ pub use page::{
 };
 #[cfg(any(test, feature = "testing"))]
 pub use patch_domain::TestingPrivateRevisionDomainProbe;
+pub use provenance::{ProvenanceBudgets, ProvenanceDemand};
 pub use provenance_resolver::{
     DetachedGeneratedSourceSpan, ProvenanceResolver, ResolvedSourceLocation,
 };

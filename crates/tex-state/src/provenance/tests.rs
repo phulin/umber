@@ -1,8 +1,8 @@
 use super::{
     InsertedOrigin, InsertedOriginKind, MacroInvocationOrigin, ORIGIN_KEY_LEASE_LEN,
-    ORIGIN_RECORD_ARCHIVE_CHUNK, OriginKeyRuns, OriginRecord, ProvenanceStore, SourceOrigin,
-    SynthesizedOrigin, SynthesizedOriginKind, SyntheticOrigin, SyntheticOriginKind,
-    packed_origin_successor,
+    ORIGIN_RECORD_ARCHIVE_CHUNK, OriginKeyRuns, OriginListRef, OriginRecord, ProvenanceBudgets,
+    ProvenanceStore, SourceOrigin, SynthesizedOrigin, SynthesizedOriginKind, SyntheticOrigin,
+    SyntheticOriginKind, packed_origin_successor,
 };
 use crate::Universe;
 use crate::font::NULL_FONT;
@@ -494,6 +494,48 @@ fn provenance_soft_budget_degrades_excess_history_to_unknown_and_empty() {
         span_limited.allocate_repeated_list(OriginId::UNKNOWN, 1),
         OriginListId::EMPTY
     );
+}
+
+#[test]
+fn rooted_provenance_obeys_each_explicit_live_and_weak_budget() {
+    let mut store = ProvenanceStore::new();
+    store.configure_budgets(ProvenanceBudgets {
+        live_atoms: 1,
+        live_origin_lists: 1,
+        origin_list_entries: 1,
+        weak_atom_slots: 1,
+        weak_atom_candidate_keys: 0,
+        weak_list_slots: 1,
+        weak_list_candidate_keys: 1,
+        detached_artifact_recipe_bytes: 0,
+    });
+    let first = store.allocate_rooted(
+        OriginRecord::Synthetic(SyntheticOrigin::new(SyntheticOriginKind::Engine)),
+        [],
+    );
+    let excess = store.allocate_rooted(
+        OriginRecord::Synthetic(SyntheticOrigin::new(SyntheticOriginKind::Primitive)),
+        [],
+    );
+    assert_ne!(first.id(), OriginId::UNKNOWN);
+    assert_eq!(excess.id(), OriginId::UNKNOWN);
+
+    let list = store.allocate_rooted_list(std::slice::from_ref(&first));
+    let excess_list = store.allocate_rooted_list(std::slice::from_ref(&first));
+    assert_eq!(list, excess_list, "exact live value remains reusable");
+    let two_entries = store.allocate_rooted_list(&[first.clone(), first.clone()]);
+    assert_eq!(two_entries, OriginListRef::empty());
+
+    drop(list);
+    drop(excess_list);
+    drop(first);
+    let replacement = store.allocate_rooted(
+        OriginRecord::Synthetic(SyntheticOrigin::new(SyntheticOriginKind::Format)),
+        [],
+    );
+    assert_ne!(replacement.id(), OriginId::UNKNOWN);
+    assert_eq!(store.rooted_record_shape(), (1, 1));
+    assert_eq!(store.rooted_list_shape(), (0, 0, 2));
 }
 
 #[test]

@@ -226,8 +226,9 @@ print channel of its own outside the borrowed
   conversion selectors. Never classify an observed command through a
   profile-free dialect approximation.
 - `src/snapshot.rs` and `src/snapshot/tests.rs`: command snapshot, quiescent
-  summary ownership, canonical detached-continuation materialization, and
-  focused internal roundtrip/rejection tests.
+  summary ownership including the rebound root source identity, canonical
+  detached-continuation materialization, and focused internal
+  roundtrip/rejection tests.
 - `src/continuation.rs` and `src/continuation/`: handle-free command-summary
   DTOs, recursive schema audit, logical detachment, and staged atomic
   destination-generation materialization of source, symbol, token, macro,

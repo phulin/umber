@@ -22,6 +22,90 @@ const ORIGIN_RECORD_ARCHIVE_CHUNK: usize = 1024;
 const ORIGIN_KEY_LEASE_LEN: u32 = 256;
 const PACKED_ARENA_ORIGIN_END: u32 = 0x8000_0000;
 
+/// Optional provenance surfaces selected once for an engine job.
+///
+/// Source registration and compact token positions are unconditional engine
+/// state. This policy controls only consumers which retain additional roots at
+/// an output boundary.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ProvenanceDemand {
+    diagnostics: bool,
+    rendered_source: bool,
+}
+
+impl ProvenanceDemand {
+    /// Ordinary batch execution: diagnostics remain exact, but shipped pages
+    /// do not retain rendered-source sidecars.
+    pub const DIAGNOSTICS: Self = Self {
+        diagnostics: true,
+        rendered_source: false,
+    };
+
+    /// Editor execution with both diagnostic and rendered-source consumers.
+    pub const DIAGNOSTICS_AND_RENDERED_SOURCE: Self = Self {
+        diagnostics: true,
+        rendered_source: true,
+    };
+
+    /// Whether an error consumer may capture diagnostic roots.
+    #[must_use]
+    pub const fn diagnostics(self) -> bool {
+        self.diagnostics
+    }
+
+    /// Whether shipout retains node-to-source roots and recipes.
+    #[must_use]
+    pub const fn rendered_source(self) -> bool {
+        self.rendered_source
+    }
+
+    /// Returns the same policy with rendered-source consumption enabled.
+    #[must_use]
+    pub const fn with_rendered_source(self) -> Self {
+        Self {
+            rendered_source: true,
+            ..self
+        }
+    }
+}
+
+impl Default for ProvenanceDemand {
+    fn default() -> Self {
+        Self::DIAGNOSTICS
+    }
+}
+
+/// Independent production admission limits for retained provenance.
+///
+/// Exhaustion degrades only optional provenance to unknown. It never aborts
+/// TeX execution or changes artifact bytes.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ProvenanceBudgets {
+    pub live_atoms: usize,
+    pub live_origin_lists: usize,
+    pub origin_list_entries: usize,
+    pub weak_atom_slots: usize,
+    pub weak_atom_candidate_keys: usize,
+    pub weak_list_slots: usize,
+    pub weak_list_candidate_keys: usize,
+    pub detached_artifact_recipe_bytes: usize,
+}
+
+impl Default for ProvenanceBudgets {
+    fn default() -> Self {
+        Self {
+            live_atoms: DEFAULT_ORIGIN_RECORD_LIMIT,
+            live_origin_lists: DEFAULT_ORIGIN_LIST_SPAN_LIMIT,
+            origin_list_entries: DEFAULT_ORIGIN_LIST_ENTRY_LIMIT,
+            weak_atom_slots: DEFAULT_ORIGIN_RECORD_LIMIT,
+            weak_atom_candidate_keys: RECORD_CANDIDATE_KEY_BUDGET,
+            weak_list_slots: DEFAULT_ORIGIN_LIST_SPAN_LIMIT,
+            weak_list_candidate_keys: LIST_CANDIDATE_KEY_BUDGET,
+            detached_artifact_recipe_bytes: 16 * 1024 * 1024,
+        }
+    }
+}
+
 type ArchivedOriginRecord = (u32, OriginRecord);
 
 #[derive(Clone, Debug, Default)]
@@ -1245,6 +1329,10 @@ pub(crate) struct ProvenanceStore {
     record_limit: usize,
     list_span_limit: usize,
     list_entry_limit: usize,
+    weak_record_slot_limit: usize,
+    weak_record_candidate_key_limit: usize,
+    weak_list_slot_limit: usize,
+    weak_list_candidate_key_limit: usize,
 }
 
 impl Clone for ProvenanceStore {
@@ -1292,6 +1380,10 @@ impl Clone for ProvenanceStore {
             record_limit: self.record_limit,
             list_span_limit: self.list_span_limit,
             list_entry_limit: self.list_entry_limit,
+            weak_record_slot_limit: self.weak_record_slot_limit,
+            weak_record_candidate_key_limit: self.weak_record_candidate_key_limit,
+            weak_list_slot_limit: self.weak_list_slot_limit,
+            weak_list_candidate_key_limit: self.weak_list_candidate_key_limit,
         }
     }
 }
@@ -1324,6 +1416,26 @@ impl ProvenanceStore {
             record_limit: DEFAULT_ORIGIN_RECORD_LIMIT,
             list_span_limit: DEFAULT_ORIGIN_LIST_SPAN_LIMIT,
             list_entry_limit: DEFAULT_ORIGIN_LIST_ENTRY_LIMIT,
+            weak_record_slot_limit: DEFAULT_ORIGIN_RECORD_LIMIT,
+            weak_record_candidate_key_limit: RECORD_CANDIDATE_KEY_BUDGET,
+            weak_list_slot_limit: DEFAULT_ORIGIN_LIST_SPAN_LIMIT,
+            weak_list_candidate_key_limit: LIST_CANDIDATE_KEY_BUDGET,
+        }
+    }
+
+    pub(crate) fn configure_budgets(&mut self, budgets: ProvenanceBudgets) {
+        self.record_limit = budgets.live_atoms;
+        self.list_span_limit = budgets.live_origin_lists;
+        self.list_entry_limit = budgets.origin_list_entries;
+        self.weak_record_slot_limit = budgets.weak_atom_slots;
+        self.weak_record_candidate_key_limit = budgets.weak_atom_candidate_keys;
+        self.weak_list_slot_limit = budgets.weak_list_slots;
+        self.weak_list_candidate_key_limit = budgets.weak_list_candidate_keys;
+        if self.rooted_record_candidates.len() > self.weak_record_candidate_key_limit {
+            self.rooted_record_candidates.clear();
+        }
+        if self.rooted_list_candidates.len() > self.weak_list_candidate_key_limit {
+            self.rooted_list_candidates.clear();
         }
     }
 
@@ -1429,7 +1541,10 @@ impl ProvenanceStore {
                 source_registration: None,
             };
         }
-        if self.live_rooted_record_count() >= self.record_limit {
+        if self.live_rooted_record_count() >= self.record_limit
+            || (self.rooted_record_free.is_empty()
+                && self.rooted_record_slots.len() >= self.weak_record_slot_limit)
+        {
             return match record {
                 OriginRecord::Inserted(inserted)
                     if inserted.kind() == InsertedOriginKind::NoExpand =>
@@ -1461,7 +1576,14 @@ impl ProvenanceStore {
             value: Arc::downgrade(&value),
         });
         self.rooted_record_keys.insert(key, slot);
-        if self.rooted_record_candidates.len() >= RECORD_CANDIDATE_KEY_BUDGET
+        if self.weak_record_candidate_key_limit == 0 {
+            return OriginRef {
+                id,
+                value: Some(value),
+                source_registration: None,
+            };
+        }
+        if self.rooted_record_candidates.len() >= self.weak_record_candidate_key_limit
             && !self.rooted_record_candidates.contains_key(&record)
         {
             self.rooted_record_candidates.clear();
@@ -1570,6 +1692,8 @@ impl ProvenanceStore {
             })
             .count();
         if live_lists >= self.list_span_limit
+            || (self.rooted_list_slots.iter().skip(1).all(Option::is_some)
+                && self.rooted_list_slots.len().saturating_sub(1) >= self.weak_list_slot_limit)
             || live_entries
                 .checked_add(ids.len())
                 .is_none_or(|entries| entries > self.list_entry_limit)
@@ -1599,7 +1723,13 @@ impl ProvenanceStore {
             owns_identity: true,
             value: Arc::downgrade(&value),
         });
-        if self.rooted_list_candidates.len() >= LIST_CANDIDATE_KEY_BUDGET
+        if self.weak_list_candidate_key_limit == 0 {
+            return OriginListRef {
+                id,
+                value: Some(value),
+            };
+        }
+        if self.rooted_list_candidates.len() >= self.weak_list_candidate_key_limit
             && !self.rooted_list_candidates.contains_key(&hash)
         {
             self.rooted_list_candidates.clear();

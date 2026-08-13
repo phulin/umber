@@ -23,7 +23,6 @@ use tex_exec::{
 };
 use tex_out::dvi::{DviError, DviPagePlan, DviStreamWriter};
 pub use tex_out::html::RenderedOutputId;
-use tex_state::token::OriginId;
 use tex_state::{
     ArtifactOrigin, CommittedArtifact, ContentHash, EditorLayout, EditorLayoutError, EffectRecord,
     FragmentStore, GenerationForkError, GenerationSubstrate, LayoutGeneration,
@@ -446,14 +445,8 @@ struct RevisionDraft {
 }
 
 enum TransactionSubstrate {
-    Retained {
-        scratch: Universe,
-        adopted_origins: Vec<OriginId>,
-    },
-    Replaced {
-        substrate: GenerationSubstrate,
-        current_artifact_origins: Vec<OriginId>,
-    },
+    Retained,
+    Replaced { substrate: Box<GenerationSubstrate> },
 }
 
 impl RevisionTransaction {
@@ -904,11 +897,11 @@ impl PageRenderMap {
         let end = *self.event_units.get(event.checked_add(1)?)? as usize;
         let origins = self.origins.get(start..end)?;
         let origin = match unit {
-            Some(unit) => *origins.get(usize::try_from(unit).ok()?)?,
+            Some(unit) => origins.get(usize::try_from(unit).ok()?)?.clone(),
             None => origins
                 .iter()
-                .copied()
-                .find(|origin| *origin != ArtifactOrigin::Unknown)?,
+                .find(|origin| **origin != ArtifactOrigin::Unknown)?
+                .clone(),
         };
         (origin != ArtifactOrigin::Unknown).then_some(origin)
     }
@@ -1119,7 +1112,11 @@ impl Session {
         )?;
         let mut output_id = [0; 16];
         getrandom::fill(&mut output_id).map_err(SessionError::OutputIdentity)?;
-        let mut template = template;
+        // Rendered-source queries are a defining output surface of this
+        // session. Select their provenance once on the immutable template so
+        // every cold/restarted candidate carries the same policy.
+        let provenance_demand = template.provenance_demand().with_rendered_source();
+        let mut template = template.with_provenance_demand(provenance_demand);
         let pure_memo = template.take_pure_memo_config().map_or_else(
             tex_state::PureMemoRuntime::default,
             tex_state::PureMemoRuntime::new,
@@ -1710,8 +1707,7 @@ impl Session {
                 history,
             },
             substrate: TransactionSubstrate::Replaced {
-                substrate,
-                current_artifact_origins: Vec::new(),
+                substrate: Box::new(substrate),
             },
             reuse,
             dumped_format,
@@ -1864,21 +1860,13 @@ impl Session {
                     record.revision = setup.next_revision;
                     history.push(record);
                 }
-                let adopted_origins = artifacts[..scratch_artifact_count]
-                    .iter()
-                    .flat_map(|artifact| artifact.live_render_origins().iter())
-                    .copied()
-                    .collect::<Vec<_>>();
                 let convergence_boundary = history.get(restart + 1).map(BoundaryRecord::key);
                 (
                     joined_effect_journal,
                     joined_artifacts,
                     joined_pages,
                     history,
-                    TransactionSubstrate::Retained {
-                        scratch: candidate.universe,
-                        adopted_origins,
-                    },
+                    TransactionSubstrate::Retained,
                     ReuseMetrics {
                         execution_path: match setup.execution_path {
                             RevisionExecutionPath::SlowEdit => RevisionExecutionPath::FastEdit,
@@ -1909,7 +1897,6 @@ impl Session {
                     },
                 )
             } else {
-                let current_artifact_origins = Vec::new();
                 let target = candidate.universe.freeze_generation();
                 let mut history = Vec::with_capacity(restart + 1 + sink.records.len());
                 for record in &setup.old_history[..=restart] {
@@ -1946,8 +1933,7 @@ impl Session {
                     joined_pages,
                     history,
                     TransactionSubstrate::Replaced {
-                        substrate: target,
-                        current_artifact_origins,
+                        substrate: Box::new(target),
                     },
                     ReuseMetrics {
                         execution_path: setup.execution_path,
@@ -1975,8 +1961,8 @@ impl Session {
             record.revision = setup.next_revision;
         }
         let retained_substrate = match &pending_substrate {
-            TransactionSubstrate::Retained { .. } => substrate,
-            TransactionSubstrate::Replaced { substrate, .. } => substrate,
+            TransactionSubstrate::Retained => substrate,
+            TransactionSubstrate::Replaced { substrate } => substrate,
         };
         let history = retain_restorable_history(history, retained_substrate)?;
         reuse.trace_retained_bytes = std::mem::size_of_val(history.as_slice());
@@ -2116,16 +2102,19 @@ impl Session {
                 },
             ))),
             Some(LayoutResolvedOrigin::Foreign) => {
-                let Some(origin) = self.rendered_origin(page, event, unit)? else {
+                let Some(origin) = self.rendered_artifact_origin(page, event, unit)? else {
                     return Ok(None);
                 };
                 let substrate = self
                     .substrate
                     .as_ref()
                     .ok_or(SessionError::MissingAcceptedSubstrate)?;
-                Ok(substrate
-                    .resolve_origin(origin)
-                    .map(RenderedSourceResult::Current))
+                let resolved = match origin {
+                    ArtifactOrigin::Rooted(origin) => substrate.resolve_rooted_origin(&origin),
+                    ArtifactOrigin::Live(origin) => substrate.resolve_origin(origin),
+                    ArtifactOrigin::Stable(_) | ArtifactOrigin::Unknown => None,
+                };
+                Ok(resolved.map(RenderedSourceResult::Current))
             }
             Some(LayoutResolvedOrigin::Deleted { minted_revision }) => {
                 Ok(Some(RenderedSourceResult::Deleted { minted_revision }))
@@ -2149,6 +2138,9 @@ impl Session {
             .as_ref()
             .ok_or(SessionError::MissingAcceptedSubstrate)?;
         Ok(Some(match origin {
+            ArtifactOrigin::Rooted(origin) => {
+                substrate.resolve_layout_rooted_origin(&origin, &self.fragments, &self.layout)
+            }
             ArtifactOrigin::Live(origin) => {
                 substrate.resolve_layout_origin(origin, &self.fragments, &self.layout)
             }
@@ -2159,16 +2151,14 @@ impl Session {
         }))
     }
 
-    fn rendered_origin(
+    #[cfg(test)]
+    fn has_rendered_origin(
         &self,
         page: u32,
         event: u32,
         unit: Option<u32>,
-    ) -> Result<Option<OriginId>, SessionError> {
-        Ok(match self.rendered_artifact_origin(page, event, unit)? {
-            Some(ArtifactOrigin::Live(origin)) => Some(origin),
-            Some(ArtifactOrigin::Stable(_) | ArtifactOrigin::Unknown) | None => None,
-        })
+    ) -> Result<bool, SessionError> {
+        Ok(self.rendered_artifact_origin(page, event, unit)?.is_some())
     }
 
     fn rendered_artifact_origin(
@@ -2296,11 +2286,11 @@ impl Session {
     ) -> Result<tex_state::World, SessionError> {
         self.validate_pending(pending)?;
         let substrate = match &pending.substrate {
-            TransactionSubstrate::Retained { .. } => self
+            TransactionSubstrate::Retained => self
                 .substrate
                 .as_ref()
                 .ok_or(SessionError::MissingAcceptedSubstrate)?,
-            TransactionSubstrate::Replaced { substrate, .. } => substrate,
+            TransactionSubstrate::Replaced { substrate } => substrate,
         };
         let mut world = substrate.materialize_detached_outputs(
             pending.payload.output.effects().records().to_vec(),
@@ -2339,42 +2329,10 @@ impl Session {
 
         let substrate_transition_started = Timer::start();
         match substrate {
-            TransactionSubstrate::Retained {
-                scratch,
-                adopted_origins,
-            } => {
-                let retained_origins = artifacts
-                    .iter()
-                    .flat_map(|artifact| artifact.live_render_origins().iter())
-                    .copied()
-                    .collect::<Vec<_>>();
-                let substrate = self
-                    .substrate
-                    .as_mut()
-                    .ok_or(SessionError::MissingAcceptedSubstrate)?;
-                substrate.retain_artifact_origin_spans(
-                    &retained_origins,
-                    &self.fragments,
-                    &self.layout,
-                );
-                substrate.retain_artifact_origins_from_fork_with_layout(
-                    &scratch,
-                    &adopted_origins,
-                    &fragments,
-                    &layout,
-                )?;
-            }
-            TransactionSubstrate::Replaced {
-                mut substrate,
-                current_artifact_origins,
-            } => {
-                substrate.retain_artifact_origin_spans(
-                    &current_artifact_origins,
-                    &fragments,
-                    &layout,
-                );
+            TransactionSubstrate::Retained => {}
+            TransactionSubstrate::Replaced { mut substrate } => {
                 substrate.accept_private_revision()?;
-                self.substrate = Some(substrate);
+                self.substrate = Some(*substrate);
             }
         }
         let substrate_transition_latency = substrate_transition_started.elapsed();
@@ -2591,8 +2549,7 @@ fn finish_cold_candidate(
             history: sink.records,
         },
         substrate: TransactionSubstrate::Replaced {
-            substrate: candidate.universe.freeze_generation(),
-            current_artifact_origins: Vec::new(),
+            substrate: Box::new(candidate.universe.freeze_generation()),
         },
         reuse: ReuseMetrics {
             pages_retyped,

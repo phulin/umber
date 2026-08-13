@@ -213,6 +213,9 @@ impl EngineCheckpoint {
         if !rebound.command.rebind_root_source(old_source, new_source) {
             return Err(EditorRestoreError::RootRevisionMismatch);
         }
+        if let Some(source) = rebound.command.root_source_id() {
+            universe.bind_rebound_editor_root_registration(source);
+        }
         rebound.universe = universe.snapshot();
         control
             .restore_checkpoint(&rebound, &mut universe)

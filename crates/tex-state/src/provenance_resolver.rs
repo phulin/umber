@@ -12,13 +12,13 @@ use unicode_width::UnicodeWidthChar;
 use crate::Universe;
 use crate::input::{InputFrameSummary, SourceId};
 use crate::provenance::{
-    DiagnosticSite, InsertedOriginKind, OriginRecord, SourceOrigin, SynthesizedOriginKind,
-    SyntheticOriginKind,
+    DiagnosticSite, InsertedOriginKind, OriginRecord, OriginRef, SourceOrigin,
+    SynthesizedOriginKind, SyntheticOriginKind,
 };
 use crate::source_fragments::{
     EditorLayout, FragmentStore, LayoutResolvedOrigin, direct_fragment_span, resolve_fragment_span,
 };
-use crate::source_map::SourceBacking;
+use crate::source_map::{SourceBacking, SourceDescriptor, SourceRegistrationRef, SourceSpan};
 use crate::token::{OriginId, Token};
 
 const DEFAULT_TRACE_DEPTH: usize = 8;
@@ -94,6 +94,147 @@ impl<'a> ProvenanceResolver<'a> {
             line: display.line_number,
             column: display.column,
         })
+    }
+
+    /// Resolves a structural origin directly from the consumer-owned root.
+    ///
+    /// Unlike [`Self::resolve_origin`], this path does not require the origin
+    /// coordinate to remain indexed by the current Universe.
+    #[must_use]
+    pub fn resolve_origin_ref(&self, origin: &OriginRef) -> Option<ResolvedSourceLocation> {
+        let mut current = origin;
+        for _ in 0..self.trace_depth.saturating_add(4) {
+            if let Some(registration) = current.source_registration() {
+                return self.resolve_registered_root(current, registration);
+            }
+            match current.record()? {
+                OriginRecord::MacroInvocation(_)
+                | OriginRecord::Inserted(_)
+                | OriginRecord::Synthesized(_) => current = current.children().first()?,
+                OriginRecord::Source(_)
+                | OriginRecord::SourceSpan(_)
+                | OriginRecord::UnknownBootstrap
+                | OriginRecord::Synthetic(_) => return None,
+            }
+        }
+        None
+    }
+
+    /// Resolves a consumer-owned structural root against the current editor
+    /// layout without importing it into the accepted provenance store.
+    #[must_use]
+    pub fn resolve_layout_origin_ref(
+        &self,
+        origin: &OriginRef,
+        fragments: &FragmentStore,
+        layout: &EditorLayout,
+    ) -> LayoutResolvedOrigin {
+        let mut current = origin;
+        for _ in 0..self.trace_depth.saturating_add(4) {
+            if let Some(span) = fragments
+                .direct_root_span_id(current.id())
+                .and_then(|span| fragments.source_span_for_root(span))
+                .or_else(|| direct_fragment_span(current.id(), fragments))
+            {
+                return resolve_fragment_span(span, fragments, layout)
+                    .unwrap_or(LayoutResolvedOrigin::Unknown);
+            }
+            match current.record() {
+                Some(OriginRecord::SourceSpan(span)) => {
+                    if let Some(resolved) = resolve_fragment_span(span, fragments, layout) {
+                        return resolved;
+                    }
+                    return self
+                        .resolve_origin_ref(current)
+                        .map_or(LayoutResolvedOrigin::Unknown, |_| {
+                            LayoutResolvedOrigin::Foreign
+                        });
+                }
+                Some(OriginRecord::Source(_)) => return LayoutResolvedOrigin::Foreign,
+                Some(
+                    OriginRecord::MacroInvocation(_)
+                    | OriginRecord::Inserted(_)
+                    | OriginRecord::Synthesized(_),
+                ) => {
+                    let Some(parent) = current.children().first() else {
+                        return LayoutResolvedOrigin::Unknown;
+                    };
+                    current = parent;
+                }
+                Some(OriginRecord::UnknownBootstrap | OriginRecord::Synthetic(_)) | None => {
+                    return self
+                        .resolve_origin_ref(current)
+                        .map_or(LayoutResolvedOrigin::Unknown, |_| {
+                            LayoutResolvedOrigin::Foreign
+                        });
+                }
+            }
+        }
+        LayoutResolvedOrigin::Unknown
+    }
+
+    fn resolve_registered_root(
+        &self,
+        origin: &OriginRef,
+        registration: &SourceRegistrationRef,
+    ) -> Option<ResolvedSourceLocation> {
+        let region = registration.region();
+        let (lo, hi) = match origin.record() {
+            Some(OriginRecord::SourceSpan(span)) => registered_offsets(region.start.raw(), span)?,
+            _ => {
+                let crate::token::OriginEncoding::DirectSource(position) = origin.id().decode()
+                else {
+                    return None;
+                };
+                let lo = position.raw().checked_sub(region.start.raw())?;
+                let bytes = self.registration_bytes(registration)?;
+                let width =
+                    u64::try_from(utf8_scalar_len_at(bytes, usize::try_from(lo).ok()?)?).ok()?;
+                (lo, lo.checked_add(width)?)
+            }
+        };
+        if hi > region.byte_len {
+            return None;
+        }
+        let bytes = self.registration_bytes(registration)?;
+        let (line, column, _) =
+            physical_line_at(bytes, registration.line_starts(), usize::try_from(lo).ok()?)?;
+        Some(ResolvedSourceLocation {
+            path: self.registration_path(registration)?,
+            start: lo,
+            end: hi,
+            line,
+            column,
+        })
+    }
+
+    fn registration_bytes<'b>(
+        &'b self,
+        registration: &'b SourceRegistrationRef,
+    ) -> Option<&'b [u8]> {
+        match registration.descriptor() {
+            SourceDescriptor::Generated(source) => Some(source.bytes()),
+            SourceDescriptor::World { input_record, .. } => {
+                let record = self.universe.world().input_record(*input_record)?;
+                self.universe.world().input_content(record.hash())
+            }
+        }
+    }
+
+    fn registration_path(&self, registration: &SourceRegistrationRef) -> Option<String> {
+        match registration.descriptor() {
+            SourceDescriptor::Generated(source) => {
+                Some(source.logical_path().unwrap_or("<generated>").to_owned())
+            }
+            SourceDescriptor::World { input_record, .. } => Some(
+                self.universe
+                    .world()
+                    .input_record(*input_record)?
+                    .path()
+                    .to_string_lossy()
+                    .into_owned(),
+            ),
+        }
     }
 
     /// Detaches generated backing identity before speculative provenance is
@@ -619,6 +760,13 @@ fn utf8_scalar_len_at(bytes: &[u8], offset: usize) -> Option<usize> {
     let end = offset.checked_add(width)?;
     let scalar = std::str::from_utf8(bytes.get(offset..end)?).ok()?;
     (scalar.chars().count() == 1).then_some(width)
+}
+
+fn registered_offsets(region_start: u64, span: SourceSpan) -> Option<(u64, u64)> {
+    Some((
+        span.lo().raw().checked_sub(region_start)?,
+        span.hi().raw().checked_sub(region_start)?,
+    ))
 }
 
 fn physical_line(bytes: &[u8], starts: &[usize], index: usize) -> Option<PhysicalLine> {

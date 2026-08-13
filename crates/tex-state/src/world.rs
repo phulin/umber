@@ -171,10 +171,17 @@ pub struct RenderProvenanceBuilder {
     refs: Vec<u64>,
     recipes: Vec<crate::OutputProvenanceRecipe>,
     recipe_ids: ahash::AHashMap<usize, u32>,
+    stable_recipe_ids: ahash::AHashMap<crate::RootSpanId, u32>,
     mixed: bool,
 }
 
 impl RenderProvenanceBuilder {
+    #[doc(hidden)]
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.live.is_empty() && self.refs.is_empty()
+    }
+
     fn push_live_id(&mut self, origin: OriginId) {
         let index = self.live.len();
         self.live.push(origin);
@@ -224,6 +231,35 @@ impl RenderProvenanceBuilder {
         }
     }
 
+    /// Appends one editor-stable source recipe at the artifact boundary.
+    pub fn push_stable_span(&mut self, span: crate::RootSpanId) {
+        if !self.mixed {
+            self.refs.extend((0..self.live.len()).map(|index| {
+                LIVE_RENDER_REF
+                    | u64::try_from(index).expect("artifact live provenance exceeds u63")
+            }));
+            self.mixed = true;
+        }
+        let recipe_index = if let Some(&index) = self.stable_recipe_ids.get(&span) {
+            index
+        } else {
+            let index = u32::try_from(self.recipes.len())
+                .expect("artifact stable provenance recipe count exceeds u32");
+            self.recipes.push(crate::OutputProvenanceRecipe {
+                piece_anchors: Arc::from([span.start_anchor()]),
+                root_spans: Arc::from([crate::OutputProvenanceSpan {
+                    piece: 0,
+                    start: span.start(),
+                    end: span.end(),
+                }]),
+                origin_slots: Arc::from([0]),
+            });
+            self.stable_recipe_ids.insert(span, index);
+            index
+        };
+        self.refs.push(u64::from(recipe_index) << 32);
+    }
+
     fn into_parts(
         self,
     ) -> (
@@ -241,8 +277,13 @@ impl RenderProvenanceBuilder {
 }
 
 /// One artifact source reference, kept stable until diagnostic consumption.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ArtifactOrigin {
+    /// Structural root owned directly by the artifact. This is the production
+    /// form emitted for a selected rendered-source consumer.
+    Rooted(crate::provenance::OriginRef),
+    /// Compatibility form for explicitly constructed unrooted test/artifact
+    /// inputs. Production shipout does not rely on it.
     Live(OriginId),
     Stable(crate::RootSpanId),
     Unknown,
@@ -584,18 +625,20 @@ impl CommittedArtifact {
             return ArtifactOrigin::Unknown;
         }
         match &self.render_provenance.sources {
-            ArtifactRenderSources::Live { origins, .. } => origins
+            ArtifactRenderSources::Live { origins, roots } => roots
                 .get(flat)
-                .copied()
-                .map_or(ArtifactOrigin::Unknown, ArtifactOrigin::Live),
+                .cloned()
+                .map(ArtifactOrigin::Rooted)
+                .or_else(|| origins.get(flat).copied().map(ArtifactOrigin::Live))
+                .unwrap_or(ArtifactOrigin::Unknown),
             ArtifactRenderSources::Deferred(recipe) => recipe
                 .stable_span(flat)
                 .map_or(ArtifactOrigin::Unknown, ArtifactOrigin::Stable),
             ArtifactRenderSources::Mixed {
                 live,
+                roots,
                 refs,
                 recipes,
-                ..
             } => {
                 let Some(&reference) = refs.get(flat) else {
                     return ArtifactOrigin::Unknown;
@@ -604,10 +647,13 @@ impl CommittedArtifact {
                     return ArtifactOrigin::Unknown;
                 }
                 if reference & LIVE_RENDER_REF != 0 {
-                    return live
-                        .get((reference & !LIVE_RENDER_REF) as usize)
-                        .copied()
-                        .map_or(ArtifactOrigin::Unknown, ArtifactOrigin::Live);
+                    let index = (reference & !LIVE_RENDER_REF) as usize;
+                    return roots
+                        .get(index)
+                        .cloned()
+                        .map(ArtifactOrigin::Rooted)
+                        .or_else(|| live.get(index).copied().map(ArtifactOrigin::Live))
+                        .unwrap_or(ArtifactOrigin::Unknown);
                 }
                 let recipe = (reference >> 32) as usize;
                 let slot = reference as u32 as usize;

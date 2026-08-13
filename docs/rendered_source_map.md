@@ -4,13 +4,14 @@ Status: authoritative contract for producer-bound per-page render source maps,
 typed current/deleted/stale/cross-producer results, and retention accounting.
 
 Builds on the edit-stable fragment-backed coordinates of
-`edit_stable_source_coordinates.md` (umber2-hwtp): the public map projects
-opaque `OriginId`s, while each live committed-artifact slot owns the aligned
-`OriginRef` that keeps that id resolvable. An edit never touches either
-column, and all resolution goes through the layout-aware resolver, which
-returns current-document offsets or a typed `Deleted` result — never a stale
-offset. Source-coordinate caches are keyed by `LayoutGeneration`, not
-revision.
+`edit_stable_source_coordinates.md` (umber2-hwtp). Rendered-source provenance
+is an explicit incremental-session demand: ordinary batch jobs omit the
+artifact column entirely. A selected session publishes each artifact slot as
+an owned structural `OriginRef` or, when the editor piece is known at shipout,
+as a compact `RootSpanId` recipe. An edit never rewrites either form, and all
+resolution goes through the layout-aware resolver, which returns
+current-document offsets or a typed `Deleted` result — never a stale offset.
+Source-coordinate caches are keyed by `LayoutGeneration`, not revision.
 
 ## 1. Problem
 
@@ -27,11 +28,12 @@ revision.
    `OriginId`.
 
 The retained sidecar is a packed ragged table: one shared `u32` end offset per
-artifact node, one shared flat `OriginId` projection, and one aligned flat
-`OriginRef` owner buffer. Fresh shipout appends node-owned roots directly;
-it does not recover ownership from ids after lowering. Artifact nodes allocate
-no individual provenance vectors. Artifact clones remain O(1) through the
-shared buffers, and indexed lookup still returns the id slice for one node.
+artifact node and one flat artifact-owned root/recipe reference per selected
+source. Fresh shipout converts editor-backed roots to stable recipes while the
+page is live and keeps other source roots directly; it does not recover
+ownership from ids after lowering or at convergence. Artifact nodes allocate
+no individual provenance vectors. Artifact clones remain O(1) through shared
+buffers.
 
 Two structural defects:
 
@@ -70,7 +72,7 @@ struct PageRenderMap {
     /// contribute zero-width ranges, so `event_units[e+1] - event_units[e]`
     /// is the unit count of event `e`.
     event_units: Vec<u32>,   // 4 bytes per event
-    origins: Vec<OriginId>,  // 4 bytes per unit slot; UNKNOWN for spaces
+    origins: Vec<ArtifactOrigin>, // owned root, stable recipe, or UNKNOWN
 }
 ```
 
@@ -78,7 +80,7 @@ Every subsequent query on that page is a pure lookup:
 
 ```text
 lookup(page, event, unit) =
-    origins[event_units[event] + unit]      // O(1)
+    origins[event_units[event] + unit]      // O(1), cloned owned reference
 ```
 
 followed by the layout-aware resolver
@@ -90,15 +92,19 @@ Origins outside the editor fragment space fall through to their engine source
 descriptor; generated inputs use only their own optional logical path and
 never a session-wide editor-root fallback.
 
-The stored `OriginId`s name fragment content, so a cached map is immutable
-for the lifetime of the accepted output it describes and is dropped with it
-at the next accept or rollback. A unit whose source text was edited away
-resolves to typed `Deleted`, never to an offset in an old snapshot.
+The stored artifact origins own their structural source or stable fragment
+recipe, so a cached map is immutable for the lifetime of the accepted output
+it describes and is dropped with it at the next accept or rollback. A unit
+whose source text was edited away resolves to typed `Deleted`, never to an
+offset in an old snapshot. Convergence joins artifact slices and drops the
+scratch Universe directly; it performs no origin-graph scan or import.
 
-Memory: four bytes per renderable source character plus one `u32` per event
-boundary, for queried pages only, charged to live retained-output accounting
-when built. The detached accepted output retains its point-in-time metrics;
-the session getter includes maps constructed by subsequent queries.
+Memory: one `ArtifactOrigin` per renderable source character plus one `u32`
+per event boundary, for queried pages only, charged to live retained-output
+accounting when built. Artifact recipe admission is independently bounded by
+the configured detached-provenance byte budget; an over-budget optional memo
+recipe is not retained. The detached accepted output retains its point-in-time
+metrics; the session getter includes maps constructed by subsequent queries.
 The full positioned event list from the one-time lowering pass is _not_
 retained — only the compact columns. Runs of consecutive direct origins
 (ordinary text) may later be run-length encoded; that is an optimization,
@@ -220,9 +226,9 @@ map layout must not preclude it (it does not).
 - Maps are dropped with the accepted output they describe (next accept or
   rollback) and are never queried across their revision boundary (checked,
   per §2.2).
-- Maps store only opaque `OriginId`s; edit-stable resolution returns
-  current-document offsets or typed `Deleted`/`Unknown`, never a stale or
-  aliased offset.
+- Maps store artifact-owned structural roots or stable recipes; edit-stable
+  resolution returns current-document offsets or typed `Deleted`/`Unknown`,
+  never a stale or aliased offset.
 - Resolution-derived bookkeeping (line indexes, layout searches) is keyed by
   `LayoutGeneration` and built lazily in Rust; nothing coordinate-bearing is
   exported to the host.
