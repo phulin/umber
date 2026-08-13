@@ -59,10 +59,11 @@ cost and the missing revision check, not the coordinate scheme.
 
 ### 2.1 Lazily built per-page map, cached in the session
 
-Keep the query API; make it cheap after first touch. On the first query
-against a page, the session performs today's deserialize + lower pass
-**once**, folds the result together with the `render_origins` sidecar into a
-compact map, and retains it beside the accepted artifacts:
+Keep the query API; make it cheap after first touch when the compact map fits
+the configured retained-byte budget. On the first query against a page, the
+session performs today's deserialize + lower pass, folds the result together
+with the `render_origins` sidecar into a compact map, and admits it beside the
+accepted artifacts only within that budget:
 
 ```rust
 /// tex-incr: built on first query per page, dropped with the accepted
@@ -76,7 +77,7 @@ struct PageRenderMap {
 }
 ```
 
-Every subsequent query on that page is a pure lookup:
+Every subsequent query on a retained page is a pure lookup:
 
 ```text
 lookup(page, event, unit) =
@@ -86,8 +87,9 @@ lookup(page, event, unit) =
 followed by the layout-aware resolver
 (`edit_stable_source_coordinates.md` §5), whose own bookkeeping (fragment
 and piece-table searches, the per-generation line-start index) is likewise
-built lazily and memoized in Rust. No page bytes are touched after the first
-query, and pages never queried cost nothing.
+built lazily and memoized in Rust. Retained pages touch no page bytes after the
+first query, pages never queried cost nothing, and an over-budget page uses the
+same map ephemerally on each query without changing its answer.
 Origins outside the editor fragment space fall through to their engine source
 descriptor; generated inputs use only their own optional logical path and
 never a session-wide editor-root fallback.
@@ -100,8 +102,10 @@ offset in an old snapshot. Convergence joins artifact slices and drops the
 scratch Universe directly; it performs no origin-graph scan or import.
 
 Memory: one `ArtifactOrigin` per renderable source character plus one `u32`
-per event boundary, for queried pages only, charged to live retained-output
-accounting when built. Artifact recipe admission is independently bounded by
+per event boundary, for queried and admitted pages only, charged to live
+retained-output accounting when built. Deterministic recency eviction admits a new page only
+after its exact logical charge fits the render-cache byte limit; a zero limit
+keeps every map ephemeral. Artifact recipe admission is independently bounded by
 the configured detached-provenance byte budget; an over-budget optional memo
 recipe is not retained. The detached accepted output retains its point-in-time
 metrics; the session getter includes maps constructed by subsequent queries.
@@ -234,12 +238,16 @@ map layout must not preclude it (it does not).
   exported to the host.
 - Lazily built map memory is charged to retained-output accounting at
   construction.
+- Cache eviction changes only later lowering work. It cannot change source
+  answers, engine state, artifact identity, or serialized output bytes.
 
 ## 5. Verification
 
-Tests require one lowering pass for repeated queries, current-document offsets
-for reused pages after an edit, typed deleted and stale-revision results, and
-producer/session rejection before map lookup. Native, WASM, DOM, and browser
-fixtures exercise the same query identity. Retention tests charge exact page-map
-capacity to accepted `output_bytes`, charge the lazy layout line index to
-`diagnostic_bytes`, and keep both caches outside snapshot capture.
+Tests require one lowering pass for repeated retained queries, repeated
+ephemeral lowering under a zero-byte budget with identical answers,
+current-document offsets for reused pages after an edit, typed deleted and
+stale-revision results, and producer/session rejection before map lookup.
+Native, WASM, DOM, and browser fixtures exercise the same query identity.
+Retention tests charge exact page-map capacity to accepted `output_bytes`,
+charge the lazy layout line index to `diagnostic_bytes`, and keep both caches
+outside snapshot capture.

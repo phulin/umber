@@ -523,6 +523,10 @@ Detached artifacts and the effect/output metadata required to export the
 accepted revision are not checkpoint-root retention: they remain necessary
 even if every optional restart point is evicted and are accounted by the
 session's separate output-retention total. The session reports both totals.
+The public `AcceptedOutput` copies only materialized effects, committed
+artifacts, detached DVI plans, and telemetry. It never copies a
+`BoundaryRecord` or `EngineCheckpoint`; restart history is visible only through
+the live session and cannot be kept alive accidentally by a published output.
 `JobStart` and the newest boundary are protected, so the checkpoint-root total
 may exceed the requested budget; the reported overage makes the budget
 explicitly soft rather than silently discarding the only useful roots.
@@ -640,7 +644,12 @@ Implementation is not complete until tests prove all of the following:
 - accepted boundary comparison never forks or rolls back the accepted
   substrate after the one restart fork;
 - checkpoint-root and output-retention accounting charge shared roots once,
-  report protected-root overage, and return to baseline after eviction; and
+  report protected-root overage, keep restart history out of published output,
+  and return to baseline after eviction;
+- dropping a prepared revision removes its provisional effects, artifacts,
+  plans, checkpoints, and private generation without changing accepted output;
+- explicit memo/render-cache eviction and an over-budget ephemeral render
+  lookup preserve state, source answers, effects, artifacts, and DVI bytes; and
 - incremental artifacts, deferred effects, and final DVI bytes equal a cold
   run across the committed fast corpus and the 1,000-edit scripted fuzz tier,
   providing empirical coverage rather than an absolute suffix-adoption

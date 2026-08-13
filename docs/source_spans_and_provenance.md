@@ -409,12 +409,14 @@ diagnostic:
   retain an in-process artifact-node sidecar for an explicit diagnostic
   consumer, and retained-output accounting includes that memory. A rendered
   source query may also lazily build a per-page event-prefix/origin map from
-  that sidecar. The map is accepted-output-owned operational state: live
-  session telemetry adds its retained vector capacities and page-slot table to
-  `output_bytes`, while the point-in-time metrics copied into the accepted
-  output remain unchanged. The layout line-start index built while resolving a
-  current origin is instead checkpoint-owned diagnostic state and is charged
-  to `diagnostic_bytes` and the protected checkpoint budget.
+  that sidecar. The map is accepted-output-owned operational state when it fits
+  the configured render-cache byte budget: live session telemetry adds its
+  exact logical charge to `output_bytes`, while the point-in-time metrics copied
+  into the accepted output remain unchanged. An over-budget map is used
+  ephemerally and changes only later query work. The layout line-start index
+  built while resolving a current origin is instead checkpoint-owned diagnostic
+  state and is charged to `diagnostic_bytes` and the protected checkpoint
+  budget.
 - Detached artifact provenance recipes retain stable piece anchors plus compact
   relative ranges for rendered nodes. Expanded deliveries which produced no
   artifact node are absent from the rendered-source sidecar.

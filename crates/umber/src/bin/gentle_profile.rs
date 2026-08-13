@@ -1739,8 +1739,8 @@ fn execute_incremental_sample(
             dvi,
             pages: accepted.artifacts.len(),
             reuse: accepted.reuse,
-            history: accepted
-                .history
+            history: session
+                .history()
                 .iter()
                 .map(|record| {
                     (

@@ -3,7 +3,7 @@
 #![forbid(unsafe_code)]
 
 use std::cell::RefCell;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -326,6 +326,10 @@ pub enum SameHistoryStop {
 }
 
 /// Detached result of one accepted editor revision.
+///
+/// Restart checkpoints remain private session history. This published value
+/// owns only exact output payloads and telemetry, so it cannot retain an
+/// engine generation after the session is released.
 #[derive(Clone, Debug)]
 pub struct AcceptedOutput {
     pub revision: RevisionId,
@@ -333,7 +337,6 @@ pub struct AcceptedOutput {
     pub effects: Vec<EffectRecord>,
     pub artifacts: Vec<CommittedArtifact>,
     pub dvi_pages: Vec<DviPagePlan>,
-    pub history: Vec<BoundaryRecord>,
     pub reuse: ReuseMetrics,
     pub retention: RetentionMetrics,
 }
@@ -907,25 +910,78 @@ impl PageRenderMap {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 struct RenderMapCache {
-    pages: Vec<Option<PageRenderMap>>,
+    pages: BTreeMap<usize, PageRenderMap>,
+    clock: VecDeque<usize>,
+    retained_bytes: usize,
+    max_retained_bytes: usize,
     #[cfg(test)]
-    page_lowerings: Vec<usize>,
+    page_lowerings: BTreeMap<usize, usize>,
 }
 
 impl RenderMapCache {
+    fn new(max_retained_bytes: usize) -> Self {
+        Self {
+            pages: BTreeMap::new(),
+            clock: VecDeque::new(),
+            retained_bytes: 0,
+            max_retained_bytes,
+            #[cfg(test)]
+            page_lowerings: BTreeMap::new(),
+        }
+    }
+
     fn retained_bytes(&self) -> usize {
-        self.pages
-            .capacity()
-            .saturating_mul(size_of::<Option<PageRenderMap>>())
-            .saturating_add(
-                self.pages
-                    .iter()
-                    .flatten()
-                    .map(PageRenderMap::retained_bytes)
-                    .sum::<usize>(),
-            )
+        self.retained_bytes
+    }
+
+    fn set_budget(&mut self, max_retained_bytes: usize) {
+        self.max_retained_bytes = max_retained_bytes;
+        self.evict_to_fit(0);
+    }
+
+    fn clear(&mut self) {
+        self.pages.clear();
+        self.clock.clear();
+        self.retained_bytes = 0;
+        #[cfg(test)]
+        self.page_lowerings.clear();
+    }
+
+    fn touch(&mut self, page: usize) {
+        self.clock.retain(|candidate| *candidate != page);
+        self.clock.push_back(page);
+    }
+
+    fn admit(&mut self, page: usize, map: PageRenderMap) {
+        let charge = map
+            .retained_bytes()
+            .saturating_add(size_of::<usize>())
+            .saturating_add(size_of::<PageRenderMap>());
+        if charge > self.max_retained_bytes {
+            return;
+        }
+        self.evict_to_fit(charge);
+        self.pages.insert(page, map);
+        self.touch(page);
+        self.retained_bytes = self.retained_bytes.saturating_add(charge);
+    }
+
+    fn evict_to_fit(&mut self, incoming: usize) {
+        while self.retained_bytes.saturating_add(incoming) > self.max_retained_bytes {
+            let Some(page) = self.clock.pop_front() else {
+                break;
+            };
+            let Some(map) = self.pages.remove(&page) else {
+                continue;
+            };
+            let charge = map
+                .retained_bytes()
+                .saturating_add(size_of::<usize>())
+                .saturating_add(size_of::<PageRenderMap>());
+            self.retained_bytes = self.retained_bytes.saturating_sub(charge);
+        }
     }
 }
 
@@ -1154,7 +1210,7 @@ impl Session {
             command_profile: CommandProfile::TEX82,
             initex: true,
             expansion_stats: ExpansionStats::default(),
-            render_maps: RefCell::default(),
+            render_maps: RefCell::new(RenderMapCache::new(usize::MAX)),
         })
     }
 
@@ -1289,6 +1345,21 @@ impl Session {
     #[must_use]
     pub fn pure_memo_stats(&self) -> tex_state::PureMemoStats {
         self.pure_memo.stats()
+    }
+
+    /// Sets the retained byte budget for lazy rendered-source page maps.
+    ///
+    /// A page whose compact map cannot fit is resolved from an ephemeral
+    /// lowering. Lowering and eviction never affect accepted output bytes or
+    /// engine state.
+    pub fn set_render_cache_budget(&self, max_retained_bytes: usize) {
+        self.render_maps.borrow_mut().set_budget(max_retained_bytes);
+    }
+
+    /// Drops session accelerators while preserving accepted state and output.
+    pub fn evict_rebuildable_caches(&mut self) {
+        self.pure_memo.evict_all();
+        self.clear_render_maps();
     }
 
     /// Returns live retention telemetry for the accepted session state.
@@ -2174,25 +2245,27 @@ impl Session {
             return Ok(None);
         };
         let mut maps = self.render_maps.borrow_mut();
-        if maps.pages.len() <= page_index {
-            maps.pages.resize_with(page_index + 1, || None);
-            #[cfg(test)]
-            maps.page_lowerings.resize(page_index + 1, 0);
+        if let Some(origin) = maps
+            .pages
+            .get(&page_index)
+            .map(|map| map.origin(event, unit))
+        {
+            maps.touch(page_index);
+            return Ok(origin);
         }
-        if maps.pages[page_index].is_none() {
-            maps.pages[page_index] = Some(build_page_render_map(artifact, page)?);
-            #[cfg(test)]
-            {
-                maps.page_lowerings[page_index] += 1;
-            }
-        }
-        Ok(maps.pages[page_index]
-            .as_ref()
-            .and_then(|map| map.origin(event, unit)))
+        let map = build_page_render_map(artifact, page)?;
+        let origin = map.origin(event, unit);
+        #[cfg(test)]
+        maps.page_lowerings
+            .entry(page_index)
+            .and_modify(|count| *count += 1)
+            .or_insert(1);
+        maps.admit(page_index, map);
+        Ok(origin)
     }
 
     fn clear_render_maps(&self) {
-        *self.render_maps.borrow_mut() = RenderMapCache::default();
+        self.render_maps.borrow_mut().clear();
     }
 
     #[cfg(test)]
@@ -2203,7 +2276,7 @@ impl Session {
         self.render_maps
             .borrow()
             .page_lowerings
-            .get(index)
+            .get(&index)
             .copied()
             .unwrap_or(0)
     }
@@ -2439,7 +2512,6 @@ impl Session {
             effects: self.output.effects().materialized_records(),
             artifacts: self.output.artifacts().artifacts().to_vec(),
             dvi_pages: self.output.dvi_pages().to_vec(),
-            history: self.history.clone(),
             reuse,
             retention,
         }

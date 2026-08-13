@@ -532,6 +532,41 @@ Commit promotes escaping node/content roots, publishes ordered effects and
 artifacts, and releases transaction-local history. Failed validation restores
 the prior aggregate state atomically.
 
+### 9.3 Published output and accelerator ownership
+
+Published output is a detached ownership class, not an engine snapshot. An
+accepted output value owns only its materialized `EffectRecord` values,
+`CommittedArtifact` bytes and artifact-local source roots or stable recipes,
+detached `DviPagePlan` values, and output telemetry. Restartable
+`BoundaryRecord` and `EngineCheckpoint` values remain private session history.
+Consequently, keeping an accepted output alive after dropping its session does
+not retain a `Universe`, generation substrate, store tuple, or revision map.
+Prepared revision output stays inside the rollback-capable transaction until
+acceptance; dropping or rejecting that transaction releases its effects,
+artifacts, plans, checkpoints, and private generation together.
+
+Every engine/session lookup structure has one of these authorities:
+
+| Structure                                                                                                                               | Authority and lifetime                                                                                                                                                                                                                                                                |
+| --------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Token, macro, glue, and structural-provenance candidate indexes                                                                         | Weak, collision-checked, reusable, and independently bounded; strong semantic owners alone keep values live.                                                                                                                                                                          |
+| State-hash projections, page-tree projections, font/hash fragments, hyphenation dependency fingerprints, and editor line/layout indexes | Rebuildable values keyed by exact immutable roots or the current layout generation. They are absent from semantic identity; a miss recomputes the same projection. Fixed-size root projections may travel with a checkpoint, while variable query indexes are charged to their owner. |
+| Pretolerance, page, and shipout pure memos                                                                                              | Detached, handle-free results under explicit entry and retained-byte limits. CLOCK eviction and explicit full eviction change only operational counters and future hit rate. Eviction-key telemetry is bounded by both limits.                                                        |
+| Incremental boundary history                                                                                                            | Explicitly charged to the checkpoint/history byte budget. `JobStart` and the newest restart root are protected and report any unavoidable overage; optional paragraph and shipout boundaries are pruned deterministically. History is never copied into published output.             |
+| Rendered-source page maps                                                                                                               | Rebuildable accepted-output query caches under a dedicated retained-byte limit. Over-budget pages are lowered ephemerally; eviction changes neither source results nor artifact/DVI bytes.                                                                                            |
+| Artifact render provenance                                                                                                              | Detached exact output: artifact-local structural roots or stable editor recipes admitted under the provenance recipe budget. This is not a cache and survives generation release.                                                                                                     |
+| VFS input/resource lookups and validated font/PDF resources                                                                             | Authoritative current-generation host bindings, bounded by file/count/byte limits. Superseded private generations disappear on rollback.                                                                                                                                              |
+| Render documents, patch plans, HTML assets, and returned memory output                                                                  | Detached output under render, patch, resource, and aggregate output limits. An acknowledged target replaces its predecessor; these values own no engine state.                                                                                                                        |
+| DVI/render/hash builders and temporary lookup maps                                                                                      | Operation-local scratch. They vanish when their builder, candidate, or transaction ends and never cross publication.                                                                                                                                                                  |
+
+Control-sequence interning, current Env/page/PDF maps, loaded fonts, active
+resource admission, and current VFS bindings are not accelerators: they are
+reachable semantic or host state and follow their owning state budget. No
+cache supplies liveness, changes iteration-visible output order, or enters
+state/artifact identity. Clearing every rebuildable session cache may increase
+later work but cannot change state, diagnostics, resource decisions, source
+answers, effects, artifacts, or serialized bytes.
+
 ## 10. Rust enforcement architecture
 
 ### 10.1 Crate boundary

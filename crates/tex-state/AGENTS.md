@@ -108,7 +108,7 @@ All production mutation of live TeX state should pass through `Universe` or simi
   demand policy, explicit provenance budgets, and retry leases.
 - `src/provenance/tests.rs`: Structural sharing, collision, packed-key,
   allocation, readback, retry, fork, and rollback provenance controls.
-- `src/pure_memo.rs`: Optional bounded pure-query caches for pretolerance, page-breaking, and shipout results plus stable output-provenance recipes.
+- `src/pure_memo.rs`: Optional entry/byte-bounded pure-query caches for pretolerance, page-breaking, and shipout results, bounded eviction telemetry, explicit cache release, and stable output-provenance recipes.
 - `src/resource.rs`: Generic host-resource availability, absence, and stable
   suspension identities plus the state-owned immutable input-content resolver
   contract shared across engine layers.

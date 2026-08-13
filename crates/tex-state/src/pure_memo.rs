@@ -6,7 +6,7 @@
 
 use crate::glue::GlueSpec;
 use crate::{ContentHash, DetachedMemoValue, RootSpanId};
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::time::Duration;
 #[cfg(not(target_arch = "wasm32"))]
@@ -271,7 +271,8 @@ struct PureMemoCache {
     entries: HashMap<PureMemoKey, Entry>,
     clock: VecDeque<PureMemoKey>,
     stats: PureMemoStats,
-    evicted_keys: HashSet<PureMemoKey>,
+    /// Bounded telemetry only. Membership never affects a cache hit or result.
+    eviction_history: VecDeque<PureMemoKey>,
 }
 
 /// Opaque operational cache owned by a long-lived execution session.
@@ -333,7 +334,7 @@ impl PureMemoRuntime {
             entries: HashMap::new(),
             clock: VecDeque::new(),
             stats: PureMemoStats::default(),
-            evicted_keys: HashSet::new(),
+            eviction_history: VecDeque::new(),
         });
     }
 
@@ -360,7 +361,7 @@ impl PureMemoRuntime {
             cache.stats.hits = cache.stats.hits.saturating_add(1);
         } else {
             cache.stats.misses = cache.stats.misses.saturating_add(1);
-            if cache.evicted_keys.remove(&key) {
+            if cache.take_evicted(key) {
                 cache.stats.pretolerance.evicted_before_reuse = cache
                     .stats
                     .pretolerance
@@ -410,7 +411,7 @@ impl PureMemoRuntime {
             cache.stats.page_hits = cache.stats.page_hits.saturating_add(1);
         } else {
             cache.stats.misses = cache.stats.misses.saturating_add(1);
-            if cache.evicted_keys.remove(&key) {
+            if cache.take_evicted(key) {
                 cache.stats.page.evicted_before_reuse =
                     cache.stats.page.evicted_before_reuse.saturating_add(1);
             } else {
@@ -500,7 +501,7 @@ impl PureMemoRuntime {
             cache.stats.shipout_hits = cache.stats.shipout_hits.saturating_add(1);
         } else {
             cache.stats.misses = cache.stats.misses.saturating_add(1);
-            if cache.evicted_keys.remove(&key) {
+            if cache.take_evicted(key) {
                 cache.stats.shipout.evicted_before_reuse =
                     cache.stats.shipout.evicted_before_reuse.saturating_add(1);
             } else {
@@ -653,6 +654,27 @@ impl PureMemoRuntime {
         cache.remove(key, false);
     }
 
+    /// Drops every rebuildable memo result without changing engine state.
+    ///
+    /// Configuration and cumulative operational counters remain installed so
+    /// later queries may repopulate the cache under the same limits.
+    pub fn evict_all(&mut self) {
+        let Some(cache) = self.cache.as_mut() else {
+            return;
+        };
+        let entries = std::mem::take(&mut cache.entries);
+        cache.clock.clear();
+        cache.eviction_history.clear();
+        for entry in entries.into_values() {
+            cache.stats.retained_entries = cache.stats.retained_entries.saturating_sub(1);
+            cache.stats.retained_bytes = cache.stats.retained_bytes.saturating_sub(entry.charge);
+            cache
+                .stats
+                .remove_kind_charge(entry.value.kind(), entry.charge, true);
+            cache.stats.evictions = cache.stats.evictions.saturating_add(1);
+        }
+    }
+
     #[must_use]
     pub fn stats(&self) -> PureMemoStats {
         let mut stats = self
@@ -694,6 +716,31 @@ impl PureMemoRuntime {
 }
 
 impl PureMemoCache {
+    fn take_evicted(&mut self, key: PureMemoKey) -> bool {
+        let Some(index) = self
+            .eviction_history
+            .iter()
+            .position(|candidate| *candidate == key)
+        else {
+            return false;
+        };
+        self.eviction_history.remove(index);
+        true
+    }
+
+    fn remember_eviction(&mut self, key: PureMemoKey) {
+        let key_bytes = std::mem::size_of::<PureMemoKey>();
+        let byte_limit = self.config.max_retained_bytes / key_bytes.max(1);
+        let limit = self.config.max_entries.min(byte_limit);
+        if limit == 0 {
+            return;
+        }
+        if self.eviction_history.len() == limit {
+            self.eviction_history.pop_front();
+        }
+        self.eviction_history.push_back(key);
+    }
+
     fn prepare_admission(&mut self, charge: usize) -> bool {
         while self.stats.retained_entries.saturating_add(1) > self.config.max_entries
             || self.stats.retained_bytes.saturating_add(charge) > self.config.max_retained_bytes
@@ -731,7 +778,7 @@ impl PureMemoCache {
             .remove_kind_charge(entry.value.kind(), entry.charge, eviction);
         if eviction {
             self.stats.evictions = self.stats.evictions.saturating_add(1);
-            self.evicted_keys.insert(key);
+            self.remember_eviction(key);
         } else {
             self.clock.retain(|candidate| *candidate != key);
         }

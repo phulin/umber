@@ -291,6 +291,10 @@ effect payload; authoritative effect success hashes and publishes the suffix
 before driver materialization.
 An unaccepted or pending revision cannot cross the boundary. Persistent WASM
 and watch sessions continue to use non-consuming accepted-output views.
+Those views are detached payloads: they contain no incremental boundary record,
+checkpoint, `Universe`, store tuple, or generation substrate. Restart history
+remains private to the session even when a caller retains an earlier output
+after the session itself is disposed.
 
 The retention values copied into an accepted output are a point-in-time
 snapshot taken during acceptance. The session's `retention_metrics()` getter,
@@ -488,12 +492,14 @@ packing, and line breaking. Shipout attaches
 an in-process origin sidecar aligned with artifact-node preorder, while the
 positioned-page lowering records which node and original character produced
 each text unit. On the first click into a page, the session parses and
-positions that page once, joins event units to the sidecar, and retains only
-compact event prefix sums plus opaque origin ids. Later queries are O(1) map
-lookups followed by layout-aware resolution. The cache is query-only Rust
-state, is discarded on the next accept or rollback, and is never copied into
-accepted snapshots. Paths, byte ranges, lines, and columns are computed only
-on demand.
+positions that page, joins event units to the sidecar, and retains only compact
+event prefix sums plus opaque origin ids when the map fits the configured
+render-cache byte budget. Later retained queries are O(1) map lookups followed
+by layout-aware resolution. An over-budget page uses the same map ephemerally
+and is rebuilt on the next query, producing the same answer without retained
+growth. The cache is query-only Rust state, supports explicit eviction, is
+discarded on the next accept or rollback, and is never copied into accepted
+snapshots. Paths, byte ranges, lines, and columns are computed only on demand.
 
 The first page query allocates its compact page map, and the first successful
 current-document query may allocate the accepted layout's line-start index.
@@ -503,6 +509,9 @@ retention telemetry charges them after the query. Ownership determines the
 metric: the map is retained with accepted output and increases `output_bytes`;
 the line index belongs to the checkpoint layout and increases
 `diagnostic_bytes` plus protected checkpoint overage.
+Virtual compile sessions set the render-cache limit from their output-byte
+limit. Direct incremental hosts may select a smaller independent cache budget;
+zero keeps every page map ephemeral.
 
 Origin columns and artifact sidecars are excluded from semantic node hashes,
 artifact bytes, and artifact content identity. Reused committed pages retain

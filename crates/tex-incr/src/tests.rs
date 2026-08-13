@@ -101,7 +101,10 @@ fn cold_history_contains_only_named_restartable_boundaries() {
     let mut session = Session::start(template(), "test", RevisionId::new(1), text, usize::MAX)
         .expect("session starts");
     let output = session.cold().expect("cold execution succeeds");
-    assert_eq!(output.history[0].key().boundary, EngineBoundary::JobStart);
+    assert_eq!(
+        session.history()[0].key().boundary,
+        EngineBoundary::JobStart
+    );
     assert!(session.substrate.is_some());
     assert_eq!(output.artifacts.len(), 2);
 }
@@ -165,6 +168,123 @@ fn live_retention_charges_query_caches_to_their_owners() {
         )
         .expect_err("missing input rolls the attempted revision back");
     assert_eq!(session.page_lowerings(1), 0, "rollback drops page maps");
+}
+
+#[test]
+fn zero_render_cache_budget_rebuilds_without_changing_output() {
+    let text = "\\font\\tenrm=cmr10\\relax\\tenrm\\shipout\\hbox{A}\\end";
+    let mut session = Session::start(
+        template(),
+        "render-cache-budget",
+        RevisionId::new(1),
+        text,
+        usize::MAX,
+    )
+    .expect("session starts");
+    session.set_render_cache_budget(0);
+    session
+        .register_input_file(Path::new("cmr10.tfm"), CMR10.to_vec())
+        .expect("font fixture registers");
+    let accepted = session.cold().expect("cold execution succeeds");
+    let event = (0..32)
+        .find(|&event| {
+            session
+                .has_rendered_origin(1, event, Some(0))
+                .expect("render lookup")
+        })
+        .expect("source-backed text event");
+    let first = session
+        .rendered_source_origin(1, event, Some(0))
+        .expect("first source query");
+    let lowerings = session.page_lowerings(1);
+    let second = session
+        .rendered_source_origin(1, event, Some(0))
+        .expect("second source query");
+    assert_eq!(first, second);
+    assert_eq!(session.page_lowerings(1), lowerings + 1);
+    assert_eq!(session.render_maps.borrow().retained_bytes(), 0);
+
+    session.evict_rebuildable_caches();
+    let current = session.output(ReuseMetrics::default(), accepted.retention);
+    assert_eq!(current.effects, accepted.effects);
+    assert_eq!(current.artifacts, accepted.artifacts);
+    assert_eq!(current.dvi_pages, accepted.dvi_pages);
+}
+
+#[test]
+fn published_output_survives_session_generation_release() {
+    let accepted = {
+        let text = "\\font\\tenrm=cmr10\\relax\\tenrm\\shipout\\hbox{A}\\end";
+        let mut session = Session::start(
+            template(),
+            "detached-output",
+            RevisionId::new(1),
+            text,
+            usize::MAX,
+        )
+        .expect("session starts");
+        session
+            .register_input_file(Path::new("cmr10.tfm"), CMR10.to_vec())
+            .expect("font fixture registers");
+        let accepted = session.cold().expect("cold execution succeeds");
+        assert!(!session.history().is_empty());
+        accepted
+    };
+
+    assert_eq!(accepted.artifacts.len(), 1);
+    assert!(accepted.artifacts[0].render_provenance_bytes() > 0);
+    assert!(!accepted.artifacts[0].bytes().is_empty());
+    assert!(!accepted.dvi_bytes().expect("detached DVI").is_empty());
+}
+
+#[test]
+fn dropping_prepared_revision_discards_all_provisional_output() {
+    let original = source("a");
+    let replacement = source("b");
+    let mut session = Session::start(
+        template(),
+        "provisional-output",
+        RevisionId::new(1),
+        original.clone(),
+        usize::MAX,
+    )
+    .expect("session starts");
+    session
+        .register_input_file(Path::new("cmr10.tfm"), CMR10.to_vec())
+        .expect("font fixture registers");
+    session.cold().expect("initial revision accepts");
+    let accepted_output = session.output.clone();
+    let accepted_history = session
+        .history()
+        .iter()
+        .map(BoundaryRecord::key)
+        .collect::<Vec<_>>();
+
+    let pending = session
+        .prepare_revision_with_resolvers(
+            RevisionId::new(2),
+            Edit {
+                base_revision: RevisionId::new(1),
+                expected_hash: ContentHash::from_bytes(original.as_bytes()),
+                range: 0..original.len(),
+                replacement,
+            },
+            &mut DirectResourceHost,
+        )
+        .expect("edited revision prepares");
+    assert!(!pending.artifacts().is_empty());
+    drop(pending);
+
+    assert_eq!(session.revision(), RevisionId::new(1));
+    assert_eq!(session.output, accepted_output);
+    assert_eq!(
+        session
+            .history()
+            .iter()
+            .map(BoundaryRecord::key)
+            .collect::<Vec<_>>(),
+        accepted_history
+    );
 }
 
 #[test]
@@ -233,11 +353,13 @@ fn accepted_history_retains_live_identities_for_direct_convergence() {
     .expect("session starts");
     let cold = session.cold().expect("cold execution succeeds");
     assert!(
-        cold.history
+        session
+            .history()
             .iter()
             .all(|record| record.checkpoint().has_exact_state_identity()),
         "cold history must capture canonical identities while each boundary is live"
     );
+    let expected_convergence = session.history().get(1).map(BoundaryRecord::key);
     let output = session
         .advance(
             RevisionId::new(2),
@@ -249,10 +371,7 @@ fn accepted_history_retains_live_identities_for_direct_convergence() {
             },
         )
         .expect("no-op revision succeeds");
-    assert_eq!(
-        output.reuse.convergence_boundary,
-        cold.history.get(1).map(BoundaryRecord::key)
-    );
+    assert_eq!(output.reuse.convergence_boundary, expected_convergence);
     assert!(output.reuse.pages_reused > 0);
     assert_eq!(output.reuse.same_history_stop, SameHistoryStop::Matched);
     assert_eq!(output.reuse.same_history_attempts, 1);
@@ -260,8 +379,8 @@ fn accepted_history_retains_live_identities_for_direct_convergence() {
     assert!(output.reuse.reexecuted_bytes > 0);
     assert!(output.reuse.reexecuted_tokens > 0);
     assert!(
-        output
-            .history
+        session
+            .history()
             .iter()
             .all(|record| record.checkpoint().has_exact_state_identity()),
         "convergence must retain the already captured identities"
@@ -1902,10 +2021,10 @@ fn pruning_protects_job_start_and_newest_and_reports_overage() {
         Session::start(template(), "test", RevisionId::new(1), text, 0).expect("session starts");
     let output = session.cold().expect("cold execution succeeds");
     assert_eq!(
-        output.history.first().expect("job start").key().boundary,
+        session.history().first().expect("job start").key().boundary,
         EngineBoundary::JobStart
     );
-    assert!(output.history.len() <= 2);
+    assert!(session.history().len() <= 2);
     assert!(output.retention.protected_overage_bytes > 0);
     assert!(output.retention.output_bytes > 0);
 }
@@ -2121,8 +2240,8 @@ fn accepted_history_hands_openout_page_to_prepared_finalization() {
     assert_eq!(accepted.revision, RevisionId::new(1));
     assert_eq!(accepted.artifacts.len(), 1);
     assert!(
-        accepted
-            .history
+        session
+            .history()
             .iter()
             .any(|record| record.artifact_prefix() == 1),
         "accepted history owns the logical page prefix"
