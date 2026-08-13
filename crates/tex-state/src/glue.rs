@@ -432,12 +432,12 @@ impl GlueStore {
             })
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "testing"))]
     pub(crate) fn testing_pool_shape(&self) -> (usize, usize, usize, usize, usize, usize) {
         self.pool.testing_shape()
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "testing"))]
     pub(crate) fn testing_live_totals(&self) -> (usize, usize) {
         self.pool
             .testing_live_totals(|_| core::mem::size_of::<GlueSpec>())

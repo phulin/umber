@@ -801,13 +801,13 @@ impl TokenStore {
             })
     }
 
-    #[cfg(test)]
-    fn testing_pool_shape(&self) -> (usize, usize, usize, usize, usize, usize) {
+    #[cfg(any(test, feature = "testing"))]
+    pub(crate) fn testing_pool_shape(&self) -> (usize, usize, usize, usize, usize, usize) {
         self.pool.testing_shape()
     }
 
-    #[cfg(test)]
-    fn testing_live_totals(&self) -> (usize, usize) {
+    #[cfg(any(test, feature = "testing"))]
+    pub(crate) fn testing_live_totals(&self) -> (usize, usize) {
         self.pool.testing_live_totals(TokenListValue::logical_bytes)
     }
 

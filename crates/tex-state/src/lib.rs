@@ -167,6 +167,8 @@ pub use source_fragments::{
     LayoutResolvedOrigin, Piece, PieceId, RootSpanId,
 };
 pub use stores::{FontParameterError, GroupFrame, GroupKind, GroupMismatch, PrepareMagDiagnostic};
+#[cfg(any(test, feature = "testing"))]
+pub use stores::{TestingOwnershipCensus, TestingValuePoolCensus};
 pub use universe::{
     BoxBuildTransaction, BoxDimension, EngineBoundaryHasher, FormatError, GenerationForkError,
     GenerationSubstrate, GeometryObservation, InputOpenContext, InputOpenState, InputReadState,

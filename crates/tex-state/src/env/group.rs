@@ -576,7 +576,7 @@ impl Env {
         self.journal.retained_bytes()
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "testing"))]
     pub(crate) fn journal_entry_count(&self) -> usize {
         self.journal.len()
     }

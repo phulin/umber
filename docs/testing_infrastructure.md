@@ -763,6 +763,33 @@ the incremental DVI with a fresh cold execution after every revision. It stays
 outside the default Cargo tier because of its intentionally long edit
 sequence.
 
+Long-session ownership has one fast routine smoke test and one explicit stress
+tier:
+
+```bash
+cargo test -q -j 1 --tests -p tex-incr \
+  tests::long_session::long_session_thousands_plateau_at_equal_work_milestones \
+  -- --ignored --exact --test-threads=1
+```
+
+After 64 warm-up cycles, the stress tier performs 2,048 accepted editor
+patches and 2,048 completed-but-rejected patches. Every rejected patch crosses
+one real `NeedResource` suspension and fulfillment before drop; accepted jobs
+exercise redefinition, group restoration, glue ownership, shipout, and named
+checkpoints. At equal 128-cycle milestones it compares reachable checkpoint
+state, effects, artifacts, DVI plans, and DVI bytes with a clean rebuild. Exact
+live token, macro, glue, provenance, source, journal, and node owner categories
+must remain constant, while weak indexes, checkpoint roots, provenance
+storage, and node storage remain within their declared budgets and fixed
+headroom. Equal-work receipts pin accepted/rejected/retry/checkpoint counts,
+delivered commands, and fuel independently of retention.
+
+On Linux the same milestones sample `/proc/self/status` and allow at most 64
+MiB of process-RSS growth after warm-up. RSS is allocator/process diagnostic
+evidence only: it never establishes reachability, equality, acceptance, or
+output authority. Run this tier alone with one test thread after checking the
+owning cgroup's `memory.events` and ensuring no heavy peer is active.
+
 Whole-engine Gentle profiling has a separate persistent in-process runner:
 
 ```bash

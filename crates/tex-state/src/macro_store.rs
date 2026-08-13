@@ -230,8 +230,8 @@ enum PatchEvent {
     Definition(MacroDefinitionId),
 }
 
-#[cfg(test)]
-type PoolShape = (usize, usize, usize, usize, usize, usize);
+#[cfg(any(test, feature = "testing"))]
+pub(crate) type PoolShape = (usize, usize, usize, usize, usize, usize);
 
 /// Weak macro-body and definition-occurrence storage.
 #[derive(Debug)]
@@ -701,7 +701,7 @@ impl MacroStore {
         (body.parameter_text.clone(), body.replacement_text.clone())
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "testing"))]
     pub(crate) fn testing_live_totals(&self) -> (usize, usize, usize, usize) {
         let (bodies, body_bytes) = self
             .bodies
@@ -712,7 +712,7 @@ impl MacroStore {
         (bodies, body_bytes, definitions, definition_bytes)
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "testing"))]
     pub(crate) fn testing_pool_shapes(&self) -> (PoolShape, PoolShape) {
         (
             self.bodies.testing_shape(),

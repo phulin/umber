@@ -242,7 +242,7 @@ impl ReusableIdentityAllocator {
     }
 
     /// Returns physical slot and reusable-entry counts for ownership tests.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "testing"))]
     pub(crate) fn testing_shape(&self) -> (usize, usize, usize) {
         (self.slots.len(), self.slots.capacity(), self.free.len())
     }

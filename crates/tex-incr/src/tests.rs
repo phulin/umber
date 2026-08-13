@@ -1,6 +1,8 @@
 use super::*;
 use tex_state::RootSpanId;
 
+mod long_session;
+
 const CMR10: &[u8] = include_bytes!("../../tex-fonts/tests/fixtures/cm/cmr10.tfm");
 
 fn template() -> Universe {

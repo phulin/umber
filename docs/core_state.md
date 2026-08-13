@@ -622,6 +622,9 @@ deoptimization rules. Until that crate exists, no raw layout API is exposed.
 - `cargo test --tests` is the hermetic default-native correctness gate.
 - `scripts/check.sh` enforces formatting and clippy boundaries.
 - Snapshot retention and scaling use `scripts/check-snapshot-budgets.sh`.
+- Long-session ownership uses an exact live-owner census at stable equal-work
+  milestones; weak metadata and process RSS are bounded diagnostics and never
+  semantic or reachability authority.
 - Exact fixture and corpus parity defines semantic compatibility.
 - Performance changes use the retained state, execution, and whole-engine
   workloads; historical prototype benchmarks are not permanent gates.

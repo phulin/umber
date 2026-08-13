@@ -64,6 +64,8 @@ use crate::state_hash::{
     combine,
 };
 use crate::stores::StoreStateHashCursor;
+#[cfg(any(test, feature = "testing"))]
+use crate::stores::TestingOwnershipCensus;
 use crate::stores::{
     FontParameterError, GroupKind, GroupMismatch, PrepareMagDiagnostic, ShipoutNodeMark,
     StoreFormatError, StoreSnapshot, Stores,
@@ -703,6 +705,13 @@ impl Snapshot {
 }
 
 impl GenerationSubstrate {
+    /// Exact test-only owner census for the frozen accepted generation.
+    #[cfg(any(test, feature = "testing"))]
+    #[must_use]
+    pub fn testing_ownership_census(&self) -> TestingOwnershipCensus {
+        self.universe.testing_ownership_census()
+    }
+
     /// Freezes one completed mutable timeline as an accepted generation.
     #[must_use]
     pub fn new(universe: Universe) -> Self {
@@ -8678,8 +8687,8 @@ impl Universe {
         self.stores.env_journal_bytes()
     }
 
-    #[cfg(test)]
-    fn env_journal_entry_count(&self) -> usize {
+    #[cfg(any(test, feature = "testing"))]
+    pub fn env_journal_entry_count(&self) -> usize {
         self.stores.env_journal_entry_count()
     }
 
@@ -8747,6 +8756,16 @@ impl Universe {
     #[must_use]
     pub fn testing_survivor_pin_retained_bytes(&self) -> usize {
         self.stores.testing_survivor_pin_retained_bytes()
+    }
+
+    /// Exact live-owner categories plus bounded weak/allocator metadata.
+    ///
+    /// This projection is test-only and has no role in semantic identity,
+    /// reachability, acceptance, or cache authority.
+    #[cfg(any(test, feature = "testing"))]
+    #[must_use]
+    pub fn testing_ownership_census(&self) -> TestingOwnershipCensus {
+        self.stores.testing_ownership_census()
     }
 
     /// Exact private-domain ownership used by cross-crate operation controls.

@@ -304,7 +304,7 @@ where
         self.index.clear();
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "testing"))]
     pub(crate) fn testing_shape(&self) -> (usize, usize, usize, usize, usize, usize) {
         let (identity_slots, identity_capacity, free) = self.identities.testing_shape();
         debug_assert_eq!(identity_slots, self.slots.len());
@@ -318,7 +318,7 @@ where
         )
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "testing"))]
     pub(crate) fn testing_live_totals(
         &self,
         logical_bytes: impl Fn(&T) -> usize,

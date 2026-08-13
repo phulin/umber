@@ -247,6 +247,63 @@ pub struct EngineStackUsage {
     pub save_stack: usize,
 }
 
+/// Test-only census of one weak immutable-value pool.
+///
+/// Live objects and logical bytes are ownership authority. The remaining
+/// fields describe bounded, non-owning lookup and slot metadata so long-run
+/// tests can distinguish live-root growth from allocator retention.
+#[cfg(any(test, feature = "testing"))]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct TestingValuePoolCensus {
+    pub live_objects: usize,
+    pub logical_bytes: usize,
+    pub slot_extent: usize,
+    pub slot_capacity: usize,
+    pub index_keys: usize,
+    pub index_capacity: usize,
+    pub max_bucket_capacity: usize,
+    pub free_slots: usize,
+}
+
+#[cfg(any(test, feature = "testing"))]
+impl TestingValuePoolCensus {
+    fn new(live: (usize, usize), shape: (usize, usize, usize, usize, usize, usize)) -> Self {
+        Self {
+            live_objects: live.0,
+            logical_bytes: live.1,
+            slot_extent: shape.0,
+            slot_capacity: shape.1,
+            index_keys: shape.2,
+            index_capacity: shape.3,
+            max_bucket_capacity: shape.4,
+            free_slots: shape.5,
+        }
+    }
+}
+
+/// Test-only logical-owner and bounded-metadata census for a live generation.
+#[cfg(any(test, feature = "testing"))]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct TestingOwnershipCensus {
+    pub token_lists: TestingValuePoolCensus,
+    pub macro_bodies: TestingValuePoolCensus,
+    pub macro_definitions: TestingValuePoolCensus,
+    pub glue_specs: TestingValuePoolCensus,
+    pub provenance_records: usize,
+    pub provenance_lists: usize,
+    pub provenance_entries: usize,
+    pub provenance_retained_bytes: usize,
+    pub source_regions: usize,
+    pub source_bytes: usize,
+    pub journal_entries: usize,
+    pub journal_retained_bytes: usize,
+    pub epoch_nodes: usize,
+    pub survivor_live_roots: usize,
+    pub survivor_slot_extent: usize,
+    pub survivor_pins: usize,
+    pub node_retained_bytes: usize,
+}
+
 /// Web2C TeX82's configured main-memory arena profile.
 const TEX82_MEMORY_WORD_CAPACITY: usize = 250_000;
 const TEX82_LOW_MEMORY_GROWTH: usize = 1_000;
@@ -3939,7 +3996,7 @@ impl Stores {
         self.env.journal_retained_bytes()
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "testing"))]
     pub(crate) fn env_journal_entry_count(&self) -> usize {
         self.env.journal_entry_count()
     }
@@ -4080,6 +4137,45 @@ impl Stores {
     #[must_use]
     pub fn testing_survivor_root_slot_count(&self) -> usize {
         self.survivors.testing_root_slot_count()
+    }
+
+    #[cfg(any(test, feature = "testing"))]
+    #[must_use]
+    pub fn testing_ownership_census(&self) -> TestingOwnershipCensus {
+        let macro_live = self.macros.testing_live_totals();
+        let macro_shapes = self.macros.testing_pool_shapes();
+        let provenance = self.provenance_stats();
+        TestingOwnershipCensus {
+            token_lists: TestingValuePoolCensus::new(
+                self.tokens.testing_live_totals(),
+                self.tokens.testing_pool_shape(),
+            ),
+            macro_bodies: TestingValuePoolCensus::new((macro_live.0, macro_live.1), macro_shapes.0),
+            macro_definitions: TestingValuePoolCensus::new(
+                (macro_live.2, macro_live.3),
+                macro_shapes.1,
+            ),
+            glue_specs: TestingValuePoolCensus::new(
+                self.glue.testing_live_totals(),
+                self.glue.testing_pool_shape(),
+            ),
+            provenance_records: provenance.origin_records(),
+            provenance_lists: provenance.origin_list_spans(),
+            provenance_entries: provenance.origin_list_entries(),
+            provenance_retained_bytes: provenance.retained_bytes(),
+            source_regions: provenance.source_regions(),
+            source_bytes: provenance.source_map_bytes(),
+            journal_entries: self.env.journal_entry_count(),
+            journal_retained_bytes: self.env.journal_retained_bytes(),
+            epoch_nodes: self.nodes.testing_node_count(),
+            survivor_live_roots: self.survivors.testing_live_slot_count(),
+            survivor_slot_extent: self.survivors.testing_root_slot_count(),
+            survivor_pins: self.survivor_pins.len() + self.timeline_node_pins.len(),
+            node_retained_bytes: self
+                .nodes
+                .retained_payload_bytes()
+                .saturating_add(self.survivors.retained_payload_bytes()),
+        }
     }
 
     #[cfg(feature = "profiling")]
