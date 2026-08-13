@@ -52,7 +52,7 @@ fn downstream_crate_cannot_construct_or_mutate_raw_content_stores() {
             "NodeArena::new",
             "NodeListBuilder::new",
             "SurvivorArena::new",
-            "method `intern` is private",
+            "no method named `intern`",
             "method `finish` is private",
             "method `get` is private",
         ],
