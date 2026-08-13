@@ -73,9 +73,9 @@ fn aggregate_step_marks_commit_private_work_and_truncate_failed_suffixes_exactly
 #[test]
 fn private_box_construction_promotes_only_committed_lists() {
     let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = MainControl::tex82_initex(&mut stores);
     stores.begin_private_revision();
     let baseline = stores.testing_epoch_node_count();
-    let mut control = MainControl::tex82_initex(&mut stores);
     register_source(&mut control, br"\setbox0=\hbox{\kern1pt}");
 
     run_to_end(&mut control, &mut stores);
