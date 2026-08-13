@@ -1585,6 +1585,7 @@ fn execute_loaded_format(
         clock: tex_state::JobClock::default(),
         interaction: case.interaction_mode.engine_mode(),
         error_context_widths: tex_state::print::ErrorContextWidths::default(),
+        provenance_demand: tex_state::ProvenanceDemand::DIAGNOSTICS,
         guards: recipe.guards,
         startup_line: case.source.clone(),
         source_name: case.source.clone(),

@@ -58,6 +58,7 @@ fn job<'a>(source: &'static [u8], observer: &'a mut dyn CommandObserver) -> Prep
         clock: clock(2031),
         interaction: InteractionMode::ErrorStop,
         error_context_widths: tex_state::print::ErrorContextWidths::default(),
+        provenance_demand: tex_state::ProvenanceDemand::DIAGNOSTICS,
         guards: guards(),
         startup_line: "provider-job.tex".into(),
         source_name: "provider-job.tex".into(),
@@ -322,6 +323,56 @@ fn loaded_job_reopens_authenticated_resources_after_job_precedence() {
             .input_records()
             .iter()
             .any(|record| record.path() == std::path::Path::new("cmr10.tfm"))
+    );
+}
+
+#[test]
+fn loaded_job_applies_explicit_provenance_demand_after_format_restore() {
+    let cache = TempDir::new().expect("cache");
+    let provider = provider(&cache);
+    let mut recipe = FormatRecipe::raw_tex82();
+    recipe.resources.push(crate::FormatResource::Tfm {
+        logical_name: "cmr10.tfm".into(),
+        bytes: Arc::from(&include_bytes!("../../../tex-fonts/tests/fixtures/cm/cmr10.tfm")[..]),
+    });
+    let fixture = provider
+        .prepare(&recipe)
+        .expect("prepare with font closure");
+    let prepared_bytes = fixture.image().to_vec();
+    let source =
+        b"\\catcode`\\{=1 \\catcode`\\}=2 \\font\\tenrm=cmr10 \\def\\x{X}\\shipout\\hbox{\\tenrm \\x}\\end\n";
+
+    let mut diagnostics_observer = Recorder::default();
+    let diagnostics = provider
+        .run(&fixture, job(source, &mut diagnostics_observer))
+        .expect("diagnostics-only loaded job");
+    assert_eq!(
+        diagnostics
+            .universe
+            .macro_invocation_provenance_stats()
+            .invocations(),
+        0,
+        "without a rendered-source consumer the completed batch job releases its macro frame"
+    );
+
+    let mut rendered_observer = Recorder::default();
+    let mut rendered_job = job(source, &mut rendered_observer);
+    rendered_job.provenance_demand = tex_state::ProvenanceDemand::DIAGNOSTICS_AND_RENDERED_SOURCE;
+    let rendered = provider
+        .run(&fixture, rendered_job)
+        .expect("rendered-source loaded job");
+    assert!(
+        rendered
+            .universe
+            .macro_invocation_provenance_stats()
+            .invocations()
+            > 0,
+        "the explicit rendered-source consumer retains the producing macro frame"
+    );
+    assert_eq!(
+        fixture.image(),
+        prepared_bytes,
+        "job-local provenance demand must not mutate prepared-format bytes"
     );
 }
 

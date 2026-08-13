@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use tex_command::{CommandObserver, RegisteredSourceKind};
-use tex_state::{InteractionMode, JobClock, World};
+use tex_state::{InteractionMode, JobClock, ProvenanceDemand, World};
 
 use crate::format_fixture::LoadedRunConfiguration;
 use crate::{
@@ -22,6 +22,11 @@ pub struct PreparedFormatJob<'a> {
     pub clock: JobClock,
     pub interaction: InteractionMode,
     pub error_context_widths: tex_state::print::ErrorContextWidths,
+    /// Optional provenance consumers selected once for this loaded job.
+    ///
+    /// This is job-local operational configuration and never participates in
+    /// prepared-format identity or serialization.
+    pub provenance_demand: ProvenanceDemand,
     pub guards: FormatGenerationGuards,
     /// Complete TeX82 §534 invocation text, including any driver selector.
     pub startup_line: String,
@@ -125,7 +130,9 @@ impl PreparedFormatProvider {
                 .push_memory_terminal_line(line)
                 .map_err(|error| FormatFixtureError::World(error.to_string()))?;
         }
-        let mut loaded = fixture.load(world)?;
+        let mut loaded = fixture
+            .load(world)?
+            .with_provenance_demand(job.provenance_demand);
         loaded.set_interaction_mode(job.interaction);
         loaded.set_error_context_widths(job.error_context_widths);
         loaded.run_configured(

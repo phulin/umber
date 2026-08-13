@@ -316,6 +316,15 @@ pub(crate) struct LoadedRunConfiguration {
 }
 
 impl LoadedFormatFixture {
+    /// Selects optional provenance consumers for this fresh loaded job.
+    ///
+    /// The policy is operational state applied only after format decoding, so
+    /// it cannot alter or select the authenticated prepared-format bytes.
+    pub(crate) fn with_provenance_demand(mut self, demand: tex_state::ProvenanceDemand) -> Self {
+        self.universe = self.universe.with_provenance_demand(demand);
+        self
+    }
+
     /// Selects the job-local TeX interaction mode after format loading.
     ///
     /// Interaction is runtime control state and is deliberately excluded from

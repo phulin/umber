@@ -50,9 +50,9 @@ The implemented boundary is `PreparedFormatProvider`. Its production
 accepts an already-resolved store for hermetic tests without changing provider
 behavior or adding a fallback. `prepare` accepts `FormatRecipe`; `run` accepts
 `PreparedFormatJob`, whose job clock, profile, output backend, interaction,
-error-context widths, positive guards, authored-root name/kind/bytes, typed
-resources, terminal lines, and command observer are all explicit. The request
-has no `World` field.
+error-context widths, positive guards, provenance demand, authored-root
+name/kind/bytes, typed resources, terminal lines, and command observer are all
+explicit. The request has no `World` field.
 
 The provider's loaded resource host gives job resources precedence, then may
 reopen authenticated recipe resources. This preserves the ordinary format
@@ -107,15 +107,22 @@ status never enter loaded-job acceptance. Each loaded run owns a new `World`,
 effects, and output assembly. Its job request explicitly supplies engine
 profile compatibility, job clock, interaction mode, TeX82 error-context
 widths, its own finite command/wall/RSS limits, backend/output policy,
-authored-root identity, source kind and bytes, ordered Input/TFM resources,
-terminal input where needed, and observers. Construction uses only the
-recipe's clock and guards, which remain cache-identity inputs; a job request's
-clock and guards are runtime controls and never select or mutate a format
-entry. The provider rejects profile mismatch, unsupported backend/profile
-combinations, or an unbounded construction or job guard. Geometry remains
-captured and reported but advisory; command-v1, terminal,
+provenance demand, authored-root identity, source kind and bytes, ordered
+Input/TFM resources, terminal input where needed, and observers. Construction
+uses only the recipe's clock and guards, which remain cache-identity inputs; a
+job request's clock and guards are runtime controls and never select or mutate
+a format entry. The provider rejects profile mismatch, unsupported
+backend/profile combinations, or an unbounded construction or job guard.
+Geometry remains captured and reported but advisory; command-v1, terminal,
 log, effects, status, and normalized DVI remain governed by each fixture's
 existing acceptance contract.
+
+The job's provenance demand is applied only after authenticated format decode,
+before execution begins. Diagnostics-only batch jobs therefore retain no
+rendered-source artifact sidecar, while parity and telemetry jobs which inspect
+post-shipout provenance explicitly select the rendered-source consumer. This
+operational choice is excluded from recipe identity and format bytes, and every
+fresh job selects it independently.
 
 ### Full-pipeline call-site inventory and target state
 

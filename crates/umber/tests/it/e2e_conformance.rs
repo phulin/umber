@@ -17,7 +17,7 @@ use tex_observe::{GeometryEvidenceProfile, SemanticEvidenceProfile};
 use tex_oracle::{ObservationStream, SchemaVersion};
 use tex_state::provenance::MacroInvocationProvenanceStats;
 use tex_state::provenance::ProvenanceStats;
-use tex_state::{EffectRecord, PrintSink};
+use tex_state::{EffectRecord, PrintSink, ProvenanceDemand};
 use tex_state::{JobClock, Universe, World};
 
 use umber::FormatCacheStore;
@@ -693,6 +693,7 @@ fn trip_profiles_reuse_authenticated_provider_entries_and_fresh_jobs() {
                         clock: recipe.clock,
                         interaction: tex_state::InteractionMode::Nonstop,
                         error_context_widths: recipe.construction_error_context_widths,
+                        provenance_demand: ProvenanceDemand::DIAGNOSTICS,
                         guards: recipe.guards,
                         startup_line: format!("{fixture_name}-provider-control.tex"),
                         source_name: format!("{fixture_name}-provider-control.tex"),
@@ -883,6 +884,7 @@ fn run_file_with_plain_format(path: &Path) -> Result<InProcessRun, String> {
                 interaction: tex_state::InteractionMode::Nonstop,
                 error_context_widths: tex_state::print::ErrorContextWidths::new(64, 32)
                     .expect("canonical Plain context widths"),
+                provenance_demand: ProvenanceDemand::DIAGNOSTICS_AND_RENDERED_SOURCE,
                 guards: plain_guards(),
                 startup_line: source_name.clone(),
                 source_name: source_name.clone(),
@@ -984,6 +986,7 @@ fn run_file_with_raw_tex82_format(path: &Path) -> Result<InProcessRun, String> {
                 interaction: tex_state::InteractionMode::Nonstop,
                 error_context_widths: tex_state::print::ErrorContextWidths::new(64, 32)
                     .expect("canonical raw TeX82 context widths"),
+                provenance_demand: ProvenanceDemand::DIAGNOSTICS_AND_RENDERED_SOURCE,
                 guards: plain_guards(),
                 startup_line: source_name.clone(),
                 source_name: source_name.clone(),
@@ -1314,6 +1317,7 @@ fn plain_provider_reuses_one_authenticated_construction_with_fresh_jobs() {
                     clock: PLAIN_CLOCK,
                     interaction: tex_state::InteractionMode::Nonstop,
                     error_context_widths: recipe.construction_error_context_widths,
+                    provenance_demand: ProvenanceDemand::DIAGNOSTICS,
                     guards: plain_guards(),
                     startup_line: "plain-provider-isolation.tex".into(),
                     source_name: "plain-provider-isolation.tex".into(),
@@ -1342,6 +1346,7 @@ fn plain_provider_reuses_one_authenticated_construction_with_fresh_jobs() {
                     clock: PLAIN_CLOCK,
                     interaction: tex_state::InteractionMode::Nonstop,
                     error_context_widths: recipe.construction_error_context_widths,
+                    provenance_demand: ProvenanceDemand::DIAGNOSTICS_AND_RENDERED_SOURCE,
                     guards: plain_guards(),
                     startup_line: "plain-provider-provenance-isolation.tex".into(),
                     source_name: "plain-provider-provenance-isolation.tex".into(),
@@ -2061,6 +2066,7 @@ fn run_two_phase_fixture(
                 clock: recipe.clock,
                 interaction: tex_state::InteractionMode::Nonstop,
                 error_context_widths: recipe.construction_error_context_widths,
+                provenance_demand: ProvenanceDemand::DIAGNOSTICS_AND_RENDERED_SOURCE,
                 guards: recipe.guards,
                 startup_line: format!(
                     "&{} {}",
@@ -2901,6 +2907,7 @@ fn run_loaded_trip_source_observed(source: Arc<[u8]>) -> (String, TripObservers)
                 clock: recipe.clock,
                 interaction: tex_state::InteractionMode::Nonstop,
                 error_context_widths: recipe.construction_error_context_widths,
+                provenance_demand: ProvenanceDemand::DIAGNOSTICS,
                 guards: recipe.guards,
                 startup_line: "&trip focused.tex".into(),
                 source_name: "focused.tex".into(),
