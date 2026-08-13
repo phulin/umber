@@ -507,7 +507,7 @@ mod tests {
         assert_eq!(stores.pdf_last_object(), 2);
         let records = stores.pdf_raw_objects();
         assert_eq!(records.len(), 2);
-        let first = records[0];
+        let first = &records[0];
         let first_data = first.data().expect("initialized reserved object");
         assert_eq!(first.id().raw(), 1);
         assert!(first_data.is_stream());
@@ -535,7 +535,7 @@ mod tests {
             &mut stores,
         )
         .expect("execute PDF accessibility controls");
-        let page = stores.pdf_pages()[0];
+        let page = &stores.pdf_pages()[0];
         assert_eq!(
             stores.pdf_space_font_name(page.space_font_name_id()),
             Some(b"fixture-space".as_slice())
@@ -1298,7 +1298,7 @@ mod tests {
             panic!("expected page target");
         };
         assert_eq!(number, 1);
-        assert_eq!(token_list_text(&stores, view), "/FitH 10");
+        assert_eq!(token_list_text(&stores, view.id()), "/FitH 10");
 
         let error = run_pdf_memory(
             "\\pdfcatalog{} openaction user{<< /S /Named >>}\\end",

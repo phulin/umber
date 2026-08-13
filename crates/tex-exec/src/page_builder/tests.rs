@@ -388,6 +388,7 @@ fn outer_vertical_contribution_routes_every_node_kind_canonically() {
     stores.set_int_param(IntParam::SAVING_V_DISCARDS, 1);
     let leading = glue(&mut stores, 2, 0, Order::Normal, 0, Order::Normal);
     let mark = stores.intern_token_list(&[]);
+    let mark = stores.token_list_ref(mark);
     stores.append_page_contribution(Node::Glue {
         spec: leading,
         kind: GlueKind::Normal,
@@ -588,6 +589,7 @@ fn page_contribution_last_items_and_max_depth_matrix() {
     assert_eq!(stores.page_dimension(PageDimension::Total), s(23));
 
     let mark = stores.intern_token_list(&[]);
+    let mark = stores.token_list_ref(mark);
     stores.append_page_contribution(Node::Mark {
         class: 4,
         tokens: mark,

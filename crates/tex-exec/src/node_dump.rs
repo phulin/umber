@@ -298,7 +298,7 @@ fn dump_node(
             depth,
             out,
         ),
-        Node::Mark { class, tokens } => dump_mark(stores, *class, *tokens, out),
+        Node::Mark { class, tokens } => dump_mark(stores, *class, tokens.id(), out),
         Node::Adjust(adjust) => {
             out.push_str(if adjust.pre {
                 "\\vadjust pre\n"
@@ -390,7 +390,7 @@ fn dump_whatsit(stores: &Universe, whatsit: &Whatsit, out: &mut String) {
                 }
                 tex_state::PrintSink::Log => out.push('-'),
             }
-            dump_token_list(stores, *tokens, out);
+            dump_token_list(stores, tokens.id(), out);
         }
         Whatsit::Special { payload, .. } => {
             append_escaped_name(stores, "special", out);
@@ -1451,6 +1451,7 @@ mod unset_diagnostic_tests {
             ch: 'x',
             cat: tex_state::token::Catcode::Letter,
         }]);
+        let tokens = stores.token_list_ref(tokens);
         let nodes = [Node::Mark { class: 0, tokens }];
         let config = DumpConfig {
             breadth: 5,

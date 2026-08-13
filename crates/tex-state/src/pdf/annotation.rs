@@ -1,7 +1,7 @@
 //! Checkpointed annotation and logical-link object records.
 
-use crate::ids::TokenListId;
 use crate::scaled::Scaled;
+use crate::token_store::TokenListRef;
 
 use super::PdfActionSpec;
 
@@ -22,14 +22,14 @@ impl PdfAnnotationDimensions {
 }
 
 /// Initialized contents of one general `\pdfannot` object.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct PdfAnnotationData {
     pub dimensions: PdfAnnotationDimensions,
-    pub entries: TokenListId,
+    pub entries: TokenListRef,
 }
 
 /// One annotation reservation. `data == None` is `reserveobjnum` state.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct PdfAnnotationRecord {
     object: u32,
     data: Option<PdfAnnotationData>,
@@ -41,13 +41,13 @@ impl PdfAnnotationRecord {
     }
 
     #[must_use]
-    pub const fn object(self) -> u32 {
+    pub const fn object(&self) -> u32 {
         self.object
     }
 
     #[must_use]
-    pub const fn data(self) -> Option<PdfAnnotationData> {
-        self.data
+    pub fn data(&self) -> Option<PdfAnnotationData> {
+        self.data.clone()
     }
 
     pub(super) fn initialize(&mut self, data: PdfAnnotationData) -> Result<(), ()> {
@@ -60,26 +60,26 @@ impl PdfAnnotationRecord {
 }
 
 /// One logical link created by `\pdfstartlink`.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct PdfLinkRecord {
     object: u32,
     dimensions: PdfAnnotationDimensions,
-    attributes: TokenListId,
+    attributes: TokenListRef,
     action: PdfActionSpec,
 }
 
 /// One currently open logical link and the mode-nest depth where it started.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct PdfOpenLink {
     pub record: PdfLinkRecord,
     pub nesting_depth: u32,
 }
 
 impl PdfLinkRecord {
-    pub(super) const fn new(
+    pub(super) fn new(
         object: u32,
         dimensions: PdfAnnotationDimensions,
-        attributes: TokenListId,
+        attributes: TokenListRef,
         action: PdfActionSpec,
     ) -> Self {
         Self {
@@ -91,23 +91,23 @@ impl PdfLinkRecord {
     }
 
     #[must_use]
-    pub const fn object(self) -> u32 {
+    pub const fn object(&self) -> u32 {
         self.object
     }
 
     #[must_use]
-    pub const fn dimensions(self) -> PdfAnnotationDimensions {
+    pub const fn dimensions(&self) -> PdfAnnotationDimensions {
         self.dimensions
     }
 
     #[must_use]
-    pub const fn attributes(self) -> TokenListId {
-        self.attributes
+    pub fn attributes(&self) -> crate::ids::TokenListId {
+        self.attributes.id()
     }
 
     #[must_use]
-    pub const fn action(self) -> PdfActionSpec {
-        self.action
+    pub fn action(&self) -> PdfActionSpec {
+        self.action.clone()
     }
 }
 

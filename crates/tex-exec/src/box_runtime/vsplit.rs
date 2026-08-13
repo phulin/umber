@@ -128,9 +128,9 @@ fn update_split_marks(stores: &mut Universe, nodes: &[Node]) {
         if let Node::Mark { class, tokens } = node {
             let (first, bot) = classes.entry(*class).or_insert((None, None));
             if first.is_none() {
-                *first = Some(*tokens);
+                *first = Some(tokens.id());
             }
-            *bot = Some(*tokens);
+            *bot = Some(tokens.id());
         }
     }
     for (class, (first, bot)) in classes {

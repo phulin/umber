@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use super::{NodeStorageObservation, PeakNodeStorageRecorder};
-use crate::ids::{FontId, GlueId, TokenListId};
+use crate::ids::{FontId, GlueId};
 use crate::node::{Node, PdfDestinationKind, PdfDestinationNode, Whatsit};
 use crate::node_arena::{NodeArena, NodeStorage};
 use crate::token::OriginId;
@@ -114,7 +114,7 @@ fn newer_whatsit_payloads_are_exhaustively_measured() {
         Whatsit::PdfThread(Box::new(crate::node::PdfThreadNode {
             identifier: crate::PdfActionIdentifier::Number(2),
             dimensions: crate::PdfAnnotationDimensions::RUNNING,
-            attributes: TokenListId::EMPTY,
+            attributes: crate::token_store::testing_empty_token_list_ref(),
             running: false,
         })),
     ]);

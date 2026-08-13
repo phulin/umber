@@ -1,28 +1,28 @@
-use crate::ids::TokenListId;
+use crate::token_store::TokenListRef;
 
 use super::PdfActionSpec;
 
 /// One immediately allocated pdfTeX outline entry.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct PdfOutlineRecord {
     action_object: u32,
     item_object: u32,
     title_object: u32,
-    attributes: TokenListId,
+    attributes: TokenListRef,
     action: PdfActionSpec,
     count: i32,
-    title: TokenListId,
+    title: TokenListRef,
 }
 
 impl PdfOutlineRecord {
-    pub(super) const fn new(
+    pub(super) fn new(
         action_object: u32,
         item_object: u32,
         title_object: u32,
-        attributes: TokenListId,
+        attributes: TokenListRef,
         action: PdfActionSpec,
         count: i32,
-        title: TokenListId,
+        title: TokenListRef,
     ) -> Self {
         Self {
             action_object,
@@ -36,31 +36,31 @@ impl PdfOutlineRecord {
     }
 
     #[must_use]
-    pub const fn action_object(self) -> u32 {
+    pub const fn action_object(&self) -> u32 {
         self.action_object
     }
     #[must_use]
-    pub const fn item_object(self) -> u32 {
+    pub const fn item_object(&self) -> u32 {
         self.item_object
     }
     #[must_use]
-    pub const fn title_object(self) -> u32 {
+    pub const fn title_object(&self) -> u32 {
         self.title_object
     }
     #[must_use]
-    pub const fn attributes(self) -> TokenListId {
-        self.attributes
+    pub fn attributes(&self) -> crate::ids::TokenListId {
+        self.attributes.id()
     }
     #[must_use]
-    pub const fn action(self) -> PdfActionSpec {
-        self.action
+    pub fn action(&self) -> PdfActionSpec {
+        self.action.clone()
     }
     #[must_use]
-    pub const fn count(self) -> i32 {
+    pub const fn count(&self) -> i32 {
         self.count
     }
     #[must_use]
-    pub const fn title(self) -> TokenListId {
-        self.title
+    pub fn title(&self) -> crate::ids::TokenListId {
+        self.title.id()
     }
 }

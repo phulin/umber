@@ -9,9 +9,9 @@
 use crate::dependency::{DependencyValue, DependencyWorldField};
 use crate::env::banks::IntParam;
 use crate::identity::{HandleIdentity, IdentityAllocator, IdentityMark};
-use crate::ids::TokenListId;
 use crate::state_hash::{StateHashFragment, StateHasher};
 use crate::token::OriginId;
+use crate::token_store::TokenListRef;
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsString;
 use std::fmt;
@@ -1124,7 +1124,7 @@ pub enum EffectRecord {
     /// Deferred `\write` seam: the token list is intentionally unexpanded.
     DeferredWrite {
         stream: StreamSlot,
-        tokens: TokenListId,
+        tokens: TokenListRef,
     },
     Special {
         class: String,
@@ -3881,7 +3881,7 @@ impl World {
     }
     /// Appends a deferred `\write` after the owning `Universe` validates the
     /// token-list capability against its live store timeline.
-    pub(crate) fn record_deferred_write(&mut self, stream: StreamSlot, tokens: TokenListId) {
+    pub(crate) fn record_deferred_write(&mut self, stream: StreamSlot, tokens: TokenListRef) {
         self.append_effect(EffectRecord::DeferredWrite { stream, tokens });
     }
 

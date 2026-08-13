@@ -2,7 +2,6 @@
 
 use std::sync::Arc;
 
-use crate::ids::TokenListId;
 use crate::state_hash::{StateHashFragment, StateHasher};
 
 use super::PdfTokenParameter;
@@ -78,7 +77,7 @@ impl PdfDocumentFragmentKind {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
 struct PdfDocumentFragment {
     kind: PdfDocumentFragmentKind,
     value: PdfTokenParameter,
@@ -119,11 +118,11 @@ impl PdfDocumentFragments {
     pub(crate) fn values(
         &self,
         kind: PdfDocumentFragmentKind,
-    ) -> impl Iterator<Item = TokenListId> + '_ {
+    ) -> impl Iterator<Item = crate::ids::TokenListId> + '_ {
         self.fragments
             .iter()
             .filter(move |fragment| fragment.kind == kind)
-            .map(|fragment| fragment.value.tokens)
+            .map(|fragment| fragment.value.id())
     }
 }
 

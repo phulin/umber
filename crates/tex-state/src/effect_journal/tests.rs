@@ -1,7 +1,9 @@
 use super::EffectJournal;
+use crate::token::Token;
 use crate::{
     EffectDomain, EffectPlacementIntraOrder, EffectRecord, EffectSemanticRecordOrdinal,
-    EffectSequence, PrintSink, TerminalPublicationId, TerminalPublicationPhase,
+    EffectSequence, PrintSink, StreamSlot, TerminalPublicationId, TerminalPublicationPhase,
+    Universe,
 };
 
 fn write(text: &str) -> EffectRecord {
@@ -107,4 +109,45 @@ fn slice_and_concat_select_prefix_patch_and_suffix_atomically() {
         selected.materialized_records(),
         vec![write("prefix"), write("patch"), write("suffix")]
     );
+}
+
+#[test]
+fn splice_transfers_deferred_write_token_roots_with_selected_records() {
+    fn journal(record: EffectRecord, sequence: u64) -> EffectJournal {
+        EffectJournal::from_parts(
+            vec![record],
+            vec![EffectSequence::new(sequence)],
+            vec![None],
+            vec![None],
+            vec![EffectDomain::World(sequence)],
+            vec![EffectSemanticRecordOrdinal::new(1)],
+            vec![EffectPlacementIntraOrder::new(sequence)],
+        )
+        .expect("aligned test journal")
+    }
+
+    let mut universe = Universe::new();
+    let root = universe.intern_token_list_ref(&[Token::param(4)]);
+    let retained = root.clone();
+    drop(universe);
+    let accepted = journal(
+        EffectRecord::DeferredWrite {
+            stream: StreamSlot::new(2),
+            tokens: root.clone(),
+        },
+        1,
+    );
+    let live = journal(write("live suffix"), 2);
+    let selected = EffectJournal::splice_prefix(&accepted, &live, 1);
+    drop(accepted);
+    drop(root);
+
+    assert!(matches!(
+        selected.records(),
+        [EffectRecord::DeferredWrite { tokens, .. }, EffectRecord::StreamWrite { .. }]
+            if tokens.tokens() == [Token::param(4)]
+    ));
+    assert_eq!(retained.strong_count(), 2);
+    drop(selected);
+    assert_eq!(retained.strong_count(), 1);
 }

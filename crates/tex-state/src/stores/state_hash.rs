@@ -1026,7 +1026,7 @@ impl Stores {
             NodeRef::Mark { class, tokens } => {
                 hasher.tag(10);
                 hasher.u16(class);
-                self.hash_token_list_semantic(tokens, hasher);
+                self.hash_token_list_semantic(tokens.id(), hasher);
             }
             NodeRef::Ins {
                 class,
@@ -1194,7 +1194,7 @@ impl Stores {
             Whatsit::DeferredWrite { sink, tokens } => {
                 hasher.tag(12);
                 hash_print_sink(*sink, hasher);
-                self.hash_token_list_semantic(*tokens, hasher);
+                self.hash_token_list_semantic(tokens.id(), hasher);
             }
             Whatsit::Special { class, payload } => {
                 hasher.tag(16);
@@ -1204,7 +1204,7 @@ impl Stores {
             Whatsit::DeferredSpecial { class, tokens } => {
                 hasher.tag(17);
                 hasher.bytes(class.as_bytes());
-                self.hash_token_list_semantic(*tokens, hasher);
+                self.hash_token_list_semantic(tokens.id(), hasher);
             }
             Whatsit::PdfLiteral { mode, payload } => {
                 hasher.tag(18);
@@ -1214,7 +1214,7 @@ impl Stores {
             Whatsit::DeferredPdfLiteral { mode, tokens } => {
                 hasher.tag(19);
                 hasher.u8(*mode as u8);
-                self.hash_token_list_semantic(*tokens, hasher);
+                self.hash_token_list_semantic(tokens.id(), hasher);
             }
             Whatsit::PdfSetMatrix { payload } => {
                 hasher.tag(20);
@@ -1320,7 +1320,7 @@ impl Stores {
                 match identifier {
                     crate::PdfActionIdentifier::Name(tokens) => {
                         hasher.u8(0);
-                        self.hash_token_list_semantic(*tokens, hasher);
+                        self.hash_token_list_semantic(tokens.id(), hasher);
                     }
                     crate::PdfActionIdentifier::Number(number) => {
                         hasher.u8(1);
@@ -1370,7 +1370,7 @@ impl Stores {
                 match identifier {
                     crate::PdfActionIdentifier::Name(tokens) => {
                         hasher.u8(0);
-                        self.hash_token_list_semantic(*tokens, hasher);
+                        self.hash_token_list_semantic(tokens.id(), hasher);
                     }
                     crate::PdfActionIdentifier::Number(number) => {
                         hasher.u8(1);
@@ -1386,7 +1386,7 @@ impl Stores {
                         hasher.i32(value.raw());
                     }
                 }
-                self.hash_token_list_semantic(*attributes, hasher);
+                self.hash_token_list_semantic(attributes.id(), hasher);
                 hasher.bool(*running);
             }
             Whatsit::PdfEndThread => hasher.tag(26),

@@ -1389,7 +1389,7 @@ impl CommandProcessor<'_> {
     ) -> Result<tex_state::PdfActionIdentifier, CommandError> {
         if self.scan_keyword("name")?.value {
             Ok(tex_state::PdfActionIdentifier::Name(
-                self.scan_balanced_text(true)?.tokens.token_list(),
+                self.scan_balanced_text(true)?.tokens.token_ref().clone(),
             ))
         } else if self.scan_keyword("num")?.value {
             Ok(tex_state::PdfActionIdentifier::Number(
@@ -1407,7 +1407,7 @@ impl CommandProcessor<'_> {
         use tex_state::{PdfActionDestination, PdfActionSpec, PdfActionTarget, PdfActionWindow};
         if self.scan_keyword("user")?.value {
             return Ok(PdfActionSpec::User(
-                self.scan_balanced_text(true)?.tokens.token_list(),
+                self.scan_balanced_text(true)?.tokens.token_ref().clone(),
             ));
         }
         let goto = if self.scan_keyword("goto")?.value {
@@ -1424,7 +1424,7 @@ impl CommandProcessor<'_> {
             .value
             .then(|| {
                 self.scan_balanced_text(true)
-                    .map(|text| text.tokens.token_list())
+                    .map(|text| text.tokens.token_ref().clone())
             })
             .transpose()?;
         let structure = if self.scan_keyword("struct")?.value {
@@ -1435,7 +1435,7 @@ impl CommandProcessor<'_> {
             }
             if file.is_some() {
                 Some(tex_state::PdfActionIdentifier::Raw(
-                    self.scan_balanced_text(true)?.tokens.token_list(),
+                    self.scan_balanced_text(true)?.tokens.token_ref().clone(),
                 ))
             } else {
                 Some(self.scan_pdf_identifier("struct identifier", false)?)
@@ -1452,11 +1452,11 @@ impl CommandProcessor<'_> {
             let number = self.scan_pdf_positive("page number", false)?;
             PdfActionTarget::Page {
                 number,
-                view: self.scan_balanced_text(true)?.tokens.token_list(),
+                view: self.scan_balanced_text(true)?.tokens.token_ref().clone(),
             }
         } else if self.scan_keyword("name")?.value {
             PdfActionTarget::Destination(tex_state::PdfActionIdentifier::Name(
-                self.scan_balanced_text(true)?.tokens.token_list(),
+                self.scan_balanced_text(true)?.tokens.token_ref().clone(),
             ))
         } else if self.scan_keyword("num")?.value {
             if goto && file.is_some() {

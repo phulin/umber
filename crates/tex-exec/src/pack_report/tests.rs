@@ -267,6 +267,7 @@ fn short_display_maps_all_node_classes() {
         ..GlueSpec::ZERO
     });
     let mark_tokens = stores.intern_token_list(&[]);
+    let mark_tokens = stores.token_list_ref(mark_tokens);
     let pre = stores.freeze_node_list(&[Node::Kern {
         amount: Scaled::from_raw(Scaled::UNITY),
         kind: KernKind::Explicit,

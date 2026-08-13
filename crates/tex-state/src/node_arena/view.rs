@@ -7,6 +7,7 @@ use crate::node::{
 };
 use crate::scaled::Scaled;
 use crate::token::OriginId;
+use crate::token_store::TokenListRef;
 
 /// A zero-allocation logical view of one compact arena node.
 #[derive(Clone, Debug)]
@@ -57,7 +58,7 @@ pub enum NodeRef<'a> {
     },
     Mark {
         class: u16,
-        tokens: crate::ids::TokenListId,
+        tokens: &'a TokenListRef,
     },
     Ins {
         class: u16,
@@ -183,7 +184,7 @@ impl<'a> From<&'a Node> for NodeRef<'a> {
             },
             Node::Mark { class, tokens } => Self::Mark {
                 class: *class,
-                tokens: *tokens,
+                tokens,
             },
             Node::Ins {
                 class,
@@ -330,7 +331,7 @@ impl NodeRef<'_> {
             },
             Self::Mark { class, tokens } => Node::Mark {
                 class: *class,
-                tokens: *tokens,
+                tokens: (*tokens).clone(),
             },
             Self::Ins {
                 class,
@@ -946,8 +947,11 @@ impl NodeStorage {
                 }
             }
             15 => {
-                let (class, tokens) = self.marks[side];
-                NodeRef::Mark { class, tokens }
+                let (class, tokens) = &self.marks[side];
+                NodeRef::Mark {
+                    class: *class,
+                    tokens,
+                }
             }
             16 => NodeRef::Ins {
                 class: self.insertions.class[side],

@@ -1511,7 +1511,7 @@ impl Clone for Universe {
             input_fragment: self.state_hash_base.input_fragment,
             interaction_mode: self.state_hash_base.interaction_mode,
             page: self.state_hash_base.page.clone(),
-            pdf: self.state_hash_base.pdf,
+            pdf: self.state_hash_base.pdf.clone(),
             checkpoint_hash: self.state_hash_base.checkpoint_hash,
         };
         Self {
@@ -3040,7 +3040,7 @@ impl Universe {
                         .map_err(|error| format!("{error:?}"))?;
                     let semantic_id = universe.stores.token_list_semantic_fragment(tokens);
                     Ok(PdfTokenParameter {
-                        tokens,
+                        tokens: universe.stores.token_list_ref(tokens),
                         semantic_id,
                     })
                 },
@@ -3662,7 +3662,7 @@ impl Universe {
             EffectRecord::DeferredWrite { stream, tokens } => {
                 hasher.tag(3);
                 hash_stream_slot(*stream, hasher);
-                self.stores.hash_token_list_semantic(*tokens, hasher);
+                self.stores.hash_token_list_semantic(tokens.id(), hasher);
             }
             EffectRecord::Special { class, payload } => {
                 hasher.tag(4);
@@ -3868,6 +3868,7 @@ impl Universe {
     /// token list belongs to this live timeline.
     pub fn record_deferred_write(&mut self, stream: StreamSlot, tokens: TokenListId) {
         self.stores.assert_live_token_list(tokens);
+        let tokens = self.stores.token_list_ref(tokens);
         self.world.record_deferred_write(stream, tokens);
         self.dependencies
             .get_mut()
@@ -4867,7 +4868,7 @@ impl Universe {
         object: u32,
         data: crate::PdfAnnotationData,
     ) -> Result<crate::PdfAnnotationRecord, crate::PdfAnnotationInitializeError> {
-        let semantic_id = self.stores.token_list_semantic_fragment(data.entries);
+        let semantic_id = self.stores.token_list_semantic_fragment(data.entries.id());
         let result = self.pdf.initialize_annotation(object, data, semantic_id);
         if result.is_ok() {
             self.mark_pdf_dependency_changed(DependencyEngineField::PdfObjects);
@@ -4972,6 +4973,8 @@ impl Universe {
         let action_semantic_id =
             action.fingerprint(|tokens| self.stores.token_list_semantic_fragment(tokens));
         let title_semantic_id = self.stores.token_list_semantic_fragment(title);
+        let attributes = self.stores.token_list_ref(attributes);
+        let title = self.stores.token_list_ref(title);
         let result = self.pdf.create_outline(
             attributes,
             action,
@@ -5005,6 +5008,7 @@ impl Universe {
         let attributes_semantic_id = self.stores.token_list_semantic_fragment(attributes);
         let action_semantic_id =
             action.fingerprint(|tokens| self.stores.token_list_semantic_fragment(tokens));
+        let attributes = self.stores.token_list_ref(attributes);
         let result = self.pdf.create_link(
             dimensions,
             attributes,
@@ -5195,9 +5199,8 @@ impl Universe {
     }
 
     fn pdf_token_parameter(&self, tokens: TokenListId) -> PdfTokenParameter {
-        let _ = self.tokens(tokens);
         PdfTokenParameter {
-            tokens,
+            tokens: self.stores.token_list_ref(tokens),
             semantic_id: self.stores.token_list_semantic_fragment(tokens),
         }
     }
@@ -7314,7 +7317,7 @@ impl Universe {
     }
 
     pub fn set_page_mark(&mut self, mark: PageMark, value: TokenListId) {
-        let _ = self.stores.tokens(value);
+        let value = self.stores.token_list_ref(value);
         self.page.set_mark(mark, value);
         self.dependencies
             .get_mut()
@@ -7363,7 +7366,7 @@ impl Universe {
     }
 
     pub fn set_page_mark_class(&mut self, mark: PageMark, class: u16, value: TokenListId) {
-        let _ = self.stores.tokens(value);
+        let value = self.stores.token_list_ref(value);
         self.page.set_mark_class(mark, class, value);
         self.dependencies
             .get_mut()

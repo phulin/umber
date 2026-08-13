@@ -143,7 +143,7 @@ fn nested_node_graph_round_trips_across_owners_and_respects_budget_atomically() 
     use crate::scaled::{GlueSetRatio, Scaled};
 
     let mut source = Universe::new();
-    let tokens = source.intern_token_list(&[Token::Char {
+    let tokens = source.intern_token_list_ref(&[Token::Char {
         ch: 'm',
         cat: Catcode::Letter,
     }]);
@@ -162,7 +162,10 @@ fn nested_node_graph_round_trips_across_owners_and_respects_budget_atomically() 
             kind: GlueKind::Normal,
             leader: None,
         },
-        Node::Mark { class: 2, tokens },
+        Node::Mark {
+            class: 2,
+            tokens: tokens.clone(),
+        },
     ]);
     let root = source.freeze_node_list(&[Node::HList(BoxNode::new(BoxNodeFields {
         width: Scaled::from_raw(20),
@@ -177,19 +180,41 @@ fn nested_node_graph_round_trips_across_owners_and_respects_budget_atomically() 
     }))]);
     let detached = source.detach_node_list(root).expect("node detachment");
     let detached_box = source.detach_box(root).expect("box detachment");
+    let source_hash = source.engine_boundary_hash(77, |hash| hash.node_list(root));
+    let source_box_hash = source.engine_boundary_hash(78, |hash| hash.node_list(root));
+    drop(tokens);
+    drop(source);
 
     let mut target = Universe::new();
     let imported = target
         .import_memo_node_list(&detached, MemoValueLimits::default())
         .expect("node import");
-    let left = source.engine_boundary_hash(77, |hash| hash.node_list(root));
     let right = target.engine_boundary_hash(77, |hash| hash.node_list(imported));
-    assert_eq!(left, right);
+    assert_eq!(source_hash, right);
+    let Some(crate::node_arena::NodeRef::HList(imported_outer)) = target.nodes(imported).first()
+    else {
+        panic!("imported node root lost its box")
+    };
+    let imported_mark = target
+        .nodes(imported_outer.children)
+        .into_iter()
+        .find_map(|node| match node {
+            crate::node_arena::NodeRef::Mark { tokens, .. } => Some(tokens),
+            _ => None,
+        })
+        .expect("imported graph lost its rooted mark");
+    assert_eq!(
+        imported_mark.tokens(),
+        &[Token::Char {
+            ch: 'm',
+            cat: Catcode::Letter,
+        }]
+    );
     let imported_box = target
         .import_memo_box(&detached_box, MemoValueLimits::default())
         .expect("box import");
     assert_eq!(
-        source.engine_boundary_hash(78, |hash| hash.node_list(root)),
+        source_box_hash,
         target.engine_boundary_hash(78, |hash| hash.node_list(imported_box))
     );
 

@@ -84,7 +84,6 @@ pub(super) fn pdf_finalization_input_with_page_records(
     let version = pdf_version(parameters)?;
     let pages = page_records
         .iter()
-        .copied()
         .map(|record| {
             let bytes = artifact_bytes(stores, artifacts, record.artifact())?;
             Ok(PdfCommittedPageInput {
@@ -580,7 +579,7 @@ fn navigation(stores: &Universe) -> PdfNavigationInput {
                 data: record.data().map(|data| {
                     (
                         dimensions(data.dimensions),
-                        token_list_bytes(stores, data.entries),
+                        token_list_bytes(stores, data.entries.id()),
                     )
                 }),
             })
@@ -588,7 +587,6 @@ fn navigation(stores: &Universe) -> PdfNavigationInput {
         links: stores
             .pdf_links()
             .iter()
-            .copied()
             .map(|record| PdfLinkInput {
                 object: record.object(),
                 dimensions: dimensions(record.dimensions()),
@@ -601,7 +599,6 @@ fn navigation(stores: &Universe) -> PdfNavigationInput {
         outlines: stores
             .pdf_outlines()
             .iter()
-            .copied()
             .map(|record| PdfOutlineInput {
                 action_object: record.action_object(),
                 item_object: record.item_object(),
@@ -656,11 +653,11 @@ fn indirect_action(stores: &Universe, record: PdfActionRecord) -> PdfIndirectAct
 
 fn action(stores: &Universe, spec: PdfActionSpec) -> PdfActionInput {
     match spec {
-        PdfActionSpec::User(tokens) => PdfActionInput::User(token_list_bytes(stores, tokens)),
+        PdfActionSpec::User(tokens) => PdfActionInput::User(token_list_bytes(stores, tokens.id())),
         PdfActionSpec::GoTo(destination) => PdfActionInput::GoTo {
             file: destination
                 .file
-                .map(|tokens| token_list_bytes(stores, tokens)),
+                .map(|tokens| token_list_bytes(stores, tokens.id())),
             structure: destination
                 .structure
                 .map(|identity| action_identity(stores, identity)),
@@ -670,7 +667,7 @@ fn action(stores: &Universe, spec: PdfActionSpec) -> PdfActionInput {
         PdfActionSpec::Thread(destination) => PdfActionInput::Thread {
             file: destination
                 .file
-                .map(|tokens| token_list_bytes(stores, tokens)),
+                .map(|tokens| token_list_bytes(stores, tokens.id())),
             structure: destination
                 .structure
                 .map(|identity| action_identity(stores, identity)),
@@ -684,7 +681,7 @@ fn action_target(stores: &Universe, target: PdfActionTarget) -> PdfActionTargetI
     match target {
         PdfActionTarget::Page { number, view } => PdfActionTargetInput::Page {
             number,
-            view: token_list_bytes(stores, view),
+            view: token_list_bytes(stores, view.id()),
         },
         PdfActionTarget::Destination(identity) => {
             PdfActionTargetInput::Destination(action_identity(stores, identity))
@@ -698,11 +695,11 @@ fn action_identity(
 ) -> PdfDestinationIdentityInput {
     match identity {
         PdfActionIdentifier::Name(tokens) => {
-            PdfDestinationIdentityInput::Name(token_list_bytes(stores, tokens))
+            PdfDestinationIdentityInput::Name(token_list_bytes(stores, tokens.id()))
         }
         PdfActionIdentifier::Number(number) => PdfDestinationIdentityInput::Number(number),
         PdfActionIdentifier::Raw(tokens) => {
-            PdfDestinationIdentityInput::Raw(token_list_bytes(stores, tokens))
+            PdfDestinationIdentityInput::Raw(token_list_bytes(stores, tokens.id()))
         }
     }
 }

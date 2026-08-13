@@ -7,6 +7,7 @@ use crate::math::MathStyle;
 use crate::node::{DiscKind, GlueKind, KernKind, MarginKernSide, Node};
 use crate::scaled::Scaled;
 use crate::token::OriginId;
+use crate::token_store::TokenListRef;
 
 const TAG_SHIFT: u32 = 59;
 const PAYLOAD_MASK: u64 = (1_u64 << TAG_SHIFT) - 1;
@@ -182,7 +183,7 @@ pub(crate) struct NodeStorage {
     pub(super) rules: Vec<(Option<Scaled>, Option<Scaled>, Option<Scaled>)>,
     pub(super) leaders: Vec<(GlueId, GlueKind, crate::node::LeaderPayload)>,
     pub(super) discs: Vec<(DiscKind, NodeListId, NodeListId, NodeListId, u8)>,
-    pub(super) marks: Vec<(u16, crate::ids::TokenListId)>,
+    pub(super) marks: Vec<(u16, TokenListRef)>,
     pub(super) insertions: InsertionTable,
     pub(super) whatsits: Vec<crate::node::Whatsit>,
     pub(super) noads: NoadTable,
@@ -516,7 +517,9 @@ impl NodeStorage {
                 &mut self.discs,
                 (*kind, *pre, *post, *replace, *physical_replace_count),
             ),
-            Node::Mark { class, tokens } => push_sidecar(15, &mut self.marks, (*class, *tokens)),
+            Node::Mark { class, tokens } => {
+                push_sidecar(15, &mut self.marks, (*class, tokens.clone()))
+            }
             Node::Ins {
                 class,
                 size,

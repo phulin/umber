@@ -10562,24 +10562,18 @@ fn pdf_graphics_text(tokens: TracedTokenList, stores: &Universe) -> Vec<u8> {
 
 fn pdf_navigation_identity(
     stores: &Universe,
-    identifier: tex_state::PdfActionIdentifier,
+    identifier: &tex_state::PdfActionIdentifier,
 ) -> tex_state::PdfDestinationIdentity {
     match identifier {
         tex_state::PdfActionIdentifier::Number(number) => {
-            tex_state::PdfDestinationIdentity::Number(number)
+            tex_state::PdfDestinationIdentity::Number(*number)
         }
-        tex_state::PdfActionIdentifier::Name(tokens) => {
-            tex_state::PdfDestinationIdentity::Name(pdf_graphics_text(
-                TracedTokenList::synthetic(stores.token_list_ref(tokens)),
-                stores,
-            ))
-        }
-        tex_state::PdfActionIdentifier::Raw(tokens) => {
-            tex_state::PdfDestinationIdentity::Name(pdf_graphics_text(
-                TracedTokenList::synthetic(stores.token_list_ref(tokens)),
-                stores,
-            ))
-        }
+        tex_state::PdfActionIdentifier::Name(tokens) => tex_state::PdfDestinationIdentity::Name(
+            pdf_graphics_text(TracedTokenList::synthetic(tokens.clone()), stores),
+        ),
+        tex_state::PdfActionIdentifier::Raw(tokens) => tex_state::PdfDestinationIdentity::Name(
+            pdf_graphics_text(TracedTokenList::synthetic(tokens.clone()), stores),
+        ),
     }
 }
 
@@ -10607,7 +10601,7 @@ fn apply_pdf_navigation_request(
                 } => {
                     let data = tex_state::PdfAnnotationData {
                         dimensions,
-                        entries: entries.tokens.token_list(),
+                        entries: entries.tokens.token_ref().clone(),
                     };
                     let record = match use_object {
                         Some(object) => stores
@@ -10650,11 +10644,11 @@ fn apply_pdf_navigation_request(
                 .create_pdf_link(
                     dimensions,
                     attributes.map_or(TokenListId::EMPTY, |value| value.tokens.token_list()),
-                    action,
+                    action.clone(),
                     stores.execution_group_depth(),
                 )
                 .map_err(|_| ExecError::PdfObjectCapacity)?;
-            reserve_navigation_action_targets(stores, action)?;
+            reserve_navigation_action_targets(stores, &action)?;
             crate::box_runtime::append_whatsit(
                 modes,
                 stores,
@@ -10701,12 +10695,12 @@ fn apply_pdf_navigation_request(
             stores
                 .create_pdf_outline(
                     attributes.map_or(TokenListId::EMPTY, |value| value.tokens.token_list()),
-                    action,
+                    action.clone(),
                     count,
                     title.tokens.token_list(),
                 )
                 .map_err(|_| ExecError::PdfObjectCapacity)?;
-            reserve_navigation_action_targets(stores, action)?;
+            reserve_navigation_action_targets(stores, &action)?;
         }
         PdfNavigationRequest::Destination(PdfDestinationRequest {
             structure,
@@ -10716,7 +10710,7 @@ fn apply_pdf_navigation_request(
             if stores.int_param(IntParam::PDF_OUTPUT) <= 0 {
                 return Err(ExecError::PdfExtensionInDviMode("pdfdest"));
             }
-            let identity = pdf_navigation_identity(stores, identifier);
+            let identity = pdf_navigation_identity(stores, &identifier);
             if stores
                 .pdf_destination(&identity, structure.is_some())
                 .is_some_and(tex_state::PdfDestinationRecord::defined)
@@ -10756,8 +10750,10 @@ fn apply_pdf_navigation_request(
                 Whatsit::PdfThread(Box::new(tex_state::node::PdfThreadNode {
                     identifier,
                     dimensions,
-                    attributes: attributes
-                        .map_or(TokenListId::EMPTY, |value| value.tokens.token_list()),
+                    attributes: attributes.map_or_else(
+                        || stores.token_list_ref(TokenListId::EMPTY),
+                        |value| value.tokens.token_ref().clone(),
+                    ),
                     running,
                 })),
             )?;
@@ -10774,7 +10770,7 @@ fn apply_pdf_navigation_request(
 
 fn reserve_navigation_action_targets(
     stores: &mut Universe,
-    action: tex_state::PdfActionSpec,
+    action: &tex_state::PdfActionSpec,
 ) -> Result<(), ExecError> {
     let (destination, structure, thread) = pdf_action_target_identities(stores, action);
     if let Some(identity) = thread {
@@ -10797,7 +10793,7 @@ fn reserve_navigation_action_targets(
 
 fn pdf_action_target_identities(
     stores: &Universe,
-    action: tex_state::PdfActionSpec,
+    action: &tex_state::PdfActionSpec,
 ) -> (
     Option<tex_state::PdfDestinationIdentity>,
     Option<tex_state::PdfDestinationIdentity>,
@@ -10806,7 +10802,7 @@ fn pdf_action_target_identities(
     let destination = match action {
         tex_state::PdfActionSpec::GoTo(destination) if destination.file.is_none() => destination,
         tex_state::PdfActionSpec::Thread(thread) if thread.file.is_none() => {
-            let identity = match thread.target {
+            let identity = match &thread.target {
                 tex_state::PdfActionTarget::Destination(identifier) => {
                     Some(pdf_navigation_identity(stores, identifier))
                 }
@@ -10816,7 +10812,7 @@ fn pdf_action_target_identities(
         }
         _ => return (None, None, None),
     };
-    let target = match destination.target {
+    let target = match &destination.target {
         tex_state::PdfActionTarget::Destination(identifier) => {
             Some(pdf_navigation_identity(stores, identifier))
         }
@@ -10824,6 +10820,7 @@ fn pdf_action_target_identities(
     };
     let structure = destination
         .structure
+        .as_ref()
         .map(|identifier| pdf_navigation_identity(stores, identifier));
     (target, structure, None)
 }
@@ -10860,7 +10857,7 @@ fn apply_pdf_graphics_request(
             text,
         } => Node::Whatsit(Whatsit::DeferredPdfLiteral {
             mode,
-            tokens: text.tokens.token_list(),
+            tokens: text.tokens.token_ref().clone(),
         }),
         PdfGraphicsRequest::Literal { mode, text, .. } => Node::Whatsit(Whatsit::PdfLiteral {
             mode,
@@ -11092,7 +11089,7 @@ fn apply_pdf_form_request(
                     .map(crate::shipout::ExpandedReplayText)
                 };
                 let artifact = crate::shipout::ShipoutTransaction::new(&mut write, &mut replay)
-                    .stage_form(form, stores)?;
+                    .stage_form(form.clone(), stores)?;
                 stores.publish_pdf_traversal_positions(
                     artifact.last_position(),
                     artifact.snap_reference(),
@@ -14282,7 +14279,8 @@ fn apply_scanned_step(
                 if stores.pdf_catalog_open_action().is_some() {
                     return Err(ExecError::PdfDuplicateOpenAction);
                 }
-                let (destination, structure, thread) = pdf_action_target_identities(stores, action);
+                let (destination, structure, thread) =
+                    pdf_action_target_identities(stores, &action);
                 stores
                     .set_pdf_catalog_open_action_with_targets(
                         action,
@@ -14458,7 +14456,7 @@ fn apply_scanned_step(
                 command.fuel,
                 Whatsit::DeferredWrite {
                     sink: replay_write_sink(stream),
-                    tokens: tokens.token_list(),
+                    tokens: tokens.token_ref().clone(),
                 },
             )?;
             Ok(ReplayStep::Continue)
@@ -14473,7 +14471,7 @@ fn apply_scanned_step(
                 command.fuel,
                 Whatsit::DeferredSpecial {
                     class: "dvi".to_owned(),
-                    tokens: tokens.token_list(),
+                    tokens: tokens.token_ref().clone(),
                 },
             )?;
             Ok(ReplayStep::Continue)
@@ -15337,7 +15335,7 @@ fn apply_scanned_step(
                 stores,
                 Node::Mark {
                     class,
-                    tokens: tokens.token_list(),
+                    tokens: tokens.token_ref().clone(),
                 },
             );
             Ok(ReplayStep::Continue)

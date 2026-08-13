@@ -2,6 +2,7 @@ use super::{
     BoxDimension, FormatError, GenerationForkError, GeometryObservation, TakeUnboxResult,
     UnboxKind, Universe, utf8_scalar_len_at,
 };
+use crate::PdfDocumentFragmentKind;
 use crate::env::banks::{IntParam, TokParam};
 use crate::font::{
     FONT_INFO_CAPACITY, FontExpansion, MAX_FONT_DIMEN, NULL_FONT, WEB2C_FONT_INFO_CAPACITY,
@@ -1833,7 +1834,7 @@ fn pdftex_margin_kern_query_owns_the_complete_skipable_edge_rule() {
         },
         Node::Mark {
             class: 0,
-            tokens: TokenListId::EMPTY,
+            tokens: universe.token_list_ref(TokenListId::EMPTY),
         },
         Node::Adjust(AdjustNode::ordinary(empty)),
         Node::Penalty(1),
@@ -3122,6 +3123,47 @@ fn frozen_generation_forks_once_at_an_owner_exact_snapshot() {
             .expect_err("foreign root rejected"),
         GenerationForkError::ForeignSnapshot
     );
+}
+
+#[test]
+fn generation_fork_retargets_page_pdf_and_effect_token_roots() {
+    let mut universe = Universe::new();
+    let root = universe.intern_token_list_ref(&[Token::param(8)]);
+    let retained = root.clone();
+    let id = root.id();
+    universe.set_page_mark(PageMark::Bot, id);
+    universe.set_page_mark_class(PageMark::SplitBot, 11, id);
+    universe.record_deferred_write(StreamSlot::new(4), id);
+    universe.append_pdf_document_fragment(PdfDocumentFragmentKind::Names, id);
+    let checkpoint = universe.snapshot();
+    drop(root);
+
+    universe.clear_page_mark(PageMark::Bot);
+    universe.clear_page_mark_class(PageMark::SplitBot, 11);
+    universe
+        .world_mut()
+        .record_special("suffix", b"discarded".to_vec());
+    let substrate = universe.freeze_generation();
+    let fork = substrate
+        .fork_at(&checkpoint)
+        .expect("typed token roots are forkable at the exact checkpoint");
+    drop(substrate);
+
+    assert_eq!(fork.page_mark(PageMark::Bot), id);
+    assert_eq!(fork.page_mark_class(PageMark::SplitBot, 11), id);
+    assert!(matches!(
+        fork.world().effect_records(),
+        [EffectRecord::DeferredWrite { tokens, .. }] if tokens.tokens() == [Token::param(8)]
+    ));
+    assert_eq!(
+        fork.pdf_document_fragments(PdfDocumentFragmentKind::Names)
+            .collect::<Vec<_>>(),
+        vec![id]
+    );
+    assert!(retained.strong_count() > 1);
+    drop(fork);
+    drop(checkpoint);
+    assert_eq!(retained.strong_count(), 1);
 }
 
 #[test]
@@ -4871,7 +4913,7 @@ fn pdf_page_allocation_replays_identical_object_ids_and_hashes() {
             reservation,
         )
         .expect("first shipout succeeds");
-    let first_page = universe.pdf_pages()[0];
+    let first_page = universe.pdf_pages()[0].clone();
     let first_state_hash = universe.snapshot().state_hash();
     assert_eq!(first_page.artifact(), first_hash);
     assert_eq!(first_page.resources_object(), 1);
@@ -6601,7 +6643,7 @@ fn deferred_write_admission_preserves_unexpanded_tokens_and_effect_order() {
             EffectRecord::StreamWrite { text: before, .. },
             EffectRecord::DeferredWrite { stream, tokens: recorded },
             EffectRecord::StreamWrite { text: after, .. },
-        ] if before == "before" && *stream == slot && *recorded == tokens && after == "after"
+        ] if before == "before" && *stream == slot && recorded.id() == tokens && after == "after"
     ));
 }
 

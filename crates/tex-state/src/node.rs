@@ -1,10 +1,11 @@
 //! Immutable TeX node model.
 
 use crate::glue::Order;
-use crate::ids::{FontId, GlueId, NodeListId, TokenListId};
+use crate::ids::{FontId, GlueId, NodeListId};
 use crate::math::{MathChoice, MathFraction, MathListNode, MathNoad, MathStyle};
 use crate::scaled::{GlueSetRatio, Scaled};
 use crate::token::OriginId;
+use crate::token_store::TokenListRef;
 use crate::world::{PrintSink, StreamSlot};
 
 /// Stable logical node kinds shared by owned and compact node views.
@@ -124,7 +125,7 @@ pub enum Node {
     },
     Mark {
         class: u16,
-        tokens: TokenListId,
+        tokens: TokenListRef,
     },
     Ins {
         class: u16,
@@ -510,7 +511,7 @@ pub enum Whatsit {
     },
     DeferredWrite {
         sink: PrintSink,
-        tokens: TokenListId,
+        tokens: TokenListRef,
     },
     Special {
         class: String,
@@ -518,7 +519,7 @@ pub enum Whatsit {
     },
     DeferredSpecial {
         class: String,
-        tokens: TokenListId,
+        tokens: TokenListRef,
     },
     PdfReferenceObject {
         object: u32,
@@ -540,7 +541,7 @@ pub enum Whatsit {
     },
     DeferredPdfLiteral {
         mode: PdfLiteralMode,
-        tokens: TokenListId,
+        tokens: TokenListRef,
     },
     PdfSetMatrix {
         payload: Vec<u8>,
@@ -586,7 +587,7 @@ pub enum Whatsit {
 pub struct PdfThreadNode {
     pub identifier: crate::PdfActionIdentifier,
     pub dimensions: crate::PdfAnnotationDimensions,
-    pub attributes: TokenListId,
+    pub attributes: TokenListRef,
     pub running: bool,
 }
 

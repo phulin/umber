@@ -155,9 +155,9 @@ fn update_page_marks_at_fire_up(stores: &mut Universe, page_nodes: &[Node]) {
                 && *node_class == class
             {
                 if first.is_none() {
-                    first = Some(*tokens);
+                    first = Some(tokens.id());
                 }
-                bot = Some(*tokens);
+                bot = Some(tokens.id());
             }
         }
 

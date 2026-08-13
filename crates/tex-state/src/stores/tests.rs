@@ -207,7 +207,10 @@ fn owned_and_borrowed_semantic_hash_paths_match_every_node_variant() {
             replace: empty,
             physical_replace_count: 0,
         },
-        Node::Mark { class: 3, tokens },
+        Node::Mark {
+            class: 3,
+            tokens: stores.token_list_ref(tokens),
+        },
         Node::Ins {
             class: 4,
             size: Scaled::from_raw(16),
@@ -411,6 +414,49 @@ fn node_semantic_ids_follow_rollback_and_promotion() {
 }
 
 #[test]
+fn compact_and_survivor_nodes_own_mark_tokens_until_rollback() {
+    let mut stores = Stores::new();
+    let snapshot = stores.checkpoint();
+    let tokens = stores.intern_token_list_ref_in_domain(&[Token::param(1)], None);
+    let token_id = tokens.id();
+    let mut nodes = vec![Node::Mark {
+        class: 7,
+        tokens: tokens.clone(),
+    }];
+
+    let compact = stores.freeze_node_list_owned(&mut nodes);
+    assert!(nodes.is_empty(), "owned freeze must move the token root");
+    drop(tokens);
+    let crate::node_arena::NodeRef::Mark { class, tokens } =
+        stores.nodes(compact).first().expect("compact mark")
+    else {
+        panic!("compact node must retain the mark sidecar")
+    };
+    assert_eq!(class, 7);
+    assert_eq!(tokens.id(), token_id);
+
+    stores.set_box_reg(0, compact);
+    let survivor = stores.box_reg(0).expect("box assignment promotes the list");
+    assert_eq!(
+        stores
+            .nodes(survivor)
+            .first()
+            .expect("survivor mark")
+            .to_owned(),
+        Node::Mark {
+            class: 7,
+            tokens: stores.tokens.owner(token_id).expect("survivor node root"),
+        }
+    );
+
+    stores.rollback(&snapshot);
+    assert!(
+        stores.tokens.owner(token_id).is_none(),
+        "final typed node owner must release the token value"
+    );
+}
+
+#[test]
 fn node_semantic_ids_exclude_token_provenance() {
     let mut stores = Stores::new();
     let token = Token::Char {
@@ -427,11 +473,11 @@ fn node_semantic_ids_exclude_token_provenance() {
 
     let first = stores.freeze_node_list(&[Node::Mark {
         class: 0,
-        tokens: first_tokens.token_list(),
+        tokens: first_tokens.token_ref().clone(),
     }]);
     let second = stores.freeze_node_list(&[Node::Mark {
         class: 0,
-        tokens: second_tokens.token_list(),
+        tokens: second_tokens.token_ref().clone(),
     }]);
     assert_ne!(first, second);
     assert_eq!(
@@ -1199,13 +1245,13 @@ fn global_code_table_assignments_survive_groups_but_not_snapshot_rollback() {
 fn rollback_restores_token_store_as_part_of_snapshot_tuple() {
     let mut stores = Stores::new();
     let snapshot = stores.checkpoint();
-    let stale = stores.intern_token_list(&[crate::token::Token::param(1)]);
+    let stale = stores.intern_token_list_ref_in_domain(&[crate::token::Token::param(1)], None);
 
     stores.rollback(&snapshot);
     let reused = stores.intern_token_list(&[crate::token::Token::param(2)]);
 
-    assert_eq!(reused.raw(), stale.raw());
-    assert_ne!(reused, stale);
+    assert_eq!(reused.raw(), stale.id().raw());
+    assert_ne!(reused, stale.id());
     assert_eq!(stores.tokens(reused), &[crate::token::Token::param(2)]);
 }
 
@@ -1758,7 +1804,7 @@ fn finish_node_list_rejects_foreign_glue_id() {
 fn freeze_node_list_rejects_stale_rolled_back_mark_token_list() {
     let mut stores = Stores::new();
     let snapshot = stores.checkpoint();
-    let stale = stores.intern_token_list(&[crate::token::Token::param(1)]);
+    let stale = stores.intern_token_list_ref_in_domain(&[crate::token::Token::param(1)], None);
 
     stores.rollback(&snapshot);
     stores.freeze_node_list(&[Node::Mark {
@@ -1772,7 +1818,8 @@ fn freeze_node_list_rejects_stale_rolled_back_mark_token_list() {
 fn finish_node_list_rejects_foreign_whatsit_token_list() {
     let mut stores = Stores::new();
     let mut foreign = stores.clone();
-    let foreign_tokens = foreign.intern_token_list(&[crate::token::Token::param(1)]);
+    let foreign_tokens =
+        foreign.intern_token_list_ref_in_domain(&[crate::token::Token::param(1)], None);
     let mut builder = stores.node_list_builder();
     builder.push(Node::Whatsit(crate::node::Whatsit::DeferredWrite {
         sink: crate::world::PrintSink::TerminalAndLog,

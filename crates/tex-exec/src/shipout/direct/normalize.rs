@@ -404,7 +404,7 @@ fn append_whatsit_effect(
             }
         }
         Whatsit::DeferredWrite { sink, tokens } if !suppress_deferred_streams => {
-            let expanded = (expansion.write_expander)(stores, sink, tokens)?;
+            let expanded = (expansion.write_expander)(stores, sink, tokens.id())?;
             let text = expanded.text;
             if let Some(sink) = deferred_write_sink(stores, sink) {
                 // TeX82 §1370's `write_out` frames the expansion as
@@ -428,7 +428,7 @@ fn append_whatsit_effect(
         }
         Whatsit::DeferredSpecial { class, tokens } => {
             let crate::shipout::ExpandedReplayText(payload) =
-                (expansion.replay_expander)(stores, super::ReplayTextKind::Special, tokens)?;
+                (expansion.replay_expander)(stores, super::ReplayTextKind::Special, tokens.id())?;
             effects.push(PageEffect::Special { class, payload });
         }
         Whatsit::PdfReferenceObject { object } => {
@@ -474,8 +474,11 @@ fn append_whatsit_effect(
             payload,
         }),
         Whatsit::DeferredPdfLiteral { mode, tokens } => {
-            let crate::shipout::ExpandedReplayText(payload) =
-                (expansion.replay_expander)(stores, super::ReplayTextKind::PdfLiteral, tokens)?;
+            let crate::shipout::ExpandedReplayText(payload) = (expansion.replay_expander)(
+                stores,
+                super::ReplayTextKind::PdfLiteral,
+                tokens.id(),
+            )?;
             effects.push(PageEffect::PdfLiteral {
                 mode: lower_pdf_literal_mode(mode),
                 payload,
@@ -570,7 +573,7 @@ fn append_whatsit_effect(
             let identity = match identifier {
                 tex_state::PdfActionIdentifier::Name(tokens) => {
                     let mut text = String::new();
-                    for &token in stores.tokens(tokens) {
+                    for &token in stores.tokens(tokens.id()) {
                         tex_state::token_show::append_token_string_text(stores, token, &mut text);
                     }
                     tex_state::PdfDestinationIdentity::Name(text.into_bytes())
@@ -659,7 +662,7 @@ fn append_whatsit_effect(
             let identity = match identifier {
                 tex_state::PdfActionIdentifier::Name(tokens) => {
                     let mut text = String::new();
-                    for &token in stores.tokens(tokens) {
+                    for &token in stores.tokens(tokens.id()) {
                         tex_state::token_show::append_token_string_text(stores, token, &mut text);
                     }
                     tex_state::PdfDestinationIdentity::Name(text.into_bytes())
@@ -683,7 +686,7 @@ fn append_whatsit_effect(
                 }
             };
             let mut attribute_bytes = String::new();
-            for &token in stores.tokens(attributes) {
+            for &token in stores.tokens(attributes.id()) {
                 tex_state::token_show::append_token_string_text(
                     stores,
                     token,

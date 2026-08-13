@@ -1,6 +1,6 @@
 use super::{NodeArena, NodeCursor, NodeListBuilder, NodeRef, NodeSemanticId, preflight_capacity};
 use crate::glue::Order;
-use crate::ids::{FontId, GlueId, NodeListId, TokenListId};
+use crate::ids::{FontId, GlueId, NodeListId};
 use crate::math::{
     FractionThickness, MathChoice, MathField, MathFraction, MathListNode, MathNoad, MathStyle,
     NoadClass, NoadKind,
@@ -483,6 +483,7 @@ fn shipout_normalization_predicate_rejects_inert_compact_tags() {
 fn every_rare_kind_round_trips_through_its_sidecar() {
     let mut arena = NodeArena::new();
     let empty = arena.append(&[]);
+    let mark_tokens = crate::token_store::testing_empty_token_list_ref();
     let mut box_node = BoxNode::new(BoxNodeFields {
         width: scaled(1),
         height: scaled(2),
@@ -534,7 +535,7 @@ fn every_rare_kind_round_trips_through_its_sidecar() {
         },
         Node::Mark {
             class: u16::MAX,
-            tokens: TokenListId::testing_new(3),
+            tokens: mark_tokens,
         },
         Node::Ins {
             class: 4,

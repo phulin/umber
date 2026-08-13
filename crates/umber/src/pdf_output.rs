@@ -212,7 +212,6 @@ fn positioned_pages(
 ) -> Result<Vec<PositionedPage>, PdfBuildError> {
     records
         .iter()
-        .copied()
         .enumerate()
         .map(|(page_index, record)| {
             let bytes = artifact_bytes(stores, artifacts, record.artifact())?;

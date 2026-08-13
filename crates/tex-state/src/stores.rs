@@ -1597,6 +1597,7 @@ impl Stores {
     }
 
     /// Interns a frozen token-list value in the owned token store.
+    #[cfg(test)]
     pub fn intern_token_list(&mut self, tokens: &[Token]) -> TokenListId {
         self.intern_token_list_in_domain(tokens, None)
     }

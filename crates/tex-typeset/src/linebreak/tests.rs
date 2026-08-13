@@ -254,6 +254,7 @@ fn base_whatsit_line_visitation_is_zero_width_and_never_a_breakpoint() {
         ch: 'w',
         cat: Catcode::Letter,
     }]);
+    let tokens = universe.token_list_ref(tokens);
     let whatsits = vec![
         Node::Whatsit(Whatsit::OpenOut {
             slot: tex_state::StreamSlot::new(15),
@@ -261,7 +262,7 @@ fn base_whatsit_line_visitation_is_zero_width_and_never_a_breakpoint() {
         }),
         Node::Whatsit(Whatsit::DeferredWrite {
             sink: tex_state::PrintSink::Log,
-            tokens,
+            tokens: tokens.clone(),
         }),
         Node::Whatsit(Whatsit::CloseOut {
             slot: Some(tex_state::StreamSlot::new(0)),
@@ -289,7 +290,7 @@ fn base_whatsit_line_visitation_is_zero_width_and_never_a_breakpoint() {
     assert_eq!(breakpoints[0].position, paragraph.len());
     assert_eq!(&paragraph[..whatsits.len()], whatsits);
     assert_eq!(
-        universe.tokens(tokens),
+        tokens.tokens(),
         [Token::Char {
             ch: 'w',
             cat: Catcode::Letter,
@@ -2464,12 +2465,13 @@ fn post_line_break_keeps_migrating_nodes_for_execution_layer() {
         ch: 'm',
         cat: Catcode::Letter,
     }]);
+    let mark_tokens = universe.token_list_ref(mark_tokens);
     let adjust_content = universe.freeze_node_list(&[kern(7)]);
     let nodes = vec![
         rule(10),
         Node::Mark {
             class: 0,
-            tokens: mark_tokens,
+            tokens: mark_tokens.clone(),
         },
         Node::Adjust(tex_state::node::AdjustNode::ordinary(adjust_content)),
         Node::Penalty(-10_000),
@@ -2516,7 +2518,7 @@ fn post_line_break_keeps_migrating_nodes_for_execution_layer() {
             Node::Adjust(adjust),
             Node::Penalty(-10_000),
             Node::Glue { .. },
-        ] if *tokens == mark_tokens && !adjust.pre && adjust.content == adjust_content
+        ] if tokens.id() == mark_tokens.id() && !adjust.pre && adjust.content == adjust_content
     ));
 }
 

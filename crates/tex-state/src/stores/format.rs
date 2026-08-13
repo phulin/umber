@@ -1374,7 +1374,7 @@ impl Stores {
                 .into_iter()
                 .map(|token| token.restore_mapped(&symbols))
                 .collect::<Result<Vec<_>, _>>()?;
-            token_ids.push(self.intern_token_list(&tokens));
+            token_ids.push(self.intern_token_list_ref_in_domain(&tokens, None));
         }
         let mut glue_ids = Vec::with_capacity(bundle.glue.len());
         for glue in bundle.glue {
@@ -1992,7 +1992,10 @@ fn install_frozen_sections(
         .map(|raw| stores.resolve_stored_glue(GlueId::new(raw as u32)))
         .collect::<Vec<_>>();
     let token_ids = (0..token_list_count)
-        .map(|raw| stores.resolve_stored_token_list(TokenListId::new(raw as u32)))
+        .map(|raw| {
+            let id = stores.resolve_stored_token_list(TokenListId::new(raw as u32));
+            stores.token_list_ref(id)
+        })
         .collect::<Vec<_>>();
     let content_ids = FormatContentIds {
         fonts: &font_ids,

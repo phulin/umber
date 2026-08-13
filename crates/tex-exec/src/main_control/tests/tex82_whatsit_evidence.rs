@@ -47,6 +47,7 @@ fn base_whatsits(stores: &mut Universe) -> Vec<Node> {
         ch: 'w',
         cat: Catcode::Letter,
     }]);
+    let write = stores.token_list_ref(write);
     vec![
         Node::Whatsit(Whatsit::OpenOut {
             slot: tex_state::StreamSlot::new(0),
@@ -395,7 +396,7 @@ fn base_whatsit_construction_projects_fields_display_size_and_ownership() {
                 && *close == tex_state::StreamSlot::new(0)
                 && class == "dvi"
                 && payload == b"early"
-                && stores.tokens(*tokens) == [Token::Cs(stores.symbol("payload").expect("payload").symbol())]
+                && tokens.tokens() == [Token::Cs(stores.symbol("payload").expect("payload").symbol())]
         ),
         "constructed nodes: {nodes:#?}"
     );

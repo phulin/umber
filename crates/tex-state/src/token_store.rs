@@ -227,6 +227,13 @@ pub struct TokenListRef {
     value: ReachableValueRef<TokenListValue>,
 }
 
+#[cfg(test)]
+pub(crate) fn testing_empty_token_list_ref() -> TokenListRef {
+    TokenStore::new()
+        .owner(TokenListId::EMPTY)
+        .expect("test token store owns the canonical empty list")
+}
+
 impl TokenListRef {
     /// Returns the compact physical coordinate carried beside this owner.
     #[must_use]

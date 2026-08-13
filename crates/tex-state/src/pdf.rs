@@ -34,6 +34,7 @@ use crate::ContentHash;
 use crate::ids::{FontId, NodeListId, TokenListId};
 use crate::scaled::Scaled;
 use crate::state_hash::{StateHashFragment, StateHasher};
+use crate::token_store::TokenListRef;
 use std::collections::BTreeMap;
 
 const PDF_STATE_DOMAIN: u64 = 0x7064_665f_7374_6174;
@@ -709,13 +710,20 @@ impl PdfOutputParameters {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub(crate) struct PdfTokenParameter {
-    pub(crate) tokens: TokenListId,
+    pub(crate) tokens: TokenListRef,
     pub(crate) semantic_id: StateHashFragment,
 }
 
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+impl PdfTokenParameter {
+    #[must_use]
+    pub(crate) fn id(&self) -> TokenListId {
+        self.tokens.id()
+    }
+}
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub(crate) struct PdfPageParameters {
     pub(crate) h_origin: Scaled,
     pub(crate) v_origin: Scaled,
@@ -730,7 +738,7 @@ pub(crate) struct PdfPageParameters {
 }
 
 /// Stable object identities assigned to one committed PDF page.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct PdfPageRecord {
     artifact: ContentHash,
     resources_object: u32,
@@ -740,7 +748,7 @@ pub struct PdfPageRecord {
 }
 
 /// Immutable captured box and canonical identities for one `\pdfxform`.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct PdfFormRecord {
     object: u32,
     resource: u32,
@@ -790,45 +798,39 @@ impl PdfFormArtifact {
 
 impl PdfFormRecord {
     #[must_use]
-    pub const fn object(self) -> u32 {
+    pub const fn object(&self) -> u32 {
         self.object
     }
     #[must_use]
-    pub const fn resource(self) -> u32 {
+    pub const fn resource(&self) -> u32 {
         self.resource
     }
     #[must_use]
-    pub const fn box_list(self) -> NodeListId {
+    pub const fn box_list(&self) -> NodeListId {
         self.box_list
     }
     #[must_use]
-    pub const fn width(self) -> Scaled {
+    pub const fn width(&self) -> Scaled {
         self.width
     }
     #[must_use]
-    pub const fn height(self) -> Scaled {
+    pub const fn height(&self) -> Scaled {
         self.height
     }
     #[must_use]
-    pub const fn depth(self) -> Scaled {
+    pub const fn depth(&self) -> Scaled {
         self.depth
     }
     #[must_use]
-    pub const fn attr(self) -> Option<TokenListId> {
-        match self.attr {
-            Some(v) => Some(v.tokens),
-            None => None,
-        }
+    pub fn attr(&self) -> Option<TokenListId> {
+        self.attr.as_ref().map(PdfTokenParameter::id)
     }
     #[must_use]
-    pub const fn resources(self) -> Option<TokenListId> {
-        match self.resources {
-            Some(v) => Some(v.tokens),
-            None => None,
-        }
+    pub fn resources(&self) -> Option<TokenListId> {
+        self.resources.as_ref().map(PdfTokenParameter::id)
     }
     #[must_use]
-    pub const fn immediate(self) -> bool {
+    pub const fn immediate(&self) -> bool {
         self.immediate
     }
 }
@@ -838,60 +840,60 @@ impl PdfPageRecord {
         self.artifact = artifact;
     }
     #[must_use]
-    pub const fn artifact(self) -> ContentHash {
+    pub const fn artifact(&self) -> ContentHash {
         self.artifact
     }
     #[must_use]
-    pub const fn resources_object(self) -> u32 {
+    pub const fn resources_object(&self) -> u32 {
         self.resources_object
     }
     #[must_use]
-    pub const fn contents_object(self) -> u32 {
+    pub const fn contents_object(&self) -> u32 {
         self.contents_object
     }
     #[must_use]
-    pub const fn page_object(self) -> u32 {
+    pub const fn page_object(&self) -> u32 {
         self.page_object
     }
     #[must_use]
-    pub const fn h_origin(self) -> Scaled {
+    pub const fn h_origin(&self) -> Scaled {
         self.parameters.h_origin
     }
     #[must_use]
-    pub const fn v_origin(self) -> Scaled {
+    pub const fn v_origin(&self) -> Scaled {
         self.parameters.v_origin
     }
     #[must_use]
-    pub const fn width(self) -> Scaled {
+    pub const fn width(&self) -> Scaled {
         self.parameters.width
     }
     #[must_use]
-    pub const fn height(self) -> Scaled {
+    pub const fn height(&self) -> Scaled {
         self.parameters.height
     }
     #[must_use]
-    pub const fn link_margin(self) -> Scaled {
+    pub const fn link_margin(&self) -> Scaled {
         self.parameters.link_margin
     }
     #[must_use]
-    pub const fn page_attr(self) -> TokenListId {
-        self.parameters.page_attr.tokens
+    pub fn page_attr(&self) -> TokenListId {
+        self.parameters.page_attr.id()
     }
     #[must_use]
-    pub const fn resources(self) -> TokenListId {
-        self.parameters.resources.tokens
+    pub fn resources(&self) -> TokenListId {
+        self.parameters.resources.id()
     }
     #[must_use]
-    pub const fn omit_procset(self) -> i32 {
+    pub const fn omit_procset(&self) -> i32 {
         self.parameters.omit_procset
     }
     #[must_use]
-    pub const fn space_font_name_id(self) -> u32 {
+    pub const fn space_font_name_id(&self) -> u32 {
         self.parameters.space_font_name
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub(crate) struct PdfStateCursor {
     enabled: bool,
     next_object: u32,
@@ -1206,11 +1208,13 @@ impl PdfState {
                     depth: form.depth,
                     attr: form
                         .attr
-                        .map(|value| detach_tokens(value.tokens))
+                        .as_ref()
+                        .map(|value| detach_tokens(value.id()))
                         .transpose()?,
                     resources: form
                         .resources
-                        .map(|value| detach_tokens(value.tokens))
+                        .as_ref()
+                        .map(|value| detach_tokens(value.id()))
                         .transpose()?,
                     immediate: form.immediate,
                 })
@@ -1404,8 +1408,8 @@ impl PdfState {
             return;
         }
         if self.pk_mode.is_none() {
+            self.fingerprint = freeze_pk_mode_fingerprint(self.fingerprint, &pk_mode);
             self.pk_mode = Some(pk_mode);
-            self.fingerprint = freeze_pk_mode_fingerprint(self.fingerprint, pk_mode);
         }
         self.ensure_page_capacity(output)
             .expect("PDF page object capacity was preflighted");
@@ -1424,8 +1428,8 @@ impl PdfState {
         } else {
             OBJECTS_PER_PAGE
         };
+        self.fingerprint = append_fingerprint(self.fingerprint, &record);
         self.pages.push(record);
-        self.fingerprint = append_fingerprint(self.fingerprint, record);
     }
 
     #[must_use]
@@ -1434,11 +1438,8 @@ impl PdfState {
     }
 
     #[must_use]
-    pub(crate) const fn pk_mode(&self) -> Option<TokenListId> {
-        match self.pk_mode {
-            Some(mode) => Some(mode.tokens),
-            None => None,
-        }
+    pub(crate) fn pk_mode(&self) -> Option<TokenListId> {
+        self.pk_mode.as_ref().map(PdfTokenParameter::id)
     }
 
     pub(crate) fn push_font_map(&mut self, operation: PdfFontMapOperation) {
@@ -1572,7 +1573,7 @@ impl PdfState {
     ) -> Result<PdfAnnotationRecord, PdfObjectCapacityError> {
         let object = self.reserve_document_object()?;
         let record = PdfAnnotationRecord::reserved(object);
-        Arc::make_mut(&mut self.annotations).push(record);
+        Arc::make_mut(&mut self.annotations).push(record.clone());
         self.annotation_fingerprint =
             append_annotation_reservation_fingerprint(self.annotation_fingerprint, object);
         Ok(record)
@@ -1589,16 +1590,17 @@ impl PdfState {
             .iter_mut()
             .find(|record| record.object() == object)
             .ok_or(PdfAnnotationInitializeError(object))?;
+        let dimensions = data.dimensions;
         record
             .initialize(data)
             .map_err(|()| PdfAnnotationInitializeError(object))?;
         self.annotation_fingerprint = append_annotation_data_fingerprint(
             self.annotation_fingerprint,
             object,
-            data.dimensions,
+            dimensions,
             entries_semantic_id,
         );
-        Ok(*record)
+        Ok(record.clone())
     }
 
     #[must_use]
@@ -1731,10 +1733,10 @@ impl PdfState {
 
     pub(crate) fn create_outline(
         &mut self,
-        attributes: TokenListId,
+        attributes: TokenListRef,
         action: PdfActionSpec,
         count: i32,
-        title: TokenListId,
+        title: TokenListRef,
         semantic_ids: [StateHashFragment; 3],
     ) -> Result<PdfOutlineRecord, PdfObjectCapacityError> {
         let action_object = self.reserve_document_object()?;
@@ -1749,14 +1751,14 @@ impl PdfState {
             count,
             title,
         );
-        Arc::make_mut(&mut self.outlines).push(record);
         self.outline_fingerprint = append_outline_fingerprint(
             self.outline_fingerprint,
-            record,
+            &record,
             semantic_ids[0],
             semantic_ids[1],
             semantic_ids[2],
         );
+        Arc::make_mut(&mut self.outlines).push(record.clone());
         Ok(record)
     }
 
@@ -1772,7 +1774,7 @@ impl PdfState {
     pub(crate) fn create_link(
         &mut self,
         dimensions: PdfAnnotationDimensions,
-        attributes: TokenListId,
+        attributes: TokenListRef,
         action: PdfActionSpec,
         attributes_semantic_id: StateHashFragment,
         action_semantic_id: StateHashFragment,
@@ -1780,17 +1782,17 @@ impl PdfState {
     ) -> Result<PdfLinkRecord, PdfObjectCapacityError> {
         let object = self.reserve_document_object()?;
         let record = PdfLinkRecord::new(object, dimensions, attributes, action);
-        Arc::make_mut(&mut self.links).push(record);
         self.link_fingerprint = append_link_fingerprint(
             self.link_fingerprint,
-            record,
+            &record,
             attributes_semantic_id,
             action_semantic_id,
         );
         Arc::make_mut(&mut self.open_links).push(PdfOpenLink {
-            record,
+            record: record.clone(),
             nesting_depth,
         });
+        Arc::make_mut(&mut self.links).push(record.clone());
         self.open_link_fingerprint = open_link_fingerprint(&self.open_links);
         Ok(record)
     }
@@ -2313,8 +2315,8 @@ impl PdfState {
             resources,
             immediate,
         };
-        Arc::make_mut(&mut self.forms).push(record);
-        self.form_fingerprint = append_form_fingerprint(self.form_fingerprint, record);
+        self.form_fingerprint = append_form_fingerprint(self.form_fingerprint, &record);
+        Arc::make_mut(&mut self.forms).push(record.clone());
         Ok(record)
     }
 
@@ -2322,12 +2324,12 @@ impl PdfState {
     pub(crate) fn form(&self, object: u32) -> Option<PdfFormRecord> {
         self.forms
             .iter()
-            .copied()
             .find(|form| form.object == object)
+            .cloned()
     }
 
     pub(crate) fn forms(&self) -> impl ExactSizeIterator<Item = PdfFormRecord> + '_ {
-        self.forms.iter().copied()
+        self.forms.iter().cloned()
     }
 
     #[must_use]
@@ -2430,28 +2432,28 @@ impl PdfState {
                 .then(|| self.reserve_document_object())
                 .transpose()?
         };
-        let record = PdfActionRecord::new(id, spec, target_object, structure_object);
         if let PdfActionSpec::GoTo(PdfActionDestination {
             file: None,
             target: PdfActionTarget::Page { number, .. },
             ..
-        }) = spec
+        }) = &spec
         {
             Arc::make_mut(&mut self.page_reservations).push(PdfPageReservation {
-                number,
+                number: *number,
                 object: target_object.expect("internal page action reserves its page object"),
             });
             self.page_reservation_fingerprint =
                 page_reservation_fingerprint(&self.page_reservations);
         }
-        self.catalog_open_action = Some(record);
+        let record = PdfActionRecord::new(id, spec, target_object, structure_object);
+        self.catalog_open_action = Some(record.clone());
         self.action_fingerprint = fingerprint;
         Ok(record)
     }
 
     #[must_use]
-    pub(crate) const fn catalog_open_action(&self) -> Option<PdfActionRecord> {
-        self.catalog_open_action
+    pub(crate) fn catalog_open_action(&self) -> Option<PdfActionRecord> {
+        self.catalog_open_action.clone()
     }
 
     fn reserved_page_object(&self, number: u32) -> Option<u32> {
@@ -2508,7 +2510,7 @@ impl PdfState {
             next_object: self.next_object,
             page_count: self.pages.len(),
             output_parameters: self.output_parameters,
-            pk_mode: self.pk_mode,
+            pk_mode: self.pk_mode.clone(),
             font_operation_count: self.font_operations.len(),
             font_resource_count: self.font_resources.len(),
             fingerprint: self.fingerprint,
@@ -2517,7 +2519,7 @@ impl PdfState {
             raw_object_fingerprint: self.raw_objects.fingerprint(),
             document_fragment_fingerprint: self.document_fragments.fingerprint(),
             document_objects: self.document_objects,
-            catalog_open_action: self.catalog_open_action,
+            catalog_open_action: self.catalog_open_action.clone(),
             action_fingerprint: self.action_fingerprint,
             page_reservation_fingerprint: self.page_reservation_fingerprint,
             space_font_name_count: self.space_font_names.len(),
@@ -2938,7 +2940,7 @@ fn append_annotation_data_fingerprint(
 
 fn append_link_fingerprint(
     previous: StateHashFragment,
-    record: PdfLinkRecord,
+    record: &PdfLinkRecord,
     attributes_semantic_id: StateHashFragment,
     action_semantic_id: StateHashFragment,
 ) -> StateHashFragment {
@@ -3017,7 +3019,7 @@ fn thread_fingerprint(records: &[PdfThreadRecord]) -> StateHashFragment {
 
 fn append_outline_fingerprint(
     previous: StateHashFragment,
-    record: PdfOutlineRecord,
+    record: &PdfOutlineRecord,
     attributes_semantic_id: StateHashFragment,
     action_semantic_id: StateHashFragment,
     title_semantic_id: StateHashFragment,
@@ -3289,7 +3291,7 @@ fn freeze_fingerprint(
     hasher.finish_fragment()
 }
 
-fn append_fingerprint(previous: StateHashFragment, record: PdfPageRecord) -> StateHashFragment {
+fn append_fingerprint(previous: StateHashFragment, record: &PdfPageRecord) -> StateHashFragment {
     let mut hasher = StateHasher::new_exact(PDF_PAGE_DOMAIN);
     previous.apply(&mut hasher);
     hasher.bytes(&record.artifact.bytes());
@@ -3309,7 +3311,7 @@ fn append_fingerprint(previous: StateHashFragment, record: PdfPageRecord) -> Sta
 
 fn append_form_fingerprint(
     previous: StateHashFragment,
-    record: PdfFormRecord,
+    record: &PdfFormRecord,
 ) -> StateHashFragment {
     let mut hasher = StateHasher::new_exact(PDF_FORM_DOMAIN);
     previous.apply(&mut hasher);
@@ -3319,7 +3321,7 @@ fn append_form_fingerprint(
     hasher.i32(record.width.raw());
     hasher.i32(record.height.raw());
     hasher.i32(record.depth.raw());
-    for value in [record.attr, record.resources] {
+    for value in [&record.attr, &record.resources] {
         hasher.bool(value.is_some());
         if let Some(value) = value {
             hasher.bytes(&value.semantic_id.bytes());
@@ -3331,7 +3333,7 @@ fn append_form_fingerprint(
 
 fn freeze_pk_mode_fingerprint(
     previous: StateHashFragment,
-    mode: PdfTokenParameter,
+    mode: &PdfTokenParameter,
 ) -> StateHashFragment {
     let mut hasher = StateHasher::new_exact(PDF_PAGE_DOMAIN);
     previous.apply(&mut hasher);
@@ -3363,11 +3365,147 @@ fn hash_output_parameters(hasher: &mut StateHasher, parameters: Option<PdfOutput
 mod tests {
     use super::*;
 
+    fn test_token_ref() -> TokenListRef {
+        crate::token_store::testing_empty_token_list_ref()
+    }
+
+    fn test_token_parameter(identity: u8) -> PdfTokenParameter {
+        PdfTokenParameter {
+            tokens: test_token_ref(),
+            semantic_id: test_identity(identity),
+        }
+    }
+
     fn test_identity(value: u8) -> StateHashFragment {
         StateHashFragment::from_parts(
             u64::from(value),
             crate::state_hash::semantic_identity_bytes(b"umber-pdf-test-identity", &[value]),
         )
+    }
+
+    fn owned_test_token_ref(value: u8) -> TokenListRef {
+        let mut universe = crate::Universe::new();
+        universe.intern_token_list_ref(&[crate::token::Token::param(value)])
+    }
+
+    #[test]
+    fn pdf_records_snapshots_and_page_suffixes_own_every_token_parameter() {
+        let mut state = PdfState::default();
+        state.enable();
+        let initial = state.snapshot();
+        let root = owned_test_token_ref(6);
+        let retained = root.clone();
+        let parameter = PdfTokenParameter {
+            tokens: root.clone(),
+            semantic_id: test_identity(6),
+        };
+
+        let annotation = state.reserve_annotation().expect("annotation reservation");
+        state
+            .initialize_annotation(
+                annotation.object(),
+                PdfAnnotationData {
+                    dimensions: PdfAnnotationDimensions::RUNNING,
+                    entries: root.clone(),
+                },
+                test_identity(6),
+            )
+            .expect("annotation initialization");
+        state
+            .create_link(
+                PdfAnnotationDimensions::RUNNING,
+                root.clone(),
+                PdfActionSpec::User(root.clone()),
+                test_identity(6),
+                test_identity(7),
+                1,
+            )
+            .expect("link creation");
+        state
+            .create_outline(
+                root.clone(),
+                PdfActionSpec::User(root.clone()),
+                0,
+                root.clone(),
+                [test_identity(6), test_identity(7), test_identity(8)],
+            )
+            .expect("outline creation");
+        let raw = state.reserve_raw_object().expect("raw object reservation");
+        state
+            .initialize_raw_object(
+                raw,
+                PdfRawObjectData::new(false, None, false, parameter.clone()),
+                true,
+            )
+            .expect("raw object initialization");
+        state.append_document_fragment(PdfDocumentFragmentKind::Names, parameter.clone());
+        let action = PdfActionSpec::User(root.clone());
+        state
+            .set_catalog_open_action(
+                action.clone(),
+                action.fingerprint(|_| test_identity(9)),
+                None,
+                None,
+                None,
+            )
+            .expect("catalog action reservation");
+        drop(action);
+        drop(parameter);
+        drop(root);
+        assert!(retained.strong_count() > 1);
+
+        state.rollback(initial.clone());
+        assert_eq!(
+            retained.strong_count(),
+            1,
+            "collection rollback must release every typed PDF owner"
+        );
+
+        let page_root = owned_test_token_ref(7);
+        let page_retained = page_root.clone();
+        let page_parameter = PdfTokenParameter {
+            tokens: page_root.clone(),
+            semantic_id: test_identity(10),
+        };
+        state.commit_page(
+            ContentHash::new([7; 32]),
+            PdfOutputParameters {
+                output: 1,
+                major_version: 1,
+                minor_version: 4,
+                compress_level: 0,
+                object_compress_level: 0,
+                decimal_digits: 3,
+                gamma: 0,
+                image_gamma: 0,
+                image_hicolor: 0,
+                image_apply_gamma: 0,
+                draft_mode: 0,
+                inclusion_copy_fonts: 0,
+                pk_resolution: 0,
+                unique_resource_names: 0,
+            },
+            PdfPageParameters {
+                h_origin: Scaled::from_raw(0),
+                v_origin: Scaled::from_raw(0),
+                width: Scaled::from_raw(1),
+                height: Scaled::from_raw(1),
+                link_margin: Scaled::from_raw(0),
+                page_attr: page_parameter.clone(),
+                resources: page_parameter.clone(),
+                omit_procset: 0,
+                space_font_name: 0,
+            },
+            page_parameter,
+        );
+        drop(page_root);
+        let suffix = state.take_page_suffix(0);
+        assert!(state.pages().is_empty());
+        assert_eq!(suffix[0].parameters.page_attr.id(), page_retained.id());
+        assert_eq!(page_retained.strong_count(), 4);
+        state.restore_page_suffix(suffix);
+        state.rollback(initial);
+        assert_eq!(page_retained.strong_count(), 1);
     }
 
     #[test]
@@ -3391,7 +3529,7 @@ mod tests {
                 reserved.object(),
                 PdfAnnotationData {
                     dimensions,
-                    entries: TokenListId::EMPTY,
+                    entries: test_token_ref(),
                 },
                 test_identity(17),
             )
@@ -3406,7 +3544,7 @@ mod tests {
                     reserved.object(),
                     PdfAnnotationData {
                         dimensions,
-                        entries: TokenListId::EMPTY,
+                        entries: test_token_ref(),
                     },
                     test_identity(17),
                 )
@@ -3417,8 +3555,8 @@ mod tests {
         let link = state
             .create_link(
                 PdfAnnotationDimensions::RUNNING,
-                TokenListId::EMPTY,
-                PdfActionSpec::User(TokenListId::EMPTY),
+                test_token_ref(),
+                PdfActionSpec::User(test_token_ref()),
                 test_identity(19),
                 test_identity(23),
                 1,
@@ -3573,26 +3711,23 @@ mod tests {
             pk_resolution: 0,
             unique_resource_names: 0,
         };
-        let token = PdfTokenParameter {
-            tokens: TokenListId::EMPTY,
-            semantic_id: test_identity(0),
-        };
+        let token = test_token_parameter(0);
         let page = PdfPageParameters {
             h_origin: Scaled::from_raw(10),
             v_origin: Scaled::from_raw(20),
             width: Scaled::from_raw(30),
             height: Scaled::from_raw(40),
             link_margin: Scaled::from_raw(0),
-            page_attr: token,
-            resources: token,
+            page_attr: token.clone(),
+            resources: token.clone(),
             omit_procset: 0,
             space_font_name: 0,
         };
-        state.commit_page(hash, parameters, page, token);
-        let first = (state.pages()[0], state.cursor());
+        state.commit_page(hash, parameters, page.clone(), token.clone());
+        let first = (state.pages()[0].clone(), state.cursor());
         state.rollback(snapshot);
         state.commit_page(hash, parameters, page, token);
-        assert_eq!((state.pages()[0], state.cursor()), first);
+        assert_eq!((state.pages()[0].clone(), state.cursor()), first);
     }
 
     #[test]
@@ -3880,21 +4015,18 @@ mod tests {
         assert_eq!(state.last_raw_object(), 1);
         assert_eq!(state.next_object(), 2);
         assert_eq!(state.raw_object(first).expect("reserved").data(), None);
-        let tokens = PdfTokenParameter {
-            tokens: TokenListId::EMPTY,
-            semantic_id: test_identity(17),
-        };
-        let data = PdfRawObjectData::new(true, Some(tokens), false, tokens);
+        let tokens = test_token_parameter(17);
+        let data = PdfRawObjectData::new(true, Some(tokens.clone()), false, tokens);
         state
-            .initialize_raw_object(first, data, true)
+            .initialize_raw_object(first, data.clone(), true)
             .expect("initialize reservation");
         let initialized = state.snapshot();
         let record = state.raw_object(first).expect("initialized");
-        assert_eq!(record.data(), Some(data));
+        assert_eq!(record.data(), Some(data.clone()));
         assert!(record.is_immediate());
         assert!(!state.is_format_empty());
         assert_eq!(
-            state.initialize_raw_object(first, data, false),
+            state.initialize_raw_object(first, data.clone(), false),
             Err(PdfRawObjectInitializeError::AlreadyInitialized(first))
         );
         state
@@ -3936,29 +4068,23 @@ mod tests {
         state.enable();
         let initial = state.snapshot();
         let initial_hash = state.hash_fragment();
-        let first = PdfTokenParameter {
-            tokens: TokenListId::EMPTY,
-            semantic_id: test_identity(11),
-        };
-        let second = PdfTokenParameter {
-            tokens: TokenListId::EMPTY,
-            semantic_id: test_identity(22),
-        };
+        let first = test_token_parameter(11);
+        let second = test_token_parameter(22);
 
-        state.append_document_fragment(PdfDocumentFragmentKind::Info, first);
-        state.append_document_fragment(PdfDocumentFragmentKind::Catalog, first);
-        state.append_document_fragment(PdfDocumentFragmentKind::Info, second);
+        state.append_document_fragment(PdfDocumentFragmentKind::Info, first.clone());
+        state.append_document_fragment(PdfDocumentFragmentKind::Catalog, first.clone());
+        state.append_document_fragment(PdfDocumentFragmentKind::Info, second.clone());
         assert_eq!(
             state
                 .document_fragments(PdfDocumentFragmentKind::Info)
                 .collect::<Vec<_>>(),
-            vec![first.tokens, second.tokens]
+            vec![first.id(), second.id()]
         );
         assert_eq!(
             state
                 .document_fragments(PdfDocumentFragmentKind::Catalog)
                 .collect::<Vec<_>>(),
-            vec![first.tokens]
+            vec![first.id()]
         );
         assert!(!state.is_format_empty());
         let appended_hash = state.hash_fragment();
@@ -3972,7 +4098,7 @@ mod tests {
             0
         );
         assert_eq!(state.hash_fragment(), initial_hash);
-        state.append_document_fragment(PdfDocumentFragmentKind::Info, first);
+        state.append_document_fragment(PdfDocumentFragmentKind::Info, first.clone());
         state.append_document_fragment(PdfDocumentFragmentKind::Catalog, first);
         state.append_document_fragment(PdfDocumentFragmentKind::Info, second);
         assert_eq!(state.hash_fragment(), appended_hash);
@@ -4041,10 +4167,7 @@ mod tests {
         pk_bytes.push(245);
         let pk_font = tex_fonts::PdfPkFont::parse(&pk_bytes).expect("synthetic PK parses");
         let pk_request = tex_fonts::PdfPkFontRequest::new(b"cmr10".to_vec(), 300, b"cx".to_vec());
-        let token = PdfTokenParameter {
-            tokens: TokenListId::EMPTY,
-            semantic_id: test_identity(29),
-        };
+        let token = test_token_parameter(29);
         let output = PdfOutputParameters {
             output: 1,
             major_version: 1,
@@ -4067,8 +4190,8 @@ mod tests {
             width: Scaled::from_raw(1),
             height: Scaled::from_raw(1),
             link_margin: Scaled::from_raw(0),
-            page_attr: token,
-            resources: token,
+            page_attr: token.clone(),
+            resources: token.clone(),
             omit_procset: 0,
             space_font_name: 0,
         };
@@ -4089,14 +4212,23 @@ mod tests {
                 .expect("font object");
             let raw = state.reserve_raw_object().expect("raw object");
             state
-                .initialize_raw_object(raw, PdfRawObjectData::new(false, None, false, token), true)
+                .initialize_raw_object(
+                    raw,
+                    PdfRawObjectData::new(false, None, false, token.clone()),
+                    true,
+                )
                 .expect("raw data");
-            state.commit_page(ContentHash::new([13; 32]), output, page, token);
-            state.append_document_fragment(PdfDocumentFragmentKind::Names, token);
+            state.commit_page(
+                ContentHash::new([13; 32]),
+                output,
+                page.clone(),
+                token.clone(),
+            );
+            state.append_document_fragment(PdfDocumentFragmentKind::Names, token.clone());
             let document = state
                 .finalize_document_objects(true)
                 .expect("document objects");
-            let page = state.pages()[0];
+            let page = &state.pages()[0];
             vec![
                 font.object_number(),
                 raw.raw(),
@@ -4129,10 +4261,7 @@ mod tests {
     fn final_document_objects_allocate_once_through_the_shared_ledger() {
         let mut state = PdfState::default();
         state.enable();
-        let token = PdfTokenParameter {
-            tokens: TokenListId::EMPTY,
-            semantic_id: test_identity(7),
-        };
+        let token = test_token_parameter(7);
         let raw = state.reserve_raw_object().expect("raw object");
         assert_eq!(raw.raw(), 1);
         state.append_document_fragment(PdfDocumentFragmentKind::Names, token);
@@ -4173,13 +4302,13 @@ mod tests {
             structure: None,
             target: PdfActionTarget::Page {
                 number: 1,
-                view: TokenListId::EMPTY,
+                view: test_token_ref(),
             },
             window: PdfActionWindow::Unspecified,
         });
         let record = state
             .set_catalog_open_action(
-                action,
+                action.clone(),
                 action.fingerprint(|_| test_identity(17)),
                 None,
                 None,
@@ -4206,10 +4335,7 @@ mod tests {
             pk_resolution: 0,
             unique_resource_names: 0,
         };
-        let token = PdfTokenParameter {
-            tokens: TokenListId::EMPTY,
-            semantic_id: test_identity(17),
-        };
+        let token = test_token_parameter(17);
         state.commit_page(
             ContentHash::new([4; 32]),
             parameters,
@@ -4219,12 +4345,12 @@ mod tests {
                 width: Scaled::from_raw(1),
                 height: Scaled::from_raw(1),
                 link_margin: Scaled::from_raw(0),
-                page_attr: token,
-                resources: token,
+                page_attr: token.clone(),
+                resources: token.clone(),
                 omit_procset: 0,
                 space_font_name: 0,
             },
-            token,
+            token.clone(),
         );
         assert_eq!(state.pages()[0].resources_object(), 3);
         assert_eq!(state.pages()[0].contents_object(), 4);
@@ -4236,7 +4362,7 @@ mod tests {
         assert_eq!(state.hash_fragment(), initial_hash);
         let replay = state
             .set_catalog_open_action(
-                action,
+                action.clone(),
                 action.fingerprint(|_| test_identity(17)),
                 None,
                 None,
@@ -4263,7 +4389,7 @@ mod tests {
         let identity = PdfDestinationIdentity::Number(7);
         let record = state
             .set_catalog_open_action(
-                action,
+                action.clone(),
                 action.fingerprint(|_| test_identity(17)),
                 None,
                 None,
@@ -4279,7 +4405,7 @@ mod tests {
         assert!(state.threads().is_empty());
         let replay = state
             .set_catalog_open_action(
-                action,
+                action.clone(),
                 action.fingerprint(|_| test_identity(17)),
                 None,
                 None,
@@ -4482,10 +4608,10 @@ mod tests {
         let checkpoint = state.snapshot();
         let record = state
             .create_outline(
-                TokenListId::EMPTY,
-                PdfActionSpec::User(TokenListId::EMPTY),
+                test_token_ref(),
+                PdfActionSpec::User(test_token_ref()),
                 -2,
-                TokenListId::EMPTY,
+                test_token_ref(),
                 [test_identity(1), test_identity(2), test_identity(3)],
             )
             .expect("outline");
@@ -4503,10 +4629,10 @@ mod tests {
         assert!(state.outlines().is_empty());
         let replay = state
             .create_outline(
-                TokenListId::EMPTY,
-                PdfActionSpec::User(TokenListId::EMPTY),
+                test_token_ref(),
+                PdfActionSpec::User(test_token_ref()),
                 -2,
-                TokenListId::EMPTY,
+                test_token_ref(),
                 [test_identity(1), test_identity(2), test_identity(3)],
             )
             .expect("replay");

@@ -1020,6 +1020,7 @@ mod tests {
             ch: 'w',
             cat: tex_state::token::Catcode::Letter,
         }]);
+        let tokens = stores.token_list_ref(tokens);
         let nodes = vec![
             Node::Whatsit(tex_state::node::Whatsit::OpenOut {
                 slot: tex_state::StreamSlot::new(15),
@@ -1027,7 +1028,7 @@ mod tests {
             }),
             Node::Whatsit(tex_state::node::Whatsit::DeferredWrite {
                 sink: tex_state::PrintSink::Log,
-                tokens,
+                tokens: tokens.clone(),
             }),
             Node::Whatsit(tex_state::node::Whatsit::CloseOut {
                 slot: Some(tex_state::StreamSlot::new(0)),
@@ -1075,7 +1076,7 @@ mod tests {
             "the actual pre-hyphenation traversal applies the language node's state"
         );
         assert_eq!(
-            stores.tokens(tokens),
+            tokens.tokens(),
             [tex_state::token::Token::Char {
                 ch: 'w',
                 cat: tex_state::token::Catcode::Letter,

@@ -2,7 +2,6 @@
 
 use std::sync::Arc;
 
-use crate::ids::TokenListId;
 use crate::state_hash::{StateHashFragment, StateHasher};
 
 use super::PdfTokenParameter;
@@ -26,7 +25,7 @@ impl PdfRawObjectId {
 }
 
 /// Detached engine-side payload for an initialized `\pdfobj`.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct PdfRawObjectData {
     stream: bool,
     stream_attr: Option<PdfTokenParameter>,
@@ -36,7 +35,7 @@ pub struct PdfRawObjectData {
 
 impl PdfRawObjectData {
     #[must_use]
-    pub(crate) const fn new(
+    pub(crate) fn new(
         stream: bool,
         stream_attr: Option<PdfTokenParameter>,
         file: bool,
@@ -51,31 +50,28 @@ impl PdfRawObjectData {
     }
 
     #[must_use]
-    pub const fn is_stream(self) -> bool {
+    pub const fn is_stream(&self) -> bool {
         self.stream
     }
 
     #[must_use]
-    pub const fn stream_attr(self) -> Option<TokenListId> {
-        match self.stream_attr {
-            Some(attr) => Some(attr.tokens),
-            None => None,
-        }
+    pub fn stream_attr(&self) -> Option<crate::ids::TokenListId> {
+        self.stream_attr.as_ref().map(PdfTokenParameter::id)
     }
 
     #[must_use]
-    pub const fn is_file(self) -> bool {
+    pub const fn is_file(&self) -> bool {
         self.file
     }
 
     #[must_use]
-    pub const fn data(self) -> TokenListId {
-        self.data.tokens
+    pub fn data(&self) -> crate::ids::TokenListId {
+        self.data.id()
     }
 }
 
 /// One reserved raw-object slot, initialized either now or by `useobjnum`.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct PdfRawObjectRecord {
     id: PdfRawObjectId,
     data: Option<PdfRawObjectData>,
@@ -85,22 +81,22 @@ pub struct PdfRawObjectRecord {
 
 impl PdfRawObjectRecord {
     #[must_use]
-    pub const fn id(self) -> PdfRawObjectId {
+    pub const fn id(&self) -> PdfRawObjectId {
         self.id
     }
 
     #[must_use]
-    pub const fn data(self) -> Option<PdfRawObjectData> {
-        self.data
+    pub fn data(&self) -> Option<PdfRawObjectData> {
+        self.data.clone()
     }
 
     #[must_use]
-    pub const fn is_immediate(self) -> bool {
+    pub const fn is_immediate(&self) -> bool {
         self.immediate
     }
 
     #[must_use]
-    pub const fn is_referenced(self) -> bool {
+    pub const fn is_referenced(&self) -> bool {
         self.referenced
     }
 }
@@ -148,7 +144,7 @@ impl PdfRawObjects {
             .records
             .binary_search_by_key(&id, |record| record.id)
             .ok()
-            .map(|index| self.0.records[index])
+            .map(|index| self.0.records[index].clone())
     }
 
     pub(crate) fn reserve(&mut self, id: PdfRawObjectId) {
@@ -213,10 +209,10 @@ fn fingerprint(state: &PdfRawObjectState) -> StateHashFragment {
     for record in &state.records {
         hasher.u32(record.id.raw());
         hasher.bool(record.data.is_some());
-        if let Some(data) = record.data {
+        if let Some(data) = &record.data {
             hasher.bool(data.stream);
             hasher.bool(data.stream_attr.is_some());
-            if let Some(attr) = data.stream_attr {
+            if let Some(attr) = &data.stream_attr {
                 hasher.bytes(&attr.semantic_id.bytes());
             }
             hasher.bool(data.file);

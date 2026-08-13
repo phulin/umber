@@ -1,6 +1,6 @@
 use super::{FormatListKey, StoreFormatError};
 use crate::glue::Order;
-use crate::ids::{FontId, GlueId, NodeListId, SurvivorRootId, TokenListId};
+use crate::ids::{FontId, GlueId, NodeListId, SurvivorRootId};
 use crate::math::{
     FractionThickness, MathChoice, MathField, MathFraction, MathListNode, MathNoad, MathStyle,
     NoadKind,
@@ -12,6 +12,7 @@ use crate::node::{
 use crate::node_arena::NodeRef;
 use crate::scaled::{GlueSetRatio, Scaled};
 use crate::stores::Stores;
+use crate::token_store::TokenListRef;
 use crate::world::{PrintSink, StreamSlot};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -22,7 +23,7 @@ type NodeIds = BTreeMap<FormatListKey, NodeListId>;
 pub(super) struct FormatContentIds<'a> {
     pub fonts: &'a [FontId],
     pub glue: &'a [GlueId],
-    pub token_lists: &'a [TokenListId],
+    pub token_lists: &'a [TokenListRef],
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -537,7 +538,7 @@ impl FormatNode {
             },
             NodeRef::Mark { class, tokens } => Self::Mark {
                 class,
-                tokens: tokens.raw(),
+                tokens: tokens.id().raw(),
             },
             NodeRef::Ins {
                 class,
@@ -859,12 +860,12 @@ impl FormatWhatsit {
             Whatsit::CloseOut { slot } => Self::CloseOut { slot },
             Whatsit::DeferredWrite { sink, tokens } => Self::DeferredWrite {
                 sink,
-                tokens: tokens.raw(),
+                tokens: tokens.id().raw(),
             },
             Whatsit::Special { class, payload } => Self::Special { class, payload },
             Whatsit::DeferredSpecial { class, tokens } => Self::DeferredSpecial {
                 class,
-                tokens: tokens.raw(),
+                tokens: tokens.id().raw(),
             },
             Whatsit::PdfLiteral { mode, payload } => Self::PdfLiteral {
                 mode: mode as u8,
@@ -872,7 +873,7 @@ impl FormatWhatsit {
             },
             Whatsit::DeferredPdfLiteral { mode, tokens } => Self::DeferredPdfLiteral {
                 mode: mode as u8,
-                tokens: tokens.raw(),
+                tokens: tokens.id().raw(),
             },
             Whatsit::PdfSetMatrix { payload } => Self::PdfSetMatrix { payload },
             Whatsit::PdfSave => Self::PdfSave,
@@ -938,7 +939,7 @@ impl FormatWhatsit {
                     kind,
                 } = destination.as_ref();
                 let (name_tokens, number) = match identifier {
-                    crate::PdfActionIdentifier::Name(tokens) => (Some(tokens.raw()), None),
+                    crate::PdfActionIdentifier::Name(tokens) => (Some(tokens.id().raw()), None),
                     crate::PdfActionIdentifier::Number(number) => (None, Some(*number)),
                     crate::PdfActionIdentifier::Raw(_) => {
                         unreachable!("destinations use typed identifiers")
@@ -976,7 +977,7 @@ impl FormatWhatsit {
                     running,
                 } = thread.as_ref();
                 let (name_tokens, number) = match identifier {
-                    crate::PdfActionIdentifier::Name(tokens) => (Some(tokens.raw()), None),
+                    crate::PdfActionIdentifier::Name(tokens) => (Some(tokens.id().raw()), None),
                     crate::PdfActionIdentifier::Number(number) => (None, Some(*number)),
                     crate::PdfActionIdentifier::Raw(_) => {
                         unreachable!("threads use typed identifiers")
@@ -988,7 +989,7 @@ impl FormatWhatsit {
                     width: dimensions.width.map(Scaled::raw),
                     height: dimensions.height.map(Scaled::raw),
                     depth: dimensions.depth.map(Scaled::raw),
-                    attributes: attributes.raw(),
+                    attributes: attributes.id().raw(),
                     running: *running,
                 }
             }
@@ -1286,10 +1287,10 @@ fn glue_id(content: &FormatContentIds<'_>, raw: u32) -> Result<GlueId, StoreForm
 fn token_list_id(
     content: &FormatContentIds<'_>,
     raw: u32,
-) -> Result<TokenListId, StoreFormatError> {
+) -> Result<TokenListRef, StoreFormatError> {
     content
         .token_lists
         .get(raw as usize)
-        .copied()
+        .cloned()
         .ok_or(StoreFormatError::Invalid("node token-list reference"))
 }

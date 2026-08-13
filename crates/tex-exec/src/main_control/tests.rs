@@ -3404,7 +3404,7 @@ fn base_whatsits_preserve_scan_timing_normalization_and_payload_ownership() {
     assert_eq!(path, "owned");
     assert_eq!(*sink, PrintSink::Log);
     let payload_symbol = stores.symbol("payload").expect("payload remains defined");
-    assert_eq!(stores.tokens(*tokens), [Token::Cs(payload_symbol.symbol())]);
+    assert_eq!(tokens.tokens(), [Token::Cs(payload_symbol.symbol())]);
     assert_eq!(*close_slot, None);
     assert_eq!(class, "dvi");
     assert_eq!(payload, b"early");
@@ -4546,6 +4546,7 @@ fn recursive_test_box(stores: &mut Universe) -> tex_state::ids::NodeListId {
             cat: Catcode::Other,
         },
     ]);
+    let tokens = stores.token_list_ref(tokens);
     let pre = stores.freeze_node_list(&[Node::Char {
         font: NULL_FONT,
         ch: 'p',
@@ -4698,7 +4699,7 @@ fn recursive_node_signature(stores: &Universe, list: tex_state::ids::NodeListId)
                 recursive_node_signature(stores, *replace)
             ),
             Node::Mark { class, tokens } => {
-                format!("mark={class}/tokens={:?}", stores.tokens(*tokens))
+                format!("mark={class}/tokens={:?}", tokens.tokens())
             }
             Node::Ins {
                 class,
@@ -4752,7 +4753,7 @@ fn copy_preserves_every_recursive_node_payload_and_source_register() {
         matches!(children[1], Node::Glue { spec, leader: Some(_), .. } if stores.glue(spec).width.raw() == 301)
     );
     assert!(
-        matches!(children[3], Node::Mark { tokens, .. } if stores.tokens(tokens) == [Token::Char { ch: 'm', cat: Catcode::Letter }, Token::Char { ch: '!', cat: Catcode::Other }])
+        matches!(&children[3], Node::Mark { tokens, .. } if tokens.tokens() == [Token::Char { ch: 'm', cat: Catcode::Letter }, Token::Char { ch: '!', cat: Catcode::Other }])
     );
 
     let mut control = MainControl::tex82_initex(&mut stores);
@@ -5133,8 +5134,8 @@ fn etex_marks_scans_extended_classes_and_expanded_text_in_every_mode() {
                 class: 32_767,
                 tokens,
             } => Some(
-                stores
-                    .tokens(*tokens)
+                tokens
+                    .tokens()
                     .iter()
                     .filter_map(|token| match token {
                         Token::Char { ch, .. } => Some(*ch),
@@ -5775,7 +5776,7 @@ fn pdf_object_rejects_dvi_before_every_option_operand_and_allocation() {
     );
     assert_eq!(define_stores.pdf_return_value(), -1);
     assert!(terminal_text(&define_stores).contains("invalid object number being ignored"));
-    let record = define_stores.pdf_raw_objects()[0];
+    let record = &define_stores.pdf_raw_objects()[0];
     let data = record.data().expect("retried object is initialized");
     assert!(data.is_stream());
     assert!(data.is_file());
@@ -5831,7 +5832,7 @@ fn immediate_pdf_object_rejects_dvi_after_lookahead_before_operand_scan() {
         MainControlStep::Continue
     );
     assert_eq!(define_stores.pdf_return_value(), -1);
-    let record = define_stores.pdf_raw_objects()[0];
+    let record = &define_stores.pdf_raw_objects()[0];
     assert!(record.is_immediate());
     let data = record.data().expect("immediate object is initialized");
     assert!(data.is_stream());
@@ -6799,7 +6800,7 @@ fn pdf_outline_checkpoint_restore_replays_identical_ledger_state() {
     );
     let first_hash = stores.snapshot().state_hash();
     let first_objects = {
-        let first = stores.pdf_outlines()[0];
+        let first = &stores.pdf_outlines()[0];
         (
             first.action_object(),
             first.item_object(),
@@ -6815,7 +6816,7 @@ fn pdf_outline_checkpoint_restore_replays_identical_ledger_state() {
         control.step(&mut stores).expect("retried outline"),
         MainControlStep::Continue
     );
-    let retried = stores.pdf_outlines()[0];
+    let retried = &stores.pdf_outlines()[0];
     assert_eq!(
         (
             retried.action_object(),

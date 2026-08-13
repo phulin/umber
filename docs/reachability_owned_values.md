@@ -198,6 +198,31 @@ freezing transfers one strong reference to its typed destination or returns an
 owned value that must be consumed by a destination. No API may return a bare
 new runtime coordinate whose payload is kept alive only by the store.
 
+### Implemented node, page, PDF, and effect token-root stratum
+
+`umber2-3v8z.3.1.2.4` installs the audited edges above. Owned nodes and compact
+mark/whatsit sidecars now carry `TokenListRef`; page scalar and mark-class
+slots carry optional roots; deferred writes own their unexpanded payloads; and
+PDF parameters, actions, annotations, links, outlines, raw objects, document
+fragments, pages, forms, catalog state, snapshots, and suffixes structurally
+own every token-bearing field. Public and compact accessors still project
+`TokenListId`, while hashing and detached DTOs remain owner-independent.
+
+The transition roots once at scanner or `Universe` admission and moves or
+clones the typed wrapper thereafter. Node freeze and survivor promotion, page
+copy-on-write mutation, World journal splice, PDF collection rollback, page
+suffix transfer, and generation fork therefore preserve ownership without a
+graph walk. Focused controls drop the final typed destination and observe the
+strong count return to the test observer alone; node rollback additionally
+proves that the weak token-store slot is no longer live.
+
+Node memo detachment reads canonical content through the compact owners and
+materialization publishes destination-local roots only after validation.
+Final PDF detachment borrows token coordinates from the still-owning records
+and emits handle-free bytes. This stratum adds no graph compaction, changes no
+portable format, and does not retire the temporary compatibility roots; those
+remain work for the final compatibility/plateau child.
+
 ## Object and slot representation
 
 Each family has a private immutable payload behind shared ownership. An owning

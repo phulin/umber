@@ -126,6 +126,7 @@ fn deferred_write_dump_uses_show_token_list_control_word_separator() {
             cat: Catcode::Other,
         },
     ]);
+    let tokens = stores.token_list_ref(tokens);
     let write = Node::Whatsit(Whatsit::DeferredWrite {
         sink: tex_state::PrintSink::TerminalAndLog,
         tokens,
@@ -150,6 +151,7 @@ fn whatsit_dump_uses_live_escape_character() {
     let mut stores = Universe::new();
     stores.set_int_param(IntParam::ESCAPE_CHAR, i32::from(b'|'));
     let tokens = stores.intern_token_list(&[]);
+    let tokens = stores.token_list_ref(tokens);
     let write = Node::Whatsit(Whatsit::DeferredWrite {
         sink: tex_state::PrintSink::Log,
         tokens,
@@ -1404,6 +1406,7 @@ fn pdftex_insertion_and_numbered_mark_dump_exact_identity_in_source_order() {
             cat: tex_state::token::Catcode::Letter,
         },
     ]);
+    let mark_tokens = stores.token_list_ref(mark_tokens);
     let nodes = [
         Node::Ins {
             class: 3,
@@ -1449,8 +1452,13 @@ fn mark_dump_prints_token_list_once() {
         ch: 'A',
         cat: tex_state::token::Catcode::Letter,
     }]);
+    let literal = stores.token_list_ref(literal);
     let control_sequence = stores.intern_token_list(&[tex_state::token::Token::Cs(foo.symbol())]);
-    let empty = tex_state::ids::TokenListId::EMPTY;
+    let control_sequence = stores.token_list_ref(control_sequence);
+    let empty = stores.intern_token_list(&[]);
+    let empty = stores.token_list_ref(empty);
+    let literal_before = literal.tokens().to_vec();
+    let control_sequence_before = control_sequence.tokens().to_vec();
     let nodes = [
         Node::Mark {
             class: 0,
@@ -1466,8 +1474,6 @@ fn mark_dump_prints_token_list_once() {
         },
     ];
     let source = stores.freeze_node_list(&nodes);
-    let literal_before = stores.tokens(literal).to_vec();
-    let control_sequence_before = stores.tokens(control_sequence).to_vec();
 
     assert_eq!(
         dump_node_list(
@@ -1482,12 +1488,22 @@ fn mark_dump_prints_token_list_once() {
         "\\mark{A}\n\\mark{\\foo}\n\\mark{}\n"
     );
     assert_eq!(stores.nodes(source), nodes.as_slice());
-    assert_eq!(stores.tokens(literal), literal_before.as_slice());
-    assert_eq!(
-        stores.tokens(control_sequence),
-        control_sequence_before.as_slice()
-    );
-    assert!(stores.tokens(empty).is_empty());
+    let [
+        Node::Mark {
+            tokens: literal, ..
+        },
+        Node::Mark {
+            tokens: control_sequence,
+            ..
+        },
+        Node::Mark { tokens: empty, .. },
+    ] = &nodes
+    else {
+        panic!("mark fixture changed shape")
+    };
+    assert_eq!(literal.tokens(), literal_before);
+    assert_eq!(control_sequence.tokens(), control_sequence_before);
+    assert!(empty.tokens().is_empty());
 }
 
 /// TeX82 §193's insertion-node arm prints every symbolic field before
@@ -1559,9 +1575,16 @@ fn etex_numbered_mark_dump_renders_dense_and_sparse_boundary_classes_exactly() {
         ch: 'x',
         cat: tex_state::token::Catcode::Letter,
     }]);
+    let tokens = stores.token_list_ref(tokens);
     let list = stores.freeze_node_list(&[
-        Node::Mark { class: 0, tokens },
-        Node::Mark { class: 255, tokens },
+        Node::Mark {
+            class: 0,
+            tokens: tokens.clone(),
+        },
+        Node::Mark {
+            class: 255,
+            tokens: tokens.clone(),
+        },
         Node::Mark { class: 256, tokens },
     ]);
 

@@ -10,6 +10,7 @@ use crate::glue::GlueSpec;
 use crate::ids::{GlueId, TokenListId};
 use crate::node::Node;
 use crate::scaled::Scaled;
+use crate::token_store::TokenListRef;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, VecDeque};
 use std::sync::Arc;
@@ -102,41 +103,34 @@ impl PageMark {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 struct MarkClassState {
-    marks: [TokenListId; 5],
-    present: u8,
+    marks: [Option<TokenListRef>; 5],
 }
 
 impl Default for MarkClassState {
     fn default() -> Self {
         Self {
-            marks: [TokenListId::EMPTY; 5],
-            present: 0,
+            marks: core::array::from_fn(|_| None),
         }
     }
 }
 
 impl MarkClassState {
-    fn get(self, mark: PageMark) -> Option<TokenListId> {
-        let index = mark.index();
-        (self.present & (1 << index) != 0).then(|| self.marks[usize::from(index)])
+    fn get(&self, mark: PageMark) -> Option<&TokenListRef> {
+        self.marks[usize::from(mark.index())].as_ref()
     }
 
-    fn set(&mut self, mark: PageMark, value: TokenListId) {
-        let index = mark.index();
-        self.marks[usize::from(index)] = value;
-        self.present |= 1 << index;
+    fn set(&mut self, mark: PageMark, value: TokenListRef) {
+        self.marks[usize::from(mark.index())] = Some(value);
     }
 
     fn clear(&mut self, mark: PageMark) {
-        let index = mark.index();
-        self.marks[usize::from(index)] = TokenListId::EMPTY;
-        self.present &= !(1 << index);
+        self.marks[usize::from(mark.index())] = None;
     }
 
-    fn is_empty(self) -> bool {
-        self.present == 0
+    fn is_empty(&self) -> bool {
+        self.marks.iter().all(Option::is_none)
     }
 }
 
@@ -332,12 +326,11 @@ pub(crate) struct PageBuilderState {
     best_size: Scaled,
     fire_up: Option<PageFireUp>,
     insertions: Arc<Vec<PageInsertion>>,
-    top_mark: TokenListId,
-    first_mark: TokenListId,
-    bot_mark: TokenListId,
-    split_first_mark: TokenListId,
-    split_bot_mark: TokenListId,
-    mark_present: [bool; 5],
+    top_mark: Option<TokenListRef>,
+    first_mark: Option<TokenListRef>,
+    bot_mark: Option<TokenListRef>,
+    split_first_mark: Option<TokenListRef>,
+    split_bot_mark: Option<TokenListRef>,
     mark_classes: Arc<BTreeMap<u16, MarkClassState>>,
 }
 
@@ -393,12 +386,11 @@ impl Default for PageBuilderState {
             best_size: Scaled::from_raw(0),
             fire_up: None,
             insertions: Arc::new(Vec::new()),
-            top_mark: TokenListId::EMPTY,
-            first_mark: TokenListId::EMPTY,
-            bot_mark: TokenListId::EMPTY,
-            split_first_mark: TokenListId::EMPTY,
-            split_bot_mark: TokenListId::EMPTY,
-            mark_present: [false; 5],
+            top_mark: None,
+            first_mark: None,
+            bot_mark: None,
+            split_first_mark: None,
+            split_bot_mark: None,
             mark_classes: Arc::new(BTreeMap::new()),
         }
     }
@@ -636,40 +628,43 @@ impl PageBuilderState {
         }
     }
 
-    pub(crate) const fn mark(&self, mark: PageMark) -> TokenListId {
-        match mark {
-            PageMark::Top => self.top_mark,
-            PageMark::First => self.first_mark,
-            PageMark::Bot => self.bot_mark,
-            PageMark::SplitFirst => self.split_first_mark,
-            PageMark::SplitBot => self.split_bot_mark,
-        }
+    pub(crate) fn mark(&self, mark: PageMark) -> TokenListId {
+        self.mark_root(mark)
+            .map_or(TokenListId::EMPTY, TokenListRef::id)
     }
 
     pub(crate) fn mark_value(&self, mark: PageMark) -> Option<TokenListId> {
-        self.mark_present[usize::from(mark.index())].then(|| self.mark(mark))
+        self.mark_root(mark).map(TokenListRef::id)
     }
 
-    pub(crate) fn set_mark(&mut self, mark: PageMark, value: TokenListId) {
+    pub(crate) fn mark_root(&self, mark: PageMark) -> Option<&TokenListRef> {
         match mark {
-            PageMark::Top => self.top_mark = value,
-            PageMark::First => self.first_mark = value,
-            PageMark::Bot => self.bot_mark = value,
-            PageMark::SplitFirst => self.split_first_mark = value,
-            PageMark::SplitBot => self.split_bot_mark = value,
+            PageMark::Top => self.top_mark.as_ref(),
+            PageMark::First => self.first_mark.as_ref(),
+            PageMark::Bot => self.bot_mark.as_ref(),
+            PageMark::SplitFirst => self.split_first_mark.as_ref(),
+            PageMark::SplitBot => self.split_bot_mark.as_ref(),
         }
-        self.mark_present[usize::from(mark.index())] = true;
+    }
+
+    pub(crate) fn set_mark(&mut self, mark: PageMark, value: TokenListRef) {
+        *match mark {
+            PageMark::Top => &mut self.top_mark,
+            PageMark::First => &mut self.first_mark,
+            PageMark::Bot => &mut self.bot_mark,
+            PageMark::SplitFirst => &mut self.split_first_mark,
+            PageMark::SplitBot => &mut self.split_bot_mark,
+        } = Some(value);
     }
 
     pub(crate) fn clear_mark(&mut self, mark: PageMark) {
-        self.mark_present[usize::from(mark.index())] = false;
-        match mark {
-            PageMark::Top => self.top_mark = TokenListId::EMPTY,
-            PageMark::First => self.first_mark = TokenListId::EMPTY,
-            PageMark::Bot => self.bot_mark = TokenListId::EMPTY,
-            PageMark::SplitFirst => self.split_first_mark = TokenListId::EMPTY,
-            PageMark::SplitBot => self.split_bot_mark = TokenListId::EMPTY,
-        }
+        *match mark {
+            PageMark::Top => &mut self.top_mark,
+            PageMark::First => &mut self.first_mark,
+            PageMark::Bot => &mut self.bot_mark,
+            PageMark::SplitFirst => &mut self.split_first_mark,
+            PageMark::SplitBot => &mut self.split_bot_mark,
+        } = None;
     }
 
     pub(crate) fn mark_class(&self, mark: PageMark, class: u16) -> TokenListId {
@@ -683,17 +678,17 @@ impl PageBuilderState {
         }
         self.mark_classes
             .get(&class)
-            .copied()
             .and_then(|marks| marks.get(mark))
+            .map(TokenListRef::id)
     }
 
-    pub(crate) fn set_mark_class(&mut self, mark: PageMark, class: u16, value: TokenListId) {
+    pub(crate) fn set_mark_class(&mut self, mark: PageMark, class: u16, value: TokenListRef) {
         if class == 0 {
             self.set_mark(mark, value);
             return;
         }
         let classes = Arc::make_mut(&mut self.mark_classes);
-        let mut marks = classes.get(&class).copied().unwrap_or_default();
+        let mut marks = classes.get(&class).cloned().unwrap_or_default();
         marks.set(mark, value);
         if marks.is_empty() {
             classes.remove(&class);
@@ -708,7 +703,7 @@ impl PageBuilderState {
             return;
         }
         let classes = Arc::make_mut(&mut self.mark_classes);
-        let Some(mut marks) = classes.get(&class).copied() else {
+        let Some(mut marks) = classes.get(&class).cloned() else {
             return;
         };
         marks.clear(mark);

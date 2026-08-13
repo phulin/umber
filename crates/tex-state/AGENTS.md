@@ -43,7 +43,7 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/env/tests.rs`: Unit tests for environment write barriers, grouping, globals, aftergroup, font banks, and raw restore behavior.
 - `src/epoch.rs`: Monotonic epoch stamps used to coalesce journal entries within a state epoch.
 - `src/epoch/tests.rs`: Unit tests for epoch ordering, raw values, and overflow behavior.
-- `src/effect_journal.rs` and `src/effect_journal/tests.rs`: Validated detached effect-ledger ownership, aligned publication metadata, prefix splicing, and terminal materialization.
+- `src/effect_journal.rs` and `src/effect_journal/tests.rs`: Validated detached effect-ledger ownership, aligned publication metadata, strong deferred-write token roots, prefix splicing, final-owner release, and terminal materialization.
 - `src/etex_tracing.rs` and `src/etex_tracing/tests.rs`: e-TeX 2.6's `\tracinggroups` group-enter/leave transcript trace, printed through the shared `\tracing*` diagnostic channel; `\tracingassigns`'s value rendering lives in `tex-exec` instead, against the primitives declared here, and `\tracingifs` renders directly in `tex-command` through the same channel.
 - `src/file_framing.rs` and `src/file_framing/tests.rs`: tex.web §54's `open_parens` and the §537/§362/§1335 prints that maintain it, held as print-adjacent `World` state so the command core can close a file's paren at §362's own point, ahead of the `check_outer_validity` diagnostic that follows it.
 - `src/font.rs`: Stateful loaded-font store, font handles, null font, missing-character records, and rollback marks.
@@ -73,7 +73,7 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/memo.rs`: Opaque schema-versioned detached memo envelopes, handle-free transition/effect/result DTOs, and aggregate token/glue/macro/node/font import APIs.
 - `src/memo/tests.rs`: Cold/fork/rollback Cross-Universe memo import, provenance stripping, corruption, bounds, kind, and semantic round-trip tests.
 - `src/measurement.rs`: `profiling-stats` process-local allocation-owner counters used by dedicated profiling builds.
-- `src/node.rs`: Immutable TeX node, box, glue, kern, penalty, rule, whatsit, math-list, discretionary, and list-field model.
+- `src/node.rs`: Immutable TeX node, box, glue, kern, penalty, rule, strongly token-rooted whatsit/mark/PDF payloads, math-list, discretionary, and list-field model.
 - `src/node_sequence.rs`: Paired semantic and TeX-physical transient node sequences with semantic-only equality.
 - `src/node_arena.rs`: Compact-node module boundary and deliberately narrow re-exports.
 - `src/node_arena/arena.rs`: Epoch arena facade and reusable owned node-list builder.
@@ -83,18 +83,18 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/node_arena/mutation.rs`: Private shape-preserving compact-row replacement operations.
 - `src/node_arena/schema.rs`: Exhaustive allocation-free logical node descriptors, typed handle policies, origins, and ordered child traversal.
 - `src/node_arena/semantic.rs`: Versioned, allocation-independent semantic identity for immutable node-list aggregates.
-- `src/node_arena/storage.rs`: Canonical node words, sidecar coordination, encoding, aggregate watermarks, and rollback.
+- `src/node_arena/storage.rs`: Canonical node words, strong token/glue sidecar coordination, encoding, aggregate watermarks, rollback, and survivor-transfer support.
 - `src/node_arena/tables.rs`: Typed structure-of-arrays sidecar tables for boxes, unsets, insertions, and noads.
 - `src/node_arena/view.rs`: Zero-allocation node references, list spans, raw tag predicates, character runs, and iterators.
 - `src/node_arena/tests.rs`: Unit tests for node-list allocation, lookup, rollback, and arena liveness.
-- `src/page.rs`: Snapshot-owned page-builder state, page dimensions/integers, contribution/current-page queues, and fire-up records.
+- `src/page.rs`: Snapshot-owned page-builder state, strongly rooted scalar and class marks, page dimensions/integers, contribution/current-page queues, and fire-up records.
 - `src/patch_domain.rs` and `src/patch_domain/tests.rs`: private-revision allocation ownership, exact single-operation marks, explicit immutable-root transfer, and focused lifecycle controls.
-- `src/pdf.rs`: Checkpointed pdfTeX document mode, deterministic object allocation, and committed-page ledger.
-- `src/pdf/action.rs`: Typed, checkpointed PDF action model shared by catalog, link, and outline scanners.
-- `src/pdf/annotation.rs`: Checkpointed general-annotation reservations, running dimension specs, and logical-link records.
-- `src/pdf/outline.rs`: Immediately allocated, checkpointed PDF outline entries and their action/item/title identities.
-- `src/pdf/object.rs`: Copy-on-write raw PDF object reservations, initialization payloads, and last-object state.
-- `src/pdf/document.rs`: Copy-on-write raw document dictionary and trailer fragments in source order.
+- `src/pdf.rs`: Checkpointed pdfTeX document mode, strongly rooted token parameters and catalog/page/form collections, deterministic object allocation, snapshots, suffix transfer, and committed-page ledger.
+- `src/pdf/action.rs`: Typed, strongly token-rooted, checkpointed PDF action model shared by catalog, link, and outline scanners.
+- `src/pdf/annotation.rs`: Checkpointed strongly rooted general-annotation reservations, running dimension specs, and logical/open-link records.
+- `src/pdf/outline.rs`: Immediately allocated, checkpointed PDF outline entries owning their attributes, title, action, and action/item/title identities.
+- `src/pdf/object.rs`: Copy-on-write raw PDF object reservations, strongly rooted initialization payloads, and last-object state.
+- `src/pdf/document.rs`: Copy-on-write strongly rooted raw document dictionary and trailer fragments in source order.
 - `src/page/sequence.rs`: Canonical persistent binary-forest sequence for growing current-page nodes.
 - `src/page/state_hash.rs`: Page semantic cursors, bounded derived projection caches, and component framing.
 - `src/page/tests.rs`: Page snapshot-root sharing and copy-on-write isolation tests.
@@ -153,7 +153,7 @@ All production mutation of live TeX state should pass through `Universe` or simi
   named parameters through the installed primitive registry rather than a
   state-local spelling table.
 - `src/universe/tests.rs`: Unit tests for `Universe` mutation, snapshots, contexts, effects, and boundary behavior.
-- `src/world.rs`: External-effect boundary for files, atomic downstream file-set publication, streams, clocks, randomness, shell policy, printing, effect records, weak snapshot-root mounts, and field/key-specific allocation-independent dependency projections.
+- `src/world.rs`: External-effect boundary for files, atomic downstream file-set publication, streams, clocks, randomness, shell policy, printing, strongly rooted deferred-write effects, weak snapshot-root mounts, and field/key-specific allocation-independent dependency projections.
 - `src/world/tests.rs`: Unit tests for world snapshots, file records, streams, printing, randomness, shell escape, effect replay, and snapshot-owned effect-root reclamation.
 - `tests/it.rs`: Integration test harness that includes capability-boundary and live-boundary test modules.
 - `tests/it/capability_boundaries.rs`: Compile-fail integration tests asserting restricted input and transaction capabilities fail to compile.

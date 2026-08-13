@@ -236,6 +236,17 @@ fn text(stores: &Universe, tokens: tex_state::ids::TokenListId) -> String {
         .collect()
 }
 
+fn rooted_text(tokens: &tex_state::token_store::TokenListRef) -> String {
+    tokens
+        .tokens()
+        .iter()
+        .filter_map(|token| match token {
+            Token::Char { ch, .. } => Some(*ch),
+            _ => None,
+        })
+        .collect()
+}
+
 fn macro_text(stores: &Universe, name: &str) -> String {
     let symbol = stores.symbol(name).expect("probe macro is defined");
     let meaning = stores.macro_meaning(symbol).expect("probe is a macro");
@@ -287,7 +298,7 @@ fn shapes(stores: &Universe, nodes: &[Node]) -> Vec<Shape> {
                 shift: boxed.shift.raw(),
                 children: shapes(stores, stores.nodes(boxed.children).testing_decoded()),
             },
-            Node::Mark { class, tokens } => Shape::Mark(*class, text(stores, *tokens)),
+            Node::Mark { class, tokens } => Shape::Mark(*class, rooted_text(tokens)),
             Node::Ins {
                 class,
                 size,

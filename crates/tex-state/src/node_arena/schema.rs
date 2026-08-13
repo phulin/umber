@@ -427,7 +427,7 @@ impl NodeRef<'_> {
             Self::Mark { tokens, .. } => content(
                 visitor,
                 NodeHandleRole::Tokens,
-                NodeHandle::TokenList(*tokens),
+                NodeHandle::TokenList(tokens.id()),
             ),
             Self::Ins {
                 split_top_skip,
@@ -678,7 +678,7 @@ fn visit_whatsit(value: &Whatsit, visitor: &mut impl NodeSchemaVisitor) {
         | Whatsit::DeferredPdfLiteral { tokens, .. } => content(
             visitor,
             NodeHandleRole::Tokens,
-            NodeHandle::TokenList(*tokens),
+            NodeHandle::TokenList(tokens.id()),
         ),
         Whatsit::PdfSnapY { glue } => {
             content(visitor, NodeHandleRole::SnapGlue, NodeHandle::Glue(*glue))
@@ -689,7 +689,7 @@ fn visit_whatsit(value: &Whatsit, visitor: &mut impl NodeSchemaVisitor) {
             content(
                 visitor,
                 NodeHandleRole::Attributes,
-                NodeHandle::TokenList(node.attributes),
+                NodeHandle::TokenList(node.attributes.id()),
             );
         }
         Whatsit::OpenOut { .. }
@@ -723,7 +723,7 @@ fn visit_identifier(value: &crate::PdfActionIdentifier, visitor: &mut impl NodeS
         content(
             visitor,
             NodeHandleRole::Identifier,
-            NodeHandle::TokenList(*tokens),
+            NodeHandle::TokenList(tokens.id()),
         );
     }
 }
@@ -772,6 +772,8 @@ mod tests {
     fn owned_and_compact_views_have_exhaustively_equivalent_schema() {
         let mut arena = super::super::NodeArena::new();
         let empty = arena.append(&[]);
+        let mark_tokens = crate::token_store::testing_empty_token_list_ref();
+        let write_tokens = crate::token_store::testing_empty_token_list_ref();
         let mut box_node = BoxNode::new(BoxNodeFields {
             width: Scaled::from_raw(1),
             height: Scaled::from_raw(2),
@@ -844,7 +846,7 @@ mod tests {
             },
             Node::Mark {
                 class: 2,
-                tokens: TokenListId::testing_new(5),
+                tokens: mark_tokens,
             },
             Node::Ins {
                 class: 3,
@@ -856,7 +858,7 @@ mod tests {
             },
             Node::Whatsit(Whatsit::DeferredWrite {
                 sink: crate::world::PrintSink::TerminalAndLog,
-                tokens: TokenListId::testing_new(7),
+                tokens: write_tokens,
             }),
             Node::MathOn(Scaled::from_raw(18)),
             Node::MathOff(Scaled::from_raw(19)),

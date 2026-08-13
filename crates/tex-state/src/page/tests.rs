@@ -2,8 +2,11 @@ use super::PageBuilderState;
 use super::sequence::PageNodeTree;
 use super::state_hash::PageHashCache;
 use crate::node::{KernKind, Node};
+use crate::page::PageMark;
 use crate::scaled::Scaled;
 use crate::state_hash::StateHasher;
+use crate::stores::Stores;
+use crate::token::Token;
 use std::sync::Arc;
 
 fn kern(value: i32) -> Node {
@@ -44,6 +47,34 @@ fn page_snapshot_clone_shares_roots_until_their_first_write() {
     assert_eq!(snapshot.current_page.len(), 1);
     assert!(Arc::ptr_eq(&page.insertions, &snapshot.insertions));
     assert!(Arc::ptr_eq(&page.mark_classes, &snapshot.mark_classes));
+}
+
+#[test]
+fn scalar_and_class_marks_keep_exact_roots_across_page_clone_and_clear() {
+    let mut stores = Stores::new();
+    let root = stores.intern_token_list_ref_in_domain(&[Token::param(3)], None);
+    let id = root.id();
+    let mut page = PageBuilderState::default();
+    page.set_mark(PageMark::Bot, root.clone());
+    page.set_mark_class(PageMark::SplitFirst, 19, root.clone());
+    let mut snapshot = page.clone();
+
+    page.clear_mark(PageMark::Bot);
+    page.clear_mark_class(PageMark::SplitFirst, 19);
+    drop(root);
+    drop(stores);
+    assert_eq!(snapshot.mark(PageMark::Bot), id);
+    assert_eq!(snapshot.mark_class(PageMark::SplitFirst, 19), id);
+    let retained = snapshot
+        .mark_root(PageMark::Bot)
+        .expect("scalar mark retains its exact root")
+        .clone();
+    assert_eq!(retained.tokens(), &[Token::param(3)]);
+    assert_eq!(retained.strong_count(), 3);
+
+    snapshot.clear_mark(PageMark::Bot);
+    snapshot.clear_mark_class(PageMark::SplitFirst, 19);
+    assert_eq!(retained.strong_count(), 1);
 }
 
 #[test]

@@ -162,12 +162,18 @@ impl PageBuilderState {
                 best_page_break: self.best_page_break,
                 best_size: self.best_size,
                 fire_up: self.fire_up,
-                top_mark: self.top_mark,
-                first_mark: self.first_mark,
-                bot_mark: self.bot_mark,
-                split_first_mark: self.split_first_mark,
-                split_bot_mark: self.split_bot_mark,
-                mark_present: self.mark_present,
+                top_mark: self.mark(super::PageMark::Top),
+                first_mark: self.mark(super::PageMark::First),
+                bot_mark: self.mark(super::PageMark::Bot),
+                split_first_mark: self.mark(super::PageMark::SplitFirst),
+                split_bot_mark: self.mark(super::PageMark::SplitBot),
+                mark_present: [
+                    self.top_mark.is_some(),
+                    self.first_mark.is_some(),
+                    self.bot_mark.is_some(),
+                    self.split_first_mark.is_some(),
+                    self.split_bot_mark.is_some(),
+                ],
             },
             contribution: Arc::clone(&self.contribution),
             current_page_len: self.current_page.len,
@@ -236,15 +242,17 @@ impl PageBuilderState {
                     }
                     None => projection.bool(false),
                 }
-                for (present, mark) in self.mark_present.into_iter().zip([
-                    self.top_mark,
-                    self.first_mark,
-                    self.bot_mark,
-                    self.split_first_mark,
-                    self.split_bot_mark,
-                ]) {
-                    projection.bool(present);
-                    hash_tokens(mark, projection);
+                for mark in [
+                    &self.top_mark,
+                    &self.first_mark,
+                    &self.bot_mark,
+                    &self.split_first_mark,
+                    &self.split_bot_mark,
+                ] {
+                    projection.bool(mark.is_some());
+                    if let Some(mark) = mark {
+                        hash_tokens(mark.id(), projection);
+                    }
                 }
             },
         );
@@ -284,9 +292,11 @@ impl PageBuilderState {
                 projection.usize(self.mark_classes.len());
                 for (&class, marks) in self.mark_classes.iter() {
                     projection.u16(class);
-                    projection.u8(marks.present);
-                    for mark in marks.marks {
-                        hash_tokens(mark, projection);
+                    for mark in &marks.marks {
+                        projection.bool(mark.is_some());
+                        if let Some(mark) = mark {
+                            hash_tokens(mark.id(), projection);
+                        }
                     }
                 }
                 self.mark_classes.len()
