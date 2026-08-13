@@ -630,6 +630,24 @@ impl Journal {
         self.glue_undo_roots.truncate(len);
     }
 
+    /// Retires every record below a committed level-zero baseline.
+    ///
+    /// `Env` proves that no snapshot or open group can name these positions
+    /// before calling this method. Keep the allocations as bounded scratch so
+    /// repeated operations plateau at their largest live journal slice.
+    pub(crate) fn clear_committed(&mut self) {
+        debug_assert!(self.save_stack.groups.is_empty());
+        self.entries.clear();
+        self.token_undo_roots.clear();
+        self.macro_undo_roots.clear();
+        self.glue_undo_roots.clear();
+        self.box_undos.clear();
+        self.save_stack.words = 0;
+        self.save_stack.entries = 0;
+        self.save_stack.latest_push = None;
+        self.save_stack.undos.clear();
+    }
+
     #[cfg(test)]
     pub(crate) const fn testing_save_stack_projection_rolled_back_entries(&self) -> usize {
         self.save_stack.rolled_back_entries

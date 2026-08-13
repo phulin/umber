@@ -41,6 +41,7 @@ const FONT_DIMEN_MASK: u32 = (1 << FONT_DIMEN_BITS) - 1;
 #[derive(Debug)]
 pub(super) struct SemanticHashCache {
     cells: AHashMap<CellId, CachedCellHash>,
+    retired_first_old: AHashMap<CellId, u64>,
     pub(super) projections: StoreProjectionCache,
     first_old: Vec<(CellId, usize, u64)>,
     changed_cells: Vec<(u64, CellId)>,
@@ -75,6 +76,12 @@ impl Default for SemanticHashCache {
         );
         Self {
             cells: AHashMap::with_hasher(cell_hasher),
+            retired_first_old: AHashMap::with_hasher(ahash::RandomState::with_seeds(
+                0x7265_7469_7265_645f,
+                0x656e_765f_6261_7365,
+                0x6c69_6e65_5f76_315f,
+                0x756d_6265_725f_7631,
+            )),
             projections: StoreProjectionCache::default(),
             first_old: Vec::new(),
             changed_cells: Vec::new(),
@@ -86,6 +93,7 @@ impl Clone for SemanticHashCache {
     fn clone(&self) -> Self {
         Self {
             cells: self.cells.clone(),
+            retired_first_old: self.retired_first_old.clone(),
             projections: self.projections.clone(),
             first_old: Vec::new(),
             changed_cells: Vec::new(),
@@ -96,6 +104,7 @@ impl Clone for SemanticHashCache {
 impl SemanticHashCache {
     pub(super) fn clear(&mut self) {
         self.cells.clear();
+        self.retired_first_old.clear();
         self.projections = StoreProjectionCache::default();
         self.first_old.clear();
         self.changed_cells.clear();
@@ -173,6 +182,7 @@ fn cached_code_table_projection(
 pub(crate) struct StoreStateHashCursor {
     owner: SnapshotOwner,
     journal_pos: crate::journal::JournalPos,
+    journal_baseline_serial: u64,
     code_tables: crate::code_tables::CodeTablesSemanticCursor,
     hyphenation_root: HyphenationSemanticCursor,
     prepared_mag: Option<i32>,
@@ -197,6 +207,53 @@ struct FontSelectionCursor {
 }
 
 impl Stores {
+    /// Preserves the compact semantic delta before an unneeded rollback
+    /// journal is retired. Old value hashes are computed while strong journal
+    /// sidecars are still live; later checkpoint hashing visits only the
+    /// distinct cells changed since its prior semantic boundary.
+    pub(crate) fn preserve_retired_env_journal_hash_delta(&mut self, start: &StoreStateHashCursor) {
+        self.assert_valid_hash_cursor(start);
+        let mut cache = std::mem::take(&mut self.semantic_hash_cache);
+        let mut first_old = std::mem::take(&mut cache.first_old);
+        debug_assert!(first_old.is_empty());
+        for (position, entry) in self
+            .env
+            .journal_entries_since(start.journal_pos)
+            .iter()
+            .enumerate()
+        {
+            match entry {
+                Entry::Undo(rec) => {
+                    first_old.push((rec.cell().without_assignment_scope(), position, rec.old()))
+                }
+                Entry::BoxUndo(id) => {
+                    let rec = self.env.box_undo(*id);
+                    first_old.push((
+                        CellId::new(BankTag::Box, u32::from(rec.index())),
+                        position,
+                        rec.old().value(),
+                    ));
+                }
+                Entry::Marker(_) => {}
+            }
+        }
+        first_old.sort_unstable_by_key(|&(cell, position, _)| (cell, position));
+        first_old.dedup_by_key(|entry| entry.0);
+        for &(cell, _, old_word) in &first_old {
+            if cache.retired_first_old.contains_key(&cell) {
+                continue;
+            }
+            let baseline_hash = cache.cells.get(&cell).map_or_else(
+                || self.cell_value_hash(cell, old_word),
+                |cached| cached.value_hash,
+            );
+            cache.retired_first_old.insert(cell, baseline_hash);
+        }
+        first_old.clear();
+        cache.first_old = first_old;
+        self.semantic_hash_cache = cache;
+    }
+
     /// Canonical identity of the rollback-coupled mutable store roots.
     ///
     /// Environment cells already carry a persistent Merkle root. The other
@@ -254,6 +311,7 @@ impl Stores {
         StoreStateHashCursor {
             owner: self.owner.snapshot_owner(),
             journal_pos: self.env.current_journal_pos(),
+            journal_baseline_serial: self.env.journal_baseline_serial(),
             code_tables: self.code_tables.semantic_cursor(),
             hyphenation_root: HyphenationSemanticCursor(std::sync::Arc::clone(&self.hyphenation)),
             prepared_mag: self.prepared_mag,
@@ -269,6 +327,7 @@ impl Stores {
         StoreStateHashCursor {
             owner: snapshot.owner,
             journal_pos: snapshot.env_snapshot.journal_pos(),
+            journal_baseline_serial: snapshot.env_snapshot.journal_baseline_serial(),
             code_tables: crate::code_tables::CodeTables::semantic_cursor_from_snapshot(
                 &snapshot.code_tables_snapshot,
             ),
@@ -292,6 +351,7 @@ impl Stores {
         StoreStateHashCursor {
             owner: self.owner.snapshot_owner(),
             journal_pos: cursor.journal_pos,
+            journal_baseline_serial: cursor.journal_baseline_serial,
             code_tables: cursor.code_tables.clone(),
             hyphenation_root: cursor.hyphenation_root.clone(),
             prepared_mag: cursor.prepared_mag,
@@ -308,6 +368,7 @@ impl Stores {
         StoreStateHashCursor {
             owner: self.owner.snapshot_owner(),
             journal_pos: cursor.journal_pos,
+            journal_baseline_serial: cursor.journal_baseline_serial,
             code_tables: cursor.code_tables.clone(),
             hyphenation_root: cursor.hyphenation_root.clone(),
             prepared_mag: cursor.prepared_mag,
@@ -329,6 +390,7 @@ impl Stores {
         StoreStateHashCursor {
             owner: self.owner.snapshot_owner(),
             journal_pos: cursor.journal_pos.min(current_journal_pos),
+            journal_baseline_serial: cursor.journal_baseline_serial,
             code_tables: cursor.code_tables.clone(),
             hyphenation_root: cursor.hyphenation_root.clone(),
             prepared_mag: cursor.prepared_mag,
@@ -531,13 +593,21 @@ impl Stores {
         first_old.dedup_by_key(|entry| entry.0);
 
         for &(cell, _, old_word) in &first_old {
-            let new_word = self.env.semantic_word(cell);
-            self.synchronize_exact_env_cell(cell, new_word);
-            let current_hash = self.cell_value_hash(cell, new_word);
+            if cache.retired_first_old.contains_key(&cell) {
+                continue;
+            }
             let baseline_hash = cache.cells.get(&cell).map_or_else(
                 || self.cell_value_hash(cell, old_word),
                 |cached| cached.value_hash,
             );
+            cache.retired_first_old.insert(cell, baseline_hash);
+        }
+
+        let mut retired_first_old = std::mem::take(&mut cache.retired_first_old);
+        for (&cell, &baseline_hash) in &retired_first_old {
+            let new_word = self.env.semantic_word(cell);
+            self.synchronize_exact_env_cell(cell, new_word);
+            let current_hash = self.cell_value_hash(cell, new_word);
 
             let order = match cache.cells.get_mut(&cell) {
                 Some(cached) => {
@@ -578,7 +648,8 @@ impl Stores {
         crate::measurement::record_hash_changed_cells(
             changed_cells.len(),
             first_old.capacity() * core::mem::size_of::<(CellId, usize, u64)>()
-                + changed_cells.capacity() * core::mem::size_of::<(u64, CellId)>(),
+                + changed_cells.capacity() * core::mem::size_of::<(u64, CellId)>()
+                + retired_first_old.capacity() * core::mem::size_of::<(CellId, u64)>(),
         );
 
         hasher.tag(0x10);
@@ -591,8 +662,10 @@ impl Stores {
 
         first_old.clear();
         changed_cells.clear();
+        retired_first_old.clear();
         cache.first_old = first_old;
         cache.changed_cells = changed_cells;
+        cache.retired_first_old = retired_first_old;
     }
 
     fn semantic_cell_key(&self, cell: CellId) -> SemanticCellKey {

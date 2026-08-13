@@ -384,7 +384,7 @@ impl GroupMismatch {
 /// The public rollback boundary is `Universe`; this token exists only so that
 /// the aggregate owner can restore all Env-owned rollback-coupled state
 /// atomically.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Debug)]
 pub(crate) struct EnvSnapshot {
     journal_pos: JournalPos,
     box_undo_len: u32,
@@ -394,19 +394,53 @@ pub(crate) struct EnvSnapshot {
     group_boundary_len: u32,
     enclosing_group_lineage: Option<u64>,
     epoch: crate::epoch::Epoch,
+    rollback_roots: Option<std::sync::Arc<super::JournalRollbackRoots>>,
+    journal_baseline_serial: u64,
+}
+
+impl Clone for EnvSnapshot {
+    fn clone(&self) -> Self {
+        Self {
+            journal_pos: self.journal_pos,
+            box_undo_len: self.box_undo_len,
+            aftergroup_len: self.aftergroup_len,
+            afterassignment: self.afterassignment,
+            group_depth: self.group_depth,
+            group_boundary_len: self.group_boundary_len,
+            enclosing_group_lineage: self.enclosing_group_lineage,
+            epoch: self.epoch,
+            rollback_roots: self
+                .rollback_roots
+                .as_ref()
+                .map(super::JournalRollbackRoots::register),
+            journal_baseline_serial: self.journal_baseline_serial,
+        }
+    }
+}
+
+impl Drop for EnvSnapshot {
+    fn drop(&mut self) {
+        if let Some(roots) = &self.rollback_roots {
+            roots.unregister();
+        }
+    }
 }
 
 impl EnvSnapshot {
     /// Returns the journal position captured by this snapshot.
     #[must_use]
-    pub(crate) const fn journal_pos(self) -> JournalPos {
+    pub(crate) const fn journal_pos(&self) -> JournalPos {
         self.journal_pos
     }
 
     /// Returns the epoch captured by this snapshot.
     #[must_use]
-    pub(crate) const fn epoch(self) -> crate::epoch::Epoch {
+    pub(crate) const fn epoch(&self) -> crate::epoch::Epoch {
         self.epoch
+    }
+
+    pub(crate) const fn journal_baseline_serial(&self) -> u64 {
+        self.journal_baseline_serial
     }
 }
 
@@ -502,6 +536,8 @@ impl Env {
                 .last()
                 .map(|boundary| boundary.lineage),
             epoch: self.epoch,
+            rollback_roots: (self.group_depth == 0).then(|| self.journal_rollback_roots.register()),
+            journal_baseline_serial: self.journal_baseline_serial,
         };
         self.epoch.bump();
         self.journal_lineage = self
@@ -532,8 +568,17 @@ impl Env {
         self.journal.pos()
     }
 
+    pub(crate) const fn journal_baseline_serial(&self) -> u64 {
+        self.journal_baseline_serial
+    }
+
     pub(crate) fn journal_retained_bytes(&self) -> usize {
         self.journal.retained_bytes()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn journal_entry_count(&self) -> usize {
+        self.journal.len()
     }
 
     /// Returns whether `snapshot` is an ancestor of the checked-out group stack.
@@ -542,7 +587,15 @@ impl Env {
     /// a group that was exited, even if later groups happen to recreate the same
     /// depth and journal position.
     #[must_use]
-    pub(crate) fn can_rollback_to(&self, snapshot: EnvSnapshot) -> bool {
+    pub(crate) fn can_rollback_to(&self, snapshot: &EnvSnapshot) -> bool {
+        if snapshot.journal_baseline_serial != self.journal_baseline_serial
+            || snapshot
+                .rollback_roots
+                .as_ref()
+                .is_some_and(|roots| !std::sync::Arc::ptr_eq(&self.journal_rollback_roots, roots))
+        {
+            return false;
+        }
         let Ok(boundary_len) = usize::try_from(snapshot.group_boundary_len) else {
             return false;
         };
@@ -556,6 +609,77 @@ impl Env {
                 .is_some_and(|boundary| boundary.lineage == lineage),
             None => boundary_len == 0,
         }
+    }
+
+    /// Retargets an inherited snapshot onto an independently owned fork.
+    pub(crate) fn retarget_snapshot(&self, snapshot: &EnvSnapshot) -> EnvSnapshot {
+        EnvSnapshot {
+            journal_pos: snapshot.journal_pos,
+            box_undo_len: snapshot.box_undo_len,
+            aftergroup_len: snapshot.aftergroup_len,
+            afterassignment: snapshot.afterassignment,
+            group_depth: snapshot.group_depth,
+            group_boundary_len: snapshot.group_boundary_len,
+            enclosing_group_lineage: snapshot.enclosing_group_lineage,
+            epoch: snapshot.epoch,
+            rollback_roots: (snapshot.group_depth == 0)
+                .then(|| self.journal_rollback_roots.register()),
+            journal_baseline_serial: self.journal_baseline_serial,
+        }
+    }
+
+    /// Starts a fork with no rollback capabilities inherited from its source.
+    pub(crate) fn reset_snapshot_roots_for_fork(&mut self) {
+        self.journal_rollback_roots = std::sync::Arc::new(super::JournalRollbackRoots::default());
+    }
+
+    pub(crate) fn can_retire_committed_snapshot(&self, snapshot: &EnvSnapshot) -> bool {
+        let snapshot_owns_current = snapshot
+            .rollback_roots
+            .as_ref()
+            .is_some_and(|roots| std::sync::Arc::ptr_eq(&self.journal_rollback_roots, roots));
+        self.group_depth == 0
+            && snapshot.journal_baseline_serial == self.journal_baseline_serial
+            && self
+                .journal_rollback_roots
+                .is_only(usize::from(snapshot_owns_current))
+    }
+
+    /// Retires closed journal history after one successful aggregate operation.
+    ///
+    /// The consumed operation mark must be the only snapshot on this baseline;
+    /// otherwise a retained checkpoint still owns the journal suffix. Open TeX
+    /// groups keep their marker and restoration records regardless.
+    pub(crate) fn retire_committed_snapshot(
+        &mut self,
+        snapshot: EnvSnapshot,
+    ) -> Option<Vec<crate::ids::NodeListId>> {
+        assert!(
+            snapshot.journal_baseline_serial == self.journal_baseline_serial,
+            "committed environment snapshot belongs to a retired baseline"
+        );
+        if !self.can_retire_committed_snapshot(&snapshot) {
+            return None;
+        }
+        let released_boxes = (0..self.journal.len())
+            .filter_map(|index| match self.journal.entry(index) {
+                Entry::BoxUndo(id) => {
+                    crate::ids::NodeListId::decode_box_word(self.journal.box_undo(id).old().value())
+                }
+                Entry::Undo(_) | Entry::Marker(_) => None,
+            })
+            .collect();
+        self.journal.clear_committed();
+        self.journal_rollback_roots = std::sync::Arc::new(super::JournalRollbackRoots::default());
+        self.journal_baseline_serial = self
+            .journal_baseline_serial
+            .checked_add(1)
+            .expect("environment journal baseline serial exhausted");
+        self.journal_lineage = self
+            .journal_lineage
+            .checked_add(1)
+            .expect("environment journal lineage exhausted");
+        Some(released_boxes)
     }
 
     #[must_use]

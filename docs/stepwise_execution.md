@@ -251,7 +251,11 @@ unobserved production runner holds one local retry snapshot across its bounded
 points retain their narrower boundary.
 For an incremental candidate it also owns the only active mark in that
 revision's disposable allocation domain. A successful step closes the mark
-and keeps its suffix once. A resource need, cancellation, hard failure, or
+and keeps its suffix once. When that mark is the only level-zero environment
+rollback root, successful commit establishes the current cells as the next
+journal baseline and retires the closed history. Open groups, delivered named
+checkpoints, and inherited fork-prefix authority keep their exact restoration
+records. A resource need, cancellation, hard failure, or
 ordinary error truncates every allocation after the mark; earlier committed
 private work stays owned by the same candidate across suspension. TeX paths
 whose semantic save-stack state must partially commit still discard the failed

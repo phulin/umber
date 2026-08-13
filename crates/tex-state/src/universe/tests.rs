@@ -41,6 +41,172 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;
 
 #[test]
+fn committed_level_zero_operations_retire_journal_history_at_a_bounded_baseline() {
+    let mut universe = Universe::new();
+    let first = universe.snapshot_for_local_retry();
+    universe.set_count_global(0, 1);
+    universe.commit_local_retry_snapshot(first);
+    assert_eq!(universe.env_journal_entry_count(), 0);
+    let retained_bytes = universe.env_journal_bytes();
+
+    for value in 2..=10_000 {
+        let operation = universe.snapshot_for_local_retry();
+        universe.set_count_global(0, value);
+        universe.set_count_global(1, -value);
+        universe.commit_local_retry_snapshot(operation);
+        assert_eq!(universe.env_journal_entry_count(), 0);
+    }
+
+    assert_eq!(universe.count(0), 10_000);
+    assert_eq!(universe.count(1), -10_000);
+    assert_eq!(universe.env_journal_bytes(), retained_bytes);
+}
+
+#[test]
+fn closed_groups_retire_but_open_groups_and_retained_checkpoints_keep_exact_history() {
+    let mut universe = Universe::new();
+    let retained = universe.snapshot();
+    let after_x = Token::Char {
+        ch: 'x',
+        cat: Catcode::Other,
+    };
+    let after_y = Token::Char {
+        ch: 'y',
+        cat: Catcode::Other,
+    };
+
+    let committed = universe.snapshot_for_local_retry();
+    universe.enter_group();
+    universe.set_count(0, 11);
+    universe.push_aftergroup(after_x);
+    assert_eq!(universe.leave_group(), vec![after_x]);
+    universe.set_count_global(1, 22);
+    universe.commit_local_retry_snapshot(committed);
+    assert!(universe.env_journal_entry_count() > 0);
+    universe.rollback(&retained);
+    assert_eq!(universe.count(0), 0);
+    assert_eq!(universe.count(1), 0);
+    drop(retained);
+
+    universe.enter_group();
+    let open = universe.snapshot_for_local_retry();
+    universe.set_count(0, 33);
+    universe.push_aftergroup(after_y);
+    let invalidated_inside_group = universe.snapshot();
+    universe.commit_local_retry_snapshot(open);
+    assert!(universe.env_journal_entry_count() > 0);
+    assert_eq!(universe.leave_group(), vec![after_y]);
+    assert_eq!(universe.count(0), 0);
+    assert!(!universe.can_rollback_to(&invalidated_inside_group));
+
+    let baseline = universe.snapshot_for_local_retry();
+    universe.set_count_global(2, 44);
+    universe.commit_local_retry_snapshot(baseline);
+    assert_eq!(universe.env_journal_entry_count(), 0);
+    assert_eq!(universe.count(2), 44);
+    drop(invalidated_inside_group);
+}
+
+#[test]
+fn journal_retirement_preserves_the_named_checkpoint_hash_schedule() {
+    let mut retired = Universe::new();
+    let mut uninterrupted = Universe::new();
+
+    for value in 1..=128 {
+        let operation = retired.snapshot_for_local_retry();
+        retired.set_count_global((value % 4) as u16, value);
+        retired.commit_local_retry_snapshot(operation);
+        uninterrupted.set_count_global((value % 4) as u16, value);
+    }
+
+    assert_eq!(retired.env_journal_entry_count(), 0);
+    let retired_hash = retired.snapshot().state_hash();
+    let uninterrupted_hash = uninterrupted.snapshot().state_hash();
+    assert_eq!(retired_hash, uninterrupted_hash);
+
+    let original = retired.count(0);
+    let first = retired.snapshot_for_local_retry();
+    retired.set_count_global(0, 999);
+    retired.commit_local_retry_snapshot(first);
+    let second = retired.snapshot_for_local_retry();
+    retired.set_count_global(0, original);
+    retired.commit_local_retry_snapshot(second);
+    uninterrupted.set_count_global(0, 999);
+    uninterrupted.set_count_global(0, original);
+    assert_eq!(
+        retired.snapshot().state_hash(),
+        uninterrupted.snapshot().state_hash()
+    );
+}
+
+#[test]
+fn journal_retirement_releases_superseded_reachability_owned_values() {
+    let mut universe = Universe::new();
+
+    let old_tokens_root = universe.intern_token_list_ref(&[Token::Char {
+        ch: 'a',
+        cat: Catcode::Other,
+    }]);
+    let old_tokens = old_tokens_root.id();
+    let old_glue = universe.intern_glue(glue(71));
+    let old_glue_id = old_glue.id();
+    let old_macro = universe.intern_macro(MacroMeaning::new(
+        MeaningFlags::EMPTY,
+        TokenListId::EMPTY,
+        TokenListId::EMPTY,
+    ));
+    let old_macro_id = old_macro.id();
+    let name = universe.intern("retired-macro");
+    let first = universe.snapshot_for_local_retry();
+    universe.set_toks(7, old_tokens);
+    universe.set_skip(7, old_glue);
+    universe.set_meaning(
+        name,
+        Meaning::Macro {
+            flags: MeaningFlags::EMPTY,
+            definition: old_macro_id,
+        },
+    );
+    drop(old_tokens_root);
+    drop(old_macro);
+    universe.commit_local_retry_snapshot(first);
+
+    let new_tokens_root = universe.intern_token_list_ref(&[Token::Char {
+        ch: 'b',
+        cat: Catcode::Other,
+    }]);
+    let new_tokens = new_tokens_root.id();
+    let new_glue = universe.intern_glue(glue(72));
+    let new_macro = universe.intern_macro(MacroMeaning::new(
+        MeaningFlags::LONG,
+        TokenListId::EMPTY,
+        TokenListId::EMPTY,
+    ));
+    let second = universe.snapshot_for_local_retry();
+    universe.set_toks(7, new_tokens);
+    universe.set_skip(7, new_glue);
+    universe.set_meaning(
+        name,
+        Meaning::Macro {
+            flags: MeaningFlags::LONG,
+            definition: new_macro.id(),
+        },
+    );
+    drop(new_tokens_root);
+    drop(new_macro);
+    universe.commit_local_retry_snapshot(second);
+
+    assert!(catch_unwind(AssertUnwindSafe(|| universe.tokens(old_tokens))).is_err());
+    assert!(catch_unwind(AssertUnwindSafe(|| universe.glue(old_glue_id))).is_err());
+    assert!(
+        catch_unwind(AssertUnwindSafe(|| {
+            universe.macro_definition(old_macro_id)
+        }))
+        .is_err()
+    );
+}
+
+#[test]
 fn private_token_roots_retry_and_accept_through_the_aggregate_boundary() {
     let mut universe = Universe::new();
     universe.begin_private_revision();

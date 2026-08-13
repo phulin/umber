@@ -1032,7 +1032,7 @@ fn rollback_to_restores_globals_across_group_markers() {
     env.set_count_global(300, 20);
     env.set_count(2, 30);
 
-    env.rollback_to(pos);
+    env.rollback_to(pos.clone());
 
     assert_eq!(env.count(1), 0);
     assert_eq!(env.count(2), 0);

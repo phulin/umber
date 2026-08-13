@@ -3121,9 +3121,20 @@ impl Universe {
     #[doc(hidden)]
     pub fn commit_local_retry_snapshot(&mut self, snapshot: LocalRetrySnapshot) {
         let LocalRetrySnapshot {
-            rollback: _,
+            rollback,
             patch_operation,
         } = snapshot;
+        // A generation fork may later retarget every retained prefix record at
+        // or before its anchor onto this timeline. `fork_origin` is that live
+        // restoration authority even before those checkpoint values are
+        // rehomed, so its shared prefix cannot become a fresh baseline here.
+        if self.fork_origin.is_none()
+            && self
+                .stores
+                .commit_local_retry_snapshot(rollback.store, &self.state_hash_base.store)
+        {
+            self.retarget_hash_base_after_group_compaction();
+        }
         match (&mut self.private_revision_domain, patch_operation) {
             (Some(domain), Some(mark)) => domain
                 .commit_operation(mark)
@@ -8596,6 +8607,11 @@ impl Universe {
     #[must_use]
     pub fn env_journal_bytes(&self) -> usize {
         self.stores.env_journal_bytes()
+    }
+
+    #[cfg(test)]
+    fn env_journal_entry_count(&self) -> usize {
+        self.stores.env_journal_entry_count()
     }
 
     #[cfg(feature = "shadow")]

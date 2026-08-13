@@ -37,6 +37,7 @@ use crate::token_store::TokenListRef;
 use ahash::AHashMap;
 use std::collections::BTreeMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 const SEGMENT_BITS: u32 = 16;
 const SEGMENT_LEN: usize = 1 << SEGMENT_BITS;
@@ -79,6 +80,32 @@ pub(crate) struct JournalRegionMark {
 /// The journal lineage changed while a tracked region was active.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct JournalRegionInvalidated;
+
+/// Shared ownership census for one live environment-journal baseline.
+///
+/// Snapshot registration is explicit rather than inferred from `Arc` strong
+/// counts because generation forks clone `Env` without inheriting another
+/// store owner's rollback capabilities.
+#[derive(Debug, Default)]
+struct JournalRollbackRoots {
+    snapshots: AtomicUsize,
+}
+
+impl JournalRollbackRoots {
+    fn register(self: &Arc<Self>) -> Arc<Self> {
+        self.snapshots.fetch_add(1, Ordering::Relaxed);
+        Arc::clone(self)
+    }
+
+    fn unregister(&self) {
+        let previous = self.snapshots.fetch_sub(1, Ordering::Relaxed);
+        assert_ne!(previous, 0, "environment snapshot root count underflowed");
+    }
+
+    fn is_only(&self, snapshots: usize) -> bool {
+        self.snapshots.load(Ordering::Relaxed) == snapshots
+    }
+}
 
 impl CellMutationReceipt {
     pub(crate) fn write(cell: CellId, old: u64, new: u64) -> Self {
@@ -280,6 +307,8 @@ pub struct Env {
     current_font: WordStamp,
     math_family_fonts: FixedBank<FontIdCodec, MATH_FAMILY_FONT_COUNT>,
     journal: Journal,
+    journal_rollback_roots: Arc<JournalRollbackRoots>,
+    journal_baseline_serial: u64,
     group_boundaries: Vec<group::GroupBoundary>,
     aftergroup: Vec<crate::token::TracedTokenWord>,
     afterassignment: Option<Token>,
@@ -338,6 +367,8 @@ impl Env {
             current_font: WordStamp::default(),
             math_family_fonts: FixedBank::new(),
             journal: Journal::new(),
+            journal_rollback_roots: Arc::new(JournalRollbackRoots::default()),
+            journal_baseline_serial: 1,
             group_boundaries: Vec::new(),
             aftergroup: Vec::new(),
             afterassignment: None,

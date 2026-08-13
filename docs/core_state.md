@@ -173,6 +173,27 @@ Groups and snapshots store journal positions rather than copies of the entire
 environment. Restoration replays undo entries while preserving monotonically
 safe generations so stale read guards cannot become valid again.
 
+Journal positions belong to an explicit baseline. A level-zero snapshot
+registers one rollback root on that baseline; cloning or dropping the snapshot
+clones or releases that exact root. Snapshots inside an open group rely on the
+group lineage and are not retained after that group is consumed. A generation
+fork's prefix-retarget authority is also a live restoration root even before
+its inherited checkpoint records are rehomed.
+
+After a successful aggregate operation, `Env` makes the current cells the new
+baseline and clears the journal only when the consumed operation mark is the
+sole level-zero root and no TeX group is open. Clearing drops token, macro, and
+glue undo owners and releases committed box-old ownership while preserving the
+vectors as bounded operation scratch. Retained checkpoints, open groups, and
+fork prefixes keep their exact suffixes. No root registry, environment scan,
+or historical-generation compactor participates in this transition.
+
+The rolling state-hash cache folds the first old semantic hash for each
+distinct retired cell before its undo owner is released. A journal-baseline
+serial prevents the unchanged-cursor fast path from skipping that compact
+pending delta. Baseline serials, root counts, capacities, and retirement
+timing remain operational and do not enter semantic identity.
+
 There is one semantic mutation boundary:
 
 - callers identify the logical cell or aggregate operation;
@@ -422,9 +443,11 @@ not publish, compute, or advance the durable semantic state identity. When a
 private revision domain is active, the same opaque snapshot owns its single
 allocation-operation mark. Rollback truncates that domain suffix before the
 restored command and mode roots become observable; commit closes the mark
-without copying the retained prefix. Canonical partial-state error paths may
-retain their specified semantic scalars but still discard allocations owned
-by the failed operation. TeX82
+without copying the retained prefix. At level zero, commit also retires the
+closed environment-journal history when no named checkpoint or fork prefix can
+restore it; otherwise it leaves that history intact. Canonical partial-state
+error paths may retain their specified semantic scalars but still discard
+allocations owned by the failed operation. TeX82
 §§1030--1038 dispatch commands within `main_control`; only the named checkpoint
 schedule is a semantic hashing boundary. The unobserved production driver
 therefore reuses one private retry point across at most 256 operations and

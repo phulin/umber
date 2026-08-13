@@ -555,9 +555,11 @@ pub enum FontParameterError {
 
 impl Clone for Stores {
     fn clone(&self) -> Self {
+        let mut env = self.env.clone();
+        env.reset_snapshot_roots_for_fork();
         Self {
             owner: StoreOwner::new(),
-            env: self.env.clone(),
+            env,
             interner: self.interner.clone(),
             string_pool: self.string_pool.clone(),
             string_pool_recycled_journal: self.string_pool_recycled_journal.clone(),
@@ -860,7 +862,7 @@ impl Stores {
 
     pub(crate) fn can_restore_snapshot(&self, snapshot: &StoreSnapshot) -> bool {
         snapshot.owner == self.owner.snapshot_owner()
-            && self.env.can_rollback_to(snapshot.env_snapshot)
+            && self.env.can_rollback_to(&snapshot.env_snapshot)
             && snapshot.env_snapshot.journal_pos() <= self.env.current_journal_pos()
             && snapshot.string_pool_recycled_mark <= self.string_pool_recycled_journal.len()
             && snapshot.survivor_pin_mark <= self.survivor_pins.len()
@@ -871,6 +873,7 @@ impl Stores {
     pub(crate) fn retarget_inherited_snapshot(&self, snapshot: &StoreSnapshot) -> StoreSnapshot {
         let mut snapshot = snapshot.clone();
         snapshot.owner = self.owner.snapshot_owner();
+        snapshot.env_snapshot = self.env.retarget_snapshot(&snapshot.env_snapshot);
         snapshot
     }
 
@@ -3779,6 +3782,29 @@ impl Stores {
         }
     }
 
+    /// Consumes one successful operation rollback root and retires environment
+    /// history when no group or independently retained checkpoint still owns
+    /// that baseline.
+    pub(crate) fn commit_local_retry_snapshot(
+        &mut self,
+        snapshot: StoreSnapshot,
+        hash_base: &StoreStateHashCursor,
+    ) -> bool {
+        if !self
+            .env
+            .can_retire_committed_snapshot(&snapshot.env_snapshot)
+        {
+            return false;
+        }
+        self.preserve_retired_env_journal_hash_delta(hash_base);
+        let released_boxes = self
+            .env
+            .retire_committed_snapshot(snapshot.env_snapshot)
+            .expect("retirement eligibility was checked above");
+        self.release_box_refs(released_boxes);
+        true
+    }
+
     /// Marks the start of node allocations owned by one shipout operation.
     #[must_use]
     pub(crate) fn shipout_node_mark(&self) -> ShipoutNodeMark {
@@ -3819,8 +3845,8 @@ impl Stores {
         let _ = self.engine_usage_statistics();
         self.release_survivor_pins_to(snapshot.survivor_pin_mark);
         self.release_timeline_node_pins_to(snapshot.timeline_node_pin_mark);
-        self.account_rollback_box_refs(snapshot.env_snapshot);
-        let receipts = self.env.rollback_to(snapshot.env_snapshot);
+        self.account_rollback_box_refs(&snapshot.env_snapshot);
+        let receipts = self.env.rollback_to(snapshot.env_snapshot.clone());
         self.interner.truncate_to(snapshot.interner_mark);
         while self.string_pool_recycled_journal.len() > snapshot.string_pool_recycled_mark {
             let retained = self
@@ -3888,6 +3914,11 @@ impl Stores {
         self.env.journal_retained_bytes()
     }
 
+    #[cfg(test)]
+    pub(crate) fn env_journal_entry_count(&self) -> usize {
+        self.env.journal_entry_count()
+    }
+
     pub(crate) fn generation_retained_bytes(&self) -> usize {
         // A live accepted generation may legitimately retain survivor pins;
         // format capture forbids them because formats have a stricter job-start
@@ -3938,7 +3969,7 @@ impl Stores {
             "Stores snapshot belongs to a different Stores instance"
         );
         assert!(
-            self.env.can_rollback_to(snapshot.env_snapshot),
+            self.env.can_rollback_to(&snapshot.env_snapshot),
             "Stores snapshots are invalidated by exiting a group that encloses them"
         );
         assert!(

@@ -484,7 +484,7 @@ impl Stores {
         }
     }
 
-    pub(super) fn account_rollback_box_refs(&mut self, snapshot: EnvSnapshot) {
+    pub(super) fn account_rollback_box_refs(&mut self, snapshot: &EnvSnapshot) {
         let dropped: Vec<_> = self
             .env
             .journal_entries_since(snapshot.journal_pos())
