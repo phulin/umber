@@ -1793,7 +1793,7 @@ fn freeze_node_list_rejects_stale_rolled_back_glue_id() {
 
     stores.rollback(&snapshot);
     stores.freeze_node_list(&[Node::Glue {
-        spec: stale,
+        spec: crate::glue::GlueSpecRef::testing_new(stale),
         kind: crate::node::GlueKind::Normal,
         leader: None,
     }]);
@@ -1807,7 +1807,7 @@ fn finish_node_list_rejects_foreign_glue_id() {
     let foreign_glue = foreign.intern_glue(glue_spec(1));
     let mut builder = stores.node_list_builder();
     builder.push(Node::Glue {
-        spec: foreign_glue,
+        spec: crate::glue::GlueSpecRef::testing_new(foreign_glue),
         kind: crate::node::GlueKind::Normal,
         leader: None,
     });

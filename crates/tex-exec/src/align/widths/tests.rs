@@ -1,6 +1,6 @@
 use super::*;
 use crate::mode::AlignColumn;
-use tex_state::glue::{GlueSpec, Order};
+use tex_state::glue::{GlueSpec, GlueSpecRef, Order};
 use tex_state::ids::TokenListId;
 use tex_state::node::{UnsetKind, UnsetNodeFields};
 
@@ -20,13 +20,13 @@ fn columns(count: usize) -> Vec<AlignColumn> {
     ]
 }
 
-fn state(kind: AlignmentKind, spec: AlignmentPackSpec, tabskips: Vec<GlueId>) -> AlignState {
+fn state(kind: AlignmentKind, spec: AlignmentPackSpec, tabskips: Vec<GlueSpecRef>) -> AlignState {
     AlignState::new(
         kind,
         spec,
         columns(tabskips.len() - 1),
         tabskips,
-        GlueId::ZERO,
+        tex_state::glue::testing_zero_glue_ref(),
         None,
     )
 }
@@ -64,7 +64,11 @@ fn pack_alignment_prototype_applies_spec_in_both_modes() {
         });
         let resolved = ResolvedWidths {
             columns: vec![sp(4), sp(5)],
-            tabskips: vec![flexible, GlueId::ZERO, flexible],
+            tabskips: vec![
+                flexible.clone(),
+                tex_state::glue::testing_zero_glue_ref(),
+                flexible,
+            ],
         };
         let empty = stores.freeze_node_list(&[]);
 
@@ -127,7 +131,10 @@ fn alignment_prototype_diagnostic_retains_unset_columns() {
         let mut stores = Universe::new_with_plain_catcodes();
         let resolved = ResolvedWidths {
             columns: vec![sp(4)],
-            tabskips: vec![GlueId::ZERO, GlueId::ZERO],
+            tabskips: vec![
+                tex_state::glue::testing_zero_glue_ref(),
+                tex_state::glue::testing_zero_glue_ref(),
+            ],
         };
         let empty = stores.freeze_node_list(&[]);
         let prototype = pack_prototype(
@@ -156,11 +163,11 @@ fn fin_align_orders_groups_packing_pop_and_insertion() {
     let first = unset(&mut stores, UnsetKind::HBox, 4, 1);
     let second = unset(&mut stores, UnsetKind::HBox, 6, 1);
     let row_children = stores.freeze_node_list(&[
-        tabskip_node(GlueId::ZERO),
+        tabskip_node(tex_state::glue::testing_zero_glue_ref()),
         first,
-        tabskip_node(GlueId::ZERO),
+        tabskip_node(tex_state::glue::testing_zero_glue_ref()),
         second,
-        tabskip_node(GlueId::ZERO),
+        tabskip_node(tex_state::glue::testing_zero_glue_ref()),
     ]);
     let row = Node::Unset(UnsetNode::new(UnsetNodeFields {
         kind: UnsetKind::HBox,
@@ -177,7 +184,11 @@ fn fin_align_orders_groups_packing_pop_and_insertion() {
     let state = state(
         AlignmentKind::HAlign,
         AlignmentPackSpec::Exactly(sp(12)),
-        vec![GlueId::ZERO, GlueId::ZERO, GlueId::ZERO],
+        vec![
+            tex_state::glue::testing_zero_glue_ref(),
+            tex_state::glue::testing_zero_glue_ref(),
+            tex_state::glue::testing_zero_glue_ref(),
+        ],
     );
 
     let finished = finish_alignment(&state, &[row], Scaled::from_raw(0), &mut stores)

@@ -94,13 +94,16 @@ fn page_ingress_rejects_post_rollback_reuse() {
     let mut universe = Universe::new();
     let snapshot = universe.snapshot();
     let stale = universe.intern_glue(glue(9));
+    let stale_id = stale.id();
+    drop(stale);
     universe.rollback(&snapshot);
     let replacement = universe.intern_glue(glue(10));
-    assert_eq!(stale.raw(), replacement.raw());
-    assert_ne!(stale, replacement);
+    assert_eq!(stale_id.raw(), replacement.raw());
+    assert_ne!(stale_id, replacement.id());
 
     assert_panics(HandleClass::Glue, || {
-        universe.append_page_contribution(glue_node(stale))
+        universe
+            .append_page_contribution(glue_node(crate::glue::GlueSpecRef::testing_new(stale_id)))
     });
     universe.append_page_contribution(glue_node(replacement));
     assert_eq!(universe.page_contributions().len(), 1);
@@ -144,11 +147,13 @@ fn exercise_rollback_reallocate(class: HandleClass) {
             let mut universe = Universe::new();
             let snapshot = universe.snapshot();
             let stale = universe.intern_glue(glue(1));
+            let stale_id = stale.id();
+            drop(stale);
             universe.rollback(&snapshot);
             let replacement = universe.intern_glue(glue(2));
-            assert_eq!(stale.raw(), replacement.raw(), "{class:?}");
-            assert_ne!(stale, replacement, "{class:?}");
-            assert_panics(class, || _ = universe.glue(stale));
+            assert_eq!(stale_id.raw(), replacement.raw(), "{class:?}");
+            assert_ne!(stale_id, replacement.id(), "{class:?}");
+            assert_panics(class, || _ = universe.glue(stale_id));
         }
         HandleClass::Font => {
             let mut universe = Universe::new();

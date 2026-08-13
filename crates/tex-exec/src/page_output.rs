@@ -347,7 +347,7 @@ fn split_insertion_remainder(
         .ok_or(ExecError::ArithmeticOverflow)?
         .min(queue.nodes.len());
     let remainder = queue.nodes.split_off(split_at);
-    let pruned = prune_page_top(stores, remainder, context.split_top_skip.id());
+    let pruned = prune_page_top(stores, remainder, context.split_top_skip.clone());
     if pruned.is_empty() {
         return Ok(None);
     }

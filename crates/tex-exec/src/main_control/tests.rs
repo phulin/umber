@@ -209,7 +209,7 @@ fn tabskip_widths(stores: &Universe, nodes: &[Node], widths: &mut Vec<i32>) {
                 spec,
                 kind: GlueKind::TabSkip,
                 ..
-            } => widths.push(stores.glue(*spec).width.raw()),
+            } => widths.push(stores.glue(spec).width.raw()),
             Node::HList(boxed) | Node::VList(boxed) => {
                 tabskip_widths(stores, &stores.nodes(boxed.children).to_vec(), widths);
             }
@@ -333,7 +333,7 @@ fn packaged_row_projection(stores: &Universe, row: &Node) -> Vec<PackagedRowItem
                 spec,
                 kind: GlueKind::TabSkip,
                 ..
-            } => Some(PackagedRowItem::TabSkip(stores.glue(*spec).width.raw())),
+            } => Some(PackagedRowItem::TabSkip(stores.glue(spec).width.raw())),
             Node::HList(boxed) => Some(PackagedRowItem::HorizontalCell(material_widths(
                 stores,
                 boxed.children,
@@ -371,28 +371,28 @@ fn alignment_node_projection(stores: &Universe, nodes: &[Node]) -> Vec<Alignment
                 kind: GlueKind::TabSkip,
                 ..
             } => Some(AlignmentNodeProjection::TabSkip(
-                stores.glue(*spec).width.raw(),
+                stores.glue(spec).width.raw(),
             )),
             Node::Glue {
                 spec,
                 kind: GlueKind::AboveDisplaySkip,
                 ..
             } => Some(AlignmentNodeProjection::AboveDisplay(
-                stores.glue(*spec).width.raw(),
+                stores.glue(spec).width.raw(),
             )),
             Node::Glue {
                 spec,
                 kind: GlueKind::BelowDisplaySkip,
                 ..
             } => Some(AlignmentNodeProjection::BelowDisplay(
-                stores.glue(*spec).width.raw(),
+                stores.glue(spec).width.raw(),
             )),
             Node::Glue {
                 spec,
                 kind: GlueKind::BaselineSkip,
                 ..
             } => Some(AlignmentNodeProjection::Baseline(
-                stores.glue(*spec).width.raw(),
+                stores.glue(spec).width.raw(),
             )),
             Node::Unset(unset) => Some(AlignmentNodeProjection::Cell {
                 span_count: unset.span_count,
@@ -3311,7 +3311,7 @@ fn text_material_preserves_ligature_space_factor_and_font_glue() {
     else {
         panic!("sentence-space fixture has character/glue/character: {sentence:?}");
     };
-    let sentence = stores.glue(*spec);
+    let sentence = stores.glue(spec);
     assert_eq!(sentence.width.raw(), 291_271);
     assert_eq!(sentence.stretch.raw(), 327_678);
     assert_eq!(sentence.shrink.raw(), 24_272);
@@ -3345,7 +3345,7 @@ fn direct_material_appends_typed_nodes_in_source_order() {
     };
     assert_eq!(*kind, tex_state::node::KernKind::Explicit);
     assert_eq!(amount.raw(), Scaled::UNITY);
-    assert_eq!(stores.glue(*spec).width.raw(), 2 * Scaled::UNITY);
+    assert_eq!(stores.glue(spec).width.raw(), 2 * Scaled::UNITY);
     assert_eq!(width.map(Scaled::raw), Some(3 * Scaled::UNITY));
     assert_eq!(height.map(Scaled::raw), Some(4 * Scaled::UNITY));
     assert_eq!(depth.map(Scaled::raw), Some(5 * Scaled::UNITY));
@@ -4572,7 +4572,7 @@ fn recursive_test_box(stores: &mut Universe) -> tex_state::ids::NodeListId {
             depth: Some(Scaled::from_raw(3)),
         },
         Node::Glue {
-            spec: glue,
+            spec: glue.clone(),
             kind: GlueKind::Leaders,
             leader: Some(LeaderPayload::HList(box_node(leaf))),
         },
@@ -4684,7 +4684,7 @@ fn recursive_node_signature(stores: &Universe, list: tex_state::ids::NodeListId)
                     ),
                     LeaderPayload::Rule { .. } => format!("{leader:?}"),
                 });
-                format!("glue={:?}/leader={leader:?}", stores.glue(*spec))
+                format!("glue={:?}/leader={leader:?}", stores.glue(spec))
             }
             Node::Disc {
                 pre,
@@ -4710,7 +4710,7 @@ fn recursive_node_signature(stores: &Universe, list: tex_state::ids::NodeListId)
                 content,
             } => format!(
                 "ins={class}/{size:?}/{:?}/{split_max_depth:?}/{floating_penalty}/content={}",
-                stores.glue(*split_top_skip),
+                stores.glue(split_top_skip),
                 recursive_node_signature(stores, *content)
             ),
             Node::Adjust(adjust) => format!(
@@ -4750,7 +4750,7 @@ fn copy_preserves_every_recursive_node_payload_and_source_register() {
     let children = stores.nodes(root.children).testing_decoded();
     assert_eq!(children.len(), 13, "every payload remains in child order");
     assert!(
-        matches!(children[1], Node::Glue { spec, leader: Some(_), .. } if stores.glue(spec).width.raw() == 301)
+        matches!(&children[1], Node::Glue { spec, leader: Some(_), .. } if stores.glue(spec).width.raw() == 301)
     );
     assert!(
         matches!(&children[3], Node::Mark { tokens, .. } if tokens.tokens() == [Token::Char { ch: 'm', cat: Catcode::Letter }, Token::Char { ch: '!', cat: Catcode::Other }])
@@ -6868,7 +6868,7 @@ fn pdf_snapping_is_any_mode_ordered_typed_material() {
             ),
             "mode {mode:?}: {nodes:?}"
         );
-        let Node::Whatsit(Whatsit::PdfSnapY { glue }) = nodes[1] else {
+        let Node::Whatsit(Whatsit::PdfSnapY { ref glue }) = nodes[1] else {
             unreachable!()
         };
         let glue = stores.glue(glue);

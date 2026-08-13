@@ -53,7 +53,7 @@ impl TestCell {
             .any(|cell| matches!(cell, Self::Skip(_) | Self::Muskip(_) | Self::GlueParam(_)))
         {
             for raw in 1..64 {
-                let id = stores.intern_glue(glue_spec(raw as i32));
+                let id = stores.testing_intern_glue(glue_spec(raw as i32));
                 assert_eq!(id.raw(), raw);
             }
         }

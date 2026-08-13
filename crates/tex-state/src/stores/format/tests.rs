@@ -117,7 +117,7 @@ fn format_round_trip_preserves_physical_diagnostic_leader_children() {
         children: semantic_children,
     });
     leader_box.diagnostic_children = Some(diagnostic_children);
-    let glue = stores.intern_glue(GlueSpec::ZERO);
+    let glue = stores.intern_glue_in_domain(GlueSpec::ZERO, None);
     let root = stores.freeze_node_list(&[Node::Glue {
         spec: glue,
         kind: GlueKind::Leaders,
@@ -168,11 +168,14 @@ fn format_round_trip_preserves_every_extended_register_family_at_boundaries() {
     for (index, value) in [(255, 1), (256, 2), (32_767, 3)] {
         stores.set_count(index, value);
         stores.set_dimen(index, Scaled::from_raw(value));
-        let glue = stores.intern_glue(GlueSpec {
-            width: Scaled::from_raw(value),
-            ..GlueSpec::ZERO
-        });
-        stores.set_skip(index, glue);
+        let glue = stores.intern_glue_in_domain(
+            GlueSpec {
+                width: Scaled::from_raw(value),
+                ..GlueSpec::ZERO
+            },
+            None,
+        );
+        stores.set_skip(index, &glue);
         stores.set_muskip(index, glue);
         let token_list = stores.intern_token_list(&[Token::Char {
             ch: char::from_digit(value as u32, 10).expect("single digit"),

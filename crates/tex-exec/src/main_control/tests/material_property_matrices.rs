@@ -263,7 +263,7 @@ fn shapes(stores: &Universe, nodes: &[Node]) -> Vec<Shape> {
             Node::Glue {
                 spec, kind, leader, ..
             } => {
-                let spec = stores.glue(*spec);
+                let spec = stores.glue(spec);
                 Shape::Glue {
                     width: spec.width.raw(),
                     stretch: spec.stretch.raw(),
@@ -309,7 +309,7 @@ fn shapes(stores: &Universe, nodes: &[Node]) -> Vec<Shape> {
             } => Shape::Insert {
                 class: *class,
                 size: size.raw(),
-                split_top_skip: stores.glue(*split_top_skip).width.raw(),
+                split_top_skip: stores.glue(split_top_skip).width.raw(),
                 split_max_depth: split_max_depth.raw(),
                 floating_penalty: *floating_penalty,
                 content: shapes(stores, stores.nodes(*content).testing_decoded()),
@@ -762,7 +762,7 @@ fn text_boundary_font_glue_scaling_and_cache_matrix() {
         "each node retains independent glue ownership"
     );
     assert_eq!(
-        stores.glue(*first),
+        stores.glue(first),
         tex_state::glue::GlueSpec {
             width: Scaled::from_raw(218_453),
             stretch: Scaled::from_raw(109_226),
@@ -772,7 +772,7 @@ fn text_boundary_font_glue_scaling_and_cache_matrix() {
         }
     );
     assert_eq!(
-        stores.glue(*second),
+        stores.glue(second),
         tex_state::glue::GlueSpec {
             width: Scaled::from_raw(218_453),
             stretch: Scaled::from_raw(109_116),

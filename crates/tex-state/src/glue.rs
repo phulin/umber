@@ -151,6 +151,8 @@ impl From<&GlueSpecRef> for GlueId {
 pub(crate) struct GlueStoreMark {
     pub(crate) specs: u32,
     patch_allocations: u32,
+    #[cfg(any(test, feature = "testing"))]
+    testing_detached_roots: u32,
 }
 
 /// Reachability-owned immutable glue values.
@@ -163,6 +165,10 @@ pub struct GlueStore {
     patch_handles: HashMap<GlueId, PatchHandle<GlueSpec>>,
     patch_root_leases: HashMap<GlueId, PatchRootWeak>,
     patch_order: Vec<GlueId>,
+    /// Explicit detached owners used only by legacy test construction APIs.
+    /// Production interning returns `GlueSpecRef` and never enters this row.
+    #[cfg(any(test, feature = "testing"))]
+    testing_detached_roots: Vec<GlueSpecRef>,
 }
 
 impl Clone for GlueStore {
@@ -179,6 +185,8 @@ impl Clone for GlueStore {
             patch_handles: HashMap::new(),
             patch_root_leases: HashMap::new(),
             patch_order: Vec::new(),
+            #[cfg(any(test, feature = "testing"))]
+            testing_detached_roots: self.testing_detached_roots.clone(),
         }
     }
 }
@@ -203,6 +211,8 @@ impl GlueStore {
             patch_handles: HashMap::new(),
             patch_root_leases: HashMap::new(),
             patch_order: Vec::new(),
+            #[cfg(any(test, feature = "testing"))]
+            testing_detached_roots: Vec::new(),
         }
     }
 
@@ -231,6 +241,8 @@ impl GlueStore {
             patch_handles: HashMap::new(),
             patch_root_leases: HashMap::new(),
             patch_order: Vec::new(),
+            #[cfg(any(test, feature = "testing"))]
+            testing_detached_roots: Vec::new(),
         })
     }
 
@@ -243,14 +255,13 @@ impl GlueStore {
         if spec == GlueSpec::ZERO {
             return self.frozen_roots[0].clone();
         }
-        if let Some(raw) = self.frozen_lookup.get(&lookup_key(&spec)) {
-            if let Some(root) = self
+        if let Some(raw) = self.frozen_lookup.get(&lookup_key(&spec))
+            && let Some(root) = self
                 .frozen_roots
                 .get(raw as usize)
                 .filter(|root| root.spec() == spec)
-            {
-                return root.clone();
-            }
+        {
+            return root.clone();
         }
         let key = content_hash(&spec);
         if let Some(value) = self.pool.find_exact(&key, |candidate| *candidate == spec) {
@@ -358,15 +369,29 @@ impl GlueStore {
             specs: self.slot_len(),
             patch_allocations: u32::try_from(self.patch_order.len())
                 .expect("glue patch allocations exceed u32"),
+            #[cfg(any(test, feature = "testing"))]
+            testing_detached_roots: u32::try_from(self.testing_detached_roots.len())
+                .expect("testing detached glue roots exceed u32"),
         }
     }
 
     pub(crate) fn truncate_to(&mut self, mark: GlueStoreMark) {
+        #[cfg(any(test, feature = "testing"))]
+        self.testing_detached_roots
+            .truncate(mark.testing_detached_roots as usize);
         while self.patch_order.len() > mark.patch_allocations as usize {
             let id = self.patch_order.pop().expect("patch order is nonempty");
             assert!(self.patch_handles.remove(&id).is_some());
             assert!(self.patch_root_leases.remove(&id).is_some());
         }
+    }
+
+    #[cfg(any(test, feature = "testing"))]
+    #[allow(dead_code)]
+    pub(crate) fn testing_intern(&mut self, spec: GlueSpec) -> GlueId {
+        let root = self.intern_owned(spec, None);
+        self.testing_detached_roots.push(root.clone());
+        root.id()
     }
 
     pub(crate) fn selected_patch_roots(&self, domain: &PatchAllocationDomain) -> Vec<PatchRoot> {

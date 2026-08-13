@@ -112,6 +112,7 @@ impl NodeStorage {
         }
         self.preflight_sidecars(needs);
         self.words.reserve(source_words.len());
+        self.glue_roots.reserve(source_words.len());
         self.origins.reserve(source_words.len());
         self.reserve_sidecars(needs);
 
@@ -243,6 +244,8 @@ impl NodeStorage {
                 _ => panic!("reserved node-word tag"),
             };
             self.words.push(copied);
+            self.glue_roots
+                .push(source.storage.glue_roots[source.start + offset].clone());
             self.origins
                 .push(source.storage.origins[source.start + offset]);
         }

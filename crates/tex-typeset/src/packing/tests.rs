@@ -99,10 +99,7 @@ fn scalar_hlist(state: &impl TypesetState, nodes: NodeList<'_>) -> Measurement {
             }
             NodeRef::Kern { amount, .. } => out.width = add(out.width, amount),
             NodeRef::Glue { spec, .. } => {
-                out.observe_horizontal(
-                    MetricEvent::Glue(state.glue(spec)),
-                    MetricOverflow::PACKING,
-                );
+                out.observe_horizontal(MetricEvent::Glue(spec.spec()), MetricOverflow::PACKING);
             }
             NodeRef::MathOn(width) | NodeRef::MathOff(width) => out.width = add(out.width, width),
             NodeRef::Penalty(_) => {}
@@ -151,7 +148,7 @@ fn compact_char_runs_differentially_match_scalar_mixed_lists() {
                     kind: KernKind::Font,
                 }),
                 3 => nodes.push(Node::Glue {
-                    spec: glue,
+                    spec: glue.clone(),
                     kind: GlueKind::Normal,
                     leader: None,
                 }),
@@ -235,7 +232,7 @@ fn hpack_records_zero_badness_for_empty_underfull_box() {
         shrink_order: Order::Normal,
     });
     let list = universe.freeze_node_list(&[Node::Glue {
-        spec: zero_glue,
+        spec: zero_glue.clone(),
         kind: GlueKind::Normal,
         leader: None,
     }]);
@@ -284,7 +281,7 @@ fn hpack_sets_finite_stretch_order_and_ratio() {
             kind: KernKind::Explicit,
         },
         Node::Glue {
-            spec: glue,
+            spec: glue.clone(),
             kind: GlueKind::Normal,
 
             leader: None,
@@ -372,7 +369,7 @@ fn hpack_infinite_shrink_has_zero_badness_and_no_diagnostic() {
     });
     let list = universe.freeze_node_list(&[
         Node::Glue {
-            spec: hss,
+            spec: hss.clone(),
             kind: GlueKind::Normal,
             leader: None,
         },
@@ -422,7 +419,7 @@ fn leader_glue_participates_in_packing_like_ordinary_glue() {
         children: empty,
     }));
     let hlist = universe.freeze_node_list(&[Node::Glue {
-        spec: glue,
+        spec: glue.clone(),
         kind: GlueKind::Xleaders,
         leader: Some(payload),
     }]);
@@ -446,7 +443,7 @@ fn leader_glue_participates_in_packing_like_ordinary_glue() {
     assert_eq!(packed.node.glue_set, GlueSetRatio::from_raw(2_000_000));
 
     let vlist = universe.freeze_node_list(&[Node::Glue {
-        spec: glue,
+        spec: glue.clone(),
         kind: GlueKind::Cleaders,
         leader: Some(LeaderPayload::Rule {
             width: Some(sp(4)),
@@ -488,7 +485,7 @@ fn hpack_clamps_overfull_normal_shrink_ratio_to_one() {
             kind: KernKind::Explicit,
         },
         Node::Glue {
-            spec: glue,
+            spec: glue.clone(),
             kind: GlueKind::Normal,
 
             leader: None,
@@ -535,7 +532,7 @@ fn hpack_reports_insufficient_normal_shrink_even_below_infinite_badness() {
             kind: KernKind::Explicit,
         },
         Node::Glue {
-            spec: glue,
+            spec: glue.clone(),
             kind: GlueKind::Normal,
             leader: None,
         },
@@ -751,7 +748,7 @@ fn vtop_with_leading_glue_has_zero_height() {
     });
     let list = universe.freeze_node_list(&[
         Node::Glue {
-            spec: glue,
+            spec: glue.clone(),
             kind: GlueKind::Normal,
             leader: None,
         },
@@ -839,7 +836,7 @@ fn vertical_spacing_consumes_previous_depth() {
     let list = universe.freeze_node_list(&[
         hbox.clone(),
         Node::Glue {
-            spec: glue,
+            spec: glue.clone(),
             kind: GlueKind::BaselineSkip,
 
             leader: None,

@@ -1,8 +1,8 @@
 //! Shared vertical-list splitting helpers for insertions and `\vsplit`.
 
 use tex_state::Universe;
-use tex_state::glue::GlueSpec;
-use tex_state::ids::{GlueId, NodeListId};
+use tex_state::glue::{GlueSpec, GlueSpecRef};
+use tex_state::ids::NodeListId;
 use tex_state::node::{BoxNode, GlueKind, Node, Whatsit};
 use tex_state::node_arena::NodeRef;
 use tex_state::scaled::Scaled;
@@ -13,7 +13,7 @@ use crate::ExecError;
 pub(crate) fn prune_page_top(
     stores: &mut Universe,
     nodes: Vec<Node>,
-    split_top_skip: GlueId,
+    split_top_skip: GlueSpecRef,
 ) -> Vec<Node> {
     prune_page_top_with_discards(stores, nodes, split_top_skip).0
 }
@@ -21,7 +21,7 @@ pub(crate) fn prune_page_top(
 pub(crate) fn prune_page_top_with_discards(
     stores: &mut Universe,
     nodes: Vec<Node>,
-    split_top_skip: GlueId,
+    split_top_skip: GlueSpecRef,
 ) -> (Vec<Node>, Vec<Node>) {
     let mut out = Vec::new();
     let mut discarded = Vec::new();
@@ -29,7 +29,7 @@ pub(crate) fn prune_page_top_with_discards(
     for node in nodes {
         match &node {
             Node::HList(_) | Node::VList(_) | Node::Rule { .. } if !inserted_top_skip => {
-                let top_skip = stores.glue(split_top_skip);
+                let top_skip = split_top_skip.spec();
                 let adjusted = GlueSpec {
                     width: top_skip
                         .width

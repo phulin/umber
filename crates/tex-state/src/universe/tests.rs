@@ -148,20 +148,20 @@ fn private_glue_roots_retry_and_selected_acceptance_follow_env_ownership() {
 #[test]
 fn glue_current_undo_page_and_checkpoint_edges_are_structural_roots() {
     let mut universe = Universe::new();
-    assert_eq!(universe.stores.glue.testing_live_totals().0, 1);
+    assert_eq!(universe.stores.testing_glue_live_totals().0, 1);
 
     let outer = universe.intern_glue(glue(201));
     universe.set_skip(0, &outer);
     drop(outer);
-    assert_eq!(universe.stores.glue.testing_live_totals().0, 2);
+    assert_eq!(universe.stores.testing_glue_live_totals().0, 2);
 
     universe.enter_group();
     let local = universe.intern_glue(glue(202));
     let local_id = local.id();
     universe.set_skip(0, local);
-    assert_eq!(universe.stores.glue.testing_live_totals().0, 3);
+    assert_eq!(universe.stores.testing_glue_live_totals().0, 3);
     let _ = universe.leave_group();
-    assert_eq!(universe.stores.glue.testing_live_totals().0, 2);
+    assert_eq!(universe.stores.testing_glue_live_totals().0, 2);
     assert!(catch_unwind(AssertUnwindSafe(|| universe.glue(local_id))).is_err());
 
     let checkpoint = universe.snapshot();
@@ -172,10 +172,10 @@ fn glue_current_undo_page_and_checkpoint_edges_are_structural_roots() {
         kind: GlueKind::Normal,
         leader: None,
     });
-    assert_eq!(universe.stores.glue.testing_live_totals().0, 3);
+    assert_eq!(universe.stores.testing_glue_live_totals().0, 3);
 
     universe.rollback(&checkpoint);
-    assert_eq!(universe.stores.glue.testing_live_totals().0, 2);
+    assert_eq!(universe.stores.testing_glue_live_totals().0, 2);
     assert!(catch_unwind(AssertUnwindSafe(|| universe.glue(page_id))).is_err());
     assert_eq!(universe.glue(universe.skip(0)), glue(201));
 }

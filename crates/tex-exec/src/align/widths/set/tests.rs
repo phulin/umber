@@ -1,6 +1,6 @@
 use super::*;
 use tex_state::glue::Order;
-use tex_state::ids::{GlueId, NodeListId};
+use tex_state::ids::NodeListId;
 use tex_state::node::{GlueKind, UnsetKind, UnsetNodeFields};
 
 fn sp(raw: i32) -> Scaled {
@@ -75,7 +75,10 @@ fn set_alignment_list_extends_running_rules_and_offsets_display_rules() {
         ],
         &ResolvedWidths {
             columns: vec![sp(11)],
-            tabskips: vec![GlueId::ZERO, GlueId::ZERO],
+            tabskips: vec![
+                tex_state::glue::testing_zero_glue_ref(),
+                tex_state::glue::testing_zero_glue_ref(),
+            ],
         },
         &Prototype {
             box_node: box_node(11, 13, empty),
@@ -107,7 +110,10 @@ fn set_alignment_list_extends_running_rules_and_offsets_display_rules() {
         }],
         &ResolvedWidths {
             columns: vec![sp(13)],
-            tabskips: vec![GlueId::ZERO, GlueId::ZERO],
+            tabskips: vec![
+                tex_state::glue::testing_zero_glue_ref(),
+                tex_state::glue::testing_zero_glue_ref(),
+            ],
         },
         &Prototype {
             box_node: box_node(11, 13, empty),
@@ -138,7 +144,10 @@ fn set_alignment_list_extends_running_rules_and_offsets_display_rules() {
         }],
         &ResolvedWidths {
             columns: vec![sp(11)],
-            tabskips: vec![GlueId::ZERO, GlueId::ZERO],
+            tabskips: vec![
+                tex_state::glue::testing_zero_glue_ref(),
+                tex_state::glue::testing_zero_glue_ref(),
+            ],
         },
         &Prototype {
             box_node: box_node(11, 13, empty),
@@ -189,9 +198,9 @@ fn materialize_spanned_cell_adds_tabskip_and_empty_boxes() {
         empty,
     );
     let row_children = stores.freeze_node_list(&[
-        tabskip_node(GlueId::ZERO),
+        tabskip_node(tex_state::glue::testing_zero_glue_ref()),
         Node::Unset(cell),
-        tabskip_node(GlueId::ZERO),
+        tabskip_node(tex_state::glue::testing_zero_glue_ref()),
     ]);
     let row = Node::Unset(UnsetNode::new(UnsetNodeFields {
         kind: UnsetKind::HBox,
@@ -207,7 +216,11 @@ fn materialize_spanned_cell_adds_tabskip_and_empty_boxes() {
     }));
     let resolved = ResolvedWidths {
         columns: vec![sp(4), sp(5)],
-        tabskips: vec![GlueId::ZERO, middle, GlueId::ZERO],
+        tabskips: vec![
+            tex_state::glue::testing_zero_glue_ref(),
+            middle.clone(),
+            tex_state::glue::testing_zero_glue_ref(),
+        ],
     };
     let prototype = Prototype {
         box_node: box_node(10, 2, empty),
@@ -251,7 +264,7 @@ fn materialize_spanned_cell_adds_tabskip_and_empty_boxes() {
         panic!("span must add one tabskip/empty-box pair, got {children:?}");
     };
     assert_eq!(first.width, sp(4));
-    assert_eq!(stores.glue(*spec).width, sp(1));
+    assert_eq!(stores.glue(spec).width, sp(1));
     assert_eq!(blank.width, sp(5));
     assert!(stores.nodes(blank.children).is_empty());
 }
@@ -275,8 +288,11 @@ fn set_alignment_preserves_final_node_order_and_running_rules() {
         },
         empty,
     ));
-    let children =
-        stores.freeze_node_list(&[tabskip_node(GlueId::ZERO), cell, tabskip_node(GlueId::ZERO)]);
+    let children = stores.freeze_node_list(&[
+        tabskip_node(tex_state::glue::testing_zero_glue_ref()),
+        cell,
+        tabskip_node(tex_state::glue::testing_zero_glue_ref()),
+    ]);
     let row = Node::Unset(UnsetNode::new(UnsetNodeFields {
         kind: UnsetKind::HBox,
         width: sp(4),
@@ -304,7 +320,7 @@ fn set_alignment_preserves_final_node_order_and_running_rules() {
         ],
         &ResolvedWidths {
             columns: vec![sp(4)],
-            tabskips: vec![GlueId::ZERO; 2],
+            tabskips: vec![tex_state::glue::testing_zero_glue_ref(); 2],
         },
         &Prototype {
             box_node: box_node(9, 2, empty),

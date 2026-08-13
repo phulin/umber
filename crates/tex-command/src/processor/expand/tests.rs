@@ -955,7 +955,7 @@ fn pdftex_margin_kern_enquiries_use_typed_box_edges_fresh_and_loaded() {
             vec![
                 Node::Penalty(10_000),
                 Node::Glue {
-                    spec: nonzero_glue,
+                    spec: nonzero_glue.clone(),
                     kind: GlueKind::LeftSkip,
                     leader: None,
                 },
@@ -977,7 +977,7 @@ fn pdftex_margin_kern_enquiries_use_typed_box_edges_fresh_and_loaded() {
                     ch: b'R',
                 },
                 Node::Glue {
-                    spec: nonzero_glue,
+                    spec: nonzero_glue.clone(),
                     kind: GlueKind::RightSkip,
                     leader: None,
                 },
@@ -992,7 +992,7 @@ fn pdftex_margin_kern_enquiries_use_typed_box_edges_fresh_and_loaded() {
             true,
             vec![
                 Node::Glue {
-                    spec: nonzero_glue,
+                    spec: nonzero_glue.clone(),
                     kind: GlueKind::RightSkip,
                     leader: None,
                 },

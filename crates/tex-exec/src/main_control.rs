@@ -17324,7 +17324,7 @@ fn finish_insert_or_adjust_group(
     // brace's still-live input stack for `ensure_vbox` -> `box_error` -> §82.
     let page_error_context = command.state.output_open_context(&stores.command_context());
     crate::paragraph_end::end_paragraph_with_fuel(modes, stores, command.state, command.fuel)?;
-    let split_top_skip = stores.glue_param(GlueParam::SPLIT_TOP_SKIP);
+    let split_top_skip = stores.glue_ref(stores.glue_param(GlueParam::SPLIT_TOP_SKIP));
     let split_max_depth = stores.dimen_param(DimenParam::SPLIT_MAX_DEPTH);
     let floating_penalty = stores.int_param(IntParam::FLOATING_PENALTY);
     let aftergroup = stores
@@ -17352,7 +17352,7 @@ fn finish_insert_or_adjust_group(
         Node::Ins {
             class,
             size,
-            split_top_skip: stores.glue_ref(split_top_skip),
+            split_top_skip,
             split_max_depth,
             floating_penalty,
             content,

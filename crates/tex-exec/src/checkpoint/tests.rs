@@ -41,7 +41,7 @@ fn retained_checkpoint_restores_command_and_mode_token_roots() {
                 v_template,
             }],
             Vec::new(),
-            tex_state::ids::GlueId::ZERO,
+            tex_state::glue::testing_zero_glue_ref(),
             None,
         ));
     let checkpoint = EngineCheckpoint::capture_checkpoint(

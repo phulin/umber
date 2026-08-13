@@ -6,7 +6,7 @@ use proptest::test_runner::Config;
 use std::env;
 use std::time::Instant;
 use tex_state::env::banks::GlueParam;
-use tex_state::glue::{GlueSpec, Order};
+use tex_state::glue::{GlueSpec, GlueSpecRef, Order};
 use tex_state::ids::{FontId, GlueId, NodeListId};
 use tex_state::node::{BoxNode, BoxNodeFields, GlueKind, Node, Sign};
 use tex_state::page::{PageDimension, PageInsertion, PageInsertionStatus, PageInteger, PageMark};
@@ -181,9 +181,9 @@ fn run_replay_identity(ops: &[Op]) {
     let mut box_oracle = BoxOracle::new();
     let mut tree_cache = TreeCache::new();
     let mut glue_ids = vec![
-        GlueId::ZERO,
-        stores.glue_param(GlueParam::BASELINE_SKIP),
-        stores.glue_param(GlueParam::PAR_FILL_SKIP),
+        stores.glue_ref(GlueId::ZERO),
+        stores.glue_ref(stores.glue_param(GlueParam::BASELINE_SKIP)),
+        stores.glue_ref(stores.glue_param(GlueParam::PAR_FILL_SKIP)),
     ];
     let mut token_ids = vec![tex_state::ids::TokenListId::EMPTY];
     let mut built_lists = Vec::new();
@@ -333,12 +333,12 @@ fn run_replay_identity(ops: &[Op]) {
 
 fn build_nodes(
     stores: &mut Universe,
-    glue_ids: &[GlueId],
+    glue_ids: &[GlueSpecRef],
     built: &[BuiltList],
     seed: &NodeSeed,
 ) -> BuiltList {
-    let glue_id = glue_ids[seed.glue_slot % glue_ids.len()];
-    let glue = stores.glue(glue_id);
+    let glue_ref = &glue_ids[seed.glue_slot % glue_ids.len()];
+    let glue = glue_ref.spec();
     let mut nodes = vec![
         Node::Char {
             font: FontId::testing_new(0),
@@ -350,7 +350,7 @@ fn build_nodes(
             kind: tex_state::node::KernKind::Explicit,
         },
         Node::Glue {
-            spec: glue_id,
+            spec: glue_ref.clone(),
             kind: GlueKind::Normal,
             leader: None,
         },
@@ -506,7 +506,7 @@ fn node_seed_strategy() -> impl Strategy<Value = NodeSeed> {
         })
 }
 
-fn page_node(glue_ids: &[GlueId], seed: &NodeSeed) -> Node {
+fn page_node(glue_ids: &[GlueSpecRef], seed: &NodeSeed) -> Node {
     if seed.amount % 2 == 0 {
         Node::Kern {
             amount: Scaled::from_raw(seed.amount),
@@ -514,7 +514,7 @@ fn page_node(glue_ids: &[GlueId], seed: &NodeSeed) -> Node {
         }
     } else {
         Node::Glue {
-            spec: glue_ids[seed.glue_slot % glue_ids.len()],
+            spec: glue_ids[seed.glue_slot % glue_ids.len()].clone(),
             kind: GlueKind::Normal,
             leader: None,
         }

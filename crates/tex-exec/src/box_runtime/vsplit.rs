@@ -22,7 +22,7 @@ pub(crate) fn split_vbox_register(
     error_context: &str,
 ) -> Result<Option<Node>, ExecError> {
     stores.clear_split_discards();
-    let split_top_skip = stores.glue_param(GlueParam::SPLIT_TOP_SKIP);
+    let split_top_skip = stores.glue_ref(stores.glue_param(GlueParam::SPLIT_TOP_SKIP));
     let split_max_depth = stores.dimen_param(DimenParam::SPLIT_MAX_DEPTH);
     let Some(source) = stores.box_reg(index) else {
         clear_split_marks(stores);
@@ -104,7 +104,7 @@ fn replace_split_source(
     stores: &mut Universe,
     index: u16,
     remainder: Vec<Node>,
-    split_top_skip: tex_state::ids::GlueId,
+    split_top_skip: tex_state::glue::GlueSpecRef,
 ) {
     let (pruned, discarded) = prune_page_top_with_discards(stores, remainder, split_top_skip);
     if stores.int_param(tex_state::env::banks::IntParam::SAVING_V_DISCARDS) > 0 {

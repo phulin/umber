@@ -6052,6 +6052,12 @@ impl Universe {
             .intern_glue_in_domain(spec, self.private_revision_domain.as_mut())
     }
 
+    #[cfg(any(test, feature = "testing"))]
+    #[allow(dead_code)]
+    pub(crate) fn testing_intern_glue(&mut self, spec: GlueSpec) -> GlueId {
+        self.stores.intern_glue(spec)
+    }
+
     #[must_use]
     pub fn glue_ref(&self, id: GlueId) -> GlueSpecRef {
         self.stores.glue_ref(id)

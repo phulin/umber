@@ -2,8 +2,8 @@ use super::*;
 
 use tex_command::FatalError;
 use tex_state::env::banks::{DimenParam, GlueParam, IntParam};
-use tex_state::glue::Order;
-use tex_state::ids::{FontId, GlueId};
+use tex_state::glue::{GlueSpecRef, Order};
+use tex_state::ids::FontId;
 use tex_state::math::{
     FractionThickness, MathChoice, MathField, MathFraction, MathListNode, MathNoad, MathStyle,
     NoadClass, NoadKind,
@@ -27,7 +27,7 @@ fn glue(
     stretch_order: Order,
     shrink: i32,
     shrink_order: Order,
-) -> GlueId {
+) -> GlueSpecRef {
     stores.intern_glue(GlueSpec {
         width: s(width),
         stretch: s(stretch),
@@ -83,7 +83,7 @@ fn ins(
     Node::Ins {
         class,
         size: s(size),
-        split_top_skip: stores.glue_param(GlueParam::SPLIT_TOP_SKIP),
+        split_top_skip: stores.glue_ref(stores.glue_param(GlueParam::SPLIT_TOP_SKIP)),
         split_max_depth: Scaled::MAX_DIMEN,
         floating_penalty,
         content,
@@ -128,7 +128,7 @@ fn pdftex_page_top_discards_snapy_but_preserves_other_whatsits() {
         [
             reference,
             Node::Glue {
-                spec: stores.glue_param(GlueParam::TOP_SKIP),
+                spec: stores.glue_ref(stores.glue_param(GlueParam::TOP_SKIP)),
                 kind: GlueKind::TopSkip,
                 leader: None,
             },
@@ -632,7 +632,7 @@ fn page_infinite_shrink_recovery_normalizes_only_the_offending_glue() {
                 spec,
                 kind: GlueKind::Normal,
                 ..
-            } => Some(stores.glue(*spec)),
+            } => Some(stores.glue(spec)),
             _ => None,
         })
         .collect::<Vec<_>>();

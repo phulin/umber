@@ -2348,9 +2348,15 @@ impl Stores {
         self.glue.intern_owned(spec, domain)
     }
 
+    #[cfg(any(test, feature = "testing"))]
+    #[allow(dead_code)]
+    pub(crate) fn intern_glue(&mut self, spec: GlueSpec) -> GlueId {
+        self.glue.testing_intern(spec)
+    }
+
     #[cfg(test)]
-    pub(crate) fn intern_glue(&mut self, spec: GlueSpec) -> GlueSpecRef {
-        self.glue.intern_owned(spec, None)
+    pub(crate) fn testing_glue_live_totals(&self) -> (usize, usize) {
+        self.glue.testing_live_totals()
     }
 
     pub(crate) fn glue_ref(&self, id: GlueId) -> GlueSpecRef {

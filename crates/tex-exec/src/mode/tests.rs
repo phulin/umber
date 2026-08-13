@@ -5,7 +5,7 @@ use super::{
 use std::sync::Arc;
 use tex_command::{ConditionalMode, FatalError};
 use tex_state::Universe;
-use tex_state::ids::{FontId, GlueId, NodeListId};
+use tex_state::ids::{FontId, NodeListId};
 use tex_state::math::FractionThickness;
 use tex_state::node::{KernKind, Node};
 use tex_state::scaled::Scaled;
@@ -314,8 +314,8 @@ fn align_state() -> AlignState {
         AlignmentKind::HAlign,
         AlignmentPackSpec::Natural,
         Vec::new(),
-        vec![GlueId::ZERO],
-        GlueId::ZERO,
+        vec![tex_state::glue::testing_zero_glue_ref()],
+        tex_state::glue::testing_zero_glue_ref(),
         None,
     )
 }
@@ -415,8 +415,8 @@ fn alignment_template_roots_survive_destructive_journal_rollback() {
                 u_template,
                 v_template,
             }],
-            vec![GlueId::ZERO],
-            GlueId::ZERO,
+            vec![tex_state::glue::testing_zero_glue_ref()],
+            tex_state::glue::testing_zero_glue_ref(),
             None,
         ));
     nest.reset_journal_for_test();
