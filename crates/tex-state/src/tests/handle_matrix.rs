@@ -316,8 +316,8 @@ fn exercise_fork(class: HandleClass) {
             let mut child = parent.clone();
             assert!(parent.origin_list_if_live(inherited).is_some(), "{class:?}");
             assert!(child.origin_list_if_live(inherited).is_some(), "{class:?}");
-            let parent_only = parent.allocate_origin_list(&[crate::token::OriginId::UNKNOWN]);
-            let child_only = child.allocate_origin_list(&[crate::token::OriginId::UNKNOWN]);
+            let parent_only = parent.allocate_origin_list(&[crate::token::OriginId::UNKNOWN; 2]);
+            let child_only = child.allocate_origin_list(&[crate::token::OriginId::UNKNOWN; 3]);
             assert!(
                 parent.origin_list_if_live(child_only).is_none(),
                 "{class:?}"

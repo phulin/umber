@@ -103,8 +103,11 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/print.rs`: tex.web §54's print `selector`, §§57--65's print primitives, §73's `print_err`, and §82's `error` report channel.
 - `src/print/error_context.rs`: tex.web §§310--318's `show_context` two-line pseudoprint, bounded eager before/after projections captured at the live input seam, §314's token-list labels, and §310's `\errorcontextlines` elision, shared by every input-stack owner.
 - `src/print/tests.rs`: Unit tests for context widths, selector routing, help routing, and error-report completion.
-- `src/provenance.rs`: Chunked diagnostic origin records, origin-list arenas, and rollback watermarks.
-- `src/provenance/tests.rs`: Unit tests for provenance allocation, readback, and rollback marks.
+- `src/provenance.rs`: Exact structural origin-record and origin-list sharing,
+  chunked packed-key storage, candidate indexes, retry leases, and rollback
+  watermarks pending the reachability-owned representation cutover.
+- `src/provenance/tests.rs`: Structural sharing, collision, packed-key,
+  allocation, readback, retry, fork, and rollback provenance controls.
 - `src/pure_memo.rs`: Optional bounded pure-query caches for pretolerance, page-breaking, and shipout results plus stable output-provenance recipes.
 - `src/resource.rs`: Generic host-resource availability, absence, and stable
   suspension identities plus the state-owned immutable input-content resolver

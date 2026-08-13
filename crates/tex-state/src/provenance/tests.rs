@@ -89,10 +89,13 @@ fn concurrent_stores_keep_process_global_keys_in_local_affine_runs() {
             let barrier = Arc::clone(&barrier);
             handles.push(scope.spawn(move || {
                 let mut store = ProvenanceStore::new();
-                for _ in 0..ORIGIN_KEY_LEASE_LEN {
+                for offset in 0..ORIGIN_KEY_LEASE_LEN {
                     barrier.wait();
-                    store.allocate(OriginRecord::Synthetic(SyntheticOrigin::new(
-                        SyntheticOriginKind::Test,
+                    store.allocate(OriginRecord::Source(SourceOrigin::new(
+                        SourceId::new(7),
+                        u64::from(offset),
+                        1,
+                        offset,
                     )));
                 }
                 store
@@ -193,14 +196,113 @@ fn provenance_fork_keeps_inherited_lists_but_separates_new_ones() {
 #[test]
 fn provenance_fork_keeps_inherited_origins_but_separates_new_keys() {
     let mut parent = ProvenanceStore::new();
-    let inherited = parent.allocate(OriginRecord::UnknownBootstrap);
+    let inherited = parent.allocate(OriginRecord::Synthetic(SyntheticOrigin::new(
+        SyntheticOriginKind::Test,
+    )));
     let mut child = parent.clone();
     assert!(child.contains_origin(inherited));
-    let parent_only = parent.allocate(OriginRecord::UnknownBootstrap);
-    let child_only = child.allocate(OriginRecord::UnknownBootstrap);
+    let parent_only = parent.allocate(OriginRecord::Synthetic(SyntheticOrigin::new(
+        SyntheticOriginKind::Format,
+    )));
+    let child_only = child.allocate(OriginRecord::Synthetic(SyntheticOrigin::new(
+        SyntheticOriginKind::Engine,
+    )));
     assert_ne!(parent_only, child_only);
     assert!(!child.contains_origin(parent_only));
     assert!(!parent.contains_origin(child_only));
+}
+
+#[test]
+fn exact_records_and_lists_share_structural_slots() {
+    let mut store = ProvenanceStore::new();
+    let record = OriginRecord::Source(SourceOrigin::new(SourceId::new(7), 123, 4, 9));
+    let first = store.allocate(record);
+    let second = store.allocate(record);
+    assert_eq!(first, second);
+    assert_eq!(store.stats().origin_records(), 1);
+
+    let first_list = store.allocate_list(&[first, OriginId::UNKNOWN]);
+    let second_list = store.allocate_list(&[first, OriginId::UNKNOWN]);
+    assert_eq!(first_list, second_list);
+    assert_eq!(store.stats().origin_list_spans(), 2);
+    assert_eq!(store.stats().origin_list_entries(), 2);
+}
+
+#[test]
+fn repeated_macro_expansion_shares_one_structural_frame() {
+    let mut store = ProvenanceStore::new();
+    let invocation = OriginId::UNKNOWN;
+    let record = OriginRecord::MacroInvocation(MacroInvocationOrigin::from_nonowning_operand(
+        42,
+        invocation,
+        OriginId::UNKNOWN,
+        OriginId::UNKNOWN,
+    ));
+    let first = store.allocate(record);
+    for _ in 0..10_000 {
+        assert_eq!(store.allocate(record), first);
+    }
+    assert_eq!(store.stats().origin_records(), 1);
+    assert_eq!(store.macro_invocation_stats().invocations(), 1);
+}
+
+#[test]
+fn origin_list_candidate_hash_collision_still_compares_exact_content() {
+    let mut store = ProvenanceStore::new();
+    let first = store.allocate_list(&[OriginId::UNKNOWN]);
+    let second_value = [OriginId::NOEXPAND_FALLBACK];
+    let colliding_hash = super::origin_list_hash(&second_value);
+    store
+        .list_candidates
+        .entry(colliding_hash)
+        .or_default()
+        .push(first);
+
+    let second = store.allocate_list(&second_value);
+    assert_ne!(first, second);
+    assert_eq!(store.list(first), &[OriginId::UNKNOWN]);
+    assert_eq!(store.list(second), &second_value);
+}
+
+#[test]
+fn structural_candidate_indexes_are_explicitly_bounded() {
+    let mut store = ProvenanceStore::new();
+    let mut origins = Vec::new();
+    for offset in 0..=super::RECORD_CANDIDATE_KEY_BUDGET {
+        origins.push(store.allocate(OriginRecord::Source(SourceOrigin::new(
+            SourceId::new(7),
+            offset as u64,
+            1,
+            offset as u32,
+        ))));
+    }
+    assert!(store.record_candidates.len() <= super::RECORD_CANDIDATE_KEY_BUDGET);
+
+    for origin in origins
+        .into_iter()
+        .take(super::LIST_CANDIDATE_KEY_BUDGET + 1)
+    {
+        let _ = store.allocate_list(&[origin]);
+    }
+    assert!(store.list_candidates.len() <= super::LIST_CANDIDATE_KEY_BUDGET);
+}
+
+#[test]
+fn rollback_removes_structural_candidates_before_slot_reuse() {
+    let mut store = ProvenanceStore::new();
+    let mark = store.watermark();
+    let record = OriginRecord::Synthetic(SyntheticOrigin::new(SyntheticOriginKind::Test));
+    let stale = store.allocate(record);
+    let stale_list = store.allocate_list(&[stale]);
+    store.truncate_to(mark);
+
+    let replacement = store.allocate(record);
+    let replacement_list = store.allocate_list(&[replacement]);
+    assert_ne!(stale, replacement);
+    assert!(!store.contains_origin(stale));
+    assert!(!store.contains_list(stale_list));
+    assert!(store.contains_origin(replacement));
+    assert!(store.contains_list(replacement_list));
 }
 
 #[test]

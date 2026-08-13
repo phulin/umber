@@ -1339,8 +1339,8 @@ fn successful_call_activates_canonical_replacement_and_replays_parameter_range()
     }
     assert_eq!(
         universe.macro_invocation_provenance_stats().invocations(),
-        2,
-        "each replayed successful call creates exactly one fresh invocation origin"
+        1,
+        "replaying an identical successful call shares its structural invocation frame"
     );
 }
 

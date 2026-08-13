@@ -33,6 +33,17 @@ and origin.
 
 ## Structural values
 
+The first migration slice installs exact structural candidate reuse in the
+existing packed store. `OriginRecord` candidates compare the complete record;
+origin-list candidates use a compact hash only to select a bucket and compare
+every `OriginId` before reuse. Rollback removes discarded candidates before
+identity reuse, forks share inherited values while preserving sibling key
+separation, and exact operation replay preserves its packed identity. This
+foundation eliminates duplicate transition rows, including 10,000 identical
+macro-frame allocations collapsing to one record. The following ownership
+sections govern the subsequent replacement of the remaining append-watermark
+authority with typed roots and weak reusable slots.
+
 ### Source registrations and ranges
 
 One immutable source-registration value owns the descriptor, original backing
