@@ -1,7 +1,7 @@
 use smallvec::{SmallVec, smallvec};
 use std::sync::Arc;
+use tex_state::glue::GlueSpecRef;
 use tex_state::ids::FontId;
-use tex_state::ids::GlueId;
 use tex_state::ids::NodeListId;
 use tex_state::math::FractionThickness;
 use tex_state::node::{BoxNode, Node};
@@ -33,9 +33,9 @@ pub(crate) fn ignored_depth(stores: &Universe) -> Scaled {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ParagraphParams {
-    pub left_skip: GlueId,
-    pub right_skip: GlueId,
-    pub par_fill_skip: GlueId,
+    pub left_skip: GlueSpecRef,
+    pub right_skip: GlueSpecRef,
+    pub par_fill_skip: GlueSpecRef,
     pub par_shape: Vec<tex_state::ParagraphShapeLine>,
     pub prev_graf: i32,
     pub hang_indent: Scaled,
@@ -635,8 +635,8 @@ pub struct AlignState {
     kind: AlignmentKind,
     pack_spec: AlignmentPackSpec,
     columns: Vec<AlignColumn>,
-    tabskips: Vec<GlueId>,
-    default_tabskip: GlueId,
+    tabskips: Vec<GlueSpecRef>,
+    default_tabskip: GlueSpecRef,
     loop_start: Option<usize>,
     current_row: usize,
     current_col: usize,
@@ -650,8 +650,8 @@ impl AlignState {
         kind: AlignmentKind,
         pack_spec: AlignmentPackSpec,
         columns: Vec<AlignColumn>,
-        tabskips: Vec<GlueId>,
-        default_tabskip: GlueId,
+        tabskips: Vec<GlueSpecRef>,
+        default_tabskip: GlueSpecRef,
         loop_start: Option<usize>,
     ) -> Self {
         Self {
@@ -684,13 +684,13 @@ impl AlignState {
     }
 
     #[must_use]
-    pub fn tabskips(&self) -> &[GlueId] {
+    pub fn tabskips(&self) -> &[GlueSpecRef] {
         &self.tabskips
     }
 
     #[must_use]
-    pub const fn default_tabskip(&self) -> GlueId {
-        self.default_tabskip
+    pub fn default_tabskip(&self) -> &GlueSpecRef {
+        &self.default_tabskip
     }
 
     #[must_use]
@@ -737,27 +737,26 @@ impl AlignState {
     }
 
     #[must_use]
-    pub fn tabskip_for_boundary(&self, boundary: usize) -> GlueId {
+    pub fn tabskip_for_boundary(&self, boundary: usize) -> &GlueSpecRef {
         if let Some(tabskip) = self.tabskips.get(boundary) {
-            return *tabskip;
+            return tabskip;
         }
         let Some(column) = boundary.checked_sub(1) else {
-            return self.default_tabskip;
+            return &self.default_tabskip;
         };
         let Some(loop_start) = self.loop_start else {
-            return self.default_tabskip;
+            return &self.default_tabskip;
         };
         let Some(repeat_len) = self.columns.len().checked_sub(loop_start) else {
-            return self.default_tabskip;
+            return &self.default_tabskip;
         };
         if repeat_len == 0 || column < loop_start {
-            return self.default_tabskip;
+            return &self.default_tabskip;
         }
         let repeated_column = loop_start + (column - loop_start) % repeat_len;
         self.tabskips
             .get(repeated_column + 1)
-            .copied()
-            .unwrap_or(self.default_tabskip)
+            .unwrap_or(&self.default_tabskip)
     }
 
     pub fn start_row(&mut self) {
@@ -977,10 +976,10 @@ fn hash_mode_list(list: &ModeList, projection: &mut EngineBoundaryHasher<'_>) {
                 projection.token_list(column.v_template.id());
             }
             projection.usize(align.tabskips.len());
-            for &tabskip in &align.tabskips {
-                projection.glue(tabskip);
+            for tabskip in &align.tabskips {
+                projection.glue(tabskip.id());
             }
-            projection.glue(align.default_tabskip);
+            projection.glue(align.default_tabskip.id());
             hash_optional_usize(align.loop_start, projection);
             projection.usize(align.current_row);
             projection.usize(align.current_col);

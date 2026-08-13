@@ -41,7 +41,10 @@ pub(crate) fn append_node_to_vertical_list(
             .ok_or(ExecError::ArithmeticOverflow)?;
         let (spec, kind) =
             if requested.raw() < stores.dimen_param(DimenParam::LINE_SKIP_LIMIT).raw() {
-                (stores.glue_param(GlueParam::LINE_SKIP), GlueKind::LineSkip)
+                (
+                    stores.glue_ref(stores.glue_param(GlueParam::LINE_SKIP)),
+                    GlueKind::LineSkip,
+                )
             } else {
                 (
                     stores.intern_glue(GlueSpec {

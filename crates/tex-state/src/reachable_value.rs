@@ -65,6 +65,16 @@ impl<T> ReachableValueRef<T> {
     }
 }
 
+#[cfg(any(test, feature = "testing"))]
+pub(crate) fn testing_value_ref<T>(identity: HandleIdentity, value: T) -> ReachableValueRef<T> {
+    ReachableValueRef {
+        object: Arc::new(ReachableValueObject {
+            identity,
+            value: Arc::new(value),
+        }),
+    }
+}
+
 #[derive(Debug)]
 struct WeakSlot<T> {
     identity: HandleIdentity,

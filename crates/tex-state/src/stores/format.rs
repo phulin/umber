@@ -1297,9 +1297,7 @@ impl Stores {
             .collect();
         let glue_mark = self.glue.watermark();
         let glue = (0..glue_mark.specs)
-            .map(|raw| {
-                FormatGlue::capture(self.glue.get(self.resolve_stored_glue(GlueId::new(raw))))
-            })
+            .map(|raw| FormatGlue::capture(self.glue.stored_slot(raw).spec()))
             .collect();
         let font_mark = self.fonts.watermark();
         let fonts = (0..font_mark.len)
@@ -1408,7 +1406,7 @@ impl Stores {
         }
         let mut glue_ids = Vec::with_capacity(bundle.glue.len());
         for glue in bundle.glue {
-            glue_ids.push(self.intern_glue(glue.restore()?));
+            glue_ids.push(self.intern_glue_in_domain(glue.restore()?, None));
         }
         let mut font_ids = Vec::with_capacity(bundle.fonts.len());
         for (raw, font) in bundle.fonts.into_iter().enumerate() {
@@ -1572,8 +1570,12 @@ impl StoreFormat {
 
         let mut live_macros = vec![false; self.macros.len()];
         let mut live_tokens = vec![false; self.token_lists.len()];
+        let mut live_glue = vec![false; self.glue.len()];
         if let Some(empty) = live_tokens.first_mut() {
             *empty = true;
+        }
+        if let Some(zero) = live_glue.first_mut() {
+            *zero = true;
         }
         for entry in &self.env {
             let cell = crate::cell::CellId::from_raw(entry.cell)
@@ -1601,6 +1603,11 @@ impl StoreFormat {
                         mark_reachable(&mut live_tokens, raw, "environment token list")?;
                     }
                 }
+                BankTag::Skip | BankTag::Muskip | BankTag::GlueParam => {
+                    let raw = u32::try_from(raw)
+                        .map_err(|_| StoreFormatError::Invalid("environment glue"))?;
+                    mark_reachable(&mut live_glue, raw, "environment glue")?;
+                }
                 _ => {}
             }
         }
@@ -1625,14 +1632,18 @@ impl StoreFormat {
                 node.visit_token_list_refs(|raw| {
                     invalid |= mark_reachable(&mut live_tokens, *raw, "node token list").is_err();
                 });
+                node.visit_glue_refs(|raw| {
+                    invalid |= mark_reachable(&mut live_glue, *raw, "node glue").is_err();
+                });
                 if invalid {
-                    return Err(StoreFormatError::Invalid("node token-list reference"));
+                    return Err(StoreFormatError::Invalid("node immutable reference"));
                 }
             }
         }
 
         let macro_map = dense_reachable_map(&live_macros)?;
         let token_map = dense_reachable_map(&live_tokens)?;
+        let glue_map = dense_reachable_map(&live_glue)?;
         // TeX82 §256 never removes a control sequence after `id_lookup` has
         // entered it, even when its meaning remains `undefined_cs`; §1309
         // therefore dumps the complete occupied hash table, not merely names
@@ -1713,6 +1724,11 @@ impl StoreFormat {
                         *raw = u64::from(remapped(&token_map, old, "environment token list")?) + 1;
                     }
                 }
+                BankTag::Skip | BankTag::Muskip | BankTag::GlueParam => {
+                    let old = u32::try_from(*raw)
+                        .map_err(|_| StoreFormatError::Invalid("environment glue"))?;
+                    *raw = u64::from(remapped(&glue_map, old, "environment glue")?);
+                }
                 BankTag::CurrentFont => {
                     let symbol_plus_one = *raw >> 32;
                     if symbol_plus_one != 0 {
@@ -1735,8 +1751,12 @@ impl StoreFormat {
                         Err(_) => invalid = true,
                     }
                 });
+                node.visit_glue_refs(|raw| match remapped(&glue_map, *raw, "node glue") {
+                    Ok(mapped) => *raw = mapped,
+                    Err(_) => invalid = true,
+                });
                 if invalid {
-                    return Err(StoreFormatError::Invalid("node token-list reference"));
+                    return Err(StoreFormatError::Invalid("node immutable reference"));
                 }
             }
         }
@@ -1774,6 +1794,12 @@ impl StoreFormat {
             .drain(..)
             .enumerate()
             .filter_map(|(raw, tokens)| live_tokens[raw].then_some(tokens))
+            .collect();
+        self.glue = self
+            .glue
+            .drain(..)
+            .enumerate()
+            .filter_map(|(raw, glue)| live_glue[raw].then_some(glue))
             .collect();
         self.names = self
             .names
@@ -1884,13 +1910,7 @@ impl ImmutableStoreIdentity {
             .collect();
         let glue_mark = stores.glue.watermark();
         let glue = (0..glue_mark.specs)
-            .map(|raw| {
-                FormatGlue::capture(
-                    stores
-                        .glue
-                        .get(stores.resolve_stored_glue(GlueId::new(raw))),
-                )
-            })
+            .map(|raw| FormatGlue::capture(stores.glue.stored_slot(raw).spec()))
             .collect();
         let font_mark = stores.fonts.watermark();
         let fonts = (0..font_mark.len)
@@ -2020,7 +2040,7 @@ fn install_frozen_sections(
         .map(|raw| stores.resolve_stored_font(FontId::new(raw as u32)))
         .collect::<Vec<_>>();
     let glue_ids = (0..glue_count)
-        .map(|raw| stores.resolve_stored_glue(GlueId::new(raw as u32)))
+        .map(|raw| stores.glue_ref(stores.resolve_stored_glue(GlueId::new(raw as u32))))
         .collect::<Vec<_>>();
     let token_ids = (0..token_list_count)
         .map(|raw| {
@@ -2147,11 +2167,31 @@ fn install_frozen_sections(
         } else {
             None
         };
+        let glue_root = if matches!(
+            cell.bank(),
+            crate::cell::BankTag::Skip
+                | crate::cell::BankTag::Muskip
+                | crate::cell::BankTag::GlueParam
+        ) {
+            let id = stores
+                .glue
+                .resolve_stored(GlueId::new(word as u32))
+                .ok_or(StoreFormatError::Invalid("frozen environment glue owner"))?;
+            Some(
+                stores
+                    .glue
+                    .owner(id)
+                    .ok_or(StoreFormatError::Invalid("frozen environment glue owner"))?,
+            )
+        } else {
+            None
+        };
         base.push(crate::env::FormatBaseCell {
             cell,
             word,
             token_root,
             macro_root,
+            glue_root,
         });
     }
     stores.env.install_format_base(base);

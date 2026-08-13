@@ -9,6 +9,7 @@ use crate::env::banks::{
     BankCodec, DimenParam, GlueParam, IntParam, OptionalTokenListIdCodec, TokParam,
 };
 use crate::epoch::Epoch;
+use crate::glue::GlueSpecRef;
 use crate::ids::NodeListId;
 use crate::macro_store::MacroDefinitionRef;
 use crate::token_store::TokenListRef;
@@ -28,6 +29,7 @@ impl Env {
         word: u64,
         token_root: Option<TokenListRef>,
         macro_root: Option<MacroDefinitionRef>,
+        glue_root: Option<GlueSpecRef>,
     ) -> super::CellMutationReceipt {
         let cell = cell.without_assignment_scope();
         let old = self.semantic_word(cell);
@@ -50,6 +52,14 @@ impl Env {
                 pos,
                 crate::journal::MacroUndoRoots::new(self.macro_root(cell), macro_root.clone()),
             );
+        } else if matches!(
+            cell.bank(),
+            BankTag::Skip | BankTag::Muskip | BankTag::GlueParam
+        ) {
+            self.journal.attach_glue_undo_roots(
+                pos,
+                crate::journal::GlueUndoRoots::new(self.glue_root(cell), glue_root.clone()),
+            );
         } else {
             assert!(
                 token_root.is_none(),
@@ -59,8 +69,9 @@ impl Env {
                 macro_root.is_none(),
                 "non-meaning raw write carried macro owner"
             );
+            assert!(glue_root.is_none(), "non-glue raw write carried glue owner");
         }
-        self.restore_raw_with_owners(cell, word, token_root, macro_root);
+        self.restore_raw_with_owners(cell, word, token_root, macro_root, glue_root);
         receipt
     }
 
@@ -72,7 +83,7 @@ impl Env {
     /// single write path records history.
     #[allow(dead_code)]
     pub(crate) fn restore_raw(&mut self, cell: CellId, word: u64) {
-        self.restore_raw_with_owners(cell, word, None, None);
+        self.restore_raw_with_owners(cell, word, None, None, None);
     }
 
     pub(crate) fn restore_raw_with_owners(
@@ -81,6 +92,7 @@ impl Env {
         word: u64,
         token_root: Option<TokenListRef>,
         macro_root: Option<MacroDefinitionRef>,
+        glue_root: Option<GlueSpecRef>,
     ) {
         match cell.bank() {
             BankTag::Meaning => self.restore_meaning_word(cell.index(), word),
@@ -155,6 +167,7 @@ impl Env {
             );
             self.set_token_root(cell, token_root);
             assert!(macro_root.is_none(), "token write carried macro owner");
+            assert!(glue_root.is_none(), "token write carried glue owner");
         } else if cell.bank() == BankTag::Meaning {
             let expected = match crate::meaning::Meaning::decode_stored(word) {
                 crate::meaning::Meaning::Macro { definition, .. } => Some(definition),
@@ -167,6 +180,19 @@ impl Env {
             );
             self.set_macro_root(cell, macro_root);
             assert!(token_root.is_none(), "meaning write carried token owner");
+            assert!(glue_root.is_none(), "meaning write carried glue owner");
+        } else if matches!(
+            cell.bank(),
+            BankTag::Skip | BankTag::Muskip | BankTag::GlueParam
+        ) {
+            assert_eq!(
+                glue_root.as_ref().map(|root| root.id().raw()).unwrap_or(0),
+                word as u32,
+                "raw glue word and strong owner diverged"
+            );
+            self.set_glue_root(cell, glue_root);
+            assert!(token_root.is_none(), "glue write carried token owner");
+            assert!(macro_root.is_none(), "glue write carried macro owner");
         } else {
             assert!(
                 token_root.is_none(),
@@ -176,6 +202,7 @@ impl Env {
                 macro_root.is_none(),
                 "non-meaning raw write carried macro owner"
             );
+            assert!(glue_root.is_none(), "non-glue raw write carried glue owner");
         }
         #[cfg(feature = "shadow")]
         shadow_set(

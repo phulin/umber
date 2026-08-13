@@ -121,7 +121,7 @@ struct LoweredMathSink<'a> {
     stores: &'a mut Universe,
     error_context: Option<&'a MathConversionErrorContext>,
     root_nodes: Vec<Node>,
-    glue_cache: Vec<(GlueSpec, GlueId)>,
+    glue_cache: Vec<(GlueSpec, tex_state::glue::GlueSpecRef)>,
     family_mask: Cell<u64>,
 }
 
@@ -200,10 +200,10 @@ impl<'a> LoweredMathSink<'a> {
                     let id = if let Some((_, id)) =
                         self.glue_cache.iter().find(|(cached, _)| cached == spec)
                     {
-                        *id
+                        id.clone()
                     } else {
                         let id = self.stores.intern_glue(*spec);
-                        self.glue_cache.push((*spec, id));
+                        self.glue_cache.push((*spec, id.clone()));
                         id
                     };
                     scratch.push(Node::Glue {
@@ -239,6 +239,10 @@ impl TypesetState for LoweredMathSink<'_> {
 
     fn glue(&self, id: GlueId) -> GlueSpec {
         self.stores.glue(id)
+    }
+
+    fn glue_ref(&self, id: GlueId) -> tex_state::glue::GlueSpecRef {
+        self.stores.glue_ref(id)
     }
 
     fn font_char_metrics(&self, font: FontId, code: u8) -> Option<tex_fonts::CharMetrics> {

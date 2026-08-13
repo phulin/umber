@@ -193,12 +193,12 @@ struct InsertionQueue {
     accepting: bool,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct SplitInsertionContext {
     insertion_start: usize,
     page_index: usize,
     class: u16,
-    split_top_skip: tex_state::ids::GlueId,
+    split_top_skip: tex_state::glue::GlueSpecRef,
     split_max_depth: Scaled,
     floating_penalty: i32,
 }
@@ -248,7 +248,7 @@ fn distribute_insertions(
                 let mut wait = Some(Node::Ins {
                     class,
                     size,
-                    split_top_skip,
+                    split_top_skip: split_top_skip.clone(),
                     split_max_depth,
                     floating_penalty,
                     content,
@@ -272,7 +272,7 @@ fn distribute_insertions(
                                 insertion_start: start,
                                 page_index: index,
                                 class,
-                                split_top_skip,
+                                split_top_skip: split_top_skip.clone(),
                                 split_max_depth,
                                 floating_penalty,
                             },
@@ -347,7 +347,7 @@ fn split_insertion_remainder(
         .ok_or(ExecError::ArithmeticOverflow)?
         .min(queue.nodes.len());
     let remainder = queue.nodes.split_off(split_at);
-    let pruned = prune_page_top(stores, remainder, context.split_top_skip);
+    let pruned = prune_page_top(stores, remainder, context.split_top_skip.id());
     if pruned.is_empty() {
         return Ok(None);
     }

@@ -1,6 +1,6 @@
 use super::{FormatListKey, StoreFormatError};
 use crate::glue::Order;
-use crate::ids::{FontId, GlueId, NodeListId, SurvivorRootId};
+use crate::ids::{FontId, NodeListId, SurvivorRootId};
 use crate::math::{
     FractionThickness, MathChoice, MathField, MathFraction, MathListNode, MathNoad, MathStyle,
     NoadKind,
@@ -22,7 +22,7 @@ type NodeIds = BTreeMap<FormatListKey, NodeListId>;
 
 pub(super) struct FormatContentIds<'a> {
     pub fonts: &'a [FontId],
-    pub glue: &'a [GlueId],
+    pub glue: &'a [crate::glue::GlueSpecRef],
     pub token_lists: &'a [TokenListRef],
 }
 
@@ -393,6 +393,15 @@ impl FormatNode {
         }
     }
 
+    pub(super) fn visit_glue_refs(&mut self, mut visit: impl FnMut(&mut u32)) {
+        match self {
+            Self::Glue { spec, .. } => visit(spec),
+            Self::Ins { split_top_skip, .. } => visit(split_top_skip),
+            Self::Whatsit(whatsit) => whatsit.visit_glue_refs(visit),
+            _ => {}
+        }
+    }
+
     pub(super) fn remap_list_keys(&mut self, keys: &BTreeMap<FormatListKey, FormatListKey>) {
         let remap = |key: &mut FormatListKey| {
             *key = *keys.get(key).expect("captured child key must be present");
@@ -500,7 +509,7 @@ impl FormatNode {
                 ch,
             },
             NodeRef::Glue { spec, kind, leader } => Self::Glue {
-                spec: spec.raw(),
+                spec: spec.id().raw(),
                 kind,
                 leader: leader
                     .cloned()
@@ -550,7 +559,7 @@ impl FormatNode {
             } => Self::Ins {
                 class,
                 size,
-                split_top_skip: split_top_skip.raw(),
+                split_top_skip: split_top_skip.id().raw(),
                 split_max_depth,
                 floating_penalty,
                 content: key(stores, content, roots),
@@ -630,7 +639,7 @@ impl FormatNode {
                 ch,
             },
             Self::Glue { spec, kind, leader } => Node::Glue {
-                spec: glue_id(content_ids, spec)?,
+                spec: glue_ref(content_ids, spec)?,
                 kind,
                 leader: leader.map(|leader| leader.restore(ids)).transpose()?,
             },
@@ -674,7 +683,7 @@ impl FormatNode {
             } => Node::Ins {
                 class,
                 size,
-                split_top_skip: glue_id(content_ids, split_top_skip)?,
+                split_top_skip: glue_ref(content_ids, split_top_skip)?,
                 split_max_depth,
                 floating_penalty,
                 content: list_id(ids, content)?,
@@ -698,6 +707,12 @@ impl FormatNode {
 }
 
 impl FormatWhatsit {
+    fn visit_glue_refs(&mut self, mut visit: impl FnMut(&mut u32)) {
+        if let Self::PdfSnapY { glue } = self {
+            visit(glue);
+        }
+    }
+
     fn visit_token_list_refs(&mut self, mut visit: impl FnMut(&mut u32)) {
         match self {
             Self::DeferredWrite { tokens, .. }
@@ -893,7 +908,9 @@ impl FormatWhatsit {
             }
             Whatsit::PdfSavePos => Self::PdfSavePos,
             Whatsit::PdfSnapRefPoint => Self::PdfSnapRefPoint,
-            Whatsit::PdfSnapY { glue } => Self::PdfSnapY { glue: glue.raw() },
+            Whatsit::PdfSnapY { glue } => Self::PdfSnapY {
+                glue: glue.id().raw(),
+            },
             Whatsit::PdfSnapYComp { ratio } => Self::PdfSnapYComp { ratio },
             Whatsit::Language {
                 language,
@@ -1038,7 +1055,7 @@ impl FormatWhatsit {
             Self::PdfSavePos => Whatsit::PdfSavePos,
             Self::PdfSnapRefPoint => Whatsit::PdfSnapRefPoint,
             Self::PdfSnapY { glue } => Whatsit::PdfSnapY {
-                glue: glue_id(content, glue)?,
+                glue: glue_ref(content, glue)?,
             },
             Self::PdfSnapYComp { ratio } => Whatsit::PdfSnapYComp { ratio },
             Self::Language {
@@ -1276,11 +1293,14 @@ fn font_id(content: &FormatContentIds<'_>, raw: u32) -> Result<FontId, StoreForm
         .ok_or(StoreFormatError::Invalid("node font reference"))
 }
 
-fn glue_id(content: &FormatContentIds<'_>, raw: u32) -> Result<GlueId, StoreFormatError> {
+fn glue_ref(
+    content: &FormatContentIds<'_>,
+    raw: u32,
+) -> Result<crate::glue::GlueSpecRef, StoreFormatError> {
     content
         .glue
         .get(raw as usize)
-        .copied()
+        .cloned()
         .ok_or(StoreFormatError::Invalid("node glue reference"))
 }
 

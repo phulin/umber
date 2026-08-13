@@ -27,12 +27,12 @@ pub(super) fn resolve_widths(
     let mut tabskips = initial_tabskips(state, column_count);
     let tabskip_widths = tabskips
         .iter()
-        .map(|id| stores.glue(*id).width)
+        .map(|root| root.spec().width)
         .collect::<Vec<_>>();
     let plan = plan_alignment_widths(state.columns().len(), &tabskip_widths, requirements)
         .map_err(map_plan_error)?;
     for boundary in plan.zero_tabskip_boundaries {
-        tabskips[boundary] = tex_state::ids::GlueId::ZERO;
+        tabskips[boundary] = stores.glue_ref(tex_state::ids::GlueId::ZERO);
     }
 
     Ok(ResolvedWidths {
@@ -41,9 +41,9 @@ pub(super) fn resolve_widths(
     })
 }
 
-fn initial_tabskips(state: &AlignState, columns: usize) -> Vec<tex_state::ids::GlueId> {
+fn initial_tabskips(state: &AlignState, columns: usize) -> Vec<tex_state::glue::GlueSpecRef> {
     (0..=columns)
-        .map(|boundary| state.tabskip_for_boundary(boundary))
+        .map(|boundary| state.tabskip_for_boundary(boundary).clone())
         .collect()
 }
 

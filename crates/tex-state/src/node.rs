@@ -1,7 +1,7 @@
 //! Immutable TeX node model.
 
-use crate::glue::Order;
-use crate::ids::{FontId, GlueId, NodeListId};
+use crate::glue::{GlueSpecRef, Order};
+use crate::ids::{FontId, NodeListId};
 use crate::math::{MathChoice, MathFraction, MathListNode, MathNoad, MathStyle};
 use crate::scaled::{GlueSetRatio, Scaled};
 use crate::token::OriginId;
@@ -102,7 +102,7 @@ pub enum Node {
         ch: u8,
     },
     Glue {
-        spec: GlueId,
+        spec: GlueSpecRef,
         kind: GlueKind,
         leader: Option<LeaderPayload>,
     },
@@ -130,7 +130,7 @@ pub enum Node {
     Ins {
         class: u16,
         size: Scaled,
-        split_top_skip: GlueId,
+        split_top_skip: GlueSpecRef,
         split_max_depth: Scaled,
         floating_penalty: i32,
         content: NodeListId,
@@ -555,7 +555,7 @@ pub enum Whatsit {
     PdfSavePos,
     PdfSnapRefPoint,
     PdfSnapY {
-        glue: GlueId,
+        glue: GlueSpecRef,
     },
     PdfSnapYComp {
         ratio: u16,

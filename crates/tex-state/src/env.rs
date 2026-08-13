@@ -23,6 +23,7 @@ use self::box_bank::{BoxBank, BoxWriteContext};
 use self::overflow::{REGISTER_COUNT, SparseBank};
 use crate::cell::{BankTag, CellId};
 use crate::epoch::Epoch;
+use crate::glue::GlueSpecRef;
 use crate::ids::{FontId, GlueId, NodeListId, TokenListId};
 use crate::interner::Symbol;
 use crate::journal::{Journal, UndoRec};
@@ -161,6 +162,7 @@ pub(crate) struct FormatBaseCell {
     pub(crate) word: u64,
     pub(crate) token_root: Option<TokenListRef>,
     pub(crate) macro_root: Option<MacroDefinitionRef>,
+    pub(crate) glue_root: Option<GlueSpecRef>,
 }
 
 macro_rules! register_accessors {
@@ -243,6 +245,7 @@ pub struct Env {
     empty_token_root: Option<TokenListRef>,
     token_roots: BTreeMap<CellId, TokenListRef>,
     macro_roots: BTreeMap<CellId, MacroDefinitionRef>,
+    glue_roots: BTreeMap<CellId, GlueSpecRef>,
     meaning_cells: Vec<Option<MeaningSegment>>,
     meaning_stamps: Vec<Option<StampSegment>>,
     counts: FixedBank<I32Codec, DENSE_REGISTER_COUNT>,
@@ -300,6 +303,7 @@ impl Env {
             empty_token_root: None,
             token_roots: BTreeMap::new(),
             macro_roots: BTreeMap::new(),
+            glue_roots: BTreeMap::new(),
             meaning_cells: Vec::new(),
             meaning_stamps: Vec::new(),
             counts: FixedBank::new(),
@@ -369,6 +373,7 @@ impl Env {
                 entry.word,
                 entry.token_root.clone(),
                 entry.macro_root.clone(),
+                entry.glue_root.clone(),
             );
         }
         self.format_base = cells.into();
@@ -547,24 +552,94 @@ impl Env {
         dimens,
         overflow_dimens
     );
-    register_accessors!(
-        skip,
-        set_skip,
-        set_skip_global,
-        GlueId,
-        Skip,
-        skips,
-        overflow_skips
-    );
-    register_accessors!(
-        muskip,
-        set_muskip,
-        set_muskip_global,
-        GlueId,
-        Muskip,
-        muskips,
-        overflow_muskips
-    );
+    #[must_use]
+    pub fn skip(&self, index: u16) -> GlueId {
+        self.glue_register(index, RegisterBank::Skip)
+    }
+
+    pub(crate) fn set_skip(&mut self, index: u16, root: GlueSpecRef) -> CellMutationReceipt {
+        self.set_glue_register(index, root, RegisterBank::Skip, false)
+    }
+
+    pub(crate) fn set_skip_global(&mut self, index: u16, root: GlueSpecRef) -> CellMutationReceipt {
+        self.set_glue_register(index, root, RegisterBank::Skip, true)
+    }
+
+    #[must_use]
+    pub fn muskip(&self, index: u16) -> GlueId {
+        self.glue_register(index, RegisterBank::Muskip)
+    }
+
+    pub(crate) fn set_muskip(&mut self, index: u16, root: GlueSpecRef) -> CellMutationReceipt {
+        self.set_glue_register(index, root, RegisterBank::Muskip, false)
+    }
+
+    pub(crate) fn set_muskip_global(
+        &mut self,
+        index: u16,
+        root: GlueSpecRef,
+    ) -> CellMutationReceipt {
+        self.set_glue_register(index, root, RegisterBank::Muskip, true)
+    }
+
+    fn glue_register(&self, index: u16, bank: RegisterBank) -> GlueId {
+        let dense = match bank {
+            RegisterBank::Skip => &self.skips,
+            RegisterBank::Muskip => &self.muskips,
+            _ => unreachable!("non-glue register bank"),
+        };
+        let sparse = match bank {
+            RegisterBank::Skip => &self.overflow_skips,
+            RegisterBank::Muskip => &self.overflow_muskips,
+            _ => unreachable!("non-glue register bank"),
+        };
+        if is_dense_register(index) {
+            dense.get(index)
+        } else {
+            sparse.get(index)
+        }
+    }
+
+    fn set_glue_register(
+        &mut self,
+        index: u16,
+        root: GlueSpecRef,
+        bank: RegisterBank,
+        global: bool,
+    ) -> CellMutationReceipt {
+        let tag = match bank {
+            RegisterBank::Skip => BankTag::Skip,
+            RegisterBank::Muskip => BankTag::Muskip,
+            _ => unreachable!("non-glue register bank"),
+        };
+        let cell = CellId::new(tag, u32::from(index));
+        let old_root = self.glue_root(cell);
+        let mark = self.journal.pos();
+        let value = root.id();
+        let context = BankSetContext {
+            journal: &mut self.journal,
+            #[cfg(feature = "shadow")]
+            shadow: &mut self.shadow,
+            epoch: self.epoch,
+            bank: tag,
+            global,
+        };
+        let receipt = if is_dense_register(index) {
+            match bank {
+                RegisterBank::Skip => self.skips.set(index, value, context),
+                RegisterBank::Muskip => self.muskips.set(index, value, context),
+                _ => unreachable!(),
+            }
+        } else {
+            match bank {
+                RegisterBank::Skip => self.overflow_skips.set(index, value, context),
+                RegisterBank::Muskip => self.overflow_muskips.set(index, value, context),
+                _ => unreachable!(),
+            }
+        };
+        self.finish_glue_write(mark, cell, old_root, Some(root));
+        receipt
+    }
     /// Returns a token register coordinate.
     #[must_use]
     pub fn toks(&self, index: u16) -> TokenListId {
@@ -860,40 +935,43 @@ impl Env {
     pub(crate) fn set_glue_param(
         &mut self,
         param: GlueParam,
-        value: GlueId,
+        root: GlueSpecRef,
     ) -> CellMutationReceipt {
-        self.glue_params.set(
+        self.set_glue_param_with_scope(param, root, false)
+    }
+
+    fn set_glue_param_with_scope(
+        &mut self,
+        param: GlueParam,
+        root: GlueSpecRef,
+        global: bool,
+    ) -> CellMutationReceipt {
+        let cell = CellId::new(BankTag::GlueParam, u32::from(param.raw()));
+        let old_root = self.glue_root(cell);
+        let mark = self.journal.pos();
+        let receipt = self.glue_params.set(
             param.raw(),
-            value,
+            root.id(),
             BankSetContext {
                 journal: &mut self.journal,
                 #[cfg(feature = "shadow")]
                 shadow: &mut self.shadow,
                 epoch: self.epoch,
                 bank: BankTag::GlueParam,
-                global: false,
+                global,
             },
-        )
+        );
+        self.finish_glue_write(mark, cell, old_root, Some(root));
+        receipt
     }
 
     /// Sets a global glue parameter value.
     pub(crate) fn set_glue_param_global(
         &mut self,
         param: GlueParam,
-        value: GlueId,
+        root: GlueSpecRef,
     ) -> CellMutationReceipt {
-        self.glue_params.set(
-            param.raw(),
-            value,
-            BankSetContext {
-                journal: &mut self.journal,
-                #[cfg(feature = "shadow")]
-                shadow: &mut self.shadow,
-                epoch: self.epoch,
-                bank: BankTag::GlueParam,
-                global: true,
-            },
-        )
+        self.set_glue_param_with_scope(param, root, true)
     }
 
     /// Returns a token-list parameter value.
@@ -966,6 +1044,51 @@ impl Env {
             );
         }
         self.set_token_root(cell, new_root);
+    }
+
+    fn finish_glue_write(
+        &mut self,
+        mark: crate::journal::JournalPos,
+        cell: CellId,
+        old_root: Option<GlueSpecRef>,
+        new_root: Option<GlueSpecRef>,
+    ) {
+        if self.journal.pos() != mark {
+            self.journal.attach_glue_undo_roots(
+                mark,
+                crate::journal::GlueUndoRoots::new(old_root, new_root.clone()),
+            );
+        }
+        self.set_glue_root(cell, new_root);
+    }
+
+    pub(crate) fn glue_root(&self, cell: CellId) -> Option<GlueSpecRef> {
+        let cell = cell.without_assignment_scope();
+        debug_assert!(matches!(
+            cell.bank(),
+            BankTag::Skip | BankTag::Muskip | BankTag::GlueParam
+        ));
+        self.glue_roots.get(&cell).cloned()
+    }
+
+    pub(crate) fn set_glue_root(&mut self, cell: CellId, root: Option<GlueSpecRef>) {
+        let cell = cell.without_assignment_scope();
+        debug_assert!(matches!(
+            cell.bank(),
+            BankTag::Skip | BankTag::Muskip | BankTag::GlueParam
+        ));
+        match root {
+            Some(root) if root.id() != GlueId::ZERO => {
+                self.glue_roots.insert(cell, root);
+            }
+            Some(root) => {
+                assert_eq!(root.id(), GlueId::ZERO);
+                self.glue_roots.remove(&cell);
+            }
+            None => {
+                self.glue_roots.remove(&cell);
+            }
+        }
     }
 
     pub(crate) fn token_root(&self, cell: CellId) -> Option<TokenListRef> {

@@ -427,8 +427,14 @@ fn dense_register_typed_api_round_trips_boundary_and_signed_values() {
 
     env.set_count(255, i32::MIN);
     env.set_dimen(255, Scaled::MIN);
-    env.set_skip(255, GlueId::new(u32::MAX));
-    env.set_muskip(255, GlueId::new(u32::MAX - 3));
+    env.set_skip(
+        255,
+        crate::glue::GlueSpecRef::testing_new(GlueId::new(u32::MAX)),
+    );
+    env.set_muskip(
+        255,
+        crate::glue::GlueSpecRef::testing_new(GlueId::new(u32::MAX - 3)),
+    );
     env.set_toks(255, token_root);
     env.set_box_reg(255, Some(NodeListId::testing_survivor(7, 3, 0)));
 
@@ -452,8 +458,8 @@ fn dense_register_journal_records_use_bank_tags_and_encoded_words() {
 
     env.set_count(1, -1);
     env.set_dimen(2, Scaled::from_raw(-2));
-    env.set_skip(3, GlueId::new(33));
-    env.set_muskip(4, GlueId::new(34));
+    env.set_skip(3, crate::glue::GlueSpecRef::testing_new(GlueId::new(33)));
+    env.set_muskip(4, crate::glue::GlueSpecRef::testing_new(GlueId::new(34)));
     env.set_toks(5, token_root);
     env.set_box_reg(6, Some(NodeListId::testing_survivor(8, 55, 0)));
 
@@ -506,7 +512,10 @@ fn parameter_typed_api_round_trips_values() {
 
     env.set_int_param(IntParam::new(127), i32::MIN);
     env.set_dimen_param(DimenParam::new(127), Scaled::MIN);
-    env.set_glue_param(GlueParam::new(127), GlueId::new(77));
+    env.set_glue_param(
+        GlueParam::new(127),
+        crate::glue::GlueSpecRef::testing_new(GlueId::new(77)),
+    );
     env.set_tok_param_option(TokParam::new(127), Some(token_root));
 
     assert_eq!(env.int_param(IntParam::new(127)), i32::MIN);
@@ -524,7 +533,10 @@ fn parameter_journal_records_use_parameter_bank_tags() {
 
     env.set_int_param(IntParam::new(1), -9);
     env.set_dimen_param(DimenParam::new(2), Scaled::from_raw(-10));
-    env.set_glue_param(GlueParam::new(3), GlueId::new(90));
+    env.set_glue_param(
+        GlueParam::new(3),
+        crate::glue::GlueSpecRef::testing_new(GlueId::new(90)),
+    );
     env.set_tok_param_option(TokParam::new(4), Some(token_root));
 
     assert_eq!(
@@ -609,7 +621,7 @@ fn sparse_journal_records_use_absolute_register_indices() {
 
     env.set_count(256, -1);
     env.set_dimen(32_767, Scaled::from_raw(-2));
-    env.set_muskip(300, GlueId::new(99));
+    env.set_muskip(300, crate::glue::GlueSpecRef::testing_new(GlueId::new(99)));
 
     assert_eq!(
         env.journal_entries_since(start),
@@ -687,8 +699,8 @@ fn sparse_register_classes_are_independent() {
 
     env.set_count(300, 123);
     env.set_dimen(300, Scaled::from_raw(456));
-    env.set_skip(300, GlueId::new(7));
-    env.set_muskip(300, GlueId::new(8));
+    env.set_skip(300, crate::glue::GlueSpecRef::testing_new(GlueId::new(7)));
+    env.set_muskip(300, crate::glue::GlueSpecRef::testing_new(GlueId::new(8)));
 
     assert_eq!(env.count(300), 123);
     assert_eq!(env.dimen(300), Scaled::from_raw(456));

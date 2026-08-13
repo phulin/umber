@@ -38,7 +38,7 @@ Use this crate for layout algorithms whose correctness can be tested as pure fun
 
 - Do not mutate `Universe` from this crate.
 - Do not handle primitive dispatch, grouping, mode transitions, file effects, or artifact commits here.
-- Keep font and glue access through narrow immutable traits so algorithms remain easy to test and reuse.
+- Keep font and glue access through narrow immutable traits; node-producing algorithms clone typed glue owners while read-only calculations borrow exact values.
 - Preserve TeX.web arithmetic and badness rules exactly; route shared fixed-point operations through `tex-arith`/`tex-state::scaled` as appropriate.
 
 ## Validation

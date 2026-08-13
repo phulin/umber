@@ -402,7 +402,11 @@ impl NodeRef<'_> {
                 content(visitor, NodeHandleRole::Font, NodeHandle::Font(*font))
             }
             Self::Glue { spec, leader, .. } => {
-                content(visitor, NodeHandleRole::GlueSpec, NodeHandle::Glue(*spec));
+                content(
+                    visitor,
+                    NodeHandleRole::GlueSpec,
+                    NodeHandle::Glue(spec.id()),
+                );
                 if let Some(LeaderPayload::HList(node) | LeaderPayload::VList(node)) = leader {
                     child(visitor, NodeChildRole::Leader, node.children, false);
                     if let Some(id) = node.diagnostic_children {
@@ -437,7 +441,7 @@ impl NodeRef<'_> {
                 content(
                     visitor,
                     NodeHandleRole::SplitTopSkip,
-                    NodeHandle::Glue(*split_top_skip),
+                    NodeHandle::Glue(split_top_skip.id()),
                 );
                 child(visitor, NodeChildRole::Insertion, *id, false);
             }
@@ -680,9 +684,11 @@ fn visit_whatsit(value: &Whatsit, visitor: &mut impl NodeSchemaVisitor) {
             NodeHandleRole::Tokens,
             NodeHandle::TokenList(tokens.id()),
         ),
-        Whatsit::PdfSnapY { glue } => {
-            content(visitor, NodeHandleRole::SnapGlue, NodeHandle::Glue(*glue))
-        }
+        Whatsit::PdfSnapY { glue } => content(
+            visitor,
+            NodeHandleRole::SnapGlue,
+            NodeHandle::Glue(glue.id()),
+        ),
         Whatsit::PdfDestination(node) => visit_identifier(&node.identifier, visitor),
         Whatsit::PdfThread(node) => {
             visit_identifier(&node.identifier, visitor);
@@ -824,7 +830,7 @@ mod tests {
                 ch: b'c',
             },
             Node::Glue {
-                spec: GlueId::testing_new(4),
+                spec: crate::glue::GlueSpecRef::testing_new(GlueId::testing_new(4)),
                 kind: GlueKind::Normal,
                 leader: None,
             },
@@ -851,7 +857,7 @@ mod tests {
             Node::Ins {
                 class: 3,
                 size: Scaled::from_raw(15),
-                split_top_skip: GlueId::testing_new(6),
+                split_top_skip: crate::glue::GlueSpecRef::testing_new(GlueId::testing_new(6)),
                 split_max_depth: Scaled::from_raw(16),
                 floating_penalty: -17,
                 content: empty,

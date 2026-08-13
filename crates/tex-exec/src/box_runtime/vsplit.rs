@@ -85,7 +85,7 @@ fn normalize_split_infinite_shrink(
         let Some(Node::Glue { spec, kind, leader }) = nodes.get(index) else {
             continue;
         };
-        let mut finite = stores.glue(*spec);
+        let mut finite = spec.spec();
         if finite.shrink_order == Order::Normal || finite.shrink.raw() == 0 {
             continue;
         }

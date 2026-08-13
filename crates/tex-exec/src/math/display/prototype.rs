@@ -22,7 +22,7 @@ pub(crate) fn display_line_prototype(stores: &mut Universe, last_line: BoxNode) 
             }
         } else {
             Node::Glue {
-                spec,
+                spec: stores.glue_ref(spec),
                 kind,
                 leader: None,
             }
@@ -103,12 +103,12 @@ pub(super) fn package_directed_display_line(
                 leader: None,
             } => {
                 children.push(Node::Glue {
-                    spec,
+                    spec: spec.clone(),
                     kind,
                     leader: None,
                 });
                 children.push(Node::Direction(tex_state::node::Direction::BeginM));
-                children.push(cancel_display_skip(stores, spec, kind, displacement));
+                children.push(cancel_display_skip(stores, &spec, kind, displacement));
             }
             Node::Kern { kind, .. } => {
                 children.push(Node::Direction(tex_state::node::Direction::BeginM));
@@ -126,7 +126,7 @@ pub(super) fn package_directed_display_line(
                 kind,
                 leader: None,
             } => {
-                children.push(cancel_display_skip(stores, spec, kind, end_displacement));
+                children.push(cancel_display_skip(stores, &spec, kind, end_displacement));
                 children.push(Node::Direction(tex_state::node::Direction::EndM));
                 children.push(Node::Glue {
                     spec,
@@ -167,11 +167,11 @@ pub(super) fn package_directed_display_line(
 
 fn cancel_display_skip(
     stores: &mut Universe,
-    original: tex_state::ids::GlueId,
+    original: &tex_state::glue::GlueSpecRef,
     kind: GlueKind,
     displacement: Scaled,
 ) -> Node {
-    let original = stores.glue(original);
+    let original = original.spec();
     let spec = stores.intern_glue(GlueSpec {
         width: scaled_sub(displacement, original.width),
         stretch: original

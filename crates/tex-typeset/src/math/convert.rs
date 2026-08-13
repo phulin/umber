@@ -335,12 +335,9 @@ fn first_pass<S: MathTypesetState>(
                     // and `subtype(q):=normal` records that the result is now
                     // ordinary glue. Named math spacing and leader subtypes do
                     // not enter this branch.
-                    (
-                        spacing::math_glue(ctx.state.glue(*spec), ctx.mu),
-                        GlueKind::Normal,
-                    )
+                    (spacing::math_glue(spec.spec(), ctx.mu), GlueKind::Normal)
                 } else {
-                    (ctx.state.glue(*spec), *kind)
+                    (spec.spec(), *kind)
                 };
                 out.push(WorkItem::Node(MathNode::Glue {
                     spec,
@@ -1161,7 +1158,7 @@ pub(crate) fn source_node(ctx: &mut Context<'_, impl MathTypesetState>, node: No
             MathNode::Native(Box::new(node))
         }
         Node::Glue { spec, kind, leader } => MathNode::Glue {
-            spec: ctx.state.glue(spec),
+            spec: spec.spec(),
             kind,
             leader,
         },

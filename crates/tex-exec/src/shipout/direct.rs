@@ -641,7 +641,7 @@ fn emit_index(
             output.margin_kern(amount, lower_margin_kern_side(side), projection.font_id, ch)?;
         }
         NodeRef::Glue { spec, kind, leader } => {
-            let spec = lower_glue(stores.glue(spec));
+            let spec = lower_glue(spec.spec());
             let kind = lower_glue_kind(kind);
             let leader = leader.cloned();
             emit_glue(stores, overlay, output, emission, spec, kind, leader, depth)?;

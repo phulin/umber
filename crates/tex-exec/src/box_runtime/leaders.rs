@@ -1,7 +1,7 @@
 //! Source-free leader payload and contribution runtime.
 
 use tex_state::Universe;
-use tex_state::ids::GlueId;
+use tex_state::glue::GlueSpecRef;
 use tex_state::meaning::UnexpandablePrimitive;
 use tex_state::node::{GlueKind, LeaderPayload, Node};
 
@@ -56,7 +56,7 @@ pub(crate) fn append_leader_contribution(
     stores: &mut Universe,
     kind: GlueKind,
     payload: LeaderPayload,
-    spec: GlueId,
+    spec: GlueSpecRef,
     fuel: &mut tex_command::CommandFuel,
     error_context: &str,
 ) -> Result<(), ExecError> {

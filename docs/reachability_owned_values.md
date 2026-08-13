@@ -300,7 +300,7 @@ sidecars disappear with their final definition reference.
 
 ### Glue-spec owner audit
 
-The bounded pre-migration audit for `umber2-3v8z.3.3` classifies every live
+The bounded pre-code audit for `umber2-3v8z.3.3` classifies every live
 `GlueId` edge below. A compact id may remain in packed Env words, node words,
 observations, and handle-free DTOs, but it is not ownership. Every runtime
 aggregate that can outlive the borrow from which it obtained an id owns the
@@ -325,6 +325,45 @@ node-survivor transfer, memo materialization, resource retry, candidate
 rejection, selected acceptance, and generation fork. It deliberately adds no
 successful-history owner, compatibility root, compactor, graph scan, or
 checkpoint-time discovery pass.
+
+### Implemented glue-spec closure
+
+`umber2-3v8z.3.3` installs the audited edges above. `GlueStore` now retains
+only the explicit zero and loaded-format roots, weak generation-safe dynamic
+slots, a bounded weak candidate index, and private-domain allocation
+metadata. Interning hashes all five glue fields and then compares exact
+content, so width, stretch, stretch order, shrink, and shrink order all
+participate in identity even when candidate keys collide. `GlueSpecRef`
+carries the immutable value and timeline coordinate; `GlueHandle` lets an API
+borrow that coordinate without consuming and prematurely releasing a sole
+owner.
+
+Env current cells and glue-valued undo records keep aligned strong sidecars.
+Compact ordinary node words keep a one-for-one optional root column, while
+leader, insertion, PDF snap, page, paragraph, alignment, line-breaking, and
+operation-local structures carry typed roots directly. Assignment, group
+exit, aggregate rollback, generation fork, node freeze, survivor transfer,
+page reset, and mode restoration therefore clone, move, or drop owners at the
+existing state transition; none discovers ownership by scanning the store.
+
+Format capture extends the existing detached reachable-closure remap to glue
+references in Env and node DTOs. A loaded format publishes all validated glue
+rows as an immutable base, while subsequent additions return to weak dynamic
+slots. Memo DTOs remain handle-free and import returns a destination-local
+owner before publishing a containing node or result. Private glue allocations
+join the aggregate token/macro acceptance order with typed weak leases;
+operation rollback truncates their exact metadata suffix, rejection retains
+nothing, and acceptance transfers only allocations selected by live typed
+destinations.
+
+Focused controls cover exact collision discrimination including stretch and
+shrink orders, the permanent zero root, final-owner release and generation
+reuse, source and loaded-format behavior, future weak append, Env
+current/undo/group restoration, page and checkpoint rollback, memo import,
+private retry/rejection/selected acceptance, 10,000 bounded-live
+redefinitions, and exact all-roots-live object and byte growth. The migration
+adds no successful-history owner, compatibility root, compaction pass, or
+runtime graph scan.
 
 ## Object and slot representation
 

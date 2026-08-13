@@ -231,12 +231,12 @@ fn dump_node(
         Node::Glue { spec, kind, leader } => {
             if let Some(leader) = leader {
                 kind.append_leader_dump_prefix(stores, out);
-                let _ = writeln!(out, "{}", format_glue(stores.glue(*spec), kind.glue_unit()));
+                let _ = writeln!(out, "{}", format_glue(spec.spec(), kind.glue_unit()));
                 dump_leader_payload(stores, leader, config, depth + 1, context, out);
             } else {
                 kind.append_glue_dump_prefix(stores, out);
                 if kind.prints_glue_spec() {
-                    out.push_str(&format_glue(stores.glue(*spec), kind.glue_unit()));
+                    out.push_str(&format_glue(spec.spec(), kind.glue_unit()));
                 }
                 out.push('\n');
             }
@@ -352,7 +352,7 @@ fn dump_node(
                 out,
                 "\\insert{class}, natural size {}; split({},{}); float cost {floating_penalty}",
                 format_scaled_without_unit(*size),
-                format_glue(stores.glue(*split_top_skip), ""),
+                format_glue(split_top_skip.spec(), ""),
                 format_scaled_without_unit(*split_max_depth),
             );
             dump_list(stores, *content, config, depth + 1, ListContext::VList, out);

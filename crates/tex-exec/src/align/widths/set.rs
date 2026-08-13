@@ -150,7 +150,9 @@ fn set_row_children(
                 out.push(set_cell(config, row, &cell, column, span, stores)?);
                 for offset in 1..span {
                     let spanned_column = column + offset;
-                    out.push(tabskip_node(config.resolved.tabskips[spanned_column]));
+                    out.push(tabskip_node(
+                        config.resolved.tabskips[spanned_column].clone(),
+                    ));
                     out.push(empty_column_box(
                         config.kind,
                         config.resolved.columns[spanned_column],
@@ -211,12 +213,12 @@ fn spanned_target(
     span: usize,
     resolved: &ResolvedWidths,
     prototype: &Prototype,
-    stores: &Universe,
+    _stores: &Universe,
 ) -> Result<Scaled, ExecError> {
     let mut target = resolved.columns[column];
     for offset in 1..span {
         let spanned_column = column + offset;
-        let glue = stores.glue(resolved.tabskips[spanned_column]);
+        let glue = resolved.tabskips[spanned_column].spec();
         target = add_scaled(target, glue.width)?;
         target = add_scaled(target, glue_adjustment(glue, prototype)?)?;
         target = add_scaled(target, resolved.columns[spanned_column])?;

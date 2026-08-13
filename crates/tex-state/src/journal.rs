@@ -7,6 +7,7 @@
 use crate::cell::{BankTag, CellId};
 use crate::env::box_bank::BoxSlot;
 use crate::env::group::GroupKind;
+use crate::glue::GlueSpecRef;
 use crate::ids::SnapshotId;
 use crate::macro_store::MacroDefinitionRef;
 use crate::meaning::Meaning;
@@ -111,6 +112,30 @@ pub(crate) struct MacroUndoRoots {
     new: Option<MacroDefinitionRef>,
 }
 
+/// Strong glue owners aligned with one glue-valued undo record.
+#[derive(Clone, Debug)]
+pub(crate) struct GlueUndoRoots {
+    old: Option<GlueSpecRef>,
+    new: Option<GlueSpecRef>,
+}
+
+impl GlueUndoRoots {
+    #[must_use]
+    pub(crate) fn new(old: Option<GlueSpecRef>, new: Option<GlueSpecRef>) -> Self {
+        Self { old, new }
+    }
+
+    #[must_use]
+    pub(crate) fn old(&self) -> Option<GlueSpecRef> {
+        self.old.clone()
+    }
+
+    #[must_use]
+    pub(crate) fn new_value(&self) -> Option<GlueSpecRef> {
+        self.new.clone()
+    }
+}
+
 impl MacroUndoRoots {
     #[must_use]
     pub(crate) fn new(old: Option<MacroDefinitionRef>, new: Option<MacroDefinitionRef>) -> Self {
@@ -208,6 +233,7 @@ pub(crate) struct Journal {
     entries: Vec<Entry>,
     token_undo_roots: Vec<Option<TokenUndoRoots>>,
     macro_undo_roots: Vec<Option<MacroUndoRoots>>,
+    glue_undo_roots: Vec<Option<GlueUndoRoots>>,
     box_undos: Vec<BoxUndoRec>,
     save_stack: SaveStackProjection,
 }
@@ -412,6 +438,11 @@ impl Journal {
                     .saturating_mul(std::mem::size_of::<Option<MacroUndoRoots>>()),
             )
             .saturating_add(
+                self.glue_undo_roots
+                    .capacity()
+                    .saturating_mul(std::mem::size_of::<Option<GlueUndoRoots>>()),
+            )
+            .saturating_add(
                 self.box_undos
                     .capacity()
                     .saturating_mul(std::mem::size_of::<BoxUndoRec>()),
@@ -442,6 +473,7 @@ impl Journal {
         self.entries.push(Entry::Undo(rec));
         self.token_undo_roots.push(None);
         self.macro_undo_roots.push(None);
+        self.glue_undo_roots.push(None);
         pos
     }
 
@@ -483,6 +515,24 @@ impl Journal {
         self.macro_undo_roots.get(index).and_then(Option::as_ref)
     }
 
+    pub(crate) fn attach_glue_undo_roots(&mut self, pos: JournalPos, roots: GlueUndoRoots) {
+        let index = checked_pos(pos, self.entries.len());
+        let Entry::Undo(rec) = self.entries[index] else {
+            panic!("glue roots require an undo entry");
+        };
+        assert!(matches!(
+            rec.cell().bank(),
+            BankTag::Skip | BankTag::Muskip | BankTag::GlueParam
+        ));
+        let previous = self.glue_undo_roots[index].replace(roots);
+        assert!(previous.is_none(), "glue undo roots already attached");
+    }
+
+    #[must_use]
+    pub(crate) fn glue_undo_roots(&self, index: usize) -> Option<&GlueUndoRoots> {
+        self.glue_undo_roots.get(index).and_then(Option::as_ref)
+    }
+
     pub(crate) fn push_box_undo(&mut self, rec: BoxUndoRec) -> (BoxUndoRec, JournalPos) {
         let pos = self.pos();
         self.save_stack.push_box_undo(rec);
@@ -494,6 +544,7 @@ impl Journal {
         self.entries.push(Entry::BoxUndo(id));
         self.token_undo_roots.push(None);
         self.macro_undo_roots.push(None);
+        self.glue_undo_roots.push(None);
         (rec, pos)
     }
 
@@ -524,6 +575,7 @@ impl Journal {
         self.entries.push(Entry::Marker(marker));
         self.token_undo_roots.push(None);
         self.macro_undo_roots.push(None);
+        self.glue_undo_roots.push(None);
     }
 
     /// Returns the live TeX82 save-stack words and latest physical push
@@ -575,6 +627,7 @@ impl Journal {
         self.entries.truncate(len);
         self.token_undo_roots.truncate(len);
         self.macro_undo_roots.truncate(len);
+        self.glue_undo_roots.truncate(len);
     }
 
     #[cfg(test)]

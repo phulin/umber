@@ -179,9 +179,9 @@ fn materialize_channel<S: TypesetState>(
         .expect("materialized line capacity fits usize");
     line.clear();
     line.reserve(required);
-    if state.glue(params.left_skip) != GlueSpec::ZERO {
+    if params.left_skip.spec() != GlueSpec::ZERO {
         line.push(Node::Glue {
-            spec: params.left_skip,
+            spec: params.left_skip.clone(),
             kind: GlueKind::LeftSkip,
             leader: None,
         });
@@ -214,7 +214,7 @@ fn materialize_channel<S: TypesetState>(
             .map(|direction| Node::Direction(matching_end(direction))),
     );
     line.push(Node::Glue {
-        spec: params.right_skip,
+        spec: params.right_skip.clone(),
         kind: GlueKind::RightSkip,
         leader: None,
     });

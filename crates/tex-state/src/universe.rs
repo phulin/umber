@@ -22,7 +22,7 @@ use crate::font::{
     CharMetrics, ExtensibleRecipe, FontMetrics, LigKernChar, LigKernCommand, LigKernIter,
     LoadedFont, MissingCharacter,
 };
-use crate::glue::{GlueSpec, Order};
+use crate::glue::{GlueSpec, GlueSpecRef, Order};
 use crate::hyphenation::{ExceptionSpec, PatternSpec};
 use crate::ids::{FontId, GlueId, MacroDefinitionId, NodeListId, OriginListId, TokenListId};
 use crate::input::{
@@ -3165,10 +3165,10 @@ impl Universe {
         if stats.operation_active {
             return Err(PrivateRevisionAcceptanceError::ActiveOperation);
         }
-        if stats.allocations != self.stores.token_patch_allocation_count() {
+        if stats.allocations != self.stores.patch_allocation_count() {
             return Err(PrivateRevisionAcceptanceError::UnrootedAllocations);
         }
-        let roots = self.stores.selected_token_patch_roots(domain);
+        let roots = self.stores.selected_patch_roots(domain);
         let domain = self
             .private_revision_domain
             .take()
@@ -3177,7 +3177,7 @@ impl Universe {
             .accept(roots)
             .expect("typed token roots were validated against the private domain");
         debug_assert!(accepted.len() <= stats.allocations);
-        self.stores.clear_token_patch_allocations();
+        self.stores.clear_patch_allocations();
         drop(accepted);
         Ok(())
     }
@@ -6047,13 +6047,19 @@ impl Universe {
         self.stores.source_origin_at_position(position)
     }
 
-    pub fn intern_glue(&mut self, spec: GlueSpec) -> GlueId {
-        self.stores.intern_glue(spec)
+    pub fn intern_glue(&mut self, spec: GlueSpec) -> GlueSpecRef {
+        self.stores
+            .intern_glue_in_domain(spec, self.private_revision_domain.as_mut())
     }
 
     #[must_use]
-    pub fn glue(&self, id: GlueId) -> GlueSpec {
-        self.stores.glue(id)
+    pub fn glue_ref(&self, id: GlueId) -> GlueSpecRef {
+        self.stores.glue_ref(id)
+    }
+
+    #[must_use]
+    pub fn glue(&self, id: impl crate::glue::GlueHandle) -> GlueSpec {
+        self.stores.glue(id.glue_id())
     }
 
     pub fn intern_font(&mut self, font: LoadedFont) -> FontId {
@@ -7230,7 +7236,7 @@ impl Universe {
         self.consume_env_mutation(receipt);
     }
 
-    pub fn set_skip(&mut self, index: u16, value: GlueId) {
+    pub fn set_skip(&mut self, index: u16, value: impl crate::glue::GlueHandle) {
         let receipt = self.stores.set_skip(index, value);
         self.consume_env_mutation(receipt);
     }
@@ -7241,12 +7247,12 @@ impl Universe {
         self.stores.skip(index)
     }
 
-    pub fn set_skip_global(&mut self, index: u16, value: GlueId) {
+    pub fn set_skip_global(&mut self, index: u16, value: impl crate::glue::GlueHandle) {
         let receipt = self.stores.set_skip_global(index, value);
         self.consume_env_mutation(receipt);
     }
 
-    pub fn set_muskip(&mut self, index: u16, value: GlueId) {
+    pub fn set_muskip(&mut self, index: u16, value: impl crate::glue::GlueHandle) {
         let receipt = self.stores.set_muskip(index, value);
         self.consume_env_mutation(receipt);
     }
@@ -7257,7 +7263,7 @@ impl Universe {
         self.stores.muskip(index)
     }
 
-    pub fn set_muskip_global(&mut self, index: u16, value: GlueId) {
+    pub fn set_muskip_global(&mut self, index: u16, value: impl crate::glue::GlueHandle) {
         let receipt = self.stores.set_muskip_global(index, value);
         self.consume_env_mutation(receipt);
     }
@@ -7982,7 +7988,7 @@ impl Universe {
     #[must_use]
     pub fn page_last_skip(&self) -> GlueSpec {
         self.observe_semantic_dependency(DependencyKey::Page(DependencyPageField::CurrentPage));
-        self.page.last_skip(|id| self.glue(id))
+        self.page.last_skip()
     }
 
     #[must_use]
@@ -8225,7 +8231,7 @@ impl Universe {
         self.stores.dimen_param(param)
     }
 
-    pub fn set_glue_param(&mut self, param: GlueParam, value: GlueId) {
+    pub fn set_glue_param(&mut self, param: GlueParam, value: impl crate::glue::GlueHandle) {
         let receipt = self.stores.set_glue_param(param, value);
         self.consume_env_mutation(receipt);
     }
@@ -8236,7 +8242,7 @@ impl Universe {
         self.stores.glue_param(param)
     }
 
-    pub fn set_glue_param_global(&mut self, param: GlueParam, value: GlueId) {
+    pub fn set_glue_param_global(&mut self, param: GlueParam, value: impl crate::glue::GlueHandle) {
         let receipt = self.stores.set_glue_param_global(param, value);
         self.consume_env_mutation(receipt);
     }
@@ -8765,7 +8771,7 @@ fn margin_kern_enquiry_skipable(
             amount.raw() == 0 || matches!(kind, KernKind::Font | KernKind::Auto)
         }
         NodeRef::Glue { spec, kind, .. } => {
-            universe.glue(*spec) == GlueSpec::ZERO
+            spec.spec() == GlueSpec::ZERO
                 || matches!(
                     (side, kind),
                     (MarginKernSide::Left, GlueKind::LeftSkip)

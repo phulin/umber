@@ -1,6 +1,7 @@
 use tex_arith::WideScaled;
 use tex_state::glue::GlueSpec;
-use tex_state::ids::{GlueId, NodeListId};
+use tex_state::glue::GlueSpecRef;
+use tex_state::ids::NodeListId;
 use tex_state::node::{KernKind, Node};
 use tex_state::node_sequence::NodeSequence;
 use tex_state::scaled::Scaled;
@@ -52,8 +53,8 @@ pub struct LineBreakParams {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PostLineBreakParams {
     pub empty_list: NodeListId,
-    pub left_skip: GlueId,
-    pub right_skip: GlueId,
+    pub left_skip: GlueSpecRef,
+    pub right_skip: GlueSpecRef,
     pub interline_penalty: i32,
     pub club_penalty: i32,
     pub widow_penalties: WidowPenalties,
@@ -251,7 +252,7 @@ impl ParagraphTape {
         self.sequence.semantic()
     }
 
-    pub fn replace_last_par_fill(&mut self, spec: GlueId) {
+    pub fn replace_last_par_fill(&mut self, spec: GlueSpecRef) {
         let (mut semantic, physical, boundaries) = std::mem::take(&mut self.sequence).into_parts();
         if let Some(Node::Glue { spec: par_fill, .. }) = semantic.iter_mut().rev().find(|node| {
             matches!(

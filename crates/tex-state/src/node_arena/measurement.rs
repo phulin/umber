@@ -401,6 +401,7 @@ impl NodeStorage {
             }};
         }
         add!(self.words);
+        add!(self.glue_roots);
         add!(self.origins);
         add!(self.ligatures);
         add!(self.boxes.rows);
@@ -471,6 +472,7 @@ impl NodeStorage {
             };
         }
         column!("words", &self.words);
+        column!("glue_roots", &self.glue_roots);
         column!("origins", &self.origins);
         column!("ligatures", &self.ligatures);
         column!("boxes.rows", &self.boxes.rows);

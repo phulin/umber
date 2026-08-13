@@ -970,7 +970,7 @@ impl Stores {
             }
             NodeRef::Glue { spec, kind, leader } => {
                 hasher.tag(3);
-                self.hash_glue(spec, hasher);
+                self.hash_glue(spec.id(), hasher);
                 hash_glue_kind(kind, hasher);
                 self.hash_leader_payload_ref(leader, hasher, stack);
             }
@@ -1039,7 +1039,7 @@ impl Stores {
                 hasher.tag(11);
                 hasher.u16(class);
                 hasher.i32(size.raw());
-                self.hash_glue_semantic(split_top_skip, hasher);
+                self.hash_glue_semantic(split_top_skip.id(), hasher);
                 hasher.i32(split_max_depth.raw());
                 hasher.i32(floating_penalty);
                 stack.push(NodeFrame::List(content));
@@ -1242,7 +1242,7 @@ impl Stores {
             Whatsit::PdfSnapRefPoint => hasher.tag(25),
             Whatsit::PdfSnapY { glue } => {
                 hasher.tag(26);
-                self.hash_glue_semantic(*glue, hasher);
+                self.hash_glue_semantic(glue.id(), hasher);
             }
             Whatsit::PdfSnapYComp { ratio } => {
                 hasher.tag(27);

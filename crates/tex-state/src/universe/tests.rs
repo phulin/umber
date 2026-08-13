@@ -97,6 +97,90 @@ fn private_token_roots_retry_and_accept_through_the_aggregate_boundary() {
 }
 
 #[test]
+fn private_glue_roots_retry_and_selected_acceptance_follow_env_ownership() {
+    let mut universe = Universe::new();
+    universe.begin_private_revision();
+
+    let retained_operation = universe.snapshot_for_local_retry();
+    let retained = universe.intern_glue(glue(101));
+    let retained_id = retained.id();
+    universe.set_skip(7, retained);
+    universe.commit_local_retry_snapshot(retained_operation);
+    let retained_stats = universe
+        .testing_private_revision_domain_stats()
+        .expect("private glue domain is live");
+    assert_eq!(retained_stats.0, 1);
+
+    let failed_operation = universe.snapshot_for_local_retry();
+    let failed = universe.intern_glue(glue(102));
+    let failed_id = failed.id();
+    universe.set_skip(7, failed);
+    universe.rollback_local_retry_snapshot(failed_operation);
+    assert_eq!(universe.skip(7), retained_id);
+    assert_eq!(universe.glue(retained_id), glue(101));
+    assert!(catch_unwind(AssertUnwindSafe(|| universe.glue(failed_id))).is_err());
+    assert_eq!(
+        universe.testing_private_revision_domain_stats(),
+        Some(retained_stats)
+    );
+
+    let unselected_operation = universe.snapshot_for_local_retry();
+    let unselected = universe.intern_glue(glue(103));
+    let unselected_id = unselected.id();
+    drop(unselected);
+    universe.commit_local_retry_snapshot(unselected_operation);
+    assert_eq!(
+        universe
+            .testing_private_revision_domain_stats()
+            .expect("private glue domain remains live")
+            .0,
+        2
+    );
+
+    universe
+        .accept_private_revision()
+        .expect("only the Env-owned glue allocation transfers");
+    assert!(universe.testing_private_revision_domain_stats().is_none());
+    assert_eq!(universe.glue(universe.skip(7)), glue(101));
+    assert!(catch_unwind(AssertUnwindSafe(|| universe.glue(unselected_id))).is_err());
+}
+
+#[test]
+fn glue_current_undo_page_and_checkpoint_edges_are_structural_roots() {
+    let mut universe = Universe::new();
+    assert_eq!(universe.stores.glue.testing_live_totals().0, 1);
+
+    let outer = universe.intern_glue(glue(201));
+    universe.set_skip(0, &outer);
+    drop(outer);
+    assert_eq!(universe.stores.glue.testing_live_totals().0, 2);
+
+    universe.enter_group();
+    let local = universe.intern_glue(glue(202));
+    let local_id = local.id();
+    universe.set_skip(0, local);
+    assert_eq!(universe.stores.glue.testing_live_totals().0, 3);
+    let _ = universe.leave_group();
+    assert_eq!(universe.stores.glue.testing_live_totals().0, 2);
+    assert!(catch_unwind(AssertUnwindSafe(|| universe.glue(local_id))).is_err());
+
+    let checkpoint = universe.snapshot();
+    let page = universe.intern_glue(glue(203));
+    let page_id = page.id();
+    universe.append_page_contribution(Node::Glue {
+        spec: page,
+        kind: GlueKind::Normal,
+        leader: None,
+    });
+    assert_eq!(universe.stores.glue.testing_live_totals().0, 3);
+
+    universe.rollback(&checkpoint);
+    assert_eq!(universe.stores.glue.testing_live_totals().0, 2);
+    assert!(catch_unwind(AssertUnwindSafe(|| universe.glue(page_id))).is_err());
+    assert_eq!(universe.glue(universe.skip(0)), glue(201));
+}
+
+#[test]
 fn private_macro_roots_retry_reject_and_accept_through_the_aggregate_boundary() {
     let mut universe = Universe::new();
     let name = universe.intern("private-macro");
@@ -900,7 +984,7 @@ fn restore_tracing_preserves_save_stack_order_for_extended_register_banks() {
     universe.set_count(2000, 5);
     universe.set_dimen(21, Scaled::from_raw(5 * Scaled::UNITY));
     universe.set_dimen(2100, Scaled::from_raw(5 * Scaled::UNITY));
-    universe.set_skip(22, glue);
+    universe.set_skip(22, &glue);
     universe.set_muskip(2200, glue);
     universe.set_toks(32767, toks);
     let _ = universe.leave_group();
@@ -1926,7 +2010,7 @@ fn pdftex_margin_kern_query_owns_the_complete_skipable_edge_rule() {
         Node::Ins {
             class: 0,
             size: Scaled::from_raw(0),
-            split_top_skip: zero_glue,
+            split_top_skip: zero_glue.clone(),
             split_max_depth: Scaled::from_raw(0),
             floating_penalty: 0,
             content: empty,
@@ -1969,7 +2053,7 @@ fn pdftex_margin_kern_query_owns_the_complete_skipable_edge_rule() {
         },
         empty_hlist,
         Node::Glue {
-            spec: nonzero_glue,
+            spec: nonzero_glue.clone(),
             kind: GlueKind::LeftSkip,
             leader: None,
         },
@@ -2184,6 +2268,7 @@ fn frozen_foundational_sections_restore_ids_and_accept_job_local_additions() {
         shrink: Scaled::from_raw(33),
         shrink_order: Order::Normal,
     });
+    universe.set_skip(0, &base_glue);
 
     let image = universe.dump_format().expect("frozen core format");
     let container = crate::format_container::decode(&image).expect("decode container");
@@ -5281,7 +5366,7 @@ fn exact_reachable_store_root_survives_format_reconstruction() {
 }
 
 #[test]
-fn format_dump_preserves_names_but_compacts_macro_and_token_closure() {
+fn format_dump_preserves_names_but_compacts_macro_token_and_glue_closure() {
     let mut universe = Universe::new();
     let dead_name = universe.intern("dead-format-history");
     let dead_tokens = universe.intern_token_list(&[Token::Cs(dead_name.symbol())]);
@@ -5290,6 +5375,8 @@ fn format_dump_preserves_names_but_compacts_macro_and_token_closure() {
         crate::ids::TokenListId::EMPTY,
         dead_tokens,
     ));
+    let dead_glue = universe.intern_glue(glue(901));
+    drop(dead_glue);
 
     let live_name = universe.intern("live-format-root");
     let live_tokens = universe.intern_token_list(&[Token::Cs(live_name.symbol())]);
@@ -5305,6 +5392,8 @@ fn format_dump_preserves_names_but_compacts_macro_and_token_closure() {
             definition: live_macro.id(),
         },
     );
+    let live_glue = universe.intern_glue(glue(902));
+    universe.set_skip(0, live_glue);
     let live_identity = identity_of(&mut universe);
 
     let image = universe.dump_format().expect("compact format dump");
@@ -5322,6 +5411,7 @@ fn format_dump_preserves_names_but_compacts_macro_and_token_closure() {
     assert_eq!(count(crate::stores::NAMES_SECTION), 2);
     assert_eq!(count(crate::stores::TOKEN_LISTS_SECTION), 2);
     assert_eq!(count(crate::stores::MACROS_SECTION), 1);
+    assert_eq!(count(crate::stores::GLUE_SECTION), 2);
 
     let mut restored =
         Universe::from_format(World::memory(), &image).expect("restore compact format");
@@ -5337,6 +5427,7 @@ fn format_dump_preserves_names_but_compacts_macro_and_token_closure() {
         .symbol("dead-format-history")
         .expect("occupied undefined name remains interned");
     assert_eq!(restored.meaning(restored_dead), Meaning::Undefined);
+    assert_eq!(restored.glue(restored.skip(0)), glue(902));
 }
 
 #[test]
@@ -5495,7 +5586,7 @@ fn snapshot_state_hash_ignores_content_intern_order() {
         target_replacement,
     ));
     first.set_toks(0, target_replacement);
-    first.set_skip(0, target_glue);
+    first.set_skip(0, &target_glue);
     first.set_meaning(
         macro_target,
         Meaning::Macro {
@@ -5534,7 +5625,7 @@ fn snapshot_state_hash_ignores_content_intern_order() {
     let second_zed = second.intern("z");
     second.set_meaning(second_zed, Meaning::Relax);
     second.set_toks(0, target_replacement);
-    second.set_skip(0, target_glue);
+    second.set_skip(0, &target_glue);
     second.set_meaning(
         macro_target,
         Meaning::Macro {

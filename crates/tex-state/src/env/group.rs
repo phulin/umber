@@ -1,7 +1,8 @@
 use super::{Env, cell_key, checked_aftergroup_start, u32_len};
 use crate::cell::{BankTag, CellId};
+use crate::glue::GlueSpecRef;
 use crate::journal::{
-    BoxUndoRec, Entry, JournalPos, MacroUndoRoots, Marker, TokenUndoRoots, UndoRec,
+    BoxUndoRec, Entry, GlueUndoRoots, JournalPos, MacroUndoRoots, Marker, TokenUndoRoots, UndoRec,
 };
 use crate::macro_store::MacroDefinitionRef;
 use crate::token::{Token, TracedTokenWord};
@@ -174,6 +175,7 @@ struct OwnedWord {
     word: u64,
     token_root: Option<TokenListRef>,
     macro_root: Option<MacroDefinitionRef>,
+    glue_root: Option<GlueSpecRef>,
 }
 
 impl<T> GlobalCompactionState<T> {
@@ -827,7 +829,17 @@ impl Env {
                         .journal
                         .macro_undo_roots(index)
                         .and_then(MacroUndoRoots::old);
-                    self.restore_raw_with_owners(rec.cell(), rec.old(), root, macro_root);
+                    let glue_root = self
+                        .journal
+                        .glue_undo_roots(index)
+                        .and_then(GlueUndoRoots::old);
+                    self.restore_raw_with_owners(
+                        rec.cell(),
+                        rec.old(),
+                        root,
+                        macro_root,
+                        glue_root,
+                    );
                     if traced_local_entries.contains(&index) {
                         restores.push(RestoreRecord::restoring(self, index, rec.cell(), rec.old()));
                     }
@@ -905,6 +917,10 @@ impl Env {
                             .journal
                             .macro_undo_roots(index)
                             .and_then(MacroUndoRoots::old),
+                        glue_root: self
+                            .journal
+                            .glue_undo_roots(index)
+                            .and_then(GlueUndoRoots::old),
                     })
                 });
             } else if let Entry::BoxUndo(id) = self.journal.entry(index) {
@@ -927,6 +943,7 @@ impl Env {
                         rec,
                         self.journal.token_undo_roots(index).cloned(),
                         self.journal.macro_undo_roots(index).cloned(),
+                        self.journal.glue_undo_roots(index).cloned(),
                     ));
                 }
                 Entry::Undo(rec) => {
@@ -943,7 +960,17 @@ impl Env {
                             .journal
                             .macro_undo_roots(index)
                             .and_then(MacroUndoRoots::old);
-                        self.restore_raw_with_owners(rec.cell(), rec.old(), root, macro_root);
+                        let glue_root = self
+                            .journal
+                            .glue_undo_roots(index)
+                            .and_then(GlueUndoRoots::old);
+                        self.restore_raw_with_owners(
+                            rec.cell(),
+                            rec.old(),
+                            root,
+                            macro_root,
+                            glue_root,
+                        );
                         if traced_local_entries.contains(&index) {
                             restores.push(RestoreRecord::restoring(
                                 self,
@@ -992,15 +1019,17 @@ impl Env {
 
         self.journal.truncate_to(JournalPos::from_raw(marker_index));
         self.journal.truncate_box_undos(box_undo_len);
-        for (rec, roots, macro_roots) in globals.into_iter().rev() {
+        for (rec, roots, macro_roots, glue_roots) in globals.into_iter().rev() {
             meaning_changed |= rec.cell().bank() == BankTag::Meaning;
             let new_root = roots.as_ref().and_then(TokenUndoRoots::new_value);
             let new_macro_root = macro_roots.as_ref().and_then(MacroUndoRoots::new_value);
+            let new_glue_root = glue_roots.as_ref().and_then(GlueUndoRoots::new_value);
             self.restore_raw_with_owners(
                 rec.cell(),
                 rec.new_value(),
                 new_root.clone(),
                 new_macro_root.clone(),
+                new_glue_root.clone(),
             );
             let key = cell_key(rec.cell());
             let state = cell_states
@@ -1011,6 +1040,7 @@ impl Env {
                     word: rec.old(),
                     token_root: roots.as_ref().and_then(TokenUndoRoots::old),
                     macro_root: macro_roots.as_ref().and_then(MacroUndoRoots::old),
+                    glue_root: glue_roots.as_ref().and_then(GlueUndoRoots::old),
                 }
             } else {
                 state.refiled = true;
@@ -1027,6 +1057,12 @@ impl Env {
                     pos,
                     MacroUndoRoots::new(old.macro_root, new_macro_root),
                 );
+            } else if matches!(
+                rec.cell().bank(),
+                BankTag::Skip | BankTag::Muskip | BankTag::GlueParam
+            ) {
+                self.journal
+                    .attach_glue_undo_roots(pos, GlueUndoRoots::new(old.glue_root, new_glue_root));
             }
         }
         for rec in box_globals.into_iter().rev() {
@@ -1080,7 +1116,11 @@ impl Env {
                     .journal
                     .macro_undo_roots(index)
                     .and_then(MacroUndoRoots::old);
-                self.restore_raw_with_owners(rec.cell(), rec.old(), root, macro_root);
+                let glue_root = self
+                    .journal
+                    .glue_undo_roots(index)
+                    .and_then(GlueUndoRoots::old);
+                self.restore_raw_with_owners(rec.cell(), rec.old(), root, macro_root, glue_root);
             } else if let Entry::BoxUndo(id) = self.journal.entry(index) {
                 let rec = self.journal.box_undo(id);
                 self.boxes.restore(rec.index(), rec.old());

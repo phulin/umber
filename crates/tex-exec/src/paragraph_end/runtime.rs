@@ -14,9 +14,9 @@ impl ParagraphBreakResult {
 
 pub(crate) fn display_line_dimensions(nest: &ModeNest, stores: &Universe) -> LineDimensions {
     let params = ParagraphParams {
-        left_skip: stores.glue_param(GlueParam::LEFT_SKIP),
-        right_skip: stores.glue_param(GlueParam::RIGHT_SKIP),
-        par_fill_skip: stores.glue_param(GlueParam::PAR_FILL_SKIP),
+        left_skip: stores.glue_ref(stores.glue_param(GlueParam::LEFT_SKIP)),
+        right_skip: stores.glue_ref(stores.glue_param(GlueParam::RIGHT_SKIP)),
+        par_fill_skip: stores.glue_ref(stores.glue_param(GlueParam::PAR_FILL_SKIP)),
         par_shape: stores.paragraph_shape(),
         prev_graf: nest.enclosing_vertical_prev_graf(),
         hang_indent: stores.dimen_param(DimenParam::HANG_INDENT),
@@ -65,7 +65,7 @@ pub(crate) fn break_current_paragraph(
     }
     nest.current_list_mutation().push(Node::Penalty(10_000));
     nest.current_list_mutation().push(Node::Glue {
-        spec: params.par_fill_skip,
+        spec: params.par_fill_skip.clone(),
         kind: GlueKind::ParFillSkip,
         leader: None,
     });
@@ -269,8 +269,8 @@ fn normalize_paragraph_infinite_shrink(
     mut error_context: Option<String>,
 ) -> Result<(), ExecError> {
     let mut reported = false;
-    let mut normalize = |spec: &mut tex_state::ids::GlueId| -> Result<(), ExecError> {
-        let mut glue = stores.glue(*spec);
+    let mut normalize = |spec: &mut tex_state::glue::GlueSpecRef| -> Result<(), ExecError> {
+        let mut glue = spec.spec();
         if glue.shrink.raw() == 0 || glue.shrink_order == Order::Normal {
             return Ok(());
         }
@@ -922,9 +922,9 @@ fn snapshot_paragraph_params(nest: &ModeNest, stores: &mut Universe) -> Paragrap
     stores.observe_semantic_dependency(DependencyKey::Engine(DependencyEngineField::ParShape));
     stores.observe_semantic_dependency(DependencyKey::Engine(DependencyEngineField::PenaltyArrays));
     ParagraphParams {
-        left_skip: stores.glue_param(GlueParam::LEFT_SKIP),
-        right_skip: stores.glue_param(GlueParam::RIGHT_SKIP),
-        par_fill_skip: stores.glue_param(GlueParam::PAR_FILL_SKIP),
+        left_skip: stores.glue_ref(stores.glue_param(GlueParam::LEFT_SKIP)),
+        right_skip: stores.glue_ref(stores.glue_param(GlueParam::RIGHT_SKIP)),
+        par_fill_skip: stores.glue_ref(stores.glue_param(GlueParam::PAR_FILL_SKIP)),
         par_shape: stores.paragraph_shape(),
         prev_graf: nest.enclosing_vertical_prev_graf(),
         hang_indent: stores.dimen_param(DimenParam::HANG_INDENT),
@@ -969,9 +969,9 @@ fn line_break_params(stores: &Universe, params: &ParagraphParams) -> LineBreakPa
         pdf_protrude_chars: stores.int_param(IntParam::PDF_PROTRUDE_CHARS),
         emergency_stretch: params.emergency_stretch,
         looseness: params.looseness,
-        left_skip: stores.glue(params.left_skip),
-        right_skip: stores.glue(params.right_skip),
-        par_fill_skip: stores.glue(params.par_fill_skip),
+        left_skip: params.left_skip.spec(),
+        right_skip: params.right_skip.spec(),
+        par_fill_skip: params.par_fill_skip.spec(),
         shape: line_shape(params),
     }
 }
@@ -983,8 +983,8 @@ fn post_line_break_params(
 ) -> PostLineBreakParams {
     PostLineBreakParams {
         empty_list,
-        left_skip: params.left_skip,
-        right_skip: params.right_skip,
+        left_skip: params.left_skip.clone(),
+        right_skip: params.right_skip.clone(),
         interline_penalty: params.interline_penalty,
         club_penalty: params.club_penalty,
         widow_penalties: tex_typeset::linebreak::WidowPenalties {
@@ -1070,7 +1070,7 @@ pub(crate) fn start_paragraph(
                     nest,
                     stores,
                     Node::Glue {
-                        spec: parskip,
+                        spec: stores.glue_ref(parskip),
                         kind: GlueKind::ParSkip,
                         leader: None,
                     },

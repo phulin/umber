@@ -649,11 +649,12 @@ impl CommandContext<'_> {
         let value = self.universe.intern_glue(value);
         if global {
             self.universe
-                .set_glue_param_global(GlueParam::TAB_SKIP, value);
+                .set_glue_param_global(GlueParam::TAB_SKIP, value.id());
         } else {
-            self.universe.set_glue_param(GlueParam::TAB_SKIP, value);
+            self.universe
+                .set_glue_param(GlueParam::TAB_SKIP, value.id());
         }
-        value
+        value.id()
     }
 
     /// Reads an engine-owned internal integer through the aggregate boundary.

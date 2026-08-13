@@ -2,7 +2,7 @@ use super::tables::{BoxTable, InsertionTable, NoadTable, UnsetTable};
 use super::view::NodeList;
 use super::{checked_len, preflight_capacity};
 use crate::identity::IdentityMark;
-use crate::ids::{GlueId, NodeListId};
+use crate::ids::NodeListId;
 use crate::math::MathStyle;
 use crate::node::{DiscKind, GlueKind, KernKind, MarginKernSide, Node};
 use crate::scaled::Scaled;
@@ -175,13 +175,19 @@ pub(super) struct LigatureSidecar {
 #[derive(Clone, Debug, Default)]
 pub(crate) struct NodeStorage {
     pub(super) words: Vec<NodeWord>,
+    /// Strong glue owner aligned one-for-one with ordinary glue node words.
+    pub(super) glue_roots: Vec<Option<crate::glue::GlueSpecRef>>,
     /// Diagnostic-only provenance aligned one-for-one with `words`.
     pub(super) origins: Vec<OriginId>,
     pub(super) ligatures: Vec<LigatureSidecar>,
     pub(super) boxes: BoxTable,
     pub(super) unsets: UnsetTable,
     pub(super) rules: Vec<(Option<Scaled>, Option<Scaled>, Option<Scaled>)>,
-    pub(super) leaders: Vec<(GlueId, GlueKind, crate::node::LeaderPayload)>,
+    pub(super) leaders: Vec<(
+        crate::glue::GlueSpecRef,
+        GlueKind,
+        crate::node::LeaderPayload,
+    )>,
     pub(super) discs: Vec<(DiscKind, NodeListId, NodeListId, NodeListId, u8)>,
     pub(super) marks: Vec<(u16, TokenListRef)>,
     pub(super) insertions: InsertionTable,
@@ -244,6 +250,7 @@ impl NodeStorage {
         // Validate the entire tuple before mutating any stream.
         assert!(mark.words as usize <= self.words.len());
         assert!(mark.words as usize <= self.origins.len());
+        assert!(mark.words as usize <= self.glue_roots.len());
         assert!(mark.ligatures as usize <= self.ligatures.len());
         assert!(mark.boxes as usize <= self.boxes.len());
         assert!(mark.unsets as usize <= self.unsets.len());
@@ -262,6 +269,7 @@ impl NodeStorage {
         self.remove_nested_payloads_from(mark.ligatures as usize, mark.whatsits as usize);
         self.words.truncate(mark.words as usize);
         self.origins.truncate(mark.words as usize);
+        self.glue_roots.truncate(mark.words as usize);
         self.ligatures.truncate(mark.ligatures as usize);
         self.boxes.truncate(mark.boxes as usize);
         self.unsets.truncate(mark.unsets as usize);
@@ -304,12 +312,19 @@ impl NodeStorage {
         }
         self.words.reserve(nodes.len());
         self.origins.reserve(nodes.len());
+        self.glue_roots.reserve(nodes.len());
         if needs.any {
             self.reserve_sidecars(needs);
         }
         for node in nodes {
             let word = self.encode(node);
             self.words.push(word);
+            self.glue_roots.push(match node {
+                Node::Glue {
+                    spec, leader: None, ..
+                } => Some(spec.clone()),
+                _ => None,
+            });
             self.origins.push(match node {
                 Node::Char { origin, .. } => *origin,
                 Node::Lig { origins, .. } => origins.first().copied().unwrap_or(OriginId::UNKNOWN),
@@ -354,10 +369,17 @@ impl NodeStorage {
         }
         self.words.reserve(nodes.len());
         self.origins.reserve(nodes.len());
+        self.glue_roots.reserve(nodes.len());
         if needs.any {
             self.reserve_sidecars(needs);
         }
         for node in nodes.drain(..) {
+            let glue_root = match &node {
+                Node::Glue {
+                    spec, leader: None, ..
+                } => Some(spec.clone()),
+                _ => None,
+            };
             let origin = match &node {
                 Node::Char { origin, .. } => *origin,
                 Node::Lig { origins, .. } => origins.first().copied().unwrap_or(OriginId::UNKNOWN),
@@ -365,6 +387,7 @@ impl NodeStorage {
             };
             let word = self.encode_owned(node);
             self.words.push(word);
+            self.glue_roots.push(glue_root);
             self.origins.push(origin);
         }
         #[cfg(feature = "profiling")]
@@ -486,7 +509,10 @@ impl NodeStorage {
                 spec,
                 kind,
                 leader: None,
-            } => NodeWord::new(3, spec.raw() as u64 | ((glue_code(*kind) as u64) << 32)),
+            } => NodeWord::new(
+                3,
+                spec.id().raw() as u64 | ((glue_code(*kind) as u64) << 32),
+            ),
             Node::Penalty(value) => NodeWord::new(4, *value as u32 as u64),
             Node::MathOn(value) => NodeWord::new(5, value.raw() as u32 as u64),
             Node::MathOff(value) => NodeWord::new(6, value.raw() as u32 as u64),
@@ -505,7 +531,7 @@ impl NodeStorage {
                 spec,
                 kind,
                 leader: Some(value),
-            } => push_sidecar(13, &mut self.leaders, (*spec, *kind, *value)),
+            } => push_sidecar(13, &mut self.leaders, (spec.clone(), *kind, *value)),
             Node::Disc {
                 kind,
                 pre,
@@ -532,7 +558,7 @@ impl NodeStorage {
                 self.insertions.push((
                     *class,
                     *size,
-                    *split_top_skip,
+                    split_top_skip.clone(),
                     *split_max_depth,
                     *floating_penalty,
                     *content,
@@ -599,7 +625,7 @@ impl NodeStorage {
                 spec,
                 kind,
                 leader: None,
-            } => NodeWord::new(3, spec.raw() as u64 | ((glue_code(kind) as u64) << 32)),
+            } => NodeWord::new(3, spec.id().raw() as u64 | ((glue_code(kind) as u64) << 32)),
             Node::Penalty(value) => NodeWord::new(4, value as u32 as u64),
             Node::MathOn(value) => NodeWord::new(5, value.raw() as u32 as u64),
             Node::MathOff(value) => NodeWord::new(6, value.raw() as u32 as u64),

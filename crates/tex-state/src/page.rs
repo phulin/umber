@@ -6,8 +6,8 @@ mod state_hash;
 use sequence::PageNodeSequence;
 pub(crate) use state_hash::{PageHashCache, PageStateHashCursor};
 
-use crate::glue::GlueSpec;
-use crate::ids::{GlueId, TokenListId};
+use crate::glue::{GlueSpec, GlueSpecRef};
+use crate::ids::TokenListId;
 use crate::node::Node;
 use crate::scaled::Scaled;
 use crate::token_store::TokenListRef;
@@ -315,7 +315,7 @@ pub(crate) struct PageBuilderState {
     page_depth: Scaled,
     page_max_depth: Scaled,
     contents: PageContents,
-    last_glue: Option<GlueId>,
+    last_glue: Option<GlueSpecRef>,
     last_penalty: i32,
     last_kern: Scaled,
     last_node_type: i32,
@@ -409,9 +409,9 @@ impl PageBuilderState {
         nodes.extend(self.current_page.iter().cloned());
         nodes.extend(self.page_discards.iter().cloned());
         nodes.extend(self.split_discards.iter().cloned());
-        if let Some(spec) = self.last_glue {
+        if let Some(spec) = &self.last_glue {
             nodes.push(Node::Glue {
-                spec,
+                spec: spec.clone(),
                 kind: crate::node::GlueKind::Normal,
                 leader: None,
             });
@@ -499,7 +499,7 @@ impl PageBuilderState {
         let split_discards = nodes[take(&mut cursor, state.split_discards_len)].to_vec();
         let last_glue = if state.has_last_glue {
             match &nodes[cursor] {
-                Node::Glue { spec, .. } => Some(*spec),
+                Node::Glue { spec, .. } => Some(spec.clone()),
                 _ => return Err(crate::MemoValueError::Invalid("invalid last-glue sentinel")),
             }
         } else {
@@ -958,15 +958,17 @@ impl PageBuilderState {
         self.last_kern = Scaled::from_raw(0);
         self.last_node_type = node.etex_type();
         match node {
-            Node::Glue { spec, .. } => self.last_glue = Some(*spec),
+            Node::Glue { spec, .. } => self.last_glue = Some(spec.clone()),
             Node::Penalty(value) => self.last_penalty = *value,
             Node::Kern { amount, .. } => self.last_kern = *amount,
             _ => {}
         }
     }
 
-    pub(crate) fn last_skip(&self, glue: impl FnOnce(GlueId) -> GlueSpec) -> GlueSpec {
-        self.last_glue.map_or(GlueSpec::ZERO, glue)
+    pub(crate) fn last_skip(&self) -> GlueSpec {
+        self.last_glue
+            .as_ref()
+            .map_or(GlueSpec::ZERO, GlueSpecRef::spec)
     }
 
     pub(crate) const fn last_penalty(&self) -> i32 {

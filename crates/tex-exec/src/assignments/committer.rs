@@ -163,13 +163,14 @@ impl<'a> AssignmentCommitter<'a> {
             old
         } else {
             let new = self.stores.intern_glue(value);
+            let id = new.id();
             match (mu, global) {
-                (true, true) => self.stores.set_muskip_global(index, new),
-                (true, false) => self.stores.set_muskip(index, new),
-                (false, true) => self.stores.set_skip_global(index, new),
-                (false, false) => self.stores.set_skip(index, new),
+                (true, true) => self.stores.set_muskip_global(index, id),
+                (true, false) => self.stores.set_muskip(index, id),
+                (false, true) => self.stores.set_skip_global(index, id),
+                (false, false) => self.stores.set_skip(index, id),
             }
-            new
+            id
         };
         let changed = !(reassigning
             || (self.stores.glue(old) == GlueSpec::ZERO
@@ -327,12 +328,13 @@ impl<'a> AssignmentCommitter<'a> {
             old
         } else {
             let new = self.stores.intern_glue(value);
+            let id = new.id();
             if global {
-                self.stores.set_glue_param_global(parameter, new);
+                self.stores.set_glue_param_global(parameter, id);
             } else {
-                self.stores.set_glue_param(parameter, new);
+                self.stores.set_glue_param(parameter, id);
             }
-            new
+            id
         };
         tracing::trace_glue_param(self.stores, index, global, old, new, !redundant);
         if redundant {

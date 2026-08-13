@@ -406,8 +406,8 @@ struct ActiveReplayAlignment {
     /// Frozen cell material retained for lifecycle diagnostics. The actual
     /// row records live on the alignment level, exactly as TeX82 §775 does.
     captured_rows: Vec<Vec<NodeListId>>,
-    tabskips: Vec<tex_state::ids::GlueId>,
-    default_tabskip: tex_state::ids::GlueId,
+    tabskips: Vec<tex_state::glue::GlueSpecRef>,
+    default_tabskip: tex_state::glue::GlueSpecRef,
     /// TeX82 §786's `cur_head`/`cur_tail` holding list: the insertions, marks,
     /// and `\vadjust` contents §796's `hpack` migrated out of this row's
     /// columns, waiting for §799 `fin_row` to append them after the row.
@@ -1807,8 +1807,8 @@ impl MainControl {
                 spec,
                 kind: GlueKind::MuSkip,
                 ..
-            } => Some(tex_command::LastNodeItem::MuGlue(stores.glue(*spec))),
-            Node::Glue { spec, .. } => Some(tex_command::LastNodeItem::Glue(stores.glue(*spec))),
+            } => Some(tex_command::LastNodeItem::MuGlue(spec.spec())),
+            Node::Glue { spec, .. } => Some(tex_command::LastNodeItem::Glue(spec.spec())),
             // TeX82 keeps a discretionary's no-break replacement nodes in
             // the surrounding list (§1119), immediately after the disc node.
             // Umber freezes that physical suffix as the disc's `replace`
@@ -12294,8 +12294,8 @@ fn begin_replay_alignment_cell(
             spec: active
                 .tabskips
                 .first()
-                .copied()
-                .unwrap_or(active.default_tabskip),
+                .cloned()
+                .unwrap_or_else(|| active.default_tabskip.clone()),
             kind: GlueKind::TabSkip,
             leader: None,
         });
@@ -12372,8 +12372,8 @@ fn capture_replay_alignment_cell(
         spec: active
             .tabskips
             .get(active.column.saturating_add(1))
-            .copied()
-            .unwrap_or(active.default_tabskip),
+            .cloned()
+            .unwrap_or_else(|| active.default_tabskip.clone()),
         kind: GlueKind::TabSkip,
         leader: None,
     });
@@ -12493,7 +12493,7 @@ fn finish_replay_alignment_with_origin(
         active.packing,
         columns,
         active.tabskips.clone(),
-        active.default_tabskip,
+        active.default_tabskip.clone(),
         active.repeat_start,
     );
     // TeX82 §800: `if nest[nest_ptr-1].mode_field=mmode then o:=display_indent
@@ -15907,8 +15907,8 @@ fn apply_scanned_step(
                 align_peek_after_noalign: false,
                 noalign_open: false,
                 captured_rows: Vec::new(),
-                tabskips: vec![stores.glue_param(GlueParam::TAB_SKIP)],
-                default_tabskip: stores.glue_param(GlueParam::TAB_SKIP),
+                tabskips: vec![stores.glue_ref(stores.glue_param(GlueParam::TAB_SKIP))],
+                default_tabskip: stores.glue_ref(stores.glue_param(GlueParam::TAB_SKIP)),
                 row_migrations: Vec::new(),
                 cell_span: 1,
                 row_open: false,
@@ -17352,7 +17352,7 @@ fn finish_insert_or_adjust_group(
         Node::Ins {
             class,
             size,
-            split_top_skip,
+            split_top_skip: stores.glue_ref(split_top_skip),
             split_max_depth,
             floating_penalty,
             content,

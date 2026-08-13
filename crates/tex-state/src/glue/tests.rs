@@ -1,208 +1,150 @@
-use super::{GlueSpec, GlueStore, GlueStoreMark, Order};
+use super::{GlueSpec, GlueStore, Order};
+use crate::frozen_lookup::FrozenLookup;
 use crate::ids::GlueId;
+use crate::patch_domain::PatchAllocationDomain;
 use crate::scaled::Scaled;
-use ahash::AHashMap;
-use proptest::prelude::*;
 
 #[test]
-fn zero_is_canonical_and_preinterned() {
-    let mut store = GlueStore::new();
-
-    assert_eq!(store.intern(GlueSpec::ZERO), GlueId::ZERO);
-    assert_eq!(store.get(GlueId::ZERO), GlueSpec::ZERO);
-    assert_eq!(store.specs, vec![GlueSpec::ZERO]);
+fn zero_is_an_explicit_immortal_root() {
+    let store = GlueStore::new();
+    let zero = store.owner(GlueId::ZERO).expect("zero owner");
+    assert_eq!(zero.spec(), GlueSpec::ZERO);
+    assert_eq!(zero.id(), GlueId::ZERO);
+    assert_eq!(zero.strong_count(), 2, "store and caller own zero");
 }
 
 #[test]
-fn get_round_trips_interned_spec() {
+fn exact_content_deduplicates_and_collision_candidates_do_not_alias() {
     let mut store = GlueStore::new();
-    let spec = spec(10, 2, Order::Fil, 3, Order::Fill);
+    let left = spec(10);
+    let right = spec(11);
+    let stretch_order = GlueSpec {
+        stretch_order: Order::Filll,
+        ..left
+    };
+    let shrink_order = GlueSpec {
+        shrink_order: Order::Normal,
+        ..left
+    };
+    let first = store.testing_intern_with_key(left, 0);
+    let equal = store.testing_intern_with_key(left, 0);
+    let collision = store.testing_intern_with_key(right, 0);
+    let stretch_collision = store.testing_intern_with_key(stretch_order, 0);
+    let shrink_collision = store.testing_intern_with_key(shrink_order, 0);
 
-    let id = store.intern(spec);
-
-    assert_eq!(store.get(id), spec);
+    assert!(first.ptr_eq(&equal));
+    assert_ne!(first.id(), collision.id());
+    assert_ne!(first.id(), stretch_collision.id());
+    assert_ne!(first.id(), shrink_collision.id());
+    assert_eq!(collision.spec(), right);
+    assert_eq!(stretch_collision.spec(), stretch_order);
+    assert_eq!(shrink_collision.spec(), shrink_order);
 }
 
 #[test]
-fn hash_consing_same_spec_twice_returns_same_id() {
+fn final_owner_release_makes_slot_collectible_and_generation_safe() {
     let mut store = GlueStore::new();
-    let spec = spec(10, 2, Order::Fil, 3, Order::Fill);
+    let stale = store.intern_owned(spec(1), None);
+    let stale_id = stale.id();
+    drop(stale);
+    assert!(!store.contains(stale_id));
 
-    let first = store.intern(spec);
-    let second = store.intern(spec);
-
-    assert_eq!(first, second);
+    let replacement = store.intern_owned(spec(2), None);
+    assert_eq!(replacement.id().raw(), stale_id.raw());
+    assert_ne!(replacement.id(), stale_id);
+    assert!(!store.contains(stale_id));
 }
 
 #[test]
-fn stretch_and_shrink_fields_are_order_sensitive() {
-    let mut store = GlueStore::new();
-    let left = spec(0, 2, Order::Fil, 3, Order::Fill);
-    let right = spec(0, 3, Order::Fill, 2, Order::Fil);
+fn loaded_base_is_explicit_and_future_append_remains_weak() {
+    let mut store = GlueStore::from_frozen(vec![GlueSpec::ZERO, spec(40)], FrozenLookup::empty())
+        .expect("valid frozen glue");
+    let frozen = store.stored_slot(1);
+    assert_eq!(frozen.spec(), spec(40));
 
-    let left_id = store.intern(left);
-    let right_id = store.intern(right);
-
-    assert_ne!(left_id, right_id);
-    assert_eq!(store.get(left_id), left);
-    assert_eq!(store.get(right_id), right);
+    let dynamic = store.intern_owned(spec(41), None);
+    let dynamic_id = dynamic.id();
+    drop(dynamic);
+    assert!(!store.contains(dynamic_id));
+    assert_eq!(store.stored_slot(1).spec(), spec(40));
 }
 
 #[test]
-fn zero_survives_truncation_to_later_mark() {
+fn private_rollback_and_selected_acceptance_follow_typed_leases() {
     let mut store = GlueStore::new();
-    let mark = store.watermark();
-    let stale = store.intern(spec(1, 0, Order::Normal, 0, Order::Normal));
+    let mut domain = PatchAllocationDomain::new();
+    let first_mark = domain.begin_operation().expect("operation");
+    let retained = store.intern_owned(spec(50), Some(&mut domain));
+    domain.commit_operation(first_mark).expect("commit");
 
-    store.truncate_to(mark);
+    let failed_mark = domain.begin_operation().expect("retry operation");
+    let store_mark = store.watermark();
+    let failed = store.intern_owned(spec(51), Some(&mut domain));
+    drop(failed);
+    domain.rollback_operation(failed_mark).expect("rollback");
+    store.truncate_to(store_mark);
 
-    assert_eq!(store.get(GlueId::ZERO), GlueSpec::ZERO);
-    assert_eq!(store.intern(GlueSpec::ZERO), GlueId::ZERO);
-    assert!(!store.contains(stale));
+    let roots = store.selected_patch_roots(&domain);
+    assert_eq!(roots.len(), 1);
+    let accepted = domain.accept(roots).expect("selected acceptance");
+    assert_eq!(accepted.len(), 1);
+    store.clear_patch_allocations();
+    drop(accepted);
+    assert_eq!(retained.spec(), spec(50));
 }
 
 #[test]
-fn truncate_then_reintern_reuses_dense_glue_id() {
+fn rejected_private_domain_cannot_keep_an_unrooted_slot_live() {
     let mut store = GlueStore::new();
-    let kept = store.intern(spec(1, 0, Order::Normal, 0, Order::Normal));
-    let mark = store.watermark();
-    let truncated = store.intern(spec(2, 0, Order::Normal, 0, Order::Normal));
-    assert_eq!(truncated.raw(), 2);
+    let mut domain = PatchAllocationDomain::new();
+    let operation = domain.begin_operation().expect("operation");
+    let rejected = store.intern_owned(spec(52), Some(&mut domain));
+    let rejected_id = rejected.id();
+    drop(rejected);
+    domain.commit_operation(operation).expect("commit");
+    drop(domain);
 
-    store.truncate_to(mark);
-    assert_eq!(store.get(kept), spec(1, 0, Order::Normal, 0, Order::Normal));
+    assert!(!store.contains(rejected_id));
+}
 
-    let reinserted = store.intern(spec(2, 0, Order::Normal, 0, Order::Normal));
-    assert_eq!(reinserted.raw(), truncated.raw());
-    assert_ne!(reinserted, truncated);
-    assert!(!store.contains(truncated));
-    assert_eq!(
-        store.get(reinserted),
-        spec(2, 0, Order::Normal, 0, Order::Normal)
+#[test]
+fn ten_thousand_bounded_live_redefinitions_plateau() {
+    let mut store = GlueStore::new();
+    let mut current = store.intern_owned(spec(0), None);
+    for raw in 1..=10_000 {
+        current = store.intern_owned(spec(raw), None);
+    }
+    assert_eq!(current.spec(), spec(10_000));
+    let shape = store.testing_pool_shape();
+    let totals = store.testing_live_totals();
+    assert!(
+        shape.0 <= 3,
+        "weak slots should track bounded live roots: {shape:?}"
     );
+    assert_eq!(totals.0, 2, "zero plus one dynamic value remain live");
+    assert!(shape.2 <= 1_024);
+    assert!(shape.4 <= 64);
 }
 
 #[test]
-#[should_panic(expected = "glue id is not live")]
-fn stale_glue_id_panics_after_truncation() {
+fn all_roots_live_grows_exactly() {
+    const VALUES: usize = 2_048;
     let mut store = GlueStore::new();
-    let mark = store.watermark();
-    let stale = store.intern(spec(1, 0, Order::Normal, 0, Order::Normal));
-
-    store.truncate_to(mark);
-
-    let _ = store.get(stale);
+    let roots = (1..=VALUES)
+        .map(|raw| store.intern_owned(spec(raw as i32), None))
+        .collect::<Vec<_>>();
+    let (objects, bytes) = store.testing_live_totals();
+    assert_eq!(objects, VALUES + 1);
+    assert_eq!(bytes, (VALUES + 1) * core::mem::size_of::<GlueSpec>());
+    assert_eq!(roots.len(), VALUES);
 }
 
-#[derive(Clone, Copy, Debug)]
-enum Op {
-    Intern(GlueSpec),
-    Mark,
-    TruncateToMark(usize),
-}
-
-fn op_strategy() -> impl Strategy<Value = Op> {
-    prop_oneof![
-        glue_spec().prop_map(Op::Intern),
-        Just(Op::Mark),
-        any::<usize>().prop_map(Op::TruncateToMark),
-    ]
-}
-
-proptest! {
-    #[test]
-    fn arbitrary_intern_and_truncate_sequences_match_naive_model(
-        ops in prop::collection::vec(op_strategy(), 0..256)
-    ) {
-        let mut store = GlueStore::new();
-        let mut model: Vec<GlueSpec> = vec![GlueSpec::ZERO];
-        let mut model_index: AHashMap<GlueSpec, usize> = AHashMap::from([(GlueSpec::ZERO, 0)]);
-        let mut marks: Vec<(GlueStoreMark, usize)> = vec![(store.watermark(), model.len())];
-
-        for op in ops {
-            match op {
-                Op::Intern(spec) => {
-                    let id = store.intern(spec);
-                    let expected = model_id(&mut model, &mut model_index, spec);
-                    prop_assert_eq!(id.raw() as usize, expected);
-                }
-                Op::Mark => {
-                    marks.push((store.watermark(), model.len()));
-                }
-                Op::TruncateToMark(raw_index) => {
-                    let index = raw_index % marks.len();
-                    let (mark, model_len) = marks[index];
-                    store.truncate_to(mark);
-                    model.truncate(model_len);
-                    model_index = rebuild_model_index(&model);
-                    marks.retain(|&(_, len)| len <= model_len);
-                }
-            }
-
-            prop_assert_eq!(store.specs.len(), model.len());
-            for (raw, expected) in model.iter().copied().enumerate() {
-                let id = store
-                    .resolve_stored(GlueId::new(raw as u32))
-                    .expect("model slot should resolve to a live glue identity");
-                prop_assert_eq!(store.get(id), expected);
-                prop_assert_eq!(store.intern(expected).raw() as usize, raw);
-            }
-        }
-    }
-}
-
-fn model_id(
-    model: &mut Vec<GlueSpec>,
-    index: &mut AHashMap<GlueSpec, usize>,
-    spec: GlueSpec,
-) -> usize {
-    if let Some(&id) = index.get(&spec) {
-        return id;
-    }
-    let id = model.len();
-    model.push(spec);
-    index.insert(spec, id);
-    id
-}
-
-fn rebuild_model_index(model: &[GlueSpec]) -> AHashMap<GlueSpec, usize> {
-    model
-        .iter()
-        .copied()
-        .enumerate()
-        .map(|(id, spec)| (spec, id))
-        .collect()
-}
-
-fn glue_spec() -> impl Strategy<Value = GlueSpec> {
-    (any::<i32>(), any::<i32>(), order(), any::<i32>(), order()).prop_map(
-        |(width, stretch, stretch_order, shrink, shrink_order)| {
-            spec(width, stretch, stretch_order, shrink, shrink_order)
-        },
-    )
-}
-
-fn order() -> impl Strategy<Value = Order> {
-    prop_oneof![
-        Just(Order::Normal),
-        Just(Order::Fil),
-        Just(Order::Fill),
-        Just(Order::Filll),
-    ]
-}
-
-fn spec(
-    width: i32,
-    stretch: i32,
-    stretch_order: Order,
-    shrink: i32,
-    shrink_order: Order,
-) -> GlueSpec {
+fn spec(width: i32) -> GlueSpec {
     GlueSpec {
         width: Scaled::from_raw(width),
-        stretch: Scaled::from_raw(stretch),
-        stretch_order,
-        shrink: Scaled::from_raw(shrink),
-        shrink_order,
+        stretch: Scaled::from_raw(width.wrapping_mul(3)),
+        stretch_order: Order::Fil,
+        shrink: Scaled::from_raw(width.wrapping_mul(5)),
+        shrink_order: Order::Fill,
     }
 }

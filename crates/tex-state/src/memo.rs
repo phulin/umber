@@ -7,7 +7,7 @@
 
 use crate::Universe;
 use crate::glue::{GlueSpec, Order};
-use crate::ids::{GlueId, MacroDefinitionId, TokenListId};
+use crate::ids::{MacroDefinitionId, TokenListId};
 use crate::interner::ControlSequenceKind;
 use crate::macro_store::MacroMeaning;
 use crate::meaning::MeaningFlags;
@@ -429,7 +429,10 @@ impl Universe {
         Ok(self.intern_token_list_ref(&tokens))
     }
 
-    pub fn detach_glue(&self, id: GlueId) -> Result<DetachedMemoValue, MemoValueError> {
+    pub fn detach_glue(
+        &self,
+        id: impl crate::glue::GlueHandle,
+    ) -> Result<DetachedMemoValue, MemoValueError> {
         let spec = self.glue(id);
         let payload = bincode::serialize(&DetachedGlue {
             width: spec.width.raw(),
@@ -445,7 +448,7 @@ impl Universe {
     pub fn import_memo_glue(
         &mut self,
         value: &DetachedMemoValue,
-    ) -> Result<GlueId, MemoValueError> {
+    ) -> Result<crate::glue::GlueSpecRef, MemoValueError> {
         let glue: DetachedGlue = value.decode(MemoValueKind::Glue)?;
         Ok(self.intern_glue(GlueSpec {
             width: crate::scaled::Scaled::from_raw(glue.width),

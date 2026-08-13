@@ -220,7 +220,7 @@ fn build_page_cold(stores: &mut Universe, error_context: Option<&str>) -> Result
                 prepare_box_or_rule(stores, &node)?;
                 contribute_front(stores)?;
             }
-            Node::Glue { spec, .. } => {
+            Node::Glue { ref spec, .. } => {
                 if !stores.page_contents().has_box() {
                     discard_front(stores);
                 } else if stores.current_page_tail().is_some_and(precedes_break) {
@@ -601,7 +601,7 @@ fn update_glue_or_kern(
     let width = match node {
         Node::Kern { amount, .. } => *amount,
         Node::Glue { spec, kind, leader } => {
-            let spec = stores.glue(*spec);
+            let spec = spec.spec();
             let spec = finite_page_shrink(stores, spec, error_context)?;
             let finite_id = stores.intern_glue(spec);
             replacement = Some(Node::Glue {
@@ -654,7 +654,7 @@ fn normalize_insert_content_shrink(
         let Some(Node::Glue { spec, kind, leader }) = content_nodes.get(index) else {
             continue;
         };
-        let mut finite = stores.glue(*spec);
+        let mut finite = spec.spec();
         if finite.shrink_order == Order::Normal || finite.shrink.raw() == 0 {
             continue;
         }
@@ -685,7 +685,7 @@ fn normalize_insert_content_shrink(
     Ok(Some(Node::Ins {
         class: *class,
         size: *size,
-        split_top_skip: *split_top_skip,
+        split_top_skip: split_top_skip.clone(),
         split_max_depth: *split_max_depth,
         floating_penalty: *floating_penalty,
         content: stores.freeze_node_list(content_nodes),

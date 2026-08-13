@@ -102,7 +102,7 @@ fn glue_and_macro_round_trip_semantically() {
         shrink: crate::scaled::Scaled::from_raw(3),
         shrink_order: Order::Normal,
     });
-    let detached_glue = source.detach_glue(glue).expect("glue detachment");
+    let detached_glue = source.detach_glue(&glue).expect("glue detachment");
 
     let parameters = source.intern_token_list(&[Token::param(1)]);
     let replacement = source.intern_token_list(&[Token::Char {

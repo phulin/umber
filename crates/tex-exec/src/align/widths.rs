@@ -6,7 +6,8 @@ mod set;
 mod tests;
 
 use tex_state::Universe;
-use tex_state::ids::{GlueId, NodeListId};
+use tex_state::glue::GlueSpecRef;
+use tex_state::ids::NodeListId;
 use tex_state::node::{
     BoxNode, BoxNodeFields, GlueKind, Node, Sign, UnsetKind, UnsetNode, UnsetNodeFields,
 };
@@ -48,7 +49,7 @@ pub(crate) fn finish_alignment(
 #[derive(Clone, Debug)]
 struct ResolvedWidths {
     columns: Vec<Scaled>,
-    tabskips: Vec<GlueId>,
+    tabskips: Vec<GlueSpecRef>,
 }
 
 #[derive(Clone, Debug)]
@@ -80,10 +81,10 @@ fn prototype_nodes(kind: AlignmentKind, resolved: &ResolvedWidths, empty: NodeLi
         .and_then(|len| len.checked_add(1))
         .expect("alignment node capacity fits usize");
     let mut nodes = Vec::with_capacity(capacity);
-    nodes.push(tabskip_node(resolved.tabskips[0]));
+    nodes.push(tabskip_node(resolved.tabskips[0].clone()));
     for (column, width) in resolved.columns.iter().copied().enumerate() {
         nodes.push(prototype_column(kind, width, empty));
-        nodes.push(tabskip_node(resolved.tabskips[column + 1]));
+        nodes.push(tabskip_node(resolved.tabskips[column + 1].clone()));
     }
     nodes
 }
@@ -163,7 +164,7 @@ fn empty_column_box(kind: AlignmentKind, size: Scaled, empty: NodeListId) -> Nod
     }
 }
 
-fn tabskip_node(spec: GlueId) -> Node {
+fn tabskip_node(spec: GlueSpecRef) -> Node {
     Node::Glue {
         spec,
         kind: GlueKind::TabSkip,

@@ -1,5 +1,6 @@
 use super::checked_len;
-use crate::ids::{GlueId, NodeListId};
+use crate::glue::GlueSpecRef;
+use crate::ids::NodeListId;
 use crate::scaled::Scaled;
 
 #[derive(Clone, Debug, Default)]
@@ -102,7 +103,7 @@ impl UnsetTable {
 pub(super) struct InsertionTable {
     pub(super) class: Vec<u16>,
     pub(super) size: Vec<Scaled>,
-    pub(super) split_top_skip: Vec<GlueId>,
+    pub(super) split_top_skip: Vec<GlueSpecRef>,
     pub(super) split_max_depth: Vec<Scaled>,
     pub(super) floating_penalty: Vec<i32>,
     pub(super) content: Vec<NodeListId>,
@@ -119,7 +120,7 @@ impl InsertionTable {
         self.floating_penalty.reserve(additional);
         self.content.reserve(additional);
     }
-    pub(super) fn push(&mut self, v: (u16, Scaled, GlueId, Scaled, i32, NodeListId)) -> u32 {
+    pub(super) fn push(&mut self, v: (u16, Scaled, GlueSpecRef, Scaled, i32, NodeListId)) -> u32 {
         let i = checked_len(self.len(), "insertion sidecar exceeds u32 entries");
         self.class.push(v.0);
         self.size.push(v.1);
@@ -133,7 +134,7 @@ impl InsertionTable {
         self.push((
             source.class[index],
             source.size[index],
-            source.split_top_skip[index],
+            source.split_top_skip[index].clone(),
             source.split_max_depth[index],
             source.floating_penalty[index],
             source.content[index],

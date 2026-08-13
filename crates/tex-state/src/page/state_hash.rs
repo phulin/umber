@@ -152,7 +152,7 @@ impl PageBuilderState {
                 page_depth: self.page_depth,
                 page_max_depth: self.page_max_depth,
                 contents: self.contents,
-                last_glue: self.last_glue,
+                last_glue: self.last_glue.as_ref().map(crate::glue::GlueSpecRef::id),
                 last_penalty: self.last_penalty,
                 last_kern: self.last_kern,
                 last_node_type: self.last_node_type,
@@ -218,7 +218,7 @@ impl PageBuilderState {
                     projection.i32(self.raw_dimension(dimension).raw());
                 }
                 projection.i32(self.page_max_depth.raw());
-                match self.last_glue {
+                match self.last_glue.as_ref().map(crate::glue::GlueSpecRef::id) {
                     Some(id) => {
                         projection.bool(true);
                         hash_glue(id, projection);

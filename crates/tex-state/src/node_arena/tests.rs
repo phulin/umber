@@ -239,7 +239,7 @@ fn every_inline_kind_uses_only_one_word_and_no_sidecar() {
             kind: KernKind::Mu,
         },
         Node::Glue {
-            spec: GlueId::testing_new(u32::MAX),
+            spec: crate::glue::GlueSpecRef::testing_new(GlueId::testing_new(u32::MAX)),
             kind: GlueKind::NonScript,
             leader: None,
         },
@@ -518,7 +518,7 @@ fn every_rare_kind_round_trips_through_its_sidecar() {
             depth: Some(scaled(13)),
         },
         Node::Glue {
-            spec: GlueId::testing_new(2),
+            spec: crate::glue::GlueSpecRef::testing_new(GlueId::testing_new(2)),
             kind: GlueKind::Leaders,
             leader: Some(LeaderPayload::Rule {
                 width: None,
@@ -540,7 +540,7 @@ fn every_rare_kind_round_trips_through_its_sidecar() {
         Node::Ins {
             class: 4,
             size: scaled(15),
-            split_top_skip: GlueId::testing_new(5),
+            split_top_skip: crate::glue::GlueSpecRef::testing_new(GlueId::testing_new(5)),
             split_max_depth: scaled(16),
             floating_penalty: -17,
             content: empty,

@@ -44,7 +44,7 @@ fn pdf_font_code_bank(table: PdfFontCode) -> crate::cell::BankTag {
         PdfFontCode::Knac => BankTag::PdfKnacCode,
     }
 }
-use crate::glue::{GlueSpec, GlueStore, GlueStoreMark};
+use crate::glue::{GlueSpec, GlueSpecRef, GlueStore, GlueStoreMark};
 use crate::hyphenation::{ExceptionSpec, HyphenationTable, PatternSpec};
 use crate::ids::{FontId, GlueId, MacroDefinitionId, NodeListId, OriginListId, TokenListId};
 use crate::input::SourceId;
@@ -999,9 +999,30 @@ impl Stores {
         } else {
             None
         };
+        let glue_root = if matches!(
+            cell.bank(),
+            crate::cell::BankTag::Skip
+                | crate::cell::BankTag::Muskip
+                | crate::cell::BankTag::GlueParam
+        ) {
+            self.glue
+                .resolve_stored(GlueId::new(word as u32))
+                .and_then(|id| self.glue.owner(id))
+        } else {
+            None
+        };
+        if matches!(
+            cell.bank(),
+            crate::cell::BankTag::Skip
+                | crate::cell::BankTag::Muskip
+                | crate::cell::BankTag::GlueParam
+        ) && word != 0
+        {
+            assert!(glue_root.is_some(), "raw glue word has no live owner");
+        }
         let receipt = self
             .env
-            .restore_raw_global(cell, word, token_root, macro_root);
+            .restore_raw_global(cell, word, token_root, macro_root, glue_root);
         if receipt.changed() {
             let cell = receipt.cell();
             self.update_exact_env_cell(cell, self.env.semantic_word(cell));
@@ -1801,24 +1822,27 @@ impl Stores {
         self.tokens.semantic_id(id)
     }
 
-    pub(crate) fn selected_token_patch_roots(
+    pub(crate) fn selected_patch_roots(
         &self,
         domain: &crate::patch_domain::PatchAllocationDomain,
     ) -> Vec<crate::patch_domain::PatchRoot> {
         let mut roots = self.tokens.selected_patch_roots(domain);
         roots.extend(self.macros.selected_patch_roots(domain));
+        roots.extend(self.glue.selected_patch_roots(domain));
         roots
     }
 
-    pub(crate) fn token_patch_allocation_count(&self) -> usize {
+    pub(crate) fn patch_allocation_count(&self) -> usize {
         self.tokens
             .patch_allocation_count()
             .saturating_add(self.macros.patch_allocation_count())
+            .saturating_add(self.glue.patch_allocation_count())
     }
 
-    pub(crate) fn clear_token_patch_allocations(&mut self) {
+    pub(crate) fn clear_patch_allocations(&mut self) {
         self.tokens.clear_patch_allocations();
         self.macros.clear_patch_allocations();
+        self.glue.clear_patch_allocations();
     }
 
     fn token_list_semantic_id(&self, tokens: impl IntoIterator<Item = Token>) -> TokenSemanticId {
@@ -2315,9 +2339,23 @@ impl Stores {
         );
     }
 
-    /// Interns a frozen glue specification in the owned glue store.
-    pub fn intern_glue(&mut self, spec: GlueSpec) -> GlueId {
-        self.glue.intern(spec)
+    /// Interns a glue specification and returns its strong exact-content owner.
+    pub fn intern_glue_in_domain(
+        &mut self,
+        spec: GlueSpec,
+        domain: Option<&mut crate::patch_domain::PatchAllocationDomain>,
+    ) -> GlueSpecRef {
+        self.glue.intern_owned(spec, domain)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn intern_glue(&mut self, spec: GlueSpec) -> GlueSpecRef {
+        self.glue.intern_owned(spec, None)
+    }
+
+    pub(crate) fn glue_ref(&self, id: GlueId) -> GlueSpecRef {
+        let id = self.resolve_stored_glue(id);
+        self.glue.owner(id).expect("glue id is not live")
     }
 
     /// Reads a live frozen glue specification.
@@ -3149,9 +3187,15 @@ impl Stores {
         self.env.set_dimen_global(index, value)
     }
 
-    pub fn set_skip(&mut self, index: u16, value: GlueId) -> crate::env::CellMutationReceipt {
+    pub fn set_skip(
+        &mut self,
+        index: u16,
+        value: impl crate::glue::GlueHandle,
+    ) -> crate::env::CellMutationReceipt {
+        let value = value.glue_id();
         self.assert_live_glue(value);
-        self.env.set_skip(index, value)
+        let value = self.resolve_stored_glue(value);
+        self.env.set_skip(index, self.glue_ref(value))
     }
 
     #[must_use]
@@ -3162,15 +3206,23 @@ impl Stores {
     pub fn set_skip_global(
         &mut self,
         index: u16,
-        value: GlueId,
+        value: impl crate::glue::GlueHandle,
     ) -> crate::env::CellMutationReceipt {
+        let value = value.glue_id();
         self.assert_live_glue(value);
-        self.env.set_skip_global(index, value)
+        let value = self.resolve_stored_glue(value);
+        self.env.set_skip_global(index, self.glue_ref(value))
     }
 
-    pub fn set_muskip(&mut self, index: u16, value: GlueId) -> crate::env::CellMutationReceipt {
+    pub fn set_muskip(
+        &mut self,
+        index: u16,
+        value: impl crate::glue::GlueHandle,
+    ) -> crate::env::CellMutationReceipt {
+        let value = value.glue_id();
         self.assert_live_glue(value);
-        self.env.set_muskip(index, value)
+        let value = self.resolve_stored_glue(value);
+        self.env.set_muskip(index, self.glue_ref(value))
     }
 
     #[must_use]
@@ -3181,10 +3233,12 @@ impl Stores {
     pub fn set_muskip_global(
         &mut self,
         index: u16,
-        value: GlueId,
+        value: impl crate::glue::GlueHandle,
     ) -> crate::env::CellMutationReceipt {
+        let value = value.glue_id();
         self.assert_live_glue(value);
-        self.env.set_muskip_global(index, value)
+        let value = self.resolve_stored_glue(value);
+        self.env.set_muskip_global(index, self.glue_ref(value))
     }
 
     pub fn set_toks(&mut self, index: u16, value: TokenListId) -> crate::env::CellMutationReceipt {
@@ -3426,10 +3480,12 @@ impl Stores {
     pub fn set_glue_param(
         &mut self,
         param: GlueParam,
-        value: GlueId,
+        value: impl crate::glue::GlueHandle,
     ) -> crate::env::CellMutationReceipt {
+        let value = value.glue_id();
         self.assert_live_glue(value);
-        self.env.set_glue_param(param, value)
+        let value = self.resolve_stored_glue(value);
+        self.env.set_glue_param(param, self.glue_ref(value))
     }
 
     #[must_use]
@@ -3440,10 +3496,12 @@ impl Stores {
     pub fn set_glue_param_global(
         &mut self,
         param: GlueParam,
-        value: GlueId,
+        value: impl crate::glue::GlueHandle,
     ) -> crate::env::CellMutationReceipt {
+        let value = value.glue_id();
         self.assert_live_glue(value);
-        self.env.set_glue_param_global(param, value)
+        let value = self.resolve_stored_glue(value);
+        self.env.set_glue_param_global(param, self.glue_ref(value))
     }
 
     pub fn set_tok_param_option(

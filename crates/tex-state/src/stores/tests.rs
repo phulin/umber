@@ -4,7 +4,7 @@ use crate::env::banks::{DimenParam, GlueParam, IntParam};
 use crate::font::NULL_FONT;
 use crate::glue::{GlueSpec, Order};
 use crate::hyphenation::{ExceptionSpec, PatternSpec};
-use crate::ids::{ArenaRef, GlueId, MacroDefinitionId, NodeListId, OriginListId};
+use crate::ids::{ArenaRef, MacroDefinitionId, NodeListId, OriginListId};
 use crate::macro_store::{MacroDefinitionProvenance, MacroMeaning};
 use crate::math::{
     FractionThickness, MathChoice, MathField, MathFraction, MathListNode, MathNoad, MathStyle,
@@ -172,7 +172,7 @@ fn owned_and_borrowed_semantic_hash_paths_match_every_node_variant() {
             ch: b'x',
         },
         Node::Glue {
-            spec: GlueId::ZERO,
+            spec: crate::glue::testing_zero_glue_ref(),
             kind: GlueKind::Leaders,
             leader: Some(LeaderPayload::Rule {
                 width: Some(Scaled::from_raw(7)),
@@ -214,7 +214,7 @@ fn owned_and_borrowed_semantic_hash_paths_match_every_node_variant() {
         Node::Ins {
             class: 4,
             size: Scaled::from_raw(16),
-            split_top_skip: GlueId::ZERO,
+            split_top_skip: crate::glue::testing_zero_glue_ref(),
             split_max_depth: Scaled::from_raw(17),
             floating_penalty: -18,
             content: empty,
@@ -2765,7 +2765,7 @@ fn promotion_patches_every_child_bearing_compact_row() {
             children: child,
         })),
         Node::Glue {
-            spec: GlueId::ZERO,
+            spec: crate::glue::testing_zero_glue_ref(),
             kind: GlueKind::Leaders,
             leader: Some(LeaderPayload::HList(box_node)),
         },
@@ -2779,7 +2779,7 @@ fn promotion_patches_every_child_bearing_compact_row() {
         Node::Ins {
             class: 1,
             size: scaled(10),
-            split_top_skip: GlueId::ZERO,
+            split_top_skip: crate::glue::testing_zero_glue_ref(),
             split_max_depth: scaled(11),
             floating_penalty: 12,
             content: child,

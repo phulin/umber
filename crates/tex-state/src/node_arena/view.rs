@@ -1,4 +1,5 @@
 use super::storage::{NodeStorage, NodeWord, decode_glue, decode_kern, decode_style};
+use crate::glue::GlueSpecRef;
 use crate::ids::{GlueId, NodeListId};
 use crate::math::MathStyle;
 use crate::node::{
@@ -36,7 +37,7 @@ pub enum NodeRef<'a> {
         ch: u8,
     },
     Glue {
-        spec: GlueId,
+        spec: &'a GlueSpecRef,
         kind: GlueKind,
         leader: Option<&'a crate::node::LeaderPayload>,
     },
@@ -63,7 +64,7 @@ pub enum NodeRef<'a> {
     Ins {
         class: u16,
         size: Scaled,
-        split_top_skip: GlueId,
+        split_top_skip: &'a GlueSpecRef,
         split_max_depth: Scaled,
         floating_penalty: i32,
         content: NodeListId,
@@ -152,7 +153,7 @@ impl<'a> From<&'a Node> for NodeRef<'a> {
                 ch: *ch,
             },
             Node::Glue { spec, kind, leader } => Self::Glue {
-                spec: *spec,
+                spec,
                 kind: *kind,
                 leader: leader.as_ref(),
             },
@@ -196,7 +197,7 @@ impl<'a> From<&'a Node> for NodeRef<'a> {
             } => Self::Ins {
                 class: *class,
                 size: *size,
-                split_top_skip: *split_top_skip,
+                split_top_skip,
                 split_max_depth: *split_max_depth,
                 floating_penalty: *floating_penalty,
                 content: *content,
@@ -299,7 +300,7 @@ impl NodeRef<'_> {
                 ch: *ch,
             },
             Self::Glue { spec, kind, leader } => Node::Glue {
-                spec: *spec,
+                spec: (*spec).clone(),
                 kind: *kind,
                 leader: leader.cloned(),
             },
@@ -343,7 +344,7 @@ impl NodeRef<'_> {
             } => Node::Ins {
                 class: *class,
                 size: *size,
-                split_top_skip: *split_top_skip,
+                split_top_skip: (*split_top_skip).clone(),
                 split_max_depth: *split_max_depth,
                 floating_penalty: *floating_penalty,
                 content: *content,
@@ -379,7 +380,7 @@ impl NodeRef<'_> {
                 kind: None,
             },
             Self::Glue { spec, leader, .. } => PackedNode::Glue {
-                spec: *spec,
+                spec: spec.id(),
                 leader: *leader,
             },
             Self::Rule {
@@ -882,7 +883,9 @@ impl NodeStorage {
                 ch: (payload >> 48) as u8,
             },
             3 => NodeRef::Glue {
-                spec: GlueId::new(payload as u32),
+                spec: self.glue_roots[index]
+                    .as_ref()
+                    .expect("ordinary glue word has strong root"),
                 kind: decode_glue(((payload >> 32) & 0x3f) as u8),
                 leader: None,
             },
@@ -931,7 +934,7 @@ impl NodeStorage {
             13 => {
                 let (spec, kind, leader) = &self.leaders[side];
                 NodeRef::Glue {
-                    spec: *spec,
+                    spec,
                     kind: *kind,
                     leader: Some(leader),
                 }
@@ -956,7 +959,7 @@ impl NodeStorage {
             16 => NodeRef::Ins {
                 class: self.insertions.class[side],
                 size: self.insertions.size[side],
-                split_top_skip: self.insertions.split_top_skip[side],
+                split_top_skip: &self.insertions.split_top_skip[side],
                 split_max_depth: self.insertions.split_max_depth[side],
                 floating_penalty: self.insertions.floating_penalty[side],
                 content: self.insertions.content[side],
