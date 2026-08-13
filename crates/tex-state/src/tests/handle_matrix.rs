@@ -132,11 +132,13 @@ fn exercise_rollback_reallocate(class: HandleClass) {
             let mut universe = Universe::new();
             let snapshot = universe.snapshot();
             let stale = universe.intern_macro(empty_macro(MeaningFlags::LONG));
+            let stale_id = stale.id();
+            drop(stale);
             universe.rollback(&snapshot);
             let replacement = universe.intern_macro(empty_macro(MeaningFlags::OUTER));
-            assert_eq!(stale.raw(), replacement.raw(), "{class:?}");
-            assert_ne!(stale, replacement, "{class:?}");
-            assert_panics(class, || _ = universe.macro_definition(stale));
+            assert_eq!(stale_id.raw(), replacement.raw(), "{class:?}");
+            assert_ne!(stale_id, replacement.id(), "{class:?}");
+            assert_panics(class, || _ = universe.macro_definition(stale_id));
         }
         HandleClass::Glue => {
             let mut universe = Universe::new();
@@ -262,16 +264,26 @@ fn exercise_fork(class: HandleClass) {
         }
         HandleClass::MacroDefinition => {
             let mut parent = Universe::new();
+            let binding = parent.intern("inherited-macro");
             let inherited = parent.intern_macro(empty_macro(MeaningFlags::LONG));
+            let inherited_id = inherited.id();
+            parent.set_meaning(
+                binding,
+                crate::meaning::Meaning::Macro {
+                    flags: MeaningFlags::LONG,
+                    definition: inherited_id,
+                },
+            );
+            drop(inherited);
             let mut child = parent.clone();
             assert_eq!(
-                parent.macro_definition(inherited),
-                child.macro_definition(inherited)
+                parent.macro_definition(inherited_id),
+                child.macro_definition(inherited_id)
             );
             let parent_only = parent.intern_macro(empty_macro(MeaningFlags::OUTER));
             let child_only = child.intern_macro(empty_macro(MeaningFlags::PROTECTED));
-            assert_panics(class, || _ = parent.macro_definition(child_only));
-            assert_panics(class, || _ = child.macro_definition(parent_only));
+            assert_panics(class, || _ = parent.macro_definition(child_only.id()));
+            assert_panics(class, || _ = child.macro_definition(parent_only.id()));
         }
         HandleClass::Glue => {
             let mut parent = Universe::new();
@@ -420,7 +432,7 @@ fn exercise_cross_universe(class: HandleClass) {
             let mut owner = Universe::new();
             let foreign = owner.intern_macro(empty_macro(MeaningFlags::LONG));
             let other = Universe::new();
-            assert_panics(class, || _ = other.macro_definition(foreign));
+            assert_panics(class, || _ = other.macro_definition(foreign.id()));
         }
         HandleClass::Glue => {
             let mut owner = Universe::new();

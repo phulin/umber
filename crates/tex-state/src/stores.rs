@@ -53,7 +53,8 @@ use crate::interner::{
     ControlSequenceKind, Interner, InternerError, InternerMark, Symbol, SymbolId, SymbolReference,
 };
 use crate::macro_store::{
-    MacroDefinitionProvenance, MacroMeaning, MacroParameterPattern, MacroStore, MacroStoreMark,
+    MacroDefinitionProvenance, MacroDefinitionRef, MacroMeaning, MacroParameterPattern, MacroStore,
+    MacroStoreMark,
 };
 use crate::math::MathFontSize;
 use crate::meaning::Meaning;
@@ -593,6 +594,16 @@ impl Clone for Stores {
 }
 
 impl Stores {
+    #[cfg(test)]
+    pub(crate) fn testing_macro_store(&self) -> &MacroStore {
+        &self.macros
+    }
+
+    #[cfg(test)]
+    pub(crate) fn testing_macro_store_mut(&mut self) -> &mut MacroStore {
+        &mut self.macros
+    }
+
     /// TeX82 §§273/275's save depth immediately before the newest checked
     /// push, merged across the Env and CodeTables physical owners.
     pub(crate) fn checked_save_stack_words(&self, save_group_source_lines: bool) -> usize {
@@ -980,7 +991,17 @@ impl Stores {
         {
             assert!(token_root.is_some(), "raw token word has no live owner");
         }
-        let receipt = self.env.restore_raw_global(cell, word, token_root);
+        let macro_root = if cell.bank() == crate::cell::BankTag::Meaning {
+            match Meaning::decode_stored(word) {
+                Meaning::Macro { definition, .. } => Some(self.macro_definition_ref(definition)),
+                _ => None,
+            }
+        } else {
+            None
+        };
+        let receipt = self
+            .env
+            .restore_raw_global(cell, word, token_root, macro_root);
         if receipt.changed() {
             let cell = receipt.cell();
             self.update_exact_env_cell(cell, self.env.semantic_word(cell));
@@ -1242,7 +1263,12 @@ impl Stores {
         let symbol = self.resolve_symbol_reference(symbol);
         self.assert_live_macro_definition_in_meaning(meaning);
         self.assert_live_font_in_meaning(meaning);
-        self.env.set_meaning_slot(symbol.raw(), meaning, false)
+        let macro_root = match meaning {
+            Meaning::Macro { definition, .. } => Some(self.macro_definition_ref(definition)),
+            _ => None,
+        };
+        self.env
+            .set_meaning_slot_with_macro_root(symbol.raw(), meaning, macro_root, false)
     }
 
     /// Interns a control-sequence name and gives a previously undefined name
@@ -1268,12 +1294,17 @@ impl Stores {
         let symbol = self.resolve_symbol_reference(symbol);
         self.assert_live_macro_definition_in_meaning(meaning);
         self.assert_live_font_in_meaning(meaning);
-        self.env.set_meaning_slot(symbol.raw(), meaning, true)
+        let macro_root = match meaning {
+            Meaning::Macro { definition, .. } => Some(self.macro_definition_ref(definition)),
+            _ => None,
+        };
+        self.env
+            .set_meaning_slot_with_macro_root(symbol.raw(), meaning, macro_root, true)
     }
 
     /// Interns a frozen macro definition in the owned macro-definition store.
-    pub fn intern_macro(&mut self, macro_meaning: MacroMeaning) -> MacroDefinitionId {
-        self.intern_macro_with_provenance(macro_meaning, None)
+    pub fn intern_macro(&mut self, macro_meaning: MacroMeaning) -> MacroDefinitionRef {
+        self.intern_macro_with_provenance_in_domain(macro_meaning, None, None)
     }
 
     /// Interns a frozen macro definition with optional diagnostic provenance.
@@ -1281,7 +1312,16 @@ impl Stores {
         &mut self,
         macro_meaning: MacroMeaning,
         provenance: Option<MacroDefinitionProvenance>,
-    ) -> MacroDefinitionId {
+    ) -> MacroDefinitionRef {
+        self.intern_macro_with_provenance_in_domain(macro_meaning, provenance, None)
+    }
+
+    pub(crate) fn intern_macro_with_provenance_in_domain(
+        &mut self,
+        macro_meaning: MacroMeaning,
+        provenance: Option<MacroDefinitionProvenance>,
+        domain: Option<&mut crate::patch_domain::PatchAllocationDomain>,
+    ) -> MacroDefinitionRef {
         self.assert_live_token_list(macro_meaning.parameter_text());
         self.assert_live_token_list(macro_meaning.replacement_text());
         if let Some(provenance) = provenance {
@@ -1314,9 +1354,22 @@ impl Stores {
                 .owner(macro_meaning.replacement_text())
                 .expect("macro replacement tokens have a live owner"),
             parameter_pattern,
+            self.tokens.semantic_id(macro_meaning.parameter_text()),
+            self.tokens.semantic_id(macro_meaning.replacement_text()),
             provenance,
             observation_width,
+            domain,
         )
+    }
+
+    pub(crate) fn macro_definition_ref(&self, id: MacroDefinitionId) -> MacroDefinitionRef {
+        let id = self
+            .macros
+            .resolve_stored(id)
+            .expect("stored macro-definition slot is not live");
+        self.macros
+            .owner(id)
+            .expect("macro definition id is not live")
     }
 
     /// Reads a live frozen macro definition.
@@ -1385,7 +1438,7 @@ impl Stores {
             symbol,
             Meaning::Macro {
                 flags: macro_meaning.flags(),
-                definition,
+                definition: definition.id(),
             },
         )
     }
@@ -1402,7 +1455,7 @@ impl Stores {
             symbol,
             Meaning::Macro {
                 flags: macro_meaning.flags(),
-                definition,
+                definition: definition.id(),
             },
         )
     }
@@ -1418,7 +1471,7 @@ impl Stores {
             symbol,
             Meaning::Macro {
                 flags: macro_meaning.flags(),
-                definition,
+                definition: definition.id(),
             },
         )
     }
@@ -1435,7 +1488,7 @@ impl Stores {
             symbol,
             Meaning::Macro {
                 flags: macro_meaning.flags(),
-                definition,
+                definition: definition.id(),
             },
         )
     }
@@ -1752,15 +1805,20 @@ impl Stores {
         &self,
         domain: &crate::patch_domain::PatchAllocationDomain,
     ) -> Vec<crate::patch_domain::PatchRoot> {
-        self.tokens.selected_patch_roots(domain)
+        let mut roots = self.tokens.selected_patch_roots(domain);
+        roots.extend(self.macros.selected_patch_roots(domain));
+        roots
     }
 
     pub(crate) fn token_patch_allocation_count(&self) -> usize {
-        self.tokens.patch_allocation_count()
+        self.tokens
+            .patch_allocation_count()
+            .saturating_add(self.macros.patch_allocation_count())
     }
 
     pub(crate) fn clear_token_patch_allocations(&mut self) {
         self.tokens.clear_patch_allocations();
+        self.macros.clear_patch_allocations();
     }
 
     fn token_list_semantic_id(&self, tokens: impl IntoIterator<Item = Token>) -> TokenSemanticId {
@@ -1971,13 +2029,35 @@ impl Stores {
         self.assert_live_origin(invocation);
         self.assert_live_origin(definition_origin);
         self.assert_live_origin(parent_invocation);
-        self.provenance
-            .allocate(OriginRecord::MacroInvocation(MacroInvocationOrigin::new(
-                definition,
+        let definition_operand = self.macros.observation_operand(definition) as u64;
+        self.provenance.allocate(OriginRecord::MacroInvocation(
+            MacroInvocationOrigin::from_nonowning_operand(
+                definition_operand,
                 invocation,
                 definition_origin,
                 parent_invocation,
-            )))
+            ),
+        ))
+    }
+
+    pub fn macro_invocation_origin_from_nonowning_operand(
+        &mut self,
+        definition_operand: u64,
+        invocation: OriginId,
+        definition_origin: OriginId,
+        parent_invocation: OriginId,
+    ) -> OriginId {
+        self.assert_live_origin(invocation);
+        self.assert_live_origin(definition_origin);
+        self.assert_live_origin(parent_invocation);
+        self.provenance.allocate(OriginRecord::MacroInvocation(
+            MacroInvocationOrigin::from_nonowning_operand(
+                definition_operand,
+                invocation,
+                definition_origin,
+                parent_invocation,
+            ),
+        ))
     }
 
     /// Allocates an inserted-token origin.

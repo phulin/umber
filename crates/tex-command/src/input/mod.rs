@@ -923,7 +923,7 @@ impl InputState {
                     tex_state::token::Token::Cs(activation.name),
                 ),
                 stores
-                    .macro_definition(activation.definition)
+                    .macro_definition(activation.definition.id())
                     .parameter_text(),
             ))
         } else {

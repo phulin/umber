@@ -170,7 +170,8 @@ print channel of its own outside the borrowed
   caller that starts from a broader notion and subtracts them by hand is
   re-deriving this predicate one exception at a time.
 - `src/macro_call.rs`, `src/macro_call/tests.rs`: private canonical scalar
-  macro matcher, invocation/argument activation ownership, and focused tests.
+  macro matcher, strong definition/replacement and argument activation ownership,
+  and focused tests.
 - `src/conditionals.rs`: private independent condition-stack machine; also
   renders e-TeX 2.6's `\tracingifs` `{...}` trace lines at conditional entry
   and at each `\or`/`\else`/`\fi` delimiter resolution, printed directly
@@ -228,8 +229,8 @@ print channel of its own outside the borrowed
   summary ownership, canonical detached-continuation materialization, and
   focused internal roundtrip/rejection tests.
 - `src/continuation.rs`: handle-free command-continuation detachment and
-  destination-generation materialization of strong token roots, symbols,
-  macros, and provenance.
+  destination-generation materialization of strong token and macro-definition
+  roots, symbols, and non-owning provenance operands.
 - `tests/`: external dependency, visibility, and capability-boundary tests.
   Character/input integration coverage binds the exact shared-domain tokenizer
   to the pinned TeX82 fixture and compile-fail gates profile immutability.

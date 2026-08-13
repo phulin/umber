@@ -86,7 +86,7 @@ fn format_roundtrip_counts_structural_end_match_in_macro_observation_width() {
         "frozen-only",
         Meaning::Macro {
             flags: MeaningFlags::OUTER,
-            definition: frozen,
+            definition: frozen.id(),
         },
     );
     let body = universe.intern_token_list(&[Token::Char {
@@ -99,7 +99,7 @@ fn format_roundtrip_counts_structural_end_match_in_macro_observation_width() {
         symbol,
         Meaning::Macro {
             flags: MeaningFlags::EMPTY,
-            definition: live,
+            definition: live.id(),
         },
     );
     let second_body = universe.intern_token_list(&[Token::Char {
@@ -112,7 +112,7 @@ fn format_roundtrip_counts_structural_end_match_in_macro_observation_width() {
         second_symbol,
         Meaning::Macro {
             flags: MeaningFlags::EMPTY,
-            definition: second,
+            definition: second.id(),
         },
     );
 

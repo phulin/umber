@@ -1,5 +1,5 @@
 use tex_state::Universe;
-use tex_state::ids::{MacroDefinitionId, OriginListId, TokenListId};
+use tex_state::ids::{OriginListId, TokenListId};
 use tex_state::macro_store::MacroMeaning;
 use tex_state::meaning::{Meaning, MeaningFlags, UnexpandablePrimitive};
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
@@ -111,7 +111,7 @@ fn activation_boundary_owns_arguments_before_exposing_its_body() {
     let universe = tex_state::Universe::new();
     let body = state.push_macro_activation(
         tex_state::interner::Symbol::testing_new(1),
-        MacroDefinitionId::testing_new(4),
+        tex_state::macro_store::MacroDefinitionRef::testing_new(4),
         builder.finish(),
         OriginId::UNKNOWN,
         universe.token_list_ref(TokenListId::EMPTY),
@@ -141,14 +141,14 @@ fn activation_parent_tracks_the_live_nested_frame() {
     let mut parameters = ParameterState::default();
     let first = parameters.push_activation(
         tex_state::interner::Symbol::testing_new(1),
-        MacroDefinitionId::testing_new(1),
+        tex_state::macro_store::MacroDefinitionRef::testing_new(1),
         MacroArgumentBuilder::default().finish(),
         OriginId::UNKNOWN,
     );
     assert_eq!(first.0, 0);
     parameters.push_activation(
         tex_state::interner::Symbol::testing_new(2),
-        MacroDefinitionId::testing_new(2),
+        tex_state::macro_store::MacroDefinitionRef::testing_new(2),
         MacroArgumentBuilder::default().finish(),
         OriginId::UNKNOWN,
     );
@@ -181,7 +181,13 @@ fn run_macro_call(
     let parameters = universe.intern_token_list(parameters);
     let replacement = universe.intern_token_list(&[Token::param(1)]);
     let definition = universe.intern_macro(MacroMeaning::new(flags, parameters, replacement));
-    universe.set_meaning(macro_name, Meaning::Macro { flags, definition });
+    universe.set_meaning(
+        macro_name,
+        Meaning::Macro {
+            flags,
+            definition: definition.id(),
+        },
+    );
     if install_outer {
         let outer = universe.intern("outer").symbol();
         let empty = universe.intern_token_list(&[]);
@@ -191,7 +197,7 @@ fn run_macro_call(
             outer,
             Meaning::Macro {
                 flags: MeaningFlags::OUTER,
-                definition: outer_definition,
+                definition: outer_definition.id(),
             },
         );
     }
@@ -270,7 +276,13 @@ fn run_observed_macro_call_with_parameters(
     let parameters = universe.intern_token_list(parameters);
     let replacement = universe.intern_token_list(&[Token::param(1)]);
     let definition = universe.intern_macro(MacroMeaning::new(flags, parameters, replacement));
-    universe.set_meaning(name, Meaning::Macro { flags, definition });
+    universe.set_meaning(
+        name,
+        Meaning::Macro {
+            flags,
+            definition: definition.id(),
+        },
+    );
     let mut capabilities = CommandHostCapabilities::default();
     let mut recorder = Recorder::default();
     let outcome = {
@@ -402,7 +414,7 @@ fn parameterless_macro_pushes_replacement_without_matching_status() {
         name,
         Meaning::Macro {
             flags: MeaningFlags::EMPTY,
-            definition,
+            definition: definition.id(),
         },
     );
     let mut capabilities = CommandHostCapabilities::default();
@@ -456,13 +468,15 @@ fn active_macro_delivery_keeps_original_replacement_after_redefinition() {
     }]);
     let original_definition =
         universe.intern_macro(MacroMeaning::new(MeaningFlags::EMPTY, empty, original));
+    let original_definition_id = original_definition.id();
     universe.set_meaning(
         name,
         Meaning::Macro {
             flags: MeaningFlags::EMPTY,
-            definition: original_definition,
+            definition: original_definition_id,
         },
     );
+    drop(original_definition);
     let mut capabilities = CommandHostCapabilities::default();
     {
         let mut processor = CommandProcessor::new(
@@ -489,8 +503,15 @@ fn active_macro_delivery_keeps_original_replacement_after_redefinition() {
         name,
         Meaning::Macro {
             flags: MeaningFlags::EMPTY,
-            definition: replacement_definition,
+            definition: replacement_definition.id(),
         },
+    );
+    assert_eq!(
+        universe
+            .macro_definition(original_definition_id)
+            .replacement_text(),
+        original,
+        "the activation is the final strong owner after redefinition"
     );
 
     let mut processor = CommandProcessor::new(
@@ -536,7 +557,7 @@ fn matching_transition_retains_the_enclosing_definition_status() {
         name,
         Meaning::Macro {
             flags: MeaningFlags::EMPTY,
-            definition,
+            definition: definition.id(),
         },
     );
     let _prior = command.begin_scanner_status(ScannerStatus::Defining(DefinitionContext {
@@ -913,7 +934,7 @@ fn non_long_argument_rejection_uses_par_token_identity_not_meaning() {
             name,
             Meaning::Macro {
                 flags: MeaningFlags::EMPTY,
-                definition,
+                definition: definition.id(),
             },
         );
         let mut capabilities = CommandHostCapabilities::default();
@@ -1036,7 +1057,7 @@ fn non_long_paragraph_backs_up_before_restoring_matching_status() {
         name,
         Meaning::Macro {
             flags: MeaningFlags::EMPTY,
-            definition,
+            definition: definition.id(),
         },
     );
     let _prior = command.begin_scanner_status(ScannerStatus::Defining(DefinitionContext {
@@ -1124,7 +1145,7 @@ fn matching_outer_recovery_reports_before_backing_up_the_forbidden_control_seque
         macro_name,
         Meaning::Macro {
             flags: MeaningFlags::EMPTY,
-            definition,
+            definition: definition.id(),
         },
     );
     let outer_name = universe.intern("outer").symbol();
@@ -1135,7 +1156,7 @@ fn matching_outer_recovery_reports_before_backing_up_the_forbidden_control_seque
         outer_name,
         Meaning::Macro {
             flags: MeaningFlags::OUTER,
-            definition: outer_definition,
+            definition: outer_definition.id(),
         },
     );
     let mut capabilities = CommandHostCapabilities::default();
@@ -1215,7 +1236,7 @@ fn successful_call_activates_canonical_replacement_and_replays_parameter_range()
         name,
         Meaning::Macro {
             flags: MeaningFlags::EMPTY,
-            definition,
+            definition: definition.id(),
         },
     );
     let mut capabilities = CommandHostCapabilities::default();
@@ -1351,14 +1372,14 @@ fn nested_macro_activation_retires_the_exhausted_caller_before_pushing_the_calle
         outer,
         Meaning::Macro {
             flags: MeaningFlags::EMPTY,
-            definition: outer_definition,
+            definition: outer_definition.id(),
         },
     );
     universe.set_meaning(
         inner,
         Meaning::Macro {
             flags: MeaningFlags::EMPTY,
-            definition: inner_definition,
+            definition: inner_definition.id(),
         },
     );
     let mut capabilities = CommandHostCapabilities::default();
@@ -1435,14 +1456,14 @@ fn nested_calls_keep_out_parameter_ownership_and_invocation_provenance() {
         outer,
         Meaning::Macro {
             flags: MeaningFlags::EMPTY,
-            definition: outer_definition,
+            definition: outer_definition.id(),
         },
     );
     universe.set_meaning(
         inner,
         Meaning::Macro {
             flags: MeaningFlags::EMPTY,
-            definition: inner_definition,
+            definition: inner_definition.id(),
         },
     );
     let mut capabilities = CommandHostCapabilities::default();

@@ -809,7 +809,7 @@ fn output_replay_completion_follows_final_macro_replacement() {
         value,
         Meaning::Macro {
             flags: MeaningFlags::EMPTY,
-            definition,
+            definition: definition.id(),
         },
     );
     push(&mut command, text_tokens("PARENT"));
@@ -1672,7 +1672,7 @@ fn expanded_balanced_text_uses_canonical_macro_argument_matching() {
         macro_name,
         Meaning::Macro {
             flags: MeaningFlags::EMPTY,
-            definition,
+            definition: definition.id(),
         },
     );
     push(
@@ -3521,7 +3521,7 @@ fn unbalanced_write_captures_context_before_recovery_retires_its_levels() {
         "endwrite",
         Meaning::Macro {
             flags: MeaningFlags::OUTER,
-            definition: endwrite,
+            definition: endwrite.id(),
         },
     );
     push(&mut command, text_tokens("x"));

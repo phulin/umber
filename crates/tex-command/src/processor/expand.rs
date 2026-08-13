@@ -2150,7 +2150,7 @@ impl CommandProcessor<'_> {
                 .macro_invocation_origin(definition, call_site, definition_origin, parent);
         self.command.push_macro_activation(
             name,
-            definition,
+            self.state.macro_definition_ref(definition),
             arguments,
             invocation,
             self.state.token_list_ref(replacement_tokens),

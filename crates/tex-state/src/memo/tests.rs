@@ -115,7 +115,7 @@ fn glue_and_macro_round_trip_semantically() {
         replacement,
     ));
     let detached_macro = source
-        .detach_macro_meaning(definition)
+        .detach_macro_meaning(definition.id())
         .expect("macro detachment");
 
     let mut target = Universe::new();
@@ -126,7 +126,7 @@ fn glue_and_macro_round_trip_semantically() {
     let imported_macro = target
         .import_memo_macro_meaning(&detached_macro, MemoValueLimits::default())
         .expect("macro import");
-    let meaning = target.macro_definition(imported_macro);
+    let meaning = target.macro_definition(imported_macro.id());
     assert_eq!(meaning.flags(), MeaningFlags::LONG);
     assert_eq!(
         target.tokens(meaning.replacement_text())[0],

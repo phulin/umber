@@ -1867,11 +1867,13 @@ impl ImmutableStoreIdentity {
         let macro_mark = stores.macros.watermark();
         let macros = (0..macro_mark.definitions)
             .map(|raw| {
-                let meaning = stores.macros.get(
-                    stores
-                        .macros
-                        .resolve_stored(MacroDefinitionId::new(raw))
-                        .expect("captured macro slot should be live"),
+                let meaning = stores.macros.stored_slot(raw).map_or(
+                    MacroMeaning::new(
+                        crate::meaning::MeaningFlags::EMPTY,
+                        TokenListId::EMPTY,
+                        TokenListId::EMPTY,
+                    ),
+                    |root| root.meaning(),
                 );
                 FormatMacro {
                     flags: meaning.flags().bits(),
@@ -2131,10 +2133,25 @@ fn install_frozen_sections(
             crate::cell::BankTag::TokParam => None,
             _ => None,
         };
+        let macro_root = if cell.bank() == crate::cell::BankTag::Meaning {
+            match crate::meaning::Meaning::decode_stored(word) {
+                crate::meaning::Meaning::Macro { definition, .. } => Some(
+                    stores
+                        .macros
+                        .resolve_stored(definition)
+                        .and_then(|id| stores.macros.owner(id))
+                        .ok_or(StoreFormatError::Invalid("frozen environment macro owner"))?,
+                ),
+                _ => None,
+            }
+        } else {
+            None
+        };
         base.push(crate::env::FormatBaseCell {
             cell,
             word,
             token_root,
+            macro_root,
         });
     }
     stores.env.install_format_base(base);
@@ -2422,7 +2439,16 @@ impl FormatToken {
     fn capture(stores: &Stores, token: Token) -> Self {
         match token {
             Token::Char { ch, cat } => Self::Char { ch, cat: cat as u8 },
-            Token::Cs(symbol) => Self::Cs(stores.resolve_stored_symbol(symbol).raw()),
+            // Weak token slots may still be live through a detached builder
+            // after its timeline-local symbol was rolled back. The reachable
+            // closure below discards such a slot; use an invalid sentinel so
+            // an actually reachable stale reference is rejected rather than
+            // panicking while the unreachable physical table is projected.
+            Token::Cs(symbol) => Self::Cs(
+                stores
+                    .try_resolve_stored_symbol(symbol)
+                    .map_or(u32::MAX, |symbol| symbol.raw()),
+            ),
             Token::Param(slot) => Self::Param(slot),
             Token::Frozen(frozen) => Self::Frozen(frozen.raw()),
         }

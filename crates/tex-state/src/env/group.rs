@@ -1,6 +1,9 @@
 use super::{Env, cell_key, checked_aftergroup_start, u32_len};
 use crate::cell::{BankTag, CellId};
-use crate::journal::{BoxUndoRec, Entry, JournalPos, Marker, TokenUndoRoots, UndoRec};
+use crate::journal::{
+    BoxUndoRec, Entry, JournalPos, MacroUndoRoots, Marker, TokenUndoRoots, UndoRec,
+};
+use crate::macro_store::MacroDefinitionRef;
 use crate::token::{Token, TracedTokenWord};
 use crate::token_store::TokenListRef;
 use ahash::AHashMap;
@@ -170,6 +173,7 @@ struct GlobalCompactionState<T> {
 struct OwnedWord {
     word: u64,
     token_root: Option<TokenListRef>,
+    macro_root: Option<MacroDefinitionRef>,
 }
 
 impl<T> GlobalCompactionState<T> {
@@ -819,7 +823,11 @@ impl Env {
                         .journal
                         .token_undo_roots(index)
                         .and_then(TokenUndoRoots::old);
-                    self.restore_raw_with_token_owner(rec.cell(), rec.old(), root);
+                    let macro_root = self
+                        .journal
+                        .macro_undo_roots(index)
+                        .and_then(MacroUndoRoots::old);
+                    self.restore_raw_with_owners(rec.cell(), rec.old(), root, macro_root);
                     if traced_local_entries.contains(&index) {
                         restores.push(RestoreRecord::restoring(self, index, rec.cell(), rec.old()));
                     }
@@ -893,6 +901,10 @@ impl Env {
                             .journal
                             .token_undo_roots(index)
                             .and_then(TokenUndoRoots::old),
+                        macro_root: self
+                            .journal
+                            .macro_undo_roots(index)
+                            .and_then(MacroUndoRoots::old),
                     })
                 });
             } else if let Entry::BoxUndo(id) = self.journal.entry(index) {
@@ -911,7 +923,11 @@ impl Env {
                         .get_mut(&cell_key(rec.cell()))
                         .expect("journal cell was indexed before group compaction")
                         .has_later_global = true;
-                    globals.push((rec, self.journal.token_undo_roots(index).cloned()));
+                    globals.push((
+                        rec,
+                        self.journal.token_undo_roots(index).cloned(),
+                        self.journal.macro_undo_roots(index).cloned(),
+                    ));
                 }
                 Entry::Undo(rec) => {
                     let state = cell_states
@@ -923,7 +939,11 @@ impl Env {
                             .journal
                             .token_undo_roots(index)
                             .and_then(TokenUndoRoots::old);
-                        self.restore_raw_with_token_owner(rec.cell(), rec.old(), root);
+                        let macro_root = self
+                            .journal
+                            .macro_undo_roots(index)
+                            .and_then(MacroUndoRoots::old);
+                        self.restore_raw_with_owners(rec.cell(), rec.old(), root, macro_root);
                         if traced_local_entries.contains(&index) {
                             restores.push(RestoreRecord::restoring(
                                 self,
@@ -972,10 +992,16 @@ impl Env {
 
         self.journal.truncate_to(JournalPos::from_raw(marker_index));
         self.journal.truncate_box_undos(box_undo_len);
-        for (rec, roots) in globals.into_iter().rev() {
+        for (rec, roots, macro_roots) in globals.into_iter().rev() {
             meaning_changed |= rec.cell().bank() == BankTag::Meaning;
             let new_root = roots.as_ref().and_then(TokenUndoRoots::new_value);
-            self.restore_raw_with_token_owner(rec.cell(), rec.new_value(), new_root.clone());
+            let new_macro_root = macro_roots.as_ref().and_then(MacroUndoRoots::new_value);
+            self.restore_raw_with_owners(
+                rec.cell(),
+                rec.new_value(),
+                new_root.clone(),
+                new_macro_root.clone(),
+            );
             let key = cell_key(rec.cell());
             let state = cell_states
                 .get_mut(&key)
@@ -984,6 +1010,7 @@ impl Env {
                 OwnedWord {
                     word: rec.old(),
                     token_root: roots.as_ref().and_then(TokenUndoRoots::old),
+                    macro_root: macro_roots.as_ref().and_then(MacroUndoRoots::old),
                 }
             } else {
                 state.refiled = true;
@@ -995,6 +1022,11 @@ impl Env {
             if matches!(rec.cell().bank(), BankTag::Toks | BankTag::TokParam) {
                 self.journal
                     .attach_token_undo_roots(pos, TokenUndoRoots::new(old.token_root, new_root));
+            } else if rec.cell().bank() == BankTag::Meaning {
+                self.journal.attach_macro_undo_roots(
+                    pos,
+                    MacroUndoRoots::new(old.macro_root, new_macro_root),
+                );
             }
         }
         for rec in box_globals.into_iter().rev() {
@@ -1044,7 +1076,11 @@ impl Env {
                     .journal
                     .token_undo_roots(index)
                     .and_then(TokenUndoRoots::old);
-                self.restore_raw_with_token_owner(rec.cell(), rec.old(), root);
+                let macro_root = self
+                    .journal
+                    .macro_undo_roots(index)
+                    .and_then(MacroUndoRoots::old);
+                self.restore_raw_with_owners(rec.cell(), rec.old(), root, macro_root);
             } else if let Entry::BoxUndo(id) = self.journal.entry(index) {
                 let rec = self.journal.box_undo(id);
                 self.boxes.restore(rec.index(), rec.old());

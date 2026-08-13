@@ -659,6 +659,8 @@ fn decode_macros(
     let mut parameter_roots = Vec::with_capacity(count);
     let mut replacement_roots = Vec::with_capacity(count);
     let mut patterns = Vec::with_capacity(count);
+    let mut parameter_semantic_ids = Vec::with_capacity(count);
+    let mut replacement_semantic_ids = Vec::with_capacity(count);
     let mut observation_widths = Vec::with_capacity(count);
     for index in 0..count {
         let record = MACROS_HEADER + index * MACRO_RECORD;
@@ -700,6 +702,8 @@ fn decode_macros(
         );
         let parameter_tokens = tokens.get(parameter_text);
         patterns.push(MacroParameterPattern::from_tokens(&parameter_tokens));
+        parameter_semantic_ids.push(tokens.semantic_id(parameter_text));
+        replacement_semantic_ids.push(tokens.semantic_id(replacement_text));
         // TeX82 §§289/294/473 store one `end_match` word between parameter
         // and replacement text. Umber represents that separator structurally,
         // but §341's observed `def_ref` still advances across its memory word.
@@ -716,6 +720,8 @@ fn decode_macros(
         parameter_roots,
         replacement_roots,
         patterns,
+        parameter_semantic_ids,
+        replacement_semantic_ids,
         observation_widths,
     )
     .map_err(StoreFormatError::Invalid)?;

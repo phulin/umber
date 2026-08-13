@@ -14,7 +14,9 @@ use crate::{
     ids::{FontId, GlueId},
     ids::{MacroDefinitionId, OriginListId, TokenListId},
     interner::{Symbol, SymbolId},
-    macro_store::{MacroDefinitionProvenance, MacroMeaning, MacroParameterPattern},
+    macro_store::{
+        MacroDefinitionProvenance, MacroDefinitionRef, MacroMeaning, MacroParameterPattern,
+    },
     math::MathFontSize,
     meaning::{InternalInteger, Meaning},
     page::{PageInteger, PageMark},
@@ -1221,6 +1223,12 @@ impl CommandContext<'_> {
     #[must_use]
     pub fn macro_definition(&self, definition: MacroDefinitionId) -> MacroMeaning {
         self.universe.macro_definition(definition)
+    }
+
+    /// Clones the strong owner for one live definition occurrence.
+    #[must_use]
+    pub fn macro_definition_ref(&self, definition: MacroDefinitionId) -> MacroDefinitionRef {
+        self.universe.macro_definition_ref(definition)
     }
 
     /// Returns TeX82's definition-head identity for detached observation.

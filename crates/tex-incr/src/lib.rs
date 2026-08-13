@@ -1339,7 +1339,6 @@ impl Session {
     pub fn start_cold_candidate(&self) -> Result<RevisionCandidate, SessionError> {
         let mut universe = self.template.clone();
         universe.begin_retained_session()?;
-        universe.begin_private_revision();
         universe.install_editor_fragments(&self.fragments, &self.layout)?;
         universe.set_root_editor_content_hash(ContentHash::from_bytes(self.source.as_bytes()));
         let mut control = candidate_control(
@@ -1355,6 +1354,7 @@ impl Session {
                 root_framing_name: self.root_framing_name.as_deref(),
             },
         )?;
+        universe.begin_private_revision();
         let mut memo = self.pure_memo.clone();
         control.install_pure_memo_runtime(std::mem::take(&mut memo));
         control.attach_pure_memo_capability(&mut universe);
@@ -1604,7 +1604,6 @@ impl Session {
     ) -> Result<RevisionCandidate, SessionError> {
         let mut universe = self.template.clone();
         universe.begin_retained_session()?;
-        universe.begin_private_revision();
         universe.install_editor_fragments(&setup.fragments, &setup.next_layout)?;
         universe.set_root_editor_content_hash(ContentHash::from_bytes(setup.next.as_bytes()));
         let mut control = candidate_control(
@@ -1620,6 +1619,7 @@ impl Session {
                 root_framing_name: self.root_framing_name.as_deref(),
             },
         )?;
+        universe.begin_private_revision();
         control.install_pure_memo_runtime(self.pure_memo.clone());
         control.attach_pure_memo_capability(&mut universe);
         let effect_start = universe.world().effect_records().len();

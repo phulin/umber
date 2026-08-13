@@ -586,7 +586,7 @@ impl SourceOrigin {
 /// Provenance for one live macro invocation frame.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct MacroInvocationOrigin {
-    definition: MacroDefinitionId,
+    definition_operand: u64,
     invocation: OriginId,
     definition_origin: OriginId,
     parent_invocation: OriginId,
@@ -602,7 +602,7 @@ impl MacroInvocationOrigin {
         parent_invocation: OriginId,
     ) -> Self {
         Self {
-            definition,
+            definition_operand: definition.raw() as u64,
             invocation,
             definition_origin,
             parent_invocation,
@@ -610,8 +610,22 @@ impl MacroInvocationOrigin {
     }
 
     #[must_use]
-    pub const fn definition(self) -> MacroDefinitionId {
-        self.definition
+    pub const fn definition_operand(self) -> u64 {
+        self.definition_operand
+    }
+
+    pub(crate) const fn from_nonowning_operand(
+        definition_operand: u64,
+        invocation: OriginId,
+        definition_origin: OriginId,
+        parent_invocation: OriginId,
+    ) -> Self {
+        Self {
+            definition_operand,
+            invocation,
+            definition_origin,
+            parent_invocation,
+        }
     }
 
     #[must_use]

@@ -267,6 +267,37 @@ format/source/future append and redefinition, memo import, operation rollback,
 resource retry, rejection, selected acceptance, a live unrelated payload clone,
 10,000 bounded-live redefinitions, and exact all-roots-live growth.
 
+### Macro-body and binding owner audit
+
+`umber2-3v8z.3.2` separates the exact immutable body from each definition
+occurrence that binds or invokes it. A body structurally owns its flags,
+preparsed parameter structure, parameter token-list root, and replacement
+token-list root. A definition reference owns that body plus optional
+diagnostic metadata; its `MacroDefinitionId` remains only the compact
+timeline-local coordinate used by `Meaning`. Equivalent definition
+occurrences may therefore retain distinct TeX observation operands and
+provenance while sharing one exact body object.
+
+| Ownership stratum             | Concrete strong owner                                                                                     | Restoration, release, or transfer edge                                                                                                                                                                |
+| ----------------------------- | --------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Weak store lookup             | None. Body candidate buckets and definition slots contain weak references only.                           | Allocation reclaims dead reusable slots; a candidate hash collision still performs exact flags and child-content comparison.                                                                          |
+| Loaded-format base            | Every validated frozen definition row has one explicit immutable definition root.                         | Decode validates flags and token child indices before publishing the base. Dynamic future definitions use ordinary weak slots and do not extend base ownership.                                       |
+| Environment current binding   | Each macro-valued meaning cell owns its exact definition reference beside the packed meaning word.        | Local/global assignment replaces word and owner atomically. Redefinition drops the displaced current root only after any required undo root is installed.                                             |
+| Environment restoration       | Each macro-valued undo old/new word owns the matching definition reference.                               | Equal local writes, global supersession/refiling, group exit, journal rollback, and truncation move or drop word and root together.                                                                   |
+| Active command invocation     | Each `MacroActivation` owns its definition reference independently of the replacement cursor.             | Activation publication clones the delivered definition root before the body level is visible. Input retirement, retry rollback, continuation detachment/materialization, and summary release drop it. |
+| Frozen primitive registry     | A driver-selected macro sentinel owns its definition beside the primitive meaning and frozen-token index. | Profile reconstruction and generation fork clone this operational owner; replacing or dropping the registry releases it independently of Env bindings.                                                |
+| Aggregate checkpoint and fork | Env current/undo roots and command-summary activation roots form the checkpoint's macro closure.          | Snapshot rollback restores those typed roots before private allocation rollback. A generation fork shares immutable bodies while retaining fork-local coordinates and complete binding roots.         |
+| Formats and memos             | Frozen formats own definition roots; detached format, memo, and continuation DTOs own semantic bytes.     | Capture serializes only the explicit reachable binding closure. Load/materialization validates, interns the exact body, creates a destination definition root, and publishes it atomically.           |
+| Diagnostic provenance         | An optional sidecar belongs to one live definition reference, never to the semantic body or index.        | Missing or stale origins degrade to unknown. Provenance records may retain a non-owning physical definition operand, but cannot upgrade it or keep the definition/body alive.                         |
+| Private patch domain          | The private domain owns each new body and definition allocation in addition to live typed references.     | Failed operation truncates its exact allocation suffix; rejection drops all private allocations; acceptance enumerates typed allocation leases and transfers only live roots and structural children. |
+
+Read-only `macro_definition`, state hashing, observation rendering, format
+encoding, and provenance resolution are borrows. `MacroInvocationOrigin`'s
+definition coordinate is diagnostic metadata and intentionally is not a root.
+There is no compatibility successful-definition history: the next TeX
+observation operand is fixed-size rollback state, while obsolete operands and
+sidecars disappear with their final definition reference.
+
 ## Object and slot representation
 
 Each family has a private immutable payload behind shared ownership. An owning

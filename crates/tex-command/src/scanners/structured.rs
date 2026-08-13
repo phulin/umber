@@ -89,11 +89,13 @@ pub struct ScannedMacroDefinition {
 /// The command processor owns every raw operand delivery, including the
 /// optional equals sign and `\futurelet`'s lookahead replay. Replay receives
 /// only the target and its already-resolved source meaning.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ScannedLetAssignment {
     pub target: Symbol,
     pub source: Option<Symbol>,
     pub meaning: Meaning,
+    #[doc(hidden)]
+    pub macro_root: Option<tex_state::macro_store::MacroDefinitionRef>,
 }
 
 /// A completed TeX82 §1224 `\\chardef` or `\\mathchardef` operand.
@@ -102,11 +104,13 @@ pub struct ScannedLetAssignment {
 /// class-restricted integer scan (§434 or §436) including its recovery. Main
 /// control receives no token or input capability: it only applies the
 /// assignment's effective scope and reports the recovery diagnostic.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ScannedCharacterDefinition {
     pub target: Symbol,
     /// The meaning replaced by §1224's scanner-time provisional `\relax`.
     pub provisional_old: Meaning,
+    #[doc(hidden)]
+    pub provisional_macro_root: Option<tex_state::macro_store::MacroDefinitionRef>,
     /// The restricted class §1224 selects for this primitive.
     pub class: RestrictedIntegerClass,
     /// `cur_val` after §434/§436's recovery.
@@ -123,12 +127,24 @@ pub struct ScannedCharacterDefinition {
 /// optional equals sign, and bounded classical register index. Main control
 /// receives only the chosen target and register selector to apply with the
 /// already determined assignment scope.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ScannedRegisterDefinition {
     pub target: Symbol,
     /// The meaning replaced by §1224's scanner-time provisional `\relax`.
     pub provisional_old: Meaning,
+    #[doc(hidden)]
+    pub provisional_macro_root: Option<tex_state::macro_store::MacroDefinitionRef>,
     pub index: u16,
+}
+
+fn meaning_macro_root(
+    state: &tex_state::CommandContext<'_>,
+    meaning: Meaning,
+) -> Option<tex_state::macro_store::MacroDefinitionRef> {
+    match meaning {
+        Meaning::Macro { definition, .. } => Some(state.macro_definition_ref(definition)),
+        _ => None,
+    }
 }
 
 /// TeX82 §§1254--1261's completed `\\font` definition request.
@@ -1110,6 +1126,7 @@ impl CommandProcessor<'_> {
     ) -> Result<ScannedCharacterDefinition, CommandError> {
         let target = self.scan_definition_target()?;
         let provisional_old = self.state.meaning(target);
+        let provisional_macro_root = meaning_macro_root(&self.state, provisional_old);
         self.state
             .set_provisional_meaning(target, Meaning::Relax, provisional_global);
         observe!(
@@ -1126,6 +1143,7 @@ impl CommandProcessor<'_> {
         Ok(ScannedCharacterDefinition {
             target,
             provisional_old,
+            provisional_macro_root,
             class,
             value: scanned.value,
             scanned: scanned.scanned,
@@ -1144,6 +1162,7 @@ impl CommandProcessor<'_> {
     ) -> Result<ScannedRegisterDefinition, CommandError> {
         let target = self.scan_definition_target()?;
         let provisional_old = self.state.meaning(target);
+        let provisional_macro_root = meaning_macro_root(&self.state, provisional_old);
         self.state
             .set_provisional_meaning(target, Meaning::Relax, provisional_global);
         observe!(
@@ -1168,6 +1187,7 @@ impl CommandProcessor<'_> {
         Ok(ScannedRegisterDefinition {
             target,
             provisional_old,
+            provisional_macro_root,
             index,
         })
     }
@@ -3702,6 +3722,7 @@ impl CommandProcessor<'_> {
             target,
             source,
             meaning,
+            macro_root: meaning_macro_root(&self.state, meaning),
         })
     }
 

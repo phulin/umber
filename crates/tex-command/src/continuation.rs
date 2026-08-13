@@ -5,7 +5,7 @@ use std::collections::{HashMap, HashSet};
 use tex_state::Universe;
 use tex_state::ids::{MacroDefinitionId, OriginListId, TokenListId};
 use tex_state::interner::{ControlSequenceKind, Symbol};
-use tex_state::macro_store::{MacroDefinitionProvenance, MacroMeaning};
+use tex_state::macro_store::{MacroDefinitionProvenance, MacroDefinitionRef, MacroMeaning};
 use tex_state::provenance::OriginRecord;
 use tex_state::token::{OriginId, Token, TracedTokenWord};
 use tex_state::token_store::TokenListRef;
@@ -93,7 +93,7 @@ impl OwnedCommandContinuation {
         let activations = parameters.activations.clone();
         for activation in &activations {
             self.collect_symbol(activation.name, universe);
-            self.collect_macro(activation.definition, universe);
+            self.collect_macro(activation.definition.id(), universe);
             self.collect_words(activation.arguments.buffer.words(), universe);
             self.collect_origin(activation.invocation, universe);
         }
@@ -235,7 +235,6 @@ impl OwnedCommandContinuation {
         self.origins.insert(id, OwnedOrigin::Record(record));
         match record {
             OriginRecord::MacroInvocation(origin) => {
-                self.collect_macro(origin.definition(), universe);
                 self.collect_origin(origin.invocation(), universe);
                 self.collect_origin(origin.definition_origin(), universe);
                 self.collect_origin(origin.parent_invocation(), universe);
@@ -258,7 +257,7 @@ struct Materializer<'a> {
     universe: &'a mut Universe,
     tokens: HashMap<TokenListId, TokenListRef>,
     origin_lists: HashMap<OriginListId, OriginListId>,
-    macros: HashMap<MacroDefinitionId, MacroDefinitionId>,
+    macros: HashMap<MacroDefinitionId, MacroDefinitionRef>,
     origins: HashMap<OriginId, OriginId>,
     macro_provenance_done: HashSet<MacroDefinitionId>,
 }
@@ -317,8 +316,8 @@ impl<'a> Materializer<'a> {
     }
 
     fn macro_id(&mut self, old: MacroDefinitionId) -> MacroDefinitionId {
-        if let Some(&id) = self.macros.get(&old) {
-            return id;
+        if let Some(root) = self.macros.get(&old) {
+            return root.id();
         }
         let owned = self.owned.macros.get(&old).expect("detached macro").clone();
         let parameters = owned
@@ -333,12 +332,13 @@ impl<'a> Materializer<'a> {
             .collect::<Vec<_>>();
         let parameters = self.universe.intern_token_list_ref(&parameters);
         let replacement = self.universe.intern_token_list_ref(&replacement);
-        let id = self.universe.intern_macro(MacroMeaning::new(
+        let root = self.universe.intern_macro(MacroMeaning::new(
             owned.flags,
             parameters.id(),
             replacement.id(),
         ));
-        self.macros.insert(old, id);
+        let id = root.id();
+        self.macros.insert(old, root);
         id
     }
 
@@ -387,16 +387,16 @@ impl<'a> Materializer<'a> {
                     self.universe.inserted_origin(origin.kind(), token, parent)
                 }
                 OriginRecord::MacroInvocation(origin) => {
-                    let definition = self.macro_id(origin.definition());
                     let invocation = self.origin(origin.invocation());
                     let definition_origin = self.origin(origin.definition_origin());
                     let parent = self.origin(origin.parent_invocation());
-                    self.universe.macro_invocation_origin(
-                        definition,
-                        invocation,
-                        definition_origin,
-                        parent,
-                    )
+                    self.universe
+                        .macro_invocation_origin_from_nonowning_operand(
+                            origin.definition_operand(),
+                            invocation,
+                            definition_origin,
+                            parent,
+                        )
                 }
             },
         };
@@ -447,8 +447,9 @@ impl<'a> Materializer<'a> {
                 Token::Cs(symbol) => symbol,
                 _ => unreachable!(),
             };
-            let old = activation.definition;
-            activation.definition = self.macro_id(old);
+            let old = activation.definition.id();
+            let id = self.macro_id(old);
+            activation.definition = self.universe.macro_definition_ref(id);
             activation.arguments.buffer = SharedTokenBuffer::new(
                 activation
                     .arguments

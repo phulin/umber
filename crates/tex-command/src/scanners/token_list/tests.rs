@@ -45,7 +45,7 @@ fn install_macro(universe: &mut tex_state::Universe, name: &str, replacement: To
         symbol,
         Meaning::Macro {
             flags: MeaningFlags::EMPTY,
-            definition,
+            definition: definition.id(),
         },
     );
 }
@@ -193,7 +193,7 @@ fn token_register_runaway_retains_assignment_owner() {
         outer,
         Meaning::Macro {
             flags: MeaningFlags::OUTER,
-            definition,
+            definition: definition.id(),
         },
     );
     let owner = universe.intern("tokens").symbol();

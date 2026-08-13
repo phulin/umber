@@ -233,7 +233,7 @@ fn configure_write_stopper(universe: &mut Universe) {
         "endwrite",
         Meaning::Macro {
             flags: MeaningFlags::OUTER,
-            definition,
+            definition: definition.id(),
         },
     );
 }

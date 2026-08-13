@@ -5146,7 +5146,7 @@ mod tests {
             outer,
             Meaning::Macro {
                 flags: MeaningFlags::OUTER,
-                definition,
+                definition: definition.id(),
             },
         );
         let mut capabilities = CommandHostCapabilities::default();
@@ -5187,7 +5187,7 @@ mod tests {
                         .meaning(),
                     Meaning::Macro {
                         flags: MeaningFlags::OUTER,
-                        definition
+                        definition: definition.id(),
                     },
                 );
             },
@@ -5220,7 +5220,7 @@ mod tests {
             outer,
             Meaning::Macro {
                 flags: MeaningFlags::OUTER,
-                definition,
+                definition: definition.id(),
             },
         );
         let mut capabilities = CommandHostCapabilities::default();

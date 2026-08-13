@@ -321,7 +321,7 @@ impl Stores {
     pub(super) fn assert_live_macro_definition(&self, id: MacroDefinitionId) {
         assert!(
             self.macros.contains(id),
-            "macro definition id is not live in this Universe timeline"
+            "macro definition id is not live in this Universe timeline: {id:?}"
         );
     }
 

@@ -486,7 +486,7 @@ impl Universe {
         &mut self,
         value: &DetachedMemoValue,
         limits: MemoValueLimits,
-    ) -> Result<MacroDefinitionId, MemoValueError> {
+    ) -> Result<crate::macro_store::MacroDefinitionRef, MemoValueError> {
         let detached: DetachedMacro = value.decode(MemoValueKind::MacroMeaning)?;
         validate_tokens(&detached.parameter_text, limits)?;
         validate_tokens(&detached.replacement_text, limits)?;

@@ -199,7 +199,7 @@ fn resolver_renders_bounded_live_macro_trace() {
         replacement_text,
     ));
     let macro_origin = stores.macro_invocation_origin(
-        definition,
+        definition.id(),
         invocation_origin,
         definition_origin,
         OriginId::UNKNOWN,
@@ -391,7 +391,7 @@ fn captured_site_renders_related_locations_and_trace_after_frames_are_gone() {
         replacement_text,
     ));
     let macro_origin = stores.macro_invocation_origin(
-        definition,
+        definition.id(),
         invocation,
         definition_origin,
         OriginId::UNKNOWN,
@@ -426,7 +426,7 @@ fn captured_macro_chain_honors_renderer_depth_beyond_the_default() {
     let mut head = OriginId::UNKNOWN;
     for offset in 0..12 {
         let invocation = stores.source_origin(crate::SourceId::new(0), offset, 1, offset as u32);
-        head = stores.macro_invocation_origin(definition, invocation, definition_origin, head);
+        head = stores.macro_invocation_origin(definition.id(), invocation, definition_origin, head);
     }
     let site = DiagnosticSite::new(None, [], Some(head));
 

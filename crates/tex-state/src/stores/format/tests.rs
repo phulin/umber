@@ -233,7 +233,7 @@ fn frozen_environment_and_macro_rows_install_exact_token_owners() {
         macro_symbol,
         Meaning::Macro {
             flags: MeaningFlags::from_bits(0),
-            definition,
+            definition: definition.id(),
         },
     );
     assert_eq!(definition.raw(), 0);

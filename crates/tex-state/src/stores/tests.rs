@@ -839,7 +839,7 @@ fn exact_environment_identity_ignores_intern_allocation_order() {
             target,
             Meaning::Macro {
                 flags: MeaningFlags::PROTECTED,
-                definition,
+                definition: definition.id(),
             },
         );
         stores.set_toks(0, tokens);
@@ -952,9 +952,10 @@ fn macro_definitions_own_parameter_and_replacement_token_children() {
         parameter,
         replacement,
     ));
-    let (stored_parameter, stored_replacement) = stores.macros.testing_token_roots(definition);
+    let (stored_parameter, stored_replacement) = stores.macros.testing_token_roots(definition.id());
     assert!(stored_parameter.ptr_eq(&parameter_root));
     assert!(stored_replacement.ptr_eq(&replacement_root));
+    drop((stored_parameter, stored_replacement));
     assert_eq!(parameter_root.strong_count(), parameter_before + 1);
     assert_eq!(replacement_root.strong_count(), replacement_before + 1);
 
@@ -1365,8 +1366,12 @@ fn provenance_records_and_lists_round_trip_through_stores_boundary() {
     let body = stores.intern_token_list(&[Token::Cs(symbol.symbol())]);
     let definition = stores.intern_macro(MacroMeaning::new(MeaningFlags::EMPTY, params, body));
     let source = stores.source_origin(SourceId::new(3), 40, 5, 2);
-    let macro_origin =
-        stores.macro_invocation_origin(definition, source, OriginId::UNKNOWN, OriginId::UNKNOWN);
+    let macro_origin = stores.macro_invocation_origin(
+        definition.id(),
+        source,
+        OriginId::UNKNOWN,
+        OriginId::UNKNOWN,
+    );
     let inserted = stores.inserted_origin(
         InsertedOriginKind::Paragraph,
         Token::Char {
@@ -1386,8 +1391,8 @@ fn provenance_records_and_lists_round_trip_through_stores_boundary() {
     );
     assert_eq!(
         stores.origin(macro_origin),
-        OriginRecord::MacroInvocation(MacroInvocationOrigin::new(
-            definition,
+        OriginRecord::MacroInvocation(MacroInvocationOrigin::from_nonowning_operand(
+            stores.macro_definition_observation_operand(definition.id()) as u64,
             source,
             OriginId::UNKNOWN,
             OriginId::UNKNOWN,
@@ -1492,7 +1497,7 @@ fn macro_definition_precomputes_parameter_delimiter_ranges() {
     let body = stores.intern_token_list(&[]);
     let definition = stores.intern_macro(MacroMeaning::new(MeaningFlags::EMPTY, params, body));
 
-    let pattern = stores.macro_definition_parameter_pattern(definition);
+    let pattern = stores.macro_definition_parameter_pattern(definition.id());
     assert_eq!(pattern.parameter_count(), 2);
     assert_eq!(pattern.leading_end(5), 1);
     assert_eq!(pattern.delimiter_bounds(0, 5), (2, 3));
@@ -1539,11 +1544,17 @@ fn identical_macro_definitions_get_distinct_definition_identity() {
     assert_ne!(first, second);
     assert!(
         stores
-            .macro_definition(first)
-            .semantic_eq(stores.macro_definition(second))
+            .macro_definition(first.id())
+            .semantic_eq(stores.macro_definition(second.id()))
     );
-    assert_eq!(stores.macro_definition_observation_operand(first), 249_985);
-    assert_eq!(stores.macro_definition_observation_operand(second), 249_983);
+    assert_eq!(
+        stores.macro_definition_observation_operand(first.id()),
+        249_985
+    );
+    assert_eq!(
+        stores.macro_definition_observation_operand(second.id()),
+        249_983
+    );
 }
 
 #[test]
@@ -1578,18 +1589,18 @@ fn identical_macro_definitions_keep_distinct_provenance() {
     assert_ne!(first, second);
     assert!(
         stores
-            .macro_definition(first)
-            .semantic_eq(stores.macro_definition(second))
+            .macro_definition(first.id())
+            .semantic_eq(stores.macro_definition(second.id()))
     );
     assert_eq!(
         stores
-            .macro_definition_provenance(first)
+            .macro_definition_provenance(first.id())
             .definition_origin(),
         first_origin
     );
     assert_eq!(
         stores
-            .macro_definition_provenance(second)
+            .macro_definition_provenance(second.id())
             .replacement_origins(),
         second_body_origins
     );
@@ -1603,7 +1614,7 @@ fn missing_macro_definition_provenance_degrades_to_unknown() {
     let definition = stores.intern_macro(MacroMeaning::new(MeaningFlags::EMPTY, params, body));
 
     assert_eq!(
-        stores.macro_definition_provenance(definition),
+        stores.macro_definition_provenance(definition.id()),
         MacroDefinitionProvenance::unknown()
     );
 }
@@ -1618,6 +1629,8 @@ fn rollback_restores_macro_store_as_part_of_snapshot_tuple() {
     let snapshot = stores.checkpoint();
     let stale_body = stores.intern_token_list(&[Token::param(2)]);
     let stale = stores.intern_macro(MacroMeaning::new(MeaningFlags::OUTER, params, stale_body));
+    let stale_id = stale.id();
+    drop(stale);
 
     stores.rollback(&snapshot);
     let reused_body = stores.intern_token_list(&[Token::Cs(symbol.symbol())]);
@@ -1627,12 +1640,15 @@ fn rollback_restores_macro_store_as_part_of_snapshot_tuple() {
         reused_body,
     ));
 
-    assert_eq!(stores.macro_definition(kept).replacement_text(), kept_body);
-    assert_eq!(reused.raw(), stale.raw());
-    assert_ne!(reused, stale);
-    assert!(!stores.macros.contains(stale));
     assert_eq!(
-        stores.macro_definition(reused).replacement_text(),
+        stores.macro_definition(kept.id()).replacement_text(),
+        kept_body
+    );
+    assert_eq!(reused.raw(), stale_id.raw());
+    assert_ne!(reused.id(), stale_id);
+    assert!(!stores.macros.contains(stale_id));
+    assert_eq!(
+        stores.macro_definition(reused.id()).replacement_text(),
         reused_body
     );
 }
@@ -1999,13 +2015,15 @@ fn stale_rolled_back_macro_definition_cannot_mutate_meaning() {
     let snapshot = stores.checkpoint();
     let body = stores.intern_token_list(&[Token::param(1)]);
     let stale = stores.intern_macro(MacroMeaning::new(MeaningFlags::EMPTY, params, body));
+    let stale_id = stale.id();
+    drop(stale);
 
     stores.rollback(&snapshot);
     stores.set_meaning(
         symbol,
         Meaning::Macro {
             flags: MeaningFlags::EMPTY,
-            definition: stale,
+            definition: stale_id,
         },
     );
 }

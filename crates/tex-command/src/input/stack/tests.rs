@@ -1,7 +1,7 @@
 use std::sync::{Arc, Weak};
 
 use tex_state::Universe;
-use tex_state::ids::{MacroDefinitionId, OriginListId, TokenListId};
+use tex_state::ids::{OriginListId, TokenListId};
 use tex_state::meaning::Meaning;
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 
@@ -41,7 +41,7 @@ fn push_activation(
     state.parameters.activations.push(MacroActivation {
         identity,
         name: tex_state::interner::Symbol::testing_new(1),
-        definition: MacroDefinitionId::testing_new(
+        definition: tex_state::macro_store::MacroDefinitionRef::testing_new(
             u32::try_from(identity.0 + 100).expect("test definition identity fits"),
         ),
         arguments: MacroArguments {

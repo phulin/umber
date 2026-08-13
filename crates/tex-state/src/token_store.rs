@@ -231,8 +231,8 @@ pub struct TokenListRef {
     patch_root: Option<PatchRootLease>,
 }
 
-#[cfg(test)]
-pub(crate) fn testing_empty_token_list_ref() -> TokenListRef {
+#[cfg(any(test, feature = "testing"))]
+pub fn testing_empty_token_list_ref() -> TokenListRef {
     TokenStore::new()
         .owner(TokenListId::EMPTY)
         .expect("test token store owns the canonical empty list")
@@ -251,7 +251,7 @@ impl TokenListRef {
         &self.value.value().tokens
     }
 
-    fn semantic_id(&self) -> TokenSemanticId {
+    pub(crate) fn semantic_id(&self) -> TokenSemanticId {
         self.value.value().semantic_id
     }
 

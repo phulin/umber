@@ -1,20 +1,26 @@
-//! Immutable macro-definition storage.
+//! Reachability-owned immutable macro definitions.
 //!
-//! Macro meanings keep one compact operand in Env. The operand names a frozen
-//! macro definition here, and the definition names separately frozen parameter
-//! text and replacement-body token lists. Diagnostic provenance for a
-//! definition is stored beside the semantic definition and is not part of
-//! [`MacroMeaning`].
+//! A definition occurrence has a timeline-local [`MacroDefinitionId`] and
+//! owns one exact immutable body. Equivalent occurrences keep their distinct
+//! diagnostic identity while the weak body pool deduplicates flags,
+//! parameter structure, and parameter/replacement token-list roots.
 
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::sync::{Arc, OnceLock};
 
-use crate::identity::{IdentityAllocator, IdentityMark};
+use crate::identity::HandleIdentity;
 use crate::ids::{MacroDefinitionId, OriginListId, TokenListId};
 use crate::meaning::MeaningFlags;
+use crate::patch_domain::{PatchAllocationDomain, PatchHandle, PatchRoot, PatchRootWeak};
+use crate::reachable_value::ReachableValuePool;
 use crate::token::{OriginId, Token};
-use crate::token_store::TokenListRef;
+use crate::token_store::{TokenListRef, TokenSemanticId};
 
 const MACRO_PARAMETER_SLOTS: usize = 9;
+mod owned;
+
+pub use owned::MacroDefinitionRef;
+use owned::{MacroBodyRef, MacroBodySemanticId, MacroBodyValue, MacroDefinitionValue};
 
 /// Allocation-free index of parameter markers in frozen macro parameter text.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -114,7 +120,7 @@ impl MacroParameterPattern {
     }
 }
 
-/// Public macro meaning aggregate used at the Universe boundary.
+/// Public semantic macro-body aggregate used at the Universe boundary.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct MacroMeaning {
     flags: MeaningFlags,
@@ -160,7 +166,7 @@ impl MacroMeaning {
     }
 }
 
-/// Diagnostic provenance captured while scanning a macro definition.
+/// Diagnostic provenance captured while scanning one definition occurrence.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct MacroDefinitionProvenance {
     definition_origin: OriginId,
@@ -169,7 +175,6 @@ pub struct MacroDefinitionProvenance {
 }
 
 impl MacroDefinitionProvenance {
-    /// Creates a definition-provenance side-table record.
     #[must_use]
     pub const fn new(
         definition_origin: OriginId,
@@ -183,7 +188,6 @@ impl MacroDefinitionProvenance {
         }
     }
 
-    /// Unknown provenance used when side-table data is absent or stale.
     #[must_use]
     pub const fn unknown() -> Self {
         Self {
@@ -209,37 +213,59 @@ impl MacroDefinitionProvenance {
     }
 }
 
-/// A rollback watermark for the macro-definition store.
+/// Rollback state for private macro allocations and compatibility operands.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct MacroStoreMark {
     pub(crate) definitions: u32,
-    identities: IdentityMark,
+    patch_events: u32,
+    next_observation_operand: i64,
 }
 
-/// Immutable macro-definition table.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PatchEvent {
+    Body(HandleIdentity),
+    Definition(MacroDefinitionId),
+}
+
+#[cfg(test)]
+type PoolShape = (usize, usize, usize, usize, usize, usize);
+
+/// Weak macro-body and definition-occurrence storage.
 #[derive(Debug)]
 pub struct MacroStore {
-    definitions: Vec<MacroMeaning>,
-    parameter_roots: Vec<TokenListRef>,
-    replacement_roots: Vec<TokenListRef>,
-    parameter_patterns: Vec<MacroParameterPattern>,
-    provenance: Vec<Option<MacroDefinitionProvenance>>,
-    observation_operands: Vec<i64>,
-    observation_widths: Vec<u32>,
-    identities: IdentityAllocator,
+    bodies: ReachableValuePool<MacroBodySemanticId, MacroBodyValue>,
+    definitions: ReachableValuePool<u64, MacroDefinitionValue>,
+    frozen_roots: Arc<[MacroDefinitionRef]>,
+    next_definition_serial: u64,
+    next_observation_operand: i64,
+    body_patch_handles: HashMap<HandleIdentity, PatchHandle<MacroBodyValue>>,
+    body_patch_leases: HashMap<HandleIdentity, PatchRootWeak>,
+    definition_patch_handles: HashMap<MacroDefinitionId, PatchHandle<MacroDefinitionValue>>,
+    definition_patch_leases: HashMap<MacroDefinitionId, PatchRootWeak>,
+    patch_order: Vec<PatchEvent>,
+    #[cfg(test)]
+    force_candidate_collision: bool,
 }
 
 impl Clone for MacroStore {
     fn clone(&self) -> Self {
+        debug_assert!(
+            self.patch_order.is_empty(),
+            "private macro allocations cannot cross a generation fork"
+        );
         Self {
+            bodies: self.bodies.clone(),
             definitions: self.definitions.clone(),
-            parameter_roots: self.parameter_roots.clone(),
-            replacement_roots: self.replacement_roots.clone(),
-            parameter_patterns: self.parameter_patterns.clone(),
-            provenance: self.provenance.clone(),
-            observation_operands: self.observation_operands.clone(),
-            observation_widths: self.observation_widths.clone(),
-            identities: self.identities.fork(),
+            frozen_roots: Arc::clone(&self.frozen_roots),
+            next_definition_serial: self.next_definition_serial,
+            next_observation_operand: self.next_observation_operand,
+            body_patch_handles: HashMap::new(),
+            body_patch_leases: HashMap::new(),
+            definition_patch_handles: HashMap::new(),
+            definition_patch_leases: HashMap::new(),
+            patch_order: Vec::new(),
+            #[cfg(test)]
+            force_candidate_collision: self.force_candidate_collision,
         }
     }
 }
@@ -248,104 +274,236 @@ impl MacroStore {
     #[must_use]
     pub(crate) fn new() -> Self {
         Self {
-            definitions: Vec::new(),
-            parameter_roots: Vec::new(),
-            replacement_roots: Vec::new(),
-            parameter_patterns: Vec::new(),
-            provenance: Vec::new(),
-            observation_operands: Vec::new(),
-            observation_widths: Vec::new(),
-            identities: IdentityAllocator::new(0),
+            bodies: ReachableValuePool::new(),
+            definitions: ReachableValuePool::new(),
+            frozen_roots: Arc::from([]),
+            next_definition_serial: 0,
+            next_observation_operand: 249_985,
+            body_patch_handles: HashMap::new(),
+            body_patch_leases: HashMap::new(),
+            definition_patch_handles: HashMap::new(),
+            definition_patch_leases: HashMap::new(),
+            patch_order: Vec::new(),
+            #[cfg(test)]
+            force_candidate_collision: false,
         }
     }
 
-    /// Installs validated frozen definitions directly over already-restored
-    /// token-list ids. Diagnostic provenance is job-local and starts absent.
+    /// Installs validated frozen definitions as one explicitly owned base.
     pub(crate) fn from_frozen(
         definitions: Vec<MacroMeaning>,
         parameter_roots: Vec<TokenListRef>,
         replacement_roots: Vec<TokenListRef>,
         parameter_patterns: Vec<MacroParameterPattern>,
+        parameter_semantic_ids: Vec<TokenSemanticId>,
+        replacement_semantic_ids: Vec<TokenSemanticId>,
         observation_widths: Vec<u32>,
     ) -> Result<Self, &'static str> {
-        if definitions.len() != parameter_patterns.len()
-            || definitions.len() != parameter_roots.len()
-            || definitions.len() != replacement_roots.len()
-            || definitions.len() != observation_widths.len()
+        let len = definitions.len();
+        if parameter_roots.len() != len
+            || replacement_roots.len() != len
+            || parameter_patterns.len() != len
+            || parameter_semantic_ids.len() != len
+            || replacement_semantic_ids.len() != len
+            || observation_widths.len() != len
         {
             return Err("frozen macro column length mismatch");
         }
-        let count = u32::try_from(definitions.len()).map_err(|_| "frozen macro capacity")?;
-        let observation_operands = observation_operands(&observation_widths)?;
+        let mut bodies = ReachableValuePool::new();
+        let mut operands = observation_operands(&observation_widths)?;
+        let next_observation_operand = observation_widths
+            .iter()
+            .try_fold(249_985_i64, |next, width| {
+                next.checked_sub(i64::from(*width))
+            })
+            .ok_or("macro observation operand underflow")?;
+        let mut values = Vec::with_capacity(len);
+        for (
+            (
+                ((((meaning, parameter_text), replacement_text), parameter_pattern), parameter_id),
+                replacement_id,
+            ),
+            operand,
+        ) in definitions
+            .into_iter()
+            .zip(parameter_roots)
+            .zip(replacement_roots)
+            .zip(parameter_patterns)
+            .zip(parameter_semantic_ids)
+            .zip(replacement_semantic_ids)
+            .zip(operands.drain(..))
+        {
+            let semantic_id =
+                MacroBodySemanticId::new(meaning.flags(), parameter_id, replacement_id);
+            let value = MacroBodyValue {
+                flags: meaning.flags(),
+                parameter_text,
+                replacement_text,
+                parameter_pattern,
+            };
+            let body = MacroBodyRef {
+                value: bodies.intern(semantic_id, value, MacroBodyValue::exact_eq),
+                patch_root: None,
+            };
+            values.push(MacroDefinitionValue {
+                body,
+                provenance: OnceLock::new(),
+                observation_operand: operand,
+            });
+        }
+        let (definitions, roots) = ReachableValuePool::from_fixed_values(values, 0);
         Ok(Self {
-            provenance: vec![None; definitions.len()],
+            bodies,
             definitions,
-            parameter_roots,
-            replacement_roots,
-            parameter_patterns,
-            observation_operands,
-            observation_widths,
-            identities: IdentityAllocator::from_frozen_len(0, count),
+            frozen_roots: roots
+                .into_iter()
+                .map(|value| MacroDefinitionRef {
+                    value,
+                    patch_root: None,
+                })
+                .collect::<Vec<_>>()
+                .into(),
+            next_definition_serial: len as u64,
+            next_observation_operand,
+            body_patch_handles: HashMap::new(),
+            body_patch_leases: HashMap::new(),
+            definition_patch_handles: HashMap::new(),
+            definition_patch_leases: HashMap::new(),
+            patch_order: Vec::new(),
+            #[cfg(test)]
+            force_candidate_collision: false,
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn intern_with_provenance(
         &mut self,
         meaning: MacroMeaning,
         parameter_root: TokenListRef,
         replacement_root: TokenListRef,
         parameter_pattern: MacroParameterPattern,
+        parameter_semantic_id: TokenSemanticId,
+        replacement_semantic_id: TokenSemanticId,
         provenance: Option<MacroDefinitionProvenance>,
         observation_width: u32,
-    ) -> MacroDefinitionId {
+        domain: Option<&mut PatchAllocationDomain>,
+    ) -> MacroDefinitionRef {
         assert_eq!(parameter_root.id(), meaning.parameter_text());
         assert_eq!(replacement_root.id(), meaning.replacement_text());
-        let id = MacroDefinitionId::from_identity(
-            self.identities
-                .allocate()
-                .expect("macro definition table exceeds u32 entries"),
+        let semantic_id = MacroBodySemanticId::new(
+            meaning.flags(),
+            parameter_semantic_id,
+            replacement_semantic_id,
         );
-        self.definitions.push(meaning);
-        self.parameter_roots.push(parameter_root);
-        self.replacement_roots.push(replacement_root);
-        self.parameter_patterns.push(parameter_pattern);
-        self.provenance.push(provenance);
-        // TeX82 §1221 installs §473's `def_ref` list head as the macro
-        // meaning's `equiv`, and §341 later exposes it as `cur_chr`. The
-        // instrumented TeX82 profile's first dynamic definition head is
-        // 249985; a frozen definition consumes its head plus its parameter
-        // and replacement tokens. Keep this detached compatibility identity
-        // beside the immutable definition so aliases share it without making
-        // a reference-engine address into a runtime handle.
-        let operand = self
-            .observation_operands
-            .last()
-            .zip(self.observation_widths.last())
-            .map_or(249_985, |(operand, width)| operand - i64::from(*width));
-        self.observation_operands.push(operand);
-        self.observation_widths.push(observation_width);
-        id
+        #[cfg(test)]
+        let semantic_id = if self.force_candidate_collision {
+            MacroBodySemanticId::testing_collision()
+        } else {
+            semantic_id
+        };
+        let body_value = MacroBodyValue {
+            flags: meaning.flags(),
+            parameter_text: parameter_root,
+            replacement_text: replacement_root,
+            parameter_pattern,
+        };
+        let (body_value, is_new_body) =
+            self.bodies
+                .intern_with_status(semantic_id, body_value, MacroBodyValue::exact_eq);
+        let body_identity = body_value.identity();
+        let mut body = MacroBodyRef {
+            value: body_value,
+            patch_root: self
+                .body_patch_leases
+                .get(&body_identity)
+                .and_then(PatchRootWeak::upgrade),
+        };
+        let mut domain = domain;
+        if is_new_body {
+            self.attach_body_patch_allocation(&mut body, domain.as_deref_mut());
+        }
+
+        let provenance_cell = OnceLock::new();
+        if let Some(provenance) = provenance {
+            let _ = provenance_cell.set(provenance);
+        }
+        let value = MacroDefinitionValue {
+            body,
+            provenance: provenance_cell,
+            observation_operand: self.next_observation_operand,
+        };
+        self.next_observation_operand = self
+            .next_observation_operand
+            .checked_sub(i64::from(observation_width))
+            .expect("macro observation operand underflow");
+        let serial = self.next_definition_serial;
+        self.next_definition_serial = self.next_definition_serial.wrapping_add(1);
+        let _ = self.definitions.find_exact(&serial, |_| false);
+        let value = self.definitions.insert_new(serial, value);
+        let mut definition = MacroDefinitionRef {
+            value,
+            patch_root: None,
+        };
+        self.attach_definition_patch_allocation(&mut definition, domain);
+        definition
     }
 
     #[must_use]
     pub(crate) fn get(&self, id: MacroDefinitionId) -> MacroMeaning {
-        assert!(self.contains(id), "macro definition id is not live");
-        self.definitions
-            .get(id.raw() as usize)
-            .copied()
+        self.owner(id)
             .expect("macro definition id is not live")
+            .meaning()
+    }
+
+    #[must_use]
+    pub(crate) fn owner(&self, id: MacroDefinitionId) -> Option<MacroDefinitionRef> {
+        self.frozen_root(id).cloned().or_else(|| {
+            self.definitions
+                .resolve(id.identity())
+                .map(|value| MacroDefinitionRef {
+                    value,
+                    patch_root: self
+                        .definition_patch_leases
+                        .get(&id)
+                        .and_then(PatchRootWeak::upgrade),
+                })
+        })
+    }
+
+    fn frozen_root(&self, id: MacroDefinitionId) -> Option<&MacroDefinitionRef> {
+        self.frozen_roots
+            .get(id.raw() as usize)
+            .filter(|root| root.id() == id)
+    }
+
+    #[must_use]
+    pub(crate) fn stored_slot(&self, raw: u32) -> Option<MacroDefinitionRef> {
+        self.frozen_roots.get(raw as usize).cloned().or_else(|| {
+            self.definitions
+                .resolve_slot(raw)
+                .map(|value| MacroDefinitionRef {
+                    value,
+                    patch_root: None,
+                })
+        })
     }
 
     #[must_use]
     pub(crate) fn parameter_pattern(&self, id: MacroDefinitionId) -> MacroParameterPattern {
-        assert!(self.contains(id), "macro definition id is not live");
-        self.parameter_patterns[id.raw() as usize].clone()
+        self.owner(id)
+            .expect("macro definition id is not live")
+            .value
+            .value()
+            .body
+            .value
+            .value()
+            .parameter_pattern
+            .clone()
     }
 
     #[must_use]
     pub(crate) fn provenance(&self, id: MacroDefinitionId) -> Option<MacroDefinitionProvenance> {
-        assert!(self.contains(id), "macro definition id is not live");
-        self.provenance.get(id.raw() as usize).copied().flatten()
+        self.owner(id)?.value.value().provenance.get().copied()
     }
 
     pub(crate) fn set_provenance(
@@ -353,19 +511,27 @@ impl MacroStore {
         id: MacroDefinitionId,
         provenance: MacroDefinitionProvenance,
     ) {
-        assert!(self.contains(id), "macro definition id is not live");
-        self.provenance[id.raw() as usize] = Some(provenance);
+        let root = self.owner(id).expect("macro definition id is not live");
+        if let Err(existing) = root.value.value().provenance.set(provenance) {
+            assert_eq!(
+                existing, provenance,
+                "macro provenance changed after publication"
+            );
+        }
     }
 
     #[must_use]
     pub(crate) fn observation_operand(&self, id: MacroDefinitionId) -> i64 {
-        assert!(self.contains(id), "macro definition id is not live");
-        self.observation_operands[id.raw() as usize]
+        self.owner(id)
+            .expect("macro definition id is not live")
+            .value
+            .value()
+            .observation_operand
     }
 
     #[must_use]
     pub(crate) fn contains(&self, id: MacroDefinitionId) -> bool {
-        self.identities.contains(id.identity())
+        self.owner(id).is_some()
     }
 
     #[must_use]
@@ -376,50 +542,147 @@ impl MacroStore {
         if !id.is_stored() {
             return None;
         }
-        self.identities
-            .identity_at(id.raw())
-            .map(MacroDefinitionId::from_identity)
+        self.stored_slot(id.raw()).map(|root| root.id())
     }
 
     #[must_use]
     pub(crate) fn watermark(&self) -> MacroStoreMark {
         MacroStoreMark {
-            definitions: u32_len(
-                self.definitions.len(),
-                "macro definition table exceeds u32 entries",
-            ),
-            identities: self.identities.watermark(),
+            definitions: u32::try_from(self.definitions.slot_len())
+                .expect("macro definition slots exceed u32 entries"),
+            patch_events: u32::try_from(self.patch_order.len())
+                .expect("macro patch events exceed u32 entries"),
+            next_observation_operand: self.next_observation_operand,
         }
     }
 
     pub(crate) fn truncate_to(&mut self, mark: MacroStoreMark) {
-        let definitions = mark.definitions as usize;
+        while self.patch_order.len() > mark.patch_events as usize {
+            match self
+                .patch_order
+                .pop()
+                .expect("macro patch order is nonempty")
+            {
+                PatchEvent::Body(id) => {
+                    assert!(self.body_patch_handles.remove(&id).is_some());
+                    assert!(self.body_patch_leases.remove(&id).is_some());
+                }
+                PatchEvent::Definition(id) => {
+                    assert!(self.definition_patch_handles.remove(&id).is_some());
+                    assert!(self.definition_patch_leases.remove(&id).is_some());
+                }
+            }
+        }
+        self.next_observation_operand = mark.next_observation_operand;
+    }
+
+    pub(crate) fn selected_patch_roots(&self, domain: &PatchAllocationDomain) -> Vec<PatchRoot> {
+        self.patch_order
+            .iter()
+            .filter_map(|event| match *event {
+                PatchEvent::Body(id) => self
+                    .body_patch_handles
+                    .get(&id)
+                    .map(|handle| domain.root_if_typed(handle)),
+                PatchEvent::Definition(id) => self
+                    .definition_patch_handles
+                    .get(&id)
+                    .map(|handle| domain.root_if_typed(handle)),
+            })
+            .filter_map(|root| root.expect("typed macro root belongs to private domain"))
+            .collect()
+    }
+
+    pub(crate) fn patch_allocation_count(&self) -> usize {
+        self.patch_order.len()
+    }
+
+    pub(crate) fn clear_patch_allocations(&mut self) {
+        self.body_patch_handles.clear();
+        self.body_patch_leases.clear();
+        self.definition_patch_handles.clear();
+        self.definition_patch_leases.clear();
+        self.patch_order.clear();
+    }
+
+    fn attach_body_patch_allocation(
+        &mut self,
+        root: &mut MacroBodyRef,
+        domain: Option<&mut PatchAllocationDomain>,
+    ) {
+        let Some(domain) = domain else { return };
+        let id = root.value.identity();
+        let handle = domain
+            .allocate_shared(root.shared(), root.value.value().logical_bytes())
+            .expect("private macro-body allocation belongs to active operation");
+        let lease = domain
+            .install_root_lease(&handle)
+            .expect("new private macro body belongs to active domain");
+        assert!(self.body_patch_handles.insert(id, handle).is_none());
         assert!(
-            definitions <= self.definitions.len(),
-            "macro-store mark has too many definitions"
+            self.body_patch_leases
+                .insert(id, lease.downgrade())
+                .is_none()
         );
-        self.identities
-            .rollback(mark.identities)
-            .expect("macro-store mark is not an ancestor");
-        self.definitions.truncate(definitions);
-        self.parameter_roots.truncate(definitions);
-        self.replacement_roots.truncate(definitions);
-        self.parameter_patterns.truncate(definitions);
-        self.provenance.truncate(definitions);
-        self.observation_operands.truncate(definitions);
-        self.observation_widths.truncate(definitions);
+        root.patch_root = Some(lease);
+        self.patch_order.push(PatchEvent::Body(id));
+    }
+
+    fn attach_definition_patch_allocation(
+        &mut self,
+        root: &mut MacroDefinitionRef,
+        domain: Option<&mut PatchAllocationDomain>,
+    ) {
+        let Some(domain) = domain else { return };
+        let id = root.id();
+        let handle = domain
+            .allocate_shared(root.shared(), root.value.value().logical_bytes())
+            .expect("private macro-definition allocation belongs to active operation");
+        let lease = domain
+            .install_root_lease(&handle)
+            .expect("new private macro definition belongs to active domain");
+        assert!(self.definition_patch_handles.insert(id, handle).is_none());
+        assert!(
+            self.definition_patch_leases
+                .insert(id, lease.downgrade())
+                .is_none()
+        );
+        root.patch_root = Some(lease);
+        self.patch_order.push(PatchEvent::Definition(id));
     }
 
     #[cfg(test)]
     pub(crate) fn testing_token_roots(
         &self,
         id: MacroDefinitionId,
-    ) -> (&TokenListRef, &TokenListRef) {
-        assert!(self.contains(id), "macro definition id is not live");
+    ) -> (TokenListRef, TokenListRef) {
+        let owner = self.owner(id).expect("macro definition id is not live");
+        let body = owner.value.value().body.value.value();
+        (body.parameter_text.clone(), body.replacement_text.clone())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn testing_live_totals(&self) -> (usize, usize, usize, usize) {
+        let (bodies, body_bytes) = self
+            .bodies
+            .testing_live_totals(MacroBodyValue::logical_bytes);
+        let (definitions, definition_bytes) = self
+            .definitions
+            .testing_live_totals(MacroDefinitionValue::logical_bytes);
+        (bodies, body_bytes, definitions, definition_bytes)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn testing_pool_shapes(&self) -> (PoolShape, PoolShape) {
         (
-            &self.parameter_roots[id.raw() as usize],
-            &self.replacement_roots[id.raw() as usize],
+            self.bodies.testing_shape(),
+            self.definitions.testing_shape(),
         )
+    }
+
+    #[cfg(test)]
+    pub(crate) fn testing_force_candidate_collision(&mut self) {
+        self.force_candidate_collision = true;
     }
 }
 
@@ -435,9 +698,5 @@ fn observation_operands(widths: &[u32]) -> Result<Vec<i64>, &'static str> {
     Ok(operands)
 }
 
-fn u32_len(value: usize, message: &str) -> u32 {
-    match u32::try_from(value) {
-        Ok(value) => value,
-        Err(_) => panic!("{message}"),
-    }
-}
+#[cfg(test)]
+mod tests;

@@ -8,6 +8,7 @@ use crate::cell::{BankTag, CellId};
 use crate::env::box_bank::BoxSlot;
 use crate::env::group::GroupKind;
 use crate::ids::SnapshotId;
+use crate::macro_store::MacroDefinitionRef;
 use crate::meaning::Meaning;
 use crate::token_store::TokenListRef;
 use ahash::AHashMap;
@@ -103,6 +104,30 @@ pub(crate) struct TokenUndoRoots {
     new: Option<TokenListRef>,
 }
 
+/// Strong macro-definition owners aligned with one meaning-valued undo.
+#[derive(Clone, Debug)]
+pub(crate) struct MacroUndoRoots {
+    old: Option<MacroDefinitionRef>,
+    new: Option<MacroDefinitionRef>,
+}
+
+impl MacroUndoRoots {
+    #[must_use]
+    pub(crate) fn new(old: Option<MacroDefinitionRef>, new: Option<MacroDefinitionRef>) -> Self {
+        Self { old, new }
+    }
+
+    #[must_use]
+    pub(crate) fn old(&self) -> Option<MacroDefinitionRef> {
+        self.old.clone()
+    }
+
+    #[must_use]
+    pub(crate) fn new_value(&self) -> Option<MacroDefinitionRef> {
+        self.new.clone()
+    }
+}
+
 impl TokenUndoRoots {
     #[must_use]
     pub(crate) fn new(old: Option<TokenListRef>, new: Option<TokenListRef>) -> Self {
@@ -182,6 +207,7 @@ impl JournalPos {
 pub(crate) struct Journal {
     entries: Vec<Entry>,
     token_undo_roots: Vec<Option<TokenUndoRoots>>,
+    macro_undo_roots: Vec<Option<MacroUndoRoots>>,
     box_undos: Vec<BoxUndoRec>,
     save_stack: SaveStackProjection,
 }
@@ -381,6 +407,11 @@ impl Journal {
                     .saturating_mul(std::mem::size_of::<Option<TokenUndoRoots>>()),
             )
             .saturating_add(
+                self.macro_undo_roots
+                    .capacity()
+                    .saturating_mul(std::mem::size_of::<Option<MacroUndoRoots>>()),
+            )
+            .saturating_add(
                 self.box_undos
                     .capacity()
                     .saturating_mul(std::mem::size_of::<BoxUndoRec>()),
@@ -410,6 +441,7 @@ impl Journal {
         self.save_stack.push_undo(rec);
         self.entries.push(Entry::Undo(rec));
         self.token_undo_roots.push(None);
+        self.macro_undo_roots.push(None);
         pos
     }
 
@@ -436,6 +468,21 @@ impl Journal {
         self.token_undo_roots.get(index).and_then(Option::as_ref)
     }
 
+    pub(crate) fn attach_macro_undo_roots(&mut self, pos: JournalPos, roots: MacroUndoRoots) {
+        let index = checked_pos(pos, self.entries.len());
+        let Entry::Undo(rec) = self.entries[index] else {
+            panic!("macro roots require an undo entry");
+        };
+        assert_eq!(rec.cell().bank(), BankTag::Meaning);
+        let previous = self.macro_undo_roots[index].replace(roots);
+        assert!(previous.is_none(), "macro undo roots already attached");
+    }
+
+    #[must_use]
+    pub(crate) fn macro_undo_roots(&self, index: usize) -> Option<&MacroUndoRoots> {
+        self.macro_undo_roots.get(index).and_then(Option::as_ref)
+    }
+
     pub(crate) fn push_box_undo(&mut self, rec: BoxUndoRec) -> (BoxUndoRec, JournalPos) {
         let pos = self.pos();
         self.save_stack.push_box_undo(rec);
@@ -446,6 +493,7 @@ impl Journal {
         self.box_undos.push(rec);
         self.entries.push(Entry::BoxUndo(id));
         self.token_undo_roots.push(None);
+        self.macro_undo_roots.push(None);
         (rec, pos)
     }
 
@@ -475,6 +523,7 @@ impl Journal {
         self.save_stack.push_marker(marker);
         self.entries.push(Entry::Marker(marker));
         self.token_undo_roots.push(None);
+        self.macro_undo_roots.push(None);
     }
 
     /// Returns the live TeX82 save-stack words and latest physical push
@@ -525,6 +574,7 @@ impl Journal {
         self.save_stack.truncate_to(len);
         self.entries.truncate(len);
         self.token_undo_roots.truncate(len);
+        self.macro_undo_roots.truncate(len);
     }
 
     #[cfg(test)]

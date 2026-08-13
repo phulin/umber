@@ -215,7 +215,7 @@ fn all_mandatory_origin_record_kinds_round_trip() {
     let source = stores.source_origin(SourceId::new(9), 88, 6, 4);
     let invocation = stores.source_origin(SourceId::new(10), 144, 8, 12);
     let macro_origin =
-        stores.macro_invocation_origin(definition, invocation, source, OriginId::UNKNOWN);
+        stores.macro_invocation_origin(definition.id(), invocation, source, OriginId::UNKNOWN);
     let inserted = stores.inserted_origin(
         InsertedOriginKind::TokenListReplay(TokenListReplayKind::MacroBody),
         Token::param(1),
@@ -230,8 +230,8 @@ fn all_mandatory_origin_record_kinds_round_trip() {
     );
     assert_eq!(
         stores.origin(macro_origin),
-        OriginRecord::MacroInvocation(MacroInvocationOrigin::new(
-            definition,
+        OriginRecord::MacroInvocation(MacroInvocationOrigin::from_nonowning_operand(
+            stores.macro_definition_observation_operand(definition.id()) as u64,
             invocation,
             source,
             OriginId::UNKNOWN,
@@ -267,13 +267,17 @@ fn macro_invocation_accounting_tracks_live_parent_chains_and_rollback() {
     let invocation_origin = stores.source_origin(SourceId::new(2), 10, 2, 3);
     let snapshot = stores.snapshot();
     let parent = stores.macro_invocation_origin(
-        definition,
+        definition.id(),
         invocation_origin,
         definition_origin,
         OriginId::UNKNOWN,
     );
-    let child =
-        stores.macro_invocation_origin(definition, invocation_origin, definition_origin, parent);
+    let child = stores.macro_invocation_origin(
+        definition.id(),
+        invocation_origin,
+        definition_origin,
+        parent,
+    );
 
     let stats = stores.macro_invocation_provenance_stats();
     let retention = stores.provenance_stats();
@@ -285,8 +289,8 @@ fn macro_invocation_accounting_tracks_live_parent_chains_and_rollback() {
     );
     assert_eq!(
         stores.origin(child),
-        OriginRecord::MacroInvocation(MacroInvocationOrigin::new(
-            definition,
+        OriginRecord::MacroInvocation(MacroInvocationOrigin::from_nonowning_operand(
+            stores.macro_definition_observation_operand(definition.id()) as u64,
             invocation_origin,
             definition_origin,
             parent,

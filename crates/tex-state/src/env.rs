@@ -26,6 +26,7 @@ use crate::epoch::Epoch;
 use crate::ids::{FontId, GlueId, NodeListId, TokenListId};
 use crate::interner::Symbol;
 use crate::journal::{Journal, UndoRec};
+use crate::macro_store::MacroDefinitionRef;
 use crate::math::{MATH_FAMILY_COUNT, MathFontSize};
 use crate::meaning::Meaning;
 use crate::scaled::Scaled;
@@ -159,6 +160,7 @@ pub(crate) struct FormatBaseCell {
     pub(crate) cell: CellId,
     pub(crate) word: u64,
     pub(crate) token_root: Option<TokenListRef>,
+    pub(crate) macro_root: Option<MacroDefinitionRef>,
 }
 
 macro_rules! register_accessors {
@@ -240,6 +242,7 @@ pub struct Env {
     format_base: Arc<[FormatBaseCell]>,
     empty_token_root: Option<TokenListRef>,
     token_roots: BTreeMap<CellId, TokenListRef>,
+    macro_roots: BTreeMap<CellId, MacroDefinitionRef>,
     meaning_cells: Vec<Option<MeaningSegment>>,
     meaning_stamps: Vec<Option<StampSegment>>,
     counts: FixedBank<I32Codec, DENSE_REGISTER_COUNT>,
@@ -296,6 +299,7 @@ impl Env {
             format_base: Arc::from([]),
             empty_token_root: None,
             token_roots: BTreeMap::new(),
+            macro_roots: BTreeMap::new(),
             meaning_cells: Vec::new(),
             meaning_stamps: Vec::new(),
             counts: FixedBank::new(),
@@ -360,7 +364,12 @@ impl Env {
         debug_assert_eq!(self.group_depth, 0);
         debug_assert!(self.format_base.is_empty());
         for entry in &cells {
-            self.restore_raw_with_token_owner(entry.cell, entry.word, entry.token_root.clone());
+            self.restore_raw_with_owners(
+                entry.cell,
+                entry.word,
+                entry.token_root.clone(),
+                entry.macro_root.clone(),
+            );
         }
         self.format_base = cells.into();
     }
@@ -441,13 +450,43 @@ impl Env {
     }
 
     /// Sets a meaning by dense interner slot after aggregate validation.
+    #[cfg(any(test, feature = "testing"))]
     pub(crate) fn set_meaning_slot(
         &mut self,
         slot: u32,
         meaning: Meaning,
         global: bool,
     ) -> CellMutationReceipt {
-        self.set_meaning_value(slot, meaning, global)
+        self.set_meaning_slot_with_macro_root(slot, meaning, None, global)
+    }
+
+    pub(crate) fn set_meaning_slot_with_macro_root(
+        &mut self,
+        slot: u32,
+        meaning: Meaning,
+        macro_root: Option<MacroDefinitionRef>,
+        global: bool,
+    ) -> CellMutationReceipt {
+        let cell = CellId::new(BankTag::Meaning, slot);
+        assert_eq!(
+            macro_root.as_ref().map(MacroDefinitionRef::raw),
+            match meaning {
+                Meaning::Macro { definition, .. } => Some(definition.raw()),
+                _ => None,
+            },
+            "meaning word and macro owner diverged"
+        );
+        let old_root = self.macro_root(cell);
+        let mark = self.journal.pos();
+        let receipt = self.set_meaning_value(slot, meaning, global);
+        if self.journal.pos() != mark {
+            self.journal.attach_macro_undo_roots(
+                mark,
+                crate::journal::MacroUndoRoots::new(old_root, macro_root.clone()),
+            );
+        }
+        self.set_macro_root(cell, macro_root);
+        receipt
     }
 
     /// Test-only local meaning write for isolated `Env` barrier coverage.
@@ -956,6 +995,25 @@ impl Env {
             }
             None => {
                 self.token_roots.remove(&cell);
+            }
+        }
+    }
+
+    pub(crate) fn macro_root(&self, cell: CellId) -> Option<MacroDefinitionRef> {
+        let cell = cell.without_assignment_scope();
+        debug_assert_eq!(cell.bank(), BankTag::Meaning);
+        self.macro_roots.get(&cell).cloned()
+    }
+
+    pub(crate) fn set_macro_root(&mut self, cell: CellId, root: Option<MacroDefinitionRef>) {
+        let cell = cell.without_assignment_scope();
+        debug_assert_eq!(cell.bank(), BankTag::Meaning);
+        match root {
+            Some(root) => {
+                self.macro_roots.insert(cell, root);
+            }
+            None => {
+                self.macro_roots.remove(&cell);
             }
         }
     }

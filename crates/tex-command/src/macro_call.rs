@@ -5,6 +5,7 @@ use std::sync::Arc;
 use tex_state::env::banks::IntParam;
 use tex_state::ids::MacroDefinitionId;
 use tex_state::interner::Symbol;
+use tex_state::macro_store::MacroDefinitionRef;
 use tex_state::meaning::{Meaning, MeaningFlags, UnexpandablePrimitive};
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 
@@ -43,7 +44,7 @@ pub(crate) struct MacroActivation {
     /// TeX82 §389's `warning_index`: the control sequence being expanded.
     /// §314 prints it as this level's context descriptor.
     pub(crate) name: Symbol,
-    pub(crate) definition: MacroDefinitionId,
+    pub(crate) definition: MacroDefinitionRef,
     pub(crate) arguments: MacroArguments,
     pub(crate) invocation: OriginId,
 }
@@ -172,7 +173,7 @@ impl ParameterState {
     pub(crate) fn push_activation(
         &mut self,
         name: Symbol,
-        definition: MacroDefinitionId,
+        definition: MacroDefinitionRef,
         arguments: MacroArguments,
         invocation: OriginId,
     ) -> MacroActivationId {
@@ -340,7 +341,7 @@ impl CommandProcessor<'_> {
             self,
             CommandObservation::Macro(MacroRecord {
                 activation: true,
-                definition: u64::from(definition.raw()),
+                definition: self.state.macro_definition_observation_operand(definition) as u64,
                 control_sequence: Some(self.state.resolve(macro_name).to_owned()),
                 argument: Some(pattern.parameter_count() as u8),
                 token_count: arguments.buffer.len() as u64,
@@ -355,7 +356,7 @@ impl CommandProcessor<'_> {
 
     fn macro_call_scalar(
         &mut self,
-        _definition: MacroDefinitionId,
+        definition: MacroDefinitionId,
         flags: MeaningFlags,
         pattern: &tex_state::macro_store::MacroParameterPattern,
     ) -> Result<MacroArguments, CommandError> {
@@ -413,7 +414,7 @@ impl CommandProcessor<'_> {
                 self,
                 CommandObservation::Macro(MacroRecord {
                     activation: false,
-                    definition: u64::from(_definition.raw()),
+                    definition: self.state.macro_definition_observation_operand(definition) as u64,
                     control_sequence: None,
                     argument: Some((parameter + 1) as u8),
                     token_count: argument.len() as u64,

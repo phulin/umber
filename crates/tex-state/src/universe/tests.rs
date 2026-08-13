@@ -97,6 +97,105 @@ fn private_token_roots_retry_and_accept_through_the_aggregate_boundary() {
 }
 
 #[test]
+fn private_macro_roots_retry_reject_and_accept_through_the_aggregate_boundary() {
+    let mut universe = Universe::new();
+    let name = universe.intern("private-macro");
+    universe.begin_private_revision();
+
+    let retained_operation = universe.snapshot_for_local_retry();
+    let retained_body = universe.intern_token_list(&[Token::Char {
+        ch: 'r',
+        cat: Catcode::Letter,
+    }]);
+    let retained = universe.intern_macro(MacroMeaning::new(
+        MeaningFlags::LONG,
+        TokenListId::EMPTY,
+        retained_body,
+    ));
+    universe.set_meaning(
+        name,
+        Meaning::Macro {
+            flags: MeaningFlags::LONG,
+            definition: retained.id(),
+        },
+    );
+    drop(retained);
+    let retained = universe.intern_macro(MacroMeaning::new(
+        MeaningFlags::LONG,
+        TokenListId::EMPTY,
+        retained_body,
+    ));
+    let retained_id = retained.id();
+    universe.set_meaning(
+        name,
+        Meaning::Macro {
+            flags: MeaningFlags::LONG,
+            definition: retained_id,
+        },
+    );
+    drop(retained);
+    universe.commit_local_retry_snapshot(retained_operation);
+    let retained_stats = universe
+        .testing_private_revision_domain_stats()
+        .expect("private macro domain is live");
+    assert_eq!(
+        retained_stats.0, 4,
+        "token, body, and two occurrences are private"
+    );
+
+    let failed_operation = universe.snapshot_for_local_retry();
+    let failed_body = universe.intern_token_list(&[Token::Char {
+        ch: 'f',
+        cat: Catcode::Letter,
+    }]);
+    let failed = universe.intern_macro(MacroMeaning::new(
+        MeaningFlags::OUTER,
+        TokenListId::EMPTY,
+        failed_body,
+    ));
+    universe.set_meaning(
+        name,
+        Meaning::Macro {
+            flags: MeaningFlags::OUTER,
+            definition: failed.id(),
+        },
+    );
+    let failed_id = failed.id();
+    drop(failed);
+    universe.rollback_local_retry_snapshot(failed_operation);
+    assert_eq!(
+        universe.testing_private_revision_domain_stats(),
+        Some(retained_stats)
+    );
+    assert_eq!(
+        universe.meaning(name),
+        Meaning::Macro {
+            flags: MeaningFlags::LONG,
+            definition: retained_id,
+        }
+    );
+    assert!(
+        catch_unwind(AssertUnwindSafe(|| {
+            universe.macro_definition(failed_id)
+        }))
+        .is_err()
+    );
+
+    let mut substrate = universe.freeze_generation();
+    substrate
+        .accept_private_revision()
+        .expect("typed macro roots transfer");
+    assert!(substrate.testing_private_revision_domain_stats().is_none());
+    assert_eq!(
+        substrate
+            .universe
+            .macro_definition(retained_id)
+            .replacement_text(),
+        retained_body
+    );
+}
+
+#[test]
 fn engine_usage_statistics_retain_one_word_extent_across_rollback() {
     let mut universe = Universe::new();
     let baseline = universe.snapshot();
@@ -2075,7 +2174,7 @@ fn frozen_foundational_sections_restore_ids_and_accept_job_local_additions() {
         base,
         Meaning::Macro {
             flags: MeaningFlags::LONG,
-            definition: base_macro,
+            definition: base_macro.id(),
         },
     );
     let base_glue = universe.intern_glue(GlueSpec {
@@ -2171,7 +2270,7 @@ fn frozen_foundational_sections_restore_ids_and_accept_job_local_additions() {
         added,
         Meaning::Macro {
             flags: MeaningFlags::EMPTY,
-            definition: added_macro,
+            definition: added_macro.id(),
         },
     );
     let added_glue = loaded.intern_glue(GlueSpec {
@@ -2184,7 +2283,7 @@ fn frozen_foundational_sections_restore_ids_and_accept_job_local_additions() {
     assert_eq!(loaded.resolve(added), "job-local-name");
     assert_eq!(loaded.tokens(added_tokens), [Token::Cs(added.symbol())]);
     assert_eq!(
-        loaded.macro_definition(added_macro).replacement_text(),
+        loaded.macro_definition(added_macro.id()).replacement_text(),
         added_tokens
     );
     assert_eq!(loaded.glue(added_glue).width, Scaled::from_raw(-7));
@@ -2239,7 +2338,7 @@ fn checksum_valid_foundational_section_corruption_fails_structural_validation() 
         name,
         Meaning::Macro {
             flags: MeaningFlags::EMPTY,
-            definition,
+            definition: definition.id(),
         },
     );
     let glue = universe.intern_glue(GlueSpec {
@@ -2294,7 +2393,7 @@ fn frozen_environment_references_are_validated_against_frozen_stores() {
         symbol,
         Meaning::Macro {
             flags: MeaningFlags::EMPTY,
-            definition,
+            definition: definition.id(),
         },
     );
     let mut image = universe.dump_format().expect("cross-store format");
@@ -3914,10 +4013,18 @@ fn snapshot_reuses_hash_base_for_origin_only_input_summary_changes() {
     let right_origin = universe.source_origin(crate::input::SourceId::new(2), 20, 4, 5);
     let left_origins = universe.allocate_origin_list(&[left_origin]);
     let right_origins = universe.allocate_origin_list(&[right_origin]);
-    let left_invocation =
-        universe.macro_invocation_origin(definition, left_origin, left_origin, OriginId::UNKNOWN);
-    let right_invocation =
-        universe.macro_invocation_origin(definition, right_origin, right_origin, OriginId::UNKNOWN);
+    let left_invocation = universe.macro_invocation_origin(
+        definition.id(),
+        left_origin,
+        left_origin,
+        OriginId::UNKNOWN,
+    );
+    let right_invocation = universe.macro_invocation_origin(
+        definition.id(),
+        right_origin,
+        right_origin,
+        OriginId::UNKNOWN,
+    );
     let body_root = universe.token_list_ref(body);
     let left_summary = macro_replay_summary(
         body_root.clone(),
@@ -5073,7 +5180,7 @@ fn live_state_identity_ignores_dead_allocation_history_and_preserves_future_appe
             name,
             Meaning::Macro {
                 flags: MeaningFlags::PROTECTED,
-                definition,
+                definition: definition.id(),
             },
         );
         universe.set_toks(0, replacement);
@@ -5155,7 +5262,7 @@ fn exact_reachable_store_root_survives_format_reconstruction() {
         name,
         Meaning::Macro {
             flags: MeaningFlags::EMPTY,
-            definition,
+            definition: definition.id(),
         },
     );
     let expected = original
@@ -5195,7 +5302,7 @@ fn format_dump_preserves_names_but_compacts_macro_and_token_closure() {
         live_name,
         Meaning::Macro {
             flags: MeaningFlags::EMPTY,
-            definition: live_macro,
+            definition: live_macro.id(),
         },
     );
     let live_identity = identity_of(&mut universe);
@@ -5393,7 +5500,7 @@ fn snapshot_state_hash_ignores_content_intern_order() {
         macro_target,
         Meaning::Macro {
             flags: MeaningFlags::PROTECTED,
-            definition: target_macro,
+            definition: target_macro.id(),
         },
     );
     assert_ne!(filler_glue, target_glue);
@@ -5432,7 +5539,7 @@ fn snapshot_state_hash_ignores_content_intern_order() {
         macro_target,
         Meaning::Macro {
             flags: MeaningFlags::PROTECTED,
-            definition: target_macro,
+            definition: target_macro.id(),
         },
     );
     assert_ne!(filler_glue, target_glue);

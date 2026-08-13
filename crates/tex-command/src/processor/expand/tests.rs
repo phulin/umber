@@ -41,7 +41,13 @@ fn install_macro_with_flags(
     let empty = universe.intern_token_list(&[]);
     let replacement = universe.intern_token_list(&[replacement]);
     let definition = universe.intern_macro(MacroMeaning::new(flags, empty, replacement));
-    universe.set_meaning(name, Meaning::Macro { flags, definition });
+    universe.set_meaning(
+        name,
+        Meaning::Macro {
+            flags,
+            definition: definition.id(),
+        },
+    );
     name
 }
 
@@ -345,7 +351,7 @@ fn cyclic_macro_exhausts_shared_command_fuel() {
         cycle,
         Meaning::Macro {
             flags: MeaningFlags::EMPTY,
-            definition,
+            definition: definition.id(),
         },
     );
     command.push_token_level(
@@ -581,7 +587,7 @@ fn pdftex_expanded_collects_the_numexpr_result_without_its_terminator() {
         int_eval,
         Meaning::Macro {
             flags: MeaningFlags::EMPTY,
-            definition,
+            definition: definition.id(),
         },
     );
     let source = command
@@ -3583,7 +3589,7 @@ fn next_non_blank_x_token_expands_across_levels_and_preserves_the_stopping_deliv
         macro_name,
         Meaning::Macro {
             flags: MeaningFlags::EMPTY,
-            definition,
+            definition: definition.id(),
         },
     );
     let source = command
@@ -4445,7 +4451,7 @@ fn macro_activations_allocate_nested_invocation_provenance() {
         );
         processor.push_macro_activation(
             target,
-            definition,
+            definition.id(),
             OriginId::UNKNOWN,
             MacroArguments::default(),
             empty,
@@ -4460,7 +4466,7 @@ fn macro_activations_allocate_nested_invocation_provenance() {
             .invocation;
         processor.push_macro_activation(
             target,
-            definition,
+            definition.id(),
             OriginId::UNKNOWN,
             MacroArguments::default(),
             empty,
@@ -4496,7 +4502,7 @@ fn meaning_reads_immutable_replacement_after_nested_macro_retirement() {
         target,
         Meaning::Macro {
             flags: MeaningFlags::EMPTY,
-            definition,
+            definition: definition.id(),
         },
     );
     command.push_token_level(
@@ -4510,7 +4516,7 @@ fn meaning_reads_immutable_replacement_after_nested_macro_retirement() {
     );
     command.push_macro_activation(
         target,
-        definition,
+        definition.clone(),
         MacroArguments::default(),
         OriginId::UNKNOWN,
         universe.token_list_ref(empty),
@@ -4550,7 +4556,7 @@ fn meaning_separates_a_control_word_from_following_letters() {
         macro_name,
         Meaning::Macro {
             flags: MeaningFlags::EMPTY,
-            definition,
+            definition: definition.id(),
         },
     );
     let command = {
@@ -4655,7 +4661,13 @@ fn meaning_renders_tex82_long_and_outer_macro_command_identity() {
     {
         let definition = universe.intern_macro(MacroMeaning::new(flags, empty, empty));
         let macro_name = universe.intern(&format!("result{index}")).symbol();
-        universe.set_meaning(macro_name, Meaning::Macro { flags, definition });
+        universe.set_meaning(
+            macro_name,
+            Meaning::Macro {
+                flags,
+                definition: definition.id(),
+            },
+        );
         let command = {
             let mut state = universe.command_context();
             CurrentCommand::resolve(
@@ -4719,7 +4731,13 @@ fn meaning_macro_prefixes_use_live_escape_character() {
     let flags = MeaningFlags::PROTECTED | MeaningFlags::LONG | MeaningFlags::OUTER;
     let definition = universe.intern_macro(MacroMeaning::new(flags, empty, empty));
     let macro_name = universe.intern("result").symbol();
-    universe.set_meaning(macro_name, Meaning::Macro { flags, definition });
+    universe.set_meaning(
+        macro_name,
+        Meaning::Macro {
+            flags,
+            definition: definition.id(),
+        },
+    );
     let command = {
         let mut state = universe.command_context();
         CurrentCommand::resolve(
@@ -4760,7 +4778,7 @@ fn meaning_macro_token_list_distinguishes_words_symbols_spaces_and_active_chars(
         macro_name,
         Meaning::Macro {
             flags: MeaningFlags::EMPTY,
-            definition,
+            definition: definition.id(),
         },
     );
     let command = {
@@ -4799,7 +4817,7 @@ fn print_cs_delimits_words_but_not_active_characters_or_control_symbols() {
         macro_name,
         Meaning::Macro {
             flags: MeaningFlags::EMPTY,
-            definition,
+            definition: definition.id(),
         },
     );
 
@@ -5455,7 +5473,10 @@ fn etex_protected_parameterized_macro_meaning_renders_structural_end_match() {
     let definition = universe.intern_macro(MacroMeaning::new(flags, parameters, replacement));
     let original = universe.intern("protected-parameterized").symbol();
     let alias = universe.intern("protected-parameterized-alias").symbol();
-    let meaning = Meaning::Macro { flags, definition };
+    let meaning = Meaning::Macro {
+        flags,
+        definition: definition.id(),
+    };
     universe.set_meaning(original, meaning);
     universe.set_meaning(alias, meaning);
 
@@ -6014,7 +6035,7 @@ fn converted_token_lists_classify_spaces_copy_tokens_and_resume_expansion() {
         long_macro,
         Meaning::Macro {
             flags: MeaningFlags::LONG,
-            definition: long_definition,
+            definition: long_definition.id(),
         },
     );
     let font = universe.intern("nullfont-id").symbol();

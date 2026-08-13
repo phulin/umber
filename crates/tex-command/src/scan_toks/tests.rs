@@ -1529,7 +1529,7 @@ fn expanded_collection_expands_a_macro_one_step_at_a_time() {
         macro_symbol,
         Meaning::Macro {
             flags: MeaningFlags::EMPTY,
-            definition,
+            definition: definition.id(),
         },
     );
     push(

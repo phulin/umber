@@ -10,6 +10,7 @@ use crate::env::banks::{
 };
 use crate::epoch::Epoch;
 use crate::ids::NodeListId;
+use crate::macro_store::MacroDefinitionRef;
 use crate::token_store::TokenListRef;
 
 impl Env {
@@ -26,6 +27,7 @@ impl Env {
         cell: CellId,
         word: u64,
         token_root: Option<TokenListRef>,
+        macro_root: Option<MacroDefinitionRef>,
     ) -> super::CellMutationReceipt {
         let cell = cell.without_assignment_scope();
         let old = self.semantic_word(cell);
@@ -43,13 +45,22 @@ impl Env {
                 pos,
                 crate::journal::TokenUndoRoots::new(self.token_root(cell), token_root.clone()),
             );
+        } else if cell.bank() == BankTag::Meaning {
+            self.journal.attach_macro_undo_roots(
+                pos,
+                crate::journal::MacroUndoRoots::new(self.macro_root(cell), macro_root.clone()),
+            );
         } else {
             assert!(
                 token_root.is_none(),
                 "non-token raw write carried token owner"
             );
+            assert!(
+                macro_root.is_none(),
+                "non-meaning raw write carried macro owner"
+            );
         }
-        self.restore_raw_with_token_owner(cell, word, token_root);
+        self.restore_raw_with_owners(cell, word, token_root, macro_root);
         receipt
     }
 
@@ -61,14 +72,15 @@ impl Env {
     /// single write path records history.
     #[allow(dead_code)]
     pub(crate) fn restore_raw(&mut self, cell: CellId, word: u64) {
-        self.restore_raw_with_token_owner(cell, word, None);
+        self.restore_raw_with_owners(cell, word, None, None);
     }
 
-    pub(crate) fn restore_raw_with_token_owner(
+    pub(crate) fn restore_raw_with_owners(
         &mut self,
         cell: CellId,
         word: u64,
         token_root: Option<TokenListRef>,
+        macro_root: Option<MacroDefinitionRef>,
     ) {
         match cell.bank() {
             BankTag::Meaning => self.restore_meaning_word(cell.index(), word),
@@ -142,10 +154,27 @@ impl Env {
                 "raw token word and strong owner diverged"
             );
             self.set_token_root(cell, token_root);
+            assert!(macro_root.is_none(), "token write carried macro owner");
+        } else if cell.bank() == BankTag::Meaning {
+            let expected = match crate::meaning::Meaning::decode_stored(word) {
+                crate::meaning::Meaning::Macro { definition, .. } => Some(definition),
+                _ => None,
+            };
+            assert_eq!(
+                macro_root.as_ref().map(MacroDefinitionRef::raw),
+                expected.map(|definition| definition.raw()),
+                "raw meaning word and strong macro owner diverged"
+            );
+            self.set_macro_root(cell, macro_root);
+            assert!(token_root.is_none(), "meaning write carried token owner");
         } else {
             assert!(
                 token_root.is_none(),
                 "non-token raw write carried token owner"
+            );
+            assert!(
+                macro_root.is_none(),
+                "non-meaning raw write carried macro owner"
             );
         }
         #[cfg(feature = "shadow")]

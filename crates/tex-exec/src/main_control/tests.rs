@@ -1954,7 +1954,7 @@ fn meaning_mutation_value_projects_protected_macro_storage_marker() {
 
     let value = meaning_mutation_value(
         Meaning::Macro {
-            definition,
+            definition: definition.id(),
             flags: MeaningFlags::PROTECTED,
         },
         &stores,

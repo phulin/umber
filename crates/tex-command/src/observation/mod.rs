@@ -897,7 +897,7 @@ mod tests {
             outer,
             Meaning::Macro {
                 flags: tex_state::meaning::MeaningFlags::OUTER,
-                definition,
+                definition: definition.id(),
             },
         );
         let mut state = universe.command_context();
@@ -930,7 +930,7 @@ mod tests {
         ));
         let meaning = Meaning::Macro {
             flags: tex_state::meaning::MeaningFlags::OUTER,
-            definition,
+            definition: definition.id(),
         };
         universe.set_meaning(original, meaning);
         universe.set_meaning(alias, meaning);

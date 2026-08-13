@@ -30,7 +30,7 @@ use crate::input::{
     SourceId, TokenListReplayKind, TracedTokenList,
 };
 use crate::interner::{ControlSequenceKind, Symbol, SymbolId};
-use crate::macro_store::{MacroDefinitionProvenance, MacroMeaning};
+use crate::macro_store::{MacroDefinitionProvenance, MacroDefinitionRef, MacroMeaning};
 use crate::math::MathFontSize;
 use crate::meaning::Meaning;
 use crate::node::{GlueKind, KernKind, MarginKernSide, Node, Whatsit};
@@ -1192,6 +1192,14 @@ struct StateHashProjectionCache {
 }
 
 /// One owned TeX state timeline.
+#[derive(Clone, Debug)]
+struct PrimitiveMeaningOwner {
+    meaning: Meaning,
+    /// Frozen macro sentinels are driver metadata rather than Env bindings,
+    /// but they still own the definition occurrence named by their word.
+    _macro_root: Option<MacroDefinitionRef>,
+}
+
 #[derive(Debug)]
 pub struct Universe {
     owner: UniverseOwner,
@@ -1214,8 +1222,8 @@ pub struct Universe {
     /// Driver-selected immutable primitive table. This is engine-mode
     /// metadata, not groupable or format semantic state; format drivers
     /// reconstruct it after loading.
-    primitive_meanings: HashMap<String, Meaning>,
-    primitive_meanings_by_index: Vec<Meaning>,
+    primitive_meanings: HashMap<String, PrimitiveMeaningOwner>,
+    primitive_meanings_by_index: Vec<PrimitiveMeaningOwner>,
     primitive_names_by_index: Vec<String>,
     primitive_indices: HashMap<String, u16>,
     state_hash_base: StateHashBase,
@@ -1835,19 +1843,28 @@ impl Universe {
     /// control sequence. Used to reconstruct engine identity after format
     /// loading, where the current meaning may intentionally be shadowed.
     pub fn register_primitive_meaning(&mut self, name: &str, meaning: Meaning) {
-        match self.primitive_meanings.insert(name.to_owned(), meaning) {
-            Some(previous) => assert_eq!(
-                previous, meaning,
+        if let Some(previous) = self.primitive_meanings.get(name) {
+            assert_eq!(
+                previous.meaning, meaning,
                 "primitive {name} was registered with conflicting meanings"
-            ),
-            None => {
-                let index = u16::try_from(self.primitive_meanings_by_index.len())
-                    .expect("primitive registry exceeds frozen-token capacity");
-                self.primitive_meanings_by_index.push(meaning);
-                self.primitive_names_by_index.push(name.to_owned());
-                self.primitive_indices.insert(name.to_owned(), index);
-            }
+            );
+            return;
         }
+        let _macro_root = match meaning {
+            Meaning::Macro { definition, .. } => Some(self.macro_definition_ref(definition)),
+            _ => None,
+        };
+        let owned = PrimitiveMeaningOwner {
+            meaning,
+            _macro_root,
+        };
+        let index = u16::try_from(self.primitive_meanings_by_index.len())
+            .expect("primitive registry exceeds frozen-token capacity");
+        self.primitive_meanings
+            .insert(name.to_owned(), owned.clone());
+        self.primitive_meanings_by_index.push(owned);
+        self.primitive_names_by_index.push(name.to_owned());
+        self.primitive_indices.insert(name.to_owned(), index);
     }
 
     /// Registers and installs one primitive meaning.
@@ -1859,7 +1876,7 @@ impl Universe {
 
     #[must_use]
     pub fn primitive_meaning(&self, name: &str) -> Option<Meaning> {
-        self.primitive_meanings.get(name).copied()
+        self.primitive_meanings.get(name).map(|owner| owner.meaning)
     }
 
     /// Returns the exact immutable primitive-registry cardinality for
@@ -1886,7 +1903,7 @@ impl Universe {
     pub fn primitive_name(&self, meaning: Meaning) -> Option<&str> {
         self.primitive_meanings_by_index
             .iter()
-            .position(|candidate| *candidate == meaning)
+            .position(|candidate| candidate.meaning == meaning)
             .and_then(|index| self.primitive_names_by_index.get(index))
             .map(String::as_str)
     }
@@ -1929,7 +1946,7 @@ impl Universe {
         };
         self.primitive_meanings_by_index
             .get(usize::from(frozen.primitive_index()?))
-            .copied()
+            .map(|owner| owner.meaning)
     }
 
     /// Begins one generic tracked region.
@@ -5496,17 +5513,29 @@ impl Universe {
         self.consume_env_mutation(receipt);
     }
 
-    pub fn intern_macro(&mut self, macro_meaning: MacroMeaning) -> MacroDefinitionId {
-        self.stores.intern_macro(macro_meaning)
+    pub fn intern_macro(&mut self, macro_meaning: MacroMeaning) -> MacroDefinitionRef {
+        self.stores.intern_macro_with_provenance_in_domain(
+            macro_meaning,
+            None,
+            self.private_revision_domain.as_mut(),
+        )
     }
 
     pub fn intern_macro_with_provenance(
         &mut self,
         macro_meaning: MacroMeaning,
         provenance: MacroDefinitionProvenance,
-    ) -> MacroDefinitionId {
-        self.stores
-            .intern_macro_with_provenance(macro_meaning, Some(provenance))
+    ) -> MacroDefinitionRef {
+        self.stores.intern_macro_with_provenance_in_domain(
+            macro_meaning,
+            Some(provenance),
+            self.private_revision_domain.as_mut(),
+        )
+    }
+
+    #[must_use]
+    pub fn macro_definition_ref(&self, id: MacroDefinitionId) -> MacroDefinitionRef {
+        self.stores.macro_definition_ref(id)
     }
 
     #[must_use]
@@ -5747,6 +5776,22 @@ impl Universe {
     ) -> OriginId {
         self.stores.macro_invocation_origin(
             definition,
+            invocation,
+            definition_origin,
+            parent_invocation,
+        )
+    }
+
+    #[doc(hidden)]
+    pub fn macro_invocation_origin_from_nonowning_operand(
+        &mut self,
+        definition_operand: u64,
+        invocation: OriginId,
+        definition_origin: OriginId,
+        parent_invocation: OriginId,
+    ) -> OriginId {
+        self.stores.macro_invocation_origin_from_nonowning_operand(
+            definition_operand,
             invocation,
             definition_origin,
             parent_invocation,

@@ -2,7 +2,8 @@
 #![allow(dead_code)] // consumed by the ordered raw-delivery implementation issues
 
 use crate::CommandState;
-use tex_state::ids::{MacroDefinitionId, OriginListId};
+use tex_state::ids::OriginListId;
+use tex_state::macro_store::MacroDefinitionRef;
 use tex_state::token::OriginId;
 use tex_state::token_store::TokenListRef;
 
@@ -151,7 +152,7 @@ impl CommandState {
     pub(crate) fn push_macro_activation(
         &mut self,
         name: tex_state::interner::Symbol,
-        definition: MacroDefinitionId,
+        definition: MacroDefinitionRef,
         arguments: MacroArguments,
         invocation: OriginId,
         replacement_tokens: TokenListRef,

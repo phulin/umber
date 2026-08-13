@@ -199,7 +199,7 @@ fn filename_scan_expands_characters_and_backs_up_first_noncharacter() {
         macro_name,
         Meaning::Macro {
             flags: MeaningFlags::EMPTY,
-            definition,
+            definition: definition.id(),
         },
     );
     universe.set_meaning(terminator, Meaning::Relax);

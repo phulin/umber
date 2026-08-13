@@ -6159,6 +6159,7 @@ enum ScannedStep {
         target: Symbol,
         /// Meaning replaced by §1224's already-applied provisional `\relax`.
         provisional_old: Meaning,
+        _provisional_macro_root: Option<tex_state::macro_store::MacroDefinitionRef>,
         /// `cur_val` after §434/§436's recover-to-zero.
         value: i32,
         global: bool,
@@ -6191,6 +6192,7 @@ enum ScannedStep {
         target: Symbol,
         /// Meaning replaced by §1224's already-applied provisional `\relax`.
         provisional_old: Meaning,
+        _provisional_macro_root: Option<tex_state::macro_store::MacroDefinitionRef>,
         index: u16,
         global: bool,
     },
@@ -6198,6 +6200,7 @@ enum ScannedStep {
         target: Symbol,
         source: Option<Symbol>,
         meaning: Meaning,
+        macro_root: Option<tex_state::macro_store::MacroDefinitionRef>,
         global: bool,
     },
     AfterGroup(TracedTokenWord),
@@ -8956,6 +8959,7 @@ fn scan_command(
                 primitive,
                 target: definition.target,
                 provisional_old: definition.provisional_old,
+                _provisional_macro_root: definition.provisional_macro_root,
                 value: definition.value,
                 global,
             })
@@ -8974,6 +8978,7 @@ fn scan_command(
                 primitive,
                 target: definition.target,
                 provisional_old: definition.provisional_old,
+                _provisional_macro_root: definition.provisional_macro_root,
                 index: definition.index,
                 global,
             })
@@ -8998,6 +9003,7 @@ fn scan_command(
                 target: assignment.target,
                 source: assignment.source,
                 meaning: assignment.meaning,
+                macro_root: assignment.macro_root,
                 global,
             })
         }
@@ -9007,6 +9013,7 @@ fn scan_command(
                 target: assignment.target,
                 source: assignment.source,
                 meaning: assignment.meaning,
+                macro_root: assignment.macro_root,
                 global,
             })
         }
@@ -14663,6 +14670,7 @@ fn apply_scanned_step(
             primitive,
             target,
             provisional_old,
+            _provisional_macro_root,
             value,
             global,
             ..
@@ -14682,6 +14690,7 @@ fn apply_scanned_step(
                 Meaning::Relax,
                 global,
             );
+            drop(_provisional_macro_root);
             let observed = match primitive {
                 UnexpandablePrimitive::CharDef => ObservationValue::Character(value as u32),
                 UnexpandablePrimitive::MathCharDef => ObservationValue::Integer(i64::from(value)),
@@ -14708,6 +14717,7 @@ fn apply_scanned_step(
             primitive,
             target,
             provisional_old,
+            _provisional_macro_root,
             index,
             global,
         } => {
@@ -14726,6 +14736,7 @@ fn apply_scanned_step(
                 Meaning::Relax,
                 global,
             );
+            drop(_provisional_macro_root);
             let observed_name =
                 if command.state.profile().capabilities().supports_etex() && index > 255 {
                     if primitive == UnexpandablePrimitive::ToksDef {
@@ -14805,9 +14816,9 @@ fn apply_scanned_step(
             target,
             source,
             meaning,
+            macro_root,
             global,
         } => {
-            let _ = source;
             // TeX82 `\let`/`\futurelet` are ordinary `prefixed_command`
             // assignments too (§1221), so `\globaldefs` must override their
             // scope exactly like every other assignment kind's
@@ -14830,6 +14841,7 @@ fn apply_scanned_step(
                     }
                 },
             );
+            drop((source, macro_root));
             command.retain_assignment_receipt(receipt);
             Ok(ReplayStep::Continue)
         }
