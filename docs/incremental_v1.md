@@ -292,12 +292,11 @@ executing. Both terminal outcomes return to one substrate:
 
 - **Convergence.** The match proves the old record at the splice point
   hash-equal to the new one, so the accepted history keeps the old records at
-  and after the match, rehomed onto the new accepted revision. The scratch
-  fork is discarded after the accepted substrate imports only the diagnostic
-  origin graph reachable from newly adopted artifacts. Process-global origin
-  keys preserve the artifacts' ids, while owned locations cover scratch-only
-  engine sources; neither operation adopts semantic scratch state. The new
-  artifacts and detached effect slices are session-owned and survive. A
+  and after the match, rehomed onto the new accepted revision. Newly adopted
+  artifacts already own their typed diagnostic roots or stable source recipes,
+  so the scratch fork is discarded directly; acceptance imports no origin
+  graph and adopts no semantic scratch state. The new artifacts and detached
+  effect slices are session-owned and survive. A
   later edit inside the diverged span restarts from the restart anchor and
   replays at most the span the previous edit already re-executed.
 - **Job end without convergence.** The fork becomes the accepted substrate.
@@ -309,9 +308,9 @@ executing. Both terminal outcomes return to one substrate:
 Rare partial-adoption outcomes may transiently leave accepted records split
 across both substrates; the next terminal outcome or ordinary eviction
 normalizes back to one. Semantic state is never spliced between substrates:
-adoption is by reference plus metadata rehoming only. The one exception is the
-validated, diagnostic-only reachable-origin import above; arbitrary handles
-and raw substores still cannot cross substrate ownership.
+adoption is by reference plus metadata rehoming only. Typed diagnostic roots
+are ordinary detached ownership, and arbitrary handles and raw substores still
+cannot cross substrate ownership.
 
 Because retained substrates are frozen, v1 needs no per-checkpoint pinning of
 journal, node, or content spans: watermark prefixes below a retained

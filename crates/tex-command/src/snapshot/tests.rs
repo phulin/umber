@@ -90,7 +90,7 @@ fn durable_continuation_materializes_canonical_stored_content_into_new_roots() {
     state.push_token_level(
         TokenPayload::Stored {
             tokens: source_root,
-            origins: tex_state::ids::OriginListId::EMPTY,
+            origins: tex_state::provenance::OriginListRef::empty(),
         },
         TokenBehavior::Ordinary,
         RetirementBehavior::Pop,
@@ -171,7 +171,7 @@ fn populated_quiescent_state() -> CommandState {
                 None,
             ],
         },
-        invocation: tex_state::token::OriginId::UNKNOWN,
+        invocation: tex_state::provenance::ExpansionFrameRef::unknown(),
     });
     state.conditions.frames.push(ConditionFrame {
         identity: ConditionId(23),

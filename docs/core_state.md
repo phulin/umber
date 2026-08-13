@@ -28,7 +28,7 @@ ownership. It does not permit untracked mutation or host I/O for performance.
 | Sparse registers     | e-TeX register overflow                             | journaled map/page roots  |
 | Code tables          | cat/lc/uc/sf/math/del codes                         | copy-on-write pages       |
 | Token store          | exact immutable token lists and semantic identities | strong roots + weak slots |
-| Provenance           | origins and origin-list spans                       | append-only watermark     |
+| Provenance           | rooted origins, frames, source ranges, and lists    | strong roots + weak slots |
 | Source fragments/map | immutable bytes and current editor layout           | roots + watermarks        |
 | Glue store           | canonical immutable glue specs                      | frozen + watermark        |
 | Node arenas          | compact node words, sidecars, semantic identities   | epoch + survivors         |

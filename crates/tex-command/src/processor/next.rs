@@ -1021,7 +1021,7 @@ impl CommandProcessor<'_> {
         let level = self.command.push_token_level(
             TokenPayload::Stored {
                 tokens: output.token_ref().clone(),
-                origins: output.origin_list(),
+                origins: output.origin_ref().clone(),
             },
             TokenBehavior::Ordinary,
             RetirementBehavior::Pop,
@@ -1445,7 +1445,7 @@ impl CommandProcessor<'_> {
                 direct_source,
             } = delivery;
 
-            if let Token::Param(slot) = spelling.semantic_token() {
+            if let Token::Param(slot) = spelling.word().semantic_token() {
                 let replay = self
                     .command
                     .replay_out_parameter(level, slot)
@@ -1468,7 +1468,7 @@ impl CommandProcessor<'_> {
 
             let delivery_stamp = DeliveryStamp::new(level.0, position, self.next_delivery_sequence);
             self.next_delivery_sequence = self.next_delivery_sequence.wrapping_add(1);
-            let mut command = CurrentCommand::resolve(
+            let mut command = CurrentCommand::resolve_rooted(
                 spelling,
                 delivery_stamp,
                 source_provenance,
@@ -1683,8 +1683,14 @@ impl CommandProcessor<'_> {
                             unreachable!("inspected token level remains a token level");
                         };
                         cursor.index += 1;
+                        let origin =
+                            self.state.origin_ref(spelling.origin()).unwrap_or_else(|| {
+                                tex_state::provenance::OriginRef::direct(spelling.origin())
+                            });
                         return Ok(Some(DeliveredToken {
-                            spelling,
+                            spelling: tex_state::token::RootedTracedTokenWord::from_word(
+                                spelling, origin,
+                            ),
                             level: identity,
                             position,
                             behavior,
@@ -1697,9 +1703,9 @@ impl CommandProcessor<'_> {
                         RetirementRestart::Continue => {}
                         RetirementRestart::EndV(level) => {
                             return Ok(Some(DeliveredToken {
-                                spelling: TracedTokenWord::pack(
+                                spelling: tex_state::token::RootedTracedTokenWord::new(
                                     self.state.frozen_end_template_token(),
-                                    OriginId::UNKNOWN,
+                                    tex_state::provenance::OriginRef::unknown(),
                                 ),
                                 level,
                                 position: u64::try_from(cursor.index)
@@ -1893,7 +1899,7 @@ impl CommandProcessor<'_> {
         &mut self,
         source_token: &SourceToken,
         allow_control_sequence_creation: bool,
-    ) -> TracedTokenWord {
+    ) -> tex_state::token::RootedTracedTokenWord {
         let token = match source_token {
             SourceToken::Character { code, catcode, .. } => Token::Char {
                 ch: character_from_code(*code),
@@ -1926,12 +1932,12 @@ impl CommandProcessor<'_> {
         let range = source_token.range();
         let origin = if range.end().saturating_sub(range.start()) == 1 {
             self.state
-                .source_token_origin(range.source(), range.start(), range.end())
+                .source_token_origin_ref(range.source(), range.start(), range.end())
         } else {
             self.state
-                .source_range_origin(range.source(), range.start(), range.end())
+                .source_range_origin_ref(range.source(), range.start(), range.end())
         };
-        TracedTokenWord::pack(token, origin)
+        tex_state::token::RootedTracedTokenWord::new(token, origin)
     }
 
     fn next_stored_token(
@@ -1964,9 +1970,8 @@ impl CommandProcessor<'_> {
             .map(|spelling| (spelling, None)),
             TokenPayload::Stored { tokens, origins } => {
                 let token = *tokens.tokens().get(cursor.index)?;
-                let origin = self
-                    .state
-                    .origin_list(*origins)
+                let origin = origins
+                    .origins()
                     .get(cursor.index)
                     .copied()
                     .unwrap_or(OriginId::UNKNOWN);
@@ -2550,7 +2555,7 @@ pub(crate) fn stored_input_reason(reason: crate::input::StoredReplayReason) -> I
 }
 
 struct DeliveredToken {
-    spelling: TracedTokenWord,
+    spelling: tex_state::token::RootedTracedTokenWord,
     level: InputLevelId,
     position: u64,
     behavior: TokenBehavior,
@@ -3659,7 +3664,7 @@ mod tests {
         command.push_token_level(
             TokenPayload::Stored {
                 tokens: stored.token_ref().clone(),
-                origins: stored.origin_list(),
+                origins: stored.origin_ref().clone(),
             },
             TokenBehavior::Ordinary,
             RetirementBehavior::Pop,

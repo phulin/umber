@@ -1,6 +1,7 @@
 //! Snapshot-ready input stack summary shared by the lexer and `Universe`.
 
 use crate::ids::{OriginListId, TokenListId};
+use crate::provenance::OriginListRef;
 use crate::source_map::RegisteredSource;
 use crate::token::{OriginId, Token, TracedTokenWord};
 use crate::token_store::TokenListRef;
@@ -80,13 +81,13 @@ impl AlignmentScannerPhase {
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct TracedTokenList {
     token_list: TokenListRef,
-    origin_list: OriginListId,
+    origin_list: OriginListRef,
 }
 
 impl TracedTokenList {
     /// Creates a token-list replay pair.
     #[must_use]
-    pub fn new(token_list: TokenListRef, origin_list: OriginListId) -> Self {
+    pub fn new(token_list: TokenListRef, origin_list: OriginListRef) -> Self {
         Self {
             token_list,
             origin_list,
@@ -98,7 +99,7 @@ impl TracedTokenList {
     pub fn synthetic(token_list: TokenListRef) -> Self {
         Self {
             token_list,
-            origin_list: OriginListId::EMPTY,
+            origin_list: OriginListRef::empty(),
         }
     }
 
@@ -114,8 +115,14 @@ impl TracedTokenList {
     }
 
     #[must_use]
-    pub const fn origin_list(&self) -> OriginListId {
-        self.origin_list
+    pub fn origin_list(&self) -> OriginListId {
+        self.origin_list.id()
+    }
+
+    /// Borrows the strong exact-position owner paired with this token list.
+    #[must_use]
+    pub fn origin_ref(&self) -> &OriginListRef {
+        &self.origin_list
     }
 }
 

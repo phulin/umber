@@ -5,6 +5,7 @@ use crate::ContentHash;
 use crate::ids::MacroDefinitionId;
 use crate::meaning::MeaningFlags;
 use crate::patch_domain::PatchRootLease;
+use crate::provenance::{OriginListRef, OriginRef};
 #[cfg(any(test, feature = "testing"))]
 use crate::reachable_value::ReachableValuePool;
 use crate::reachable_value::ReachableValueRef;
@@ -103,7 +104,15 @@ impl MacroBodyRef {
 pub(super) struct MacroDefinitionValue {
     pub(super) body: MacroBodyRef,
     pub(super) provenance: OnceLock<MacroDefinitionProvenance>,
+    pub(super) provenance_roots: OnceLock<MacroDefinitionProvenanceRoots>,
     pub(super) observation_operand: i64,
+}
+
+#[derive(Clone, Debug)]
+pub(super) struct MacroDefinitionProvenanceRoots {
+    pub(super) definition: OriginRef,
+    pub(super) parameters: OriginListRef,
+    pub(super) replacement: OriginListRef,
 }
 
 impl MacroDefinitionValue {
@@ -148,6 +157,7 @@ impl MacroDefinitionRef {
             .map(|index| MacroDefinitionValue {
                 body: body.clone(),
                 provenance: OnceLock::new(),
+                provenance_roots: OnceLock::new(),
                 observation_operand: i64::from(index),
             })
             .collect();

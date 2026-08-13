@@ -91,7 +91,10 @@ pub(crate) struct ArtifactRenderProvenance {
 
 #[derive(Clone, Debug)]
 enum ArtifactRenderSources {
-    Live(Arc<[OriginId]>),
+    Live {
+        origins: Arc<[OriginId]>,
+        roots: Arc<[crate::provenance::OriginRef]>,
+    },
     Deferred(crate::OutputProvenanceRecipe),
     Mixed {
         live: Arc<[OriginId]>,
@@ -105,7 +108,10 @@ impl ArtifactRenderProvenance {
         assert_valid_render_origins(&ends, origins.len());
         Self {
             ends: ends.into(),
-            sources: ArtifactRenderSources::Live(origins.into()),
+            sources: ArtifactRenderSources::Live {
+                origins: origins.into(),
+                roots: Arc::from([]),
+            },
         }
     }
 
@@ -118,11 +124,14 @@ impl ArtifactRenderProvenance {
     }
 
     fn built(ends: Vec<u32>, builder: RenderProvenanceBuilder) -> Self {
-        let (live, refs, recipes) = builder.into_parts();
+        let (live, roots, refs, recipes) = builder.into_parts();
         let flat_len = ends.last().copied().unwrap_or(0) as usize;
         let sources = if refs.is_empty() {
             assert_eq!(flat_len, live.len());
-            ArtifactRenderSources::Live(live.into())
+            ArtifactRenderSources::Live {
+                origins: live.into(),
+                roots: roots.into(),
+            }
         } else {
             assert_eq!(flat_len, refs.len());
             ArtifactRenderSources::Mixed {
@@ -139,14 +148,14 @@ impl ArtifactRenderProvenance {
 
     fn live_origins(&self) -> &[OriginId] {
         match &self.sources {
-            ArtifactRenderSources::Live(origins) => origins,
+            ArtifactRenderSources::Live { origins, .. } => origins,
             ArtifactRenderSources::Deferred(_) => &[],
             ArtifactRenderSources::Mixed { live, .. } => live,
         }
     }
 
     fn is_deferred(&self) -> bool {
-        !matches!(self.sources, ArtifactRenderSources::Live(_))
+        !matches!(self.sources, ArtifactRenderSources::Live { .. })
     }
 }
 
@@ -156,6 +165,7 @@ impl ArtifactRenderProvenance {
 #[derive(Debug, Default)]
 pub struct RenderProvenanceBuilder {
     live: Vec<OriginId>,
+    roots: Vec<crate::provenance::OriginRef>,
     refs: Vec<u64>,
     recipes: Vec<crate::OutputProvenanceRecipe>,
     recipe_ids: ahash::AHashMap<usize, u32>,
@@ -172,6 +182,23 @@ impl RenderProvenanceBuilder {
                     | u64::try_from(index).expect("artifact live provenance exceeds u63"),
             );
         }
+    }
+
+    pub fn push_root(&mut self, origin: crate::provenance::OriginRef) {
+        let id = origin.id();
+        self.push_live(id);
+        self.roots.push(origin);
+    }
+
+    #[doc(hidden)]
+    pub fn attach_roots(&mut self, roots: Vec<crate::provenance::OriginRef>) {
+        self.roots = roots;
+    }
+
+    #[doc(hidden)]
+    #[must_use]
+    pub fn live_origins_for_rooting(&self) -> &[OriginId] {
+        &self.live
     }
 
     pub fn push_deferred(
@@ -206,11 +233,18 @@ impl RenderProvenanceBuilder {
         }
     }
 
-    fn into_parts(self) -> (Vec<OriginId>, Vec<u64>, Vec<crate::OutputProvenanceRecipe>) {
+    fn into_parts(
+        self,
+    ) -> (
+        Vec<OriginId>,
+        Vec<crate::provenance::OriginRef>,
+        Vec<u64>,
+        Vec<crate::OutputProvenanceRecipe>,
+    ) {
         if self.mixed {
-            (self.live, self.refs, self.recipes)
+            (self.live, self.roots, self.refs, self.recipes)
         } else {
-            (self.live, Vec::new(), Vec::new())
+            (self.live, self.roots, Vec::new(), Vec::new())
         }
     }
 }
@@ -388,7 +422,7 @@ impl VerifiedArtifact {
     #[doc(hidden)]
     #[must_use]
     pub fn render_origins_for_memo(&self) -> RenderOrigins<'_> {
-        let ArtifactRenderSources::Live(origins) = &self.render_provenance.sources else {
+        let ArtifactRenderSources::Live { origins, .. } = &self.render_provenance.sources else {
             unreachable!("deferred artifacts are not memoized")
         };
         RenderOrigins {
@@ -513,7 +547,7 @@ impl CommittedArtifact {
     /// the complete sidecar.
     #[must_use]
     pub fn render_origins(&self) -> Option<RenderOrigins<'_>> {
-        let ArtifactRenderSources::Live(origins) = &self.render_provenance.sources else {
+        let ArtifactRenderSources::Live { origins, .. } = &self.render_provenance.sources else {
             return None;
         };
         Some(RenderOrigins {
@@ -559,7 +593,7 @@ impl CommittedArtifact {
             return ArtifactOrigin::Unknown;
         }
         match &self.render_provenance.sources {
-            ArtifactRenderSources::Live(origins) => origins
+            ArtifactRenderSources::Live { origins, .. } => origins
                 .get(flat)
                 .copied()
                 .map_or(ArtifactOrigin::Unknown, ArtifactOrigin::Live),
@@ -601,9 +635,14 @@ impl CommittedArtifact {
             .len()
             .saturating_mul(std::mem::size_of::<u32>())
             .saturating_add(match &self.render_provenance.sources {
-                ArtifactRenderSources::Live(origins) => origins
+                ArtifactRenderSources::Live { origins, roots } => origins
                     .len()
-                    .saturating_mul(std::mem::size_of::<OriginId>()),
+                    .saturating_mul(std::mem::size_of::<OriginId>())
+                    .saturating_add(
+                        roots
+                            .len()
+                            .saturating_mul(std::mem::size_of::<crate::provenance::OriginRef>()),
+                    ),
                 ArtifactRenderSources::Deferred(recipe) => provenance_recipe_bytes(recipe),
                 ArtifactRenderSources::Mixed {
                     live,

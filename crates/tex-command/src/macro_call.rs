@@ -7,6 +7,7 @@ use tex_state::ids::MacroDefinitionId;
 use tex_state::interner::Symbol;
 use tex_state::macro_store::MacroDefinitionRef;
 use tex_state::meaning::{Meaning, MeaningFlags, UnexpandablePrimitive};
+use tex_state::provenance::{ExpansionFrameRef, OriginRef};
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 
 use crate::input::SharedTokenBuffer;
@@ -46,7 +47,7 @@ pub(crate) struct MacroActivation {
     pub(crate) name: Symbol,
     pub(crate) definition: MacroDefinitionRef,
     pub(crate) arguments: MacroArguments,
-    pub(crate) invocation: OriginId,
+    pub(crate) invocation: ExpansionFrameRef,
 }
 
 /// One contiguous macro-argument allocation and its at-most-nine ranges.
@@ -175,7 +176,7 @@ impl ParameterState {
         name: Symbol,
         definition: MacroDefinitionRef,
         arguments: MacroArguments,
-        invocation: OriginId,
+        invocation: ExpansionFrameRef,
     ) -> MacroActivationId {
         let identity = MacroActivationId(self.next_activation_identity);
         self.next_activation_identity = self.next_activation_identity.wrapping_add(1);
@@ -189,11 +190,11 @@ impl ParameterState {
         identity
     }
 
-    pub(crate) fn parent_invocation(&self) -> OriginId {
+    pub(crate) fn parent_invocation(&self) -> OriginRef {
         self.activations
             .last()
-            .map(|activation| activation.invocation)
-            .unwrap_or(OriginId::UNKNOWN)
+            .map(|activation| activation.invocation.as_origin().clone())
+            .unwrap_or_else(OriginRef::unknown)
     }
 }
 
@@ -321,7 +322,7 @@ impl CommandProcessor<'_> {
         let _level = self.push_macro_activation(
             macro_name,
             definition,
-            call.spelling().origin(),
+            call.origin_ref().clone(),
             arguments.clone(),
             meaning.replacement_text(),
             provenance.replacement_origins(),

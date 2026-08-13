@@ -1062,7 +1062,7 @@ impl CommandProcessor<'_> {
         self.insert_expansion_list(
             TokenPayload::Stored {
                 tokens: scanned.replacement_text.token_ref().clone(),
-                origins: scanned.replacement_text.origin_list(),
+                origins: scanned.replacement_text.origin_ref().clone(),
             },
             first,
         );

@@ -3,7 +3,8 @@
 use tex_state::CommandContext;
 use tex_state::interner::Symbol;
 use tex_state::meaning::Meaning;
-use tex_state::token::{Catcode, Token, TracedTokenWord};
+use tex_state::provenance::OriginRef;
+use tex_state::token::{Catcode, RootedTracedTokenWord, Token, TracedTokenWord};
 
 use crate::{SourceLocation, SourceProvenance, SourceRange};
 
@@ -17,6 +18,7 @@ use crate::{SourceLocation, SourceProvenance, SourceRange};
 #[derive(Debug, Eq, PartialEq)]
 pub struct CurrentCommand {
     spelling: TracedTokenWord,
+    origin: OriginRef,
     meaning: Meaning,
     macro_observation_operand: Option<i64>,
     identity: CommandIdentity,
@@ -178,6 +180,26 @@ impl CurrentCommand {
         direct_source: bool,
         state: &mut CommandContext<'_>,
     ) -> Self {
+        let origin = state
+            .origin_ref(spelling.origin())
+            .unwrap_or_else(|| OriginRef::direct(spelling.origin()));
+        Self::resolve_rooted(
+            RootedTracedTokenWord::from_word(spelling, origin),
+            delivery,
+            source_provenance,
+            direct_source,
+            state,
+        )
+    }
+
+    pub(crate) fn resolve_rooted(
+        spelling: RootedTracedTokenWord,
+        delivery: DeliveryStamp,
+        source_provenance: Option<SourceProvenance>,
+        direct_source: bool,
+        state: &mut CommandContext<'_>,
+    ) -> Self {
+        let (spelling, origin) = spelling.into_parts();
         let token = spelling.semantic_token();
         let (control_sequence, meaning) = match token {
             Token::Cs(symbol) => (Some(symbol), state.meaning(symbol)),
@@ -219,6 +241,7 @@ impl CurrentCommand {
         };
         Self {
             spelling,
+            origin,
             meaning,
             macro_observation_operand,
             identity: CommandIdentity::from_meaning(meaning),
@@ -391,6 +414,10 @@ impl CurrentCommand {
         self.spelling.origin()
     }
 
+    pub fn origin_ref(&self) -> &OriginRef {
+        &self.origin
+    }
+
     /// Returns the execution-local proof of this exact input delivery.
     #[must_use]
     pub const fn delivery_stamp(&self) -> DeliveryStamp {
@@ -437,9 +464,10 @@ impl CurrentCommand {
 
     /// Makes a fresh copy for the input backup path. `CurrentCommand` itself
     /// remains deliberately non-`Clone` at the public boundary.
-    pub(crate) const fn copy_for_backup(&self) -> Self {
+    pub(crate) fn copy_for_backup(&self) -> Self {
         Self {
             spelling: self.spelling,
+            origin: self.origin.clone(),
             meaning: self.meaning,
             macro_observation_operand: self.macro_observation_operand,
             identity: self.identity,

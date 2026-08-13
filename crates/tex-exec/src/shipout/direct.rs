@@ -297,6 +297,13 @@ pub(crate) fn stage_shipout(
     let render_origin_ends = emission
         .render_origin_ends
         .expect("page shipout must record render provenance");
+    let render_roots = emission
+        .render_origins
+        .live_origins_for_rooting()
+        .iter()
+        .filter_map(|origin| stores.origin_ref(*origin))
+        .collect();
+    emission.render_origins.attach_roots(render_roots);
     Ok(StagedShipout {
         artifact: VerifiedArtifact::new(artifact_bytes)
             .with_built_render_origins(render_origin_ends, emission.render_origins)

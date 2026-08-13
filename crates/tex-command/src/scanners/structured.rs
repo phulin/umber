@@ -2569,7 +2569,7 @@ impl CommandProcessor<'_> {
         let write_level = self.command.push_token_level(
             TokenPayload::Stored {
                 tokens: tokens.token_ref().clone(),
-                origins: tokens.origin_list(),
+                origins: tokens.origin_ref().clone(),
             },
             TokenBehavior::Ordinary,
             RetirementBehavior::Pop,

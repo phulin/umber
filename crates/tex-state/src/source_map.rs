@@ -288,6 +288,29 @@ pub(crate) struct SourceRegion {
     identity: HandleIdentity,
 }
 
+/// Strong ownership of one immutable source registration.
+///
+/// Logical positions remain compact, non-owning values. A diagnostic consumer
+/// that can outlive the aggregate source-map row retains this handle instead.
+#[derive(Clone, Debug)]
+pub struct SourceRegistrationRef(Arc<SourceRegistrationValue>);
+
+#[derive(Debug)]
+struct SourceRegistrationValue {
+    region: SourceRegion,
+    #[allow(dead_code)]
+    descriptor: SourceDescriptor,
+    #[allow(dead_code)]
+    line_starts: Arc<[usize]>,
+}
+
+impl SourceRegistrationRef {
+    #[must_use]
+    pub(crate) fn region(&self) -> SourceRegion {
+        self.0.region
+    }
+}
+
 impl SourceRegion {
     pub(crate) const fn anchor(self) -> SourcePos {
         SourcePos(self.start.0 + self.byte_len)
@@ -305,6 +328,7 @@ pub(crate) struct SourceMapMark {
 #[derive(Debug)]
 pub(crate) struct SourceMap {
     regions: Vec<SourceRegion>,
+    registration_roots: Vec<SourceRegistrationRef>,
     region_by_source: AHashMap<SourceId, usize>,
     line_starts: Vec<Arc<[usize]>>,
     generated: Vec<GeneratedSource>,
@@ -326,6 +350,7 @@ impl Default for SourceMap {
     fn default() -> Self {
         Self {
             regions: Vec::new(),
+            registration_roots: Vec::new(),
             region_by_source: AHashMap::new(),
             line_starts: Vec::new(),
             generated: Vec::new(),
@@ -341,6 +366,7 @@ impl Clone for SourceMap {
     fn clone(&self) -> Self {
         Self {
             regions: self.regions.clone(),
+            registration_roots: self.registration_roots.clone(),
             region_by_source: self.region_by_source.clone(),
             line_starts: self.line_starts.clone(),
             generated: self.generated.clone(),
@@ -400,6 +426,7 @@ impl SourceMap {
         }
 
         let byte_len = descriptor.byte_len();
+        let owned_descriptor = descriptor.clone();
         let retry_start = self.retry_registrations.last().and_then(|retry| {
             (retry.source == source
                 && retry.descriptor == descriptor
@@ -438,6 +465,12 @@ impl SourceMap {
             backing,
             identity,
         });
+        self.registration_roots
+            .push(SourceRegistrationRef(Arc::new(SourceRegistrationValue {
+                region: self.regions[region_index],
+                descriptor: owned_descriptor,
+                line_starts: Arc::clone(&line_starts),
+            })));
         assert_eq!(
             self.region_by_source.insert(source, region_index),
             None,
@@ -539,6 +572,17 @@ impl SourceMap {
             .and_then(|index| self.regions.get(*index))
             .copied()?;
         (region.source == source && self.identities.contains(region.identity)).then_some(region)
+    }
+
+    pub(crate) fn registration_for_span(&self, span: SourceSpan) -> Option<SourceRegistrationRef> {
+        let region = self.region_for_position(span.lo())?;
+        if span.hi().0 > region.anchor().0 {
+            return None;
+        }
+        self.registration_roots
+            .get(region.identity.slot() as usize)
+            .filter(|registration| registration.region() == region)
+            .cloned()
     }
 
     pub(crate) fn contains_registration(
@@ -669,6 +713,7 @@ impl SourceMap {
             );
         }
         self.regions.truncate(mark.regions);
+        self.registration_roots.truncate(mark.regions);
         self.line_starts.truncate(mark.regions);
         self.generated.truncate(mark.generated);
         if self.forced_next_pos {

@@ -48,7 +48,8 @@ use crate::pdf::{
     PdfStateSnapshot, PdfTokenParameter,
 };
 use crate::provenance::{
-    InsertedOriginKind, OriginListBuilder, OriginRecord, SynthesizedOriginKind, SyntheticOriginKind,
+    ExpansionFrameRef, InsertedOriginKind, OriginListBuilder, OriginListRef, OriginRecord,
+    OriginRef, SynthesizedOriginKind, SyntheticOriginKind,
 };
 use crate::provenance::{MacroInvocationProvenanceStats, ProvenanceStats};
 use crate::scaled::Scaled;
@@ -799,9 +800,9 @@ impl GenerationSubstrate {
             .unwrap_or(crate::LayoutResolvedOrigin::Unknown)
     }
 
-    /// Retains only the diagnostic origin graph needed by artifacts adopted
-    /// from a related scratch fork. Semantic state and source stores remain on
-    /// the accepted generation.
+    /// Detaches diagnostic locations needed by artifacts adopted from a
+    /// related scratch fork. Artifact typed roots retain structural origins;
+    /// semantic state and source stores remain on the accepted generation.
     pub fn retain_artifact_origins_from_fork(
         &mut self,
         fork: &Universe,
@@ -822,9 +823,6 @@ impl GenerationSubstrate {
                     .or_insert(location);
             }
         }
-        self.universe
-            .stores
-            .retain_diagnostic_origins_from(&fork.stores, roots);
         self.charged_bytes = generation_charged_bytes(
             &self.universe,
             &self.retained_origin_locations,
@@ -862,9 +860,6 @@ impl GenerationSubstrate {
                     .or_insert(location);
             }
         }
-        self.universe
-            .stores
-            .retain_diagnostic_origins_from(&fork.stores, roots);
         self.charged_bytes = generation_charged_bytes(
             &self.universe,
             &self.retained_origin_locations,
@@ -5561,6 +5556,14 @@ impl Universe {
         self.stores.macro_definition_provenance(id)
     }
 
+    #[doc(hidden)]
+    pub fn macro_definition_provenance_roots(
+        &self,
+        id: MacroDefinitionId,
+    ) -> Option<(OriginRef, OriginListRef, OriginListRef)> {
+        self.stores.macro_definition_provenance_roots(id)
+    }
+
     /// Attaches provenance after a definition's semantic body has been interned.
     ///
     /// Detached continuation import uses this two-phase operation to break the
@@ -5766,6 +5769,30 @@ impl Universe {
         self.stores.source_span_origin(span)
     }
 
+    pub fn source_span_origin_ref(&mut self, span: SourceSpan) -> OriginRef {
+        self.stores.source_span_origin_ref(span)
+    }
+
+    pub fn source_token_origin_ref(
+        &mut self,
+        source: SourceId,
+        byte_offset: u64,
+        byte_end: u64,
+    ) -> OriginRef {
+        self.stores
+            .source_token_origin_ref(source, byte_offset, byte_end)
+    }
+
+    pub fn source_range_origin_ref(
+        &mut self,
+        source: SourceId,
+        byte_offset: u64,
+        byte_end: u64,
+    ) -> OriginRef {
+        self.stores
+            .source_range_origin_ref(source, byte_offset, byte_end)
+    }
+
     /// Allocates a macro-invocation origin.
     pub fn macro_invocation_origin(
         &mut self,
@@ -5776,6 +5803,37 @@ impl Universe {
     ) -> OriginId {
         self.stores.macro_invocation_origin(
             definition,
+            invocation,
+            definition_origin,
+            parent_invocation,
+        )
+    }
+
+    pub fn macro_invocation_frame(
+        &mut self,
+        definition: MacroDefinitionId,
+        invocation: OriginRef,
+        definition_origin: OriginRef,
+        parent_invocation: OriginRef,
+    ) -> ExpansionFrameRef {
+        self.stores.macro_invocation_frame(
+            definition,
+            invocation,
+            definition_origin,
+            parent_invocation,
+        )
+    }
+
+    #[doc(hidden)]
+    pub fn macro_invocation_frame_from_nonowning_operand(
+        &mut self,
+        definition_operand: u64,
+        invocation: OriginRef,
+        definition_origin: OriginRef,
+        parent_invocation: OriginRef,
+    ) -> ExpansionFrameRef {
+        self.stores.macro_invocation_frame_from_nonowning_operand(
+            definition_operand,
             invocation,
             definition_origin,
             parent_invocation,
@@ -5808,6 +5866,15 @@ impl Universe {
         self.stores.inserted_origin(kind, token, parent)
     }
 
+    pub fn inserted_origin_ref(
+        &mut self,
+        kind: InsertedOriginKind,
+        token: Token,
+        parent: OriginRef,
+    ) -> OriginRef {
+        self.stores.inserted_origin_ref(kind, token, parent)
+    }
+
     /// Allocates a synthesized-token origin.
     pub fn synthesized_origin(
         &mut self,
@@ -5817,9 +5884,26 @@ impl Universe {
         self.stores.synthesized_origin(kind, parent)
     }
 
+    pub fn synthesized_origin_ref(
+        &mut self,
+        kind: SynthesizedOriginKind,
+        parent: OriginRef,
+    ) -> OriginRef {
+        self.stores.synthesized_origin_ref(kind, parent)
+    }
+
     /// Allocates a synthetic/bootstrap origin.
     pub fn synthetic_origin(&mut self, kind: SyntheticOriginKind) -> OriginId {
         self.stores.synthetic_origin(kind)
+    }
+
+    pub fn synthetic_origin_ref(&mut self, kind: SyntheticOriginKind) -> OriginRef {
+        self.stores.synthetic_origin_ref(kind)
+    }
+
+    #[must_use]
+    pub fn origin_ref(&self, id: OriginId) -> Option<OriginRef> {
+        self.stores.origin_ref(id)
     }
 
     /// Reads a live origin record.
@@ -5860,6 +5944,15 @@ impl Universe {
     /// Allocates an origin-list span.
     pub fn allocate_origin_list(&mut self, origins: &[OriginId]) -> OriginListId {
         self.stores.allocate_origin_list(origins)
+    }
+
+    pub fn allocate_origin_list_ref(&mut self, origins: &[OriginRef]) -> OriginListRef {
+        self.stores.allocate_origin_list_ref(origins)
+    }
+
+    #[must_use]
+    pub fn origin_list_ref(&self, id: OriginListId) -> Option<OriginListRef> {
+        self.stores.origin_list_ref(id)
     }
 
     /// Allocates an origin-list span by repeating one live origin.

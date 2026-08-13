@@ -4452,7 +4452,7 @@ fn macro_activations_allocate_nested_invocation_provenance() {
         processor.push_macro_activation(
             target,
             definition.id(),
-            OriginId::UNKNOWN,
+            tex_state::provenance::OriginRef::unknown(),
             MacroArguments::default(),
             empty,
             tex_state::ids::OriginListId::EMPTY,
@@ -4463,11 +4463,12 @@ fn macro_activations_allocate_nested_invocation_provenance() {
             .activations
             .last()
             .expect("outer activation")
-            .invocation;
+            .invocation
+            .clone();
         processor.push_macro_activation(
             target,
             definition.id(),
-            OriginId::UNKNOWN,
+            tex_state::provenance::OriginRef::unknown(),
             MacroArguments::default(),
             empty,
             tex_state::ids::OriginListId::EMPTY,
@@ -4478,7 +4479,8 @@ fn macro_activations_allocate_nested_invocation_provenance() {
             .activations
             .last()
             .expect("inner activation")
-            .invocation;
+            .invocation
+            .clone();
     }
 
     assert_ne!(outer_invocation, inner_invocation);
@@ -4518,17 +4520,17 @@ fn meaning_reads_immutable_replacement_after_nested_macro_retirement() {
         target,
         definition.clone(),
         MacroArguments::default(),
-        OriginId::UNKNOWN,
+        tex_state::provenance::ExpansionFrameRef::unknown(),
         universe.token_list_ref(empty),
-        OriginListId::EMPTY,
+        tex_state::provenance::OriginListRef::empty(),
     );
     command.push_macro_activation(
         target,
         definition,
         MacroArguments::default(),
-        OriginId::UNKNOWN,
+        tex_state::provenance::ExpansionFrameRef::unknown(),
         universe.token_list_ref(empty),
-        OriginListId::EMPTY,
+        tex_state::provenance::OriginListRef::empty(),
     );
 
     let mut capabilities = CommandHostCapabilities::default();

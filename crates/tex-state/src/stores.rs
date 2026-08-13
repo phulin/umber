@@ -63,9 +63,10 @@ use crate::node::Node;
 use crate::node_arena::NodeMemoryColumn;
 use crate::node_arena::{NodeArena, NodeArenaMark, NodeList, NodeListBuilder};
 use crate::provenance::{
-    InsertedOrigin, InsertedOriginKind, MacroInvocationOrigin, OriginListBuilder, OriginRecord,
-    ProvenanceStats, ProvenanceStore, ProvenanceStoreMark, SourceOrigin, SynthesizedOrigin,
-    SynthesizedOriginKind, SyntheticOrigin, SyntheticOriginKind,
+    ExpansionFrameRef, InsertedOrigin, InsertedOriginKind, MacroInvocationOrigin,
+    OriginListBuilder, OriginListRef, OriginRecord, OriginRef, ProvenanceStats, ProvenanceStore,
+    ProvenanceStoreMark, SourceOrigin, SynthesizedOrigin, SynthesizedOriginKind, SyntheticOrigin,
+    SyntheticOriginKind,
 };
 use crate::scaled::Scaled;
 use crate::source_fragments::{FragmentStore, direct_fragment_span};
@@ -806,11 +807,6 @@ impl Stores {
         self.fonts.iter()
     }
 
-    pub(crate) fn retain_diagnostic_origins_from(&mut self, fork: &Self, roots: &[OriginId]) {
-        self.provenance
-            .retain_origin_graph_from(&fork.provenance, roots);
-    }
-
     pub(crate) fn install_source_fragments(&mut self, fragments: FragmentStore) {
         self.source_fragments = fragments;
     }
@@ -1345,10 +1341,17 @@ impl Stores {
     ) -> MacroDefinitionRef {
         self.assert_live_token_list(macro_meaning.parameter_text());
         self.assert_live_token_list(macro_meaning.replacement_text());
-        if let Some(provenance) = provenance {
+        let provenance_roots = provenance.map(|provenance| {
             self.assert_live_origin(provenance.definition_origin());
-            self.assert_live_origin_list(provenance.parameter_origins());
-            self.assert_live_origin_list(provenance.replacement_origins());
+            let definition = self
+                .origin_ref(provenance.definition_origin())
+                .unwrap_or_else(|| OriginRef::direct(provenance.definition_origin()));
+            let parameters = self
+                .origin_list_ref(provenance.parameter_origins())
+                .unwrap_or_else(OriginListRef::empty);
+            let replacement = self
+                .origin_list_ref(provenance.replacement_origins())
+                .unwrap_or_else(OriginListRef::empty);
             self.assert_origin_list_len_matches(
                 macro_meaning.parameter_text(),
                 provenance.parameter_origins(),
@@ -1357,7 +1360,8 @@ impl Stores {
                 macro_meaning.replacement_text(),
                 provenance.replacement_origins(),
             );
-        }
+            (definition, parameters, replacement)
+        });
         let parameter_tokens = self.tokens(macro_meaning.parameter_text());
         let parameter_pattern = MacroParameterPattern::from_tokens(&parameter_tokens);
         let observation_width = u32::try_from(
@@ -1366,7 +1370,7 @@ impl Stores {
                 + self.tokens(macro_meaning.replacement_text()).len(),
         )
         .expect("macro token list length exceeds u32");
-        self.macros.intern_with_provenance(
+        let definition = self.macros.intern_with_provenance(
             macro_meaning,
             self.tokens
                 .owner(macro_meaning.parameter_text())
@@ -1380,7 +1384,16 @@ impl Stores {
             provenance,
             observation_width,
             domain,
-        )
+        );
+        if let Some((definition_root, parameter_roots, replacement_roots)) = provenance_roots {
+            self.macros.set_provenance_roots(
+                definition.id(),
+                definition_root,
+                parameter_roots,
+                replacement_roots,
+            );
+        }
+        definition
     }
 
     pub(crate) fn macro_definition_ref(&self, id: MacroDefinitionId) -> MacroDefinitionRef {
@@ -1424,20 +1437,18 @@ impl Stores {
         let Some(provenance) = self.macros.provenance(id) else {
             return MacroDefinitionProvenance::unknown();
         };
-        if self
-            .provenance
-            .contains_origin(provenance.definition_origin())
-            && self
-                .provenance
-                .contains_list(provenance.parameter_origins())
-            && self
-                .provenance
-                .contains_list(provenance.replacement_origins())
-        {
+        if self.macros.provenance_roots(id).is_some() {
             provenance
         } else {
             MacroDefinitionProvenance::unknown()
         }
+    }
+
+    pub(crate) fn macro_definition_provenance_roots(
+        &self,
+        id: MacroDefinitionId,
+    ) -> Option<(OriginRef, OriginListRef, OriginListRef)> {
+        self.macros.provenance_roots(id)
     }
 
     pub(crate) fn set_macro_definition_provenance(
@@ -1446,6 +1457,17 @@ impl Stores {
         provenance: MacroDefinitionProvenance,
     ) {
         self.macros.set_provenance(id, provenance);
+        let definition = self
+            .origin_ref(provenance.definition_origin())
+            .unwrap_or_else(|| OriginRef::direct(provenance.definition_origin()));
+        let parameters = self
+            .origin_list_ref(provenance.parameter_origins())
+            .unwrap_or_else(OriginListRef::empty);
+        let replacement = self
+            .origin_list_ref(provenance.replacement_origins())
+            .unwrap_or_else(OriginListRef::empty);
+        self.macros
+            .set_provenance_roots(id, definition, parameters, replacement);
     }
 
     /// Sets a local macro meaning by freezing its public aggregate first.
@@ -1790,7 +1812,18 @@ impl Stores {
             legacy_key.as_deref(),
             domain,
         );
-        let origin_list = self.provenance.allocate_traced_list(traced);
+        let roots = traced
+            .iter()
+            .map(|word| {
+                self.provenance
+                    .origin_ref(word.origin())
+                    .unwrap_or_else(|| OriginRef::direct(word.origin()))
+            })
+            .collect::<Vec<_>>();
+        let origin_list_id = self
+            .provenance
+            .allocate_list(&roots.iter().map(OriginRef::id).collect::<Vec<_>>());
+        let origin_list = self.provenance.attach_rooted_list(origin_list_id, &roots);
         TracedTokenList::new(token_list, origin_list)
     }
 
@@ -2041,6 +2074,57 @@ impl Stores {
         self.provenance.allocate(OriginRecord::SourceSpan(span))
     }
 
+    pub fn source_span_origin_ref(&mut self, span: SourceSpan) -> OriginRef {
+        let registration = self.source_map.registration_for_span(span);
+        self.provenance.allocate_pending_rooted_with_registration(
+            OriginRecord::SourceSpan(span),
+            [],
+            registration,
+        )
+    }
+
+    pub fn source_token_origin_ref(
+        &mut self,
+        source: SourceId,
+        byte_offset: u64,
+        byte_end: u64,
+    ) -> OriginRef {
+        let Ok(span) = self
+            .source_map
+            .span_for_source_offsets(source, byte_offset, byte_end)
+        else {
+            return OriginRef::unknown();
+        };
+        if span.is_empty() {
+            return OriginRef::unknown();
+        }
+        let registration = self.source_map.registration_for_span(span);
+        OriginId::direct_source(span.lo()).map_or_else(
+            || self.source_span_origin_ref(span),
+            |id| {
+                registration.map_or_else(
+                    || OriginRef::direct(id),
+                    |registration| OriginRef::direct_registered(id, registration),
+                )
+            },
+        )
+    }
+
+    pub fn source_range_origin_ref(
+        &mut self,
+        source: SourceId,
+        byte_offset: u64,
+        byte_end: u64,
+    ) -> OriginRef {
+        let Ok(span) = self
+            .source_map
+            .span_for_source_offsets(source, byte_offset, byte_end)
+        else {
+            return OriginRef::unknown();
+        };
+        self.source_span_origin_ref(span)
+    }
+
     /// Allocates a macro-invocation origin.
     pub fn macro_invocation_origin(
         &mut self,
@@ -2084,6 +2168,42 @@ impl Stores {
         ))
     }
 
+    pub fn macro_invocation_frame_from_nonowning_operand(
+        &mut self,
+        definition_operand: u64,
+        invocation: OriginRef,
+        definition_origin: OriginRef,
+        parent_invocation: OriginRef,
+    ) -> ExpansionFrameRef {
+        let record = OriginRecord::MacroInvocation(MacroInvocationOrigin::from_nonowning_operand(
+            definition_operand,
+            invocation.id(),
+            definition_origin.id(),
+            parent_invocation.id(),
+        ));
+        ExpansionFrameRef(
+            self.provenance
+                .allocate_rooted(record, [invocation, definition_origin, parent_invocation]),
+        )
+    }
+
+    pub fn macro_invocation_frame(
+        &mut self,
+        definition: MacroDefinitionId,
+        invocation: OriginRef,
+        definition_origin: OriginRef,
+        parent_invocation: OriginRef,
+    ) -> ExpansionFrameRef {
+        self.assert_live_macro_definition(definition);
+        let definition_operand = self.macros.observation_operand(definition) as u64;
+        self.macro_invocation_frame_from_nonowning_operand(
+            definition_operand,
+            invocation,
+            definition_origin,
+            parent_invocation,
+        )
+    }
+
     /// Allocates an inserted-token origin.
     pub fn inserted_origin(
         &mut self,
@@ -2099,6 +2219,19 @@ impl Stores {
             )))
     }
 
+    pub fn inserted_origin_ref(
+        &mut self,
+        kind: InsertedOriginKind,
+        token: Token,
+        parent: OriginRef,
+    ) -> OriginRef {
+        self.assert_live_token(token);
+        self.provenance.allocate_pending_rooted(
+            OriginRecord::Inserted(InsertedOrigin::new(kind, token, parent.id())),
+            [parent],
+        )
+    }
+
     /// Allocates a synthesized-token origin.
     pub fn synthesized_origin(
         &mut self,
@@ -2112,6 +2245,17 @@ impl Stores {
             )))
     }
 
+    pub fn synthesized_origin_ref(
+        &mut self,
+        kind: SynthesizedOriginKind,
+        parent: OriginRef,
+    ) -> OriginRef {
+        self.provenance.allocate_pending_rooted(
+            OriginRecord::Synthesized(SynthesizedOrigin::new(kind, parent.id())),
+            [parent],
+        )
+    }
+
     /// Allocates a synthetic/bootstrap origin.
     pub fn synthetic_origin(&mut self, kind: SyntheticOriginKind) -> OriginId {
         match kind {
@@ -2120,6 +2264,19 @@ impl Stores {
                 .provenance
                 .allocate(OriginRecord::Synthetic(SyntheticOrigin::new(kind))),
         }
+    }
+
+    pub fn synthetic_origin_ref(&mut self, kind: SyntheticOriginKind) -> OriginRef {
+        match kind {
+            SyntheticOriginKind::Bootstrap => OriginRef::unknown(),
+            _ => self
+                .provenance
+                .allocate_pending_rooted(OriginRecord::Synthetic(SyntheticOrigin::new(kind)), []),
+        }
+    }
+
+    pub fn origin_ref(&self, id: OriginId) -> Option<OriginRef> {
+        self.provenance.origin_ref(id)
     }
 
     /// Reads a live origin record.
@@ -2160,6 +2317,17 @@ impl Stores {
             self.assert_live_origin(origin);
         }
         self.provenance.allocate_list(origins)
+    }
+
+    pub fn allocate_origin_list_ref(&mut self, origins: &[OriginRef]) -> OriginListRef {
+        let id = self
+            .provenance
+            .allocate_list(&origins.iter().map(OriginRef::id).collect::<Vec<_>>());
+        self.provenance.attach_rooted_list(id, origins)
+    }
+
+    pub fn origin_list_ref(&self, id: OriginListId) -> Option<OriginListRef> {
+        self.provenance.origin_list_ref(id)
     }
 
     /// Allocates an origin-list span by repeating one live origin.
@@ -2330,6 +2498,14 @@ impl Stores {
 
     fn assert_origin_list_len_matches(&self, token_list: TokenListId, origin_list: OriginListId) {
         if origin_list == OriginListId::EMPTY {
+            return;
+        }
+        if let Some(origins) = self.origin_list_ref(origin_list) {
+            assert_eq!(
+                self.tokens(token_list).len(),
+                origins.origins().len(),
+                "origin-list length does not match token-list length"
+            );
             return;
         }
         assert_eq!(

@@ -20,7 +20,10 @@ const MACRO_PARAMETER_SLOTS: usize = 9;
 mod owned;
 
 pub use owned::MacroDefinitionRef;
-use owned::{MacroBodyRef, MacroBodySemanticId, MacroBodyValue, MacroDefinitionValue};
+use owned::{
+    MacroBodyRef, MacroBodySemanticId, MacroBodyValue, MacroDefinitionProvenanceRoots,
+    MacroDefinitionValue,
+};
 
 /// Allocation-free index of parameter markers in frozen macro parameter text.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -348,6 +351,7 @@ impl MacroStore {
             values.push(MacroDefinitionValue {
                 body,
                 provenance: OnceLock::new(),
+                provenance_roots: OnceLock::new(),
                 observation_operand: operand,
             });
         }
@@ -430,6 +434,7 @@ impl MacroStore {
         let value = MacroDefinitionValue {
             body,
             provenance: provenance_cell,
+            provenance_roots: OnceLock::new(),
             observation_operand: self.next_observation_operand,
         };
         self.next_observation_operand = self
@@ -518,6 +523,41 @@ impl MacroStore {
                 "macro provenance changed after publication"
             );
         }
+    }
+
+    pub(crate) fn set_provenance_roots(
+        &mut self,
+        id: MacroDefinitionId,
+        definition: crate::provenance::OriginRef,
+        parameters: crate::provenance::OriginListRef,
+        replacement: crate::provenance::OriginListRef,
+    ) {
+        let root = self.owner(id).expect("macro definition id is not live");
+        let roots = MacroDefinitionProvenanceRoots {
+            definition,
+            parameters,
+            replacement,
+        };
+        if root.value.value().provenance_roots.set(roots).is_err() {
+            panic!("macro provenance roots changed after publication");
+        }
+    }
+
+    pub(crate) fn provenance_roots(
+        &self,
+        id: MacroDefinitionId,
+    ) -> Option<(
+        crate::provenance::OriginRef,
+        crate::provenance::OriginListRef,
+        crate::provenance::OriginListRef,
+    )> {
+        let root = self.owner(id)?;
+        let roots = root.value.value().provenance_roots.get()?;
+        Some((
+            roots.definition.clone(),
+            roots.parameters.clone(),
+            roots.replacement.clone(),
+        ))
     }
 
     #[must_use]

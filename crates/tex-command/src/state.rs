@@ -536,7 +536,7 @@ impl CommandState {
         let identity = self.push_token_level(
             TokenPayload::Stored {
                 tokens: tokens.token_ref().clone(),
-                origins: tokens.origin_list(),
+                origins: tokens.origin_ref().clone(),
             },
             TokenBehavior::Ordinary,
             RetirementBehavior::Pop,
@@ -670,7 +670,7 @@ impl CommandState {
         let level = self.push_token_level(
             TokenPayload::Stored {
                 tokens: token_root.clone(),
-                origins: tokens.origin_list(),
+                origins: tokens.origin_ref().clone(),
             },
             TokenBehavior::Ordinary,
             RetirementBehavior::Pop,
@@ -1565,7 +1565,7 @@ impl CommandState {
         Some(self.push_token_level(
             TokenPayload::Stored {
                 tokens: every_eof.token_ref().clone(),
-                origins: every_eof.origin_list(),
+                origins: every_eof.origin_ref().clone(),
             },
             TokenBehavior::Ordinary,
             RetirementBehavior::Pop,
@@ -1701,7 +1701,7 @@ impl CommandState {
         self.push_token_level(
             TokenPayload::Stored {
                 tokens: template.token_ref().clone(),
-                origins: template.origin_list(),
+                origins: template.origin_ref().clone(),
             },
             behavior,
             retirement,

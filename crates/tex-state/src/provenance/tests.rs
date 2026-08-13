@@ -565,3 +565,103 @@ fn universe_provenance_stats_measure_rollback_truncation() {
     assert!(rolled_back.retained_bytes() >= baseline.retained_bytes());
     assert!(rolled_back.retained_bytes() > rolled_back.estimated_bytes());
 }
+
+#[test]
+fn rooted_final_owner_release_reuses_weak_slots_without_stale_resolution() {
+    let mut store = ProvenanceStore::new();
+    let first = store.allocate_rooted(
+        OriginRecord::Synthetic(SyntheticOrigin::new(SyntheticOriginKind::Engine)),
+        [],
+    );
+    let first_id = first.id();
+    let retained = first.clone();
+    drop(first);
+    assert!(store.origin_ref(first_id).is_some());
+    drop(retained);
+
+    let second = store.allocate_rooted(
+        OriginRecord::Synthetic(SyntheticOrigin::new(SyntheticOriginKind::Format)),
+        [],
+    );
+    assert_ne!(second.id(), first_id);
+    assert!(store.origin_ref(first_id).is_none());
+    assert_eq!(store.rooted_record_shape(), (1, 1));
+}
+
+#[test]
+fn rooted_origin_lists_release_children_and_reuse_generation_safe_slots() {
+    let mut store = ProvenanceStore::new();
+    let atom = store.allocate_rooted(
+        OriginRecord::Synthetic(SyntheticOrigin::new(SyntheticOriginKind::Test)),
+        [],
+    );
+    let first = store.allocate_rooted_list(std::slice::from_ref(&atom));
+    let first_id = first.id();
+    drop(atom);
+    assert!(store.origin_ref(first.origins()[0]).is_some());
+    drop(first);
+
+    let replacement_atom = store.allocate_rooted(
+        OriginRecord::Synthetic(SyntheticOrigin::new(SyntheticOriginKind::Primitive)),
+        [],
+    );
+    let second = store.allocate_rooted_list(std::slice::from_ref(&replacement_atom));
+    assert_eq!(second.id().raw(), first_id.raw());
+    assert_ne!(second.id(), first_id);
+    assert!(store.origin_list_ref(first_id).is_none());
+    assert_eq!(store.rooted_list_shape(), (1, 1, 2));
+}
+
+#[test]
+fn rooted_provenance_plateaus_for_dead_work_and_grows_exactly_for_live_work() {
+    const OPERATIONS: u64 = 10_000;
+    let mut bounded = ProvenanceStore::new();
+    for serial in 0..OPERATIONS {
+        let root = bounded.allocate_rooted(
+            OriginRecord::MacroInvocation(MacroInvocationOrigin::from_nonowning_operand(
+                serial,
+                OriginId::UNKNOWN,
+                OriginId::UNKNOWN,
+                OriginId::UNKNOWN,
+            )),
+            [],
+        );
+        let list = bounded.allocate_rooted_list(std::slice::from_ref(&root));
+        drop(list);
+        drop(root);
+    }
+    assert_eq!(bounded.rooted_record_shape(), (0, 1));
+    assert_eq!(bounded.rooted_list_shape(), (0, 0, 2));
+
+    let mut all_live = ProvenanceStore::new();
+    let roots = (0..OPERATIONS)
+        .map(|serial| {
+            all_live.allocate_rooted(
+                OriginRecord::MacroInvocation(MacroInvocationOrigin::from_nonowning_operand(
+                    serial,
+                    OriginId::UNKNOWN,
+                    OriginId::UNKNOWN,
+                    OriginId::UNKNOWN,
+                )),
+                [],
+            )
+        })
+        .collect::<Vec<_>>();
+    let lists = roots
+        .iter()
+        .map(|root| all_live.allocate_rooted_list(std::slice::from_ref(root)))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        all_live.rooted_record_shape(),
+        (OPERATIONS as usize, OPERATIONS as usize)
+    );
+    assert_eq!(
+        all_live.rooted_list_shape(),
+        (
+            OPERATIONS as usize,
+            OPERATIONS as usize,
+            OPERATIONS as usize + 1
+        )
+    );
+    assert_eq!(lists.len(), OPERATIONS as usize);
+}

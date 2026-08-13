@@ -1,7 +1,7 @@
 use std::sync::{Arc, Weak};
 
 use tex_state::Universe;
-use tex_state::ids::{OriginListId, TokenListId};
+use tex_state::ids::TokenListId;
 use tex_state::meaning::Meaning;
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 
@@ -48,7 +48,7 @@ fn push_activation(
             buffer: SharedTokenBuffer::new(tokens),
             ranges,
         },
-        invocation: OriginId::UNKNOWN,
+        invocation: tex_state::provenance::ExpansionFrameRef::unknown(),
     });
     identity
 }
@@ -92,7 +92,7 @@ fn transient_dynamic_words_count_owned_buffers_once() {
     state.push_token_level(
         TokenPayload::Stored {
             tokens: universe.token_list_ref(TokenListId::EMPTY),
-            origins: OriginListId::EMPTY,
+            origins: tex_state::provenance::OriginListRef::empty(),
         },
         TokenBehavior::Ordinary,
         RetirementBehavior::Pop,
@@ -112,7 +112,7 @@ fn each_popped_level_retires_exactly_once_with_its_trace() {
     let identity = state.push_token_level(
         TokenPayload::Stored {
             tokens: universe.token_list_ref(TokenListId::EMPTY),
-            origins: OriginListId::EMPTY,
+            origins: tex_state::provenance::OriginListRef::empty(),
         },
         TokenBehavior::Ordinary,
         RetirementBehavior::StopAtEnd,
@@ -616,7 +616,7 @@ fn stored_token_reference_lifetime_survives_redefinition_and_replay() {
     let level = state.push_token_level(
         TokenPayload::Stored {
             tokens: list,
-            origins: OriginListId::EMPTY,
+            origins: tex_state::provenance::OriginListRef::empty(),
         },
         TokenBehavior::Ordinary,
         RetirementBehavior::Pop,
@@ -658,7 +658,7 @@ fn snapshot_restores_strong_stored_root_after_live_cursor_retires() {
     let level = state.push_token_level(
         TokenPayload::Stored {
             tokens: root,
-            origins: OriginListId::EMPTY,
+            origins: tex_state::provenance::OriginListRef::empty(),
         },
         TokenBehavior::Ordinary,
         RetirementBehavior::Pop,
@@ -844,7 +844,7 @@ fn token_list_kind_reference_and_parameter_stack_lifecycle_matrix() {
         let identity = state.push_token_level(
             TokenPayload::Stored {
                 tokens: universe.token_list_ref(TokenListId::EMPTY),
-                origins: OriginListId::EMPTY,
+                origins: tex_state::provenance::OriginListRef::empty(),
             },
             behavior,
             RetirementBehavior::Pop,

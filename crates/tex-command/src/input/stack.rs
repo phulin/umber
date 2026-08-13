@@ -2,9 +2,8 @@
 #![allow(dead_code)] // consumed by the ordered raw-delivery implementation issues
 
 use crate::CommandState;
-use tex_state::ids::OriginListId;
 use tex_state::macro_store::MacroDefinitionRef;
-use tex_state::token::OriginId;
+use tex_state::provenance::{ExpansionFrameRef, OriginListRef};
 use tex_state::token_store::TokenListRef;
 
 use crate::macro_call::{MacroActivationId, MacroArguments};
@@ -154,9 +153,9 @@ impl CommandState {
         name: tex_state::interner::Symbol,
         definition: MacroDefinitionRef,
         arguments: MacroArguments,
-        invocation: OriginId,
+        invocation: ExpansionFrameRef,
         replacement_tokens: TokenListRef,
-        replacement_origins: OriginListId,
+        replacement_origins: OriginListRef,
     ) -> InputLevelId {
         let parameter_count = arguments
             .ranges

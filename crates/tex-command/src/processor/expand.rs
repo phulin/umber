@@ -8,7 +8,7 @@ use tex_state::ids::{MacroDefinitionId, OriginListId, TokenListId};
 use tex_state::interner::ControlSequenceKind;
 use tex_state::meaning::{ExpandablePrimitive, Meaning, MeaningFlags};
 use tex_state::page::PageMark;
-use tex_state::provenance::SynthesizedOriginKind;
+use tex_state::provenance::{OriginRef, SynthesizedOriginKind};
 use tex_state::scaled::Scaled;
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 
@@ -1278,7 +1278,7 @@ impl CommandProcessor<'_> {
         self.insert_expansion_list(
             TokenPayload::Stored {
                 tokens: replacement.token_ref().clone(),
-                origins: replacement.origin_list(),
+                origins: replacement.origin_ref().clone(),
             },
             first,
         );
@@ -1590,7 +1590,7 @@ impl CommandProcessor<'_> {
                     self.insert_expansion_list(
                         TokenPayload::Stored {
                             tokens,
-                            origins: OriginListId::EMPTY,
+                            origins: tex_state::provenance::OriginListRef::empty(),
                         },
                         first,
                     );
@@ -1996,7 +1996,7 @@ impl CommandProcessor<'_> {
         let level = self.command.push_token_level(
             TokenPayload::Stored {
                 tokens: self.state.token_list_ref(tokens),
-                origins: OriginListId::EMPTY,
+                origins: tex_state::provenance::OriginListRef::empty(),
             },
             TokenBehavior::Ordinary,
             RetirementBehavior::Pop,
@@ -2135,7 +2135,7 @@ impl CommandProcessor<'_> {
         &mut self,
         name: tex_state::interner::Symbol,
         definition: MacroDefinitionId,
-        call_site: OriginId,
+        call_site: OriginRef,
         arguments: MacroArguments,
         replacement_tokens: TokenListId,
         replacement_origins: OriginListId,
@@ -2145,16 +2145,22 @@ impl CommandProcessor<'_> {
             .macro_definition_provenance(definition)
             .definition_origin();
         let parent = self.command.parameters.parent_invocation();
+        let definition_origin = self
+            .state
+            .origin_ref(definition_origin)
+            .unwrap_or_else(|| OriginRef::direct(definition_origin));
         let invocation =
             self.state
-                .macro_invocation_origin(definition, call_site, definition_origin, parent);
+                .macro_invocation_frame(definition, call_site, definition_origin, parent);
         self.command.push_macro_activation(
             name,
             self.state.macro_definition_ref(definition),
             arguments,
             invocation,
             self.state.token_list_ref(replacement_tokens),
-            replacement_origins,
+            self.state
+                .origin_list_ref(replacement_origins)
+                .unwrap_or_else(tex_state::provenance::OriginListRef::empty),
         )
     }
 }

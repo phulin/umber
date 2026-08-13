@@ -294,6 +294,17 @@ impl CommandContext<'_> {
             .source_range_origin(source, byte_offset, byte_end)
     }
 
+    #[must_use]
+    pub fn source_range_origin_ref(
+        &mut self,
+        source: crate::SourceId,
+        byte_offset: u64,
+        byte_end: u64,
+    ) -> crate::provenance::OriginRef {
+        self.universe
+            .source_range_origin_ref(source, byte_offset, byte_end)
+    }
+
     /// Allocates provenance for one ordinary backed source scalar.
     #[must_use]
     pub fn source_token_origin(
@@ -304,6 +315,17 @@ impl CommandContext<'_> {
     ) -> OriginId {
         self.universe
             .source_token_origin(source, byte_offset, byte_end)
+    }
+
+    #[must_use]
+    pub fn source_token_origin_ref(
+        &mut self,
+        source: crate::SourceId,
+        byte_offset: u64,
+        byte_end: u64,
+    ) -> crate::provenance::OriginRef {
+        self.universe
+            .source_token_origin_ref(source, byte_offset, byte_end)
     }
 
     /// Reads one catcode through the aggregate code-table boundary.
@@ -1142,6 +1164,10 @@ impl CommandContext<'_> {
     pub fn origin_list(&self, id: OriginListId) -> &[OriginId] {
         self.universe.origin_list(id)
     }
+
+    pub fn origin_list_ref(&self, id: OriginListId) -> Option<crate::provenance::OriginListRef> {
+        self.universe.origin_list_ref(id)
+    }
     /// Returns the mutation stamp for a typed aggregate-state dependency.
     #[must_use]
     pub fn dependency_changed_at(&self, key: DependencyKey) -> ChangedAt {
@@ -1269,6 +1295,23 @@ impl CommandContext<'_> {
         )
     }
 
+    /// Creates one structurally rooted macro expansion frame. Its parent,
+    /// invocation, and definition positions are strong child edges.
+    pub fn macro_invocation_frame(
+        &mut self,
+        definition: MacroDefinitionId,
+        invocation: crate::provenance::OriginRef,
+        definition_origin: crate::provenance::OriginRef,
+        parent_invocation: crate::provenance::OriginRef,
+    ) -> crate::provenance::ExpansionFrameRef {
+        self.universe.macro_invocation_frame(
+            definition,
+            invocation,
+            definition_origin,
+            parent_invocation,
+        )
+    }
+
     /// Allocates provenance for a token manufactured by canonical expansion.
     pub fn synthesized_origin(
         &mut self,
@@ -1276,6 +1319,19 @@ impl CommandContext<'_> {
         parent: OriginId,
     ) -> OriginId {
         self.universe.synthesized_origin(kind, parent)
+    }
+
+    pub fn synthesized_origin_ref(
+        &mut self,
+        kind: SynthesizedOriginKind,
+        parent: crate::provenance::OriginRef,
+    ) -> crate::provenance::OriginRef {
+        self.universe.synthesized_origin_ref(kind, parent)
+    }
+
+    #[must_use]
+    pub fn origin_ref(&self, id: OriginId) -> Option<crate::provenance::OriginRef> {
+        self.universe.origin_ref(id)
     }
 }
 

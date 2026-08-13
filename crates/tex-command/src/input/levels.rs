@@ -3,7 +3,7 @@
 
 use std::sync::Arc;
 
-use tex_state::ids::OriginListId;
+use tex_state::provenance::OriginListRef;
 use tex_state::token::TracedTokenWord;
 use tex_state::token_store::TokenListRef;
 
@@ -95,7 +95,7 @@ pub(crate) enum TokenPayload {
     /// Immutable semantic tokens and their parallel immutable origins.
     Stored {
         tokens: TokenListRef,
-        origins: OriginListId,
+        origins: OriginListRef,
     },
     /// Tokens materialized for a bounded insertion or scanner operation.
     Transient(SharedTokenBuffer),

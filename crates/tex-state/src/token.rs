@@ -259,6 +259,46 @@ const _: () = assert!(core::mem::size_of::<OriginId>() == 4);
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct TracedTokenWord(u64);
 
+/// One packed traced word paired with the typed root owning its diagnostic
+/// position. Semantic token equality continues to use the packed word's token
+/// projection and ignores this owner.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct RootedTracedTokenWord {
+    word: TracedTokenWord,
+    origin: crate::provenance::OriginRef,
+}
+
+impl RootedTracedTokenWord {
+    #[must_use]
+    pub fn new(token: Token, origin: crate::provenance::OriginRef) -> Self {
+        Self {
+            word: TracedTokenWord::pack(token, origin.id()),
+            origin,
+        }
+    }
+
+    #[must_use]
+    pub fn from_word(word: TracedTokenWord, origin: crate::provenance::OriginRef) -> Self {
+        assert_eq!(word.origin(), origin.id(), "traced word/root mismatch");
+        Self { word, origin }
+    }
+
+    #[must_use]
+    pub const fn word(&self) -> TracedTokenWord {
+        self.word
+    }
+
+    #[must_use]
+    pub fn origin_ref(&self) -> &crate::provenance::OriginRef {
+        &self.origin
+    }
+
+    #[must_use]
+    pub fn into_parts(self) -> (TracedTokenWord, crate::provenance::OriginRef) {
+        (self.word, self.origin)
+    }
+}
+
 impl TracedTokenWord {
     const KIND_SHIFT: u32 = 62;
     const PAYLOAD_SHIFT: u32 = 32;

@@ -1,5 +1,5 @@
 use tex_state::Universe;
-use tex_state::ids::{OriginListId, TokenListId};
+use tex_state::ids::TokenListId;
 use tex_state::macro_store::MacroMeaning;
 use tex_state::meaning::{Meaning, MeaningFlags, UnexpandablePrimitive};
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
@@ -113,9 +113,9 @@ fn activation_boundary_owns_arguments_before_exposing_its_body() {
         tex_state::interner::Symbol::testing_new(1),
         tex_state::macro_store::MacroDefinitionRef::testing_new(4),
         builder.finish(),
-        OriginId::UNKNOWN,
+        tex_state::provenance::ExpansionFrameRef::unknown(),
         universe.token_list_ref(TokenListId::EMPTY),
-        OriginListId::EMPTY,
+        tex_state::provenance::OriginListRef::empty(),
     );
 
     let owner = state
@@ -143,17 +143,17 @@ fn activation_parent_tracks_the_live_nested_frame() {
         tex_state::interner::Symbol::testing_new(1),
         tex_state::macro_store::MacroDefinitionRef::testing_new(1),
         MacroArgumentBuilder::default().finish(),
-        OriginId::UNKNOWN,
+        tex_state::provenance::ExpansionFrameRef::unknown(),
     );
     assert_eq!(first.0, 0);
     parameters.push_activation(
         tex_state::interner::Symbol::testing_new(2),
         tex_state::macro_store::MacroDefinitionRef::testing_new(2),
         MacroArgumentBuilder::default().finish(),
-        OriginId::UNKNOWN,
+        tex_state::provenance::ExpansionFrameRef::unknown(),
     );
     assert_eq!(parameters.activations.len(), 2);
-    assert_eq!(parameters.parent_invocation(), OriginId::UNKNOWN);
+    assert_eq!(parameters.parent_invocation().id(), OriginId::UNKNOWN);
 }
 
 fn run_macro_call(
@@ -1522,7 +1522,8 @@ fn nested_calls_keep_out_parameter_ownership_and_invocation_provenance() {
     }
     assert_eq!(
         universe.macro_invocation_provenance_stats().invocations(),
-        2
+        0,
+        "retiring the final nested activation releases both structural frames"
     );
 }
 

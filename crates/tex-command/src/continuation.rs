@@ -6,7 +6,7 @@ use tex_state::Universe;
 use tex_state::ids::{MacroDefinitionId, OriginListId, TokenListId};
 use tex_state::interner::{ControlSequenceKind, Symbol};
 use tex_state::macro_store::{MacroDefinitionProvenance, MacroDefinitionRef, MacroMeaning};
-use tex_state::provenance::OriginRecord;
+use tex_state::provenance::{ExpansionFrameRef, OriginListRef, OriginRecord, OriginRef};
 use tex_state::token::{OriginId, Token, TracedTokenWord};
 use tex_state::token_store::TokenListRef;
 
@@ -95,7 +95,7 @@ impl OwnedCommandContinuation {
             self.collect_symbol(activation.name, universe);
             self.collect_macro(activation.definition.id(), universe);
             self.collect_words(activation.arguments.buffer.words(), universe);
-            self.collect_origin(activation.invocation, universe);
+            self.collect_origin_ref(activation.invocation.as_origin(), universe);
         }
     }
 
@@ -111,13 +111,13 @@ impl OwnedCommandContinuation {
             InputLevel::Source(source) => {
                 if let Some(list) = &source.every_eof {
                     self.collect_token_root(list.token_ref(), universe);
-                    self.collect_origin_list(list.origin_list(), universe);
+                    self.collect_origin_list(list.origin_ref(), universe);
                 }
             }
             InputLevel::Tokens(cursor) => match &cursor.payload {
                 TokenPayload::Stored { tokens, origins } => {
                     self.collect_token_root(tokens, universe);
-                    self.collect_origin_list(*origins, universe);
+                    self.collect_origin_list(origins, universe);
                 }
                 TokenPayload::Transient(words) => self.collect_words(words.words(), universe),
                 TokenPayload::InlineTransient(word) => self.collect_word(*word, universe),
@@ -148,14 +148,15 @@ impl OwnedCommandContinuation {
         self.token_lists.insert(id, detached);
     }
 
-    fn collect_origin_list(&mut self, id: OriginListId, universe: &Universe) {
+    fn collect_origin_list(&mut self, root: &OriginListRef, universe: &Universe) {
+        let id = root.id();
         if self.origin_lists.contains_key(&id) {
             return;
         }
-        let origins = universe.origin_list(id).to_vec();
+        let origins = root.origins().to_vec();
         self.origin_lists.insert(id, origins.clone());
-        for origin in origins {
-            self.collect_origin(origin, universe);
+        for origin in root.roots() {
+            self.collect_origin_ref(origin, universe);
         }
     }
 
@@ -221,8 +222,27 @@ impl OwnedCommandContinuation {
             .expect("macro placeholder")
             .replacement = replacement;
         self.collect_origin(provenance.definition_origin(), universe);
-        self.collect_origin_list(provenance.parameter_origins(), universe);
-        self.collect_origin_list(provenance.replacement_origins(), universe);
+        let (definition, parameters, replacement) = universe
+            .macro_definition_provenance_roots(id)
+            .expect("live macro provenance has typed roots");
+        self.collect_origin_ref(&definition, universe);
+        self.collect_origin_list(&parameters, universe);
+        self.collect_origin_list(&replacement, universe);
+    }
+
+    fn collect_origin_ref(&mut self, root: &OriginRef, universe: &Universe) {
+        let id = root.id();
+        if id == OriginId::UNKNOWN || self.origins.contains_key(&id) {
+            return;
+        }
+        let record = root
+            .record()
+            .or_else(|| universe.origin_if_live(id))
+            .expect("command continuation origin is live");
+        self.origins.insert(id, OwnedOrigin::Record(record));
+        for child in root.children() {
+            self.collect_origin_ref(child, universe);
+        }
     }
 
     fn collect_origin(&mut self, id: OriginId, universe: &Universe) {
@@ -256,9 +276,9 @@ struct Materializer<'a> {
     owned: &'a OwnedCommandContinuation,
     universe: &'a mut Universe,
     tokens: HashMap<TokenListId, TokenListRef>,
-    origin_lists: HashMap<OriginListId, OriginListId>,
+    origin_lists: HashMap<OriginListId, OriginListRef>,
     macros: HashMap<MacroDefinitionId, MacroDefinitionRef>,
-    origins: HashMap<OriginId, OriginId>,
+    origins: HashMap<OriginId, OriginRef>,
     macro_provenance_done: HashSet<MacroDefinitionId>,
 }
 
@@ -353,54 +373,63 @@ impl<'a> Materializer<'a> {
         let replacement = self.origin_list(provenance.replacement_origins());
         self.universe.set_macro_definition_provenance(
             id,
-            MacroDefinitionProvenance::new(definition, parameters, replacement),
+            MacroDefinitionProvenance::new(definition.id(), parameters.id(), replacement.id()),
         );
     }
 
-    fn origin(&mut self, old: OriginId) -> OriginId {
+    fn origin(&mut self, old: OriginId) -> OriginRef {
         if old == OriginId::UNKNOWN {
-            return old;
+            return OriginRef::unknown();
         }
-        if let Some(&id) = self.origins.get(&old) {
-            return id;
+        if let Some(id) = self.origins.get(&old) {
+            return id.clone();
         }
         let record = self.owned.origins[&old];
         let id = match record {
             OwnedOrigin::Record(record) => match record {
-                OriginRecord::UnknownBootstrap => self.universe.bootstrap_origin(),
-                OriginRecord::Source(source) => self.universe.source_origin_with_input_record(
-                    source.source(),
-                    source.input_record(),
-                    source.byte_offset(),
-                    source.line(),
-                    source.column(),
-                ),
-                OriginRecord::SourceSpan(span) => self.universe.source_span_origin(span),
-                OriginRecord::Synthetic(origin) => self.universe.synthetic_origin(origin.kind()),
+                OriginRecord::UnknownBootstrap => OriginRef::unknown(),
+                OriginRecord::Source(source) => {
+                    let id = self.universe.source_origin_with_input_record(
+                        source.source(),
+                        source.input_record(),
+                        source.byte_offset(),
+                        source.line(),
+                        source.column(),
+                    );
+                    self.universe
+                        .origin_ref(id)
+                        .unwrap_or_else(|| OriginRef::direct(id))
+                }
+                OriginRecord::SourceSpan(span) => self.universe.source_span_origin_ref(span),
+                OriginRecord::Synthetic(origin) => {
+                    self.universe.synthetic_origin_ref(origin.kind())
+                }
                 OriginRecord::Synthesized(origin) => {
                     let parent = self.origin(origin.parent());
-                    self.universe.synthesized_origin(origin.kind(), parent)
+                    self.universe.synthesized_origin_ref(origin.kind(), parent)
                 }
                 OriginRecord::Inserted(origin) => {
                     let token = self.token(&self.owned_token(origin.token()));
                     let parent = self.origin(origin.parent());
-                    self.universe.inserted_origin(origin.kind(), token, parent)
+                    self.universe
+                        .inserted_origin_ref(origin.kind(), token, parent)
                 }
                 OriginRecord::MacroInvocation(origin) => {
                     let invocation = self.origin(origin.invocation());
                     let definition_origin = self.origin(origin.definition_origin());
                     let parent = self.origin(origin.parent_invocation());
                     self.universe
-                        .macro_invocation_origin_from_nonowning_operand(
+                        .macro_invocation_frame_from_nonowning_operand(
                             origin.definition_operand(),
                             invocation,
                             definition_origin,
                             parent,
                         )
+                        .into_origin()
                 }
             },
         };
-        self.origins.insert(old, id);
+        self.origins.insert(old, id.clone());
         id
     }
 
@@ -411,9 +440,9 @@ impl<'a> Materializer<'a> {
         }
     }
 
-    fn origin_list(&mut self, old: OriginListId) -> OriginListId {
-        if let Some(&id) = self.origin_lists.get(&old) {
-            return id;
+    fn origin_list(&mut self, old: OriginListId) -> OriginListRef {
+        if let Some(id) = self.origin_lists.get(&old) {
+            return id.clone();
         }
         let origins = self
             .owned
@@ -424,14 +453,14 @@ impl<'a> Materializer<'a> {
             .into_iter()
             .map(|origin| self.origin(origin))
             .collect::<Vec<_>>();
-        let id = self.universe.allocate_origin_list(&origins);
-        self.origin_lists.insert(old, id);
+        let id = self.universe.allocate_origin_list_ref(&origins);
+        self.origin_lists.insert(old, id.clone());
         id
     }
 
     fn word(&mut self, word: TracedTokenWord) -> TracedTokenWord {
         let token = self.token(&self.owned_token(word.semantic_token()));
-        TracedTokenWord::pack(token, self.origin(word.origin()))
+        TracedTokenWord::pack(token, self.origin(word.origin()).id())
     }
 
     fn materialize_summary(&mut self, summary: &mut CommandSummary) {
@@ -460,7 +489,8 @@ impl<'a> Materializer<'a> {
                     .map(|word| self.word(word))
                     .collect::<Vec<_>>(),
             );
-            activation.invocation = self.origin(activation.invocation);
+            activation.invocation =
+                ExpansionFrameRef::from_origin(self.origin(activation.invocation.id()));
             self.finish_macro_provenance(old);
         }
     }
@@ -479,7 +509,7 @@ impl<'a> Materializer<'a> {
                 InputLevel::Tokens(cursor) => match &mut cursor.payload {
                     TokenPayload::Stored { tokens, origins } => {
                         *tokens = self.token_list(tokens.id());
-                        *origins = self.origin_list(*origins);
+                        *origins = self.origin_list(origins.id());
                     }
                     TokenPayload::Transient(words) => {
                         *words = SharedTokenBuffer::new(
