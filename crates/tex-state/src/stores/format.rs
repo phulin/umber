@@ -431,8 +431,11 @@ fn node_memory_words(
     let detached_extent = node_lists
         .iter()
         .flat_map(|list| &list.nodes)
-        .filter_map(FormatNode::diagnostic_children)
-        .map(|root| {
+        .filter_map(|node| {
+            node.diagnostic_children()
+                .map(|root| (root, node.allocator_high_cell_overlap()))
+        })
+        .map(|(root, allocator_high_cell_overlap)| {
             let mut words = 0_usize;
             let mut seen = std::collections::BTreeSet::new();
             let mut stack = vec![root];
@@ -455,7 +458,7 @@ fn node_memory_words(
                     );
                 }
             }
-            words
+            words.saturating_sub(allocator_high_cell_overlap as usize)
         })
         .max()
         .unwrap_or(0);

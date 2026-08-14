@@ -151,6 +151,14 @@ pub(crate) fn break_current_paragraph(
             .collect::<Vec<_>>();
         let needs_physical_diagnostic =
             discretionary_diagnostics_differ(stores, &diagnostic_nodes, &broken.nodes);
+        let allocator_high_cell_overlap = if needs_physical_diagnostic {
+            tex_state::node_sequence::direct_high_cell_overlap(
+                &broken.high_cell_lineages,
+                &broken.physical_high_cell_lineages,
+            )
+        } else {
+            0
+        };
         for node in &mut broken.nodes {
             if let Node::Disc { replace, .. } = node {
                 *replace = empty_list;
@@ -160,6 +168,7 @@ pub(crate) fn break_current_paragraph(
             stores,
             &mut broken.nodes,
             needs_physical_diagnostic.then_some(&mut diagnostic_nodes),
+            allocator_high_cell_overlap,
             PackSpec::Exactly(broken.dimensions.width),
         );
         let mut line = line;

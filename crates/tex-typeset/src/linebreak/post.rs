@@ -1,5 +1,7 @@
 use tex_state::glue::GlueSpec;
 use tex_state::node::{Direction, GlueKind, KernKind, Node};
+use tex_state::node_arena::NodeRef;
+use tex_state::node_sequence::{DirectHighCellLineage, FrozenListRole};
 
 use crate::TypesetState;
 
@@ -31,9 +33,11 @@ pub struct LineMaterializer {
 
 struct ChannelCursor {
     nodes: std::vec::IntoIter<Node>,
+    high_cell_lineages: std::vec::IntoIter<Vec<DirectHighCellLineage>>,
     position: usize,
     node_count: usize,
     pending_post: Vec<Node>,
+    pending_post_high_cell_lineages: Vec<DirectHighCellLineage>,
     active_directions: Vec<Direction>,
 }
 
@@ -49,6 +53,8 @@ impl LineMaterializer {
             materialization,
             ..
         } = tape;
+        let semantic_high_cell_lineages = sequence.semantic_high_cell_lineages().to_vec();
+        let physical_high_cell_lineages = sequence.physical_high_cell_lineages().to_vec();
         let (semantic, physical, boundaries) = sequence.into_parts();
         let physical_breaks = breaks
             .iter()
@@ -58,8 +64,8 @@ impl LineMaterializer {
             })
             .collect();
         Self {
-            semantic: ChannelCursor::new(semantic),
-            physical: ChannelCursor::new(physical),
+            semantic: ChannelCursor::new(semantic, semantic_high_cell_lineages),
+            physical: ChannelCursor::new(physical, physical_high_cell_lineages),
             physical_breaks,
             actions: materialization,
             breaks,
@@ -96,9 +102,13 @@ impl LineMaterializer {
                 };
             }
         }
+        let sequence = tex_state::node_sequence::NodeSequence::mirrored(nodes);
+        let semantic_high_cell_lineages = sequence.semantic_high_cell_lineages().to_vec();
+        let physical_high_cell_lineages = sequence.physical_high_cell_lineages().to_vec();
+        let (semantic, physical) = sequence.take();
         Self {
-            physical: ChannelCursor::new(nodes.clone()),
-            semantic: ChannelCursor::new(nodes),
+            physical: ChannelCursor::new(physical, physical_high_cell_lineages),
+            semantic: ChannelCursor::new(semantic, semantic_high_cell_lineages),
             physical_breaks: breaks.clone(),
             actions,
             breaks,
@@ -114,6 +124,7 @@ impl LineMaterializer {
     ) -> Option<BrokenLine> {
         let decision = *self.breaks.get(self.line_no)?;
         let dimensions = self.params.shape.dimensions(self.line_no + 1);
+        let mut high_cell_lineages = Vec::new();
         materialize_channel(
             state,
             &mut self.semantic,
@@ -121,8 +132,10 @@ impl LineMaterializer {
             &self.params,
             Some(&self.actions),
             &mut line,
+            &mut high_cell_lineages,
         );
         let mut physical_nodes = Vec::new();
+        let mut physical_high_cell_lineages = Vec::new();
         materialize_channel(
             state,
             &mut self.physical,
@@ -130,6 +143,7 @@ impl LineMaterializer {
             &self.params,
             None,
             &mut physical_nodes,
+            &mut physical_high_cell_lineages,
         );
 
         let penalty_after = line_penalty_after(
@@ -142,6 +156,8 @@ impl LineMaterializer {
         Some(BrokenLine {
             physical_nodes,
             nodes: line,
+            high_cell_lineages,
+            physical_high_cell_lineages,
             penalty_after,
             hyphenated: decision.hyphenated,
             dimensions,
@@ -150,13 +166,16 @@ impl LineMaterializer {
 }
 
 impl ChannelCursor {
-    fn new(nodes: Vec<Node>) -> Self {
+    fn new(nodes: Vec<Node>, high_cell_lineages: Vec<Vec<DirectHighCellLineage>>) -> Self {
         let node_count = nodes.len();
+        assert_eq!(node_count, high_cell_lineages.len());
         Self {
             nodes: nodes.into_iter(),
+            high_cell_lineages: high_cell_lineages.into_iter(),
             position: 0,
             node_count,
             pending_post: Vec::new(),
+            pending_post_high_cell_lineages: Vec::new(),
             active_directions: Vec::new(),
         }
     }
@@ -169,6 +188,7 @@ fn materialize_channel<S: TypesetState>(
     params: &PostLineBreakParams,
     actions: Option<&[MaterializationAction]>,
     line: &mut Vec<Node>,
+    lineages: &mut Vec<DirectHighCellLineage>,
 ) {
     let end = decision.position.min(cursor.node_count);
     let start = cursor.position.min(end);
@@ -178,6 +198,7 @@ fn materialize_channel<S: TypesetState>(
         .and_then(|len| len.checked_add(2))
         .expect("materialized line capacity fits usize");
     line.clear();
+    lineages.clear();
     line.reserve(required);
     if params.left_skip.spec() != GlueSpec::ZERO {
         line.push(Node::Glue {
@@ -195,15 +216,23 @@ fn materialize_channel<S: TypesetState>(
     );
     let directional_start = line.len();
     line.append(&mut cursor.pending_post);
-    cursor.pending_post = push_owned_line_segment(
+    lineages.append(&mut cursor.pending_post_high_cell_lineages);
+    let (pending_post, pending_post_lineages) = push_owned_line_segment(
         state,
-        (&mut cursor.nodes, &mut cursor.position, cursor.node_count),
+        (
+            &mut cursor.nodes,
+            &mut cursor.high_cell_lineages,
+            &mut cursor.position,
+            cursor.node_count,
+        ),
         end,
         decision,
         params.empty_list,
         actions,
-        line,
+        (line, lineages),
     );
+    cursor.pending_post = pending_post;
+    cursor.pending_post_high_cell_lineages = pending_post_lineages;
     update_active_directions(&line[directional_start..], &mut cursor.active_directions);
     line.extend(
         cursor
@@ -220,6 +249,7 @@ fn materialize_channel<S: TypesetState>(
     });
     while cursor.nodes.as_slice().first().is_some_and(is_discardable) {
         let _ = cursor.nodes.next();
+        let _ = cursor.high_cell_lineages.next();
         cursor.position += 1;
     }
 }
@@ -271,18 +301,28 @@ pub fn post_line_break_owned<S: TypesetState>(
 
 fn push_owned_line_segment<S: TypesetState>(
     state: &S,
-    source: (&mut std::vec::IntoIter<Node>, &mut usize, usize),
+    source: (
+        &mut std::vec::IntoIter<Node>,
+        &mut std::vec::IntoIter<Vec<DirectHighCellLineage>>,
+        &mut usize,
+        usize,
+    ),
     end: usize,
     decision: &BreakDecision,
     empty_list: tex_state::ids::NodeListId,
     actions: Option<&[MaterializationAction]>,
-    out: &mut Vec<Node>,
-) -> Vec<Node> {
-    let (nodes, position, node_count) = source;
+    output: (&mut Vec<Node>, &mut Vec<DirectHighCellLineage>),
+) -> (Vec<Node>, Vec<DirectHighCellLineage>) {
+    let (nodes, lineage_rows, position, node_count) = source;
+    let (out, out_lineages) = output;
     let mut post = Vec::new();
+    let mut post_lineages = Vec::new();
     while *position < end {
         let absolute = *position;
         let node = nodes.next().expect("paragraph break position is in bounds");
+        let node_lineages = lineage_rows
+            .next()
+            .expect("paragraph lineage position is in bounds");
         *position += 1;
         let action = actions.and_then(|actions| actions.get(absolute)).copied();
         match node {
@@ -303,12 +343,18 @@ fn push_owned_line_segment<S: TypesetState>(
                     physical_replace_count: 0,
                 });
                 out.extend(state.nodes(pre).into_iter().map(|node| node.to_owned()));
+                out_lineages.extend(frozen_high_cell_lineages(state, pre, FrozenListRole::Pre));
                 post.extend(
                     state
                         .nodes(post_list)
                         .into_iter()
                         .map(|node| node.to_owned()),
                 );
+                post_lineages.extend(frozen_high_cell_lineages(
+                    state,
+                    post_list,
+                    FrozenListRole::Post,
+                ));
             }
             Node::Disc {
                 kind,
@@ -325,6 +371,11 @@ fn push_owned_line_segment<S: TypesetState>(
                     physical_replace_count,
                 });
                 out.extend(state.nodes(replace).into_iter().map(|node| node.to_owned()));
+                out_lineages.extend(frozen_high_cell_lineages(
+                    state,
+                    replace,
+                    FrozenListRole::Replace,
+                ));
             }
             Node::Glue { .. }
                 if absolute + 1 == end
@@ -339,10 +390,38 @@ fn push_owned_line_segment<S: TypesetState>(
             {
                 out.push(Node::MathOff(tex_state::scaled::Scaled::from_raw(0)));
             }
-            node => out.push(node),
+            node => {
+                out.push(node);
+                out_lineages.extend(node_lineages);
+            }
         }
     }
-    post
+    (post, post_lineages)
+}
+
+fn frozen_high_cell_lineages<S: TypesetState>(
+    state: &S,
+    list: tex_state::ids::NodeListId,
+    role: FrozenListRole,
+) -> Vec<DirectHighCellLineage> {
+    state
+        .nodes(list)
+        .iter()
+        .enumerate()
+        .flat_map(|(row, node)| {
+            let count = match node {
+                NodeRef::Char { .. } => 1,
+                NodeRef::Lig { orig, .. } => orig.len(),
+                _ => 0,
+            };
+            (0..count).map(move |unit| DirectHighCellLineage::Frozen {
+                list,
+                row: u32::try_from(row).expect("frozen node list exceeds u32 rows"),
+                unit: u32::try_from(unit).expect("ligature source exceeds u32 cells"),
+                role,
+            })
+        })
+        .collect()
 }
 
 pub(super) fn line_penalty_after(

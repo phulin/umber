@@ -3,8 +3,10 @@ use tex_fonts::metrics::CharTag;
 use tex_fonts::{CharMetrics, FontMetrics, LoadedFont};
 use tex_state::Universe;
 use tex_state::font::FontExpansion;
+use tex_state::font::NULL_FONT;
 use tex_state::glue::{GlueSpec, Order};
 use tex_state::node::{DiscKind, GlueKind, KernKind, Node, Whatsit};
+use tex_state::provenance::OriginRef;
 use tex_state::scaled::Scaled;
 use tex_state::token::{Catcode, Token};
 
@@ -3135,5 +3137,85 @@ fn paired_materialization_cursor_preserves_physical_diagnostic_topology() {
     assert_eq!(
         first.physical_nodes[0..2],
         [Node::Penalty(10), Node::Penalty(11)]
+    );
+}
+
+#[test]
+fn materialized_final_line_preserves_two_direct_and_four_frozen_lig_ptr_cells() {
+    let mut universe = Universe::new();
+    let zero = universe.intern_glue(GlueSpec::ZERO);
+    let empty = universe.freeze_node_list(&[]);
+    let lig = |ch, orig: [char; 2]| Node::Lig {
+        font: NULL_FONT,
+        ch,
+        orig: orig.to_vec(),
+        left_hit: false,
+        right_hit: false,
+        origins: vec![OriginRef::unknown(); 2],
+    };
+    let bb = universe.freeze_node_list(&[lig('A', ['B', 'B'])]);
+    let ca = universe.freeze_node_list(&[lig('\u{82}', ['C', 'A'])]);
+    let character = |ch| Node::Char {
+        font: NULL_FONT,
+        ch,
+        origin: OriginRef::unknown(),
+    };
+    let disc = |replace| Node::Disc {
+        kind: DiscKind::AutomaticHyphen,
+        pre: empty,
+        post: empty,
+        replace,
+        physical_replace_count: 1,
+    };
+    let nodes = vec![character('A'), character('/'), disc(bb), disc(ca)];
+    let tape = ParagraphTape::analyze(
+        &universe,
+        tex_state::node_sequence::NodeSequence::from_channels(nodes.clone(), nodes),
+        &params(100),
+    );
+    let mut materializer = LineMaterializer::new(
+        tape,
+        vec![BreakDecision {
+            position: 4,
+            penalty: EJECT_PENALTY,
+            hyphenated: false,
+        }],
+        PostLineBreakParams {
+            empty_list: empty,
+            left_skip: zero.clone(),
+            right_skip: zero,
+            interline_penalty: 0,
+            club_penalty: 0,
+            widow_penalties: ordinary_widow_penalties(0, Vec::new()),
+            broken_penalty: 0,
+            prev_graf: 0,
+            interline_penalties: Vec::new(),
+            club_penalties: Vec::new(),
+            shape: LineShape::natural(sp(100)),
+        },
+    );
+    let line = materializer
+        .materialize_next(&universe, Vec::new())
+        .expect("final line");
+
+    assert_eq!(
+        tex_state::node_sequence::direct_high_cell_overlap(
+            &line.high_cell_lineages,
+            &line.physical_high_cell_lineages,
+        ),
+        6
+    );
+    assert_eq!(
+        line.high_cell_lineages
+            .iter()
+            .filter(|lineage| matches!(
+                lineage,
+                tex_state::node_sequence::DirectHighCellLineage::Frozen {
+                    role: tex_state::node_sequence::FrozenListRole::Replace,
+                    ..
+                }
+            ))
+            .count(),
+        4
     );
 }

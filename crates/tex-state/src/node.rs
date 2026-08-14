@@ -302,6 +302,10 @@ pub struct BoxNode {
     pub glue_order: Order,
     pub children: NodeListId,
     pub diagnostic_children: Option<NodeListId>,
+    /// Direct high-memory cells shared with `diagnostic_children` by exact
+    /// allocator lineage. This allocator projection is nonsemantic and is not
+    /// part of the portable format schema.
+    pub allocator_high_cell_overlap: u32,
 }
 
 impl BoxNode {
@@ -319,6 +323,7 @@ impl BoxNode {
             glue_order: fields.glue_order,
             children: fields.children,
             diagnostic_children: None,
+            allocator_high_cell_overlap: 0,
         }
     }
 }

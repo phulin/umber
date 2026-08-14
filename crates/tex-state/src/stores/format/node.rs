@@ -110,6 +110,17 @@ impl FormatNode {
         }
     }
 
+    pub(super) fn allocator_high_cell_overlap(&self) -> u32 {
+        match self {
+            Self::HList(node) | Self::VList(node) => node.allocator_high_cell_overlap,
+            Self::Glue {
+                leader: Some(FormatLeaderPayload::HList(node) | FormatLeaderPayload::VList(node)),
+                ..
+            } => node.allocator_high_cell_overlap,
+            _ => 0,
+        }
+    }
+
     pub(super) fn semantic_children(&self) -> [Option<FormatListKey>; 4] {
         let mut children = [None; 4];
         match self {
@@ -228,6 +239,8 @@ pub(super) struct FormatBoxNode {
     glue_order: Order,
     children: FormatListKey,
     diagnostic_children: Option<FormatListKey>,
+    #[serde(skip)]
+    allocator_high_cell_overlap: u32,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize)]
@@ -786,6 +799,7 @@ impl FormatBoxNode {
             glue_order: node.glue_order,
             children: key(stores, node.children, roots),
             diagnostic_children: node.diagnostic_children.map(|id| key(stores, id, roots)),
+            allocator_high_cell_overlap: node.allocator_high_cell_overlap,
         }
     }
 
@@ -804,6 +818,7 @@ impl FormatBoxNode {
                 .diagnostic_children
                 .map(|id| list_id(ids, id))
                 .transpose()?,
+            allocator_high_cell_overlap: self.allocator_high_cell_overlap,
         })
     }
 }

@@ -8,6 +8,7 @@ use crate::macro_store::MacroMeaning;
 use crate::meaning::{Meaning, MeaningFlags};
 use crate::node::{BoxLr, BoxNode, BoxNodeFields, DiscKind, GlueKind, LeaderPayload, Node, Sign};
 use crate::node_arena::NodeRef;
+use crate::provenance::OriginRef;
 use crate::scaled::{GlueSetRatio, Scaled};
 use crate::stores::Stores;
 use crate::token::{Catcode, Token};
@@ -98,6 +99,69 @@ fn format_round_trip_preserves_physical_diagnostic_box_children() {
         restored.nodes(diagnostic).first(),
         Some(NodeRef::Penalty(2))
     ));
+}
+
+#[test]
+fn allocator_overlap_changes_only_detached_extent_not_format_bytes() {
+    fn stores_with_overlap(overlap: u32) -> Stores {
+        let mut stores = Stores::new();
+        let direct = |ch| Node::Char {
+            font: crate::font::NULL_FONT,
+            ch,
+            origin: OriginRef::unknown(),
+        };
+        let semantic_children = stores.freeze_node_list(&[
+            direct('A'),
+            direct('/'),
+            direct('B'),
+            direct('B'),
+            direct('C'),
+            direct('A'),
+        ]);
+        let diagnostic_children = stores.freeze_node_list(&[
+            direct('Z'),
+            direct('Y'),
+            direct('X'),
+            direct('W'),
+            direct('V'),
+            direct('U'),
+        ]);
+        let mut box_node = BoxNode::new(BoxNodeFields {
+            width: Scaled::from_raw(0),
+            height: Scaled::from_raw(0),
+            depth: Scaled::from_raw(0),
+            shift: Scaled::from_raw(0),
+            box_lr: BoxLr::Normal,
+            glue_set: GlueSetRatio::ZERO,
+            glue_sign: Sign::Normal,
+            glue_order: Order::Normal,
+            children: semantic_children,
+        });
+        box_node.diagnostic_children = Some(diagnostic_children);
+        box_node.allocator_high_cell_overlap = overlap;
+        let root = stores.freeze_node_list(&[Node::HList(box_node)]);
+        stores.set_box_reg(0, root);
+        stores
+    }
+
+    let without_overlap = stores_with_overlap(0);
+    let with_overlap = stores_with_overlap(6);
+    let without_usage = super::main_memory_usage_without_scratch(&without_overlap)
+        .expect("plain allocation projects")
+        .usage();
+    let with_usage = super::main_memory_usage_without_scratch(&with_overlap)
+        .expect("overlap allocation projects")
+        .usage();
+    assert_eq!(without_usage.dynamic, with_usage.dynamic);
+    assert_eq!(without_usage.dynamic_extent, with_usage.dynamic_extent + 6);
+
+    let without_format = without_overlap
+        .encode_frozen_format()
+        .expect("plain format encodes");
+    let with_format = with_overlap
+        .encode_frozen_format()
+        .expect("overlap format encodes");
+    assert_eq!(without_format.nodes, with_format.nodes);
 }
 
 #[test]

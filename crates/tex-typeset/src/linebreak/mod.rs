@@ -329,6 +329,11 @@ pub struct BrokenLine {
     pub nodes: Vec<Node>,
     /// TeX-physical topology retained for diagnostics only.
     pub physical_nodes: Vec<Node>,
+    /// Allocator-only identities for direct high-memory cells in `nodes`.
+    pub high_cell_lineages: Vec<tex_state::node_sequence::DirectHighCellLineage>,
+    /// Allocator-only identities for direct high-memory cells in the retained
+    /// TeX-physical diagnostic predecessor.
+    pub physical_high_cell_lineages: Vec<tex_state::node_sequence::DirectHighCellLineage>,
     pub penalty_after: Option<i32>,
     pub hyphenated: bool,
     pub dimensions: LineDimensions,

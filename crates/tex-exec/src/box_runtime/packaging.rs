@@ -171,6 +171,7 @@ pub(crate) fn hpack_owned_with_overfull_rule(
     stores: &mut Universe,
     nodes: &mut Vec<Node>,
     mut diagnostic_nodes: Option<&mut Vec<Node>>,
+    allocator_high_cell_overlap: u32,
     spec: PackSpec,
 ) -> tex_state::node::BoxNode {
     let params = hpack_params(stores);
@@ -211,6 +212,11 @@ pub(crate) fn hpack_owned_with_overfull_rule(
     };
     let children = stores.freeze_node_list_owned(nodes);
     let mut packed = plan.finish(children);
+    packed.node.allocator_high_cell_overlap = if diagnostic_nodes.is_some() {
+        allocator_high_cell_overlap
+    } else {
+        0
+    };
     stores.set_last_badness(packed.badness);
     stores.record_geometry_observation(GeometryObservation::Hpack {
         width_sp: i64::from(packed.node.width.raw()),

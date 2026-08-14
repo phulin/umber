@@ -860,9 +860,10 @@ fn u32_len(value: usize, message: &str) -> u32 {
 mod tests {
     use super::{SURVIVOR_ROOT_MAX, SurvivorArena, survivor_root_successor};
     use crate::font::NULL_FONT;
-    use crate::node::{MarginKernSide, Node};
+    use crate::glue::Order;
+    use crate::node::{BoxLr, BoxNode, BoxNodeFields, MarginKernSide, Node, Sign};
     use crate::node_arena::{NodeArena, NodeRef, NodeStorage};
-    use crate::scaled::Scaled;
+    use crate::scaled::{GlueSetRatio, Scaled};
 
     #[test]
     fn survivor_root_namespace_includes_its_last_packed_key() {
@@ -938,5 +939,46 @@ mod tests {
                 },
             ]
         );
+    }
+
+    #[test]
+    fn promotion_preserves_allocator_only_box_overlap() {
+        let mut epoch = NodeArena::new();
+        let children = epoch.append(&[Node::Penalty(1)]);
+        let diagnostic_children = epoch.append(&[Node::Penalty(2)]);
+        let mut box_node = BoxNode::new(BoxNodeFields {
+            width: Scaled::from_raw(0),
+            height: Scaled::from_raw(0),
+            depth: Scaled::from_raw(0),
+            shift: Scaled::from_raw(0),
+            box_lr: BoxLr::Normal,
+            glue_set: GlueSetRatio::ZERO,
+            glue_sign: Sign::Normal,
+            glue_order: Order::Normal,
+            children,
+        });
+        box_node.diagnostic_children = Some(diagnostic_children);
+        let semantic_equal = box_node;
+        box_node.allocator_high_cell_overlap = 6;
+        assert_eq!(box_node, semantic_equal);
+        let source = epoch.append(&[Node::HList(box_node)]);
+        let mut survivors = SurvivorArena::new();
+
+        let promoted = survivors.promote(source, &epoch);
+        let Some(NodeRef::HList(promoted_box)) = survivors.get(promoted).first() else {
+            panic!("expected promoted hlist")
+        };
+        assert_eq!(promoted_box.allocator_high_cell_overlap, 6);
+        assert!(matches!(
+            promoted_box.children.arena(),
+            crate::ids::ArenaRef::Survivor(_)
+        ));
+        assert!(matches!(
+            promoted_box
+                .diagnostic_children
+                .expect("diagnostic child")
+                .arena(),
+            crate::ids::ArenaRef::Survivor(_)
+        ));
     }
 }
