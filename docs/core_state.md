@@ -475,18 +475,30 @@ identity is stored with that checkpoint. Later convergence compares the two
 retained identities directly. It never forks or rolls an accepted generation
 back merely to reconstruct an earlier identity.
 
-Environment cells maintain a persistent deterministic Merkle treap keyed by
-canonical semantic cell identity. Each value projection resolves token, macro,
-glue, font, and node handles into canonical referenced content, so the treap is
-also the root of the live immutable closure. The same `CellId`
-assignment-scope stripping operation canonicalizes dependency keys and Merkle
-keys. At a checkpoint, the existing mutation-journal slice identifies the
-distinct dirty cells; only those Merkle paths are replaced, and the root is
-retained in the store snapshot so rollback and generation forks restore it in
-O(1). A full environment walk seeds the root only when a fresh store or format
-image is loaded. Input, page, PDF, and mode projections likewise traverse only
-their referenced content. Append-only store lineages and their derived
-membership caches are absent from the composed identity.
+Environment cells maintain a commutative accumulator of domain-separated
+canonical `(semantic cell key, semantic value)` atoms. Each value projection
+resolves token, macro, glue, font, and node handles into canonical referenced
+content before it reaches the accumulator. The current-cell lookup beside the
+accumulator is non-authoritative and proportional only to live non-default Env
+cells; it retains neither replaced values nor generations. A typed mutation
+subtracts the former atom and adds the new atom, so insertion order and
+physical handle choice do not affect identity. The same `CellId`
+assignment-scope stripping operation canonicalizes dependency and accumulator
+cells.
+
+An environment snapshot retains only the accumulator's fixed-width sum, xor,
+cardinality, journal cursor, and delta mark. Ordinary mutation receipts keep
+the live lookup current. A rollback replays only the replacement deltas after
+its mark and truncates that suffix; consuming the last aggregate rollback root
+discards the remaining delta log immediately, including while TeX's own group
+save stack remains open. Thus the log is bounded by live rollback authority and
+never becomes append history. Group exit applies its typed inverse deltas, and
+a generation fork copies the current live lookup once with the rest of the
+store substrate. Fresh stores and format images seed it with one live Env walk.
+There is no persistent path copy, historical-generation registry, graph
+compaction, or compactor. Input, page, PDF, and mode projections likewise
+traverse only their referenced content. Append-only store lineages and their
+derived membership caches are absent from the composed identity.
 
 The session-local aHash comparison composes that environment root with cached
 canonical roots for code tables, hyphenation, magnification/font selection, page-builder

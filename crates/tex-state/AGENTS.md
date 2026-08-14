@@ -134,7 +134,7 @@ All production mutation of live TeX state should pass through `Universe` or simi
   metadata census used by long-session gates.
 - `src/stores/handles.rs`: Store-boundary liveness checks for symbols, token lists, origins, glue, fonts, macros, and node handles.
 - `src/stores/low_memory.rs`: Compact TeX variable-size free-ring and rover projection.
-- `src/stores/exact_identity.rs`: Persistent deterministic Merkle treap for canonical identities of current non-default environment cells retained by checkpoints.
+- `src/stores/exact_identity.rs`: Commutative current-cell accumulator and constant-size rollback image for canonical identities of non-default environment cells.
 - `src/stores/node_semantic.rs`: Canonical node encoding and bottom-up semantic-identity composition at aggregate freeze.
 - `src/stores/format.rs`: Deterministic versioned format-image DTO capture, reachable token/macro/glue closure remapping, validation, and fresh-store reconstruction.
 - `src/stores/format/frozen_core.rs`: Fixed-width schema-11 names, token-list, macro, and glue section codecs plus direct validated dense-store restoration.

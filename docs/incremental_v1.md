@@ -252,7 +252,7 @@ rehoming. A later comparison reads both retained identities directly; it never
 forks or rolls the accepted substrate back to materialize an old boundary.
 Ordinary non-incremental snapshot consumers still use the bounded snapshot
 path without requesting this optional projection. Mutable environment state
-contributes its journal-maintained persistent Merkle root. Each live value
+contributes its journal-maintained commutative live-cell accumulator. Each live value
 resolves referenced token, macro, glue, font, and node handles into canonical
 content, so unreferenced append-store entries never enter the identity.
 Code-table, hyphenation, page, input, World, interaction, and PDF components
