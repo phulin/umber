@@ -307,10 +307,14 @@ but they remain part of the self-contained frozen graph and of §638 shipout
 memory observation; capture and decode therefore require their targets exactly
 like semantic child targets.
 
-After validation, all lists are installed into one immutable survivor-backed
-arena root with their precomputed semantic spans. No legacy key map, graph
-promotion, or semantic reseal runs on the load path. The job epoch arena starts
-empty; job-local lists may safely refer to frozen lists and allocate normally.
+After validation, all lists are installed into one immutable `NodeListPayload`
+with their precomputed semantic spans. Schema 11's still-unmigrated Env box
+coordinates publish that payload through the existing survivor bridge; the
+payload representation itself is the one directly owned by `NodeListRef`.
+No legacy key map, graph promotion, or semantic reseal runs on the load path.
+The job epoch arena starts empty; job-local lists may safely refer to frozen
+lists and allocate normally. This substrate change does not claim that format
+Env roots or later job-local owners already store `NodeListRef` directly.
 
 ### Frozen environment (kind 528)
 

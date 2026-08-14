@@ -1,23 +1,33 @@
 # Compact node-word arena
 
-Status: authoritative contract for the adopted compact node representation.
+Status: authoritative contract for the adopted compact node representation and
+installed directly owned substrate. Nested and aggregate owner migration is
+tracked separately and is not claimed here.
 
-The arena stores immutable TeX node lists as an eight-byte word stream with
-kind-specific sidecars. Runtime list identities are generation-tagged and
-owner-validated; retained survivor graphs are immutable, self-contained roots.
-Raw words, indexes, and handles are implementation details rather than artifact
-formats.
+An immutable TeX node-list graph is an eight-byte word stream with kind-specific
+sidecars behind `NodeListRef`. The ref directly owns one `Arc` payload plus an
+exact validated span and semantic projection. A compact coordinate is a private,
+borrow-scoped projection into that payload, never lifetime authority. Raw words,
+indexes, coordinates, and native layout remain implementation details rather
+than artifact formats.
 
 ## Core invariants
 
-- Frozen lists are immutable and minted only through the aggregate state API.
-- Every semantic or ownership field, sidecar length, identity table, survivor
-  refcount, and rollback mark is inside `Universe`/`Stores` ownership.
-- Rollback truncates one aggregate node mark; it cannot restore only part of a
-  word/sidecar tuple.
-- Discarded epoch identities and survivor root identities never revive.
-- Survivor promotion copies a graph bottom-up into one self-contained root;
-  related Universes may share its immutable payload.
+- A directly frozen graph has exactly one mutable construction authority:
+  operation-local `NodeListBuilder`. Consuming freeze validates first and
+  publishes one immutable `NodeListRef` only after the complete graph exists.
+- `NodeListRef` is the sole strong owner in the installed direct substrate.
+  Cloning shares exact immutable data; final drop releases the payload.
+- The canonical empty list has one explicit immutable owner.
+- Every compact storage field and sidecar length is inside the immutable
+  payload. Legacy identity tables, survivor refcounts, and rollback marks
+  remain inside `Universe`/`Stores` until their owning strata migrate.
+- Legacy rollback truncates one aggregate node mark; it cannot restore only
+  part of a word/sidecar tuple.
+- A compact coordinate can resolve only while borrowing its matching
+  `NodeListRef`; a weak projection cannot upgrade after final drop.
+- Direct freeze copies registered child owners into one self-contained compact
+  graph. Related owners may share that immutable payload.
 - Semantic hashes traverse decoded logical nodes and referenced content, never
   raw tags, indexes, capacities, addresses, or allocation order.
 - Downstream crates receive builders and decoded read-only views, never raw
@@ -62,9 +72,30 @@ and exhaustive discriminant mapping. A glue with a leader always uses tag 13;
 its sidecar owns the full leader payload. Capacity is checked before any word
 or sidecar length changes.
 
-## Generation-tagged `NodeListId`
+## Owned refs and compact coordinates
 
-`NodeListId` is a private sixteen-byte runtime identity. Epoch handles use the
+`NodeListRef` contains an `Arc<NodeListPayload>`, the exact top-level span, and
+its precomputed semantic identity. The payload contains `NodeStorage` and a
+private sorted table of exact child spans and semantic identities. Resolving a
+child checks the payload coordinate and exact span, then returns a `NodeList`
+whose lifetime is bounded by the owner borrow. It does not consult
+`SurvivorArena`, a registry, a root slot, or a pin.
+
+The canonical empty owner is process-shared and consumes no node word. Empty
+children use only its canonical projection; arbitrary zero-length coordinates
+are rejected.
+
+The optional candidate index retains at most 64 weak entries. Candidate
+fingerprints are acceleration only: reuse also requires the full semantic
+identity and an exact normalized graph comparison including diagnostic and
+physical-only content. Clearing or evicting the index changes neither liveness
+nor meaning. Ten thousand bounded-live replacements retain bounded weak
+metadata; an all-live control grows by the exact graph count and logical bytes.
+
+## Transitional `NodeListId`
+
+`NodeListId` is still the compact sixteen-byte runtime coordinate used by
+unmigrated node fields and aggregate owners. Epoch coordinates use the
 common `(namespace, generation, slot)` identity; the arena maps the slot to a
 compact `(start, len)` span. Lookup performs bounds and generation validation
 before loading the span. Empty epoch lists use one immutable built-in identity.
@@ -80,15 +111,16 @@ support roots through `2^20-2`, starts through `2^21-1`, and lengths through
 `2^22-1`. The all-ones word is the canonical `None` encoding in the Env box
 bank. Epoch handles never enter raw Env words; assignment promotes them first.
 
-One `NodeArenaMark` contains the identity-table and compact-storage watermarks.
+One legacy `NodeArenaMark` contains the identity-table and compact-storage watermarks.
 Rollback validates them, truncates the identity suffix, advances the generation
 before slot reuse, and then truncates words and every sidecar. Arena clones
 preserve inherited tags and use a fresh namespace for new allocations.
 
-Survivor root keys are monotonic and never reused. Storage buffers may recycle
-after the last shared payload owner disappears, but recycled capacity cannot
-affect liveness, meaning, hashes, or output. Exhaustion is explicit and never
-aliases the null encoding.
+Direct ownership does not expose or resolve a coordinate through a store table.
+The current packed survivor root field uses a process-unique payload coordinate
+only so pre-migration compact child rows retain their native layout. It is
+non-authoritative, cannot upgrade a dead payload, and has no historical
+generation table.
 
 Handles are not serialized. Frozen formats use private logical node DTOs and
 dense content keys, validate the complete graph, and mint fresh identities on
@@ -125,26 +157,30 @@ truncating all columns and the word stream as one private operation. No public
 API can mark, truncate, append a raw word, append an isolated sidecar row, or
 restore a subset.
 
-Builder finish is transactional with respect to logical state: validate child
-handles and capacity, reserve all required columns, append sidecar rows, and
-publish words last. Bottom-up construction requires epoch children to end
-before their parent span. During one executor operation, these epoch spans are
-patch-local construction storage. A successful operation enumerates its typed
-mode, page, control, and Env roots, promotes only newly referenced graphs, and
-then truncates the complete epoch suffix. Retry or rejection truncates the same
-suffix without promotion. Retained vector capacity after rollback is allocator
-state only and is reported separately from live logical bytes.
+Direct builder freeze is transactional with respect to logical state: validate
+every ordinary handle and directly registered child owner, preflight capacity,
+construct and patch the complete self-contained graph in unpublished local
+storage, then return its owner. Validation failure publishes no payload and
+changes no aggregate destination. Frozen words and sidecars never mutate.
 
-## Survivor roots and sharing
+The existing epoch path remains during the dependency-ordered owner migration.
+Its successful operation still promotes referenced graphs before truncating
+the epoch suffix; retry or rejection truncates without publication. This is a
+transition path, not ownership authority for the new direct substrate.
 
-Every survivor root payload owns a complete immutable `NodeStorage`. Env box
-words and timeline pins use the local root refcount. Mode, page, control, and
-checkpoint roots instead carry a structural `Arc` owner beside their ordinary
-`NodeListId`; that owner is nonsemantic and follows the aggregate root through
-copy-on-write snapshots and forks. Promotion iteratively decodes a mixed
-epoch/survivor DAG, memoizes source spans, appends logical nodes to the
-destination, and rewrites child handles to the new root. No sidecar index
-crosses a root.
+## Legacy aggregate bridge
+
+The pre-existing survivor bridge now stores the same `NodeListPayload` used by
+`NodeListRef`, and its structural owner contains a `NodeListRef`. This lets the
+substrate land without copying a second immutable representation. It does not
+declare the remaining raw owners migrated: Env box current/undo, page, mode,
+control, checkpoints, PDF forms, shipout, format installation, pins, and legacy
+root refcounts are retired only by the later ownership children.
+
+No new compatibility owner, lifetime sidecar, registry, pin, graph scan,
+compactor, or successful-history table is introduced by the substrate.
+Promotion continues to copy a mixed legacy epoch/survivor DAG into one compact
+payload and rewrites every child coordinate before publication.
 
 Live box registers and retained undo records own survivor references. Publishing
 a box into nest or page state adds one aggregate root pin; one pin covers every
@@ -162,28 +198,31 @@ construction transfers a live box pointer through `box_end`, and pdftex.web
 §1546, where `\pdfxform` clears the register but stores that pointer in the form
 object for later recursive traversal (§§773--775).
 
-At local refcount zero with no structural owner, the root slot is removed. Its
-vectors enter the recycled pool only if `Arc::try_unwrap` proves that no related
-Universe still shares the payload; otherwise teardown is an O(1) shared-payload
-drop. Operation commit also reaps registry-only zero-root chunks after replacing
-the typed owner projections, so a list that ceases to be reachable does not need
-a post-hoc arena scan.
+At local legacy refcount zero with no direct ref, the old root slot is removed.
+Its vectors enter the recycled pool only if `Arc::try_unwrap` proves that no
+direct owner or related Universe shares the payload; otherwise teardown is an
+O(1) shared-payload drop. This recycling is allocator policy, not liveness
+authority.
 
 ## Access boundary
 
-The node API exposes builders, `NodeList<'a>`/`NodeIter<'a>` read-only views,
-decoded `NodeRef<'a>` accessors, and a `NodeCursor<'a>` that presents the same
-logical view over owned construction lists and compact epoch or survivor lists.
+The node API exposes `NodeListRef`, consuming builders,
+`NodeList<'a>`/`NodeIter<'a>` read-only views, decoded `NodeRef<'a>` accessors,
+and a `NodeCursor<'a>` that presents the same logical view over owned
+construction lists and compact epoch or survivor lists.
 `PackedNode` is the shared dimension-bearing projection. Semantic child
 traversal excludes diagnostic-only box children; physical traversal includes
-them. The API never exposes a raw word slice, sidecar slice/index, unchecked
-decoder, raw handle constructor, or mutable storage.
+them. `NodeListRef::child_nodes` validates an internal coordinate and returns a
+view tied to the ref borrow, so direct child traversal needs no
+`SurvivorOwner`. The API never exposes a raw word slice, sidecar slice/index,
+unchecked decoder, raw handle constructor, or mutable storage.
 
-All rewriting is builder-then-freeze. A changed top-level list may retain
-unchanged survivor-backed descendants under a root pin, but no algorithm mutates
-a frozen word or sidecar row. Pure typesetting receives immutable views and
-copied parameters; execution owns publication and box-register writes; shipout
-lowers into detached artifacts and cannot retain a live view.
+All direct rewriting is builder-then-freeze and creates one self-contained
+payload. The legacy path may still retain unchanged survivor-backed descendants
+under an existing root pin until its owning stratum migrates. No algorithm
+mutates a frozen word or sidecar row. Pure typesetting receives immutable views
+and copied parameters; execution owns publication and box-register writes;
+shipout lowers into detached artifacts and cannot retain a live view.
 
 ## Semantic hashing and width scans
 
@@ -205,7 +244,9 @@ modern non-byte glyphs, font changes, and non-character nodes end the run.
 
 Validation covers every tag and reserved tag, signed extrema, Unicode and TFM
 bounds, identity/namespace/generation liveness, null and capacity boundaries,
-sidecar alignment, bottom-up graphs, rollback, survivor sharing and recycling,
-compile-fail access checks, semantic hash equivalence, all typesetting kernels,
-width runs, shipout, exact fixture/DVI parity, and logical/retained allocation
-budgets.
+sidecar alignment, transactional freeze, exact collision separation, canonical
+empty ownership, child-span resolution, clone/final-drop behavior, stale weak
+projection rejection, bounded weak metadata, exact all-live growth, semantic
+hash equivalence across physical coordinates, legacy rollback and survivor
+recycling, compile-fail access checks, all typesetting kernels, width runs,
+shipout, exact fixture/DVI parity, and logical/retained allocation budgets.
