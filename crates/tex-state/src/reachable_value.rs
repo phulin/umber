@@ -322,6 +322,16 @@ where
         visited
     }
 
+    /// Biases the next bounded sweep toward a rollback suffix.
+    ///
+    /// The caller supplies only the physical extent captured in its O(1)
+    /// operation mark. No slot is released here: the ordinary generation-safe
+    /// sweep still checks the weak owner after restoration has dropped the
+    /// discarded roots.
+    pub(crate) fn prioritize_reclamation_from(&mut self, slot: usize) {
+        self.sweep_cursor = slot.min(self.slots.len());
+    }
+
     #[cfg(test)]
     fn clear_index(&mut self) {
         self.index.clear();

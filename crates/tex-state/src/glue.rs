@@ -384,6 +384,7 @@ impl GlueStore {
             assert!(self.patch_handles.remove(&id).is_some());
             assert!(self.patch_root_leases.remove(&id).is_some());
         }
+        self.pool.prioritize_reclamation_from(mark.specs as usize);
     }
 
     #[cfg(any(test, feature = "testing"))]

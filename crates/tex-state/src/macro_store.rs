@@ -219,6 +219,7 @@ impl MacroDefinitionProvenance {
 /// Rollback state for private macro allocations and compatibility operands.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct MacroStoreMark {
+    bodies: u32,
     pub(crate) definitions: u32,
     patch_events: u32,
     next_observation_operand: i64,
@@ -588,6 +589,7 @@ impl MacroStore {
     #[must_use]
     pub(crate) fn watermark(&self) -> MacroStoreMark {
         MacroStoreMark {
+            bodies: u32::try_from(self.bodies.slot_len()).expect("macro body slots exceed u32"),
             definitions: u32::try_from(self.definitions.slot_len())
                 .expect("macro definition slots exceed u32 entries"),
             patch_events: u32::try_from(self.patch_order.len())
@@ -613,6 +615,10 @@ impl MacroStore {
                 }
             }
         }
+        self.bodies
+            .prioritize_reclamation_from(mark.bodies as usize);
+        self.definitions
+            .prioritize_reclamation_from(mark.definitions as usize);
         self.next_observation_operand = mark.next_observation_operand;
     }
 

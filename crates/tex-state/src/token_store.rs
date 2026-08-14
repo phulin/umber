@@ -142,6 +142,7 @@ impl TokenSemanticIdBuilder {
 /// A rollback watermark for the token store.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct TokenStoreMark {
+    weak_slots: u32,
     patch_allocations: u32,
     #[cfg(any(test, feature = "testing"))]
     testing_detached_roots: u32,
@@ -735,6 +736,7 @@ impl TokenStore {
     #[must_use]
     pub(crate) fn watermark(&self) -> TokenStoreMark {
         TokenStoreMark {
+            weak_slots: u32_len(self.pool.slot_len(), "token-list slots exceed u32 entries"),
             patch_allocations: u32_len(
                 self.patch_order.len(),
                 "token-list patch allocations exceed u32 entries",
@@ -757,6 +759,8 @@ impl TokenStore {
             assert!(self.patch_handles.remove(&id).is_some());
             assert!(self.patch_root_leases.remove(&id).is_some());
         }
+        self.pool
+            .prioritize_reclamation_from(mark.weak_slots as usize);
     }
 
     pub(crate) fn slot_len(&self) -> u32 {
