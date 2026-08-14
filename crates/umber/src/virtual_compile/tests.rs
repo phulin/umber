@@ -112,6 +112,14 @@ fn session(main: &str) -> VirtualCompileSession {
     session
 }
 
+#[test]
+fn virtual_compile_session_keeps_engine_owners_out_of_caller_stack() {
+    assert!(
+        std::mem::size_of::<VirtualCompileSession>() <= 4_096,
+        "the public orchestration value must remain shallow"
+    );
+}
+
 fn load_profile_format(mode: EngineMode, bytes: &[u8]) -> Universe {
     let mut stores = Universe::from_format(World::memory(), bytes).expect("profile format loads");
     mode.install_after_format(&mut stores);
@@ -3452,7 +3460,7 @@ fn accepted_patch_publishes_root_generated_files_and_output_together() {
     let engine = session
         .incremental
         .as_ref()
-        .and_then(tex_incr::Session::retention_metrics)
+        .and_then(|session| session.retention_metrics())
         .expect("engine retention");
     let returned = memory_run_output_bytes(&new_output);
     let retention = session.retention_metrics().expect("session retention");

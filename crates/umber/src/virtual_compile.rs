@@ -810,12 +810,12 @@ pub struct VirtualCompileSession {
     font_mapping_fallback: FontMappingFallbackPolicy,
     outputs: OutputCapabilitySet,
     html_asset_mode: tex_out::html::AssetMode,
-    incremental: Option<tex_incr::Session>,
+    incremental: Option<Box<tex_incr::Session>>,
     accepted_output: Option<MemoryRunOutput>,
     accepted_render_document: Option<RenderDocument>,
     pending_render_update: Option<RenderUpdate>,
     pending_patch: Option<(tex_incr::RevisionId, tex_incr::Edit)>,
-    candidate: Option<RetainedCandidate>,
+    candidate: Option<Box<RetainedCandidate>>,
     response_generation: u64,
     virtual_font_resources: PdfVirtualFontResources,
     pdf_font_closure_requests: BTreeSet<ResourceRequestKey>,
@@ -1150,7 +1150,7 @@ impl VirtualCompileSession {
         let tex_incr::AcceptedUniverseFinalization {
             universe: stores,
             prepared_pages,
-        } = session
+        } = (*session)
             .into_accepted_universe()
             .map_err(|error| CompileError::Incremental(error.to_string()))?;
         let pdf_raw_object_file_receipt = pdf_raw_object_file_receipt(&stores, &self.workspace)?;
@@ -1290,7 +1290,7 @@ impl VirtualCompileSession {
         self.incremental
             .as_ref()
             .filter(|_| self.accepted_output.is_some() || self.pending_patch.is_some())
-            .map(tex_incr::Session::revision)
+            .map(|session| session.revision())
     }
 
     #[must_use]
@@ -1298,14 +1298,14 @@ impl VirtualCompileSession {
         self.revision().and_then(|_| {
             self.incremental
                 .as_ref()
-                .map(tex_incr::Session::content_hash)
+                .map(|session| session.content_hash())
         })
     }
 
     #[must_use]
     pub fn rendered_output_id(&self) -> Option<tex_incr::RenderedOutputId> {
         self.revision()
-            .and_then(|_| self.incremental.as_ref().map(tex_incr::Session::output_id))
+            .and_then(|_| self.incremental.as_ref().map(|session| session.output_id()))
     }
 
     #[must_use]
@@ -1411,11 +1411,11 @@ impl VirtualCompileSession {
         let accepted = self
             .incremental
             .as_ref()
-            .and_then(tex_incr::Session::retention_metrics);
+            .and_then(|session| session.retention_metrics());
         let candidate = self
             .candidate
             .as_ref()
-            .map(RetainedCandidate::engine_retention);
+            .map(|candidate| candidate.engine_retention());
         if accepted.is_none() && candidate.is_none() {
             return None;
         }
@@ -1458,7 +1458,7 @@ impl VirtualCompileSession {
         self.incremental
             .iter()
             .filter(|_| self.accepted_output.is_some())
-            .flat_map(tex_incr::Session::accepted_input_dependencies)
+            .flat_map(|session| session.accepted_input_dependencies())
     }
 
     /// Returns the versioned public projection of the accepted revision's
@@ -2054,12 +2054,12 @@ impl VirtualCompileSession {
                 .map_err(|error| CompileError::Incremental(error.to_string()))?;
             candidate.set_cumulative_fuel_limit(self.limits.engine_fuel);
             candidate.set_execution_budgets(self.execution_budgets());
-            RetainedCandidate {
+            Box::new(RetainedCandidate {
                 workspace: candidate_workspace.clone(),
                 execution: RetainedExecution::Initial { session, candidate },
                 response_generation: self.response_generation,
                 suspension_serial: 0,
-            }
+            })
         } else if let Some(session) = self.incremental.as_ref() {
             let (next_revision, edit) = self
                 .pending_patch
@@ -2078,12 +2078,12 @@ impl VirtualCompileSession {
             .map_err(|error| CompileError::Incremental(error.to_string()))?;
             candidate.set_cumulative_fuel_limit(self.limits.engine_fuel);
             candidate.set_execution_budgets(self.execution_budgets());
-            RetainedCandidate {
+            Box::new(RetainedCandidate {
                 workspace: candidate_workspace,
                 execution: RetainedExecution::Pending(candidate),
                 response_generation: self.response_generation,
                 suspension_serial: 0,
-            }
+            })
         } else {
             unreachable!("candidate creation covers initial and accepted sessions")
         };
@@ -2596,7 +2596,7 @@ impl VirtualCompileSession {
         let next_generated = generated_fingerprint(&pending_workspace)?;
         let reuse = execution.reuse();
         match execution {
-            PreparedExecution::Initial { session, .. } => self.incremental = Some(*session),
+            PreparedExecution::Initial { session, .. } => self.incremental = Some(session),
             PreparedExecution::Transaction(transaction) => {
                 self.incremental
                     .as_mut()

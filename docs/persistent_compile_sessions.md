@@ -17,6 +17,14 @@ hosts and the WebAssembly binding. It composes the typed resource protocol in
   revision; and
 - detached output for the most recently accepted revision.
 
+The public Rust orchestration value remains shallow: its aggregate accepted
+incremental session and suspended revision candidate are heap-owned values.
+Their semantic ownership is still exclusive to the compile session, but a
+caller's stack frame does not grow with the concrete engine-state
+representation or with the number of compile-session locals it holds. Moving
+a suspended candidate between attempts preserves that allocation instead of
+materializing the aggregate state machine on the caller's stack.
+
 The existing `advance()`/`compile_attempt()` operation drives every state.
 Session options also fix the nonempty Rust-owned `OutputCapabilitySet` before
 the first candidate runs. DVI remains the Rust API default; an explicit
