@@ -18,6 +18,9 @@ struct WorkReceipt {
 
 impl WorkReceipt {
     fn add_telemetry(&mut self, telemetry: tex_exec::ExecutionTelemetry) {
+        self.resource_retries = self
+            .resource_retries
+            .saturating_add(telemetry.local_step_retries);
         self.delivered_commands = self
             .delivered_commands
             .saturating_add(telemetry.advance_calls);
@@ -194,10 +197,12 @@ fn complete_retried_rejected_patch(session: &Session, receipt: &mut WorkReceipt)
         RevisionCandidateResult::Complete
     ));
     let telemetry = candidate.execution_telemetry();
-    assert!(telemetry.suspensions > 0, "receipt records the retry");
+    assert_eq!(telemetry.suspensions, 1, "receipt records one suspension");
+    assert_eq!(telemetry.local_step_retries, 1);
+    assert_eq!(telemetry.replayed_delivered_tokens, 2);
+    assert_eq!(telemetry.replayed_dispatches, 2);
     receipt.add_telemetry(telemetry);
     receipt.rejected_patches += 1;
-    receipt.resource_retries += 1;
     drop(candidate);
     assert_eq!(session.retention_metrics(), Some(before_retention));
     assert_eq!(

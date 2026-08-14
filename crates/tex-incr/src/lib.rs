@@ -393,9 +393,20 @@ pub struct RevisionCandidate {
     completed: Option<CandidateCompletion>,
     output_ledger: OutputLedger,
     delivered_commands: usize,
+    local_step_retries: u64,
+    replayed_delivered_tokens: u64,
+    replayed_dispatches: u64,
+    pending_resource_retry: Option<PendingResourceRetry>,
     effect_start: usize,
     execution_budgets: tex_exec::ExecutionBudgets,
     kind: RevisionCandidateKind,
+}
+
+struct PendingResourceRetry {
+    need: ResourceNeed,
+    delivered_tokens: u64,
+    dispatches: u64,
+    ready: bool,
 }
 
 struct CandidateCompletion {
@@ -691,7 +702,24 @@ impl RevisionCandidate {
                     tex_exec::ExecError::ExecutionCancelled,
                 ));
             }
+            if self
+                .pending_resource_retry
+                .as_ref()
+                .is_some_and(|retry| retry.ready)
+            {
+                let retry = self
+                    .pending_resource_retry
+                    .take()
+                    .expect("a ready resource retry is retained");
+                self.local_step_retries = self.local_step_retries.saturating_add(1);
+                self.replayed_delivered_tokens = self
+                    .replayed_delivered_tokens
+                    .saturating_add(retry.delivered_tokens);
+                self.replayed_dispatches =
+                    self.replayed_dispatches.saturating_add(retry.dispatches);
+            }
             self.validate_execution_budgets()?;
+            let telemetry_before = self.control.advance_telemetry();
             let step_result = {
                 let sink: &mut dyn CheckpointSink = match &mut self.sink {
                     CandidateSink::Cold(sink) => sink,
@@ -732,6 +760,13 @@ impl RevisionCandidate {
                     unreachable!("a completed canonical step is terminal");
                 }
                 CanonicalStepResult::ResourceNeed(need) => {
+                    let telemetry_after = self.control.advance_telemetry();
+                    let replayed_delivered_tokens = telemetry_after
+                        .resource_replayed_delivered_tokens
+                        .saturating_sub(telemetry_before.resource_replayed_delivered_tokens);
+                    let replayed_dispatches = telemetry_after
+                        .resource_replayed_dispatches
+                        .saturating_sub(telemetry_before.resource_replayed_dispatches);
                     self.validate_execution_budgets()?;
                     if answered_needs.contains(&need) {
                         return Err(SessionError::ResourceNoProgress {
@@ -748,14 +783,30 @@ impl RevisionCandidate {
                             self.output_ledger
                                 .fulfill(&mut self.control, &need, fulfillment)
                                 .map_err(|_| SessionError::UnexpectedResource)?;
+                            if let Some(retry) = self.pending_resource_retry.as_mut()
+                                && retry.need == need
+                            {
+                                retry.ready = true;
+                            }
                             answered_needs.push(need);
                         }
                         ResourceOutcome::Unavailable => {
                             self.output_ledger
                                 .mark_unavailable(&mut self.control, &need, false);
+                            if let Some(retry) = self.pending_resource_retry.as_mut()
+                                && retry.need == need
+                            {
+                                retry.ready = true;
+                            }
                             answered_needs.push(need);
                         }
                         ResourceOutcome::Declined => {
+                            self.pending_resource_retry = Some(PendingResourceRetry {
+                                need: need.clone(),
+                                delivered_tokens: replayed_delivered_tokens,
+                                dispatches: replayed_dispatches,
+                                ready: false,
+                            });
                             self.output_ledger.record_suspension();
                             return Ok(RevisionCandidateResult::AwaitingResources(need));
                         }
@@ -829,9 +880,9 @@ impl RevisionCandidate {
             cold_starts: 0,
             advance_calls: self.delivered_commands as u64,
             suspensions: self.suspension_serial(),
-            local_step_retries: 0,
-            replayed_delivered_tokens: 0,
-            replayed_dispatches: 0,
+            local_step_retries: self.local_step_retries,
+            replayed_delivered_tokens: self.replayed_delivered_tokens,
+            replayed_dispatches: self.replayed_dispatches,
             cumulative_fuel: self.control.fuel_burned(),
             engine_time: Duration::ZERO,
             savepoint_capture_time: Duration::ZERO,
@@ -1434,6 +1485,10 @@ impl Session {
             completed: None,
             output_ledger: OutputLedger::new(CheckpointIdentity::Exact),
             delivered_commands: 0,
+            local_step_retries: 0,
+            replayed_delivered_tokens: 0,
+            replayed_dispatches: 0,
+            pending_resource_retry: None,
             effect_start,
             execution_budgets: tex_exec::ExecutionBudgets::default(),
             kind: RevisionCandidateKind::Initial {
@@ -1656,6 +1711,10 @@ impl Session {
             completed: None,
             output_ledger: OutputLedger::resume(CheckpointIdentity::Exact),
             delivered_commands: 0,
+            local_step_retries: 0,
+            replayed_delivered_tokens: 0,
+            replayed_dispatches: 0,
+            pending_resource_retry: None,
             effect_start,
             execution_budgets: tex_exec::ExecutionBudgets::default(),
             kind: RevisionCandidateKind::Incremental {
@@ -1698,6 +1757,10 @@ impl Session {
             completed: None,
             output_ledger: OutputLedger::new(CheckpointIdentity::Exact),
             delivered_commands: 0,
+            local_step_retries: 0,
+            replayed_delivered_tokens: 0,
+            replayed_dispatches: 0,
+            pending_resource_retry: None,
             effect_start,
             execution_budgets: tex_exec::ExecutionBudgets::default(),
             kind: RevisionCandidateKind::Replacement { setup },

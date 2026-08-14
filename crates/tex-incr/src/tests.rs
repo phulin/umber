@@ -1094,6 +1094,10 @@ fn candidate_root_eof_is_one_fatal_completion() {
             .len(),
         effects
     );
+    let telemetry = candidate.execution_telemetry();
+    assert_eq!(telemetry.local_step_retries, 0);
+    assert_eq!(telemetry.replayed_delivered_tokens, 0);
+    assert_eq!(telemetry.replayed_dispatches, 0);
 }
 
 #[test]
@@ -1925,6 +1929,9 @@ fn restored_suffix_resource_candidate_retries_once_and_rejects_atomically() {
     ));
     let telemetry = candidate.execution_telemetry();
     assert_eq!(telemetry.suspensions, 1);
+    assert_eq!(telemetry.local_step_retries, 1);
+    assert_eq!(telemetry.replayed_delivered_tokens, 2);
+    assert_eq!(telemetry.replayed_dispatches, 2);
     assert_eq!(candidate.suspension_serial(), 1);
     drop(candidate);
 

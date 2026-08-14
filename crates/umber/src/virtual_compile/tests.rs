@@ -2922,9 +2922,19 @@ fn preloaded_and_partitioned_positive_negative_resources_are_exactly_equivalent(
     let partitioned_telemetry = partitioned.compile_telemetry();
     assert_eq!(preloaded_telemetry.execution.cold_starts, 0);
     assert_eq!(preloaded_telemetry.execution.suspensions, 0);
+    assert_eq!(preloaded_telemetry.execution.local_step_retries, 0);
+    assert_eq!(preloaded_telemetry.execution.replayed_delivered_tokens, 0);
+    assert_eq!(preloaded_telemetry.execution.replayed_dispatches, 0);
     assert_eq!(partitioned_telemetry.execution.cold_starts, 0);
     assert_eq!(partitioned_telemetry.execution.suspensions, 3);
-    assert_eq!(partitioned_telemetry.execution.local_step_retries, 0);
+    assert_eq!(
+        (
+            partitioned_telemetry.execution.local_step_retries,
+            partitioned_telemetry.execution.replayed_delivered_tokens,
+            partitioned_telemetry.execution.replayed_dispatches,
+        ),
+        (3, 5, 5),
+    );
     assert_eq!(partitioned.attempts(), 4);
     assert!(
         partitioned_telemetry.execution.cumulative_fuel

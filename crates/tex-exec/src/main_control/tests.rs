@@ -4343,7 +4343,10 @@ fn production_batch_rolls_back_its_bounded_prefix_on_resource_need() {
         StepResult::Suspended(ResourceNeed::Input { name, .. }) if name == "child.tex"
     ));
     assert_eq!(stores.count(0), 0, "the whole bounded prefix rolls back");
-    assert_eq!(control.advance_telemetry().rollbacks, 1);
+    let suspended = control.advance_telemetry();
+    assert_eq!(suspended.rollbacks, 1);
+    assert_eq!(suspended.resource_replayed_delivered_tokens, 2);
+    assert_eq!(suspended.resource_replayed_dispatches, 2);
 
     control.capabilities_mut().register_input(
         "child.tex",
@@ -4362,6 +4365,8 @@ fn production_batch_rolls_back_its_bounded_prefix_on_resource_need() {
     assert_eq!(stores.count(0), 11);
     let telemetry = control.advance_telemetry();
     assert_eq!(telemetry.rollbacks, 1);
+    assert_eq!(telemetry.resource_replayed_delivered_tokens, 2);
+    assert_eq!(telemetry.resource_replayed_dispatches, 2);
     assert_eq!(telemetry.attempts, telemetry.commits + telemetry.rollbacks);
 }
 
