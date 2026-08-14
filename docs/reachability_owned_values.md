@@ -345,7 +345,7 @@ parallel exact `GlueSpecRef`.
 | Aggregate checkpoints and forks        | Env current/undo roots, mode summaries, page roots, and compact/survivor node roots form the checkpoint's glue closure.                                                                         | Retained checkpoint restoration clones these typed roots before switching aggregate state. Generation fork shares immutable payloads while minting or resolving generation-local coordinates; losing checkpoints or generations drop their complete closure.                                            |
 | Formats and memos                      | Loaded formats own every validated glue row as an explicit frozen base. Detached format and memo DTOs own handle-free five-field glue data.                                                     | Capture enumerates only typed reachable Env and node roots. Load/import validates data, interns it, installs destination-local owners, and publishes the containing cell or node atomically. Future append uses ordinary weak slots and does not extend the frozen base.                                |
 | Private patch domain                   | A private domain owns every newly allocated glue object in addition to typed private destinations and their weak acceptance leases.                                                             | Failure and `NeedResource` restore destinations before truncating the exact allocation suffix. Rejection drops the domain. Acceptance follows allocation order and transfers only allocations whose typed lease remains live, then clears private metadata.                                             |
-| Non-owning projections                 | Scanner/expression source identities, assignment-trace old/new operands, semantic hashing, printers, packers, compact views, and DTO table indices borrow or project ids only.                  | These values never upgrade a dead slot and cannot retain content. A completed builder or scanner value that must survive application instead carries semantic `GlueSpec` data until a typed runtime destination interns and owns it.                                                                    |
+| Non-owning projections                 | Scanner/expression source identities, semantic hashing, printers, packers, compact views, and DTO table indices borrow or project ids only.                                                     | These values never upgrade a dead slot and cannot retain content. A completed builder or scanner value that must survive application instead carries semantic `GlueSpec` data until a typed runtime destination interns and owns it.                                                                    |
 
 This audit includes source and loaded-format construction, later append,
 equal-local/global-supersession restoration, page and mode rollback,
@@ -392,6 +392,22 @@ private retry/rejection/selected acceptance, 10,000 bounded-live
 redefinitions, and exact all-roots-live object and byte growth. The migration
 adds no successful-history owner, compatibility root, compaction pass, or
 runtime graph scan.
+
+### Assignment observation glue values
+
+e-TeX 2.6 [19.277--279] observes an eqtb glue pre-image before `eq_destroy`
+can release it, performs the assignment, and then observes the post-image.
+Umber's combined commit-and-trace boundary therefore snapshots the fixed-size
+semantic old and new `GlueSpec` values across skip, muskip, and glue-parameter
+writes. The renderer reads those operation-local values directly instead of
+resolving bare coordinates after a global write has released the displaced
+Env owner.
+
+Local undo ownership remains independent: an ordinary local write may also
+keep the pre-image reachable through its save-stack record, while a global
+write creates no such owner. The copied semantic operands disappear when the
+commit call returns and add no history authority, lookup owner, compaction, or
+graph scan.
 
 ## Object and slot representation
 

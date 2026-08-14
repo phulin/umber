@@ -153,32 +153,30 @@ impl<'a> AssignmentCommitter<'a> {
         redundant: bool,
         reassigning: bool,
     ) -> MutationReceipt {
+        // e-TeX 2.6 [19.277--279] observes the old eqtb glue pointer before
+        // `eq_destroy` can release it. Snapshot its fixed-size semantic value
+        // before Umber's combined write-and-trace boundary releases the root.
         let old = if mu {
             self.stores.muskip(index)
         } else {
             self.stores.skip(index)
         };
+        let old_spec = self.stores.glue(old);
         let redundant = !global && (redundant || self.redundant_zero_glue(old, &value));
-        let new = if redundant {
-            old
-        } else {
+        if !redundant {
             let new = self.stores.intern_glue(value);
-            let id = new.id();
             match (mu, global) {
-                (true, true) => self.stores.set_muskip_global(index, id),
-                (true, false) => self.stores.set_muskip(index, id),
-                (false, true) => self.stores.set_skip_global(index, id),
-                (false, false) => self.stores.set_skip(index, id),
-            }
-            id
-        };
-        let changed = !(reassigning
-            || (self.stores.glue(old) == GlueSpec::ZERO
-                && self.stores.glue(new) == GlueSpec::ZERO));
+                (true, true) => self.stores.set_muskip_global(index, &new),
+                (true, false) => self.stores.set_muskip(index, &new),
+                (false, true) => self.stores.set_skip_global(index, &new),
+                (false, false) => self.stores.set_skip(index, &new),
+            };
+        }
+        let changed = !(reassigning || (old_spec == GlueSpec::ZERO && value == GlueSpec::ZERO));
         if mu {
-            tracing::trace_muglue_register(self.stores, index, global, old, new, changed);
+            tracing::trace_muglue_register(self.stores, index, global, old_spec, value, changed);
         } else {
-            tracing::trace_glue_register(self.stores, index, global, old, new, changed);
+            tracing::trace_glue_register(self.stores, index, global, old_spec, value, changed);
         }
         if redundant && index <= 255 {
             MutationReceipt::SILENT
@@ -326,21 +324,20 @@ impl<'a> AssignmentCommitter<'a> {
         global: bool,
     ) -> MutationReceipt {
         let parameter = GlueParam::new(index);
+        // Snapshot the pre-image for the same e-TeX [19.277--279] interval as
+        // glue registers above.
         let old = self.stores.glue_param(parameter);
+        let old_spec = self.stores.glue(old);
         let redundant = !global && self.redundant_zero_glue(old, &value);
-        let new = if redundant {
-            old
-        } else {
+        if !redundant {
             let new = self.stores.intern_glue(value);
-            let id = new.id();
             if global {
-                self.stores.set_glue_param_global(parameter, id);
+                self.stores.set_glue_param_global(parameter, &new);
             } else {
-                self.stores.set_glue_param(parameter, id);
+                self.stores.set_glue_param(parameter, &new);
             }
-            id
-        };
-        tracing::trace_glue_param(self.stores, index, global, old, new, !redundant);
+        }
+        tracing::trace_glue_param(self.stores, index, global, old_spec, value, !redundant);
         if redundant {
             MutationReceipt::SILENT
         } else {

@@ -24,7 +24,7 @@
 //! this module renders only the four `\tracingassigns` labels.
 
 use tex_state::env::banks::IntParam;
-use tex_state::ids::GlueId;
+use tex_state::glue::GlueSpec;
 use tex_state::meaning::{Meaning, MeaningFlags};
 use tex_state::scaled::Scaled;
 use tex_state::token::Token;
@@ -192,7 +192,7 @@ fn dimen_text(value: Scaled) -> String {
 
 /// Traces an `eq_define` glue write using the caller's TeX pointer decision.
 ///
-/// `changed` cannot be reconstructed from [`GlueId`]: Umber hash-conses
+/// `changed` cannot be reconstructed from [`GlueSpec`]: Umber hash-conses
 /// equal immutable specs, while TeX allocates a fresh node for every nonzero
 /// scanned specification. The assignment owner therefore supplies whether
 /// e-TeX [19.277] took the same-pointer `reassigning` return.
@@ -200,15 +200,15 @@ pub(crate) fn trace_glue_param(
     stores: &mut Universe,
     index: u16,
     global: bool,
-    old: GlueId,
-    new: GlueId,
+    old: GlueSpec,
+    new: GlueSpec,
     changed: bool,
 ) {
     let (raw_name, unit) = glue_param_name(index);
     let name = escaped(stores, &raw_name);
     let tracing_before = stores.int_param(IntParam::TRACING_ASSIGNS) > 0;
-    let old_text = format_glue_with_unit(stores.glue(old), unit);
-    let new_text = format_glue_with_unit(stores.glue(new), unit);
+    let old_text = format_glue_with_unit(old, unit);
+    let new_text = format_glue_with_unit(new, unit);
     trace_scalar(
         stores,
         tracing_before,
@@ -225,14 +225,14 @@ pub(crate) fn trace_glue_register(
     stores: &mut Universe,
     index: u16,
     global: bool,
-    old: GlueId,
-    new: GlueId,
+    old: GlueSpec,
+    new: GlueSpec,
     changed: bool,
 ) {
     let name = escaped(stores, &format!("skip{index}"));
     let tracing_before = stores.int_param(IntParam::TRACING_ASSIGNS) > 0;
-    let old_text = format_glue_with_unit(stores.glue(old), "pt");
-    let new_text = format_glue_with_unit(stores.glue(new), "pt");
+    let old_text = format_glue_with_unit(old, "pt");
+    let new_text = format_glue_with_unit(new, "pt");
     trace_scalar(
         stores,
         tracing_before,
@@ -249,14 +249,14 @@ pub(crate) fn trace_muglue_register(
     stores: &mut Universe,
     index: u16,
     global: bool,
-    old: GlueId,
-    new: GlueId,
+    old: GlueSpec,
+    new: GlueSpec,
     changed: bool,
 ) {
     let name = escaped(stores, &format!("muskip{index}"));
     let tracing_before = stores.int_param(IntParam::TRACING_ASSIGNS) > 0;
-    let old_text = format_glue_with_unit(stores.glue(old), "mu");
-    let new_text = format_glue_with_unit(stores.glue(new), "mu");
+    let old_text = format_glue_with_unit(old, "mu");
+    let new_text = format_glue_with_unit(new, "mu");
     trace_scalar(
         stores,
         tracing_before,

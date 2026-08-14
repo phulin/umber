@@ -1450,6 +1450,30 @@ fn tracingrestores_reports_named_glue_parameters_with_exact_specs() {
 }
 
 #[test]
+fn tracingassigns_global_glue_arithmetic_keeps_the_displaced_spec_live() {
+    // e-TeX 2.6 [19.277--279] traces the pre-image before `geq_define`
+    // destroys it and the post-image after the write. A global assignment has
+    // no save-stack root, so the combined Umber boundary must retain the old
+    // glue spec operation-locally while rendering both observations.
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = etex_initex(&mut stores);
+    register_source(
+        &mut control,
+        br"\skip0=1pt\tracingonline=1\tracingassigns=1\global\advance\skip0 by 2pt\end",
+    );
+
+    run_to_end(&mut control, &mut stores);
+
+    let expected = concat!(
+        "{into \\tracingassigns=1}\n",
+        "{globally changing \\skip0=1.0pt}\n",
+        "{into \\skip0=3.0pt}\n",
+    );
+    assert_eq!(pending_sink_text(&stores, true), expected);
+    assert_eq!(pending_sink_text(&stores, false), expected);
+}
+
+#[test]
 fn etex_identical_sparse_pointer_assignments_do_not_create_restore_entries() {
     // e-TeX 2.6 [53a] `sa_def` reports an identical pointer as
     // `reassigning`, destroys the scanned reference, and never calls
