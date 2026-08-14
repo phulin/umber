@@ -61,7 +61,9 @@ use crate::meaning::Meaning;
 use crate::node::Node;
 #[cfg(feature = "profiling")]
 use crate::node_arena::NodeMemoryColumn;
-use crate::node_arena::{NodeArena, NodeArenaMark, NodeList, NodeListBuilder};
+use crate::node_arena::{
+    NodeArena, NodeArenaMark, NodeList, NodeListBuilder, NodeListRef, NodeListWeakIndex,
+};
 use crate::provenance::{
     ExpansionFrameRef, InsertedOrigin, InsertedOriginKind, MacroInvocationOrigin,
     OriginListBuilder, OriginListRef, OriginRecord, OriginRef, ProvenanceStats, ProvenanceStore,
@@ -203,6 +205,7 @@ pub struct Stores {
     glue: GlueStore,
     fonts: FontStore,
     nodes: NodeArena,
+    node_ref_index: NodeListWeakIndex,
     survivors: SurvivorArena,
     survivor_pins: Vec<NodeListId>,
     timeline_node_pins: Vec<NodeListId>,
@@ -639,6 +642,7 @@ impl Clone for Stores {
             glue: self.glue.clone(),
             fonts: self.fonts.clone(),
             nodes: self.nodes.clone(),
+            node_ref_index: NodeListWeakIndex::new(),
             survivors: self.survivors.clone(),
             survivor_pins: self.survivor_pins.clone(),
             timeline_node_pins: self.timeline_node_pins.clone(),
@@ -1081,6 +1085,7 @@ impl Stores {
             glue: GlueStore::new(),
             fonts: FontStore::new(),
             nodes: NodeArena::new(),
+            node_ref_index: NodeListWeakIndex::new(),
             survivors: SurvivorArena::new(),
             survivor_pins: Vec::new(),
             timeline_node_pins: Vec::new(),
@@ -3425,6 +3430,20 @@ impl Stores {
                 .append_preflighted_with_semantic_id(builder.as_slice(), semantic_id, needs);
         builder.clear();
         id
+    }
+
+    /// Consumes one operation-local builder and publishes a directly owned,
+    /// immutable compact graph. No aggregate destination is changed if
+    /// validation fails.
+    pub fn freeze_node_list_ref(&mut self, builder: NodeListBuilder) -> NodeListRef {
+        let (semantic_id, needs) = self.validate_and_plan_direct_node_list(&builder);
+        let (nodes, children) = builder.into_direct_parts();
+        self.node_ref_index.intern(NodeListRef::freeze_builder(
+            nodes,
+            children,
+            semantic_id,
+            needs,
+        ))
     }
 
     pub(crate) fn promote_operation_node_list(

@@ -400,7 +400,7 @@ impl NodeStorage {
         usize::try_from(self.payload_bytes().1).expect("node storage retained bytes exceed usize")
     }
 
-    pub(super) fn payload_bytes(&self) -> (u64, u64) {
+    pub(crate) fn payload_bytes(&self) -> (u64, u64) {
         fn bytes<T>(values: &Vec<T>) -> (u64, u64) {
             (
                 (values.len() * core::mem::size_of::<T>()) as u64,

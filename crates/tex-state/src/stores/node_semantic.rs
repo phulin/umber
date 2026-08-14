@@ -56,6 +56,37 @@ impl Stores {
         (identity.finish(), needs)
     }
 
+    pub(super) fn validate_and_plan_direct_node_list(
+        &mut self,
+        builder: &crate::node_arena::NodeListBuilder,
+    ) -> (NodeSemanticId, SidecarNeeds) {
+        let nodes = builder.as_slice();
+        let mut identity = NodeSemanticIdBuilder::new();
+        let mut needs = SidecarNeeds::default();
+        let mut index = 0;
+        while index < nodes.len() {
+            if let Node::Char { font, .. } = nodes[index] {
+                let end = same_font_char_run_end(nodes, index, font);
+                self.assert_live_font(font);
+                self.push_char_run_identity(&mut identity, font, &nodes[index..end]);
+                index = end;
+            } else {
+                let node = &nodes[index];
+                needs.preflight_and_count(node);
+                self.assert_live_handles_in_direct_node(node, |id| builder.owns_direct_child(id));
+                identity.push(|hasher| {
+                    self.hash_node_semantic_identity_with(NodeRef::from(node), hasher, &|child| {
+                        builder
+                            .direct_child_semantic_id(child)
+                            .expect("direct node-list child coordinate is stale or unowned")
+                    });
+                });
+                index += 1;
+            }
+        }
+        (identity.finish(), needs)
+    }
+
     fn push_char_run_identity(
         &self,
         identity: &mut NodeSemanticIdBuilder,
@@ -83,6 +114,15 @@ impl Stores {
     }
 
     pub(super) fn hash_node_semantic_identity(&self, node: NodeRef<'_>, hasher: &mut StateHasher) {
+        self.hash_node_semantic_identity_with(node, hasher, &|child| self.node_semantic_id(child));
+    }
+
+    fn hash_node_semantic_identity_with(
+        &self,
+        node: NodeRef<'_>,
+        hasher: &mut StateHasher,
+        child_semantic_id: &impl Fn(NodeListId) -> NodeSemanticId,
+    ) {
         match node {
             NodeRef::Char { font, ch, .. } => {
                 hasher.tag(0);
@@ -128,7 +168,7 @@ impl Stores {
                 hasher.tag(3);
                 self.hash_glue_semantic(spec.id(), hasher);
                 hash_glue_kind(kind, hasher);
-                self.hash_leader_identity(leader, hasher);
+                self.hash_leader_identity(leader, hasher, child_semantic_id);
             }
             NodeRef::Penalty(value) => {
                 hasher.tag(4);
@@ -144,8 +184,12 @@ impl Stores {
                 hash_optional_scaled(height, hasher);
                 hash_optional_scaled(depth, hasher);
             }
-            NodeRef::HList(box_node) => self.hash_box_identity(6, &box_node, hasher),
-            NodeRef::VList(box_node) => self.hash_box_identity(7, &box_node, hasher),
+            NodeRef::HList(box_node) => {
+                self.hash_box_identity(6, &box_node, hasher, child_semantic_id)
+            }
+            NodeRef::VList(box_node) => {
+                self.hash_box_identity(7, &box_node, hasher, child_semantic_id)
+            }
             NodeRef::Unset(unset) => {
                 hasher.tag(8);
                 hasher.u8(match unset.kind {
@@ -160,7 +204,7 @@ impl Stores {
                 hasher.u8(unset.stretch_order as u8);
                 hasher.i32(unset.shrink.raw());
                 hasher.u8(unset.shrink_order as u8);
-                self.hash_child_identity(unset.children, hasher);
+                hash_child_identity(unset.children, hasher, child_semantic_id);
             }
             NodeRef::Disc {
                 kind,
@@ -175,9 +219,9 @@ impl Stores {
                     crate::node::DiscKind::ExplicitHyphen => 1,
                     crate::node::DiscKind::AutomaticHyphen => 2,
                 });
-                self.hash_child_identity(pre, hasher);
-                self.hash_child_identity(post, hasher);
-                self.hash_child_identity(replace, hasher);
+                hash_child_identity(pre, hasher, child_semantic_id);
+                hash_child_identity(post, hasher, child_semantic_id);
+                hash_child_identity(replace, hasher, child_semantic_id);
             }
             NodeRef::Mark { class, tokens } => {
                 hasher.tag(10);
@@ -198,7 +242,7 @@ impl Stores {
                 self.hash_glue_semantic(split_top_skip.id(), hasher);
                 hasher.i32(split_max_depth.raw());
                 hasher.i32(floating_penalty);
-                self.hash_child_identity(content, hasher);
+                hash_child_identity(content, hasher, child_semantic_id);
             }
             NodeRef::Whatsit(whatsit) => self.hash_whatsit_identity(whatsit, hasher),
             NodeRef::MathOn(width) => {
@@ -212,19 +256,19 @@ impl Stores {
             NodeRef::Adjust(adjust) => {
                 hasher.tag(15);
                 hasher.bool(adjust.pre);
-                self.hash_child_identity(adjust.content, hasher);
+                hash_child_identity(adjust.content, hasher, child_semantic_id);
             }
             NodeRef::MathNoad(noad) => {
                 hasher.tag(16);
                 hash_noad_kind(&noad.kind, hasher);
-                self.hash_math_field_identity(&noad.nucleus, hasher);
-                self.hash_math_field_identity(&noad.subscript, hasher);
-                self.hash_math_field_identity(&noad.superscript, hasher);
+                self.hash_math_field_identity(&noad.nucleus, hasher, child_semantic_id);
+                self.hash_math_field_identity(&noad.subscript, hasher, child_semantic_id);
+                self.hash_math_field_identity(&noad.superscript, hasher, child_semantic_id);
             }
             NodeRef::FractionNoad(fraction) => {
                 hasher.tag(17);
-                self.hash_child_identity(fraction.numerator, hasher);
-                self.hash_child_identity(fraction.denominator, hasher);
+                hash_child_identity(fraction.numerator, hasher, child_semantic_id);
+                hash_child_identity(fraction.denominator, hasher, child_semantic_id);
                 hash_fraction_thickness(fraction.thickness, hasher);
                 hash_optional_delimiter(fraction.left_delimiter, hasher);
                 hash_optional_delimiter(fraction.right_delimiter, hasher);
@@ -240,15 +284,15 @@ impl Stores {
             }
             NodeRef::MathChoice(choice) => {
                 hasher.tag(19);
-                self.hash_child_identity(choice.display, hasher);
-                self.hash_child_identity(choice.text, hasher);
-                self.hash_child_identity(choice.script, hasher);
-                self.hash_child_identity(choice.script_script, hasher);
+                hash_child_identity(choice.display, hasher, child_semantic_id);
+                hash_child_identity(choice.text, hasher, child_semantic_id);
+                hash_child_identity(choice.script, hasher, child_semantic_id);
+                hash_child_identity(choice.script_script, hasher, child_semantic_id);
             }
             NodeRef::MathList(list) => {
                 hasher.tag(20);
                 hasher.bool(list.display);
-                self.hash_child_identity(list.content, hasher);
+                hash_child_identity(list.content, hasher, child_semantic_id);
             }
             NodeRef::Nonscript => hasher.tag(21),
             NodeRef::Direction(direction) => {
@@ -258,17 +302,17 @@ impl Stores {
         }
     }
 
-    fn hash_child_identity(&self, child: NodeListId, hasher: &mut StateHasher) {
-        self.hash_node_list_identity(child, hasher);
-    }
-
     pub(super) fn hash_node_list_identity(&self, id: NodeListId, hasher: &mut StateHasher) {
-        let semantic_id = self.node_semantic_id(id);
-        hasher.tag(0x70);
-        semantic_id.apply(hasher);
+        hash_child_identity(id, hasher, &|child| self.node_semantic_id(child));
     }
 
-    fn hash_box_identity(&self, tag: u8, box_node: &BoxNode, hasher: &mut StateHasher) {
+    fn hash_box_identity(
+        &self,
+        tag: u8,
+        box_node: &BoxNode,
+        hasher: &mut StateHasher,
+        child_semantic_id: &impl Fn(NodeListId) -> NodeSemanticId,
+    ) {
         hasher.tag(tag);
         hasher.i32(box_node.width.raw());
         hasher.i32(box_node.height.raw());
@@ -279,14 +323,23 @@ impl Stores {
         hasher.i32(box_node.glue_set.denominator());
         hash_sign(box_node.glue_sign, hasher);
         hasher.u8(box_node.glue_order as u8);
-        self.hash_child_identity(box_node.children, hasher);
+        hash_child_identity(box_node.children, hasher, child_semantic_id);
     }
 
-    fn hash_leader_identity(&self, payload: Option<&LeaderPayload>, hasher: &mut StateHasher) {
+    fn hash_leader_identity(
+        &self,
+        payload: Option<&LeaderPayload>,
+        hasher: &mut StateHasher,
+        child_semantic_id: &impl Fn(NodeListId) -> NodeSemanticId,
+    ) {
         match payload {
             None => hasher.tag(0),
-            Some(LeaderPayload::HList(box_node)) => self.hash_box_identity(1, box_node, hasher),
-            Some(LeaderPayload::VList(box_node)) => self.hash_box_identity(2, box_node, hasher),
+            Some(LeaderPayload::HList(box_node)) => {
+                self.hash_box_identity(1, box_node, hasher, child_semantic_id)
+            }
+            Some(LeaderPayload::VList(box_node)) => {
+                self.hash_box_identity(2, box_node, hasher, child_semantic_id)
+            }
             Some(LeaderPayload::Rule {
                 width,
                 height,
@@ -300,7 +353,12 @@ impl Stores {
         }
     }
 
-    fn hash_math_field_identity(&self, field: &MathField, hasher: &mut StateHasher) {
+    fn hash_math_field_identity(
+        &self,
+        field: &MathField,
+        hasher: &mut StateHasher,
+        child_semantic_id: &impl Fn(NodeListId) -> NodeSemanticId,
+    ) {
         match field {
             MathField::Empty => hasher.tag(0),
             MathField::MathChar(ch) => {
@@ -313,11 +371,11 @@ impl Stores {
             }
             MathField::SubBox(list) => {
                 hasher.tag(3);
-                self.hash_child_identity(*list, hasher);
+                hash_child_identity(*list, hasher, child_semantic_id);
             }
             MathField::SubMlist(list) => {
                 hasher.tag(4);
-                self.hash_child_identity(*list, hasher);
+                hash_child_identity(*list, hasher, child_semantic_id);
             }
         }
     }
@@ -511,6 +569,15 @@ impl Stores {
             Whatsit::PdfEndThread => hasher.tag(25),
         }
     }
+}
+
+fn hash_child_identity(
+    child: NodeListId,
+    hasher: &mut StateHasher,
+    child_semantic_id: &impl Fn(NodeListId) -> NodeSemanticId,
+) {
+    hasher.tag(0x70);
+    child_semantic_id(child).apply(hasher);
 }
 
 fn same_font_char_run_end(nodes: &[Node], start: usize, font: FontId) -> usize {

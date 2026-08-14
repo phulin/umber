@@ -387,6 +387,17 @@ impl Stores {
         NodeRef::from(node).visit_schema(&mut LiveHandleValidator(self));
     }
 
+    pub(crate) fn assert_live_handles_in_direct_node(
+        &self,
+        node: &Node,
+        owns_child: impl Fn(NodeListId) -> bool,
+    ) {
+        NodeRef::from(node).visit_schema(&mut DirectHandleValidator {
+            stores: self,
+            owns_child: &owns_child,
+        });
+    }
+
     fn assert_live_child_node_list(&self, id: NodeListId) {
         match id.arena() {
             ArenaRef::Epoch => {
@@ -563,6 +574,40 @@ impl NodeSchemaVisitor for LiveHandleValidator<'_> {
             NodeHandle::Glue(id) => self.0.assert_live_glue(id),
             NodeHandle::TokenList(id) => self.0.assert_live_token_list(id),
             NodeHandle::NodeList(id) => self.0.assert_live_child_node_list(id),
+            NodeHandle::Origin(_) | NodeHandle::Origins(_) | NodeHandle::OriginRefs(_) => {
+                unreachable!("semantic node handles cannot contain origins")
+            }
+        }
+    }
+}
+
+struct DirectHandleValidator<'a, F> {
+    stores: &'a Stores,
+    owns_child: &'a F,
+}
+
+impl<F> NodeSchemaVisitor for DirectHandleValidator<'_, F>
+where
+    F: Fn(NodeListId) -> bool,
+{
+    fn descriptor(&mut self, _descriptor: &'static NodeDescriptor) {}
+
+    fn handle(&mut self, event: NodeHandleEvent<'_>) {
+        if let NodeHandle::NodeList(id) = event.handle {
+            assert!(
+                (self.owns_child)(id),
+                "direct node-list child coordinate is stale or unowned"
+            );
+            return;
+        }
+        if event.policy == NodeHandlePolicy::Diagnostic {
+            return;
+        }
+        match event.handle {
+            NodeHandle::Font(id) => self.stores.assert_live_font(id),
+            NodeHandle::Glue(id) => self.stores.assert_live_glue(id),
+            NodeHandle::TokenList(id) => self.stores.assert_live_token_list(id),
+            NodeHandle::NodeList(_) => unreachable!(),
             NodeHandle::Origin(_) | NodeHandle::Origins(_) | NodeHandle::OriginRefs(_) => {
                 unreachable!("semantic node handles cannot contain origins")
             }

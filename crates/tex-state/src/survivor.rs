@@ -4,18 +4,17 @@
 //! and rewrites child spans to be relative to the survivor root.
 
 use crate::ids::{ArenaRef, NodeListId, SurvivorRootId};
-use crate::node_arena::{ChildPatch, NodeArena, NodeList, NodeSemanticId, NodeStorage};
+use crate::node_arena::{
+    ChildPatch, NodeArena, NodeList, NodeListPayload, NodeListRef, NodeSemanticId, NodeStorage,
+    OwnedSemanticSpan, allocate_node_payload_root,
+};
 use ahash::AHashMap;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU32, Ordering as AtomicOrdering};
 
 #[cfg(feature = "profiling")]
 use std::sync::atomic::{AtomicU64, Ordering};
 #[cfg(feature = "profiling")]
 use std::time::Instant;
-
-const SURVIVOR_ROOT_MAX: u32 = (1 << 20) - 2;
-static NEXT_SURVIVOR_ROOT: AtomicU32 = AtomicU32::new(0);
 
 /// Process-local survivor-operation measurements. Times include the complete
 /// promotion, recycling release, or shared-payload drop operation; scratch
@@ -128,7 +127,7 @@ pub struct SurvivorArena {
 
 #[derive(Clone, Debug)]
 struct SurvivorRoot {
-    payload: Arc<SurvivorPayload>,
+    payload: Arc<NodeListPayload>,
     refcount: u32,
 }
 
@@ -139,20 +138,19 @@ struct SurvivorRoot {
 /// forks without adding a historical root registry.
 #[derive(Clone, Debug)]
 pub struct SurvivorOwner {
-    id: NodeListId,
-    payload: Arc<SurvivorPayload>,
+    owner: NodeListRef,
 }
 
 impl SurvivorOwner {
     #[must_use]
-    pub const fn id(&self) -> NodeListId {
-        self.id
+    pub fn id(&self) -> NodeListId {
+        self.owner.id()
     }
 }
 
 impl PartialEq for SurvivorOwner {
     fn eq(&self, other: &Self) -> bool {
-        self.id == other.id && Arc::ptr_eq(&self.payload, &other.payload)
+        self.id() == other.id() && self.owner.shares_payload(&other.owner)
     }
 }
 
@@ -181,26 +179,11 @@ impl PartialEq for SurvivorOwners {
 
 impl Eq for SurvivorOwners {}
 
-#[derive(Debug)]
-struct SurvivorPayload {
-    storage: NodeStorage,
-    semantic_spans: Vec<SurvivorSemanticSpan>,
-}
-
-#[derive(Clone, Copy, Debug)]
-struct SurvivorSemanticSpan {
-    start: u32,
-    len: u32,
-    semantic_id: NodeSemanticId,
-}
-
 impl SurvivorArena {
     /// Reserves a process-unique root for a fully validated frozen format
     /// graph. The caller must publish it before exposing any derived handles.
     pub(crate) fn reserve_frozen_root(&self) -> SurvivorRootId {
-        allocate_survivor_root()
-            .map(SurvivorRootId::new)
-            .expect("survivor root identity space exhausted")
+        allocate_node_payload_root().expect("survivor root identity space exhausted")
     }
 
     /// Publishes a portable frozen graph as one immutable survivor root.
@@ -213,7 +196,7 @@ impl SurvivorArena {
         let spans = spans
             .into_iter()
             .filter(|(_, len, _)| *len != 0)
-            .map(|(start, len, semantic_id)| SurvivorSemanticSpan {
+            .map(|(start, len, semantic_id)| OwnedSemanticSpan {
                 start,
                 len,
                 semantic_id,
@@ -233,9 +216,9 @@ impl SurvivorArena {
                     .retained_payload_bytes()
                     .saturating_add(
                         root.payload
-                            .semantic_spans
-                            .capacity()
-                            .saturating_mul(core::mem::size_of::<SurvivorSemanticSpan>()),
+                            .spans()
+                            .len()
+                            .saturating_mul(core::mem::size_of::<OwnedSemanticSpan>()),
                     )
             })
             .sum::<usize>();
@@ -286,8 +269,7 @@ impl SurvivorArena {
         (
             promoted,
             SurvivorOwner {
-                id: promoted,
-                payload,
+                owner: NodeListRef::from_shared(promoted, payload),
             },
         )
     }
@@ -297,16 +279,14 @@ impl SurvivorArena {
         id: NodeListId,
         epoch: &NodeArena,
         refcount: u32,
-    ) -> (NodeListId, Arc<SurvivorPayload>) {
+    ) -> (NodeListId, Arc<NodeListPayload>) {
         #[cfg(feature = "profiling")]
         let started = measurement::start_timer();
         assert!(
             matches!(id.arena(), ArenaRef::Epoch),
             "only epoch node lists are promoted"
         );
-        let root = allocate_survivor_root()
-            .map(SurvivorRootId::new)
-            .expect("survivor root identity space exhausted");
+        let root = allocate_node_payload_root().expect("survivor root identity space exhausted");
         let (storage, recycled) = self.take_recycled_buffer();
         #[cfg(not(feature = "profiling"))]
         let _ = recycled;
@@ -340,16 +320,16 @@ impl SurvivorArena {
 
     /// Acquires structural ownership for an already-live survivor span.
     pub(crate) fn owner(&self, id: NodeListId) -> SurvivorOwner {
+        let payload = Arc::clone(
+            &self
+                .root(match id.arena() {
+                    ArenaRef::Survivor(root) => root,
+                    ArenaRef::Epoch => panic!("structural node owner requires a survivor list"),
+                })
+                .payload,
+        );
         SurvivorOwner {
-            id,
-            payload: Arc::clone(
-                &self
-                    .root(match id.arena() {
-                        ArenaRef::Survivor(root) => root,
-                        ArenaRef::Epoch => panic!("structural node owner requires a survivor list"),
-                    })
-                    .payload,
-            ),
+            owner: NodeListRef::from_shared(id, payload),
         }
     }
 
@@ -406,10 +386,10 @@ impl SurvivorArena {
         let root = self.root(root);
         let index = root
             .payload
-            .semantic_spans
+            .spans()
             .binary_search_by_key(&id.start(), |span| span.start)
             .expect("survivor node-list semantic id is not live");
-        let span = root.payload.semantic_spans[index];
+        let span = root.payload.spans()[index];
         assert_eq!(span.len, id.len(), "survivor semantic span length mismatch");
         span.semantic_id
     }
@@ -425,10 +405,10 @@ impl SurvivorArena {
         let payload = Arc::get_mut(&mut root.payload)
             .expect("a frozen root cannot be shared before identity validation");
         let index = payload
-            .semantic_spans
+            .spans()
             .binary_search_by_key(&id.start(), |span| span.start)
             .expect("frozen node-list semantic id is not live");
-        let span = &mut payload.semantic_spans[index];
+        let span = &mut payload.spans_mut()[index];
         assert_eq!(span.len, id.len(), "frozen semantic span length mismatch");
         span.semantic_id = semantic_id;
     }
@@ -591,16 +571,11 @@ impl SurvivorArena {
             .slots
             .iter()
             .flatten()
-            .map(|root| {
-                (
-                    root.payload.semantic_spans.len(),
-                    root.payload.semantic_spans.capacity(),
-                )
-            })
+            .map(|root| (root.payload.spans().len(), root.payload.spans().len()))
             .fold((0, 0), |(len, capacity), current| {
                 (len + current.0, capacity + current.1)
             });
-        let element_bytes = core::mem::size_of::<SurvivorSemanticSpan>();
+        let element_bytes = core::mem::size_of::<OwnedSemanticSpan>();
         columns.push(crate::node_arena::NodeMemoryColumn {
             name: "survivor.live.semantic_spans".to_owned(),
             len,
@@ -616,13 +591,10 @@ impl SurvivorArena {
         &mut self,
         root: SurvivorRootId,
         storage: NodeStorage,
-        semantic_spans: Vec<SurvivorSemanticSpan>,
+        semantic_spans: Vec<OwnedSemanticSpan>,
         refcount: u32,
-    ) -> Arc<SurvivorPayload> {
-        let payload = Arc::new(SurvivorPayload {
-            storage,
-            semantic_spans,
-        });
+    ) -> Arc<NodeListPayload> {
+        let payload = Arc::new(NodeListPayload::new(root, storage, semantic_spans));
         let slot = SurvivorRoot {
             payload: Arc::clone(&payload),
             refcount,
@@ -675,24 +647,10 @@ impl SurvivorArena {
     fn debug_assert_no_epoch_ids(&self, _id: NodeListId) {}
 }
 
-fn allocate_survivor_root() -> Option<u32> {
-    NEXT_SURVIVOR_ROOT
-        .fetch_update(
-            AtomicOrdering::Relaxed,
-            AtomicOrdering::Relaxed,
-            survivor_root_successor,
-        )
-        .ok()
-}
-
-fn survivor_root_successor(next: u32) -> Option<u32> {
-    (next <= SURVIVOR_ROOT_MAX).then_some(next + 1)
-}
-
 struct PromotionResult {
     storage: NodeStorage,
     promoted: NodeListId,
-    semantic_spans: Vec<SurvivorSemanticSpan>,
+    semantic_spans: Vec<OwnedSemanticSpan>,
     remapped: AHashMap<NodeListId, NodeListId>,
     pending: Vec<ChildPatch>,
     #[cfg(feature = "profiling")]
@@ -747,7 +705,7 @@ struct PromotionCopy<'a> {
     root: SurvivorRootId,
     remapped: AHashMap<NodeListId, NodeListId>,
     pending: Vec<ChildPatch>,
-    semantic_spans: Vec<SurvivorSemanticSpan>,
+    semantic_spans: Vec<OwnedSemanticSpan>,
     #[cfg(feature = "profiling")]
     peak_scratch_logical: usize,
     #[cfg(feature = "profiling")]
@@ -817,7 +775,7 @@ impl<'a> PromotionCopy<'a> {
         let remapped = NodeListId::new_survivor(self.root, start, len);
         self.remapped.insert(id, remapped);
         if len != 0 {
-            self.semantic_spans.push(SurvivorSemanticSpan {
+            self.semantic_spans.push(OwnedSemanticSpan {
                 start,
                 len,
                 semantic_id,
@@ -858,25 +816,12 @@ fn u32_len(value: usize, message: &str) -> u32 {
 
 #[cfg(test)]
 mod tests {
-    use super::{SURVIVOR_ROOT_MAX, SurvivorArena, survivor_root_successor};
+    use super::SurvivorArena;
     use crate::font::NULL_FONT;
     use crate::glue::Order;
     use crate::node::{BoxLr, BoxNode, BoxNodeFields, MarginKernSide, Node, Sign};
     use crate::node_arena::{NodeArena, NodeRef, NodeStorage};
     use crate::scaled::{GlueSetRatio, Scaled};
-
-    #[test]
-    fn survivor_root_namespace_includes_its_last_packed_key() {
-        assert_eq!(
-            survivor_root_successor(SURVIVOR_ROOT_MAX - 1),
-            Some(SURVIVOR_ROOT_MAX)
-        );
-        assert_eq!(
-            survivor_root_successor(SURVIVOR_ROOT_MAX),
-            Some(SURVIVOR_ROOT_MAX + 1)
-        );
-        assert_eq!(survivor_root_successor(SURVIVOR_ROOT_MAX + 1), None);
-    }
 
     #[test]
     fn recycled_buffer_selection_prefers_largest_capacity() {

@@ -53,6 +53,17 @@ impl NodeSemanticId {
             ),
         }
     }
+
+    #[cfg(test)]
+    pub(super) fn testing_collision(fingerprint: u64, exact: u64) -> Self {
+        Self {
+            fingerprint,
+            identity: crate::state_hash::semantic_identity_bytes(
+                b"umber-testing-node-collision",
+                &exact.to_le_bytes(),
+            ),
+        }
+    }
 }
 
 /// Current node semantic-identity scheme. Changing node tags, dependency

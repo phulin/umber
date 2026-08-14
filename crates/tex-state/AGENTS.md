@@ -83,6 +83,8 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/node_arena/measurement.rs`: `profiling-stats` compact-column and peak-storage accounting.
 - `src/node_arena/measurement/tests.rs`: Coherence, divergent-maximum, nested-payload, and concurrent peak-measurement tests.
 - `src/node_arena/mutation.rs`: Private shape-preserving compact-row replacement operations.
+- `src/node_arena/owned.rs`: Direct `NodeListRef` ownership, consuming builder freeze, private borrow-scoped span resolution, exact weak candidate reuse, canonical empty ownership, and retained-byte accounting.
+- `src/node_arena/owned/tests.rs`: Collision, canonical-empty, transactional freeze, child resolution, clone/final-drop, weak-metadata plateau, all-live, and allocation-independent semantic controls for direct node-list ownership.
 - `src/node_arena/schema.rs`: Exhaustive allocation-free logical node descriptors, typed handle policies, origins, and ordered child traversal.
 - `src/node_arena/semantic.rs`: Versioned, allocation-independent semantic identity for immutable node-list aggregates.
 - `src/node_arena/storage.rs`: Canonical node words, aligned strong provenance/token/glue sidecar coordination, encoding, aggregate watermarks, rollback, and survivor-transfer support.
@@ -146,7 +148,7 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/stores/format/font_validation.rs`: Pre-publication validation of detached font metrics, identifiers, and serialized Env font banks, plus test-only corruption fixtures.
 - `src/stores/state_hash.rs`: Store snapshot cursor and semantic hashing implementation for changed cells and store-owned slices.
 - `src/stores/tests.rs`: Unit tests for aggregate store rollback, builders, handle validation, parameters, boxes, and state hashes.
-- `src/survivor.rs`: Survivor arena for node lists that escape epoch rollback boundaries, including shared immutable payload ownership, root-safe buffer recycling, and profiling-only promotion measurements.
+- `src/survivor.rs`: Legacy aggregate bridge for node lists that escape epoch rollback boundaries, now sharing the immutable `NodeListRef` payload while retaining the pre-migration root/refcount and recycling machinery required by raw Env/page/mode/control owners.
 - `src/tests.rs`: Crate-level integration-style unit tests for `Universe`, snapshots, world effects, and module test wiring.
 - `src/tests/handle_matrix.rs`: Table-driven aggregate rollback, fork, and cross-Universe liveness coverage for every production opaque handle class.
 - `src/tests/live_boundary.rs`: Unit tests proving live-state capability boundaries and restricted context APIs.

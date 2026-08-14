@@ -34,7 +34,7 @@ use crate::macro_store::{MacroDefinitionProvenance, MacroDefinitionRef, MacroMea
 use crate::math::MathFontSize;
 use crate::meaning::Meaning;
 use crate::node::{GlueKind, KernKind, MarginKernSide, Node, Whatsit};
-use crate::node_arena::{NodeArenaMark, NodeList, NodeListBuilder};
+use crate::node_arena::{NodeArenaMark, NodeList, NodeListBuilder, NodeListRef};
 use crate::page::{
     PageBreak, PageBuilderState, PageContents, PageDimension, PageFireUp, PageHashCache,
     PageInsertion, PageInteger, PageMark, PageMemoState, PageStateHashCursor,
@@ -6751,6 +6751,12 @@ impl Universe {
 
     pub fn finish_node_list(&mut self, builder: &mut NodeListBuilder) -> NodeListId {
         self.stores.finish_node_list(builder)
+    }
+
+    /// Consumes an operation-local builder and returns direct immutable graph
+    /// ownership without publishing it into an aggregate state destination.
+    pub fn freeze_node_list_ref(&mut self, builder: NodeListBuilder) -> NodeListRef {
+        self.stores.freeze_node_list_ref(builder)
     }
 
     /// Captures a handle-free, provenance-free node graph for memo retention.
