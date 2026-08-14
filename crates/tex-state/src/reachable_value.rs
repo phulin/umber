@@ -12,6 +12,7 @@ use crate::identity::{HandleIdentity, ReusableIdentityAllocator};
 
 const DEFAULT_INDEX_KEY_BUDGET: usize = 1_024;
 const INDEX_BUCKET_ENTRY_BUDGET: usize = 64;
+const RECLAIM_WORK_PER_OPERATION: usize = 8;
 
 /// One owning reference to an immutable exact-content value.
 pub(crate) struct ReachableValueRef<T> {
@@ -89,6 +90,7 @@ struct WeakSlot<T> {
 pub(crate) struct ReachableValuePool<K, T> {
     identities: ReusableIdentityAllocator,
     slots: Vec<Option<WeakSlot<T>>>,
+    sweep_cursor: usize,
     index: HashMap<K, Vec<u32>>,
     index_key_budget: usize,
 }
@@ -110,6 +112,7 @@ where
                     })
                 })
                 .collect(),
+            sweep_cursor: self.sweep_cursor,
             index: self.index.clone(),
             index_key_budget: self.index_key_budget,
         }
@@ -155,6 +158,7 @@ where
             Self {
                 identities,
                 slots,
+                sweep_cursor: 0,
                 index: HashMap::new(),
                 index_key_budget: DEFAULT_INDEX_KEY_BUDGET,
             },
@@ -166,6 +170,7 @@ where
         Self {
             identities: ReusableIdentityAllocator::new(0),
             slots: Vec::new(),
+            sweep_cursor: 0,
             index: HashMap::new(),
             index_key_budget,
         }
@@ -201,25 +206,33 @@ where
         key: &K,
         exact_eq: impl Fn(&T) -> bool,
     ) -> Option<ReachableValueRef<T>> {
-        self.reclaim_dead_slots();
-        if let Some(candidates) = self.index.get(key) {
-            for &raw in candidates {
+        self.reclaim_some_dead_slots(RECLAIM_WORK_PER_OPERATION);
+        let mut exact = None;
+        let mut remove_empty_candidates = false;
+        if let Some(candidates) = self.index.get_mut(key) {
+            candidates.retain(|&raw| {
                 let Some(slot) = self.slots.get(raw as usize).and_then(Option::as_ref) else {
-                    continue;
+                    return false;
                 };
                 let Some(candidate) = slot.value.upgrade() else {
-                    continue;
+                    return false;
                 };
-                if exact_eq(&candidate.value) {
-                    return Some(ReachableValueRef { object: candidate });
+                if exact.is_none() && exact_eq(&candidate.value) {
+                    exact = Some(ReachableValueRef { object: candidate });
                 }
-            }
+                true
+            });
+            remove_empty_candidates = candidates.is_empty();
         }
-        None
+        if remove_empty_candidates {
+            self.index.remove(key);
+        }
+        exact
     }
 
     /// Installs a value after the caller has performed exact candidate lookup.
     pub(crate) fn insert_new(&mut self, key: K, value: T) -> ReachableValueRef<T> {
+        self.reclaim_some_dead_slots(RECLAIM_WORK_PER_OPERATION);
         let identity = self
             .identities
             .allocate()
@@ -281,11 +294,20 @@ where
         self.slots.len()
     }
 
-    fn reclaim_dead_slots(&mut self) {
-        // Release high slots first so the allocator's stack returns the
-        // lowest reusable coordinate. This is nonsemantic, but it keeps the
-        // temporary dense compatibility prefix gap-free during migration.
-        for slot in self.slots.iter_mut().rev() {
+    /// Advances a bounded weak-metadata sweep. The strong owner has already
+    /// destroyed a dead value, so interning need not rescan every live slot
+    /// before doing useful work. Reclaimed identities remain generation-safe
+    /// through `ReusableIdentityAllocator`.
+    fn reclaim_some_dead_slots(&mut self, work: usize) -> usize {
+        let mut visited = 0;
+        while visited < work && !self.slots.is_empty() {
+            if self.sweep_cursor >= self.slots.len() {
+                self.sweep_cursor = 0;
+            }
+            let index = self.sweep_cursor;
+            self.sweep_cursor += 1;
+            visited += 1;
+            let slot = &mut self.slots[index];
             let Some(occupied) = slot else {
                 continue;
             };
@@ -297,6 +319,7 @@ where
                 .expect("weak value slot and identity table diverged");
             *slot = None;
         }
+        visited
     }
 
     #[cfg(test)]

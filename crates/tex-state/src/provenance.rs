@@ -11,7 +11,7 @@ use crate::input::{SourceId, TokenListReplayKind};
 use crate::source_map::{SourceMapStats, SourceRegistrationRef, SourceSpan};
 use crate::token::{OriginId, Token};
 use crate::world::InputRecordId;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::hash::{Hash, Hasher};
 use std::mem;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -1224,6 +1224,7 @@ struct RootedOriginSlot {
 struct RootedOriginListSlot {
     identity: HandleIdentity,
     owns_identity: bool,
+    entry_len: usize,
     value: Weak<OriginListValue>,
 }
 
@@ -1299,6 +1300,7 @@ const DEFAULT_ORIGIN_LIST_SPAN_LIMIT: usize = 262_144;
 const DEFAULT_ORIGIN_LIST_ENTRY_LIMIT: usize = 2_097_152;
 const RECORD_CANDIDATE_KEY_BUDGET: usize = 4_096;
 const LIST_CANDIDATE_KEY_BUDGET: usize = 1_024;
+const ROOTED_RECLAIM_WORK_PER_ALLOCATION: usize = 8;
 
 /// Append-only origin-record and origin-list arenas.
 #[derive(Debug)]
@@ -1319,12 +1321,18 @@ pub(crate) struct ProvenanceStore {
     retry_records: Vec<ArchivedOriginRecord>,
     rooted_record_slots: Vec<Option<RootedOriginSlot>>,
     rooted_record_free: Vec<usize>,
+    rooted_record_sweep_cursor: usize,
+    rooted_record_occupied: usize,
     rooted_record_keys: HashMap<u32, usize>,
     rooted_record_candidates: HashMap<OriginRecord, Vec<Weak<OriginValue>>>,
     pending_record_roots: HashMap<OriginId, OriginRef>,
     rooted_list_identities: ReusableIdentityAllocator,
     rooted_list_slots: Vec<Option<RootedOriginListSlot>>,
+    rooted_list_sweep_cursor: usize,
+    rooted_list_occupied: usize,
+    rooted_list_entries: usize,
     rooted_attached_lists: HashMap<OriginListId, Weak<OriginListValue>>,
+    rooted_attached_list_order: VecDeque<OriginListId>,
     rooted_list_candidates: HashMap<u64, Vec<Weak<OriginListValue>>>,
     record_limit: usize,
     list_span_limit: usize,
@@ -1360,6 +1368,8 @@ impl Clone for ProvenanceStore {
                 })
                 .collect(),
             rooted_record_free: self.rooted_record_free.clone(),
+            rooted_record_sweep_cursor: self.rooted_record_sweep_cursor,
+            rooted_record_occupied: self.rooted_record_occupied,
             rooted_record_keys: self.rooted_record_keys.clone(),
             rooted_record_candidates: self.rooted_record_candidates.clone(),
             pending_record_roots: HashMap::new(),
@@ -1371,11 +1381,16 @@ impl Clone for ProvenanceStore {
                     slot.as_ref().map(|slot| RootedOriginListSlot {
                         identity: slot.identity,
                         owns_identity: slot.owns_identity,
+                        entry_len: slot.entry_len,
                         value: slot.value.clone(),
                     })
                 })
                 .collect(),
+            rooted_list_sweep_cursor: self.rooted_list_sweep_cursor,
+            rooted_list_occupied: self.rooted_list_occupied,
+            rooted_list_entries: self.rooted_list_entries,
             rooted_attached_lists: self.rooted_attached_lists.clone(),
+            rooted_attached_list_order: self.rooted_attached_list_order.clone(),
             rooted_list_candidates: self.rooted_list_candidates.clone(),
             record_limit: self.record_limit,
             list_span_limit: self.list_span_limit,
@@ -1406,12 +1421,18 @@ impl ProvenanceStore {
             retry_records: Vec::new(),
             rooted_record_slots: Vec::new(),
             rooted_record_free: Vec::new(),
+            rooted_record_sweep_cursor: 0,
+            rooted_record_occupied: 0,
             rooted_record_keys: HashMap::new(),
             rooted_record_candidates: HashMap::new(),
             pending_record_roots: HashMap::new(),
             rooted_list_identities: ReusableIdentityAllocator::new(1),
             rooted_list_slots: vec![None],
+            rooted_list_sweep_cursor: 1,
+            rooted_list_occupied: 0,
+            rooted_list_entries: 0,
             rooted_attached_lists: HashMap::new(),
+            rooted_attached_list_order: VecDeque::new(),
             rooted_list_candidates: HashMap::new(),
             record_limit: DEFAULT_ORIGIN_RECORD_LIMIT,
             list_span_limit: DEFAULT_ORIGIN_LIST_SPAN_LIMIT,
@@ -1531,17 +1552,38 @@ impl ProvenanceStore {
         children: impl IntoIterator<Item = OriginRef>,
         source_registration: Option<SourceRegistrationRef>,
     ) -> OriginRef {
-        self.reclaim_dead_rooted_records();
-        if let Some(candidates) = self.rooted_record_candidates.get(&record)
-            && let Some(value) = candidates.iter().find_map(Weak::upgrade)
-        {
+        self.reclaim_some_dead_rooted_records(ROOTED_RECLAIM_WORK_PER_ALLOCATION);
+        let mut exact = None;
+        let mut remove_empty_candidates = false;
+        if let Some(candidates) = self.rooted_record_candidates.get_mut(&record) {
+            candidates.retain(|candidate| {
+                let Some(value) = candidate.upgrade() else {
+                    return false;
+                };
+                if exact.is_none() {
+                    exact = Some(value);
+                }
+                true
+            });
+            remove_empty_candidates = candidates.is_empty();
+        }
+        if remove_empty_candidates {
+            self.rooted_record_candidates.remove(&record);
+        }
+        if let Some(value) = exact {
             return OriginRef {
                 id: value.id,
                 value: Some(value),
                 source_registration: None,
             };
         }
-        if self.live_rooted_record_count() >= self.record_limit
+        if self.rooted_record_occupied >= self.record_limit
+            || (self.rooted_record_free.is_empty()
+                && self.rooted_record_slots.len() >= self.weak_record_slot_limit)
+        {
+            self.reclaim_dead_rooted_records();
+        }
+        if self.rooted_record_occupied >= self.record_limit
             || (self.rooted_record_free.is_empty()
                 && self.rooted_record_slots.len() >= self.weak_record_slot_limit)
         {
@@ -1575,6 +1617,7 @@ impl ProvenanceStore {
             key,
             value: Arc::downgrade(&value),
         });
+        self.rooted_record_occupied += 1;
         self.rooted_record_keys.insert(key, slot);
         if self.weak_record_candidate_key_limit == 0 {
             return OriginRef {
@@ -1621,8 +1664,21 @@ impl ProvenanceStore {
         }
     }
 
-    fn reclaim_dead_rooted_records(&mut self) {
-        for (index, slot) in self.rooted_record_slots.iter_mut().enumerate() {
+    /// Advances a bounded weak-slot sweep. Dead roots do not require prompt
+    /// destruction—the final strong owner already destroyed the value—so
+    /// ordinary allocation only needs to retire enough weak metadata to keep
+    /// churn bounded. Admission falls back to a complete sweep at a hard
+    /// limit, where an exact live count is required.
+    fn reclaim_some_dead_rooted_records(&mut self, work: usize) -> usize {
+        let mut visited = 0;
+        while visited < work && !self.rooted_record_slots.is_empty() {
+            if self.rooted_record_sweep_cursor >= self.rooted_record_slots.len() {
+                self.rooted_record_sweep_cursor = 0;
+            }
+            let index = self.rooted_record_sweep_cursor;
+            self.rooted_record_sweep_cursor += 1;
+            visited += 1;
+            let slot = &mut self.rooted_record_slots[index];
             let Some(occupied) = slot else {
                 continue;
             };
@@ -1632,21 +1688,23 @@ impl ProvenanceStore {
             self.rooted_record_keys.remove(&occupied.key);
             *slot = None;
             self.rooted_record_free.push(index);
+            self.rooted_record_occupied -= 1;
         }
+        visited
+    }
+
+    fn reclaim_dead_rooted_records(&mut self) {
+        let extent = self.rooted_record_slots.len();
+        self.reclaim_some_dead_rooted_records(extent);
         self.rooted_record_candidates.retain(|_, candidates| {
             candidates.retain(|candidate| candidate.strong_count() != 0);
             !candidates.is_empty()
         });
     }
 
+    #[cfg(test)]
     fn live_rooted_record_count(&self) -> usize {
-        self.rooted_record_slots
-            .iter()
-            .filter(|slot| {
-                slot.as_ref()
-                    .is_some_and(|slot| slot.value.strong_count() != 0)
-            })
-            .count()
+        self.rooted_record_occupied
     }
 
     #[cfg(test)]
@@ -1663,38 +1721,45 @@ impl ProvenanceStore {
         if roots.is_empty() {
             return OriginListRef::empty();
         }
-        self.reclaim_dead_rooted_lists();
+        self.reclaim_some_dead_rooted_lists(ROOTED_RECLAIM_WORK_PER_ALLOCATION);
         let ids = roots.iter().map(OriginRef::id).collect::<Vec<_>>();
         let hash = origin_list_hash(&ids);
-        if let Some(candidates) = self.rooted_list_candidates.get(&hash)
-            && let Some(value) = candidates
-                .iter()
-                .filter_map(Weak::upgrade)
-                .find(|candidate| candidate.origins.as_ref() == ids)
-        {
+        let mut exact = None;
+        let mut remove_empty_candidates = false;
+        if let Some(candidates) = self.rooted_list_candidates.get_mut(&hash) {
+            candidates.retain(|candidate| {
+                let Some(value) = candidate.upgrade() else {
+                    return false;
+                };
+                if exact.is_none() && value.origins.as_ref() == ids {
+                    exact = Some(value);
+                }
+                true
+            });
+            remove_empty_candidates = candidates.is_empty();
+        }
+        if remove_empty_candidates {
+            self.rooted_list_candidates.remove(&hash);
+        }
+        if let Some(value) = exact {
             return OriginListRef {
                 id: value.id,
                 value: Some(value),
             };
         }
-        let live_entries = self
-            .rooted_list_slots
-            .iter()
-            .filter_map(|slot| slot.as_ref()?.value.upgrade())
-            .map(|value| value.origins.len())
-            .sum::<usize>();
-        let live_lists = self
-            .rooted_list_slots
-            .iter()
-            .filter(|slot| {
-                slot.as_ref()
-                    .is_some_and(|slot| slot.value.strong_count() != 0)
-            })
-            .count();
-        if live_lists >= self.list_span_limit
-            || (self.rooted_list_slots.iter().skip(1).all(Option::is_some)
-                && self.rooted_list_slots.len().saturating_sub(1) >= self.weak_list_slot_limit)
-            || live_entries
+        if self.rooted_list_occupied >= self.list_span_limit
+            || self.rooted_list_occupied >= self.weak_list_slot_limit
+            || self
+                .rooted_list_entries
+                .checked_add(ids.len())
+                .is_none_or(|entries| entries > self.list_entry_limit)
+        {
+            self.reclaim_dead_rooted_lists();
+        }
+        if self.rooted_list_occupied >= self.list_span_limit
+            || self.rooted_list_occupied >= self.weak_list_slot_limit
+            || self
+                .rooted_list_entries
                 .checked_add(ids.len())
                 .is_none_or(|entries| entries > self.list_entry_limit)
         {
@@ -1705,6 +1770,7 @@ impl ProvenanceStore {
             .allocate()
             .expect("origin-list live capacity checked");
         let id = OriginListId::from_identity(identity);
+        let entry_len = ids.len();
         let value = Arc::new(OriginListValue {
             id,
             origins: ids.into(),
@@ -1721,8 +1787,11 @@ impl ProvenanceStore {
         self.rooted_list_slots[raw] = Some(RootedOriginListSlot {
             identity,
             owns_identity: true,
+            entry_len,
             value: Arc::downgrade(&value),
         });
+        self.rooted_list_occupied += 1;
+        self.rooted_list_entries += entry_len;
         if self.weak_list_candidate_key_limit == 0 {
             return OriginListRef {
                 id,
@@ -1772,10 +1841,11 @@ impl ProvenanceStore {
         if id == OriginListId::EMPTY {
             return OriginListRef::empty();
         }
-        self.reclaim_dead_rooted_lists();
+        self.reclaim_some_dead_rooted_attached_lists(ROOTED_RECLAIM_WORK_PER_ALLOCATION);
         if let Some(existing) = self.origin_list_ref(id) {
             return existing;
         }
+        let already_tracked = self.rooted_attached_lists.contains_key(&id);
         let value = Arc::new(OriginListValue {
             id,
             origins: roots.iter().map(OriginRef::id).collect::<Vec<_>>().into(),
@@ -1783,14 +1853,28 @@ impl ProvenanceStore {
         });
         self.rooted_attached_lists
             .insert(id, Arc::downgrade(&value));
+        if !already_tracked {
+            self.rooted_attached_list_order.push_back(id);
+        }
         OriginListRef {
             id,
             value: Some(value),
         }
     }
 
-    fn reclaim_dead_rooted_lists(&mut self) {
-        for slot in self.rooted_list_slots.iter_mut().skip(1).rev() {
+    #[cfg(test)]
+    fn reclaim_some_dead_rooted_lists(&mut self, work: usize) -> usize {
+        let mut visited = 0;
+        while visited < work && self.rooted_list_slots.len() > 1 {
+            if self.rooted_list_sweep_cursor < 1
+                || self.rooted_list_sweep_cursor >= self.rooted_list_slots.len()
+            {
+                self.rooted_list_sweep_cursor = 1;
+            }
+            let index = self.rooted_list_sweep_cursor;
+            self.rooted_list_sweep_cursor += 1;
+            visited += 1;
+            let slot = &mut self.rooted_list_slots[index];
             let Some(occupied) = slot else {
                 continue;
             };
@@ -1802,14 +1886,47 @@ impl ProvenanceStore {
                     .release(occupied.identity)
                     .expect("origin-list weak slot and identity table diverged");
             }
+            self.rooted_list_entries -= occupied.entry_len;
+            self.rooted_list_occupied -= 1;
             *slot = None;
         }
+        visited
+    }
+
+    fn reclaim_some_dead_rooted_attached_lists(&mut self, work: usize) -> usize {
+        let mut visited = 0;
+        while visited < work {
+            let Some(id) = self.rooted_attached_list_order.pop_front() else {
+                break;
+            };
+            visited += 1;
+            if self
+                .rooted_attached_lists
+                .get(&id)
+                .is_some_and(|value| value.strong_count() != 0)
+            {
+                self.rooted_attached_list_order.push_back(id);
+            } else {
+                self.rooted_attached_lists.remove(&id);
+            }
+        }
+        visited
+    }
+
+    #[cfg(test)]
+    fn reclaim_dead_rooted_lists(&mut self) {
+        let slot_extent = self.rooted_list_slots.len().saturating_sub(1);
+        self.reclaim_some_dead_rooted_lists(slot_extent);
+        let attached_extent = self.rooted_attached_list_order.len();
+        self.reclaim_some_dead_rooted_attached_lists(attached_extent);
         self.rooted_list_candidates.retain(|_, candidates| {
             candidates.retain(|candidate| candidate.strong_count() != 0);
             !candidates.is_empty()
         });
-        self.rooted_attached_lists
-            .retain(|_, value| value.strong_count() != 0);
+        debug_assert_eq!(
+            self.rooted_attached_lists.len(),
+            self.rooted_attached_list_order.len()
+        );
     }
 
     #[cfg(test)]

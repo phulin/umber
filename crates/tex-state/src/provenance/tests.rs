@@ -713,6 +713,57 @@ fn rooted_provenance_plateaus_for_dead_work_and_grows_exactly_for_live_work() {
 }
 
 #[test]
+fn rooted_record_reclamation_is_bounded_and_preserves_live_negative_control() {
+    const LIVE_ROOTS: u64 = 1_024;
+    let mut store = ProvenanceStore::new();
+    let roots = (0..LIVE_ROOTS)
+        .map(|serial| {
+            store.allocate_rooted(
+                OriginRecord::MacroInvocation(MacroInvocationOrigin::from_nonowning_operand(
+                    serial,
+                    OriginId::UNKNOWN,
+                    OriginId::UNKNOWN,
+                    OriginId::UNKNOWN,
+                )),
+                [],
+            )
+        })
+        .collect::<Vec<_>>();
+    let transient = store.allocate_rooted(
+        OriginRecord::Synthetic(SyntheticOrigin::new(SyntheticOriginKind::Engine)),
+        [],
+    );
+    let transient_id = transient.id();
+    drop(transient);
+
+    let extent = store.rooted_record_slots.len();
+    let mut visited = 0;
+    while store.rooted_record_occupied > roots.len() {
+        let step = store.reclaim_some_dead_rooted_records(8);
+        assert!(step <= 8, "ordinary reclamation must have constant work");
+        visited += step;
+        assert!(visited <= extent + 8, "one sweep must find the dead slot");
+    }
+
+    assert!(store.origin_ref(transient_id).is_none());
+    assert!(
+        roots
+            .iter()
+            .all(|root| store.origin_ref(root.id()).is_some())
+    );
+    let duplicate = store.allocate_rooted(
+        OriginRecord::MacroInvocation(MacroInvocationOrigin::from_nonowning_operand(
+            LIVE_ROOTS / 2,
+            OriginId::UNKNOWN,
+            OriginId::UNKNOWN,
+            OriginId::UNKNOWN,
+        )),
+        [],
+    );
+    assert_eq!(duplicate.id(), roots[(LIVE_ROOTS / 2) as usize].id());
+}
+
+#[test]
 fn node_owners_plateau_for_10k_released_roots_and_retain_10k_live_roots() {
     const OPERATIONS: u64 = 10_000;
     let mut bounded = ProvenanceStore::new();

@@ -186,9 +186,12 @@ stable recipes, so the scratch Universe can be dropped directly. The existing
 Production uses explicit independent budgets for live structural atoms,
 origin-list entries, weak slot metadata, weak candidate buckets, and detached
 artifact recipes. Exhaustion degrades optional new provenance to unknown and
-never aborts TeX. Weak indexes are bounded and may be cleared at any time.
-Dead reusable slots are reclaimed at the next allocation; capacity must
-plateau at the live-root and configured-cache high-water size.
+never aborts TeX. Weak indexes are bounded and may be cleared at any time. Each
+ordinary allocation advances a fixed-size weak-slot cursor, and exact reuse
+cleans only the candidate bucket it queries. A hard admission limit performs a
+complete sweep before degradation so the limit remains exact. Capacity must
+plateau at the live-root and configured-cache high-water size without making
+allocation cost proportional to an unrelated live prefix.
 
 `ProvenanceStats` reports live rooted atoms, live expansion frames, live
 origin lists and entries, weak slot/index capacity, source registrations,

@@ -92,6 +92,36 @@ fn all_roots_live_negative_control_grows_exactly() {
 }
 
 #[test]
+fn live_prefix_reclamation_work_is_bounded_and_identity_safe() {
+    const LIVE_ROOTS: u64 = 2_048;
+    let mut pool = ReachableValuePool::with_index_key_budget(LIVE_ROOTS as usize + 2);
+    let roots = (0..LIVE_ROOTS)
+        .map(|value| pool.intern(value, value, u64::eq))
+        .collect::<Vec<_>>();
+    let transient = pool.intern(u64::MAX, u64::MAX, u64::eq);
+    let transient_identity = transient.identity();
+    drop(transient);
+
+    let extent = pool.slots.len();
+    let mut visited = 0;
+    while pool.identities.contains(transient_identity) {
+        let step = pool.reclaim_some_dead_slots(8);
+        assert!(step <= 8, "ordinary reclamation must have constant work");
+        visited += step;
+        assert!(visited <= extent + 8, "one sweep must find the dead slot");
+    }
+
+    assert!(pool.resolve(transient_identity).is_none());
+    assert!(
+        roots
+            .iter()
+            .all(|root| pool.resolve(root.identity()).is_some())
+    );
+    let duplicate = pool.intern(LIVE_ROOTS / 2, LIVE_ROOTS / 2, u64::eq);
+    assert!(duplicate.ptr_eq(&roots[(LIVE_ROOTS / 2) as usize]));
+}
+
+#[test]
 fn fork_shares_inherited_payload_but_not_future_slot_identity() {
     let mut parent = ReachableValuePool::new();
     let inherited = parent.intern(1_u8, String::from("inherited"), String::eq);
