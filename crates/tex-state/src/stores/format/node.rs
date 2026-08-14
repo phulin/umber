@@ -167,12 +167,14 @@ impl FormatNode {
     /// their declared word size and allocate character nodes from §125's
     /// one-word arena. A ligature's §143 `lig_ptr` keeps its source character
     /// nodes live alongside the two-word ligature node.
-    pub(super) fn tex82_memory_words(&self) -> (usize, usize) {
+    pub(super) fn memory_words(&self, profile: super::super::StringPoolProfile) -> (usize, usize) {
+        let synctex_extra =
+            usize::from(matches!(profile, super::super::StringPoolProfile::Etex26)) * 2;
         let low = match self {
             Self::Char { .. } => return (0, 1),
             Self::Lig { orig, .. } => return (2, orig.len()),
-            Self::HList(_) | Self::VList(_) | Self::Unset(_) => 7,
-            Self::Rule { .. } => 4,
+            Self::HList(_) | Self::VList(_) | Self::Unset(_) => 7 + synctex_extra,
+            Self::Rule { .. } => 4 + synctex_extra,
             Self::Ins { .. } => 5,
             Self::MathNoad(noad) => match noad.kind {
                 NoadKind::Radical { .. } | NoadKind::Accent { .. } => 5,
@@ -195,14 +197,15 @@ impl FormatNode {
             Self::Kern { .. }
             | Self::Glue { .. }
             | Self::Penalty(_)
-            | Self::Disc { .. }
-            | Self::Mark { .. }
-            | Self::Whatsit(_)
             | Self::MathOn(_)
             | Self::MathOff(_)
+            | Self::Nonscript => 2 + synctex_extra,
+            Self::Direction(_) if synctex_extra != 0 => 2 + synctex_extra,
+            Self::Disc { .. }
+            | Self::Mark { .. }
+            | Self::Whatsit(_)
             | Self::Direction(_)
             | Self::MathList(_)
-            | Self::Nonscript
             | Self::Adjust { .. } => 2,
         };
         (low, 0)

@@ -87,6 +87,7 @@ use std::sync::Arc;
 mod exact_identity;
 mod format;
 mod handles;
+mod low_memory;
 mod node_semantic;
 mod state_hash;
 
@@ -129,6 +130,12 @@ pub(crate) struct StoreSnapshot {
     last_loaded_font: FontId,
     exact_env_identity: exact_identity::ExactEnvIdentity,
     exact_projection_cache: state_hash::StoreProjectionCache,
+}
+
+#[derive(Clone, Debug)]
+struct PendingLowMemoryBreak {
+    arena: low_memory::LowMemoryArena,
+    owners: Vec<(crate::PureBreakMemoryOwner, low_memory::Allocation)>,
 }
 
 impl StoreSnapshot {
@@ -209,6 +216,9 @@ pub struct Stores {
     usage_high_water: EngineUsageStatistics,
     memory_low_extent: usize,
     memory_high_extent: usize,
+    main_memory_profile: StringPoolProfile,
+    low_memory_fragments: Vec<usize>,
+    pending_low_memory_break: Option<PendingLowMemoryBreak>,
     transient_memory_base: Option<(u32, format::MainMemoryProjection)>,
     #[cfg(test)]
     transient_memory_base_projections: usize,
@@ -642,6 +652,9 @@ impl Clone for Stores {
             usage_high_water: self.usage_high_water,
             memory_low_extent: self.memory_low_extent,
             memory_high_extent: self.memory_high_extent,
+            main_memory_profile: self.main_memory_profile,
+            low_memory_fragments: self.low_memory_fragments.clone(),
+            pending_low_memory_break: self.pending_low_memory_break.clone(),
             transient_memory_base: self.transient_memory_base.clone(),
             #[cfg(test)]
             transient_memory_base_projections: self.transient_memory_base_projections,
@@ -738,9 +751,91 @@ impl Stores {
         let Ok(projection) = projection else {
             return self.record_main_memory_usage(projection.map(|value| value.usage()));
         };
+        if let Ok(requests) = projection.low_node_requests(self, extra_nodes) {
+            self.observe_low_memory_requests(projection.usage().variable, &requests);
+        }
         let usage = projection.usage_with_extra_nodes(self, extra_nodes);
         self.transient_memory_base = Some((self.glue.watermark().specs, projection));
         self.record_main_memory_usage(usage)
+    }
+
+    pub(crate) fn observe_line_break_memory_search(&mut self, memory: &crate::PureBreakMemoryPlan) {
+        let live_words = format::main_memory_usage(self, None)
+            .map_or(TEX82_STATIC_LOW_MEMORY_WORDS, |usage| usage.variable);
+        let mut pending = PendingLowMemoryBreak {
+            arena: low_memory::LowMemoryArena::from_live_and_fragments(
+                self.memory_low_extent,
+                TEX82_LOW_MEMORY_GROWTH,
+                live_words,
+                &self.low_memory_fragments,
+            ),
+            owners: Vec::new(),
+        };
+        Self::replay_low_memory_events(&mut pending, &memory.search);
+        self.memory_low_extent = self.memory_low_extent.max(pending.arena.extent());
+        self.pending_low_memory_break = Some(pending);
+    }
+
+    pub(crate) fn observe_line_break_memory_cleanup(
+        &mut self,
+        memory: &crate::PureBreakMemoryPlan,
+    ) {
+        let Some(mut pending) = self.pending_low_memory_break.take() else {
+            return;
+        };
+        Self::replay_low_memory_events(&mut pending, &memory.cleanup);
+        self.memory_low_extent = self.memory_low_extent.max(pending.arena.extent());
+        self.low_memory_fragments = pending.arena.detached_free_sizes();
+    }
+
+    fn replay_low_memory_events(
+        pending: &mut PendingLowMemoryBreak,
+        events: &[crate::PureBreakMemoryEvent],
+    ) {
+        for &event in events {
+            match event {
+                crate::PureBreakMemoryEvent::Allocate { owner, words } => {
+                    let allocation = pending.arena.allocate(usize::from(words));
+                    pending.owners.push((owner, allocation));
+                }
+                crate::PureBreakMemoryEvent::Free(owner) => {
+                    let index = pending
+                        .owners
+                        .iter()
+                        .position(|(candidate, _)| *candidate == owner)
+                        .expect("line-break allocator owner is live");
+                    let (_, allocation) = pending.owners.remove(index);
+                    pending.arena.free(allocation);
+                }
+            }
+        }
+    }
+
+    fn observe_low_memory_requests(&mut self, live_words: usize, requests: &[usize]) {
+        if requests.is_empty() {
+            return;
+        }
+        if let Some(pending) = &mut self.pending_low_memory_break {
+            for &request in requests {
+                let _ = pending.arena.allocate(request);
+            }
+            self.memory_low_extent = self.memory_low_extent.max(pending.arena.extent());
+            return;
+        }
+        if self.low_memory_fragments.is_empty() {
+            return;
+        }
+        let mut arena = low_memory::LowMemoryArena::from_live_and_fragments(
+            self.memory_low_extent,
+            TEX82_LOW_MEMORY_GROWTH,
+            live_words,
+            &self.low_memory_fragments,
+        );
+        for &request in requests {
+            let _ = arena.allocate(request);
+        }
+        self.memory_low_extent = self.memory_low_extent.max(arena.extent());
+        self.low_memory_fragments = arena.detached_free_sizes();
     }
 
     pub(crate) fn observe_main_memory_dynamic_words(&mut self, extra_words: usize) -> usize {
@@ -999,6 +1094,9 @@ impl Stores {
             usage_high_water: EngineUsageStatistics::default(),
             memory_low_extent: TEX82_INITIAL_LOW_MEMORY_EXTENT,
             memory_high_extent: TEX82_INITIAL_HIGH_MEMORY_EXTENT,
+            main_memory_profile: StringPoolProfile::Tex82,
+            low_memory_fragments: Vec::new(),
+            pending_low_memory_break: None,
             transient_memory_base: None,
             #[cfg(test)]
             transient_memory_base_projections: 0,
@@ -1729,6 +1827,8 @@ impl Stores {
 
     pub(crate) fn select_string_pool_profile(&mut self, profile: StringPoolProfile) {
         self.string_pool.select_profile(profile);
+        self.main_memory_profile = profile;
+        self.transient_memory_base = None;
     }
 
     /// Interns a control-sequence name, reporting packed-token capacity exhaustion.

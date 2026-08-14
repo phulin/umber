@@ -159,8 +159,9 @@ pub use provenance_resolver::{
 };
 pub use pure_memo::{
     MemoLayerStats, MemoTimingPhase, OutputProvenanceRecipe, OutputProvenanceSpan,
-    PureBreakDecision, PureBreakPlan, PureMemoConfig, PureMemoKey, PureMemoLayer,
-    PureMemoRecordingPolicy, PureMemoRuntime, PureMemoStats, PurePageEntry, PureShipoutEntry,
+    PureBreakDecision, PureBreakMemoryEvent, PureBreakMemoryOwner, PureBreakMemoryPlan,
+    PureBreakPlan, PureMemoConfig, PureMemoKey, PureMemoLayer, PureMemoRecordingPolicy,
+    PureMemoRuntime, PureMemoStats, PurePageEntry, PureShipoutEntry,
 };
 pub use source_fragments::{
     EditorLayout, EditorLayoutError, FragmentId, FragmentStore, LayoutGeneration,

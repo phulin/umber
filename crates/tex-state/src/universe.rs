@@ -1595,6 +1595,16 @@ impl Universe {
             .observe_main_memory_box_copy(root, live_dynamic_words);
     }
 
+    /// Replays the pure line breaker's ordered variable-size scratch owners.
+    pub fn observe_line_break_memory_search(&mut self, memory: &crate::PureBreakMemoryPlan) {
+        self.stores.observe_line_break_memory_search(memory);
+    }
+
+    /// Releases line-break scratch after post-line-break packing has finished.
+    pub fn observe_line_break_memory_cleanup(&mut self, memory: &crate::PureBreakMemoryPlan) {
+        self.stores.observe_line_break_memory_cleanup(memory);
+    }
+
     #[cfg(test)]
     fn testing_transient_memory_base_projections(&self) -> usize {
         self.stores.testing_transient_memory_base_projections()

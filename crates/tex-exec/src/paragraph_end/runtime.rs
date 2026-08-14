@@ -88,6 +88,8 @@ pub(crate) fn break_current_paragraph(
     }
     let (mut decisions, trace, missing_hyphens) =
         break_hlist_with_trace(stores, hlist, line_params, fuel, tracing)?;
+    stores.observe_line_break_memory_search(&decisions.memory);
+    let break_memory = decisions.memory.clone();
     if tracing {
         report_line_break_trace(stores, decisions.tape.nodes(), &trace, &missing_hyphens);
     } else {
@@ -193,6 +195,7 @@ pub(crate) fn break_current_paragraph(
         }
         line_nodes = broken.nodes;
     }
+    stores.observe_line_break_memory_cleanup(&break_memory);
     stores.set_pack_begin_line(restore_pack_begin_line);
     nest.current_list_mutation().set_prev_graf(
         params

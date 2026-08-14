@@ -60,6 +60,7 @@ pub fn install_etex_unexpandable_primitives(universe: &mut Universe) {
 
 /// Registers e-TeX's enum-backed primitive meanings without shadowing a format.
 pub fn register_etex_unexpandable_primitives(universe: &mut Universe) {
+    universe.select_string_pool_profile(tex_state::StringPoolProfile::Etex26);
     configure_generated(
         universe,
         false,
@@ -125,6 +126,7 @@ pub fn install_etex_expandable_primitives(universe: &mut Universe) {
 
 /// Reconstructs e-TeX 2.6's immutable primitive lookup table after format load.
 pub fn register_etex_expandable_primitives(universe: &mut Universe) {
+    universe.select_string_pool_profile(tex_state::StringPoolProfile::Etex26);
     configure_etex_expandable_primitives(universe, false);
 }
 

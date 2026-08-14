@@ -178,11 +178,39 @@ pub struct PureBreakDecision {
     pub hyphenated: bool,
 }
 
+/// A line-break scratch owner in TeX's variable-size `mem` arena.
+///
+/// These identities are local to one [`PureBreakPlan`] and deliberately do
+/// not participate in semantic identity or format serialization.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PureBreakMemoryOwner {
+    Active(u32),
+    Passive(u32),
+}
+
+/// One ordered §§126--127 allocation event from the pure line breaker.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PureBreakMemoryEvent {
+    Allocate {
+        owner: PureBreakMemoryOwner,
+        words: u8,
+    },
+    Free(PureBreakMemoryOwner),
+}
+
+/// Allocator-only evidence split around §880's `post_line_break` call.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct PureBreakMemoryPlan {
+    pub search: Vec<PureBreakMemoryEvent>,
+    pub cleanup: Vec<PureBreakMemoryEvent>,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct PureBreakPlan {
     pub breaks: Vec<PureBreakDecision>,
     pub demerits: i32,
     pub last_line_fill: Option<GlueSpec>,
+    pub memory: PureBreakMemoryPlan,
 }
 
 /// Stable current-revision recipe for artifact provenance slots.
@@ -581,6 +609,18 @@ impl PureMemoRuntime {
             plan.breaks
                 .capacity()
                 .saturating_mul(std::mem::size_of::<PureBreakDecision>())
+                .saturating_add(
+                    plan.memory
+                        .search
+                        .capacity()
+                        .saturating_mul(std::mem::size_of::<PureBreakMemoryEvent>()),
+                )
+                .saturating_add(
+                    plan.memory
+                        .cleanup
+                        .capacity()
+                        .saturating_mul(std::mem::size_of::<PureBreakMemoryEvent>()),
+                )
         });
         self.insert_value(key, PureMemoValue::Pretolerance(plan), owned_bytes);
         self.record_timing(

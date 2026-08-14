@@ -171,7 +171,11 @@ fn hanging_applies(line_no: usize, hang_after: i32) -> bool {
     }
 }
 
-pub use tex_state::{PureBreakDecision as BreakDecision, PureBreakPlan as BreakPlan};
+pub use tex_state::{
+    PureBreakDecision as BreakDecision, PureBreakMemoryEvent as BreakMemoryEvent,
+    PureBreakMemoryOwner as BreakMemoryOwner, PureBreakMemoryPlan as BreakMemoryPlan,
+    PureBreakPlan as BreakPlan,
+};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct LineBreakResult {
@@ -179,6 +183,7 @@ pub struct LineBreakResult {
     pub demerits: i32,
     pub tape: ParagraphTape,
     pub last_line_fill: Option<GlueSpec>,
+    pub memory: BreakMemoryPlan,
 }
 
 /// One paragraph's immutable topology and line-breaking analysis.
@@ -379,6 +384,7 @@ pub fn plan_with_tape(plan: BreakPlan, tape: ParagraphTape) -> LineBreakResult {
         demerits: plan.demerits,
         tape,
         last_line_fill: plan.last_line_fill,
+        memory: plan.memory,
     }
 }
 
@@ -663,6 +669,11 @@ fn run_pass<S: TypesetState>(
     final_pass: bool,
     mut trace: Option<&mut Vec<LineBreakTrace>>,
 ) -> Option<BreakPlan> {
+    let mut memory = BreakMemoryPlan::default();
+    memory.search.push(BreakMemoryEvent::Allocate {
+        owner: BreakMemoryOwner::Active(0),
+        words: 3,
+    });
     let nodes = tape.nodes();
     let canonical_trace_admission = trace.is_some();
     let mut background = Widths::from_glue(params.left_skip);
@@ -860,6 +871,13 @@ fn run_pass<S: TypesetState>(
             if !deactivates {
                 active[survivor_count] = active_candidate;
                 survivor_count += 1;
+            } else {
+                memory
+                    .search
+                    .push(BreakMemoryEvent::Free(BreakMemoryOwner::Active(
+                        u32::try_from(active_candidate.serial)
+                            .expect("active-node serial exceeds u32"),
+                    )));
             }
         }
         let winner_count = retain_competitive_routes(
@@ -875,6 +893,18 @@ fn run_pass<S: TypesetState>(
                 next_serial += 1;
             }
             let passive_id = passive.len();
+            memory.search.push(BreakMemoryEvent::Allocate {
+                owner: BreakMemoryOwner::Passive(
+                    u32::try_from(passive_id).expect("passive-node id exceeds u32"),
+                ),
+                words: 2,
+            });
+            memory.search.push(BreakMemoryEvent::Allocate {
+                owner: BreakMemoryOwner::Active(
+                    u32::try_from(candidate.serial).expect("active-node serial exceeds u32"),
+                ),
+                words: 3,
+            });
             passive.push(PassiveRoute {
                 decision: BreakDecision {
                     position: candidate.position.min(nodes.len()),
@@ -955,7 +985,17 @@ fn run_pass<S: TypesetState>(
     if !final_pass && actual_looseness != params.looseness {
         return None;
     }
-    Some(reconstruct(active[chosen], &passive, last_line_fit))
+    memory.cleanup.extend(active.iter().map(|candidate| {
+        BreakMemoryEvent::Free(BreakMemoryOwner::Active(
+            u32::try_from(candidate.serial).expect("active-node serial exceeds u32"),
+        ))
+    }));
+    memory.cleanup.extend((0..passive.len()).rev().map(|id| {
+        BreakMemoryEvent::Free(BreakMemoryOwner::Passive(
+            u32::try_from(id).expect("passive-node id exceeds u32"),
+        ))
+    }));
+    Some(reconstruct(active[chosen], &passive, last_line_fit, memory))
 }
 
 fn trace_display_suffix(nodes: &[Node], bp: Breakpoint) -> Option<NodeListId> {
@@ -1748,6 +1788,7 @@ fn reconstruct(
     chosen: Candidate,
     passive: &[PassiveRoute],
     last_line_fit: LastLineFit,
+    memory: BreakMemoryPlan,
 ) -> BreakPlan {
     let mut breaks = Vec::new();
     let demerits = chosen.path_demerits.min(AWFUL_BAD);
@@ -1763,6 +1804,7 @@ fn reconstruct(
         breaks,
         demerits,
         last_line_fill,
+        memory,
     }
 }
 

@@ -9,6 +9,13 @@ fn plan(position: usize) -> Option<PureBreakPlan> {
         }],
         demerits: 100,
         last_line_fill: None,
+        memory: PureBreakMemoryPlan {
+            search: vec![PureBreakMemoryEvent::Allocate {
+                owner: PureBreakMemoryOwner::Active(0),
+                words: 3,
+            }],
+            cleanup: vec![PureBreakMemoryEvent::Free(PureBreakMemoryOwner::Active(0))],
+        },
     })
 }
 

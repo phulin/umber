@@ -49,6 +49,40 @@ fn params(width: i32) -> LineBreakParams {
 }
 
 #[test]
+fn single_line_break_retains_ordered_allocator_phases() {
+    let universe = Universe::new();
+    let nodes = vec![rule(10), Node::Penalty(EJECT_PENALTY)];
+    let plan = try_line_break_without_hyphenation(&universe, &nodes, &params(10))
+        .expect("the forced one-line paragraph breaks");
+
+    assert_eq!(
+        plan.memory.search,
+        vec![
+            BreakMemoryEvent::Allocate {
+                owner: BreakMemoryOwner::Active(0),
+                words: 3,
+            },
+            BreakMemoryEvent::Free(BreakMemoryOwner::Active(0)),
+            BreakMemoryEvent::Allocate {
+                owner: BreakMemoryOwner::Passive(0),
+                words: 2,
+            },
+            BreakMemoryEvent::Allocate {
+                owner: BreakMemoryOwner::Active(1),
+                words: 3,
+            },
+        ]
+    );
+    assert_eq!(
+        plan.memory.cleanup,
+        vec![
+            BreakMemoryEvent::Free(BreakMemoryOwner::Active(1)),
+            BreakMemoryEvent::Free(BreakMemoryOwner::Passive(0)),
+        ]
+    );
+}
+
+#[test]
 fn tracing_omits_initial_second_pass_label_but_records_emergency_transition() {
     // TeX82 §816 begins the diagnostic silently when `pretolerance<0`;
     // `@secondpass` names only the transition from a failed first pass.

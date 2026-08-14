@@ -350,7 +350,7 @@ fn main_memory_projection_inner(
             .filter(|key| key.start == u32::MAX),
     );
     let (node_low_words, node_high_words, detached_dynamic_extent) =
-        node_memory_words(&node_lists, node_roots);
+        node_memory_words(&node_lists, node_roots, stores.main_memory_profile);
     // Section 133's five fixed glue specifications occupy the 21 static low
     // words. Every additional reachable §150 glue specification owns four
     // variable-size words independently of its two-word glue node.
@@ -392,7 +392,13 @@ fn main_memory_projection_inner(
         if *count == 1 {
             box_copy_projections.insert(
                 root,
-                copy_node_list_projection(&lists_by_key, key, &mut copy_cache, true)?,
+                copy_node_list_projection(
+                    &lists_by_key,
+                    key,
+                    &mut copy_cache,
+                    true,
+                    stores.main_memory_profile,
+                )?,
             );
         }
     }
@@ -426,6 +432,7 @@ fn copy_node_list_projection(
     root: FormatListKey,
     cache: &mut std::collections::BTreeMap<(FormatListKey, bool), CopyNodeListProjection>,
     owns_head: bool,
+    profile: super::StringPoolProfile,
 ) -> Result<CopyNodeListProjection, StoreFormatError> {
     if let Some(projection) = cache.get(&(root, owns_head)).copied() {
         return Ok(projection);
@@ -516,7 +523,7 @@ fn copy_node_list_projection(
                         next_node,
                         projection,
                     });
-                    let (projection, children) = copy_node_projection(node);
+                    let (projection, children) = copy_node_projection(node, profile);
                     frames.push(Frame::Node {
                         children,
                         next_child: 0,
@@ -558,8 +565,9 @@ fn copy_node_list_projection(
 
 fn copy_node_projection(
     node: &FormatNode,
+    profile: super::StringPoolProfile,
 ) -> (CopyNodeListProjection, [Option<(FormatListKey, bool)>; 4]) {
-    let (low_words, high_words) = node.tex82_memory_words();
+    let (low_words, high_words) = node.memory_words(profile);
     if matches!(node, FormatNode::Char { .. }) {
         return (
             CopyNodeListProjection {
@@ -616,6 +624,7 @@ fn compose_copy_projection(
 fn node_memory_words(
     node_lists: &[FormatNodeList],
     roots: impl IntoIterator<Item = FormatListKey>,
+    profile: super::StringPoolProfile,
 ) -> (usize, usize, usize) {
     let lists_by_key = node_lists
         .iter()
@@ -641,7 +650,7 @@ fn node_memory_words(
         .filter(|list| semantic_lists.contains(&list.key))
         .flat_map(|list| &list.nodes)
         .fold((0_usize, 0_usize), |(low, high), node| {
-            let (node_low, node_high) = node.tex82_memory_words();
+            let (node_low, node_high) = node.memory_words(profile);
             (low.saturating_add(node_low), high.saturating_add(node_high))
         });
     let detached_extent = node_lists
@@ -663,7 +672,7 @@ fn node_memory_words(
                     words = words.saturating_add(
                         list.nodes
                             .iter()
-                            .map(|node| node.tex82_memory_words().1)
+                            .map(|node| node.memory_words(profile).1)
                             .sum::<usize>(),
                     );
                     stack.extend(
@@ -733,7 +742,7 @@ impl MainMemoryProjection {
             .map(|list| list.key)
             .filter(|key| key.start == u32::MAX);
         let (node_low_words, node_high_words, detached_dynamic_extent) =
-            node_memory_words(&node_lists, roots);
+            node_memory_words(&node_lists, roots, stores.main_memory_profile);
         let variable = self.usage.variable.saturating_add(node_low_words);
         let dynamic = self
             .usage
@@ -746,6 +755,27 @@ impl MainMemoryProjection {
             dynamic_extent: dynamic
                 .saturating_add(self.detached_dynamic_extent.max(detached_dynamic_extent)),
         })
+    }
+
+    pub(super) fn low_node_requests(
+        &self,
+        stores: &Stores,
+        extra_nodes: &[Node],
+    ) -> Result<Vec<usize>, StoreFormatError> {
+        let node_lists = capture_extra_memory_nodes(
+            stores,
+            extra_nodes,
+            &self.live_node_lists,
+            &self.live_survivor_roots,
+        )?;
+        Ok(node_lists
+            .iter()
+            .flat_map(|list| &list.nodes)
+            .filter_map(|node| {
+                let words = node.memory_words(stores.main_memory_profile).0;
+                (words > 1).then_some(words)
+            })
+            .collect())
     }
 
     pub(super) fn usage_with_box_copy(
@@ -1097,7 +1127,8 @@ fn box_memory_projection(
     for node in node_lists.iter_mut().flat_map(|list| &mut list.nodes) {
         node.visit_token_list_refs(|raw| token_refs.push(*raw));
     }
-    let (low_words, high_words, detached_dynamic_extent) = node_memory_words(&node_lists, [root]);
+    let (low_words, high_words, detached_dynamic_extent) =
+        node_memory_words(&node_lists, [root], stores.main_memory_profile);
     let lists_by_key = node_lists
         .iter()
         .map(|list| (list.key, list))
@@ -1107,6 +1138,7 @@ fn box_memory_projection(
         root,
         &mut std::collections::BTreeMap::new(),
         true,
+        stores.main_memory_profile,
     )?;
     Ok(BoxMemoryProjection {
         token_refs: token_refs.into(),
