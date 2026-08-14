@@ -31,6 +31,29 @@ use crate::{
 };
 
 #[test]
+fn recursive_box_copy_below_existing_coordinates_does_not_raise_extents() {
+    let mut stores = Stores::new();
+    let root = stores.freeze_node_list(&[Node::Char {
+        font: NULL_FONT,
+        ch: 'A',
+        origin: crate::provenance::OriginRef::unknown(),
+    }]);
+    stores.set_box_reg(0, root);
+    let root = stores.box_reg(0).expect("promoted box root");
+    stores.observe_main_memory(None);
+
+    // A copy operation only changes §1334's retained coordinates when its
+    // concurrent operation peak exceeds them. This is the phase/lifetime
+    // negative exercised by e-TRIP's six copies: their owners are real, but
+    // all of their composed peaks remain below the prior allocator record.
+    stores.memory_low_extent = 2_021;
+    stores.memory_high_extent = 1_296;
+    stores.observe_main_memory_box_copy(root, 0);
+    assert_eq!(stores.memory_low_extent, 2_021);
+    assert_eq!(stores.memory_high_extent, 1_296);
+}
+
+#[test]
 fn engine_stack_usage_merges_runtime_high_water_by_owner() {
     let mut stores = Stores::new();
     stores.record_engine_stack_usage(EngineStackUsage {

@@ -165,6 +165,125 @@ fn allocator_overlap_changes_only_detached_extent_not_format_bytes() {
 }
 
 #[test]
+fn recursive_box_copy_composes_with_live_projection_owners() {
+    fn direct(ch: char) -> Node {
+        Node::Char {
+            font: crate::font::NULL_FONT,
+            ch,
+            origin: OriginRef::unknown(),
+        }
+    }
+
+    fn box_node(children: crate::ids::NodeListId) -> BoxNode {
+        BoxNode::new(BoxNodeFields {
+            width: Scaled::from_raw(0),
+            height: Scaled::from_raw(0),
+            depth: Scaled::from_raw(0),
+            shift: Scaled::from_raw(0),
+            box_lr: BoxLr::Normal,
+            glue_set: GlueSetRatio::ZERO,
+            glue_sign: Sign::Normal,
+            glue_order: Order::Normal,
+            children,
+        })
+    }
+
+    let mut stores = Stores::new();
+    let ligatures = stores.freeze_node_list(&[Node::Lig {
+        font: crate::font::NULL_FONT,
+        ch: 'A',
+        orig: vec!['A'; 10],
+        left_hit: false,
+        right_hit: false,
+        origins: vec![OriginRef::unknown(); 10],
+    }]);
+    let horizontal = stores.freeze_node_list(&[Node::HList(box_node(ligatures))]);
+    let diagnostic = stores.freeze_node_list(&[direct('x'), direct('y'), direct('z')]);
+    let mut root_box = box_node(horizontal);
+    root_box.diagnostic_children = Some(diagnostic);
+    let root = stores.freeze_node_list(&[Node::VList(root_box)]);
+    stores.set_box_reg(254, root);
+    let root = stores.box_reg(254).expect("promoted box root");
+
+    let mut projection =
+        super::main_memory_usage_without_scratch(&stores).expect("box graph projects");
+    let baseline = projection.usage();
+    assert_eq!(baseline.dynamic_extent, baseline.dynamic + 3);
+    let copied = projection
+        .usage_with_box_copy(root, 1)
+        .expect("live box copy projects");
+    // TeX82 §204 has four simultaneously live temporary heads on the path
+    // root -> vlist -> hlist -> lig_ptr. The ten copied character cells are
+    // retained in traversal order, while the backed-up scan terminator stays
+    // live for the whole operation.
+    assert_eq!(copied.variable, baseline.variable + 16);
+    assert_eq!(copied.dynamic, baseline.dynamic + 1 + 10);
+    assert_eq!(copied.dynamic_extent, baseline.dynamic_extent + 1 + 14);
+
+    // A shared read or destructive `\box` does not invoke §204, so merely
+    // consulting the cached projection changes no allocator coordinate.
+    assert_eq!(projection.usage(), baseline);
+
+    projection
+        .update_box_root(&stores, Some(root), None, true)
+        .expect("root removal projects");
+    assert!(
+        projection.usage_with_box_copy(root, 1).is_none(),
+        "released owners cannot contribute to a later operation peak"
+    );
+}
+
+#[test]
+fn recursive_box_copy_peak_depends_on_copied_ligature_units() {
+    fn projection_for(orig_len: usize) -> super::CopyNodeListProjection {
+        let mut stores = Stores::new();
+        let ligatures = stores.freeze_node_list(&[Node::Lig {
+            font: crate::font::NULL_FONT,
+            ch: 'A',
+            orig: vec!['A'; orig_len],
+            left_hit: false,
+            right_hit: false,
+            origins: vec![OriginRef::unknown(); orig_len],
+        }]);
+        let horizontal = stores.freeze_node_list(&[Node::HList(BoxNode::new(BoxNodeFields {
+            width: Scaled::from_raw(0),
+            height: Scaled::from_raw(0),
+            depth: Scaled::from_raw(0),
+            shift: Scaled::from_raw(0),
+            box_lr: BoxLr::Normal,
+            glue_set: GlueSetRatio::ZERO,
+            glue_sign: Sign::Normal,
+            glue_order: Order::Normal,
+            children: ligatures,
+        }))]);
+        let root = stores.freeze_node_list(&[Node::VList(BoxNode::new(BoxNodeFields {
+            width: Scaled::from_raw(0),
+            height: Scaled::from_raw(0),
+            depth: Scaled::from_raw(0),
+            shift: Scaled::from_raw(0),
+            box_lr: BoxLr::Normal,
+            glue_set: GlueSetRatio::ZERO,
+            glue_sign: Sign::Normal,
+            glue_order: Order::Normal,
+            children: horizontal,
+        }))]);
+        stores.set_box_reg(0, root);
+        let root = stores.box_reg(0).expect("promoted box root");
+        super::main_memory_usage_without_scratch(&stores)
+            .expect("box graph projects")
+            .box_copy_projections[&root]
+    }
+
+    let nine = projection_for(9);
+    let ten = projection_for(10);
+    assert_eq!(nine.high_words, 9);
+    assert_eq!(ten.high_words, 10);
+    assert_eq!(nine.high_peak, 13);
+    assert_eq!(ten.high_peak, 14);
+    assert_eq!(nine.high_peak + 1, ten.high_peak);
+}
+
+#[test]
 fn format_round_trip_preserves_physical_diagnostic_leader_children() {
     let mut stores = Stores::new();
     let semantic_children = stores.freeze_node_list(&[Node::Penalty(3)]);

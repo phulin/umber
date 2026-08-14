@@ -1588,6 +1588,13 @@ impl Universe {
         self.stores.observe_main_memory_dynamic_words(words);
     }
 
+    /// Observes TeX82 §204's ordered recursive allocation while a box
+    /// register and the command's transient one-word nodes remain live.
+    pub fn observe_box_copy(&mut self, root: NodeListId, live_dynamic_words: usize) {
+        self.stores
+            .observe_main_memory_box_copy(root, live_dynamic_words);
+    }
+
     #[cfg(test)]
     fn testing_transient_memory_base_projections(&self) -> usize {
         self.stores.testing_transient_memory_base_projections()

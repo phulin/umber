@@ -760,6 +760,25 @@ impl Stores {
         )))
     }
 
+    pub(crate) fn observe_main_memory_box_copy(
+        &mut self,
+        root: NodeListId,
+        live_dynamic_words: usize,
+    ) {
+        // Root capture/update precomputes the ordered §204 summary. The hot
+        // copy path composes lifetimes without revisiting the frozen graph.
+        let projection = self.take_transient_memory_base();
+        let Ok(projection) = projection else {
+            self.record_main_memory_usage(projection.map(|value| value.usage()));
+            return;
+        };
+        let usage = projection
+            .usage_with_box_copy(root, live_dynamic_words)
+            .expect("copied box root belongs to the allocator projection");
+        self.transient_memory_base = Some((self.glue.watermark().specs, projection));
+        self.record_main_memory_usage(Ok(usage));
+    }
+
     fn take_transient_memory_base(
         &mut self,
     ) -> Result<format::MainMemoryProjection, format::StoreFormatError> {

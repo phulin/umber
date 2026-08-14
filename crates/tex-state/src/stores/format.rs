@@ -152,6 +152,7 @@ pub(super) struct MainMemoryProjection {
     live_survivor_roots: std::collections::BTreeSet<crate::ids::SurvivorRootId>,
     box_root_counts: std::collections::BTreeMap<NodeListId, u32>,
     box_graphs: std::collections::BTreeMap<NodeListId, BoxMemoryProjection>,
+    box_copy_projections: std::collections::BTreeMap<NodeListId, CopyNodeListProjection>,
     detached_dynamic_extent: usize,
 }
 
@@ -159,7 +160,17 @@ struct CapturedMemoryRoots {
     env: Vec<FormatEnvEntry>,
     node_lists: Vec<FormatNodeList>,
     live_node_lists: std::collections::BTreeSet<NodeListId>,
-    box_roots: Vec<NodeListId>,
+    box_roots: Vec<(NodeListId, FormatListKey)>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct CopyNodeListProjection {
+    /// Variable-size words retained by the completed duplicate.
+    low_words: usize,
+    /// One-word cells retained by the completed duplicate.
+    high_words: usize,
+    /// Maximum concurrent one-word cells, including §204's active heads.
+    high_peak: usize,
 }
 
 const TEX82_UNTYPED_ONE_WORD_SCRATCH_EXTENT: usize = 4;
@@ -369,9 +380,21 @@ fn main_memory_projection_inner(
         .saturating_add(detached_dynamic_extent)
         .saturating_add(scratch_extent);
     let mut box_root_counts = std::collections::BTreeMap::new();
-    for root in box_roots {
+    let mut box_copy_projections = std::collections::BTreeMap::new();
+    let mut copy_cache = std::collections::BTreeMap::new();
+    let lists_by_key = node_lists
+        .iter()
+        .map(|list| (list.key, list))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    for (root, key) in box_roots {
         let count = box_root_counts.entry(root).or_insert(0_u32);
         *count = count.saturating_add(1);
+        if *count == 1 {
+            box_copy_projections.insert(
+                root,
+                copy_node_list_projection(&lists_by_key, key, &mut copy_cache, true)?,
+            );
+        }
     }
     Ok(MainMemoryProjection {
         usage: MainMemoryUsage {
@@ -393,8 +416,201 @@ fn main_memory_projection_inner(
             .collect(),
         box_root_counts,
         box_graphs: std::collections::BTreeMap::new(),
+        box_copy_projections,
         detached_dynamic_extent,
     })
+}
+
+fn copy_node_list_projection(
+    lists_by_key: &std::collections::BTreeMap<FormatListKey, &FormatNodeList>,
+    root: FormatListKey,
+    cache: &mut std::collections::BTreeMap<(FormatListKey, bool), CopyNodeListProjection>,
+    owns_head: bool,
+) -> Result<CopyNodeListProjection, StoreFormatError> {
+    if let Some(projection) = cache.get(&(root, owns_head)).copied() {
+        return Ok(projection);
+    }
+    lists_by_key
+        .get(&root)
+        .ok_or(StoreFormatError::Invalid("copy node-list root"))?;
+
+    enum Frame {
+        List {
+            key: FormatListKey,
+            owns_head: bool,
+            next_node: usize,
+            projection: CopyNodeListProjection,
+        },
+        Node {
+            children: [Option<(FormatListKey, bool)>; 4],
+            next_child: usize,
+            projection: CopyNodeListProjection,
+        },
+    }
+
+    let list_frame = |key, owns_head| Frame::List {
+        key,
+        owns_head,
+        next_node: 0,
+        projection: CopyNodeListProjection {
+            low_words: 0,
+            high_words: 0,
+            high_peak: usize::from(owns_head),
+        },
+    };
+    let mut frames = vec![list_frame(root, owns_head)];
+    let mut completed = None;
+    loop {
+        if let Some(child) = completed.take() {
+            let Some(parent) = frames.pop() else {
+                return Ok(child);
+            };
+            frames.push(match parent {
+                Frame::List {
+                    key,
+                    owns_head,
+                    next_node,
+                    mut projection,
+                } => {
+                    compose_copy_projection(&mut projection, child, usize::from(owns_head));
+                    Frame::List {
+                        key,
+                        owns_head,
+                        next_node,
+                        projection,
+                    }
+                }
+                Frame::Node {
+                    children,
+                    next_child,
+                    mut projection,
+                } => {
+                    compose_copy_projection(&mut projection, child, 0);
+                    Frame::Node {
+                        children,
+                        next_child,
+                        projection,
+                    }
+                }
+            });
+            continue;
+        }
+
+        let frame = frames.pop().expect("copy projection has a root frame");
+        match frame {
+            Frame::List {
+                key,
+                owns_head,
+                mut next_node,
+                projection,
+            } => {
+                let list = lists_by_key
+                    .get(&key)
+                    .copied()
+                    .ok_or(StoreFormatError::Invalid("copy node-list root"))?;
+                if let Some(node) = list.nodes.get(next_node) {
+                    next_node = next_node.saturating_add(1);
+                    frames.push(Frame::List {
+                        key,
+                        owns_head,
+                        next_node,
+                        projection,
+                    });
+                    let (projection, children) = copy_node_projection(node);
+                    frames.push(Frame::Node {
+                        children,
+                        next_child: 0,
+                        projection,
+                    });
+                } else {
+                    cache.insert((key, owns_head), projection);
+                    completed = Some(projection);
+                }
+            }
+            Frame::Node {
+                children,
+                mut next_child,
+                projection,
+            } => {
+                let child = children[next_child..]
+                    .iter()
+                    .enumerate()
+                    .find_map(|(offset, child)| child.map(|child| (offset, child)));
+                if let Some((offset, (key, owns_head))) = child {
+                    next_child = next_child.saturating_add(offset).saturating_add(1);
+                    frames.push(Frame::Node {
+                        children,
+                        next_child,
+                        projection,
+                    });
+                    if let Some(child) = cache.get(&(key, owns_head)).copied() {
+                        completed = Some(child);
+                    } else {
+                        frames.push(list_frame(key, owns_head));
+                    }
+                } else {
+                    completed = Some(projection);
+                }
+            }
+        }
+    }
+}
+
+fn copy_node_projection(
+    node: &FormatNode,
+) -> (CopyNodeListProjection, [Option<(FormatListKey, bool)>; 4]) {
+    let (low_words, high_words) = node.tex82_memory_words();
+    if matches!(node, FormatNode::Char { .. }) {
+        return (
+            CopyNodeListProjection {
+                low_words: 0,
+                high_words: 1,
+                high_peak: 1,
+            },
+            [None; 4],
+        );
+    }
+    if let FormatNode::Lig { orig, .. } = node {
+        return (
+            CopyNodeListProjection {
+                low_words,
+                high_words: orig.len(),
+                high_peak: orig.len().saturating_add(1),
+            },
+            [None; 4],
+        );
+    }
+
+    let mut children = node
+        .semantic_children()
+        .map(|child| child.map(|child| (child, true)));
+    if let FormatNode::Disc { replace, .. } = node {
+        // Section 204 copies the replacement nodes later in the same
+        // enclosing list, not through a recursive temporary head.
+        children[2] = Some((*replace, false));
+    }
+    (
+        CopyNodeListProjection {
+            low_words,
+            high_words,
+            high_peak: high_words,
+        },
+        children,
+    )
+}
+
+fn compose_copy_projection(
+    projection: &mut CopyNodeListProjection,
+    child: CopyNodeListProjection,
+    live_head_words: usize,
+) {
+    projection.low_words = projection.low_words.saturating_add(child.low_words);
+    projection.high_peak = projection.high_peak.max(
+        live_head_words
+            .saturating_add(projection.high_words)
+            .saturating_add(child.high_peak),
+    );
+    projection.high_words = projection.high_words.saturating_add(child.high_words);
 }
 
 fn node_memory_words(
@@ -532,6 +748,31 @@ impl MainMemoryProjection {
         })
     }
 
+    pub(super) fn usage_with_box_copy(
+        &self,
+        root: NodeListId,
+        live_dynamic_words: usize,
+    ) -> Option<MainMemoryUsage> {
+        self.box_root_counts.contains_key(&root).then_some(())?;
+        let copy = self.box_copy_projections.get(&root)?;
+        Some(MainMemoryUsage {
+            variable: self.usage.variable.saturating_add(copy.low_words),
+            dynamic: self
+                .usage
+                .dynamic
+                .saturating_add(live_dynamic_words)
+                .saturating_add(copy.high_words),
+            dynamic_extent: self
+                .usage
+                .dynamic_extent
+                // The cached coordinate and command-owned cells remain live
+                // until §204 has returned the complete duplicate. Compose
+                // their lifetimes; an independent max loses this overlap.
+                .saturating_add(live_dynamic_words)
+                .saturating_add(copy.high_peak),
+        })
+    }
+
     pub(super) fn update_cell(
         &mut self,
         stores: &Stores,
@@ -663,6 +904,9 @@ impl MainMemoryProjection {
             {
                 self.live_survivor_roots.remove(&root);
             }
+            if let Some(old) = old {
+                self.box_copy_projections.remove(&old);
+            }
         }
         if let Some(new_graph) = new_graph {
             for raw in new_graph.token_refs.iter().copied() {
@@ -672,6 +916,9 @@ impl MainMemoryProjection {
                 && let crate::ids::ArenaRef::Survivor(root) = new.arena()
             {
                 self.live_survivor_roots.insert(root);
+            }
+            if let Some(new) = new {
+                self.box_copy_projections.insert(new, new_graph.copy);
             }
             self.detached_dynamic_extent = self
                 .detached_dynamic_extent
@@ -825,6 +1072,7 @@ struct BoxMemoryProjection {
     low_words: usize,
     high_words: usize,
     detached_dynamic_extent: usize,
+    copy: CopyNodeListProjection,
 }
 
 fn box_memory_projection(
@@ -850,11 +1098,22 @@ fn box_memory_projection(
         node.visit_token_list_refs(|raw| token_refs.push(*raw));
     }
     let (low_words, high_words, detached_dynamic_extent) = node_memory_words(&node_lists, [root]);
+    let lists_by_key = node_lists
+        .iter()
+        .map(|list| (list.key, list))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    let copy = copy_node_list_projection(
+        &lists_by_key,
+        root,
+        &mut std::collections::BTreeMap::new(),
+        true,
+    )?;
     Ok(BoxMemoryProjection {
         token_refs: token_refs.into(),
         low_words,
         high_words,
         detached_dynamic_extent,
+        copy,
     })
 }
 
@@ -911,6 +1170,13 @@ fn capture_memory_roots(
         })
         .collect::<Vec<_>>();
     canonicalize_node_list_keys(&mut node_lists, &mut env);
+    let box_roots = box_roots
+        .into_iter()
+        .zip(env.iter().filter_map(|entry| match entry.value {
+            FormatEnvValue::Box(key) => Some(key),
+            FormatEnvValue::Raw(_) => None,
+        }))
+        .collect();
 
     if !extra_nodes.is_empty() {
         let mut seen = std::collections::BTreeSet::new();

@@ -15123,14 +15123,7 @@ fn apply_scanned_step(
                         report_improper_setbox(context, stores)?;
                     }
                     ScannedBoxShiftPayload::BoxRegister { index, copy } => {
-                        let id = if copy {
-                            stores.box_reg(index)
-                        } else {
-                            stores.take_box_reg_same_level(index)
-                        };
-                        if copy && let Some(id) = id {
-                            stores.pin_survivor(id);
-                        }
+                        let id = read_box_register(index, copy, stores, command);
                         let node = crate::box_runtime::first_box_node(stores, id);
                         let context = boxes.take_box_context(false);
                         box_end(context, node, modes, stores, prepared_dvi_pages, command)?;
@@ -15190,14 +15183,7 @@ fn apply_scanned_step(
             copy,
             ships_out,
         } => {
-            let id = if copy {
-                stores.box_reg(index)
-            } else {
-                stores.take_box_reg_same_level(index)
-            };
-            if copy && let Some(id) = id {
-                stores.pin_survivor(id);
-            }
+            let id = read_box_register(index, copy, stores, command);
             let node = crate::box_runtime::first_box_node(stores, id);
             let context = boxes.take_box_context(ships_out);
             box_end(context, node, modes, stores, prepared_dvi_pages, command)?;
@@ -15259,6 +15245,9 @@ fn apply_scanned_step(
             copy,
             glue,
         } => {
+            if copy && let Some(root) = stores.box_reg(index) {
+                stores.observe_box_copy(root, command.state.transient_dynamic_words());
+            }
             if let Some(payload) = crate::box_runtime::take_register_payload(stores, index, copy) {
                 let spec = stores.intern_glue(glue);
                 let error_context = command.state.output_open_context(&stores.command_context());
@@ -16893,14 +16882,7 @@ fn apply_box_shift(
             Ok(ReplayStep::Continue)
         }
         ScannedBoxShiftPayload::BoxRegister { index, copy } => {
-            let id = if copy {
-                stores.box_reg(index)
-            } else {
-                stores.take_box_reg_same_level(index)
-            };
-            if copy && let Some(id) = id {
-                stores.pin_survivor(id);
-            }
+            let id = read_box_register(index, copy, stores, command);
             let node = crate::box_runtime::first_box_node(stores, id);
             append_shifted_box(modes, stores, node, shift.delta, command)?;
             Ok(ReplayStep::Continue)
@@ -17012,6 +16994,21 @@ enum BoxContext {
     SetBox(SetBoxTarget),
     /// `box_context=ship_out_flag`: §1075's `ship_out(cur_box)`.
     ShipOut,
+}
+
+fn read_box_register(
+    index: u16,
+    copy: bool,
+    stores: &mut Universe,
+    command: &CommandMachine<'_>,
+) -> Option<NodeListId> {
+    if !copy {
+        return stores.take_box_reg_same_level(index);
+    }
+    let root = stores.box_reg(index)?;
+    stores.observe_box_copy(root, command.state.transient_dynamic_words());
+    stores.pin_survivor(root);
+    Some(root)
 }
 
 impl ReplayBoxes {

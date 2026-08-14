@@ -114,7 +114,12 @@ pub(crate) enum ParameterReplayError {
 }
 
 impl CommandState {
-    pub(crate) fn transient_dynamic_words(&self) -> usize {
+    /// TeX82 one-word nodes owned by live command input and argument buffers.
+    ///
+    /// An execution operation that allocates recursively must compose its
+    /// peak with these owners before the command stack can retire them.
+    #[must_use]
+    pub fn transient_dynamic_words(&self) -> usize {
         let arguments = self
             .parameters
             .activations
