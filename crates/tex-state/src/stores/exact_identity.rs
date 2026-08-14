@@ -1,226 +1,219 @@
+use crate::cell::CellId;
+use crate::journal::JournalPos;
 use crate::state_hash::exact_identity_bytes;
-use std::sync::Arc;
+use ahash::AHashMap;
 
-const EMPTY_ENV_DOMAIN: &[u8] = b"umber-exact-env-empty-v1";
-const ENV_NODE_DOMAIN: &[u8] = b"umber-exact-env-node-v1";
+const ENV_ENTRY_DOMAIN: &[u8] = b"umber-exact-env-entry-v2";
+const ENV_IDENTITY_DOMAIN: &[u8] = b"umber-exact-env-identity-v2";
 
-/// Persistent deterministic treap over canonical environment-cell identities.
+/// Constant-size rollback image of the canonical environment accumulator.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) struct ExactEnvSnapshot {
+    sum: u64,
+    xor: u64,
+    len: u64,
+    journal_pos: JournalPos,
+    journal_baseline_serial: u64,
+    undo_mark: usize,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct Entry {
+    key: u64,
+    value: u64,
+    atom: u64,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct Undo {
+    cell: CellId,
+    previous: Option<Entry>,
+}
+
+/// Canonical commutative identity of the current non-default environment cells.
 ///
-/// The shape depends only on the key identities, not insertion order. Updating
-/// one cell path-copies logarithmically many nodes, so snapshots retain one
-/// root while exact checkpoint identity follows only journal-dirty cells.
-#[derive(Clone, Debug, Default)]
+/// Each cell contributes one domain-separated atom. Replacing a cell subtracts
+/// its former atom and adds its new atom, so mutation and rollback touch fixed
+/// state regardless of the number of live cells. `entries` is a current-state
+/// lookup only. `undo` retains replacement deltas only while an aggregate
+/// snapshot can roll back to them; consuming the last such root clears the
+/// suffix directly, without a historical registry or compaction pass.
+#[derive(Clone, Debug)]
 pub(super) struct ExactEnvIdentity {
-    root: Option<Arc<Node>>,
+    entries: AHashMap<CellId, Entry>,
+    undo: Vec<Undo>,
+    accumulator: ExactEnvSnapshot,
     #[cfg(test)]
     updates: usize,
 }
 
+impl Default for ExactEnvIdentity {
+    fn default() -> Self {
+        Self {
+            entries: AHashMap::new(),
+            undo: Vec::new(),
+            accumulator: ExactEnvSnapshot {
+                sum: 0,
+                xor: 0,
+                len: 0,
+                journal_pos: JournalPos::from_raw(0),
+                journal_baseline_serial: 1,
+                undo_mark: 0,
+            },
+            #[cfg(test)]
+            updates: 0,
+        }
+    }
+}
+
 impl ExactEnvIdentity {
     pub(super) fn identity(&self) -> u64 {
-        self.root.as_ref().map_or_else(
-            || exact_identity_bytes(EMPTY_ENV_DOMAIN, &[]),
-            |root| root.identity,
+        identity(self.accumulator)
+    }
+
+    pub(super) const fn snapshot(&self) -> ExactEnvSnapshot {
+        self.accumulator
+    }
+
+    pub(super) fn restore(&mut self, snapshot: ExactEnvSnapshot) {
+        assert!(
+            snapshot.undo_mark <= self.undo.len(),
+            "exact environment snapshot is not an ancestor"
+        );
+        while self.undo.len() > snapshot.undo_mark {
+            let undo = self.undo.pop().expect("checked exact undo length");
+            match undo.previous {
+                Some(previous) => {
+                    self.entries.insert(undo.cell, previous);
+                }
+                None => {
+                    self.entries.remove(&undo.cell);
+                }
+            }
+        }
+        self.accumulator = snapshot;
+    }
+
+    pub(super) fn discard_undo_history(&mut self) {
+        self.undo.clear();
+        self.accumulator.undo_mark = 0;
+    }
+
+    pub(super) fn reconcile(&mut self, replacement: &Self) {
+        let removed = self
+            .entries
+            .keys()
+            .copied()
+            .filter(|cell| !replacement.entries.contains_key(cell))
+            .collect::<Vec<_>>();
+        for cell in removed {
+            self.update(cell, 0, None);
+        }
+        for (&cell, entry) in &replacement.entries {
+            self.update(cell, entry.key, Some(entry.value));
+        }
+    }
+
+    pub(super) const fn journal_cursor(&self) -> (JournalPos, u64) {
+        (
+            self.accumulator.journal_pos,
+            self.accumulator.journal_baseline_serial,
         )
     }
 
-    pub(super) fn update(&mut self, key: u64, value: Option<u64>) {
+    pub(super) fn mark_journal(&mut self, journal_pos: JournalPos, journal_baseline_serial: u64) {
+        self.accumulator.journal_pos = journal_pos;
+        self.accumulator.journal_baseline_serial = journal_baseline_serial;
+    }
+
+    pub(super) fn update(&mut self, cell: CellId, key: u64, value: Option<u64>) {
+        if self
+            .entries
+            .get(&cell)
+            .is_some_and(|entry| Some((entry.key, entry.value)) == value.map(|value| (key, value)))
+            || (value.is_none() && !self.entries.contains_key(&cell))
+        {
+            return;
+        }
+
         #[cfg(test)]
         {
             self.updates += 1;
         }
-        self.root = match value {
-            Some(value) => insert(self.root.take(), key, value),
-            None => remove(self.root.take(), key),
-        };
+
+        self.undo.push(Undo {
+            cell,
+            previous: self.entries.get(&cell).copied(),
+        });
+        self.accumulator.undo_mark = self.undo.len();
+
+        if let Some(previous) = self.entries.remove(&cell) {
+            self.accumulator.sum = self.accumulator.sum.wrapping_sub(previous.atom);
+            self.accumulator.xor ^= previous.atom;
+            self.accumulator.len = self
+                .accumulator
+                .len
+                .checked_sub(1)
+                .expect("exact environment entry count underflowed");
+        }
+        if let Some(value) = value {
+            let atom = entry_atom(key, value);
+            let replaced = self.entries.insert(cell, Entry { key, value, atom });
+            debug_assert!(replaced.is_none());
+            self.accumulator.sum = self.accumulator.sum.wrapping_add(atom);
+            self.accumulator.xor ^= atom;
+            self.accumulator.len = self
+                .accumulator
+                .len
+                .checked_add(1)
+                .expect("exact environment entry count overflowed");
+        }
     }
 
-    pub(super) fn contains(&self, key: u64, value: Option<u64>) -> bool {
-        lookup(self.root.as_deref(), key) == value
+    pub(super) fn contains(&self, cell: CellId, key: u64, value: Option<u64>) -> bool {
+        self.entries
+            .get(&cell)
+            .map(|entry| (entry.key, entry.value))
+            == value.map(|value| (key, value))
     }
 
     #[cfg(test)]
     pub(super) const fn testing_updates(&self) -> usize {
         self.updates
     }
-}
 
-fn lookup(mut node: Option<&Node>, key: u64) -> Option<u64> {
-    while let Some(current) = node {
-        if key == current.key {
-            return Some(current.value);
-        }
-        node = if key < current.key {
-            current.left.as_deref()
-        } else {
-            current.right.as_deref()
-        };
-    }
-    None
-}
-
-#[derive(Debug)]
-struct Node {
-    key: u64,
-    value: u64,
-    priority: u64,
-    left: Option<Arc<Node>>,
-    right: Option<Arc<Node>>,
-    len: usize,
-    identity: u64,
-}
-
-impl Node {
-    fn new(key: u64, value: u64, left: Option<Arc<Self>>, right: Option<Arc<Self>>) -> Arc<Self> {
-        let priority = priority(key);
-        let len = 1 + node_len(&left) + node_len(&right);
-        let mut bytes = [0_u8; 192];
-        let mut offset = 0;
-        for part in [
-            ENV_NODE_DOMAIN,
-            key.to_le_bytes().as_slice(),
-            value.to_le_bytes().as_slice(),
-            node_identity(&left).to_le_bytes().as_slice(),
-            node_identity(&right).to_le_bytes().as_slice(),
-            (len as u64).to_le_bytes().as_slice(),
-        ] {
-            bytes[offset..offset + part.len()].copy_from_slice(part);
-            offset += part.len();
-        }
-        Arc::new(Self {
-            key,
-            value,
-            priority,
-            left,
-            right,
-            len,
-            identity: exact_identity_bytes(ENV_NODE_DOMAIN, &bytes[..offset]),
-        })
+    #[cfg(test)]
+    pub(super) const fn testing_undo_len(&self) -> usize {
+        self.undo.len()
     }
 }
 
-fn node_len(node: &Option<Arc<Node>>) -> usize {
-    node.as_ref().map_or(0, |node| node.len)
+fn entry_atom(key: u64, value: u64) -> u64 {
+    let mut bytes = [0; 16];
+    bytes[..8].copy_from_slice(&key.to_le_bytes());
+    bytes[8..].copy_from_slice(&value.to_le_bytes());
+    exact_identity_bytes(ENV_ENTRY_DOMAIN, &bytes)
 }
 
-fn node_identity(node: &Option<Arc<Node>>) -> u64 {
-    node.as_ref().map_or(0, |node| node.identity)
-}
-
-fn higher_priority_key(key: u64, right: &Node) -> bool {
-    let key_priority = priority(key);
-    key_priority < right.priority || (key_priority == right.priority && key < right.key)
-}
-
-fn priority(mut key: u64) -> u64 {
-    key ^= key >> 30;
-    key = key.wrapping_mul(0xbf58_476d_1ce4_e5b9);
-    key ^= key >> 27;
-    key = key.wrapping_mul(0x94d0_49bb_1331_11eb);
-    key ^ (key >> 31)
-}
-
-fn higher_priority(left: &Node, right: &Node) -> bool {
-    higher_priority_key(left.key, right)
-}
-
-fn insert(root: Option<Arc<Node>>, key: u64, value: u64) -> Option<Arc<Node>> {
-    let Some(root) = root else {
-        return Some(Node::new(key, value, None, None));
-    };
-    if key == root.key {
-        if value == root.value {
-            return Some(root);
-        }
-        return Some(Node::new(key, value, root.left.clone(), root.right.clone()));
-    }
-    if higher_priority_key(key, &root) {
-        let (left, right) = split(Some(root), key);
-        return Some(Node::new(key, value, left, right));
-    }
-    if key < root.key {
-        Some(Node::new(
-            root.key,
-            root.value,
-            insert(root.left.clone(), key, value),
-            root.right.clone(),
-        ))
-    } else {
-        Some(Node::new(
-            root.key,
-            root.value,
-            root.left.clone(),
-            insert(root.right.clone(), key, value),
-        ))
-    }
-}
-
-fn remove(root: Option<Arc<Node>>, key: u64) -> Option<Arc<Node>> {
-    let root = root?;
-    if key == root.key {
-        return merge(root.left.clone(), root.right.clone());
-    }
-    if key < root.key {
-        Some(Node::new(
-            root.key,
-            root.value,
-            remove(root.left.clone(), key),
-            root.right.clone(),
-        ))
-    } else {
-        Some(Node::new(
-            root.key,
-            root.value,
-            root.left.clone(),
-            remove(root.right.clone(), key),
-        ))
-    }
-}
-
-fn split(root: Option<Arc<Node>>, key: u64) -> (Option<Arc<Node>>, Option<Arc<Node>>) {
-    let Some(root) = root else {
-        return (None, None);
-    };
-    if root.key < key {
-        let (middle, right) = split(root.right.clone(), key);
-        (
-            Some(Node::new(root.key, root.value, root.left.clone(), middle)),
-            right,
-        )
-    } else {
-        let (left, middle) = split(root.left.clone(), key);
-        (
-            left,
-            Some(Node::new(root.key, root.value, middle, root.right.clone())),
-        )
-    }
-}
-
-fn merge(left: Option<Arc<Node>>, right: Option<Arc<Node>>) -> Option<Arc<Node>> {
-    match (left, right) {
-        (None, right) => right,
-        (left, None) => left,
-        (Some(left), Some(right)) if higher_priority(&left, &right) => Some(Node::new(
-            left.key,
-            left.value,
-            left.left.clone(),
-            merge(left.right.clone(), Some(right)),
-        )),
-        (Some(left), Some(right)) => Some(Node::new(
-            right.key,
-            right.value,
-            merge(Some(left), right.left.clone()),
-            right.right.clone(),
-        )),
-    }
+fn identity(accumulator: ExactEnvSnapshot) -> u64 {
+    let mut bytes = [0; 24];
+    bytes[..8].copy_from_slice(&accumulator.sum.to_le_bytes());
+    bytes[8..16].copy_from_slice(&accumulator.xor.to_le_bytes());
+    bytes[16..].copy_from_slice(&accumulator.len.to_le_bytes());
+    exact_identity_bytes(ENV_IDENTITY_DOMAIN, &bytes)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cell::BankTag;
 
     fn hash(value: u8) -> u64 {
         exact_identity_bytes(b"test", &[value])
+    }
+
+    fn cell(index: u32) -> CellId {
+        CellId::new(BankTag::Count, index)
     }
 
     #[test]
@@ -228,10 +221,10 @@ mod tests {
         let mut forward = ExactEnvIdentity::default();
         let mut reverse = ExactEnvIdentity::default();
         for value in 1..=32 {
-            forward.update(hash(value), Some(hash(value + 64)));
+            forward.update(cell(u32::from(value)), hash(value), Some(hash(value + 64)));
         }
         for value in (1..=32).rev() {
-            reverse.update(hash(value), Some(hash(value + 64)));
+            reverse.update(cell(u32::from(value)), hash(value), Some(hash(value + 64)));
         }
         assert_eq!(forward.identity(), reverse.identity());
     }
@@ -240,13 +233,44 @@ mod tests {
     fn replacement_and_removal_restore_identity() {
         let mut identity = ExactEnvIdentity::default();
         let empty = identity.identity();
-        identity.update(hash(1), Some(hash(2)));
+        identity.update(cell(1), hash(1), Some(hash(2)));
         let original = identity.identity();
-        identity.update(hash(1), Some(hash(3)));
+        identity.update(cell(1), hash(1), Some(hash(3)));
         assert_ne!(identity.identity(), original);
-        identity.update(hash(1), Some(hash(2)));
+        identity.update(cell(1), hash(1), Some(hash(2)));
         assert_eq!(identity.identity(), original);
-        identity.update(hash(1), None);
+        identity.update(cell(1), hash(1), None);
         assert_eq!(identity.identity(), empty);
+    }
+
+    #[test]
+    fn unchanged_and_handle_only_rewrites_do_not_change_identity() {
+        let mut env_identity = ExactEnvIdentity::default();
+        env_identity.update(cell(1), hash(1), Some(hash(2)));
+        let original = env_identity.identity();
+        let updates = env_identity.testing_updates();
+
+        // Runtime handles are resolved before this boundary. Replacing one
+        // physical representation with the same canonical key/value pair is
+        // therefore indistinguishable from an unchanged cell.
+        env_identity.update(cell(1), hash(1), Some(hash(2)));
+        assert_eq!(env_identity.identity(), original);
+        assert_eq!(env_identity.testing_updates(), updates);
+    }
+
+    #[test]
+    fn snapshots_are_constant_size_and_restore_nested_accumulators() {
+        assert_eq!(core::mem::size_of::<ExactEnvSnapshot>(), 48);
+        let mut env_identity = ExactEnvIdentity::default();
+        env_identity.update(cell(1), hash(1), Some(hash(2)));
+        let outer = env_identity.snapshot();
+        env_identity.update(cell(2), hash(2), Some(hash(3)));
+        let inner = env_identity.snapshot();
+        env_identity.update(cell(1), hash(1), Some(hash(4)));
+        assert_ne!(env_identity.identity(), identity(inner));
+        env_identity.restore(inner);
+        assert_eq!(env_identity.identity(), identity(inner));
+        env_identity.restore(outer);
+        assert_eq!(env_identity.identity(), identity(outer));
     }
 }

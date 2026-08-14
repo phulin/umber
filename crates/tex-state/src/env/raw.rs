@@ -281,6 +281,25 @@ impl Env {
         }
     }
 
+    /// Returns the cell's effective semantic word when it differs from its
+    /// virtual default.
+    ///
+    /// Meaning and box banks use nonzero sentinels for their absent values;
+    /// every other Env bank uses zero. Exact live-state identity must apply
+    /// the same sparse predicate as `for_each_semantic_non_default_word` when
+    /// a typed mutation removes one current cell.
+    pub(crate) fn semantic_non_default_word(&self, cell: CellId) -> Option<u64> {
+        let word = self.semantic_word(cell);
+        let non_default = match cell.bank() {
+            BankTag::Meaning => {
+                crate::meaning::Meaning::decode_stored(word) != crate::meaning::Meaning::Undefined
+            }
+            BankTag::Box => word != NodeListId::encode_box_word(None),
+            _ => word != 0,
+        };
+        non_default.then_some(word)
+    }
+
     /// Returns the effective value visible after a save-stack restoration.
     ///
     /// A loaded-format journal may use the default word to remove a mutable

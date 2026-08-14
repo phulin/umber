@@ -128,7 +128,7 @@ pub(crate) struct StoreSnapshot {
     hyphenation: Arc<HyphenationTable>,
     prepared_mag: Option<i32>,
     last_loaded_font: FontId,
-    exact_env_identity: exact_identity::ExactEnvIdentity,
+    exact_env_identity: exact_identity::ExactEnvSnapshot,
     exact_projection_cache: state_hash::StoreProjectionCache,
 }
 
@@ -1121,6 +1121,7 @@ impl Stores {
         stores.set_font_hyphen_char(NULL_FONT, i32::from(b'-'));
         stores.set_font_skew_char(NULL_FONT, -1);
         stores.initialize_exact_env_identity();
+        stores.discard_exact_env_undo_history();
         stores
     }
 
@@ -1157,7 +1158,7 @@ impl Stores {
     /// canonical values resolve aggregate token, macro, glue, font, and node
     /// handles. Every raw semantic write therefore crosses this seam exactly
     /// once. Env records a save-stack-neutral global undo so group refiling and
-    /// aggregate rollback preserve ordering; Stores updates the treap now, and
+    /// aggregate rollback preserve ordering; Stores updates the accumulator now, and
     /// the later journal hash observes that it is already synchronized rather
     /// than folding it twice.
     fn restore_env_word_with_exact_identity(
@@ -1213,8 +1214,7 @@ impl Stores {
             .env
             .restore_raw_global(cell, word, token_root, macro_root, glue_root);
         if receipt.changed() {
-            let cell = receipt.cell();
-            self.update_exact_env_cell(cell, self.env.semantic_word(cell));
+            self.synchronize_exact_env_identity();
         }
         receipt
     }
@@ -1755,9 +1755,22 @@ impl Stores {
 
     /// Interns an inaccessible engine-owned fixed `eqtb` control sequence.
     pub fn intern_internal_control_sequence(&mut self, name: &str) -> SymbolId {
-        self.interner
+        let prior_kind = self
+            .interner
+            .get(name)
+            .map(|symbol| self.interner.kind_id(symbol));
+        let symbol = self
+            .interner
             .intern_internal(name)
-            .expect("control-sequence symbol capacity exceeded")
+            .expect("control-sequence symbol capacity exceeded");
+        if prior_kind.is_some_and(|kind| kind != self.interner.kind_id(symbol)) {
+            // Canonicalizing an already-live name into the inaccessible
+            // namespace changes the semantic key of its Meaning cell and any
+            // font identities that use it as `font_id_text`.
+            self.initialize_exact_env_identity();
+            self.semantic_hash_cache.clear();
+        }
+        symbol
     }
 
     pub(crate) fn intern_retained_pool_string(&mut self, value: &str) -> SymbolId {
@@ -3507,6 +3520,11 @@ impl Stores {
         let box_refs_to_release = self.current_group_box_refs_to_release();
         let (payloads, _meaning_changed, changed_cells, mut restores) =
             self.env.leave_group_observing_meanings();
+        for receipt in &changed_cells {
+            let cell = receipt.cell();
+            self.update_exact_env_cell(cell, self.env.semantic_word(cell));
+        }
+        self.mark_exact_env_journal_current();
         self.capture_box_restore_texts(&mut restores);
         self.release_box_refs(box_refs_to_release);
         let code_before = self.code_tables.generations();
@@ -3536,6 +3554,11 @@ impl Stores {
         let (payloads, _meaning_changed, changed_cells, mut restores) = self
             .env
             .leave_group_with_kind_observing_meanings(expected)?;
+        for receipt in &changed_cells {
+            let cell = receipt.cell();
+            self.update_exact_env_cell(cell, self.env.semantic_word(cell));
+        }
+        self.mark_exact_env_journal_current();
         self.capture_box_restore_texts(&mut restores);
         self.release_box_refs(box_refs_to_release);
         let code_before = self.code_tables.generations();
@@ -3959,6 +3982,7 @@ impl Stores {
     /// important than a premature journal for this INITEX-style state.
     #[must_use]
     pub(crate) fn checkpoint(&mut self) -> StoreSnapshot {
+        self.synchronize_exact_env_identity();
         StoreSnapshot {
             owner: self.owner.snapshot_owner(),
             env_snapshot: self.env.checkpoint(),
@@ -3978,7 +4002,7 @@ impl Stores {
             hyphenation: self.hyphenation.clone(),
             prepared_mag: self.prepared_mag,
             last_loaded_font: self.last_loaded_font,
-            exact_env_identity: self.exact_env_identity.clone(),
+            exact_env_identity: self.exact_env_identity.snapshot(),
             exact_projection_cache: self.semantic_hash_cache.projections.clone(),
         }
     }
@@ -3991,10 +4015,16 @@ impl Stores {
         snapshot: StoreSnapshot,
         hash_base: &StoreStateHashCursor,
     ) -> bool {
+        let discard_exact_history = self
+            .env
+            .can_discard_derived_snapshot_history(&snapshot.env_snapshot);
         if !self
             .env
             .can_retire_committed_snapshot(&snapshot.env_snapshot)
         {
+            if discard_exact_history {
+                self.discard_exact_env_undo_history();
+            }
             return false;
         }
         self.preserve_retired_env_journal_hash_delta(hash_base);
@@ -4003,6 +4033,8 @@ impl Stores {
             .retire_committed_snapshot(snapshot.env_snapshot)
             .expect("retirement eligibility was checked above");
         self.release_box_refs(released_boxes);
+        self.discard_exact_env_undo_history();
+        self.mark_exact_env_journal_current();
         true
     }
 
@@ -4072,6 +4104,7 @@ impl Stores {
         }
         self.macros.truncate_to(snapshot.macro_mark);
         self.glue.truncate_to(snapshot.glue_mark);
+        let font_state_changed = self.fonts.watermark() != snapshot.font_mark;
         self.fonts.truncate_to(snapshot.font_mark);
         self.nodes.truncate_to(snapshot.node_mark);
         self.code_tables
@@ -4079,7 +4112,26 @@ impl Stores {
         self.hyphenation = snapshot.hyphenation.clone();
         self.prepared_mag = snapshot.prepared_mag;
         self.last_loaded_font = snapshot.last_loaded_font;
-        self.exact_env_identity = snapshot.exact_env_identity.clone();
+        if font_state_changed {
+            // Font identifiers and expansion configuration participate in
+            // canonical FontBank keys without changing their Env words.
+            // Font mutation is rare; rebuild the current-cell lookup after
+            // restoring such a mark, while the checkpoint accumulator remains
+            // a constant-size rollback value.
+            self.initialize_exact_env_identity();
+        } else {
+            for receipt in &receipts {
+                let cell = receipt.cell();
+                self.update_exact_env_cell(cell, self.env.semantic_word(cell));
+            }
+        }
+        self.mark_exact_env_journal_current();
+        self.exact_env_identity.restore(snapshot.exact_env_identity);
+        debug_assert_eq!(
+            self.exact_env_identity.snapshot(),
+            snapshot.exact_env_identity,
+            "exact environment deltas did not restore the checkpoint accumulator"
+        );
         // The cache is derived from the checkpoint timeline rather than part
         // of semantic state. Rebuild baselines lazily from the restored
         // journal slice instead of adding it to the O(1) snapshot tuple.

@@ -668,7 +668,7 @@ fn exact_environment_identity_updates_distinct_journal_cells_and_rolls_back() {
     assert_eq!(
         stores.testing_exact_env_updates(),
         baseline_updates + 1,
-        "one journal slice must update one Merkle path per distinct dirty cell"
+        "one journal slice must apply one canonical delta per distinct dirty cell"
     );
 
     let mut rebuilt = stores.clone();
@@ -750,7 +750,7 @@ fn exact_environment_identity_raw_restore_and_journal_rollback_have_one_owner() 
     assert_eq!(
         stores.exact_env_identity(),
         stores.testing_recomputed_exact_env_identity(),
-        "aggregate rollback restores the snapshot-owned treap rather than replay-folding it"
+        "aggregate rollback restores the snapshot-owned accumulator"
     );
 }
 
@@ -772,7 +772,7 @@ fn exact_environment_identity_rekeys_font_banks_when_identifier_changes() {
     assert_eq!(
         stores.testing_exact_env_updates(),
         updates,
-        "an identical identifier assignment must not rebuild the Env treap"
+        "an identical identifier assignment must not rebuild the Env accumulator"
     );
 
     let second = stores.intern("nullfont-second");
@@ -806,6 +806,45 @@ fn exact_environment_identity_excludes_empty_save_stack_representation() {
         stores.exact_env_identity(),
         stores.testing_recomputed_exact_env_identity(),
         "group markers, epochs, and checkpoint baselines are representation metadata"
+    );
+}
+
+#[test]
+fn exact_environment_identity_nested_snapshots_restore_isolated_deltas() {
+    let mut stores = Stores::new();
+    stores.set_count(7, 11);
+    let outer = stores.checkpoint();
+    let outer_identity = stores.exact_env_identity();
+
+    stores.set_count(7, 13);
+    stores.set_dimen(9, Scaled::from_raw(17));
+    let inner = stores.checkpoint();
+    let inner_identity = stores.exact_env_identity();
+    assert_ne!(inner_identity, outer_identity);
+
+    stores.set_count(7, 19);
+    stores.set_dimen(10, Scaled::from_raw(23));
+    let _latest = stores.checkpoint();
+    stores.rollback(&inner);
+    assert_eq!(stores.count(7), 13);
+    assert_eq!(stores.dimen(9), Scaled::from_raw(17));
+    assert_eq!(stores.dimen(10), Scaled::from_raw(0));
+    assert_eq!(stores.exact_env_identity(), inner_identity);
+    assert_eq!(
+        stores.exact_env_identity(),
+        stores.testing_recomputed_exact_env_identity()
+    );
+
+    stores.set_count(8, 29);
+    let _diverged = stores.checkpoint();
+    stores.rollback(&outer);
+    assert_eq!(stores.count(7), 11);
+    assert_eq!(stores.count(8), 0);
+    assert_eq!(stores.dimen(9), Scaled::from_raw(0));
+    assert_eq!(stores.exact_env_identity(), outer_identity);
+    assert_eq!(
+        stores.exact_env_identity(),
+        stores.testing_recomputed_exact_env_identity()
     );
 }
 

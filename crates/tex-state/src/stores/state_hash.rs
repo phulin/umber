@@ -249,6 +249,9 @@ impl Stores {
             );
             cache.retired_first_old.insert(cell, baseline_hash);
         }
+        for &(cell, _, _) in &first_old {
+            self.synchronize_exact_env_cell(cell, self.env.semantic_word(cell));
+        }
         first_old.clear();
         cache.first_old = first_old;
         self.semantic_hash_cache = cache;
@@ -256,11 +259,12 @@ impl Stores {
 
     /// Canonical identity of the rollback-coupled mutable store roots.
     ///
-    /// Environment cells already carry a persistent Merkle root. The other
+    /// Environment cells already carry a canonical commutative accumulator. The other
     /// components reuse the same root-keyed canonical projections as the
     /// rolling checkpoint hash, so an exact comparison visits only roots that
     /// have changed since their last projection.
     pub(crate) fn exact_mutable_identity(&mut self) -> u64 {
+        self.synchronize_exact_env_identity();
         let cursor = self.state_hash_cursor();
         let mut cache = std::mem::take(&mut self.semantic_hash_cache);
         let code_tables: [StateHashFragment; 6] = core::array::from_fn(|table| {
@@ -295,7 +299,7 @@ impl Stores {
         self.semantic_hash_cache = cache;
 
         let mut framed = Vec::with_capacity(32 + 8 * 9);
-        framed.extend_from_slice(b"umber-exact-mutable-store-v1");
+        framed.extend_from_slice(b"umber-exact-mutable-store-v3");
         framed.extend_from_slice(&self.exact_env_identity().to_le_bytes());
         for fragment in code_tables {
             framed.extend_from_slice(&fragment.exact_identity().to_le_bytes());
@@ -303,7 +307,7 @@ impl Stores {
         framed.extend_from_slice(&hyphenation.exact_identity().to_le_bytes());
         framed.extend_from_slice(&prepared_mag.exact_identity().to_le_bytes());
         framed.extend_from_slice(&last_loaded_font.exact_identity().to_le_bytes());
-        crate::state_hash::exact_identity_bytes(b"umber-exact-mutable-store-v2", &framed)
+        crate::state_hash::exact_identity_bytes(b"umber-exact-mutable-store-v4", &framed)
     }
 
     #[must_use]
@@ -483,7 +487,7 @@ impl Stores {
         hyphenation.apply(&mut hasher);
         prepared_mag.apply(&mut hasher);
         last_loaded_font.apply(&mut hasher);
-        end.exact_env_identity = self.exact_env_identity.clone();
+        end.exact_env_identity = self.exact_env_identity.snapshot();
         hasher.finish()
     }
 
@@ -767,24 +771,83 @@ impl Stores {
         })
     }
 
-    pub(super) fn update_exact_env_cell(&mut self, cell: CellId, word: u64) {
+    pub(crate) fn update_exact_env_cell(&mut self, cell: CellId, word: u64) {
+        debug_assert_eq!(word, self.env.semantic_word(cell));
+        let value = self
+            .env
+            .semantic_non_default_word(cell)
+            .map(|word| self.exact_cell_value(cell, word));
+        if value.is_none() {
+            self.exact_env_identity.update(cell, 0, None);
+            return;
+        }
         let semantic_key = self.semantic_cell_key(cell);
         let key = self.exact_cell_key(&semantic_key);
-        let value = (word != 0).then(|| self.exact_cell_value(cell, word));
-        self.exact_env_identity.update(key, value);
+        self.exact_env_identity.update(cell, key, value);
     }
 
     fn synchronize_exact_env_cell(&mut self, cell: CellId, word: u64) {
+        debug_assert_eq!(word, self.env.semantic_word(cell));
+        let value = self
+            .env
+            .semantic_non_default_word(cell)
+            .map(|word| self.exact_cell_value(cell, word));
+        if value.is_none() {
+            if !self.exact_env_identity.contains(cell, 0, None) {
+                self.exact_env_identity.update(cell, 0, None);
+            }
+            return;
+        }
         let semantic_key = self.semantic_cell_key(cell);
         let key = self.exact_cell_key(&semantic_key);
-        let value = (word != 0).then(|| self.exact_cell_value(cell, word));
-        if !self.exact_env_identity.contains(key, value) {
-            self.exact_env_identity.update(key, value);
+        if !self.exact_env_identity.contains(cell, key, value) {
+            self.exact_env_identity.update(cell, key, value);
         }
     }
 
+    pub(crate) fn synchronize_exact_env_identity(&mut self) {
+        let (journal_pos, baseline_serial) = self.exact_env_identity.journal_cursor();
+        assert_eq!(
+            baseline_serial,
+            self.env.journal_baseline_serial(),
+            "exact environment cursor belongs to a retired journal baseline"
+        );
+        let mut cells = self
+            .env
+            .journal_entries_since(journal_pos)
+            .iter()
+            .filter_map(|entry| match entry {
+                Entry::Undo(rec) => Some(rec.cell().without_assignment_scope()),
+                Entry::BoxUndo(id) => Some(CellId::new(
+                    BankTag::Box,
+                    u32::from(self.env.box_undo(*id).index()),
+                )),
+                Entry::Marker(_) => None,
+            })
+            .collect::<Vec<_>>();
+        cells.sort_unstable();
+        cells.dedup();
+        for cell in cells {
+            self.synchronize_exact_env_cell(cell, self.env.semantic_word(cell));
+        }
+        self.mark_exact_env_journal_current();
+    }
+
+    pub(super) fn mark_exact_env_journal_current(&mut self) {
+        self.exact_env_identity.mark_journal(
+            self.env.current_journal_pos(),
+            self.env.journal_baseline_serial(),
+        );
+    }
+
     pub(crate) fn initialize_exact_env_identity(&mut self) {
-        self.exact_env_identity = self.recomputed_exact_env_identity();
+        let recomputed = self.recomputed_exact_env_identity();
+        self.exact_env_identity.reconcile(&recomputed);
+        self.mark_exact_env_journal_current();
+    }
+
+    pub(crate) fn discard_exact_env_undo_history(&mut self) {
+        self.exact_env_identity.discard_undo_history();
     }
 
     fn recomputed_exact_env_identity(&self) -> super::exact_identity::ExactEnvIdentity {
@@ -795,10 +858,12 @@ impl Stores {
         for (cell, word) in cells {
             let semantic_key = self.semantic_cell_key(cell);
             identity.update(
+                cell,
                 self.exact_cell_key(&semantic_key),
                 Some(self.exact_cell_value(cell, word)),
             );
         }
+        identity.discard_undo_history();
         identity
     }
 
@@ -809,6 +874,11 @@ impl Stores {
     #[cfg(test)]
     pub(crate) const fn testing_exact_env_updates(&self) -> usize {
         self.exact_env_identity.testing_updates()
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn testing_exact_env_undo_entries(&self) -> usize {
+        self.exact_env_identity.testing_undo_len()
     }
 
     #[cfg(test)]

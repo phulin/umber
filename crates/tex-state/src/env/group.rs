@@ -634,12 +634,20 @@ impl Env {
     }
 
     pub(crate) fn can_retire_committed_snapshot(&self, snapshot: &EnvSnapshot) -> bool {
+        self.group_depth == 0 && self.can_discard_derived_snapshot_history(snapshot)
+    }
+
+    /// Returns whether consuming `snapshot` leaves no aggregate rollback root
+    /// on the current journal baseline.
+    ///
+    /// Derived mutation journals may discard their suffix at this boundary
+    /// even while an open TeX group keeps Env's own save stack live.
+    pub(crate) fn can_discard_derived_snapshot_history(&self, snapshot: &EnvSnapshot) -> bool {
         let snapshot_owns_current = snapshot
             .rollback_roots
             .as_ref()
             .is_some_and(|roots| std::sync::Arc::ptr_eq(&self.journal_rollback_roots, roots));
-        self.group_depth == 0
-            && snapshot.journal_baseline_serial == self.journal_baseline_serial
+        snapshot.journal_baseline_serial == self.journal_baseline_serial
             && self
                 .journal_rollback_roots
                 .is_only(usize::from(snapshot_owns_current))

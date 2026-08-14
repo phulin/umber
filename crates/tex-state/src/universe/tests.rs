@@ -128,6 +128,7 @@ fn committed_level_zero_operations_retire_journal_history_at_a_bounded_baseline(
         universe.set_count_global(1, -value);
         universe.commit_local_retry_snapshot(operation);
         assert_eq!(universe.env_journal_entry_count(), 0);
+        assert_eq!(universe.stores.testing_exact_env_undo_entries(), 0);
     }
 
     assert_eq!(universe.count(0), 10_000);
@@ -178,6 +179,17 @@ fn closed_groups_retire_but_open_groups_and_retained_checkpoints_keep_exact_hist
     assert_eq!(universe.env_journal_entry_count(), 0);
     assert_eq!(universe.count(2), 44);
     drop(invalidated_inside_group);
+
+    universe.enter_group();
+    let open_without_retained_snapshot = universe.snapshot_for_local_retry();
+    universe.set_count(3, 55);
+    universe.commit_local_retry_snapshot(open_without_retained_snapshot);
+    assert_eq!(
+        universe.stores.testing_exact_env_undo_entries(),
+        0,
+        "an open TeX group alone must not retain derived snapshot deltas"
+    );
+    let _ = universe.leave_group();
 }
 
 #[test]
@@ -1504,7 +1516,7 @@ fn exact_environment_identity_tracks_null_parshape_representation_rewrite() {
     // Paragraph completion canonically clears `par_shape_ptr`. The already
     // null case still materializes Umber's private empty-list representation
     // without a TeX save-stack word, so the aggregate raw-restore seam must
-    // update the exact Env treap and retain only snapshot-rollback history.
+    // update the exact Env accumulator and retain only snapshot-rollback state.
     universe.set_paragraph_shape(&[], false);
     assert_eq!(universe.paragraph_shape_len(), 0);
     assert_ne!(universe.stores.exact_env_identity(), baseline);

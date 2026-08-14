@@ -1747,6 +1747,7 @@ impl Universe {
             clock,
         );
         stores.initialize_exact_env_identity();
+        stores.discard_exact_env_undo_history();
         let input_summary = InputSummary::default();
         let page = PageBuilderState::default();
         let pdf = PdfState::default();
@@ -2607,6 +2608,7 @@ impl Universe {
         if !receipt.changed() {
             return;
         }
+        self.stores.synchronize_exact_env_identity();
         let cell = receipt.cell();
         self.stores.update_main_memory_roots(receipt);
         let index = cell.index();
@@ -2952,7 +2954,6 @@ impl Universe {
             },
             clock,
         );
-        stores.initialize_exact_env_identity();
         let input_summary = InputSummary::default();
         let page = PageBuilderState::default();
         let pdf_format = format.pdf;
@@ -3037,6 +3038,12 @@ impl Universe {
         };
         universe.pdf = pdf;
         universe.state_hash_base.pdf = universe.pdf.cursor();
+        // Format-carried PDF token parameters may upgrade an existing named
+        // control sequence to its inaccessible internal namespace while they
+        // are imported. Build exact Env identity after that canonicalization
+        // so the initial loaded timeline matches a freshly constructed one.
+        universe.stores.initialize_exact_env_identity();
+        universe.stores.discard_exact_env_undo_history();
         Ok(universe)
     }
 
@@ -3782,13 +3789,13 @@ impl Universe {
         self.state_hash_projection_cache = cache;
 
         let mut framed = Vec::with_capacity(192);
-        framed.extend_from_slice(b"umber-exact-checkpoint-v2");
+        framed.extend_from_slice(b"umber-exact-checkpoint-v4");
         framed.extend_from_slice(&store.to_le_bytes());
         for component in [input, world, interaction, page, pdf] {
             framed.extend_from_slice(&component.exact_identity().to_le_bytes());
         }
         let identity =
-            crate::state_hash::exact_identity_bytes(b"umber-exact-checkpoint-v3", &framed);
+            crate::state_hash::exact_identity_bytes(b"umber-exact-checkpoint-v5", &framed);
         #[cfg(feature = "profiling")]
         {
             let projections_after = crate::measurement::state_hash_measurement();
