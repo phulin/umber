@@ -4104,7 +4104,6 @@ impl Stores {
         }
         self.macros.truncate_to(snapshot.macro_mark);
         self.glue.truncate_to(snapshot.glue_mark);
-        let font_state_changed = self.fonts.watermark() != snapshot.font_mark;
         self.fonts.truncate_to(snapshot.font_mark);
         self.nodes.truncate_to(snapshot.node_mark);
         self.code_tables
@@ -4112,18 +4111,9 @@ impl Stores {
         self.hyphenation = snapshot.hyphenation.clone();
         self.prepared_mag = snapshot.prepared_mag;
         self.last_loaded_font = snapshot.last_loaded_font;
-        if font_state_changed {
-            // Font identifiers and expansion configuration participate in
-            // canonical FontBank keys without changing their Env words.
-            // Font mutation is rare; rebuild the current-cell lookup after
-            // restoring such a mark, while the checkpoint accumulator remains
-            // a constant-size rollback value.
-            self.initialize_exact_env_identity();
-        } else {
-            for receipt in &receipts {
-                let cell = receipt.cell();
-                self.update_exact_env_cell(cell, self.env.semantic_word(cell));
-            }
+        for receipt in &receipts {
+            let cell = receipt.cell();
+            self.update_exact_env_cell(cell, self.env.semantic_word(cell));
         }
         self.mark_exact_env_journal_current();
         self.exact_env_identity.restore(snapshot.exact_env_identity);
