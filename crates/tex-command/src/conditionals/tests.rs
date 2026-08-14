@@ -2566,6 +2566,87 @@ fn if_ifcat_and_ifx_complete_operand_matrix() {
 }
 
 #[test]
+fn ifx_compares_macro_tokens_after_candidate_index_churn() {
+    // TeX82 §507 compares the parameter and replacement token lists. Their
+    // allocator coordinates are deliberately different here: the bounded
+    // candidate index is operational metadata, not semantic authority, and
+    // must not change `\ifx`'s result after it rolls over.
+    let mut command = CommandState::default();
+    let mut universe = crate::test_harness::universe();
+    let first = macro_token(
+        &mut universe,
+        "domain-first",
+        MeaningFlags::EMPTY,
+        &[Token::param(1)],
+        &[Token::param(1), letter('x')],
+    );
+
+    for value in 0..2_048_u32 {
+        let ch = char::from_u32(0x1_000 + value).expect("filler is a Unicode scalar");
+        let _filler = macro_token(
+            &mut universe,
+            &format!("ifx-churn-{value}"),
+            MeaningFlags::EMPTY,
+            &[Token::param(1)],
+            &[Token::param(1), other(ch)],
+        );
+    }
+    let equal = macro_token(
+        &mut universe,
+        "domain-equal",
+        MeaningFlags::EMPTY,
+        &[Token::param(1)],
+        &[Token::param(1), letter('x')],
+    );
+    let different = macro_token(
+        &mut universe,
+        "domain-different",
+        MeaningFlags::EMPTY,
+        &[Token::param(1)],
+        &[Token::param(1), letter('y')],
+    );
+
+    let replacement = |token| {
+        let Token::Cs(symbol) = token else {
+            panic!("macro operand is a control sequence");
+        };
+        let Meaning::Macro { definition, .. } = universe.meaning(symbol) else {
+            panic!("macro operand has a macro meaning");
+        };
+        universe.macro_definition(definition).replacement_text()
+    };
+    let first_replacement = replacement(first);
+    let equal_replacement = replacement(equal);
+    assert_ne!(first_replacement, equal_replacement);
+    assert_eq!(
+        universe.tokens(first_replacement).tokens(),
+        universe.tokens(equal_replacement).tokens()
+    );
+
+    let mut tokens = Vec::new();
+    append_boolean_case(
+        &mut universe,
+        &mut tokens,
+        "domain-equal-case",
+        ExpandablePrimitive::IfX,
+        vec![first, equal],
+    );
+    append_boolean_case(
+        &mut universe,
+        &mut tokens,
+        "domain-different-case",
+        ExpandablePrimitive::IfX,
+        vec![first, different],
+    );
+    push(&mut command, tokens);
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut processor = processor(&mut command, &mut universe, &mut capabilities);
+
+    assert_eq!(next_character(&mut processor), 't');
+    assert_eq!(next_character(&mut processor), 'f');
+}
+
+#[test]
 fn etex_ifdefined_tests_one_unexpanded_raw_meaning() {
     let mut command = CommandState::new(crate::CommandProfile::ETEX26);
     let mut universe = crate::test_harness::universe();
