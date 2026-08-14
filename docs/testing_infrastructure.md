@@ -780,9 +780,12 @@ checkpoints. At equal 128-cycle milestones it compares reachable checkpoint
 state, effects, artifacts, DVI plans, and DVI bytes with a clean rebuild. Exact
 live token, macro, glue, provenance, source, journal, and node owner categories
 must remain constant, while weak indexes, checkpoint roots, provenance
-storage, and node storage remain within their declared budgets and fixed
-headroom. Equal-work receipts pin accepted/rejected/retry/checkpoint counts,
-delivered commands, and fuel independently of retention.
+storage, and node storage remain within their declared budgets. Fragment
+metadata has a 64-row retired-coordinate budget; after warm-up, both
+`diagnostic_bytes` and `checkpoint_root_bytes` must equal their baseline
+exactly rather than consume patch-count headroom. Equal-work receipts pin
+accepted/rejected/retry/checkpoint counts, delivered commands, and fuel
+independently of retention.
 
 On Linux the same milestones sample `/proc/self/status` and allow at most 64
 MiB of process-RSS growth after warm-up. RSS is allocator/process diagnostic

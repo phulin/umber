@@ -503,13 +503,101 @@ fn metadata_snapshots_are_o1_and_immutable_across_owner_appends() {
         append(&mut fragments, b"x", revision);
     }
     let metadata = fragments.metadata_snapshot();
-    assert!(Arc::ptr_eq(
-        fragments.fragments.root.as_ref().expect("owner root"),
-        metadata.fragments.root.as_ref().expect("snapshot root")
-    ));
+    assert!(Arc::ptr_eq(&fragments.retired, &metadata.retired,));
+    assert_eq!(
+        metadata.reserved_position_bytes(),
+        fragments.reserved_position_bytes()
+    );
     assert_eq!(metadata.len(), 32);
     append(&mut fragments, b"later", 33);
     assert_eq!(fragments.len(), 33);
     assert_eq!(metadata.len(), 32);
     assert_eq!(metadata.source_bytes(), 0);
+}
+
+#[test]
+fn retired_metadata_budget_eviction_preserves_stable_recipe_resolution() {
+    let row_bytes = mem::size_of::<SourceFragment>();
+    let mut fragments = FragmentStore::testing_with_retired_metadata_budget(2 * row_bytes);
+    let (first, first_registration) = append(&mut fragments, b"a", 11);
+    let first_piece = Piece::new(first, 0, 1);
+    let first_recipe = fragments
+        .root_span_id(&first_piece, 0..1)
+        .expect("stable first-fragment recipe");
+    let first_origin = first_registration
+        .direct_origin(0, 1)
+        .expect("direct first-fragment origin");
+    let (_, second_registration) = append(&mut fragments, b"b", 12);
+    let second_origin = second_registration
+        .direct_origin(0, 1)
+        .expect("direct second-fragment origin");
+    let (_, third_registration) = append(&mut fragments, b"c", 13);
+    let third_origin = third_registration
+        .direct_origin(0, 1)
+        .expect("direct third-fragment origin");
+    let (current, current_registration) = append(&mut fragments, b"de", 14);
+    let current_origin = current_registration
+        .direct_origin(0, 1)
+        .expect("direct current-fragment origin");
+    let layout = EditorLayout::new(
+        "root.tex",
+        LayoutGeneration::new(14),
+        vec![Piece::new(current, 0, 2)],
+        &fragments,
+    )
+    .expect("current layout");
+
+    assert_eq!(fragments.prune_for_layout(&layout, 14, 14), 3);
+    assert_eq!(fragments.testing_retired_metadata_rows(), 2);
+    assert_eq!(direct_fragment_span(first_origin, &fragments), None);
+    assert!(matches!(
+        direct_fragment_span(second_origin, &fragments)
+            .and_then(|span| resolve_fragment_span(span, &fragments, &layout)),
+        Some(LayoutResolvedOrigin::Deleted {
+            minted_revision: 12
+        })
+    ));
+    assert!(matches!(
+        direct_fragment_span(third_origin, &fragments)
+            .and_then(|span| resolve_fragment_span(span, &fragments, &layout)),
+        Some(LayoutResolvedOrigin::Deleted {
+            minted_revision: 13
+        })
+    ));
+    assert!(matches!(
+        direct_fragment_span(current_origin, &fragments)
+            .and_then(|span| resolve_fragment_span(span, &fragments, &layout)),
+        Some(LayoutResolvedOrigin::Current { .. })
+    ));
+    let compact_recipe = fragments
+        .root_span_id(&Piece::new(current, 0, 2), 0..1)
+        .expect("piece anchor")
+        .start_anchor()
+        .with_offsets(1, 2);
+    assert!(matches!(
+        resolve_root_span(compact_recipe, &fragments, &layout),
+        LayoutResolvedOrigin::Current {
+            doc_offset_lo: 1,
+            doc_offset_hi: 2,
+            ..
+        }
+    ));
+    assert_eq!(
+        resolve_root_span(first_recipe, &fragments, &layout),
+        LayoutResolvedOrigin::Deleted {
+            minted_revision: 11
+        },
+        "typed detached recipes outlive the raw-coordinate history window"
+    );
+    let mut universe = crate::Universe::new();
+    universe
+        .install_editor_fragments(&fragments, &layout)
+        .expect("bounded fragment snapshot installs");
+    let materialized = universe
+        .origin_for_root_span(first_recipe)
+        .expect("evicted stable recipe materializes");
+    assert!(matches!(
+        universe.origin_if_live(materialized),
+        Some(crate::provenance::OriginRecord::SourceSpan(_))
+    ));
 }

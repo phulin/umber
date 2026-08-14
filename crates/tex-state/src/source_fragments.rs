@@ -2,7 +2,7 @@
 
 mod layout_index;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::mem;
 use std::ops::Range;
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
@@ -59,6 +59,9 @@ pub struct RootSpanId {
     start: u32,
     end: u32,
     content: ContentHash,
+    region_start: SourcePos,
+    fragment_byte_len: u64,
+    minted_revision: u64,
 }
 
 impl RootSpanId {
@@ -70,6 +73,9 @@ impl RootSpanId {
             start: self.start,
             end: self.start,
             content: self.content,
+            region_start: self.region_start,
+            fragment_byte_len: self.fragment_byte_len,
+            minted_revision: self.minted_revision,
         }
     }
 
@@ -103,6 +109,9 @@ impl RootSpanId {
             start,
             end,
             content: self.content,
+            region_start: self.region_start,
+            fragment_byte_len: self.fragment_byte_len,
+            minted_revision: self.minted_revision,
         }
     }
 }
@@ -126,6 +135,7 @@ struct SourceFragment {
 
 #[derive(Clone, Debug)]
 struct FragmentSource {
+    fragment: SourceFragment,
     bytes: Option<Arc<[u8]>>,
     removed_revision: Option<u64>,
     live_generation: LayoutGeneration,
@@ -137,142 +147,29 @@ impl SourceFragment {
     }
 }
 
-#[derive(Debug)]
-enum FragmentNode {
-    Leaf(SourceFragment),
-    Branch {
-        left: Option<Arc<Self>>,
-        right: Option<Arc<Self>>,
-    },
+/// Retired raw-coordinate history is diagnostic cache state, not semantic
+/// ownership. Sixty-four rows cover the editor's immediate undo/hover window
+/// while giving the long-session gate a fixed, architecture-derived charge.
+pub const RETIRED_FRAGMENT_METADATA_ROWS: usize = 64;
+
+const fn default_retired_fragment_metadata_bytes() -> usize {
+    RETIRED_FRAGMENT_METADATA_ROWS * mem::size_of::<SourceFragment>()
 }
 
-#[derive(Clone, Debug, Default)]
-struct FragmentTable {
-    root: Option<Arc<FragmentNode>>,
-    len: u32,
-    depth: u8,
-}
-
-impl FragmentTable {
-    fn push(&mut self, fragment: SourceFragment) -> Result<(), SourceMapError> {
-        if self.len == u32::MAX {
-            return Err(SourceMapError::LogicalPositionExhausted);
-        }
-        if self.root.is_none() {
-            self.root = Some(Arc::new(FragmentNode::Leaf(fragment)));
-        } else if u64::from(self.len) == (1_u64 << self.depth) {
-            self.root = Some(Arc::new(FragmentNode::Branch {
-                left: self.root.take(),
-                right: Some(Self::new_path(self.depth, fragment)),
-            }));
-            self.depth += 1;
-        } else {
-            let Some(root) = self.root.as_ref() else {
-                unreachable!("nonempty fragment tree")
-            };
-            self.root = Some(Self::insert(root, self.depth, self.len, fragment));
-        }
-        self.len += 1;
-        Ok(())
-    }
-
-    fn new_path(depth: u8, fragment: SourceFragment) -> Arc<FragmentNode> {
-        if depth == 0 {
-            Arc::new(FragmentNode::Leaf(fragment))
-        } else {
-            Arc::new(FragmentNode::Branch {
-                left: Some(Self::new_path(depth - 1, fragment)),
-                right: None,
-            })
-        }
-    }
-
-    fn insert(
-        node: &Arc<FragmentNode>,
-        depth: u8,
-        index: u32,
-        fragment: SourceFragment,
-    ) -> Arc<FragmentNode> {
-        if depth == 0 {
-            return Arc::new(FragmentNode::Leaf(fragment));
-        }
-        let FragmentNode::Branch { left, right } = node.as_ref() else {
-            unreachable!("fragment tree depth matches node shape")
-        };
-        let right_half = index & (1_u32 << (depth - 1)) != 0;
-        if right_half {
-            let child = match right {
-                Some(child) => Self::insert(child, depth - 1, index, fragment),
-                None => Self::new_path(depth - 1, fragment),
-            };
-            Arc::new(FragmentNode::Branch {
-                left: left.clone(),
-                right: Some(child),
-            })
-        } else {
-            let child = match left {
-                Some(child) => Self::insert(child, depth - 1, index, fragment),
-                None => Self::new_path(depth - 1, fragment),
-            };
-            Arc::new(FragmentNode::Branch {
-                left: Some(child),
-                right: right.clone(),
-            })
-        }
-    }
-
-    fn get(&self, index: u32) -> Option<&SourceFragment> {
-        if index >= self.len {
-            return None;
-        }
-        let mut node = self.root.as_deref()?;
-        for shift in (0..self.depth).rev() {
-            let FragmentNode::Branch { left, right } = node else {
-                return None;
-            };
-            node = if index & (1_u32 << shift) == 0 {
-                left.as_deref()?
-            } else {
-                right.as_deref()?
-            };
-        }
-        let FragmentNode::Leaf(fragment) = node else {
-            return None;
-        };
-        Some(fragment)
-    }
-
-    fn visit(&self, mut visitor: impl FnMut(&SourceFragment)) {
-        fn walk(node: &FragmentNode, visitor: &mut impl FnMut(&SourceFragment)) {
-            match node {
-                FragmentNode::Leaf(fragment) => visitor(fragment),
-                FragmentNode::Branch { left, right } => {
-                    if let Some(left) = left {
-                        walk(left, visitor);
-                    }
-                    if let Some(right) = right {
-                        walk(right, visitor);
-                    }
-                }
-            }
-        }
-        if let Some(root) = &self.root {
-            walk(root, &mut visitor);
-        }
-    }
-}
-
-/// Session-scoped append-only registry of immutable editor source fragments.
+/// Session-scoped registry of current fragments and bounded retired metadata.
 ///
 /// Clones share inherited metadata and byte ownership in O(1) and receive a
 /// fresh append lineage. Engine generations install a metadata-only view;
 /// the accepted session remains the sole byte-state mutator.
 #[derive(Debug)]
 pub struct FragmentStore {
-    fragments: FragmentTable,
     sources: Arc<HashMap<FragmentId, FragmentSource>>,
+    retired: Arc<VecDeque<SourceFragment>>,
     root_coordinates: Option<RootCoordinateMap>,
     append_lineage: u64,
+    next_slot: u32,
+    reserved_position_bytes: u64,
+    retired_metadata_budget_bytes: usize,
 }
 
 #[derive(Clone, Debug)]
@@ -282,6 +179,7 @@ struct RootCoordinateMap {
     content: ContentHash,
     pieces: Arc<[Piece]>,
     doc_starts: Arc<[u64]>,
+    fragments: Arc<[SourceFragment]>,
     registrations: Arc<Vec<RegisteredSource>>,
     backing: Option<Arc<[u8]>>,
 }
@@ -289,10 +187,13 @@ struct RootCoordinateMap {
 impl Clone for FragmentStore {
     fn clone(&self) -> Self {
         Self {
-            fragments: self.fragments.clone(),
             sources: Arc::clone(&self.sources),
+            retired: Arc::clone(&self.retired),
             root_coordinates: self.root_coordinates.clone(),
             append_lineage: next_fragment_lineage(),
+            next_slot: self.next_slot,
+            reserved_position_bytes: self.reserved_position_bytes,
+            retired_metadata_budget_bytes: self.retired_metadata_budget_bytes,
         }
     }
 }
@@ -300,10 +201,13 @@ impl Clone for FragmentStore {
 impl Default for FragmentStore {
     fn default() -> Self {
         Self {
-            fragments: FragmentTable::default(),
             sources: Arc::new(HashMap::new()),
+            retired: Arc::new(VecDeque::new()),
             root_coordinates: None,
             append_lineage: next_fragment_lineage(),
+            next_slot: 0,
+            reserved_position_bytes: 0,
+            retired_metadata_budget_bytes: default_retired_fragment_metadata_bytes(),
         }
     }
 }
@@ -312,6 +216,15 @@ impl FragmentStore {
     #[must_use]
     pub fn new() -> Self {
         Self::default()
+    }
+
+    #[cfg(any(test, feature = "testing"))]
+    #[must_use]
+    pub fn testing_with_retired_metadata_budget(budget_bytes: usize) -> Self {
+        Self {
+            retired_metadata_budget_bytes: budget_bytes,
+            ..Self::default()
+        }
     }
 
     /// Appends one immutable fragment and returns its opaque id and registration.
@@ -335,13 +248,12 @@ impl FragmentStore {
     /// Failed editor advances use this after append so their logical position
     /// ranges and ids remain burned without retaining an orphan backing.
     pub fn discard_unpublished_bytes(&mut self, id: FragmentId) -> usize {
-        if self.get(id).is_none() {
+        let Some(source) = Arc::make_mut(&mut self.sources).remove(&id) else {
             return 0;
-        }
-        Arc::make_mut(&mut self.sources)
-            .remove(&id)
-            .and_then(|source| source.bytes)
-            .map_or(0, |bytes| bytes.len())
+        };
+        let dropped = source.bytes.as_ref().map_or(0, |bytes| bytes.len());
+        self.retain_retired_metadata(source.fragment);
+        dropped
     }
 
     /// Appends at an exact logical position for representation-boundary tests.
@@ -368,7 +280,11 @@ impl FragmentStore {
         byte_len: u64,
         start: u64,
     ) -> Result<(FragmentId, RegisteredSource), SourceMapError> {
-        let slot = self.fragments.len;
+        let slot = self.next_slot;
+        self.next_slot = self
+            .next_slot
+            .checked_add(1)
+            .ok_or(SourceMapError::LogicalPositionExhausted)?;
         let id = FragmentId {
             lineage: self.append_lineage,
             slot,
@@ -379,10 +295,13 @@ impl FragmentStore {
             byte_len,
             minted_revision,
         };
-        self.fragments.push(fragment)?;
+        self.reserved_position_bytes = self
+            .reserved_position_bytes
+            .saturating_add(byte_len.saturating_add(1));
         Arc::make_mut(&mut self.sources).insert(
             id,
             FragmentSource {
+                fragment,
                 bytes: Some(bytes),
                 removed_revision: None,
                 live_generation: LayoutGeneration::new(u64::MAX),
@@ -396,12 +315,12 @@ impl FragmentStore {
 
     #[must_use]
     pub fn len(&self) -> usize {
-        self.fragments.len as usize
+        self.next_slot as usize
     }
 
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.fragments.len == 0
+        self.next_slot == 0
     }
 
     /// Drops bytes from fragments that are absent from the accepted layout and
@@ -419,11 +338,11 @@ impl FragmentStore {
             }
         }
         let mut dropped = 0_usize;
-        for (id, source) in sources.iter_mut() {
+        for source in sources.values_mut() {
             if source.live_generation == layout.generation() {
                 continue;
             }
-            let fragment = self.fragments.get(id.slot).expect("source has metadata");
+            let fragment = &source.fragment;
             let removed_revision = *source
                 .removed_revision
                 .get_or_insert(accepted_revision.max(fragment.minted_revision));
@@ -433,7 +352,14 @@ impl FragmentStore {
                 dropped = dropped.saturating_add(bytes.len());
             }
         }
-        sources.retain(|_, source| source.bytes.is_some());
+        let mut retired = sources
+            .extract_if(|_, source| source.bytes.is_none())
+            .map(|(_, source)| source.fragment)
+            .collect::<Vec<_>>();
+        retired.sort_unstable_by_key(|fragment| fragment.region_start);
+        for fragment in retired {
+            self.retain_retired_metadata(fragment);
+        }
         dropped
     }
 
@@ -450,11 +376,7 @@ impl FragmentStore {
     /// Cumulative logical position space consumed, including one anchor per fragment.
     #[must_use]
     pub fn reserved_position_bytes(&self) -> u64 {
-        let mut total = 0_u64;
-        self.fragments.visit(|fragment| {
-            total = total.saturating_add(fragment.byte_len.saturating_add(1));
-        });
-        total
+        self.reserved_position_bytes
     }
 
     /// Requested diagnostic storage retained by this session-owned table.
@@ -467,10 +389,13 @@ impl FragmentStore {
 
     pub(crate) fn metadata_snapshot(&self) -> Self {
         Self {
-            fragments: self.fragments.clone(),
             sources: Arc::new(HashMap::new()),
+            retired: Arc::clone(&self.retired),
             root_coordinates: self.root_coordinates.clone(),
             append_lineage: next_fragment_lineage(),
+            next_slot: self.next_slot,
+            reserved_position_bytes: self.reserved_position_bytes,
+            retired_metadata_budget_bytes: self.retired_metadata_budget_bytes,
         }
     }
 
@@ -480,22 +405,41 @@ impl FragmentStore {
         retain_rendered_source: bool,
     ) -> Self {
         let mut snapshot = self.metadata_snapshot();
-        if retain_rendered_source {
-            snapshot.sources = Arc::clone(&self.sources);
-        }
+        let mut current_sources = HashMap::new();
+        let mut current_fragments = Vec::new();
         let mut bytes = Vec::with_capacity(usize::try_from(layout.byte_len).unwrap_or(0));
         for piece in layout.pieces.iter() {
             let source = self
-                .bytes(piece.fragment())
+                .sources
+                .get(&piece.fragment())
+                .expect("validated editor layout has live accepted fragment metadata");
+            let backing = source
+                .bytes
+                .as_deref()
                 .expect("validated editor layout has live accepted backing");
-            bytes.extend_from_slice(&source[piece.start() as usize..piece.end() as usize]);
+            bytes.extend_from_slice(&backing[piece.start() as usize..piece.end() as usize]);
+            if current_fragments
+                .last()
+                .is_none_or(|last: &SourceFragment| last.id != source.fragment.id)
+            {
+                current_fragments.push(source.fragment.clone());
+            }
+            if retain_rendered_source {
+                current_sources
+                    .entry(source.fragment.id)
+                    .or_insert_with(|| source.clone());
+            }
         }
+        current_fragments.sort_unstable_by_key(|fragment| fragment.region_start);
+        current_fragments.dedup_by_key(|fragment| fragment.id);
+        snapshot.sources = Arc::new(current_sources);
         snapshot.root_coordinates = Some(RootCoordinateMap {
             logical_path: Arc::clone(&layout.path),
             byte_len: layout.byte_len,
             content: ContentHash::from_bytes(&bytes),
             pieces: Arc::clone(&layout.pieces),
             doc_starts: Arc::clone(&layout.doc_starts),
+            fragments: current_fragments.into(),
             registrations: Arc::new(Vec::new()),
             backing: None,
         });
@@ -540,8 +484,34 @@ impl FragmentStore {
     }
 
     pub(crate) fn metadata_retained_bytes(&self) -> usize {
-        (self.fragments.len as usize)
-            .saturating_mul(mem::size_of::<SourceFragment>() + mem::size_of::<FragmentNode>())
+        self.sources
+            .len()
+            .saturating_mul(mem::size_of::<FragmentSource>())
+            .saturating_add(self.retired_metadata_budget_bytes)
+            .saturating_add(self.root_coordinates.as_ref().map_or(0, |root| {
+                root.fragments
+                    .len()
+                    .saturating_mul(mem::size_of::<SourceFragment>())
+            }))
+    }
+
+    fn retain_retired_metadata(&mut self, fragment: SourceFragment) {
+        let row_bytes = mem::size_of::<SourceFragment>();
+        if row_bytes == 0 || self.retired_metadata_budget_bytes < row_bytes {
+            return;
+        }
+        let rows = self.retired_metadata_budget_bytes / row_bytes;
+        let retired = Arc::make_mut(&mut self.retired);
+        while retired.len() >= rows {
+            retired.pop_front();
+        }
+        retired.push_back(fragment);
+    }
+
+    #[cfg(any(test, feature = "testing"))]
+    #[must_use]
+    pub fn testing_retired_metadata_rows(&self) -> usize {
+        self.retired.len()
     }
 
     /// Returns the immutable bytes retained for one fragment.
@@ -554,6 +524,7 @@ impl FragmentStore {
     /// Identifies a range relative to a current piece without using document offsets.
     #[must_use]
     pub fn root_span_id(&self, piece: &Piece, range: Range<u32>) -> Option<RootSpanId> {
+        let fragment = self.get(piece.fragment())?;
         let piece_len = piece.end().checked_sub(piece.start())?;
         if range.start > range.end || range.end > piece_len {
             return None;
@@ -568,6 +539,9 @@ impl FragmentStore {
             start,
             end,
             content: ContentHash::from_bytes(bytes),
+            region_start: fragment.region_start,
+            fragment_byte_len: fragment.byte_len,
+            minted_revision: fragment.minted_revision,
         })
     }
 
@@ -620,6 +594,9 @@ impl FragmentStore {
             start,
             end,
             content,
+            region_start: fragment.region_start,
+            fragment_byte_len: fragment.byte_len,
+            minted_revision: fragment.minted_revision,
         })
     }
 
@@ -633,9 +610,9 @@ impl FragmentStore {
         if range.start > range.end || range.end > bytes.len() as u64 {
             return None;
         }
-        for slot in 0..self.fragments.len {
-            let fragment = self.fragments.get(slot)?;
-            if self.bytes(fragment.id)? != bytes {
+        for source in self.sources.values() {
+            let fragment = &source.fragment;
+            if source.bytes.as_deref()? != bytes {
                 continue;
             }
             let start = u32::try_from(range.start).ok()?;
@@ -645,6 +622,9 @@ impl FragmentStore {
                 start,
                 end,
                 content: ContentHash::from_bytes(bytes.get(start as usize..end as usize)?),
+                region_start: fragment.region_start,
+                fragment_byte_len: fragment.byte_len,
+                minted_revision: fragment.minted_revision,
             });
         }
         None
@@ -673,6 +653,9 @@ impl FragmentStore {
             start,
             end,
             content,
+            region_start: fragment.region_start,
+            fragment_byte_len: fragment.byte_len,
+            minted_revision: fragment.minted_revision,
         })
     }
 
@@ -695,6 +678,9 @@ impl FragmentStore {
             start,
             end,
             content,
+            region_start: fragment.region_start,
+            fragment_byte_len: fragment.byte_len,
+            minted_revision: fragment.minted_revision,
         })
     }
 
@@ -743,11 +729,17 @@ impl FragmentStore {
             start,
             end,
             content,
+            region_start: self.get(piece.fragment())?.region_start,
+            fragment_byte_len: self.get(piece.fragment())?.byte_len,
+            minted_revision: self.get(piece.fragment())?.minted_revision,
         })
     }
 
     pub(crate) fn source_span_for_root(&self, span: RootSpanId) -> Option<SourceSpan> {
-        let registration = self.registration(span.piece.fragment())?;
+        if u64::from(span.end) > span.fragment_byte_len {
+            return None;
+        }
+        let registration = RegisteredSource::new(span.region_start, span.fragment_byte_len);
         registration
             .span(u64::from(span.start), u64::from(span.end))
             .ok()
@@ -777,25 +769,43 @@ impl FragmentStore {
     }
 
     fn get(&self, id: FragmentId) -> Option<&SourceFragment> {
-        self.fragments
-            .get(id.slot)
-            .filter(|fragment| fragment.id == id)
+        self.sources
+            .get(&id)
+            .map(|source| &source.fragment)
+            .or_else(|| self.retired.iter().find(|fragment| fragment.id == id))
+            .or_else(|| {
+                self.root_coordinates
+                    .as_ref()?
+                    .fragments
+                    .iter()
+                    .find(|fragment| fragment.id == id)
+            })
     }
 
     fn fragment_at(&self, position: SourcePos) -> Option<(FragmentId, &SourceFragment)> {
-        let mut low = 0_u32;
-        let mut high = self.fragments.len;
-        while low < high {
-            let mid = low + (high - low) / 2;
-            let fragment = self.fragments.get(mid)?;
-            if fragment.region_start <= position {
-                low = mid + 1;
-            } else {
-                high = mid;
-            }
+        if let Some(fragment) = self
+            .root_coordinates
+            .as_ref()
+            .and_then(|root| fragment_at_in_sorted(&root.fragments, position))
+        {
+            return Some((fragment.id, fragment));
         }
-        let fragment = self.fragments.get(low.checked_sub(1)?)?;
-        (position.raw() <= fragment.anchor()).then_some((fragment.id, fragment))
+        if let Some(fragment) =
+            self.sources
+                .values()
+                .map(|source| &source.fragment)
+                .find(|fragment| {
+                    fragment.region_start <= position && position.raw() <= fragment.anchor()
+                })
+        {
+            return Some((fragment.id, fragment));
+        }
+        self.retired
+            .iter()
+            .find(|fragment| {
+                fragment.region_start <= position && position.raw() <= fragment.anchor()
+            })
+            .map(|fragment| (fragment.id, fragment))
     }
 
     fn span_for_direct(&self, position: SourcePos) -> Option<SourceSpan> {
@@ -815,6 +825,17 @@ impl FragmentStore {
         (hi <= fragment.anchor())
             .then(|| SourceSpan::new(position, SourcePos::from_raw_for_store(hi)))
     }
+}
+
+fn fragment_at_in_sorted(
+    fragments: &[SourceFragment],
+    position: SourcePos,
+) -> Option<&SourceFragment> {
+    let index = fragments
+        .partition_point(|fragment| fragment.region_start <= position)
+        .checked_sub(1)?;
+    let fragment = &fragments[index];
+    (position.raw() <= fragment.anchor()).then_some(fragment)
 }
 
 /// Monotonic identity of one accepted editor piece-table layout.
@@ -1117,6 +1138,37 @@ pub(crate) fn resolve_fragment_span(
         line,
         column,
     })
+}
+
+pub(crate) fn resolve_root_span(
+    span: RootSpanId,
+    fragments: &FragmentStore,
+    layout: &EditorLayout,
+) -> LayoutResolvedOrigin {
+    if span.start > span.end || u64::from(span.end) > span.fragment_byte_len {
+        return LayoutResolvedOrigin::Unknown;
+    }
+    let fragment = span.piece.fragment();
+    let Some((doc_offset_lo, doc_offset_hi)) =
+        layout.current_range(fragment, u64::from(span.start), u64::from(span.end))
+    else {
+        return LayoutResolvedOrigin::Deleted {
+            minted_revision: span.minted_revision,
+        };
+    };
+    if fragments.bytes(fragment).is_none() {
+        return LayoutResolvedOrigin::Unknown;
+    }
+    let Some((line, column)) = layout.line_column(fragments, doc_offset_lo) else {
+        return LayoutResolvedOrigin::Unknown;
+    };
+    LayoutResolvedOrigin::Current {
+        path: layout.path.to_string(),
+        doc_offset_lo,
+        doc_offset_hi,
+        line,
+        column,
+    }
 }
 
 pub(crate) fn direct_fragment_span(

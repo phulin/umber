@@ -5,8 +5,6 @@ const STRESS_WARMUP_CYCLES: usize = 64;
 const STRESS_CYCLES: usize = 2_048;
 const STRESS_MILESTONE_CYCLES: usize = 128;
 const RSS_TOLERANCE_BYTES: usize = 64 * 1024 * 1024;
-const GENERATION_TOLERANCE_BYTES: usize = 2 * 1024 * 1024;
-const DIAGNOSTIC_TOLERANCE_BYTES: usize = 256 * 1024;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 struct WorkReceipt {
@@ -283,21 +281,13 @@ fn assert_budgeted_plateau(baseline: PlateauMilestone, current: PlateauMilestone
         current.physical, baseline.physical,
         "weak indexes, reusable slots, journals, provenance, and node storage must plateau exactly"
     );
-    assert!(
-        current.retention.checkpoint_root_bytes
-            <= baseline
-                .retention
-                .checkpoint_root_bytes
-                .saturating_add(GENERATION_TOLERANCE_BYTES),
-        "generation charge grew beyond its fixed headroom: baseline={baseline:?}, current={current:?}"
+    assert_eq!(
+        current.retention.checkpoint_root_bytes, baseline.retention.checkpoint_root_bytes,
+        "generation charge must plateau at live roots plus the fragment-history budget"
     );
-    assert!(
-        current.retention.diagnostic_bytes
-            <= baseline
-                .retention
-                .diagnostic_bytes
-                .saturating_add(DIAGNOSTIC_TOLERANCE_BYTES),
-        "diagnostic ownership exceeded its live-layout headroom"
+    assert_eq!(
+        current.retention.diagnostic_bytes, baseline.retention.diagnostic_bytes,
+        "diagnostic ownership must plateau at the live layout plus the fragment-history budget"
     );
     assert_eq!(
         current.retention.output_bytes,

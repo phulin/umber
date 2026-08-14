@@ -81,10 +81,11 @@ from the table at read time. A `SourcePos` inside `F1` resolves to a typed
 - **Construction** stays the existing single add per token: the lexer keeps
   calling `RegisteredSource::direct_origin(start, end)` with
   fragment-relative offsets. No table is consulted per token (§4).
-- **Fragment metadata** costs O(log fragments) per accepted append and O(1)
-  per immutable engine-generation snapshot. Piece replacement rebuilds the
-  O(pieces) flat arrays plus the indexed layout described below. Nothing
-  retained is rewritten, so there is nothing to go stale.
+- **Fragment metadata** costs O(current fragments plus the fixed retired-row
+  budget), independent of accepted patch count. Piece replacement rebuilds
+  the O(pieces) flat arrays plus the indexed layout described below. The
+  accepted transition retires metadata which is neither current nor protected
+  by checkpoint bytes. Nothing provenance-bearing is rewritten.
 - **Layout construction** rebuilds the flat piece and document-start arrays
   and a static fragment/offset index. For fragment `f` with `v_f` views, the
   index costs O(`v_f log v_f`) time and storage; total index cost is
@@ -99,10 +100,10 @@ from the table at read time. A `SourcePos` inside `F1` resolves to a typed
 ## 3. Data structures
 
 ```rust
-/// tex-state: session-scoped, append-only, immutable entries.
+/// tex-state: session-scoped current entries plus bounded retired metadata.
 pub struct FragmentStore {
-    fragments: PersistentTree<SourceFragment>, // O(log n) indexed append
-    sources: HashMap<FragmentId, FragmentSource>, // session owner only
+    sources: HashMap<FragmentId, FragmentSource>, // live/protected bytes
+    retired: VecDeque<SourceFragment>, // fixed metadata-byte budget
     append_lineage: u64,              // fresh on every writable clone
 }
 
@@ -141,19 +142,30 @@ pub struct Piece {
 ```
 
 Positions and fragment ids are process-unique and never reused, extending
-the existing rollback invariant. A clone shares the persistent metadata root
-in O(1) but receives a fresh append lineage, so sibling copy-on-write appends
-at the same dense slot mint different handles and reject one another rather
-than aliasing. Appends path-copy O(log fragments) metadata nodes. Mutable byte
-retention lives only in the session owner; pruning marks the layout's live
-source entries in place and drops retired entries without cloning metadata or
-allocating a fragment-count bitmap. The `FragmentStore` is owned by the
-session's retained root and shared with every engine generation as an O(1)
-metadata snapshot installed together
-with its validated layout at rebind. It therefore survives fork discard: a
-fragment minted for an edit stays resolvable no matter which substrate —
-scratch or converged — wins the revision, which fixes the dead-origin defect
-directly.
+the existing rollback invariant. A clone shares current byte ownership and
+the bounded retired window in O(1) but receives a fresh append lineage, so
+sibling copy-on-write appends at the same dense slot mint different handles
+and reject one another rather than aliasing. Mutable byte retention lives only
+in the session owner. At acceptance, pruning keeps every current layout
+fragment and checkpoint-protected backing, then moves newly unprotected rows
+into a FIFO whose capacity is the explicit retired-metadata budget. Evicting
+the oldest row burns its id and logical range permanently but makes an
+unowned raw coordinate resolve `Unknown`; rows still in the window resolve
+typed `Deleted` with their exact mint revision.
+
+Detached `RootSpanId` values are different: they carry the fragment
+registration, mint revision, range, and content identity needed to resolve a
+stable artifact or frozen-diagnostic recipe without retaining a historical
+store row. Such a recipe therefore remains exactly `Current` when its piece
+is in the live layout and exactly `Deleted` otherwise, even after its raw row
+leaves the FIFO. This is typed value ownership, not a graph import or a
+historical-generation registry.
+
+The `FragmentStore` is owned by the session's retained root. Every engine
+generation receives an O(1) snapshot of the bounded retired window plus the
+metadata and backing for the installed current layout. It therefore survives
+fork discard and preserves checkpoint restart and continuation
+materialization without copying patch-count history into the generation.
 
 For each fragment, index construction sweeps views by start offset. Every
 prefix root is a persistent range-min tree over end offsets and stores the
@@ -274,20 +286,19 @@ retained per-page tables sorted by `SourcePos`.
 - **Within a compile**, engine snapshot/rollback semantics are unchanged:
   the fragment store is read-only during execution, so snapshot capture
   stays O(1) and rollback has nothing new to truncate.
-- **Across revisions**, a failed or resource-incomplete `advance` retains its
-  newly minted fragment metadata as an orphan but immediately drops its
-  session-owned bytes. The fragment has no layout view and resolves as
-  `Deleted`; its logical position range and id remain permanently consumed.
-  Retrying the same pending patch therefore burns fresh metadata without
-  retaining duplicate replacement backings.
-- **Byte pruning**: when the last layout view of a fragment disappears and
-  no retained checkpoint's revision precedes the removal, the fragment's
-  bytes drop; its metadata row (region range, `minted_revision`) is retained
-  forever in the persistent metadata tree so old ids stay typed-`Deleted`
-  rather than aliasable. Session
-  memory becomes O(initial document + live inserted text + metadata per
-  edit) instead of one full document per revision. `self.source` remains the
-  single contiguous current-document copy.
+- **Across revisions**, a failed or resource-incomplete `advance` drops its
+  candidate-owned bytes and candidate metadata together. Its logical position
+  range and id remain permanently consumed. While the candidate owner exists,
+  the unpublished row resolves `Deleted`; after rejection it is `Unknown`.
+  Retrying the same pending patch therefore burns fresh identity without
+  retaining duplicate replacement backing or session history.
+- **Byte and metadata pruning**: when the last layout view of a fragment
+  disappears and no retained checkpoint's revision precedes the removal, its
+  bytes drop and its row enters the fixed retired window. Rows leave that
+  window oldest-first once its byte budget is full. Session memory is
+  O(current/protected fragment bytes + current layout metadata + the declared
+  retired-row budget), not O(patches). `self.source` remains the single
+  contiguous current-document copy.
 
 ## 7. Capacity
 
@@ -340,9 +351,9 @@ lookups chase at most one hop. Deferred until measurements demand it.
   hashes, memo keys, format images, and artifact content identity.
 - Ordinary source-character delivery performs zero provenance-store writes;
   `TracedTokenWord` stays 64 bits with a 32-bit origin field.
-- Snapshot capture stays O(1) by sharing the immutable metadata root;
-  positions and fragment ids are never reused
-  across rollback or fork discard.
+- Snapshot capture stays O(1) by sharing the bounded retired window and
+  current-layout backing; positions and fragment ids are never reused across
+  rollback, rejection, retirement, or fork discard.
 - Resolution degrades to typed `Deleted`/`Unknown`, never to a silently
   wrong offset; diagnostic exhaustion never aborts execution.
 - Node origin columns and `render_origins` accounting are unchanged; the

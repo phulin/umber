@@ -802,12 +802,7 @@ impl GenerationSubstrate {
         fragments: &crate::FragmentStore,
         layout: &crate::EditorLayout,
     ) -> crate::LayoutResolvedOrigin {
-        fragments
-            .source_span_for_root(span)
-            .and_then(|span| {
-                crate::source_fragments::resolve_fragment_span(span, fragments, layout)
-            })
-            .unwrap_or(crate::LayoutResolvedOrigin::Unknown)
+        crate::source_fragments::resolve_root_span(span, fragments, layout)
     }
 
     #[doc(hidden)]
@@ -4133,12 +4128,7 @@ impl Universe {
         fragments: &crate::FragmentStore,
         layout: &crate::EditorLayout,
     ) -> crate::LayoutResolvedOrigin {
-        fragments
-            .source_span_for_root(span)
-            .and_then(|span| {
-                crate::source_fragments::resolve_fragment_span(span, fragments, layout)
-            })
-            .unwrap_or(crate::LayoutResolvedOrigin::Unknown)
+        crate::source_fragments::resolve_root_span(span, fragments, layout)
     }
 
     /// Recreates a diagnostic source origin from validated stable root identity.

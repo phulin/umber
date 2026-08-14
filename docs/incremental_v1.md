@@ -651,7 +651,8 @@ Implementation is not complete until tests prove all of the following:
 - explicit memo/render-cache eviction and an over-budget ephemeral render
   lookup preserve state, source answers, effects, artifacts, and DVI bytes; and
 - 2,048 accepted patches and 2,048 resource-retried rejected patches preserve
-  exact live-owner plateaus plus bounded weak/checkpoint/node metadata at
+  exact live-owner plateaus, exact checkpoint/diagnostic charges after the
+  64-row fragment-history budget is warm, and bounded weak/node metadata at
   equal-work milestones, with process RSS retained only as a diagnostic; and
 - incremental artifacts, deferred effects, and final DVI bytes equal a cold
   run across the committed fast corpus and the 1,000-edit scripted fuzz tier,
