@@ -172,7 +172,7 @@ impl NodeListRef {
         }
     }
 
-    #[cfg(any(test, feature = "testing"))]
+    #[cfg(test)]
     pub(crate) fn strong_count(&self) -> usize {
         Arc::strong_count(&self.payload)
     }
@@ -339,7 +339,7 @@ impl NodeListWeakIndex {
         candidate
     }
 
-    #[cfg(any(test, feature = "testing"))]
+    #[cfg(test)]
     pub(crate) fn shape(&self) -> (usize, usize) {
         (self.entries.len(), self.entries.capacity())
     }

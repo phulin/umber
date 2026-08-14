@@ -148,7 +148,7 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/stores/format/font_validation.rs`: Pre-publication validation of detached font metrics, identifiers, and serialized Env font banks, plus test-only corruption fixtures.
 - `src/stores/state_hash.rs`: Store snapshot cursor and semantic hashing implementation for changed cells and store-owned slices.
 - `src/stores/tests.rs`: Unit tests for aggregate store rollback, builders, handle validation, parameters, boxes, and state hashes.
-- `src/survivor.rs`: Legacy aggregate bridge for node lists that escape epoch rollback boundaries, now sharing the immutable `NodeListRef` payload while retaining the pre-migration root/refcount and recycling machinery required by raw Env/page/mode/control owners.
+- `src/survivor.rs`: Legacy aggregate bridge for node lists that escape epoch rollback boundaries; its temporary transparent `SurvivorOwner` wrapper adds no authority beyond one `NodeListRef` and is mandatory removal in `.22.4`, while the pre-existing arena root/refcount/recycling path remains only for unmigrated raw Env/page/mode/control owners.
 - `src/tests.rs`: Crate-level integration-style unit tests for `Universe`, snapshots, world effects, and module test wiring.
 - `src/tests/handle_matrix.rs`: Table-driven aggregate rollback, fork, and cross-Universe liveness coverage for every production opaque handle class.
 - `src/tests/live_boundary.rs`: Unit tests proving live-state capability boundaries and restricted context APIs.

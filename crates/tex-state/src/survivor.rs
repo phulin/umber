@@ -131,11 +131,14 @@ struct SurvivorRoot {
     refcount: u32,
 }
 
-/// Structural ownership of one immutable survivor chunk.
+/// Temporary source-compatible spelling for a direct node-list owner.
 ///
-/// The list coordinate remains in the owned node value.  This sidecar keeps
-/// the chunk containing it alive across mode/page snapshots and generation
-/// forks without adding a historical root registry.
+/// This bridge has exactly the lifetime semantics of its single
+/// [`NodeListRef`] field: it has no refcount, pin, registry entry, upgrade path,
+/// or other lifetime authority of its own. It exists only for aggregate call
+/// sites that have not yet migrated their field types, and must be removed with
+/// those call sites in the `.22.4` aggregate-owner migration.
+#[repr(transparent)]
 #[derive(Clone, Debug)]
 pub struct SurvivorOwner {
     owner: NodeListRef,
@@ -156,7 +159,10 @@ impl PartialEq for SurvivorOwner {
 
 impl Eq for SurvivorOwner {}
 
-/// Nonsemantic structural owners attached to an aggregate node root.
+/// Temporary nonsemantic aggregate of direct owners for unmigrated call sites.
+///
+/// This is not an ownership mechanism beyond the contained `NodeListRef`
+/// clones and must be removed with `SurvivorOwner` in `.22.4`.
 #[derive(Clone, Debug, Default)]
 pub struct SurvivorOwners {
     _owners: Arc<Vec<SurvivorOwner>>,
@@ -816,12 +822,35 @@ fn u32_len(value: usize, message: &str) -> u32 {
 
 #[cfg(test)]
 mod tests {
-    use super::SurvivorArena;
+    use super::{SurvivorArena, SurvivorOwner};
     use crate::font::NULL_FONT;
     use crate::glue::Order;
     use crate::node::{BoxLr, BoxNode, BoxNodeFields, MarginKernSide, Node, Sign};
     use crate::node_arena::{NodeArena, NodeRef, NodeStorage};
     use crate::scaled::{GlueSetRatio, Scaled};
+
+    #[test]
+    fn temporary_owner_bridge_is_exactly_one_direct_ref() {
+        assert_eq!(
+            core::mem::size_of::<SurvivorOwner>(),
+            core::mem::size_of::<crate::node_arena::NodeListRef>()
+        );
+
+        let mut epoch = NodeArena::new();
+        let source = epoch.append(&[Node::Penalty(7)]);
+        let mut survivors = SurvivorArena::new();
+        let (_, owner) = survivors.promote_owned(source, &epoch);
+        assert_eq!(owner.owner.strong_count(), 2);
+
+        let clone = owner.clone();
+        assert_eq!(owner.owner.strong_count(), 3);
+        drop(clone);
+        assert_eq!(owner.owner.strong_count(), 2);
+
+        drop(owner);
+        survivors.release_zero_root_chunks();
+        assert_eq!(survivors.testing_live_slot_count(), 0);
+    }
 
     #[test]
     fn recycled_buffer_selection_prefers_largest_capacity() {

@@ -171,11 +171,18 @@ transition path, not ownership authority for the new direct substrate.
 ## Legacy aggregate bridge
 
 The pre-existing survivor bridge now stores the same `NodeListPayload` used by
-`NodeListRef`, and its structural owner contains a `NodeListRef`. This lets the
-substrate land without copying a second immutable representation. It does not
-declare the remaining raw owners migrated: Env box current/undo, page, mode,
-control, checkpoints, PDF forms, shipout, format installation, pins, and legacy
-root refcounts are retired only by the later ownership children.
+`NodeListRef`. Its temporary `SurvivorOwner` spelling is a transparent wrapper
+around exactly one `NodeListRef`: it adds no independent refcount, pin,
+registry entry, upgrade path, or lifetime authority. `SurvivorOwners` merely
+groups those direct-owner clones for unmigrated aggregates. Both wrapper names
+are mandatory removals in the `.22.4` aggregate-owner migration.
+
+This bridge does not declare the remaining raw owners migrated: Env box
+current/undo, page, mode, control, checkpoints, PDF forms, shipout, format
+installation, and the pre-existing survivor root/refcount/pin machinery are
+retired only by the later ownership children. That old arena machinery remains
+a parallel legacy path for raw `NodeListId` call sites; it is not part of the
+direct `NodeListRef` representation and must not be extended.
 
 No new compatibility owner, lifetime sidecar, registry, pin, graph scan,
 compactor, or successful-history table is introduced by the substrate.
