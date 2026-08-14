@@ -24,10 +24,11 @@
 //! this module renders only the four `\tracingassigns` labels.
 
 use tex_state::env::banks::IntParam;
-use tex_state::ids::{GlueId, TokenListId};
+use tex_state::ids::GlueId;
 use tex_state::meaning::{Meaning, MeaningFlags};
 use tex_state::scaled::Scaled;
 use tex_state::token::Token;
+use tex_state::token_store::TokenListRef;
 use tex_state::{PenaltyArrayKind, Universe};
 
 use super::primitives::{dimen_param_name, glue_param_name, int_param_name, tok_param_name};
@@ -271,18 +272,18 @@ pub(crate) fn trace_tok_param(
     stores: &mut Universe,
     index: u16,
     global: bool,
-    old: TokenListId,
-    new: TokenListId,
+    old: &TokenListRef,
+    new: &TokenListRef,
 ) {
     let name = escaped(stores, &tok_param_name(index));
     let tracing_before = stores.int_param(IntParam::TRACING_ASSIGNS) > 0;
-    let old_text = tokens_text(stores, old);
-    let new_text = tokens_text(stores, new);
+    let old_text = tokens_text(stores, old.tokens());
+    let new_text = tokens_text(stores, new.tokens());
     trace_scalar(
         stores,
         tracing_before,
         global,
-        old != new,
+        old.id() != new.id(),
         &name,
         &old_text,
         &new_text,
@@ -293,18 +294,18 @@ pub(crate) fn trace_toks_register(
     stores: &mut Universe,
     index: u16,
     global: bool,
-    old: TokenListId,
-    new: TokenListId,
+    old: &TokenListRef,
+    new: &TokenListRef,
 ) {
     let name = escaped(stores, &format!("toks{index}"));
     let tracing_before = stores.int_param(IntParam::TRACING_ASSIGNS) > 0;
-    let old_text = tokens_text(stores, old);
-    let new_text = tokens_text(stores, new);
+    let old_text = tokens_text(stores, old.tokens());
+    let new_text = tokens_text(stores, new.tokens());
     trace_scalar(
         stores,
         tracing_before,
         global,
-        old != new,
+        old.id() != new.id(),
         &name,
         &old_text,
         &new_text,
@@ -413,9 +414,9 @@ pub(crate) fn trace_penalty_array(
     );
 }
 
-fn tokens_text(stores: &Universe, id: TokenListId) -> String {
+fn tokens_text(stores: &Universe, tokens: &[Token]) -> String {
     let mut text = String::new();
-    for &token in stores.tokens(id).iter() {
+    for &token in tokens {
         crate::diagnostics::append_token_show_text(stores, token, &mut text);
     }
     text

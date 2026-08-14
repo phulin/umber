@@ -10,3 +10,6 @@ pub use primitives::{
     install_etex_unexpandable_primitives, install_unexpandable_primitives,
     register_etex_unexpandable_primitives, register_unexpandable_primitives,
 };
+
+#[cfg(test)]
+mod tests;

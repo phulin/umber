@@ -202,14 +202,18 @@ impl<'a> AssignmentCommitter<'a> {
         observed: ObservationValue,
         global: bool,
     ) -> MutationReceipt {
-        let old = self.stores.toks(index);
-        let redundant = !global && self.redundant_word(old, value);
+        // e-TeX 2.6 [19.277--279] observes the old eqtb token pointer before
+        // `eq_destroy` can release it. Keep both operation-local values rooted
+        // across Umber's combined write-and-trace boundary.
+        let old = self.stores.token_list_ref(self.stores.toks(index));
+        let new = self.stores.token_list_ref(value);
+        let redundant = !global && self.redundant_word(old.id(), new.id());
         if global {
-            self.stores.set_toks_global(index, value);
+            self.stores.set_toks_global(index, new.id());
         } else if !redundant {
-            self.stores.set_toks(index, value);
+            self.stores.set_toks(index, new.id());
         }
-        tracing::trace_toks_register(self.stores, index, global, old, value);
+        tracing::trace_toks_register(self.stores, index, global, &old, &new);
         if redundant && index <= 255 {
             MutationReceipt::SILENT
         } else {
@@ -290,18 +294,18 @@ impl<'a> AssignmentCommitter<'a> {
         let parameter = TokParam::new(index);
         let old = self.stores.tok_param_option(parameter);
         let redundant = !global && self.redundant_word(old, value);
+        let old_root = self
+            .stores
+            .token_list_ref(old.unwrap_or(TokenListId::EMPTY));
+        let new_root = self
+            .stores
+            .token_list_ref(value.unwrap_or(TokenListId::EMPTY));
         if global {
             self.stores.set_tok_param_option_global(parameter, value);
         } else if !redundant {
             self.stores.set_tok_param_option(parameter, value);
         }
-        tracing::trace_tok_param(
-            self.stores,
-            index,
-            global,
-            old.unwrap_or(TokenListId::EMPTY),
-            value.unwrap_or(TokenListId::EMPTY),
-        );
+        tracing::trace_tok_param(self.stores, index, global, &old_root, &new_root);
         if redundant {
             MutationReceipt::SILENT
         } else {

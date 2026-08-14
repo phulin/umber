@@ -142,6 +142,23 @@ The ordinary operation lifecycle still restores destinations before private
 patch truncation on `NeedResource` or scanner failure. No new root walk,
 compaction phase, or store-wide checkpoint discovery was added.
 
+### Assignment observation token roots
+
+e-TeX 2.6 [19.277--279] observes an eqtb token-list pre-image before
+`eq_destroy` can release it, performs the assignment, and then observes the
+post-image. Umber's execution boundary combines that sequence in
+`AssignmentCommitter`, so token-register and token-parameter commits clone
+typed pre/post `TokenListRef` values before mutating `Env`. The assignment
+trace renderer borrows those exact values directly and never resolves a bare
+operation-local `TokenListId` after the write.
+
+This owner is necessary even when an ordinary local assignment happens to
+retain the pre-image through an undo sidecar: a global write, redundant-write
+shortcut, or later journal disposition must not determine whether the
+operation-local observation stays readable. The roots disappear when the
+commit-and-trace call returns. They add no history owner, index authority,
+compaction pass, or graph scan.
+
 ### Node, page, PDF, and effect token-root audit
 
 The bounded pre-change audit for `umber2-3v8z.3.1.2.4` identifies the

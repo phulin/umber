@@ -28,6 +28,8 @@ Command operands are scanned by `tex-command` into typed request and result valu
 - `src/assignments/`: the `AssignmentCommitter` authority for scoped writes,
   e-TeX redundant-local decisions, tracing, and typed mutation receipts, plus
   primitive registration delegated from `tex-command`'s integrated catalogue.
+- `src/assignments/tests.rs`: focused typed-owner controls for token assignment
+  pre/post images across global replacement and local undo-backed writes.
 - `src/box_runtime/`: source-free box-register, material, packing, migration, horizontal contribution, shaping, spacing, indentation, whatsit, leader, and list-commit operations.
 - `src/paragraph_end.rs` and `src/paragraph_end/`: typed paragraph completion, hyphenation, line materialization, packing, migration, contribution, diagnostics, and pretolerance memoization.
 - `src/output_provenance.rs` and `src/output_provenance/tests.rs`: explicitly
