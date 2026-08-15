@@ -28,7 +28,7 @@ fn traced(ch: char) -> TracedTokenWord {
 }
 
 fn transient_payload(tokens: &[TracedTokenWord]) -> TokenPayload {
-    TokenPayload::Transient(SharedTokenBuffer::new(tokens.to_vec()))
+    TokenPayload::Transient(SharedTokenBuffer::new(tokens))
 }
 
 fn push_activation(
