@@ -493,6 +493,16 @@ impl CommandContext<'_> {
         self.universe.finish_traced_token_list(tokens)
     }
 
+    /// Freezes an already rooted scanner accumulator without reconstructing
+    /// ownership from compact ids.
+    #[must_use]
+    pub fn finish_rooted_traced_token_list(
+        &mut self,
+        tokens: &crate::token::RootedTracedTokenBuffer,
+    ) -> TracedTokenList {
+        self.universe.finish_rooted_traced_token_list(tokens)
+    }
+
     /// Records a command-scanner token allocation at its completed boundary.
     pub fn observe_transient_token_words(&mut self, words: usize) {
         self.universe.observe_transient_token_words(words);

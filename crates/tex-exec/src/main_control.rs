@@ -6217,7 +6217,7 @@ enum ScannedStep {
         macro_root: Option<tex_state::macro_store::MacroDefinitionRef>,
         global: bool,
     },
-    AfterGroup(TracedTokenWord),
+    AfterGroup(tex_state::token::RootedTracedTokenWord),
     AfterAssignment(Token),
     Rule {
         width: Option<Scaled>,
@@ -9049,7 +9049,7 @@ fn scan_command(
                     .ok_or(ExecError::MissingToken {
                         context: "\\aftergroup",
                     })?
-                    .spelling(),
+                    .rooted_spelling(),
             ))
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::AfterAssignment) => {
@@ -12250,7 +12250,7 @@ fn replace_alignment_entry_save_level(
 fn leave_alignment_save_level(
     stores: &mut Universe,
     context: &'static str,
-) -> Result<Vec<TracedTokenWord>, ExecError> {
+) -> Result<Vec<tex_state::token::RootedTracedTokenWord>, ExecError> {
     stores
         .leave_group_with_kind(GroupKind::Align)
         .map_err(|_| ExecError::MissingToken { context })
@@ -12265,7 +12265,7 @@ fn leave_alignment_save_level(
 fn leave_fin_align_save_level(
     stores: &mut Universe,
     confusion_site: &'static str,
-) -> Result<Vec<TracedTokenWord>, ExecError> {
+) -> Result<Vec<tex_state::token::RootedTracedTokenWord>, ExecError> {
     stores
         .leave_group_with_kind(GroupKind::Align)
         .map_err(|_| ExecError::Fatal(FatalError::confusion(confusion_site)))
@@ -16380,7 +16380,7 @@ fn print_display_content(stores: &mut Universe, content: &str) {
 fn schedule_aftergroup(
     command: &mut CommandMachine<'_>,
     stores: &mut Universe,
-    tokens: Vec<TracedTokenWord>,
+    tokens: Vec<tex_state::token::RootedTracedTokenWord>,
 ) -> Result<(), ExecError> {
     if tokens.is_empty() {
         return Ok(());
@@ -16388,13 +16388,14 @@ fn schedule_aftergroup(
     let traced: Vec<_> = tokens
         .into_iter()
         .map(|spelling| {
+            let (spelling, parent) = spelling.into_parts();
             let token = spelling.semantic_token();
-            let origin = stores.inserted_origin(
+            let origin = stores.inserted_origin_ref(
                 tex_state::provenance::InsertedOriginKind::AfterGroup,
                 token,
-                spelling.origin(),
+                parent,
             );
-            tex_state::token::TracedTokenWord::pack(token, origin)
+            tex_state::token::RootedTracedTokenWord::new(token, origin)
         })
         .collect::<Vec<_>>();
     command
@@ -16428,13 +16429,14 @@ fn schedule_afterassignment(
     let Some(token) = stores.take_afterassignment() else {
         return Ok(());
     };
-    let origin = stores.inserted_origin(
+    let origin = stores.inserted_origin_ref(
         tex_state::provenance::InsertedOriginKind::AfterAssignment,
         token,
-        tex_state::token::OriginId::UNKNOWN,
+        tex_state::provenance::OriginRef::unknown(),
     );
     let mut processor = command_processor(command, fuel, capabilities, observations, stores);
-    let result = processor.back_input_token(tex_state::token::TracedTokenWord::pack(token, origin));
+    let result = processor
+        .back_input_rooted_token(tex_state::token::RootedTracedTokenWord::new(token, origin));
     result.map_err(command_error)
 }
 

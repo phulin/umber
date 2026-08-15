@@ -103,8 +103,8 @@ impl CommandSummary {
         for (left, right) in normalized.input.levels.iter_mut().zip(&other.input.levels) {
             match (left, right) {
                 (InputLevel::Tokens(left), InputLevel::Tokens(right)) => {
-                    if left.payload.backed_up_words().is_some()
-                        && right.payload.backed_up_words().is_some()
+                    if left.payload.is_backed_up()
+                        && right.payload.is_backed_up()
                         && left
                             .payload
                             .adopt_matching_origins(&right.payload)
@@ -230,7 +230,7 @@ impl CommandSummary {
             let InputLevel::Tokens(tokens) = level else {
                 continue;
             };
-            if tokens.payload.backed_up_words().is_some()
+            if tokens.payload.is_backed_up()
                 && tokens
                     .payload
                     .rehome_backed_up_source(id, byte_delta)

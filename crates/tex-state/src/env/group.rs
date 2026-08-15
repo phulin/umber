@@ -5,7 +5,7 @@ use crate::journal::{
     BoxUndoRec, Entry, GlueUndoRoots, JournalPos, MacroUndoRoots, Marker, TokenUndoRoots, UndoRec,
 };
 use crate::macro_store::MacroDefinitionRef;
-use crate::token::{Token, TracedTokenWord};
+use crate::token::Token;
 use crate::token_store::TokenListRef;
 use ahash::AHashMap;
 use ahash::AHashSet;
@@ -759,13 +759,13 @@ impl Env {
 
     /// Pushes an opaque `\aftergroup` payload for the current group.
     pub(crate) fn push_aftergroup(&mut self, payload: Token) {
-        self.push_aftergroup_traced(TracedTokenWord::pack(
+        self.push_aftergroup_traced(crate::token::RootedTracedTokenWord::new(
             payload,
-            crate::token::OriginId::UNKNOWN,
+            crate::provenance::OriginRef::unknown(),
         ));
     }
 
-    pub(crate) fn push_aftergroup_traced(&mut self, payload: TracedTokenWord) {
+    pub(crate) fn push_aftergroup_traced(&mut self, payload: crate::token::RootedTracedTokenWord) {
         if self.group_depth != 0 {
             self.aftergroup.push(payload);
             self.journal.push_marker(Marker::Aftergroup);
@@ -792,7 +792,7 @@ impl Env {
         self.leave_group_unchecked()
             .0
             .into_iter()
-            .map(TracedTokenWord::semantic_token)
+            .map(|word| word.word().semantic_token())
             .collect()
     }
 
@@ -802,7 +802,7 @@ impl Env {
     pub(crate) fn leave_group_observing_meanings(
         &mut self,
     ) -> (
-        Vec<TracedTokenWord>,
+        Vec<crate::token::RootedTracedTokenWord>,
         bool,
         MutationReceipts,
         Vec<RestoreRecord>,
@@ -826,7 +826,7 @@ impl Env {
             .leave_group_unchecked()
             .0
             .into_iter()
-            .map(TracedTokenWord::semantic_token)
+            .map(|word| word.word().semantic_token())
             .collect())
     }
 
@@ -835,7 +835,7 @@ impl Env {
         expected: GroupKind,
     ) -> Result<
         (
-            Vec<TracedTokenWord>,
+            Vec<crate::token::RootedTracedTokenWord>,
             bool,
             MutationReceipts,
             Vec<RestoreRecord>,
@@ -854,7 +854,7 @@ impl Env {
     fn leave_group_unchecked(
         &mut self,
     ) -> (
-        Vec<TracedTokenWord>,
+        Vec<crate::token::RootedTracedTokenWord>,
         bool,
         MutationReceipts,
         Vec<RestoreRecord>,

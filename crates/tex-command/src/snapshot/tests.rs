@@ -77,11 +77,11 @@ fn durable_continuation_roundtrip_preserves_inline_payloads() {
         });
     assert!(matches!(
         payloads.next(),
-        Some(TokenPayload::InlineTransient(word)) if *word == inline_word('t')
+        Some(TokenPayload::InlineTransient(word)) if word.word() == inline_word('t')
     ));
     assert!(matches!(
         payloads.next(),
-        Some(TokenPayload::InlineBackedUp(word)) if word.spelling == inline_word('b')
+        Some(TokenPayload::InlineBackedUp(word)) if word.token().spelling == inline_word('b')
     ));
 }
 
@@ -192,9 +192,9 @@ fn durable_continuation_roundtrips_source_macro_and_frame_recipes() {
         name: macro_name,
         definition: macro_root,
         arguments: MacroArguments {
-            buffer: SharedTokenBuffer::new([TracedTokenWord::pack(
+            buffer: SharedTokenBuffer::new_rooted([tex_state::token::RootedTracedTokenWord::new(
                 Token::Cs(macro_name),
-                inserted.id(),
+                inserted.clone(),
             )]),
             ranges: [
                 MacroArgumentRange::new(0, 1),
@@ -536,7 +536,7 @@ fn snapshot_roundtrip_preserves_nonquiescent_semantic_state() {
     let (expected, snapshot) = state.with_scanner_status(status, |state| {
         state.transient.builders.push(LiveTokenBuilder {
             identity: 79,
-            tokens: Vec::new(),
+            tokens: tex_state::token::RootedTracedTokenBuffer::default(),
         });
         state.transient.rollback_roots.push(89);
         state.transient.active_expansion_depth = 2;
@@ -723,7 +723,7 @@ fn summary_rejects_expansion_alignment_and_live_transients() {
         |state| {
             state.transient.builders.push(LiveTokenBuilder {
                 identity: 1,
-                tokens: Vec::new(),
+                tokens: tex_state::token::RootedTracedTokenBuffer::default(),
             });
         },
         CommandSummaryError::LiveTokenBuilder,

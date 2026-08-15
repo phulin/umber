@@ -312,7 +312,7 @@ pub struct Env {
     journal_rollback_roots: Arc<JournalRollbackRoots>,
     journal_baseline_serial: u64,
     group_boundaries: Vec<group::GroupBoundary>,
-    aftergroup: Vec<crate::token::TracedTokenWord>,
+    aftergroup: Vec<crate::token::RootedTracedTokenWord>,
     afterassignment: Option<Token>,
     group_depth: u32,
     next_group_lineage: u64,

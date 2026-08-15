@@ -1,4 +1,4 @@
-use std::sync::{Arc, Weak};
+use std::sync::Arc;
 
 use tex_state::Universe;
 use tex_state::ids::TokenListId;
@@ -259,30 +259,32 @@ fn exhausted_v_template_reports_its_boundary_before_the_next_fetch_pops_it() {
 #[test]
 fn transient_payload_drops_with_its_last_input_owner() {
     let allocation: Arc<[TracedTokenWord]> = vec![traced('x')].into();
-    let weak: Weak<[TracedTokenWord]> = Arc::downgrade(&allocation);
+    let shared = SharedTokenBuffer::new(Arc::clone(&allocation));
+    let weak = shared.downgrade();
     let mut state = CommandState::default();
     let identity = state.push_token_level(
-        TokenPayload::Transient(SharedTokenBuffer::new(Arc::clone(&allocation))),
+        TokenPayload::Transient(shared),
         TokenBehavior::Ordinary,
         RetirementBehavior::Pop,
         ReplayTrace::Inserted,
     );
     drop(allocation);
-    assert!(weak.upgrade().is_some());
+    assert!(weak.is_live());
 
     state
         .retire_exhausted_input(identity)
         .expect("transient insertion retires");
-    assert!(weak.upgrade().is_none());
+    assert!(!weak.is_live());
 }
 
 #[test]
 fn snapshot_ownership_keeps_transient_payload_live_past_stack_retirement() {
     let allocation: Arc<[TracedTokenWord]> = vec![traced('x')].into();
-    let weak: Weak<[TracedTokenWord]> = Arc::downgrade(&allocation);
+    let shared = SharedTokenBuffer::new(Arc::clone(&allocation));
+    let weak = shared.downgrade();
     let mut state = CommandState::default();
     let identity = state.push_token_level(
-        TokenPayload::Transient(SharedTokenBuffer::new(Arc::clone(&allocation))),
+        TokenPayload::Transient(shared),
         TokenBehavior::Ordinary,
         RetirementBehavior::Pop,
         ReplayTrace::Inserted,
@@ -293,9 +295,9 @@ fn snapshot_ownership_keeps_transient_payload_live_past_stack_retirement() {
     state
         .retire_exhausted_input(identity)
         .expect("live cursor retires");
-    assert!(weak.upgrade().is_some());
+    assert!(weak.is_live());
     drop(snapshot);
-    assert!(weak.upgrade().is_none());
+    assert!(!weak.is_live());
 }
 
 #[test]

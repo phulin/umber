@@ -35,11 +35,15 @@ fn traced(ch: char) -> TracedTokenWord {
     )
 }
 
+fn rooted(ch: char) -> tex_state::token::RootedTracedTokenWord {
+    tex_state::token::RootedTracedTokenWord::unowned(traced(ch))
+}
+
 #[test]
 fn completed_arguments_share_one_buffer_and_preserve_empty_ranges() {
     let mut builder = MacroArgumentBuilder::default();
     builder
-        .complete(1, [traced('a'), traced('b')])
+        .complete(1, [rooted('a'), rooted('b')])
         .expect("first completed argument is accepted");
     builder
         .complete(2, std::iter::empty())
@@ -105,7 +109,7 @@ fn replacement_parameter_forms_remain_compact_and_distinct() {
 fn activation_boundary_owns_arguments_before_exposing_its_body() {
     let mut builder = MacroArgumentBuilder::default();
     builder
-        .complete(1, [traced('x')])
+        .complete(1, [rooted('x')])
         .expect("argument completes");
     let mut state = CommandState::default();
     let universe = tex_state::Universe::new();
@@ -822,8 +826,7 @@ fn macro_argument_recovery_emits_exact_extra_brace_and_runaway_reports() {
     let recovered_par = extra.input.levels.last().and_then(|level| match level {
         crate::input::InputLevel::Tokens(cursor) => cursor
             .payload
-            .backed_up_words()
-            .and_then(|tokens| tokens.get(cursor.index))
+            .backed_up_get(cursor.index)
             .map(|token| token.spelling.semantic_token()),
         crate::input::InputLevel::Source(_) => None,
     });

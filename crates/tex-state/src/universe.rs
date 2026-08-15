@@ -5670,6 +5670,18 @@ impl Universe {
             .finish_traced_token_list_in_domain(tokens, self.private_revision_domain.as_mut())
     }
 
+    /// Freezes a structurally rooted transient buffer without consulting the
+    /// provenance arena for ownership.
+    pub fn finish_rooted_traced_token_list(
+        &mut self,
+        tokens: &crate::token::RootedTracedTokenBuffer,
+    ) -> TracedTokenList {
+        self.stores.finish_rooted_traced_token_list_in_domain(
+            tokens,
+            self.private_revision_domain.as_mut(),
+        )
+    }
+
     #[must_use]
     pub fn tokens(&self, id: TokenListId) -> TokenListRef {
         self.stores.tokens(id)
@@ -6857,7 +6869,7 @@ impl Universe {
         self.stores.push_aftergroup(payload);
     }
 
-    pub fn push_aftergroup_traced(&mut self, payload: crate::token::TracedTokenWord) {
+    pub fn push_aftergroup_traced(&mut self, payload: crate::token::RootedTracedTokenWord) {
         self.stores.push_aftergroup_traced(payload);
     }
 
@@ -6874,14 +6886,14 @@ impl Universe {
         }
         tokens
             .into_iter()
-            .map(crate::token::TracedTokenWord::semantic_token)
+            .map(|word| word.word().semantic_token())
             .collect()
     }
 
     pub fn leave_group_with_kind(
         &mut self,
         expected: GroupKind,
-    ) -> Result<Vec<crate::token::TracedTokenWord>, GroupMismatch> {
+    ) -> Result<Vec<crate::token::RootedTracedTokenWord>, GroupMismatch> {
         let trace_context = self.leaving_group_trace_context();
         let (tokens, receipts, code_before, code_after, restores, code_restores) = self
             .stores

@@ -312,6 +312,7 @@ impl CurrentCommand {
             },
             tex_state::token::OriginId::UNKNOWN,
         );
+        self.origin = OriginRef::unknown();
         self.meaning = Meaning::CharToken {
             ch: ' ',
             cat: Catcode::Space,
@@ -416,6 +417,11 @@ impl CurrentCommand {
 
     pub fn origin_ref(&self) -> &OriginRef {
         &self.origin
+    }
+
+    /// Clones the spelling together with its structural provenance owner.
+    pub fn rooted_spelling(&self) -> RootedTracedTokenWord {
+        RootedTracedTokenWord::from_word(self.spelling, self.origin.clone())
     }
 
     /// Returns the execution-local proof of this exact input delivery.

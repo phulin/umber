@@ -167,6 +167,9 @@ distinct non-direct origin used by those words. Unknown, fallback, and ordinary
 direct-source positions add no strong root. A slice shares that value and names
 only its word range; it does not copy roots or consult a store. Clone, move, and
 drop therefore retain, transfer, and release both projections together.
+Mutable scanner and matcher values use `RootedTracedTokenBuffer`; immutable
+cursor and argument values use the same word-plus-sparse-roots representation
+behind their shared buffer owners.
 
 | Concrete owner                                                                                          | Packed positions and roots owned                                                                                                                        | Install, mutation, and release transitions                                                                                                                                                                                                                                                                                                                                   |
 | ------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

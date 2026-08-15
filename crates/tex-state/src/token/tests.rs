@@ -1,5 +1,8 @@
-use super::{Catcode, OriginId, Token, TracedTokenWord};
+use super::{
+    Catcode, OriginId, RootedTracedTokenBuffer, RootedTracedTokenWord, Token, TracedTokenWord,
+};
 use crate::interner::Symbol;
+use crate::provenance::{InsertedOriginKind, OriginRef};
 
 #[test]
 fn token_is_one_word() {
@@ -165,4 +168,69 @@ fn packed_token_decode_rejects_unrepresentable_payloads() {
     assert_eq!(bad_param_zero.unpack(), None);
     assert_eq!(bad_param_ten.unpack(), None);
     assert_eq!(bad_char_scalar.unpack(), None);
+}
+
+#[test]
+fn mutable_rooted_buffer_tracks_exact_distinct_structural_owners() {
+    let mut universe = crate::Universe::new();
+    let token = Token::Char {
+        ch: 'x',
+        cat: Catcode::Letter,
+    };
+    let first =
+        universe.inserted_origin_ref(InsertedOriginKind::Unread, token, OriginRef::unknown());
+    let second_token = Token::Char {
+        ch: 'y',
+        cat: Catcode::Letter,
+    };
+    let second = universe.inserted_origin_ref(
+        InsertedOriginKind::Unread,
+        second_token,
+        OriginRef::unknown(),
+    );
+    let mut buffer = RootedTracedTokenBuffer::default();
+
+    buffer.push(RootedTracedTokenWord::new(token, first.clone()));
+    buffer.push(RootedTracedTokenWord::new(token, first.clone()));
+    buffer.push_unowned(TracedTokenWord::pack(token, OriginId::UNKNOWN));
+    assert_eq!(buffer.len(), 3);
+    assert_eq!(buffer.roots(), std::slice::from_ref(&first));
+
+    buffer.push(RootedTracedTokenWord::new(second_token, second.clone()));
+    assert_eq!(buffer.roots(), &[first.clone(), second.clone()]);
+    buffer.pop();
+    assert_eq!(buffer.roots(), std::slice::from_ref(&first));
+    buffer.truncate(1);
+    assert_eq!(buffer.roots(), std::slice::from_ref(&first));
+    buffer.pop();
+    assert!(buffer.roots().is_empty());
+}
+
+#[test]
+fn mutable_rooted_buffer_churn_keeps_direct_storage_empty_and_live_growth_exact() {
+    let token = Token::Char {
+        ch: 'x',
+        cat: Catcode::Letter,
+    };
+    for _ in 0..10_000 {
+        let mut direct = RootedTracedTokenBuffer::default();
+        direct.extend_unowned([TracedTokenWord::pack(token, OriginId::UNKNOWN); 8]);
+        assert!(direct.roots().is_empty());
+    }
+
+    let mut universe = crate::Universe::new();
+    let mut live = RootedTracedTokenBuffer::default();
+    for index in 0..128_u8 {
+        let rooted_token = Token::Char {
+            ch: char::from(index),
+            cat: Catcode::Other,
+        };
+        let root = universe.inserted_origin_ref(
+            InsertedOriginKind::Unread,
+            rooted_token,
+            OriginRef::unknown(),
+        );
+        live.push(RootedTracedTokenWord::new(rooted_token, root));
+    }
+    assert_eq!(live.roots().len(), 128);
 }

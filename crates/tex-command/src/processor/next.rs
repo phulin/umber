@@ -748,13 +748,13 @@ impl CommandProcessor<'_> {
     /// §407 guards its call with `if p<>backup_head`, so an empty list is the
     /// caller's business; pushing one here would observe a level that retires
     /// without ever delivering a token.
-    pub(crate) fn back_list(&mut self, tokens: Vec<BackedUpToken>) {
+    pub(crate) fn back_list(&mut self, tokens: Vec<crate::input::RootedBackedUpToken>) {
         debug_assert!(
             !tokens.is_empty(),
             "TeX82 §407 guards back_list with `p<>backup_head`"
         );
         let level = self.command.push_token_level(
-            TokenPayload::backed_up(tokens),
+            TokenPayload::backed_up_rooted(tokens),
             TokenBehavior::BackedUp(BackupTreatment::Ordinary),
             RetirementBehavior::Pop,
             ReplayTrace::BackedUp,
@@ -794,17 +794,30 @@ impl CommandProcessor<'_> {
     /// that is available must have its own adjustment reversed, not one
     /// recomputed from the token.
     pub fn back_input_token(&mut self, spelling: TracedTokenWord) -> Result<(), CommandError> {
+        self.back_input_rooted_token(tex_state::token::RootedTracedTokenWord::unowned(spelling))
+    }
+
+    /// Rooted form of [`Self::back_input_token`] for synthesized or saved
+    /// arena-backed positions.
+    pub fn back_input_rooted_token(
+        &mut self,
+        spelling: tex_state::token::RootedTracedTokenWord,
+    ) -> Result<(), CommandError> {
         self.conserve_input_stack()?;
+        let word = spelling.word();
         self.command
             .alignment
             .undo_delivery(AlignmentDeliveryState::back_input_adjustment(
-                spelling.semantic_token(),
+                word.semantic_token(),
             ));
         let level = self.command.push_token_level(
-            TokenPayload::backed_up([BackedUpToken {
-                spelling,
-                source_provenance: None,
-            }]),
+            TokenPayload::backed_up_rooted([crate::input::RootedBackedUpToken::new(
+                BackedUpToken {
+                    spelling: word,
+                    source_provenance: None,
+                },
+                spelling.into_parts().1,
+            )]),
             TokenBehavior::BackedUp(BackupTreatment::Ordinary),
             RetirementBehavior::Pop,
             ReplayTrace::BackedUp,
@@ -820,7 +833,7 @@ impl CommandProcessor<'_> {
             }));
             self.observe(CommandObservation::Recovery(RecoveryRecord {
                 kind: RecoveryKind::Backup,
-                tokens: vec![self.observed_token(spelling)],
+                tokens: vec![self.observed_token(word)],
             }));
         }
         Ok(())
@@ -835,17 +848,17 @@ impl CommandProcessor<'_> {
     /// not push or observe another input level.
     pub fn back_input_aftergroup_tokens(
         &mut self,
-        tokens: impl IntoIterator<Item = TracedTokenWord>,
+        tokens: impl IntoIterator<Item = tex_state::token::RootedTracedTokenWord>,
     ) -> Result<(), CommandError> {
         let mut tokens = tokens.into_iter().collect::<Vec<_>>();
         let Some(last) = tokens.pop() else {
             return Ok(());
         };
-        self.back_input_token(last)?;
+        self.back_input_rooted_token(last)?;
         if self.profile().capabilities().supports_etex() {
             for spelling in tokens.iter().rev() {
                 self.command.alignment.undo_delivery(
-                    AlignmentDeliveryState::back_input_adjustment(spelling.semantic_token()),
+                    AlignmentDeliveryState::back_input_adjustment(spelling.word().semantic_token()),
                 );
             }
             let Some(InputLevel::Tokens(cursor)) = self.command.input.levels.last_mut() else {
@@ -857,9 +870,15 @@ impl CommandProcessor<'_> {
             );
             if cursor
                 .payload
-                .prepend_backed_up(tokens.into_iter().map(|spelling| BackedUpToken {
-                    spelling,
-                    source_provenance: None,
+                .prepend_backed_up(tokens.into_iter().map(|spelling| {
+                    let (word, root) = spelling.into_parts();
+                    crate::input::RootedBackedUpToken::new(
+                        BackedUpToken {
+                            spelling: word,
+                            source_provenance: None,
+                        },
+                        root,
+                    )
                 }))
                 .is_none()
             {
@@ -867,7 +886,7 @@ impl CommandProcessor<'_> {
             }
         } else {
             for spelling in tokens.into_iter().rev() {
-                self.back_input_token(spelling)?;
+                self.back_input_rooted_token(spelling)?;
             }
         }
         Ok(())
@@ -1126,8 +1145,7 @@ impl CommandProcessor<'_> {
             || !matches!(
                 cursor
                     .payload
-                    .backed_up_words()
-                    .and_then(|tokens| tokens.first())
+                    .backed_up_get(0)
                     .map(|token| token.spelling.semantic_token()),
                 Some(Token::Char {
                     cat: Catcode::EndGroup,
@@ -1345,10 +1363,13 @@ impl CommandProcessor<'_> {
         self.undo_alignment_delivery(&command);
 
         let level = self.command.push_token_level(
-            TokenPayload::backed_up([BackedUpToken {
-                spelling: command.spelling(),
-                source_provenance: command.source_provenance(),
-            }]),
+            TokenPayload::backed_up_rooted([crate::input::RootedBackedUpToken::new(
+                BackedUpToken {
+                    spelling: command.spelling(),
+                    source_provenance: command.source_provenance(),
+                },
+                command.origin_ref().clone(),
+            )]),
             TokenBehavior::BackedUp(treatment),
             RetirementBehavior::Pop,
             ReplayTrace::BackedUp,
@@ -1683,14 +1704,8 @@ impl CommandProcessor<'_> {
                             unreachable!("inspected token level remains a token level");
                         };
                         cursor.index += 1;
-                        let origin =
-                            self.state.origin_ref(spelling.origin()).unwrap_or_else(|| {
-                                tex_state::provenance::OriginRef::direct(spelling.origin())
-                            });
                         return Ok(Some(DeliveredToken {
-                            spelling: tex_state::token::RootedTracedTokenWord::from_word(
-                                spelling, origin,
-                            ),
+                            spelling,
                             level: identity,
                             position,
                             behavior,
@@ -1944,38 +1959,47 @@ impl CommandProcessor<'_> {
         &self,
         cursor: &TokenCursor,
     ) -> Option<(
-        TracedTokenWord,
+        tex_state::token::RootedTracedTokenWord,
         u64,
         TokenBehavior,
         Option<SourceProvenance>,
     )> {
         let position = u64::try_from(cursor.index).ok()?;
         let spelling = match &cursor.payload {
-            TokenPayload::Transient(buffer) => {
-                buffer.get(cursor.index).map(|spelling| (spelling, None))
-            }
+            TokenPayload::Transient(buffer) => buffer
+                .get_rooted(cursor.index)
+                .map(|spelling| (spelling, None)),
             TokenPayload::InlineTransient(spelling) => {
-                (cursor.index == 0).then_some((*spelling, None))
+                (cursor.index == 0).then(|| (spelling.clone(), None))
             }
-            TokenPayload::BackedUp(buffer) => buffer
-                .get(cursor.index)
-                .map(|token| (token.spelling, token.source_provenance)),
-            TokenPayload::InlineBackedUp(token) => {
-                (cursor.index == 0).then_some((token.spelling, token.source_provenance))
-            }
+            TokenPayload::BackedUp(buffer) => buffer.get_rooted(cursor.index).map(|rooted| {
+                let (token, root) = rooted.into_parts();
+                (
+                    tex_state::token::RootedTracedTokenWord::from_word(token.spelling, root),
+                    token.source_provenance,
+                )
+            }),
+            TokenPayload::InlineBackedUp(token) => (cursor.index == 0).then(|| {
+                let (token, root) = token.clone().into_parts();
+                (
+                    tex_state::token::RootedTracedTokenWord::from_word(token.spelling, root),
+                    token.source_provenance,
+                )
+            }),
             TokenPayload::ArgumentRange { buffer, range } => (cursor.index
                 < range.end().saturating_sub(range.start()))
-            .then(|| buffer.get(range.start() + cursor.index))
+            .then(|| buffer.get_rooted(range.start() + cursor.index))
             .flatten()
             .map(|spelling| (spelling, None)),
             TokenPayload::Stored { tokens, origins } => {
                 let token = *tokens.tokens().get(cursor.index)?;
                 let origin = origins
-                    .origins()
-                    .get(cursor.index)
-                    .copied()
-                    .unwrap_or(OriginId::UNKNOWN);
-                Some((TracedTokenWord::pack(token, origin), None))
+                    .root(cursor.index)
+                    .unwrap_or_else(tex_state::provenance::OriginRef::unknown);
+                Some((
+                    tex_state::token::RootedTracedTokenWord::new(token, origin),
+                    None,
+                ))
             }
         }?;
         Some((spelling.0, position, cursor.behavior.clone(), spelling.1))
@@ -3810,17 +3834,17 @@ mod tests {
         let mut capabilities = CommandHostCapabilities::default();
         let mut processor = processor(&mut command, &mut universe, &mut capabilities);
         let words = ['a', 'b', 'c'].map(|ch| {
-            TracedTokenWord::pack(
+            tex_state::token::RootedTracedTokenWord::unowned(TracedTokenWord::pack(
                 Token::Char {
                     ch,
                     cat: Catcode::Other,
                 },
                 OriginId::UNKNOWN,
-            )
+            ))
         });
 
         processor
-            .back_input_aftergroup_tokens(words)
+            .back_input_aftergroup_tokens(words.clone())
             .expect("aftergroup tokens back up");
         let Some(InputLevel::Tokens(cursor)) = processor.command.input.levels.last() else {
             panic!("aftergroup backup is a token level");
@@ -3834,7 +3858,7 @@ mod tests {
                 .iter()
                 .map(|token| token.spelling.semantic_token())
                 .collect::<Vec<_>>(),
-            words.map(TracedTokenWord::semantic_token)
+            words.map(|word| word.word().semantic_token())
         );
     }
 
@@ -4850,13 +4874,15 @@ mod tests {
             .builders
             .push(crate::state::LiveTokenBuilder {
                 identity: 5,
-                tokens: vec![TracedTokenWord::pack(
-                    Token::Char {
-                        ch: '{',
-                        cat: Catcode::BeginGroup,
-                    },
-                    OriginId::UNKNOWN,
-                )],
+                tokens: tex_state::token::RootedTracedTokenBuffer::new([
+                    tex_state::token::RootedTracedTokenWord::unowned(TracedTokenWord::pack(
+                        Token::Char {
+                            ch: '{',
+                            cat: Catcode::BeginGroup,
+                        },
+                        OriginId::UNKNOWN,
+                    )),
+                ]),
             });
         command.with_scanner_status(
             ScannerStatus::Aligning(AlignmentScanContext {

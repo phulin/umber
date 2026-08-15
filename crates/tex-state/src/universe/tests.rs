@@ -33,7 +33,9 @@ use crate::provenance::{
 use crate::scaled::{GlueSetRatio, Scaled};
 use crate::source_fragments::{EditorLayout, FragmentStore, LayoutGeneration, Piece};
 use crate::source_map::{SourceDescriptor, SourceMapError};
-use crate::token::{Catcode, OriginId, Token, TracedTokenWord};
+use crate::token::{
+    Catcode, OriginId, RootedTracedTokenBuffer, RootedTracedTokenWord, Token, TracedTokenWord,
+};
 use crate::world::{
     ContentDomain, ContentHash, EffectRecord, InputDependencyAccess, InputDependencyOutcome,
     JobClock, PrintSink, ShellEscapePolicy, StreamSlot, World,
@@ -2054,6 +2056,28 @@ fn traced_list_finish_rejects_rolled_back_origins_before_publishing() {
     let finished = universe.finish_traced_token_list(&[valid]);
     assert_eq!(finished.token_list().raw(), 1);
     assert_eq!(finished.origin_list().raw(), 1);
+}
+
+#[test]
+fn rooted_transient_freeze_survives_rollback_without_origin_lookup() {
+    let mut universe = Universe::new();
+    let snapshot = universe.snapshot();
+    let token = Token::Char {
+        ch: 'x',
+        cat: Catcode::Letter,
+    };
+    let root = universe.synthetic_origin_ref(SyntheticOriginKind::Test);
+    let origin = root.id();
+    let transient = RootedTracedTokenBuffer::new([RootedTracedTokenWord::new(token, root)]);
+
+    universe.rollback_for_local_retry(&snapshot);
+    let frozen = universe.finish_rooted_traced_token_list(&transient);
+    assert_eq!(frozen.token_ref().tokens(), [token]);
+    assert_eq!(frozen.origin_ref().origins(), [origin]);
+    assert_eq!(
+        frozen.origin_ref().root(0).expect("aligned root").id(),
+        origin
+    );
 }
 
 #[test]

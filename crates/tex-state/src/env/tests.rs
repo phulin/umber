@@ -1080,7 +1080,9 @@ fn aftergroup_payload_origin_survives_snapshot_rollback_and_group_exit() {
     let parent = crate::token::OriginId::from_raw(42);
 
     env.enter_group();
-    env.push_aftergroup_traced(crate::token::TracedTokenWord::pack(token, parent));
+    env.push_aftergroup_traced(crate::token::RootedTracedTokenWord::unowned(
+        crate::token::TracedTokenWord::pack(token, parent),
+    ));
     let snapshot = env.checkpoint();
     env.push_aftergroup(Token::Char {
         ch: 'y',
@@ -1090,8 +1092,8 @@ fn aftergroup_payload_origin_survives_snapshot_rollback_and_group_exit() {
 
     let payloads = env.leave_group_observing_meanings().0;
     assert_eq!(payloads.len(), 1);
-    assert_eq!(payloads[0].semantic_token(), token);
-    assert_eq!(payloads[0].origin(), parent);
+    assert_eq!(payloads[0].word().semantic_token(), token);
+    assert_eq!(payloads[0].word().origin(), parent);
 }
 
 #[test]

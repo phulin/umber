@@ -132,13 +132,13 @@ impl CommandState {
             };
             let owned = cursor
                 .payload
-                .transient_words()
-                .map_or(0, |words| words.len())
+                .transient_len()
+                .unwrap_or(0)
                 .saturating_add(
                     cursor
                         .payload
-                        .backed_up_words()
-                        .map_or(0, |words| words.len()),
+                        .backed_up_len()
+                        .unwrap_or(0),
                 );
             words.saturating_add(owned)
         })

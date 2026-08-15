@@ -17,8 +17,8 @@ mod tests;
 
 pub(crate) use levels::{
     BackedUpToken, BackupTreatment, InputLevel, InputLevelId, ReplayTrace, RetirementBehavior,
-    SharedBackedUpBuffer, SharedTokenBuffer, SourceLevel, SourceOpenDepths, SourceRetirement,
-    StoredReplayReason, TokenBehavior, TokenCursor, TokenPayload,
+    RootedBackedUpToken, SharedBackedUpBuffer, SharedTokenBuffer, SourceLevel, SourceOpenDepths,
+    SourceRetirement, StoredReplayReason, TokenBehavior, TokenCursor, TokenPayload,
 };
 pub(crate) use lines::{ReducedSourceSpelling, SourceLineState};
 pub(crate) use source::{
@@ -391,14 +391,14 @@ fn project_token_cursor(
                 project_token(hash, word.token()?, state)?;
             }
         }
-        TokenPayload::InlineTransient(word) => project_token(hash, word.token()?, state)?,
+        TokenPayload::InlineTransient(word) => project_token(hash, word.word().token()?, state)?,
         TokenPayload::BackedUp(words) => {
             for word in words.words() {
                 project_token(hash, word.spelling.token()?, state)?;
             }
         }
         TokenPayload::InlineBackedUp(word) => {
-            project_token(hash, word.spelling.token()?, state)?;
+            project_token(hash, word.token().spelling.token()?, state)?;
         }
         TokenPayload::ArgumentRange { buffer, .. } => {
             for word in buffer.words() {
@@ -875,12 +875,14 @@ impl InputState {
                 TokenPayload::Transient(words) => {
                     words.get(index).map(|word| word.semantic_token())
                 }
-                TokenPayload::InlineTransient(word) => (index == 0).then(|| word.semantic_token()),
+                TokenPayload::InlineTransient(word) => {
+                    (index == 0).then(|| word.word().semantic_token())
+                }
                 TokenPayload::BackedUp(words) => {
                     words.get(index).map(|word| word.spelling.semantic_token())
                 }
                 TokenPayload::InlineBackedUp(word) => {
-                    (index == 0).then(|| word.spelling.semantic_token())
+                    (index == 0).then(|| word.token().spelling.semantic_token())
                 }
                 TokenPayload::ArgumentRange { buffer, range } => buffer
                     .get(range.start().saturating_add(index))

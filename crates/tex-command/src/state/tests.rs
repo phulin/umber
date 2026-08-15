@@ -48,7 +48,7 @@ fn retained_capacities(pool: &TracedTokenBufferPool) -> Vec<usize> {
 
 fn fail_with_checked_out_scratch(pool: Arc<TracedTokenBufferPool>) -> Result<(), ()> {
     let mut scratch = traced_token_scratch_from(pool);
-    scratch.push(traced_a());
+    scratch.push_unowned(traced_a());
     Err(())
 }
 
@@ -57,7 +57,7 @@ fn traced_token_scratch_returns_on_success_and_error() {
     let pool = Arc::new(TracedTokenBufferPool::default());
     {
         let mut scratch = traced_token_scratch_from(Arc::clone(&pool));
-        scratch.extend([traced_a(); 17]);
+        scratch.extend_unowned([traced_a(); 17]);
     }
     assert_eq!(retained_capacities(&pool).len(), 1);
 
@@ -73,7 +73,7 @@ fn traced_token_scratch_pool_bounds_slots_and_capacity() {
         .map(|_| traced_token_scratch_from(Arc::clone(&pool)))
         .collect::<Vec<_>>();
     for scratch in &mut checkouts {
-        scratch.push(traced_a());
+        scratch.push_unowned(traced_a());
     }
     drop(checkouts);
     assert_eq!(retained_capacities(&pool).len(), TRACED_TOKEN_POOL_SLOTS);

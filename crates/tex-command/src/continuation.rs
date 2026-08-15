@@ -15,7 +15,7 @@ use tex_state::provenance::{
     SynthesizedOriginKind, SyntheticOriginKind,
 };
 use tex_state::source_map::{SourceDescriptor, SourceMapError};
-use tex_state::token::{OriginId, Token, TracedTokenWord};
+use tex_state::token::{OriginId, Token};
 use tex_state::token_store::TokenListRef;
 
 use crate::conditionals::{ConditionFrame, ConditionStack, ConditionalKind, IfLimit};

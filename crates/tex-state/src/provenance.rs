@@ -9,7 +9,7 @@ use crate::identity::{HandleIdentity, IdentityAllocator, IdentityMark, ReusableI
 use crate::ids::{MacroDefinitionId, OriginListId};
 use crate::input::{SourceId, TokenListReplayKind};
 use crate::source_map::{SourceMapStats, SourceRegistrationRef, SourceSpan};
-use crate::token::{OriginId, Token};
+use crate::token::{OriginEncoding, OriginId, Token};
 use crate::world::InputRecordId;
 use std::collections::{HashMap, VecDeque};
 use std::hash::{Hash, Hasher};
@@ -1179,6 +1179,17 @@ impl OriginListRef {
         })
     }
 
+    /// Returns the typed root aligned with one compact list position.
+    #[must_use]
+    pub fn root(&self, index: usize) -> Option<OriginRef> {
+        let id = *self.origins().get(index)?;
+        Some(
+            self.value
+                .as_ref()
+                .map_or_else(|| OriginRef::direct(id), |value| value.root(id)),
+        )
+    }
+
     #[cfg(test)]
     fn owned_root_count(&self) -> usize {
         self.value.as_ref().map_or(0, |value| value.owners.len())
@@ -1778,6 +1789,35 @@ impl ProvenanceStore {
         }
         let id = self.allocate_list(&ids);
         self.attach_rooted_list_value(id, ids, owners)
+    }
+
+    /// Publishes an origin list from an already structurally rooted buffer.
+    ///
+    /// This deliberately keeps the legacy compact-list publication required
+    /// by loaded-format compatibility while deriving every strong owner from
+    /// the value being frozen, never from historical arena lookup.
+    pub(crate) fn allocate_attached_rooted_origin_ids(
+        &mut self,
+        origins: impl ExactSizeIterator<Item = OriginId>,
+        roots: &[OriginRef],
+    ) -> OriginListRef {
+        let ids = origins.collect::<Vec<_>>();
+        for root in roots {
+            assert!(
+                ids.contains(&root.id()),
+                "transient provenance owner has no packed position"
+            );
+        }
+        for &id in &ids {
+            if matches!(id.decode(), OriginEncoding::Arena(_)) {
+                assert!(
+                    roots.binary_search_by_key(&id, OriginRef::id).is_ok(),
+                    "arena-backed transient position has no structural owner"
+                );
+            }
+        }
+        let id = self.allocate_list(&ids);
+        self.attach_rooted_list_value(id, ids, roots.to_vec())
     }
 
     fn insert_distinct_owner(owners: &mut Vec<OriginRef>, root: OriginRef) {

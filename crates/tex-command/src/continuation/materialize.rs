@@ -277,8 +277,11 @@ impl<'a> Materializer<'a> {
         root
     }
 
-    fn word(&mut self, word: &OwnedWord) -> TracedTokenWord {
-        TracedTokenWord::pack(self.token(&word.token), self.origin(word.origin).id())
+    fn word(&mut self, word: &OwnedWord) -> tex_state::token::RootedTracedTokenWord {
+        tex_state::token::RootedTracedTokenWord::new(
+            self.token(&word.token),
+            self.origin(word.origin),
+        )
     }
 
     fn registered_source(
@@ -359,14 +362,18 @@ impl<'a> Materializer<'a> {
         }
     }
 
-    fn backed_up(&mut self, word: &OwnedBackedUpToken) -> BackedUpToken {
-        BackedUpToken {
-            spelling: self.word(&word.spelling),
-            source_provenance: word
-                .source_provenance
-                .as_ref()
-                .map(|source| self.source_provenance(source)),
-        }
+    fn backed_up(&mut self, word: &OwnedBackedUpToken) -> crate::input::RootedBackedUpToken {
+        let spelling = self.word(&word.spelling);
+        crate::input::RootedBackedUpToken::new(
+            BackedUpToken {
+                spelling: spelling.word(),
+                source_provenance: word
+                    .source_provenance
+                    .as_ref()
+                    .map(|source| self.source_provenance(source)),
+            },
+            spelling.into_parts().1,
+        )
     }
 
     fn payload(&mut self, payload: &OwnedTokenPayload) -> TokenPayload {
@@ -375,30 +382,20 @@ impl<'a> Materializer<'a> {
                 tokens: self.token_list(*tokens),
                 origins: self.origin_list(*origins),
             },
-            OwnedTokenPayload::Transient(words) => TokenPayload::Transient(SharedTokenBuffer::new(
-                words.iter().map(|word| self.word(word)).collect::<Vec<_>>(),
-            )),
+            OwnedTokenPayload::Transient(words) => TokenPayload::Transient(
+                SharedTokenBuffer::new_rooted(words.iter().map(|word| self.word(word))),
+            ),
             OwnedTokenPayload::InlineTransient(word) => {
                 TokenPayload::InlineTransient(self.word(word))
             }
-            OwnedTokenPayload::BackedUp(words) => {
-                TokenPayload::BackedUp(SharedBackedUpBuffer::new(
-                    words
-                        .iter()
-                        .map(|word| self.backed_up(word))
-                        .collect::<Vec<_>>(),
-                ))
-            }
+            OwnedTokenPayload::BackedUp(words) => TokenPayload::BackedUp(
+                SharedBackedUpBuffer::new_rooted(words.iter().map(|word| self.backed_up(word))),
+            ),
             OwnedTokenPayload::InlineBackedUp(word) => {
                 TokenPayload::InlineBackedUp(self.backed_up(word))
             }
             OwnedTokenPayload::ArgumentRange { buffer, range } => TokenPayload::ArgumentRange {
-                buffer: SharedTokenBuffer::new(
-                    buffer
-                        .iter()
-                        .map(|word| self.word(word))
-                        .collect::<Vec<_>>(),
-                ),
+                buffer: SharedTokenBuffer::new_rooted(buffer.iter().map(|word| self.word(word))),
                 range: *range,
             },
         }
@@ -492,12 +489,8 @@ impl<'a> Materializer<'a> {
                         name: self.symbols[activation.name.0],
                         definition,
                         arguments: MacroArguments {
-                            buffer: SharedTokenBuffer::new(
-                                activation
-                                    .arguments
-                                    .iter()
-                                    .map(|word| self.word(word))
-                                    .collect::<Vec<_>>(),
+                            buffer: SharedTokenBuffer::new_rooted(
+                                activation.arguments.iter().map(|word| self.word(word)),
                             ),
                             ranges: activation.ranges,
                         },

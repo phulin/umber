@@ -264,7 +264,7 @@ fn scan_toks_keeps_its_one_step_collector_and_direct_splice_boundary() {
         splice.contains("let target = self.get_x_token()?"),
         "\\the must expand its internal-value target before selecting a token list"
     );
-    assert!(splice.contains("output.extend("));
+    assert!(splice.contains("output.extend_unowned("));
     assert!(
         !splice.contains("self.expand("),
         "direct token-list splicing must not recursively expand its contents"

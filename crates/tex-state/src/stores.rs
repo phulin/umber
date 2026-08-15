@@ -22,7 +22,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
 type GroupExitObservation = (
-    Vec<crate::token::TracedTokenWord>,
+    Vec<crate::token::RootedTracedTokenWord>,
     crate::env::group::MutationReceipts,
     CodeTableGenerations,
     CodeTableGenerations,
@@ -1999,6 +1999,41 @@ impl Stores {
         TracedTokenList::new(token_list, origin_list)
     }
 
+    pub(crate) fn finish_rooted_traced_token_list_in_domain(
+        &mut self,
+        traced: &crate::token::RootedTracedTokenBuffer,
+        domain: Option<&mut crate::patch_domain::PatchAllocationDomain>,
+    ) -> TracedTokenList {
+        let words = traced.words();
+        let semantic_id = self.traced_token_list_semantic_id(words);
+        let frozen_hash = self.tokens.has_frozen_lists().then(|| {
+            self.frozen_token_lookup_hash(words.iter().map(|word| {
+                word.token()
+                    .expect("validated traced token became invalid during lookup encoding")
+            }))
+        });
+        let legacy_key = self.tokens.requires_legacy_frozen_key().then(|| {
+            self.legacy_frozen_token_lookup_key(words.iter().map(|word| {
+                word.token()
+                    .expect("validated traced token became invalid during lookup encoding")
+            }))
+        });
+        let token_list = self.tokens.intern_traced_owned_with_semantic_id(
+            words,
+            semantic_id,
+            frozen_hash.unwrap_or(0),
+            legacy_key.as_deref(),
+            domain,
+        );
+        #[cfg(feature = "profiling")]
+        crate::measurement::record_traced_list_finish(words.len(), 0, 0);
+        let origin_list = self.provenance.allocate_attached_rooted_origin_ids(
+            words.iter().map(|word| word.origin()),
+            traced.roots(),
+        );
+        TracedTokenList::new(token_list, origin_list)
+    }
+
     pub(crate) fn token_list_ref(&self, id: TokenListId) -> TokenListRef {
         let id = self.resolve_stored_token_list(id);
         self.tokens.owner(id).expect("token list id is not live")
@@ -3422,8 +3457,8 @@ impl Stores {
         self.env.push_aftergroup(payload);
     }
 
-    pub fn push_aftergroup_traced(&mut self, payload: crate::token::TracedTokenWord) {
-        self.assert_live_token(payload.semantic_token());
+    pub fn push_aftergroup_traced(&mut self, payload: crate::token::RootedTracedTokenWord) {
+        self.assert_live_token(payload.word().semantic_token());
         self.env.push_aftergroup_traced(payload);
     }
 
@@ -3434,7 +3469,7 @@ impl Stores {
         self.leave_group_observing_dependencies()
             .0
             .into_iter()
-            .map(crate::token::TracedTokenWord::semantic_token)
+            .map(|word| word.word().semantic_token())
             .collect()
     }
 

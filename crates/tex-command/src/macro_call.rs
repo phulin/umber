@@ -1,14 +1,12 @@
 //! Private canonical scalar macro-call state machine.
 #![allow(dead_code)] // expansion dispatch is the next ordered integration slice
-use std::sync::Arc;
-
 use tex_state::env::banks::IntParam;
 use tex_state::ids::MacroDefinitionId;
 use tex_state::interner::Symbol;
 use tex_state::macro_store::MacroDefinitionRef;
 use tex_state::meaning::{Meaning, MeaningFlags, UnexpandablePrimitive};
 use tex_state::provenance::{ExpansionFrameRef, OriginRef};
-use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
+use tex_state::token::{Catcode, OriginId, RootedTracedTokenBuffer, Token, TracedTokenWord};
 
 use crate::input::SharedTokenBuffer;
 use crate::processor::status::{
@@ -71,7 +69,7 @@ pub(crate) enum MacroCallOutcome {
 /// half-open range, so parameter replay never duplicates argument tokens.
 #[derive(Clone, Debug, Default, Eq, Hash, PartialEq)]
 pub(crate) struct MacroArgumentBuilder {
-    tokens: Vec<TracedTokenWord>,
+    tokens: RootedTracedTokenBuffer,
     ranges: [Option<MacroArgumentRange>; 9],
     next_slot: u8,
 }
@@ -137,7 +135,7 @@ impl MacroArgumentBuilder {
     pub(crate) fn complete(
         &mut self,
         slot: u8,
-        argument: impl IntoIterator<Item = TracedTokenWord>,
+        argument: impl IntoIterator<Item = tex_state::token::RootedTracedTokenWord>,
     ) -> Result<(), MacroArgumentBuildError> {
         if !(1..=9).contains(&slot) {
             return Err(MacroArgumentBuildError::InvalidSlot(slot));
@@ -161,7 +159,7 @@ impl MacroArgumentBuilder {
     #[must_use]
     pub(crate) fn finish(self) -> MacroArguments {
         MacroArguments {
-            buffer: SharedTokenBuffer::new(Arc::from(self.tokens)),
+            buffer: SharedTokenBuffer::new_rooted(self.tokens.rooted_words()),
             ranges: self.ranges,
         }
     }
@@ -402,7 +400,7 @@ impl CommandProcessor<'_> {
             } else {
                 self.scan_delimited_argument(flags, delimiter)?
             };
-            self.trace_macro_argument(pattern.marker(parameter), parameter + 1, &argument);
+            self.trace_macro_argument(pattern.marker(parameter), parameter + 1, argument.words());
             observe!(
                 self,
                 CommandObservation::TokenList(TokenListRecord {
@@ -427,8 +425,7 @@ impl CommandProcessor<'_> {
                     token_count: argument.len() as u64,
                     tokens: argument
                         .iter()
-                        .copied()
-                        .map(|token| self.observed_token(token))
+                        .map(|token| self.observed_token(*token))
                         .collect(),
                 }),
             );
@@ -596,7 +593,7 @@ impl CommandProcessor<'_> {
     fn recover_extra_right_brace_argument(
         &mut self,
         command: crate::CurrentCommand,
-    ) -> Result<Vec<TracedTokenWord>, CommandError> {
+    ) -> Result<RootedTracedTokenBuffer, CommandError> {
         self.back_input(command)?;
         self.insert_macro_argument_recovery_par()?;
         // §395 ends with `ins_error`, so §82 renders the context with
@@ -615,7 +612,7 @@ impl CommandProcessor<'_> {
     fn scan_undelimited_argument(
         &mut self,
         flags: MeaningFlags,
-    ) -> Result<Vec<TracedTokenWord>, CommandError> {
+    ) -> Result<RootedTracedTokenBuffer, CommandError> {
         let first = loop {
             let command = self
                 .get_token()?
@@ -651,7 +648,7 @@ impl CommandProcessor<'_> {
                 ..
             }
         ) {
-            return Ok(vec![first.spelling()]);
+            return Ok(RootedTracedTokenBuffer::new([first.rooted_spelling()]));
         }
 
         // TeX82 §394 links the opening left brace into the temporary
@@ -659,7 +656,7 @@ impl CommandProcessor<'_> {
         // argument completes.  Keep that ownership here too: §396's
         // runaway pseudoprint must still see an unmatched opening brace.
         let mut depth = 1_u32;
-        let mut tokens = vec![first.spelling()];
+        let mut tokens = RootedTracedTokenBuffer::new([first.rooted_spelling()]);
         loop {
             let command = self
                 .get_token()?
@@ -673,17 +670,17 @@ impl CommandProcessor<'_> {
                 continue;
             }
             if self.outer_recovered_while_matching && is_paragraph_command(&command) {
-                self.set_runaway_partial(crate::processor::RUNAWAY_SCAN_DIAGNOSTIC, &tokens);
+                self.set_runaway_partial(crate::processor::RUNAWAY_SCAN_DIAGNOSTIC, tokens.words());
                 return Err(CommandError::OuterInMacroArgument);
             }
-            self.check_argument_paragraph(&command, flags, &tokens)?;
+            self.check_argument_paragraph(&command, flags, tokens.words())?;
             match command.spelling().semantic_token() {
                 Token::Char {
                     cat: Catcode::BeginGroup,
                     ..
                 } => {
                     depth += 1;
-                    tokens.push(command.spelling());
+                    tokens.push(command.rooted_spelling());
                 }
                 Token::Char {
                     cat: Catcode::EndGroup,
@@ -691,12 +688,12 @@ impl CommandProcessor<'_> {
                 } => {
                     depth -= 1;
                     if depth == 0 {
-                        tokens.push(command.spelling());
+                        tokens.push(command.rooted_spelling());
                         return Ok(strip_one_outer_group(tokens));
                     }
-                    tokens.push(command.spelling());
+                    tokens.push(command.rooted_spelling());
                 }
-                _ => tokens.push(command.spelling()),
+                _ => tokens.push(command.rooted_spelling()),
             }
         }
     }
@@ -710,10 +707,10 @@ impl CommandProcessor<'_> {
         &mut self,
         flags: MeaningFlags,
         delimiter: &[Token],
-    ) -> Result<Vec<TracedTokenWord>, CommandError> {
+    ) -> Result<RootedTracedTokenBuffer, CommandError> {
         debug_assert!(!delimiter.is_empty());
-        let mut tokens = Vec::new();
-        let mut prefix = Vec::with_capacity(delimiter.len());
+        let mut tokens = RootedTracedTokenBuffer::default();
+        let mut prefix = RootedTracedTokenBuffer::default();
         let mut depth = 0_u32;
         let mut current = None;
 
@@ -728,15 +725,15 @@ impl CommandProcessor<'_> {
                 continue;
             }
             if self.outer_recovered_while_matching && is_paragraph_command(&command) {
-                let mut partial = tokens.clone();
-                partial.extend(prefix.iter().copied());
+                let mut partial = tokens.words().to_vec();
+                partial.extend_from_slice(prefix.words());
                 self.set_runaway_partial(crate::processor::RUNAWAY_SCAN_DIAGNOSTIC, &partial);
                 return Err(CommandError::OuterInMacroArgument);
             }
             let token = command.spelling().semantic_token();
 
             if depth == 0 && token == delimiter[prefix.len()] {
-                prefix.push(command.spelling());
+                prefix.push(command.rooted_spelling());
                 if prefix.len() == delimiter.len() {
                     // `#{` consumes the opening brace as parameter text. Raw
                     // delivery has accounted for it, but no replacement-body
@@ -750,25 +747,26 @@ impl CommandProcessor<'_> {
             }
 
             if !prefix.is_empty() {
-                let retained = overlapping_delimiter_prefix(&prefix, command.spelling(), delimiter);
+                let retained =
+                    overlapping_delimiter_prefix(&prefix, command.rooted_spelling(), delimiter);
                 let committed = if retained == 0 {
                     prefix.len()
                 } else {
                     prefix.len() + 1 - retained
                 };
-                for prefix_token in prefix.drain(..committed) {
+                for prefix_token in prefix.drain_prefix(committed) {
                     observe!(
                         self,
                         CommandObservation::TokenList(TokenListRecord {
                             transition: "splice",
                             purpose: "macro_delimiter_recovery",
-                            tokens: vec![self.observed_token(prefix_token)],
+                            tokens: vec![self.observed_token(prefix_token.word())],
                         }),
                     );
                     push_delimited_argument_token(&mut tokens, &mut depth, prefix_token);
                 }
                 if retained != 0 {
-                    prefix.push(command.spelling());
+                    prefix.push(command.rooted_spelling());
                     continue;
                 }
 
@@ -784,8 +782,8 @@ impl CommandProcessor<'_> {
                 // prefix. TeX.web §394 permits a recovered `\par` prefix;
                 // only this newly ordinary token is subject to the non-long
                 // paragraph check.
-                self.check_argument_paragraph(&command, flags, &tokens)?;
-                push_delimited_argument_token(&mut tokens, &mut depth, command.spelling());
+                self.check_argument_paragraph(&command, flags, tokens.words())?;
+                push_delimited_argument_token(&mut tokens, &mut depth, command.rooted_spelling());
                 continue;
             }
 
@@ -793,8 +791,8 @@ impl CommandProcessor<'_> {
                 return self.recover_extra_right_brace_argument(command);
             }
 
-            self.check_argument_paragraph(&command, flags, &tokens)?;
-            push_delimited_argument_token(&mut tokens, &mut depth, command.spelling());
+            self.check_argument_paragraph(&command, flags, tokens.words())?;
+            push_delimited_argument_token(&mut tokens, &mut depth, command.rooted_spelling());
         }
     }
 
@@ -853,8 +851,8 @@ fn is_paragraph_command(command: &crate::CurrentCommand) -> bool {
 /// these scalar token sequences directly while moving the unmatched leading
 /// tokens into the completed argument.
 fn overlapping_delimiter_prefix(
-    prefix: &[TracedTokenWord],
-    current: TracedTokenWord,
+    prefix: &RootedTracedTokenBuffer,
+    current: tex_state::token::RootedTracedTokenWord,
     delimiter: &[Token],
 ) -> usize {
     let pending_len = prefix.len() + 1;
@@ -865,8 +863,7 @@ fn overlapping_delimiter_prefix(
                 let pending = pending_len - candidate_len + index;
                 let token = prefix
                     .get(pending)
-                    .copied()
-                    .unwrap_or(current)
+                    .unwrap_or_else(|| current.word())
                     .semantic_token();
                 token == delimiter[index]
             })
@@ -875,11 +872,11 @@ fn overlapping_delimiter_prefix(
 }
 
 fn push_delimited_argument_token(
-    tokens: &mut Vec<TracedTokenWord>,
+    tokens: &mut RootedTracedTokenBuffer,
     depth: &mut u32,
-    token: TracedTokenWord,
+    token: tex_state::token::RootedTracedTokenWord,
 ) {
-    match token.semantic_token() {
+    match token.word().semantic_token() {
         Token::Char {
             cat: Catcode::BeginGroup,
             ..
@@ -893,7 +890,7 @@ fn push_delimited_argument_token(
     tokens.push(token);
 }
 
-fn strip_one_outer_group(mut tokens: Vec<TracedTokenWord>) -> Vec<TracedTokenWord> {
+fn strip_one_outer_group(mut tokens: RootedTracedTokenBuffer) -> RootedTracedTokenBuffer {
     if tokens.len() < 2
         || !is_begin_group(tokens[0].semantic_token())
         || !is_end_group(tokens[tokens.len() - 1].semantic_token())

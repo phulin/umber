@@ -7,8 +7,8 @@ use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 
 use super::{
     BackedUpToken, BackupTreatment, InputLevel, InputLevelId, ReplayTrace, RetirementBehavior,
-    SharedBackedUpBuffer, SharedTokenBuffer, StoredReplayReason, TokenBehavior, TokenCursor,
-    TokenPayload,
+    RootedBackedUpToken, SharedBackedUpBuffer, SharedTokenBuffer, StoredReplayReason,
+    TokenBehavior, TokenCursor, TokenPayload,
 };
 use crate::macro_call::MacroArgumentRange;
 
@@ -20,6 +20,44 @@ fn traced(ch: char) -> TracedTokenWord {
         },
         OriginId::UNKNOWN,
     )
+}
+
+#[test]
+fn shared_transient_buffers_own_only_distinct_structural_origins() {
+    let mut universe = Universe::new();
+    let root = universe.synthetic_origin_ref(SyntheticOriginKind::Test);
+    let first = tex_state::token::RootedTracedTokenWord::new(
+        Token::Char {
+            ch: 'a',
+            cat: Catcode::Other,
+        },
+        root.clone(),
+    );
+    let second = tex_state::token::RootedTracedTokenWord::new(
+        Token::Char {
+            ch: 'b',
+            cat: Catcode::Other,
+        },
+        root,
+    );
+    let rooted = SharedTokenBuffer::new_rooted([first, second]);
+    let direct = SharedTokenBuffer::new([traced('c'), traced('d')]);
+
+    assert_eq!(rooted.0.roots.len(), 1);
+    assert!(direct.0.roots.is_empty());
+    drop(universe);
+    assert!(
+        rooted
+            .rooted_words()
+            .all(|word| word.origin_ref().record().is_some())
+    );
+}
+
+fn rooted_backup(ch: char) -> RootedBackedUpToken {
+    RootedBackedUpToken::unowned(BackedUpToken {
+        spelling: traced(ch),
+        source_provenance: None,
+    })
 }
 
 #[test]
@@ -87,10 +125,7 @@ fn backed_up_buffer_prepends_without_reversing_existing_tokens() {
         },
     ]);
 
-    buffer.prepend([BackedUpToken {
-        spelling: traced('a'),
-        source_provenance: None,
-    }]);
+    buffer.prepend([rooted_backup('a')]);
 
     assert_eq!(
         (0..3)
@@ -103,7 +138,7 @@ fn backed_up_buffer_prepends_without_reversing_existing_tokens() {
 #[test]
 fn single_token_payload_constructors_select_inline_storage() {
     let transient = TokenPayload::transient([traced('a')]);
-    assert!(matches!(transient, TokenPayload::InlineTransient(word) if word == traced('a')));
+    assert!(matches!(transient, TokenPayload::InlineTransient(word) if word.word() == traced('a')));
 
     let backed_up = TokenPayload::backed_up([BackedUpToken {
         spelling: traced('b'),
@@ -111,7 +146,7 @@ fn single_token_payload_constructors_select_inline_storage() {
     }]);
     assert!(matches!(
         backed_up,
-        TokenPayload::InlineBackedUp(BackedUpToken { spelling, .. }) if spelling == traced('b')
+        TokenPayload::InlineBackedUp(word) if word.token().spelling == traced('b')
     ));
 }
 
@@ -148,16 +183,7 @@ fn prepend_promotes_inline_backup_without_reordering() {
         source_provenance: None,
     }]);
     payload
-        .prepend_backed_up([
-            BackedUpToken {
-                spelling: traced('a'),
-                source_provenance: None,
-            },
-            BackedUpToken {
-                spelling: traced('b'),
-                source_provenance: None,
-            },
-        ])
+        .prepend_backed_up([rooted_backup('a'), rooted_backup('b')])
         .expect("backed-up payload promotes");
 
     assert!(matches!(payload, TokenPayload::BackedUp(_)));
@@ -175,21 +201,28 @@ fn prepend_promotes_inline_backup_without_reordering() {
 #[test]
 fn inline_payload_origin_adoption_matches_shared_semantics() {
     let mut universe = tex_state::Universe::new();
-    let recorded_origin = universe.synthetic_origin(SyntheticOriginKind::Engine);
-    let live_origin = universe.synthetic_origin(SyntheticOriginKind::Primitive);
+    let recorded_origin = universe.synthetic_origin_ref(SyntheticOriginKind::Engine);
+    let live_origin = universe.synthetic_origin_ref(SyntheticOriginKind::Primitive);
     let token = Token::Char {
         ch: 'a',
         cat: Catcode::Other,
     };
-    let mut recorded = TokenPayload::transient([TracedTokenWord::pack(token, recorded_origin)]);
-    let live = TokenPayload::transient([TracedTokenWord::pack(token, live_origin)]);
+    let mut recorded = TokenPayload::transient_rooted([
+        tex_state::token::RootedTracedTokenWord::new(token, recorded_origin),
+    ]);
+    let live = TokenPayload::transient_rooted([
+        tex_state::token::RootedTracedTokenWord::new(token, live_origin.clone()),
+    ]);
 
     recorded
         .adopt_matching_origins(&live)
         .expect("matching inline token adopts live origin");
     assert_eq!(
-        recorded.transient_words().expect("transient words")[0].origin(),
-        live_origin
+        match recorded {
+            TokenPayload::InlineTransient(word) => word.word().origin(),
+            _ => panic!("singleton remains inline"),
+        },
+        live_origin.id()
     );
 }
 
@@ -207,7 +240,11 @@ fn inline_backup_rehomes_source_provenance_in_place() {
     payload
         .rehome_backed_up_source(new_source, 5)
         .expect("inline source provenance rehomes");
-    let rehomed = payload.backed_up_words().expect("backed-up words")[0]
+    let TokenPayload::InlineBackedUp(word) = payload else {
+        panic!("singleton remains inline");
+    };
+    let rehomed = word
+        .token()
         .source_provenance
         .expect("source provenance remains present");
     assert_eq!(rehomed.range(), crate::SourceRange::new(new_source, 15, 17));

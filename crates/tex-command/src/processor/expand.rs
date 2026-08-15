@@ -917,7 +917,7 @@ impl CommandProcessor<'_> {
             Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfFontSize) => {
                 let font = self.scan_font_selector()?;
                 let size = format_scaled(self.state.tracked_font_size(font));
-                self.push_rendered_text(&size, command.origin());
+                self.push_rendered_text(&size, command.origin_ref());
                 Ok(())
             }
             // pdftex.web §470 scans e-TeX's extended box-register domain,
@@ -938,7 +938,7 @@ impl CommandProcessor<'_> {
                         "pdfTeX error (marginkern): a non-empty hbox expected",
                     ));
                 };
-                self.push_rendered_text(&format_scaled(amount), command.origin());
+                self.push_rendered_text(&format_scaled(amount), command.origin_ref());
                 Ok(())
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::Input) => self.expand_input(command),
@@ -946,20 +946,20 @@ impl CommandProcessor<'_> {
             Meaning::ExpandablePrimitive(ExpandablePrimitive::JobName) => {
                 self.state.unsupported_host_capability();
                 let job_name = self.host.job_name().to_owned();
-                self.push_rendered_text(&job_name, command.origin());
+                self.push_rendered_text(&job_name, command.origin_ref());
                 Ok(())
             }
             // e-TeX 2.6 etex.ch §3211 installs `\eTeXrevision` as a
             // `convert` command; §1387 prints the immutable revision string
             // through TeX82 §470's ordinary conversion-token path.
             Meaning::ExpandablePrimitive(ExpandablePrimitive::ETeXRevision) => {
-                self.push_rendered_text(".6", command.origin());
+                self.push_rendered_text(".6", command.origin_ref());
                 Ok(())
             }
             // pdfTeX §57.4 exposes the revision suffix independently of the
             // integer `\pdftexversion` parameter.
             Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfTeXRevision) => {
-                self.push_rendered_text("27", command.origin());
+                self.push_rendered_text("27", command.origin_ref());
                 Ok(())
             }
             // pdftex.web §§494 and 496--498 install `\pdftexbanner` as an
@@ -970,7 +970,7 @@ impl CommandProcessor<'_> {
             Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfTeXBanner) => {
                 self.push_rendered_text(
                     "This is pdfTeX, Version 3.141592653-2.6-1.40.29 (TeX Live 2026) kpathsea version 6.4.2",
-                    command.origin(),
+                    command.origin_ref(),
                 );
                 Ok(())
             }
@@ -981,12 +981,12 @@ impl CommandProcessor<'_> {
             Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfUniformDeviate) => {
                 let bound = self.scan_integer()?.value;
                 let value = self.state.pdf_uniform_deviate(bound);
-                self.push_rendered_text(&value.to_string(), command.origin());
+                self.push_rendered_text(&value.to_string(), command.origin_ref());
                 Ok(())
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfNormalDeviate) => {
                 let value = self.state.pdf_normal_deviate();
-                self.push_rendered_text(&value.to_string(), command.origin());
+                self.push_rendered_text(&value.to_string(), command.origin_ref());
                 Ok(())
             }
             // pdftex.web §1590's `pdf_creation_date_code` conversion calls
@@ -996,7 +996,7 @@ impl CommandProcessor<'_> {
             // pdfTeX's `\pdfcreationdate` spelling share this meaning.
             Meaning::ExpandablePrimitive(ExpandablePrimitive::CreationDate) => {
                 let clock = self.state.job_clock();
-                self.push_rendered_text(&format_pdf_date(clock, 0), command.origin());
+                self.push_rendered_text(&format_pdf_date(clock, 0), command.origin_ref());
                 Ok(())
             }
             // pdfTeX and XeTeX change section [53a] report shell escape as
@@ -1008,7 +1008,7 @@ impl CommandProcessor<'_> {
                     .state
                     .internal_integer(tex_state::meaning::InternalInteger::PdfShellEscape)
                     .expect("the shell-escape status is an integer enquiry");
-                self.push_rendered_text(&status.to_string(), command.origin());
+                self.push_rendered_text(&status.to_string(), command.origin_ref());
                 Ok(())
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::StringCompare) => {
@@ -1070,7 +1070,7 @@ impl CommandProcessor<'_> {
                         "pdfTeX error (pdfximagebbox): invalid parameter.",
                     ));
                 };
-                self.push_rendered_text(&format_scaled(coordinate), command.origin());
+                self.push_rendered_text(&format_scaled(coordinate), command.origin_ref());
                 Ok(())
             }
             // pdftex.web §1549's `pdf_xform_name_code` conversion scans a
@@ -1083,7 +1083,7 @@ impl CommandProcessor<'_> {
                     .ok()
                     .and_then(|object| self.state.pdf_form_resource(object))
                     .unwrap_or(0);
-                self.push_rendered_text(&resource.to_string(), command.origin());
+                self.push_rendered_text(&resource.to_string(), command.origin_ref());
                 Ok(())
             }
             // pdftex.web §470's `pdf_page_ref_code` conversion scans a one-based
@@ -1102,7 +1102,7 @@ impl CommandProcessor<'_> {
                     .ok()
                     .and_then(|page| self.state.pdf_page_object(page))
                     .unwrap_or(0);
-                self.push_rendered_text(&object.to_string(), command.origin());
+                self.push_rendered_text(&object.to_string(), command.origin_ref());
                 Ok(())
             }
             // pdfTeX §57.1 consumes one raw token and, only for a registered
@@ -1120,7 +1120,10 @@ impl CommandProcessor<'_> {
                 let Some(frozen) = self.state.primitive_token(name) else {
                     return Ok(());
                 };
-                self.back_input_token(TracedTokenWord::pack(frozen, target.origin()))
+                self.back_input_rooted_token(tex_state::token::RootedTracedTokenWord::new(
+                    frozen,
+                    target.origin_ref().clone(),
+                ))
             }
             Meaning::ExpandablePrimitive(
                 primitive @ (ExpandablePrimitive::TopMark
@@ -1261,7 +1264,7 @@ impl CommandProcessor<'_> {
             &mut self.state,
             scanned.replacement_text.token_ref().tokens(),
         );
-        self.push_rendered_text(&text, opener.origin());
+        self.push_rendered_text(&text, opener.origin_ref());
         Ok(())
     }
 
@@ -1303,7 +1306,7 @@ impl CommandProcessor<'_> {
             std::cmp::Ordering::Equal => 0,
             std::cmp::Ordering::Greater => 1,
         };
-        self.push_rendered_text(&value.to_string(), opener.origin());
+        self.push_rendered_text(&value.to_string(), opener.origin_ref());
         Ok(())
     }
 
@@ -1340,7 +1343,7 @@ impl CommandProcessor<'_> {
                     .collect(),
             }),
         );
-        self.push_rendered_text(&escaped, opener.origin());
+        self.push_rendered_text(&escaped, opener.origin_ref());
         Ok(())
     }
 
@@ -1376,7 +1379,7 @@ impl CommandProcessor<'_> {
                     .collect(),
             }),
         );
-        self.push_rendered_text(&escaped, opener.origin());
+        self.push_rendered_text(&escaped, opener.origin_ref());
         Ok(())
     }
 
@@ -1417,7 +1420,7 @@ impl CommandProcessor<'_> {
                     .collect(),
             }),
         );
-        self.push_rendered_text(&unescaped, opener.origin());
+        self.push_rendered_text(&unescaped, opener.origin_ref());
         Ok(())
     }
 
@@ -1472,10 +1475,14 @@ impl CommandProcessor<'_> {
     fn expand_csname(&mut self, opener: CurrentCommand) -> Result<(), CommandError> {
         let name = self.scan_csname_characters()?;
         let symbol = self.state.intern_relaxed_control_sequence(&name);
-        let origin = self
-            .state
-            .synthesized_origin(SynthesizedOriginKind::Expansion, opener.origin());
-        self.back_input_token(TracedTokenWord::pack(Token::Cs(symbol), origin))
+        let origin = self.state.synthesized_origin_ref(
+            SynthesizedOriginKind::Expansion,
+            opener.origin_ref().clone(),
+        );
+        self.back_input_rooted_token(tex_state::token::RootedTracedTokenWord::new(
+            Token::Cs(symbol),
+            origin,
+        ))
     }
 
     /// Collects TeX82 §372's expanded character list through `\\endcsname`.
@@ -1528,7 +1535,7 @@ impl CommandProcessor<'_> {
             .ok_or(CommandError::input_invariant())?;
         self.push_rendered_text(
             &string_text(&self.state, target.spelling().semantic_token()),
-            opener.origin(),
+            opener.origin_ref(),
         );
         Ok(())
     }
@@ -1538,7 +1545,7 @@ impl CommandProcessor<'_> {
             .get_token_with_normal_scanner_status()?
             .ok_or(CommandError::input_invariant())?;
         let text = meaning_text(&mut self.state, &target);
-        self.push_rendered_text(&text, opener.origin());
+        self.push_rendered_text(&text, opener.origin_ref());
         Ok(())
     }
 
@@ -1549,7 +1556,7 @@ impl CommandProcessor<'_> {
         } else {
             value.to_string()
         };
-        self.push_rendered_text(&text, opener.origin());
+        self.push_rendered_text(&text, opener.origin_ref());
         Ok(())
     }
 
@@ -1562,7 +1569,7 @@ impl CommandProcessor<'_> {
     /// scanner and changes the observable input ordering.
     fn expand_the(&mut self, opener: CurrentCommand) -> Result<(), CommandError> {
         let target = self.scan_internal_value_or_zero()?;
-        self.expand_the_value(opener.origin(), target.value)
+        self.expand_the_value(opener.origin_ref().clone(), target.value)
     }
 
     /// Installs one TeX82 §467 `ins_the_toks` result.
@@ -1575,11 +1582,11 @@ impl CommandProcessor<'_> {
     /// input level.
     pub(crate) fn expand_the_value(
         &mut self,
-        opener: OriginId,
+        opener: tex_state::provenance::OriginRef,
         value: crate::InternalValue,
     ) -> Result<(), CommandError> {
         if let Some(text) = render_the_value(&value) {
-            self.push_rendered_text(&text, opener);
+            self.push_rendered_text(&text, &opener);
         } else {
             match value {
                 // §466 copies the register's list rather than sharing its
@@ -1596,7 +1603,7 @@ impl CommandProcessor<'_> {
                     );
                 }
                 crate::InternalValue::Font(symbol) => {
-                    self.push_rendered_tokens([Token::Cs(symbol)], opener);
+                    self.push_rendered_tokens([Token::Cs(symbol)], &opener);
                 }
                 _ => unreachable!("non-token internal values are rendered above"),
             }
@@ -1613,7 +1620,7 @@ impl CommandProcessor<'_> {
     fn expand_fontname(&mut self, opener: CurrentCommand) -> Result<(), CommandError> {
         let font = self.scan_font_selector()?;
         let name = self.state.font_name(font);
-        self.push_rendered_text(&name, opener.origin());
+        self.push_rendered_text(&name, opener.origin_ref());
         Ok(())
     }
 
@@ -1626,17 +1633,21 @@ impl CommandProcessor<'_> {
             // distinction is observable after the relax terminates the
             // active filename scan: its depleted inserted level retires, so
             // a diagnostic on the restored command says `<recently read>`.
-            let opener_origin = opener.origin();
+            let opener_origin = opener.origin_ref().clone();
             self.back_input(opener)?;
             let origin = self
                 .state
-                .synthesized_origin(SynthesizedOriginKind::Expansion, opener_origin);
-            let frozen_relax = TracedTokenWord::pack(Token::frozen_relax(), origin);
+                .synthesized_origin_ref(SynthesizedOriginKind::Expansion, opener_origin);
+            let frozen_relax =
+                tex_state::token::RootedTracedTokenWord::new(Token::frozen_relax(), origin);
             let level = self.command.push_token_level(
-                TokenPayload::backed_up([BackedUpToken {
-                    spelling: frozen_relax,
-                    source_provenance: None,
-                }]),
+                TokenPayload::backed_up_rooted([crate::input::RootedBackedUpToken::new(
+                    BackedUpToken {
+                        spelling: frozen_relax.word(),
+                        source_provenance: None,
+                    },
+                    frozen_relax.into_parts().1,
+                )]),
                 TokenBehavior::BackedUp(BackupTreatment::Ordinary),
                 RetirementBehavior::Pop,
                 ReplayTrace::Inserted,
@@ -1727,7 +1738,7 @@ impl CommandProcessor<'_> {
             Ok(regex) => regex.case_insensitive(case_insensitive),
             Err(error) => {
                 self.pdftex_regex_warning(posix_regex_diagnostic(&error, &pattern));
-                self.push_rendered_text("-1", opener.origin());
+                self.push_rendered_text("-1", opener.origin_ref());
                 return Ok(());
             }
         };
@@ -1748,7 +1759,7 @@ impl CommandProcessor<'_> {
             .collect();
         self.state
             .set_pdf_match_state(haystack, captures, subcount, matched);
-        self.push_rendered_text(if matched { "1" } else { "0" }, opener.origin());
+        self.push_rendered_text(if matched { "1" } else { "0" }, opener.origin_ref());
         Ok(())
     }
 
@@ -1781,7 +1792,7 @@ impl CommandProcessor<'_> {
                 0
             }
         };
-        self.push_rendered_text(&id.to_string(), opener.origin());
+        self.push_rendered_text(&id.to_string(), opener.origin_ref());
         Ok(())
     }
 
@@ -1802,7 +1813,7 @@ impl CommandProcessor<'_> {
         if let Some((_, bytes)) = capture {
             rendered.extend(bytes.into_iter().map(char::from));
         }
-        self.push_rendered_text(&rendered, opener.origin());
+        self.push_rendered_text(&rendered, opener.origin_ref());
         Ok(())
     }
 
@@ -1857,7 +1868,7 @@ impl CommandProcessor<'_> {
             use std::fmt::Write as _;
             write!(rendered, "{byte:02X}").expect("writing to a String cannot fail");
         }
-        self.push_rendered_text(&rendered, opener.origin());
+        self.push_rendered_text(&rendered, opener.origin_ref());
         Ok(())
     }
 
@@ -1878,7 +1889,10 @@ impl CommandProcessor<'_> {
                 ))
             };
         };
-        self.push_rendered_text(&source.source().bytes().len().to_string(), opener.origin());
+        self.push_rendered_text(
+            &source.source().bytes().len().to_string(),
+            opener.origin_ref(),
+        );
         Ok(())
     }
 
@@ -1904,7 +1918,7 @@ impl CommandProcessor<'_> {
         if let Some(date) = resource.modification_date() {
             self.push_rendered_text(
                 &format_pdf_date(date.clock, date.utc_offset_minutes),
-                opener.origin(),
+                opener.origin_ref(),
             );
         }
         Ok(())
@@ -1935,7 +1949,7 @@ impl CommandProcessor<'_> {
             .iter()
             .map(|byte| format!("{byte:02X}"))
             .collect::<String>();
-        self.push_rendered_text(&rendered, opener.origin());
+        self.push_rendered_text(&rendered, opener.origin_ref());
         Ok(())
     }
 
@@ -1959,7 +1973,7 @@ impl CommandProcessor<'_> {
             .host
             .page_insertion_height(class)
             .map_or_else(|| "0pt".to_owned(), format_scaled);
-        self.push_rendered_text(&rendered, opener.origin());
+        self.push_rendered_text(&rendered, opener.origin_ref());
         Ok(())
     }
 
@@ -2022,7 +2036,7 @@ impl CommandProcessor<'_> {
     /// Keeping that identity on the live input frame makes both retirement and
     /// detached observation follow the actual input transition, rather than
     /// asking a trace adapter to recognize rendered text later.
-    fn push_rendered_text(&mut self, text: &str, parent: OriginId) {
+    fn push_rendered_text(&mut self, text: &str, parent: &tex_state::provenance::OriginRef) {
         self.push_rendered_tokens(
             text.chars().map(|ch| Token::Char {
                 ch,
@@ -2036,17 +2050,21 @@ impl CommandProcessor<'_> {
         );
     }
 
-    fn push_rendered_tokens(&mut self, tokens: impl IntoIterator<Item = Token>, parent: OriginId) {
+    fn push_rendered_tokens(
+        &mut self,
+        tokens: impl IntoIterator<Item = Token>,
+        parent: &tex_state::provenance::OriginRef,
+    ) {
         let origin = self
             .state
-            .synthesized_origin(SynthesizedOriginKind::ValueRendering, parent);
+            .synthesized_origin_ref(SynthesizedOriginKind::ValueRendering, parent.clone());
         let mut tokens = tokens.into_iter();
         let first = tokens.next();
         let traced = first
             .into_iter()
             .chain(tokens)
-            .map(|token| TracedTokenWord::pack(token, origin));
-        self.insert_expansion_list(TokenPayload::transient(traced), first);
+            .map(|token| tex_state::token::RootedTracedTokenWord::new(token, origin.clone()));
+        self.insert_expansion_list(TokenPayload::transient_rooted(traced), first);
     }
 
     /// Performs TeX82 §323's `ins_list` for one expansion result.
@@ -2096,10 +2114,13 @@ impl CommandProcessor<'_> {
         self.conserve_input_stack()?;
         self.undo_alignment_delivery(&command);
         let level = self.command.push_token_level(
-            TokenPayload::backed_up([BackedUpToken {
-                spelling: command.spelling(),
-                source_provenance: command.source_provenance(),
-            }]),
+            TokenPayload::backed_up_rooted([crate::input::RootedBackedUpToken::new(
+                BackedUpToken {
+                    spelling: command.spelling(),
+                    source_provenance: command.source_provenance(),
+                },
+                command.origin_ref().clone(),
+            )]),
             TokenBehavior::BackedUp(BackupTreatment::Ordinary),
             RetirementBehavior::Pop,
             ReplayTrace::BackedUp,

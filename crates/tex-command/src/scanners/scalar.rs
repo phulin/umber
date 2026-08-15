@@ -471,9 +471,14 @@ impl CommandProcessor<'_> {
         self.back_list(
             matched
                 .into_iter()
-                .map(|command| crate::input::BackedUpToken {
-                    spelling: command.spelling(),
-                    source_provenance: command.source_provenance(),
+                .map(|command| {
+                    crate::input::RootedBackedUpToken::new(
+                        crate::input::BackedUpToken {
+                            spelling: command.spelling(),
+                            source_provenance: command.source_provenance(),
+                        },
+                        command.origin_ref().clone(),
+                    )
                 })
                 .collect(),
         );

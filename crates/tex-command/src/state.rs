@@ -1243,8 +1243,8 @@ impl CommandState {
                 if matches!(cursor.behavior, TokenBehavior::BackedUp(_))
                     && cursor
                         .payload
-                        .backed_up_words()
-                        .is_some_and(|tokens| tokens.get(cursor.index).is_none())
+                        .backed_up_len()
+                        .is_some_and(|len| cursor.index >= len)
         );
         if exhausted_backed_up_endv
             && self
@@ -2062,7 +2062,7 @@ pub(crate) struct TransientState {
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub(crate) struct LiveTokenBuilder {
     pub(crate) identity: u64,
-    pub(crate) tokens: Vec<TracedTokenWord>,
+    pub(crate) tokens: tex_state::token::RootedTracedTokenBuffer,
 }
 
 const TRACED_TOKEN_POOL_SLOTS: usize = 2;
@@ -2075,11 +2075,11 @@ struct TracedTokenBufferPool {
 
 pub(crate) struct TracedTokenScratch {
     pool: Arc<TracedTokenBufferPool>,
-    buffer: Option<Vec<TracedTokenWord>>,
+    buffer: Option<tex_state::token::RootedTracedTokenBuffer>,
 }
 
 impl Deref for TracedTokenScratch {
-    type Target = Vec<TracedTokenWord>;
+    type Target = tex_state::token::RootedTracedTokenBuffer;
 
     fn deref(&self) -> &Self::Target {
         self.buffer.as_ref().expect("checked-out buffer is present")
@@ -2094,11 +2094,11 @@ impl DerefMut for TracedTokenScratch {
 
 impl Drop for TracedTokenScratch {
     fn drop(&mut self) {
-        let mut buffer = self.buffer.take().expect("checked-out buffer is present");
-        buffer.clear();
+        let buffer = self.buffer.take().expect("checked-out buffer is present");
         if buffer.capacity() > MAX_RETAINED_TRACED_TOKEN_CAPACITY {
             return;
         }
+        let buffer = buffer.into_cleared_words();
         if let Some(slot) = self
             .pool
             .buffers
@@ -2134,7 +2134,9 @@ fn traced_token_scratch_from(pool: Arc<TracedTokenBufferPool>) -> TracedTokenScr
         .unwrap_or_default();
     TracedTokenScratch {
         pool,
-        buffer: Some(buffer),
+        buffer: Some(tex_state::token::RootedTracedTokenBuffer::from_empty_words(
+            buffer,
+        )),
     }
 }
 

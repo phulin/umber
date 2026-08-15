@@ -268,6 +268,211 @@ pub struct RootedTracedTokenWord {
     origin: crate::provenance::OriginRef,
 }
 
+/// Mutable traced-token storage with sparse structural provenance ownership.
+///
+/// Packed words remain position-aligned while `roots` contains exactly one
+/// strong owner for each distinct arena-backed origin used by those words.
+/// Direct and unknown origins therefore add no side allocation or owner.
+#[derive(Clone, Debug, Default, Eq, Hash, PartialEq)]
+pub struct RootedTracedTokenBuffer {
+    words: Vec<TracedTokenWord>,
+    roots: Vec<crate::provenance::OriginRef>,
+}
+
+impl RootedTracedTokenBuffer {
+    #[must_use]
+    pub fn new(tokens: impl IntoIterator<Item = RootedTracedTokenWord>) -> Self {
+        let mut buffer = Self::default();
+        buffer.extend(tokens);
+        buffer
+    }
+
+    #[must_use]
+    pub fn words(&self) -> &[TracedTokenWord] {
+        &self.words
+    }
+
+    #[must_use]
+    pub fn roots(&self) -> &[crate::provenance::OriginRef] {
+        &self.roots
+    }
+
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.words.len()
+    }
+
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.words.is_empty()
+    }
+
+    #[must_use]
+    pub fn get(&self, index: usize) -> Option<TracedTokenWord> {
+        self.words.get(index).copied()
+    }
+
+    #[must_use]
+    pub fn get_rooted(&self, index: usize) -> Option<RootedTracedTokenWord> {
+        let word = self.get(index)?;
+        let root = self
+            .roots
+            .binary_search_by_key(&word.origin(), crate::provenance::OriginRef::id)
+            .map_or_else(
+                |_| crate::provenance::OriginRef::direct(word.origin()),
+                |index| self.roots[index].clone(),
+            );
+        Some(RootedTracedTokenWord::from_word(word, root))
+    }
+
+    pub fn push(&mut self, token: RootedTracedTokenWord) {
+        let (word, root) = token.into_parts();
+        self.words.push(word);
+        self.insert_root(root);
+    }
+
+    pub fn push_unowned(&mut self, word: TracedTokenWord) {
+        self.push(RootedTracedTokenWord::unowned(word));
+    }
+
+    pub fn extend(&mut self, tokens: impl IntoIterator<Item = RootedTracedTokenWord>) {
+        for token in tokens {
+            self.push(token);
+        }
+    }
+
+    pub fn extend_unowned(&mut self, tokens: impl IntoIterator<Item = TracedTokenWord>) {
+        self.extend(tokens.into_iter().map(RootedTracedTokenWord::unowned));
+    }
+
+    pub fn pop(&mut self) -> Option<RootedTracedTokenWord> {
+        let word = self.words.pop()?;
+        let rooted = self.root_word(word);
+        self.prune_root(word.origin());
+        Some(rooted)
+    }
+
+    pub fn remove(&mut self, index: usize) -> RootedTracedTokenWord {
+        let word = self.words.remove(index);
+        let rooted = self.root_word(word);
+        self.prune_root(word.origin());
+        rooted
+    }
+
+    pub fn drain_prefix(&mut self, len: usize) -> Vec<RootedTracedTokenWord> {
+        assert!(len <= self.len(), "rooted token drain exceeds buffer");
+        let drained = (0..len)
+            .map(|index| self.get_rooted(index).expect("validated drain index"))
+            .collect();
+        self.words.drain(..len);
+        self.roots
+            .retain(|root| self.words.iter().any(|word| word.origin() == root.id()));
+        drained
+    }
+
+    pub fn truncate(&mut self, len: usize) {
+        self.words.truncate(len);
+        self.roots
+            .retain(|root| self.words.iter().any(|word| word.origin() == root.id()));
+    }
+
+    pub fn clear(&mut self) {
+        self.words.clear();
+        self.roots.clear();
+    }
+
+    pub fn reserve_exact(&mut self, additional: usize) {
+        self.words.reserve_exact(additional);
+    }
+
+    #[must_use]
+    pub fn capacity(&self) -> usize {
+        self.words.capacity()
+    }
+
+    /// Returns the cleared word allocation for process-local scratch reuse.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn into_cleared_words(mut self) -> Vec<TracedTokenWord> {
+        self.clear();
+        self.words
+    }
+
+    /// Reuses an empty process-local word allocation.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn from_empty_words(words: Vec<TracedTokenWord>) -> Self {
+        assert!(words.is_empty(), "scratch allocation must be empty");
+        Self {
+            words,
+            roots: Vec::new(),
+        }
+    }
+
+    #[must_use]
+    pub fn rooted_words(&self) -> impl ExactSizeIterator<Item = RootedTracedTokenWord> + '_ {
+        self.words.iter().copied().map(|word| self.root_word(word))
+    }
+
+    fn root_word(&self, word: TracedTokenWord) -> RootedTracedTokenWord {
+        let root = self
+            .roots
+            .binary_search_by_key(&word.origin(), crate::provenance::OriginRef::id)
+            .map_or_else(
+                |_| crate::provenance::OriginRef::direct(word.origin()),
+                |index| self.roots[index].clone(),
+            );
+        RootedTracedTokenWord::from_word(word, root)
+    }
+
+    fn insert_root(&mut self, root: crate::provenance::OriginRef) {
+        if root.record().is_none() {
+            return;
+        }
+        if let Err(index) = self
+            .roots
+            .binary_search_by_key(&root.id(), crate::provenance::OriginRef::id)
+        {
+            self.roots.insert(index, root);
+        }
+    }
+
+    fn prune_root(&mut self, id: OriginId) {
+        if self.words.iter().any(|word| word.origin() == id) {
+            return;
+        }
+        if let Ok(index) = self
+            .roots
+            .binary_search_by_key(&id, crate::provenance::OriginRef::id)
+        {
+            self.roots.remove(index);
+        }
+    }
+}
+
+impl AsRef<[TracedTokenWord]> for RootedTracedTokenBuffer {
+    fn as_ref(&self) -> &[TracedTokenWord] {
+        self.words()
+    }
+}
+
+impl std::ops::Deref for RootedTracedTokenBuffer {
+    type Target = [TracedTokenWord];
+
+    fn deref(&self) -> &Self::Target {
+        self.words()
+    }
+}
+
+impl IntoIterator for RootedTracedTokenBuffer {
+    type Item = RootedTracedTokenWord;
+    type IntoIter = std::vec::IntoIter<RootedTracedTokenWord>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.rooted_words().collect::<Vec<_>>().into_iter()
+    }
+}
+
 impl RootedTracedTokenWord {
     #[must_use]
     pub fn new(token: Token, origin: crate::provenance::OriginRef) -> Self {
@@ -281,6 +486,20 @@ impl RootedTracedTokenWord {
     pub fn from_word(word: TracedTokenWord, origin: crate::provenance::OriginRef) -> Self {
         assert_eq!(word.origin(), origin.id(), "traced word/root mismatch");
         Self { word, origin }
+    }
+
+    /// Attaches the zero-allocation owner for a word whose packed origin does
+    /// not address a structural provenance atom.
+    #[must_use]
+    pub fn unowned(word: TracedTokenWord) -> Self {
+        assert!(
+            !matches!(word.origin().decode(), OriginEncoding::Arena(_)),
+            "arena-backed traced word requires a structural origin root"
+        );
+        Self {
+            word,
+            origin: crate::provenance::OriginRef::direct(word.origin()),
+        }
     }
 
     #[must_use]

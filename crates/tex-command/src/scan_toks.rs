@@ -11,7 +11,9 @@
 use tex_state::TracedTokenList;
 use tex_state::interner::{ControlSequenceKind, Symbol};
 use tex_state::meaning::{ExpandablePrimitive, Meaning, MeaningFlags};
-use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
+use tex_state::token::{
+    Catcode, OriginId, RootedTracedTokenBuffer, RootedTracedTokenWord, Token, TracedTokenWord,
+};
 
 use crate::processor::alignment::TEMPLATE_ALIGN_STATE;
 use crate::processor::expand::is_expandable_command;
@@ -255,7 +257,7 @@ impl ScannedLeftBrace {
 struct ScannedParameterText {
     tokens: crate::state::TracedTokenScratch,
     highest_parameter: u8,
-    hash_brace: Option<TracedTokenWord>,
+    hash_brace: Option<RootedTracedTokenWord>,
     primary: OriginId,
     malformed_parameter: bool,
     missing_left_brace: bool,
@@ -445,8 +447,8 @@ impl CommandProcessor<'_> {
             replacement.push(brace);
         }
         Ok(ScannedToks {
-            parameter_text: self.state.finish_traced_token_list(&parameter_text),
-            replacement_text: self.state.finish_traced_token_list(&replacement),
+            parameter_text: self.state.finish_rooted_traced_token_list(&parameter_text),
+            replacement_text: self.state.finish_rooted_traced_token_list(&replacement),
             primary,
             malformed_parameter,
         })
@@ -576,17 +578,17 @@ impl CommandProcessor<'_> {
                 });
             }
             if !is_parameter(token) {
-                output.push(command.spelling());
+                output.push(command.rooted_spelling());
                 continue;
             }
             let follower = self.get_token()?.ok_or(CommandError::input_invariant())?;
             let follower_token = follower.spelling().semantic_token();
             if is_begin_group(follower_token) {
-                output.push(follower.spelling());
+                output.push(follower.rooted_spelling());
                 return Ok(ScannedParameterText {
                     tokens: output,
                     highest_parameter: next_parameter - 1,
-                    hash_brace: Some(follower.spelling()),
+                    hash_brace: Some(follower.rooted_spelling()),
                     primary,
                     malformed_parameter,
                     missing_left_brace: false,
@@ -605,11 +607,11 @@ impl CommandProcessor<'_> {
                     // TeX82 §476's match token retains `cur_chr`, i.e. the
                     // actual parameter-character code. Keep that spelling
                     // beside the compact slot token when it is not `#`.
-                    output.push(command.spelling());
+                    output.push(command.rooted_spelling());
                 }
-                output.push(TracedTokenWord::pack(
+                output.push(RootedTracedTokenWord::new(
                     Token::Param(number),
-                    follower.origin(),
+                    follower.origin_ref().clone(),
                 ));
                 next_parameter += 1;
                 continue;
@@ -635,9 +637,9 @@ impl CommandProcessor<'_> {
             self.report_macro_parameter_diagnostic(MacroParameterDiagnostic::NonconsecutiveNumber)?;
             malformed_parameter = true;
             if next_parameter <= 9 {
-                output.push(TracedTokenWord::pack(
+                output.push(RootedTracedTokenWord::new(
                     Token::Param(next_parameter),
-                    command.origin(),
+                    command.origin_ref().clone(),
                 ));
                 next_parameter += 1;
             }
@@ -739,7 +741,7 @@ impl CommandProcessor<'_> {
                 if expansion.is_expanded() {
                     self.observe_expanded_delivery(&command);
                 }
-                let spelling = command.spelling();
+                let spelling = command.rooted_spelling();
                 delivered = command;
                 spelling
             };
@@ -761,7 +763,7 @@ impl CommandProcessor<'_> {
             if delivered.is_outer_recovery_space() {
                 continue;
             }
-            let token = spelling.semantic_token();
+            let token = spelling.word().semantic_token();
             if let Some((hash, highest_parameter, target)) = pending_parameter.take() {
                 // §479: a second parameter character stores that character
                 // once -- `##` is one parameter token in the body, not two.
@@ -772,14 +774,17 @@ impl CommandProcessor<'_> {
                 if let Some(number) = parameter_number(token)
                     && number <= highest_parameter
                 {
-                    let converted = TracedTokenWord::pack(Token::Param(number), spelling.origin());
-                    output.push(converted);
+                    let converted = RootedTracedTokenWord::new(
+                        Token::Param(number),
+                        spelling.origin_ref().clone(),
+                    );
+                    output.push(converted.clone());
                     observe!(
                         self,
                         CommandObservation::TokenList(TokenListRecord {
                             transition: "splice",
                             purpose: "parameter_conversion",
-                            tokens: vec![self.observed_token(converted)],
+                            tokens: vec![self.observed_token(converted.word())],
                         }),
                     );
                     continue;
@@ -894,7 +899,7 @@ impl CommandProcessor<'_> {
     /// The target alone is read; no input from after that target is examined.
     fn append_direct_the_toks(
         &mut self,
-        output: &mut Vec<TracedTokenWord>,
+        output: &mut RootedTracedTokenBuffer,
     ) -> Result<bool, CommandError> {
         let target = self.get_x_token()?.ok_or(CommandError::input_invariant())?;
         let Some(value) = self.scan_the_internal_value(&target)? else {
@@ -940,7 +945,7 @@ impl CommandProcessor<'_> {
         } else {
             Vec::new()
         };
-        output.extend(tokens);
+        output.extend_unowned(tokens);
         self.command.expansion.cumulative_expansions = self
             .command
             .expansion
@@ -965,15 +970,17 @@ impl CommandProcessor<'_> {
     /// e-TeX `\unexpanded` uses the same direct-splice rule.  Its balanced
     /// text is scanned raw and attached without parameter conversion or
     /// recursive expansion.
-    fn append_unexpanded(&mut self, output: &mut Vec<TracedTokenWord>) -> Result<(), CommandError> {
+    fn append_unexpanded(
+        &mut self,
+        output: &mut RootedTracedTokenBuffer,
+    ) -> Result<(), CommandError> {
         let scanned = self.scan_toks(ScanToksMode::GeneralText {
             purpose: "unexpanded",
         })?;
-        let raw = self.traced_words(scanned.replacement_text);
+        let raw = self.rooted_words(scanned.replacement_text);
         let observed = raw
             .iter()
-            .copied()
-            .map(|token| self.observed_token(token))
+            .map(|token| self.observed_token(token.word()))
             .collect::<Vec<_>>();
         output.extend(raw);
         self.command.expansion.cumulative_expansions = self
@@ -1001,7 +1008,10 @@ impl CommandProcessor<'_> {
     /// attached directly, just like §478's ordinary `\the` result. It must
     /// not become a §470 `conv_toks` inserted input level whose characters
     /// are fetched again one by one.
-    fn append_detokenize(&mut self, output: &mut Vec<TracedTokenWord>) -> Result<(), CommandError> {
+    fn append_detokenize(
+        &mut self,
+        output: &mut RootedTracedTokenBuffer,
+    ) -> Result<(), CommandError> {
         let scanned = self.scan_toks(ScanToksMode::GeneralText {
             purpose: "detokenize",
         })?;
@@ -1030,7 +1040,7 @@ impl CommandProcessor<'_> {
             .copied()
             .map(|token| self.observed_token(token))
             .collect::<Vec<_>>();
-        output.extend(tokens);
+        output.extend_unowned(tokens);
         self.command.expansion.cumulative_expansions = self
             .command
             .expansion
@@ -1069,16 +1079,18 @@ impl CommandProcessor<'_> {
         Ok(())
     }
 
-    fn traced_words(&self, list: TracedTokenList) -> Vec<TracedTokenWord> {
+    fn rooted_words(&self, list: TracedTokenList) -> Vec<RootedTracedTokenWord> {
         let tokens = list.token_ref().tokens();
-        let origins = list.origin_ref().origins();
         tokens
             .iter()
             .copied()
             .enumerate()
             .map(|(index, token)| {
-                let origin = origins.get(index).copied().unwrap_or(OriginId::UNKNOWN);
-                TracedTokenWord::pack(token, origin)
+                let origin = list
+                    .origin_ref()
+                    .root(index)
+                    .unwrap_or_else(tex_state::provenance::OriginRef::unknown);
+                RootedTracedTokenWord::new(token, origin)
             })
             .collect()
     }
@@ -1204,7 +1216,7 @@ impl CommandProcessor<'_> {
         // token-list assignment. The committed observation is §1225's
         // meaning mutation, whose macro body includes §482's leading
         // `end_match_token`.
-        Ok(self.state.finish_traced_token_list(&tokens))
+        Ok(self.state.finish_rooted_traced_token_list(&tokens))
     }
 
     /// §482's `repeat <Input and store tokens from the next line> until
@@ -1243,7 +1255,7 @@ impl CommandProcessor<'_> {
         target: tex_state::interner::Symbol,
         raw_catcodes: bool,
         prompt_number: &mut i32,
-        tokens: &mut Vec<TracedTokenWord>,
+        tokens: &mut RootedTracedTokenBuffer,
     ) -> Result<(), CommandError> {
         // §483 calls `begin_file_reading` before §484-§486 acquire the line.
         // §328 establishes that new level with `name:=0`; the selected
@@ -1368,7 +1380,7 @@ impl CommandProcessor<'_> {
                 self.command.alignment.align_state = TEMPLATE_ALIGN_STATE;
                 return Ok(());
             }
-            tokens.push(command.spelling());
+            tokens.push(command.rooted_spelling());
         }
         Ok(())
     }
@@ -1384,7 +1396,7 @@ impl CommandProcessor<'_> {
     fn collect_read_line_verbatim(
         &mut self,
         level: crate::input::InputLevelId,
-        tokens: &mut Vec<TracedTokenWord>,
+        tokens: &mut RootedTracedTokenBuffer,
     ) -> Result<(), CommandError> {
         let endlinechar = self
             .state
@@ -1392,7 +1404,7 @@ impl CommandProcessor<'_> {
         self.command.load_next_source_line(endlinechar);
         while let Some(character) = self.command.next_source_character() {
             let ch = crate::profile::token_character(character.code());
-            let origin = self.state.source_token_origin(
+            let origin = self.state.source_token_origin_ref(
                 character.range().source(),
                 character.range().start(),
                 character.range().end(),
@@ -1402,7 +1414,7 @@ impl CommandProcessor<'_> {
             } else {
                 Catcode::Other
             };
-            tokens.push(TracedTokenWord::pack(Token::Char { ch, cat }, origin));
+            tokens.push(RootedTracedTokenWord::new(Token::Char { ch, cat }, origin));
         }
         self.retire_read_line_level(level)?;
         Ok(())

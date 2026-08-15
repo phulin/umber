@@ -282,10 +282,10 @@ impl<'a> Detacher<'a> {
         recipe
     }
 
-    fn word(&mut self, word: TracedTokenWord) -> OwnedWord {
+    fn word(&mut self, word: tex_state::token::RootedTracedTokenWord) -> OwnedWord {
         OwnedWord {
-            token: self.token(word.semantic_token()),
-            origin: self.origin_id(word.origin()),
+            token: self.token(word.word().semantic_token()),
+            origin: self.origin_ref(word.origin_ref()),
         }
     }
 
@@ -448,31 +448,39 @@ impl<'a> Detacher<'a> {
                 origins: self.origin_list(origins),
             },
             TokenPayload::Transient(words) => OwnedTokenPayload::Transient(
-                words.words().iter().map(|word| self.word(*word)).collect(),
+                words.rooted_words().map(|word| self.word(word)).collect(),
             ),
             TokenPayload::InlineTransient(word) => {
-                OwnedTokenPayload::InlineTransient(self.word(*word))
+                OwnedTokenPayload::InlineTransient(self.word(word.clone()))
             }
             TokenPayload::BackedUp(words) => OwnedTokenPayload::BackedUp(
-                words
-                    .words()
-                    .iter()
-                    .map(|word| self.backed_up(*word))
+                (0..words.words().len())
+                    .map(|index| {
+                        self.backed_up(
+                            words
+                                .get_rooted(index)
+                                .expect("index from exact backed-up-buffer length"),
+                        )
+                    })
                     .collect(),
             ),
             TokenPayload::InlineBackedUp(word) => {
-                OwnedTokenPayload::InlineBackedUp(self.backed_up(*word))
+                OwnedTokenPayload::InlineBackedUp(self.backed_up(word.clone()))
             }
             TokenPayload::ArgumentRange { buffer, range } => OwnedTokenPayload::ArgumentRange {
-                buffer: buffer.words().iter().map(|word| self.word(*word)).collect(),
+                buffer: buffer.rooted_words().map(|word| self.word(word)).collect(),
                 range: *range,
             },
         }
     }
 
-    fn backed_up(&mut self, word: BackedUpToken) -> OwnedBackedUpToken {
+    fn backed_up(&mut self, word: crate::input::RootedBackedUpToken) -> OwnedBackedUpToken {
+        let (word, root) = word.into_parts();
         OwnedBackedUpToken {
-            spelling: self.word(word.spelling),
+            spelling: self.word(tex_state::token::RootedTracedTokenWord::from_word(
+                word.spelling,
+                root,
+            )),
             source_provenance: word
                 .source_provenance
                 .map(|source| self.source_provenance(source)),
@@ -491,9 +499,8 @@ impl<'a> Detacher<'a> {
                     arguments: activation
                         .arguments
                         .buffer
-                        .words()
-                        .iter()
-                        .map(|word| self.word(*word))
+                        .rooted_words()
+                        .map(|word| self.word(word))
                         .collect(),
                     ranges: activation.arguments.ranges,
                     invocation: self.origin_ref(activation.invocation.as_origin()),

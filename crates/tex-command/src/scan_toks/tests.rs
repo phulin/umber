@@ -108,9 +108,9 @@ fn scratch_pool_warmth_preserves_scan_semantics_and_publications() {
         );
         if warm_scratch_pool {
             let mut first = crate::state::traced_token_scratch();
-            first.extend([traced(Token::Param(1)); 32]);
+            first.extend_unowned([traced(Token::Param(1)); 32]);
             let mut second = crate::state::traced_token_scratch();
-            second.extend([traced(Token::Param(1)); 16]);
+            second.extend_unowned([traced(Token::Param(1)); 16]);
         }
         let mut universe = crate::test_harness::universe_with_plain_catcodes();
         let mut capabilities = CommandHostCapabilities::default();
@@ -180,16 +180,20 @@ fn origin_list_budget_fallback_preserves_section_478_splice_semantics() {
     let mut capabilities = CommandHostCapabilities::default();
     let processor = processor(&mut command, &mut universe, &mut capabilities);
 
-    let words = processor.traced_words(list);
+    let words = processor.rooted_words(list);
 
     assert_eq!(
         words
             .iter()
-            .map(|word| word.semantic_token())
+            .map(|word| word.word().semantic_token())
             .collect::<Vec<_>>(),
         tokens
     );
-    assert!(words.iter().all(|word| word.origin() == OriginId::UNKNOWN));
+    assert!(
+        words
+            .iter()
+            .all(|word| word.word().origin() == OriginId::UNKNOWN)
+    );
 }
 
 #[test]
@@ -2638,7 +2642,7 @@ fn readline_exact_bytes_nested_in_scantokens_replay_after_rollback() {
                     vec![0xff],
                 )
                 .expect("readline bytes install");
-            let mut tokens = Vec::new();
+            let mut tokens = tex_state::token::RootedTracedTokenBuffer::default();
             processor
                 .collect_read_line_verbatim(line, &mut tokens)
                 .expect("exact-byte readline collects");
@@ -2649,7 +2653,7 @@ fn readline_exact_bytes_nested_in_scantokens_replay_after_rollback() {
             );
             tokens
                 .into_iter()
-                .map(TracedTokenWord::semantic_token)
+                .map(|word| word.word().semantic_token())
                 .collect::<Vec<_>>()
         };
         assert_eq!(

@@ -3,8 +3,8 @@
 
 use std::sync::Arc;
 
-use tex_state::provenance::OriginListRef;
-use tex_state::token::TracedTokenWord;
+use tex_state::provenance::{OriginListRef, OriginRef};
+use tex_state::token::{RootedTracedTokenWord, TracedTokenWord};
 use tex_state::token_store::TokenListRef;
 
 use crate::macro_call::{MacroActivationId, MacroArgumentRange};
@@ -100,12 +100,12 @@ pub(crate) enum TokenPayload {
     /// Tokens materialized for a bounded insertion or scanner operation.
     Transient(SharedTokenBuffer),
     /// One transient token stored directly in its input level.
-    InlineTransient(TracedTokenWord),
+    InlineTransient(RootedTracedTokenWord),
     /// One command restored by TeX's `back_input`, retaining the committed
     /// physical spelling range if it originally came from registered source.
     BackedUp(SharedBackedUpBuffer),
     /// One backed-up command stored directly in its input level.
-    InlineBackedUp(BackedUpToken),
+    InlineBackedUp(RootedBackedUpToken),
     /// One already materialized macro argument, replayed literally by range.
     ArgumentRange {
         buffer: SharedTokenBuffer,
@@ -124,7 +124,7 @@ impl TokenPayload {
             return Self::Transient(SharedTokenBuffer::default());
         };
         let Some(second) = tokens.next() else {
-            return Self::InlineTransient(first);
+            return Self::InlineTransient(RootedTracedTokenWord::unowned(first));
         };
         let Some(third) = tokens.next() else {
             return Self::Transient(SharedTokenBuffer::new([first, second]));
@@ -136,6 +136,23 @@ impl TokenPayload {
         Self::Transient(SharedTokenBuffer::new(shared))
     }
 
+    /// Selects shared structural storage for rooted transient positions.
+    /// Rooted singletons deliberately do not use the raw inline form.
+    pub(crate) fn transient_rooted(
+        tokens: impl IntoIterator<Item = RootedTracedTokenWord>,
+    ) -> Self {
+        let mut tokens = tokens.into_iter();
+        let Some(first) = tokens.next() else {
+            return Self::Transient(SharedTokenBuffer::default());
+        };
+        let Some(second) = tokens.next() else {
+            return Self::InlineTransient(first);
+        };
+        Self::Transient(SharedTokenBuffer::new_rooted(
+            [first, second].into_iter().chain(tokens),
+        ))
+    }
+
     /// Selects inline storage for one backed-up command and shared storage for
     /// empty or multi-token payloads.
     pub(crate) fn backed_up(tokens: impl IntoIterator<Item = BackedUpToken>) -> Self {
@@ -144,7 +161,7 @@ impl TokenPayload {
             return Self::BackedUp(SharedBackedUpBuffer::default());
         };
         let Some(second) = tokens.next() else {
-            return Self::InlineBackedUp(first);
+            return Self::InlineBackedUp(RootedBackedUpToken::unowned(first));
         };
         let (lower, _) = tokens.size_hint();
         let mut shared = Vec::with_capacity(lower.saturating_add(2));
@@ -153,10 +170,31 @@ impl TokenPayload {
         Self::BackedUp(SharedBackedUpBuffer::new(shared))
     }
 
+    pub(crate) fn backed_up_rooted(tokens: impl IntoIterator<Item = RootedBackedUpToken>) -> Self {
+        let mut tokens = tokens.into_iter();
+        let Some(first) = tokens.next() else {
+            return Self::BackedUp(SharedBackedUpBuffer::default());
+        };
+        let Some(second) = tokens.next() else {
+            return Self::InlineBackedUp(first);
+        };
+        Self::BackedUp(SharedBackedUpBuffer::new_rooted(
+            [first, second].into_iter().chain(tokens),
+        ))
+    }
+
     pub(crate) fn transient_words(&self) -> Option<&[TracedTokenWord]> {
         match self {
             Self::Transient(words) => Some(words.words()),
-            Self::InlineTransient(word) => Some(std::slice::from_ref(word)),
+            Self::InlineTransient(_) => None,
+            _ => None,
+        }
+    }
+
+    pub(crate) fn transient_len(&self) -> Option<usize> {
+        match self {
+            Self::Transient(words) => Some(words.len()),
+            Self::InlineTransient(_) => Some(1),
             _ => None,
         }
     }
@@ -164,23 +202,43 @@ impl TokenPayload {
     pub(crate) fn backed_up_words(&self) -> Option<&[BackedUpToken]> {
         match self {
             Self::BackedUp(words) => Some(words.words()),
-            Self::InlineBackedUp(word) => Some(std::slice::from_ref(word)),
+            Self::InlineBackedUp(_) => None,
             _ => None,
         }
+    }
+
+    pub(crate) fn backed_up_len(&self) -> Option<usize> {
+        match self {
+            Self::BackedUp(words) => Some(words.words().len()),
+            Self::InlineBackedUp(_) => Some(1),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn backed_up_get(&self, index: usize) -> Option<BackedUpToken> {
+        match self {
+            Self::BackedUp(words) => words.get(index),
+            Self::InlineBackedUp(word) => (index == 0).then(|| word.token()),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn is_backed_up(&self) -> bool {
+        matches!(self, Self::BackedUp(_) | Self::InlineBackedUp(_))
     }
 
     /// Prepends e-TeX aftergroup tokens, promoting inline storage when the
     /// resulting backed-up level contains multiple commands.
     pub(crate) fn prepend_backed_up(
         &mut self,
-        prefix: impl IntoIterator<Item = BackedUpToken>,
+        prefix: impl IntoIterator<Item = RootedBackedUpToken>,
     ) -> Option<()> {
         let mut prefix = prefix.into_iter().collect::<Vec<_>>();
         match self {
             Self::BackedUp(words) => words.prepend(prefix),
             Self::InlineBackedUp(word) => {
-                prefix.push(*word);
-                *self = Self::backed_up(prefix);
+                prefix.push(word.clone());
+                *self = Self::backed_up_rooted(prefix);
             }
             _ => return None,
         }
@@ -195,7 +253,7 @@ impl TokenPayload {
         match self {
             Self::BackedUp(words) => words.rehome_source(source, byte_delta),
             Self::InlineBackedUp(word) => {
-                if let Some(provenance) = &mut word.source_provenance {
+                if let Some(provenance) = &mut word.token.source_provenance {
                     provenance.rehome(source, byte_delta)?;
                 }
                 Some(())
@@ -205,6 +263,22 @@ impl TokenPayload {
     }
 
     pub(crate) fn adopt_matching_origins(&mut self, live: &Self) -> Option<()> {
+        if let (Self::InlineTransient(recorded), Self::InlineTransient(live)) = (&*self, live) {
+            if recorded.word().token() != live.word().token() {
+                return None;
+            }
+            *self = Self::InlineTransient(live.clone());
+            return Some(());
+        }
+        if let (Self::InlineBackedUp(recorded), Self::InlineBackedUp(live)) = (&*self, live) {
+            if recorded.token().spelling.token() != live.token().spelling.token()
+                || recorded.token().source_provenance != live.token().source_provenance
+            {
+                return None;
+            }
+            *self = Self::InlineBackedUp(live.clone());
+            return Some(());
+        }
         if let (Some(recorded), Some(live_words)) = (self.transient_words(), live.transient_words())
         {
             if recorded.len() != live_words.len()
@@ -239,32 +313,109 @@ impl TokenPayload {
 ///
 /// Cloning a cursor or snapshot retains the allocation rather than copying its
 /// tokens. A macro activation and its parameter cursors may share this value.
-#[derive(Clone, Debug, Default, Eq, Hash, PartialEq)]
-pub(crate) struct SharedTokenBuffer(Arc<[TracedTokenWord]>);
+#[derive(Debug, Eq, Hash, PartialEq)]
+struct SharedTokenBufferValue {
+    words: Box<[TracedTokenWord]>,
+    /// Sorted, distinct structural owners. Direct, fallback, and unknown
+    /// positions are represented by their packed words alone.
+    roots: Box<[OriginRef]>,
+}
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub(crate) struct SharedTokenBuffer(Arc<SharedTokenBufferValue>);
+
+#[cfg(test)]
+pub(crate) struct SharedTokenBufferWeak(std::sync::Weak<SharedTokenBufferValue>);
+
+#[cfg(test)]
+impl SharedTokenBufferWeak {
+    pub(crate) fn is_live(&self) -> bool {
+        self.0.upgrade().is_some()
+    }
+}
+
+impl Default for SharedTokenBuffer {
+    fn default() -> Self {
+        Self::new([])
+    }
+}
 
 impl SharedTokenBuffer {
-    pub(crate) fn new(tokens: impl Into<Arc<[TracedTokenWord]>>) -> Self {
-        Self(tokens.into())
+    #[cfg(test)]
+    pub(crate) fn downgrade(&self) -> SharedTokenBufferWeak {
+        SharedTokenBufferWeak(Arc::downgrade(&self.0))
+    }
+
+    /// Builds a rootless buffer. Arena-backed words are rejected because a
+    /// raw id cannot confer ownership on its provenance atom.
+    pub(crate) fn new(tokens: impl AsRef<[TracedTokenWord]>) -> Self {
+        Self::new_rooted(
+            tokens
+                .as_ref()
+                .iter()
+                .copied()
+                .map(RootedTracedTokenWord::unowned),
+        )
+    }
+
+    pub(crate) fn new_rooted(tokens: impl IntoIterator<Item = RootedTracedTokenWord>) -> Self {
+        let mut words = Vec::new();
+        let mut roots = Vec::new();
+        for token in tokens {
+            let (word, root) = token.into_parts();
+            words.push(word);
+            if root.record().is_some() {
+                match roots.binary_search_by_key(&root.id(), OriginRef::id) {
+                    Ok(_) => {}
+                    Err(index) => roots.insert(index, root),
+                }
+            }
+        }
+        Self(Arc::new(SharedTokenBufferValue {
+            words: words.into_boxed_slice(),
+            roots: roots.into_boxed_slice(),
+        }))
     }
 
     pub(crate) fn len(&self) -> usize {
-        self.0.len()
+        self.0.words.len()
     }
 
     pub(crate) fn get(&self, index: usize) -> Option<TracedTokenWord> {
-        self.0.get(index).copied()
+        self.0.words.get(index).copied()
+    }
+
+    pub(crate) fn get_rooted(&self, index: usize) -> Option<RootedTracedTokenWord> {
+        let word = self.get(index)?;
+        let root = self
+            .0
+            .roots
+            .binary_search_by_key(&word.origin(), OriginRef::id)
+            .map_or_else(
+                |_| OriginRef::direct(word.origin()),
+                |index| self.0.roots[index].clone(),
+            );
+        Some(RootedTracedTokenWord::from_word(word, root))
     }
 
     pub(crate) fn words(&self) -> &[TracedTokenWord] {
-        &self.0
+        &self.0.words
+    }
+
+    pub(crate) fn rooted_words(&self) -> impl ExactSizeIterator<Item = RootedTracedTokenWord> + '_ {
+        (0..self.len()).map(|index| {
+            self.get_rooted(index)
+                .expect("index from the exact shared-buffer length")
+        })
     }
 
     pub(crate) fn adopt_matching_origins(&mut self, live: &Self) -> Option<()> {
-        if self.0.len() != live.0.len()
+        if self.0.words.len() != live.0.words.len()
             || self
                 .0
+                .words
                 .iter()
-                .zip(live.0.iter())
+                .zip(live.0.words.iter())
                 .any(|(recorded, live)| recorded.token() != live.token())
         {
             return None;
@@ -278,29 +429,80 @@ impl SharedTokenBuffer {
 ///
 /// The range is delivery metadata, separate from the token's semantic and
 /// opaque-origin identity, so reusing it cannot affect fixture identities.
-#[derive(Clone, Debug, Default, Eq, Hash, PartialEq)]
-pub(crate) struct SharedBackedUpBuffer(Arc<[BackedUpToken]>);
+#[derive(Debug, Eq, Hash, PartialEq)]
+struct SharedBackedUpBufferValue {
+    tokens: Box<[BackedUpToken]>,
+    roots: Box<[OriginRef]>,
+}
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub(crate) struct SharedBackedUpBuffer(Arc<SharedBackedUpBufferValue>);
+
+impl Default for SharedBackedUpBuffer {
+    fn default() -> Self {
+        Self::new([])
+    }
+}
 
 impl SharedBackedUpBuffer {
-    pub(crate) fn new(tokens: impl Into<Arc<[BackedUpToken]>>) -> Self {
-        Self(tokens.into())
+    pub(crate) fn new(tokens: impl AsRef<[BackedUpToken]>) -> Self {
+        Self::new_rooted(
+            tokens
+                .as_ref()
+                .iter()
+                .copied()
+                .map(RootedBackedUpToken::unowned),
+        )
+    }
+
+    pub(crate) fn new_rooted(tokens: impl IntoIterator<Item = RootedBackedUpToken>) -> Self {
+        let mut words = Vec::new();
+        let mut roots = Vec::new();
+        for rooted in tokens {
+            let (token, root) = rooted.into_parts();
+            words.push(token);
+            if root.record().is_some() {
+                match roots.binary_search_by_key(&root.id(), OriginRef::id) {
+                    Ok(_) => {}
+                    Err(index) => roots.insert(index, root),
+                }
+            }
+        }
+        Self(Arc::new(SharedBackedUpBufferValue {
+            tokens: words.into_boxed_slice(),
+            roots: roots.into_boxed_slice(),
+        }))
     }
 
     pub(crate) fn get(&self, index: usize) -> Option<BackedUpToken> {
-        self.0.get(index).copied()
+        self.0.tokens.get(index).copied()
+    }
+
+    pub(crate) fn get_rooted(&self, index: usize) -> Option<RootedBackedUpToken> {
+        let token = self.get(index)?;
+        let root = self
+            .0
+            .roots
+            .binary_search_by_key(&token.spelling.origin(), OriginRef::id)
+            .map_or_else(
+                |_| OriginRef::direct(token.spelling.origin()),
+                |index| self.0.roots[index].clone(),
+            );
+        Some(RootedBackedUpToken { token, root })
     }
 
     pub(crate) fn words(&self) -> &[BackedUpToken] {
-        &self.0
+        &self.0.tokens
     }
 
     /// Prepends tokens to e-TeX's active optimized `backed_up` list.
-    pub(crate) fn prepend(&mut self, prefix: impl IntoIterator<Item = BackedUpToken>) {
-        let prefix = prefix.into_iter().collect::<Vec<_>>();
-        let mut tokens = Vec::with_capacity(prefix.len() + self.0.len());
-        tokens.extend(prefix);
-        tokens.extend(self.0.iter().copied());
-        self.0 = tokens.into();
+    pub(crate) fn prepend(&mut self, prefix: impl IntoIterator<Item = RootedBackedUpToken>) {
+        let mut tokens = prefix.into_iter().collect::<Vec<_>>();
+        tokens.extend((0..self.0.tokens.len()).map(|index| {
+            self.get_rooted(index)
+                .expect("index from exact backed-up-buffer length")
+        }));
+        *self = Self::new_rooted(tokens);
     }
 
     pub(crate) fn rehome_source(
@@ -308,22 +510,28 @@ impl SharedBackedUpBuffer {
         source: tex_state::SourceId,
         byte_delta: i64,
     ) -> Option<()> {
-        let mut tokens = self.0.to_vec();
+        let mut tokens = self.0.tokens.to_vec();
         for token in &mut tokens {
             if let Some(provenance) = &mut token.source_provenance {
                 provenance.rehome(source, byte_delta)?;
             }
         }
-        self.0 = tokens.into();
+        let rooted = tokens.into_iter().enumerate().map(|(index, token)| {
+            let old = self
+                .get_rooted(index)
+                .expect("rehome preserves backed-up-buffer length");
+            RootedBackedUpToken::new(token, old.origin_ref().clone())
+        });
+        *self = Self::new_rooted(rooted);
         Some(())
     }
 
     pub(crate) fn adopt_matching_origins(&mut self, live: &Self) -> Option<()> {
-        if self.0.len() != live.0.len() {
+        if self.0.tokens.len() != live.0.tokens.len() {
             return None;
         }
-        let mut tokens = self.0.to_vec();
-        for (recorded, live) in tokens.iter_mut().zip(live.0.iter()) {
+        let mut tokens = self.0.tokens.to_vec();
+        for (recorded, live) in tokens.iter_mut().zip(live.0.tokens.iter()) {
             if recorded.spelling.token() != live.spelling.token()
                 || recorded.source_provenance != live.source_provenance
             {
@@ -334,7 +542,16 @@ impl SharedBackedUpBuffer {
                 live.spelling.origin(),
             );
         }
-        self.0 = tokens.into();
+        let rooted = tokens.into_iter().enumerate().map(|(index, token)| {
+            RootedBackedUpToken::new(
+                token,
+                live.get_rooted(index)
+                    .expect("matching buffers have equal lengths")
+                    .origin_ref()
+                    .clone(),
+            )
+        });
+        *self = Self::new_rooted(rooted);
         Some(())
     }
 }
@@ -344,6 +561,39 @@ impl SharedBackedUpBuffer {
 pub(crate) struct BackedUpToken {
     pub(crate) spelling: TracedTokenWord,
     pub(crate) source_provenance: Option<SourceProvenance>,
+}
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub(crate) struct RootedBackedUpToken {
+    token: BackedUpToken,
+    root: OriginRef,
+}
+
+impl RootedBackedUpToken {
+    pub(crate) fn new(token: BackedUpToken, root: OriginRef) -> Self {
+        assert_eq!(token.spelling.origin(), root.id());
+        Self { token, root }
+    }
+
+    pub(crate) fn unowned(token: BackedUpToken) -> Self {
+        let rooted = RootedTracedTokenWord::unowned(token.spelling);
+        Self {
+            token,
+            root: rooted.into_parts().1,
+        }
+    }
+
+    pub(crate) const fn token(&self) -> BackedUpToken {
+        self.token
+    }
+
+    pub(crate) fn origin_ref(&self) -> &OriginRef {
+        &self.root
+    }
+
+    pub(crate) fn into_parts(self) -> (BackedUpToken, OriginRef) {
+        (self.token, self.root)
+    }
 }
 
 /// Semantic treatment applied while a token level delivers its payload.

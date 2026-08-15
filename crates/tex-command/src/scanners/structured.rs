@@ -11,7 +11,7 @@ use tex_state::ids::FontId;
 use tex_state::interner::Symbol;
 use tex_state::meaning::{Meaning, UnexpandablePrimitive};
 use tex_state::scaled::{FontSizeSpec, Scaled};
-use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
+use tex_state::token::{Catcode, OriginId, RootedTracedTokenBuffer, Token, TracedTokenWord};
 use tex_state::{
     SourceId, TracedTokenList,
     env::banks::{GlueParam, IntParam},
@@ -1055,14 +1055,14 @@ impl CommandProcessor<'_> {
         loop {
             match self.get_x_or_protected_with_replay_completion()? {
                 Some(CommandReplayDelivery::Command(command)) => {
-                    expanded.push(command.spelling());
+                    expanded.push(command.rooted_spelling());
                 }
                 Some(CommandReplayDelivery::Completed(completed)) if completed == episode => break,
                 Some(CommandReplayDelivery::Completed(_)) => continue,
                 None => return Err(CommandError::input_invariant()),
             }
         }
-        Ok(self.state.finish_traced_token_list(&expanded))
+        Ok(self.state.finish_rooted_traced_token_list(&expanded))
     }
 
     /// TeX82 §1215's `get_r_token`, including its restart after inserting
@@ -3259,7 +3259,7 @@ impl CommandProcessor<'_> {
             .builders
             .push(crate::state::LiveTokenBuilder {
                 identity: builder.0,
-                tokens: Vec::new(),
+                tokens: RootedTracedTokenBuffer::default(),
             });
         let scanner_episode = self.begin_scanner_episode(
             ScannerStatus::Aligning(AlignmentScanContext {
@@ -3291,7 +3291,7 @@ impl CommandProcessor<'_> {
             // `done1`/`done2` labels. A missing `#` leaves the delivered
             // delimiter backed up, then the v-template loop reads it again.
             // A single combined u/v phase loses that replay boundary.
-            let mut u_template = Vec::new();
+            let mut u_template = RootedTracedTokenBuffer::default();
             loop {
                 let command = self
                     .get_preamble_token()?
@@ -3364,7 +3364,7 @@ impl CommandProcessor<'_> {
                 ) || !u_template.is_empty()
                 {
                     // TeX82 §760 eliminates only leading u-template spaces.
-                    u_template.push(command.spelling());
+                    u_template.push(command.rooted_spelling());
                     self.command
                         .transient
                         .builders
@@ -3372,11 +3372,11 @@ impl CommandProcessor<'_> {
                         .find(|live| live.identity == builder.0)
                         .ok_or(CommandError::input_invariant())?
                         .tokens
-                        .push(command.spelling());
+                        .push(command.rooted_spelling());
                 }
             }
 
-            let mut v_template = Vec::new();
+            let mut v_template = RootedTracedTokenBuffer::default();
             let ends_preamble = loop {
                 let command = self
                     .get_preamble_token()?
@@ -3431,7 +3431,7 @@ impl CommandProcessor<'_> {
                     );
                     continue;
                 }
-                v_template.push(command.spelling());
+                v_template.push(command.rooted_spelling());
                 self.command
                     .transient
                     .builders
@@ -3439,13 +3439,13 @@ impl CommandProcessor<'_> {
                     .find(|live| live.identity == builder.0)
                     .ok_or(CommandError::input_invariant())?
                     .tokens
-                    .push(command.spelling());
+                    .push(command.rooted_spelling());
             };
             columns.push(AlignmentCellTemplates {
                 // `init_col` installs a u-template even when its token list
                 // is empty. `None` is reserved for the typed `\\omit` path.
-                u_template: Some(self.state.finish_traced_token_list(&u_template)),
-                v_template: self.state.finish_traced_token_list(&v_template),
+                u_template: Some(self.state.finish_rooted_traced_token_list(&u_template)),
+                v_template: self.state.finish_rooted_traced_token_list(&v_template),
             });
             tabskips.push(current_tabskip);
             if ends_preamble {
@@ -3597,10 +3597,8 @@ impl CommandProcessor<'_> {
             let token = scanned.token_ref().tokens()[index];
             let origin = scanned
                 .origin_ref()
-                .origins()
-                .get(index)
-                .copied()
-                .unwrap_or(OriginId::UNKNOWN);
+                .root(index)
+                .unwrap_or_else(tex_state::provenance::OriginRef::unknown);
             let token = match token {
                 Token::Char { ch, cat } => {
                     let code = if uppercase {
@@ -3614,10 +3612,10 @@ impl CommandProcessor<'_> {
                 }
                 Token::Cs(_) | Token::Param(_) | Token::Frozen(_) => token,
             };
-            shifted.push(TracedTokenWord::pack(token, origin));
+            shifted.push(tex_state::token::RootedTracedTokenWord::new(token, origin));
         }
         let level = self.command.push_token_level(
-            TokenPayload::transient(shifted),
+            TokenPayload::transient_rooted(shifted),
             TokenBehavior::BackedUp(BackupTreatment::Ordinary),
             RetirementBehavior::Pop,
             ReplayTrace::BackedUp,
