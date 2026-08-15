@@ -403,7 +403,6 @@ pub(crate) fn indent_in_hmode(
     if matches!(nest.current_mode(), Mode::Math | Mode::DisplayMath) {
         let indent_box = make_indent_box(stores);
         let list = stores.freeze_node_list(&[indent_box]);
-        let list = stores.node_list_ref(list);
         nest.current_list_mutation()
             .push(Node::MathNoad(MathNoad::new(
                 NoadKind::Normal(NoadClass::Ord),

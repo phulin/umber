@@ -3,7 +3,7 @@
 //! Raw words and sidecars stay private to this module family. Public consumers
 //! receive only logical node-list views or the aggregate arena facade.
 
-mod arena;
+mod builder;
 mod copy;
 mod measurement;
 mod mutation;
@@ -14,7 +14,7 @@ mod storage;
 mod tables;
 mod view;
 
-pub use arena::{NodeArena, NodeListBuilder};
+pub use builder::NodeListBuilder;
 pub(crate) use copy::ChildPatch;
 #[cfg(feature = "profiling")]
 pub use measurement::{NodeMemoryColumn, NodeStorageObservation, peak_node_storage_measurement};
@@ -27,7 +27,7 @@ pub use schema::{
     NodeHandleKind, NodeHandlePolicy, NodeHandleRole, NodeSchemaVisitor, NodeTag,
 };
 pub(crate) use semantic::{NodeSemanticId, NodeSemanticIdBuilder};
-pub(crate) use storage::{NodeArenaMark, NodeStorage, SidecarNeeds};
+pub(crate) use storage::{NodeStorage, SidecarNeeds};
 pub use view::{CharCodes, CharRun, NodeCursor, NodeIter, NodeList, NodeRef, PackedNode};
 
 pub(super) fn checked_len(value: usize, message: &str) -> u32 {

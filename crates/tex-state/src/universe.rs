@@ -24,7 +24,7 @@ use crate::font::{
 };
 use crate::glue::{GlueSpec, GlueSpecRef, Order};
 use crate::hyphenation::{ExceptionSpec, PatternSpec};
-use crate::ids::{FontId, GlueId, MacroDefinitionId, NodeListId, OriginListId, TokenListId};
+use crate::ids::{FontId, GlueId, MacroDefinitionId, OriginListId, TokenListId};
 use crate::input::{
     ConditionKind, ConditionLimb, InputFrameSummary, InputSemanticRoot, InputSummary, LexerState,
     SourceId, TokenListReplayKind, TracedTokenList,
@@ -34,7 +34,7 @@ use crate::macro_store::{MacroDefinitionProvenance, MacroDefinitionRef, MacroMea
 use crate::math::MathFontSize;
 use crate::meaning::Meaning;
 use crate::node::{GlueKind, KernKind, MarginKernSide, Node, Whatsit};
-use crate::node_arena::{NodeArenaMark, NodeList, NodeListBuilder, NodeListRef};
+use crate::node_arena::{NodeList, NodeListBuilder, NodeListRef};
 use crate::page::{
     PageBreak, PageBuilderState, PageContents, PageDimension, PageFireUp, PageHashCache,
     PageInsertion, PageInteger, PageMark, PageMemoState, PageStateHashCursor,
@@ -67,8 +67,8 @@ use crate::stores::StoreStateHashCursor;
 #[cfg(any(test, feature = "testing"))]
 use crate::stores::TestingOwnershipCensus;
 use crate::stores::{
-    FontParameterError, GroupKind, GroupMismatch, PrepareMagDiagnostic, ShipoutNodeMark,
-    StoreFormatError, StoreSnapshot, Stores,
+    FontParameterError, GroupKind, GroupMismatch, PrepareMagDiagnostic, StoreFormatError,
+    StoreSnapshot, Stores,
 };
 use crate::token::{Catcode, OriginId, Token, TracedTokenWord};
 use crate::token_store::{TokenListBuilder, TokenListRef};
@@ -318,8 +318,6 @@ pub struct Snapshot {
 pub struct LocalRetrySnapshot {
     rollback: ScopedRollback,
     patch_operation: Option<PatchOperationMark>,
-    node_mark: NodeArenaMark,
-    node_promotions: HashMap<NodeListId, (NodeListId, crate::survivor::SurvivorOwner)>,
 }
 
 /// One immutable accepted-generation state substrate shared by O(1) snapshots.
@@ -387,7 +385,6 @@ struct ForkOrigin {
 #[derive(Debug)]
 pub struct ShipoutTransaction<'a> {
     universe: &'a mut Universe,
-    node_mark: ShipoutNodeMark,
     rollback: Option<ScopedRollback>,
     finished: bool,
 }
@@ -470,7 +467,6 @@ struct PageMemoWire {
 #[derive(Debug)]
 pub struct BoxBuildTransaction<'a> {
     universe: &'a mut Universe,
-    node_mark: ShipoutNodeMark,
     finished: bool,
 }
 
@@ -544,7 +540,7 @@ impl std::ops::DerefMut for BoxBuildTransaction<'_> {
 impl Drop for BoxBuildTransaction<'_> {
     fn drop(&mut self) {
         if !self.finished {
-            self.universe.stores.release_shipout_nodes(self.node_mark);
+            self.universe.stores.finish_node_operation();
         }
     }
 }
@@ -571,8 +567,7 @@ impl ShipoutTransaction<'_> {
         let hash_base = self.state_hash_base.clone();
         let hash = self.world.store_verified_artifact(&artifact)?;
         if self.world.commit_mode() == WorldCommitMode::Retained {
-            let node_mark = self.node_mark;
-            self.stores.release_shipout_nodes(node_mark);
+            self.stores.finish_node_operation();
             self.state_hash_base = self.retarget_hash_base_after_committed_boundary(hash_base);
             self.set_page_integer(PageInteger::DeadCycles, 0);
             self.pdf
@@ -593,14 +588,12 @@ impl ShipoutTransaction<'_> {
         }
         if let Err(err) = self.world.commit_effects(effect_pos) {
             self.state_hash_base = self.retarget_hash_base_after_committed_boundary(hash_base);
-            let node_mark = self.node_mark;
-            self.stores.release_shipout_nodes(node_mark);
+            self.stores.finish_node_operation();
             self.rollback = None;
             self.finished = true;
             return Err(err);
         }
-        let node_mark = self.node_mark;
-        self.stores.release_shipout_nodes(node_mark);
+        self.stores.finish_node_operation();
         self.state_hash_base = self.retarget_hash_base_after_committed_boundary(hash_base);
         self.set_page_integer(PageInteger::DeadCycles, 0);
         self.pdf
@@ -622,17 +615,16 @@ impl ShipoutTransaction<'_> {
 }
 
 impl BoxBuildTransaction<'_> {
-    /// Promotes the result into the register store and commits the owned suffix.
-    pub fn finish(mut self, index: u16, value: Option<NodeListId>, global: bool) {
+    /// Moves the result into the register store and commits the owned suffix.
+    pub fn finish(mut self, index: u16, value: Option<NodeListRef>, global: bool) {
         let receipt = match (global, value) {
-            (false, Some(value)) => self.stores.set_box_reg(index, value),
-            (true, Some(value)) => self.stores.set_box_reg_global(index, value),
+            (false, Some(value)) => self.stores.write_box_reg_ref(index, Some(value), false),
+            (true, Some(value)) => self.stores.write_box_reg_ref(index, Some(value), true),
             (false, None) => self.stores.clear_box_reg(index),
             (true, None) => self.stores.clear_box_reg_global(index),
         };
         self.consume_env_mutation(receipt);
-        let node_mark = self.node_mark;
-        self.stores.release_shipout_nodes(node_mark);
+        self.stores.finish_node_operation();
         self.finished = true;
     }
 }
@@ -1338,11 +1330,6 @@ impl EngineBoundaryHasher<'_> {
             .hash_node_slice_semantic(nodes, &mut self.hasher);
     }
 
-    pub fn node_list(&mut self, id: NodeListId) {
-        self.stores.hash_node_list_semantic(id, &mut self.hasher);
-        self.visits += 1;
-    }
-
     pub fn node_list_ref(&mut self, owner: &NodeListRef) {
         self.hasher.tag(0x70);
         owner.semantic_id().apply(&mut self.hasher);
@@ -1592,13 +1579,6 @@ impl Universe {
     /// interned or installed in semantic state.
     pub fn observe_transient_token_words(&mut self, words: usize) {
         self.stores.observe_main_memory_dynamic_words(words);
-    }
-
-    /// Observes TeX82 §204's ordered recursive allocation while a box
-    /// register and the command's transient one-word nodes remain live.
-    pub fn observe_box_copy(&mut self, root: NodeListId, live_dynamic_words: usize) {
-        self.stores
-            .observe_main_memory_box_copy(root, live_dynamic_words);
     }
 
     /// Replays the pure line breaker's ordered variable-size scratch owners.
@@ -2829,7 +2809,7 @@ impl Universe {
                         .map_err(|error| format!("{error:?}"))
                 },
                 |nodes| {
-                    self.detach_node_list_ref(nodes)
+                    self.detach_node_list(nodes)
                         .and_then(|value| value.to_bytes())
                         .map_err(|error| format!("{error:?}"))
                 },
@@ -3038,7 +3018,6 @@ impl Universe {
                     let nodes = universe
                         .import_memo_node_list(&value, crate::MemoValueLimits::default())
                         .map_err(|error| format!("{error:?}"))?;
-                    let nodes = universe.stores.prepare_node_list_ref(nodes);
                     let semantic = nodes.semantic_id().fragment();
                     Ok((nodes, semantic))
                 },
@@ -3088,7 +3067,6 @@ impl Universe {
     #[doc(hidden)]
     #[must_use]
     pub fn snapshot_for_local_retry(&mut self) -> LocalRetrySnapshot {
-        let node_mark = self.stores.node_arena_mark();
         let patch_operation = self.private_revision_domain.as_mut().map(|domain| {
             domain
                 .begin_operation()
@@ -3097,55 +3075,7 @@ impl Universe {
         LocalRetrySnapshot {
             rollback: self.capture_scoped_rollback(),
             patch_operation,
-            node_mark,
-            node_promotions: HashMap::new(),
         }
-    }
-
-    /// Promotes one explicit operation root while preserving sharing between
-    /// repeated references to the same unfinished list.
-    #[doc(hidden)]
-    pub fn promote_node_list_for_commit(
-        &mut self,
-        snapshot: &mut LocalRetrySnapshot,
-        id: NodeListId,
-    ) -> NodeListId {
-        if let Some((promoted, _)) = snapshot.node_promotions.get(&id) {
-            return *promoted;
-        }
-        let Some((promoted, owner)) = self
-            .stores
-            .promote_operation_node_list(snapshot.node_mark, id)
-        else {
-            return id;
-        };
-        snapshot.node_promotions.insert(id, (promoted, owner));
-        promoted
-    }
-
-    /// Captures structural owners for a typed set of committed direct roots.
-    #[doc(hidden)]
-    pub fn committed_node_owners(
-        &self,
-        roots: &[NodeListId],
-    ) -> Vec<crate::survivor::SurvivorOwner> {
-        let mut by_root = std::collections::BTreeMap::new();
-        for &id in roots {
-            let crate::ids::ArenaRef::Survivor(root) = id.arena() else {
-                continue;
-            };
-            by_root.entry(root.raw()).or_insert_with(|| {
-                self.stores
-                    .survivor_owner(id)
-                    .expect("survivor root is live")
-            });
-        }
-        by_root.into_values().collect()
-    }
-
-    fn promote_page_node_roots(&mut self, snapshot: &mut LocalRetrySnapshot) {
-        let _ = snapshot;
-        self.page.replace_node_owners(Vec::new());
     }
 
     /// Returns whether `snapshot` still names a valid private retry point.
@@ -3207,13 +3137,10 @@ impl Universe {
     /// Commits the private allocation suffix paired with one successful
     /// executor operation.
     #[doc(hidden)]
-    pub fn commit_local_retry_snapshot(&mut self, mut snapshot: LocalRetrySnapshot) {
-        self.promote_page_node_roots(&mut snapshot);
+    pub fn commit_local_retry_snapshot(&mut self, snapshot: LocalRetrySnapshot) {
         let LocalRetrySnapshot {
             rollback,
             patch_operation,
-            node_mark,
-            mut node_promotions,
         } = snapshot;
         // A generation fork may later retarget every retained prefix record at
         // or before its anchor onto this timeline. `fork_origin` is that live
@@ -3233,8 +3160,7 @@ impl Universe {
             (None, None) => {}
             _ => panic!("local retry patch operation does not match its Universe"),
         }
-        node_promotions.clear();
-        self.stores.finish_operation_nodes(node_mark);
+        self.stores.finish_node_operation();
     }
 
     /// Discards only allocations made by a failed private operation while
@@ -3244,13 +3170,10 @@ impl Universe {
     /// no longer roll back, plus pdfTeX's reserved-object error. Those paths
     /// still do not acquire ownership of failed patch allocations.
     #[doc(hidden)]
-    pub fn discard_local_retry_allocations(&mut self, mut snapshot: LocalRetrySnapshot) {
-        self.promote_page_node_roots(&mut snapshot);
+    pub fn discard_local_retry_allocations(&mut self, snapshot: LocalRetrySnapshot) {
         let LocalRetrySnapshot {
             rollback,
             patch_operation,
-            node_mark,
-            mut node_promotions,
         } = snapshot;
         assert_eq!(
             rollback.owner,
@@ -3264,8 +3187,7 @@ impl Universe {
             (None, None) => {}
             _ => panic!("local retry patch operation does not match its Universe"),
         }
-        node_promotions.clear();
-        self.stores.finish_operation_nodes(node_mark);
+        self.stores.finish_node_operation();
     }
 
     #[must_use]
@@ -3486,8 +3408,6 @@ impl Universe {
         let LocalRetrySnapshot {
             rollback,
             patch_operation,
-            node_mark,
-            mut node_promotions,
         } = snapshot;
         assert_eq!(
             rollback.owner,
@@ -3517,8 +3437,7 @@ impl Universe {
             (None, None) => {}
             _ => panic!("local retry patch operation does not match its Universe"),
         }
-        node_promotions.clear();
-        self.stores.finish_operation_nodes(node_mark);
+        self.stores.finish_node_operation();
     }
 
     fn rollback_generation_fork(&mut self, snapshot: &Snapshot) {
@@ -3952,10 +3871,8 @@ impl Universe {
             index: 0,
         });
         let rollback = self.capture_scoped_rollback();
-        let node_mark = self.stores.shipout_node_mark();
         ShipoutTransaction {
             universe: self,
-            node_mark,
             rollback: Some(rollback),
             finished: false,
         }
@@ -6736,21 +6653,21 @@ impl Universe {
         self.stores.node_list_builder()
     }
 
-    pub fn freeze_node_list(&mut self, nodes: &[Node]) -> NodeListId {
+    pub fn freeze_node_list(&mut self, nodes: &[Node]) -> NodeListRef {
         self.stores.freeze_node_list(nodes)
     }
 
-    pub fn freeze_node_list_owned(&mut self, nodes: &mut Vec<Node>) -> NodeListId {
+    pub fn freeze_node_list_owned(&mut self, nodes: &mut Vec<Node>) -> NodeListRef {
         self.stores.freeze_node_list_owned(nodes)
     }
 
     #[doc(hidden)]
     #[must_use]
-    pub fn node_word_index(&self, list: NodeListId, index: usize) -> Option<u32> {
-        list.start().checked_add(u32::try_from(index).ok()?)
+    pub fn node_word_index(&self, list: &NodeListRef, index: usize) -> Option<u32> {
+        list.id().start().checked_add(u32::try_from(index).ok()?)
     }
 
-    pub fn finish_node_list(&mut self, builder: &mut NodeListBuilder) -> NodeListId {
+    pub fn finish_node_list(&mut self, builder: &mut NodeListBuilder) -> NodeListRef {
         self.stores.finish_node_list(builder)
     }
 
@@ -6760,36 +6677,8 @@ impl Universe {
         self.stores.freeze_node_list_ref(builder)
     }
 
-    /// Acquires direct immutable ownership of a published aggregate list.
-    ///
-    /// This is the explicit boundary adapter for aggregate state that still
-    /// stores compact coordinates. Nested owned values must retain the
-    /// returned reference instead of copying its private coordinate.
-    pub fn node_list_ref(&mut self, id: NodeListId) -> NodeListRef {
-        self.stores.node_list_ref(id)
-    }
-
-    /// Borrows direct ownership already retained by a published aggregate.
-    ///
-    /// Epoch-local coordinates have not crossed a publication boundary and
-    /// therefore return `None`; callers handling those values must use
-    /// [`Self::node_list_ref`] while they still hold mutable operation state.
-    #[must_use]
-    pub fn published_node_list_ref(&self, id: NodeListId) -> Option<NodeListRef> {
-        self.stores.published_node_list_ref(id)
-    }
-
     /// Captures a handle-free, provenance-free node graph for memo retention.
     pub fn detach_node_list(
-        &self,
-        id: NodeListId,
-    ) -> Result<crate::DetachedMemoValue, crate::MemoValueError> {
-        self.detach_node_value(id, crate::MemoValueKind::Nodes)
-    }
-
-    /// Captures a structurally owned node graph without resolving its raw
-    /// projection through aggregate survivor state.
-    pub fn detach_node_list_ref(
         &self,
         root: &NodeListRef,
     ) -> Result<crate::DetachedMemoValue, crate::MemoValueError> {
@@ -6806,11 +6695,11 @@ impl Universe {
     /// Captures one box-root list as a detached memo value.
     pub fn detach_box(
         &self,
-        id: NodeListId,
+        root: &NodeListRef,
     ) -> Result<crate::DetachedMemoValue, crate::MemoValueError> {
-        if self.nodes(id).len() != 1
+        if root.nodes().len() != 1
             || !matches!(
-                self.nodes(id).first(),
+                root.nodes().first(),
                 Some(crate::node_arena::NodeRef::HList(_) | crate::node_arena::NodeRef::VList(_))
             )
         {
@@ -6818,17 +6707,17 @@ impl Universe {
                 "memo box root is not one box",
             ));
         }
-        self.detach_node_value(id, crate::MemoValueKind::Box)
+        self.detach_node_value(root, crate::MemoValueKind::Box)
     }
 
     fn detach_node_value(
         &self,
-        id: NodeListId,
+        root: &NodeListRef,
         kind: crate::MemoValueKind,
     ) -> Result<crate::DetachedMemoValue, crate::MemoValueError> {
         let payload = self
             .stores
-            .encode_memo_node_list(id)
+            .encode_memo_node_list(root)
             .map_err(|error| crate::MemoValueError::Codec(format!("{error:?}")))?;
         Ok(crate::DetachedMemoValue::from_payload(kind, payload))
     }
@@ -6838,7 +6727,7 @@ impl Universe {
         &mut self,
         value: &crate::DetachedMemoValue,
         limits: crate::MemoValueLimits,
-    ) -> Result<NodeListId, crate::MemoValueError> {
+    ) -> Result<NodeListRef, crate::MemoValueError> {
         self.import_memo_node_value(value, crate::MemoValueKind::Nodes, limits, false)
     }
 
@@ -6847,7 +6736,7 @@ impl Universe {
         &mut self,
         value: &crate::DetachedMemoValue,
         limits: crate::MemoValueLimits,
-    ) -> Result<NodeListId, crate::MemoValueError> {
+    ) -> Result<NodeListRef, crate::MemoValueError> {
         self.import_memo_node_value(value, crate::MemoValueKind::Box, limits, true)
     }
 
@@ -6857,7 +6746,7 @@ impl Universe {
         kind: crate::MemoValueKind,
         limits: crate::MemoValueLimits,
         require_box: bool,
-    ) -> Result<NodeListId, crate::MemoValueError> {
+    ) -> Result<NodeListRef, crate::MemoValueError> {
         let payload = value.payload(kind)?;
         if payload.len() > limits.max_payload_bytes {
             return Err(crate::MemoValueError::Oversized {
@@ -6872,18 +6761,18 @@ impl Universe {
             limits.max_tokens,
             limits.max_string_bytes,
         ) {
-            Ok(id)
+            Ok(root)
                 if !require_box
-                    || (self.nodes(id).len() == 1
+                    || (root.nodes().len() == 1
                         && matches!(
-                            self.nodes(id).first(),
+                            root.nodes().first(),
                             Some(
                                 crate::node_arena::NodeRef::HList(_)
                                     | crate::node_arena::NodeRef::VList(_)
                             )
                         )) =>
             {
-                Ok(id)
+                Ok(root)
             }
             Ok(_) => {
                 self.rollback_scoped(rollback);
@@ -6896,11 +6785,6 @@ impl Universe {
                 Err(crate::MemoValueError::Codec(format!("{error:?}")))
             }
         }
-    }
-
-    #[must_use]
-    pub fn nodes(&self, id: NodeListId) -> NodeList<'_> {
-        self.stores.nodes(id)
     }
 
     #[must_use]
@@ -7556,16 +7440,6 @@ impl Universe {
         self.consume_env_mutation(receipt);
     }
 
-    pub fn set_box_reg(&mut self, index: u16, value: NodeListId) {
-        let receipt = self.stores.set_box_reg(index, value);
-        self.consume_env_mutation(receipt);
-    }
-
-    pub fn set_box_reg_global(&mut self, index: u16, value: NodeListId) {
-        let receipt = self.stores.set_box_reg_global(index, value);
-        self.consume_env_mutation(receipt);
-    }
-
     /// Installs an already-owned box without routing it through a raw
     /// coordinate lookup.
     pub fn set_box_reg_ref(&mut self, index: u16, value: NodeListRef) {
@@ -7579,26 +7453,16 @@ impl Universe {
         self.consume_env_mutation(receipt);
     }
 
-    /// Marks the epoch-node suffix owned by one box-register value scan.
+    /// Begins one box-register value scan.
     #[must_use]
     pub fn begin_box_build(&mut self) -> BoxBuildTransaction<'_> {
-        let node_mark = self.stores.shipout_node_mark();
         BoxBuildTransaction {
             universe: self,
-            node_mark,
             finished: false,
         }
     }
 
-    #[must_use]
-    pub fn box_reg(&self, index: u16) -> Option<NodeListId> {
-        self.observe_cell_dependency(BankTag::Box, u32::from(index));
-        self.stores.box_reg(index)
-    }
-
-    /// Clones the box register's structural owner. The returned reference is
-    /// independent of the legacy survivor table and remains readable after a
-    /// destructive register replacement.
+    /// Clones the box register's structural owner.
     #[must_use]
     pub fn box_reg_ref(&self, index: u16) -> Option<NodeListRef> {
         self.observe_cell_dependency(BankTag::Box, u32::from(index));
@@ -7609,16 +7473,16 @@ impl Universe {
     /// borrowing the register's structural owner.
     pub fn observe_box_copy_ref(&mut self, root: &NodeListRef, live_dynamic_words: usize) {
         self.stores
-            .observe_main_memory_box_copy(root.id(), live_dynamic_words);
+            .observe_main_memory_box_copy(root, live_dynamic_words);
     }
 
     /// Formats a box register value through TeX82 §§174/252's compact
     /// `show_eqtb` representation used by assignment diagnostics.
     #[must_use]
-    pub fn box_assignment_trace_text(&self, value: Option<NodeListId>) -> String {
+    pub fn box_assignment_trace_text(&self, value: Option<&NodeListRef>) -> String {
         value.map_or_else(
             || "void".to_owned(),
-            |id| self.stores.box_restore_trace_text(id),
+            |root| self.stores.box_restore_trace_text_ref(root),
         )
     }
 
@@ -8062,7 +7926,7 @@ impl Universe {
         let root = self.freeze_node_list(&nodes);
         let (payload, origins) = self
             .stores
-            .encode_memo_node_list_with_origins(root)
+            .encode_memo_node_list_with_origins(&root)
             .map_err(|error| crate::MemoValueError::Codec(format!("{error:?}")))?;
         let detached_nodes =
             crate::DetachedMemoValue::from_payload(crate::MemoValueKind::Nodes, payload)
@@ -8086,7 +7950,7 @@ impl Universe {
         let (nodes, _) = self.page.memo_parts();
         let root = self.freeze_node_list(&nodes);
         self.stores
-            .encode_memo_node_list_with_origins(root)
+            .encode_memo_node_list_with_origins(&root)
             .map(|(_, origins)| origins)
             .map_err(|error| crate::MemoValueError::Codec(format!("{error:?}")))
     }
@@ -8099,7 +7963,7 @@ impl Universe {
     ) -> Result<Vec<OriginRef>, crate::MemoValueError> {
         let root = self.freeze_node_list(std::slice::from_ref(node));
         self.stores
-            .encode_memo_node_list_with_origins(root)
+            .encode_memo_node_list_with_origins(&root)
             .map(|(_, origins)| origins)
             .map_err(|error| crate::MemoValueError::Codec(format!("{error:?}")))
     }
@@ -8176,7 +8040,7 @@ impl Universe {
                 return Err(crate::MemoValueError::Codec(format!("{error:?}")));
             }
         };
-        let nodes = self.stores.node_list_ref(imported).to_vec();
+        let nodes = imported.to_vec();
         if let Err(error) = self.page.install_memo_parts(nodes, wire.state) {
             self.rollback_scoped(rollback);
             return Err(error);
@@ -8313,24 +8177,8 @@ impl Universe {
         self.page.has_last_glue()
     }
 
-    /// Destructively takes a box and returns only its non-owning coordinate
-    /// projection. Runtime consumers must use the `NodeListRef` boundary.
-    pub fn take_box_reg(&mut self, index: u16) -> Option<NodeListId> {
-        let (value, receipt) = self.stores.take_box_reg_ref_with_receipt(index);
-        self.consume_env_mutation(receipt);
-        value.as_ref().map(NodeListRef::id)
-    }
-
-    /// Same-level destructive take returning only a non-owning projection.
-    pub fn take_box_reg_same_level(&mut self, index: u16) -> Option<NodeListId> {
-        let (value, receipt) = self.stores.take_box_reg_ref_same_level_with_receipt(index);
-        self.consume_env_mutation(receipt);
-        value.as_ref().map(NodeListRef::id)
-    }
-
     /// Destructively takes a box while moving its structural owner to the
-    /// caller. This is the publication seam for destinations that own the box
-    /// directly rather than through an aggregate survivor pin.
+    /// caller.
     pub fn take_box_reg_ref_same_level(&mut self, index: u16) -> Option<NodeListRef> {
         let (value, receipt) = self.stores.take_box_reg_ref_same_level_with_receipt(index);
         self.consume_env_mutation(receipt);
@@ -8343,11 +8191,6 @@ impl Universe {
         let (value, receipt) = self.stores.take_box_reg_ref_with_receipt(index);
         self.consume_env_mutation(receipt);
         value
-    }
-
-    /// Keeps a survivor root alive after a non-destructive register read.
-    pub fn pin_survivor(&mut self, id: NodeListId) {
-        self.stores.pin_survivor(id);
     }
 
     /// Moves compatible box children out, then clears the register with
@@ -8381,8 +8224,8 @@ impl Universe {
         TakeUnboxResult::Children(children)
     }
 
-    pub fn set_box_reg_same_level(&mut self, index: u16, value: NodeListId) {
-        let receipt = self.stores.set_box_reg_same_level(index, value);
+    pub fn set_box_reg_same_level(&mut self, index: u16, value: NodeListRef) {
+        let receipt = self.stores.write_box_reg_ref_same_level(index, Some(value));
         self.consume_env_mutation(receipt);
     }
 
@@ -8431,7 +8274,7 @@ impl Universe {
         let candidate = loop {
             let candidate = next();
             match candidate {
-                Some(node) if margin_kern_enquiry_skipable(self, &node, side) => {}
+                Some(node) if margin_kern_enquiry_skipable(&children_owner, &node, side) => {}
                 _ => break candidate,
             }
         };
@@ -8803,56 +8646,6 @@ impl Universe {
         self.state_hash_projection_cache.input_hash_calls
     }
 
-    #[cfg(any(test, feature = "testing"))]
-    #[must_use]
-    pub fn testing_live_survivor_slot_count(&self) -> usize {
-        self.stores.testing_live_survivor_slot_count()
-    }
-
-    #[cfg(any(test, feature = "testing"))]
-    #[must_use]
-    pub fn testing_epoch_node_count(&self) -> usize {
-        self.stores.testing_epoch_node_count()
-    }
-
-    #[cfg(any(test, feature = "testing"))]
-    #[must_use]
-    pub fn testing_survivor_refcount(&self, id: NodeListId) -> u32 {
-        self.stores.testing_survivor_refcount(id)
-    }
-
-    #[cfg(any(test, feature = "testing"))]
-    #[must_use]
-    pub fn testing_survivor_recycled_buffer_uses(&self) -> usize {
-        self.stores.testing_survivor_recycled_buffer_uses()
-    }
-
-    #[cfg(any(test, feature = "testing"))]
-    #[must_use]
-    pub fn testing_survivor_root_slot_count(&self) -> usize {
-        self.stores.testing_survivor_root_slot_count()
-    }
-
-    /// Returns `(clone operations, epoch-owned source lists visited)` for
-    /// focused ownership-transfer tests.
-    #[cfg(any(test, feature = "testing"))]
-    #[must_use]
-    pub fn testing_epoch_clone_counts(&self) -> (u64, u64) {
-        self.stores.testing_epoch_clone_counts()
-    }
-
-    #[cfg(any(test, feature = "testing"))]
-    #[must_use]
-    pub fn testing_survivor_pin_count(&self) -> usize {
-        self.stores.testing_survivor_pin_count()
-    }
-
-    #[cfg(any(test, feature = "testing"))]
-    #[must_use]
-    pub fn testing_survivor_pin_retained_bytes(&self) -> usize {
-        self.stores.testing_survivor_pin_retained_bytes()
-    }
-
     /// Exact live-owner categories plus bounded weak/allocator metadata.
     ///
     /// This projection is test-only and has no role in semantic identity,
@@ -8926,14 +8719,6 @@ impl Universe {
         domain
             .commit_operation(mark)
             .expect("synthetic allocation operation commits");
-    }
-
-    /// Computes allocator-payload accounting for all compact node storage.
-    /// The returned diagnostic value is not semantic engine state.
-    #[cfg(feature = "profiling")]
-    #[must_use]
-    pub fn node_memory_columns(&self) -> Vec<crate::node_arena::NodeMemoryColumn> {
-        self.stores.node_memory_columns()
     }
 }
 
@@ -9068,7 +8853,7 @@ fn box_dimension_from_nodes(nodes: NodeList<'_>, dimension: BoxDimension) -> Opt
 
 /// pdftex.web §470's edge traversal, using its `cp_skipable` predicate.
 fn margin_kern_enquiry_skipable(
-    universe: &Universe,
+    owner: &NodeListRef,
     node: &crate::node_arena::NodeRef<'_>,
     side: MarginKernSide,
 ) -> bool {
@@ -9088,9 +8873,9 @@ fn margin_kern_enquiry_skipable(
             ..
         } => {
             *physical_replace_count == 0
-                && universe.nodes(*pre).is_empty()
-                && universe.nodes(*post).is_empty()
-                && universe.nodes(*replace).is_empty()
+                && owner.resolve(*pre).is_some_and(|list| list.is_empty())
+                && owner.resolve(*post).is_some_and(|list| list.is_empty())
+                && owner.resolve(*replace).is_some_and(|list| list.is_empty())
         }
         NodeRef::MathOn(width) | NodeRef::MathOff(width) => width.raw() == 0,
         NodeRef::Kern { amount, kind } => {
@@ -9108,7 +8893,9 @@ fn margin_kern_enquiry_skipable(
             box_node.width.raw() == 0
                 && box_node.height.raw() == 0
                 && box_node.depth.raw() == 0
-                && universe.nodes(box_node.children).is_empty()
+                && owner
+                    .resolve(box_node.children)
+                    .is_some_and(|list| list.is_empty())
         }
         _ => false,
     }

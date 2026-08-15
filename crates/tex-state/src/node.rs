@@ -535,45 +535,6 @@ impl PartialEq for Node {
     }
 }
 
-#[cfg(feature = "profiling")]
-mod stats {
-    use std::sync::atomic::{AtomicU64, Ordering};
-
-    use super::Node;
-
-    static COUNTS: [AtomicU64; 24] = [const { AtomicU64::new(0) }; 24];
-
-    pub fn record(node: &Node) {
-        let index = node.kind() as usize;
-        COUNTS[index].fetch_add(1, Ordering::Relaxed);
-    }
-
-    pub fn snapshot() -> Vec<(&'static str, u64)> {
-        super::NodeKind::ALL
-            .iter()
-            .zip(&COUNTS)
-            .filter_map(|(kind, count)| {
-                let count = count.load(Ordering::Relaxed);
-                (count != 0).then_some((kind.descriptor().name, count))
-            })
-            .collect()
-    }
-}
-
-/// Returns the process-local node-append histogram used by measurement builds.
-///
-/// These relaxed counters are diagnostic-only and are not engine state.
-#[cfg(feature = "profiling")]
-#[must_use]
-pub fn node_append_histogram() -> Vec<(&'static str, u64)> {
-    stats::snapshot()
-}
-
-#[cfg(feature = "profiling")]
-pub(crate) fn record_node_append(node: &Node) {
-    stats::record(node);
-}
-
 /// A pdfTeX adjustment node payload.
 ///
 /// Ordinary TeX adjustments migrate after their containing horizontal box;

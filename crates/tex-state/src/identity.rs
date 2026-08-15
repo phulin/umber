@@ -48,7 +48,7 @@ impl HandleIdentity {
     /// Creates an internal tagged payload in a reserved namespace.
     ///
     /// Reserved identities are for non-timeline representations such as
-    /// survivor handles and detached format DTO references. They never enter
+    /// owned payload coordinates and detached format DTO references. They never enter
     /// an `IdentityAllocator` tag table.
     pub(crate) const fn reserved(namespace: u64, upper: NonZeroU32, lower: u32) -> Self {
         assert!(
@@ -90,12 +90,6 @@ impl HandleIdentity {
 pub(crate) struct IdentityMark {
     len: usize,
     frontier: Option<AllocationTag>,
-}
-
-impl IdentityMark {
-    pub(crate) const fn len(self) -> usize {
-        self.len
-    }
 }
 
 /// A bounded failure that never permits identity wrap or history revival.
@@ -367,14 +361,6 @@ impl IdentityAllocator {
             len: self.slots.len(),
             frontier: self.slots.last().copied(),
         }
-    }
-
-    pub(crate) fn measurement_shape(&self) -> (usize, usize, usize) {
-        (
-            self.slots.len(),
-            self.slots.capacity(),
-            core::mem::size_of::<AllocationTag>(),
-        )
     }
 
     /// Truncates to an ancestor mark and advances the generation before reuse.

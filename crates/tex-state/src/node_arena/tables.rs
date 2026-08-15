@@ -23,9 +23,6 @@ impl BoxTable {
     pub(super) fn copy_row(&mut self, source: &Self, index: usize) -> u32 {
         self.push(source.rows[index])
     }
-    pub(super) fn truncate(&mut self, len: usize) {
-        self.rows.truncate(len);
-    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -85,18 +82,6 @@ impl UnsetTable {
             children: source.children[index],
         }))
     }
-    pub(super) fn truncate(&mut self, n: usize) {
-        self.kind.truncate(n);
-        self.width.truncate(n);
-        self.height.truncate(n);
-        self.depth.truncate(n);
-        self.span_count.truncate(n);
-        self.stretch.truncate(n);
-        self.stretch_order.truncate(n);
-        self.shrink.truncate(n);
-        self.shrink_order.truncate(n);
-        self.children.truncate(n)
-    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -140,14 +125,6 @@ impl InsertionTable {
             source.content[index],
         ))
     }
-    pub(super) fn truncate(&mut self, n: usize) {
-        self.class.truncate(n);
-        self.size.truncate(n);
-        self.split_top_skip.truncate(n);
-        self.split_max_depth.truncate(n);
-        self.floating_penalty.truncate(n);
-        self.content.truncate(n)
-    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -182,11 +159,5 @@ impl NoadTable {
             subscript: source.subscript[index].clone(),
             superscript: source.superscript[index].clone(),
         })
-    }
-    pub(super) fn truncate(&mut self, n: usize) {
-        self.kind.truncate(n);
-        self.nucleus.truncate(n);
-        self.subscript.truncate(n);
-        self.superscript.truncate(n)
     }
 }

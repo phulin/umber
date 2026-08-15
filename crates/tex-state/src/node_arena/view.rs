@@ -920,10 +920,10 @@ impl<'a> DoubleEndedIterator for NodeIter<'a> {
 }
 impl ExactSizeIterator for NodeIter<'_> {}
 
-/// A source-independent cursor over owned, epoch, or survivor-backed nodes.
+/// A source-independent cursor over owned or detached compact nodes.
 ///
-/// Arena ownership remains in `NodeArena`/`SurvivorArena`; the cursor only
-/// normalizes immutable logical access.
+/// Structural ownership remains in `NodeListRef`; the cursor only normalizes
+/// immutable logical access.
 #[derive(Clone, Copy)]
 pub struct NodeCursor<'a> {
     source: NodeCursorSource<'a>,

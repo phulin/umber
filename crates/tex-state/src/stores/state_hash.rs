@@ -540,10 +540,6 @@ impl Stores {
         self.hash_glue(id, hasher);
     }
 
-    pub(crate) fn hash_node_list_semantic(&self, id: NodeListId, hasher: &mut StateHasher) {
-        self.hash_node_list_identity(id, hasher);
-    }
-
     pub(crate) fn hash_font_semantic(&self, id: FontId, hasher: &mut StateHasher) {
         hasher.tag(0x68);
         let id = self.resolve_stored_font(id);

@@ -16,8 +16,7 @@ mod vertical_break;
 use tex_state::Universe;
 use tex_state::font::PdfFontCode;
 use tex_state::glue::GlueSpec;
-use tex_state::ids::{FontId, NodeListId};
-use tex_state::node_arena::NodeList;
+use tex_state::ids::FontId;
 use tex_state::scaled::Scaled;
 
 pub use packing::{
@@ -56,7 +55,6 @@ pub const OVERFULL_BADNESS: i32 = 1_000_000;
 
 /// Immutable state access needed by the packing kernels.
 pub trait TypesetState {
-    fn nodes(&self, id: NodeListId) -> NodeList<'_>;
     fn glue(&self, id: tex_state::ids::GlueId) -> GlueSpec;
     fn glue_ref(&self, id: tex_state::ids::GlueId) -> tex_state::glue::GlueSpecRef;
     fn font_char_metrics(&self, font: FontId, code: u8) -> Option<tex_fonts::CharMetrics>;
@@ -83,10 +81,6 @@ pub trait TypesetState {
 }
 
 impl TypesetState for Universe {
-    fn nodes(&self, id: NodeListId) -> NodeList<'_> {
-        Universe::nodes(self, id)
-    }
-
     fn glue(&self, id: tex_state::ids::GlueId) -> GlueSpec {
         Universe::glue(self, id)
     }

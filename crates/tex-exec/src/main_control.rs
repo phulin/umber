@@ -33,7 +33,7 @@ use tex_state::GeometryObservation;
 use tex_state::code_tables::{DelCode, LcCode, MathCode, SfCode, UcCode};
 use tex_state::env::banks::{DimenParam, GlueParam, IntParam, TokParam};
 use tex_state::glue::{GlueSpec, Order};
-use tex_state::ids::{FontId, GlueId, NodeListId, TokenListId};
+use tex_state::ids::{FontId, GlueId, TokenListId};
 use tex_state::interner::{ControlSequenceKind, Symbol, SymbolId};
 use tex_state::macro_store::{MacroDefinitionProvenance, MacroMeaning};
 use tex_state::math::{
@@ -99,9 +99,6 @@ pub struct MainControl {
     /// PDF driver. Virtual multi-output sessions set this explicitly.
     emit_dvi_override: Option<bool>,
     modes: ModeNest,
-    /// Structural owners for survivor chunks referenced by replay/control
-    /// fields outside the mode nest. Excluded from semantic state.
-    node_owners: tex_state::survivor::SurvivorOwners,
     /// Maximum typed §273/§275 checked pre-push save-stack projection. Runtime
     /// diagnostics do not participate in rollback, identity, or formats.
     max_save_stack: usize,
@@ -408,7 +405,7 @@ struct ActiveReplayAlignment {
     noalign_open: bool,
     /// Frozen cell material retained for lifecycle diagnostics. The actual
     /// row records live on the alignment level, exactly as TeX82 §775 does.
-    captured_rows: Vec<Vec<NodeListId>>,
+    captured_rows: Vec<Vec<tex_state::node_arena::NodeListRef>>,
     tabskips: Vec<tex_state::glue::GlueSpecRef>,
     default_tabskip: tex_state::glue::GlueSpecRef,
     /// TeX82 §786's `cur_head`/`cur_tail` holding list: the insertions, marks,
@@ -633,8 +630,7 @@ impl StepSnapshot {
         stores.can_rollback_to_local_retry(&self.universe)
     }
 
-    fn commit(mut self, control: &mut MainControl, stores: &mut Universe) {
-        control.promote_node_roots(stores, &mut self.universe);
+    fn commit(self, control: &mut MainControl, stores: &mut Universe) {
         control
             .modes
             .commit_journal(self.mode_savepoint)
@@ -642,8 +638,7 @@ impl StepSnapshot {
         stores.commit_local_retry_snapshot(self.universe);
     }
 
-    fn commit_failed(mut self, control: &mut MainControl, stores: &mut Universe) {
-        control.promote_node_roots(stores, &mut self.universe);
+    fn commit_failed(self, control: &mut MainControl, stores: &mut Universe) {
         control
             .modes
             .commit_journal(self.mode_savepoint)
@@ -912,38 +907,6 @@ fn command_processor<'a>(
 }
 
 impl MainControl {
-    fn promote_node_roots(
-        &mut self,
-        stores: &mut Universe,
-        snapshot: &mut tex_state::LocalRetrySnapshot,
-    ) {
-        fn visit_alignment(
-            alignment: &mut ActiveReplayAlignment,
-            mut visit: impl FnMut(&mut NodeListId),
-        ) {
-            for row in &mut alignment.captured_rows {
-                for list in row {
-                    visit(list);
-                }
-            }
-        }
-
-        let mut roots = Vec::new();
-        let mut promote = |id: &mut NodeListId| {
-            *id = stores.promote_node_list_for_commit(snapshot, *id);
-            roots.push(*id);
-        };
-        if let Some(alignment) = &mut self.active_alignment {
-            visit_alignment(alignment, &mut promote);
-        }
-        for alignment in &mut self.boxes.suspended_alignments {
-            visit_alignment(alignment, &mut promote);
-        }
-        self.node_owners =
-            tex_state::survivor::SurvivorOwners::new(stores.committed_node_owners(&roots));
-        self.modes.promote_node_roots(stores, snapshot);
-    }
-
     /// Replaces the execution-owned memo service between candidate runs.
     pub fn install_pure_memo_runtime(&mut self, runtime: tex_state::PureMemoRuntime) {
         self.pure_memo = Arc::new(std::sync::Mutex::new(runtime));
@@ -2419,7 +2382,6 @@ impl MainControl {
         });
         let prefix_end = first_forbidden.unwrap_or(level.list().nodes().len());
         let nodes = stores.freeze_node_list(&level.list().nodes()[..prefix_end]);
-        let nodes = stores.node_list_ref(nodes);
         let deleted =
             first_forbidden.map(|index| stores.freeze_node_list(&level.list().nodes()[index..]));
         let aftergroup =
@@ -2564,7 +2526,6 @@ impl MainControl {
             }
             Err(_) => stores.freeze_node_list(&[]),
         };
-        let pre = stores.node_list_ref(pre);
         let empty = tex_state::node_arena::NodeListRef::empty();
         self.modes.current_list_mutation().push(Node::Disc {
             kind: DiscKind::ExplicitHyphen,
@@ -4327,7 +4288,6 @@ impl MainControl {
                     MathField::Empty,
                 )));
                 let content = stores.freeze_node_list(&nodes);
-                let content = stores.node_list_ref(content);
                 self.modes
                     .current_list_mutation()
                     .push(Node::MathNoad(MathNoad::new(
@@ -5143,7 +5103,7 @@ impl MainControl {
 /// `show_box` even though recovery rejects the enclosing discretionary.
 fn report_improper_discretionary(
     stores: &mut Universe,
-    deleted: NodeListId,
+    deleted: tex_state::node_arena::NodeListRef,
     context: String,
 ) -> Result<(), ExecError> {
     let text = crate::node_dump::dump_node_list(
@@ -5453,7 +5413,6 @@ fn start_fraction(
         return false;
     }
     let numerator = stores.freeze_node_list(&list.take_nodes());
-    let numerator = stores.node_list_ref(numerator);
     list.set_incomplete_fraction(crate::mode::IncompleteFraction {
         numerator,
         thickness: match fraction.thickness {
@@ -5474,7 +5433,6 @@ fn finish_math_list(
     let mut output = nodes.to_vec();
     if let Some(fraction) = incomplete {
         let denominator = stores.freeze_node_list(&output);
-        let denominator = stores.node_list_ref(denominator);
         // TeX82 §1185 and e-TeX [48.1185]: `delim_ptr` identifies the most
         // recent `\left` or `\middle` in a math-left group.  Completion moves
         // only the nodes after that boundary into the numerator, then links
@@ -5498,8 +5456,7 @@ fn finish_math_list(
         let numerator = if prefix.is_empty() {
             fraction.numerator.clone()
         } else {
-            let numerator = stores.freeze_node_list(&numerator_nodes);
-            stores.node_list_ref(numerator)
+            stores.freeze_node_list(&numerator_nodes)
         };
         let fraction = Node::FractionNoad(MathFraction {
             numerator,
@@ -5511,7 +5468,7 @@ fn finish_math_list(
         output = prefix.into_iter().chain([fraction]).collect();
     }
     let output = stores.freeze_node_list(&output);
-    Ok(stores.node_list_ref(output))
+    Ok(output)
 }
 
 /// TeX82 §1186's `math_group` singleton-Ord simplification.
@@ -12426,7 +12383,7 @@ fn capture_replay_alignment_cell(
         .ok_or(ExecError::MissingToken {
             context: "active replay alignment row",
         })?
-        .push(material);
+        .push(material.clone());
     let cell = crate::align::packaging::make_unset_node(
         stores,
         material,
@@ -15838,7 +15795,6 @@ fn apply_scanned_step(
             // payload, nor a `\raise`/`\lower` operand, and the whole box
             // context every other branch below classifies is inapplicable.
             if box_state.kind == ReplayBoxKind::VCenter {
-                let boxed = stores.node_list_ref(boxed);
                 modes
                     .current_list_mutation()
                     .push(Node::MathNoad(MathNoad::new(
@@ -17051,17 +17007,18 @@ fn box_end(
 /// covers immediate `\box`, `\copy`, `\lastbox`, and `\vsplit` operands.
 fn commit_set_box_target(
     target: SetBoxTarget,
-    boxed: Option<NodeListId>,
+    boxed: Option<tex_state::node_arena::NodeListRef>,
     stores: &mut Universe,
     command: &mut CommandMachine<'_>,
 ) {
+    let traced_box = boxed.clone();
     let receipt = AssignmentCommitter::new(stores).box_register(
         target.index,
-        boxed,
+        traced_box.as_ref(),
         target.global,
         |stores| match (target.global, boxed) {
-            (false, Some(boxed)) => stores.set_box_reg(target.index, boxed),
-            (true, Some(boxed)) => stores.set_box_reg_global(target.index, boxed),
+            (false, Some(boxed)) => stores.set_box_reg_ref(target.index, boxed),
+            (true, Some(boxed)) => stores.set_box_reg_ref_global(target.index, boxed),
             (false, None) => stores.clear_box_reg(target.index),
             (true, None) => stores.clear_box_reg_global(target.index),
         },
@@ -17403,8 +17360,7 @@ fn finish_insert_or_adjust_group(
         box_max_depth: Scaled::MAX_DIMEN,
         ..crate::packing_params::vpack_params(stores)
     };
-    let packed = crate::packing_params::vpack(stores, content, PackSpec::Natural, params);
-    let content = stores.node_list_ref(content);
+    let packed = crate::packing_params::vpack(stores, content.clone(), PackSpec::Natural, params);
     crate::box_runtime::flush_pending_hchars_with_fuel(modes, stores, command.fuel)?;
     let node = if class == 255 {
         Node::Adjust(tex_state::node::AdjustNode { content, pre })

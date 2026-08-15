@@ -5,7 +5,7 @@
 //! graph. The optional candidate index below stores only bounded weak entries.
 
 use super::{ChildPatch, NodeList, NodeSemanticId, NodeStorage, SidecarNeeds, checked_len};
-use crate::ids::{ArenaRef, NodeListId, SurvivorRootId};
+use crate::ids::{ArenaRef, NodeListId, NodePayloadId};
 use crate::node::Node;
 use ahash::{AHashMap, AHashSet};
 use std::collections::VecDeque;
@@ -26,7 +26,7 @@ pub(crate) struct OwnedSemanticSpan {
 /// One immutable, self-contained compact graph.
 #[derive(Debug)]
 pub(crate) struct NodeListPayload {
-    root: SurvivorRootId,
+    root: NodePayloadId,
     pub(crate) storage: NodeStorage,
     semantic_spans: Box<[OwnedSemanticSpan]>,
     logical_bytes: usize,
@@ -71,8 +71,8 @@ impl NodeListRef {
             id.is_empty(),
             "synthetic Env owner must be a zero-length projection"
         );
-        let ArenaRef::Survivor(root) = id.arena() else {
-            panic!("synthetic Env owner must use a survivor projection");
+        let ArenaRef::Owned(root) = id.arena() else {
+            panic!("synthetic Env owner must use an owned projection");
         };
         Self::from_payload(
             id,
@@ -90,7 +90,7 @@ impl NodeListRef {
                 let root = allocate_node_payload_root()
                     .expect("node-list payload coordinate space exhausted");
                 let semantic_id = NodeSemanticId::empty();
-                let id = NodeListId::new_survivor(root, 0, 0);
+                let id = NodeListId::new_owned(root, 0, 0);
                 Self::from_payload(
                     id,
                     NodeListPayload::new(root, NodeStorage::default(), Vec::new()),
@@ -191,7 +191,7 @@ impl NodeListRef {
         if child.is_empty() {
             return Some(self.payload.storage.view(0, 0));
         }
-        let ArenaRef::Survivor(root) = child.arena() else {
+        let ArenaRef::Owned(root) = child.arena() else {
             return None;
         };
         (root == self.payload.root && self.payload.semantic_span(child).is_some())
@@ -258,7 +258,7 @@ impl NodeListRef {
         let (start, copied_len) = storage.append_compact(source.view(0, len), &mut pending);
         assert_eq!((start, copied_len), (0, len));
 
-        let root_id = NodeListId::new_survivor(root, 0, len);
+        let root_id = NodeListId::new_owned(root, 0, len);
         let mut copier = DirectGraphCopy::new(root, storage, children);
         copier.semantic_spans.push(OwnedSemanticSpan {
             start: 0,
@@ -308,7 +308,7 @@ impl NodeListRef {
 
 impl NodeListPayload {
     pub(crate) fn new(
-        root: SurvivorRootId,
+        root: NodePayloadId,
         storage: NodeStorage,
         mut semantic_spans: Vec<OwnedSemanticSpan>,
     ) -> Self {
@@ -351,7 +351,7 @@ impl NodeListPayload {
     }
 
     fn semantic_span(&self, id: NodeListId) -> Option<OwnedSemanticSpan> {
-        let ArenaRef::Survivor(root) = id.arena() else {
+        let ArenaRef::Owned(root) = id.arena() else {
             return None;
         };
         if root != self.root {
@@ -365,6 +365,7 @@ impl NodeListPayload {
         Some(self.semantic_spans[index])
     }
 
+    #[cfg(test)]
     pub(crate) fn spans(&self) -> &[OwnedSemanticSpan] {
         &self.semantic_spans
     }
@@ -432,22 +433,22 @@ impl NodeListWeakIndex {
 }
 
 struct DirectGraphCopy {
-    root: SurvivorRootId,
+    root: NodePayloadId,
     storage: NodeStorage,
-    sources: AHashMap<SurvivorRootId, NodeListRef>,
+    sources: AHashMap<NodePayloadId, NodeListRef>,
     remapped: AHashMap<NodeListId, NodeListId>,
     pending: Vec<ChildPatch>,
     semantic_spans: Vec<OwnedSemanticSpan>,
 }
 
 impl DirectGraphCopy {
-    fn new(root: SurvivorRootId, storage: NodeStorage, children: Vec<NodeListRef>) -> Self {
+    fn new(root: NodePayloadId, storage: NodeStorage, children: Vec<NodeListRef>) -> Self {
         let mut sources = AHashMap::new();
         for child in children {
             if child.is_empty() {
                 continue;
             }
-            let ArenaRef::Survivor(source_root) = child.id().arena() else {
+            let ArenaRef::Owned(source_root) = child.id().arena() else {
                 unreachable!("direct node-list owners use private compact payload coordinates")
             };
             if let Some(existing) = sources.insert(source_root, child.clone()) {
@@ -489,7 +490,7 @@ impl DirectGraphCopy {
         if let Some(&remapped) = self.remapped.get(&source_id) {
             return remapped;
         }
-        let ArenaRef::Survivor(source_root) = source_id.arena() else {
+        let ArenaRef::Owned(source_root) = source_id.arena() else {
             panic!("direct builder child coordinate is not structurally owned")
         };
         let source = self
@@ -500,7 +501,7 @@ impl DirectGraphCopy {
 
         let start = checked_len(self.storage.len(), "owned node graph exceeds u32 entries");
         let len = checked_len(source.len(), "owned child node list exceeds u32 entries");
-        let remapped = NodeListId::new_survivor(self.root, start, len);
+        let remapped = NodeListId::new_owned(self.root, start, len);
         self.remapped.insert(source_id, remapped);
         self.semantic_spans.push(OwnedSemanticSpan {
             start,
@@ -519,27 +520,27 @@ impl DirectGraphCopy {
 /// compared recursively by [`NodeListRef::exact_semantic_eq`], so the local
 /// projection retains only field order and empty/nonempty shape.
 fn normalized_node(node: super::NodeRef<'_>) -> String {
-    let root = SurvivorRootId::new(0);
+    let root = NodePayloadId::new(0);
     let mut node = node.to_compact_owned();
     let mut child = 0;
     node.visit_lists_mut(|id| {
         *id = if id.is_empty() {
-            NodeListId::new_survivor(root, 0, 0)
+            NodeListId::new_owned(root, 0, 0)
         } else {
             child += 1;
-            NodeListId::new_survivor(root, child, 1)
+            NodeListId::new_owned(root, child, 1)
         };
     });
     format!("{node:?}")
 }
 
-pub(crate) fn allocate_node_payload_root() -> Option<SurvivorRootId> {
+pub(crate) fn allocate_node_payload_root() -> Option<NodePayloadId> {
     NEXT_NODE_PAYLOAD_ROOT
         .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |next| {
             (next <= NODE_PAYLOAD_ROOT_MAX).then_some(next + 1)
         })
         .ok()
-        .map(SurvivorRootId::new)
+        .map(NodePayloadId::new)
 }
 
 #[cfg(test)]

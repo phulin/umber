@@ -3395,7 +3395,7 @@ mod tests {
     }
 
     fn test_form_owner(root: u32) -> NodeListRef {
-        NodeListRef::testing_with_id(NodeListId::testing_survivor(root, 1, 0))
+        NodeListRef::testing_with_id(NodeListId::testing_owned(root, 1, 0))
     }
 
     fn initialize_test_form(state: &mut PdfState, owner: NodeListRef) -> PdfFormRecord {

@@ -844,8 +844,8 @@ fn survivor_and_committed_artifact_release_their_exact_node_roots() {
     epoch.truncate_to(mark);
     assert!(store.origin_ref(id).is_some());
 
-    let survivor_root = survivors.get(survivor).first().expect("survivor character");
-    let crate::node_arena::NodeRef::Char { origin_root, .. } = survivor_root else {
+    let payload_root = survivors.get(survivor).first().expect("survivor character");
+    let crate::node_arena::NodeRef::Char { origin_root, .. } = payload_root else {
         panic!("survivor character")
     };
     let mut builder = crate::RenderProvenanceBuilder::default();

@@ -19,7 +19,7 @@ fn downstream_serde_cannot_mint_or_construct_live_handles() {
             "GlueId",
             "FontId",
             "SnapshotId",
-            "SurvivorRootId",
+            "NodePayloadId",
             "ArenaRef",
             "NodeListId",
             "Node",

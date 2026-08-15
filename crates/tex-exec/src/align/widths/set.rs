@@ -106,7 +106,6 @@ fn set_row(
 ) -> Result<Node, ExecError> {
     let children = set_row_children(config, row, stores)?;
     let children = stores.freeze_node_list(&children);
-    let children = stores.node_list_ref(children);
     let fields = match config.kind {
         AlignmentKind::HAlign => BoxNodeFields {
             width: config.prototype.box_node.width,

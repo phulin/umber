@@ -277,7 +277,6 @@ mod tests {
     fn pdf_forms_rollback_and_replay_reuse_canonical_identity() {
         let mut stores = Universe::default();
         prepare_pdftex_run_stores(&mut stores);
-        let survivor_roots_before = stores.testing_live_survivor_slot_count();
         let snapshot = stores.snapshot();
         let source = "\\pdfoutput=1\\setbox0=\\hbox{}\\pdfxform0\\end";
         run_pdf_memory(source, &mut stores).expect("first form run");
@@ -286,11 +285,6 @@ mod tests {
         stores.rollback(&snapshot);
         assert_eq!(stores.pdf_last_form(), 0);
         assert!(stores.pdf_forms().next().is_none());
-        assert_eq!(
-            stores.testing_live_survivor_slot_count(),
-            survivor_roots_before,
-            "rolling back the form ledger releases its durable node owner"
-        );
         run_pdf_memory(source, &mut stores).expect("replayed form run");
         assert_eq!(stores.pdf_last_form(), 1);
         assert_eq!(stores.snapshot().state_hash(), first_hash);

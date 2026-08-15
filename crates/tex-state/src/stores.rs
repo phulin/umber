@@ -59,11 +59,7 @@ use crate::macro_store::{
 use crate::math::MathFontSize;
 use crate::meaning::Meaning;
 use crate::node::Node;
-#[cfg(feature = "profiling")]
-use crate::node_arena::NodeMemoryColumn;
-use crate::node_arena::{
-    NodeArena, NodeArenaMark, NodeList, NodeListBuilder, NodeListRef, NodeListWeakIndex,
-};
+use crate::node_arena::{NodeListBuilder, NodeListRef, NodeListWeakIndex};
 use crate::provenance::{
     ExpansionFrameRef, InsertedOrigin, InsertedOriginKind, MacroInvocationOrigin,
     OriginListBuilder, OriginListRef, OriginRecord, OriginRef, ProvenanceStats, ProvenanceStore,
@@ -76,8 +72,6 @@ use crate::source_map::{
     GeneratedSource, SourceBacking, SourceDescriptor, SourceMap, SourceMapError, SourceMapMark,
     SourcePos, SourceRegion, SourceSpan,
 };
-use crate::survivor::SurvivorArena;
-use crate::survivor::SurvivorOwner;
 use crate::token::{Catcode, OriginId, Token, TracedTokenWord};
 use crate::token_store::{
     TokenListBuilder, TokenListRef, TokenSemanticId, TokenSemanticIdBuilder, TokenStore,
@@ -123,9 +117,6 @@ pub(crate) struct StoreSnapshot {
     macro_mark: MacroStoreMark,
     glue_mark: GlueStoreMark,
     font_mark: FontStoreMark,
-    node_mark: NodeArenaMark,
-    survivor_pin_mark: usize,
-    timeline_node_pin_mark: usize,
     code_tables_snapshot: CodeTablesSnapshot,
     hyphenation: Arc<HyphenationTable>,
     prepared_mag: Option<i32>,
@@ -145,14 +136,6 @@ impl StoreSnapshot {
     pub(crate) const fn epoch(&self) -> crate::epoch::Epoch {
         self.env_snapshot.epoch()
     }
-}
-
-/// Opaque node-allocation mark for one in-progress shipout.
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct ShipoutNodeMark {
-    owner: SnapshotOwner,
-    node_mark: NodeArenaMark,
-    survivor_pin_mark: usize,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -204,11 +187,7 @@ pub struct Stores {
     macros: MacroStore,
     glue: GlueStore,
     fonts: FontStore,
-    nodes: NodeArena,
     node_ref_index: NodeListWeakIndex,
-    survivors: SurvivorArena,
-    survivor_pins: Vec<NodeListId>,
-    timeline_node_pins: Vec<NodeListId>,
     code_tables: CodeTables,
     hyphenation: Arc<HyphenationTable>,
     prepared_mag: Option<i32>,
@@ -310,11 +289,6 @@ pub struct TestingOwnershipCensus {
     pub source_bytes: usize,
     pub journal_entries: usize,
     pub journal_retained_bytes: usize,
-    pub epoch_nodes: usize,
-    pub survivor_live_roots: usize,
-    pub survivor_slot_extent: usize,
-    pub survivor_pins: usize,
-    pub node_retained_bytes: usize,
 }
 
 /// Web2C TeX82's configured main-memory arena profile.
@@ -641,11 +615,7 @@ impl Clone for Stores {
             macros: self.macros.clone(),
             glue: self.glue.clone(),
             fonts: self.fonts.clone(),
-            nodes: self.nodes.clone(),
             node_ref_index: NodeListWeakIndex::new(),
-            survivors: self.survivors.clone(),
-            survivor_pins: self.survivor_pins.clone(),
-            timeline_node_pins: self.timeline_node_pins.clone(),
             code_tables: self.code_tables.clone(),
             hyphenation: self.hyphenation.clone(),
             prepared_mag: self.prepared_mag,
@@ -861,7 +831,7 @@ impl Stores {
 
     pub(crate) fn observe_main_memory_box_copy(
         &mut self,
-        root: NodeListId,
+        root: &NodeListRef,
         live_dynamic_words: usize,
     ) {
         // Root capture/update precomputes the ordered §204 summary. The hot
@@ -872,7 +842,7 @@ impl Stores {
             return;
         };
         let usage = projection
-            .usage_with_box_copy(root, live_dynamic_words)
+            .usage_with_box_copy(root.id(), live_dynamic_words)
             .expect("copied box root belongs to the allocator projection");
         self.transient_memory_base = Some((self.glue.watermark().specs, projection));
         self.record_main_memory_usage(Ok(usage));
@@ -920,8 +890,8 @@ impl Stores {
         }
     }
 
-    /// Updates one box-register root while direct-write survivor graphs are
-    /// still live. TeX82 §§125--130 mutate allocator ownership at the root;
+    /// Updates one box-register root while its structural graph is still live.
+    /// TeX82 §§125--130 mutate allocator ownership at the root;
     /// replacing or restoring Umber's immutable graph must not force the next
     /// allocation event to reconstruct every unrelated root before §1334.
     fn update_main_memory_box_root(
@@ -932,9 +902,8 @@ impl Stores {
         let Some((_, mut projection)) = self.transient_memory_base.take() else {
             return false;
         };
-        // A directly owned Env root may already be absent from the legacy
-        // survivor table. If this projection has not seen the graph, discard
-        // the cache and let the next full root capture borrow Env's owner.
+        // If this projection has not seen the graph, discard the cache and let
+        // the next full root capture borrow Env's owner.
         let update = projection.update_box_root(self, old, new, false);
         if update.is_ok_and(|updated| updated) {
             self.transient_memory_base = Some((self.glue.watermark().specs, projection));
@@ -1044,8 +1013,6 @@ impl Stores {
             && self.env.can_rollback_to(&snapshot.env_snapshot)
             && snapshot.env_snapshot.journal_pos() <= self.env.current_journal_pos()
             && snapshot.string_pool_recycled_mark <= self.string_pool_recycled_journal.len()
-            && snapshot.survivor_pin_mark <= self.survivor_pins.len()
-            && snapshot.timeline_node_pin_mark <= self.timeline_node_pins.len()
     }
 
     /// Retargets an already-validated inherited snapshot to this fork's exact owner.
@@ -1087,11 +1054,7 @@ impl Stores {
             macros: MacroStore::new(),
             glue: GlueStore::new(),
             fonts: FontStore::new(),
-            nodes: NodeArena::new(),
             node_ref_index: NodeListWeakIndex::new(),
-            survivors: SurvivorArena::new(),
-            survivor_pins: Vec::new(),
-            timeline_node_pins: Vec::new(),
             code_tables: CodeTables::new(),
             hyphenation: Arc::new(HyphenationTable::new()),
             prepared_mag: None,
@@ -3401,38 +3364,35 @@ impl Stores {
     /// Creates a fresh owned scratch node-list builder.
     #[must_use]
     pub fn node_list_builder(&self) -> NodeListBuilder {
-        NodeArena::builder()
+        NodeListBuilder::new()
     }
 
-    pub(crate) fn node_arena_mark(&self) -> NodeArenaMark {
-        self.nodes.watermark()
-    }
-
-    /// Appends and freezes a node list in the owned epoch arena.
-    pub fn freeze_node_list(&mut self, nodes: &[Node]) -> NodeListId {
-        let (semantic_id, needs) = self.validate_and_plan_node_list(nodes);
+    /// Freezes a node list as one directly owned immutable compact graph.
+    pub fn freeze_node_list(&mut self, nodes: &[Node]) -> NodeListRef {
         self.observe_main_memory_nodes(nodes);
-        self.nodes
-            .append_preflighted_with_semantic_id(nodes, semantic_id, needs)
+        let mut builder = NodeListBuilder::new();
+        builder.reserve(nodes.len());
+        for node in nodes {
+            builder.push(node.clone());
+        }
+        self.freeze_node_list_ref(builder)
     }
 
     /// Freezes an owned decoded node vector and clears it for allocation reuse.
-    pub fn freeze_node_list_owned(&mut self, nodes: &mut Vec<Node>) -> NodeListId {
-        let (semantic_id, needs) = self.validate_and_plan_node_list(nodes);
+    pub fn freeze_node_list_owned(&mut self, nodes: &mut Vec<Node>) -> NodeListRef {
         self.observe_main_memory_nodes(nodes);
-        self.nodes
-            .append_owned_preflighted_with_semantic_id(nodes, semantic_id, needs)
+        let mut builder = NodeListBuilder::new();
+        builder.reserve(nodes.len());
+        for node in nodes.drain(..) {
+            builder.push(node);
+        }
+        self.freeze_node_list_ref(builder)
     }
 
     /// Freezes the current node-list builder value and clears it for reuse.
-    pub fn finish_node_list(&mut self, builder: &mut NodeListBuilder) -> NodeListId {
-        let (semantic_id, needs) = self.validate_and_plan_node_list(builder.as_slice());
-        self.observe_main_memory_nodes(builder.as_slice());
-        let id =
-            self.nodes
-                .append_preflighted_with_semantic_id(builder.as_slice(), semantic_id, needs);
-        builder.clear();
-        id
+    pub fn finish_node_list(&mut self, builder: &mut NodeListBuilder) -> NodeListRef {
+        let owned = core::mem::replace(builder, NodeListBuilder::new());
+        self.freeze_node_list_ref(owned)
     }
 
     /// Consumes one operation-local builder and publishes a directly owned,
@@ -3447,71 +3407,6 @@ impl Stores {
             semantic_id,
             needs,
         ))
-    }
-
-    pub(crate) fn node_list_ref(&mut self, id: NodeListId) -> NodeListRef {
-        if id.is_empty() {
-            return NodeListRef::empty();
-        }
-        match id.arena() {
-            crate::ids::ArenaRef::Epoch => {
-                self.survivors.promote_owned(id, &self.nodes).1.node_ref()
-            }
-            crate::ids::ArenaRef::Survivor(_) => self.survivors.owner(id).node_ref(),
-        }
-    }
-
-    /// Moves an operation-local projection into a direct owner without
-    /// publishing it through the legacy survivor root table.
-    pub(crate) fn prepare_node_list_ref(&mut self, id: NodeListId) -> NodeListRef {
-        self.prepare_box_value(id)
-    }
-
-    pub(crate) fn published_node_list_ref(&self, id: NodeListId) -> Option<NodeListRef> {
-        if id.is_empty() {
-            return Some(NodeListRef::empty());
-        }
-        self.survivor_owner(id).map(|owner| owner.node_ref())
-    }
-
-    pub(crate) fn promote_operation_node_list(
-        &mut self,
-        mark: NodeArenaMark,
-        id: NodeListId,
-    ) -> Option<(NodeListId, SurvivorOwner)> {
-        if !self.nodes.allocated_since(mark, id) {
-            return None;
-        }
-        Some(self.survivors.promote_owned(id, &self.nodes))
-    }
-
-    pub(crate) fn survivor_owner(&self, id: NodeListId) -> Option<SurvivorOwner> {
-        matches!(id.arena(), crate::ids::ArenaRef::Survivor(_)).then(|| self.survivors.owner(id))
-    }
-
-    pub(crate) fn finish_operation_nodes(&mut self, mark: NodeArenaMark) {
-        self.nodes.truncate_to(mark);
-        self.survivors.release_zero_root_chunks();
-    }
-
-    /// Reads a live frozen node list.
-    #[must_use]
-    pub fn nodes(&self, id: NodeListId) -> NodeList<'_> {
-        self.assert_live_node_list(id);
-        self.nodes.get(id, &self.survivors)
-    }
-
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub(crate) fn node_list_semantic_fragment(&self, id: NodeListId) -> StateHashFragment {
-        self.assert_live_node_list(id);
-        self.nodes.semantic_id(id, &self.survivors).fragment()
-    }
-
-    /// Keeps a survivor root alive until its enclosing allocation scope ends.
-    pub fn pin_survivor(&mut self, id: NodeListId) {
-        self.assert_live_node_list(id);
-        self.survivors.inc_ref(id);
-        self.survivor_pins.push(id);
     }
 
     /// Enters a TeX group.
@@ -3733,45 +3628,16 @@ impl Stores {
         )
     }
 
-    pub fn set_box_reg(
-        &mut self,
-        index: u16,
-        value: NodeListId,
-    ) -> crate::env::CellMutationReceipt {
-        self.write_box_reg(index, Some(value), false)
-    }
-
-    pub fn set_box_reg_global(
-        &mut self,
-        index: u16,
-        value: NodeListId,
-    ) -> crate::env::CellMutationReceipt {
-        self.write_box_reg(index, Some(value), true)
-    }
-
-    pub fn set_box_reg_same_level(
-        &mut self,
-        index: u16,
-        value: NodeListId,
-    ) -> crate::env::CellMutationReceipt {
-        self.write_box_reg_same_level(index, Some(value))
-    }
-
     pub fn clear_box_reg(&mut self, index: u16) -> crate::env::CellMutationReceipt {
-        self.write_box_reg(index, None, false)
+        self.write_box_reg_ref(index, None, false)
     }
 
     pub fn clear_box_reg_global(&mut self, index: u16) -> crate::env::CellMutationReceipt {
-        self.write_box_reg(index, None, true)
+        self.write_box_reg_ref(index, None, true)
     }
 
     pub fn clear_box_reg_same_level(&mut self, index: u16) -> crate::env::CellMutationReceipt {
-        self.write_box_reg_same_level(index, None)
-    }
-
-    #[must_use]
-    pub fn box_reg(&self, index: u16) -> Option<NodeListId> {
-        self.env.box_reg(index)
+        self.write_box_reg_ref_same_level(index, None)
     }
 
     pub(crate) fn box_reg_ref(&self, index: u16) -> Option<NodeListRef> {
@@ -4052,9 +3918,6 @@ impl Stores {
             macro_mark: self.macros.watermark(),
             glue_mark: self.glue.watermark(),
             font_mark: self.fonts.watermark(),
-            node_mark: self.nodes.watermark(),
-            survivor_pin_mark: self.survivor_pins.len(),
-            timeline_node_pin_mark: self.timeline_node_pins.len(),
             code_tables_snapshot: self.code_tables.checkpoint(),
             hyphenation: self.hyphenation.clone(),
             prepared_mag: self.prepared_mag,
@@ -4093,29 +3956,8 @@ impl Stores {
         true
     }
 
-    /// Marks the start of node allocations owned by one shipout operation.
-    #[must_use]
-    pub(crate) fn shipout_node_mark(&self) -> ShipoutNodeMark {
-        ShipoutNodeMark {
-            owner: self.owner.snapshot_owner(),
-            node_mark: self.nodes.watermark(),
-            survivor_pin_mark: self.survivor_pins.len(),
-        }
-    }
-
-    /// Releases epoch nodes allocated for a completed shipout page.
-    pub(crate) fn release_shipout_nodes(&mut self, mark: ShipoutNodeMark) {
-        assert_eq!(
-            mark.owner,
-            self.owner.snapshot_owner(),
-            "shipout node mark belongs to a different Stores instance"
-        );
-        assert!(
-            mark.survivor_pin_mark <= self.survivor_pins.len(),
-            "shipout node mark is invalidated by an enclosing survivor-pin release"
-        );
-        self.release_survivor_pins_to(mark.survivor_pin_mark);
-        self.nodes.truncate_to(mark.node_mark);
+    /// Clears operation-local diagnostic projections after shipout or box build.
+    pub(crate) fn finish_node_operation(&mut self) {
         self.transient_memory_base = None;
     }
 
@@ -4131,8 +3973,6 @@ impl Stores {
     fn rollback_inner(&mut self, snapshot: &StoreSnapshot, retry: bool) -> MutationReceipts {
         self.assert_valid_snapshot(snapshot);
         let _ = self.engine_usage_statistics();
-        self.release_survivor_pins_to(snapshot.survivor_pin_mark);
-        self.release_timeline_node_pins_to(snapshot.timeline_node_pin_mark);
         let receipts = self.env.rollback_to(snapshot.env_snapshot.clone());
         self.interner.truncate_to(snapshot.interner_mark);
         while self.string_pool_recycled_journal.len() > snapshot.string_pool_recycled_mark {
@@ -4159,7 +3999,6 @@ impl Stores {
         self.macros.truncate_to(snapshot.macro_mark);
         self.glue.truncate_to(snapshot.glue_mark);
         self.fonts.truncate_to(snapshot.font_mark);
-        self.nodes.truncate_to(snapshot.node_mark);
         self.code_tables
             .rollback_to(snapshot.code_tables_snapshot.clone());
         self.hyphenation = snapshot.hyphenation.clone();
@@ -4217,40 +4056,18 @@ impl Stores {
     }
 
     pub(crate) fn generation_retained_bytes(&self) -> usize {
-        // A live accepted generation may legitimately retain survivor pins;
-        // format capture forbids them because formats have a stricter job-start
-        // contract. Use the serialized-size proxy only when that contract is
-        // satisfied instead of turning retention accounting into a panic.
-        let serialized = if self.survivor_pins.is_empty() && self.timeline_node_pins.is_empty() {
-            self.encode_frozen_format()
-                .map_or(0, |format| format.payload_len())
-        } else {
-            0
-        };
+        let serialized = self
+            .encode_frozen_format()
+            .map_or(0, |format| format.payload_len());
         let provenance = self.provenance_stats().retained_bytes();
         let source_map = self.source_map.stats().retained_bytes;
         let source_fragment_metadata = self.source_fragments.metadata_retained_bytes();
-        let nodes = self
-            .nodes
-            .retained_payload_bytes()
-            .saturating_add(self.survivors.retained_payload_bytes())
-            .saturating_add(
-                self.survivor_pins
-                    .capacity()
-                    .saturating_mul(mem::size_of::<NodeListId>()),
-            )
-            .saturating_add(
-                self.timeline_node_pins
-                    .capacity()
-                    .saturating_mul(mem::size_of::<NodeListId>()),
-            );
         std::mem::size_of::<Self>()
             .saturating_add(serialized)
             .saturating_add(self.env.journal_retained_bytes())
             .saturating_add(provenance)
             .saturating_add(source_map)
             .saturating_add(source_fragment_metadata)
-            .saturating_add(nodes)
     }
 
     /// Verifies the shadow mirror against real environment storage.
@@ -4273,85 +4090,6 @@ impl Stores {
             snapshot.env_snapshot.journal_pos() <= self.env.current_journal_pos(),
             "Stores snapshots are invalidated by journal truncation before their checkpoint position"
         );
-        assert!(
-            snapshot.survivor_pin_mark <= self.survivor_pins.len(),
-            "Stores snapshots are invalidated by an enclosing survivor-pin release"
-        );
-        assert!(
-            snapshot.timeline_node_pin_mark <= self.timeline_node_pins.len(),
-            "Stores snapshots are invalidated by an enclosing timeline-node-pin release"
-        );
-    }
-
-    fn release_survivor_pins_to(&mut self, mark: usize) {
-        while self.survivor_pins.len() > mark {
-            let id = self
-                .survivor_pins
-                .pop()
-                .expect("survivor pin length was checked");
-            self.survivors.dec_ref(id);
-        }
-    }
-
-    fn release_timeline_node_pins_to(&mut self, mark: usize) {
-        while self.timeline_node_pins.len() > mark {
-            let id = self
-                .timeline_node_pins
-                .pop()
-                .expect("timeline node pin length was checked");
-            self.survivors.dec_ref(id);
-        }
-    }
-
-    #[cfg(any(test, feature = "testing"))]
-    #[must_use]
-    pub fn testing_live_survivor_slot_count(&self) -> usize {
-        self.survivors.testing_live_slot_count()
-    }
-
-    #[cfg(any(test, feature = "testing"))]
-    #[must_use]
-    pub fn testing_epoch_node_count(&self) -> usize {
-        self.nodes.testing_node_count()
-    }
-
-    /// The epoch-clone facility has been removed; register-read paths must
-    /// keep this structural regression counter at zero.
-    #[cfg(any(test, feature = "testing"))]
-    #[must_use]
-    pub const fn testing_epoch_clone_counts(&self) -> (u64, u64) {
-        (0, 0)
-    }
-
-    #[cfg(any(test, feature = "testing"))]
-    #[must_use]
-    pub fn testing_survivor_refcount(&self, id: NodeListId) -> u32 {
-        self.survivors.testing_refcount(id)
-    }
-
-    #[cfg(any(test, feature = "testing"))]
-    #[allow(dead_code)] // Exposed through Universe when the retention budget lands.
-    #[must_use]
-    pub fn testing_survivor_pin_count(&self) -> usize {
-        self.survivor_pins.len()
-    }
-
-    #[cfg(any(test, feature = "testing"))]
-    #[must_use]
-    pub fn testing_survivor_pin_retained_bytes(&self) -> usize {
-        self.survivor_pins.capacity() * mem::size_of::<NodeListId>()
-    }
-
-    #[cfg(any(test, feature = "testing"))]
-    #[must_use]
-    pub fn testing_survivor_recycled_buffer_uses(&self) -> usize {
-        self.survivors.testing_recycled_buffer_uses()
-    }
-
-    #[cfg(any(test, feature = "testing"))]
-    #[must_use]
-    pub fn testing_survivor_root_slot_count(&self) -> usize {
-        self.survivors.testing_root_slot_count()
     }
 
     #[cfg(any(test, feature = "testing"))]
@@ -4382,22 +4120,7 @@ impl Stores {
             source_bytes: provenance.source_map_bytes(),
             journal_entries: self.env.journal_entry_count(),
             journal_retained_bytes: self.env.journal_retained_bytes(),
-            epoch_nodes: self.nodes.testing_node_count(),
-            survivor_live_roots: self.survivors.testing_live_slot_count(),
-            survivor_slot_extent: self.survivors.testing_root_slot_count(),
-            survivor_pins: self.survivor_pins.len() + self.timeline_node_pins.len(),
-            node_retained_bytes: self
-                .nodes
-                .retained_payload_bytes()
-                .saturating_add(self.survivors.retained_payload_bytes()),
         }
-    }
-
-    #[cfg(feature = "profiling")]
-    pub(crate) fn node_memory_columns(&self) -> Vec<NodeMemoryColumn> {
-        let mut columns = self.nodes.memory_columns();
-        columns.extend(self.survivors.memory_columns());
-        columns
     }
 }
 

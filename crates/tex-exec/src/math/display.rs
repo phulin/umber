@@ -94,7 +94,7 @@ pub(crate) fn finish_display_math(
     let display_list = stores.freeze_node_list(&display_nodes);
     let mut display_box = hpack_nodes(
         stores,
-        display_list,
+        display_list.clone(),
         PackSpec::Natural,
         hpack_params(stores),
     )

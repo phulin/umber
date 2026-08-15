@@ -210,7 +210,6 @@ fn project_physical_pre_break_spans(
             crate::box_runtime::hmode::reconstitute_with_fuel(stores, &pending, true, false, fuel)
                 .map_err(ExecError::Command)?;
         let pre = stores.freeze_node_list(&pre);
-        let pre = stores.node_list_ref(pre);
         let Node::Disc {
             pre: physical_pre, ..
         } = &mut nodes[index]
@@ -608,7 +607,6 @@ fn append_hyphenated_word(
                 fuel,
                 projection.missing_hyphens,
             )?;
-            let physical_post = stores.node_list_ref(physical_post);
             projection
                 .physical_post_overrides
                 .push((out.len(), physical_post));
@@ -650,7 +648,7 @@ fn discretionary_through_node(
     following: &[Node],
     fuel: &mut tex_command::CommandFuel,
     missing_hyphens: &mut Vec<MissingHyphenDiagnostic>,
-) -> Result<(Node, tex_state::ids::NodeListId), ExecError> {
+) -> Result<(Node, tex_state::node_arena::NodeListRef), ExecError> {
     let (span, node_index) = location;
     let (start, position, end) = span;
     let font = word[position - 1].font;
@@ -706,7 +704,7 @@ fn physical_discretionary_projection(
     replacement: &Node,
     following: &[Node],
     fuel: &mut tex_command::CommandFuel,
-) -> Result<(u8, tex_state::ids::NodeListId), ExecError> {
+) -> Result<(u8, tex_state::node_arena::NodeListRef), ExecError> {
     let (start, position, end) = span;
     let mut major = Vec::with_capacity(following.len() + 1);
     major.push(replacement.clone());
@@ -789,9 +787,9 @@ fn automatic_discretionary_with_count(
         let replace = stores.freeze_node_list(replace);
         Node::Disc {
             kind: DiscKind::AutomaticHyphen,
-            pre: stores.node_list_ref(pre),
-            post: stores.node_list_ref(post),
-            replace: stores.node_list_ref(replace),
+            pre,
+            post,
+            replace,
             physical_replace_count,
         }
     })
@@ -840,14 +838,14 @@ fn discretionary_hyphen(
                 ch,
                 origin: OriginRef::unknown(),
             }]);
-            stores.node_list_ref(pre)
+            pre
         },
     );
     let replace = replacement.as_ref().map_or_else(
         || empty.clone(),
         |node| {
             let replace = stores.freeze_node_list(std::slice::from_ref(node));
-            stores.node_list_ref(replace)
+            replace
         },
     );
     Node::Disc {

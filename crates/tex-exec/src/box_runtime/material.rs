@@ -248,7 +248,6 @@ pub(crate) fn append_box_node_to_current_list(
         };
     let node = if matches!(nest.current_mode(), Mode::Math | Mode::DisplayMath) {
         let nucleus = stores.freeze_node_list(std::slice::from_ref(&node));
-        let nucleus = stores.node_list_ref(nucleus);
         Node::MathNoad(MathNoad::new(
             NoadKind::Normal(NoadClass::Ord),
             MathField::SubBox(nucleus),
@@ -280,7 +279,7 @@ fn extract_box_migrations(stores: &mut Universe, node: &mut Node) -> (Vec<Node>,
     let (retained, pre_migrated, migrated) = split_hpack_migrations(children);
     if !pre_migrated.is_empty() || !migrated.is_empty() {
         let retained = stores.freeze_node_list(&retained);
-        boxed.children = stores.node_list_ref(retained);
+        boxed.children = retained;
     }
     (pre_migrated, migrated)
 }

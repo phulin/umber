@@ -1,6 +1,5 @@
 //! Source-free horizontal packing and box-register lookup.
 
-use tex_state::ids::NodeListId;
 use tex_state::node::Node;
 use tex_state::node_arena::NodeListRef;
 use tex_state::{GeometryObservation, Universe};
@@ -102,7 +101,7 @@ fn report_cannot_take_last_box(
 
 pub(crate) fn hpack_with_overfull_rule(
     stores: &mut Universe,
-    children: NodeListId,
+    children: tex_state::node_arena::NodeListRef,
     spec: PackSpec,
 ) -> tex_state::node::BoxNode {
     let params = hpack_params(stores);
@@ -124,7 +123,7 @@ pub(crate) fn hpack_with_overfull_rule(
             depth: None,
         });
         let children = stores.freeze_node_list(&nodes);
-        packed.node.children = stores.node_list_ref(children);
+        packed.node.children = children;
     }
     // TeX82 §§115/162 stores a discretionary's replacement as the
     // physical nodes immediately following the disc node. Umber keeps that
@@ -167,7 +166,7 @@ fn physical_discretionary_projection(
         }
     }
     let physical = stores.freeze_node_list_owned(&mut physical);
-    Some(stores.node_list_ref(physical))
+    Some(physical)
 }
 
 pub(crate) fn hpack_owned_with_overfull_rule(
@@ -214,7 +213,6 @@ pub(crate) fn hpack_owned_with_overfull_rule(
         crate::pack_report::DiagnosticListLayout::FrozenList
     };
     let children = stores.freeze_node_list_owned(nodes);
-    let children = stores.node_list_ref(children);
     let mut packed = plan.finish(children);
     packed.node.allocator_high_cell_overlap = if diagnostic_nodes.is_some() {
         allocator_high_cell_overlap
@@ -231,13 +229,11 @@ pub(crate) fn hpack_owned_with_overfull_rule(
     });
     let diagnostic_box = if let Some(nodes) = diagnostic_nodes {
         let diagnostic_children = stores.freeze_node_list(nodes);
-        let diagnostic_children = stores.node_list_ref(diagnostic_children);
         let children = stores.freeze_node_list(
             short_diagnostic_nodes
                 .as_deref()
                 .expect("physical diagnostics have a short-display projection"),
         );
-        let children = stores.node_list_ref(children);
         packed.node.diagnostic_children = Some(diagnostic_children);
         tex_state::node::BoxNode {
             children,

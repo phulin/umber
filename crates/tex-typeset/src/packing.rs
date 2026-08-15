@@ -473,7 +473,7 @@ fn measure_hlist(
                         .expect("discretionary replacement belongs to its owner payload");
                     measure_hlist(state, NodeCursor::compact(replacement), Some(owner))
                 } else {
-                    measure_hlist(state, NodeCursor::compact(state.nodes(replace)), None)
+                    unreachable!("compact discretionary nodes require a structural owner")
                 };
                 // A discretionary replacement contributes its natural box
                 // dimensions here, but its inner glue is not outer hpack glue.

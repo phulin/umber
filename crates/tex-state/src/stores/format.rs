@@ -68,7 +68,7 @@ pub(crate) fn testing_corrupt_environment_box_reference(payload: &[u8]) -> Vec<u
         .find(|entry| matches!(entry.value, FormatEnvValue::Box(_)))
         .expect("test frozen environment has a box entry");
     entry.value = FormatEnvValue::Box(FormatListKey {
-        survivor_root: None,
+        payload_root: None,
         start: u32::MAX,
         len: 1,
     });
@@ -149,9 +149,7 @@ pub(super) struct MainMemoryProjection {
     /// to subtract its previously measured allocation exactly.
     token_words: Vec<usize>,
     live_node_lists: std::collections::BTreeSet<NodeListId>,
-    live_survivor_roots: std::collections::BTreeSet<crate::ids::SurvivorRootId>,
     box_root_counts: std::collections::BTreeMap<NodeListId, u32>,
-    box_graphs: std::collections::BTreeMap<NodeListId, BoxMemoryProjection>,
     box_copy_projections: std::collections::BTreeMap<NodeListId, CopyNodeListProjection>,
     detached_dynamic_extent: usize,
 }
@@ -413,15 +411,7 @@ fn main_memory_projection_inner(
         macro_token_refs,
         token_words,
         live_node_lists,
-        live_survivor_roots: box_root_counts
-            .keys()
-            .filter_map(|id| match id.arena() {
-                crate::ids::ArenaRef::Survivor(root) => Some(root),
-                crate::ids::ArenaRef::Epoch => None,
-            })
-            .collect(),
         box_root_counts,
-        box_graphs: std::collections::BTreeMap::new(),
         box_copy_projections,
         detached_dynamic_extent,
     })
@@ -713,12 +703,8 @@ impl MainMemoryProjection {
         if extra_nodes.is_empty() {
             return Ok(self.usage);
         }
-        let mut node_lists = capture_extra_memory_nodes(
-            stores,
-            extra_nodes,
-            &self.live_node_lists,
-            &self.live_survivor_roots,
-        )?;
+        let mut node_lists =
+            capture_extra_memory_nodes(stores, extra_nodes, &self.live_node_lists)?;
         let mut extra_tokens = std::collections::BTreeSet::new();
         for node in node_lists.iter_mut().flat_map(|list| &mut list.nodes) {
             node.visit_token_list_refs(|raw| {
@@ -762,12 +748,7 @@ impl MainMemoryProjection {
         stores: &Stores,
         extra_nodes: &[Node],
     ) -> Result<Vec<usize>, StoreFormatError> {
-        let node_lists = capture_extra_memory_nodes(
-            stores,
-            extra_nodes,
-            &self.live_node_lists,
-            &self.live_survivor_roots,
-        )?;
+        let node_lists = capture_extra_memory_nodes(stores, extra_nodes, &self.live_node_lists)?;
         Ok(node_lists
             .iter()
             .flat_map(|list| &list.nodes)
@@ -848,117 +829,19 @@ impl MainMemoryProjection {
 
     pub(super) fn update_box_root(
         &mut self,
-        stores: &Stores,
+        _stores: &Stores,
         old: Option<NodeListId>,
         new: Option<NodeListId>,
-        capture_missing: bool,
+        _capture_missing: bool,
     ) -> Result<bool, StoreFormatError> {
         if old == new {
             return Ok(true);
         }
 
-        // The projection already owns the exact box-root multiplicities from
-        // the preceding environment state. Update those counts at the same
-        // handoff as the graph contribution instead of rescanning unrelated
-        // meaning and token roots for every box assignment.
-        let remove_old = if let Some(old) = old {
-            let Some(count) = self.box_root_counts.get_mut(&old) else {
-                return Ok(false);
-            };
-            *count = count.saturating_sub(1);
-            if *count == 0 {
-                self.box_root_counts.remove(&old);
-                true
-            } else {
-                false
-            }
-        } else {
-            false
-        };
-        let add_new = if let Some(new) = new {
-            let count = self.box_root_counts.entry(new).or_insert(0);
-            let add = *count == 0;
-            *count = count.saturating_add(1);
-            add
-        } else {
-            false
-        };
-        let old_graph = if remove_old {
-            let old = old.expect("checked old box root");
-            match self.box_graphs.get(&old).cloned() {
-                Some(graph) => Some(graph),
-                None if capture_missing => {
-                    let graph = box_memory_projection(stores, old)?;
-                    self.box_graphs.insert(old, graph.clone());
-                    Some(graph)
-                }
-                None => return Ok(false),
-            }
-        } else {
-            None
-        };
-        let new_graph = if add_new {
-            let new = new.expect("checked new box root");
-            match self.box_graphs.get(&new).cloned() {
-                Some(graph) => Some(graph),
-                None if capture_missing => {
-                    let graph = box_memory_projection(stores, new)?;
-                    self.box_graphs.insert(new, graph.clone());
-                    Some(graph)
-                }
-                None => return Ok(false),
-            }
-        } else {
-            None
-        };
-        let old_low_words = old_graph.as_ref().map_or(0, |graph| graph.low_words);
-        let old_high_words = old_graph.as_ref().map_or(0, |graph| graph.high_words);
-        let new_low_words = new_graph.as_ref().map_or(0, |graph| graph.low_words);
-        let new_high_words = new_graph.as_ref().map_or(0, |graph| graph.high_words);
-        self.usage.variable = self
-            .usage
-            .variable
-            .saturating_sub(old_low_words)
-            .saturating_add(new_low_words);
-        self.usage.dynamic = self
-            .usage
-            .dynamic
-            .saturating_sub(old_high_words)
-            .saturating_add(new_high_words);
-        if let Some(old_graph) = old_graph {
-            for raw in old_graph.token_refs.iter().copied() {
-                self.adjust_token(stores, u64::from(raw), false, false)?;
-            }
-            if let Some(old) = old
-                && let crate::ids::ArenaRef::Survivor(root) = old.arena()
-            {
-                self.live_survivor_roots.remove(&root);
-            }
-            if let Some(old) = old {
-                self.box_copy_projections.remove(&old);
-            }
-        }
-        if let Some(new_graph) = new_graph {
-            for raw in new_graph.token_refs.iter().copied() {
-                self.adjust_token(stores, u64::from(raw), false, true)?;
-            }
-            if let Some(new) = new
-                && let crate::ids::ArenaRef::Survivor(root) = new.arena()
-            {
-                self.live_survivor_roots.insert(root);
-            }
-            if let Some(new) = new {
-                self.box_copy_projections.insert(new, new_graph.copy);
-            }
-            self.detached_dynamic_extent = self
-                .detached_dynamic_extent
-                .max(new_graph.detached_dynamic_extent);
-        }
-        self.usage.dynamic_extent = self
-            .usage
-            .dynamic
-            .saturating_add(self.detached_dynamic_extent);
-        Ok(true)
+        // Structural box ownership moves atomically with the Env mutation.
+        // Retire this derived projection and rebuild it lazily instead of
+        // retaining a second graph-lifetime index for incremental accounting.
+        Ok(false)
     }
 
     fn adjust_meaning(
@@ -1096,59 +979,6 @@ impl MainMemoryProjection {
     }
 }
 
-#[derive(Clone, Debug)]
-struct BoxMemoryProjection {
-    token_refs: std::sync::Arc<[u32]>,
-    low_words: usize,
-    high_words: usize,
-    detached_dynamic_extent: usize,
-    copy: CopyNodeListProjection,
-}
-
-fn box_memory_projection(
-    stores: &Stores,
-    root: NodeListId,
-) -> Result<BoxMemoryProjection, StoreFormatError> {
-    let mut node_lists = Vec::new();
-    let mut seen = std::collections::BTreeSet::new();
-    let mut visiting = std::collections::BTreeSet::new();
-    let mut survivor_roots = std::collections::BTreeMap::new();
-    capture_node_list(
-        stores,
-        root,
-        &mut seen,
-        &mut visiting,
-        &mut survivor_roots,
-        &mut node_lists,
-        None,
-    )?;
-    let root = FormatListKey::capture(stores, root, &mut survivor_roots);
-    let mut token_refs = Vec::new();
-    for node in node_lists.iter_mut().flat_map(|list| &mut list.nodes) {
-        node.visit_token_list_refs(|raw| token_refs.push(*raw));
-    }
-    let (low_words, high_words, detached_dynamic_extent) =
-        node_memory_words(&node_lists, [root], stores.main_memory_profile);
-    let lists_by_key = node_lists
-        .iter()
-        .map(|list| (list.key, list))
-        .collect::<std::collections::BTreeMap<_, _>>();
-    let copy = copy_node_list_projection(
-        &lists_by_key,
-        root,
-        &mut std::collections::BTreeMap::new(),
-        true,
-        stores.main_memory_profile,
-    )?;
-    Ok(BoxMemoryProjection {
-        token_refs: token_refs.into(),
-        low_words,
-        high_words,
-        detached_dynamic_extent,
-        copy,
-    })
-}
-
 /// Captures only the live typed roots needed for TeX82 allocator accounting.
 ///
 /// Unlike a format image, this diagnostic projection does not clone names,
@@ -1176,7 +1006,7 @@ fn capture_memory_roots(
         .collect::<Vec<_>>();
     let mut seen = std::collections::BTreeSet::new();
     let mut visiting = std::collections::BTreeSet::new();
-    let mut survivor_roots = std::collections::BTreeMap::new();
+    let mut payload_roots = std::collections::BTreeMap::new();
     let mut node_lists = Vec::new();
     for (_, root) in &box_roots {
         capture_owned_node_list(
@@ -1184,8 +1014,9 @@ fn capture_memory_roots(
             root.clone(),
             &mut seen,
             &mut visiting,
-            &mut survivor_roots,
+            &mut payload_roots,
             &mut node_lists,
+            None,
         )?;
     }
     let live_node_lists = seen;
@@ -1195,7 +1026,7 @@ fn capture_memory_roots(
             let value = if cell.bank() == crate::cell::BankTag::Box {
                 let id = NodeListId::decode_box_word(word)
                     .expect("non-default box memory entry should contain a list");
-                FormatEnvValue::Box(FormatListKey::capture(stores, id, &mut survivor_roots))
+                FormatEnvValue::Box(FormatListKey::capture(stores, id, &mut payload_roots))
             } else {
                 FormatEnvValue::Raw(word)
             };
@@ -1216,17 +1047,19 @@ fn capture_memory_roots(
         .collect();
 
     if !extra_nodes.is_empty() {
-        let mut seen = std::collections::BTreeSet::new();
+        let mut seen = live_node_lists.clone();
         let mut visiting = std::collections::BTreeSet::new();
-        let mut survivor_roots = std::collections::BTreeMap::new();
+        let mut payload_roots = std::collections::BTreeMap::new();
         for node in extra_nodes {
-            for child in crate::node_arena::NodeRef::from(node).physical_children() {
-                capture_node_list(
+            let mut children = Vec::new();
+            node.visit_node_lists(|child| children.push(child.clone()));
+            for child in children {
+                capture_owned_node_list(
                     stores,
                     child,
                     &mut seen,
                     &mut visiting,
-                    &mut survivor_roots,
+                    &mut payload_roots,
                     &mut node_lists,
                     None,
                 )?;
@@ -1234,7 +1067,7 @@ fn capture_memory_roots(
         }
         node_lists.push(FormatNodeList {
             key: FormatListKey {
-                survivor_root: None,
+                payload_root: None,
                 start: u32::MAX,
                 len: u32::try_from(extra_nodes.len())
                     .map_err(|_| StoreFormatError::Invalid("extra node-list length"))?,
@@ -1246,7 +1079,7 @@ fn capture_memory_roots(
                     FormatNode::capture(
                         stores,
                         crate::node_arena::NodeRef::from(node),
-                        &mut survivor_roots,
+                        &mut payload_roots,
                     )
                 })
                 .collect(),
@@ -1264,26 +1097,21 @@ fn capture_extra_memory_nodes(
     stores: &Stores,
     extra_nodes: &[Node],
     live_node_lists: &std::collections::BTreeSet<NodeListId>,
-    live_survivor_roots: &std::collections::BTreeSet<crate::ids::SurvivorRootId>,
 ) -> Result<Vec<FormatNodeList>, StoreFormatError> {
     let mut seen = live_node_lists.clone();
     let mut visiting = std::collections::BTreeSet::new();
-    let mut survivor_roots = std::collections::BTreeMap::new();
+    let mut payload_roots = std::collections::BTreeMap::new();
     let mut node_lists = Vec::new();
     for node in extra_nodes {
-        for child in crate::node_arena::NodeRef::from(node).physical_children() {
-            if matches!(
-                child.arena(),
-                crate::ids::ArenaRef::Survivor(root) if live_survivor_roots.contains(&root)
-            ) {
-                continue;
-            }
-            capture_node_list(
+        let mut children = Vec::new();
+        node.visit_node_lists(|child| children.push(child.clone()));
+        for child in children {
+            capture_owned_node_list(
                 stores,
                 child,
                 &mut seen,
                 &mut visiting,
-                &mut survivor_roots,
+                &mut payload_roots,
                 &mut node_lists,
                 None,
             )?;
@@ -1291,7 +1119,7 @@ fn capture_extra_memory_nodes(
     }
     node_lists.push(FormatNodeList {
         key: FormatListKey {
-            survivor_root: None,
+            payload_root: None,
             start: u32::MAX,
             len: u32::try_from(extra_nodes.len())
                 .map_err(|_| StoreFormatError::Invalid("extra node-list length"))?,
@@ -1303,7 +1131,7 @@ fn capture_extra_memory_nodes(
                 FormatNode::capture(
                     stores,
                     crate::node_arena::NodeRef::from(node),
-                    &mut survivor_roots,
+                    &mut payload_roots,
                 )
             })
             .collect(),
@@ -1422,7 +1250,7 @@ struct FormatCodeTables {
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 struct FormatListKey {
-    survivor_root: Option<u32>,
+    payload_root: Option<u32>,
     start: u32,
     len: u32,
 }
@@ -1499,8 +1327,8 @@ impl Stores {
     ///
     /// Environment, code-table, hyphenation, and font-selection roots resolve
     /// referenced immutable values to canonical content. Append-store
-    /// watermarks and unreferenced entries are absent; survivor pins and
-    /// identity caches are retention metadata, not reachability authority.
+    /// watermarks and unreferenced entries are absent; structural roots are
+    /// the sole node reachability authority.
     pub(crate) fn semantic_identity(&mut self) -> Result<u64, StoreFormatError> {
         if self.env.group_depth() != 0 {
             return Err(StoreFormatError::OpenGroups(self.env.group_depth()));
@@ -1568,14 +1396,13 @@ impl Stores {
 
     pub(crate) fn encode_memo_node_list(
         &self,
-        root: NodeListId,
+        root: &crate::node_arena::NodeListRef,
     ) -> Result<Vec<u8>, StoreFormatError> {
         self.encode_memo_node_list_with_origins(root)
             .map(|(bytes, _)| bytes)
     }
 
-    /// Detaches a graph through its structural owner without consulting the
-    /// legacy survivor table for liveness.
+    /// Detaches a graph through its structural owner.
     pub(crate) fn encode_memo_node_list_ref(
         &self,
         root: &crate::node_arena::NodeListRef,
@@ -1613,17 +1440,18 @@ impl Stores {
             .collect();
         let mut seen = std::collections::BTreeSet::new();
         let mut visiting = std::collections::BTreeSet::new();
-        let mut survivor_roots = std::collections::BTreeMap::new();
+        let mut payload_roots = std::collections::BTreeMap::new();
         let mut node_lists = Vec::new();
         capture_owned_node_list(
             self,
             root.clone(),
             &mut seen,
             &mut visiting,
-            &mut survivor_roots,
+            &mut payload_roots,
             &mut node_lists,
+            None,
         )?;
-        let root = FormatListKey::capture(self, root.id(), &mut survivor_roots);
+        let root = FormatListKey::capture(self, root.id(), &mut payload_roots);
         bincode::serialize(&MemoNodeBundle {
             names,
             token_lists,
@@ -1637,7 +1465,7 @@ impl Stores {
 
     pub(crate) fn encode_memo_node_list_with_origins(
         &self,
-        root: NodeListId,
+        root: &crate::node_arena::NodeListRef,
     ) -> Result<(Vec<u8>, Vec<crate::provenance::OriginRef>), StoreFormatError> {
         let names = (0..self.interner.len())
             .map(|raw| {
@@ -1672,19 +1500,19 @@ impl Stores {
             .collect();
         let mut seen = std::collections::BTreeSet::new();
         let mut visiting = std::collections::BTreeSet::new();
-        let mut survivor_roots = std::collections::BTreeMap::new();
+        let mut payload_roots = std::collections::BTreeMap::new();
         let mut node_lists = Vec::new();
         let mut origins = Vec::new();
-        capture_node_list(
+        capture_owned_node_list(
             self,
-            root,
+            root.clone(),
             &mut seen,
             &mut visiting,
-            &mut survivor_roots,
+            &mut payload_roots,
             &mut node_lists,
             Some(&mut origins),
         )?;
-        let root = FormatListKey::capture(self, root, &mut survivor_roots);
+        let root = FormatListKey::capture(self, root.id(), &mut payload_roots);
         let bytes = bincode::serialize(&MemoNodeBundle {
             names,
             token_lists,
@@ -1703,7 +1531,7 @@ impl Stores {
         max_nodes: usize,
         max_tokens: usize,
         max_string_bytes: usize,
-    ) -> Result<NodeListId, StoreFormatError> {
+    ) -> Result<crate::node_arena::NodeListRef, StoreFormatError> {
         self.import_memo_node_list_with_origins(bytes, max_nodes, max_tokens, max_string_bytes, &[])
     }
 
@@ -1714,7 +1542,7 @@ impl Stores {
         max_tokens: usize,
         max_string_bytes: usize,
         origins: &[crate::provenance::OriginRef],
-    ) -> Result<NodeListId, StoreFormatError> {
+    ) -> Result<crate::node_arena::NodeListRef, StoreFormatError> {
         let bundle: MemoNodeBundle = bincode::deserialize(bytes)
             .map_err(|error| StoreFormatError::Codec(error.to_string()))?;
         let node_count = bundle
@@ -1802,6 +1630,8 @@ impl Stores {
             token_lists: &token_ids,
         };
         let mut node_ids = std::collections::BTreeMap::new();
+        let mut node_owners = std::collections::BTreeMap::new();
+        let mut owners_by_id = std::collections::BTreeMap::new();
         let mut origins = origins.iter().cloned();
         for list in bundle.node_lists {
             let nodes = list
@@ -1810,14 +1640,23 @@ impl Stores {
                 .map(|node| node.restore_with_origins(&content_ids, &node_ids, &mut origins))
                 .collect::<Result<Vec<_>, _>>()?
                 .into_iter()
-                .map(|node| node.map_lists(|child| self.node_list_ref(child)))
+                .map(|node| {
+                    node.map_lists(|child| {
+                        owners_by_id
+                            .get(&child)
+                            .cloned()
+                            .expect("memo child must precede its parent")
+                    })
+                })
                 .collect::<Vec<_>>();
-            let id = self.freeze_node_list(&nodes);
-            node_ids.insert(list.key, id);
+            let owner = self.freeze_node_list(&nodes);
+            node_ids.insert(list.key, owner.id());
+            owners_by_id.insert(owner.id(), owner.clone());
+            node_owners.insert(list.key, owner);
         }
-        node_ids
+        node_owners
             .get(&bundle.root)
-            .copied()
+            .cloned()
             .ok_or(StoreFormatError::Invalid("memo root is missing"))
     }
 
@@ -1884,15 +1723,17 @@ impl StoreFormat {
         if !extra_nodes.is_empty() {
             let mut seen = std::collections::BTreeSet::new();
             let mut visiting = std::collections::BTreeSet::new();
-            let mut survivor_roots = std::collections::BTreeMap::new();
+            let mut payload_roots = std::collections::BTreeMap::new();
             for node in extra_nodes {
-                for child in crate::node_arena::NodeRef::from(node).physical_children() {
-                    capture_node_list(
+                let mut children = Vec::new();
+                node.visit_node_lists(|child| children.push(child.clone()));
+                for child in children {
+                    capture_owned_node_list(
                         stores,
                         child,
                         &mut seen,
                         &mut visiting,
-                        &mut survivor_roots,
+                        &mut payload_roots,
                         &mut mutable.node_lists,
                         None,
                     )?;
@@ -1900,7 +1741,7 @@ impl StoreFormat {
             }
             mutable.node_lists.push(FormatNodeList {
                 key: FormatListKey {
-                    survivor_root: None,
+                    payload_root: None,
                     start: u32::MAX,
                     len: u32::try_from(extra_nodes.len())
                         .map_err(|_| StoreFormatError::Invalid("extra node-list length"))?,
@@ -1912,7 +1753,7 @@ impl StoreFormat {
                         FormatNode::capture(
                             stores,
                             crate::node_arena::NodeRef::from(node),
-                            &mut survivor_roots,
+                            &mut payload_roots,
                         )
                     })
                     .collect(),
@@ -2328,7 +2169,7 @@ impl MutableStoreIdentity {
             .collect();
         let mut seen = std::collections::BTreeSet::new();
         let mut visiting = std::collections::BTreeSet::new();
-        let mut survivor_roots = std::collections::BTreeMap::new();
+        let mut payload_roots = std::collections::BTreeMap::new();
         let mut node_lists = Vec::new();
         for (_, root) in roots {
             capture_owned_node_list(
@@ -2336,8 +2177,9 @@ impl MutableStoreIdentity {
                 root,
                 &mut seen,
                 &mut visiting,
-                &mut survivor_roots,
+                &mut payload_roots,
                 &mut node_lists,
+                None,
             )?;
         }
         let mut env: Vec<FormatEnvEntry> = env_words
@@ -2346,7 +2188,7 @@ impl MutableStoreIdentity {
                 let value = if cell.bank() == crate::cell::BankTag::Box {
                     let id = NodeListId::decode_box_word(word)
                         .expect("non-default box format entry should contain a list");
-                    FormatEnvValue::Box(FormatListKey::capture(stores, id, &mut survivor_roots))
+                    FormatEnvValue::Box(FormatListKey::capture(stores, id, &mut payload_roots))
                 } else {
                     FormatEnvValue::Raw(word)
                 };
@@ -2441,7 +2283,7 @@ fn install_frozen_sections(
         .map(|list| {
             let len = u32::try_from(list.nodes.len())
                 .map_err(|_| StoreFormatError::Invalid("frozen node list exceeds u32"))?;
-            let id = NodeListId::new_survivor(root, next_start, len);
+            let id = NodeListId::new_owned(root, next_start, len);
             next_start = next_start
                 .checked_add(len)
                 .ok_or(StoreFormatError::Invalid("frozen node arena exceeds u32"))?;
@@ -2748,7 +2590,7 @@ fn canonicalize_node_list_keys(node_lists: &mut [FormatNodeList], env: &mut [For
             (
                 list.key,
                 FormatListKey {
-                    survivor_root: None,
+                    payload_root: None,
                     start: u32::try_from(index).expect("format node-list count exceeds u32"),
                     len: u32::try_from(list.nodes.len()).expect("format node list exceeds u32"),
                 },
@@ -2770,29 +2612,20 @@ fn canonicalize_node_list_keys(node_lists: &mut [FormatNodeList], env: &mut [For
 
 impl FormatListKey {
     fn capture(
-        stores: &Stores,
+        _stores: &Stores,
         id: NodeListId,
-        survivor_roots: &mut std::collections::BTreeMap<crate::ids::SurvivorRootId, u32>,
+        payload_roots: &mut std::collections::BTreeMap<crate::ids::NodePayloadId, u32>,
     ) -> Self {
-        let (start, len) = match id.arena() {
-            crate::ids::ArenaRef::Epoch => {
-                let span = stores
-                    .nodes
-                    .span(id)
-                    .expect("captured epoch node-list id must be live");
-                (span.start, span.len)
-            }
-            crate::ids::ArenaRef::Survivor(_) => (id.start(), id.len()),
-        };
+        let (start, len) = (id.start(), id.len());
         Self {
-            survivor_root: match id.arena() {
+            payload_root: match id.arena() {
                 crate::ids::ArenaRef::Epoch => None,
-                crate::ids::ArenaRef::Survivor(root) => Some(match survivor_roots.get(&root) {
+                crate::ids::ArenaRef::Owned(root) => Some(match payload_roots.get(&root) {
                     Some(&detached) => detached,
                     None => {
-                        let detached = u32::try_from(survivor_roots.len())
-                            .expect("format survivor roots exceed u32");
-                        survivor_roots.insert(root, detached);
+                        let detached = u32::try_from(payload_roots.len())
+                            .expect("format payload roots exceed u32");
+                        payload_roots.insert(root, detached);
                         detached
                     }
                 }),
@@ -2803,78 +2636,14 @@ impl FormatListKey {
     }
 }
 
-fn capture_node_list(
-    stores: &Stores,
-    id: NodeListId,
-    seen: &mut std::collections::BTreeSet<NodeListId>,
-    visiting: &mut std::collections::BTreeSet<NodeListId>,
-    survivor_roots: &mut std::collections::BTreeMap<crate::ids::SurvivorRootId, u32>,
-    out: &mut Vec<FormatNodeList>,
-    mut origins: Option<&mut Vec<crate::provenance::OriginRef>>,
-) -> Result<(), StoreFormatError> {
-    enum Visit {
-        Enter(NodeListId),
-        Exit(NodeListId),
-    }
-
-    let mut stack = vec![Visit::Enter(id)];
-    while let Some(visit) = stack.pop() {
-        match visit {
-            Visit::Enter(id) => {
-                if seen.contains(&id) {
-                    continue;
-                }
-                if !visiting.insert(id) {
-                    return Err(StoreFormatError::Invalid("cyclic node-list graph"));
-                }
-                stack.push(Visit::Exit(id));
-                let nodes = stores.nodes(id);
-                for node in nodes.iter().rev() {
-                    // TeX82 §§135 and 1307 dump the complete reachable
-                    // memory graph behind every box list pointer. The frozen
-                    // DTO likewise retains detached physical projections of
-                    // §§115/162 replacement nodes for §182 diagnostics even
-                    // though semantic traversal excludes them. Discovery must
-                    // follow every edge capture serializes; §638 can observe
-                    // this graph while accounting a shipped box.
-                    for child in node.physical_children().rev() {
-                        stack.push(Visit::Enter(child));
-                    }
-                }
-            }
-            Visit::Exit(id) => {
-                visiting.remove(&id);
-                if !seen.insert(id) {
-                    continue;
-                }
-                let nodes = stores
-                    .nodes(id)
-                    .iter()
-                    .map(|node| match origins.as_deref_mut() {
-                        Some(origins) => {
-                            FormatNode::capture_with_origins(stores, node, survivor_roots, origins)
-                        }
-                        None => FormatNode::capture(stores, node, survivor_roots),
-                    })
-                    .collect();
-                out.push(FormatNodeList {
-                    key: FormatListKey::capture(stores, id, survivor_roots),
-                    semantic_id: stores.node_semantic_id(id).value(),
-                    nodes,
-                });
-            }
-        }
-    }
-    Ok(())
-}
-
 fn capture_owned_node_list(
     stores: &Stores,
     root: crate::node_arena::NodeListRef,
     seen: &mut std::collections::BTreeSet<NodeListId>,
     visiting: &mut std::collections::BTreeSet<NodeListId>,
-    survivor_roots: &mut std::collections::BTreeMap<crate::ids::SurvivorRootId, u32>,
+    payload_roots: &mut std::collections::BTreeMap<crate::ids::NodePayloadId, u32>,
     out: &mut Vec<FormatNodeList>,
+    mut origins: Option<&mut Vec<crate::provenance::OriginRef>>,
 ) -> Result<(), StoreFormatError> {
     enum Visit {
         Enter(crate::node_arena::NodeListRef),
@@ -2911,10 +2680,15 @@ fn capture_owned_node_list(
                 let nodes = owner
                     .nodes()
                     .iter()
-                    .map(|node| FormatNode::capture(stores, node, survivor_roots))
+                    .map(|node| match origins.as_deref_mut() {
+                        Some(origins) => {
+                            FormatNode::capture_with_origins(stores, node, payload_roots, origins)
+                        }
+                        None => FormatNode::capture(stores, node, payload_roots),
+                    })
                     .collect();
                 out.push(FormatNodeList {
-                    key: FormatListKey::capture(stores, id, survivor_roots),
+                    key: FormatListKey::capture(stores, id, payload_roots),
                     semantic_id: owner.semantic_id().value(),
                     nodes,
                 });

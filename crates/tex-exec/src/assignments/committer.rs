@@ -8,7 +8,7 @@ use tex_command::{MutationRecord, MutationTarget, ObservationValue};
 use tex_state::Universe;
 use tex_state::env::banks::{DimenParam, GlueParam, IntParam, TokParam};
 use tex_state::glue::GlueSpec;
-use tex_state::ids::{GlueId, NodeListId, TokenListId};
+use tex_state::ids::{GlueId, TokenListId};
 use tex_state::interner::Symbol;
 use tex_state::meaning::Meaning;
 use tex_state::scaled::Scaled;
@@ -383,7 +383,7 @@ impl<'a> AssignmentCommitter<'a> {
     pub(crate) fn box_register<F>(
         &mut self,
         index: u16,
-        boxed: Option<NodeListId>,
+        boxed: Option<&tex_state::node_arena::NodeListRef>,
         global: bool,
         write: F,
     ) -> MutationReceipt

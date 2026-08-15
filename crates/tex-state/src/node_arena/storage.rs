@@ -1,7 +1,6 @@
 use super::tables::{BoxTable, InsertionTable, NoadTable, UnsetTable};
 use super::view::NodeList;
 use super::{checked_len, preflight_capacity};
-use crate::identity::IdentityMark;
 use crate::ids::NodeListId;
 use crate::math::MathStyle;
 use crate::node::{DiscKind, GlueKind, KernKind, MarginKernSide, Node};
@@ -37,32 +36,6 @@ impl NodeWord {
     pub(super) const fn sidecar(tag: u8, index: u32) -> Self {
         Self::new(tag, index as u64)
     }
-}
-
-/// One opaque aggregate rollback watermark.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct NodeArenaMark {
-    pub(super) storage: StorageMark,
-    pub(super) identities: IdentityMark,
-}
-
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(super) struct StorageMark {
-    pub(super) words: u32,
-    pub(super) ligatures: u32,
-    pub(super) boxes: u32,
-    pub(super) unsets: u32,
-    pub(super) rules: u32,
-    pub(super) leaders: u32,
-    pub(super) discs: u32,
-    pub(super) marks: u32,
-    pub(super) insertions: u32,
-    pub(super) whatsits: u32,
-    pub(super) noads: u32,
-    pub(super) fractions: u32,
-    pub(super) choices: u32,
-    pub(super) math_lists: u32,
-    pub(super) adjusts: u32,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -173,7 +146,7 @@ pub(super) struct LigatureSidecar {
     pub(super) right_hit: bool,
 }
 
-/// Canonical compact storage shared by epoch and survivor arenas.
+/// Canonical compact storage inside one structurally owned payload.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct NodeStorage {
     pub(super) words: Vec<NodeWord>,
@@ -215,144 +188,6 @@ impl NodeStorage {
     pub(crate) fn len(&self) -> usize {
         self.words.len()
     }
-    pub(crate) fn node_capacity(&self) -> usize {
-        self.words.capacity()
-    }
-    pub(crate) fn is_empty(&self) -> bool {
-        self.words.is_empty()
-    }
-    pub(crate) fn clear(&mut self) {
-        self.truncate(StorageMark::default());
-    }
-
-    pub(super) fn mark(&self) -> StorageMark {
-        StorageMark {
-            words: checked_len(self.words.len(), "node arena exceeds u32 entries"),
-            ligatures: checked_len(self.ligatures.len(), "ligature sidecar exceeds u32 entries"),
-            boxes: checked_len(self.boxes.len(), "box sidecar exceeds u32 entries"),
-            unsets: checked_len(self.unsets.len(), "unset sidecar exceeds u32 entries"),
-            rules: checked_len(self.rules.len(), "rule sidecar exceeds u32 entries"),
-            leaders: checked_len(self.leaders.len(), "leader sidecar exceeds u32 entries"),
-            discs: checked_len(self.discs.len(), "disc sidecar exceeds u32 entries"),
-            marks: checked_len(self.marks.len(), "mark sidecar exceeds u32 entries"),
-            insertions: checked_len(
-                self.insertions.len(),
-                "insertion sidecar exceeds u32 entries",
-            ),
-            whatsits: checked_len(self.whatsits.len(), "whatsit sidecar exceeds u32 entries"),
-            noads: checked_len(self.noads.len(), "noad sidecar exceeds u32 entries"),
-            fractions: checked_len(self.fractions.len(), "fraction sidecar exceeds u32 entries"),
-            choices: checked_len(self.choices.len(), "choice sidecar exceeds u32 entries"),
-            math_lists: checked_len(
-                self.math_lists.len(),
-                "math-list sidecar exceeds u32 entries",
-            ),
-            adjusts: checked_len(self.adjusts.len(), "adjust sidecar exceeds u32 entries"),
-        }
-    }
-
-    pub(super) fn truncate(&mut self, mark: StorageMark) {
-        // Validate the entire tuple before mutating any stream.
-        assert!(mark.words as usize <= self.words.len());
-        assert!(mark.words as usize <= self.origins.len());
-        assert!(mark.words as usize <= self.origin_roots.len());
-        assert!(mark.words as usize <= self.glue_roots.len());
-        assert!(mark.ligatures as usize <= self.ligatures.len());
-        assert!(mark.boxes as usize <= self.boxes.len());
-        assert!(mark.unsets as usize <= self.unsets.len());
-        assert!(mark.rules as usize <= self.rules.len());
-        assert!(mark.leaders as usize <= self.leaders.len());
-        assert!(mark.discs as usize <= self.discs.len());
-        assert!(mark.marks as usize <= self.marks.len());
-        assert!(mark.insertions as usize <= self.insertions.len());
-        assert!(mark.whatsits as usize <= self.whatsits.len());
-        assert!(mark.noads as usize <= self.noads.len());
-        assert!(mark.fractions as usize <= self.fractions.len());
-        assert!(mark.choices as usize <= self.choices.len());
-        assert!(mark.math_lists as usize <= self.math_lists.len());
-        assert!(mark.adjusts as usize <= self.adjusts.len());
-        #[cfg(feature = "profiling")]
-        self.remove_nested_payloads_from(mark.ligatures as usize, mark.whatsits as usize);
-        self.words.truncate(mark.words as usize);
-        self.origins.truncate(mark.words as usize);
-        self.origin_roots.truncate(mark.words as usize);
-        self.glue_roots.truncate(mark.words as usize);
-        self.ligatures.truncate(mark.ligatures as usize);
-        self.boxes.truncate(mark.boxes as usize);
-        self.unsets.truncate(mark.unsets as usize);
-        self.rules.truncate(mark.rules as usize);
-        self.leaders.truncate(mark.leaders as usize);
-        self.discs.truncate(mark.discs as usize);
-        self.marks.truncate(mark.marks as usize);
-        self.insertions.truncate(mark.insertions as usize);
-        self.whatsits.truncate(mark.whatsits as usize);
-        self.noads.truncate(mark.noads as usize);
-        self.fractions.truncate(mark.fractions as usize);
-        self.choices.truncate(mark.choices as usize);
-        self.math_lists.truncate(mark.math_lists as usize);
-        self.adjusts.truncate(mark.adjusts as usize);
-    }
-
-    pub(crate) fn append_preflighted(&mut self, nodes: &[Node], needs: SidecarNeeds) -> (u32, u32) {
-        #[cfg(feature = "profiling")]
-        let capacity_before = self.capacity_signature();
-        #[cfg(feature = "profiling")]
-        let retained_before = self.retained_payload_bytes();
-        let start = checked_len(self.words.len(), "node arena exceeds u32 entries");
-        let len = checked_len(nodes.len(), "node list exceeds u32 entries");
-        start
-            .checked_add(len)
-            .expect("node arena span overflows u32");
-        if needs.any {
-            self.preflight_sidecars(needs);
-        }
-        self.words.reserve(nodes.len());
-        self.origins.reserve(nodes.len());
-        self.origin_roots.reserve(nodes.len());
-        self.glue_roots.reserve(nodes.len());
-        if needs.any {
-            self.reserve_sidecars(needs);
-        }
-        for node in nodes {
-            let word = self.encode(node, |list: &crate::node_arena::NodeListRef| list.id());
-            self.words.push(word);
-            self.glue_roots.push(match node {
-                Node::Glue {
-                    spec, leader: None, ..
-                } => Some(spec.clone()),
-                _ => None,
-            });
-            self.origins.push(match node {
-                Node::Char { origin, .. } => origin.id(),
-                Node::Lig { origins, .. } => {
-                    origins.first().map_or(OriginId::UNKNOWN, OriginRef::id)
-                }
-                _ => OriginId::UNKNOWN,
-            });
-            self.origin_roots.push(match node {
-                Node::Char { origin, .. } => Some(origin.clone()),
-                _ => None,
-            });
-        }
-        #[cfg(feature = "profiling")]
-        {
-            let capacity_after = self.capacity_signature();
-            let growth_by_column = core::array::from_fn(|index| {
-                u8::from(capacity_before[index] != capacity_after[index])
-            });
-            let retained_after = self.retained_payload_bytes();
-            crate::measurement::record_node_append(
-                nodes.len(),
-                needs.as_array(),
-                growth_by_column,
-                retained_after.saturating_sub(retained_before),
-                false,
-            );
-            self.record_peak();
-        }
-        (start, len)
-    }
-
     pub(crate) fn append_owned_preflighted(
         &mut self,
         nodes: &mut Vec<Node>,

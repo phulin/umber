@@ -49,11 +49,8 @@ fn epoch_node_list_boundaries_round_trip() {
 #[test]
 fn survivor_node_list_boundaries_round_trip() {
     for (root, start, len) in [(0, 0, 0), ((1 << 20) - 2, (1 << 21) - 1, (1 << 22) - 1)] {
-        let id = NodeListId::testing_survivor(root, start, len);
-        assert_eq!(
-            id.arena(),
-            ArenaRef::Survivor(super::SurvivorRootId::new(root))
-        );
+        let id = NodeListId::testing_owned(root, start, len);
+        assert_eq!(id.arena(), ArenaRef::Owned(super::NodePayloadId::new(root)));
         assert_eq!(id.start(), start);
         assert_eq!(id.len(), len);
         assert_eq!(
@@ -65,7 +62,7 @@ fn survivor_node_list_boundaries_round_trip() {
 
 #[test]
 fn box_word_uses_canonical_none_without_translating_survivor_ids() {
-    let zero = NodeListId::testing_survivor(0, 0, 0);
+    let zero = NodeListId::testing_owned(0, 0, 0);
     assert_eq!(
         NodeListId::decode_box_word(NodeListId::encode_box_word(Some(zero))),
         Some(zero)
@@ -88,20 +85,20 @@ fn epoch_span_overflow_is_rejected() {
 
 #[test]
 #[should_panic(expected = "survivor root id exceeds encoding")]
-fn reserved_survivor_root_is_rejected() {
-    let _ = NodeListId::testing_survivor((1 << 20) - 1, 0, 0);
+fn reserved_payload_root_is_rejected() {
+    let _ = NodeListId::testing_owned((1 << 20) - 1, 0, 0);
 }
 
 #[test]
 #[should_panic(expected = "survivor span start exceeds encoding")]
 fn survivor_start_above_capacity_is_rejected() {
-    let _ = NodeListId::testing_survivor(0, 1 << 21, 0);
+    let _ = NodeListId::testing_owned(0, 1 << 21, 0);
 }
 
 #[test]
 #[should_panic(expected = "survivor span length exceeds encoding")]
 fn survivor_length_above_capacity_is_rejected() {
-    let _ = NodeListId::testing_survivor(0, 0, 1 << 22);
+    let _ = NodeListId::testing_owned(0, 0, 1 << 22);
 }
 
 #[test]

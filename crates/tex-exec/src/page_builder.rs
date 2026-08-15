@@ -686,7 +686,6 @@ fn normalize_insert_content_shrink(
         return Ok(None);
     };
     let content = stores.freeze_node_list(content_nodes);
-    let content = stores.node_list_ref(content);
     Ok(Some(Node::Ins {
         class: *class,
         size: *size,

@@ -35,7 +35,7 @@ pub(crate) fn encode(entries: &[FormatEnvEntry]) -> Result<Vec<u8>, StoreFormatE
         let (tag, payload) = match entry.value {
             FormatEnvValue::Raw(word) => (RAW_TAG, word),
             FormatEnvValue::Box(key) => {
-                if key.survivor_root.is_some() {
+                if key.payload_root.is_some() {
                     return Err(StoreFormatError::Invalid("noncanonical frozen box key"));
                 }
                 (BOX_TAG, u64::from(key.start) | (u64::from(key.len) << 32))
@@ -94,7 +94,7 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<Vec<FormatEnvEntry>, StoreFormatErr
         let value = match bytes[offset + 8] {
             RAW_TAG => FormatEnvValue::Raw(payload),
             BOX_TAG => FormatEnvValue::Box(FormatListKey {
-                survivor_root: None,
+                payload_root: None,
                 start: payload as u32,
                 len: (payload >> 32) as u32,
             }),

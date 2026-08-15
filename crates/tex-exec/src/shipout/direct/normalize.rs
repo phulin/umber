@@ -326,7 +326,6 @@ fn normalize_index(
         NormalizeNode::Math(math) => {
             let mut nodes = crate::math::finish_math_list_node(stores, math, false);
             let replacement = stores.freeze_node_list_owned(&mut nodes);
-            let replacement = stores.node_list_ref(replacement);
             overlay.math.push(MathSubstitution {
                 list: list.clone(),
                 index,

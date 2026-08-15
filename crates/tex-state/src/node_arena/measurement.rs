@@ -136,9 +136,7 @@ pub(super) fn record_peak_observation(
         .observe(totals, columns);
 }
 
-/// Largest individual canonical storage observed during this process.
-/// Survivor scratch is reported separately; aggregate end-state storage is
-/// available through `Universe::node_memory_columns`.
+/// Largest individual canonical payload storage observed during this process.
 #[cfg(feature = "profiling")]
 #[must_use]
 pub fn peak_node_storage_measurement() -> Option<NodeStorageObservation> {
@@ -288,46 +286,6 @@ impl NodeStorage {
         }
     }
 
-    #[cfg(feature = "profiling")]
-    pub(super) fn remove_nested_payloads_from(
-        &mut self,
-        ligature_start: usize,
-        whatsit_start: usize,
-    ) {
-        let mut logical = 0_u64;
-        let mut retained = 0_u64;
-        for ligature in &self.ligatures[ligature_start..] {
-            let source = &ligature.orig;
-            let origins = &ligature.origins;
-            logical += (source.len() * core::mem::size_of::<char>()) as u64;
-            retained += (source.capacity() * core::mem::size_of::<char>()) as u64;
-            logical += (origins.len() * core::mem::size_of::<crate::token::OriginId>()) as u64;
-            retained +=
-                (origins.capacity() * core::mem::size_of::<crate::token::OriginId>()) as u64;
-            logical += (ligature.origin_roots.len()
-                * core::mem::size_of::<crate::provenance::OriginRef>())
-                as u64;
-            retained += (ligature.origin_roots.capacity()
-                * core::mem::size_of::<crate::provenance::OriginRef>())
-                as u64;
-        }
-        for whatsit in &self.whatsits[whatsit_start..] {
-            let owned = whatsit_owned_payloads(whatsit);
-            for allocation in [owned.strings, owned.bytes, owned.boxes] {
-                logical += allocation.logical as u64;
-                retained += allocation.retained as u64;
-            }
-        }
-        self.nested_payload_logical = self
-            .nested_payload_logical
-            .checked_sub(logical)
-            .expect("nested logical payload accounting underflow");
-        self.nested_payload_retained = self
-            .nested_payload_retained
-            .checked_sub(retained)
-            .expect("nested retained payload accounting underflow");
-    }
-
     #[cfg(all(test, feature = "profiling"))]
     pub(super) fn rebuild_nested_payload_measurement(&mut self) {
         self.nested_payload_logical = 0;
@@ -396,6 +354,7 @@ impl NodeStorage {
         ]
     }
 
+    #[cfg(feature = "profiling")]
     pub(crate) fn retained_payload_bytes(&self) -> usize {
         usize::try_from(self.payload_bytes().1).expect("node storage retained bytes exceed usize")
     }

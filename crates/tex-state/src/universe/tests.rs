@@ -3034,7 +3034,7 @@ fn pdf_format_resources_round_trip_and_remain_usable() {
 }
 
 #[test]
-fn semantic_format_uses_dto_local_survivor_root_keys() {
+fn semantic_format_uses_dto_local_payload_root_keys() {
     fn boxed_universe() -> Universe {
         let mut universe = Universe::new();
         let list = universe.freeze_node_list(&[Node::Penalty(123)]);
@@ -3532,7 +3532,7 @@ fn node_memory_measurement_is_nonsemantic_and_covers_recycled_storage() {
     }));
     assert!(columns.iter().any(|column| {
         column.name == "survivor.root_lookup_entries"
-            && column.element_bytes == core::mem::size_of::<(crate::ids::SurvivorRootId, usize)>()
+            && column.element_bytes == core::mem::size_of::<(crate::ids::NodePayloadId, usize)>()
             && column.logical_bytes > 0
     }));
     assert_eq!(semantic_hash, universe.snapshot().state_hash());
@@ -6738,7 +6738,7 @@ fn grouped_box_take_owns_nested_children_before_coalesced_release() {
         .take_box_reg_ref_same_level(0)
         .expect("local box should move out of the register");
 
-    let ArenaRef::Survivor(root) = taken.id().arena() else {
+    let ArenaRef::Owned(root) = taken.id().arena() else {
         panic!("taken value should remain survivor-backed")
     };
     let Some(crate::node_arena::NodeRef::Glue {
@@ -6748,7 +6748,7 @@ fn grouped_box_take_owns_nested_children_before_coalesced_release() {
     else {
         panic!("taken value should preserve its leader box");
     };
-    assert_eq!(leader.children.arena(), ArenaRef::Survivor(root));
+    assert_eq!(leader.children.arena(), ArenaRef::Owned(root));
     assert_eq!(
         universe.nodes(leader.children),
         &[Node::Char {
@@ -6763,7 +6763,7 @@ fn grouped_box_take_owns_nested_children_before_coalesced_release() {
         "§1079's direct voiding preserves the original void restoration"
     );
     assert_eq!(universe.testing_epoch_clone_counts(), before);
-    assert_eq!(universe.testing_survivor_pin_count(), 1);
+    assert_eq!(universe.testing_owned_pin_count(), 1);
 }
 
 #[test]
@@ -6848,13 +6848,13 @@ fn destructive_unbox_transfers_only_children_before_same_level_clear() {
     };
 
     assert!(universe.box_reg(0).is_none());
-    let ArenaRef::Survivor(root) = children.id().arena() else {
+    let ArenaRef::Owned(root) = children.id().arena() else {
         panic!("unboxed children should remain survivor-backed")
     };
     let Some(crate::node_arena::NodeRef::HList(nested)) = children.nodes().first() else {
         panic!("nested hbox should survive the transfer")
     };
-    assert_eq!(nested.children.arena(), ArenaRef::Survivor(root));
+    assert_eq!(nested.children.arena(), ArenaRef::Owned(root));
     assert!(matches!(
         children
             .resolve(nested.children)
@@ -6908,7 +6908,7 @@ fn assert_promoted_wrapper_is_resolvable(
     let Some(crate::node_arena::NodeRef::VList(box_node)) = wrapper.nodes().first() else {
         panic!("promoted wrapper should contain a vlist");
     };
-    let (ArenaRef::Survivor(wrapper_root), ArenaRef::Survivor(child_root)) =
+    let (ArenaRef::Owned(wrapper_root), ArenaRef::Owned(child_root)) =
         (wrapper.id().arena(), box_node.children.arena())
     else {
         panic!("promoted wrapper and child should be survivor-owned");

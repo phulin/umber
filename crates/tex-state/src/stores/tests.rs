@@ -2370,7 +2370,7 @@ fn released_direct_box_key_cannot_upgrade_after_final_drop() {
     assert!(!stores.survivors.contains(stale));
     assert!(!stores.survivors.contains(replacement.id()));
     assert_eq!(replacement.to_vec(), [one_char_node('n')]);
-    assert_eq!(stores.testing_survivor_recycled_buffer_uses(), 0);
+    assert_eq!(stores.testing_owned_recycled_buffer_uses(), 0);
     assert!(std::panic::catch_unwind(|| stores.nodes(stale)).is_err());
 }
 
@@ -2395,7 +2395,7 @@ fn repeated_direct_box_preparation_bounds_weak_metadata() {
     assert!(!stores.survivors.contains(stale));
     assert_ne!(stale.arena(), live.id().arena());
     assert_eq!(stores.testing_live_survivor_slot_count(), 0);
-    assert_eq!(stores.testing_survivor_root_slot_count(), 0);
+    assert_eq!(stores.testing_owned_root_slot_count(), 0);
     let (weak_len, weak_capacity) = stores.node_ref_index.shape();
     assert!(weak_len <= 64);
     assert!(weak_capacity <= 64);
@@ -2448,7 +2448,7 @@ fn direct_box_replacement_carries_word_and_box_rule_sidecars_together() {
         }]
     );
     assert!(stale.expect("a stale root exists").upgrade().is_none());
-    assert_eq!(stores.testing_survivor_recycled_buffer_uses(), 0);
+    assert_eq!(stores.testing_owned_recycled_buffer_uses(), 0);
 }
 
 #[test]
@@ -2471,7 +2471,7 @@ fn coalesced_box_replacements_roll_back_to_the_checkpoint_owner() {
     let stale = stale.expect("at least one replacement should be stored");
     assert!(!stores.survivors.contains(stale));
     assert_eq!(stores.testing_live_survivor_slot_count(), 0);
-    assert_eq!(stores.testing_survivor_recycled_buffer_uses(), 0);
+    assert_eq!(stores.testing_owned_recycled_buffer_uses(), 0);
 
     stores.rollback(&snapshot);
     assert_eq!(stores.box_reg(0), Some(baseline));
@@ -2653,7 +2653,7 @@ fn local_box_after_global_drops_local_survivor_on_group_exit() {
 }
 
 #[test]
-fn promoted_nested_box_remaps_children_to_same_survivor_root() {
+fn promoted_nested_box_remaps_children_to_same_payload_root() {
     let mut stores = Stores::new();
     let inner = one_char(&mut stores, 'x');
     let inner = stores.node_list_ref(inner);
@@ -3036,7 +3036,7 @@ fn one_char_node(ch: char) -> Node {
 }
 
 fn assert_same_root(a: NodeListId, b: NodeListId) {
-    let (ArenaRef::Survivor(a), ArenaRef::Survivor(b)) = (a.arena(), b.arena()) else {
+    let (ArenaRef::Owned(a), ArenaRef::Owned(b)) = (a.arena(), b.arena()) else {
         panic!("expected survivor ids");
     };
     assert_eq!(a, b);

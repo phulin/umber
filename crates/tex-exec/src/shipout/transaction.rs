@@ -449,7 +449,7 @@ fn report_invalid_pdf_version(
 fn shipout_key(stores: &mut Universe, node: &Node) -> PureMemoKey {
     let root = stores.freeze_node_list(std::slice::from_ref(node));
     let environment = stores.engine_boundary_hash(SHIPOUT_ENV_HASH_DOMAIN, |hash| {
-        hash.node_list(root);
+        hash.node_list_ref(&root);
         hash.i32(stores.int_param(IntParam::MAG));
         hash.i32(stores.dimen_param(DimenParam::H_OFFSET).raw());
         hash.i32(stores.dimen_param(DimenParam::V_OFFSET).raw());

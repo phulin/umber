@@ -104,7 +104,7 @@ pub(crate) fn prepare_box255(
         },
     );
     let box255 = stores.freeze_node_list(&[Node::VList(packed.node)]);
-    stores.set_box_reg_global(255, box255);
+    stores.set_box_reg_ref_global(255, box255);
     stores.start_page_after_output();
     for node in distributed.heldover {
         stores.push_current_page_node(node);
@@ -345,8 +345,7 @@ fn split_insertion_remainder(
         return Ok(None);
     }
     let content = stores.freeze_node_list(&pruned);
-    let size = natural_vlist_size(stores, content)?;
-    let content = stores.node_list_ref(content);
+    let size = natural_vlist_size(stores, content.clone())?;
     Ok(Some(Node::Ins {
         class: context.class,
         size,
@@ -361,7 +360,7 @@ fn package_insertion_box(stores: &mut Universe, class: u16, nodes: Vec<Node>) {
     let list = stores.freeze_node_list(&nodes);
     let packed = vpack_natural(stores, list);
     let boxed = stores.freeze_node_list(&[Node::VList(packed)]);
-    stores.set_box_reg_global(class, boxed);
+    stores.set_box_reg_ref_global(class, boxed);
 }
 
 pub(crate) fn prepend_output_heldover(

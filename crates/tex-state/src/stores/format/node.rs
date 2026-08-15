@@ -1,6 +1,6 @@
 use super::{FormatListKey, StoreFormatError};
 use crate::glue::Order;
-use crate::ids::{FontId, NodeListId, SurvivorRootId};
+use crate::ids::{FontId, NodeListId, NodePayloadId};
 use crate::math::{
     FractionThickness, MathChoice, MathField, MathFraction, MathListNode, MathNoad, MathStyle,
     NoadKind,
@@ -17,7 +17,7 @@ use crate::world::{PrintSink, StreamSlot};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-type SurvivorRoots = BTreeMap<SurvivorRootId, u32>;
+type PayloadRoots = BTreeMap<NodePayloadId, u32>;
 type NodeIds = BTreeMap<FormatListKey, NodeListId>;
 
 pub(super) struct FormatContentIds<'a> {
@@ -478,7 +478,7 @@ impl FormatNode {
     pub(super) fn capture_with_origins(
         stores: &Stores,
         node: NodeRef<'_>,
-        roots: &mut SurvivorRoots,
+        roots: &mut PayloadRoots,
         origins: &mut Vec<crate::provenance::OriginRef>,
     ) -> Self {
         match &node {
@@ -492,7 +492,7 @@ impl FormatNode {
         Self::capture(stores, node, roots)
     }
 
-    pub(super) fn capture(stores: &Stores, node: NodeRef<'_>, roots: &mut SurvivorRoots) -> Self {
+    pub(super) fn capture(stores: &Stores, node: NodeRef<'_>, roots: &mut PayloadRoots) -> Self {
         match node {
             NodeRef::Char { font, ch, .. } => Self::Char {
                 font: font.raw(),
@@ -788,7 +788,7 @@ impl FormatMathField {
 }
 
 impl FormatBoxNode {
-    fn capture(stores: &Stores, node: BoxNode<NodeListId>, roots: &mut SurvivorRoots) -> Self {
+    fn capture(stores: &Stores, node: BoxNode<NodeListId>, roots: &mut PayloadRoots) -> Self {
         Self {
             width: node.width,
             height: node.height,
@@ -828,7 +828,7 @@ impl FormatLeaderPayload {
     fn capture(
         stores: &Stores,
         leader: LeaderPayload<NodeListId>,
-        roots: &mut SurvivorRoots,
+        roots: &mut PayloadRoots,
     ) -> Self {
         match leader {
             LeaderPayload::HList(node) => Self::HList(FormatBoxNode::capture(stores, node, roots)),
@@ -863,7 +863,7 @@ impl FormatLeaderPayload {
 }
 
 impl FormatUnsetNode {
-    fn capture(stores: &Stores, node: UnsetNode<NodeListId>, roots: &mut SurvivorRoots) -> Self {
+    fn capture(stores: &Stores, node: UnsetNode<NodeListId>, roots: &mut PayloadRoots) -> Self {
         Self {
             kind: node.kind,
             width: node.width,
@@ -1202,7 +1202,7 @@ fn pdf_literal_mode(mode: u8) -> Result<PdfLiteralMode, StoreFormatError> {
 }
 
 impl FormatMathField {
-    fn capture(stores: &Stores, field: MathField<NodeListId>, roots: &mut SurvivorRoots) -> Self {
+    fn capture(stores: &Stores, field: MathField<NodeListId>, roots: &mut PayloadRoots) -> Self {
         match field {
             MathField::Empty => Self::Empty,
             MathField::MathChar(value) => Self::MathChar(value),
@@ -1224,7 +1224,7 @@ impl FormatMathField {
 }
 
 impl FormatMathNoad {
-    fn capture(stores: &Stores, noad: MathNoad<NodeListId>, roots: &mut SurvivorRoots) -> Self {
+    fn capture(stores: &Stores, noad: MathNoad<NodeListId>, roots: &mut PayloadRoots) -> Self {
         Self {
             kind: noad.kind,
             nucleus: FormatMathField::capture(stores, noad.nucleus, roots),
@@ -1244,11 +1244,7 @@ impl FormatMathNoad {
 }
 
 impl FormatMathFraction {
-    fn capture(
-        stores: &Stores,
-        value: MathFraction<NodeListId>,
-        roots: &mut SurvivorRoots,
-    ) -> Self {
+    fn capture(stores: &Stores, value: MathFraction<NodeListId>, roots: &mut PayloadRoots) -> Self {
         Self {
             numerator: key(stores, value.numerator, roots),
             denominator: key(stores, value.denominator, roots),
@@ -1270,7 +1266,7 @@ impl FormatMathFraction {
 }
 
 impl FormatMathChoice {
-    fn capture(stores: &Stores, value: MathChoice<NodeListId>, roots: &mut SurvivorRoots) -> Self {
+    fn capture(stores: &Stores, value: MathChoice<NodeListId>, roots: &mut PayloadRoots) -> Self {
         Self {
             display: key(stores, value.display, roots),
             text: key(stores, value.text, roots),
@@ -1290,11 +1286,7 @@ impl FormatMathChoice {
 }
 
 impl FormatMathListNode {
-    fn capture(
-        stores: &Stores,
-        value: MathListNode<NodeListId>,
-        roots: &mut SurvivorRoots,
-    ) -> Self {
+    fn capture(stores: &Stores, value: MathListNode<NodeListId>, roots: &mut PayloadRoots) -> Self {
         Self {
             display: value.display,
             content: key(stores, value.content, roots),
@@ -1309,7 +1301,7 @@ impl FormatMathListNode {
     }
 }
 
-fn key(stores: &Stores, id: NodeListId, roots: &mut SurvivorRoots) -> FormatListKey {
+fn key(stores: &Stores, id: NodeListId, roots: &mut PayloadRoots) -> FormatListKey {
     FormatListKey::capture(stores, id, roots)
 }
 

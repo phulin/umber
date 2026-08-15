@@ -70,7 +70,7 @@ pub(super) fn encode(
     put_u32(&mut out, 16, payload_len);
     for (index, (list, start, len, node_count)) in records.into_iter().enumerate() {
         let at = HEADER_LEN + index * RECORD_LEN;
-        put_u32(&mut out, at, list.key.survivor_root.unwrap_or(u32::MAX));
+        put_u32(&mut out, at, list.key.payload_root.unwrap_or(u32::MAX));
         put_u32(&mut out, at + 4, list.key.start);
         put_u32(&mut out, at + 8, list.key.len);
         put_u32(&mut out, at + 12, start);
@@ -147,7 +147,7 @@ pub(super) fn decode(
         let semantic = get_u64(bytes, at + 24);
         lists.push(FormatNodeList {
             key: super::FormatListKey {
-                survivor_root: (root != u32::MAX).then_some(root),
+                payload_root: (root != u32::MAX).then_some(root),
                 start: get_u32(bytes, at + 4),
                 len: get_u32(bytes, at + 8),
             },

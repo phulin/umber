@@ -6,7 +6,7 @@ use tex_command::CommandProfile;
 use tex_state::Universe;
 use tex_state::env::banks::IntParam;
 use tex_state::glue::{GlueSpec, Order};
-use tex_state::ids::{NodeListId, TokenListId};
+use tex_state::ids::TokenListId;
 use tex_state::math::{
     FractionThickness, LimitType, MathChar, MathChoice, MathField, MathFraction, MathListNode,
     MathNoad, MathStyle, NoadClass, NoadKind,
@@ -49,8 +49,7 @@ impl DumpConfig {
     }
 }
 
-pub(crate) fn dump_node_list(stores: &mut Universe, id: NodeListId, config: DumpConfig) -> String {
-    let owner = stores.node_list_ref(id);
+pub(crate) fn dump_node_list(stores: &Universe, owner: NodeListRef, config: DumpConfig) -> String {
     dump_node_list_ref(stores, &owner, config)
 }
 

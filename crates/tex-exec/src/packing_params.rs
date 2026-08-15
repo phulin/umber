@@ -1,8 +1,8 @@
 //! Execution-side snapshots of packing parameters.
 
 use tex_state::env::banks::{DimenParam, IntParam};
-use tex_state::ids::NodeListId;
 use tex_state::node::{Direction, KernKind, Node};
+use tex_state::node_arena::NodeListRef;
 use tex_state::scaled::Scaled;
 use tex_state::{GeometryObservation, Universe};
 use tex_typeset::{HpackParams, PackSpec, PackedBox, VpackParams};
@@ -32,7 +32,7 @@ pub(crate) fn vpack_params(stores: &Universe) -> VpackParams {
 
 pub(crate) fn hpack(
     stores: &mut Universe,
-    list: NodeListId,
+    list: NodeListRef,
     spec: PackSpec,
     params: HpackParams,
 ) -> PackedBox {
@@ -48,18 +48,17 @@ pub(crate) fn hpack(
 /// [`report_hpack`]. Ordinary callers use [`hpack`], which reports once.
 pub(crate) fn hpack_unreported(
     stores: &mut Universe,
-    list: NodeListId,
+    list: NodeListRef,
     spec: PackSpec,
     params: HpackParams,
 ) -> (PackedBox, Option<(usize, usize)>) {
-    let mut recovered = stores.node_list_ref(list).to_vec();
+    let mut recovered = list.to_vec();
     let lr_problems = recover_texxet_directions(stores, &mut recovered);
     let list = if lr_problems.is_some() {
         stores.freeze_node_list(&recovered)
     } else {
         list
     };
-    let list = stores.node_list_ref(list);
     let packed = tex_typeset::hpack(&*stores, list, spec, params);
     stores.set_last_badness(packed.badness);
     stores.record_geometry_observation(GeometryObservation::Hpack {
@@ -133,11 +132,10 @@ pub(crate) fn recover_texxet_directions(
 
 pub(crate) fn vpack(
     stores: &mut Universe,
-    list: NodeListId,
+    list: NodeListRef,
     spec: PackSpec,
     params: VpackParams,
 ) -> PackedBox {
-    let list = stores.node_list_ref(list);
     let packed = tex_typeset::vpack(&*stores, list, spec, params);
     stores.set_last_badness(packed.badness);
     stores.record_geometry_observation(GeometryObservation::Vpack {
@@ -159,7 +157,7 @@ pub(crate) fn vpack(
 
 pub(crate) fn vtop(
     stores: &mut Universe,
-    list: NodeListId,
+    list: NodeListRef,
     spec: PackSpec,
     params: VpackParams,
 ) -> PackedBox {

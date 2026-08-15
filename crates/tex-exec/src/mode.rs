@@ -923,7 +923,6 @@ impl ModeLevelSummary {
 #[derive(Clone, Debug, PartialEq)]
 pub struct ModeNestSummary {
     levels: Arc<Vec<ModeLevelSummary>>,
-    node_owners: tex_state::survivor::SurvivorOwners,
 }
 
 impl ModeNestSummary {
@@ -1105,7 +1104,6 @@ fn hash_optional_u32(value: Option<u32>, projection: &mut EngineBoundaryHasher<'
 pub struct ModeNest {
     levels: Arc<Vec<ModeLevelSummary>>,
     journal: journal::ModeJournal,
-    node_owners: tex_state::survivor::SurvivorOwners,
     /// TeX82 §216's maximum pre-push `nest_ptr`. This runtime diagnostic is
     /// intentionally absent from summaries, semantic equality, and hashes.
     max_nest_stack: usize,
@@ -1116,7 +1114,6 @@ impl Clone for ModeNest {
         Self {
             levels: self.levels.clone(),
             journal: journal::ModeJournal::enabled(self.levels.len()),
-            node_owners: self.node_owners.clone(),
             max_nest_stack: self.max_nest_stack,
         }
     }
@@ -1158,7 +1155,6 @@ impl ModeNest {
         Self {
             levels: Arc::new(levels),
             journal: journal::ModeJournal::enabled(1),
-            node_owners: tex_state::survivor::SurvivorOwners::default(),
             max_nest_stack: 0,
         }
     }
@@ -1177,7 +1173,6 @@ impl ModeNest {
         Ok(Self {
             journal: journal::ModeJournal::enabled(summary.levels.len()),
             levels: summary.levels,
-            node_owners: summary.node_owners,
             max_nest_stack: 0,
         })
     }
@@ -1186,18 +1181,7 @@ impl ModeNest {
     pub fn summary(&self) -> ModeNestSummary {
         ModeNestSummary {
             levels: self.levels.clone(),
-            node_owners: self.node_owners.clone(),
         }
-    }
-
-    pub(crate) fn promote_node_roots(
-        &mut self,
-        _stores: &mut Universe,
-        _snapshot: &mut tex_state::LocalRetrySnapshot,
-    ) {
-        // Mode nodes and their auxiliary math/box payloads retain structural
-        // owners directly; no nested coordinate promotion walk remains.
-        self.node_owners = tex_state::survivor::SurvivorOwners::default();
     }
 
     #[must_use]

@@ -10,7 +10,6 @@ use crate::glue::{GlueSpec, GlueSpecRef};
 use crate::ids::TokenListId;
 use crate::node::Node;
 use crate::scaled::Scaled;
-use crate::survivor::{SurvivorOwner, SurvivorOwners};
 use crate::token_store::TokenListRef;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, VecDeque};
@@ -333,9 +332,6 @@ pub(crate) struct PageBuilderState {
     split_first_mark: Option<TokenListRef>,
     split_bot_mark: Option<TokenListRef>,
     mark_classes: Arc<BTreeMap<u16, MarkClassState>>,
-    /// Structural owners for survivor chunks referenced by the four node
-    /// queues above. Excluded from semantic projections.
-    node_owners: SurvivorOwners,
 }
 
 /// Handle-free scalar half of a detached page-builder transition. Node, glue,
@@ -396,16 +392,11 @@ impl Default for PageBuilderState {
             split_first_mark: None,
             split_bot_mark: None,
             mark_classes: Arc::new(BTreeMap::new()),
-            node_owners: SurvivorOwners::default(),
         }
     }
 }
 
 impl PageBuilderState {
-    pub(crate) fn replace_node_owners(&mut self, owners: Vec<SurvivorOwner>) {
-        self.node_owners = SurvivorOwners::new(owners);
-    }
-
     pub(crate) fn memo_parts(&self) -> (Vec<Node>, PageMemoState) {
         let mut nodes = Vec::with_capacity(
             self.contribution.len()

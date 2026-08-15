@@ -2,8 +2,8 @@ use std::cell::Cell;
 
 use tex_state::env::banks::{DimenParam, GlueParam, IntParam};
 use tex_state::glue::GlueSpec;
+use tex_state::ids::FontId;
 use tex_state::ids::GlueId;
-use tex_state::ids::{FontId, NodeListId};
 use tex_state::math::MathListNode;
 use tex_state::node::{BoxNode, BoxNodeFields, GlueKind, Node};
 use tex_state::node_arena::NodeListRef;
@@ -162,7 +162,6 @@ impl<'a> LoweredMathSink<'a> {
                     unreachable!()
                 };
                 let children = self.stores.freeze_node_list(&scratch[start..]);
-                let children = self.stores.node_list_ref(children);
                 scratch.truncate(start);
                 let boxed_node = lower_math_box(&boxed, children);
                 scratch.push(if vertical {
@@ -235,10 +234,6 @@ impl<'a> LoweredMathSink<'a> {
 }
 
 impl TypesetState for LoweredMathSink<'_> {
-    fn nodes(&self, id: NodeListId) -> tex_state::node_arena::NodeList<'_> {
-        self.stores.nodes(id)
-    }
-
     fn glue(&self, id: GlueId) -> GlueSpec {
         self.stores.glue(id)
     }

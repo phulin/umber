@@ -2,9 +2,8 @@
 
 use tex_state::Universe;
 use tex_state::glue::{GlueSpec, GlueSpecRef};
-use tex_state::ids::NodeListId;
 use tex_state::node::{BoxNode, GlueKind, Node, Whatsit};
-use tex_state::node_arena::NodeRef;
+use tex_state::node_arena::{NodeListRef, NodeRef};
 use tex_state::scaled::Scaled;
 use tex_typeset::{INF_BAD, PackSpec, VpackParams};
 
@@ -72,7 +71,7 @@ pub(crate) fn is_page_top_discardable(node: &Node) -> bool {
 
 pub(crate) fn natural_vlist_size(
     stores: &mut Universe,
-    content: NodeListId,
+    content: NodeListRef,
 ) -> Result<Scaled, ExecError> {
     let packed = vpack_natural(stores, content);
     packed
@@ -81,7 +80,7 @@ pub(crate) fn natural_vlist_size(
         .ok_or(ExecError::ArithmeticOverflow)
 }
 
-pub(crate) fn vpack_natural(stores: &mut Universe, content: NodeListId) -> BoxNode {
+pub(crate) fn vpack_natural(stores: &mut Universe, content: NodeListRef) -> BoxNode {
     crate::packing_params::vpack(
         stores,
         content,

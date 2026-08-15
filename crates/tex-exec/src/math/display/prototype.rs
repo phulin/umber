@@ -33,7 +33,6 @@ pub(crate) fn display_line_prototype(stores: &mut Universe, last_line: BoxNode) 
         boundary(stores, GlueParam::RIGHT_SKIP, GlueKind::RightSkip),
     ];
     let children = stores.freeze_node_list(&children);
-    let children = stores.node_list_ref(children);
     BoxNode::new(BoxNodeFields {
         width: last_line.width,
         height: Scaled::from_raw(0),
@@ -145,7 +144,7 @@ pub(super) fn package_directed_display_line(
             _ => panic!("e-TeX display prototype right boundary is glue or kern"),
         }
         let children = stores.freeze_node_list_owned(&mut children);
-        prototype.children = stores.node_list_ref(children);
+        prototype.children = children;
         return prototype;
     }
 

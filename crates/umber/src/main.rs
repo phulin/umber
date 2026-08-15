@@ -312,30 +312,6 @@ fn finalize_run(
     }
     #[cfg(feature = "profiling")]
     if opts.profiling_stats {
-        for (kind, count) in tex_state::node::node_append_histogram() {
-            eprintln!("NODE_HISTOGRAM {kind} {count}");
-        }
-    }
-    #[cfg(feature = "profiling")]
-    if opts.profiling_stats {
-        let columns = stores.node_memory_columns();
-        for column in &columns {
-            eprintln!(
-                "NODE_MEMORY {} len={} capacity={} element_bytes={} logical_bytes={} retained_payload_bytes={}",
-                column.name,
-                column.len,
-                column.capacity,
-                column.element_bytes,
-                column.logical_bytes,
-                column.retained_payload_bytes
-            );
-        }
-        let logical: usize = columns.iter().map(|column| column.logical_bytes).sum();
-        let retained: usize = columns
-            .iter()
-            .map(|column| column.retained_payload_bytes)
-            .sum();
-        eprintln!("NODE_MEMORY_TOTAL logical_bytes={logical} retained_payload_bytes={retained}");
         if let Some(peak) = tex_state::node_arena::peak_node_storage_measurement() {
             eprintln!(
                 "NODE_STORAGE_PEAK logical_bytes={} retained_payload_bytes={}",
@@ -353,26 +329,6 @@ fn finalize_run(
                 );
             }
         }
-        let survivor = tex_state::survivor::survivor_measurement();
-        eprintln!(
-            "NODE_SURVIVOR fresh_calls={} fresh_nanos={} recycled_calls={} recycled_nanos={} release_calls={} release_nanos={} shared_payload_drops={} shared_payload_drop_nanos={} peak_scratch_logical_bytes={} peak_scratch_retained_bytes={} source_words={} child_bearing_nodes={} remap_entries={} pending_entries={} peak_remap_entries={} peak_pending_entries={}",
-            survivor.fresh_promotions,
-            survivor.fresh_promotion_nanos,
-            survivor.recycled_promotions,
-            survivor.recycled_promotion_nanos,
-            survivor.releases_to_recycling,
-            survivor.release_nanos,
-            survivor.shared_payload_drops,
-            survivor.shared_payload_drop_nanos,
-            survivor.peak_promotion_scratch_logical_bytes,
-            survivor.peak_promotion_scratch_retained_bytes,
-            survivor.source_words,
-            survivor.child_bearing_nodes,
-            survivor.remap_entries,
-            survivor.pending_entries,
-            survivor.peak_remap_entries,
-            survivor.peak_pending_entries
-        );
         let append = tex_state::measurement::node_append_measurement();
         eprintln!(
             "ALLOC_NODE_APPEND calls={} words={} sidecar_rows={:?} growth_events={} grown_bytes={}",

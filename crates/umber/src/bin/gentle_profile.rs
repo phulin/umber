@@ -23,8 +23,6 @@ use tex_state::measurement::{
     NODE_APPEND_CAPACITY_COLUMNS, NodeAppendMeasurement, StateHashMeasurement,
     node_append_measurement, state_hash_measurement,
 };
-#[cfg(feature = "profiling")]
-use tex_state::survivor::{SurvivorMeasurement, survivor_measurement};
 use tex_state::{
     ContentHash, JobClock, PureMemoConfig, PureMemoRecordingPolicy, PureMemoStats, Universe, World,
 };
@@ -513,8 +511,6 @@ fn run_cold_memo_policy(
     #[cfg(feature = "profiling")]
     let mut last_state_hash = StateHashMeasurement::default();
     #[cfg(feature = "profiling")]
-    let mut last_survivor = SurvivorMeasurement::default();
-    #[cfg(feature = "profiling")]
     let replay_measurement_before = step_snapshot_measurement();
 
     for run in 0..total_runs {
@@ -528,8 +524,6 @@ fn run_cold_memo_policy(
         let mut resolvers = FileSessionResolvers::new(&source_path, Vec::new(), Vec::new());
         #[cfg(feature = "profiling")]
         let state_hash_before = state_hash_measurement();
-        #[cfg(feature = "profiling")]
-        let survivor_before = survivor_measurement();
         let started = Instant::now();
         let accepted = session
             .cold_with_resolvers(&mut resolvers)
@@ -550,7 +544,6 @@ fn run_cold_memo_policy(
         #[cfg(feature = "profiling")]
         {
             last_state_hash = state_hash_delta(state_hash_measurement(), state_hash_before);
-            last_survivor = survivor_delta(survivor_measurement(), survivor_before);
         }
         let _ = black_box(last_pages);
         let _ = black_box(dvi.len());
@@ -579,20 +572,6 @@ fn run_cold_memo_policy(
             last_state_hash.journal_entries,
             last_state_hash.changed_cells,
             last_state_hash.peak_changed_cell_scratch_bytes,
-        );
-        println!(
-            "gentle-profile isolated cold survivor: fresh_promotions={} recycled_promotions={} releases={} promotion_nanos={} source_words={} epoch_source_words={} survivor_source_words={} epoch_source_lists={} survivor_source_lists={}",
-            last_survivor.fresh_promotions,
-            last_survivor.recycled_promotions,
-            last_survivor.releases_to_recycling,
-            last_survivor
-                .fresh_promotion_nanos
-                .saturating_add(last_survivor.recycled_promotion_nanos),
-            last_survivor.source_words,
-            last_survivor.epoch_source_words,
-            last_survivor.survivor_source_words,
-            last_survivor.epoch_source_lists,
-            last_survivor.survivor_source_lists,
         );
         print_step_snapshot_measurement(
             "isolated cold",
@@ -1791,56 +1770,6 @@ fn state_hash_delta(
                     .saturating_sub(before.components[index].nanos),
             }
         }),
-    }
-}
-
-#[cfg(feature = "profiling")]
-fn survivor_delta(after: SurvivorMeasurement, before: SurvivorMeasurement) -> SurvivorMeasurement {
-    SurvivorMeasurement {
-        fresh_promotions: after
-            .fresh_promotions
-            .saturating_sub(before.fresh_promotions),
-        fresh_promotion_nanos: after
-            .fresh_promotion_nanos
-            .saturating_sub(before.fresh_promotion_nanos),
-        recycled_promotions: after
-            .recycled_promotions
-            .saturating_sub(before.recycled_promotions),
-        recycled_promotion_nanos: after
-            .recycled_promotion_nanos
-            .saturating_sub(before.recycled_promotion_nanos),
-        releases_to_recycling: after
-            .releases_to_recycling
-            .saturating_sub(before.releases_to_recycling),
-        release_nanos: after.release_nanos.saturating_sub(before.release_nanos),
-        shared_payload_drops: after
-            .shared_payload_drops
-            .saturating_sub(before.shared_payload_drops),
-        shared_payload_drop_nanos: after
-            .shared_payload_drop_nanos
-            .saturating_sub(before.shared_payload_drop_nanos),
-        source_words: after.source_words.saturating_sub(before.source_words),
-        epoch_source_words: after
-            .epoch_source_words
-            .saturating_sub(before.epoch_source_words),
-        survivor_source_words: after
-            .survivor_source_words
-            .saturating_sub(before.survivor_source_words),
-        epoch_source_lists: after
-            .epoch_source_lists
-            .saturating_sub(before.epoch_source_lists),
-        survivor_source_lists: after
-            .survivor_source_lists
-            .saturating_sub(before.survivor_source_lists),
-        child_bearing_nodes: after
-            .child_bearing_nodes
-            .saturating_sub(before.child_bearing_nodes),
-        remap_entries: after.remap_entries.saturating_sub(before.remap_entries),
-        pending_entries: after.pending_entries.saturating_sub(before.pending_entries),
-        peak_promotion_scratch_logical_bytes: after.peak_promotion_scratch_logical_bytes,
-        peak_promotion_scratch_retained_bytes: after.peak_promotion_scratch_retained_bytes,
-        peak_remap_entries: after.peak_remap_entries,
-        peak_pending_entries: after.peak_pending_entries,
     }
 }
 

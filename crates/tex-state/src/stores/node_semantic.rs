@@ -22,38 +22,12 @@ impl Stores {
                 index = end;
             } else {
                 identity.push(|hasher| {
-                    self.hash_node_semantic_identity(NodeRef::from(&nodes[index]), hasher);
+                    self.hash_owned_node_semantic_identity(&nodes[index], hasher);
                 });
                 index += 1;
             }
         }
         identity.finish()
-    }
-
-    pub(super) fn validate_and_plan_node_list(
-        &mut self,
-        nodes: &[Node],
-    ) -> (NodeSemanticId, SidecarNeeds) {
-        let mut identity = NodeSemanticIdBuilder::new();
-        let mut needs = SidecarNeeds::default();
-        let mut index = 0;
-        while index < nodes.len() {
-            if let Node::Char { font, .. } = nodes[index] {
-                let end = same_font_char_run_end(nodes, index, font);
-                self.assert_live_font(font);
-                self.push_char_run_identity(&mut identity, font, &nodes[index..end]);
-                index = end;
-            } else {
-                let node = &nodes[index];
-                needs.preflight_and_count(node);
-                self.assert_live_handles_in_node(node);
-                identity.push(|hasher| {
-                    self.hash_node_semantic_identity(NodeRef::from(node), hasher);
-                });
-                index += 1;
-            }
-        }
-        (identity.finish(), needs)
     }
 
     pub(super) fn validate_and_plan_direct_node_list(
@@ -106,15 +80,6 @@ impl Stores {
                 hasher.u32(*ch as u32);
             }
         });
-    }
-
-    pub(crate) fn node_semantic_id(&self, id: NodeListId) -> NodeSemanticId {
-        self.assert_live_node_list(id);
-        self.nodes.semantic_id(id, &self.survivors)
-    }
-
-    pub(super) fn hash_node_semantic_identity(&self, node: NodeRef<'_>, hasher: &mut StateHasher) {
-        self.hash_node_semantic_identity_with(node, hasher, &|child| self.node_semantic_id(child));
     }
 
     pub(super) fn hash_owned_node_semantic_identity(&self, node: &Node, hasher: &mut StateHasher) {
@@ -315,10 +280,6 @@ impl Stores {
                 hasher.u8(direction as u8);
             }
         }
-    }
-
-    pub(super) fn hash_node_list_identity(&self, id: NodeListId, hasher: &mut StateHasher) {
-        hash_child_identity(id, hasher, &|child| self.node_semantic_id(child));
     }
 
     fn hash_box_identity(

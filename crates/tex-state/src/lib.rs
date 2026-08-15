@@ -94,7 +94,6 @@ pub mod source_fragments;
 pub mod source_map;
 pub(crate) mod state_hash;
 mod stores;
-pub mod survivor;
 pub mod token;
 pub mod token_show;
 pub mod token_store;

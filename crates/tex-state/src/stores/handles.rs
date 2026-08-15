@@ -1,7 +1,5 @@
 use super::Stores;
-use crate::ids::{
-    ArenaRef, FontId, GlueId, MacroDefinitionId, NodeListId, OriginListId, TokenListId,
-};
+use crate::ids::{FontId, GlueId, MacroDefinitionId, NodeListId, OriginListId, TokenListId};
 use crate::input::{InputFrameSummary, InputSummary, SourceFrameSummary};
 use crate::interner::{Symbol, SymbolId, SymbolReference};
 use crate::meaning::Meaning;
@@ -34,13 +32,7 @@ impl Stores {
         }
     }
 
-    pub(crate) fn box_restore_trace_text(&self, id: NodeListId) -> String {
-        self.assert_live_node_list(id);
-        let nodes = self.nodes(id);
-        Self::format_box_restore_trace(nodes.first(), |child| !self.nodes(child).is_empty())
-    }
-
-    fn box_restore_trace_text_ref(&self, root: &NodeListRef) -> String {
+    pub(crate) fn box_restore_trace_text_ref(&self, root: &NodeListRef) -> String {
         Self::format_box_restore_trace(root.nodes().first(), |child| {
             root.resolve(child).is_some_and(|child| !child.is_empty())
         })
@@ -374,17 +366,6 @@ impl Stores {
         }
     }
 
-    pub(super) fn assert_live_node_list(&self, id: NodeListId) {
-        if id.is_empty() {
-            return;
-        }
-        let live = match id.arena() {
-            ArenaRef::Epoch => self.nodes.contains(id),
-            ArenaRef::Survivor(_) => self.survivors.contains(id),
-        };
-        assert!(live, "node list is not live in this Universe timeline");
-    }
-
     pub(super) fn assert_live_macro_definition_in_meaning(&self, meaning: Meaning) {
         if let Meaning::Macro { definition, .. } = meaning {
             self.assert_live_macro_definition(definition);
@@ -418,55 +399,6 @@ impl Stores {
         });
     }
 
-    fn assert_live_child_node_list(&self, id: NodeListId) {
-        if id.is_empty() {
-            return;
-        }
-        match id.arena() {
-            ArenaRef::Epoch => {
-                assert!(
-                    self.nodes.contains(id),
-                    "child node-list id is not live in this Universe timeline"
-                );
-            }
-            ArenaRef::Survivor(_) => {
-                assert!(
-                    self.survivors.contains(id),
-                    "child node-list id is not live in this Universe timeline"
-                );
-            }
-        }
-    }
-
-    pub(super) fn prepare_box_value(&mut self, value: NodeListId) -> NodeListRef {
-        self.assert_live_node_list(value);
-        match value.arena() {
-            ArenaRef::Epoch => self
-                .node_ref_index
-                .intern(self.survivors.promote_direct(value, &self.nodes)),
-            ArenaRef::Survivor(_) => self.survivors.owner(value).node_ref(),
-        }
-    }
-
-    pub(super) fn write_box_reg(
-        &mut self,
-        index: u16,
-        value: Option<NodeListId>,
-        global: bool,
-    ) -> crate::env::CellMutationReceipt {
-        let old = self.env.box_reg(index);
-        let value = match value {
-            Some(value) if Some(value) == old => Some(value),
-            Some(value) => {
-                let value = self.prepare_box_value(value);
-                return self.write_box_reg_ref(index, Some(value), global);
-            }
-            None => None,
-        };
-        let root = value.and_then(|_| self.env.box_reg_ref(index));
-        self.write_box_reg_ref(index, root, global)
-    }
-
     pub(crate) fn write_box_reg_ref(
         &mut self,
         index: u16,
@@ -489,25 +421,7 @@ impl Stores {
         receipt
     }
 
-    pub(super) fn write_box_reg_same_level(
-        &mut self,
-        index: u16,
-        value: Option<NodeListId>,
-    ) -> crate::env::CellMutationReceipt {
-        let old = self.env.box_reg(index);
-        let value = match value {
-            Some(value) if Some(value) == old => Some(value),
-            Some(value) => {
-                let value = self.prepare_box_value(value);
-                return self.write_box_reg_same_level_ref(index, Some(value));
-            }
-            None => None,
-        };
-        let root = value.and_then(|_| self.env.box_reg_ref(index));
-        self.write_box_reg_same_level_ref(index, root)
-    }
-
-    pub(super) fn write_box_reg_same_level_ref(
+    pub(crate) fn write_box_reg_ref_same_level(
         &mut self,
         index: u16,
         value: Option<NodeListRef>,
@@ -538,7 +452,7 @@ impl NodeSchemaVisitor for LiveHandleValidator<'_> {
             NodeHandle::Font(id) => self.0.assert_live_font(id),
             NodeHandle::Glue(id) => self.0.assert_live_glue(id),
             NodeHandle::TokenList(id) => self.0.assert_live_token_list(id),
-            NodeHandle::NodeList(id) => self.0.assert_live_child_node_list(id),
+            NodeHandle::NodeList(_) => {}
             NodeHandle::Origin(_) | NodeHandle::Origins(_) | NodeHandle::OriginRefs(_) => {
                 unreachable!("semantic node handles cannot contain origins")
             }
