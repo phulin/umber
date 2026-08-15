@@ -19,6 +19,12 @@ or live engine state. Incremental revisions use the same keyed pages, nodes,
 resources, and canonical digests rather than translating the positioned stream
 a second time.
 
+Shipout's live node graph remains owned only until `PageArtifact` lowering
+finishes. `PageArtifact`, positioned events, `RenderDocument`, render patches,
+HTML bytes, and asset manifests contain semantic geometry, text, resources,
+and stable artifact-local keys only; none retains `NodeListRef`, `NodeListId`,
+payload coordinates, or a route back into the engine node store.
+
 Artifact schema 23 keeps this fixed-page model, makes
 `OpenTypePreferred` the modern font authority, and adds engine-positioned
 OpenType math. It does not delegate formula layout to MathML.

@@ -101,6 +101,10 @@ The private revision is an owned `tex_incr::RevisionCandidate`: its canonical
 main control and command state, rollback roots,
 speculative checkpoint sink, command trace, and candidate output remain
 live across progressing resource responses.
+Node-list state in each of those aggregates is held by direct `NodeListRef`
+ownership. A retry restores those aggregate references before failed scratch
+is dropped; cancellation and rejection drop the candidate closure; acceptance
+moves the chosen closure without a node-root scan, pin log, or promotion pass.
 Provisioning changes only immutable session resource bindings and increments a
 monotonic response generation. The next `compile_attempt` supplies a fresh VFS
 snapshot-backed resolver to the same candidate; the candidate's monotonic
@@ -303,6 +307,10 @@ Those views are detached payloads: they contain no incremental boundary record,
 checkpoint, `Universe`, store tuple, or generation substrate. Restart history
 remains private to the session even when a caller retains an earlier output
 after the session itself is disposed.
+They likewise contain no `NodeListId`, payload coordinate, or live
+`NodeListRef`: shipout lowers the owned page/form graph completely into
+semantic artifact, DVI-plan, PDF-finalization, and keyed render data before an
+accepted view is published.
 
 The retention values copied into an accepted output are a point-in-time
 snapshot taken during acceptance. The session's `retention_metrics()` getter,

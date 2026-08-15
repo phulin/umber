@@ -300,19 +300,31 @@ forward or self references, cycles, invalid store indices, malformed enum
 values, bad section geometry, reserved bytes, count mismatches, and semantic
 identities that do not recompute from the validated graph.
 
+The same node DTO vocabulary is used by detached memos, but a memo bundle has
+no frozen payload-root namespace: every list key must be exactly `(dense
+bottom-up ordinal, node count)`, and the requested root must be the final row.
+Memo import validates that canonical topology, all content-table references,
+and every recomputed semantic identity in private scratch stores before it
+materializes anything in the destination generation. Thus neither format nor
+memo bytes preserve allocation order or a runtime `NodeListId`.
+
 Capture discovers every list edge that the DTO serializes, including detached
 physical box children used to represent TeX82 §§115/162 replacement nodes for
 §182 diagnostics. Those diagnostic-only edges do not enter semantic identity,
 but they remain part of the self-contained frozen graph and of §638 shipout
 memory observation; capture and decode therefore require their targets exactly
-like semantic child targets.
+like semantic child targets. Compact graph copying remaps both the semantic and
+diagnostic children of ordinary and leader boxes before publication. Every
+zero-length projection is then canonicalized to the single empty row before
+dense DTO keys are assigned.
 
 After validation, all lists are installed into one immutable `NodeListPayload`
 with their precomputed semantic spans. Each nonvoid frozen Env box cell receives
 the corresponding `NodeListRef` directly when the immutable format base is
 installed. No legacy key map, graph promotion, survivor publication, or
-semantic reseal runs on the load path. The job epoch arena starts empty;
-job-local lists may safely refer to frozen lists and allocate normally.
+semantic reseal runs on the load path. Job-local construction begins without
+any published node graph; new builders may safely own frozen lists and freeze
+their results normally.
 
 ### Frozen environment (kind 528)
 

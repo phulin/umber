@@ -70,6 +70,14 @@ a converged candidate transfers only the new roots required by the accepted
 detached prefix, then drops its scratch domain. Neither path retains the
 domain merely because one allocation survives.
 
+Node-list payloads need no allocation-domain transfer ledger. A private
+candidate's mode, page, command, Env, PDF, checkpoint, and output staging
+values own their `NodeListRef` fields directly. Success moves those references,
+rollback or retry restores the cloned aggregate before scratch drops,
+rejection drops the candidate closure, and acceptance moves the selected
+aggregate. Detached format, memo, DVI, PDF, and HTML values contain no runtime
+node coordinate that the domain could retain.
+
 ## Operation marks
 
 One domain has at most one active aggregate operation mark. Main control owns

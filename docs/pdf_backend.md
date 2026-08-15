@@ -113,6 +113,11 @@ register. The PDF ledger's copy-on-write collections and snapshots share that
 owner; rollback before `\pdfxform`, suffix rejection, or final record drop
 releases it. No box-build, local survivor, or timeline pin participates, so
 direct shipout may normalize forms recursively through the record's owner.
+The traversal borrows compact child coordinates only through that owner and
+finishes by emitting detached positioned/form artifacts. Neither the
+finalization input nor the validated `tex-out` PDF graph retains a
+`NodeListRef`, `NodeListId`, payload root, weak-index entry, or other engine
+lifetime metadata.
 
 Finalization detaches only forms that have traversal artifacts (plus immediate
 forms, whose creation performs that traversal). An unreferenced lazy form

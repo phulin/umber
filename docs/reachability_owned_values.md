@@ -76,7 +76,7 @@ that coordinate before the legacy successful-history arena is retired.
 | Command live state                    | `SourceLevel::every_eof`, `TokenPayload::Stored`, alignment cell u/v templates, active macro-body replacement delivery, queued named-token-list observations, and completed scanner/request values that cross the processor borrow. | Command operation snapshots and `CommandSummary` clones share roots. Input retirement, template completion, request application, failure rollback, and `NeedResource` retry drop or restore the exact level/request root.                         |
 | Detached command continuation         | `OwnedCommandContinuation` is a handle-free logical DTO. It owns source descriptors and bytes, symbol spellings, token/macro/origin/list/frame recipes, and portable command scalars; it owns no `CommandSummary` or runtime root.  | Materialization validates the complete recipe graph, installs it in a staged destination fork, and swaps that fork only after a complete destination-local `CommandSummary` exists.                                                               |
 | Execution mode                        | `AlignState` columns' u/v templates and any operation-local execution value retained after command delivery.                                                                                                                        | Mode snapshots, rollback-journal entries, checkpoint summaries, and aggregate operation retry clone or swap the corresponding owner with the compact field.                                                                                       |
-| Owned and compact nodes               | `Node::Mark`; deferred write/special/PDF-literal whatsits; PDF action, destination, thread, and annotation fields within owned nodes; compact mark and whatsit sidecars.                                                            | Builder freeze validates and captures each owner. Arena suffix rollback drops it, survivor promotion shares it, and node-format or memo detachment converts it to semantic DTO data.                                                              |
+| Owned and compact nodes               | `Node::Mark`; deferred write/special/PDF-literal whatsits; PDF action, destination, thread, and annotation fields within owned nodes; compact mark and whatsit sidecars.                                                            | Builder freeze validates and captures each owner in one structural `NodeListRef` payload. Dropping the final list owner releases it, while node-format or memo detachment converts it to semantic DTO data.                                       |
 | Page and split state                  | Current/split/top/first/bottom marks, mark-class maps, contribution/current-page nodes, insertion records, fire-up state, and page snapshots.                                                                                       | Copy-on-write page mutation, split/fire-up replacement, page rollback, shipout commit, memo import, and checkpoint restore swap whole persistent roots or one typed field without reconstructing ownership from ids.                              |
 | World effects                         | Unexpanded `EffectRecord::DeferredWrite` entries still retained in the live or detached effect ledger.                                                                                                                              | Effect rollback, prefix commit/splice, resource retry, accepted-output transfer, and final materialization carry or release the owner with the exact effect record.                                                                               |
 | PDF state                             | Token parameters; page/form records; raw objects; document fragments; annotations and links; action identifiers/targets/specs; destinations, threads, outlines, and open-link state.                                                | Each copy-on-write PDF collection and `PdfStateSnapshot` structurally shares owners. Rollback, page-suffix transfer, format capture/load, and final detached PDF publication preserve exact content. Cached semantic fingerprints are not owners. |
@@ -179,7 +179,7 @@ callbacks, token expanders, and handle-free detached bytes are not owners.
 | Owner                                            | Pre-migration compact field                                                                                                                          | Required strong edge                                                                                                                                                                | Typed release, restoration, or transfer boundary                                                                                                                                                                                         |
 | ------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Owned node                                       | `Node::Mark::tokens`; deferred write, special, and PDF-literal whatsit tokens; PDF thread attributes and token-valued action identifiers             | Each owned node value owns every token value named by its fields before it can enter a page queue, mode list, box, memo graph, or freeze builder.                                   | Dropping or replacing the owned node releases its fields; moving it into compact storage transfers the same roots without an unrooted interval.                                                                                          |
-| Compact node                                     | Mark rows and token-bearing whatsit/PDF sidecars in `NodeStorage`                                                                                    | Every compact sidecar holds the exact `TokenListRef` beside the logical token coordinate exposed by `NodeRef`.                                                                      | Arena suffix rollback truncates the root-bearing sidecars; compact copying and survivor promotion clone the roots; final survivor release drops them.                                                                                    |
+| Compact node                                     | Mark rows and token-bearing whatsit/PDF sidecars in `NodeStorage`                                                                                    | Every compact sidecar holds the exact `TokenListRef` beside the logical token coordinate exposed by `NodeRef`.                                                                      | Builder failure drops unpublished rows; structural graph copy clones the roots; dropping the final enclosing `NodeListRef` releases them.                                                                                                |
 | Node detachment and materialization              | Token-table indices in node format and memo DTOs                                                                                                     | Detachment copies canonical token data from the node's owning references; materialization interns the data and installs destination-generation roots before publishing a node.      | Failed validation publishes no node or token root. Successful format/memo import transfers only the newly materialized owned graph.                                                                                                      |
 | Page scalar marks                                | Top, first, bottom, split-first, and split-bottom `TokenListId` plus presence bits                                                                   | Each present page mark is one optional strong token root; present empty is distinct from absent.                                                                                    | `set_mark`, clear, page reset, split, fire-up, and snapshot rollback replace or drop the exact option at the typed page mutation.                                                                                                        |
 | Mark classes                                     | `MarkClassState::marks` plus its presence bitmap in the persistent class map                                                                         | Each present slot in every nonzero class owns its token value, including the canonical empty value.                                                                                 | Copy-on-write class mutation shares untouched roots and replaces one slot; removing the final slot drops the class row and all of its roots.                                                                                             |
@@ -191,7 +191,7 @@ callbacks, token expanders, and handle-free detached bytes are not owners.
 | PDF outline, destination, and thread             | Outline attributes/title/action plus token-valued destination/thread identifiers retained by records or nodes                                        | Each record owns all token values reachable through its typed fields.                                                                                                               | Collection append, duplicate lookup, snapshot restore, node lowering, and final PDF publication borrow or clone the record roots; collection or node release drops them.                                                                 |
 | PDF page, form, object, and document collections | `PdfPageRecord`, `PdfFormRecord`, `PdfRawObjectRecord`, `PdfDocumentFragments`, catalog open action, and their copy-on-write roots                   | Each collection element structurally owns its token wrappers; each form also owns its captured `NodeListRef`. `PdfStateSnapshot` shares the collection roots and frozen parameters. | PDF rollback swaps complete roots; page-suffix take/restore moves owners; form capture moves the box-register owner; format load validates and roots every value before publishing state; clearing the final record releases its fields. |
 | PDF detachment and suffix publication            | Handle-free format DTO token bytes, detached finalization values, committed pages, and accepted page suffixes                                        | Live detachment borrows strong owners and emits canonical bytes. Any live page suffix remains owning until its detached consumer no longer needs runtime token expansion.           | Successful detachment leaves no runtime coordinate in the DTO. Page-suffix transfer moves owning records exactly once; rejection or rollback drops the transferred suffix.                                                               |
-| Generation and aggregate rollback                | `Universe` page, PDF, node/survivor, and `World` snapshot roots                                                                                      | A fork shares immutable token payloads while retaining generation-local coordinates through the owning wrappers already embedded above.                                             | Local retry restores typed roots before patch-domain truncation; checkpoint/fork replacement drops the losing generation's closure at the aggregate boundary.                                                                            |
+| Generation and aggregate rollback                | `Universe` page, PDF, structurally owned node, and `World` snapshot roots                                                                            | A fork shares immutable token payloads through the owning wrappers already embedded above.                                                                                          | Local retry restores typed roots before patch-domain truncation; checkpoint/fork replacement drops the losing generation's closure at the aggregate boundary.                                                                            |
 
 The implementation may keep `TokenListId` as an accessor result and compact
 coordinate, but no runtime aggregate listed above may store an authoritative
@@ -237,7 +237,7 @@ own every token-bearing field. Public and compact accessors still project
 `TokenListId`, while hashing and detached DTOs remain owner-independent.
 
 The transition roots once at scanner or `Universe` admission and moves or
-clones the typed wrapper thereafter. Node freeze and survivor promotion, page
+clones the typed wrapper thereafter. Node freeze and structural graph copy, page
 copy-on-write mutation, World journal splice, PDF collection rollback, page
 suffix transfer, and generation fork therefore preserve ownership without a
 graph walk. Focused controls drop the final typed destination and observe the
@@ -245,10 +245,42 @@ strong count return to the test observer alone; node rollback additionally
 proves that the weak token-store slot is no longer live.
 
 Node memo detachment reads canonical content through the compact owners and
-materialization publishes destination-local roots only after validation.
+assigns allocation-independent dense list keys. Materialization validates the
+complete graph and its semantic identities in private scratch stores, then
+publishes destination-local roots only after validation.
 Final PDF detachment borrows token coordinates from the still-owning records
 and emits handle-free bytes. This stratum adds no graph compaction and changes
 no portable format.
+
+### Direct node-list ownership closure
+
+`NodeListRef` is the sole runtime owner of an immutable compact node graph.
+Env box cells and undo, page and mode roots, command replay state, checkpoints,
+generation forks, PDF forms, retries, private candidates, and shipout staging
+all store it directly or inside owned `Node` values. Compact `NodeListId`
+values survive only inside the payload or as borrow-scoped projections; no
+coordinate can recover a dropped graph.
+
+Success moves the reference, rollback and retry restore cloned aggregate
+roots before failed scratch drops, rejection drops the candidate closure,
+checkpoint/fork shares references, and shipout borrows or moves the root until
+handle-free artifact lowering completes. Format and memo codecs traverse
+explicit owners, assign dense bottom-up DTO keys, and validate the complete
+graph before publishing any destination root. DVI, PDF, HTML, and accepted
+output values retain semantic data only.
+
+Env compares a box owner's assignment depth separately from its semantic
+content. Reassigning the same `NodeListRef` for the first time in a nested
+group still creates the canonical §283 undo position and owns the saved value;
+only a same-depth repetition may coalesce or become unchanged.
+
+The optional exact-candidate index is weak and bounded. Tests observe both its
+entry count and retained capacity, in addition to exact live logical and
+allocator-retained payload bytes. Bounded replacements, rollback, retry,
+rejection, shipout, and form lifecycles plateau those physical measurements;
+the all-live control grows by the exact intentionally retained graph bytes and
+owner count. No survivor, root slot, pin, refcount ledger, promotion walk,
+historical registry, or compactor remains.
 
 ### Completed format, memo, and acceptance closure
 
@@ -339,17 +371,17 @@ parallel exact `GlueSpecRef`.
 | Weak store lookup and zero value       | The canonical zero glue and validated loaded-format rows are explicit immutable roots. Dynamic slots and candidate buckets are weak, bounded, and non-authoritative.                            | Each lookup/allocation advances bounded reclamation; reuse mints a fresh generation. Candidate-key collisions still compare all five glue fields exactly.                                                                                                                                               |
 | Environment current cells              | Dense and sparse skip and muskip registers, glue parameters, and glue-valued immutable format-base cells own one exact root beside each packed word.                                            | Local and global assignment replace the word and root atomically. Raw format-overlay installation validates and installs the matching frozen root before publishing the word.                                                                                                                           |
 | Environment restoration                | Every glue-valued undo record owns its old and new roots, including equal local writes and records refiled by later global writes.                                                              | Group compaction, `unsave`, aggregate rollback, and journal truncation move or drop roots at the same transition as their words. Restoration installs the saved owner before releasing the displaced current owner.                                                                                     |
-| Owned and compact nodes                | Glue, leader, insertion split-top-skip, and PDF snap nodes own each glue value they name; compact rows retain parallel roots in `NodeStorage`.                                                  | Builder freeze captures roots before publication. Arena suffix rollback drops them, compact copying and survivor promotion clone them, and final list release drops them. Node-format and memo detachment emit semantic glue data rather than runtime handles.                                          |
+| Owned and compact nodes                | Glue, leader, insertion split-top-skip, and PDF snap nodes own each glue value they name; compact rows retain parallel roots in `NodeStorage`.                                                  | Builder freeze captures roots before publication. Builder failure drops unpublished rows, structural graph copy clones the roots, and final `NodeListRef` release drops them. Node-format and memo detachment emit semantic glue data rather than runtime handles.                                      |
 | Page state                             | `PageBuilderState::last_glue`, contribution/current-page/discard/insertion/best-break/fire-up node roots, and page snapshots own their scalar or node-contained glue closure.                   | Page append and reset replace `last_glue` with the node's root; split, fire-up, rollback, checkpoint eviction, and generation replacement share, swap, or drop the persistent page roots without a store scan.                                                                                          |
 | Execution mode and unfinished builders | Paragraph left/right/fill skips, alignment default and boundary tabskips, unfinished mode lists, split/page-output requests, and operation-local builders own their glue values until transfer. | Command-to-mode handoff, mode-journal rollback, checkpoint summary capture/restore, list freeze, split completion, and failed-operation rollback move, clone, or drop the typed owners directly. Pure typesetting snapshots may copy `GlueSpec` semantic values and are not runtime-handle authorities. |
-| Aggregate checkpoints and forks        | Env current/undo roots, mode summaries, page roots, and compact/survivor node roots form the checkpoint's glue closure.                                                                         | Retained checkpoint restoration clones these typed roots before switching aggregate state. Generation fork shares immutable payloads while minting or resolving generation-local coordinates; losing checkpoints or generations drop their complete closure.                                            |
+| Aggregate checkpoints and forks        | Env current/undo roots, mode summaries, page roots, and structurally owned compact node roots form the checkpoint's glue closure.                                                               | Retained checkpoint restoration clones these typed roots before switching aggregate state. Generation fork shares immutable payloads through their direct owners; losing checkpoints or generations drop their complete closure.                                                                        |
 | Formats and memos                      | Loaded formats own every validated glue row as an explicit frozen base. Detached format and memo DTOs own handle-free five-field glue data.                                                     | Capture enumerates only typed reachable Env and node roots. Load/import validates data, interns it, installs destination-local owners, and publishes the containing cell or node atomically. Future append uses ordinary weak slots and does not extend the frozen base.                                |
 | Private patch domain                   | A private domain owns every newly allocated glue object in addition to typed private destinations and their weak acceptance leases.                                                             | Failure and `NeedResource` restore destinations before truncating the exact allocation suffix. Rejection drops the domain. Acceptance follows allocation order and transfers only allocations whose typed lease remains live, then clears private metadata.                                             |
 | Non-owning projections                 | Scanner/expression source identities, semantic hashing, printers, packers, compact views, and DTO table indices borrow or project ids only.                                                     | These values never upgrade a dead slot and cannot retain content. A completed builder or scanner value that must survive application instead carries semantic `GlueSpec` data until a typed runtime destination interns and owns it.                                                                    |
 
 This audit includes source and loaded-format construction, later append,
 equal-local/global-supersession restoration, page and mode rollback,
-node-survivor transfer, memo materialization, resource retry, candidate
+direct node-list handoff, memo materialization, resource retry, candidate
 rejection, selected acceptance, and generation fork. It deliberately adds no
 successful-history owner, compatibility root, compactor, graph scan, or
 checkpoint-time discovery pass.
@@ -370,7 +402,7 @@ Env current cells and glue-valued undo records keep aligned strong sidecars.
 Compact ordinary node words keep a one-for-one optional root column, while
 leader, insertion, PDF snap, page, paragraph, alignment, line-breaking, and
 operation-local structures carry typed roots directly. Assignment, group
-exit, aggregate rollback, generation fork, node freeze, survivor transfer,
+exit, aggregate rollback, generation fork, node freeze, structural graph copy,
 page reset, and mode restoration therefore clone, move, or drop owners at the
 existing state transition; none discovers ownership by scanning the store.
 
@@ -448,10 +480,9 @@ word. A receipt without the ownership disposition is insufficient.
 
 Immutable nodes structurally own every token-list and glue value named by
 their compact rows or sidecars. Node freeze validates and captures those
-references before publication. Arena rollback drops the exact allocated
-suffix and its references; survivor promotion shares the immutable references
-with the promoted payload. This contract does not otherwise implement the node
-promotion work tracked by `umber2-3v8z.6`.
+references before publication. Builder failure drops unpublished rows and
+their references; structural graph copy shares the immutable child values;
+dropping the final `NodeListRef` releases the complete payload.
 
 Page, PDF, input, command, and mode structures store owning references in their
 persistent copy-on-write roots. Replacing one field releases exactly that
