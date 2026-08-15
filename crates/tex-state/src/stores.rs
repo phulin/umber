@@ -932,7 +932,10 @@ impl Stores {
         let Some((_, mut projection)) = self.transient_memory_base.take() else {
             return false;
         };
-        let update = projection.update_box_root(self, old, new, true);
+        // A directly owned Env root may already be absent from the legacy
+        // survivor table. If this projection has not seen the graph, discard
+        // the cache and let the next full root capture borrow Env's owner.
+        let update = projection.update_box_root(self, old, new, false);
         if update.is_ok_and(|updated| updated) {
             self.transient_memory_base = Some((self.glue.watermark().specs, projection));
             true
@@ -1217,7 +1220,7 @@ impl Stores {
         }
         let receipt = self
             .env
-            .restore_raw_global(cell, word, token_root, macro_root, glue_root);
+            .restore_raw_global(cell, word, token_root, macro_root, glue_root, None);
         if receipt.changed() {
             self.synchronize_exact_env_identity();
         }
@@ -3458,6 +3461,12 @@ impl Stores {
         }
     }
 
+    /// Moves an operation-local projection into a direct owner without
+    /// publishing it through the legacy survivor root table.
+    pub(crate) fn prepare_node_list_ref(&mut self, id: NodeListId) -> NodeListRef {
+        self.prepare_box_value(id)
+    }
+
     pub(crate) fn published_node_list_ref(&self, id: NodeListId) -> Option<NodeListRef> {
         if id.is_empty() {
             return Some(NodeListRef::empty());
@@ -3492,6 +3501,7 @@ impl Stores {
         self.nodes.get(id, &self.survivors)
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn node_list_semantic_fragment(&self, id: NodeListId) -> StateHashFragment {
         self.assert_live_node_list(id);
         self.nodes.semantic_id(id, &self.survivors).fragment()
@@ -3502,17 +3512,6 @@ impl Stores {
         self.assert_live_node_list(id);
         self.survivors.inc_ref(id);
         self.survivor_pins.push(id);
-    }
-
-    /// Keeps a survivor root live for rollback-coupled timeline state.
-    ///
-    /// Unlike an allocation-scope pin, this ownership is not released when an
-    /// enclosing box build or shipout finishes. Aggregate rollback releases
-    /// only roots created after the restored snapshot.
-    pub fn pin_timeline_node_list(&mut self, id: NodeListId) {
-        self.assert_live_node_list(id);
-        self.survivors.inc_ref(id);
-        self.timeline_node_pins.push(id);
     }
 
     /// Enters a TeX group.
@@ -3555,7 +3554,6 @@ impl Stores {
     }
 
     pub(crate) fn leave_group_observing_dependencies(&mut self) -> GroupExitObservation {
-        let box_refs_to_release = self.current_group_box_refs_to_release();
         let (payloads, _meaning_changed, changed_cells, mut restores) =
             self.env.leave_group_observing_meanings();
         for receipt in &changed_cells {
@@ -3564,7 +3562,6 @@ impl Stores {
         }
         self.mark_exact_env_journal_current();
         self.capture_box_restore_texts(&mut restores);
-        self.release_box_refs(box_refs_to_release);
         let code_before = self.code_tables.generations();
         let code_restores = self.code_tables.leave_group();
         let code_after = self.code_tables.generations();
@@ -3588,7 +3585,6 @@ impl Stores {
         if actual != expected {
             return Err(GroupMismatch::new(expected, actual));
         }
-        let box_refs_to_release = self.current_group_box_refs_to_release();
         let (payloads, _meaning_changed, changed_cells, mut restores) = self
             .env
             .leave_group_with_kind_observing_meanings(expected)?;
@@ -3598,7 +3594,6 @@ impl Stores {
         }
         self.mark_exact_env_journal_current();
         self.capture_box_restore_texts(&mut restores);
-        self.release_box_refs(box_refs_to_release);
         let code_before = self.code_tables.generations();
         let code_restores = self.code_tables.leave_group();
         let code_after = self.code_tables.generations();
@@ -3779,22 +3774,36 @@ impl Stores {
         self.env.box_reg(index)
     }
 
+    pub(crate) fn box_reg_ref(&self, index: u16) -> Option<NodeListRef> {
+        self.env.box_reg_ref(index)
+    }
+
     #[cfg(test)]
     pub fn take_box_reg(&mut self, index: u16) -> Option<NodeListId> {
         self.take_box_reg_with_receipt(index).0
     }
 
+    #[cfg(test)]
     pub(crate) fn take_box_reg_with_receipt(
         &mut self,
         index: u16,
     ) -> (Option<NodeListId>, crate::env::CellMutationReceipt) {
+        let (old, receipt) = self.take_box_reg_ref_with_receipt(index);
+        (old.as_ref().map(NodeListRef::id), receipt)
+    }
+
+    pub(crate) fn take_box_reg_ref_with_receipt(
+        &mut self,
+        index: u16,
+    ) -> (Option<NodeListRef>, crate::env::CellMutationReceipt) {
         let (old, receipt, rec) = self.env.take_box_reg(index);
-        let receipt = if receipt.changed() && self.update_main_memory_box_root(old, None) {
+        let old_id = old.as_ref().map(NodeListRef::id);
+        let receipt = if receipt.changed() && self.update_main_memory_box_root(old_id, None) {
             receipt.with_main_memory_roots_updated()
         } else {
             receipt
         };
-        self.account_box_write(old, rec);
+        let _ = rec;
         (old, receipt)
     }
 
@@ -3803,17 +3812,27 @@ impl Stores {
         self.take_box_reg_same_level_with_receipt(index).0
     }
 
+    #[cfg(test)]
     pub(crate) fn take_box_reg_same_level_with_receipt(
         &mut self,
         index: u16,
     ) -> (Option<NodeListId>, crate::env::CellMutationReceipt) {
+        let (old, receipt) = self.take_box_reg_ref_same_level_with_receipt(index);
+        (old.as_ref().map(NodeListRef::id), receipt)
+    }
+
+    pub(crate) fn take_box_reg_ref_same_level_with_receipt(
+        &mut self,
+        index: u16,
+    ) -> (Option<NodeListRef>, crate::env::CellMutationReceipt) {
         let (old, receipt, rec) = self.env.take_box_reg_same_level(index);
-        let receipt = if receipt.changed() && self.update_main_memory_box_root(old, None) {
+        let old_id = old.as_ref().map(NodeListRef::id);
+        let receipt = if receipt.changed() && self.update_main_memory_box_root(old_id, None) {
             receipt.with_main_memory_roots_updated()
         } else {
             receipt
         };
-        self.account_box_write(old, rec);
+        let _ = rec;
         (old, receipt)
     }
 
@@ -4066,11 +4085,9 @@ impl Stores {
             return false;
         }
         self.preserve_retired_env_journal_hash_delta(hash_base);
-        let released_boxes = self
-            .env
+        self.env
             .retire_committed_snapshot(snapshot.env_snapshot)
             .expect("retirement eligibility was checked above");
-        self.release_box_refs(released_boxes);
         self.discard_exact_env_undo_history();
         self.mark_exact_env_journal_current();
         true
@@ -4116,7 +4133,6 @@ impl Stores {
         let _ = self.engine_usage_statistics();
         self.release_survivor_pins_to(snapshot.survivor_pin_mark);
         self.release_timeline_node_pins_to(snapshot.timeline_node_pin_mark);
-        self.account_rollback_box_refs(&snapshot.env_snapshot);
         let receipts = self.env.rollback_to(snapshot.env_snapshot.clone());
         self.interner.truncate_to(snapshot.interner_mark);
         while self.string_pool_recycled_journal.len() > snapshot.string_pool_recycled_mark {

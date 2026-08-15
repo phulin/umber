@@ -190,31 +190,6 @@ impl PartialEq for SurvivorOwners {
 impl Eq for SurvivorOwners {}
 
 impl SurvivorArena {
-    /// Reserves a process-unique root for a fully validated frozen format
-    /// graph. The caller must publish it before exposing any derived handles.
-    pub(crate) fn reserve_frozen_root(&self) -> SurvivorRootId {
-        allocate_node_payload_root().expect("survivor root identity space exhausted")
-    }
-
-    /// Publishes a portable frozen graph as one immutable survivor root.
-    pub(crate) fn publish_frozen_root(
-        &mut self,
-        root: SurvivorRootId,
-        storage: NodeStorage,
-        spans: Vec<(u32, u32, NodeSemanticId)>,
-    ) {
-        let spans = spans
-            .into_iter()
-            .filter(|(_, len, _)| *len != 0)
-            .map(|(start, len, semantic_id)| OwnedSemanticSpan {
-                start,
-                len,
-                semantic_id,
-            })
-            .collect();
-        let _ = self.allocate_root(root, storage, spans, 1);
-    }
-
     pub(crate) fn retained_payload_bytes(&self) -> usize {
         let root_storage = self
             .slots
@@ -265,6 +240,7 @@ impl SurvivorArena {
     }
 
     /// Promotes an epoch list into one survivor root with refcount 1.
+    #[cfg(test)]
     pub(crate) fn promote(&mut self, id: NodeListId, epoch: &NodeArena) -> NodeListId {
         self.promote_with_refcount(id, epoch, 1).0
     }
@@ -281,6 +257,38 @@ impl SurvivorArena {
             SurvivorOwner {
                 owner: NodeListRef::from_shared(promoted, payload),
             },
+        )
+    }
+
+    /// Copies an operation-local graph directly into its typed lifetime owner.
+    ///
+    /// Unlike the legacy aggregate bridge, this path does not publish a root
+    /// slot or refcount entry. Env and other migrated destinations must use
+    /// this boundary so their raw coordinate remains only a projection.
+    pub(crate) fn promote_direct(&mut self, id: NodeListId, epoch: &NodeArena) -> NodeListRef {
+        assert!(
+            matches!(id.arena(), ArenaRef::Epoch),
+            "only epoch node lists are promoted"
+        );
+        let semantic_id = epoch.semantic_id(id, self);
+        let root = allocate_node_payload_root().expect("node payload identity space exhausted");
+        let remapped = core::mem::take(&mut self.promotion_remap);
+        let pending = core::mem::take(&mut self.promotion_pending);
+        let copied = copy_list_iterative(
+            id,
+            epoch,
+            self,
+            NodeStorage::default(),
+            root,
+            remapped,
+            pending,
+        );
+        self.promotion_remap = copied.remapped;
+        self.promotion_pending = copied.pending;
+        NodeListRef::from_payload(
+            copied.promoted,
+            NodeListPayload::new(root, copied.storage, copied.semantic_spans),
+            semantic_id,
         )
     }
 
@@ -402,25 +410,6 @@ impl SurvivorArena {
         let span = root.payload.spans()[index];
         assert_eq!(span.len, id.len(), "survivor semantic span length mismatch");
         span.semantic_id
-    }
-
-    /// Replaces one placeholder identity while atomically installing a frozen
-    /// graph. Callers must finish validating every span before exposing the
-    /// restored stores.
-    pub(crate) fn set_frozen_semantic_id(&mut self, id: NodeListId, semantic_id: NodeSemanticId) {
-        let ArenaRef::Survivor(root) = id.arena() else {
-            panic!("frozen semantic ids belong to survivor roots");
-        };
-        let root = self.root_mut(root);
-        let payload = Arc::get_mut(&mut root.payload)
-            .expect("a frozen root cannot be shared before identity validation");
-        let index = payload
-            .spans()
-            .binary_search_by_key(&id.start(), |span| span.start)
-            .expect("frozen node-list semantic id is not live");
-        let span = &mut payload.spans_mut()[index];
-        assert_eq!(span.len, id.len(), "frozen semantic span length mismatch");
-        span.semantic_id = semantic_id;
     }
 
     /// Increments the root refcount for a survivor list.
@@ -863,7 +852,12 @@ mod tests {
     fn recycled_buffer_selection_prefers_largest_capacity() {
         fn cleared_storage(len: usize) -> NodeStorage {
             let mut storage = NodeStorage::default();
-            storage.append(&vec![Node::Penalty(0); len]);
+            let mut nodes = vec![Node::Penalty(0); len];
+            let mut needs = crate::node_arena::SidecarNeeds::default();
+            for node in &nodes {
+                needs.preflight_and_count(node);
+            }
+            storage.append_owned_preflighted(&mut nodes, needs);
             storage.clear();
             storage
         }

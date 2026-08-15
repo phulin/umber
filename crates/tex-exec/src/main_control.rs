@@ -11122,9 +11122,9 @@ fn apply_pdf_form_request(
                 .reserve_pdf_form()
                 .map_err(|_| ExecError::PdfObjectCapacity)?;
             let list = stores
-                .take_box_reg_same_level(box_register)
+                .take_box_reg_ref_same_level(box_register)
                 .ok_or(ExecError::PdfXFormVoidBox)?;
-            let dimensions = match stores.node_list_ref(list).get(0) {
+            let dimensions = match list.get(0) {
                 Some(Node::HList(node) | Node::VList(node)) => {
                     (node.width, node.height, node.depth)
                 }
@@ -15098,7 +15098,7 @@ fn apply_scanned_step(
                     }
                     ScannedBoxShiftPayload::BoxRegister { index, copy } => {
                         let id = read_box_register(index, copy, stores, command);
-                        let node = crate::box_runtime::first_box_node(stores, id);
+                        let node = crate::box_runtime::first_box_node(id);
                         let context = boxes.take_box_context(false);
                         box_end(context, node, modes, stores, prepared_dvi_pages, command)?;
                     }
@@ -15158,7 +15158,7 @@ fn apply_scanned_step(
             ships_out,
         } => {
             let id = read_box_register(index, copy, stores, command);
-            let node = crate::box_runtime::first_box_node(stores, id);
+            let node = crate::box_runtime::first_box_node(id);
             let context = boxes.take_box_context(ships_out);
             box_end(context, node, modes, stores, prepared_dvi_pages, command)?;
             Ok(ReplayStep::Continue)
@@ -15219,8 +15219,8 @@ fn apply_scanned_step(
             copy,
             glue,
         } => {
-            if copy && let Some(root) = stores.box_reg(index) {
-                stores.observe_box_copy(root, command.state.transient_dynamic_words());
+            if copy && let Some(root) = stores.box_reg_ref(index) {
+                stores.observe_box_copy_ref(&root, command.state.transient_dynamic_words());
             }
             if let Some(payload) = crate::box_runtime::take_register_payload(stores, index, copy) {
                 let spec = stores.intern_glue(glue);
@@ -16858,7 +16858,7 @@ fn apply_box_shift(
         }
         ScannedBoxShiftPayload::BoxRegister { index, copy } => {
             let id = read_box_register(index, copy, stores, command);
-            let node = crate::box_runtime::first_box_node(stores, id);
+            let node = crate::box_runtime::first_box_node(id);
             append_shifted_box(modes, stores, node, shift.delta, command)?;
             Ok(ReplayStep::Continue)
         }
@@ -16976,13 +16976,12 @@ fn read_box_register(
     copy: bool,
     stores: &mut Universe,
     command: &CommandMachine<'_>,
-) -> Option<NodeListId> {
+) -> Option<tex_state::node_arena::NodeListRef> {
     if !copy {
-        return stores.take_box_reg_same_level(index);
+        return stores.take_box_reg_ref_same_level(index);
     }
-    let root = stores.box_reg(index)?;
-    stores.observe_box_copy(root, command.state.transient_dynamic_words());
-    stores.pin_survivor(root);
+    let root = stores.box_reg_ref(index)?;
+    stores.observe_box_copy_ref(&root, command.state.transient_dynamic_words());
     Some(root)
 }
 

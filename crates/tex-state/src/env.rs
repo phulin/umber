@@ -30,6 +30,7 @@ use crate::journal::{Journal, UndoRec};
 use crate::macro_store::MacroDefinitionRef;
 use crate::math::{MATH_FAMILY_COUNT, MathFontSize};
 use crate::meaning::Meaning;
+use crate::node_arena::NodeListRef;
 use crate::scaled::Scaled;
 use crate::token::Token;
 use crate::token_store::TokenListRef;
@@ -190,6 +191,7 @@ pub(crate) struct FormatBaseCell {
     pub(crate) token_root: Option<TokenListRef>,
     pub(crate) macro_root: Option<MacroDefinitionRef>,
     pub(crate) glue_root: Option<GlueSpecRef>,
+    pub(crate) box_root: Option<NodeListRef>,
 }
 
 macro_rules! register_accessors {
@@ -405,6 +407,7 @@ impl Env {
                 entry.token_root.clone(),
                 entry.macro_root.clone(),
                 entry.glue_root.clone(),
+                entry.box_root.clone(),
             );
         }
         self.format_base = cells.into();
@@ -725,11 +728,17 @@ impl Env {
         NodeListId::decode_box_word(self.boxes.get(index).value())
     }
 
+    /// Clones the structural owner of one nonvoid box register.
+    #[must_use]
+    pub(crate) fn box_reg_ref(&self, index: u16) -> Option<NodeListRef> {
+        self.boxes.get(index).root()
+    }
+
     /// Sets a local box register value validated by the owning store.
     pub(crate) fn set_box_reg(
         &mut self,
         index: u16,
-        value: Option<NodeListId>,
+        value: Option<NodeListRef>,
     ) -> (CellMutationReceipt, BoxWriteOutcome) {
         self.set_box_reg_local(index, value, true)
     }
@@ -737,11 +746,11 @@ impl Env {
     fn set_box_reg_local(
         &mut self,
         index: u16,
-        value: Option<NodeListId>,
+        value: Option<NodeListRef>,
         coalesce: bool,
     ) -> (CellMutationReceipt, BoxWriteOutcome) {
         let old_word = self.boxes.get(index).value();
-        let new_word = NodeListId::encode_box_word(value);
+        let new_word = NodeListId::encode_box_word(value.as_ref().map(NodeListRef::id));
         let outcome = self.boxes.write(
             index,
             value,
@@ -757,7 +766,7 @@ impl Env {
         shadow_set(
             &mut self.shadow,
             CellId::new(BankTag::Box, u32::from(index)),
-            NodeListId::encode_box_word(value),
+            new_word,
         );
         (
             CellMutationReceipt::write(
@@ -773,10 +782,10 @@ impl Env {
     pub(crate) fn set_box_reg_global(
         &mut self,
         index: u16,
-        value: Option<NodeListId>,
+        value: Option<NodeListRef>,
     ) -> (CellMutationReceipt, BoxWriteOutcome) {
         let old_word = self.boxes.get(index).value();
-        let new_word = NodeListId::encode_box_word(value);
+        let new_word = NodeListId::encode_box_word(value.as_ref().map(NodeListRef::id));
         let outcome = self.boxes.write(
             index,
             value,
@@ -792,7 +801,7 @@ impl Env {
         shadow_set(
             &mut self.shadow,
             CellId::new(BankTag::Box, u32::from(index)),
-            NodeListId::encode_box_word(value),
+            new_word,
         );
         (
             CellMutationReceipt::write(
@@ -808,20 +817,20 @@ impl Env {
     pub(crate) fn set_box_reg_same_level(
         &mut self,
         index: u16,
-        value: Option<NodeListId>,
+        value: Option<NodeListRef>,
     ) -> (CellMutationReceipt, BoxWriteOutcome) {
         let owner_depth = self.boxes.get(index).owner_depth();
         if owner_depth == 0 {
             return self.set_box_reg_global(index, value);
         }
         let old_word = self.boxes.get(index).value();
-        let new_word = NodeListId::encode_box_word(value);
+        let new_word = NodeListId::encode_box_word(value.as_ref().map(NodeListRef::id));
         let outcome = self.boxes.write_same_level(index, value, &mut self.journal);
         #[cfg(feature = "shadow")]
         shadow_set(
             &mut self.shadow,
             CellId::new(BankTag::Box, u32::from(index)),
-            NodeListId::encode_box_word(value),
+            new_word,
         );
         (
             CellMutationReceipt::write(
@@ -841,8 +850,8 @@ impl Env {
     pub(crate) fn take_box_reg_same_level(
         &mut self,
         index: u16,
-    ) -> (Option<NodeListId>, CellMutationReceipt, BoxWriteOutcome) {
-        let old = self.box_reg(index);
+    ) -> (Option<NodeListRef>, CellMutationReceipt, BoxWriteOutcome) {
+        let old = self.box_reg_ref(index);
         let owner_depth = self.boxes.get(index).owner_depth();
         let (receipt, rec) = if owner_depth == 0 {
             self.set_box_reg_global(index, None)
@@ -857,8 +866,8 @@ impl Env {
     pub(crate) fn take_box_reg(
         &mut self,
         index: u16,
-    ) -> (Option<NodeListId>, CellMutationReceipt, BoxWriteOutcome) {
-        let old = self.box_reg(index);
+    ) -> (Option<NodeListRef>, CellMutationReceipt, BoxWriteOutcome) {
+        let old = self.box_reg_ref(index);
         let (receipt, outcome) = self.set_box_reg_local(index, None, false);
         (old, receipt, outcome)
     }

@@ -50,8 +50,16 @@ impl DumpConfig {
 }
 
 pub(crate) fn dump_node_list(stores: &mut Universe, id: NodeListId, config: DumpConfig) -> String {
-    let mut out = String::new();
     let owner = stores.node_list_ref(id);
+    dump_node_list_ref(stores, &owner, config)
+}
+
+pub(crate) fn dump_node_list_ref(
+    stores: &Universe,
+    owner: &NodeListRef,
+    config: DumpConfig,
+) -> String {
+    let mut out = String::new();
     dump_nodes(
         stores,
         &owner.to_vec(),

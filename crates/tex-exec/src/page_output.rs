@@ -6,6 +6,7 @@ use tex_state::Universe;
 use tex_state::env::banks::{DimenParam, IntParam, TokParam};
 use tex_state::glue::{GlueSpec, Order};
 use tex_state::node::{BoxNode, BoxNodeFields, GlueKind, Node, Sign};
+use tex_state::node_arena::NodeListRef;
 use tex_state::page::{
     AWFUL_BAD, INF_PENALTY, PageFireUp, PageInsertionStatus, PageInteger, PageMark,
 };
@@ -63,7 +64,7 @@ pub(crate) fn resume_page_builder_after_output(
     output_nodes: Vec<Node>,
     error_context: String,
 ) -> Result<(), ExecError> {
-    if let Some(box255) = stores.box_reg(255) {
+    if let Some(box255) = stores.box_reg_ref(255) {
         stores.clear_box_reg_same_level(255);
         report_box255_not_emptied(stores, box255, error_context.clone())?;
     }
@@ -77,7 +78,7 @@ pub(crate) fn prepare_box255(
     fire_up: PageFireUp,
     error_context: Option<&str>,
 ) -> Result<(), ExecError> {
-    if let Some(box255) = stores.box_reg(255) {
+    if let Some(box255) = stores.box_reg_ref(255) {
         stores.clear_box_reg_same_level(255);
         report_box255_not_void(stores, box255, error_context)?;
     }
@@ -307,14 +308,11 @@ fn insertion_box_nodes(
     else {
         return Ok(Vec::new());
     };
-    let Some(node) = stores.node_list_ref(list).get(0) else {
+    let Some(node) = list.get(0) else {
         return Ok(Vec::new());
     };
     match node {
-        Node::VList(box_node) => {
-            stores.pin_survivor(list);
-            Ok(box_node.children.to_vec())
-        }
+        Node::VList(box_node) => Ok(box_node.children.to_vec()),
         Node::HList(_) => unreachable!("ensure_insertion_vbox rejected the hbox"),
         _ => Ok(Vec::new()),
     }
@@ -450,7 +448,7 @@ pub(crate) fn report_output_loop(
 /// TeX.web §1015's `<Ensure that box 255 is empty before output>`.
 fn report_box255_not_void(
     stores: &mut Universe,
-    deleted: tex_state::ids::NodeListId,
+    deleted: NodeListRef,
     error_context: Option<&str>,
 ) -> Result<(), ExecError> {
     let context = error_context.map_or_else(
@@ -474,7 +472,7 @@ fn report_box255_not_void(
 /// TeX.web §1028's `<Ensure that box 255 is empty after output>`.
 pub(crate) fn report_box255_not_emptied(
     stores: &mut Universe,
-    deleted: tex_state::ids::NodeListId,
+    deleted: NodeListRef,
     context: String,
 ) -> Result<(), ExecError> {
     let mut report = stores.print_err("Output routine didn't use all of ");
@@ -493,10 +491,10 @@ pub(crate) fn report_box255_not_emptied(
 }
 
 /// TeX82 §199's `box_error` tail after the caller's recoverable error.
-fn report_deleted_box(stores: &mut Universe, deleted: tex_state::ids::NodeListId) {
-    let dump = crate::node_dump::dump_node_list(
+fn report_deleted_box(stores: &mut Universe, deleted: NodeListRef) {
+    let dump = crate::node_dump::dump_node_list_ref(
         stores,
-        deleted,
+        &deleted,
         crate::node_dump::DumpConfig::read(stores),
     );
     let mut diagnostic = stores.begin_diagnostic();
@@ -508,11 +506,10 @@ fn report_deleted_box(stores: &mut Universe, deleted: tex_state::ids::NodeListId
 }
 
 pub(crate) fn take_box255_node(stores: &mut Universe) -> Result<Node, ExecError> {
-    let id = stores
-        .take_box_reg_same_level(255)
+    let owner = stores
+        .take_box_reg_ref_same_level(255)
         .ok_or(ExecError::MissingToken { context: "box" })?;
-    stores
-        .node_list_ref(id)
+    owner
         .get(0)
         .ok_or(ExecError::MissingToken { context: "box" })
 }

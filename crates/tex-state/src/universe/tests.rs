@@ -807,15 +807,15 @@ fn box_root_changes_reuse_the_allocator_base() {
     universe.observe_transient_token_words(0);
     assert_eq!(universe.testing_transient_memory_base_projections(), 1);
 
-    let taken = universe.take_box_reg(0).expect("box is present");
+    let taken = universe.take_box_reg_ref(0).expect("box is present");
     universe.observe_transient_token_words(0);
     assert_eq!(universe.testing_transient_memory_base_projections(), 1);
-    universe.set_box_reg_global(0, taken);
+    universe.set_box_reg_ref_global(0, taken);
     universe.observe_transient_token_words(0);
     assert_eq!(universe.testing_transient_memory_base_projections(), 1);
 
-    let alias = universe.box_reg(0).expect("replacement box");
-    universe.set_box_reg_global(1, alias);
+    let alias = universe.box_reg_ref(0).expect("replacement box");
+    universe.set_box_reg_ref_global(1, alias);
     universe.observe_transient_token_words(0);
     assert_eq!(universe.testing_transient_memory_base_projections(), 1);
 
@@ -841,8 +841,8 @@ fn box_alias_handoffs_do_not_revisit_unrelated_allocator_roots() {
     universe.observe_transient_token_words(0);
     assert_eq!(universe.testing_main_memory_root_traversals(), 1);
 
-    let alias = universe.box_reg(0).expect("box root");
-    universe.set_box_reg_global(1, alias);
+    let alias = universe.box_reg_ref(0).expect("box root");
+    universe.set_box_reg_ref_global(1, alias);
     universe.clear_box_reg_global(0);
     universe.clear_box_reg_global(1);
     universe.observe_transient_token_words(0);
@@ -2111,15 +2111,16 @@ fn semantic_format_is_deterministic_validated_and_world_independent() {
     }))]);
     universe.set_box_reg(7, root);
     let semantic_id = universe
-        .stores
-        .node_semantic_id(universe.box_reg(7).expect("promoted box register"));
+        .box_reg_ref(7)
+        .expect("promoted box register")
+        .semantic_id();
 
     let first = universe.dump_format().expect("format encode");
     let _retained_checkpoint = universe.snapshot();
     let second = universe.dump_format().expect("deterministic format encode");
     assert_eq!(first, second, "retained checkpoints are not format state");
 
-    let mut restored = Universe::from_format(World::memory(), &first).expect("format decode");
+    let restored = Universe::from_format(World::memory(), &first).expect("format decode");
     let restored_name = restored.symbol("answer").expect("restored name");
     assert_eq!(restored.meaning(restored_name), Meaning::CountRegister(42));
     assert_eq!(restored.count(42), 1234);
@@ -2128,9 +2129,9 @@ fn semantic_format_is_deterministic_validated_and_world_independent() {
         restored.meaning(restored_macro),
         Meaning::Macro { .. }
     ));
-    let restored_root = restored.box_reg(7).expect("restored box register");
-    assert_eq!(restored.stores.node_semantic_id(restored_root), semantic_id);
-    let restored_nodes = restored.node_list_ref(restored_root).to_vec();
+    let restored_root = restored.box_reg_ref(7).expect("restored box register");
+    assert_eq!(restored_root.semantic_id(), semantic_id);
+    let restored_nodes = restored_root.to_vec();
     let Node::HList(ref restored_box) = restored_nodes[0] else {
         panic!("restored box node kind");
     };
@@ -2218,18 +2219,16 @@ fn format_roundtrip_complete_math_graph() {
     ]);
     universe.set_box_reg(23, root);
     let expected_semantic_id = universe
-        .stores
-        .node_semantic_id(universe.box_reg(23).expect("promoted math graph"));
+        .box_reg_ref(23)
+        .expect("promoted math graph")
+        .semantic_id();
     let image = universe.dump_format().expect("complete math graph encodes");
 
-    let mut restored =
+    let restored =
         Universe::from_format(World::memory(), &image).expect("complete math graph restores");
-    let restored_root = restored.box_reg(23).expect("math graph root restores");
-    assert_eq!(
-        restored.stores.node_semantic_id(restored_root),
-        expected_semantic_id
-    );
-    assert_eq!(restored.node_list_ref(restored_root).len(), 7);
+    let restored_root = restored.box_reg_ref(23).expect("math graph root restores");
+    assert_eq!(restored_root.semantic_id(), expected_semantic_id);
+    assert_eq!(restored_root.len(), 7);
     assert_eq!(
         restored.dump_format().expect("complete math graph redumps"),
         image
@@ -2659,8 +2658,8 @@ fn frozen_node_arena_installs_outside_job_epoch_and_rejects_corrupt_metadata() {
 
     let mut loaded = Universe::from_format(World::memory(), &image).expect("load frozen nodes");
     assert_eq!(loaded.testing_epoch_node_count(), 0);
-    let frozen_root = loaded.box_reg(8).expect("frozen box root");
-    let frozen_root = loaded.node_list_ref(frozen_root);
+    assert_eq!(loaded.stores.testing_live_survivor_slot_count(), 0);
+    let frozen_root = loaded.box_reg_ref(8).expect("frozen box root");
     let local = loaded.freeze_node_list(&[Node::Adjust(crate::node::AdjustNode::ordinary(
         frozen_root.clone(),
     ))]);
@@ -2950,7 +2949,7 @@ fn pdf_format_resources_round_trip_and_remain_usable() {
     let form_nodes = universe.freeze_node_list(&[Node::Penalty(2718)]);
     universe.set_box_reg(0, form_nodes);
     let form_nodes = universe
-        .take_box_reg_same_level(0)
+        .take_box_reg_ref_same_level(0)
         .expect("take form nodes");
     let form_identity = universe.reserve_pdf_form().expect("reserve form");
     universe
@@ -3012,9 +3011,10 @@ fn pdf_format_resources_round_trip_and_remain_usable() {
         }]
     );
     let form = restored.pdf_form(form_identity.0).expect("restored form");
+    assert_eq!(restored.stores.testing_live_survivor_slot_count(), 0);
     assert_eq!(form.width(), Scaled::from_raw(11));
     assert!(matches!(
-        restored.nodes(form.box_list()).first(),
+        form.box_list_ref().nodes().first(),
         Some(crate::node_arena::NodeRef::Penalty(2718))
     ));
     assert_eq!(
@@ -3045,8 +3045,8 @@ fn semantic_format_uses_dto_local_survivor_root_keys() {
     let first = boxed_universe();
     let second = boxed_universe();
     assert_ne!(
-        first.box_reg(0).expect("first box").arena(),
-        second.box_reg(0).expect("second box").arena()
+        first.box_reg_ref(0).expect("first box").id().arena(),
+        second.box_reg_ref(0).expect("second box").id().arena()
     );
     assert_eq!(
         first.dump_format().expect("first format"),
@@ -3398,9 +3398,9 @@ fn format_v11_round_trips_tex_web_box_shift_and_rejects_legacy_v10() {
 
     let bytes = universe.dump_format().expect("format encodes");
     assert_eq!(&bytes[8..12], &11_u32.to_le_bytes());
-    let mut restored = Universe::from_format(World::memory(), &bytes).expect("v11 format restores");
-    let restored_root = restored.box_reg(19).expect("box register restores");
-    let Some(Node::HList(boxed)) = restored.node_list_ref(restored_root).get(0) else {
+    let restored = Universe::from_format(World::memory(), &bytes).expect("v11 format restores");
+    let restored_root = restored.box_reg_ref(19).expect("box register restores");
+    let Some(Node::HList(boxed)) = restored_root.get(0) else {
         panic!("box register should contain an hlist");
     };
     assert_eq!(boxed.shift, Scaled::from_raw(-4));
@@ -6683,11 +6683,10 @@ fn mixed_arena_box_promotion_replays_with_resolvable_equal_hashes() {
     assert_eq!(first_hash, second_hash);
 }
 
-fn promote_survivor_wrapped_box(universe: &mut Universe) -> NodeListId {
+fn promote_survivor_wrapped_box(universe: &mut Universe) -> crate::node_arena::NodeListRef {
     let child = universe
-        .box_reg(0)
+        .box_reg_ref(0)
         .expect("survivor child should remain live");
-    let child = universe.node_list_ref(child);
     let wrapper = universe.freeze_node_list(&[Node::VList(BoxNode::new(BoxNodeFields {
         width: Scaled::from_raw(10),
         height: Scaled::from_raw(7),
@@ -6700,11 +6699,13 @@ fn promote_survivor_wrapped_box(universe: &mut Universe) -> NodeListId {
         children: child,
     }))]);
     universe.set_box_reg_global(255, wrapper);
-    universe.box_reg(255).expect("wrapper should be promoted")
+    universe
+        .box_reg_ref(255)
+        .expect("wrapper should be promoted")
 }
 
 #[test]
-fn grouped_box_take_pins_nested_survivor_children_before_coalesced_release() {
+fn grouped_box_take_owns_nested_children_before_coalesced_release() {
     let mut universe = Universe::new();
     let leader_children = universe.freeze_node_list(&[Node::Char {
         font: NULL_FONT,
@@ -6734,16 +6735,16 @@ fn grouped_box_take_pins_nested_survivor_children_before_coalesced_release() {
     universe.set_box_reg(0, value);
     let before = universe.testing_epoch_clone_counts();
     let taken = universe
-        .take_box_reg_same_level(0)
+        .take_box_reg_ref_same_level(0)
         .expect("local box should move out of the register");
 
-    let ArenaRef::Survivor(root) = taken.arena() else {
+    let ArenaRef::Survivor(root) = taken.id().arena() else {
         panic!("taken value should remain survivor-backed")
     };
     let Some(crate::node_arena::NodeRef::Glue {
         leader: Some(LeaderPayload::HList(leader)),
         ..
-    }) = universe.nodes(taken).first()
+    }) = taken.nodes().first()
     else {
         panic!("taken value should preserve its leader box");
     };
@@ -6847,15 +6848,19 @@ fn destructive_unbox_transfers_only_children_before_same_level_clear() {
     };
 
     assert!(universe.box_reg(0).is_none());
-    let ArenaRef::Survivor(root) = children.arena() else {
+    let ArenaRef::Survivor(root) = children.id().arena() else {
         panic!("unboxed children should remain survivor-backed")
     };
-    let Some(crate::node_arena::NodeRef::HList(nested)) = universe.nodes(children).first() else {
+    let Some(crate::node_arena::NodeRef::HList(nested)) = children.nodes().first() else {
         panic!("nested hbox should survive the transfer")
     };
     assert_eq!(nested.children.arena(), ArenaRef::Survivor(root));
     assert!(matches!(
-        universe.nodes(nested.children).first(),
+        children
+            .resolve(nested.children)
+            .expect("owned nested child")
+            .nodes()
+            .first(),
         Some(crate::node_arena::NodeRef::Char { ch: 'x', .. })
     ));
     let after = universe.testing_epoch_clone_counts();
@@ -6896,18 +6901,24 @@ fn destructive_unbox_rejects_incompatible_kind_without_mutation() {
     assert_eq!(universe.testing_epoch_clone_counts(), before);
 }
 
-fn assert_promoted_wrapper_is_resolvable(universe: &Universe, wrapper: NodeListId) {
-    let Some(crate::node_arena::NodeRef::VList(box_node)) = universe.nodes(wrapper).first() else {
+fn assert_promoted_wrapper_is_resolvable(
+    _universe: &Universe,
+    wrapper: crate::node_arena::NodeListRef,
+) {
+    let Some(crate::node_arena::NodeRef::VList(box_node)) = wrapper.nodes().first() else {
         panic!("promoted wrapper should contain a vlist");
     };
     let (ArenaRef::Survivor(wrapper_root), ArenaRef::Survivor(child_root)) =
-        (wrapper.arena(), box_node.children.arena())
+        (wrapper.id().arena(), box_node.children.arena())
     else {
         panic!("promoted wrapper and child should be survivor-owned");
     };
     assert_eq!(wrapper_root, child_root);
     assert_eq!(
-        universe.nodes(box_node.children),
+        wrapper
+            .resolve(box_node.children)
+            .expect("owned wrapper child")
+            .nodes(),
         &[Node::Char {
             font: NULL_FONT,
             ch: 'x',
@@ -7050,12 +7061,17 @@ fn finished_box_assignment_reclaims_only_its_epoch_construction_suffix() {
             ..
         })
     ));
-    let stored = universe.box_reg(0).expect("box assignment should be live");
-    let Some(crate::node_arena::NodeRef::HList(box_node)) = universe.nodes(stored).first() else {
+    let stored = universe
+        .box_reg_ref(0)
+        .expect("box assignment should be live");
+    let Some(crate::node_arena::NodeRef::HList(box_node)) = stored.nodes().first() else {
         panic!("stored value should be an hbox");
     };
     assert_eq!(
-        universe.nodes(box_node.children),
+        stored
+            .resolve(box_node.children)
+            .expect("owned stored child")
+            .nodes(),
         &[Node::Kern {
             amount: Scaled::from_raw(17),
             kind: KernKind::Explicit,

@@ -435,8 +435,10 @@ fn node_semantic_ids_follow_rollback_and_promotion() {
     ))]);
     let semantic_id = stores.node_semantic_id(root);
     stores.set_box_reg(0, root);
-    let survivor = stores.box_reg(0).expect("box assignment promotes the list");
-    assert_eq!(stores.node_semantic_id(survivor), semantic_id);
+    let survivor = stores
+        .box_reg_ref(0)
+        .expect("box assignment promotes the list");
+    assert_eq!(survivor.semantic_id(), semantic_id);
 }
 
 #[test]
@@ -462,10 +464,10 @@ fn compact_and_survivor_nodes_own_mark_tokens_until_rollback() {
     assert_eq!(tokens.id(), token_id);
 
     stores.set_box_reg(0, compact);
-    let survivor = stores.box_reg(0).expect("box assignment promotes the list");
     let expected_tokens = stores.tokens.owner(token_id).expect("survivor node root");
     let survivor_node = stores
-        .node_list_ref(survivor)
+        .box_reg_ref(0)
+        .expect("box assignment owns the list")
         .get(0)
         .expect("survivor mark");
     assert_eq!(
@@ -2275,197 +2277,132 @@ fn stale_rolled_back_symbol_cannot_write_reused_meaning_cell() {
 }
 
 #[test]
-fn same_epoch_list_stored_twice_promotes_to_independent_roots() {
+fn same_epoch_list_stored_twice_reuses_one_direct_payload() {
     let mut stores = Stores::new();
     let list = one_char(&mut stores, 'a');
 
     stores.set_box_reg(0, list);
     stores.set_box_reg(1, list);
 
-    let first = stores.box_reg(0).expect("box 0 should be non-void");
-    let second = stores.box_reg(1).expect("box 1 should be non-void");
-    assert_ne!(first.arena(), second.arena());
-    assert_eq!(stores.testing_live_survivor_slot_count(), 2);
-    assert_eq!(stores.testing_survivor_refcount(first), 1);
-    assert_eq!(stores.testing_survivor_refcount(second), 1);
+    let first = stores.box_reg_ref(0).expect("box 0 should be non-void");
+    let second = stores.box_reg_ref(1).expect("box 1 should be non-void");
+    assert_eq!(first.id(), second.id());
+    assert!(first.shares_payload(&second));
+    assert_eq!(stores.testing_live_survivor_slot_count(), 0);
 }
 
 #[test]
-fn survivor_fork_keeps_inherited_roots_and_separates_new_roots() {
+fn box_cells_and_undo_remain_readable_after_legacy_survivor_release() {
+    let mut stores = Stores::new();
+    let baseline = one_char(&mut stores, 'b');
+    stores.set_box_reg(0, baseline);
+    let baseline = stores.box_reg_ref(0).expect("baseline box owner");
+    let baseline_id = baseline.id();
+    drop(baseline);
+    stores.survivors.release_zero_root_chunks();
+    assert!(!stores.survivors.contains(baseline_id));
+    assert_eq!(
+        stores.box_reg_ref(0).expect("Env owns baseline").to_vec(),
+        [one_char_node('b')]
+    );
+
+    stores.enter_group();
+    let replacement = one_char(&mut stores, 'r');
+    stores.set_box_reg(0, replacement);
+    let replacement = stores.box_reg_ref(0).expect("replacement box owner");
+    let replacement_id = replacement.id();
+    drop(replacement);
+    stores.survivors.release_zero_root_chunks();
+    assert!(!stores.survivors.contains(replacement_id));
+    assert_eq!(
+        stores
+            .box_reg_ref(0)
+            .expect("Env owns replacement")
+            .to_vec(),
+        [one_char_node('r')]
+    );
+
+    assert_eq!(stores.leave_group(), Vec::<Token>::new());
+    assert_eq!(
+        stores
+            .box_reg_ref(0)
+            .expect("undo restored baseline owner")
+            .to_vec(),
+        [one_char_node('b')]
+    );
+}
+
+#[test]
+fn direct_box_fork_keeps_inherited_roots_and_separates_new_roots() {
     let mut parent = Stores::new();
     let inherited_epoch = one_char(&mut parent, 'i');
     let inherited = parent.prepare_box_value(inherited_epoch);
     let mut child = parent.clone();
 
-    assert_eq!(
-        parent.nodes(inherited).to_vec(),
-        child.nodes(inherited).to_vec()
-    );
+    assert_eq!(inherited.to_vec(), [one_char_node('i')]);
 
     let parent_epoch = one_char(&mut parent, 'p');
     let parent_only = parent.prepare_box_value(parent_epoch);
     let child_epoch = one_char(&mut child, 'c');
     let child_only = child.prepare_box_value(child_epoch);
 
-    assert_ne!(parent_only.arena(), child_only.arena());
-    assert!(parent.survivors.contains(parent_only));
-    assert!(!parent.survivors.contains(child_only));
-    assert!(child.survivors.contains(child_only));
-    assert!(!child.survivors.contains(parent_only));
-    assert!(std::panic::catch_unwind(|| parent.nodes(child_only)).is_err());
-    assert!(std::panic::catch_unwind(|| child.nodes(parent_only)).is_err());
+    assert_ne!(parent_only.id().arena(), child_only.id().arena());
+    assert_eq!(parent_only.to_vec(), [one_char_node('p')]);
+    assert_eq!(child_only.to_vec(), [one_char_node('c')]);
+    assert_eq!(parent.testing_live_survivor_slot_count(), 0);
+    assert_eq!(child.testing_live_survivor_slot_count(), 0);
 }
 
 #[test]
-fn survivor_pin_survives_register_clear_and_group_exit() {
-    let mut stores = Stores::new();
-
-    let cleared = one_char(&mut stores, 'c');
-    stores.set_box_reg(0, cleared);
-    let cleared = stores.box_reg(0).expect("box should be stored");
-    stores.pin_survivor(cleared);
-    stores.clear_box_reg_same_level(0);
-    assert_eq!(stores.box_reg(0), None);
-    // The undo record and the pin both retain the cleared value.
-    assert_eq!(stores.testing_survivor_refcount(cleared), 2);
-
-    stores.enter_group();
-    let grouped = one_char(&mut stores, 'g');
-    stores.set_box_reg(1, grouped);
-    let grouped = stores.box_reg(1).expect("group-local box should be stored");
-    stores.pin_survivor(grouped);
-    assert_eq!(stores.leave_group(), Vec::<Token>::new());
-    assert_eq!(stores.box_reg(1), None);
-    assert_eq!(stores.testing_survivor_refcount(grouped), 1);
-    assert_eq!(stores.testing_survivor_pin_count(), 2);
-}
-
-#[test]
-fn checkpoint_rollback_releases_only_new_survivor_pins() {
-    let mut stores = Stores::new();
-    let before = one_char(&mut stores, 'b');
-    stores.set_box_reg(0, before);
-    let before = stores.box_reg(0).expect("box should be stored");
-    stores.pin_survivor(before);
-    let snapshot = stores.checkpoint();
-
-    let after = one_char(&mut stores, 'a');
-    stores.set_box_reg(1, after);
-    let after = stores.box_reg(1).expect("box should be stored");
-    stores.pin_survivor(after);
-    assert_eq!(stores.testing_survivor_pin_count(), 2);
-
-    stores.rollback(&snapshot);
-    assert_eq!(stores.testing_survivor_pin_count(), 1);
-    assert_eq!(stores.testing_survivor_refcount(before), 2);
-    assert!(!stores.survivors.contains(after));
-}
-
-#[test]
-fn shipout_release_drops_only_shipout_scoped_survivor_pins() {
-    let mut stores = Stores::new();
-    let before = one_char(&mut stores, 'b');
-    stores.set_box_reg(0, before);
-    let before = stores.box_reg(0).expect("box should be stored");
-    stores.pin_survivor(before);
-    let mark = stores.shipout_node_mark();
-
-    let during = one_char(&mut stores, 'd');
-    stores.set_box_reg(1, during);
-    let during = stores.box_reg(1).expect("box should be stored");
-    stores.pin_survivor(during);
-    stores.release_shipout_nodes(mark);
-
-    assert_eq!(stores.testing_survivor_pin_count(), 1);
-    assert_eq!(stores.testing_survivor_refcount(before), 2);
-    assert_eq!(stores.testing_survivor_refcount(during), 1);
-}
-
-#[test]
-fn survivor_pin_marks_follow_interleaved_snapshot_and_shipout_ordering() {
-    let mut stores = Stores::new();
-    let root = one_char(&mut stores, 'x');
-    stores.set_box_reg(0, root);
-    let root = stores.box_reg(0).expect("box should be stored");
-
-    let snapshot = stores.checkpoint();
-    stores.pin_survivor(root);
-    let shipout = stores.shipout_node_mark();
-    stores.pin_survivor(root);
-    stores.release_shipout_nodes(shipout);
-    assert_eq!(stores.testing_survivor_pin_count(), 1);
-    stores.rollback(&snapshot);
-    assert_eq!(stores.testing_survivor_pin_count(), 0);
-    assert_eq!(stores.testing_survivor_refcount(root), 1);
-
-    let shipout = stores.shipout_node_mark();
-    stores.pin_survivor(root);
-    let snapshot = stores.checkpoint();
-    stores.pin_survivor(root);
-    stores.rollback(&snapshot);
-    assert_eq!(stores.testing_survivor_pin_count(), 1);
-    stores.release_shipout_nodes(shipout);
-    assert_eq!(stores.testing_survivor_pin_count(), 0);
-    assert_eq!(stores.testing_survivor_refcount(root), 1);
-}
-
-#[test]
-fn generation_retention_accounting_accepts_live_survivor_pins() {
-    let mut stores = Stores::new();
-    let value = one_char(&mut stores, 'r');
-    stores.set_box_reg(0, value);
-    let survivor = stores.box_reg(0).expect("box should be stored");
-    stores.pin_survivor(survivor);
-    assert!(stores.generation_retained_bytes() >= std::mem::size_of::<Stores>());
-}
-
-#[test]
-fn released_survivor_key_stays_stale_when_its_storage_is_recycled() {
+fn released_direct_box_key_cannot_upgrade_after_final_drop() {
     let mut stores = Stores::new();
     let old_epoch = one_char(&mut stores, 'o');
-    let stale = stores.prepare_box_value(old_epoch);
-    stores.dec_survivor_ref(stale);
+    let stale_owner = stores.prepare_box_value(old_epoch);
+    let stale = stale_owner.id();
+    let observer = stale_owner.downgrade();
+    drop(stale_owner);
+    assert!(observer.upgrade().is_none());
 
     let new_epoch = one_char(&mut stores, 'n');
     let replacement = stores.prepare_box_value(new_epoch);
 
-    assert_ne!(stale.arena(), replacement.arena());
+    assert_ne!(stale.arena(), replacement.id().arena());
     assert!(!stores.survivors.contains(stale));
-    assert!(stores.survivors.contains(replacement));
-    assert_eq!(stores.testing_survivor_recycled_buffer_uses(), 1);
+    assert!(!stores.survivors.contains(replacement.id()));
+    assert_eq!(replacement.to_vec(), [one_char_node('n')]);
+    assert_eq!(stores.testing_survivor_recycled_buffer_uses(), 0);
     assert!(std::panic::catch_unwind(|| stores.nodes(stale)).is_err());
 }
 
 #[test]
-fn repeated_survivor_replacement_recycles_buffers_without_reviving_stale_ids() {
+fn repeated_direct_box_preparation_bounds_weak_metadata() {
     const REPLACEMENTS: usize = 20_000;
 
     let mut stores = Stores::new();
     let first = one_char(&mut stores, 'a');
     let mut live = stores.prepare_box_value(first);
-    let stale = live;
+    let stale = live.id();
+    let stale_observer = live.downgrade();
 
     for index in 1..REPLACEMENTS {
         let replacement = one_char(&mut stores, if index % 2 == 0 { 'a' } else { 'b' });
         let replacement = stores.prepare_box_value(replacement);
-        stores.dec_survivor_ref(live);
+        drop(live);
         live = replacement;
     }
 
+    assert!(stale_observer.upgrade().is_none());
     assert!(!stores.survivors.contains(stale));
-    assert_ne!(stale.arena(), live.arena());
-    assert_eq!(stores.testing_live_survivor_slot_count(), 1);
-    assert_eq!(stores.testing_survivor_root_slot_count(), REPLACEMENTS);
-    // Two buffers cover the old and replacement roots; every later
-    // promotion reuses one of them.
-    assert_eq!(
-        stores.testing_survivor_recycled_buffer_uses(),
-        REPLACEMENTS - 2
-    );
+    assert_ne!(stale.arena(), live.id().arena());
+    assert_eq!(stores.testing_live_survivor_slot_count(), 0);
+    assert_eq!(stores.testing_survivor_root_slot_count(), 0);
+    let (weak_len, weak_capacity) = stores.node_ref_index.shape();
+    assert!(weak_len <= 64);
+    assert!(weak_capacity <= 64);
 }
 
 #[test]
-fn survivor_recycling_carries_word_and_box_rule_sidecars_together() {
+fn direct_box_replacement_carries_word_and_box_rule_sidecars_together() {
     let mut stores = Stores::new();
     let mut stale = None;
     let mut live = None;
@@ -2490,30 +2427,28 @@ fn survivor_recycling_carries_word_and_box_rule_sidecars_together() {
         }))]);
         let promoted = stores.prepare_box_value(root);
         if let Some(previous) = live.replace(promoted) {
-            stale.get_or_insert(previous);
-            stores.dec_survivor_ref(previous);
+            stale.get_or_insert_with(|| previous.downgrade());
+            drop(previous);
         }
     }
 
     let live = live.expect("one survivor remains");
-    let Some(crate::node_arena::NodeRef::HList(box_node)) = stores.nodes(live).first() else {
+    let Some(crate::node_arena::NodeRef::HList(box_node)) = live.nodes().first() else {
         panic!("survivor root should retain its box sidecar")
     };
     assert_eq!(box_node.width, Scaled::from_raw(31));
     assert_eq!(
-        stores.nodes(box_node.children),
+        live.resolve(box_node.children)
+            .expect("box child belongs to direct owner")
+            .nodes(),
         &[Node::Rule {
             width: Some(Scaled::from_raw(31)),
             height: None,
             depth: Some(Scaled::from_raw(-31)),
         }]
     );
-    assert!(
-        !stores
-            .survivors
-            .contains(stale.expect("a stale root exists"))
-    );
-    assert!(stores.testing_survivor_recycled_buffer_uses() > 0);
+    assert!(stale.expect("a stale root exists").upgrade().is_none());
+    assert_eq!(stores.testing_survivor_recycled_buffer_uses(), 0);
 }
 
 #[test]
@@ -2535,38 +2470,46 @@ fn coalesced_box_replacements_roll_back_to_the_checkpoint_owner() {
 
     let stale = stale.expect("at least one replacement should be stored");
     assert!(!stores.survivors.contains(stale));
-    assert_eq!(stores.testing_live_survivor_slot_count(), 2);
-    assert_eq!(
-        stores.testing_survivor_recycled_buffer_uses(),
-        REPLACEMENTS - 2
-    );
+    assert_eq!(stores.testing_live_survivor_slot_count(), 0);
+    assert_eq!(stores.testing_survivor_recycled_buffer_uses(), 0);
 
     stores.rollback(&snapshot);
     assert_eq!(stores.box_reg(0), Some(baseline));
-    assert_eq!(stores.testing_live_survivor_slot_count(), 1);
-    assert_eq!(stores.testing_survivor_refcount(baseline), 1);
+    assert_eq!(stores.testing_live_survivor_slot_count(), 0);
+    assert_eq!(
+        stores
+            .box_reg_ref(0)
+            .expect("restored direct owner")
+            .to_vec(),
+        [one_char_node('o')]
+    );
 }
 
 #[test]
-fn storing_survivor_in_second_register_shares_refcount_until_release() {
+fn storing_direct_owner_in_second_register_shares_payload_until_release() {
     let mut stores = Stores::new();
     let list = one_char(&mut stores, 'a');
 
     stores.set_box_reg(0, list);
-    let survivor = stores.box_reg(0).expect("box should be non-void");
-    stores.set_box_reg(1, survivor);
+    let owner = stores.box_reg_ref(0).expect("box should be non-void");
+    let observer = owner.downgrade();
+    stores.write_box_reg_ref(1, Some(owner.clone()), false);
 
-    assert_eq!(stores.testing_live_survivor_slot_count(), 1);
-    assert_eq!(stores.testing_survivor_refcount(survivor), 2);
+    assert_eq!(stores.testing_live_survivor_slot_count(), 0);
+    assert!(
+        stores
+            .box_reg_ref(1)
+            .expect("second owner")
+            .shares_payload(&owner)
+    );
 
-    assert_eq!(stores.take_box_reg(0), Some(survivor));
-    // Register 1 and the take journal entry both hold the survivor until a
-    // rollback/commit boundary drops the journal record.
-    assert_eq!(stores.testing_survivor_refcount(survivor), 2);
+    assert_eq!(stores.take_box_reg(0), Some(owner.id()));
+    drop(owner);
+    assert!(observer.upgrade().is_some());
 
     let replacement = one_char(&mut stores, 'b');
     stores.set_box_reg(1, replacement);
-    assert_eq!(stores.testing_live_survivor_slot_count(), 2);
+    assert_eq!(stores.testing_live_survivor_slot_count(), 0);
 }
 
 #[test]
@@ -2580,17 +2523,19 @@ fn group_exit_and_rollback_restore_box_refs_once() {
     stores.enter_group();
     let inner = one_char(&mut stores, 'i');
     stores.set_box_reg(0, inner);
-    assert_eq!(stores.testing_live_survivor_slot_count(), 2);
+    assert_eq!(stores.testing_live_survivor_slot_count(), 0);
 
     assert_eq!(stores.leave_group(), Vec::<Token>::new());
     assert_eq!(stores.box_reg(0), Some(baseline));
-    assert_eq!(stores.testing_live_survivor_slot_count(), 1);
-    assert_eq!(stores.testing_survivor_refcount(baseline), 1);
+    assert_eq!(stores.testing_live_survivor_slot_count(), 0);
+    assert_eq!(
+        stores.box_reg_ref(0).expect("restored owner").to_vec(),
+        [one_char_node('o')]
+    );
 
     stores.rollback(&snapshot);
     assert_eq!(stores.box_reg(0), Some(baseline));
-    assert_eq!(stores.testing_live_survivor_slot_count(), 1);
-    assert_eq!(stores.testing_survivor_refcount(baseline), 1);
+    assert_eq!(stores.testing_live_survivor_slot_count(), 0);
 }
 
 #[test]
@@ -2603,19 +2548,25 @@ fn same_level_box_journal_keeps_value_live_across_nested_group_exit() {
     stores.enter_group();
     let inner = one_char(&mut stores, 'i');
     stores.set_box_reg(0, inner);
-    let local = stores.box_reg(0).expect("local box should be stored");
+    let local = stores.box_reg_ref(0).expect("local box should be stored");
+    let observer = local.downgrade();
     stores.enter_group();
-    assert_eq!(stores.take_box_reg_same_level(0), Some(local));
-    assert_eq!(stores.testing_survivor_refcount(local), 1);
+    assert_eq!(stores.take_box_reg_same_level(0), Some(local.id()));
+    drop(local);
+    assert!(observer.upgrade().is_some());
 
     assert_eq!(stores.leave_group(), Vec::<Token>::new());
     assert_eq!(stores.box_reg(0), None);
-    assert_eq!(stores.testing_survivor_refcount(local), 1);
+    assert!(observer.upgrade().is_some());
 
     assert_eq!(stores.leave_group(), Vec::<Token>::new());
+    assert!(observer.upgrade().is_none());
     assert_eq!(stores.box_reg(0), Some(baseline));
-    assert_eq!(stores.testing_live_survivor_slot_count(), 1);
-    assert_eq!(stores.testing_survivor_refcount(baseline), 1);
+    assert_eq!(stores.testing_live_survivor_slot_count(), 0);
+    assert_eq!(
+        stores.box_reg_ref(0).expect("baseline restored").id(),
+        baseline
+    );
 }
 
 #[test]
@@ -2633,13 +2584,11 @@ fn global_box_assignment_survives_group_and_journal_owner_survives_rollback() {
 
     assert_eq!(stores.leave_group(), Vec::<Token>::new());
     assert_eq!(stores.box_reg(0), Some(global));
-    assert_eq!(stores.testing_survivor_refcount(global), 1);
-    assert_eq!(stores.testing_survivor_refcount(baseline), 1);
+    assert_eq!(stores.testing_live_survivor_slot_count(), 0);
 
     stores.rollback(&snapshot);
     assert_eq!(stores.box_reg(0), Some(baseline));
-    assert_eq!(stores.testing_live_survivor_slot_count(), 1);
-    assert_eq!(stores.testing_survivor_refcount(baseline), 1);
+    assert_eq!(stores.testing_live_survivor_slot_count(), 0);
 }
 
 #[test]
@@ -2652,13 +2601,13 @@ fn same_value_global_box_adds_only_journal_owner() {
 
     stores.enter_group();
     stores.set_box_reg_global(0, survivor);
-    assert_eq!(stores.testing_survivor_refcount(survivor), 2);
+    assert_eq!(stores.testing_live_survivor_slot_count(), 0);
     assert_eq!(stores.leave_group(), Vec::<Token>::new());
-    assert_eq!(stores.testing_survivor_refcount(survivor), 2);
+    assert_eq!(stores.box_reg(0), Some(survivor));
 
     stores.rollback(&snapshot);
     assert_eq!(stores.box_reg(0), Some(survivor));
-    assert_eq!(stores.testing_survivor_refcount(survivor), 1);
+    assert_eq!(stores.testing_live_survivor_slot_count(), 0);
 }
 
 #[test]
@@ -2671,14 +2620,10 @@ fn same_value_local_box_assignment_preserves_live_register_owner() {
     stores.set_box_reg(0, survivor);
 
     assert_eq!(stores.box_reg(0), Some(survivor));
-    assert_eq!(stores.testing_survivor_refcount(survivor), 1);
+    assert_eq!(stores.testing_live_survivor_slot_count(), 0);
     assert_eq!(
-        stores.nodes(survivor),
-        &[Node::Char {
-            font: NULL_FONT,
-            ch: 'a',
-            origin: crate::provenance::OriginRef::unknown(),
-        }]
+        stores.box_reg_ref(0).expect("direct owner").to_vec(),
+        [one_char_node('a')]
     );
 }
 
@@ -2696,18 +2641,15 @@ fn local_box_after_global_drops_local_survivor_on_group_exit() {
     let global = stores.box_reg(0).expect("global box should be stored");
     let local = one_char(&mut stores, 'l');
     stores.set_box_reg(0, local);
-    assert_eq!(stores.testing_live_survivor_slot_count(), 3);
+    assert_eq!(stores.testing_live_survivor_slot_count(), 0);
 
     assert_eq!(stores.leave_group(), Vec::<Token>::new());
     assert_eq!(stores.box_reg(0), Some(global));
-    assert_eq!(stores.testing_live_survivor_slot_count(), 2);
-    assert_eq!(stores.testing_survivor_refcount(global), 1);
-    assert_eq!(stores.testing_survivor_refcount(baseline), 1);
+    assert_eq!(stores.testing_live_survivor_slot_count(), 0);
 
     stores.rollback(&snapshot);
     assert_eq!(stores.box_reg(0), Some(baseline));
-    assert_eq!(stores.testing_live_survivor_slot_count(), 1);
-    assert_eq!(stores.testing_survivor_refcount(baseline), 1);
+    assert_eq!(stores.testing_live_survivor_slot_count(), 0);
 }
 
 #[test]
@@ -2740,20 +2682,23 @@ fn promoted_nested_box_remaps_children_to_same_survivor_root() {
     }))]);
 
     stores.set_box_reg(0, outer);
-    let promoted_outer = stores.box_reg(0).expect("box should be promoted");
-    let Some(crate::node_arena::NodeRef::VList(outer_box)) = stores.nodes(promoted_outer).first()
-    else {
+    let promoted_outer = stores.box_reg_ref(0).expect("box should be promoted");
+    let Some(crate::node_arena::NodeRef::VList(outer_box)) = promoted_outer.nodes().first() else {
         panic!("outer survivor list should contain one vlist");
     };
-    assert_same_root(promoted_outer, outer_box.children);
-    let Some(crate::node_arena::NodeRef::HList(middle_box)) =
-        stores.nodes(outer_box.children).first()
-    else {
+    assert_same_root(promoted_outer.id(), outer_box.children);
+    let middle = promoted_outer
+        .resolve(outer_box.children)
+        .expect("owned middle list");
+    let Some(crate::node_arena::NodeRef::HList(middle_box)) = middle.nodes().first() else {
         panic!("middle survivor list should contain one hlist");
     };
-    assert_same_root(promoted_outer, middle_box.children);
+    assert_same_root(promoted_outer.id(), middle_box.children);
     assert_eq!(
-        stores.nodes(middle_box.children),
+        promoted_outer
+            .resolve(middle_box.children)
+            .expect("owned inner list")
+            .nodes(),
         &[Node::Char {
             font: NULL_FONT,
             ch: 'x',
@@ -2767,8 +2712,7 @@ fn promotion_canonicalizes_shared_survivor_children_into_new_root() {
     let mut stores = Stores::new();
     let child = one_char(&mut stores, 'x');
     stores.set_box_reg(0, child);
-    let child = stores.box_reg(0).expect("child box should be promoted");
-    let child = stores.node_list_ref(child);
+    let child = stores.box_reg_ref(0).expect("child box should be promoted");
     let fields = BoxNodeFields {
         width: scaled(10),
         height: scaled(7),
@@ -2786,8 +2730,10 @@ fn promotion_canonicalizes_shared_survivor_children_into_new_root() {
     ]);
 
     stores.set_box_reg(255, outer);
-    let promoted = stores.box_reg(255).expect("outer box should be promoted");
-    let nodes = stores.nodes(promoted);
+    let promoted = stores
+        .box_reg_ref(255)
+        .expect("outer box should be promoted");
+    let nodes = promoted.nodes();
     let (
         Some(crate::node_arena::NodeRef::HList(first)),
         Some(crate::node_arena::NodeRef::VList(second)),
@@ -2796,13 +2742,16 @@ fn promotion_canonicalizes_shared_survivor_children_into_new_root() {
         panic!("promoted root should preserve both wrapper boxes");
     };
 
-    assert_same_root(promoted, first.children);
+    assert_same_root(promoted.id(), first.children);
     assert_eq!(
         first.children, second.children,
         "shared child is copied once"
     );
     assert_eq!(
-        stores.nodes(first.children),
+        promoted
+            .resolve(first.children)
+            .expect("owned shared child")
+            .nodes(),
         &[Node::Char {
             font: NULL_FONT,
             ch: 'x',
@@ -2890,8 +2839,8 @@ fn promotion_patches_every_child_bearing_compact_row() {
     ]);
 
     stores.set_box_reg(17, root);
-    let promoted = stores.box_reg(17).expect("root should be promoted");
-    assert!(stores.nodes(promoted).into_iter().any(|node| matches!(
+    let promoted = stores.box_reg_ref(17).expect("root should be promoted");
+    assert!(promoted.nodes().into_iter().any(|node| matches!(
         node,
         crate::node_arena::NodeRef::Disc {
             physical_replace_count: 3,
@@ -2899,11 +2848,14 @@ fn promotion_patches_every_child_bearing_compact_row() {
         }
     )));
     let mut child_count = 0;
-    for node in stores.nodes(promoted) {
+    for node in promoted.nodes() {
         for child in node.children() {
-            assert_same_root(promoted, child);
+            assert_same_root(promoted.id(), child);
             assert_eq!(
-                stores.nodes(child),
+                promoted
+                    .resolve(child)
+                    .expect("owned promoted child")
+                    .nodes(),
                 &[Node::Char {
                     font: NULL_FONT,
                     ch: 'c',
@@ -2939,8 +2891,8 @@ fn promotion_copies_overlapping_source_spans_independently() {
     let root = stores.freeze_node_list(&[Node::HList(fields(whole)), Node::HList(fields(suffix))]);
 
     stores.set_box_reg(18, root);
-    let promoted = stores.box_reg(18).expect("root should be promoted");
-    let nodes = stores.nodes(promoted);
+    let promoted = stores.box_reg_ref(18).expect("root should be promoted");
+    let nodes = promoted.nodes();
     let (
         Some(crate::node_arena::NodeRef::HList(whole)),
         Some(crate::node_arena::NodeRef::HList(suffix)),
@@ -2950,10 +2902,19 @@ fn promotion_copies_overlapping_source_spans_independently() {
     };
     assert_ne!(whole.children.start(), suffix.children.start());
     assert_eq!(
-        stores.nodes(whole.children),
+        promoted
+            .resolve(whole.children)
+            .expect("owned whole span")
+            .nodes(),
         &[Node::Penalty(10), Node::Penalty(20)]
     );
-    assert_eq!(stores.nodes(suffix.children), &[Node::Penalty(20)]);
+    assert_eq!(
+        promoted
+            .resolve(suffix.children)
+            .expect("owned suffix span")
+            .nodes(),
+        &[Node::Penalty(20)]
+    );
 }
 
 #[test]
@@ -3032,17 +2993,18 @@ fn promotion_handles_pathologically_deep_box_nesting() {
     }
 
     stores.set_box_reg(0, current);
-    let mut promoted = stores.box_reg(0).expect("box should be promoted");
+    let mut promoted = stores.box_reg_ref(0).expect("box should be promoted");
     for _ in 0..4096 {
-        let Some(crate::node_arena::NodeRef::HList(box_node)) = stores.nodes(promoted).first()
-        else {
+        let Some(crate::node_arena::NodeRef::HList(box_node)) = promoted.nodes().first() else {
             panic!("deep promoted chain should remain hlist nodes");
         };
-        assert_same_root(promoted, box_node.children);
-        promoted = box_node.children;
+        assert_same_root(promoted.id(), box_node.children);
+        promoted = promoted
+            .resolve(box_node.children)
+            .expect("owned nested box");
     }
     assert_eq!(
-        stores.nodes(promoted),
+        promoted.nodes(),
         &[Node::Char {
             font: NULL_FONT,
             ch: 'x',
@@ -3062,11 +3024,15 @@ fn glue_spec(width: i32) -> GlueSpec {
 }
 
 fn one_char(stores: &mut Stores, ch: char) -> NodeListId {
-    stores.freeze_node_list(&[Node::Char {
+    stores.freeze_node_list(&[one_char_node(ch)])
+}
+
+fn one_char_node(ch: char) -> Node {
+    Node::Char {
         font: NULL_FONT,
         ch,
         origin: crate::provenance::OriginRef::unknown(),
-    }])
+    }
 }
 
 fn assert_same_root(a: NodeListId, b: NodeListId) {

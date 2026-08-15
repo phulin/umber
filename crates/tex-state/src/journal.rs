@@ -25,7 +25,7 @@ pub(crate) enum Entry {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct BoxUndoId(u32);
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct BoxUndoRec {
     index: u16,
     global: bool,
@@ -35,7 +35,7 @@ pub(crate) struct BoxUndoRec {
 }
 
 impl BoxUndoRec {
-    pub(crate) const fn new(index: u16, global: bool, old: BoxSlot, new: BoxSlot) -> Self {
+    pub(crate) fn new(index: u16, global: bool, old: BoxSlot, new: BoxSlot) -> Self {
         Self {
             index,
             global,
@@ -44,12 +44,7 @@ impl BoxUndoRec {
             new,
         }
     }
-    pub(crate) const fn new_at_depth(
-        index: u16,
-        restore_depth: u32,
-        old: BoxSlot,
-        new: BoxSlot,
-    ) -> Self {
+    pub(crate) fn new_at_depth(index: u16, restore_depth: u32, old: BoxSlot, new: BoxSlot) -> Self {
         Self {
             index,
             global: false,
@@ -58,26 +53,26 @@ impl BoxUndoRec {
             new,
         }
     }
-    pub(crate) const fn index(self) -> u16 {
+    pub(crate) const fn index(&self) -> u16 {
         self.index
     }
-    pub(crate) const fn is_global(self) -> bool {
+    pub(crate) const fn is_global(&self) -> bool {
         self.global
     }
-    pub(crate) const fn survives_group(self, leaving_depth: u32) -> bool {
+    pub(crate) const fn survives_group(&self, leaving_depth: u32) -> bool {
         self.global || self.restore_depth < leaving_depth
     }
-    pub(crate) const fn restore_depth(self) -> u32 {
+    pub(crate) const fn restore_depth(&self) -> u32 {
         self.restore_depth
     }
-    pub(crate) const fn old(self) -> BoxSlot {
-        self.old
+    pub(crate) fn old(&self) -> BoxSlot {
+        self.old.clone()
     }
-    pub(crate) const fn new_value(self) -> BoxSlot {
-        self.new
+    pub(crate) fn new_value(&self) -> BoxSlot {
+        self.new.clone()
     }
-    pub(crate) fn with_new_value(self, new: BoxSlot) -> Self {
-        Self { new, ..self }
+    pub(crate) fn replace_new_value(&mut self, new: BoxSlot) {
+        self.new = new;
     }
 }
 
@@ -299,7 +294,7 @@ impl SaveStackProjection {
         self.finish_entry(pushed_words, mutation);
     }
 
-    fn push_box_undo(&mut self, rec: BoxUndoRec) {
+    fn push_box_undo(&mut self, rec: &BoxUndoRec) {
         let mut pushed_words = 0;
         let mut mutation = SaveStackProjectionMutation::None;
         let Some(saved) = self.groups.last_mut() else {
@@ -533,9 +528,9 @@ impl Journal {
         self.glue_undo_roots.get(index).and_then(Option::as_ref)
     }
 
-    pub(crate) fn push_box_undo(&mut self, rec: BoxUndoRec) -> (BoxUndoRec, JournalPos) {
+    pub(crate) fn push_box_undo(&mut self, rec: BoxUndoRec) -> JournalPos {
         let pos = self.pos();
-        self.save_stack.push_box_undo(rec);
+        self.save_stack.push_box_undo(&rec);
         let id = BoxUndoId(u32_len(
             self.box_undos.len(),
             "box undo arena exceeds u32 entries",
@@ -545,11 +540,11 @@ impl Journal {
         self.token_undo_roots.push(None);
         self.macro_undo_roots.push(None);
         self.glue_undo_roots.push(None);
-        (rec, pos)
+        pos
     }
 
     pub(crate) fn box_undo(&self, id: BoxUndoId) -> BoxUndoRec {
-        self.box_undos[id.0 as usize]
+        self.box_undos[id.0 as usize].clone()
     }
 
     pub(crate) fn replace_box_new(&mut self, pos: JournalPos, new: BoxSlot) {
@@ -558,7 +553,7 @@ impl Journal {
             panic!("journal position does not name a box undo entry");
         };
         let rec = &mut self.box_undos[id.0 as usize];
-        *rec = rec.with_new_value(new);
+        rec.replace_new_value(new);
     }
 
     pub(crate) fn box_undo_len(&self) -> u32 {

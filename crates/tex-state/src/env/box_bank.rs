@@ -6,6 +6,7 @@
 use crate::epoch::Epoch;
 use crate::ids::NodeListId;
 use crate::journal::{BoxUndoRec, Journal, JournalPos};
+use crate::node_arena::NodeListRef;
 use core::array;
 
 use super::banks::{BoxWriteOutcome, DENSE_REGISTER_COUNT};
@@ -19,9 +20,10 @@ const PAGE_COUNT: usize = 128;
 /// - value and bookkeeping are mutated and restored atomically;
 /// - a live `coalesce_pos` names the matching live `BoxUndoRec`;
 /// - bookkeeping is excluded from semantic hashing and format images.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct BoxSlot {
     value: u64,
+    root: Option<NodeListRef>,
     owner_depth: u32,
     coalesce_epoch: Epoch,
     coalesce_pos: u32,
@@ -31,6 +33,7 @@ impl Default for BoxSlot {
     fn default() -> Self {
         Self {
             value: NodeListId::encode_box_word(None),
+            root: None,
             owner_depth: 0,
             coalesce_epoch: Epoch::ZERO,
             coalesce_pos: 0,
@@ -39,16 +42,20 @@ impl Default for BoxSlot {
 }
 
 impl BoxSlot {
-    pub(crate) fn value(self) -> u64 {
+    pub(crate) const fn value(&self) -> u64 {
         self.value
     }
 
+    pub(crate) fn root(&self) -> Option<NodeListRef> {
+        self.root.clone()
+    }
+
     #[cfg(test)]
-    pub(super) fn is_owned_by(self, depth: u32) -> bool {
+    pub(super) fn is_owned_by(&self, depth: u32) -> bool {
         depth != 0 && self.owner_depth == depth
     }
 
-    pub(crate) const fn owner_depth(self) -> u32 {
+    pub(crate) const fn owner_depth(&self) -> u32 {
         self.owner_depth
     }
 }
@@ -70,19 +77,19 @@ pub(super) struct BoxWriteContext<'a> {
 impl BoxBank {
     pub(super) fn new() -> Self {
         Self {
-            dense: [BoxSlot::default(); DENSE_REGISTER_COUNT],
+            dense: array::from_fn(|_| BoxSlot::default()),
             sparse: array::from_fn(|_| None),
         }
     }
 
     pub(super) fn get(&self, index: u16) -> BoxSlot {
         if usize::from(index) < DENSE_REGISTER_COUNT {
-            self.dense[usize::from(index)]
+            self.dense[usize::from(index)].clone()
         } else {
             let (page, offset) = sparse_location(index);
             self.sparse[page]
                 .as_ref()
-                .map_or_else(BoxSlot::default, |slots| slots[offset])
+                .map_or_else(BoxSlot::default, |slots| slots[offset].clone())
         }
     }
 
@@ -91,19 +98,19 @@ impl BoxBank {
             &mut self.dense[usize::from(index)]
         } else {
             let (page, offset) = sparse_location(index);
-            &mut self.sparse[page].get_or_insert_with(|| Box::new([BoxSlot::default(); PAGE_LEN]))
-                [offset]
+            &mut self.sparse[page]
+                .get_or_insert_with(|| Box::new(array::from_fn(|_| BoxSlot::default())))[offset]
         }
     }
 
     pub(super) fn write(
         &mut self,
         index: u16,
-        value: Option<NodeListId>,
+        root: Option<NodeListRef>,
         ctx: BoxWriteContext<'_>,
     ) -> BoxWriteOutcome {
         let old = self.get(index);
-        let value = NodeListId::encode_box_word(value);
+        let value = NodeListId::encode_box_word(root.as_ref().map(NodeListRef::id));
         if old.value == value && !ctx.global {
             return BoxWriteOutcome::Unchanged;
         }
@@ -117,17 +124,17 @@ impl BoxBank {
 
         if can_coalesce {
             let pos = JournalPos::from_raw(old.coalesce_pos as usize);
-            let mut new = old;
+            let mut new = old.clone();
             new.value = value;
-            ctx.journal.replace_box_new(pos, new);
+            new.root = root;
+            ctx.journal.replace_box_new(pos, new.clone());
             *self.get_mut(index) = new;
-            BoxWriteOutcome::Coalesced {
-                displaced: old.value,
-            }
+            BoxWriteOutcome::Coalesced
         } else {
             let pos = ctx.journal.pos();
             let new = BoxSlot {
                 value,
+                root,
                 owner_depth,
                 coalesce_epoch: if !ctx.global && ctx.coalesce {
                     ctx.epoch
@@ -136,26 +143,26 @@ impl BoxBank {
                 },
                 coalesce_pos: pos.raw(),
             };
-            let (rec, actual_pos) = ctx
-                .journal
-                .push_box_undo(BoxUndoRec::new(index, ctx.global, old, new));
+            let actual_pos =
+                ctx.journal
+                    .push_box_undo(BoxUndoRec::new(index, ctx.global, old, new.clone()));
             debug_assert_eq!(pos, actual_pos);
             *self.get_mut(index) = new;
-            BoxWriteOutcome::Journaled { rec, pos }
+            BoxWriteOutcome::Journaled { pos }
         }
     }
 
     pub(super) fn write_same_level(
         &mut self,
         index: u16,
-        value: Option<NodeListId>,
+        root: Option<NodeListRef>,
         journal: &mut Journal,
     ) -> BoxWriteOutcome {
         let old = self.get(index);
         if old.owner_depth == 0 {
             return self.write(
                 index,
-                value,
+                root,
                 BoxWriteContext {
                     global: true,
                     coalesce: false,
@@ -165,7 +172,7 @@ impl BoxBank {
                 },
             );
         }
-        let value = NodeListId::encode_box_word(value);
+        let value = NodeListId::encode_box_word(root.as_ref().map(NodeListRef::id));
         if old.value == value {
             return BoxWriteOutcome::Unchanged;
         }
@@ -176,6 +183,7 @@ impl BoxBank {
         // slot; group exit still restores its `old` slot.
         let mut new = old;
         new.value = value;
+        new.root = root;
         *self.get_mut(index) = new;
         BoxWriteOutcome::SameLevel
     }
@@ -186,16 +194,22 @@ impl BoxBank {
             let (page, _) = sparse_location(index);
             if self.sparse[page]
                 .as_ref()
-                .is_some_and(|slots| slots.iter().all(|slot| *slot == BoxSlot::default()))
+                .is_some_and(|slots| slots.iter().all(|slot| slot == &BoxSlot::default()))
             {
                 self.sparse[page] = None;
             }
         }
     }
 
-    pub(super) fn restore_value(&mut self, index: u16, value: u64) {
+    pub(super) fn restore_value(&mut self, index: u16, value: u64, root: Option<NodeListRef>) {
+        assert_eq!(
+            NodeListId::decode_box_word(value),
+            root.as_ref().map(NodeListRef::id),
+            "box word and structural owner disagree"
+        );
         let mut slot = self.get(index);
         slot.value = value;
+        slot.root = root;
         self.restore(index, slot);
     }
 

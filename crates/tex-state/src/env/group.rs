@@ -24,6 +24,7 @@ pub struct RestoreRecord {
     tracing_restores: i32,
     tracing_online: i32,
     escape_char: i32,
+    box_root: Option<crate::node_arena::NodeListRef>,
     box_trace_text: Option<String>,
 }
 
@@ -39,6 +40,7 @@ impl RestoreRecord {
             tracing_restores: env.int_param(crate::env::banks::IntParam::TRACING_RESTORES),
             tracing_online: env.int_param(crate::env::banks::IntParam::TRACING_ONLINE),
             escape_char: env.int_param(crate::env::banks::IntParam::ESCAPE_CHAR),
+            box_root: None,
             box_trace_text: None,
         }
     }
@@ -54,6 +56,7 @@ impl RestoreRecord {
             tracing_restores: env.int_param(crate::env::banks::IntParam::TRACING_RESTORES),
             tracing_online: env.int_param(crate::env::banks::IntParam::TRACING_ONLINE),
             escape_char: env.int_param(crate::env::banks::IntParam::ESCAPE_CHAR),
+            box_root: None,
             box_trace_text: None,
         }
     }
@@ -73,20 +76,23 @@ impl RestoreRecord {
             tracing_restores: env.int_param(crate::env::banks::IntParam::TRACING_RESTORES),
             tracing_online: env.int_param(crate::env::banks::IntParam::TRACING_ONLINE),
             escape_char: env.int_param(crate::env::banks::IntParam::ESCAPE_CHAR),
+            box_root: old.root(),
             box_trace_text: None,
         }
     }
 
     fn retaining_box(env: &Env, save_position: usize, index: u16) -> Self {
+        let current = env.boxes.get(index);
         Self {
             save_position,
             cell: CellId::new(BankTag::Box, u32::from(index)),
-            old: env.boxes.get(index).value(),
+            old: current.value(),
             trace_eligible: true,
             retaining: true,
             tracing_restores: env.int_param(crate::env::banks::IntParam::TRACING_RESTORES),
             tracing_online: env.int_param(crate::env::banks::IntParam::TRACING_ONLINE),
             escape_char: env.int_param(crate::env::banks::IntParam::ESCAPE_CHAR),
+            box_root: current.root(),
             box_trace_text: None,
         }
     }
@@ -129,7 +135,12 @@ impl RestoreRecord {
 
     pub(crate) fn capture_box_trace_text(&mut self, text: String) {
         debug_assert_eq!(self.cell.bank(), BankTag::Box);
+        self.box_root = None;
         self.box_trace_text = Some(text);
+    }
+
+    pub(crate) fn box_root(&self) -> Option<&crate::node_arena::NodeListRef> {
+        self.box_root.as_ref()
     }
 
     fn refresh_restored_shape_value(&mut self, env: &Env) {
@@ -557,6 +568,7 @@ impl Env {
         self.journal.box_undo(id)
     }
 
+    #[cfg(test)]
     pub(crate) fn last_group_marker_pos(&self) -> Option<JournalPos> {
         self.group_boundaries
             .last()
@@ -658,10 +670,7 @@ impl Env {
     /// The consumed operation mark must be the only snapshot on this baseline;
     /// otherwise a retained checkpoint still owns the journal suffix. Open TeX
     /// groups keep their marker and restoration records regardless.
-    pub(crate) fn retire_committed_snapshot(
-        &mut self,
-        snapshot: EnvSnapshot,
-    ) -> Option<Vec<crate::ids::NodeListId>> {
+    pub(crate) fn retire_committed_snapshot(&mut self, snapshot: EnvSnapshot) -> Option<()> {
         assert!(
             snapshot.journal_baseline_serial == self.journal_baseline_serial,
             "committed environment snapshot belongs to a retired baseline"
@@ -669,14 +678,6 @@ impl Env {
         if !self.can_retire_committed_snapshot(&snapshot) {
             return None;
         }
-        let released_boxes = (0..self.journal.len())
-            .filter_map(|index| match self.journal.entry(index) {
-                Entry::BoxUndo(id) => {
-                    crate::ids::NodeListId::decode_box_word(self.journal.box_undo(id).old().value())
-                }
-                Entry::Undo(_) | Entry::Marker(_) => None,
-            })
-            .collect();
         self.journal.clear_committed();
         self.journal_rollback_roots = std::sync::Arc::new(super::JournalRollbackRoots::default());
         self.journal_baseline_serial = self
@@ -687,7 +688,7 @@ impl Env {
             .journal_lineage
             .checked_add(1)
             .expect("environment journal lineage exhausted");
-        Some(released_boxes)
+        Some(())
     }
 
     #[must_use]
@@ -971,6 +972,7 @@ impl Env {
                         root,
                         macro_root,
                         glue_root,
+                        None,
                     );
                     if traced_local_entries.contains(&index) {
                         restores.push(RestoreRecord::restoring(self, index, rec.cell(), rec.old()));
@@ -1102,6 +1104,7 @@ impl Env {
                             root,
                             macro_root,
                             glue_root,
+                            None,
                         );
                         if traced_local_entries.contains(&index) {
                             restores.push(RestoreRecord::restoring(
@@ -1162,6 +1165,7 @@ impl Env {
                 new_root.clone(),
                 new_macro_root.clone(),
                 new_glue_root.clone(),
+                None,
             );
             let key = cell_key(rec.cell());
             let state = cell_states
@@ -1206,7 +1210,7 @@ impl Env {
                 rec.old()
             } else {
                 state.refiled = true;
-                state.first_old
+                state.first_old.clone()
             };
             self.journal.push_box_undo(if rec.is_global() {
                 BoxUndoRec::new(rec.index(), true, old, rec.new_value())
@@ -1252,7 +1256,14 @@ impl Env {
                     .journal
                     .glue_undo_roots(index)
                     .and_then(GlueUndoRoots::old);
-                self.restore_raw_with_owners(rec.cell(), rec.old(), root, macro_root, glue_root);
+                self.restore_raw_with_owners(
+                    rec.cell(),
+                    rec.old(),
+                    root,
+                    macro_root,
+                    glue_root,
+                    None,
+                );
             } else if let Entry::BoxUndo(id) = self.journal.entry(index) {
                 let rec = self.journal.box_undo(id);
                 self.boxes.restore(rec.index(), rec.old());

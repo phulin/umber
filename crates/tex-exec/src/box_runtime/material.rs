@@ -43,7 +43,7 @@ fn execute_scanned_unbox_impl(
     } else {
         UnboxKind::Vertical
     };
-    let Some(register) = stores.box_reg(index) else {
+    let Some(register) = stores.box_reg_ref(index) else {
         return Ok(());
     };
     // TeX82 §1110 first returns for a void register, then refuses every
@@ -60,10 +60,10 @@ fn execute_scanned_unbox_impl(
                 report_incompatible_unbox(stores, error_context)?;
                 return Ok(());
             }
-            TakeUnboxResult::Children(children) => Some(UnboxSource::PinnedSurvivor(children)),
+            TakeUnboxResult::Children(children) => Some(children),
         }
     } else {
-        let Some(node) = first_box_node(stores, Some(register)) else {
+        let Some(node) = first_box_node(Some(register)) else {
             report_incompatible_unbox(stores, error_context)?;
             return Ok(());
         };
@@ -75,7 +75,7 @@ fn execute_scanned_unbox_impl(
             Node::HList(node) | Node::VList(node) => node.children.clone(),
             _ => unreachable!(),
         };
-        Some(UnboxSource::Shared(children))
+        Some(children)
     };
     append_unboxed(nest, stores, source, fuel)
 }
@@ -315,23 +315,14 @@ pub(crate) fn split_hpack_migrations(nodes: Vec<Node>) -> (Vec<Node>, Vec<Node>,
     (retained, pre_migrated, migrated)
 }
 
-enum UnboxSource {
-    PinnedSurvivor(tex_state::ids::NodeListId),
-    Shared(tex_state::node_arena::NodeListRef),
-}
-
 fn append_unboxed(
     nest: &mut ModeNest,
     stores: &mut Universe,
-    source: Option<UnboxSource>,
+    source: Option<tex_state::node_arena::NodeListRef>,
     fuel: &mut tex_command::CommandFuel,
 ) -> Result<(), ExecError> {
-    let Some(source) = source else {
+    let Some(children) = source else {
         return Ok(());
-    };
-    let children = match source {
-        UnboxSource::PinnedSurvivor(children) => stores.node_list_ref(children),
-        UnboxSource::Shared(children) => children,
     };
     flush_pending_hchars(nest, stores, fuel)?;
     // pdfTeX's margin-kern nodes are line-breaking annotations owned by the

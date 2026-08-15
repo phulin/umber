@@ -523,13 +523,8 @@ pub(crate) struct FixedBank<C, const N: usize> {
 pub(crate) enum BoxWriteOutcome {
     Unchanged,
     SameLevel,
-    Journaled {
-        rec: crate::journal::BoxUndoRec,
-        pos: JournalPos,
-    },
-    Coalesced {
-        displaced: u64,
-    },
+    Journaled { pos: JournalPos },
+    Coalesced,
 }
 
 impl<C, const N: usize> FixedBank<C, N>

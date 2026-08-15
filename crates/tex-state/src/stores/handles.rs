@@ -1,5 +1,4 @@
 use super::Stores;
-use crate::env::EnvSnapshot;
 use crate::ids::{
     ArenaRef, FontId, GlueId, MacroDefinitionId, NodeListId, OriginListId, TokenListId,
 };
@@ -8,7 +7,8 @@ use crate::interner::{Symbol, SymbolId, SymbolReference};
 use crate::meaning::Meaning;
 use crate::node::Node;
 use crate::node_arena::{
-    NodeDescriptor, NodeHandle, NodeHandleEvent, NodeHandlePolicy, NodeRef, NodeSchemaVisitor,
+    NodeDescriptor, NodeHandle, NodeHandleEvent, NodeHandlePolicy, NodeListRef, NodeRef,
+    NodeSchemaVisitor,
 };
 use crate::token::{OriginId, Token};
 use crate::world::World;
@@ -25,15 +25,32 @@ impl Stores {
     ) {
         for record in restores {
             if record.cell().bank() == crate::cell::BankTag::Box {
-                let text = NodeListId::decode_box_word(record.old())
-                    .map_or_else(|| "void".to_owned(), |id| self.box_restore_trace_text(id));
+                let text = record.box_root().map_or_else(
+                    || "void".to_owned(),
+                    |root| self.box_restore_trace_text_ref(root),
+                );
                 record.capture_box_trace_text(text);
             }
         }
     }
 
     pub(crate) fn box_restore_trace_text(&self, id: NodeListId) -> String {
-        let Some(node) = self.nodes(id).first() else {
+        self.assert_live_node_list(id);
+        let nodes = self.nodes(id);
+        Self::format_box_restore_trace(nodes.first(), |child| !self.nodes(child).is_empty())
+    }
+
+    fn box_restore_trace_text_ref(&self, root: &NodeListRef) -> String {
+        Self::format_box_restore_trace(root.nodes().first(), |child| {
+            root.resolve(child).is_some_and(|child| !child.is_empty())
+        })
+    }
+
+    fn format_box_restore_trace(
+        node: Option<NodeRef<'_>>,
+        has_children: impl FnOnce(NodeListId) -> bool,
+    ) -> String {
+        let Some(node) = node else {
             return "void".to_owned();
         };
         let (name, box_node) = match node {
@@ -80,7 +97,7 @@ impl Stores {
             let ratio = crate::scaled::Scaled::from_raw(i32::try_from(raw).unwrap_or(i32::MAX));
             let _ = write!(text, ", glue set {sign}{}", scaled(ratio));
         }
-        if !self.nodes(box_node.children).is_empty() {
+        if has_children(box_node.children) {
             text.push_str(" []");
         }
         text
@@ -421,14 +438,13 @@ impl Stores {
         }
     }
 
-    pub(super) fn prepare_box_value(&mut self, value: NodeListId) -> NodeListId {
+    pub(super) fn prepare_box_value(&mut self, value: NodeListId) -> NodeListRef {
         self.assert_live_node_list(value);
         match value.arena() {
-            ArenaRef::Epoch => self.survivors.promote(value, &self.nodes),
-            ArenaRef::Survivor(_) => {
-                self.survivors.inc_ref(value);
-                value
-            }
+            ArenaRef::Epoch => self
+                .node_ref_index
+                .intern(self.survivors.promote_direct(value, &self.nodes)),
+            ArenaRef::Survivor(_) => self.survivors.owner(value).node_ref(),
         }
     }
 
@@ -441,20 +457,35 @@ impl Stores {
         let old = self.env.box_reg(index);
         let value = match value {
             Some(value) if Some(value) == old => Some(value),
-            Some(value) => Some(self.prepare_box_value(value)),
+            Some(value) => {
+                let value = self.prepare_box_value(value);
+                return self.write_box_reg_ref(index, Some(value), global);
+            }
             None => None,
         };
+        let root = value.and_then(|_| self.env.box_reg_ref(index));
+        self.write_box_reg_ref(index, root, global)
+    }
+
+    pub(crate) fn write_box_reg_ref(
+        &mut self,
+        index: u16,
+        value: Option<NodeListRef>,
+        global: bool,
+    ) -> crate::env::CellMutationReceipt {
+        let old = self.env.box_reg(index);
+        let new = value.as_ref().map(NodeListRef::id);
         let (receipt, rec) = if global {
             self.env.set_box_reg_global(index, value)
         } else {
             self.env.set_box_reg(index, value)
         };
-        let receipt = if receipt.changed() && self.update_main_memory_box_root(old, value) {
+        let receipt = if receipt.changed() && self.update_main_memory_box_root(old, new) {
             receipt.with_main_memory_roots_updated()
         } else {
             receipt
         };
-        self.account_box_write(old, rec);
+        let _ = rec;
         receipt
     }
 
@@ -466,103 +497,31 @@ impl Stores {
         let old = self.env.box_reg(index);
         let value = match value {
             Some(value) if Some(value) == old => Some(value),
-            Some(value) => Some(self.prepare_box_value(value)),
+            Some(value) => {
+                let value = self.prepare_box_value(value);
+                return self.write_box_reg_same_level_ref(index, Some(value));
+            }
             None => None,
         };
+        let root = value.and_then(|_| self.env.box_reg_ref(index));
+        self.write_box_reg_same_level_ref(index, root)
+    }
+
+    pub(super) fn write_box_reg_same_level_ref(
+        &mut self,
+        index: u16,
+        value: Option<NodeListRef>,
+    ) -> crate::env::CellMutationReceipt {
+        let old = self.env.box_reg(index);
+        let new = value.as_ref().map(NodeListRef::id);
         let (receipt, rec) = self.env.set_box_reg_same_level(index, value);
-        let receipt = if receipt.changed() && self.update_main_memory_box_root(old, value) {
+        let receipt = if receipt.changed() && self.update_main_memory_box_root(old, new) {
             receipt.with_main_memory_roots_updated()
         } else {
             receipt
         };
-        self.account_box_write(old, rec);
+        let _ = rec;
         receipt
-    }
-
-    pub(super) fn account_box_write(
-        &mut self,
-        old: Option<NodeListId>,
-        outcome: crate::env::banks::BoxWriteOutcome,
-    ) {
-        match outcome {
-            crate::env::banks::BoxWriteOutcome::Unchanged => {}
-            crate::env::banks::BoxWriteOutcome::SameLevel => {}
-            crate::env::banks::BoxWriteOutcome::Journaled { rec, .. } => {
-                if rec.old().value() == rec.new_value().value() {
-                    self.inc_survivor_ref(NodeListId::decode_box_word(rec.old().value()));
-                }
-                if rec.old().value() == 0 {
-                    self.dec_survivor_ref_opt(old);
-                }
-            }
-            crate::env::banks::BoxWriteOutcome::Coalesced { displaced } => {
-                self.dec_survivor_ref_opt(NodeListId::decode_box_word(displaced));
-            }
-        }
-    }
-
-    pub(super) fn account_rollback_box_refs(&mut self, snapshot: &EnvSnapshot) {
-        let dropped: Vec<_> = self
-            .env
-            .journal_entries_since(snapshot.journal_pos())
-            .iter()
-            .rev()
-            .filter_map(|entry| match entry {
-                crate::journal::Entry::BoxUndo(id) => {
-                    Some(self.env.box_undo(*id).new_value().value())
-                }
-                _ => None,
-            })
-            .collect();
-        for word in dropped {
-            self.dec_survivor_ref_opt(NodeListId::decode_box_word(word));
-        }
-    }
-
-    pub(super) fn current_group_box_refs_to_release(&self) -> Vec<NodeListId> {
-        let Some(pos) = self.env.last_group_marker_pos() else {
-            return Vec::new();
-        };
-        let leaving_depth = self.env.group_depth();
-        self.env
-            .journal_entries_since(pos)
-            .iter()
-            .rev()
-            .filter_map(|entry| match entry {
-                crate::journal::Entry::BoxUndo(id)
-                    if !self.env.box_undo(*id).survives_group(leaving_depth) =>
-                {
-                    NodeListId::decode_box_word(self.env.box_undo(*id).new_value().value())
-                }
-                _ => None,
-            })
-            .collect()
-    }
-
-    pub(super) fn release_box_refs(&mut self, dropped: Vec<NodeListId>) {
-        for id in dropped {
-            self.dec_survivor_ref(id);
-        }
-    }
-
-    pub(super) fn inc_survivor_ref(&mut self, value: Option<NodeListId>) {
-        if let Some(id) = value
-            && matches!(id.arena(), ArenaRef::Survivor(_))
-        {
-            self.survivors.inc_ref(id);
-        }
-    }
-
-    pub(super) fn dec_survivor_ref_opt(&mut self, value: Option<NodeListId>) {
-        if let Some(id) = value {
-            self.dec_survivor_ref(id);
-        }
-    }
-
-    pub(super) fn dec_survivor_ref(&mut self, id: NodeListId) {
-        if matches!(id.arena(), ArenaRef::Survivor(_)) {
-            self.survivors.dec_ref(id);
-        }
     }
 }
 

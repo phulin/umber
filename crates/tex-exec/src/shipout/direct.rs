@@ -85,8 +85,8 @@ fn stage_form_inner(
     write_expander: &mut WriteExpander<'_>,
     replay_expander: &mut ReplayTextExpander<'_>,
 ) -> Result<tex_state::PdfFormArtifact, ExecError> {
-    let root_node = stores
-        .node_list_ref(form.box_list())
+    let root_node = form
+        .box_list_ref()
         .get(0)
         .ok_or(ExecError::PdfXFormVoidBox)?;
     let (root, children, vertical, box_lr) = match root_node {

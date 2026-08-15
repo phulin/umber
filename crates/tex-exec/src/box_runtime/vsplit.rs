@@ -24,11 +24,11 @@ pub(crate) fn split_vbox_register(
     stores.clear_split_discards();
     let split_top_skip = stores.glue_ref(stores.glue_param(GlueParam::SPLIT_TOP_SKIP));
     let split_max_depth = stores.dimen_param(DimenParam::SPLIT_MAX_DEPTH);
-    let Some(source) = stores.box_reg(index) else {
+    let Some(source) = stores.box_reg_ref(index) else {
         clear_split_marks(stores);
         return Ok(None);
     };
-    let Some(source_node) = stores.node_list_ref(source).get(0) else {
+    let Some(source_node) = source.get(0) else {
         clear_split_marks(stores);
         stores.clear_box_reg_same_level(index);
         return Ok(None);
@@ -49,7 +49,6 @@ pub(crate) fn split_vbox_register(
         return Ok(None);
     };
 
-    stores.pin_survivor(source);
     let mut split_nodes = source_box.children.to_vec();
     let split =
         vert_break(stores, &split_nodes, height, split_max_depth).map_err(vertical_break_error)?;

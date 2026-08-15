@@ -6,6 +6,7 @@ use crate::ids::{FontId, GlueId, NodeListId, TokenListId};
 use crate::interner::Symbol;
 use crate::journal::{Entry, UndoRec};
 use crate::meaning::Meaning;
+use crate::node_arena::NodeListRef as NodeRoot;
 use crate::scaled::Scaled;
 use crate::token::{Catcode, Token};
 use crate::token_store::{TokenListRef, TokenStore};
@@ -24,6 +25,10 @@ fn token_root(tokens: &mut TokenStore, ch: char) -> TokenListRef {
         cat: Catcode::Other,
     }]);
     tokens.owner(id).expect("interned token root")
+}
+
+fn box_owner(id: NodeListId) -> NodeRoot {
+    NodeRoot::testing_with_id(id)
 }
 
 #[test]
@@ -363,20 +368,20 @@ fn box_slots_restore_owner_and_value_across_nested_local_and_global_writes() {
         let inner = NodeListId::testing_survivor(3, 1, 0);
         let global = NodeListId::testing_survivor(4, 1, 0);
         let mut env = Env::new();
-        env.set_box_reg_global(index, Some(root));
+        env.set_box_reg_global(index, Some(box_owner(root)));
 
         env.enter_group();
-        env.set_box_reg(index, Some(outer));
+        env.set_box_reg(index, Some(box_owner(outer)));
         assert!(env.box_reg_is_local_to_current_group(index));
         env.enter_group();
-        env.set_box_reg(index, Some(inner));
+        env.set_box_reg(index, Some(box_owner(inner)));
         assert!(env.box_reg_is_local_to_current_group(index));
         let _ = env.leave_group();
         assert_eq!(env.box_reg(index), Some(outer));
         assert!(env.box_reg_is_local_to_current_group(index));
 
         env.enter_group();
-        env.set_box_reg_global(index, Some(global));
+        env.set_box_reg_global(index, Some(box_owner(global)));
         assert!(!env.box_reg_is_local_to_current_group(index));
         let _ = env.leave_group();
         assert_eq!(env.box_reg(index), Some(global));
@@ -392,13 +397,13 @@ fn box_checkpoint_rollback_restores_coalescing_cursor_for_same_depth_reuse() {
     let discarded = NodeListId::testing_survivor(2, 1, 0);
     let replacement = NodeListId::testing_survivor(3, 1, 0);
     env.enter_group();
-    env.set_box_reg(9, Some(first));
+    env.set_box_reg(9, Some(box_owner(first)));
     let snapshot = env.checkpoint();
-    env.set_box_reg(9, Some(discarded));
+    env.set_box_reg(9, Some(box_owner(discarded)));
     env.rollback_to(snapshot);
     assert_eq!(env.box_reg(9), Some(first));
     assert!(env.box_reg_is_local_to_current_group(9));
-    env.set_box_reg(9, Some(replacement));
+    env.set_box_reg(9, Some(box_owner(replacement)));
     assert_eq!(env.box_reg(9), Some(replacement));
     let _ = env.leave_group();
     assert_eq!(env.box_reg(9), None);
@@ -408,15 +413,131 @@ fn box_checkpoint_rollback_restores_coalescing_cursor_for_same_depth_reuse() {
 fn cloned_box_slots_and_journals_diverge_without_cross_timeline_cursors() {
     let mut env = Env::new();
     env.enter_group();
-    env.set_box_reg(300, Some(NodeListId::testing_survivor(1, 1, 0)));
+    env.set_box_reg(300, Some(box_owner(NodeListId::testing_survivor(1, 1, 0))));
     let mut fork = env.clone();
-    fork.set_box_reg(300, Some(NodeListId::testing_survivor(2, 1, 0)));
-    env.set_box_reg(300, Some(NodeListId::testing_survivor(3, 1, 0)));
+    fork.set_box_reg(300, Some(box_owner(NodeListId::testing_survivor(2, 1, 0))));
+    env.set_box_reg(300, Some(box_owner(NodeListId::testing_survivor(3, 1, 0))));
     assert_ne!(env.box_reg(300), fork.box_reg(300));
     let _ = env.leave_group();
     let _ = fork.leave_group();
     assert_eq!(env.box_reg(300), None);
     assert_eq!(fork.box_reg(300), None);
+}
+
+#[test]
+fn coalesced_box_replacements_drop_displaced_structural_owners() {
+    const REPLACEMENTS: u32 = 10_000;
+
+    let mut env = Env::new();
+    env.enter_group();
+    let mut displaced = None;
+    let mut current = None;
+    for root in 1..=REPLACEMENTS {
+        let owner = box_owner(NodeListId::testing_survivor(root, 1, 0));
+        let observer = owner.downgrade();
+        env.set_box_reg(300, Some(owner));
+        if let Some(observer) = displaced.replace(observer.clone()) {
+            assert!(
+                observer.upgrade().is_none(),
+                "replacement {root} retained its predecessor"
+            );
+        }
+        current = Some(observer);
+    }
+
+    assert_eq!(
+        env.journal.box_undo_len(),
+        1,
+        "same-epoch writes must coalesce"
+    );
+    let current = current.expect("at least one replacement");
+    assert!(current.upgrade().is_some());
+    let _ = env.leave_group();
+    assert!(
+        current.upgrade().is_none(),
+        "group exit must release the current and undo owners"
+    );
+}
+
+#[test]
+fn box_owner_edges_move_restore_and_fork_without_external_roots() {
+    let mut env = Env::new();
+    let baseline = box_owner(NodeListId::testing_survivor(20_001, 1, 0));
+    let baseline_observer = baseline.downgrade();
+    env.set_box_reg_global(7, Some(baseline));
+
+    // An equal local projection keeps the installed payload and discards the
+    // redundant incoming owner.
+    let equal = box_owner(NodeListId::testing_survivor(20_001, 1, 0));
+    let equal_observer = equal.downgrade();
+    env.enter_group();
+    env.set_box_reg(7, Some(equal));
+    assert!(equal_observer.upgrade().is_none());
+    assert!(baseline_observer.upgrade().is_some());
+
+    let local = box_owner(NodeListId::testing_survivor(20_002, 1, 0));
+    let local_observer = local.downgrade();
+    env.set_box_reg(7, Some(local));
+    let (taken, _, _) = env.take_box_reg_same_level(7);
+    assert_eq!(
+        taken.as_ref().map(NodeRoot::id),
+        Some(NodeListId::testing_survivor(20_002, 1, 0))
+    );
+    assert!(local_observer.upgrade().is_some());
+    drop(taken);
+    assert!(
+        local_observer.upgrade().is_some(),
+        "the existing undo new edge must retain the prior same-level value"
+    );
+    let _ = env.leave_group();
+    assert!(
+        local_observer.upgrade().is_none(),
+        "group exit must retire the same-level history edge"
+    );
+    assert!(baseline_observer.upgrade().is_some());
+
+    let checkpoint = env.checkpoint();
+    let replacement = box_owner(NodeListId::testing_survivor(20_003, 1, 0));
+    let replacement_observer = replacement.downgrade();
+    env.set_box_reg_global(7, Some(replacement));
+    env.rollback_to(checkpoint);
+    assert!(replacement_observer.upgrade().is_none());
+    assert!(baseline_observer.upgrade().is_some());
+
+    let fork = env.clone();
+    drop(env);
+    assert!(
+        baseline_observer.upgrade().is_some(),
+        "fork must clone current and undo ownership"
+    );
+    drop(fork);
+    assert!(baseline_observer.upgrade().is_none());
+}
+
+#[test]
+fn distinct_live_box_cells_retain_exactly_their_structural_payloads() {
+    const LIVE: u16 = 1_024;
+
+    let mut env = Env::new();
+    let mut observers = Vec::with_capacity(usize::from(LIVE));
+    for index in 0..LIVE {
+        let owner = box_owner(NodeListId::testing_survivor(
+            u32::from(index) + 30_000,
+            1,
+            0,
+        ));
+        observers.push(owner.downgrade());
+        env.set_box_reg_global(index, Some(owner));
+    }
+    assert_eq!(
+        observers
+            .iter()
+            .filter(|owner| owner.upgrade().is_some())
+            .count(),
+        usize::from(LIVE)
+    );
+    drop(env);
+    assert!(observers.iter().all(|owner| owner.upgrade().is_none()));
 }
 
 #[test]
@@ -436,7 +557,7 @@ fn dense_register_typed_api_round_trips_boundary_and_signed_values() {
         crate::glue::GlueSpecRef::testing_new(GlueId::new(u32::MAX - 3)),
     );
     env.set_toks(255, token_root);
-    env.set_box_reg(255, Some(NodeListId::testing_survivor(7, 3, 0)));
+    env.set_box_reg(255, Some(box_owner(NodeListId::testing_survivor(7, 3, 0))));
 
     assert_eq!(env.count(255), i32::MIN);
     assert_eq!(env.dimen(255), Scaled::MIN);
@@ -461,7 +582,7 @@ fn dense_register_journal_records_use_bank_tags_and_encoded_words() {
     env.set_skip(3, crate::glue::GlueSpecRef::testing_new(GlueId::new(33)));
     env.set_muskip(4, crate::glue::GlueSpecRef::testing_new(GlueId::new(34)));
     env.set_toks(5, token_root);
-    env.set_box_reg(6, Some(NodeListId::testing_survivor(8, 55, 0)));
+    env.set_box_reg(6, Some(box_owner(NodeListId::testing_survivor(8, 55, 0))));
 
     let entries = env.journal_entries_since(start);
     assert_eq!(

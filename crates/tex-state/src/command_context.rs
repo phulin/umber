@@ -795,8 +795,8 @@ impl CommandContext<'_> {
     #[must_use]
     pub fn box_kind(&mut self, index: u16) -> Option<CommandBoxKind> {
         self.observe_cell(BankTag::Box, u32::from(index));
-        let list = self.universe.box_reg(index)?;
-        match self.universe.nodes(list).first()? {
+        let list = self.universe.box_reg_ref(index)?;
+        match list.nodes().first()? {
             crate::node_arena::NodeRef::HList(_) => Some(CommandBoxKind::Horizontal),
             crate::node_arena::NodeRef::VList(_) => Some(CommandBoxKind::Vertical),
             _ => None,

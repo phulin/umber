@@ -167,10 +167,10 @@ fn page_episode_key(stores: &Universe) -> PureMemoKey {
             hash.i32(stores.count(*class));
             hash.i32(stores.dimen(*class).raw());
             hash.glue(stores.skip(*class));
-            match stores.box_reg(*class) {
+            match stores.box_reg_ref(*class) {
                 Some(list) => {
                     hash.u32(1);
-                    hash.node_list(list);
+                    hash.node_list_ref(&list);
                 }
                 None => hash.u32(0),
             }
@@ -371,7 +371,7 @@ fn insertion_box_size(
     let Some(list) = ensure_insertion_vbox(stores, class, error_context)? else {
         return Ok(Scaled::from_raw(0));
     };
-    let Some(node) = stores.nodes(list).first() else {
+    let Some(node) = list.nodes().first() else {
         return Ok(Scaled::from_raw(0));
     };
     match node {
@@ -386,12 +386,12 @@ pub(crate) fn ensure_insertion_vbox(
     stores: &mut Universe,
     class: u16,
     error_context: Option<&str>,
-) -> Result<Option<tex_state::ids::NodeListId>, ExecError> {
-    let Some(list) = stores.box_reg(class) else {
+) -> Result<Option<tex_state::node_arena::NodeListRef>, ExecError> {
+    let Some(list) = stores.box_reg_ref(class) else {
         return Ok(None);
     };
     if !matches!(
-        stores.nodes(list).first(),
+        list.nodes().first(),
         Some(tex_state::node_arena::NodeRef::HList(_))
     ) {
         return Ok(Some(list));
@@ -417,8 +417,11 @@ pub(crate) fn ensure_insertion_vbox(
     // TeX82 §993's `box_error` continues after `error`: it enters a diagnostic
     // scope, identifies the rejected box, and applies `show_box` before
     // flushing the register. `show_box` starts with §182's structural newline.
-    let text =
-        crate::node_dump::dump_node_list(stores, list, crate::node_dump::DumpConfig::read(stores));
+    let text = crate::node_dump::dump_node_list_ref(
+        stores,
+        &list,
+        crate::node_dump::DumpConfig::read(stores),
+    );
     let mut diagnostic = stores.begin_diagnostic();
     diagnostic
         .print_nl("The following box has been deleted:")

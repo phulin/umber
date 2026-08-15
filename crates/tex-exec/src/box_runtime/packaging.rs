@@ -2,6 +2,7 @@
 
 use tex_state::ids::NodeListId;
 use tex_state::node::Node;
+use tex_state::node_arena::NodeListRef;
 use tex_state::{GeometryObservation, Universe};
 use tex_typeset::{PackDiagnostic, PackSpec, plan_hpack_nodes};
 
@@ -295,10 +296,8 @@ pub(crate) fn project_short_diagnostic_discs(physical: &[Node], semantic: &[Node
         .collect()
 }
 
-pub(crate) fn first_box_node(stores: &mut Universe, id: Option<NodeListId>) -> Option<Node> {
-    let id = id?;
-    stores
-        .node_list_ref(id)
+pub(crate) fn first_box_node(owner: Option<NodeListRef>) -> Option<Node> {
+    owner?
         .get(0)
         .filter(|node| matches!(node, Node::HList(_) | Node::VList(_)))
 }

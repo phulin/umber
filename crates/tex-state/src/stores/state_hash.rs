@@ -11,6 +11,7 @@ use crate::meaning::{
 #[cfg(test)]
 use crate::node::{BoxNode, LeaderPayload, Whatsit};
 use crate::node::{GlueKind, KernKind, Node, Sign};
+use crate::node_arena::NodeListRef;
 #[cfg(test)]
 use crate::node_arena::NodeRef;
 use crate::state_hash::{StateHashComponent, StateHashFragment, StateHasher};
@@ -216,6 +217,7 @@ impl Stores {
         self.assert_valid_hash_cursor(start);
         let mut cache = std::mem::take(&mut self.semantic_hash_cache);
         let mut first_old = std::mem::take(&mut cache.first_old);
+        let mut first_old_box_hashes = AHashMap::new();
         debug_assert!(first_old.is_empty());
         for (position, entry) in self
             .env
@@ -229,11 +231,12 @@ impl Stores {
                 }
                 Entry::BoxUndo(id) => {
                     let rec = self.env.box_undo(*id);
-                    first_old.push((
-                        CellId::new(BankTag::Box, u32::from(rec.index())),
-                        position,
-                        rec.old().value(),
-                    ));
+                    let cell = CellId::new(BankTag::Box, u32::from(rec.index()));
+                    let old = rec.old();
+                    first_old_box_hashes.entry(cell).or_insert_with(|| {
+                        self.cell_value_hash_with_box_root(cell, old.value(), old.root().as_ref())
+                    });
+                    first_old.push((cell, position, old.value()));
                 }
                 Entry::Marker(_) => {}
             }
@@ -245,7 +248,12 @@ impl Stores {
                 continue;
             }
             let baseline_hash = cache.cells.get(&cell).map_or_else(
-                || self.cell_value_hash(cell, old_word),
+                || {
+                    first_old_box_hashes
+                        .get(&cell)
+                        .copied()
+                        .unwrap_or_else(|| self.cell_value_hash(cell, old_word))
+                },
                 |cached| cached.value_hash,
             );
             cache.retired_first_old.insert(cell, baseline_hash);
@@ -574,6 +582,7 @@ impl Stores {
         let end_index = end.env_snapshot.journal_pos().raw() as usize;
         let mut first_old = std::mem::take(&mut cache.first_old);
         let mut changed_cells = std::mem::take(&mut cache.changed_cells);
+        let mut first_old_box_hashes = AHashMap::new();
         debug_assert!(first_old.is_empty());
         debug_assert!(changed_cells.is_empty());
         for (position, entry) in self.env.journal_entries_since(start.journal_pos)
@@ -589,7 +598,11 @@ impl Stores {
                 Entry::BoxUndo(id) => {
                     let rec = self.env.box_undo(*id);
                     let cell = CellId::new(crate::cell::BankTag::Box, u32::from(rec.index()));
-                    first_old.push((cell, position, rec.old().value()));
+                    let old = rec.old();
+                    first_old_box_hashes.entry(cell).or_insert_with(|| {
+                        self.cell_value_hash_with_box_root(cell, old.value(), old.root().as_ref())
+                    });
+                    first_old.push((cell, position, old.value()));
                 }
                 Entry::Marker(_) => {}
             }
@@ -602,7 +615,12 @@ impl Stores {
                 continue;
             }
             let baseline_hash = cache.cells.get(&cell).map_or_else(
-                || self.cell_value_hash(cell, old_word),
+                || {
+                    first_old_box_hashes
+                        .get(&cell)
+                        .copied()
+                        .unwrap_or_else(|| self.cell_value_hash(cell, old_word))
+                },
                 |cached| cached.value_hash,
             );
             cache.retired_first_old.insert(cell, baseline_hash);
@@ -755,8 +773,22 @@ impl Stores {
     }
 
     fn cell_value_hash(&self, cell: CellId, word: u64) -> u64 {
+        let box_root = if cell.bank() == BankTag::Box {
+            self.env.box_reg_ref(cell.index() as u16)
+        } else {
+            None
+        };
+        self.cell_value_hash_with_box_root(cell, word, box_root.as_ref())
+    }
+
+    fn cell_value_hash_with_box_root(
+        &self,
+        cell: CellId,
+        word: u64,
+        box_root: Option<&NodeListRef>,
+    ) -> u64 {
         let mut hasher = StateHasher::new(CELL_VALUE_DOMAIN);
-        self.hash_cell_value(cell, word, &mut hasher);
+        self.hash_cell_value(cell, word, box_root, &mut hasher);
         hasher.finish()
     }
 
@@ -767,8 +799,13 @@ impl Stores {
     }
 
     fn exact_cell_value(&self, cell: CellId, word: u64) -> u64 {
+        let box_root = if cell.bank() == BankTag::Box {
+            self.env.box_reg_ref(cell.index() as u16)
+        } else {
+            None
+        };
         exact_identity_from_hashers(EXACT_CELL_VALUE_DOMAIN, |hasher| {
-            self.hash_cell_value(cell, word, hasher);
+            self.hash_cell_value(cell, word, box_root.as_ref(), hasher);
         })
     }
 
@@ -887,7 +924,13 @@ impl Stores {
         self.recomputed_exact_env_identity().identity()
     }
 
-    fn hash_cell_value(&self, cell: CellId, word: u64, hasher: &mut StateHasher) {
+    fn hash_cell_value(
+        &self,
+        cell: CellId,
+        word: u64,
+        box_root: Option<&NodeListRef>,
+        hasher: &mut StateHasher,
+    ) {
         match cell.bank() {
             BankTag::Meaning => self.hash_meaning(
                 self.resolve_stored_meaning(Meaning::decode_stored(word)),
@@ -919,8 +962,19 @@ impl Stores {
                 }
             }
             BankTag::Box => match NodeListId::decode_box_word(word) {
-                Some(id) => self.hash_node_list_identity(id, hasher),
-                None => hasher.tag(0),
+                Some(id) => {
+                    let root = box_root.expect("nonvoid box word must carry a structural owner");
+                    assert_eq!(id, root.id(), "box word and structural owner disagree");
+                    hasher.tag(0x70);
+                    root.semantic_id().apply(hasher);
+                }
+                None => {
+                    assert!(
+                        box_root.is_none(),
+                        "void box word carried a structural owner"
+                    );
+                    hasher.tag(0);
+                }
             },
             BankTag::FontDimen => hasher.i32(word as u32 as i32),
             BankTag::FontParamLen => hasher.u32(decode_u32(word)),

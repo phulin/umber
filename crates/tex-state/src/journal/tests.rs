@@ -11,7 +11,7 @@ fn widened_cell_ids_do_not_grow_journal_records() {
     assert_eq!(size_of::<CellId>(), 8);
     assert_eq!(size_of::<UndoRec>(), 24);
     assert_eq!(size_of::<Entry>(), 32);
-    assert!(size_of::<BoxUndoRec>() <= 56);
+    assert!(size_of::<BoxUndoRec>() <= 128);
 }
 
 #[test]

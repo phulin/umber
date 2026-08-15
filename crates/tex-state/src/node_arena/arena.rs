@@ -215,7 +215,12 @@ impl NodeArena {
         for n in nodes {
             crate::node::record_node_append(n);
         }
-        let (start, len) = self.storage.append(nodes);
+        let mut owned = nodes.to_vec();
+        let mut needs = SidecarNeeds::default();
+        for node in &owned {
+            needs.preflight_and_count(node);
+        }
+        let (start, len) = self.storage.append_owned_preflighted(&mut owned, needs);
         self.mint_span(start, len, semantic_id)
     }
 

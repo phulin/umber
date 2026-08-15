@@ -1343,6 +1343,12 @@ impl EngineBoundaryHasher<'_> {
         self.visits += 1;
     }
 
+    pub fn node_list_ref(&mut self, owner: &NodeListRef) {
+        self.hasher.tag(0x70);
+        owner.semantic_id().apply(&mut self.hasher);
+        self.visits += 1;
+    }
+
     pub fn token_list(&mut self, id: TokenListId) {
         self.stores.hash_token_list_semantic(id, &mut self.hasher);
     }
@@ -2194,10 +2200,6 @@ impl Universe {
             projection(&mut build)
         };
         let font = |id| self.semantic_font_dependency_value(id);
-        let node_list = |id| {
-            let mut build = |hash: &mut EngineBoundaryHasher<'_>| hash.node_list(id);
-            projection(&mut build)
-        };
         match key {
             DependencyKey::Cell(cell) => {
                 let index = cell.index();
@@ -2216,9 +2218,15 @@ impl Universe {
                     BankTag::Skip => glue(self.skip(index16)),
                     BankTag::Muskip => glue(self.muskip(index16)),
                     BankTag::Toks => token_list(self.toks(index16)),
-                    BankTag::Box => self
-                        .box_reg(index16)
-                        .map_or(DependencyValue::Absent, node_list),
+                    BankTag::Box => {
+                        self.box_reg_ref(index16)
+                            .map_or(DependencyValue::Absent, |owner| {
+                                let mut build = |hash: &mut EngineBoundaryHasher<'_>| {
+                                    hash.node_list_ref(&owner);
+                                };
+                                projection(&mut build)
+                            })
+                    }
                     BankTag::IntParam => {
                         DependencyValue::Integer(i64::from(self.int_param(IntParam::new(index16))))
                     }
@@ -2821,7 +2829,7 @@ impl Universe {
                         .map_err(|error| format!("{error:?}"))
                 },
                 |nodes| {
-                    self.detach_node_list(nodes)
+                    self.detach_node_list_ref(nodes)
                         .and_then(|value| value.to_bytes())
                         .map_err(|error| format!("{error:?}"))
                 },
@@ -3030,7 +3038,8 @@ impl Universe {
                     let nodes = universe
                         .import_memo_node_list(&value, crate::MemoValueLimits::default())
                         .map_err(|error| format!("{error:?}"))?;
-                    let semantic = universe.stores.node_list_semantic_fragment(nodes);
+                    let nodes = universe.stores.prepare_node_list_ref(nodes);
+                    let semantic = nodes.semantic_id().fragment();
                     Ok((nodes, semantic))
                 },
             )
@@ -4784,13 +4793,13 @@ impl Universe {
     pub fn initialize_pdf_form(
         &mut self,
         identity: (u32, u32),
-        box_list: NodeListId,
+        box_list: NodeListRef,
         dimensions: (Scaled, Scaled, Scaled),
         attr: Option<TokenListId>,
         resources: Option<TokenListId>,
         immediate: bool,
     ) -> Result<crate::PdfFormRecord, PdfObjectCapacityError> {
-        let semantic_id = self.stores.node_list_semantic_fragment(box_list);
+        let semantic_id = box_list.semantic_id().fragment();
         let attr = attr.map(|tokens| self.pdf_token_parameter(tokens));
         let resources = resources.map(|tokens| self.pdf_token_parameter(tokens));
         let form = self.pdf.initialize_form(
@@ -4801,10 +4810,6 @@ impl Universe {
             (attr, resources),
             immediate,
         )?;
-        // pdfTeX transfers the consumed box from the register into the form
-        // object. That owner must outlive temporary box-build and shipout
-        // allocation scopes, but must still disappear on aggregate rollback.
-        self.stores.pin_timeline_node_list(box_list);
         self.mark_pdf_dependency_changed(DependencyEngineField::PdfForms);
         Ok(form)
     }
@@ -6782,6 +6787,22 @@ impl Universe {
         self.detach_node_value(id, crate::MemoValueKind::Nodes)
     }
 
+    /// Captures a structurally owned node graph without resolving its raw
+    /// projection through aggregate survivor state.
+    pub fn detach_node_list_ref(
+        &self,
+        root: &NodeListRef,
+    ) -> Result<crate::DetachedMemoValue, crate::MemoValueError> {
+        let payload = self
+            .stores
+            .encode_memo_node_list_ref(root)
+            .map_err(|error| crate::MemoValueError::Codec(format!("{error:?}")))?;
+        Ok(crate::DetachedMemoValue::from_payload(
+            crate::MemoValueKind::Nodes,
+            payload,
+        ))
+    }
+
     /// Captures one box-root list as a detached memo value.
     pub fn detach_box(
         &self,
@@ -7545,6 +7566,19 @@ impl Universe {
         self.consume_env_mutation(receipt);
     }
 
+    /// Installs an already-owned box without routing it through a raw
+    /// coordinate lookup.
+    pub fn set_box_reg_ref(&mut self, index: u16, value: NodeListRef) {
+        let receipt = self.stores.write_box_reg_ref(index, Some(value), false);
+        self.consume_env_mutation(receipt);
+    }
+
+    /// Globally installs an already-owned box.
+    pub fn set_box_reg_ref_global(&mut self, index: u16, value: NodeListRef) {
+        let receipt = self.stores.write_box_reg_ref(index, Some(value), true);
+        self.consume_env_mutation(receipt);
+    }
+
     /// Marks the epoch-node suffix owned by one box-register value scan.
     #[must_use]
     pub fn begin_box_build(&mut self) -> BoxBuildTransaction<'_> {
@@ -7560,6 +7594,22 @@ impl Universe {
     pub fn box_reg(&self, index: u16) -> Option<NodeListId> {
         self.observe_cell_dependency(BankTag::Box, u32::from(index));
         self.stores.box_reg(index)
+    }
+
+    /// Clones the box register's structural owner. The returned reference is
+    /// independent of the legacy survivor table and remains readable after a
+    /// destructive register replacement.
+    #[must_use]
+    pub fn box_reg_ref(&self, index: u16) -> Option<NodeListRef> {
+        self.observe_cell_dependency(BankTag::Box, u32::from(index));
+        self.stores.box_reg_ref(index)
+    }
+
+    /// Observes TeX82 allocator pressure for a non-destructive box copy while
+    /// borrowing the register's structural owner.
+    pub fn observe_box_copy_ref(&mut self, root: &NodeListRef, live_dynamic_words: usize) {
+        self.stores
+            .observe_main_memory_box_copy(root.id(), live_dynamic_words);
     }
 
     /// Formats a box register value through TeX82 §§174/252's compact
@@ -8263,22 +8313,34 @@ impl Universe {
         self.page.has_last_glue()
     }
 
+    /// Destructively takes a box and returns only its non-owning coordinate
+    /// projection. Runtime consumers must use the `NodeListRef` boundary.
     pub fn take_box_reg(&mut self, index: u16) -> Option<NodeListId> {
-        let value = self.stores.box_reg(index);
-        if let Some(value) = value {
-            self.stores.pin_survivor(value);
-        }
-        let (_, receipt) = self.stores.take_box_reg_with_receipt(index);
+        let (value, receipt) = self.stores.take_box_reg_ref_with_receipt(index);
+        self.consume_env_mutation(receipt);
+        value.as_ref().map(NodeListRef::id)
+    }
+
+    /// Same-level destructive take returning only a non-owning projection.
+    pub fn take_box_reg_same_level(&mut self, index: u16) -> Option<NodeListId> {
+        let (value, receipt) = self.stores.take_box_reg_ref_same_level_with_receipt(index);
+        self.consume_env_mutation(receipt);
+        value.as_ref().map(NodeListRef::id)
+    }
+
+    /// Destructively takes a box while moving its structural owner to the
+    /// caller. This is the publication seam for destinations that own the box
+    /// directly rather than through an aggregate survivor pin.
+    pub fn take_box_reg_ref_same_level(&mut self, index: u16) -> Option<NodeListRef> {
+        let (value, receipt) = self.stores.take_box_reg_ref_same_level_with_receipt(index);
         self.consume_env_mutation(receipt);
         value
     }
 
-    pub fn take_box_reg_same_level(&mut self, index: u16) -> Option<NodeListId> {
-        let value = self.stores.box_reg(index);
-        if let Some(value) = value {
-            self.stores.pin_survivor(value);
-        }
-        let (_, receipt) = self.stores.take_box_reg_same_level_with_receipt(index);
+    /// Destructively takes a local box while moving structural ownership to
+    /// the caller.
+    pub fn take_box_reg_ref(&mut self, index: u16) -> Option<NodeListRef> {
+        let (value, receipt) = self.stores.take_box_reg_ref_with_receipt(index);
         self.consume_env_mutation(receipt);
         value
     }
@@ -8288,34 +8350,33 @@ impl Universe {
         self.stores.pin_survivor(id);
     }
 
-    /// Pins compatible box children, then clears the register with same-level
-    /// TeX assignment semantics.
+    /// Moves compatible box children out, then clears the register with
+    /// same-level TeX assignment semantics.
     ///
-    /// Compatibility is checked before mutation, and the children are cloned
-    /// while the survivor-backed register owner is still live. The outer
+    /// Compatibility is checked before mutation, and the child owner is cloned
+    /// directly from the register payload. The outer
     /// one-node box wrapper is deliberately not retained by the consumer.
     pub fn take_unbox_children_same_level(
         &mut self,
         index: u16,
         expected: UnboxKind,
     ) -> TakeUnboxResult {
-        let Some(value) = self.stores.box_reg(index) else {
+        let Some(value) = self.stores.box_reg_ref(index) else {
             return TakeUnboxResult::Void;
         };
-        let nodes = self.nodes(value);
+        let nodes = value.nodes();
         if nodes.len() != 1 {
             return TakeUnboxResult::Incompatible;
         }
         let children = match (expected, nodes.first()) {
             (UnboxKind::Horizontal, Some(crate::node_arena::NodeRef::HList(box_node)))
-            | (UnboxKind::Vertical, Some(crate::node_arena::NodeRef::VList(box_node))) => {
-                box_node.children
-            }
+            | (UnboxKind::Vertical, Some(crate::node_arena::NodeRef::VList(box_node))) => value
+                .resolve(box_node.children)
+                .expect("box child belongs to the register owner"),
             _ => return TakeUnboxResult::Incompatible,
         };
-        self.stores.pin_survivor(value);
-        let (taken, receipt) = self.stores.take_box_reg_same_level_with_receipt(index);
-        debug_assert_eq!(taken, Some(value));
+        let (taken, receipt) = self.stores.take_box_reg_ref_same_level_with_receipt(index);
+        debug_assert_eq!(taken.as_ref().map(NodeListRef::id), Some(value.id()));
         self.consume_env_mutation(receipt);
         TakeUnboxResult::Children(children)
     }
@@ -8342,8 +8403,8 @@ impl Universe {
 
     #[must_use]
     pub fn box_dimension(&self, index: u16, dimension: BoxDimension) -> Option<Scaled> {
-        let id = self.box_reg(index)?;
-        box_dimension_from_nodes(self.nodes(id), dimension)
+        let root = self.box_reg_ref(index)?;
+        box_dimension_from_nodes(root.nodes(), dimension)
     }
 
     /// Reads pdfTeX's character-protrusion kern at one edge of an hbox.
@@ -8352,13 +8413,16 @@ impl Universe {
     /// whose queried edge has no margin kern (which returns zero).
     #[must_use]
     pub fn box_margin_kern(&self, index: u16, side: MarginKernSide) -> Option<Scaled> {
-        let id = self.box_reg(index)?;
-        let nodes = self.nodes(id);
+        let root = self.box_reg_ref(index)?;
+        let nodes = root.nodes();
         let box_node = match (nodes.len(), nodes.first()) {
             (1, Some(crate::node_arena::NodeRef::HList(box_node))) => box_node,
             _ => return None,
         };
-        let children = self.nodes(box_node.children);
+        let children_owner = root
+            .resolve(box_node.children)
+            .expect("box children belong to the register owner");
+        let children = children_owner.nodes();
         let mut edge = children.iter();
         let mut next = || match side {
             MarginKernSide::Left => edge.next(),
@@ -8392,10 +8456,10 @@ impl Universe {
     }
 
     fn set_box_dimension_impl(&mut self, index: u16, dimension: BoxDimension, value: Scaled) {
-        let Some(id) = self.box_reg(index) else {
+        let Some(root) = self.box_reg_ref(index) else {
             return;
         };
-        let Some(mut node) = self.stores.node_list_ref(id).to_vec().into_iter().next() else {
+        let Some(mut node) = root.to_vec().into_iter().next() else {
             return;
         };
         if !set_box_dimension_in_node(&mut node, dimension, value) {
@@ -8977,11 +9041,11 @@ pub enum UnboxKind {
 }
 
 /// Outcome of a destructive unbox transfer.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum TakeUnboxResult {
     Void,
     Incompatible,
-    Children(NodeListId),
+    Children(NodeListRef),
 }
 
 fn box_dimension_from_nodes(nodes: NodeList<'_>, dimension: BoxDimension) -> Option<Scaled> {

@@ -32,6 +32,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::ContentHash;
 use crate::ids::{FontId, NodeListId, TokenListId};
+use crate::node_arena::NodeListRef;
 use crate::scaled::Scaled;
 use crate::state_hash::{StateHashFragment, StateHasher};
 use crate::token_store::TokenListRef;
@@ -752,7 +753,7 @@ pub struct PdfPageRecord {
 pub struct PdfFormRecord {
     object: u32,
     resource: u32,
-    box_list: NodeListId,
+    box_list: NodeListRef,
     box_semantic_id: StateHashFragment,
     width: Scaled,
     height: Scaled,
@@ -806,8 +807,13 @@ impl PdfFormRecord {
         self.resource
     }
     #[must_use]
-    pub const fn box_list(&self) -> NodeListId {
-        self.box_list
+    pub fn box_list(&self) -> NodeListId {
+        self.box_list.id()
+    }
+    /// Borrows the captured box's structural node-list owner.
+    #[must_use]
+    pub fn box_list_ref(&self) -> &NodeListRef {
+        &self.box_list
     }
     #[must_use]
     pub const fn width(&self) -> Scaled {
@@ -1134,7 +1140,7 @@ impl PdfState {
     pub(crate) fn capture_format(
         &self,
         mut detach_tokens: impl FnMut(TokenListId) -> Result<Vec<u8>, String>,
-        mut detach_nodes: impl FnMut(NodeListId) -> Result<Vec<u8>, String>,
+        mut detach_nodes: impl FnMut(&NodeListRef) -> Result<Vec<u8>, String>,
     ) -> Result<Option<PdfFormatState>, String> {
         let glyph_to_unicode = self
             .font_operations
@@ -1202,7 +1208,7 @@ impl PdfState {
                 Ok(PdfFormatForm {
                     object: form.object,
                     resource: form.resource,
-                    nodes: detach_nodes(form.box_list)?,
+                    nodes: detach_nodes(&form.box_list)?,
                     width: form.width,
                     height: form.height,
                     depth: form.depth,
@@ -1248,7 +1254,7 @@ impl PdfState {
     pub(crate) fn restore_format(
         format: PdfFormatState,
         mut import_tokens: impl FnMut(&[u8]) -> Result<PdfTokenParameter, String>,
-        mut import_nodes: impl FnMut(&[u8]) -> Result<(NodeListId, StateHashFragment), String>,
+        mut import_nodes: impl FnMut(&[u8]) -> Result<(NodeListRef, StateHashFragment), String>,
     ) -> Result<Self, String> {
         if format.version != 1 || format.next_object == 0 || format.next_form_resource == 0 {
             return Err("unsupported or invalid PDF format resource state".to_owned());
@@ -2295,7 +2301,7 @@ impl PdfState {
     pub(crate) fn initialize_form(
         &mut self,
         identity: (u32, u32),
-        box_list: NodeListId,
+        box_list: NodeListRef,
         box_semantic_id: StateHashFragment,
         dimensions: (Scaled, Scaled, Scaled),
         options: (Option<PdfTokenParameter>, Option<PdfTokenParameter>),
@@ -3386,6 +3392,97 @@ mod tests {
     fn owned_test_token_ref(value: u8) -> TokenListRef {
         let mut universe = crate::Universe::new();
         universe.intern_token_list_ref(&[crate::token::Token::param(value)])
+    }
+
+    fn test_form_owner(root: u32) -> NodeListRef {
+        NodeListRef::testing_with_id(NodeListId::testing_survivor(root, 1, 0))
+    }
+
+    fn initialize_test_form(state: &mut PdfState, owner: NodeListRef) -> PdfFormRecord {
+        let identity = state.reserve_form().expect("form reservation");
+        state
+            .initialize_form(
+                identity,
+                owner,
+                test_identity(42),
+                (
+                    Scaled::from_raw(0),
+                    Scaled::from_raw(0),
+                    Scaled::from_raw(0),
+                ),
+                (None, None),
+                false,
+            )
+            .expect("form initialization")
+    }
+
+    #[test]
+    fn pdf_form_snapshots_and_forks_retain_structural_box_owners() {
+        let mut state = PdfState::default();
+        state.enable();
+        let before_form = state.snapshot();
+        let owner = test_form_owner(50_001);
+        let observer = owner.downgrade();
+        drop(initialize_test_form(&mut state, owner));
+        let with_form = state.snapshot();
+
+        let fork = state.clone();
+        state.rollback(before_form);
+        assert!(
+            observer.upgrade().is_some(),
+            "snapshot and fork still own the captured form"
+        );
+        drop(with_form);
+        assert!(
+            observer.upgrade().is_some(),
+            "fork remains the sole form owner"
+        );
+        drop(fork);
+        assert!(
+            observer.upgrade().is_none(),
+            "dropping the final form timeline releases its box"
+        );
+    }
+
+    #[test]
+    fn rolled_back_forms_plateau_while_all_live_forms_grow_exactly() {
+        const ROLLED_BACK: u32 = 10_000;
+        const ALL_LIVE: u32 = 1_024;
+
+        let mut rolled_back = PdfState::default();
+        rolled_back.enable();
+        let empty = rolled_back.snapshot();
+        for offset in 0..ROLLED_BACK {
+            let owner = test_form_owner(60_000 + offset);
+            let observer = owner.downgrade();
+            drop(initialize_test_form(&mut rolled_back, owner));
+            assert!(observer.upgrade().is_some());
+            rolled_back.rollback(empty.clone());
+            assert!(
+                observer.upgrade().is_none(),
+                "rolled-back form {offset} retained its payload"
+            );
+        }
+        assert_eq!(rolled_back.forms().len(), 0);
+
+        let mut all_live = PdfState::default();
+        all_live.enable();
+        let mut observers = Vec::with_capacity(ALL_LIVE as usize);
+        for offset in 0..ALL_LIVE {
+            let owner = test_form_owner(80_000 + offset);
+            observers.push(owner.downgrade());
+            drop(initialize_test_form(&mut all_live, owner));
+        }
+        assert_eq!(all_live.forms().len(), ALL_LIVE as usize);
+        assert_eq!(
+            observers
+                .iter()
+                .filter(|owner| owner.upgrade().is_some())
+                .count(),
+            ALL_LIVE as usize
+        );
+        drop(all_live);
+        assert!(observers.iter().all(|owner| owner.upgrade().is_none()));
     }
 
     #[test]

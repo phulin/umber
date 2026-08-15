@@ -65,6 +65,22 @@ impl core::fmt::Debug for NodeListRef {
 }
 
 impl NodeListRef {
+    #[cfg(test)]
+    pub(crate) fn testing_with_id(id: NodeListId) -> Self {
+        assert!(
+            id.is_empty(),
+            "synthetic Env owner must be a zero-length projection"
+        );
+        let ArenaRef::Survivor(root) = id.arena() else {
+            panic!("synthetic Env owner must use a survivor projection");
+        };
+        Self::from_payload(
+            id,
+            NodeListPayload::new(root, NodeStorage::default(), Vec::new()),
+            NodeSemanticId::empty(),
+        )
+    }
+
     /// Returns the explicitly owned canonical empty list.
     #[must_use]
     pub fn empty() -> Self {

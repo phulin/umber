@@ -10,7 +10,7 @@ use tex_state::token::{Catcode, Token};
 use tex_state::{PrintSink, Universe};
 
 use crate::mode::ignored_depth;
-use crate::node_dump::{DumpConfig, dump_node_list, dump_node_slice};
+use crate::node_dump::{DumpConfig, dump_node_slice};
 
 /// Renders TeX82 §§94--95's irrecoverable reports before §93 `succumb`.
 ///
@@ -335,15 +335,15 @@ pub(crate) fn execute_showbox(
     // and `print_nl("> \box"); print_int; print_char("=")`, then `show_box`
     // or `"void"`.
     let mut text = format!("> \\box{index}=");
-    if let Some(id) = stores.box_reg(index) {
+    if let Some(owner) = stores.box_reg_ref(index) {
         // TeX82 §198's `show_box` enters `show_node_list`, whose first
         // visible node is opened by `print_ln`; the structural break belongs
         // only to this branch. Section 1296 prints `"void"` directly after
         // the equals sign when the register is null.
         text.push('\n');
-        text.push_str(&dump_node_list(
+        text.push_str(&crate::node_dump::dump_node_list_ref(
             stores,
-            id,
+            &owner,
             DumpConfig::read(stores).for_profile(profile),
         ));
     } else {

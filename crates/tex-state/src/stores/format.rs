@@ -1164,24 +1164,28 @@ fn capture_memory_roots(
     let box_roots = env_words
         .iter()
         .filter_map(|&(cell, word)| {
-            (cell.bank() == crate::cell::BankTag::Box)
-                .then(|| NodeListId::decode_box_word(word))
-                .flatten()
+            (cell.bank() == crate::cell::BankTag::Box).then(|| {
+                let id = NodeListId::decode_box_word(word)
+                    .expect("non-default box memory entry should contain a list");
+                let owner = stores
+                    .box_reg_ref(cell.index() as u16)
+                    .expect("non-default box memory entry should own its list");
+                (id, owner)
+            })
         })
         .collect::<Vec<_>>();
     let mut seen = std::collections::BTreeSet::new();
     let mut visiting = std::collections::BTreeSet::new();
     let mut survivor_roots = std::collections::BTreeMap::new();
     let mut node_lists = Vec::new();
-    for &root in &box_roots {
-        capture_node_list(
+    for (_, root) in &box_roots {
+        capture_owned_node_list(
             stores,
-            root,
+            root.clone(),
             &mut seen,
             &mut visiting,
             &mut survivor_roots,
             &mut node_lists,
-            None,
         )?;
     }
     let live_node_lists = seen;
@@ -1204,6 +1208,7 @@ fn capture_memory_roots(
     canonicalize_node_list_keys(&mut node_lists, &mut env);
     let box_roots = box_roots
         .into_iter()
+        .map(|(id, _)| id)
         .zip(env.iter().filter_map(|entry| match entry.value {
             FormatEnvValue::Box(key) => Some(key),
             FormatEnvValue::Raw(_) => None,
@@ -1567,6 +1572,67 @@ impl Stores {
     ) -> Result<Vec<u8>, StoreFormatError> {
         self.encode_memo_node_list_with_origins(root)
             .map(|(bytes, _)| bytes)
+    }
+
+    /// Detaches a graph through its structural owner without consulting the
+    /// legacy survivor table for liveness.
+    pub(crate) fn encode_memo_node_list_ref(
+        &self,
+        root: &crate::node_arena::NodeListRef,
+    ) -> Result<Vec<u8>, StoreFormatError> {
+        let names = (0..self.interner.len())
+            .map(|raw| {
+                let symbol = self
+                    .interner
+                    .symbol_at_slot(raw as u32)
+                    .expect("captured interner slot should be live");
+                FormatName {
+                    active: self.interner.kind(symbol) == ControlSequenceKind::ActiveCharacter,
+                    hash_occupied: self.interner.is_hash_entry(symbol),
+                    text: self.interner.resolve(symbol).to_owned(),
+                }
+            })
+            .collect();
+        let token_lists = (0..self.tokens.slot_len())
+            .map(|raw| {
+                self.tokens
+                    .get(self.resolve_stored_token_list(TokenListId::new(raw)))
+                    .iter()
+                    .copied()
+                    .map(|token| FormatToken::capture(self, token))
+                    .collect()
+            })
+            .collect();
+        let glue_mark = self.glue.watermark();
+        let glue = (0..glue_mark.specs)
+            .map(|raw| FormatGlue::capture(self.glue.stored_slot(raw).spec()))
+            .collect();
+        let font_mark = self.fonts.watermark();
+        let fonts = (0..font_mark.len)
+            .map(|raw| FormatFont::capture(&self.fonts, self.resolve_stored_font(FontId::new(raw))))
+            .collect();
+        let mut seen = std::collections::BTreeSet::new();
+        let mut visiting = std::collections::BTreeSet::new();
+        let mut survivor_roots = std::collections::BTreeMap::new();
+        let mut node_lists = Vec::new();
+        capture_owned_node_list(
+            self,
+            root.clone(),
+            &mut seen,
+            &mut visiting,
+            &mut survivor_roots,
+            &mut node_lists,
+        )?;
+        let root = FormatListKey::capture(self, root.id(), &mut survivor_roots);
+        bincode::serialize(&MemoNodeBundle {
+            names,
+            token_lists,
+            glue,
+            fonts,
+            node_lists,
+            root,
+        })
+        .map_err(|error| StoreFormatError::Codec(error.to_string()))
     }
 
     pub(crate) fn encode_memo_node_list_with_origins(
@@ -2250,24 +2316,28 @@ impl MutableStoreIdentity {
         let roots: Vec<_> = env_words
             .iter()
             .filter_map(|&(cell, word)| {
-                (cell.bank() == crate::cell::BankTag::Box)
-                    .then(|| NodeListId::decode_box_word(word))
-                    .flatten()
+                (cell.bank() == crate::cell::BankTag::Box).then(|| {
+                    let id = NodeListId::decode_box_word(word)
+                        .expect("non-default box format entry should contain a list");
+                    let owner = stores
+                        .box_reg_ref(cell.index() as u16)
+                        .expect("non-default box format entry should own its list");
+                    (id, owner)
+                })
             })
             .collect();
         let mut seen = std::collections::BTreeSet::new();
         let mut visiting = std::collections::BTreeSet::new();
         let mut survivor_roots = std::collections::BTreeMap::new();
         let mut node_lists = Vec::new();
-        for root in roots {
-            capture_node_list(
+        for (_, root) in roots {
+            capture_owned_node_list(
                 stores,
                 root,
                 &mut seen,
                 &mut visiting,
                 &mut survivor_roots,
                 &mut node_lists,
-                None,
             )?;
         }
         let mut env: Vec<FormatEnvEntry> = env_words
@@ -2361,7 +2431,9 @@ fn install_frozen_sections(
     if semantic_ids.len() != format.node_lists.len() {
         return Err(StoreFormatError::Invalid("frozen node identity count"));
     }
-    let root = stores.survivors.reserve_frozen_root();
+    let root = crate::node_arena::allocate_node_payload_root().ok_or(StoreFormatError::Invalid(
+        "frozen node root identity space exhausted",
+    ))?;
     let mut next_start = 0_u32;
     let node_ids: std::collections::BTreeMap<_, _> = format
         .node_lists
@@ -2393,45 +2465,60 @@ fn install_frozen_sections(
         if start != id.start() || len != id.len() {
             return Err(StoreFormatError::Invalid("frozen node span metadata"));
         }
-        spans.push((
-            start,
-            len,
-            crate::node_arena::NodeSemanticId::unverified_frozen(expected_id),
-        ));
+        if len != 0 {
+            spans.push(crate::node_arena::OwnedSemanticSpan {
+                start,
+                len,
+                semantic_id: crate::node_arena::NodeSemanticId::unverified_frozen(expected_id),
+            });
+        }
         verified_ids.push((id, expected_id));
     }
-    stores.survivors.publish_frozen_root(root, storage, spans);
+    let mut payload = std::sync::Arc::new(crate::node_arena::NodeListPayload::new(
+        root, storage, spans,
+    ));
     for (id, expected_fingerprint) in verified_ids {
-        let nodes = stores.node_list_ref(id).to_vec();
-        let semantic_id = stores.compute_node_semantic_id(&nodes);
+        let semantic_id = {
+            let owner = NodeListRef::from_shared(id, std::sync::Arc::clone(&payload));
+            let nodes = owner.to_vec();
+            stores.compute_node_semantic_id(&nodes)
+        };
         if semantic_id.value() != expected_fingerprint {
             return Err(StoreFormatError::Invalid("frozen node semantic identity"));
         }
-        drop(nodes);
-        if id.len() != 0 {
-            stores.survivors.set_frozen_semantic_id(id, semantic_id);
+        if id.len() == 0 {
+            continue;
         }
+        let payload_mut = std::sync::Arc::get_mut(&mut payload)
+            .expect("frozen node payload is not published during validation");
+        let span = payload_mut
+            .spans_mut()
+            .iter_mut()
+            .find(|span| span.start == id.start() && span.len == id.len())
+            .expect("validated frozen span exists");
+        span.semantic_id = semantic_id;
     }
     let mut base = Vec::with_capacity(format.env.len());
     for entry in format.env {
         let dto_cell = crate::cell::CellId::from_raw(entry.cell)
             .ok_or(StoreFormatError::Invalid("unknown environment cell"))?;
         let cell = crate::cell::CellId::new(dto_cell.bank(), dto_cell.index());
-        let word = match (cell.bank(), entry.value) {
+        let (word, box_root) = match (cell.bank(), entry.value) {
             (crate::cell::BankTag::Box, FormatEnvValue::Box(key)) => {
                 let id = node_ids
                     .get(&key)
                     .copied()
                     .ok_or(StoreFormatError::Invalid("missing box node list"))?;
-                NodeListId::encode_box_word(Some(stores.prepare_box_value(id)))
+                let root = NodeListRef::from_shared(id, std::sync::Arc::clone(&payload));
+                (NodeListId::encode_box_word(Some(root.id())), Some(root))
             }
             (crate::cell::BankTag::Box, FormatEnvValue::Raw(_)) => {
                 return Err(StoreFormatError::Invalid("raw box environment value"));
             }
             (crate::cell::BankTag::CurrentFont, FormatEnvValue::Raw(word)) => {
-                restore_current_font_word(&stores, word)?
+                (restore_current_font_word(&stores, word)?, None)
             }
-            (_, FormatEnvValue::Raw(word)) => word,
+            (_, FormatEnvValue::Raw(word)) => (word, None),
             (_, FormatEnvValue::Box(_)) => {
                 return Err(StoreFormatError::Invalid("box value in non-box bank"));
             }
@@ -2497,6 +2584,7 @@ fn install_frozen_sections(
             token_root,
             macro_root,
             glue_root,
+            box_root,
         });
     }
     stores.env.install_format_base(base);
@@ -2772,6 +2860,62 @@ fn capture_node_list(
                 out.push(FormatNodeList {
                     key: FormatListKey::capture(stores, id, survivor_roots),
                     semantic_id: stores.node_semantic_id(id).value(),
+                    nodes,
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
+fn capture_owned_node_list(
+    stores: &Stores,
+    root: crate::node_arena::NodeListRef,
+    seen: &mut std::collections::BTreeSet<NodeListId>,
+    visiting: &mut std::collections::BTreeSet<NodeListId>,
+    survivor_roots: &mut std::collections::BTreeMap<crate::ids::SurvivorRootId, u32>,
+    out: &mut Vec<FormatNodeList>,
+) -> Result<(), StoreFormatError> {
+    enum Visit {
+        Enter(crate::node_arena::NodeListRef),
+        Exit(crate::node_arena::NodeListRef),
+    }
+
+    let mut stack = vec![Visit::Enter(root)];
+    while let Some(visit) = stack.pop() {
+        match visit {
+            Visit::Enter(owner) => {
+                let id = owner.id();
+                if seen.contains(&id) {
+                    continue;
+                }
+                if !visiting.insert(id) {
+                    return Err(StoreFormatError::Invalid("cyclic owned node-list graph"));
+                }
+                stack.push(Visit::Exit(owner.clone()));
+                for node in owner.nodes().iter().rev() {
+                    for child in node.physical_children().rev() {
+                        let child = owner.resolve(child).ok_or(StoreFormatError::Invalid(
+                            "owned node child is outside its payload",
+                        ))?;
+                        stack.push(Visit::Enter(child));
+                    }
+                }
+            }
+            Visit::Exit(owner) => {
+                let id = owner.id();
+                visiting.remove(&id);
+                if !seen.insert(id) {
+                    continue;
+                }
+                let nodes = owner
+                    .nodes()
+                    .iter()
+                    .map(|node| FormatNode::capture(stores, node, survivor_roots))
+                    .collect();
+                out.push(FormatNodeList {
+                    key: FormatListKey::capture(stores, id, survivor_roots),
+                    semantic_id: owner.semantic_id().value(),
                     nodes,
                 });
             }

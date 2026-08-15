@@ -39,15 +39,13 @@ pub(crate) fn take_register_payload(
     index: u16,
     copy: bool,
 ) -> Option<LeaderPayload> {
-    let id = if copy {
-        stores.box_reg(index)
+    let owner = if copy {
+        stores.box_reg_ref(index)
     } else {
-        stores.take_box_reg_same_level(index)
+        stores.take_box_reg_ref_same_level(index)
     };
-    if copy && let Some(id) = id {
-        stores.pin_survivor(id);
-    }
-    id.and_then(|id| stores.node_list_ref(id).get(0))
+    owner
+        .and_then(|owner| owner.get(0))
         .and_then(payload_from_node)
 }
 

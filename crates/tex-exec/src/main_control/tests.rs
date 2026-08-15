@@ -5746,7 +5746,9 @@ fn install_test_hbox(stores: &mut Universe, register: u16, width: Scaled) {
 
 fn install_test_form(stores: &mut Universe) {
     install_test_hbox(stores, 0, Scaled::from_raw(11));
-    let list = stores.take_box_reg_same_level(0).expect("test form box");
+    let list = stores
+        .take_box_reg_ref_same_level(0)
+        .expect("test form box");
     let identity = stores.reserve_pdf_form().expect("reserve test form");
     stores
         .initialize_pdf_form(
