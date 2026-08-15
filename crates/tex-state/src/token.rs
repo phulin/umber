@@ -327,6 +327,11 @@ impl RootedTracedTokenBuffer {
 
     pub fn push(&mut self, token: RootedTracedTokenWord) {
         let (word, root) = token.into_parts();
+        assert!(
+            root.record().is_some() || !matches!(root.id().decode(), OriginEncoding::Arena(_)),
+            "arena-backed transient token {:?} was supplied without structural ownership",
+            word.token()
+        );
         self.words.push(word);
         self.insert_root(root);
     }

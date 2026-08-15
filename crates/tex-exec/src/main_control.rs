@@ -17404,22 +17404,20 @@ fn schedule_everybox(command: &mut CommandState, stores: &mut Universe, horizont
         return;
     }
     let tokens: Vec<_> = stores.tokens(tokens).to_vec();
-    let traced: Vec<_> = tokens
-        .into_iter()
-        .map(|token| {
-            let origin = stores.inserted_origin(
-                tex_state::provenance::InsertedOriginKind::TokenListReplay(if horizontal {
-                    tex_state::TokenListReplayKind::EveryHBox
-                } else {
-                    tex_state::TokenListReplayKind::EveryVBox
-                }),
-                token,
-                stores.bootstrap_origin(),
-            );
-            tex_state::token::TracedTokenWord::pack(token, origin)
-        })
-        .collect();
-    command.push_everybox(stores.finish_traced_token_list(&traced), horizontal);
+    let mut traced = tex_state::token::RootedTracedTokenBuffer::default();
+    for token in tokens {
+        let origin = stores.inserted_origin_ref(
+            tex_state::provenance::InsertedOriginKind::TokenListReplay(if horizontal {
+                tex_state::TokenListReplayKind::EveryHBox
+            } else {
+                tex_state::TokenListReplayKind::EveryVBox
+            }),
+            token,
+            tex_state::provenance::OriginRef::unknown(),
+        );
+        traced.push(tex_state::token::RootedTracedTokenWord::new(token, origin));
+    }
+    command.push_everybox(stores.finish_rooted_traced_token_list(&traced), horizontal);
 }
 
 /// Runs TeX82 §774 `init_align`'s and §799 `fin_row`'s shared
@@ -17436,20 +17434,18 @@ fn schedule_everycr(command: &mut CommandState, stores: &mut Universe) {
         return;
     }
     let tokens: Vec<_> = stores.tokens(tokens).to_vec();
-    let traced: Vec<_> = tokens
-        .into_iter()
-        .map(|token| {
-            let origin = stores.inserted_origin(
-                tex_state::provenance::InsertedOriginKind::TokenListReplay(
-                    tex_state::TokenListReplayKind::EveryCr,
-                ),
-                token,
-                stores.bootstrap_origin(),
-            );
-            tex_state::token::TracedTokenWord::pack(token, origin)
-        })
-        .collect();
-    command.push_everycr(stores.finish_traced_token_list(&traced));
+    let mut traced = tex_state::token::RootedTracedTokenBuffer::default();
+    for token in tokens {
+        let origin = stores.inserted_origin_ref(
+            tex_state::provenance::InsertedOriginKind::TokenListReplay(
+                tex_state::TokenListReplayKind::EveryCr,
+            ),
+            token,
+            tex_state::provenance::OriginRef::unknown(),
+        );
+        traced.push(tex_state::token::RootedTracedTokenWord::new(token, origin));
+    }
+    command.push_everycr(stores.finish_rooted_traced_token_list(&traced));
 }
 
 /// Runs TeX82 §1030 `main_control`'s prologue,
@@ -17467,20 +17463,18 @@ fn schedule_everyjob(command: &mut CommandState, stores: &mut Universe) {
         return;
     }
     let tokens: Vec<_> = stores.tokens(tokens).to_vec();
-    let traced: Vec<_> = tokens
-        .into_iter()
-        .map(|token| {
-            let origin = stores.inserted_origin(
-                tex_state::provenance::InsertedOriginKind::TokenListReplay(
-                    tex_state::TokenListReplayKind::EveryJob,
-                ),
-                token,
-                stores.bootstrap_origin(),
-            );
-            tex_state::token::TracedTokenWord::pack(token, origin)
-        })
-        .collect();
-    command.push_everyjob(stores.finish_traced_token_list(&traced));
+    let mut traced = tex_state::token::RootedTracedTokenBuffer::default();
+    for token in tokens {
+        let origin = stores.inserted_origin_ref(
+            tex_state::provenance::InsertedOriginKind::TokenListReplay(
+                tex_state::TokenListReplayKind::EveryJob,
+            ),
+            token,
+            tex_state::provenance::OriginRef::unknown(),
+        );
+        traced.push(tex_state::token::RootedTracedTokenWord::new(token, origin));
+    }
+    command.push_everyjob(stores.finish_rooted_traced_token_list(&traced));
 }
 
 fn schedule_everymath(command: &mut CommandState, stores: &mut Universe, display: bool) {

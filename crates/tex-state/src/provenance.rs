@@ -1812,7 +1812,9 @@ impl ProvenanceStore {
             if matches!(id.decode(), OriginEncoding::Arena(_)) {
                 assert!(
                     roots.binary_search_by_key(&id, OriginRef::id).is_ok(),
-                    "arena-backed transient position has no structural owner"
+                    "arena-backed transient position {:?} has no structural owner among {:?}",
+                    id.decode(),
+                    roots.iter().map(OriginRef::id).collect::<Vec<_>>()
                 );
             }
         }
