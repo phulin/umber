@@ -1,7 +1,7 @@
 use tex_arith::WideScaled;
 use tex_state::glue::{GlueSpec, Order};
 use tex_state::node::Node;
-use tex_state::node_arena::{NodeCursor, NodeList, NodeListRef, NodeRef, PackedNode};
+use tex_state::node_arena::{NodeCursor, NodeListRef, NodeRef, PackedNode};
 use tex_state::scaled::Scaled;
 
 use crate::TypesetState;
@@ -185,13 +185,7 @@ pub(super) fn add_node_width<S: TypesetState>(
     include_font_expansion: bool,
 ) {
     if let Node::Disc { replace, .. } = &nodes[index] {
-        add_nested_list_widths(
-            widths,
-            state,
-            replace,
-            replace.nodes(),
-            include_font_expansion,
-        );
+        add_nested_list_widths(widths, state, replace, include_font_expansion);
         return;
     }
     add_node_width_cursor(
@@ -250,9 +244,9 @@ fn add_node_width_cursor<S: TypesetState>(
         PackedNode::Disc(replace) => {
             let owner = owner.expect("compact discretionary traversal requires its owner");
             let replacement = owner
-                .child_nodes(replace)
+                .resolve(replace)
                 .expect("discretionary replacement belongs to its owner payload");
-            add_nested_list_widths(widths, state, owner, replacement, include_font_expansion);
+            add_nested_list_widths(widths, state, &replacement, include_font_expansion);
         }
         PackedNode::Image { width, .. } => {
             widths.natural = add_scaled(widths.natural, width);
@@ -264,15 +258,17 @@ fn add_node_width_cursor<S: TypesetState>(
 /// Adds discretionary replacement lists without using the native call stack.
 /// TeX node lists may be tens of thousands of levels deep, while the explicit
 /// cursor stack remains proportional to depth and has a small fixed frame.
-fn add_nested_list_widths<'a, S: TypesetState>(
+fn add_nested_list_widths<S: TypesetState>(
     widths: &mut Widths,
     state: &S,
-    owner: &'a NodeListRef,
-    nodes: NodeList<'a>,
+    owner: &NodeListRef,
     include_font_expansion: bool,
 ) {
-    let mut stack = vec![(NodeCursor::compact(nodes), 0usize)];
-    while let Some((cursor, index)) = stack.last_mut() {
+    // Every frame carries its typed direct owner. A root payload deliberately
+    // cannot resolve a grandchild coordinate through its child payload.
+    let mut stack = vec![(owner.clone(), 0usize)];
+    while let Some((owner, index)) = stack.last_mut() {
+        let cursor = NodeCursor::compact(owner.nodes());
         if *index >= cursor.len() {
             let _ = stack.pop();
             continue;
@@ -294,7 +290,7 @@ fn add_nested_list_widths<'a, S: TypesetState>(
             PackedNode::Kern { amount, kind } => {
                 widths.natural = add_scaled(widths.natural, amount);
                 if include_font_expansion && kind == Some(tex_state::node::KernKind::Font) {
-                    add_font_kern_expansion(state, widths, cursor, current, amount);
+                    add_font_kern_expansion(state, widths, &cursor, current, amount);
                 }
             }
             PackedNode::Math(width) => widths.natural = add_scaled(widths.natural, width),
@@ -312,9 +308,9 @@ fn add_nested_list_widths<'a, S: TypesetState>(
             }
             PackedNode::Disc(replace) => {
                 let replacement = owner
-                    .child_nodes(replace)
+                    .resolve(replace)
                     .expect("nested discretionary replacement belongs to its owner payload");
-                stack.push((NodeCursor::compact(replacement), 0));
+                stack.push((replacement, 0));
             }
             PackedNode::Image { width, .. } => {
                 widths.natural = add_scaled(widths.natural, width);
