@@ -3595,9 +3595,9 @@ impl CommandProcessor<'_> {
             // remain in place while the case-code lookup records its mutable
             // dependency read. Only the rewritten backup list needs storage.
             let token = scanned.token_ref().tokens()[index];
-            let origin = self
-                .state
-                .origin_list(scanned.origin_list())
+            let origin = scanned
+                .origin_ref()
+                .origins()
                 .get(index)
                 .copied()
                 .unwrap_or(OriginId::UNKNOWN);

@@ -208,8 +208,7 @@ impl<'a> Detacher<'a> {
         self.origin_lists.push(Vec::new());
         let origins = root
             .roots()
-            .iter()
-            .map(|origin| self.origin_ref(origin))
+            .map(|origin| self.origin_ref(&origin))
             .collect();
         self.origin_lists[recipe.0] = origins;
         recipe

@@ -15,7 +15,7 @@ use crate::input::{
     MacroArgumentRange, MacroArguments, SourceFrameSummary, SourceId, TokenListReplayKind,
     TracedTokenList,
 };
-use crate::macro_store::MacroMeaning;
+use crate::macro_store::{MacroDefinitionProvenance, MacroMeaning};
 use crate::math::{
     FractionThickness, MathChar, MathChoice, MathField, MathFraction, MathListNode, MathNoad,
     MathStyle, NoadClass, NoadKind,
@@ -2054,6 +2054,107 @@ fn traced_list_finish_rejects_rolled_back_origins_before_publishing() {
     let finished = universe.finish_traced_token_list(&[valid]);
     assert_eq!(finished.token_list().raw(), 1);
     assert_eq!(finished.origin_list().raw(), 1);
+}
+
+#[test]
+fn structural_traced_list_owns_rollback_survivors_and_retry_reuses_only_weak_slots() {
+    let mut universe = Universe::new();
+    let legacy_baseline = universe.provenance_stats();
+    let snapshot = universe.snapshot();
+    let first_root = universe.synthetic_origin_ref(SyntheticOriginKind::Test);
+    let first_origin = first_root.id();
+    let first = universe.finish_traced_token_list(&[TracedTokenWord::pack(
+        Token::Char {
+            ch: 'x',
+            cat: Catcode::Letter,
+        },
+        first_origin,
+    )]);
+    let first_list = first.origin_list();
+    drop(first_root);
+
+    universe.rollback_for_local_retry(&snapshot);
+    assert!(universe.origin_ref(first_origin).is_some());
+    assert_eq!(first.origin_ref().origins(), [first_origin]);
+    drop(first);
+    // The compact compatibility archive remains an explicit lifetime
+    // authority until transient raw token buffers migrate in umber2-3v8z.22.16
+    // and the archive retires in umber2-3v8z.22.15.
+    assert!(universe.origin_ref(first_origin).is_some());
+
+    let retried_root = universe.synthetic_origin_ref(SyntheticOriginKind::Test);
+    let retried = universe.finish_traced_token_list(&[TracedTokenWord::pack(
+        Token::Char {
+            ch: 'x',
+            cat: Catcode::Letter,
+        },
+        retried_root.id(),
+    )]);
+    assert_eq!(retried.origin_list().raw(), first_list.raw());
+    assert_ne!(retried.origin_list(), first_list);
+    let after_retry = universe.provenance_stats();
+    assert_eq!(
+        after_retry.origin_list_spans(),
+        legacy_baseline.origin_list_spans() + 1
+    );
+    assert_eq!(
+        after_retry.origin_list_entries(),
+        legacy_baseline.origin_list_entries() + 1
+    );
+}
+
+#[test]
+fn detached_format_strips_structural_origin_lists_without_retaining_runtime_ids() {
+    let mut source = Universe::new();
+    let name = source.intern("format-provenance-negative");
+    let body = source.intern_token_list(&[Token::Char {
+        ch: 'x',
+        cat: Catcode::Letter,
+    }]);
+    let definition = source.intern_macro(MacroMeaning::new(
+        MeaningFlags::EMPTY,
+        TokenListId::EMPTY,
+        body,
+    ));
+    source.set_meaning(
+        name,
+        Meaning::Macro {
+            flags: MeaningFlags::EMPTY,
+            definition: definition.id(),
+        },
+    );
+    let origin = source.synthetic_origin_ref(SyntheticOriginKind::Format);
+    let repeated: [crate::provenance::OriginRef; 32] = std::array::from_fn(|_| origin.clone());
+    let replacement = source.allocate_origin_list_ref(&repeated);
+    source.set_macro_definition_provenance(
+        definition.id(),
+        MacroDefinitionProvenance::new(
+            origin.id(),
+            crate::ids::OriginListId::EMPTY,
+            replacement.id(),
+        ),
+    );
+
+    let image = source
+        .dump_format()
+        .expect("format with live provenance dumps");
+    let loaded = Universe::from_format(World::memory(), &image).expect("detached format loads");
+    let restored_name = loaded
+        .symbol("format-provenance-negative")
+        .expect("macro name is restored");
+    let Meaning::Macro {
+        definition: restored,
+        ..
+    } = loaded.meaning(restored_name)
+    else {
+        panic!("restored meaning is a macro");
+    };
+    assert_eq!(
+        loaded.macro_definition_provenance(restored),
+        MacroDefinitionProvenance::unknown()
+    );
+    assert_eq!(loaded.provenance_stats().origin_records(), 0);
+    assert_eq!(loaded.provenance_stats().origin_list_entries(), 0);
 }
 
 #[test]

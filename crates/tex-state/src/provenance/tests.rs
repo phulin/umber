@@ -722,7 +722,7 @@ fn rooted_provenance_plateaus_for_dead_work_and_grows_exactly_for_live_work() {
 }
 
 #[test]
-fn legacy_attach_reproduces_direct_and_repeated_root_amplification() {
+fn legacy_attach_retains_arena_but_shares_repeated_roots() {
     const OPERATIONS: usize = 256;
     const WIDTH: usize = 32;
     let position_count = OPERATIONS * WIDTH;
@@ -734,11 +734,10 @@ fn legacy_attach_reproduces_direct_and_repeated_root_amplification() {
         let roots = (first_raw..first_raw + WIDTH)
             .map(|raw| OriginRef::direct(OriginId::from_raw(raw as u32)))
             .collect::<Vec<_>>();
-        let id = bounded_direct.allocate_list(
-            &roots.iter().map(OriginRef::id).collect::<Vec<_>>(),
-        );
+        let id = bounded_direct.allocate_list(&roots.iter().map(OriginRef::id).collect::<Vec<_>>());
         let list = bounded_direct.attach_rooted_list(id, &roots);
         assert_eq!(list.roots().len(), WIDTH);
+        assert_eq!(list.owned_root_count(), 0);
         drop(list);
     }
     let retained = bounded_direct.stats().saturating_sub(baseline);
@@ -761,26 +760,85 @@ fn legacy_attach_reproduces_direct_and_repeated_root_amplification() {
             [],
         );
         let repeated = vec![root.clone(); WIDTH];
-        let id = all_live_rooted.allocate_list(
-            &repeated.iter().map(OriginRef::id).collect::<Vec<_>>(),
-        );
+        let id =
+            all_live_rooted.allocate_list(&repeated.iter().map(OriginRef::id).collect::<Vec<_>>());
         lists.push(all_live_rooted.attach_rooted_list(id, &repeated));
         roots.push(root);
     }
 
-    let dense_live_bytes = lists
+    let live_bytes = lists
         .iter()
         .map(|list| {
-            list.origins().len() * std::mem::size_of::<OriginId>()
-                + list.roots().len() * std::mem::size_of::<OriginRef>()
+            std::mem::size_of_val(list.origins())
+                + list.owned_root_count() * std::mem::size_of::<OriginRef>()
         })
         .sum::<usize>();
     let minimal_distinct_owner_bytes = position_count * std::mem::size_of::<OriginId>()
         + OPERATIONS * std::mem::size_of::<OriginRef>();
-    assert_eq!(dense_live_bytes, position_count * (4 + 24));
-    assert_eq!(minimal_distinct_owner_bytes, position_count * 4 + OPERATIONS * 24);
+    assert_eq!(live_bytes, minimal_distinct_owner_bytes);
+    assert_eq!(
+        minimal_distinct_owner_bytes,
+        position_count * 4 + OPERATIONS * 24
+    );
     assert_eq!(lists.len(), OPERATIONS);
     assert_eq!(roots.len(), OPERATIONS);
+}
+
+#[test]
+fn structural_lists_plateau_for_direct_churn_and_grow_by_distinct_live_roots() {
+    const OPERATIONS: usize = 256;
+    const WIDTH: usize = 32;
+
+    let mut bounded_direct = ProvenanceStore::new();
+    let legacy_baseline = bounded_direct.stats();
+    for operation in 0..OPERATIONS {
+        let first_raw = 1 + operation * WIDTH;
+        let list = bounded_direct.allocate_rooted_origin_ids(
+            (first_raw..first_raw + WIDTH).map(|raw| OriginId::from_raw(raw as u32)),
+        );
+        assert_eq!(list.origins().len(), WIDTH);
+        assert_eq!(list.owned_root_count(), 0);
+        drop(list);
+    }
+    assert!(bounded_direct.stats().retained_layout_eq(legacy_baseline));
+    assert_eq!(bounded_direct.rooted_list_shape(), (0, 0, 2));
+
+    let mut all_live_rooted = ProvenanceStore::new();
+    let roots = (0..OPERATIONS as u64)
+        .map(|serial| {
+            all_live_rooted.allocate_rooted(
+                OriginRecord::MacroInvocation(MacroInvocationOrigin::from_nonowning_operand(
+                    serial,
+                    OriginId::UNKNOWN,
+                    OriginId::UNKNOWN,
+                    OriginId::UNKNOWN,
+                )),
+                [],
+            )
+        })
+        .collect::<Vec<_>>();
+    let lists = roots
+        .iter()
+        .map(|root| {
+            let repeated: [OriginRef; WIDTH] = std::array::from_fn(|_| root.clone());
+            all_live_rooted.allocate_rooted_list(&repeated)
+        })
+        .collect::<Vec<_>>();
+    assert!(lists.iter().all(|list| list.owned_root_count() == 1));
+    assert_eq!(
+        all_live_rooted.rooted_list_shape(),
+        (OPERATIONS, OPERATIONS * WIDTH, OPERATIONS + 1)
+    );
+    assert_eq!(
+        lists
+            .iter()
+            .map(|list| {
+                std::mem::size_of_val(list.origins())
+                    + list.owned_root_count() * std::mem::size_of::<OriginRef>()
+            })
+            .sum::<usize>(),
+        OPERATIONS * WIDTH * 4 + OPERATIONS * 24
+    );
 }
 
 #[test]

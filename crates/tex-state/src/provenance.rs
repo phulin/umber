@@ -1129,8 +1129,19 @@ impl ExpansionFrameRef {
 #[derive(Debug)]
 struct OriginListValue {
     id: OriginListId,
-    origins: Arc<[OriginId]>,
-    roots: Arc<[OriginRef]>,
+    origins: Box<[OriginId]>,
+    owners: Box<[OriginRef]>,
+}
+
+impl OriginListValue {
+    fn root(&self, id: OriginId) -> OriginRef {
+        self.owners
+            .binary_search_by_key(&id, OriginRef::id)
+            .map_or_else(
+                |_| OriginRef::direct(id),
+                |index| self.owners[index].clone(),
+            )
+    }
 }
 
 /// Strong ownership of one immutable exact token-position sequence.
@@ -1160,8 +1171,17 @@ impl OriginListRef {
     }
 
     #[must_use]
-    pub fn roots(&self) -> &[OriginRef] {
-        self.value.as_ref().map_or(&[], |value| &value.roots)
+    pub fn roots(&self) -> impl ExactSizeIterator<Item = OriginRef> + '_ {
+        self.origins().iter().copied().map(|id| {
+            self.value
+                .as_ref()
+                .map_or_else(|| OriginRef::direct(id), |value| value.root(id))
+        })
+    }
+
+    #[cfg(test)]
+    fn owned_root_count(&self) -> usize {
+        self.value.as_ref().map_or(0, |value| value.owners.len())
     }
 }
 
@@ -1716,13 +1736,69 @@ impl ProvenanceStore {
         )
     }
 
-    #[cfg(test)]
     pub(crate) fn allocate_rooted_list(&mut self, roots: &[OriginRef]) -> OriginListRef {
-        if roots.is_empty() {
+        let mut ids = Vec::with_capacity(roots.len());
+        let mut owners = Vec::new();
+        for root in roots {
+            ids.push(root.id());
+            Self::insert_distinct_owner(&mut owners, root.clone());
+        }
+        self.allocate_rooted_list_value(ids, owners)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn allocate_rooted_origin_ids(
+        &mut self,
+        origins: impl ExactSizeIterator<Item = OriginId>,
+    ) -> OriginListRef {
+        let mut ids = Vec::with_capacity(origins.len());
+        for id in origins {
+            ids.push(id);
+        }
+        let mut owners = Vec::new();
+        for &id in &ids {
+            if let Some(root) = self.origin_ref(id) {
+                Self::insert_distinct_owner(&mut owners, root);
+            }
+        }
+        self.allocate_rooted_list_value(ids, owners)
+    }
+
+    pub(crate) fn allocate_attached_origin_ids(
+        &mut self,
+        origins: impl ExactSizeIterator<Item = OriginId>,
+    ) -> OriginListRef {
+        let mut ids = Vec::with_capacity(origins.len());
+        let mut owners = Vec::new();
+        for id in origins {
+            ids.push(id);
+            if let Some(root) = self.origin_ref(id) {
+                Self::insert_distinct_owner(&mut owners, root);
+            }
+        }
+        let id = self.allocate_list(&ids);
+        self.attach_rooted_list_value(id, ids, owners)
+    }
+
+    fn insert_distinct_owner(owners: &mut Vec<OriginRef>, root: OriginRef) {
+        if root.record().is_none() && root.source_registration().is_none() {
+            return;
+        }
+        match owners.binary_search_by_key(&root.id(), OriginRef::id) {
+            Ok(_) => {}
+            Err(index) => owners.insert(index, root),
+        }
+    }
+
+    fn allocate_rooted_list_value(
+        &mut self,
+        ids: Vec<OriginId>,
+        owners: Vec<OriginRef>,
+    ) -> OriginListRef {
+        if ids.is_empty() {
             return OriginListRef::empty();
         }
         self.reclaim_some_dead_rooted_lists(ROOTED_RECLAIM_WORK_PER_ALLOCATION);
-        let ids = roots.iter().map(OriginRef::id).collect::<Vec<_>>();
         let hash = origin_list_hash(&ids);
         let mut exact = None;
         let mut remove_empty_candidates = false;
@@ -1773,10 +1849,10 @@ impl ProvenanceStore {
         let entry_len = ids.len();
         let value = Arc::new(OriginListValue {
             id,
-            origins: ids.into(),
-            roots: roots.to_vec().into(),
+            origins: ids.into_boxed_slice(),
+            owners: owners.into_boxed_slice(),
         });
-        for root in roots {
+        for root in &value.owners {
             self.pending_record_roots.remove(&root.id());
         }
         let raw = identity.slot() as usize;
@@ -1833,6 +1909,7 @@ impl ProvenanceStore {
         })
     }
 
+    #[cfg(test)]
     pub(crate) fn attach_rooted_list(
         &mut self,
         id: OriginListId,
@@ -1845,11 +1922,31 @@ impl ProvenanceStore {
         if let Some(existing) = self.origin_list_ref(id) {
             return existing;
         }
+        let mut owners = Vec::new();
+        for root in roots {
+            Self::insert_distinct_owner(&mut owners, root.clone());
+        }
+        self.attach_rooted_list_value(id, roots.iter().map(OriginRef::id).collect(), owners)
+    }
+
+    fn attach_rooted_list_value(
+        &mut self,
+        id: OriginListId,
+        origins: Vec<OriginId>,
+        owners: Vec<OriginRef>,
+    ) -> OriginListRef {
+        if id == OriginListId::EMPTY {
+            return OriginListRef::empty();
+        }
+        self.reclaim_some_dead_rooted_attached_lists(ROOTED_RECLAIM_WORK_PER_ALLOCATION);
+        if let Some(existing) = self.origin_list_ref(id) {
+            return existing;
+        }
         let already_tracked = self.rooted_attached_lists.contains_key(&id);
         let value = Arc::new(OriginListValue {
             id,
-            origins: roots.iter().map(OriginRef::id).collect::<Vec<_>>().into(),
-            roots: roots.to_vec().into(),
+            origins: origins.into_boxed_slice(),
+            owners: owners.into_boxed_slice(),
         });
         self.rooted_attached_lists
             .insert(id, Arc::downgrade(&value));
@@ -1862,7 +1959,6 @@ impl ProvenanceStore {
         }
     }
 
-    #[cfg(test)]
     fn reclaim_some_dead_rooted_lists(&mut self, work: usize) -> usize {
         let mut visited = 0;
         while visited < work && self.rooted_list_slots.len() > 1 {
@@ -1913,7 +2009,6 @@ impl ProvenanceStore {
         visited
     }
 
-    #[cfg(test)]
     fn reclaim_dead_rooted_lists(&mut self) {
         let slot_extent = self.rooted_list_slots.len().saturating_sub(1);
         self.reclaim_some_dead_rooted_lists(slot_extent);

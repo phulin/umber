@@ -1071,7 +1071,7 @@ impl CommandProcessor<'_> {
 
     fn traced_words(&self, list: TracedTokenList) -> Vec<TracedTokenWord> {
         let tokens = list.token_ref().tokens();
-        let origins = self.state.origin_list(list.origin_list());
+        let origins = list.origin_ref().origins();
         tokens
             .iter()
             .copied()

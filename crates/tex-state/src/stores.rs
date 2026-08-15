@@ -1984,8 +1984,6 @@ impl Stores {
             }))
         });
 
-        #[cfg(feature = "profiling")]
-        crate::measurement::record_traced_list_finish(traced.len(), 0, 0);
         let token_list = self.tokens.intern_traced_owned_with_semantic_id(
             traced,
             semantic_id,
@@ -1993,18 +1991,11 @@ impl Stores {
             legacy_key.as_deref(),
             domain,
         );
-        let roots = traced
-            .iter()
-            .map(|word| {
-                self.provenance
-                    .origin_ref(word.origin())
-                    .unwrap_or_else(|| OriginRef::direct(word.origin()))
-            })
-            .collect::<Vec<_>>();
-        let origin_list_id = self
+        #[cfg(feature = "profiling")]
+        crate::measurement::record_traced_list_finish(traced.len(), 0, 0);
+        let origin_list = self
             .provenance
-            .allocate_list(&roots.iter().map(OriginRef::id).collect::<Vec<_>>());
-        let origin_list = self.provenance.attach_rooted_list(origin_list_id, &roots);
+            .allocate_attached_origin_ids(traced.iter().map(|word| word.origin()));
         TracedTokenList::new(token_list, origin_list)
     }
 
@@ -2501,10 +2492,7 @@ impl Stores {
     }
 
     pub fn allocate_origin_list_ref(&mut self, origins: &[OriginRef]) -> OriginListRef {
-        let id = self
-            .provenance
-            .allocate_list(&origins.iter().map(OriginRef::id).collect::<Vec<_>>());
-        self.provenance.attach_rooted_list(id, origins)
+        self.provenance.allocate_rooted_list(origins)
     }
 
     pub fn origin_list_ref(&self, id: OriginListId) -> Option<OriginListRef> {

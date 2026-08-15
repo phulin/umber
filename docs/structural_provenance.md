@@ -111,14 +111,14 @@ phase growth before accounting for token payloads and allocator rounding.
 
 The replacement invariant is falsifiable:
 
-- The immutable list stores one compact `OriginId` per position and one strong
-  `OriginRef` per _distinct owned origin_, never per direct or fallback
-  position. Repeated expansion positions share that one root. Direct
-  positions with no source-registration owner allocate no root payload.
-- Freeze consumes packed origins once into their final immutable id span while
-  incrementally collecting only distinct strong owners. It creates no parallel
-  dense id/root scratch, publishes the id span and owner set atomically, and
-  returns no raw coordinate without the `OriginListRef` owner.
+- The new immutable list stores one compact `OriginId` per position and one
+  strong `OriginRef` per _distinct owned origin_, never per direct or fallback
+  position. Repeated expansion positions share that one root. Direct positions
+  with no source-registration owner allocate no root payload.
+- Freeze consumes packed origins once into the new list's final immutable id
+  span while incrementally collecting only distinct strong owners. It creates
+  no parallel dense id/root scratch, publishes the id span and owner set
+  atomically, and returns no raw coordinate without the `OriginListRef` owner.
 - Exact weak interning may reuse a live immutable list after complete id
   comparison. Weak slots and candidates remain bounded and non-authoritative.
   Rollback, retry, rejection, and final-owner drop release the list and its
@@ -128,11 +128,36 @@ The replacement invariant is falsifiable:
   rendered provenance do not depend on allocation order, capacity, or weak
   cache state.
 
-The old stored-list arena and its rollback identities are a second lifetime
-authority. Live traced-list production stops writing it in this cutover;
-`umber2-3v8z.22.15` separately migrates the remaining loaded-format and raw-id
-consumers and retires that arena. The compatibility path is not extended with
-another owner sidecar here.
+The post-change phase census separates cumulative production, exact peak live
+payload, retained legacy capacity, and process high water:
+
+| Committed step | Sparse published bytes | Peak live sparse bytes | Stored-arena capacity growth | Root/id scratch bytes | RSS high water |
+| -------------- | ---------------------- | ---------------------- | ---------------------------- | --------------------- | -------------- |
+| 1,024          | 2,405,868              | 676,264                | 1,064,952                    | 0                     | 236,424 KiB    |
+| 2,048          | 5,671,776              | 2,011,372              | 4,128,760                    | 0                     | 262,436 KiB    |
+| 4,096          | 10,377,580             | 3,749,420              | 4,259,832                    | 0                     | 301,076 KiB    |
+| 6,144          | 17,581,772             | 6,851,080              | 8,257,528                    | 0                     | 379,164 KiB    |
+
+At step 6,144 the structural list change removes 57,052,368 bytes of
+cumulative published payload and 74,634,140 bytes of cumulative scratch
+allocation. Only 6,851,080 bytes of sparse list payload were live at any one
+time, and the retained legacy capacity was 8,257,528 bytes. RSS high water did
+not fall reliably: a repeated post-change run reached 362,500 KiB, while the
+phase-aligned run above reached 379,164 KiB against the 378,628 KiB baseline.
+The removed 131,686,508 bytes were therefore cumulative churn already absorbed
+by allocator high-water reuse, not 131 MiB of simultaneously live semantic
+state. The remaining process RSS cannot be assigned to the sparse list or its
+scratch. These receipts prove the producer-level amplifier and its structural
+removal but do not constitute the epic's sub-400 MiB acceptance row.
+
+The old stored-list arena and its rollback identities remain a second lifetime
+authority in this cutover. Trying to stop its writes exposed a distinct owner:
+transient and inline command buffers retain raw `TracedTokenWord` values whose
+root lifetime is currently supplied by that arena. `umber2-3v8z.22.16`
+separately gives those buffers structural provenance ownership;
+`umber2-3v8z.22.15` then retires the legacy format/list-id authority after that
+migration. This cutover retains only the compact compatibility id span and does
+not add another owner sidecar.
 
 ### Expansion frames
 
