@@ -207,12 +207,15 @@ fn inline_payload_origin_adoption_matches_shared_semantics() {
         ch: 'a',
         cat: Catcode::Other,
     };
-    let mut recorded = TokenPayload::transient_rooted([
-        tex_state::token::RootedTracedTokenWord::new(token, recorded_origin),
-    ]);
-    let live = TokenPayload::transient_rooted([
-        tex_state::token::RootedTracedTokenWord::new(token, live_origin.clone()),
-    ]);
+    let mut recorded =
+        TokenPayload::transient_rooted([tex_state::token::RootedTracedTokenWord::new(
+            token,
+            recorded_origin,
+        )]);
+    let live = TokenPayload::transient_rooted([tex_state::token::RootedTracedTokenWord::new(
+        token,
+        live_origin.clone(),
+    )]);
 
     recorded
         .adopt_matching_origins(&live)
