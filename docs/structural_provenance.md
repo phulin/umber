@@ -84,6 +84,56 @@ in the command token state (`NOEXPAND_FALLBACK` where required). Diagnostic
 position follows the nearest structural parent, with an optional compact
 role retained only by a consumer which can present that distinction.
 
+#### Traced-list freeze invariant
+
+The pre-node allocation audit for `umber2-3v8z.22.14` found that traced-list
+freeze was not implementing the structural contract above. It materialized a
+dense `Vec<OriginRef>`, materialized a second dense `Vec<OriginId>`, appended
+the ids to the stored-list arena, and then published another dense id/root
+pair. The following exact capped-prefix measurements use the pinned
+`2606.12566` source, format, distribution, closure, and cache:
+
+| Committed step | Traced positions | Direct positions | Rooted positions | Dense published bytes | Root scratch bytes | Id scratch bytes | Stored-arena capacity growth | RSS high water |
+| -------------- | ---------------- | ---------------- | ---------------- | --------------------- | ------------------ | ---------------- | ---------------------------- | -------------- |
+| 1,024          | 443,013          | 416,401          | 26,612           | 12,404,364            | 10,632,312         | 1,772,052        | 1,064,952                    | 220,496 KiB    |
+| 2,048          | 990,732          | 919,094          | 71,638           | 27,740,496            | 23,777,568         | 3,962,928        | 4,128,760                    | 250,644 KiB    |
+| 4,096          | 1,684,411        | 1,527,940        | 156,471          | 47,163,508            | 40,425,864         | 6,737,644        | 4,259,832                    | 295,952 KiB    |
+| 6,144          | 2,665,505        | 2,370,640        | 294,865          | 74,634,140            | 63,972,120         | 10,662,020       | 8,257,528                    | 378,628 KiB    |
+
+The published column is cumulative logical payload requested by the old
+dense representation. Stored-arena growth is retained vector capacity.
+Scratch columns are cumulative allocation churn and are not live after each
+freeze; their contribution to RSS is allocator fragmentation and high-water
+reuse, not semantic state. From step 1,024 through step 6,144 these four
+producer columns grow by 131,651,130 bytes while RSS high water grows by
+161,927,168 bytes. Thus this one producer explains 81 percent of the measured
+phase growth before accounting for token payloads and allocator rounding.
+
+The replacement invariant is falsifiable:
+
+- The immutable list stores one compact `OriginId` per position and one strong
+  `OriginRef` per _distinct owned origin_, never per direct or fallback
+  position. Repeated expansion positions share that one root. Direct
+  positions with no source-registration owner allocate no root payload.
+- Freeze consumes packed origins once into their final immutable id span while
+  incrementally collecting only distinct strong owners. It creates no parallel
+  dense id/root scratch, publishes the id span and owner set atomically, and
+  returns no raw coordinate without the `OriginListRef` owner.
+- Exact weak interning may reuse a live immutable list after complete id
+  comparison. Weak slots and candidates remain bounded and non-authoritative.
+  Rollback, retry, rejection, and final-owner drop release the list and its
+  distinct children without an ownership scan.
+- Continuation and format detachment reconstruct an ordered `OriginRef` stream
+  from the compact ids plus the distinct owner set. Detached identity and
+  rendered provenance do not depend on allocation order, capacity, or weak
+  cache state.
+
+The old stored-list arena and its rollback identities are a second lifetime
+authority. Live traced-list production stops writing it in this cutover;
+`umber2-3v8z.22.15` separately migrates the remaining loaded-format and raw-id
+consumers and retires that arena. The compatibility path is not extended with
+another owner sidecar here.
+
 ### Expansion frames
 
 An active macro invocation owns one immutable `ExpansionFrameRef` containing

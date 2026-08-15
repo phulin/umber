@@ -1,8 +1,8 @@
 use super::{
     InsertedOrigin, InsertedOriginKind, MacroInvocationOrigin, ORIGIN_KEY_LEASE_LEN,
-    ORIGIN_RECORD_ARCHIVE_CHUNK, OriginKeyRuns, OriginListRef, OriginRecord, ProvenanceBudgets,
-    ProvenanceStore, SourceOrigin, SynthesizedOrigin, SynthesizedOriginKind, SyntheticOrigin,
-    SyntheticOriginKind, packed_origin_successor,
+    ORIGIN_RECORD_ARCHIVE_CHUNK, OriginKeyRuns, OriginListRef, OriginRecord, OriginRef,
+    ProvenanceBudgets, ProvenanceStore, SourceOrigin, SynthesizedOrigin, SynthesizedOriginKind,
+    SyntheticOrigin, SyntheticOriginKind, packed_origin_successor,
 };
 use crate::Universe;
 use crate::font::NULL_FONT;
@@ -719,6 +719,68 @@ fn rooted_provenance_plateaus_for_dead_work_and_grows_exactly_for_live_work() {
         )
     );
     assert_eq!(lists.len(), OPERATIONS as usize);
+}
+
+#[test]
+fn legacy_attach_reproduces_direct_and_repeated_root_amplification() {
+    const OPERATIONS: usize = 256;
+    const WIDTH: usize = 32;
+    let position_count = OPERATIONS * WIDTH;
+
+    let mut bounded_direct = ProvenanceStore::new();
+    let baseline = bounded_direct.stats();
+    for operation in 0..OPERATIONS {
+        let first_raw = 1 + operation * WIDTH;
+        let roots = (first_raw..first_raw + WIDTH)
+            .map(|raw| OriginRef::direct(OriginId::from_raw(raw as u32)))
+            .collect::<Vec<_>>();
+        let id = bounded_direct.allocate_list(
+            &roots.iter().map(OriginRef::id).collect::<Vec<_>>(),
+        );
+        let list = bounded_direct.attach_rooted_list(id, &roots);
+        assert_eq!(list.roots().len(), WIDTH);
+        drop(list);
+    }
+    let retained = bounded_direct.stats().saturating_sub(baseline);
+    assert_eq!(retained.origin_list_spans(), OPERATIONS);
+    assert_eq!(retained.origin_list_entries(), position_count);
+    assert!(retained.origin_list_entry_capacity() >= position_count);
+    assert_eq!(bounded_direct.rooted_list_shape(), (0, 0, 1));
+
+    let mut all_live_rooted = ProvenanceStore::new();
+    let mut roots = Vec::with_capacity(OPERATIONS);
+    let mut lists = Vec::with_capacity(OPERATIONS);
+    for serial in 0..OPERATIONS as u64 {
+        let root = all_live_rooted.allocate_rooted(
+            OriginRecord::MacroInvocation(MacroInvocationOrigin::from_nonowning_operand(
+                serial,
+                OriginId::UNKNOWN,
+                OriginId::UNKNOWN,
+                OriginId::UNKNOWN,
+            )),
+            [],
+        );
+        let repeated = vec![root.clone(); WIDTH];
+        let id = all_live_rooted.allocate_list(
+            &repeated.iter().map(OriginRef::id).collect::<Vec<_>>(),
+        );
+        lists.push(all_live_rooted.attach_rooted_list(id, &repeated));
+        roots.push(root);
+    }
+
+    let dense_live_bytes = lists
+        .iter()
+        .map(|list| {
+            list.origins().len() * std::mem::size_of::<OriginId>()
+                + list.roots().len() * std::mem::size_of::<OriginRef>()
+        })
+        .sum::<usize>();
+    let minimal_distinct_owner_bytes = position_count * std::mem::size_of::<OriginId>()
+        + OPERATIONS * std::mem::size_of::<OriginRef>();
+    assert_eq!(dense_live_bytes, position_count * (4 + 24));
+    assert_eq!(minimal_distinct_owner_bytes, position_count * 4 + OPERATIONS * 24);
+    assert_eq!(lists.len(), OPERATIONS);
+    assert_eq!(roots.len(), OPERATIONS);
 }
 
 #[test]
