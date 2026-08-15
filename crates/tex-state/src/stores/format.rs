@@ -148,7 +148,6 @@ pub(super) struct MainMemoryProjection {
     /// coordinate may already be dead even though this projection still has
     /// to subtract its previously measured allocation exactly.
     token_words: Vec<usize>,
-    live_node_lists: std::collections::BTreeSet<NodeListId>,
     box_root_counts: std::collections::BTreeMap<NodeListId, u32>,
     box_copy_projections: std::collections::BTreeMap<NodeListId, CopyNodeListProjection>,
     detached_dynamic_extent: usize,
@@ -157,7 +156,6 @@ pub(super) struct MainMemoryProjection {
 struct CapturedMemoryRoots {
     env: Vec<FormatEnvEntry>,
     node_lists: Vec<FormatNodeList>,
-    live_node_lists: std::collections::BTreeSet<NodeListId>,
     box_roots: Vec<(NodeListId, FormatListKey)>,
 }
 
@@ -222,7 +220,6 @@ fn main_memory_projection_inner(
     let CapturedMemoryRoots {
         env,
         mut node_lists,
-        live_node_lists,
         box_roots,
     } = capture_memory_roots(stores, extra_nodes)?;
     let token_count = stores.tokens.slot_len() as usize;
@@ -410,7 +407,6 @@ fn main_memory_projection_inner(
         token_refs,
         macro_token_refs,
         token_words,
-        live_node_lists,
         box_root_counts,
         box_copy_projections,
         detached_dynamic_extent,
@@ -617,25 +613,6 @@ fn node_memory_words(
     profile: super::StringPoolProfile,
 ) -> (usize, usize, usize) {
     let roots = roots.into_iter().collect::<Vec<_>>();
-    let lists_by_key = node_lists
-        .iter()
-        .map(|list| (list.key, list))
-        .collect::<std::collections::BTreeMap<_, _>>();
-    let mut semantic_lists = std::collections::BTreeSet::new();
-    let mut stack = roots.clone();
-    while let Some(key) = stack.pop() {
-        if !semantic_lists.insert(key) {
-            continue;
-        }
-        if let Some(list) = lists_by_key.get(&key) {
-            stack.extend(
-                list.nodes
-                    .iter()
-                    .flat_map(FormatNode::semantic_children)
-                    .flatten(),
-            );
-        }
-    }
     // Exact immutable payloads may be shared, but every semantic root and
     // child edge still represents an independently allocated TeX list. Cache
     // each bottom-up subtree total, then charge it once per occurrence rather
@@ -676,29 +653,13 @@ fn node_memory_words(
                 .map(|root| (root, node.allocator_high_cell_overlap()))
         })
         .map(|(root, allocator_high_cell_overlap)| {
-            let mut words = 0_usize;
-            let mut seen = std::collections::BTreeSet::new();
-            let mut stack = vec![root];
-            while let Some(key) = stack.pop() {
-                if semantic_lists.contains(&key) || !seen.insert(key) {
-                    continue;
-                }
-                if let Some(list) = lists_by_key.get(&key) {
-                    words = words.saturating_add(
-                        list.nodes
-                            .iter()
-                            .map(|node| node.memory_words(profile).1)
-                            .sum::<usize>(),
-                    );
-                    stack.extend(
-                        list.nodes
-                            .iter()
-                            .flat_map(FormatNode::semantic_children)
-                            .flatten(),
-                    );
-                }
-            }
-            words.saturating_sub(allocator_high_cell_overlap as usize)
+            // The diagnostic branch records a detached TeX allocation, even
+            // when immutable host interning gives it the same coordinate as
+            // a live semantic branch. Its complete subtree therefore has an
+            // independent lifetime at the historical high-water mark.
+            subtree_words.get(&root).map_or(0, |&(_, high)| {
+                high.saturating_sub(allocator_high_cell_overlap as usize)
+            })
         })
         .max()
         .unwrap_or(0);
@@ -728,8 +689,7 @@ impl MainMemoryProjection {
         if extra_nodes.is_empty() {
             return Ok(self.usage);
         }
-        let mut node_lists =
-            capture_extra_memory_nodes(stores, extra_nodes, &self.live_node_lists)?;
+        let mut node_lists = capture_extra_memory_nodes(stores, extra_nodes)?;
         let mut extra_tokens = std::collections::BTreeSet::new();
         for node in node_lists.iter_mut().flat_map(|list| &mut list.nodes) {
             node.visit_token_list_refs(|raw| {
@@ -773,7 +733,7 @@ impl MainMemoryProjection {
         stores: &Stores,
         extra_nodes: &[Node],
     ) -> Result<Vec<usize>, StoreFormatError> {
-        let node_lists = capture_extra_memory_nodes(stores, extra_nodes, &self.live_node_lists)?;
+        let node_lists = capture_extra_memory_nodes(stores, extra_nodes)?;
         Ok(node_lists
             .iter()
             .flat_map(|list| &list.nodes)
@@ -1112,7 +1072,6 @@ fn capture_memory_roots(
     Ok(CapturedMemoryRoots {
         env,
         node_lists,
-        live_node_lists,
         box_roots,
     })
 }
@@ -1120,9 +1079,13 @@ fn capture_memory_roots(
 fn capture_extra_memory_nodes(
     stores: &Stores,
     extra_nodes: &[Node],
-    live_node_lists: &std::collections::BTreeSet<NodeListId>,
 ) -> Result<Vec<FormatNodeList>, StoreFormatError> {
-    let mut seen = live_node_lists.clone();
+    // TeX82 §§125--130 allocate each child edge in a newly constructed node
+    // graph even when Umber can share the child's immutable host payload with
+    // an already-live root. Deduplicate only within this transient graph; a
+    // process-local NodeListId shared with the cached live projection is not a
+    // TeX allocator identity.
+    let mut seen = std::collections::BTreeSet::new();
     let mut visiting = std::collections::BTreeSet::new();
     let mut payload_roots = std::collections::BTreeMap::new();
     let mut node_lists = Vec::new();
@@ -2349,7 +2312,10 @@ fn install_frozen_sections(
         verified_ids.push((id, expected_id));
     }
     let mut payload = std::sync::Arc::new(crate::node_arena::NodeListPayload::new(
-        root, storage, spans,
+        root,
+        storage,
+        spans,
+        Vec::new(),
     ));
     for (id, expected_fingerprint) in verified_ids {
         let semantic_id = {

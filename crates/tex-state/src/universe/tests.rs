@@ -6785,7 +6785,7 @@ fn grouped_box_take_owns_nested_children_before_coalesced_release() {
     else {
         panic!("taken value should preserve its leader box");
     };
-    assert_eq!(leader.children.arena(), ArenaRef::Owned(root));
+    assert_ne!(leader.children.arena(), ArenaRef::Owned(root));
     assert_eq!(
         taken
             .resolve(leader.children)
@@ -6888,7 +6888,7 @@ fn destructive_unbox_transfers_only_children_before_same_level_clear() {
     let Some(crate::node_arena::NodeRef::HList(nested)) = children.nodes().first() else {
         panic!("nested hbox should survive the transfer")
     };
-    assert_eq!(nested.children.arena(), ArenaRef::Owned(root));
+    assert_ne!(nested.children.arena(), ArenaRef::Owned(root));
     assert!(matches!(
         children
             .resolve(nested.children)
@@ -6939,9 +6939,9 @@ fn assert_promoted_wrapper_is_resolvable(
     let (ArenaRef::Owned(wrapper_root), ArenaRef::Owned(child_root)) =
         (wrapper.id().arena(), box_node.children.arena())
     else {
-        panic!("wrapper and child should share one owned payload");
+        panic!("wrapper and child should each have an owned payload");
     };
-    assert_eq!(wrapper_root, child_root);
+    assert_ne!(wrapper_root, child_root);
     assert_eq!(
         wrapper
             .resolve(box_node.children)

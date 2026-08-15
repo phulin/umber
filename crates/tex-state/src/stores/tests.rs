@@ -2561,7 +2561,7 @@ fn local_box_after_global_drops_local_survivor_on_group_exit() {
 }
 
 #[test]
-fn promoted_nested_box_remaps_children_to_same_payload_root() {
+fn promoted_nested_box_retains_local_child_payloads() {
     let mut stores = Stores::new();
     let inner = one_char(&mut stores, 'x');
     let middle = stores.freeze_node_list(&[Node::HList(BoxNode::new(BoxNodeFields {
@@ -2592,16 +2592,20 @@ fn promoted_nested_box_remaps_children_to_same_payload_root() {
     let Some(crate::node_arena::NodeRef::VList(outer_box)) = promoted_outer.nodes().first() else {
         panic!("outer survivor list should contain one vlist");
     };
-    assert_same_root(promoted_outer.id(), outer_box.children);
+    assert_different_roots(promoted_outer.id(), outer_box.children);
     let middle = promoted_outer
         .resolve(outer_box.children)
         .expect("owned middle list");
     let Some(crate::node_arena::NodeRef::HList(middle_box)) = middle.nodes().first() else {
         panic!("middle survivor list should contain one hlist");
     };
-    assert_same_root(promoted_outer.id(), middle_box.children);
+    assert_different_roots(middle.id(), middle_box.children);
+    assert!(
+        promoted_outer.resolve(middle_box.children).is_none(),
+        "the outer payload must not scan through its direct child owner"
+    );
     assert_eq!(
-        promoted_outer
+        middle
             .resolve(middle_box.children)
             .expect("owned inner list")
             .nodes(),
@@ -2614,7 +2618,7 @@ fn promoted_nested_box_remaps_children_to_same_payload_root() {
 }
 
 #[test]
-fn promotion_canonicalizes_shared_survivor_children_into_new_root() {
+fn promotion_retains_one_shared_direct_child_owner() {
     let mut stores = Stores::new();
     let child = one_char(&mut stores, 'x');
     stores.install_box(0, child);
@@ -2648,10 +2652,10 @@ fn promotion_canonicalizes_shared_survivor_children_into_new_root() {
         panic!("promoted root should preserve both wrapper boxes");
     };
 
-    assert_same_root(promoted.id(), first.children);
+    assert_different_roots(promoted.id(), first.children);
     assert_eq!(
         first.children, second.children,
-        "shared child is copied once"
+        "shared child has one direct structural owner"
     );
     assert_eq!(
         promoted
@@ -2667,7 +2671,7 @@ fn promotion_canonicalizes_shared_survivor_children_into_new_root() {
 }
 
 #[test]
-fn promotion_patches_every_child_bearing_compact_row() {
+fn promotion_resolves_every_direct_child_bearing_compact_row() {
     let mut stores = Stores::new();
     let child = one_char(&mut stores, 'c');
     let box_node = BoxNode::new(BoxNodeFields {
@@ -2755,7 +2759,7 @@ fn promotion_patches_every_child_bearing_compact_row() {
     let mut child_count = 0;
     for node in promoted.nodes() {
         for child in node.children() {
-            assert_same_root(promoted.id(), child);
+            assert_different_roots(promoted.id(), child);
             assert_eq!(
                 promoted
                     .resolve(child)
@@ -2854,7 +2858,7 @@ fn promotion_handles_pathologically_deep_box_nesting() {
         let Some(crate::node_arena::NodeRef::HList(box_node)) = promoted.nodes().first() else {
             panic!("deep promoted chain should remain hlist nodes");
         };
-        assert_same_root(promoted.id(), box_node.children);
+        assert_different_roots(promoted.id(), box_node.children);
         promoted = promoted
             .resolve(box_node.children)
             .expect("owned nested box");
@@ -2891,11 +2895,11 @@ fn one_char_node(ch: char) -> Node {
     }
 }
 
-fn assert_same_root(a: NodeListId, b: NodeListId) {
+fn assert_different_roots(a: NodeListId, b: NodeListId) {
     let (ArenaRef::Owned(a), ArenaRef::Owned(b)) = (a.arena(), b.arena()) else {
         panic!("expected survivor ids");
     };
-    assert_eq!(a, b);
+    assert_ne!(a, b);
 }
 
 fn scaled(raw: i32) -> Scaled {

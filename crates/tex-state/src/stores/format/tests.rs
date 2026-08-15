@@ -63,6 +63,62 @@ fn nested_penalty_graph(stores: &mut Stores, filler: bool) -> NodeListRef {
 }
 
 #[test]
+fn source_and_loaded_children_keep_their_local_payload_boundary() {
+    let mut source = Stores::new();
+    let source_child = freeze_ref(&mut source, &[Node::Penalty(17)]);
+    let source_parent = freeze_ref(
+        &mut source,
+        &[Node::HList(BoxNode::new(BoxNodeFields {
+            width: Scaled::from_raw(1),
+            height: Scaled::from_raw(2),
+            depth: Scaled::from_raw(3),
+            shift: Scaled::from_raw(4),
+            box_lr: BoxLr::Normal,
+            glue_set: GlueSetRatio::ZERO,
+            glue_sign: Sign::Normal,
+            glue_order: Order::Normal,
+            children: source_child.clone(),
+        }))],
+    );
+    let Node::HList(source_box) = source_parent.get(0).expect("source parent node") else {
+        panic!("expected source hlist")
+    };
+    assert!(source_box.children.shares_payload(&source_child));
+    assert!(!source_box.children.shares_payload(&source_parent));
+
+    set_box(&mut source, 0, source_parent);
+    let mut loaded = frozen_round_trip(&source);
+    let loaded_parent = loaded.box_reg_ref(0).expect("loaded parent root");
+    let Node::HList(loaded_box) = loaded_parent.get(0).expect("loaded parent node") else {
+        panic!("expected loaded hlist")
+    };
+    assert!(
+        loaded_box.children.shares_payload(&loaded_parent),
+        "the frozen loader installs its validated self-contained payload"
+    );
+
+    let dynamic_parent = freeze_ref(
+        &mut loaded,
+        &[Node::HList(BoxNode::new(BoxNodeFields {
+            width: Scaled::from_raw(5),
+            height: Scaled::from_raw(6),
+            depth: Scaled::from_raw(7),
+            shift: Scaled::from_raw(8),
+            box_lr: BoxLr::Normal,
+            glue_set: GlueSetRatio::ZERO,
+            glue_sign: Sign::Normal,
+            glue_order: Order::Normal,
+            children: loaded_parent.clone(),
+        }))],
+    );
+    let Node::HList(dynamic_box) = dynamic_parent.get(0).expect("dynamic parent node") else {
+        panic!("expected dynamic hlist")
+    };
+    assert!(dynamic_box.children.shares_payload(&loaded_parent));
+    assert!(!dynamic_box.children.shares_payload(&dynamic_parent));
+}
+
+#[test]
 fn memo_node_keys_are_dense_and_allocation_independent() {
     let mut first = Stores::new();
     let first_root = nested_penalty_graph(&mut first, false);
@@ -270,6 +326,73 @@ fn allocator_overlap_changes_only_detached_extent_not_format_bytes() {
 }
 
 #[test]
+fn detached_extent_is_independent_of_equal_content_host_sharing() {
+    fn stores_with_diagnostic(shared_content: Option<bool>) -> Stores {
+        let mut stores = Stores::new();
+        let direct = |ch| Node::Char {
+            font: crate::font::NULL_FONT,
+            ch,
+            origin: OriginRef::unknown(),
+        };
+        let semantic_children = freeze_ref(&mut stores, &[direct('A'), direct('B'), direct('C')]);
+        let diagnostic_children = if shared_content == Some(true) {
+            let equal = freeze_ref(&mut stores, &[direct('A'), direct('B'), direct('C')]);
+            assert!(semantic_children.shares_payload(&equal));
+            equal
+        } else if shared_content == Some(false) {
+            freeze_ref(&mut stores, &[direct('X'), direct('Y'), direct('Z')])
+        } else {
+            NodeListRef::empty()
+        };
+        let mut box_node = BoxNode::new(BoxNodeFields {
+            width: Scaled::from_raw(0),
+            height: Scaled::from_raw(0),
+            depth: Scaled::from_raw(0),
+            shift: Scaled::from_raw(0),
+            box_lr: BoxLr::Normal,
+            glue_set: GlueSetRatio::ZERO,
+            glue_sign: Sign::Normal,
+            glue_order: Order::Normal,
+            children: semantic_children,
+        });
+        box_node.diagnostic_children = Some(diagnostic_children);
+        let root = stores.freeze_node_list(&[Node::HList(box_node)]);
+        set_box(&mut stores, 0, root);
+        stores
+    }
+
+    let distinct = stores_with_diagnostic(Some(false));
+    let shared = stores_with_diagnostic(Some(true));
+    let empty = stores_with_diagnostic(None);
+    let distinct_usage = super::main_memory_usage_without_scratch(&distinct)
+        .expect("distinct diagnostic allocation projects")
+        .usage();
+    let shared_usage = super::main_memory_usage_without_scratch(&shared)
+        .expect("shared diagnostic allocation projects")
+        .usage();
+    let empty_usage = super::main_memory_usage_without_scratch(&empty)
+        .expect("empty diagnostic allocation projects")
+        .usage();
+    assert_eq!(distinct_usage.dynamic, shared_usage.dynamic);
+    assert_eq!(distinct_usage.dynamic, empty_usage.dynamic);
+    assert_eq!(distinct_usage.dynamic_extent, distinct_usage.dynamic + 3);
+    assert_eq!(shared_usage.dynamic_extent, distinct_usage.dynamic_extent);
+    assert_eq!(empty_usage.dynamic_extent, empty_usage.dynamic);
+
+    for (source, expected) in [
+        (&distinct, distinct_usage),
+        (&shared, shared_usage),
+        (&empty, empty_usage),
+    ] {
+        let loaded = frozen_round_trip(source);
+        let loaded_usage = super::main_memory_usage_without_scratch(&loaded)
+            .expect("loaded diagnostic allocation projects")
+            .usage();
+        assert_eq!(loaded_usage, expected);
+    }
+}
+
+#[test]
 fn recursive_box_copy_composes_with_live_projection_owners() {
     fn direct(ch: char) -> Node {
         Node::Char {
@@ -349,6 +472,53 @@ fn recursive_box_copy_composes_with_live_projection_owners() {
             .expect("root removal is classified"),
         "direct ownership requires the caller to discard its borrowed projection"
     );
+}
+
+#[test]
+fn transient_projection_charges_a_shared_child_as_a_new_tex_edge() {
+    fn usage_with_adjust(
+        stores: &Stores,
+        projection: &super::MainMemoryProjection,
+        content: NodeListRef,
+    ) -> super::MainMemoryUsage {
+        projection
+            .usage_with_extra_nodes(
+                stores,
+                &[Node::Adjust(crate::node::AdjustNode::ordinary(content))],
+            )
+            .expect("transient adjustment projects")
+    }
+
+    let mut source = Stores::new();
+    let live_child = freeze_ref(&mut source, &[Node::Penalty(17)]);
+    set_box(&mut source, 0, live_child.clone());
+    let distinct_child = freeze_ref(&mut source, &[Node::Penalty(18)]);
+    let source_projection =
+        super::main_memory_usage_without_scratch(&source).expect("source roots project");
+    let source_baseline = source_projection.usage();
+    let source_shared = usage_with_adjust(&source, &source_projection, live_child);
+    let source_distinct = usage_with_adjust(&source, &source_projection, distinct_child);
+    let source_empty = usage_with_adjust(&source, &source_projection, NodeListRef::empty());
+
+    // TeX82 §§125--130/1334 charge the two-word adjustment and its two-word
+    // penalty child. Host payload sharing cannot erase that physical edge.
+    assert_eq!(source_shared, source_distinct);
+    assert_eq!(source_shared.variable, source_baseline.variable + 4);
+    assert_eq!(source_shared.dynamic, source_baseline.dynamic);
+    assert_eq!(source_empty.variable, source_baseline.variable + 2);
+
+    let mut loaded = frozen_round_trip(&source);
+    let loaded_child = loaded.box_reg_ref(0).expect("loaded child root");
+    let loaded_distinct = freeze_ref(&mut loaded, &[Node::Penalty(18)]);
+    let loaded_projection =
+        super::main_memory_usage_without_scratch(&loaded).expect("loaded roots project");
+    let loaded_baseline = loaded_projection.usage();
+    let loaded_shared = usage_with_adjust(&loaded, &loaded_projection, loaded_child);
+    let loaded_distinct = usage_with_adjust(&loaded, &loaded_projection, loaded_distinct);
+
+    assert_eq!(loaded_baseline, source_baseline);
+    assert_eq!(loaded_shared, loaded_distinct);
+    assert_eq!(loaded_shared, source_shared);
 }
 
 #[test]

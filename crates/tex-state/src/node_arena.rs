@@ -4,8 +4,10 @@
 //! receive only strong list owners and borrow-scoped logical views.
 
 mod builder;
+#[cfg(all(test, feature = "profiling"))]
 mod copy;
 mod measurement;
+#[cfg(all(test, feature = "profiling"))]
 mod mutation;
 mod owned;
 mod schema;
@@ -15,7 +17,6 @@ mod tables;
 mod view;
 
 pub use builder::NodeListBuilder;
-pub(crate) use copy::ChildPatch;
 #[cfg(feature = "profiling")]
 pub use measurement::{NodeMemoryColumn, NodeStorageObservation, peak_node_storage_measurement};
 pub use owned::NodeListRef;

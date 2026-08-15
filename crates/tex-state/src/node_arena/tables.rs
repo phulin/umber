@@ -20,6 +20,7 @@ impl BoxTable {
         self.rows.push(value);
         index
     }
+    #[cfg(all(test, feature = "profiling"))]
     pub(super) fn copy_row(&mut self, source: &Self, index: usize) -> u32 {
         self.push(source.rows[index])
     }
@@ -68,6 +69,7 @@ impl UnsetTable {
         self.children.push(v.children);
         i
     }
+    #[cfg(all(test, feature = "profiling"))]
     pub(super) fn copy_row(&mut self, source: &Self, index: usize) -> u32 {
         self.push(crate::node::UnsetNode::new(crate::node::UnsetNodeFields {
             kind: source.kind[index],
@@ -115,6 +117,7 @@ impl InsertionTable {
         self.content.push(v.5);
         i
     }
+    #[cfg(all(test, feature = "profiling"))]
     pub(super) fn copy_row(&mut self, source: &Self, index: usize) -> u32 {
         self.push((
             source.class[index],
@@ -152,6 +155,7 @@ impl NoadTable {
         self.superscript.push(v.superscript);
         i
     }
+    #[cfg(all(test, feature = "profiling"))]
     pub(super) fn copy_row(&mut self, source: &Self, index: usize) -> u32 {
         self.push(crate::math::MathNoad {
             kind: source.kind[index].clone(),

@@ -313,10 +313,10 @@ physical box children used to represent TeX82 §§115/162 replacement nodes for
 §182 diagnostics. Those diagnostic-only edges do not enter semantic identity,
 but they remain part of the self-contained frozen graph and of §638 shipout
 memory observation; capture and decode therefore require their targets exactly
-like semantic child targets. Compact graph copying remaps both the semantic and
-diagnostic children of ordinary and leader boxes before publication. Every
-zero-length projection is then canonicalized to the single empty row before
-dense DTO keys are assigned.
+like semantic child targets. Detached decoding remaps both the semantic and
+diagnostic children of ordinary and leader boxes into the validated loaded
+payload before publication. Every zero-length projection is then canonicalized
+to the single empty row before dense DTO keys are assigned.
 
 After validation, all lists are installed into one immutable `NodeListPayload`
 with their precomputed semantic spans. Each nonvoid frozen Env box cell receives

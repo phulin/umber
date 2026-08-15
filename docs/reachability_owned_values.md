@@ -255,6 +255,8 @@ no portable format.
 ### Direct node-list ownership closure
 
 `NodeListRef` is the sole runtime owner of an immutable compact node graph.
+Each payload holds a sorted distinct set of its direct child-payload refs, and
+those children recursively own the remainder of the graph without flattening.
 Env box cells and undo, page and mode roots, command replay state, checkpoints,
 generation forks, PDF forms, retries, private candidates, and shipout staging
 all store it directly or inside owned `Node` values. Compact `NodeListId`
@@ -278,8 +280,9 @@ The optional exact-candidate index is weak and bounded. Tests observe both its
 entry count and retained capacity, in addition to exact live logical and
 allocator-retained payload bytes. Bounded replacements, rollback, retry,
 rejection, shipout, and form lifecycles plateau those physical measurements;
-the all-live control grows by the exact intentionally retained graph bytes and
-owner count. No survivor, root slot, pin, refcount ledger, promotion walk,
+the all-live control grows by the exact intentionally retained distinct
+payload bytes and direct-owner count. No survivor, root slot, pin, refcount
+ledger, promotion walk,
 historical registry, or compactor remains.
 
 ### Completed format, memo, and acceptance closure
@@ -481,8 +484,10 @@ word. A receipt without the ownership disposition is insufficient.
 Immutable nodes structurally own every token-list and glue value named by
 their compact rows or sidecars. Node freeze validates and captures those
 references before publication. Builder failure drops unpublished rows and
-their references; structural graph copy shares the immutable child values;
-dropping the final `NodeListRef` releases the complete payload.
+their references; each published payload retains its sorted distinct direct
+child `NodeListRef` values without copying the child graphs. Dropping the final
+root releases the resulting closure except for child payloads with another
+structural owner.
 
 Page, PDF, input, command, and mode structures store owning references in their
 persistent copy-on-write roots. Replacing one field releases exactly that

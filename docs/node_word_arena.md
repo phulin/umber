@@ -12,16 +12,20 @@ pin journal, root slot, refcount ledger, or raw-coordinate lifetime API.
 
 A `NodeListRef` is a strong reference to one immutable `NodeListPayload` plus a
 compact span inside that payload. The payload contains canonical node words,
-typed sidecars, semantic spans, and every nested list reachable from the root.
-Cloning the reference clones structural ownership; dropping the final clone
-releases the whole payload.
+typed sidecars, semantic spans, and a sorted, deduplicated set of strong
+`NodeListRef` owners for the payloads named directly by those rows. Each child
+payload owns its own direct children in turn. Cloning the reference clones
+structural ownership; dropping the final root clone releases that closure when
+no independently held child reference remains.
 
 `NodeListId` is not an owner. It is a private compact coordinate used while a
 `NodeListRef` is borrowed and in packed node sidecars. Detached codecs use a
 separate `FormatListKey` vocabulary whose canonical form is the dense
 bottom-up list ordinal plus its validated node count. Resolving a runtime child
-coordinate requires the enclosing `NodeListRef`; a coordinate cannot upgrade
-or rediscover a dropped payload.
+coordinate requires the enclosing `NodeListRef`, which resolves its own spans
+or delegates to the one direct child owner with the coordinate's payload root.
+It does not scan descendants or consult a registry, and a coordinate cannot
+upgrade or rediscover a dropped payload.
 
 The canonical empty list is also a `NodeListRef`. Empty child coordinates
 resolve without consulting global state. Detachment normalizes every
@@ -36,13 +40,14 @@ references. Freezing performs these steps atomically:
 
 1. validate non-node handles and direct child ownership;
 2. compute allocation-independent semantic identity;
-3. encode the root and its child payloads into one immutable compact graph;
+3. move-encode the root rows into one new immutable compact payload and attach
+   the sorted distinct direct child-payload owners;
 4. return one `NodeListRef` for the root span.
 
 The newly owned root rows are move-encoded directly into their final payload
-once. Preexisting child payloads are still flattened compact-to-compact into
-that graph and their coordinates are patched before publication; the root is
-not first materialized in temporary compact storage and copied from there.
+once. Preexisting immutable child payloads retain their existing coordinates
+and allocation boundaries; freeze copies neither their compact words nor their
+transitive descendants.
 
 Validation failure publishes nothing. A weak, bounded candidate index may
 reuse an exactly equal live payload, but weak entries neither retain payloads
@@ -75,14 +80,20 @@ Public `Node` fields such as box children, discretionary parts, leaders, math
 choices, math lists, fractions, insertions, adjustments, and replay boxes are
 `NodeListRef`. Compact `NodeRef` projections expose `NodeListId` only while the
 enclosing payload is borrowed. Algorithms that descend through compact nodes
-must resolve each coordinate through that same owner.
+must resolve each coordinate through that same owner, then use the returned
+child owner for the next level. A root owner deliberately cannot resolve an
+arbitrary grandchild coordinate that is absent from its direct owner set.
+Iterative traversals therefore carry the current `NodeListRef` in every stack
+frame rather than retaining one root owner beside a stack of bare cursors.
 
 ## Semantic identity
 
 Node-list identity is allocation independent. It hashes semantic node content,
 resolved child semantic identities, and referenced semantic values. Origins
 remain diagnostic. Strong references and payload coordinates do not
-participate in equality or checkpoint state hashes.
+participate in equality or checkpoint state hashes. The sorted owner set is a
+lifetime and lookup structure only; its allocation order does not enter format
+or memo bytes.
 
 ## Format and memo boundaries
 
@@ -104,15 +115,24 @@ the current depth is an unchanged write.
 
 ## Accounting
 
-Logical and retained payload bytes are reported by the structural owner.
+Logical and retained payload bytes report the storage, semantic spans, and
+direct-owner slots allocated by that payload, without recursively charging a
+shared child payload again.
 Process-wide peak instrumentation observes allocations without retaining them.
 There is deliberately no all-live node registry: aggregate memory is accounted
 from the roots already in scope, and a derived accounting cache is discarded
 when a box-root handoff cannot be updated without adding lifetime metadata.
 The optional node candidate index reports its weak-entry count and retained
 capacity to testing censuses only. Bounded-live controls require both values to
-plateau; all-live controls sum exact logical and allocator-retained payload
-bytes from the intentionally retained references.
+plateau; all-live controls sum exact logical and allocator-retained bytes over
+the intentionally retained distinct payload references.
+
+TeX82 memory reporting remains a projection of physical TeX allocation
+lifetimes, not host payload coordinates. In particular, a detached diagnostic
+branch contributes its complete historical high-memory subtree even when weak
+interning gives it the same immutable host payload as a live semantic branch.
+Allocator-overlap metadata removes only cells whose TeX lifetimes actually
+overlap; equal semantic content never suppresses an independent allocation.
 
 ## Final raw-coordinate audit
 

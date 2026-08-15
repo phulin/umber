@@ -201,6 +201,9 @@ fn incremental_nested_payload_totals_follow_owned_append_compact_copy_and_drop()
                 class: "measurement".to_owned(),
                 payload: vec![1, 2, 3, 4],
             }),
+            Node::Adjust(crate::node::AdjustNode::ordinary(
+                crate::node_arena::NodeListRef::empty(),
+            )),
         ],
     );
     assert_eq!(source.payload_bytes(), observation(&source).order_key());
@@ -209,8 +212,14 @@ fn incremental_nested_payload_totals_follow_owned_append_compact_copy_and_drop()
     {
         let mut candidate = NodeStorage::default();
         let mut pending = Vec::new();
-        candidate.append_compact(source.view(0, 2), &mut pending);
-        assert!(pending.is_empty());
+        candidate.append_compact(source.view(0, 3), &mut pending);
+        assert_eq!(pending.len(), 1);
+        pending.clear();
+        candidate.collect_child_patches(0, 3, &mut pending);
+        assert_eq!(pending.len(), 1);
+        for patch in pending {
+            candidate.apply_child_patch(patch.remap(|child| child));
+        }
         assert_eq!(
             candidate.payload_bytes(),
             observation(&candidate).order_key()

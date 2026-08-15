@@ -4,10 +4,10 @@
 //! projections validated against its payload and cannot recover a dropped
 //! graph. The optional candidate index below stores only bounded weak entries.
 
-use super::{ChildPatch, NodeList, NodeSemanticId, NodeStorage, SidecarNeeds, checked_len};
+use super::{NodeList, NodeSemanticId, NodeStorage, SidecarNeeds};
 use crate::ids::{ArenaRef, NodeListId, NodePayloadId};
 use crate::node::Node;
-use ahash::{AHashMap, AHashSet};
+use ahash::AHashSet;
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, OnceLock, Weak};
@@ -23,12 +23,13 @@ pub(crate) struct OwnedSemanticSpan {
     pub(crate) semantic_id: NodeSemanticId,
 }
 
-/// One immutable, self-contained compact graph.
+/// One immutable compact payload and its direct structural child owners.
 #[derive(Debug)]
 pub(crate) struct NodeListPayload {
     root: NodePayloadId,
     pub(crate) storage: NodeStorage,
     semantic_spans: Box<[OwnedSemanticSpan]>,
+    children: Box<[NodeListRef]>,
     logical_bytes: usize,
     retained_bytes: usize,
 }
@@ -76,7 +77,7 @@ impl NodeListRef {
         };
         Self::from_payload(
             id,
-            NodeListPayload::new(root, NodeStorage::default(), Vec::new()),
+            NodeListPayload::new(root, NodeStorage::default(), Vec::new(), Vec::new()),
             NodeSemanticId::empty(),
         )
     }
@@ -93,7 +94,7 @@ impl NodeListRef {
                 let id = NodeListId::new_owned(root, 0, 0);
                 Self::from_payload(
                     id,
-                    NodeListPayload::new(root, NodeStorage::default(), Vec::new()),
+                    NodeListPayload::new(root, NodeStorage::default(), Vec::new(), Vec::new()),
                     semantic_id,
                 )
             })
@@ -129,7 +130,7 @@ impl NodeListRef {
     }
 
     /// Materializes this owned list while resolving every direct child through
-    /// the same immutable payload.
+    /// this payload's structural owner set.
     #[must_use]
     pub fn to_vec(&self) -> Vec<Node> {
         self.nodes()
@@ -171,13 +172,13 @@ impl NodeListRef {
         self.semantic_id().value()
     }
 
-    /// Reports the logical compact bytes in the complete owned graph.
+    /// Reports the logical compact bytes owned directly by this payload.
     #[must_use]
     pub fn logical_payload_bytes(&self) -> usize {
         self.payload.logical_bytes
     }
 
-    /// Reports allocator-retained bytes in the complete owned graph.
+    /// Reports allocator-retained bytes owned directly by this payload.
     #[must_use]
     pub fn retained_payload_bytes(&self) -> usize {
         self.payload.retained_bytes
@@ -194,8 +195,10 @@ impl NodeListRef {
         let ArenaRef::Owned(root) = child.arena() else {
             return None;
         };
-        (root == self.payload.root && self.payload.semantic_span(child).is_some())
-            .then(|| self.payload.storage.view(child.start(), child.len()))
+        if root == self.payload.root && self.payload.semantic_span(child).is_some() {
+            return Some(self.payload.storage.view(child.start(), child.len()));
+        }
+        self.payload.child_owner(root)?.child_nodes(child)
     }
 
     pub(crate) fn id(&self) -> NodeListId {
@@ -214,11 +217,17 @@ impl NodeListRef {
 
     /// Resolves an exact child span using only this structural owner.
     pub fn resolve(&self, child: NodeListId) -> Option<Self> {
-        self.child_nodes(child)?;
         if child.is_empty() {
             return Some(Self::empty());
         }
-        Some(Self::from_shared(child, Arc::clone(&self.payload)))
+        let ArenaRef::Owned(root) = child.arena() else {
+            return None;
+        };
+        if root == self.payload.root {
+            self.child_nodes(child)?;
+            return Some(Self::from_shared(child, Arc::clone(&self.payload)));
+        }
+        self.payload.child_owner(root)?.resolve(child)
     }
 
     pub(crate) fn downgrade(&self) -> NodeListWeak {
@@ -254,18 +263,19 @@ impl NodeListRef {
         let mut storage = NodeStorage::default();
         let (start, len) = storage.append_owned_preflighted(&mut nodes, needs);
         assert_eq!(start, 0);
-        let mut pending = Vec::new();
-        storage.collect_child_patches(start, len, &mut pending);
 
         let root_id = NodeListId::new_owned(root, 0, len);
-        let mut copier = DirectGraphCopy::new(root, storage, children);
-        copier.semantic_spans.push(OwnedSemanticSpan {
-            start: 0,
-            len,
-            semantic_id,
-        });
-        copier.pending = pending;
-        copier.finish(root_id, semantic_id)
+        let payload = NodeListPayload::new(
+            root,
+            storage,
+            vec![OwnedSemanticSpan {
+                start: 0,
+                len,
+                semantic_id,
+            }],
+            children,
+        );
+        Self::from_payload(root_id, payload, semantic_id)
     }
 
     fn exact_semantic_eq(&self, other: &Self) -> bool {
@@ -310,6 +320,7 @@ impl NodeListPayload {
         root: NodePayloadId,
         storage: NodeStorage,
         mut semantic_spans: Vec<OwnedSemanticSpan>,
+        mut children: Vec<NodeListRef>,
     ) -> Self {
         semantic_spans.sort_unstable_by_key(|span| (span.start, span.len));
         for duplicate in semantic_spans.windows(2) {
@@ -331,21 +342,39 @@ impl NodeListPayload {
                 "owned node-list span exceeds payload"
             );
         }
+        children.retain(|child| !child.is_empty());
+        children.sort_unstable_by_key(|child| child.payload.root);
+        children.dedup_by(|left, right| {
+            if left.payload.root != right.payload.root {
+                return false;
+            }
+            assert!(
+                left.shares_payload(right),
+                "one child payload coordinate must identify one immutable allocation"
+            );
+            true
+        });
         let (storage_logical, storage_retained) = storage.payload_bytes();
         let span_logical = semantic_spans
             .len()
             .saturating_mul(core::mem::size_of::<OwnedSemanticSpan>());
         let span_retained = span_logical;
+        let child_bytes = children
+            .len()
+            .saturating_mul(core::mem::size_of::<NodeListRef>());
         Self {
             root,
             storage,
             semantic_spans: semantic_spans.into_boxed_slice(),
+            children: children.into_boxed_slice(),
             logical_bytes: usize::try_from(storage_logical)
                 .expect("node-list logical bytes exceed usize")
-                .saturating_add(span_logical),
+                .saturating_add(span_logical)
+                .saturating_add(child_bytes),
             retained_bytes: usize::try_from(storage_retained)
                 .expect("node-list retained bytes exceed usize")
-                .saturating_add(span_retained),
+                .saturating_add(span_retained)
+                .saturating_add(child_bytes),
         }
     }
 
@@ -362,6 +391,18 @@ impl NodeListPayload {
             .binary_search_by_key(&key, |span| (span.start, span.len))
             .ok()?;
         Some(self.semantic_spans[index])
+    }
+
+    fn child_owner(&self, root: NodePayloadId) -> Option<&NodeListRef> {
+        self.children
+            .binary_search_by_key(&root, |child| child.payload.root)
+            .ok()
+            .map(|index| &self.children[index])
+    }
+
+    #[cfg(test)]
+    fn child_roots(&self) -> impl ExactSizeIterator<Item = NodePayloadId> + '_ {
+        self.children.iter().map(|child| child.payload.root)
     }
 
     pub(crate) fn spans_mut(&mut self) -> &mut [OwnedSemanticSpan] {
@@ -423,90 +464,6 @@ impl NodeListWeakIndex {
     #[cfg(any(test, feature = "testing"))]
     pub(crate) fn shape(&self) -> (usize, usize) {
         (self.entries.len(), self.entries.capacity())
-    }
-}
-
-struct DirectGraphCopy {
-    root: NodePayloadId,
-    storage: NodeStorage,
-    sources: AHashMap<NodePayloadId, NodeListRef>,
-    remapped: AHashMap<NodeListId, NodeListId>,
-    pending: Vec<ChildPatch>,
-    semantic_spans: Vec<OwnedSemanticSpan>,
-}
-
-impl DirectGraphCopy {
-    fn new(root: NodePayloadId, storage: NodeStorage, children: Vec<NodeListRef>) -> Self {
-        let mut sources = AHashMap::new();
-        for child in children {
-            if child.is_empty() {
-                continue;
-            }
-            let ArenaRef::Owned(source_root) = child.id().arena() else {
-                unreachable!("direct node-list owners use private compact payload coordinates")
-            };
-            if let Some(existing) = sources.insert(source_root, child.clone()) {
-                assert!(
-                    existing.shares_payload(&child),
-                    "one compact root cannot name two immutable payloads"
-                );
-            }
-        }
-        Self {
-            root,
-            storage,
-            sources,
-            remapped: AHashMap::new(),
-            pending: Vec::new(),
-            semantic_spans: Vec::new(),
-        }
-    }
-
-    fn finish(mut self, root_id: NodeListId, semantic_id: NodeSemanticId) -> NodeListRef {
-        while let Some(patch) = self.pending.pop() {
-            let patch = patch.remap(|child| self.copy_child(child));
-            self.storage.apply_child_patch(patch);
-        }
-        let payload = NodeListPayload::new(self.root, self.storage, self.semantic_spans);
-        NodeListRef::from_payload(root_id, payload, semantic_id)
-    }
-
-    fn copy_child(&mut self, source_id: NodeListId) -> NodeListId {
-        if source_id.is_empty() {
-            let empty = NodeListRef::empty();
-            assert_eq!(
-                source_id,
-                empty.id(),
-                "direct builder empty child is not the canonical owner projection"
-            );
-            return empty.id();
-        }
-        if let Some(&remapped) = self.remapped.get(&source_id) {
-            return remapped;
-        }
-        let ArenaRef::Owned(source_root) = source_id.arena() else {
-            panic!("direct builder child coordinate is not structurally owned")
-        };
-        let source = self
-            .sources
-            .get(&source_root)
-            .and_then(|owner| owner.resolve(source_id))
-            .unwrap_or_else(|| panic!("direct builder child coordinate is stale or unowned"));
-
-        let start = checked_len(self.storage.len(), "owned node graph exceeds u32 entries");
-        let len = checked_len(source.len(), "owned child node list exceeds u32 entries");
-        let remapped = NodeListId::new_owned(self.root, start, len);
-        self.remapped.insert(source_id, remapped);
-        self.semantic_spans.push(OwnedSemanticSpan {
-            start,
-            len,
-            semantic_id: source.semantic_id(),
-        });
-        let appended = self
-            .storage
-            .append_compact(source.nodes(), &mut self.pending);
-        assert_eq!(appended, (start, len));
-        remapped
     }
 }
 
