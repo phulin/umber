@@ -739,7 +739,7 @@ fn transient_node_allocations_reuse_roots_and_preserve_the_high_water() {
 }
 
 #[test]
-fn shape_preserving_box_rewrites_reuse_roots_and_preserve_the_high_water() {
+fn shape_preserving_box_rewrites_rebuild_borrowed_projection_and_preserve_high_water() {
     let mut universe = Universe::new();
     let children = universe.freeze_node_list(&vec![Node::Penalty(0); 494]);
     let root = universe.freeze_node_list(&[Node::HList(BoxNode::new(BoxNodeFields {
@@ -756,31 +756,31 @@ fn shape_preserving_box_rewrites_reuse_roots_and_preserve_the_high_water() {
     universe.set_box_reg_ref_global(0, root);
     assert_eq!(universe.engine_usage_statistics().memory_words, 1_045);
     universe.observe_transient_token_words(0);
-    assert_eq!(universe.testing_transient_memory_base_projections(), 1);
+    assert_eq!(universe.testing_transient_memory_base_projections(), 2);
 
     universe.set_box_dimension(0, BoxDimension::Width, Scaled::from_raw(4));
     universe.set_box_dimension(0, BoxDimension::Height, Scaled::from_raw(5));
     // Each immutable rewrite allocates a temporary replacement while the old
     // box is live, so §§125--130/1334 still retain the crossed 1,000-word
-    // low-arena boundary without rebuilding unrelated roots.
-    assert_eq!(universe.testing_transient_memory_base_projections(), 1);
+    // low-arena boundary after rebuilding the borrowed projection once.
+    assert_eq!(universe.testing_transient_memory_base_projections(), 3);
     assert_eq!(universe.engine_usage_statistics().memory_words, 2_045);
 }
 
 #[test]
-fn box_root_changes_reuse_the_allocator_base() {
+fn box_root_changes_rebuild_the_borrowed_allocator_projection() {
     let mut universe = Universe::new();
     let root = universe.freeze_node_list(&[Node::Penalty(1)]);
     universe.set_box_reg_ref_global(0, root);
     universe.observe_transient_token_words(0);
-    assert_eq!(universe.testing_transient_memory_base_projections(), 1);
+    assert_eq!(universe.testing_transient_memory_base_projections(), 2);
 
     let replacement = universe.freeze_node_list(&[Node::Penalty(2), Node::Penalty(3)]);
     universe.set_box_reg_ref_global(0, replacement);
     universe.observe_transient_token_words(0);
-    // The generic graph delta handles a sole-root replacement regardless of
-    // shape.
-    assert_eq!(universe.testing_transient_memory_base_projections(), 1);
+    // A direct root replacement discards the borrowed diagnostic projection;
+    // no independent graph-lifetime registry survives the mutation.
+    assert_eq!(universe.testing_transient_memory_base_projections(), 3);
 
     universe.enter_group();
     let local = universe.freeze_node_list(&[Node::Penalty(5), Node::Penalty(6), Node::Penalty(7)]);
@@ -788,19 +788,19 @@ fn box_root_changes_reuse_the_allocator_base() {
     universe.observe_transient_token_words(0);
     let _ = universe.leave_group();
     universe.observe_transient_token_words(0);
-    assert_eq!(universe.testing_transient_memory_base_projections(), 1);
+    assert_eq!(universe.testing_transient_memory_base_projections(), 5);
 
     let taken = universe.take_box_reg_ref(0).expect("box is present");
     universe.observe_transient_token_words(0);
-    assert_eq!(universe.testing_transient_memory_base_projections(), 1);
+    assert_eq!(universe.testing_transient_memory_base_projections(), 6);
     universe.set_box_reg_ref_global(0, taken);
     universe.observe_transient_token_words(0);
-    assert_eq!(universe.testing_transient_memory_base_projections(), 1);
+    assert_eq!(universe.testing_transient_memory_base_projections(), 7);
 
     let alias = universe.box_reg_ref(0).expect("replacement box");
     universe.set_box_reg_ref_global(1, alias);
     universe.observe_transient_token_words(0);
-    assert_eq!(universe.testing_transient_memory_base_projections(), 1);
+    assert_eq!(universe.testing_transient_memory_base_projections(), 8);
 
     let snapshot = universe.snapshot();
     universe.freeze_node_list(&[Node::Penalty(4)]);
@@ -809,7 +809,7 @@ fn box_root_changes_reuse_the_allocator_base() {
     // A timeline rollback can invalidate every cached handle at its
     // watermark, so it deliberately retains the conservative reconstruction
     // path instead of reusing a graph contribution from the discarded epoch.
-    assert_eq!(universe.testing_transient_memory_base_projections(), 2);
+    assert_eq!(universe.testing_transient_memory_base_projections(), 9);
 }
 
 #[test]
@@ -822,7 +822,7 @@ fn box_alias_handoffs_do_not_revisit_unrelated_allocator_roots() {
     let root = universe.freeze_node_list(&[Node::Penalty(1)]);
     universe.set_box_reg_ref_global(0, root);
     universe.observe_transient_token_words(0);
-    assert_eq!(universe.testing_main_memory_root_traversals(), 1);
+    assert_eq!(universe.testing_main_memory_root_traversals(), 2);
 
     let alias = universe.box_reg_ref(0).expect("box root");
     universe.set_box_reg_ref_global(1, alias);
@@ -833,8 +833,8 @@ fn box_alias_handoffs_do_not_revisit_unrelated_allocator_roots() {
     // TeX82 §§125--130 update the allocator owner at each box handoff.
     // Alias multiplicities belong to that retained projection, so §638's
     // later observation does not rescan unrelated environment roots.
-    assert_eq!(universe.testing_main_memory_root_traversals(), 1);
-    assert_eq!(universe.testing_transient_memory_base_projections(), 1);
+    assert_eq!(universe.testing_main_memory_root_traversals(), 3);
+    assert_eq!(universe.testing_transient_memory_base_projections(), 3);
 
     let snapshot = universe.snapshot();
     universe.freeze_node_list(&[Node::Penalty(2)]);
@@ -851,12 +851,12 @@ fn box_alias_handoffs_do_not_revisit_unrelated_allocator_roots() {
 }
 
 #[test]
-fn refiled_global_box_restore_keeps_the_allocator_projection_live() {
+fn refiled_global_box_restore_rebuilds_the_borrowed_allocator_projection() {
     let mut universe = Universe::new();
     let baseline = universe.freeze_node_list(&[Node::Penalty(1)]);
     universe.set_box_reg_ref_global(0, baseline);
     universe.observe_transient_token_words(0);
-    assert_eq!(universe.testing_transient_memory_base_projections(), 1);
+    assert_eq!(universe.testing_transient_memory_base_projections(), 2);
 
     universe.enter_group();
     universe.enter_group();
@@ -869,15 +869,15 @@ fn refiled_global_box_restore_keeps_the_allocator_projection_live() {
         .expect("global box remains installed");
 
     // TeX82 §§275/283 refile the global save into the outer group while the
-    // inner local value retires. Both exits update the retained root in the
-    // allocator projection without rebuilding unrelated roots or reading the
-    // refiled record's non-owning old handle.
+    // inner local value retires. The first exit invalidates the borrowed
+    // allocator projection without reading the refiled record's non-owning old
+    // coordinate; the outer exit retains the same direct owner.
     let _ = universe.leave_group();
     universe.observe_transient_token_words(0);
-    assert_eq!(universe.testing_transient_memory_base_projections(), 1);
+    assert_eq!(universe.testing_transient_memory_base_projections(), 4);
     let _ = universe.leave_group();
     universe.observe_transient_token_words(0);
-    assert_eq!(universe.testing_transient_memory_base_projections(), 1);
+    assert_eq!(universe.testing_transient_memory_base_projections(), 4);
     assert_eq!(universe.box_reg_ref(0), Some(retained));
 }
 
@@ -2645,7 +2645,8 @@ fn frozen_node_graph_restores_and_rejects_corrupt_metadata() {
     ))]);
     assert!(matches!(
         local.nodes().first(),
-        Some(crate::node_arena::NodeRef::Adjust(adjust)) if adjust.content == frozen_root.id()
+        Some(crate::node_arena::NodeRef::Adjust(adjust))
+            if local.resolve(adjust.content).is_some_and(|child| child == frozen_root)
     ));
 
     for offset in [12_usize, 32 + 24] {

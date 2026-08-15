@@ -1,4 +1,4 @@
-use super::{FrozenCoreSections, FrozenNodeSection, FrozenNonNodeSections};
+use super::{FrozenCoreSections, FrozenNodeSection, FrozenNonNodeSections, MemoNodeBundle};
 use crate::cell::{BankTag, CellId};
 use crate::env::banks::{IntParam, TokParam};
 use crate::glue::GlueSpec;
@@ -42,6 +42,91 @@ fn freeze_ref(stores: &mut Stores, nodes: &[Node]) -> NodeListRef {
 
 fn set_box(stores: &mut Stores, index: u16, root: NodeListRef) {
     let _ = stores.write_box_reg_ref(index, Some(root), false);
+}
+
+fn nested_penalty_graph(stores: &mut Stores, filler: bool) -> NodeListRef {
+    if filler {
+        drop(stores.freeze_node_list(&[Node::Penalty(i32::MAX)]));
+    }
+    let child = stores.freeze_node_list(&[Node::Penalty(17)]);
+    stores.freeze_node_list(&[Node::HList(BoxNode::new(BoxNodeFields {
+        width: Scaled::from_raw(1),
+        height: Scaled::from_raw(2),
+        depth: Scaled::from_raw(3),
+        shift: Scaled::from_raw(4),
+        box_lr: BoxLr::Normal,
+        glue_set: GlueSetRatio::ZERO,
+        glue_sign: Sign::Normal,
+        glue_order: Order::Normal,
+        children: child,
+    }))])
+}
+
+#[test]
+fn memo_node_keys_are_dense_and_allocation_independent() {
+    let mut first = Stores::new();
+    let first_root = nested_penalty_graph(&mut first, false);
+    let first_bytes = first
+        .encode_memo_node_list_ref(&first_root)
+        .expect("first memo graph encodes");
+
+    let mut shifted = Stores::new();
+    let shifted_root = nested_penalty_graph(&mut shifted, true);
+    assert_ne!(first_root.id(), shifted_root.id());
+    let shifted_bytes = shifted
+        .encode_memo_node_list_ref(&shifted_root)
+        .expect("shifted memo graph encodes");
+
+    assert_eq!(first_bytes, shifted_bytes);
+    let bundle: MemoNodeBundle = bincode::deserialize(&first_bytes).expect("memo bundle decodes");
+    assert_eq!(bundle.root.payload_root, None);
+    assert_eq!(bundle.root.start as usize, bundle.node_lists.len() - 1);
+    assert!(bundle.node_lists.iter().enumerate().all(|(index, list)| {
+        list.key.payload_root.is_none()
+            && list.key.start as usize == index
+            && list.key.len as usize == list.nodes.len()
+    }));
+}
+
+#[test]
+fn memo_graph_is_fully_validated_before_destination_mutation() {
+    let mut source = Stores::new();
+    let root = nested_penalty_graph(&mut source, false);
+    let encoded = source
+        .encode_memo_node_list_ref(&root)
+        .expect("memo graph encodes");
+    let mut bundle: MemoNodeBundle = bincode::deserialize(&encoded).expect("memo bundle decodes");
+    bundle
+        .node_lists
+        .last_mut()
+        .expect("memo graph has a root")
+        .semantic_id ^= 1;
+    let corrupted = bincode::serialize(&bundle).expect("corrupt memo bundle encodes");
+
+    let mut target = Stores::new();
+    let before = target.testing_ownership_census();
+    assert!(matches!(
+        target.import_memo_node_list(&corrupted, 16, 16, 1024),
+        Err(super::StoreFormatError::Invalid(
+            "memo node semantic identity"
+        ))
+    ));
+    assert_eq!(target.testing_ownership_census(), before);
+
+    bundle
+        .node_lists
+        .last_mut()
+        .expect("memo graph has a root")
+        .key
+        .payload_root = Some(0);
+    let noncanonical = bincode::serialize(&bundle).expect("noncanonical memo bundle encodes");
+    assert!(matches!(
+        target.import_memo_node_list(&noncanonical, 16, 16, 1024),
+        Err(super::StoreFormatError::Invalid(
+            "memo root is not canonical"
+        ))
+    ));
+    assert_eq!(target.testing_ownership_census(), before);
 }
 
 #[test]
@@ -243,17 +328,49 @@ fn recursive_box_copy_composes_with_live_projection_owners() {
     assert_eq!(copied.dynamic, baseline.dynamic + 1 + 10);
     assert_eq!(copied.dynamic_extent, baseline.dynamic_extent + 1 + 14);
 
+    let loaded = frozen_round_trip(&stores);
+    let loaded_root = loaded.box_reg_ref(254).expect("loaded box root");
+    let loaded_projection =
+        super::main_memory_usage_without_scratch(&loaded).expect("loaded box graph projects");
+    let loaded_baseline = loaded_projection.usage();
+    let loaded_copy = loaded_projection
+        .usage_with_box_copy(loaded_root.id(), 1)
+        .expect("loaded live box copy projects");
+    assert_eq!(loaded_baseline, baseline);
+    assert_eq!(loaded_copy, copied);
+
     // A shared read or destructive `\box` does not invoke §204, so merely
     // consulting the cached projection changes no allocator coordinate.
     assert_eq!(projection.usage(), baseline);
 
-    projection
-        .update_box_root(&stores, Some(root.id()), None, true)
-        .expect("root removal projects");
     assert!(
-        projection.usage_with_box_copy(root.id(), 1).is_none(),
-        "released owners cannot contribute to a later operation peak"
+        !projection
+            .update_box_root(&stores, Some(root.id()), None, true)
+            .expect("root removal is classified"),
+        "direct ownership requires the caller to discard its borrowed projection"
     );
+}
+
+#[test]
+fn shared_payload_box_roots_keep_distinct_physical_word_owners() {
+    let mut stores = Stores::new();
+    let root = stores.freeze_node_list(&[Node::Char {
+        font: crate::font::NULL_FONT,
+        ch: 'x',
+        origin: OriginRef::unknown(),
+    }]);
+    set_box(&mut stores, 0, root.clone());
+    let single =
+        super::main_memory_usage_without_scratch(&stores).expect("single box root projects");
+
+    set_box(&mut stores, 1, root);
+    let aliased =
+        super::main_memory_usage_without_scratch(&stores).expect("aliased box roots project");
+
+    let (single, aliased) = (single.usage(), aliased.usage());
+    assert_eq!(aliased.variable, single.variable);
+    assert_eq!(aliased.dynamic, single.dynamic + 1);
+    assert_eq!(aliased.dynamic_extent, single.dynamic_extent + 1);
 }
 
 #[test]
@@ -335,7 +452,28 @@ fn format_round_trip_preserves_physical_diagnostic_leader_children() {
         kind: GlueKind::Leaders,
         leader: Some(LeaderPayload::HList(leader_box)),
     }]);
+    for child in root
+        .nodes()
+        .iter()
+        .flat_map(|node| node.physical_children().collect::<Vec<_>>())
+    {
+        assert!(
+            root.resolve(child).is_some(),
+            "freshly frozen physical child must belong to its owner"
+        );
+    }
     set_box(&mut stores, 0, root);
+    let installed = stores.box_reg_ref(0).expect("installed box root");
+    for child in installed
+        .nodes()
+        .iter()
+        .flat_map(|node| node.physical_children().collect::<Vec<_>>())
+    {
+        assert!(
+            installed.resolve(child).is_some(),
+            "installed physical child must belong to its owner"
+        );
+    }
 
     let restored = frozen_round_trip(&stores);
     let restored_root = restored.box_reg_ref(0).expect("restored box root");

@@ -111,7 +111,7 @@ impl BoxBank {
     ) -> BoxWriteOutcome {
         let old = self.get(index);
         let value = NodeListId::encode_box_word(root.as_ref().map(NodeListRef::id));
-        if old.value == value && !ctx.global {
+        if old.value == value && !ctx.global && old.owner_depth == ctx.group_depth {
             return BoxWriteOutcome::Unchanged;
         }
 

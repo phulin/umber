@@ -16,9 +16,16 @@ impl NodeStorage {
                 self.boxes.rows[row].diagnostic_children = diagnostic_child;
             }
             ChildPatch::Unset { row, child } => self.unsets.children[row] = child,
-            ChildPatch::Leader { row, child } => match &mut self.leaders[row].2 {
+            ChildPatch::Leader {
+                row,
+                child,
+                diagnostic_child,
+            } => match &mut self.leaders[row].2 {
                 crate::node::LeaderPayload::HList(value)
-                | crate::node::LeaderPayload::VList(value) => value.children = child,
+                | crate::node::LeaderPayload::VList(value) => {
+                    value.children = child;
+                    value.diagnostic_children = diagnostic_child;
+                }
                 crate::node::LeaderPayload::Rule { .. } => {
                     unreachable!("rule leader cannot carry a child patch")
                 }

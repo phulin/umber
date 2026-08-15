@@ -1119,7 +1119,7 @@
         },
         {
           "path": "crates/tex-exec/src/main_control/tests.rs",
-          "test": "destructive_unbox_shares_nested_survivor_children_without_epoch_clone"
+          "test": "destructive_unbox_transfers_nested_structural_children"
         },
         {
           "path": "crates/tex-exec/src/main_control/tests.rs",
@@ -1295,7 +1295,7 @@
         },
         {
           "path": "crates/tex-exec/src/main_control/tests.rs",
-          "test": "destructive_unbox_shares_nested_survivor_children_without_epoch_clone"
+          "test": "destructive_unbox_transfers_nested_structural_children"
         },
         {
           "path": "crates/tex-exec/src/main_control/tests.rs",

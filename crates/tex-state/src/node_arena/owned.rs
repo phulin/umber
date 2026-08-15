@@ -283,7 +283,7 @@ impl NodeListRef {
                 return false;
             }
             for (left_node, right_node) in left.nodes().iter().zip(right.nodes().iter()) {
-                if normalized_node(left_node.clone()) != normalized_node(right_node.clone()) {
+                if !super::schema::physical_shape_eq(&left_node, &right_node) {
                     return false;
                 }
                 let left_children = left_node.physical_children().collect::<Vec<_>>();
@@ -421,7 +421,7 @@ impl NodeListWeakIndex {
         candidate
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "testing"))]
     pub(crate) fn shape(&self) -> (usize, usize) {
         (self.entries.len(), self.entries.capacity())
     }
@@ -509,24 +509,6 @@ impl DirectGraphCopy {
         assert_eq!(appended, (start, len));
         remapped
     }
-}
-
-/// Allocation-independent exact-node collision guard. Child coordinates are
-/// compared recursively by [`NodeListRef::exact_semantic_eq`], so the local
-/// projection retains only field order and empty/nonempty shape.
-fn normalized_node(node: super::NodeRef<'_>) -> String {
-    let root = NodePayloadId::new(0);
-    let mut node = node.to_compact_owned();
-    let mut child = 0;
-    node.visit_lists_mut(|id| {
-        *id = if id.is_empty() {
-            NodeListId::new_owned(root, 0, 0)
-        } else {
-            child += 1;
-            NodeListId::new_owned(root, child, 1)
-        };
-    });
-    format!("{node:?}")
 }
 
 pub(crate) fn allocate_node_payload_root() -> Option<NodePayloadId> {

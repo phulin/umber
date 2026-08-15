@@ -47,7 +47,7 @@ fn epoch_node_list_boundaries_round_trip() {
 }
 
 #[test]
-fn survivor_node_list_boundaries_round_trip() {
+fn owned_node_list_boundaries_round_trip() {
     for (root, start, len) in [(0, 0, 0), ((1 << 20) - 2, (1 << 21) - 1, (1 << 22) - 1)] {
         let id = NodeListId::testing_owned(root, start, len);
         assert_eq!(id.arena(), ArenaRef::Owned(super::NodePayloadId::new(root)));
@@ -61,7 +61,7 @@ fn survivor_node_list_boundaries_round_trip() {
 }
 
 #[test]
-fn box_word_uses_canonical_none_without_translating_survivor_ids() {
+fn box_word_uses_canonical_none_without_translating_owned_coordinates() {
     let zero = NodeListId::testing_owned(0, 0, 0);
     assert_eq!(
         NodeListId::decode_box_word(NodeListId::encode_box_word(Some(zero))),
@@ -84,25 +84,25 @@ fn epoch_span_overflow_is_rejected() {
 }
 
 #[test]
-#[should_panic(expected = "survivor root id exceeds encoding")]
+#[should_panic(expected = "node payload id exceeds encoding")]
 fn reserved_payload_root_is_rejected() {
     let _ = NodeListId::testing_owned((1 << 20) - 1, 0, 0);
 }
 
 #[test]
-#[should_panic(expected = "survivor span start exceeds encoding")]
-fn survivor_start_above_capacity_is_rejected() {
+#[should_panic(expected = "owned span start exceeds encoding")]
+fn owned_start_above_capacity_is_rejected() {
     let _ = NodeListId::testing_owned(0, 1 << 21, 0);
 }
 
 #[test]
-#[should_panic(expected = "survivor span length exceeds encoding")]
-fn survivor_length_above_capacity_is_rejected() {
+#[should_panic(expected = "owned span length exceeds encoding")]
+fn owned_length_above_capacity_is_rejected() {
     let _ = NodeListId::testing_owned(0, 0, 1 << 22);
 }
 
 #[test]
-#[should_panic(expected = "box word contains reserved survivor root id")]
+#[should_panic(expected = "box word contains a reserved node-payload id")]
 fn box_word_rejects_non_null_encoding_with_reserved_root() {
     let reserved_root_word = (1_u64 << 63) | (((1_u64 << 20) - 1) << 43);
     let _ = NodeListId::decode_box_word(reserved_root_word);

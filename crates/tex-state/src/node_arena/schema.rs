@@ -621,6 +621,181 @@ pub(super) fn semantic_eq(left: &NodeRef<'_>, right: &NodeRef<'_>) -> bool {
     }
 }
 
+/// Compares one node's allocation-independent physical shape. Child payloads
+/// are compared by the graph walker, so only their compact coordinates are
+/// erased here. Diagnostic origins and physical allocator metadata remain
+/// exact, without rendering `Debug` output or allocating temporary strings.
+pub(super) fn physical_shape_eq(left: &NodeRef<'_>, right: &NodeRef<'_>) -> bool {
+    match (left, right) {
+        (
+            NodeRef::Char {
+                font: a,
+                ch: b,
+                origin_root: c,
+                ..
+            },
+            NodeRef::Char {
+                font: d,
+                ch: e,
+                origin_root: f,
+                ..
+            },
+        ) => a == d && b == e && c == f,
+        (
+            NodeRef::Lig {
+                font: a,
+                ch: b,
+                orig: c,
+                origin_roots: d,
+                left_hit: e,
+                right_hit: f,
+                ..
+            },
+            NodeRef::Lig {
+                font: g,
+                ch: h,
+                orig: i,
+                origin_roots: j,
+                left_hit: k,
+                right_hit: l,
+                ..
+            },
+        ) => a == g && b == h && c == i && d == j && e == k && f == l,
+        (
+            NodeRef::Glue {
+                spec: a,
+                kind: b,
+                leader: c,
+            },
+            NodeRef::Glue {
+                spec: d,
+                kind: e,
+                leader: f,
+            },
+        ) => {
+            a == d
+                && b == e
+                && match (c, f) {
+                    (Some(a), Some(b)) => leader_physical_shape_eq(a, b),
+                    (None, None) => true,
+                    _ => false,
+                }
+        }
+        (NodeRef::HList(a), NodeRef::HList(b)) | (NodeRef::VList(a), NodeRef::VList(b)) => {
+            box_physical_shape_eq(a, b)
+        }
+        (NodeRef::Unset(a), NodeRef::Unset(b)) => (*a).map_list(|_| ()) == (*b).map_list(|_| ()),
+        (
+            NodeRef::Disc {
+                kind: a,
+                physical_replace_count: b,
+                ..
+            },
+            NodeRef::Disc {
+                kind: c,
+                physical_replace_count: d,
+                ..
+            },
+        ) => a == c && b == d,
+        (
+            NodeRef::Ins {
+                class: a,
+                size: b,
+                split_top_skip: c,
+                split_max_depth: d,
+                floating_penalty: e,
+                ..
+            },
+            NodeRef::Ins {
+                class: f,
+                size: g,
+                split_top_skip: h,
+                split_max_depth: i,
+                floating_penalty: j,
+                ..
+            },
+        ) => a == f && b == g && c == h && d == i && e == j,
+        (NodeRef::MathNoad(a), NodeRef::MathNoad(b)) => {
+            noad_kind_physical_eq(&a.kind, &b.kind)
+                && math_field_physical_shape_eq(&a.nucleus, &b.nucleus)
+                && math_field_physical_shape_eq(&a.subscript, &b.subscript)
+                && math_field_physical_shape_eq(&a.superscript, &b.superscript)
+        }
+        (NodeRef::FractionNoad(a), NodeRef::FractionNoad(b)) => {
+            (*a).map_lists(|_| ()) == (*b).map_lists(|_| ())
+        }
+        (NodeRef::MathChoice(a), NodeRef::MathChoice(b)) => {
+            (*a).map_lists(|_| ()) == (*b).map_lists(|_| ())
+        }
+        (NodeRef::MathList(a), NodeRef::MathList(b)) => {
+            (*a).map_list(|_| ()) == (*b).map_list(|_| ())
+        }
+        (NodeRef::Adjust(a), NodeRef::Adjust(b)) => (*a).map_list(|_| ()) == (*b).map_list(|_| ()),
+        _ => semantic_eq(left, right),
+    }
+}
+
+fn box_physical_shape_eq(
+    left: &crate::node::BoxNode<NodeListId>,
+    right: &crate::node::BoxNode<NodeListId>,
+) -> bool {
+    (*left).map_lists(|_| ()) == (*right).map_lists(|_| ())
+        && left.diagnostic_children.is_some() == right.diagnostic_children.is_some()
+        && left.allocator_high_cell_overlap == right.allocator_high_cell_overlap
+}
+
+fn leader_physical_shape_eq(
+    left: &crate::node::LeaderPayload<NodeListId>,
+    right: &crate::node::LeaderPayload<NodeListId>,
+) -> bool {
+    match (left, right) {
+        (crate::node::LeaderPayload::HList(a), crate::node::LeaderPayload::HList(b))
+        | (crate::node::LeaderPayload::VList(a), crate::node::LeaderPayload::VList(b)) => {
+            box_physical_shape_eq(a, b)
+        }
+        (
+            crate::node::LeaderPayload::Rule {
+                width: a,
+                height: b,
+                depth: c,
+            },
+            crate::node::LeaderPayload::Rule {
+                width: d,
+                height: e,
+                depth: f,
+            },
+        ) => a == d && b == e && c == f,
+        _ => false,
+    }
+}
+
+fn math_char_physical_eq(left: &MathChar, right: &MathChar) -> bool {
+    left.family == right.family && left.character == right.character && left.origin == right.origin
+}
+
+fn math_field_physical_shape_eq(
+    left: &MathField<NodeListId>,
+    right: &MathField<NodeListId>,
+) -> bool {
+    match (left, right) {
+        (MathField::Empty, MathField::Empty)
+        | (MathField::SubBox(_), MathField::SubBox(_))
+        | (MathField::SubMlist(_), MathField::SubMlist(_)) => true,
+        (MathField::MathChar(a), MathField::MathChar(b))
+        | (MathField::MathTextChar(a), MathField::MathTextChar(b)) => math_char_physical_eq(a, b),
+        _ => false,
+    }
+}
+
+fn noad_kind_physical_eq(left: &NoadKind, right: &NoadKind) -> bool {
+    match (left, right) {
+        (NoadKind::Accent { accent: a }, NoadKind::Accent { accent: b }) => {
+            math_char_physical_eq(a, b)
+        }
+        _ => left == right,
+    }
+}
+
 fn content(visitor: &mut impl NodeSchemaVisitor, role: NodeHandleRole, handle: NodeHandle<'_>) {
     visitor.handle(NodeHandleEvent {
         role,
@@ -789,6 +964,8 @@ mod tests {
         let empty = crate::node_arena::NodeListRef::empty();
         let mark_tokens = crate::token_store::testing_empty_token_list_ref();
         let write_tokens = crate::token_store::testing_empty_token_list_ref();
+        let mut stores = Stores::new();
+        let glue = stores.intern_glue_in_domain(crate::glue::GlueSpec::ZERO, None);
         let mut box_node = BoxNode::new(BoxNodeFields {
             width: Scaled::from_raw(1),
             height: Scaled::from_raw(2),
@@ -816,12 +993,12 @@ mod tests {
         let origin = crate::provenance::OriginRef::direct(OriginId::from_raw(17));
         let nodes = vec![
             Node::Char {
-                font: FontId::testing_new(1),
+                font: crate::font::NULL_FONT,
                 ch: 'a',
                 origin: origin.clone(),
             },
             Node::Lig {
-                font: FontId::testing_new(2),
+                font: crate::font::NULL_FONT,
                 ch: 'b',
                 orig: vec!['a'],
                 origins: vec![origin],
@@ -835,11 +1012,11 @@ mod tests {
             Node::MarginKern {
                 amount: Scaled::from_raw(11),
                 side: MarginKernSide::Right,
-                font: FontId::testing_new(3),
+                font: crate::font::NULL_FONT,
                 ch: b'c',
             },
             Node::Glue {
-                spec: crate::glue::GlueSpecRef::testing_new(GlueId::testing_new(4)),
+                spec: glue.clone(),
                 kind: GlueKind::Normal,
                 leader: None,
             },
@@ -866,7 +1043,7 @@ mod tests {
             Node::Ins {
                 class: 3,
                 size: Scaled::from_raw(15),
-                split_top_skip: crate::glue::GlueSpecRef::testing_new(GlueId::testing_new(6)),
+                split_top_skip: glue,
                 split_max_depth: Scaled::from_raw(16),
                 floating_penalty: -17,
                 content: empty.clone(),
@@ -906,7 +1083,6 @@ mod tests {
                 pre: true,
             }),
         ];
-        let mut stores = Stores::new();
         let list = stores.freeze_node_list(&nodes);
 
         assert_eq!(nodes.len(), NodeKind::ALL.len());

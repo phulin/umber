@@ -523,7 +523,7 @@ fn node_semantic_ids_exclude_token_provenance() {
         class: 0,
         tokens: second_tokens.token_ref().clone(),
     }]);
-    assert_ne!(first, second);
+    assert!(first.shares_payload(&second));
     assert_eq!(first.semantic_id(), second.semantic_id());
 }
 

@@ -296,6 +296,8 @@ fn assert_budgeted_plateau(baseline: PlateauMilestone, current: PlateauMilestone
     assert!(current.physical.macro_bodies.index_keys <= 1_024);
     assert!(current.physical.macro_definitions.index_keys <= 1_024);
     assert!(current.physical.glue_specs.index_keys <= 1_024);
+    assert!(current.physical.node_weak_entries <= 64);
+    assert!(current.physical.node_weak_capacity <= 64);
     assert!(current.physical.token_lists.max_bucket_capacity <= 64);
     assert!(current.physical.macro_bodies.max_bucket_capacity <= 64);
     assert!(current.physical.macro_definitions.max_bucket_capacity <= 64);

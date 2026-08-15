@@ -616,12 +616,13 @@ fn node_memory_words(
     roots: impl IntoIterator<Item = FormatListKey>,
     profile: super::StringPoolProfile,
 ) -> (usize, usize, usize) {
+    let roots = roots.into_iter().collect::<Vec<_>>();
     let lists_by_key = node_lists
         .iter()
         .map(|list| (list.key, list))
         .collect::<std::collections::BTreeMap<_, _>>();
     let mut semantic_lists = std::collections::BTreeSet::new();
-    let mut stack = roots.into_iter().collect::<Vec<_>>();
+    let mut stack = roots.clone();
     while let Some(key) = stack.pop() {
         if !semantic_lists.insert(key) {
             continue;
@@ -635,13 +636,37 @@ fn node_memory_words(
             );
         }
     }
-    let (low_words, high_words) = node_lists
+    // Exact immutable payloads may be shared, but every semantic root and
+    // child edge still represents an independently allocated TeX list. Cache
+    // each bottom-up subtree total, then charge it once per occurrence rather
+    // than once per host coordinate.
+    let mut subtree_words = std::collections::BTreeMap::new();
+    for list in node_lists {
+        let mut words = list
+            .nodes
+            .iter()
+            .fold((0_usize, 0_usize), |(low, high), node| {
+                let (node_low, node_high) = node.memory_words(profile);
+                (low.saturating_add(node_low), high.saturating_add(node_high))
+            });
+        for child in list
+            .nodes
+            .iter()
+            .flat_map(FormatNode::semantic_children)
+            .flatten()
+        {
+            if let Some(&(child_low, child_high)) = subtree_words.get(&child) {
+                words.0 = words.0.saturating_add(child_low);
+                words.1 = words.1.saturating_add(child_high);
+            }
+        }
+        subtree_words.insert(list.key, words);
+    }
+    let (low_words, high_words) = roots
         .iter()
-        .filter(|list| semantic_lists.contains(&list.key))
-        .flat_map(|list| &list.nodes)
-        .fold((0_usize, 0_usize), |(low, high), node| {
-            let (node_low, node_high) = node.memory_words(profile);
-            (low.saturating_add(node_low), high.saturating_add(node_high))
+        .filter_map(|root| subtree_words.get(root))
+        .fold((0_usize, 0_usize), |(low, high), &(root_low, root_high)| {
+            (low.saturating_add(root_low), high.saturating_add(root_high))
         });
     let detached_extent = node_lists
         .iter()
@@ -1261,7 +1286,7 @@ struct FormatNodeList {
     nodes: Vec<FormatNode>,
 }
 
-#[derive(Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 struct MemoNodeBundle {
     names: Vec<FormatName>,
     token_lists: Vec<Vec<FormatToken>>,
@@ -1450,7 +1475,8 @@ impl Stores {
             &mut node_lists,
             None,
         )?;
-        let root = FormatListKey::capture(self, root.id(), &mut payload_roots);
+        let mut root = FormatListKey::capture(self, root.id(), &mut payload_roots);
+        canonicalize_memo_node_list_keys(&mut node_lists, &mut root);
         bincode::serialize(&MemoNodeBundle {
             names,
             token_lists,
@@ -1511,7 +1537,8 @@ impl Stores {
             &mut node_lists,
             Some(&mut origins),
         )?;
-        let root = FormatListKey::capture(self, root.id(), &mut payload_roots);
+        let mut root = FormatListKey::capture(self, root.id(), &mut payload_roots);
+        canonicalize_memo_node_list_keys(&mut node_lists, &mut root);
         let bytes = bincode::serialize(&MemoNodeBundle {
             names,
             token_lists,
@@ -1544,33 +1571,36 @@ impl Stores {
     ) -> Result<crate::node_arena::NodeListRef, StoreFormatError> {
         let bundle: MemoNodeBundle = bincode::deserialize(bytes)
             .map_err(|error| StoreFormatError::Codec(error.to_string()))?;
-        let node_count = bundle
-            .node_lists
-            .iter()
-            .try_fold(0usize, |total, list| total.checked_add(list.nodes.len()));
-        if node_count.is_none_or(|count| count > max_nodes) {
-            return Err(StoreFormatError::Invalid("memo node budget exceeded"));
-        }
-        let token_count = bundle
-            .token_lists
-            .iter()
-            .try_fold(0usize, |total, list| total.checked_add(list.len()));
-        if token_count.is_none_or(|count| count > max_tokens) {
-            return Err(StoreFormatError::Invalid("memo token budget exceeded"));
-        }
-        let string_bytes = bundle
-            .names
-            .iter()
-            .map(|name| name.text.len())
-            .chain(bundle.fonts.iter().map(|font| font.name.len()))
-            .try_fold(0usize, usize::checked_add);
-        if string_bytes.is_none_or(|count| count > max_string_bytes) {
-            return Err(StoreFormatError::Invalid("memo string budget exceeded"));
-        }
+        validate_memo_node_bundle_limits(&bundle, max_nodes, max_tokens, max_string_bytes)?;
+        validate_dense_memo_node_graph(&bundle)?;
 
-        let mut symbols = Vec::with_capacity(bundle.names.len());
-        let mut symbol_ids = Vec::with_capacity(bundle.names.len());
-        for name in bundle.names {
+        // Validate content references and semantic fingerprints without
+        // touching the destination stores. The second materialization can
+        // therefore publish only a graph whose complete detached closure has
+        // already succeeded. Target-specific capacity failures remain under
+        // the aggregate scoped rollback owned by `Universe`.
+        let mut validator = Stores::new();
+        drop(validator.materialize_memo_node_bundle(bundle.clone(), &[])?);
+        self.materialize_memo_node_bundle(bundle, origins)
+    }
+
+    fn materialize_memo_node_bundle(
+        &mut self,
+        bundle: MemoNodeBundle,
+        origins: &[crate::provenance::OriginRef],
+    ) -> Result<crate::node_arena::NodeListRef, StoreFormatError> {
+        let MemoNodeBundle {
+            names,
+            token_lists,
+            glue,
+            fonts,
+            node_lists,
+            root,
+        } = bundle;
+
+        let mut symbols = Vec::with_capacity(names.len());
+        let mut symbol_ids = Vec::with_capacity(names.len());
+        for name in names {
             let id = if name.active {
                 let mut chars = name.text.chars();
                 let ch = chars
@@ -1590,20 +1620,20 @@ impl Stores {
             symbol_ids.push(id);
         }
 
-        let mut token_ids = Vec::with_capacity(bundle.token_lists.len());
-        for tokens in bundle.token_lists {
+        let mut token_ids = Vec::with_capacity(token_lists.len());
+        for tokens in token_lists {
             let tokens = tokens
                 .into_iter()
                 .map(|token| token.restore_mapped(&symbols))
                 .collect::<Result<Vec<_>, _>>()?;
             token_ids.push(self.intern_token_list_ref_in_domain(&tokens, None));
         }
-        let mut glue_ids = Vec::with_capacity(bundle.glue.len());
-        for glue in bundle.glue {
+        let mut glue_ids = Vec::with_capacity(glue.len());
+        for glue in glue {
             glue_ids.push(self.intern_glue_in_domain(glue.restore()?, None));
         }
-        let mut font_ids = Vec::with_capacity(bundle.fonts.len());
-        for (raw, font) in bundle.fonts.into_iter().enumerate() {
+        let mut font_ids = Vec::with_capacity(fonts.len());
+        for (raw, font) in fonts.into_iter().enumerate() {
             if raw == 0 {
                 font_ids.push(NULL_FONT);
                 continue;
@@ -1632,7 +1662,8 @@ impl Stores {
         let mut node_owners = std::collections::BTreeMap::new();
         let mut owners_by_id = std::collections::BTreeMap::new();
         let mut origins = origins.iter().cloned();
-        for list in bundle.node_lists {
+        for list in node_lists {
+            let expected_semantic_id = list.semantic_id;
             let nodes = list
                 .nodes
                 .into_iter()
@@ -1649,12 +1680,15 @@ impl Stores {
                 })
                 .collect::<Vec<_>>();
             let owner = self.freeze_node_list(&nodes);
+            if owner.semantic_fingerprint() != expected_semantic_id {
+                return Err(StoreFormatError::Invalid("memo node semantic identity"));
+            }
             node_ids.insert(list.key, owner.id());
             owners_by_id.insert(owner.id(), owner.clone());
             node_owners.insert(list.key, owner);
         }
         node_owners
-            .get(&bundle.root)
+            .get(&root)
             .cloned()
             .ok_or(StoreFormatError::Invalid("memo root is missing"))
     }
@@ -2581,7 +2615,25 @@ impl StoreFormat {
 }
 
 fn canonicalize_node_list_keys(node_lists: &mut [FormatNodeList], env: &mut [FormatEnvEntry]) {
-    let keys: std::collections::BTreeMap<_, _> = node_lists
+    let keys = dense_node_list_keys(node_lists);
+    remap_node_list_keys(node_lists, &keys);
+    for entry in env {
+        if let FormatEnvValue::Box(key) = &mut entry.value {
+            *key = keys[key];
+        }
+    }
+}
+
+fn canonicalize_memo_node_list_keys(node_lists: &mut [FormatNodeList], root: &mut FormatListKey) {
+    let keys = dense_node_list_keys(node_lists);
+    *root = keys[root];
+    remap_node_list_keys(node_lists, &keys);
+}
+
+fn dense_node_list_keys(
+    node_lists: &[FormatNodeList],
+) -> std::collections::BTreeMap<FormatListKey, FormatListKey> {
+    node_lists
         .iter()
         .enumerate()
         .map(|(index, list)| {
@@ -2594,26 +2646,107 @@ fn canonicalize_node_list_keys(node_lists: &mut [FormatNodeList], env: &mut [For
                 },
             )
         })
-        .collect();
+        .collect()
+}
+
+fn remap_node_list_keys(
+    node_lists: &mut [FormatNodeList],
+    keys: &std::collections::BTreeMap<FormatListKey, FormatListKey>,
+) {
     for list in node_lists {
         for node in &mut list.nodes {
-            node.remap_list_keys(&keys);
+            node.remap_list_keys(keys);
         }
         list.key = keys[&list.key];
     }
-    for entry in env {
-        if let FormatEnvValue::Box(key) = &mut entry.value {
-            *key = keys[key];
+}
+
+fn validate_memo_node_bundle_limits(
+    bundle: &MemoNodeBundle,
+    max_nodes: usize,
+    max_tokens: usize,
+    max_string_bytes: usize,
+) -> Result<(), StoreFormatError> {
+    let node_count = bundle
+        .node_lists
+        .iter()
+        .try_fold(0usize, |total, list| total.checked_add(list.nodes.len()));
+    if node_count.is_none_or(|count| count > max_nodes) {
+        return Err(StoreFormatError::Invalid("memo node budget exceeded"));
+    }
+    let token_count = bundle
+        .token_lists
+        .iter()
+        .try_fold(0usize, |total, list| total.checked_add(list.len()));
+    if token_count.is_none_or(|count| count > max_tokens) {
+        return Err(StoreFormatError::Invalid("memo token budget exceeded"));
+    }
+    let string_bytes = bundle
+        .names
+        .iter()
+        .map(|name| name.text.len())
+        .chain(bundle.fonts.iter().map(|font| font.name.len()))
+        .try_fold(0usize, usize::checked_add);
+    if string_bytes.is_none_or(|count| count > max_string_bytes) {
+        return Err(StoreFormatError::Invalid("memo string budget exceeded"));
+    }
+    Ok(())
+}
+
+fn validate_dense_memo_node_graph(bundle: &MemoNodeBundle) -> Result<(), StoreFormatError> {
+    let Some(last) = bundle.node_lists.last() else {
+        return Err(StoreFormatError::Invalid("memo node graph is empty"));
+    };
+    if bundle.root != last.key {
+        return Err(StoreFormatError::Invalid("memo root is not canonical"));
+    }
+    for (index, list) in bundle.node_lists.iter().enumerate() {
+        let expected = FormatListKey {
+            payload_root: None,
+            start: u32::try_from(index)
+                .map_err(|_| StoreFormatError::Invalid("memo node-list count exceeds u32"))?,
+            len: u32::try_from(list.nodes.len())
+                .map_err(|_| StoreFormatError::Invalid("memo node list exceeds u32"))?,
+        };
+        if list.key != expected {
+            return Err(StoreFormatError::Invalid("noncanonical memo node-list key"));
+        }
+        for child in list.nodes.iter().flat_map(|node| {
+            node.semantic_children()
+                .into_iter()
+                .flatten()
+                .chain(node.diagnostic_children())
+        }) {
+            let child_index = child.start as usize;
+            if child.payload_root.is_some()
+                || child_index >= index
+                || bundle
+                    .node_lists
+                    .get(child_index)
+                    .is_none_or(|dependency| dependency.key != child)
+            {
+                return Err(StoreFormatError::Invalid(
+                    "memo node dependency is not canonical",
+                ));
+            }
         }
     }
+    Ok(())
 }
 
 impl FormatListKey {
     fn capture(
         _stores: &Stores,
-        id: NodeListId,
+        mut id: NodeListId,
         payload_roots: &mut std::collections::BTreeMap<crate::ids::NodePayloadId, u32>,
     ) -> Self {
+        // Zero-length child coordinates are semantically the one canonical
+        // empty list even when compact copying projected them into the
+        // enclosing payload. Detached schemas must not retain that private
+        // payload coordinate.
+        if id.is_empty() {
+            id = crate::node_arena::NodeListRef::empty().id();
+        }
         let (start, len) = (id.start(), id.len());
         Self {
             payload_root: match id.arena() {

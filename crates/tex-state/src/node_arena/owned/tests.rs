@@ -9,8 +9,10 @@ use crate::node::{
     UnsetKind, UnsetNode, UnsetNodeFields,
 };
 use crate::node_arena::{NodeSemanticId, SidecarNeeds};
+use crate::provenance::OriginRef;
 use crate::scaled::{GlueSetRatio, Scaled};
 use crate::stores::Stores;
+use crate::token::OriginId;
 
 fn freeze(stores: &mut Stores, nodes: impl IntoIterator<Item = Node>) -> NodeListRef {
     let mut builder = stores.node_list_builder();
@@ -180,6 +182,60 @@ fn candidate_collision_compares_exact_semantic_projection() {
     assert!(!first.shares_payload(&collision));
     assert_eq!(first.nodes().to_vec(), [Node::Penalty(1)]);
     assert_eq!(collision.nodes().to_vec(), [Node::Penalty(2)]);
+}
+
+#[test]
+fn exact_candidate_guard_preserves_diagnostic_glyph_provenance() {
+    let mut index = NodeListWeakIndex::new();
+    let semantic_id = NodeSemanticId::testing_collision(8, 1);
+    let first_origin = OriginRef::direct(OriginId::from_raw(1));
+    let second_origin = OriginRef::direct(OriginId::from_raw(2));
+    let first = testing_ref(
+        Node::Char {
+            font: crate::font::NULL_FONT,
+            ch: 'a',
+            origin: first_origin.clone(),
+        },
+        semantic_id,
+    );
+    let same_semantics = testing_ref(
+        Node::Char {
+            font: crate::font::NULL_FONT,
+            ch: 'a',
+            origin: second_origin.clone(),
+        },
+        semantic_id,
+    );
+
+    let first = index.intern(first);
+    let same_semantics = index.intern(same_semantics);
+    assert!(!first.shares_payload(&same_semantics));
+
+    let first_ligature = testing_ref(
+        Node::Lig {
+            font: crate::font::NULL_FONT,
+            ch: 'b',
+            orig: vec!['a'],
+            origins: vec![first_origin],
+            left_hit: false,
+            right_hit: true,
+        },
+        semantic_id,
+    );
+    let same_ligature_semantics = testing_ref(
+        Node::Lig {
+            font: crate::font::NULL_FONT,
+            ch: 'b',
+            orig: vec!['a'],
+            origins: vec![second_origin],
+            left_hit: false,
+            right_hit: true,
+        },
+        semantic_id,
+    );
+    let first_ligature = index.intern(first_ligature);
+    let same_ligature_semantics = index.intern(same_ligature_semantics);
+    assert!(!first_ligature.shares_payload(&same_ligature_semantics));
 }
 
 #[test]

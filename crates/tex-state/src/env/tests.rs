@@ -466,18 +466,19 @@ fn box_owner_edges_move_restore_and_fork_without_external_roots() {
     let baseline_observer = baseline.downgrade();
     env.set_box_reg_global(7, Some(baseline));
 
-    // An equal local projection keeps the installed payload and discards the
-    // redundant incoming owner.
+    // The first local assignment must publish its owner even when the value is
+    // equal, because the group still owns a restore record for the baseline.
     let equal = box_owner(NodeListId::testing_owned(20_001, 1, 0));
     let equal_observer = equal.downgrade();
     env.enter_group();
     env.set_box_reg(7, Some(equal));
-    assert!(equal_observer.upgrade().is_none());
+    assert!(equal_observer.upgrade().is_some());
     assert!(baseline_observer.upgrade().is_some());
 
     let local = box_owner(NodeListId::testing_owned(20_002, 1, 0));
     let local_observer = local.downgrade();
     env.set_box_reg(7, Some(local));
+    assert!(equal_observer.upgrade().is_none());
     let (taken, _, _) = env.take_box_reg_same_level(7);
     assert_eq!(
         taken.as_ref().map(NodeRoot::id),
@@ -682,6 +683,33 @@ fn first_same_value_local_write_at_new_group_level_is_restored() {
     );
     assert_eq!(restores[0].old(), u64::from((-1_i32) as u32));
     assert!(!restores[0].is_retaining());
+}
+
+#[test]
+fn first_same_box_owner_at_new_group_level_keeps_canonical_restore_order() {
+    let mut env = Env::new();
+    let box_root = crate::node_arena::NodeListRef::empty();
+    env.set_box_reg_global(255, Some(box_root.clone()));
+    env.enter_group();
+
+    env.set_dimen(9, Scaled::from_raw(1));
+    env.set_count(5, 1);
+    env.set_box_reg(255, Some(box_root));
+    env.set_int_param(IntParam::GLOBAL_DEFS, 1);
+    let (_, _, _, restores) = env.leave_group_observing_meanings();
+
+    assert_eq!(
+        restores
+            .iter()
+            .map(crate::env::group::RestoreRecord::cell)
+            .collect::<Vec<_>>(),
+        [
+            CellId::new(BankTag::IntParam, u32::from(IntParam::GLOBAL_DEFS.raw()),),
+            CellId::new(BankTag::Box, 255),
+            CellId::new(BankTag::Count, 5),
+            CellId::new(BankTag::Dimen, 9),
+        ]
+    );
 }
 
 #[test]

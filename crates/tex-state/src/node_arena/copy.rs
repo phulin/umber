@@ -22,6 +22,7 @@ pub(crate) enum ChildPatch {
     Leader {
         row: usize,
         child: NodeListId,
+        diagnostic_child: Option<NodeListId>,
     },
     Disc {
         row: usize,
@@ -66,8 +67,17 @@ impl ChildPatch {
                     *child = map(*child);
                 }
             }
+            Self::Leader {
+                child,
+                diagnostic_child,
+                ..
+            } => {
+                *child = map(*child);
+                if let Some(child) = diagnostic_child {
+                    *child = map(*child);
+                }
+            }
             Self::Unset { child, .. }
-            | Self::Leader { child, .. }
             | Self::Insertion { child, .. }
             | Self::MathList { child, .. }
             | Self::Adjust { child, .. } => *child = map(*child),
@@ -149,9 +159,15 @@ impl NodeStorage {
                 13 => {
                     let row = copy_vec_row(13, &mut self.leaders, &source.storage.leaders, side);
                     if let Some(child) = leader_child(&self.leaders[row.payload() as usize].2) {
+                        let diagnostic_child = match &self.leaders[row.payload() as usize].2 {
+                            crate::node::LeaderPayload::HList(node)
+                            | crate::node::LeaderPayload::VList(node) => node.diagnostic_children,
+                            crate::node::LeaderPayload::Rule { .. } => None,
+                        };
                         pending.push(ChildPatch::Leader {
                             row: row.payload() as usize,
                             child,
+                            diagnostic_child,
                         });
                     }
                     row

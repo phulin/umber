@@ -281,6 +281,8 @@ pub struct TestingOwnershipCensus {
     pub macro_bodies: TestingValuePoolCensus,
     pub macro_definitions: TestingValuePoolCensus,
     pub glue_specs: TestingValuePoolCensus,
+    pub node_weak_entries: usize,
+    pub node_weak_capacity: usize,
     pub provenance_records: usize,
     pub provenance_lists: usize,
     pub provenance_entries: usize,
@@ -4070,6 +4072,7 @@ impl Stores {
         let macro_live = self.macros.testing_live_totals();
         let macro_shapes = self.macros.testing_pool_shapes();
         let provenance = self.provenance_stats();
+        let (node_weak_entries, node_weak_capacity) = self.node_ref_index.shape();
         TestingOwnershipCensus {
             token_lists: TestingValuePoolCensus::new(
                 self.tokens.testing_live_totals(),
@@ -4084,6 +4087,8 @@ impl Stores {
                 self.glue.testing_live_totals(),
                 self.glue.testing_pool_shape(),
             ),
+            node_weak_entries,
+            node_weak_capacity,
             provenance_records: provenance.origin_records(),
             provenance_lists: provenance.origin_list_spans(),
             provenance_entries: provenance.origin_list_entries(),

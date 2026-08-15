@@ -49,11 +49,9 @@ fn downstream_crate_cannot_construct_or_mutate_raw_content_stores() {
             "TokenStore::new",
             "TokenListBuilder::new",
             "GlueStore::new",
-            "NodeArena::new",
             "NodeListBuilder::new",
-            "SurvivorArena::new",
             "no method named `intern`",
-            "method `finish` is private",
+            "no method named `finish`",
             "method `get` is private",
         ],
     );
