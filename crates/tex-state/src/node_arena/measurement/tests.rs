@@ -3,7 +3,7 @@ use std::sync::Arc;
 use super::{NodeStorageObservation, PeakNodeStorageRecorder};
 use crate::ids::FontId;
 use crate::node::{Node, PdfDestinationKind, PdfDestinationNode, Whatsit};
-use crate::node_arena::NodeStorage;
+use crate::node_arena::{NodeStorage, SidecarNeeds};
 use crate::token::OriginId;
 use crate::{PdfActionIdentifier, PdfColorStackAction};
 
@@ -143,17 +143,20 @@ fn newer_whatsit_payloads_are_exhaustively_measured() {
 #[test]
 fn owned_ligature_payloads_participate_in_totals_and_columns() {
     let mut storage = NodeStorage::default();
-    storage.append(&[Node::Lig {
-        font: FontId::new(1),
-        ch: 'f',
-        orig: vec!['f', 'i'],
-        origins: vec![
-            crate::provenance::OriginRef::direct(OriginId::from_raw(1)),
-            crate::provenance::OriginRef::direct(OriginId::from_raw(2)),
-        ],
-        left_hit: false,
-        right_hit: false,
-    }]);
+    append_owned(
+        &mut storage,
+        [Node::Lig {
+            font: FontId::new(1),
+            ch: 'f',
+            orig: vec!['f', 'i'],
+            origins: vec![
+                crate::provenance::OriginRef::direct(OriginId::from_raw(1)),
+                crate::provenance::OriginRef::direct(OriginId::from_raw(2)),
+            ],
+            left_hit: false,
+            right_hit: false,
+        }],
+    );
 
     let measured = observation(&storage);
 
@@ -178,41 +181,43 @@ fn owned_ligature_payloads_participate_in_totals_and_columns() {
 }
 
 #[test]
-fn incremental_nested_payload_totals_follow_compact_copy_and_rollback() {
+fn incremental_nested_payload_totals_follow_owned_append_compact_copy_and_drop() {
     let mut source = NodeStorage::default();
-    source.append(&[
-        Node::Lig {
-            font: FontId::new(1),
-            ch: 'f',
-            orig: vec!['f', 'i'],
-            origins: vec![
-                crate::provenance::OriginRef::direct(OriginId::from_raw(1)),
-                crate::provenance::OriginRef::direct(OriginId::from_raw(2)),
-            ],
-            left_hit: false,
-            right_hit: false,
-        },
-        Node::Whatsit(Whatsit::Special {
-            class: "measurement".to_owned(),
-            payload: vec![1, 2, 3, 4],
-        }),
-    ]);
-
-    let mut destination = NodeStorage::default();
-    let empty = destination.mark();
-    let mut pending = Vec::new();
-    destination.append_compact(source.view(0, 2), &mut pending);
-    assert!(pending.is_empty());
-    assert_eq!(
-        destination.payload_bytes(),
-        observation(&destination).order_key()
+    append_owned(
+        &mut source,
+        [
+            Node::Lig {
+                font: FontId::new(1),
+                ch: 'f',
+                orig: vec!['f', 'i'],
+                origins: vec![
+                    crate::provenance::OriginRef::direct(OriginId::from_raw(1)),
+                    crate::provenance::OriginRef::direct(OriginId::from_raw(2)),
+                ],
+                left_hit: false,
+                right_hit: false,
+            },
+            Node::Whatsit(Whatsit::Special {
+                class: "measurement".to_owned(),
+                payload: vec![1, 2, 3, 4],
+            }),
+        ],
     );
+    assert_eq!(source.payload_bytes(), observation(&source).order_key());
 
-    destination.truncate(empty);
-    assert_eq!(
-        destination.payload_bytes(),
-        observation(&destination).order_key()
-    );
+    let restored_observation = observation(&source);
+    {
+        let mut candidate = NodeStorage::default();
+        let mut pending = Vec::new();
+        candidate.append_compact(source.view(0, 2), &mut pending);
+        assert!(pending.is_empty());
+        assert_eq!(
+            candidate.payload_bytes(),
+            observation(&candidate).order_key()
+        );
+    }
+
+    assert_eq!(observation(&source), restored_observation);
 }
 
 #[test]
@@ -261,6 +266,16 @@ fn observation(storage: &NodeStorage) -> NodeStorageObservation {
 
 fn observe_storage(recorder: &PeakNodeStorageRecorder, storage: &NodeStorage) {
     recorder.observe(storage.payload_bytes(), || storage.memory_columns("peak"));
+}
+
+fn append_owned(storage: &mut NodeStorage, nodes: impl IntoIterator<Item = Node>) {
+    let mut nodes = nodes.into_iter().collect::<Vec<_>>();
+    let mut needs = SidecarNeeds::default();
+    for node in &nodes {
+        needs.preflight_and_count(node);
+    }
+    storage.append_owned_preflighted(&mut nodes, needs);
+    assert!(nodes.is_empty(), "owned append consumes its source nodes");
 }
 
 fn assert_column_bytes(
