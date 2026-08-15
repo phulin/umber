@@ -11,12 +11,21 @@ use crate::input::{SourceId, TokenListReplayKind};
 use crate::macro_store::MacroMeaning;
 use crate::meaning::MeaningFlags;
 use crate::node::Node;
-use crate::node_arena::NodeArena;
+use crate::node_arena::{NodeListRef, NodeSemanticIdBuilder, SidecarNeeds};
 use crate::source_map::SourceDescriptor;
-use crate::survivor::SurvivorArena;
 use crate::token::{Catcode, OriginId, Token};
 use std::sync::Arc;
 use std::sync::Barrier;
+
+fn freeze_test_nodes(nodes: Vec<Node>, semantic: u64) -> NodeListRef {
+    let mut needs = SidecarNeeds::default();
+    for node in &nodes {
+        needs.preflight_and_count(node);
+    }
+    let mut identity = NodeSemanticIdBuilder::new();
+    identity.push(|hasher| hasher.u64(semantic));
+    NodeListRef::freeze_builder(nodes, Vec::new(), identity.finish(), needs)
+}
 
 #[test]
 fn unknown_origin_and_empty_list_are_preallocated() {
@@ -767,8 +776,6 @@ fn rooted_record_reclamation_is_bounded_and_preserves_live_negative_control() {
 fn node_owners_plateau_for_10k_released_roots_and_retain_10k_live_roots() {
     const OPERATIONS: u64 = 10_000;
     let mut bounded = ProvenanceStore::new();
-    let mut arena = NodeArena::new();
-    let mark = arena.watermark();
     for serial in 0..OPERATIONS {
         let root = bounded.allocate_rooted(
             OriginRecord::MacroInvocation(MacroInvocationOrigin::from_nonowning_operand(
@@ -780,13 +787,16 @@ fn node_owners_plateau_for_10k_released_roots_and_retain_10k_live_roots() {
             [],
         );
         let id = root.id();
-        arena.append(&[Node::Char {
-            font: NULL_FONT,
-            ch: 'x',
-            origin: root,
-        }]);
+        let owner = freeze_test_nodes(
+            vec![Node::Char {
+                font: NULL_FONT,
+                ch: 'x',
+                origin: root,
+            }],
+            serial,
+        );
         assert!(bounded.origin_ref(id).is_some());
-        arena.truncate_to(mark);
+        drop(owner);
         assert!(bounded.origin_ref(id).is_none());
     }
     assert_eq!(bounded.rooted_record_shape(), (0, 1));
@@ -814,37 +824,34 @@ fn node_owners_plateau_for_10k_released_roots_and_retain_10k_live_roots() {
             origin,
         })
         .collect::<Vec<_>>();
-    let mut live_arena = NodeArena::new();
-    live_arena.append(&nodes);
-    drop(nodes);
+    let live_owner = freeze_test_nodes(nodes, OPERATIONS);
     drop(roots);
     assert_eq!(
         all_live.rooted_record_shape(),
         (OPERATIONS as usize, OPERATIONS as usize)
     );
+    drop(live_owner);
 }
 
 #[test]
-fn survivor_and_committed_artifact_release_their_exact_node_roots() {
+fn structural_owner_and_committed_artifact_release_their_exact_node_roots() {
     let mut store = ProvenanceStore::new();
     let root = store.allocate_rooted(
         OriginRecord::Synthetic(SyntheticOrigin::new(SyntheticOriginKind::Test)),
         [],
     );
     let id = root.id();
-    let mut epoch = NodeArena::new();
-    let mark = epoch.watermark();
-    let list = epoch.append(&[Node::Char {
-        font: NULL_FONT,
-        ch: 'x',
-        origin: root,
-    }]);
-    let mut survivors = SurvivorArena::new();
-    let survivor = survivors.promote(list, &epoch);
-    epoch.truncate_to(mark);
+    let list = freeze_test_nodes(
+        vec![Node::Char {
+            font: NULL_FONT,
+            ch: 'x',
+            origin: root,
+        }],
+        1,
+    );
     assert!(store.origin_ref(id).is_some());
 
-    let payload_root = survivors.get(survivor).first().expect("survivor character");
+    let payload_root = list.nodes().first().expect("owned character");
     let crate::node_arena::NodeRef::Char { origin_root, .. } = payload_root else {
         panic!("survivor character")
     };
@@ -860,7 +867,7 @@ fn survivor_and_committed_artifact_release_their_exact_node_roots() {
         render_provenance,
         occurrences,
     );
-    survivors.dec_ref(survivor);
+    drop(list);
     assert!(store.origin_ref(id).is_some());
     drop(artifact);
     assert!(store.origin_ref(id).is_none());

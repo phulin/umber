@@ -3644,20 +3644,6 @@ impl Stores {
         self.env.box_reg_ref(index)
     }
 
-    #[cfg(test)]
-    pub fn take_box_reg(&mut self, index: u16) -> Option<NodeListId> {
-        self.take_box_reg_with_receipt(index).0
-    }
-
-    #[cfg(test)]
-    pub(crate) fn take_box_reg_with_receipt(
-        &mut self,
-        index: u16,
-    ) -> (Option<NodeListId>, crate::env::CellMutationReceipt) {
-        let (old, receipt) = self.take_box_reg_ref_with_receipt(index);
-        (old.as_ref().map(NodeListRef::id), receipt)
-    }
-
     pub(crate) fn take_box_reg_ref_with_receipt(
         &mut self,
         index: u16,
@@ -3671,20 +3657,6 @@ impl Stores {
         };
         let _ = rec;
         (old, receipt)
-    }
-
-    #[cfg(test)]
-    pub fn take_box_reg_same_level(&mut self, index: u16) -> Option<NodeListId> {
-        self.take_box_reg_same_level_with_receipt(index).0
-    }
-
-    #[cfg(test)]
-    pub(crate) fn take_box_reg_same_level_with_receipt(
-        &mut self,
-        index: u16,
-    ) -> (Option<NodeListId>, crate::env::CellMutationReceipt) {
-        let (old, receipt) = self.take_box_reg_ref_same_level_with_receipt(index);
-        (old.as_ref().map(NodeListRef::id), receipt)
     }
 
     pub(crate) fn take_box_reg_ref_same_level_with_receipt(

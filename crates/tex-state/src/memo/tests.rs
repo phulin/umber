@@ -167,7 +167,6 @@ fn nested_node_graph_round_trips_across_owners_and_respects_budget_atomically() 
             tokens: tokens.clone(),
         },
     ]);
-    let child = source.node_list_ref(child);
     let root = source.freeze_node_list(&[Node::HList(BoxNode::new(BoxNodeFields {
         width: Scaled::from_raw(20),
         height: Scaled::from_raw(5),
@@ -179,10 +178,10 @@ fn nested_node_graph_round_trips_across_owners_and_respects_budget_atomically() 
         glue_order: Order::Normal,
         children: child,
     }))]);
-    let detached = source.detach_node_list(root).expect("node detachment");
-    let detached_box = source.detach_box(root).expect("box detachment");
-    let source_hash = source.engine_boundary_hash(77, |hash| hash.node_list(root));
-    let source_box_hash = source.engine_boundary_hash(78, |hash| hash.node_list(root));
+    let detached = source.detach_node_list(&root).expect("node detachment");
+    let detached_box = source.detach_box(&root).expect("box detachment");
+    let source_hash = source.engine_boundary_hash(77, |hash| hash.node_list_ref(&root));
+    let source_box_hash = source.engine_boundary_hash(78, |hash| hash.node_list_ref(&root));
     drop(tokens);
     drop(source);
 
@@ -190,14 +189,16 @@ fn nested_node_graph_round_trips_across_owners_and_respects_budget_atomically() 
     let imported = target
         .import_memo_node_list(&detached, MemoValueLimits::default())
         .expect("node import");
-    let right = target.engine_boundary_hash(77, |hash| hash.node_list(imported));
+    let right = target.engine_boundary_hash(77, |hash| hash.node_list_ref(&imported));
     assert_eq!(source_hash, right);
-    let Some(crate::node_arena::NodeRef::HList(imported_outer)) = target.nodes(imported).first()
-    else {
+    let Some(crate::node_arena::NodeRef::HList(imported_outer)) = imported.nodes().first() else {
         panic!("imported node root lost its box")
     };
-    let imported_mark = target
-        .nodes(imported_outer.children)
+    let imported_children = imported
+        .resolve(imported_outer.children)
+        .expect("imported box children belong to their structural owner");
+    let imported_mark = imported_children
+        .nodes()
         .into_iter()
         .find_map(|node| match node {
             crate::node_arena::NodeRef::Mark { tokens, .. } => Some(tokens),
@@ -216,7 +217,7 @@ fn nested_node_graph_round_trips_across_owners_and_respects_budget_atomically() 
         .expect("box import");
     assert_eq!(
         source_box_hash,
-        target.engine_boundary_hash(78, |hash| hash.node_list(imported_box))
+        target.engine_boundary_hash(78, |hash| hash.node_list_ref(&imported_box))
     );
 
     let before = target.snapshot().state_hash();
@@ -244,15 +245,14 @@ fn detached_nodes_drop_absolute_origins() {
         origin: crate::provenance::OriginRef::direct(crate::token::OriginId::from_raw(37)),
     }]);
     let detached = source
-        .detach_node_list(root)
+        .detach_node_list(&root)
         .expect("origin-free node detachment");
 
     let mut target = Universe::new();
     let imported = target
         .import_memo_node_list(&detached, MemoValueLimits::default())
         .expect("origin-free node import");
-    let Some(crate::node_arena::NodeRef::Char { origin, .. }) = target.nodes(imported).first()
-    else {
+    let Some(crate::node_arena::NodeRef::Char { origin, .. }) = imported.nodes().first() else {
         panic!("expected imported character node");
     };
     assert_eq!(origin, crate::token::OriginId::UNKNOWN);
@@ -352,7 +352,7 @@ fn deeply_nested_node_graph_detaches_and_imports_iteratively() {
     let mut source = Universe::new();
     let mut root = source.freeze_node_list(&[]);
     for _ in 0..DEPTH {
-        let children = source.node_list_ref(root);
+        let children = root;
         root = source.freeze_node_list(&[Node::HList(BoxNode::new(BoxNodeFields {
             width: Scaled::from_raw(0),
             height: Scaled::from_raw(0),
@@ -366,7 +366,9 @@ fn deeply_nested_node_graph_detaches_and_imports_iteratively() {
         }))]);
     }
 
-    let detached = source.detach_node_list(root).expect("deep node detachment");
+    let detached = source
+        .detach_node_list(&root)
+        .expect("deep node detachment");
     let mut target = Universe::new();
     let mut imported = target
         .import_memo_node_list(
@@ -378,13 +380,14 @@ fn deeply_nested_node_graph_detaches_and_imports_iteratively() {
         )
         .expect("deep node import");
     for _ in 0..DEPTH {
-        let Some(crate::node_arena::NodeRef::HList(box_node)) = target.nodes(imported).first()
-        else {
+        let Some(crate::node_arena::NodeRef::HList(box_node)) = imported.nodes().first() else {
             panic!("deep imported graph lost a box level");
         };
-        imported = box_node.children;
+        imported = imported
+            .resolve(box_node.children)
+            .expect("imported child belongs to its structural owner");
     }
-    assert!(target.nodes(imported).is_empty());
+    assert!(imported.is_empty());
 }
 
 #[test]

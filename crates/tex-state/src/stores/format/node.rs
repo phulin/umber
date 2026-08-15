@@ -584,11 +584,11 @@ impl FormatNode {
             NodeRef::Direction(direction) => Self::Direction(direction),
             NodeRef::MathNoad(noad) => Self::MathNoad(FormatMathNoad::capture(stores, noad, roots)),
             NodeRef::FractionNoad(fraction) => {
-                Self::FractionNoad(FormatMathFraction::capture(stores, fraction.clone(), roots))
+                Self::FractionNoad(FormatMathFraction::capture(stores, fraction, roots))
             }
             NodeRef::MathStyle(style) => Self::MathStyle(style),
             NodeRef::MathChoice(choice) => {
-                Self::MathChoice(FormatMathChoice::capture(stores, choice.clone(), roots))
+                Self::MathChoice(FormatMathChoice::capture(stores, choice, roots))
             }
             NodeRef::MathList(list) => {
                 Self::MathList(FormatMathListNode::capture(stores, list, roots))

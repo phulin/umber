@@ -1,6 +1,6 @@
 use crate::font::{FontMetrics, LoadedFont};
 use crate::glue::{GlueSpec, Order};
-use crate::ids::{NodeListId, TokenListId};
+use crate::ids::TokenListId;
 use crate::macro_store::MacroMeaning;
 use crate::meaning::MeaningFlags;
 use crate::node::{GlueKind, Node};
@@ -23,8 +23,6 @@ enum HandleClass {
     OriginList,
     ArenaOrigin,
     SourcePosition,
-    EpochNodeList,
-    SurvivorNodeList,
     WorldInputRecord,
 }
 
@@ -37,8 +35,6 @@ const HANDLE_CLASSES: &[HandleClass] = &[
     HandleClass::OriginList,
     HandleClass::ArenaOrigin,
     HandleClass::SourcePosition,
-    HandleClass::EpochNodeList,
-    HandleClass::SurvivorNodeList,
     HandleClass::WorldInputRecord,
 ];
 
@@ -198,24 +194,6 @@ fn exercise_rollback_reallocate(class: HandleClass) {
                 "{class:?}"
             );
         }
-        HandleClass::EpochNodeList => {
-            let mut universe = Universe::new();
-            let snapshot = universe.snapshot();
-            let stale = universe.freeze_node_list(&[Node::Penalty(1)]);
-            universe.rollback(&snapshot);
-            let replacement = universe.freeze_node_list(&[Node::Penalty(2)]);
-            assert_ne!(stale, replacement, "{class:?}");
-            assert_panics(class, || _ = universe.nodes(stale));
-        }
-        HandleClass::SurvivorNodeList => {
-            let mut universe = Universe::new();
-            let snapshot = universe.snapshot();
-            let stale = store_box(&mut universe, 0, 1);
-            universe.rollback(&snapshot);
-            let replacement = store_box(&mut universe, 0, 2);
-            assert_ne!(stale.arena(), replacement.arena(), "{class:?}");
-            assert_panics(class, || _ = universe.nodes(stale));
-        }
         HandleClass::WorldInputRecord => {
             let mut universe = universe_with_files();
             let snapshot = universe.snapshot();
@@ -358,32 +336,6 @@ fn exercise_fork(class: HandleClass) {
                 "{class:?}"
             );
         }
-        HandleClass::EpochNodeList => {
-            let mut parent = Universe::new();
-            let inherited = parent.freeze_node_list(&[Node::Penalty(0)]);
-            let mut child = parent.clone();
-            assert_eq!(
-                parent.nodes(inherited).to_vec(),
-                child.nodes(inherited).to_vec()
-            );
-            let parent_only = parent.freeze_node_list(&[Node::Penalty(1)]);
-            let child_only = child.freeze_node_list(&[Node::Penalty(2)]);
-            assert_panics(class, || _ = parent.nodes(child_only));
-            assert_panics(class, || _ = child.nodes(parent_only));
-        }
-        HandleClass::SurvivorNodeList => {
-            let mut parent = Universe::new();
-            let inherited = store_box(&mut parent, 0, 0);
-            let mut child = parent.clone();
-            assert_eq!(
-                parent.nodes(inherited).to_vec(),
-                child.nodes(inherited).to_vec()
-            );
-            let parent_only = store_box(&mut parent, 1, 1);
-            let child_only = store_box(&mut child, 1, 2);
-            assert_panics(class, || _ = parent.nodes(child_only));
-            assert_panics(class, || _ = child.nodes(parent_only));
-        }
         HandleClass::WorldInputRecord => {
             let mut parent = universe_with_files();
             let inherited = parent
@@ -469,18 +421,6 @@ fn exercise_cross_universe(class: HandleClass) {
             let other = Universe::new();
             assert!(other.source_span(foreign, foreign).is_err(), "{class:?}");
         }
-        HandleClass::EpochNodeList => {
-            let mut owner = Universe::new();
-            let foreign = owner.freeze_node_list(&[Node::Penalty(1)]);
-            let other = Universe::new();
-            assert_panics(class, || _ = other.nodes(foreign));
-        }
-        HandleClass::SurvivorNodeList => {
-            let mut owner = Universe::new();
-            let foreign = store_box(&mut owner, 0, 1);
-            let other = Universe::new();
-            assert_panics(class, || _ = other.nodes(foreign));
-        }
         HandleClass::WorldInputRecord => {
             let mut owner = universe_with_files();
             let foreign = owner
@@ -554,12 +494,6 @@ fn source_position(
     universe
         .source_position(SourceId::new(source), 0)
         .expect("registered source has a start position")
-}
-
-fn store_box(universe: &mut Universe, register: u16, penalty: i32) -> NodeListId {
-    let epoch = universe.freeze_node_list(&[Node::Penalty(penalty)]);
-    universe.set_box_reg(register, epoch);
-    universe.box_reg(register).expect("stored box is non-void")
 }
 
 fn universe_with_files() -> Universe {

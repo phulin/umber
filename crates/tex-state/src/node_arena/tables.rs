@@ -155,9 +155,9 @@ impl NoadTable {
     pub(super) fn copy_row(&mut self, source: &Self, index: usize) -> u32 {
         self.push(crate::math::MathNoad {
             kind: source.kind[index].clone(),
-            nucleus: source.nucleus[index].clone(),
-            subscript: source.subscript[index].clone(),
-            superscript: source.superscript[index].clone(),
+            nucleus: source.nucleus[index],
+            subscript: source.subscript[index],
+            superscript: source.superscript[index],
         })
     }
 }

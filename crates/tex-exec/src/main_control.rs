@@ -1759,7 +1759,7 @@ impl MainControl {
             return match crate::effective_tail::EffectiveTail::find(
                 stores.page_contributions().iter(),
             ) {
-                Some(tail) => Self::classify_last_node(stores, tail.node()),
+                Some(tail) => Self::classify_last_node(tail.node()),
                 None => match stores.page_last_node_type() {
                     11 => Some(tex_command::LastNodeItem::Glue(stores.page_last_skip())),
                     12 => Some(tex_command::LastNodeItem::Kern(stores.page_last_kern())),
@@ -1774,7 +1774,7 @@ impl MainControl {
             return None;
         }
         crate::effective_tail::EffectiveTail::find(self.modes.current_list().nodes().iter())
-            .and_then(|tail| Self::classify_last_node(stores, tail.node()))
+            .and_then(|tail| Self::classify_last_node(tail.node()))
     }
 
     /// e-TeX 2.6 `etex.ch` [26.424]'s `find_effective_tail` result for
@@ -1803,7 +1803,7 @@ impl MainControl {
     /// other node shape (including a character, which tex.web excludes via
     /// `is_char_node`) has no matching case, exactly like tex.web's
     /// `case cur_chr of ... end {there are no other cases}`.
-    fn classify_last_node(stores: &Universe, node: &Node) -> Option<tex_command::LastNodeItem> {
+    fn classify_last_node(node: &Node) -> Option<tex_command::LastNodeItem> {
         match node {
             Node::Penalty(value) => Some(tex_command::LastNodeItem::Penalty(*value)),
             Node::Kern { amount, .. } => Some(tex_command::LastNodeItem::Kern(*amount)),
@@ -1823,7 +1823,7 @@ impl MainControl {
             Node::Disc { replace, .. } => replace
                 .to_vec()
                 .pop()
-                .and_then(|node| Self::classify_last_node(stores, &node)),
+                .and_then(|node| Self::classify_last_node(&node)),
             _ => None,
         }
     }

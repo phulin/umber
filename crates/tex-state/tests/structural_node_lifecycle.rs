@@ -32,6 +32,13 @@ fn boxed_penalty_value(root: &NodeListRef) -> i32 {
     value
 }
 
+fn box_register_penalty(universe: &Universe) -> i32 {
+    let root = universe
+        .box_reg_ref(0)
+        .expect("box register 0 must retain its structural root");
+    boxed_penalty_value(&root)
+}
+
 #[test]
 fn aggregate_transitions_use_structural_node_ownership() {
     let mut universe = Universe::default();
@@ -41,32 +48,32 @@ fn aggregate_transitions_use_structural_node_ownership() {
     let rollback = universe.snapshot();
     let replacement = boxed_penalty(&mut universe, 20);
     universe.set_box_reg_ref(0, replacement);
-    assert_eq!(boxed_penalty_value(&universe.box_reg_ref(0).unwrap()), 20);
+    assert_eq!(box_register_penalty(&universe), 20);
     universe.rollback(&rollback);
-    assert_eq!(boxed_penalty_value(&universe.box_reg_ref(0).unwrap()), 10);
+    assert_eq!(box_register_penalty(&universe), 10);
 
     let retry = universe.snapshot_for_local_retry();
     let retried = boxed_penalty(&mut universe, 30);
     universe.set_box_reg_ref(0, retried);
     universe.rollback_local_retry_snapshot(retry);
-    assert_eq!(boxed_penalty_value(&universe.box_reg_ref(0).unwrap()), 10);
+    assert_eq!(box_register_penalty(&universe), 10);
 
     let committed_failure = universe.snapshot_for_local_retry();
     let partial = boxed_penalty(&mut universe, 40);
     universe.set_box_reg_ref(0, partial);
     universe.discard_local_retry_allocations(committed_failure);
-    assert_eq!(boxed_penalty_value(&universe.box_reg_ref(0).unwrap()), 40);
+    assert_eq!(box_register_penalty(&universe), 40);
 
     {
         let mut rejected = universe.begin_box_build();
         let _scratch = boxed_penalty(&mut rejected, 50);
     }
-    assert_eq!(boxed_penalty_value(&universe.box_reg_ref(0).unwrap()), 40);
+    assert_eq!(box_register_penalty(&universe), 40);
 
     let mut accepted = universe.begin_box_build();
     let installed = boxed_penalty(&mut accepted, 60);
     accepted.finish(0, Some(installed), false);
-    assert_eq!(boxed_penalty_value(&universe.box_reg_ref(0).unwrap()), 60);
+    assert_eq!(box_register_penalty(&universe), 60);
 }
 
 #[test]
@@ -83,5 +90,5 @@ fn generation_fork_clones_checkpoint_node_roots() {
         .fork_at(&checkpoint)
         .expect("checkpoint belongs to the frozen generation substrate");
 
-    assert_eq!(boxed_penalty_value(&fork.box_reg_ref(0).unwrap()), 70);
+    assert_eq!(box_register_penalty(&fork), 70);
 }

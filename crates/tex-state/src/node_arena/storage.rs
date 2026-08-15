@@ -662,39 +662,6 @@ impl NodeStorage {
             end,
         }
     }
-
-    #[cfg(test)]
-    pub(crate) fn all_nodes(&self) -> NodeList<'_> {
-        self.view(
-            0,
-            checked_len(self.words.len(), "node arena exceeds u32 entries"),
-        )
-    }
-
-    #[cfg(test)]
-    pub(super) fn testing_sidecar_lengths(&self) -> [u32; 13] {
-        let m = self.mark();
-        [
-            m.boxes,
-            m.unsets,
-            m.rules,
-            m.leaders,
-            m.discs,
-            m.marks,
-            m.insertions,
-            m.whatsits,
-            m.noads,
-            m.fractions,
-            m.choices,
-            m.math_lists,
-            m.adjusts,
-        ]
-    }
-
-    #[cfg(test)]
-    pub(super) fn testing_tags(&self) -> Vec<u8> {
-        self.words.iter().map(|word| word.tag()).collect()
-    }
 }
 
 fn push_sidecar<T>(tag: u8, table: &mut Vec<T>, value: T) -> NodeWord {

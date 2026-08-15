@@ -174,17 +174,6 @@ impl NodeListId {
     }
 
     #[cfg(any(test, feature = "testing"))]
-    pub(crate) const fn new_epoch(identity: crate::identity::HandleIdentity) -> Self {
-        assert!(
-            identity.namespace() != NODE_LIST_OWNED_NAMESPACE
-                && identity.namespace() != NODE_LIST_FORMAT_EPOCH_NAMESPACE
-                && identity.namespace() != NODE_LIST_FORMAT_OWNED_NAMESPACE,
-            "epoch identity uses a reserved node-list namespace"
-        );
-        Self(identity)
-    }
-
-    #[cfg(any(test, feature = "testing"))]
     const fn packed_epoch_span(start: u32, len: u32) -> u64 {
         assert!(
             len <= NODE_LIST_EPOCH_LEN_MAX,
@@ -259,23 +248,6 @@ impl NodeListId {
 
     const fn reserved_word(self) -> u64 {
         ((self.0.upper() as u64) << 32) | self.0.lower() as u64
-    }
-
-    #[cfg(any(test, feature = "testing"))]
-    pub(crate) const fn epoch_identity(self) -> crate::identity::HandleIdentity {
-        assert!(
-            self.0.namespace() != NODE_LIST_OWNED_NAMESPACE
-                && self.0.namespace() != NODE_LIST_FORMAT_EPOCH_NAMESPACE
-                && self.0.namespace() != NODE_LIST_FORMAT_OWNED_NAMESPACE,
-            "node-list handle is not a live epoch identity"
-        );
-        self.0
-    }
-
-    #[cfg(any(test, feature = "testing"))]
-    pub(crate) const fn is_format_reference(self) -> bool {
-        self.0.namespace() == NODE_LIST_FORMAT_EPOCH_NAMESPACE
-            || self.0.namespace() == NODE_LIST_FORMAT_OWNED_NAMESPACE
     }
 
     /// Creates a test-only epoch id without going through a node arena.

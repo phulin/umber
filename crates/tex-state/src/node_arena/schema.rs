@@ -755,6 +755,7 @@ mod tests {
         MarginKernSide, Node, Sign, UnsetKind, UnsetNode, UnsetNodeFields,
     };
     use crate::scaled::{GlueSetRatio, Scaled};
+    use crate::stores::Stores;
 
     #[derive(Default)]
     struct Snapshot {
@@ -905,13 +906,13 @@ mod tests {
                 pre: true,
             }),
         ];
-        let mut arena = super::super::NodeArena::new();
-        let list = arena.append(&nodes);
+        let mut stores = Stores::new();
+        let list = stores.freeze_node_list(&nodes);
 
         assert_eq!(nodes.len(), NodeKind::ALL.len());
         for (index, owned) in nodes.iter().enumerate() {
             let owned_ref = NodeRef::from(owned);
-            let compact_ref = list_view(&arena, list, index);
+            let compact_ref = list_view(&list, index);
             assert_eq!(owned_ref, compact_ref);
             assert_eq!(
                 owned,
@@ -949,11 +950,8 @@ mod tests {
         }
     }
 
-    fn list_view(arena: &super::super::NodeArena, list: NodeListId, index: usize) -> NodeRef<'_> {
-        arena
-            .get_epoch(list)
-            .get(index)
-            .expect("schema fixture node")
+    fn list_view(list: &super::super::NodeListRef, index: usize) -> NodeRef<'_> {
+        list.nodes().get(index).expect("schema fixture node")
     }
 
     #[test]

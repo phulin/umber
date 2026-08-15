@@ -54,7 +54,7 @@ impl NodeListBuilder {
     }
 
     pub(crate) fn owns_direct_child(&self, id: NodeListId) -> bool {
-        id.len() == 0
+        id.is_empty()
             || self
                 .direct_children
                 .iter()

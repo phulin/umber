@@ -46,9 +46,6 @@ struct ActiveOwners {
     source_regions: usize,
     source_bytes: usize,
     journal_entries: usize,
-    epoch_nodes: usize,
-    survivor_roots: usize,
-    survivor_pins: usize,
 }
 
 impl From<tex_state::TestingOwnershipCensus> for ActiveOwners {
@@ -68,9 +65,6 @@ impl From<tex_state::TestingOwnershipCensus> for ActiveOwners {
             source_regions: census.source_regions,
             source_bytes: census.source_bytes,
             journal_entries: census.journal_entries,
-            epoch_nodes: census.epoch_nodes,
-            survivor_roots: census.survivor_live_roots,
-            survivor_pins: census.survivor_pins,
         }
     }
 }
@@ -284,7 +278,7 @@ fn assert_budgeted_plateau(baseline: PlateauMilestone, current: PlateauMilestone
     );
     assert_eq!(
         current.physical, baseline.physical,
-        "weak indexes, reusable slots, journals, provenance, and node storage must plateau exactly"
+        "weak indexes, reusable slots, journals, and provenance must plateau exactly"
     );
     assert_eq!(
         current.retention.checkpoint_root_bytes, baseline.retention.checkpoint_root_bytes,

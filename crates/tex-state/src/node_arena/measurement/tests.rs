@@ -3,7 +3,7 @@ use std::sync::Arc;
 use super::{NodeStorageObservation, PeakNodeStorageRecorder};
 use crate::ids::FontId;
 use crate::node::{Node, PdfDestinationKind, PdfDestinationNode, Whatsit};
-use crate::node_arena::{NodeArena, NodeStorage};
+use crate::node_arena::NodeStorage;
 use crate::token::OriginId;
 use crate::{PdfActionIdentifier, PdfColorStackAction};
 
@@ -142,8 +142,8 @@ fn newer_whatsit_payloads_are_exhaustively_measured() {
 
 #[test]
 fn owned_ligature_payloads_participate_in_totals_and_columns() {
-    let mut arena = NodeArena::new();
-    arena.append(&[Node::Lig {
+    let mut storage = NodeStorage::default();
+    storage.append(&[Node::Lig {
         font: FontId::new(1),
         ch: 'f',
         orig: vec!['f', 'i'],
@@ -155,23 +155,23 @@ fn owned_ligature_payloads_participate_in_totals_and_columns() {
         right_hit: false,
     }]);
 
-    let measured = NodeStorageObservation::from_columns(arena.memory_columns());
+    let measured = observation(&storage);
 
     assert_column_sums(&measured);
     let sources = measured
         .columns
         .iter()
-        .find(|column| column.name == "epoch.ligatures.owned_sources")
+        .find(|column| column.name == "peak.ligatures.owned_sources")
         .expect("owned ligature-source column");
     assert_eq!(sources.logical_bytes, 2 * core::mem::size_of::<char>());
     let origins = measured
         .columns
         .iter()
-        .find(|column| column.name == "epoch.ligatures.owned_origins")
+        .find(|column| column.name == "peak.ligatures.owned_origins")
         .expect("owned ligature-origin column");
     assert_eq!(origins.logical_bytes, 2 * core::mem::size_of::<OriginId>());
     assert_eq!(
-        arena.measurement_payload_bytes(),
+        storage.payload_bytes(),
         measured.order_key(),
         "payload totals must equal the sum of canonical columns"
     );
@@ -243,23 +243,6 @@ fn concurrent_updates_publish_only_complete_observations() {
     assert_column_sums(&peak);
 }
 
-#[test]
-fn epoch_identity_and_span_tables_are_coherent_live_and_peak_columns() {
-    let mut arena = NodeArena::new();
-    arena.append(&[Node::Penalty(1)]);
-    let live = NodeStorageObservation::from_columns(arena.memory_columns());
-    assert_column_sums(&live);
-    assert_metadata_columns(&live, "epoch");
-
-    let recorder = PeakNodeStorageRecorder::default();
-    recorder.observe(arena.measurement_payload_bytes(), || {
-        arena.measurement_columns("peak")
-    });
-    let peak = recorder.snapshot().expect("arena observation");
-    assert_column_sums(&peak);
-    assert_metadata_columns(&peak, "peak");
-}
-
 fn storage_with_payload(len: usize, capacity: usize) -> NodeStorage {
     let mut payload = Vec::with_capacity(capacity);
     payload.resize(len, 0);
@@ -278,22 +261,6 @@ fn observation(storage: &NodeStorage) -> NodeStorageObservation {
 
 fn observe_storage(recorder: &PeakNodeStorageRecorder, storage: &NodeStorage) {
     recorder.observe(storage.payload_bytes(), || storage.memory_columns("peak"));
-}
-
-fn assert_metadata_columns(observation: &NodeStorageObservation, prefix: &str) {
-    let identities = observation
-        .columns
-        .iter()
-        .find(|column| column.name == format!("{prefix}.identity_tags"))
-        .expect("identity-tag column");
-    let spans = observation
-        .columns
-        .iter()
-        .find(|column| column.name == format!("{prefix}.spans"))
-        .expect("span column");
-    assert_eq!(identities.len, spans.len);
-    assert_eq!(identities.element_bytes, 16);
-    assert_eq!(spans.element_bytes, 8);
 }
 
 fn assert_column_bytes(

@@ -9,6 +9,7 @@ use tex_state::env::banks::GlueParam;
 use tex_state::glue::{GlueSpec, GlueSpecRef, Order};
 use tex_state::ids::{FontId, GlueId, NodeListId};
 use tex_state::node::{BoxNode, BoxNodeFields, GlueKind, Node, Sign};
+use tex_state::node_arena::NodeListRef;
 use tex_state::page::{PageDimension, PageInsertion, PageInsertionStatus, PageInteger, PageMark};
 use tex_state::scaled::{GlueSetRatio, Scaled};
 use tex_state::token::{Catcode, Token};
@@ -85,7 +86,7 @@ type TreeList = Vec<TreeNode>;
 
 #[derive(Clone, Debug)]
 struct BuiltList {
-    id: NodeListId,
+    owner: NodeListRef,
     tree: TreeList,
 }
 
@@ -93,7 +94,6 @@ struct BuiltList {
 struct Checkpoint {
     snapshot: Snapshot,
     hash: u64,
-    survivor_slots: usize,
     boxes: BoxOracle,
 }
 
@@ -155,20 +155,18 @@ fn group_exit_epoch_amendment_smoke() {
 fn rollback_keeps_box_register_ids_resolvable() {
     let mut stores = Universe::new();
     let baseline = stores.freeze_node_list(&[Node::MathOn(Scaled::from_raw(0))]);
-    stores.set_box_reg(0, baseline);
+    stores.set_box_reg_ref(0, baseline);
     let snapshot = stores.snapshot();
     let temporary = stores.freeze_node_list(&[Node::MathOff(Scaled::from_raw(0))]);
-    stores.set_box_reg(0, temporary);
-    stores.set_box_reg(257, temporary);
+    stores.set_box_reg_ref(0, temporary.clone());
+    stores.set_box_reg_ref(257, temporary);
 
     stores.rollback(&snapshot);
 
-    // core_state §9's "restore as one tuple" is observable here: if the
-    // journal were restored without the matching watermarks/refcounts, a box
-    // register could hold a dangling survivor id and this resolve would panic.
+    // Restoring the journal must also restore each register's structural owner.
     for index in (0..256).chain([257, 513, 32_767]) {
-        if let Some(id) = stores.box_reg(index) {
-            let _ = stores.nodes(id);
+        if let Some(owner) = stores.box_reg_ref(index) {
+            let _ = owner.nodes();
         }
     }
 }
@@ -196,7 +194,6 @@ fn run_replay_identity(ops: &[Op]) {
     checkpoints.push(Checkpoint {
         snapshot: stores.snapshot(),
         hash,
-        survivor_slots: stores.testing_live_survivor_slot_count(),
         boxes: box_oracle.clone(),
     });
 
@@ -227,9 +224,9 @@ fn run_replay_identity(ops: &[Op]) {
             } => {
                 if let Some(list) = choose_list(&built_lists, *list) {
                     if *global {
-                        stores.set_box_reg_global(*index, list.id);
+                        stores.set_box_reg_ref_global(*index, list.owner.clone());
                     } else {
-                        stores.set_box_reg(*index, list.id);
+                        stores.set_box_reg_ref(*index, list.owner.clone());
                     }
                     box_oracle.set(*index, Some(list.tree.clone()), *global);
                     box_oracle.assert_index_matches(*index, &stores, &mut tree_cache);
@@ -239,7 +236,7 @@ fn run_replay_identity(ops: &[Op]) {
                 }
             }
             Op::TakeBoxReg(index) => {
-                stores.take_box_reg(*index);
+                stores.take_box_reg_ref(*index);
                 box_oracle.set(*index, None, false);
                 box_oracle.assert_index_matches(*index, &stores, &mut tree_cache);
             }
@@ -297,7 +294,6 @@ fn run_replay_identity(ops: &[Op]) {
                 checkpoints.push(Checkpoint {
                     snapshot: stores.snapshot(),
                     hash,
-                    survivor_slots: stores.testing_live_survivor_slot_count(),
                     boxes: box_oracle.clone(),
                 });
             }
@@ -311,12 +307,6 @@ fn run_replay_identity(ops: &[Op]) {
             stores.snapshot().state_hash(),
             checkpoint.hash,
             "rollback to {:?}",
-            checkpoint.snapshot
-        );
-        assert_eq!(
-            stores.testing_live_survivor_slot_count(),
-            checkpoint.survivor_slots,
-            "survivor slot leak across rollback to {:?}",
             checkpoint.snapshot
         );
         checkpoint.boxes.assert_matches(&stores, &mut tree_cache);
@@ -365,7 +355,7 @@ fn build_nodes(
     ];
 
     if let Some(slot) = seed.nest_slot.and_then(|slot| choose_list(built, slot)) {
-        let children = stores.node_list_ref(slot.id);
+        let children = slot.owner.clone();
         nodes.push(Node::HList(BoxNode::new(BoxNodeFields {
             width: Scaled::from_raw(1),
             height: Scaled::from_raw(2),
@@ -381,7 +371,7 @@ fn build_nodes(
     }
 
     BuiltList {
-        id: stores.freeze_node_list(&nodes),
+        owner: stores.freeze_node_list(&nodes),
         tree,
     }
 }
@@ -684,8 +674,8 @@ impl BoxOracle {
         tree_cache: &mut TreeCache,
     ) {
         let real = stores
-            .box_reg(index)
-            .map(|id| tree_cache.tree_from_store(stores, id));
+            .box_reg_ref(index)
+            .map(|owner| tree_cache.tree_from_store(stores, &owner));
         assert_eq!(
             real.as_ref(),
             self.get(index),
@@ -709,26 +699,26 @@ impl TreeCache {
         self.lists.clear();
     }
 
-    fn tree_from_store(&mut self, stores: &Universe, id: NodeListId) -> TreeList {
-        self.tree_from_store_bounded(stores, id, 0)
+    fn tree_from_store(&mut self, stores: &Universe, owner: &NodeListRef) -> TreeList {
+        self.tree_from_store_bounded(stores, owner, 0)
     }
 
     fn tree_from_store_bounded(
         &mut self,
         stores: &Universe,
-        id: NodeListId,
+        owner: &NodeListRef,
         depth: usize,
     ) -> TreeList {
         assert!(
             depth <= TREE_FROM_STORE_MAX_DEPTH,
             "replay oracle exceeded maximum node-list nesting depth"
         );
-        if let Some(tree) = self.lists.get(&id) {
+        if let Some(tree) = self.lists.get(&owner.id()) {
             return tree.clone();
         }
 
-        let tree = stores
-            .nodes(id)
+        let tree = owner
+            .nodes()
             .iter()
             .map(|node| match node {
                 crate::node_arena::NodeRef::Char { font, ch, .. } => TreeNode::Char {
@@ -740,14 +730,23 @@ impl TreeCache {
                     TreeNode::Glue(stores.glue(spec), kind)
                 }
                 crate::node_arena::NodeRef::HList(box_node) => TreeNode::HList(
-                    self.tree_from_store_bounded(stores, box_node.children, depth + 1),
+                    self.tree_from_store_bounded(
+                        stores,
+                        &owner
+                            .resolve(box_node.children)
+                            .expect("replay child belongs to its structural owner"),
+                        depth + 1,
+                    ),
                 ),
                 crate::node_arena::NodeRef::MathOn(width) => TreeNode::MathOn(width.raw()),
                 other => panic!("unexpected replay node: {other:?}"),
             })
             .collect();
-        self.lists.insert(id, tree);
-        self.lists.get(&id).expect("tree was just cached").clone()
+        self.lists.insert(owner.id(), tree);
+        self.lists
+            .get(&owner.id())
+            .expect("tree was just cached")
+            .clone()
     }
 }
 

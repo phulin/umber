@@ -1,7 +1,7 @@
-//! Compact epoch storage for immutable node lists.
+//! Structurally owned compact storage for immutable node lists.
 //!
 //! Raw words and sidecars stay private to this module family. Public consumers
-//! receive only logical node-list views or the aggregate arena facade.
+//! receive only strong list owners and borrow-scoped logical views.
 
 mod builder;
 mod copy;
@@ -37,6 +37,3 @@ pub(super) fn checked_len(value: usize, message: &str) -> u32 {
 pub(super) fn preflight_capacity(have: u32, add: u32, message: &str) -> u32 {
     have.checked_add(add).unwrap_or_else(|| panic!("{message}"))
 }
-
-#[cfg(test)]
-mod tests;

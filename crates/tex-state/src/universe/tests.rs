@@ -9,7 +9,7 @@ use crate::font::{
 };
 use crate::glue::{GlueSpec, Order};
 use crate::hyphenation::{ExceptionSpec, PatternSpec};
-use crate::ids::{ArenaRef, FontId, NodeListId, TokenListId};
+use crate::ids::{ArenaRef, FontId, TokenListId};
 use crate::input::{
     ConditionFrameSummary, ConditionFrameToken, InputFrameSummary, InputSummary, LexerState,
     MacroArgumentRange, MacroArguments, SourceFrameSummary, SourceId, TokenListReplayKind,
@@ -56,57 +56,42 @@ fn zero_box(children: NodeListRef) -> BoxNode {
 }
 
 fn freeze_ref(universe: &mut Universe, nodes: &[Node]) -> NodeListRef {
-    let id = universe.freeze_node_list(nodes);
-    universe.node_list_ref(id)
+    universe.freeze_node_list(nodes)
 }
 
 #[test]
 fn rejected_operation_discards_page_node_builders_exactly() {
     let mut universe = Universe::new();
     universe.begin_private_revision();
-    let epoch_baseline = universe.testing_epoch_node_count();
-    let survivor_baseline = universe.testing_live_survivor_slot_count();
 
     let retry = universe.snapshot_for_local_retry();
     let children = universe.freeze_node_list(&[Node::Penalty(17)]);
-    let children = universe.node_list_ref(children);
     universe.append_page_contribution(Node::HList(zero_box(children)));
-    assert!(universe.testing_epoch_node_count() > epoch_baseline);
     universe.rollback_local_retry_snapshot(retry);
 
-    assert_eq!(universe.testing_epoch_node_count(), epoch_baseline);
-    assert_eq!(
-        universe.testing_live_survivor_slot_count(),
-        survivor_baseline
-    );
     assert!(universe.page_contributions().is_empty());
 }
 
 #[test]
-fn committed_page_nodes_promote_and_checkpoint_owners_release_at_zero_roots() {
+fn committed_page_nodes_remain_owned_across_checkpoint_rollback() {
     let mut universe = Universe::new();
     universe.begin_private_revision();
-    let epoch_baseline = universe.testing_epoch_node_count();
 
     let operation = universe.snapshot_for_local_retry();
     let children = universe.freeze_node_list(&[Node::Penalty(23)]);
-    let children = universe.node_list_ref(children);
     universe.append_page_contribution(Node::HList(zero_box(children)));
     universe.commit_local_retry_snapshot(operation);
 
-    assert_eq!(universe.testing_epoch_node_count(), epoch_baseline);
     let promoted = match universe.page_contribution_front() {
         Some(Node::HList(node)) => node.children.clone(),
         other => panic!("expected committed page hlist, got {other:?}"),
     };
     assert_eq!(promoted.to_vec(), [Node::Penalty(23)]);
-    assert_eq!(universe.testing_live_survivor_slot_count(), 0);
 
     let checkpoint = universe.snapshot();
     let operation = universe.snapshot_for_local_retry();
     let _ = universe.pop_page_contribution_front();
     universe.commit_local_retry_snapshot(operation);
-    assert_eq!(universe.testing_live_survivor_slot_count(), 0);
 
     universe.rollback(&checkpoint);
     assert_eq!(promoted.to_vec(), [Node::Penalty(23)]);
@@ -117,7 +102,6 @@ fn committed_page_nodes_promote_and_checkpoint_owners_release_at_zero_roots() {
 
     let operation = universe.snapshot_for_local_retry();
     universe.commit_local_retry_snapshot(operation);
-    assert_eq!(universe.testing_live_survivor_slot_count(), 0);
 }
 
 #[test]
@@ -605,7 +589,7 @@ fn main_memory_extent_is_recorded_at_allocation_before_group_restore() {
 fn main_memory_projection_separates_variable_and_character_nodes() {
     let mut variable = Universe::new();
     let penalties = variable.freeze_node_list(&vec![Node::Penalty(0); 501]);
-    variable.set_box_reg_global(0, penalties);
+    variable.set_box_reg_ref_global(0, penalties);
     // TeX82 §§127/157 allocate two low-memory words per penalty. The 1002
     // live words cross §127's initial 1000-word free block exactly once.
     assert_eq!(variable.engine_usage_statistics().memory_words, 2_045);
@@ -619,7 +603,7 @@ fn main_memory_projection_separates_variable_and_character_nodes() {
         };
         501
     ]);
-    characters.set_box_reg_global(0, chars);
+    characters.set_box_reg_ref_global(0, chars);
     // Section 135's character nodes come from §125's one-word arena, so the
     // same logical node count must not grow the variable-size low arena.
     assert_eq!(characters.engine_usage_statistics().memory_words, 1_546);
@@ -758,7 +742,6 @@ fn transient_node_allocations_reuse_roots_and_preserve_the_high_water() {
 fn shape_preserving_box_rewrites_reuse_roots_and_preserve_the_high_water() {
     let mut universe = Universe::new();
     let children = universe.freeze_node_list(&vec![Node::Penalty(0); 494]);
-    let children = universe.node_list_ref(children);
     let root = universe.freeze_node_list(&[Node::HList(BoxNode::new(BoxNodeFields {
         width: Scaled::from_raw(1),
         height: Scaled::from_raw(2),
@@ -770,7 +753,7 @@ fn shape_preserving_box_rewrites_reuse_roots_and_preserve_the_high_water() {
         glue_order: Order::Normal,
         children,
     }))]);
-    universe.set_box_reg_global(0, root);
+    universe.set_box_reg_ref_global(0, root);
     assert_eq!(universe.engine_usage_statistics().memory_words, 1_045);
     universe.observe_transient_token_words(0);
     assert_eq!(universe.testing_transient_memory_base_projections(), 1);
@@ -788,12 +771,12 @@ fn shape_preserving_box_rewrites_reuse_roots_and_preserve_the_high_water() {
 fn box_root_changes_reuse_the_allocator_base() {
     let mut universe = Universe::new();
     let root = universe.freeze_node_list(&[Node::Penalty(1)]);
-    universe.set_box_reg_global(0, root);
+    universe.set_box_reg_ref_global(0, root);
     universe.observe_transient_token_words(0);
     assert_eq!(universe.testing_transient_memory_base_projections(), 1);
 
     let replacement = universe.freeze_node_list(&[Node::Penalty(2), Node::Penalty(3)]);
-    universe.set_box_reg_global(0, replacement);
+    universe.set_box_reg_ref_global(0, replacement);
     universe.observe_transient_token_words(0);
     // The generic graph delta handles a sole-root replacement regardless of
     // shape.
@@ -801,7 +784,7 @@ fn box_root_changes_reuse_the_allocator_base() {
 
     universe.enter_group();
     let local = universe.freeze_node_list(&[Node::Penalty(5), Node::Penalty(6), Node::Penalty(7)]);
-    universe.set_box_reg(0, local);
+    universe.set_box_reg_ref(0, local);
     universe.observe_transient_token_words(0);
     let _ = universe.leave_group();
     universe.observe_transient_token_words(0);
@@ -837,7 +820,7 @@ fn box_alias_handoffs_do_not_revisit_unrelated_allocator_roots() {
         universe.set_meaning_global(symbol, Meaning::Relax);
     }
     let root = universe.freeze_node_list(&[Node::Penalty(1)]);
-    universe.set_box_reg_global(0, root);
+    universe.set_box_reg_ref_global(0, root);
     universe.observe_transient_token_words(0);
     assert_eq!(universe.testing_main_memory_root_traversals(), 1);
 
@@ -871,17 +854,19 @@ fn box_alias_handoffs_do_not_revisit_unrelated_allocator_roots() {
 fn refiled_global_box_restore_keeps_the_allocator_projection_live() {
     let mut universe = Universe::new();
     let baseline = universe.freeze_node_list(&[Node::Penalty(1)]);
-    universe.set_box_reg_global(0, baseline);
+    universe.set_box_reg_ref_global(0, baseline);
     universe.observe_transient_token_words(0);
     assert_eq!(universe.testing_transient_memory_base_projections(), 1);
 
     universe.enter_group();
     universe.enter_group();
     let local = universe.freeze_node_list(&[Node::Penalty(2), Node::Penalty(3)]);
-    universe.set_box_reg(0, local);
+    universe.set_box_reg_ref(0, local);
     let retained = universe.freeze_node_list(&[Node::Penalty(4)]);
-    universe.set_box_reg_global(0, retained);
-    let retained = universe.box_reg(0).expect("global box remains installed");
+    universe.set_box_reg_ref_global(0, retained);
+    let retained = universe
+        .box_reg_ref(0)
+        .expect("global box remains installed");
 
     // TeX82 §§275/283 refile the global save into the outer group while the
     // inner local value retires. Both exits update the retained root in the
@@ -893,7 +878,7 @@ fn refiled_global_box_restore_keeps_the_allocator_projection_live() {
     let _ = universe.leave_group();
     universe.observe_transient_token_words(0);
     assert_eq!(universe.testing_transient_memory_base_projections(), 1);
-    assert_eq!(universe.box_reg(0), Some(retained));
+    assert_eq!(universe.box_reg_ref(0), Some(retained));
 }
 
 #[test]
@@ -2097,7 +2082,6 @@ fn semantic_format_is_deterministic_validated_and_world_independent() {
         height: Some(Scaled::from_raw(20)),
         depth: None,
     }]);
-    let child = universe.node_list_ref(child);
     let root = universe.freeze_node_list(&[Node::HList(BoxNode::new(BoxNodeFields {
         width: Scaled::from_raw(10),
         height: Scaled::from_raw(20),
@@ -2109,7 +2093,7 @@ fn semantic_format_is_deterministic_validated_and_world_independent() {
         glue_order: Order::Normal,
         children: child,
     }))]);
-    universe.set_box_reg(7, root);
+    universe.set_box_reg_ref(7, root);
     let semantic_id = universe
         .box_reg_ref(7)
         .expect("promoted box register")
@@ -2217,7 +2201,7 @@ fn format_roundtrip_complete_math_graph() {
         }),
         Node::MathOff(Scaled::from_raw(3)),
     ]);
-    universe.set_box_reg(23, root);
+    universe.set_box_reg_ref(23, root);
     let expected_semantic_id = universe
         .box_reg_ref(23)
         .expect("promoted math graph")
@@ -2237,9 +2221,8 @@ fn format_roundtrip_complete_math_graph() {
 
 #[test]
 fn pdftex_margin_kern_query_owns_the_complete_skipable_edge_rule() {
-    fn hbox(universe: &mut Universe, children: Vec<Node>) -> NodeListId {
+    fn hbox(universe: &mut Universe, children: Vec<Node>) -> NodeListRef {
         let children = universe.freeze_node_list(&children);
-        let children = universe.node_list_ref(children);
         universe.freeze_node_list(&[Node::HList(BoxNode::new(BoxNodeFields {
             width: Scaled::from_raw(0),
             height: Scaled::from_raw(0),
@@ -2334,7 +2317,7 @@ fn pdftex_margin_kern_query_owns_the_complete_skipable_edge_rule() {
         },
     ];
     let root = hbox(&mut universe, skipable);
-    universe.set_box_reg(0, root);
+    universe.set_box_reg_ref(0, root);
     assert_eq!(
         universe.box_margin_kern(0, MarginKernSide::Left),
         Some(expected)
@@ -2390,7 +2373,7 @@ fn pdftex_margin_kern_query_owns_the_complete_skipable_edge_rule() {
             ],
         );
         let index = u16::try_from(offset + 1).expect("small test register");
-        universe.set_box_reg(index, root);
+        universe.set_box_reg_ref(index, root);
         assert_eq!(
             universe.box_margin_kern(index, MarginKernSide::Left),
             Some(Scaled::from_raw(0)),
@@ -2648,25 +2631,21 @@ fn frozen_foundational_sections_restore_ids_and_accept_job_local_additions() {
 }
 
 #[test]
-fn frozen_node_arena_installs_outside_job_epoch_and_rejects_corrupt_metadata() {
+fn frozen_node_graph_restores_and_rejects_corrupt_metadata() {
     let mut universe = Universe::new();
     let child = universe.freeze_node_list(&[Node::Penalty(17)]);
-    let child = universe.node_list_ref(child);
     let root = universe.freeze_node_list(&[Node::Adjust(crate::node::AdjustNode::ordinary(child))]);
-    universe.set_box_reg(8, root);
+    universe.set_box_reg_ref(8, root);
     let image = universe.dump_format().expect("frozen node format");
 
     let mut loaded = Universe::from_format(World::memory(), &image).expect("load frozen nodes");
-    assert_eq!(loaded.testing_epoch_node_count(), 0);
-    assert_eq!(loaded.stores.testing_live_survivor_slot_count(), 0);
     let frozen_root = loaded.box_reg_ref(8).expect("frozen box root");
     let local = loaded.freeze_node_list(&[Node::Adjust(crate::node::AdjustNode::ordinary(
         frozen_root.clone(),
     ))]);
-    assert_eq!(loaded.testing_epoch_node_count(), 1);
     assert!(matches!(
-        loaded.node_list_ref(local).get(0),
-        Some(Node::Adjust(adjust)) if adjust.content == frozen_root
+        local.nodes().first(),
+        Some(crate::node_arena::NodeRef::Adjust(adjust)) if adjust.content == frozen_root.id()
     ));
 
     for offset in [12_usize, 32 + 24] {
@@ -2776,7 +2755,7 @@ fn frozen_environment_references_are_validated_against_frozen_stores() {
 fn frozen_environment_rejects_global_cells_and_bad_box_references() {
     let mut universe = Universe::new();
     let list = universe.freeze_node_list(&[Node::Penalty(12)]);
-    universe.set_box_reg(3, list);
+    universe.set_box_reg_ref(3, list);
     let valid = universe.dump_format().expect("format with frozen box");
     for (corrupt, expected) in [
         (
@@ -2947,7 +2926,7 @@ fn pdf_format_resources_round_trip_and_remain_usable() {
         .expect("reference raw object");
 
     let form_nodes = universe.freeze_node_list(&[Node::Penalty(2718)]);
-    universe.set_box_reg(0, form_nodes);
+    universe.set_box_reg_ref(0, form_nodes);
     let form_nodes = universe
         .take_box_reg_ref_same_level(0)
         .expect("take form nodes");
@@ -3011,7 +2990,6 @@ fn pdf_format_resources_round_trip_and_remain_usable() {
         }]
     );
     let form = restored.pdf_form(form_identity.0).expect("restored form");
-    assert_eq!(restored.stores.testing_live_survivor_slot_count(), 0);
     assert_eq!(form.width(), Scaled::from_raw(11));
     assert!(matches!(
         form.box_list_ref().nodes().first(),
@@ -3038,7 +3016,7 @@ fn semantic_format_uses_dto_local_payload_root_keys() {
     fn boxed_universe() -> Universe {
         let mut universe = Universe::new();
         let list = universe.freeze_node_list(&[Node::Penalty(123)]);
-        universe.set_box_reg(0, list);
+        universe.set_box_reg_ref(0, list);
         universe
     }
 
@@ -3375,7 +3353,7 @@ fn format_with_box_glue_set(glue_set: GlueSetRatio) -> Vec<u8> {
         glue_order: Order::Normal,
         children,
     }))]);
-    universe.set_box_reg(19, root);
+    universe.set_box_reg_ref(19, root);
     universe.dump_format().expect("format encodes")
 }
 
@@ -3394,7 +3372,7 @@ fn format_v11_round_trips_tex_web_box_shift_and_rejects_legacy_v10() {
         glue_order: Order::Normal,
         children,
     }))]);
-    universe.set_box_reg(19, root);
+    universe.set_box_reg_ref(19, root);
 
     let bytes = universe.dump_format().expect("format encodes");
     assert_eq!(&bytes[8..12], &11_u32.to_le_bytes());
@@ -3478,76 +3456,6 @@ fn corrupt_font_format(
     replace_format_section(bytes, crate::stores::FONTS_SECTION, |section| {
         *section = frozen;
     });
-}
-
-#[cfg(feature = "profiling")]
-#[test]
-fn node_memory_measurement_is_nonsemantic_and_covers_recycled_storage() {
-    let mut universe = Universe::new();
-    let before = universe.snapshot().state_hash();
-    let empty = universe.node_memory_columns();
-    assert!(empty.iter().any(|column| column.name == "epoch.words"));
-    assert!(
-        empty
-            .iter()
-            .any(|column| column.name == "epoch.identity_tags")
-    );
-    assert!(empty.iter().any(|column| column.name == "epoch.spans"));
-    assert!(empty.iter().any(|column| {
-        column.name == "epoch.semantic_ids"
-            && column.element_bytes == core::mem::size_of::<crate::node_arena::NodeSemanticId>()
-    }));
-    assert_eq!(before, universe.snapshot().state_hash());
-
-    for amount in 0..32 {
-        let children = universe.freeze_node_list(&[Node::Kern {
-            amount: Scaled::from_raw(amount),
-            kind: KernKind::Explicit,
-        }]);
-        let root = universe.freeze_node_list(&[Node::HList(BoxNode::new(BoxNodeFields {
-            width: Scaled::from_raw(amount),
-            height: Scaled::from_raw(0),
-            depth: Scaled::from_raw(0),
-            shift: Scaled::from_raw(0),
-            box_lr: crate::node::BoxLr::Normal,
-            glue_set: GlueSetRatio::ZERO,
-            glue_sign: Sign::Normal,
-            glue_order: Order::Normal,
-            children,
-        }))]);
-        universe.set_box_reg(0, root);
-    }
-
-    let semantic_hash = universe.snapshot().state_hash();
-    let columns = universe.node_memory_columns();
-    assert!(
-        columns.iter().any(|column| {
-            column.name == "survivor.live.boxes.rows" && column.logical_bytes > 0
-        })
-    );
-    assert!(columns.iter().any(|column| {
-        column.name == "survivor.recycled.words"
-            && column.logical_bytes == 0
-            && column.retained_payload_bytes > 0
-    }));
-    assert!(columns.iter().any(|column| {
-        column.name == "survivor.root_lookup_entries"
-            && column.element_bytes == core::mem::size_of::<(crate::ids::NodePayloadId, usize)>()
-            && column.logical_bytes > 0
-    }));
-    assert_eq!(semantic_hash, universe.snapshot().state_hash());
-
-    let timing = crate::survivor::survivor_measurement();
-    assert!(timing.fresh_promotions > 0);
-    assert!(timing.recycled_promotions > 0);
-    assert!(timing.releases_to_recycling > 0);
-    assert!(timing.peak_promotion_scratch_retained_bytes > 0);
-    let append = crate::measurement::node_append_measurement();
-    assert!(append.calls > 0);
-    assert!(append.words > 0);
-    let hash = crate::measurement::state_hash_measurement();
-    assert!(hash.calls > 0);
-    assert_eq!(semantic_hash, universe.snapshot().state_hash());
 }
 
 #[test]
@@ -5257,7 +5165,6 @@ fn shipout_commit_flushes_releases_then_checkpoints() {
         children,
     }));
     assert!(matches!(page, Node::HList(_)));
-    assert_eq!(transaction.testing_epoch_node_count(), 1);
 
     transaction
         .world_mut()
@@ -5285,7 +5192,6 @@ fn shipout_commit_flushes_releases_then_checkpoints() {
         universe.world().memory_terminal_output(),
         Some(&b"shipout\n"[..])
     );
-    assert_eq!(universe.testing_epoch_node_count(), 0);
     assert_eq!(universe.snapshot().state_hash(), base.state_hash());
 }
 
@@ -5319,7 +5225,6 @@ fn repeated_shipout_commits_do_not_retain_epoch_page_nodes() {
                 reservation,
             )
             .expect("shipout commit succeeds");
-        assert_eq!(universe.testing_epoch_node_count(), 0);
     }
 }
 
@@ -5347,7 +5252,6 @@ fn retained_shipout_rolls_back_logical_output_without_published_host_bytes() {
     assert_eq!(universe.world().artifact_commits().len(), 1);
     assert_eq!(universe.world().effect_records().len(), 1);
     assert_eq!(universe.world().memory_terminal_output(), Some(&b""[..]));
-    assert_eq!(universe.testing_epoch_node_count(), 0);
 
     universe.rollback(&before);
     assert!(universe.world().artifact_commits().is_empty());
@@ -6630,7 +6534,7 @@ fn rollback_rebuilds_incremental_hash_baselines_after_node_span_reuse() {
         ch: 'x',
         origin: crate::provenance::OriginRef::unknown(),
     }]);
-    reused.set_box_reg(0, first_list);
+    reused.set_box_reg_ref(0, first_list.clone());
     let first_hash = reused.snapshot().state_hash();
 
     reused.rollback(&base);
@@ -6643,7 +6547,7 @@ fn rollback_rebuilds_incremental_hash_baselines_after_node_span_reuse() {
         first_list, second_list,
         "rollback must retag the reused epoch node span"
     );
-    reused.set_box_reg(0, second_list);
+    reused.set_box_reg_ref(0, second_list);
     let reused_hash = reused.snapshot().state_hash();
 
     let mut fresh = Universe::new();
@@ -6653,7 +6557,7 @@ fn rollback_rebuilds_incremental_hash_baselines_after_node_span_reuse() {
         ch: 'y',
         origin: crate::provenance::OriginRef::unknown(),
     }]);
-    fresh.set_box_reg(0, fresh_list);
+    fresh.set_box_reg_ref(0, fresh_list);
     let fresh_hash = fresh.snapshot().state_hash();
 
     assert_ne!(first_hash, reused_hash);
@@ -6661,32 +6565,32 @@ fn rollback_rebuilds_incremental_hash_baselines_after_node_span_reuse() {
 }
 
 #[test]
-fn mixed_arena_box_promotion_replays_with_resolvable_equal_hashes() {
+fn structurally_owned_box_replays_with_resolvable_equal_hashes() {
     let mut universe = Universe::new();
     let child = universe.freeze_node_list(&[Node::Char {
         font: NULL_FONT,
         ch: 'x',
         origin: crate::provenance::OriginRef::unknown(),
     }]);
-    universe.set_box_reg(0, child);
+    universe.set_box_reg_ref(0, child);
     let base = universe.snapshot();
 
-    let first = promote_survivor_wrapped_box(&mut universe);
+    let first = store_wrapped_box(&mut universe);
     let first_hash = universe.snapshot().state_hash();
     assert_promoted_wrapper_is_resolvable(&universe, first);
 
     universe.rollback(&base);
-    let second = promote_survivor_wrapped_box(&mut universe);
+    let second = store_wrapped_box(&mut universe);
     let second_hash = universe.snapshot().state_hash();
     assert_promoted_wrapper_is_resolvable(&universe, second);
 
     assert_eq!(first_hash, second_hash);
 }
 
-fn promote_survivor_wrapped_box(universe: &mut Universe) -> crate::node_arena::NodeListRef {
+fn store_wrapped_box(universe: &mut Universe) -> crate::node_arena::NodeListRef {
     let child = universe
         .box_reg_ref(0)
-        .expect("survivor child should remain live");
+        .expect("child owner should remain live");
     let wrapper = universe.freeze_node_list(&[Node::VList(BoxNode::new(BoxNodeFields {
         width: Scaled::from_raw(10),
         height: Scaled::from_raw(7),
@@ -6698,10 +6602,8 @@ fn promote_survivor_wrapped_box(universe: &mut Universe) -> crate::node_arena::N
         glue_order: Order::Normal,
         children: child,
     }))]);
-    universe.set_box_reg_global(255, wrapper);
-    universe
-        .box_reg_ref(255)
-        .expect("wrapper should be promoted")
+    universe.set_box_reg_ref_global(255, wrapper);
+    universe.box_reg_ref(255).expect("wrapper should be stored")
 }
 
 #[test]
@@ -6712,7 +6614,6 @@ fn grouped_box_take_owns_nested_children_before_coalesced_release() {
         ch: 'x',
         origin: crate::provenance::OriginRef::unknown(),
     }]);
-    let leader_children = universe.node_list_ref(leader_children);
     let leader = BoxNode::new(BoxNodeFields {
         width: Scaled::from_raw(10),
         height: Scaled::from_raw(7),
@@ -6732,14 +6633,13 @@ fn grouped_box_take_owns_nested_children_before_coalesced_release() {
     }]);
 
     universe.enter_group();
-    universe.set_box_reg(0, value);
-    let before = universe.testing_epoch_clone_counts();
+    universe.set_box_reg_ref(0, value);
     let taken = universe
         .take_box_reg_ref_same_level(0)
         .expect("local box should move out of the register");
 
     let ArenaRef::Owned(root) = taken.id().arena() else {
-        panic!("taken value should remain survivor-backed")
+        panic!("taken value should remain directly owned")
     };
     let Some(crate::node_arena::NodeRef::Glue {
         leader: Some(LeaderPayload::HList(leader)),
@@ -6750,7 +6650,10 @@ fn grouped_box_take_owns_nested_children_before_coalesced_release() {
     };
     assert_eq!(leader.children.arena(), ArenaRef::Owned(root));
     assert_eq!(
-        universe.nodes(leader.children),
+        taken
+            .resolve(leader.children)
+            .expect("leader child belongs to the taken owner")
+            .nodes(),
         &[Node::Char {
             font: NULL_FONT,
             ch: 'x',
@@ -6759,11 +6662,9 @@ fn grouped_box_take_owns_nested_children_before_coalesced_release() {
     );
     let _ = universe.leave_group();
     assert!(
-        universe.box_reg(0).is_none(),
+        universe.box_reg_ref(0).is_none(),
         "§1079's direct voiding preserves the original void restoration"
     );
-    assert_eq!(universe.testing_epoch_clone_counts(), before);
-    assert_eq!(universe.testing_owned_pin_count(), 1);
 }
 
 #[test]
@@ -6774,8 +6675,8 @@ fn same_level_box_take_crosses_nested_group_but_restores_at_owner_group() {
         ch: 'o',
         origin: crate::provenance::OriginRef::unknown(),
     }]);
-    universe.set_box_reg(0, baseline);
-    let baseline = universe.box_reg(0).expect("root box");
+    universe.set_box_reg_ref(0, baseline);
+    let baseline = universe.box_reg_ref(0).expect("root box");
 
     universe.enter_group();
     let local = universe.freeze_node_list(&[Node::Char {
@@ -6783,18 +6684,18 @@ fn same_level_box_take_crosses_nested_group_but_restores_at_owner_group() {
         ch: 'l',
         origin: crate::provenance::OriginRef::unknown(),
     }]);
-    universe.set_box_reg(0, local);
+    universe.set_box_reg_ref(0, local);
     universe.enter_group();
-    assert!(universe.take_box_reg_same_level(0).is_some());
-    assert!(universe.box_reg(0).is_none());
+    assert!(universe.take_box_reg_ref_same_level(0).is_some());
+    assert!(universe.box_reg_ref(0).is_none());
 
     let _ = universe.leave_group();
     assert!(
-        universe.box_reg(0).is_none(),
+        universe.box_reg_ref(0).is_none(),
         "the destructive take must survive the nested construction group"
     );
     let _ = universe.leave_group();
-    assert_eq!(universe.box_reg(0), Some(baseline));
+    assert_eq!(universe.box_reg_ref(0), Some(baseline));
 }
 
 #[test]
@@ -6805,8 +6706,8 @@ fn destructive_unbox_transfers_only_children_before_same_level_clear() {
         ch: 'b',
         origin: crate::provenance::OriginRef::unknown(),
     }]);
-    universe.set_box_reg(0, baseline);
-    let baseline = universe.box_reg(0).expect("baseline box");
+    universe.set_box_reg_ref(0, baseline);
+    let baseline = universe.box_reg_ref(0).expect("baseline box");
 
     universe.enter_group();
     let leaf = universe.freeze_node_list(&[Node::Char {
@@ -6814,7 +6715,6 @@ fn destructive_unbox_transfers_only_children_before_same_level_clear() {
         ch: 'x',
         origin: crate::provenance::OriginRef::unknown(),
     }]);
-    let leaf = universe.node_list_ref(leaf);
     let nested = universe.freeze_node_list(&[Node::HList(BoxNode::new(BoxNodeFields {
         width: Scaled::from_raw(10),
         height: Scaled::from_raw(7),
@@ -6826,7 +6726,6 @@ fn destructive_unbox_transfers_only_children_before_same_level_clear() {
         glue_order: Order::Normal,
         children: leaf,
     }))]);
-    let nested = universe.node_list_ref(nested);
     let wrapper = universe.freeze_node_list(&[Node::HList(BoxNode::new(BoxNodeFields {
         width: Scaled::from_raw(10),
         height: Scaled::from_raw(7),
@@ -6838,18 +6737,16 @@ fn destructive_unbox_transfers_only_children_before_same_level_clear() {
         glue_order: Order::Normal,
         children: nested,
     }))]);
-    universe.set_box_reg(0, wrapper);
-    let before = universe.testing_epoch_clone_counts();
-
+    universe.set_box_reg_ref(0, wrapper);
     let TakeUnboxResult::Children(children) =
         universe.take_unbox_children_same_level(0, UnboxKind::Horizontal)
     else {
         panic!("compatible hbox should transfer its children")
     };
 
-    assert!(universe.box_reg(0).is_none());
+    assert!(universe.box_reg_ref(0).is_none());
     let ArenaRef::Owned(root) = children.id().arena() else {
-        panic!("unboxed children should remain survivor-backed")
+        panic!("unboxed children should remain directly owned")
     };
     let Some(crate::node_arena::NodeRef::HList(nested)) = children.nodes().first() else {
         panic!("nested hbox should survive the transfer")
@@ -6863,11 +6760,8 @@ fn destructive_unbox_transfers_only_children_before_same_level_clear() {
             .first(),
         Some(crate::node_arena::NodeRef::Char { ch: 'x', .. })
     ));
-    let after = universe.testing_epoch_clone_counts();
-    assert_eq!(after, before, "survivor transfer performs no epoch clone");
-
     let _ = universe.leave_group();
-    assert_eq!(universe.box_reg(0), Some(baseline));
+    assert_eq!(universe.box_reg_ref(0), Some(baseline));
 }
 
 #[test]
@@ -6877,7 +6771,6 @@ fn destructive_unbox_rejects_incompatible_kind_without_mutation() {
         amount: Scaled::from_raw(1),
         kind: KernKind::Explicit,
     }]);
-    let children = universe.node_list_ref(children);
     let wrapper = universe.freeze_node_list(&[Node::VList(BoxNode::new(BoxNodeFields {
         width: Scaled::from_raw(0),
         height: Scaled::from_raw(0),
@@ -6889,16 +6782,14 @@ fn destructive_unbox_rejects_incompatible_kind_without_mutation() {
         glue_order: Order::Normal,
         children,
     }))]);
-    universe.set_box_reg(4, wrapper);
-    let survivor = universe.box_reg(4);
-    let before = universe.testing_epoch_clone_counts();
+    universe.set_box_reg_ref(4, wrapper);
+    let stored = universe.box_reg_ref(4);
 
     assert_eq!(
         universe.take_unbox_children_same_level(4, UnboxKind::Horizontal),
         TakeUnboxResult::Incompatible
     );
-    assert_eq!(universe.box_reg(4), survivor);
-    assert_eq!(universe.testing_epoch_clone_counts(), before);
+    assert_eq!(universe.box_reg_ref(4), stored);
 }
 
 fn assert_promoted_wrapper_is_resolvable(
@@ -6906,12 +6797,12 @@ fn assert_promoted_wrapper_is_resolvable(
     wrapper: crate::node_arena::NodeListRef,
 ) {
     let Some(crate::node_arena::NodeRef::VList(box_node)) = wrapper.nodes().first() else {
-        panic!("promoted wrapper should contain a vlist");
+        panic!("stored wrapper should contain a vlist");
     };
     let (ArenaRef::Owned(wrapper_root), ArenaRef::Owned(child_root)) =
         (wrapper.id().arena(), box_node.children.arena())
     else {
-        panic!("promoted wrapper and child should be survivor-owned");
+        panic!("wrapper and child should share one owned payload");
     };
     assert_eq!(wrapper_root, child_root);
     assert_eq!(
@@ -6937,7 +6828,7 @@ fn snapshot_state_hash_walks_deep_node_lists_iteratively() {
     }]);
 
     for _ in 0..5000 {
-        let children = universe.node_list_ref(current);
+        let children = current;
         current = universe.freeze_node_list(&[Node::HList(BoxNode::new(BoxNodeFields {
             width: Scaled::from_raw(1),
             height: Scaled::from_raw(2),
@@ -6951,7 +6842,7 @@ fn snapshot_state_hash_walks_deep_node_lists_iteratively() {
         }))]);
     }
 
-    universe.set_box_reg(0, current);
+    universe.set_box_reg_ref(0, current);
     assert_ne!(universe.snapshot().state_hash(), 0);
 }
 
@@ -6967,7 +6858,6 @@ fn snapshot_state_hash_ignores_unreachable_epoch_node_allocations() {
             amount: Scaled::from_raw(amount),
             kind: KernKind::Explicit,
         }]);
-        let child = with_discarded_nodes.node_list_ref(child);
         let _discarded =
             with_discarded_nodes.freeze_node_list(&[Node::HList(BoxNode::new(BoxNodeFields {
                 width: Scaled::from_raw(amount),
@@ -7000,7 +6890,7 @@ fn snapshot_state_hash_depends_on_live_box_content_not_overwritten_construction_
             amount: Scaled::from_raw(amount),
             kind: KernKind::Explicit,
         }]);
-        overwritten.set_box_reg(0, transient);
+        overwritten.set_box_reg_ref(0, transient);
     }
 
     let direct_final = direct.freeze_node_list(&[Node::Char {
@@ -7008,13 +6898,13 @@ fn snapshot_state_hash_depends_on_live_box_content_not_overwritten_construction_
         ch: 'x',
         origin: crate::provenance::OriginRef::unknown(),
     }]);
-    direct.set_box_reg(0, direct_final);
+    direct.set_box_reg_ref(0, direct_final);
     let overwritten_final = overwritten.freeze_node_list(&[Node::Char {
         font: NULL_FONT,
         ch: 'x',
         origin: crate::provenance::OriginRef::unknown(),
     }]);
-    overwritten.set_box_reg(0, overwritten_final);
+    overwritten.set_box_reg_ref(0, overwritten_final);
 
     assert_eq!(
         direct.snapshot().state_hash(),
@@ -7035,7 +6925,6 @@ fn finished_box_assignment_reclaims_only_its_epoch_construction_suffix() {
         amount: Scaled::from_raw(17),
         kind: KernKind::Explicit,
     }]);
-    let children = transaction.node_list_ref(children);
     let root = transaction.freeze_node_list(&[Node::HList(BoxNode::new(BoxNodeFields {
         width: Scaled::from_raw(17),
         height: Scaled::from_raw(0),
@@ -7047,13 +6936,10 @@ fn finished_box_assignment_reclaims_only_its_epoch_construction_suffix() {
         glue_order: Order::Normal,
         children,
     }))]);
-    assert_eq!(transaction.testing_epoch_node_count(), 3);
-
     transaction.finish(0, Some(root), false);
 
-    assert_eq!(universe.testing_epoch_node_count(), 1);
     assert!(matches!(
-        universe.nodes(older).first(),
+        older.nodes().first(),
         Some(crate::node_arena::NodeRef::Char {
             font: NULL_FONT,
             ch: 'a',
@@ -7091,7 +6977,7 @@ fn cancelled_box_build_reclaims_its_epoch_construction_suffix() {
         }]);
     }
 
-    assert_eq!(universe.testing_epoch_node_count(), 0);
+    assert!(universe.box_reg_ref(0).is_none());
 }
 
 fn checkpoint_hashes_for_program() -> Vec<u64> {

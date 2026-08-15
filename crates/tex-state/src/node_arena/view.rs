@@ -318,7 +318,7 @@ impl NodeRef<'_> {
             Self::Glue { spec, kind, leader } => Node::Glue {
                 spec: (*spec).clone(),
                 kind: *kind,
-                leader: leader.clone(),
+                leader: *leader,
             },
             Self::Penalty(value) => Node::Penalty(*value),
             Self::Rule {
@@ -330,9 +330,9 @@ impl NodeRef<'_> {
                 height: *height,
                 depth: *depth,
             },
-            Self::HList(value) => Node::HList(value.clone()),
-            Self::VList(value) => Node::VList(value.clone()),
-            Self::Unset(value) => Node::Unset(value.clone()),
+            Self::HList(value) => Node::HList(*value),
+            Self::VList(value) => Node::VList(*value),
+            Self::Unset(value) => Node::Unset(*value),
             Self::Disc {
                 kind,
                 pre,
@@ -370,12 +370,12 @@ impl NodeRef<'_> {
             Self::MathOff(value) => Node::MathOff(*value),
             Self::Direction(value) => Node::Direction(*value),
             Self::MathNoad(value) => Node::MathNoad(value.clone()),
-            Self::FractionNoad(value) => Node::FractionNoad(value.clone()),
+            Self::FractionNoad(value) => Node::FractionNoad(*value),
             Self::MathStyle(value) => Node::MathStyle(*value),
-            Self::MathChoice(value) => Node::MathChoice(value.clone()),
-            Self::MathList(value) => Node::MathList(value.clone()),
+            Self::MathChoice(value) => Node::MathChoice(*value),
+            Self::MathList(value) => Node::MathList(*value),
             Self::Nonscript => Node::Nonscript,
-            Self::Adjust(value) => Node::Adjust(value.clone()),
+            Self::Adjust(value) => Node::Adjust(*value),
         }
     }
 
@@ -427,7 +427,7 @@ impl NodeRef<'_> {
             Self::Glue { spec, kind, leader } => Node::Glue {
                 spec: (*spec).clone(),
                 kind: *kind,
-                leader: leader.clone().map(|value| value.map_lists(&mut resolve)),
+                leader: (*leader).map(|value| value.map_lists(&mut resolve)),
             },
             Self::Penalty(v) => Node::Penalty(*v),
             Self::Rule {
@@ -439,9 +439,9 @@ impl NodeRef<'_> {
                 height: *height,
                 depth: *depth,
             },
-            Self::HList(v) => Node::HList(v.clone().map_lists(&mut resolve)),
-            Self::VList(v) => Node::VList(v.clone().map_lists(&mut resolve)),
-            Self::Unset(v) => Node::Unset(v.clone().map_list(&mut resolve)),
+            Self::HList(v) => Node::HList((*v).map_lists(&mut resolve)),
+            Self::VList(v) => Node::VList((*v).map_lists(&mut resolve)),
+            Self::Unset(v) => Node::Unset((*v).map_list(&mut resolve)),
             Self::Disc {
                 kind,
                 pre,
@@ -479,12 +479,12 @@ impl NodeRef<'_> {
             Self::MathOff(v) => Node::MathOff(*v),
             Self::Direction(v) => Node::Direction(*v),
             Self::MathNoad(v) => Node::MathNoad(v.clone().map_lists(&mut resolve)),
-            Self::FractionNoad(v) => Node::FractionNoad(v.clone().map_lists(&mut resolve)),
+            Self::FractionNoad(v) => Node::FractionNoad((*v).map_lists(&mut resolve)),
             Self::MathStyle(v) => Node::MathStyle(*v),
-            Self::MathChoice(v) => Node::MathChoice(v.clone().map_lists(&mut resolve)),
-            Self::MathList(v) => Node::MathList(v.clone().map_list(&mut resolve)),
+            Self::MathChoice(v) => Node::MathChoice((*v).map_lists(&mut resolve)),
+            Self::MathList(v) => Node::MathList((*v).map_list(&mut resolve)),
             Self::Nonscript => Node::Nonscript,
-            Self::Adjust(v) => Node::Adjust(v.clone().map_list(resolve)),
+            Self::Adjust(v) => Node::Adjust((*v).map_list(resolve)),
         }
     }
 
@@ -1087,7 +1087,7 @@ impl NodeStorage {
                 NodeRef::Glue {
                     spec,
                     kind: *kind,
-                    leader: Some(leader.clone()),
+                    leader: Some(*leader),
                 }
             }
             14 => {
@@ -1118,9 +1118,9 @@ impl NodeStorage {
             17 => NodeRef::Whatsit(&self.whatsits[side]),
             18 => NodeRef::MathNoad(crate::math::MathNoad {
                 kind: self.noads.kind[side].clone(),
-                nucleus: self.noads.nucleus[side].clone(),
-                subscript: self.noads.subscript[side].clone(),
-                superscript: self.noads.superscript[side].clone(),
+                nucleus: self.noads.nucleus[side],
+                subscript: self.noads.subscript[side],
+                superscript: self.noads.superscript[side],
             }),
             19 => NodeRef::FractionNoad(self.fractions[side]),
             20 => NodeRef::MathChoice(self.choices[side]),

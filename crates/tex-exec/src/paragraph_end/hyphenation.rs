@@ -833,20 +833,16 @@ fn discretionary_hyphen(
     let pre = automatic_hyphen_char(stores, font, node_index, missing_hyphens).map_or_else(
         || empty.clone(),
         |ch| {
-            let pre = stores.freeze_node_list(&[Node::Char {
+            stores.freeze_node_list(&[Node::Char {
                 font,
                 ch,
                 origin: OriginRef::unknown(),
-            }]);
-            pre
+            }])
         },
     );
     let replace = replacement.as_ref().map_or_else(
         || empty.clone(),
-        |node| {
-            let replace = stores.freeze_node_list(std::slice::from_ref(node));
-            replace
-        },
+        |node| stores.freeze_node_list(std::slice::from_ref(node)),
     );
     Node::Disc {
         kind: DiscKind::AutomaticHyphen,

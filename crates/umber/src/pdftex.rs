@@ -205,7 +205,7 @@ mod tests {
             &mut stores,
         )
         .expect("scan and reference a PDF form");
-        assert!(stores.box_reg(0).is_none());
+        assert!(stores.box_reg_ref(0).is_none());
         let form = stores.pdf_form(1).expect("captured form");
         assert_eq!(form.resource(), 1);
         assert_eq!(form.width(), Scaled::from_raw(10 * 65_536));
@@ -2360,12 +2360,15 @@ mod tests {
         )
         .expect("pdfTeX line dimensions");
 
-        let root = stores.box_reg(0).expect("setbox result");
-        let Some(tex_state::node_arena::NodeRef::VList(vbox)) = stores.nodes(root).first() else {
+        let root = stores.box_reg_ref(0).expect("setbox result");
+        let Some(tex_state::node_arena::NodeRef::VList(vbox)) = root.nodes().first() else {
             panic!("box0 is not a vbox");
         };
-        let lines = stores
-            .nodes(vbox.children)
+        let children = root
+            .resolve(vbox.children)
+            .expect("vbox children belong to the box-register owner");
+        let lines = children
+            .nodes()
             .into_iter()
             .filter_map(|node| match node {
                 tex_state::node_arena::NodeRef::HList(line) => Some(line),

@@ -203,7 +203,7 @@ impl NodeListRef {
     }
 
     pub(crate) fn semantic_id(&self) -> NodeSemanticId {
-        if self.id.len() == 0 {
+        if self.id.is_empty() {
             return NodeSemanticId::empty();
         }
         self.payload
@@ -215,7 +215,7 @@ impl NodeListRef {
     /// Resolves an exact child span using only this structural owner.
     pub fn resolve(&self, child: NodeListId) -> Option<Self> {
         self.child_nodes(child)?;
-        if child.len() == 0 {
+        if child.is_empty() {
             return Some(Self::empty());
         }
         Some(Self::from_shared(child, Arc::clone(&self.payload)))
@@ -365,11 +365,6 @@ impl NodeListPayload {
         Some(self.semantic_spans[index])
     }
 
-    #[cfg(test)]
-    pub(crate) fn spans(&self) -> &[OwnedSemanticSpan] {
-        &self.semantic_spans
-    }
-
     pub(crate) fn spans_mut(&mut self) -> &mut [OwnedSemanticSpan] {
         &mut self.semantic_spans
     }
@@ -478,7 +473,7 @@ impl DirectGraphCopy {
     }
 
     fn copy_child(&mut self, source_id: NodeListId) -> NodeListId {
-        if source_id.len() == 0 {
+        if source_id.is_empty() {
             let empty = NodeListRef::empty();
             assert_eq!(
                 source_id,

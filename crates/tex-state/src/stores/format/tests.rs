@@ -37,8 +37,11 @@ fn frozen_round_trip(stores: &Stores) -> Stores {
 }
 
 fn freeze_ref(stores: &mut Stores, nodes: &[Node]) -> NodeListRef {
-    let id = stores.freeze_node_list(nodes);
-    stores.node_list_ref(id)
+    stores.freeze_node_list(nodes)
+}
+
+fn set_box(stores: &mut Stores, index: u16, root: NodeListRef) {
+    let _ = stores.write_box_reg_ref(index, Some(root), false);
 }
 
 #[test]
@@ -52,12 +55,12 @@ fn format_round_trip_preserves_diagnostic_disc_replacement_count() {
         replace: empty,
         physical_replace_count: 3,
     }]);
-    stores.set_box_reg(0, root);
+    set_box(&mut stores, 0, root);
 
     let restored = frozen_round_trip(&stores);
-    let restored_root = restored.box_reg(0).expect("restored box root");
+    let restored_root = restored.box_reg_ref(0).expect("restored box root");
     assert!(matches!(
-        restored.nodes(restored_root).first(),
+        restored_root.nodes().first(),
         Some(NodeRef::Disc {
             physical_replace_count: 3,
             ..
@@ -86,22 +89,28 @@ fn format_round_trip_preserves_physical_diagnostic_box_children() {
     });
     box_node.diagnostic_children = Some(diagnostic_children);
     let root = stores.freeze_node_list(&[Node::HList(box_node)]);
-    stores.set_box_reg(0, root);
+    set_box(&mut stores, 0, root);
 
     let restored = frozen_round_trip(&stores);
-    let restored_root = restored.box_reg(0).expect("restored box root");
-    let Some(NodeRef::HList(restored_box)) = restored.nodes(restored_root).first() else {
+    let restored_root = restored.box_reg_ref(0).expect("restored box root");
+    let Some(NodeRef::HList(restored_box)) = restored_root.nodes().first() else {
         panic!("expected restored hlist")
     };
+    let semantic_children = restored_root
+        .resolve(restored_box.children)
+        .expect("semantic children belong to restored owner");
     assert!(matches!(
-        restored.nodes(restored_box.children).first(),
+        semantic_children.nodes().first(),
         Some(NodeRef::Penalty(1))
     ));
     let diagnostic = restored_box
         .diagnostic_children
         .expect("restored diagnostic child");
+    let diagnostic = restored_root
+        .resolve(diagnostic)
+        .expect("diagnostic children belong to restored owner");
     assert!(matches!(
-        restored.nodes(diagnostic).first(),
+        diagnostic.nodes().first(),
         Some(NodeRef::Penalty(2))
     ));
 }
@@ -151,7 +160,7 @@ fn allocator_overlap_changes_only_detached_extent_not_format_bytes() {
         box_node.diagnostic_children = Some(diagnostic_children);
         box_node.allocator_high_cell_overlap = overlap;
         let root = stores.freeze_node_list(&[Node::HList(box_node)]);
-        stores.set_box_reg(0, root);
+        set_box(&mut stores, 0, root);
         stores
     }
 
@@ -216,15 +225,15 @@ fn recursive_box_copy_composes_with_live_projection_owners() {
     let mut root_box = box_node(horizontal);
     root_box.diagnostic_children = Some(diagnostic);
     let root = stores.freeze_node_list(&[Node::VList(root_box)]);
-    stores.set_box_reg(254, root);
-    let root = stores.box_reg(254).expect("promoted box root");
+    set_box(&mut stores, 254, root);
+    let root = stores.box_reg_ref(254).expect("owned box root");
 
     let mut projection =
         super::main_memory_usage_without_scratch(&stores).expect("box graph projects");
     let baseline = projection.usage();
     assert_eq!(baseline.dynamic_extent, baseline.dynamic + 3);
     let copied = projection
-        .usage_with_box_copy(root, 1)
+        .usage_with_box_copy(root.id(), 1)
         .expect("live box copy projects");
     // TeX82 §204 has four simultaneously live temporary heads on the path
     // root -> vlist -> hlist -> lig_ptr. The ten copied character cells are
@@ -239,10 +248,10 @@ fn recursive_box_copy_composes_with_live_projection_owners() {
     assert_eq!(projection.usage(), baseline);
 
     projection
-        .update_box_root(&stores, Some(root), None, true)
+        .update_box_root(&stores, Some(root.id()), None, true)
         .expect("root removal projects");
     assert!(
-        projection.usage_with_box_copy(root, 1).is_none(),
+        projection.usage_with_box_copy(root.id(), 1).is_none(),
         "released owners cannot contribute to a later operation peak"
     );
 }
@@ -287,11 +296,11 @@ fn recursive_box_copy_peak_depends_on_copied_ligature_units() {
             glue_order: Order::Normal,
             children: horizontal,
         }))]);
-        stores.set_box_reg(0, root);
-        let root = stores.box_reg(0).expect("promoted box root");
+        set_box(&mut stores, 0, root);
+        let root = stores.box_reg_ref(0).expect("owned box root");
         super::main_memory_usage_without_scratch(&stores)
             .expect("box graph projects")
-            .box_copy_projections[&root]
+            .box_copy_projections[&root.id()]
     }
 
     let nine = projection_for(9);
@@ -326,26 +335,32 @@ fn format_round_trip_preserves_physical_diagnostic_leader_children() {
         kind: GlueKind::Leaders,
         leader: Some(LeaderPayload::HList(leader_box)),
     }]);
-    stores.set_box_reg(0, root);
+    set_box(&mut stores, 0, root);
 
     let restored = frozen_round_trip(&stores);
-    let restored_root = restored.box_reg(0).expect("restored box root");
+    let restored_root = restored.box_reg_ref(0).expect("restored box root");
     let Some(NodeRef::Glue {
         leader: Some(LeaderPayload::HList(restored_box)),
         ..
-    }) = restored.nodes(restored_root).first()
+    }) = restored_root.nodes().first()
     else {
         panic!("expected restored hlist leader")
     };
+    let semantic_children = restored_root
+        .resolve(restored_box.children)
+        .expect("semantic leader children belong to restored owner");
     assert!(matches!(
-        restored.nodes(restored_box.children).first(),
+        semantic_children.nodes().first(),
         Some(NodeRef::Penalty(3))
     ));
     let diagnostic = restored_box
         .diagnostic_children
         .expect("restored leader diagnostic child");
+    let diagnostic = restored_root
+        .resolve(diagnostic)
+        .expect("diagnostic leader children belong to restored owner");
     assert!(matches!(
-        restored.nodes(diagnostic).first(),
+        diagnostic.nodes().first(),
         Some(NodeRef::Penalty(4))
     ));
 }
@@ -386,7 +401,7 @@ fn format_round_trip_preserves_every_extended_register_family_at_boundaries() {
         }]);
         stores.set_toks(index, token_list);
         let list = stores.freeze_node_list(&[Node::Penalty(value)]);
-        stores.set_box_reg(index, list);
+        set_box(&mut stores, index, list);
     }
 
     let restored = frozen_round_trip(&stores);
@@ -408,10 +423,8 @@ fn format_round_trip_preserves_every_extended_register_family_at_boundaries() {
                 cat: Catcode::Other,
             }]
         );
-        let list = restored.box_reg(index).expect("restored sparse box");
-        assert!(
-            matches!(restored.nodes(list).first(), Some(NodeRef::Penalty(found)) if found == value)
-        );
+        let list = restored.box_reg_ref(index).expect("restored sparse box");
+        assert!(matches!(list.nodes().first(), Some(NodeRef::Penalty(found)) if found == value));
     }
 }
 
@@ -537,7 +550,7 @@ fn format_round_trip_preserves_all_box_lr_states() {
             glue_order: Order::Normal,
             children: empty.clone(),
         }))]);
-        stores.set_box_reg(register, list);
+        set_box(&mut stores, register, list);
     }
 
     let restored = frozen_round_trip(&stores);
@@ -546,8 +559,10 @@ fn format_round_trip_preserves_all_box_lr_states() {
         (11, BoxLr::Reversed),
         (12, BoxLr::DList),
     ] {
-        let list = restored.box_reg(register).expect("restored box register");
-        let Some(NodeRef::HList(box_node)) = restored.nodes(list).first() else {
+        let list = restored
+            .box_reg_ref(register)
+            .expect("restored box register");
+        let Some(NodeRef::HList(box_node)) = list.nodes().first() else {
             panic!("expected restored hlist")
         };
         assert_eq!(box_node.box_lr, expected);

@@ -993,15 +993,14 @@ fn capture_memory_roots(
     });
     let box_roots = env_words
         .iter()
-        .filter_map(|&(cell, word)| {
-            (cell.bank() == crate::cell::BankTag::Box).then(|| {
-                let id = NodeListId::decode_box_word(word)
-                    .expect("non-default box memory entry should contain a list");
-                let owner = stores
-                    .box_reg_ref(cell.index() as u16)
-                    .expect("non-default box memory entry should own its list");
-                (id, owner)
-            })
+        .filter(|&&(cell, _)| cell.bank() == crate::cell::BankTag::Box)
+        .map(|&(cell, word)| {
+            let id = NodeListId::decode_box_word(word)
+                .expect("non-default box memory entry should contain a list");
+            let owner = stores
+                .box_reg_ref(cell.index() as u16)
+                .expect("non-default box memory entry should own its list");
+            (id, owner)
         })
         .collect::<Vec<_>>();
     let mut seen = std::collections::BTreeSet::new();
@@ -2156,15 +2155,14 @@ impl MutableStoreIdentity {
         });
         let roots: Vec<_> = env_words
             .iter()
-            .filter_map(|&(cell, word)| {
-                (cell.bank() == crate::cell::BankTag::Box).then(|| {
-                    let id = NodeListId::decode_box_word(word)
-                        .expect("non-default box format entry should contain a list");
-                    let owner = stores
-                        .box_reg_ref(cell.index() as u16)
-                        .expect("non-default box format entry should own its list");
-                    (id, owner)
-                })
+            .filter(|&&(cell, _)| cell.bank() == crate::cell::BankTag::Box)
+            .map(|&(cell, word)| {
+                let id = NodeListId::decode_box_word(word)
+                    .expect("non-default box format entry should contain a list");
+                let owner = stores
+                    .box_reg_ref(cell.index() as u16)
+                    .expect("non-default box format entry should own its list");
+                (id, owner)
             })
             .collect();
         let mut seen = std::collections::BTreeSet::new();
@@ -2328,7 +2326,7 @@ fn install_frozen_sections(
         if semantic_id.value() != expected_fingerprint {
             return Err(StoreFormatError::Invalid("frozen node semantic identity"));
         }
-        if id.len() == 0 {
+        if id.is_empty() {
             continue;
         }
         let payload_mut = std::sync::Arc::get_mut(&mut payload)
