@@ -108,8 +108,8 @@ required TeX save-stack work without changing the word. Restoration walks
 deduplicate touched cells and compare their visible values before and after the
 complete walk. They additionally report `Retained` when a global assignment
 survives group compaction without changing the group-exit value. Box ownership
-and survivor accounting remain attached to the box write outcome but do not
-replace this semantic receipt.
+remains attached to the box write outcome but does not replace this semantic
+receipt.
 
 The journal also owns an incremental projection of TeX82 §§273--280's physical
 save-stack words for §1334's diagnostic high-water accounting. Appending a
@@ -133,13 +133,17 @@ semantic hashing, and format serialization apply without a PDF-specific side
 store.
 
 Box slots additionally retain the group depth that owns their visible value.
+Each nonvoid slot owns an `Option<NodeListRef>` beside its packed semantic word,
+and each box undo record owns its complete old/new slot pair. The word is never
+lifetime authority. Coalescing replaces the undo record's new owner, same-level
+takes move the current owner to their caller, and group exit, rollback, journal
+retirement, and fork cloning drop or clone owners as ordinary typed values.
 Destructive `\box`, `\unhbox`, `\unvbox`, and `\vsplit` updates preserve that
 owner depth even when executed inside a nested box-construction group: the
 void or remainder value crosses inner boundaries, then the prior value is
-restored only when its owning group ends. Journal records therefore carry a
-box restore depth independently of whether an ordinary assignment was global;
-survivor-reference cleanup uses that same depth so a refiled entry keeps its
-box node root live across intervening group exits.
+restored only when its owning group ends. Journal records therefore carry a box
+restore depth independently of whether an ordinary assignment was global; a
+refiled record carries its owned box root across intervening group exits.
 
 ## 5. Meaning, sparse tier: the code tables
 
@@ -182,9 +186,9 @@ its inherited checkpoint records are rehomed.
 
 After a successful aggregate operation, `Env` makes the current cells the new
 baseline and clears the journal only when the consumed operation mark is the
-sole level-zero root and no TeX group is open. Clearing drops token, macro, and
-glue undo owners and releases committed box-old ownership while preserving the
-vectors as bounded operation scratch. Retained checkpoints, open groups, and
+sole level-zero root and no TeX group is open. Clearing drops token, macro,
+glue, and box undo owners while preserving the vectors as bounded operation
+scratch. Retained checkpoints, open groups, and
 fork prefixes keep their exact suffixes. No root registry, environment scan,
 or historical-generation compactor participates in this transition.
 
@@ -341,13 +345,13 @@ suffix; failed and retried operations truncate it directly. Each frozen list
 has a canonical semantic identity composed from decoded node values and child
 identities, excluding provenance.
 
-Survivor roots separate immutable payload ownership from one Universe's local
-root/refcount table. Env box words retain refcount ownership; mode, page,
-control, and checkpoint aggregates carry nonsemantic structural owners beside
-their handles. Related Universe forks share payloads through `Arc`; dropping a
-fork recycles storage only when it is the last payload owner. Survivors preserve
-exact checkpoint-owned node graphs without retaining discarded operation
-arenas or mounting historical finished paragraphs.
+Env box cells and undo records directly retain immutable `NodeListRef` payloads;
+their raw words are projections used by semantic hashing and format encoding.
+PDF form records likewise own the box moved from the source register. Mode,
+page, control, and checkpoint aggregates still use the temporary survivor
+bridge pending their aggregate-owner migration. Related Universe forks share
+direct payloads through `Arc`; losing Env/PDF timelines release their complete
+typed closure without a root table, discovery walk, or timeline pin.
 
 ## 8. External effects: the virtualized world
 

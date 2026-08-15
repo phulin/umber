@@ -36,7 +36,7 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/env/banks.rs`: Dense fixed-size bank codecs, parameter ids, and typed
   bank access helpers. Primitive spellings are owned by `tex-command`'s
   catalogue, not repeated here.
-- `src/env/box_bank.rs`: Dense-and-paged box slots combining semantic values with journal-owned assignment and coalescing state.
+- `src/env/box_bank.rs`: Dense-and-paged box slots combining raw semantic projections, direct `NodeListRef` ownership, and journal-owned assignment/coalescing state.
 - `src/env/group.rs`: Group stack, aftergroup/afterassignment handling, group mismatch types, final-value restoration receipts, and environment snapshot logic.
 - `src/env/overflow.rs`: Sparse e-TeX overflow register banks for high register numbers.
 - `src/env/raw.rs`: Restore-only raw environment writes, semantic word iteration, shadow verification, and raw word helpers.
@@ -138,7 +138,7 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/stores/low_memory.rs`: Compact TeX variable-size free-ring and rover projection.
 - `src/stores/exact_identity.rs`: Commutative current-cell accumulator and constant-size rollback image for canonical identities of non-default environment cells.
 - `src/stores/node_semantic.rs`: Canonical node encoding and bottom-up semantic-identity composition at aggregate freeze.
-- `src/stores/format.rs`: Deterministic versioned format-image DTO capture, reachable token/macro/glue closure remapping, validation, and fresh-store reconstruction.
+- `src/stores/format.rs`: Deterministic versioned format-image DTO capture, reachable token/macro/glue/node closure remapping, direct Env/PDF node-owner installation, validation, and fresh-store reconstruction.
 - `src/stores/format/frozen_core.rs`: Fixed-width schema-11 names, token-list, macro, and glue section codecs plus direct validated dense-store restoration.
 - `src/stores/format/frozen_non_node.rs`: Schema-11 font, code-table, and hyphenation section codecs plus direct validated store restoration.
 - `src/stores/format/frozen_node.rs`: Schema-11 fixed-record reachable node-graph codec, semantic-identity validation, and frozen arena installation metadata.
@@ -148,7 +148,7 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/stores/format/font_validation.rs`: Pre-publication validation of detached font metrics, identifiers, and serialized Env font banks, plus test-only corruption fixtures.
 - `src/stores/state_hash.rs`: Store snapshot cursor and semantic hashing implementation for changed cells and store-owned slices.
 - `src/stores/tests.rs`: Unit tests for aggregate store rollback, builders, handle validation, parameters, boxes, and state hashes.
-- `src/survivor.rs`: Legacy aggregate bridge for node lists that escape epoch rollback boundaries; its temporary transparent `SurvivorOwner` wrapper adds no authority beyond one `NodeListRef` and is mandatory removal in `.22.4`, while the pre-existing arena root/refcount/recycling path remains only for unmigrated raw Env/page/mode/control owners.
+- `src/survivor.rs`: Legacy aggregate bridge for node lists that escape epoch rollback boundaries; its temporary transparent `SurvivorOwner` wrapper adds no authority beyond one `NodeListRef` and is mandatory removal in `.22.4`, while the pre-existing arena root/refcount/recycling path remains only for unmigrated page/mode/control/checkpoint owners.
 - `src/tests.rs`: Crate-level integration-style unit tests for `Universe`, snapshots, world effects, and module test wiring.
 - `src/tests/handle_matrix.rs`: Table-driven aggregate rollback, fork, and cross-Universe liveness coverage for every production opaque handle class.
 - `src/tests/live_boundary.rs`: Unit tests proving live-state capability boundaries and restricted context APIs.

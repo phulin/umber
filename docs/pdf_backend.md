@@ -108,12 +108,11 @@ image, form, and graphics-state resources are referenced rather than copied.
 Future primitive issues may add object kinds without adding a second PDF
 state store.
 
-A staged form record owns its consumed compact node-list root through the same
-rollback timeline as the PDF ledger. This ownership is distinct from temporary
-box-build and shipout allocation pins: closing an enclosing box cannot reclaim
-a lazy form payload, while rollback before `\pdfxform` removes the ledger entry
-and releases its survivor root together. Direct shipout may therefore normalize
-forms recursively without weakening node-handle liveness checks.
+A staged form record directly owns the `NodeListRef` moved from its consumed box
+register. The PDF ledger's copy-on-write collections and snapshots share that
+owner; rollback before `\pdfxform`, suffix rejection, or final record drop
+releases it. No box-build, local survivor, or timeline pin participates, so
+direct shipout may normalize forms recursively through the record's owner.
 
 Finalization detaches only forms that have traversal artifacts (plus immediate
 forms, whose creation performs that traversal). An unreferenced lazy form

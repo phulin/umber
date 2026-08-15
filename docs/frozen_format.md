@@ -308,13 +308,11 @@ memory observation; capture and decode therefore require their targets exactly
 like semantic child targets.
 
 After validation, all lists are installed into one immutable `NodeListPayload`
-with their precomputed semantic spans. Schema 11's still-unmigrated Env box
-coordinates publish that payload through the existing survivor bridge; the
-payload representation itself is the one directly owned by `NodeListRef`.
-No legacy key map, graph promotion, or semantic reseal runs on the load path.
-The job epoch arena starts empty; job-local lists may safely refer to frozen
-lists and allocate normally. This substrate change does not claim that format
-Env roots or later job-local owners already store `NodeListRef` directly.
+with their precomputed semantic spans. Each nonvoid frozen Env box cell receives
+the corresponding `NodeListRef` directly when the immutable format base is
+installed. No legacy key map, graph promotion, survivor publication, or
+semantic reseal runs on the load path. The job epoch arena starts empty;
+job-local lists may safely refer to frozen lists and allocate normally.
 
 ### Frozen environment (kind 528)
 
@@ -328,9 +326,9 @@ validated against the decoded frozen stores.
 Value tag 0 stores the raw fixed-width semantic cell word. Tag 1 is permitted
 only for a nonvoid box cell and packs the frozen node-list record index in the
 low `u32` and its validated node count in the high `u32`. No runtime handle is
-serialized. After cross-store and node-reference validation, the loader maps
-box records to the installed survivor arena and bulk-installs all cells as an
-immutable format base without calling assignment APIs.
+serialized. After cross-store and node-reference validation, the loader clones
+the installed payload owner named by each box record and bulk-installs all cells
+as an immutable format base without calling assignment APIs.
 
 For token-parameter banks, record presence is semantic: an omitted cell is
 null, while a present record whose payload is token-list record 0 is an

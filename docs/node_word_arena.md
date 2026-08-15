@@ -2,8 +2,9 @@
 
 Status: authoritative contract for the adopted compact node representation,
 installed directly owned substrate, and nested-node owner migration. Aggregate
-Env, page, mode, control, PDF-form, and survivor-bridge migration remains
-tracked separately.
+Page, mode, control, checkpoint, shipout, and survivor-bridge migration remains
+tracked separately. Env box cells and undo records plus PDF forms directly own
+their node-list payloads.
 
 An immutable TeX node-list graph is an eight-byte word stream with kind-specific
 sidecars behind `NodeListRef`. The ref directly owns one `Arc` payload plus an
@@ -204,33 +205,32 @@ registry entry, upgrade path, or lifetime authority. `SurvivorOwners` merely
 groups those direct-owner clones for unmigrated aggregates. Both wrapper names
 are mandatory removals in the `.22.4` aggregate-owner migration.
 
-This bridge does not declare the remaining raw owners migrated: Env box
-current/undo, page, mode, control, checkpoints, PDF forms, shipout, format
-installation, and the pre-existing survivor root/refcount/pin machinery are
-retired only by the later ownership children. That old arena machinery remains
-a parallel legacy path for raw `NodeListId` call sites; it is not part of the
-direct `NodeListRef` representation and must not be extended.
+This bridge does not declare the remaining raw aggregate owners migrated: page,
+mode, control, checkpoints, shipout, and the pre-existing survivor
+root/refcount/pin machinery are retired only by the later ownership child. Env
+box current/undo values, format-installed box roots, and PDF forms no longer use
+that authority. The old arena machinery remains a parallel legacy path for the
+remaining raw `NodeListId` call sites; it is not part of the direct
+`NodeListRef` representation and must not be extended.
 
 No new compatibility owner, lifetime sidecar, registry, pin, graph scan,
 compactor, or successful-history table is introduced by the substrate.
 Promotion continues to copy a mixed legacy epoch/survivor DAG into one compact
 payload and rewrites every child coordinate before publication.
 
-Live box registers and retained undo records own survivor references. Publishing
-a box into nest or page state adds one aggregate root pin; one pin covers every
-interior span. Snapshots and shipout scopes capture the pin-log length and drain
-only their suffix on rollback or release. Group exit does not independently
-truncate node pins. Format capture requires a quiescent empty runtime pin log.
+Every nonvoid Env box slot stores `Option<NodeListRef>` beside its packed raw
+word, and every box undo record owns its exact old and new slots. Equal writes,
+coalescing, same-level mutation, global compaction, group restoration, rollback,
+and fork cloning therefore move or clone typed owners at the write barrier;
+retiring the journal drops them. The raw word is only a semantic/format
+projection and cannot recover ownership.
 
-Rollback-coupled engine records that retain a node list after its originating
-allocation scope use a separate timeline pin log. In particular, a PDF form
-owns the box removed from its register until aggregate rollback removes that
-form. Box-build and shipout completion never drain timeline pins; snapshots
-capture both pin-log lengths, and rollback releases the corresponding suffixes
-before truncating survivor storage. This follows TeX.web §§1073--1086, where box
-construction transfers a live box pointer through `box_end`, and pdftex.web
-§1546, where `\pdfxform` clears the register but stores that pointer in the form
-object for later recursive traversal (§§773--775).
+`\pdfxform` moves the direct owner out of the register after reserving the form
+identity. `PdfFormRecord` retains that owner through PDF copy-on-write snapshots,
+rollback, suffix preparation, recursive traversal, and format capture. Removing
+or dropping the last form record releases the payload without a local or
+timeline pin. This follows pdftex.web §1546, where the command clears the
+register but stores that pointer for later recursive traversal (§§773--775).
 
 At local legacy refcount zero with no direct ref, the old root slot is removed.
 Its vectors enter the recycled pool only if `Arc::try_unwrap` proves that no
