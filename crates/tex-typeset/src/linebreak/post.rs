@@ -227,7 +227,7 @@ fn materialize_channel<S: TypesetState>(
         ),
         end,
         decision,
-        params.empty_list,
+        &params.empty_list,
         actions,
         (line, lineages),
     );
@@ -300,7 +300,7 @@ pub fn post_line_break_owned<S: TypesetState>(
 }
 
 fn push_owned_line_segment<S: TypesetState>(
-    state: &S,
+    _state: &S,
     source: (
         &mut std::vec::IntoIter<Node>,
         &mut std::vec::IntoIter<Vec<DirectHighCellLineage>>,
@@ -309,7 +309,7 @@ fn push_owned_line_segment<S: TypesetState>(
     ),
     end: usize,
     decision: &BreakDecision,
-    empty_list: tex_state::ids::NodeListId,
+    empty_list: &tex_state::node_arena::NodeListRef,
     actions: Option<&[MaterializationAction]>,
     output: (&mut Vec<Node>, &mut Vec<DirectHighCellLineage>),
 ) -> (Vec<Node>, Vec<DirectHighCellLineage>) {
@@ -337,24 +337,15 @@ fn push_owned_line_segment<S: TypesetState>(
                 // pre-break material.
                 out.push(Node::Disc {
                     kind,
-                    pre: empty_list,
-                    post: empty_list,
-                    replace: empty_list,
+                    pre: empty_list.clone(),
+                    post: empty_list.clone(),
+                    replace: empty_list.clone(),
                     physical_replace_count: 0,
                 });
-                out.extend(state.nodes(pre).into_iter().map(|node| node.to_owned()));
-                out_lineages.extend(frozen_high_cell_lineages(state, pre, FrozenListRole::Pre));
-                post.extend(
-                    state
-                        .nodes(post_list)
-                        .into_iter()
-                        .map(|node| node.to_owned()),
-                );
-                post_lineages.extend(frozen_high_cell_lineages(
-                    state,
-                    post_list,
-                    FrozenListRole::Post,
-                ));
+                out.extend(pre.to_vec());
+                out_lineages.extend(frozen_high_cell_lineages(&pre, FrozenListRole::Pre));
+                post.extend(post_list.to_vec());
+                post_lineages.extend(frozen_high_cell_lineages(&post_list, FrozenListRole::Post));
             }
             Node::Disc {
                 kind,
@@ -367,15 +358,11 @@ fn push_owned_line_segment<S: TypesetState>(
                     kind,
                     pre,
                     post,
-                    replace,
+                    replace: replace.clone(),
                     physical_replace_count,
                 });
-                out.extend(state.nodes(replace).into_iter().map(|node| node.to_owned()));
-                out_lineages.extend(frozen_high_cell_lineages(
-                    state,
-                    replace,
-                    FrozenListRole::Replace,
-                ));
+                out.extend(replace.to_vec());
+                out_lineages.extend(frozen_high_cell_lineages(&replace, FrozenListRole::Replace));
             }
             Node::Glue { .. }
                 if absolute + 1 == end
@@ -399,13 +386,11 @@ fn push_owned_line_segment<S: TypesetState>(
     (post, post_lineages)
 }
 
-fn frozen_high_cell_lineages<S: TypesetState>(
-    state: &S,
-    list: tex_state::ids::NodeListId,
+fn frozen_high_cell_lineages(
+    list: &tex_state::node_arena::NodeListRef,
     role: FrozenListRole,
 ) -> Vec<DirectHighCellLineage> {
-    state
-        .nodes(list)
+    list.nodes()
         .iter()
         .enumerate()
         .flat_map(|(row, node)| {
@@ -415,7 +400,7 @@ fn frozen_high_cell_lineages<S: TypesetState>(
                 _ => 0,
             };
             (0..count).map(move |unit| DirectHighCellLineage::Frozen {
-                list,
+                list: list.clone(),
                 row: u32::try_from(row).expect("frozen node list exceeds u32 rows"),
                 unit: u32::try_from(unit).expect("ligature source exceeds u32 cells"),
                 role,

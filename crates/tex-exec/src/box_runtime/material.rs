@@ -72,7 +72,7 @@ fn execute_scanned_unbox_impl(
             return Ok(());
         }
         let children = match node {
-            Node::HList(node) | Node::VList(node) => node.children,
+            Node::HList(node) | Node::VList(node) => node.children.clone(),
             _ => unreachable!(),
         };
         Some(UnboxSource::Shared(children))
@@ -248,6 +248,7 @@ pub(crate) fn append_box_node_to_current_list(
         };
     let node = if matches!(nest.current_mode(), Mode::Math | Mode::DisplayMath) {
         let nucleus = stores.freeze_node_list(std::slice::from_ref(&node));
+        let nucleus = stores.node_list_ref(nucleus);
         Node::MathNoad(MathNoad::new(
             NoadKind::Normal(NoadClass::Ord),
             MathField::SubBox(nucleus),
@@ -275,14 +276,11 @@ fn extract_box_migrations(stores: &mut Universe, node: &mut Node) -> (Vec<Node>,
     let Node::HList(boxed) = node else {
         return (Vec::new(), Vec::new());
     };
-    let children = stores
-        .nodes(boxed.children)
-        .into_iter()
-        .map(|child| child.to_owned())
-        .collect::<Vec<_>>();
-    let (retained, pre_migrated, migrated) = split_hpack_migrations(stores, children);
+    let children = boxed.children.to_vec();
+    let (retained, pre_migrated, migrated) = split_hpack_migrations(children);
     if !pre_migrated.is_empty() || !migrated.is_empty() {
-        boxed.children = stores.freeze_node_list(&retained);
+        let retained = stores.freeze_node_list(&retained);
+        boxed.children = stores.node_list_ref(retained);
     }
     (pre_migrated, migrated)
 }
@@ -296,10 +294,7 @@ fn extract_box_migrations(stores: &mut Universe, node: &mut Node) -> (Vec<Node>,
 /// caller that packs a horizontal list with `adjust_tail` non-null -- §1076's
 /// `\hbox` contribution to a vertical list, §796's alignment column -- performs
 /// exactly this split, and differs only in where the migrated material lands.
-pub(crate) fn split_hpack_migrations(
-    stores: &Universe,
-    nodes: Vec<Node>,
-) -> (Vec<Node>, Vec<Node>, Vec<Node>) {
+pub(crate) fn split_hpack_migrations(nodes: Vec<Node>) -> (Vec<Node>, Vec<Node>, Vec<Node>) {
     let mut retained = Vec::with_capacity(nodes.len());
     let mut pre_migrated = Vec::new();
     let mut migrated = Vec::new();
@@ -312,12 +307,7 @@ pub(crate) fn split_hpack_migrations(
                 } else {
                     &mut migrated
                 };
-                target.extend(
-                    stores
-                        .nodes(adjust.content)
-                        .into_iter()
-                        .map(|node| node.to_owned()),
-                );
+                target.extend(adjust.content.to_vec());
             }
             node => retained.push(node),
         }
@@ -327,7 +317,7 @@ pub(crate) fn split_hpack_migrations(
 
 enum UnboxSource {
     PinnedSurvivor(tex_state::ids::NodeListId),
-    Shared(tex_state::ids::NodeListId),
+    Shared(tex_state::node_arena::NodeListRef),
 }
 
 fn append_unboxed(
@@ -340,21 +330,17 @@ fn append_unboxed(
         return Ok(());
     };
     let children = match source {
-        UnboxSource::PinnedSurvivor(children) => children,
-        UnboxSource::Shared(children) => {
-            stores.pin_survivor(children);
-            children
-        }
+        UnboxSource::PinnedSurvivor(children) => stores.node_list_ref(children),
+        UnboxSource::Shared(children) => children,
     };
     flush_pending_hchars(nest, stores, fuel)?;
     // pdfTeX's margin-kern nodes are line-breaking annotations owned by the
     // containing packed line. Copying the box preserves them, but either
     // unboxing primitive removes them while splicing the remaining children;
     // the frozen source list itself must remain immutable for `\unhcopy`.
-    for node in stores
-        .nodes(children)
-        .iter()
-        .map(|node| node.to_owned())
+    for node in children
+        .to_vec()
+        .into_iter()
         .filter(|node| {
             !matches!(
                 node,

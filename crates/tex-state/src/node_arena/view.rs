@@ -1,3 +1,4 @@
+use super::NodeListRef;
 use super::storage::{NodeStorage, NodeWord, decode_glue, decode_kern, decode_style};
 use crate::glue::GlueSpecRef;
 use crate::ids::{GlueId, NodeListId};
@@ -42,7 +43,7 @@ pub enum NodeRef<'a> {
     Glue {
         spec: &'a GlueSpecRef,
         kind: GlueKind,
-        leader: Option<&'a crate::node::LeaderPayload>,
+        leader: Option<crate::node::LeaderPayload<NodeListId>>,
     },
     Penalty(i32),
     Rule {
@@ -50,9 +51,9 @@ pub enum NodeRef<'a> {
         height: Option<Scaled>,
         depth: Option<Scaled>,
     },
-    HList(BoxNode),
-    VList(BoxNode),
-    Unset(UnsetNode),
+    HList(BoxNode<NodeListId>),
+    VList(BoxNode<NodeListId>),
+    Unset(UnsetNode<NodeListId>),
     Disc {
         kind: DiscKind,
         pre: NodeListId,
@@ -76,13 +77,13 @@ pub enum NodeRef<'a> {
     MathOn(Scaled),
     MathOff(Scaled),
     Direction(Direction),
-    MathNoad(crate::math::MathNoad),
-    FractionNoad(&'a crate::math::MathFraction),
+    MathNoad(crate::math::MathNoad<NodeListId>),
+    FractionNoad(crate::math::MathFraction<NodeListId>),
     MathStyle(MathStyle),
-    MathChoice(&'a crate::math::MathChoice),
-    MathList(crate::math::MathListNode),
+    MathChoice(crate::math::MathChoice<NodeListId>),
+    MathList(crate::math::MathListNode<NodeListId>),
     Nonscript,
-    Adjust(crate::node::AdjustNode),
+    Adjust(crate::node::AdjustNode<NodeListId>),
 }
 
 /// Dimension-bearing projection shared by owned and compact nodes.
@@ -98,15 +99,15 @@ pub enum PackedNode<'a> {
     },
     Glue {
         spec: GlueId,
-        leader: Option<&'a LeaderPayload>,
+        leader: Option<&'a LeaderPayload<NodeListId>>,
     },
     Rule {
         width: Option<Scaled>,
         height: Option<Scaled>,
         depth: Option<Scaled>,
     },
-    Box(BoxNode),
-    Unset(UnsetNode),
+    Box(BoxNode<NodeListId>),
+    Unset(UnsetNode<NodeListId>),
     Disc(NodeListId),
     Image {
         width: Scaled,
@@ -160,7 +161,9 @@ impl<'a> From<&'a Node> for NodeRef<'a> {
             Node::Glue { spec, kind, leader } => Self::Glue {
                 spec,
                 kind: *kind,
-                leader: leader.as_ref(),
+                leader: leader
+                    .clone()
+                    .map(|value| value.map_lists(|list| list.id())),
             },
             Node::Penalty(value) => Self::Penalty(*value),
             Node::Rule {
@@ -172,9 +175,9 @@ impl<'a> From<&'a Node> for NodeRef<'a> {
                 height: *height,
                 depth: *depth,
             },
-            Node::HList(value) => Self::HList(*value),
-            Node::VList(value) => Self::VList(*value),
-            Node::Unset(value) => Self::Unset(*value),
+            Node::HList(value) => Self::HList(value.clone().map_lists(|list| list.id())),
+            Node::VList(value) => Self::VList(value.clone().map_lists(|list| list.id())),
+            Node::Unset(value) => Self::Unset(value.clone().map_list(|list| list.id())),
             Node::Disc {
                 kind,
                 pre,
@@ -183,9 +186,9 @@ impl<'a> From<&'a Node> for NodeRef<'a> {
                 physical_replace_count,
             } => Self::Disc {
                 kind: *kind,
-                pre: *pre,
-                post: *post,
-                replace: *replace,
+                pre: pre.id(),
+                post: post.id(),
+                replace: replace.id(),
                 physical_replace_count: *physical_replace_count,
             },
             Node::Mark { class, tokens } => Self::Mark {
@@ -205,19 +208,21 @@ impl<'a> From<&'a Node> for NodeRef<'a> {
                 split_top_skip,
                 split_max_depth: *split_max_depth,
                 floating_penalty: *floating_penalty,
-                content: *content,
+                content: content.id(),
             },
             Node::Whatsit(value) => Self::Whatsit(value),
             Node::MathOn(value) => Self::MathOn(*value),
             Node::MathOff(value) => Self::MathOff(*value),
             Node::Direction(value) => Self::Direction(*value),
-            Node::MathNoad(value) => Self::MathNoad(value.clone()),
-            Node::FractionNoad(value) => Self::FractionNoad(value),
+            Node::MathNoad(value) => Self::MathNoad(value.clone().map_lists(|list| list.id())),
+            Node::FractionNoad(value) => {
+                Self::FractionNoad(value.clone().map_lists(|list| list.id()))
+            }
             Node::MathStyle(value) => Self::MathStyle(*value),
-            Node::MathChoice(value) => Self::MathChoice(value),
-            Node::MathList(value) => Self::MathList(*value),
+            Node::MathChoice(value) => Self::MathChoice(value.clone().map_lists(|list| list.id())),
+            Node::MathList(value) => Self::MathList(value.clone().map_list(|list| list.id())),
             Node::Nonscript => Self::Nonscript,
-            Node::Adjust(value) => Self::Adjust(*value),
+            Node::Adjust(value) => Self::Adjust(value.clone().map_list(|list| list.id())),
         }
     }
 }
@@ -265,9 +270,9 @@ impl NodeRef<'_> {
         self.kind().etex_type()
     }
 
-    /// Materializes an owned node for builder/list-surgery output, never for storage.
-    #[must_use]
-    pub fn to_owned(&self) -> Node {
+    /// Materializes the compact representation for allocation-independent
+    /// payload comparison. This never escapes as an owned engine node.
+    pub(crate) fn to_compact_owned(&self) -> Node<NodeListId> {
         match self {
             Self::Char {
                 font,
@@ -313,9 +318,9 @@ impl NodeRef<'_> {
             Self::Glue { spec, kind, leader } => Node::Glue {
                 spec: (*spec).clone(),
                 kind: *kind,
-                leader: leader.cloned(),
+                leader: leader.clone(),
             },
-            Self::Penalty(v) => Node::Penalty(*v),
+            Self::Penalty(value) => Node::Penalty(*value),
             Self::Rule {
                 width,
                 height,
@@ -325,9 +330,9 @@ impl NodeRef<'_> {
                 height: *height,
                 depth: *depth,
             },
-            Self::HList(v) => Node::HList(*v),
-            Self::VList(v) => Node::VList(*v),
-            Self::Unset(v) => Node::Unset(*v),
+            Self::HList(value) => Node::HList(value.clone()),
+            Self::VList(value) => Node::VList(value.clone()),
+            Self::Unset(value) => Node::Unset(value.clone()),
             Self::Disc {
                 kind,
                 pre,
@@ -360,17 +365,126 @@ impl NodeRef<'_> {
                 floating_penalty: *floating_penalty,
                 content: *content,
             },
+            Self::Whatsit(value) => Node::Whatsit((*value).clone()),
+            Self::MathOn(value) => Node::MathOn(*value),
+            Self::MathOff(value) => Node::MathOff(*value),
+            Self::Direction(value) => Node::Direction(*value),
+            Self::MathNoad(value) => Node::MathNoad(value.clone()),
+            Self::FractionNoad(value) => Node::FractionNoad(value.clone()),
+            Self::MathStyle(value) => Node::MathStyle(*value),
+            Self::MathChoice(value) => Node::MathChoice(value.clone()),
+            Self::MathList(value) => Node::MathList(value.clone()),
+            Self::Nonscript => Node::Nonscript,
+            Self::Adjust(value) => Node::Adjust(value.clone()),
+        }
+    }
+
+    /// Materializes an owned node for builder/list-surgery output, never for storage.
+    #[must_use]
+    pub fn to_owned_with(&self, mut resolve: impl FnMut(NodeListId) -> NodeListRef) -> Node {
+        match self {
+            Self::Char {
+                font,
+                ch,
+                origin_root,
+                ..
+            } => Node::Char {
+                font: *font,
+                ch: *ch,
+                origin: (*origin_root).clone(),
+            },
+            Self::Lig {
+                font,
+                ch,
+                orig,
+                origin_roots,
+                left_hit,
+                right_hit,
+                ..
+            } => Node::Lig {
+                font: *font,
+                ch: *ch,
+                orig: orig.to_vec(),
+                origins: origin_roots.to_vec(),
+                left_hit: *left_hit,
+                right_hit: *right_hit,
+            },
+            Self::Kern { amount, kind } => Node::Kern {
+                amount: *amount,
+                kind: *kind,
+            },
+            Self::MarginKern {
+                amount,
+                side,
+                font,
+                ch,
+            } => Node::MarginKern {
+                amount: *amount,
+                side: *side,
+                font: *font,
+                ch: *ch,
+            },
+            Self::Glue { spec, kind, leader } => Node::Glue {
+                spec: (*spec).clone(),
+                kind: *kind,
+                leader: leader.clone().map(|value| value.map_lists(&mut resolve)),
+            },
+            Self::Penalty(v) => Node::Penalty(*v),
+            Self::Rule {
+                width,
+                height,
+                depth,
+            } => Node::Rule {
+                width: *width,
+                height: *height,
+                depth: *depth,
+            },
+            Self::HList(v) => Node::HList(v.clone().map_lists(&mut resolve)),
+            Self::VList(v) => Node::VList(v.clone().map_lists(&mut resolve)),
+            Self::Unset(v) => Node::Unset(v.clone().map_list(&mut resolve)),
+            Self::Disc {
+                kind,
+                pre,
+                post,
+                replace,
+                physical_replace_count,
+            } => Node::Disc {
+                kind: *kind,
+                pre: resolve(*pre),
+                post: resolve(*post),
+                replace: resolve(*replace),
+                physical_replace_count: *physical_replace_count,
+            },
+            Self::Mark { class, tokens } => Node::Mark {
+                class: *class,
+                tokens: (*tokens).clone(),
+            },
+            Self::Ins {
+                class,
+                size,
+                split_top_skip,
+                split_max_depth,
+                floating_penalty,
+                content,
+            } => Node::Ins {
+                class: *class,
+                size: *size,
+                split_top_skip: (*split_top_skip).clone(),
+                split_max_depth: *split_max_depth,
+                floating_penalty: *floating_penalty,
+                content: resolve(*content),
+            },
             Self::Whatsit(v) => Node::Whatsit((*v).clone()),
             Self::MathOn(v) => Node::MathOn(*v),
             Self::MathOff(v) => Node::MathOff(*v),
             Self::Direction(v) => Node::Direction(*v),
-            Self::MathNoad(v) => Node::MathNoad(v.clone()),
-            Self::FractionNoad(v) => Node::FractionNoad((*v).clone()),
+            Self::MathNoad(v) => Node::MathNoad(v.clone().map_lists(&mut resolve)),
+            Self::FractionNoad(v) => Node::FractionNoad(v.clone().map_lists(&mut resolve)),
             Self::MathStyle(v) => Node::MathStyle(*v),
-            Self::MathChoice(v) => Node::MathChoice((*v).clone()),
-            Self::MathList(v) => Node::MathList(*v),
+            Self::MathChoice(v) => Node::MathChoice(v.clone().map_lists(&mut resolve)),
+            Self::MathList(v) => Node::MathList(v.clone().map_list(&mut resolve)),
             Self::Nonscript => Node::Nonscript,
-            Self::Adjust(v) => Node::Adjust(*v),
+            Self::Adjust(v) => Node::Adjust(v.clone().map_list(resolve)),
         }
     }
 
@@ -392,7 +506,7 @@ impl NodeRef<'_> {
             },
             Self::Glue { spec, leader, .. } => PackedNode::Glue {
                 spec: spec.id(),
-                leader: *leader,
+                leader: leader.as_ref(),
             },
             Self::Rule {
                 width,
@@ -441,7 +555,7 @@ impl NodeRef<'_> {
     }
 
     #[must_use]
-    pub fn box_node(&self) -> Option<BoxNode> {
+    pub fn box_node(&self) -> Option<BoxNode<NodeListId>> {
         match self.packed() {
             PackedNode::Box(node) => Some(node),
             _ => None,
@@ -523,7 +637,7 @@ impl NodeRef<'_> {
     }
 }
 
-fn math_field_child(field: &crate::math::MathField) -> Option<NodeListId> {
+fn math_field_child(field: &crate::math::MathField<NodeListId>) -> Option<NodeListId> {
     match field {
         crate::math::MathField::SubBox(child) | crate::math::MathField::SubMlist(child) => {
             Some(*child)
@@ -678,7 +792,13 @@ impl<'a> NodeList<'a> {
     }
     #[must_use]
     pub fn to_vec(self) -> Vec<Node> {
-        self.iter().map(|node| node.to_owned()).collect()
+        self.iter()
+            .map(|node| {
+                node.to_owned_with(|_| {
+                    panic!("materializing a nested compact list requires its structural owner")
+                })
+            })
+            .collect()
     }
     /// Test/debug-only decoded view for legacy structural assertions.
     #[cfg(any(test, feature = "testing"))]
@@ -850,6 +970,15 @@ impl<'a> NodeCursor<'a> {
         })
     }
 
+    /// Returns the decoded source node when this cursor borrows an owned list.
+    #[must_use]
+    pub fn owned_node(&self, index: usize) -> Option<&'a Node> {
+        match self.source {
+            NodeCursorSource::Owned(nodes) => nodes.get(index),
+            NodeCursorSource::Compact(_) => None,
+        }
+    }
+
     const fn source_len(&self) -> usize {
         match self.source {
             NodeCursorSource::Owned(nodes) => nodes.len(),
@@ -958,7 +1087,7 @@ impl NodeStorage {
                 NodeRef::Glue {
                     spec,
                     kind: *kind,
-                    leader: Some(leader),
+                    leader: Some(leader.clone()),
                 }
             }
             14 => {
@@ -993,8 +1122,8 @@ impl NodeStorage {
                 subscript: self.noads.subscript[side].clone(),
                 superscript: self.noads.superscript[side].clone(),
             }),
-            19 => NodeRef::FractionNoad(&self.fractions[side]),
-            20 => NodeRef::MathChoice(&self.choices[side]),
+            19 => NodeRef::FractionNoad(self.fractions[side]),
+            20 => NodeRef::MathChoice(self.choices[side]),
             21 => NodeRef::MathList(self.math_lists[side]),
             22 => NodeRef::Adjust(self.adjusts[side]),
             _ => panic!("reserved node-word tag"),

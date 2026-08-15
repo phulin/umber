@@ -527,9 +527,7 @@ impl FormatNode {
             NodeRef::Glue { spec, kind, leader } => Self::Glue {
                 spec: spec.id().raw(),
                 kind,
-                leader: leader
-                    .cloned()
-                    .map(|leader| FormatLeaderPayload::capture(stores, leader, roots)),
+                leader: leader.map(|leader| FormatLeaderPayload::capture(stores, leader, roots)),
             },
             NodeRef::Penalty(value) => Self::Penalty(value),
             NodeRef::Rule {
@@ -607,7 +605,7 @@ impl FormatNode {
         self,
         content_ids: &FormatContentIds<'_>,
         ids: &NodeIds,
-    ) -> Result<Node, StoreFormatError> {
+    ) -> Result<Node<NodeListId>, StoreFormatError> {
         self.restore_with_origins(content_ids, ids, &mut std::iter::empty())
     }
 
@@ -616,7 +614,7 @@ impl FormatNode {
         content_ids: &FormatContentIds<'_>,
         ids: &NodeIds,
         origins: &mut impl Iterator<Item = crate::provenance::OriginRef>,
-    ) -> Result<Node, StoreFormatError> {
+    ) -> Result<Node<NodeListId>, StoreFormatError> {
         Ok(match self {
             Self::Char { font, ch } => Node::Char {
                 font: font_id(content_ids, font)?,
@@ -790,7 +788,7 @@ impl FormatMathField {
 }
 
 impl FormatBoxNode {
-    fn capture(stores: &Stores, node: BoxNode, roots: &mut SurvivorRoots) -> Self {
+    fn capture(stores: &Stores, node: BoxNode<NodeListId>, roots: &mut SurvivorRoots) -> Self {
         Self {
             width: node.width,
             height: node.height,
@@ -806,7 +804,7 @@ impl FormatBoxNode {
         }
     }
 
-    fn restore(self, ids: &NodeIds) -> Result<BoxNode, StoreFormatError> {
+    fn restore(self, ids: &NodeIds) -> Result<BoxNode<NodeListId>, StoreFormatError> {
         Ok(BoxNode {
             width: self.width,
             height: self.height,
@@ -827,7 +825,11 @@ impl FormatBoxNode {
 }
 
 impl FormatLeaderPayload {
-    fn capture(stores: &Stores, leader: LeaderPayload, roots: &mut SurvivorRoots) -> Self {
+    fn capture(
+        stores: &Stores,
+        leader: LeaderPayload<NodeListId>,
+        roots: &mut SurvivorRoots,
+    ) -> Self {
         match leader {
             LeaderPayload::HList(node) => Self::HList(FormatBoxNode::capture(stores, node, roots)),
             LeaderPayload::VList(node) => Self::VList(FormatBoxNode::capture(stores, node, roots)),
@@ -843,7 +845,7 @@ impl FormatLeaderPayload {
         }
     }
 
-    fn restore(self, ids: &NodeIds) -> Result<LeaderPayload, StoreFormatError> {
+    fn restore(self, ids: &NodeIds) -> Result<LeaderPayload<NodeListId>, StoreFormatError> {
         Ok(match self {
             Self::HList(node) => LeaderPayload::HList(node.restore(ids)?),
             Self::VList(node) => LeaderPayload::VList(node.restore(ids)?),
@@ -861,7 +863,7 @@ impl FormatLeaderPayload {
 }
 
 impl FormatUnsetNode {
-    fn capture(stores: &Stores, node: UnsetNode, roots: &mut SurvivorRoots) -> Self {
+    fn capture(stores: &Stores, node: UnsetNode<NodeListId>, roots: &mut SurvivorRoots) -> Self {
         Self {
             kind: node.kind,
             width: node.width,
@@ -876,7 +878,7 @@ impl FormatUnsetNode {
         }
     }
 
-    fn restore(self, ids: &NodeIds) -> Result<UnsetNode, StoreFormatError> {
+    fn restore(self, ids: &NodeIds) -> Result<UnsetNode<NodeListId>, StoreFormatError> {
         Ok(UnsetNode {
             kind: self.kind,
             width: self.width,
@@ -1200,7 +1202,7 @@ fn pdf_literal_mode(mode: u8) -> Result<PdfLiteralMode, StoreFormatError> {
 }
 
 impl FormatMathField {
-    fn capture(stores: &Stores, field: MathField, roots: &mut SurvivorRoots) -> Self {
+    fn capture(stores: &Stores, field: MathField<NodeListId>, roots: &mut SurvivorRoots) -> Self {
         match field {
             MathField::Empty => Self::Empty,
             MathField::MathChar(value) => Self::MathChar(value),
@@ -1210,7 +1212,7 @@ impl FormatMathField {
         }
     }
 
-    fn restore(self, ids: &NodeIds) -> Result<MathField, StoreFormatError> {
+    fn restore(self, ids: &NodeIds) -> Result<MathField<NodeListId>, StoreFormatError> {
         Ok(match self {
             Self::Empty => MathField::Empty,
             Self::MathChar(value) => MathField::MathChar(value),
@@ -1222,7 +1224,7 @@ impl FormatMathField {
 }
 
 impl FormatMathNoad {
-    fn capture(stores: &Stores, noad: MathNoad, roots: &mut SurvivorRoots) -> Self {
+    fn capture(stores: &Stores, noad: MathNoad<NodeListId>, roots: &mut SurvivorRoots) -> Self {
         Self {
             kind: noad.kind,
             nucleus: FormatMathField::capture(stores, noad.nucleus, roots),
@@ -1231,7 +1233,7 @@ impl FormatMathNoad {
         }
     }
 
-    fn restore(self, ids: &NodeIds) -> Result<MathNoad, StoreFormatError> {
+    fn restore(self, ids: &NodeIds) -> Result<MathNoad<NodeListId>, StoreFormatError> {
         Ok(MathNoad {
             kind: self.kind,
             nucleus: self.nucleus.restore(ids)?,
@@ -1242,7 +1244,11 @@ impl FormatMathNoad {
 }
 
 impl FormatMathFraction {
-    fn capture(stores: &Stores, value: MathFraction, roots: &mut SurvivorRoots) -> Self {
+    fn capture(
+        stores: &Stores,
+        value: MathFraction<NodeListId>,
+        roots: &mut SurvivorRoots,
+    ) -> Self {
         Self {
             numerator: key(stores, value.numerator, roots),
             denominator: key(stores, value.denominator, roots),
@@ -1252,7 +1258,7 @@ impl FormatMathFraction {
         }
     }
 
-    fn restore(self, ids: &NodeIds) -> Result<MathFraction, StoreFormatError> {
+    fn restore(self, ids: &NodeIds) -> Result<MathFraction<NodeListId>, StoreFormatError> {
         Ok(MathFraction {
             numerator: list_id(ids, self.numerator)?,
             denominator: list_id(ids, self.denominator)?,
@@ -1264,7 +1270,7 @@ impl FormatMathFraction {
 }
 
 impl FormatMathChoice {
-    fn capture(stores: &Stores, value: MathChoice, roots: &mut SurvivorRoots) -> Self {
+    fn capture(stores: &Stores, value: MathChoice<NodeListId>, roots: &mut SurvivorRoots) -> Self {
         Self {
             display: key(stores, value.display, roots),
             text: key(stores, value.text, roots),
@@ -1273,7 +1279,7 @@ impl FormatMathChoice {
         }
     }
 
-    fn restore(self, ids: &NodeIds) -> Result<MathChoice, StoreFormatError> {
+    fn restore(self, ids: &NodeIds) -> Result<MathChoice<NodeListId>, StoreFormatError> {
         Ok(MathChoice {
             display: list_id(ids, self.display)?,
             text: list_id(ids, self.text)?,
@@ -1284,14 +1290,18 @@ impl FormatMathChoice {
 }
 
 impl FormatMathListNode {
-    fn capture(stores: &Stores, value: MathListNode, roots: &mut SurvivorRoots) -> Self {
+    fn capture(
+        stores: &Stores,
+        value: MathListNode<NodeListId>,
+        roots: &mut SurvivorRoots,
+    ) -> Self {
         Self {
             display: value.display,
             content: key(stores, value.content, roots),
         }
     }
 
-    fn restore(self, ids: &NodeIds) -> Result<MathListNode, StoreFormatError> {
+    fn restore(self, ids: &NodeIds) -> Result<MathListNode<NodeListId>, StoreFormatError> {
         Ok(MathListNode {
             display: self.display,
             content: list_id(ids, self.content)?,

@@ -152,7 +152,7 @@ fn rollback_restores_env_and_interner_as_one_tuple() {
 #[test]
 fn owned_and_borrowed_semantic_hash_paths_match_every_node_variant() {
     let mut stores = Stores::new();
-    let empty = stores.freeze_node_list(&[]);
+    let empty = crate::node_arena::NodeListRef::empty();
     let tokens = stores.intern_token_list(&[]);
     let box_node = BoxNode::new(BoxNodeFields {
         width: Scaled::from_raw(1),
@@ -163,7 +163,7 @@ fn owned_and_borrowed_semantic_hash_paths_match_every_node_variant() {
         glue_set: GlueSetRatio::from_raw(5),
         glue_sign: Sign::Shrinking,
         glue_order: Order::Fill,
-        children: empty,
+        children: empty.clone(),
     });
     let nodes = vec![
         Node::Char {
@@ -209,7 +209,7 @@ fn owned_and_borrowed_semantic_hash_paths_match_every_node_variant() {
             height: Some(Scaled::from_raw(10)),
             depth: None,
         },
-        Node::HList(box_node),
+        Node::HList(box_node.clone()),
         Node::VList(box_node),
         Node::Unset(UnsetNode::new(UnsetNodeFields {
             kind: UnsetKind::VBox,
@@ -221,13 +221,13 @@ fn owned_and_borrowed_semantic_hash_paths_match_every_node_variant() {
             stretch_order: Order::Filll,
             shrink: Scaled::from_raw(15),
             shrink_order: Order::Fil,
-            children: empty,
+            children: empty.clone(),
         })),
         Node::Disc {
             kind: DiscKind::AutomaticHyphen,
-            pre: empty,
-            post: empty,
-            replace: empty,
+            pre: empty.clone(),
+            post: empty.clone(),
+            replace: empty.clone(),
             physical_replace_count: 0,
         },
         Node::Mark {
@@ -240,7 +240,7 @@ fn owned_and_borrowed_semantic_hash_paths_match_every_node_variant() {
             split_top_skip: crate::glue::testing_zero_glue_ref(),
             split_max_depth: Scaled::from_raw(17),
             floating_penalty: -18,
-            content: empty,
+            content: empty.clone(),
         },
         Node::Whatsit(Whatsit::Language {
             language: 19,
@@ -252,25 +252,25 @@ fn owned_and_borrowed_semantic_hash_paths_match_every_node_variant() {
         Node::Direction(crate::node::Direction::EndR),
         Node::MathNoad(MathNoad::new(
             NoadKind::Normal(NoadClass::Ord),
-            MathField::SubMlist(empty),
+            MathField::SubMlist(empty.clone()),
         )),
         Node::FractionNoad(MathFraction {
-            numerator: empty,
-            denominator: empty,
+            numerator: empty.clone(),
+            denominator: empty.clone(),
             thickness: FractionThickness::Explicit(Scaled::from_raw(22)),
             left_delimiter: Some(23),
             right_delimiter: None,
         }),
         Node::MathStyle(MathStyle::ScriptScript),
         Node::MathChoice(MathChoice {
-            display: empty,
-            text: empty,
-            script: empty,
-            script_script: empty,
+            display: empty.clone(),
+            text: empty.clone(),
+            script: empty.clone(),
+            script_script: empty.clone(),
         }),
         Node::MathList(MathListNode {
             display: true,
-            content: empty,
+            content: empty.clone(),
         }),
         Node::Nonscript,
         Node::Adjust(crate::node::AdjustNode::ordinary(empty)),
@@ -283,8 +283,9 @@ fn owned_and_borrowed_semantic_hash_paths_match_every_node_variant() {
 fn node_semantic_ids_are_canonical_and_compose_from_children() {
     fn nested(stores: &mut Stores, penalty: i32) -> (NodeListId, NodeListId) {
         let child = stores.freeze_node_list(&[Node::Penalty(penalty)]);
+        let child_ref = stores.node_list_ref(child);
         let root =
-            stores.freeze_node_list(&[Node::Adjust(crate::node::AdjustNode::ordinary(child))]);
+            stores.freeze_node_list(&[Node::Adjust(crate::node::AdjustNode::ordinary(child_ref))]);
         (child, root)
     }
 
@@ -312,7 +313,7 @@ fn node_semantic_ids_are_canonical_and_compose_from_children() {
 
     let mut builder = shifted.node_list_builder();
     builder.push(Node::Adjust(crate::node::AdjustNode::ordinary(
-        shifted_child,
+        shifted.node_list_ref(shifted_child),
     )));
     let built_root = shifted.finish_node_list(&mut builder);
     assert_eq!(
@@ -335,7 +336,7 @@ fn node_semantic_ids_are_canonical_and_compose_from_children() {
 #[test]
 fn box_lr_is_part_of_canonical_node_semantic_identity() {
     let mut stores = Stores::new();
-    let empty = stores.freeze_node_list(&[]);
+    let empty = crate::node_arena::NodeListRef::empty();
     let mut identities = Vec::new();
     for box_lr in [
         crate::node::BoxLr::Normal,
@@ -351,7 +352,7 @@ fn box_lr_is_part_of_canonical_node_semantic_identity() {
             glue_set: GlueSetRatio::ZERO,
             glue_sign: Sign::Normal,
             glue_order: Order::Normal,
-            children: empty,
+            children: empty.clone(),
         }))]);
         identities.push(stores.node_semantic_id(list));
     }
@@ -428,8 +429,10 @@ fn node_semantic_ids_follow_rollback_and_promotion() {
     assert_ne!(stale_semantic_id, stores.node_semantic_id(replacement));
     assert!(std::panic::catch_unwind(|| stores.node_semantic_id(stale)).is_err());
 
-    let root =
-        stores.freeze_node_list(&[Node::Adjust(crate::node::AdjustNode::ordinary(replacement))]);
+    let replacement_ref = stores.node_list_ref(replacement);
+    let root = stores.freeze_node_list(&[Node::Adjust(crate::node::AdjustNode::ordinary(
+        replacement_ref,
+    ))]);
     let semantic_id = stores.node_semantic_id(root);
     stores.set_box_reg(0, root);
     let survivor = stores.box_reg(0).expect("box assignment promotes the list");
@@ -460,17 +463,19 @@ fn compact_and_survivor_nodes_own_mark_tokens_until_rollback() {
 
     stores.set_box_reg(0, compact);
     let survivor = stores.box_reg(0).expect("box assignment promotes the list");
+    let expected_tokens = stores.tokens.owner(token_id).expect("survivor node root");
+    let survivor_node = stores
+        .node_list_ref(survivor)
+        .get(0)
+        .expect("survivor mark");
     assert_eq!(
-        stores
-            .nodes(survivor)
-            .first()
-            .expect("survivor mark")
-            .to_owned(),
+        survivor_node,
         Node::Mark {
             class: 7,
-            tokens: stores.tokens.owner(token_id).expect("survivor node root"),
+            tokens: expected_tokens,
         }
     );
+    drop(survivor_node);
 
     stores.rollback(&snapshot);
     assert!(
@@ -573,12 +578,14 @@ fn semantic_projection_visits_only_outer_nodes() {
     let mut stores = Stores::new();
     let mut nested = stores.freeze_node_list(&[Node::Penalty(1)]);
     for _ in 0..512 {
+        let nested_ref = stores.node_list_ref(nested);
         nested =
-            stores.freeze_node_list(&[Node::Adjust(crate::node::AdjustNode::ordinary(nested))]);
+            stores.freeze_node_list(&[Node::Adjust(crate::node::AdjustNode::ordinary(nested_ref))]);
     }
 
+    let nested_ref = stores.node_list_ref(nested);
     let outer = [
-        Node::Adjust(crate::node::AdjustNode::ordinary(nested)),
+        Node::Adjust(crate::node::AdjustNode::ordinary(nested_ref)),
         Node::Penalty(2),
     ];
     let mut hasher = StateHasher::new(0x6f75_7465_725f_6e64);
@@ -588,10 +595,11 @@ fn semantic_projection_visits_only_outer_nodes() {
     let mut equivalent = Stores::new();
     let mut equivalent_nested = equivalent.freeze_node_list(&[Node::Penalty(1)]);
     for _ in 0..512 {
-        equivalent_nested = equivalent.freeze_node_list(&[Node::Adjust(
-            crate::node::AdjustNode::ordinary(equivalent_nested),
-        )]);
+        let nested_ref = equivalent.node_list_ref(equivalent_nested);
+        equivalent_nested = equivalent
+            .freeze_node_list(&[Node::Adjust(crate::node::AdjustNode::ordinary(nested_ref))]);
     }
+    let equivalent_nested = equivalent.node_list_ref(equivalent_nested);
     let mut equivalent_hasher = StateHasher::new(0x6f75_7465_725f_6e64);
     let equivalent_visits = equivalent.hash_node_slice_semantic(
         &[
@@ -608,18 +616,22 @@ fn semantic_projection_visits_only_outer_nodes() {
 fn adjustment_pre_marker_is_semantic_state() {
     let mut stores = Stores::new();
     let content = stores.freeze_node_list(&[Node::Penalty(17)]);
-    let ordinary =
-        stores.freeze_node_list(&[Node::Adjust(crate::node::AdjustNode::ordinary(content))]);
-    let pre =
-        stores.freeze_node_list(&[Node::Adjust(crate::node::AdjustNode { content, pre: true })]);
+    let content_ref = stores.node_list_ref(content);
+    let ordinary = stores.freeze_node_list(&[Node::Adjust(crate::node::AdjustNode::ordinary(
+        content_ref.clone(),
+    ))]);
+    let pre = stores.freeze_node_list(&[Node::Adjust(crate::node::AdjustNode {
+        content: content_ref,
+        pre: true,
+    })]);
 
     assert_ne!(
         stores.node_semantic_id(ordinary),
         stores.node_semantic_id(pre)
     );
     assert!(matches!(
-        stores.nodes(pre).testing_decoded(),
-        [Node::Adjust(adjust)] if adjust.pre && adjust.content == content
+        stores.node_list_ref(pre).get(0),
+        Some(Node::Adjust(adjust)) if adjust.pre && adjust.content.semantic_id() == stores.node_semantic_id(content)
     ));
 }
 
@@ -1912,15 +1924,19 @@ fn finish_node_list_rejects_foreign_whatsit_token_list() {
 }
 
 #[test]
-#[should_panic(expected = "child node-list id is not live in this Universe timeline")]
-fn freeze_node_list_rejects_stale_rolled_back_child_node_list() {
+fn direct_child_owner_survives_aggregate_rollback() {
     let mut stores = Stores::new();
     let snapshot = stores.checkpoint();
     let stale = one_char(&mut stores, 'x');
+    let stale = stores.node_list_ref(stale);
 
     stores.rollback(&snapshot);
     stores.freeze_node_list(&[Node::Penalty(1), Node::Penalty(2)]);
-    stores.freeze_node_list(&[Node::Adjust(crate::node::AdjustNode::ordinary(stale))]);
+    let root = stores.freeze_node_list(&[Node::Adjust(crate::node::AdjustNode::ordinary(stale))]);
+    assert!(matches!(
+        stores.nodes(root).first(),
+        Some(crate::node_arena::NodeRef::Adjust(_))
+    ));
 }
 
 #[test]
@@ -1960,11 +1976,11 @@ fn box_restore_text_rejects_a_genuinely_stale_timeline_handle() {
 }
 
 #[test]
-#[should_panic(expected = "child node-list id is not live in this Universe timeline")]
-fn finish_node_list_rejects_foreign_child_node_list() {
+fn direct_child_owner_can_cross_universe_boundaries() {
     let mut stores = Stores::new();
     let mut foreign = Stores::new();
     let foreign_child = one_char(&mut foreign, 'x');
+    let foreign_child = foreign.node_list_ref(foreign_child);
     let mut builder = stores.node_list_builder();
     builder.push(Node::HList(BoxNode::new(BoxNodeFields {
         width: scaled(10),
@@ -1978,7 +1994,8 @@ fn finish_node_list_rejects_foreign_child_node_list() {
         children: foreign_child,
     })));
 
-    let _ = stores.finish_node_list(&mut builder);
+    let root = stores.freeze_node_list_ref(builder);
+    assert!(matches!(root.get(0), Some(Node::HList(_))));
 }
 
 #[test]
@@ -2459,6 +2476,7 @@ fn survivor_recycling_carries_word_and_box_rule_sidecars_together() {
             height: None,
             depth: Some(Scaled::from_raw(-raw)),
         }]);
+        let child = stores.node_list_ref(child);
         let root = stores.freeze_node_list(&[Node::HList(BoxNode::new(BoxNodeFields {
             width: Scaled::from_raw(raw),
             height: Scaled::from_raw(0),
@@ -2696,6 +2714,7 @@ fn local_box_after_global_drops_local_survivor_on_group_exit() {
 fn promoted_nested_box_remaps_children_to_same_survivor_root() {
     let mut stores = Stores::new();
     let inner = one_char(&mut stores, 'x');
+    let inner = stores.node_list_ref(inner);
     let middle = stores.freeze_node_list(&[Node::HList(BoxNode::new(BoxNodeFields {
         width: scaled(10),
         height: scaled(7),
@@ -2707,6 +2726,7 @@ fn promoted_nested_box_remaps_children_to_same_survivor_root() {
         glue_order: Order::Normal,
         children: inner,
     }))]);
+    let middle = stores.node_list_ref(middle);
     let outer = stores.freeze_node_list(&[Node::VList(BoxNode::new(BoxNodeFields {
         width: scaled(20),
         height: scaled(9),
@@ -2748,6 +2768,7 @@ fn promotion_canonicalizes_shared_survivor_children_into_new_root() {
     let child = one_char(&mut stores, 'x');
     stores.set_box_reg(0, child);
     let child = stores.box_reg(0).expect("child box should be promoted");
+    let child = stores.node_list_ref(child);
     let fields = BoxNodeFields {
         width: scaled(10),
         height: scaled(7),
@@ -2757,10 +2778,10 @@ fn promotion_canonicalizes_shared_survivor_children_into_new_root() {
         glue_set: GlueSetRatio::ZERO,
         glue_sign: Sign::Normal,
         glue_order: Order::Normal,
-        children: child,
+        children: child.clone(),
     };
     let outer = stores.freeze_node_list(&[
-        Node::HList(BoxNode::new(fields)),
+        Node::HList(BoxNode::new(fields.clone())),
         Node::VList(BoxNode::new(fields)),
     ]);
 
@@ -2794,6 +2815,7 @@ fn promotion_canonicalizes_shared_survivor_children_into_new_root() {
 fn promotion_patches_every_child_bearing_compact_row() {
     let mut stores = Stores::new();
     let child = one_char(&mut stores, 'c');
+    let child = stores.node_list_ref(child);
     let box_node = BoxNode::new(BoxNodeFields {
         width: scaled(1),
         height: scaled(2),
@@ -2803,17 +2825,17 @@ fn promotion_patches_every_child_bearing_compact_row() {
         glue_set: GlueSetRatio::ZERO,
         glue_sign: Sign::Normal,
         glue_order: Order::Normal,
-        children: child,
+        children: child.clone(),
     });
     let noad = MathNoad {
         kind: NoadKind::Normal(NoadClass::Ord),
-        nucleus: MathField::SubBox(child),
-        subscript: MathField::SubMlist(child),
-        superscript: MathField::SubBox(child),
+        nucleus: MathField::SubBox(child.clone()),
+        subscript: MathField::SubMlist(child.clone()),
+        superscript: MathField::SubBox(child.clone()),
     };
     let root = stores.freeze_node_list(&[
-        Node::HList(box_node),
-        Node::VList(box_node),
+        Node::HList(box_node.clone()),
+        Node::VList(box_node.clone()),
         Node::Unset(UnsetNode::new(UnsetNodeFields {
             kind: UnsetKind::HBox,
             width: scaled(5),
@@ -2824,7 +2846,7 @@ fn promotion_patches_every_child_bearing_compact_row() {
             stretch_order: Order::Fil,
             shrink: scaled(9),
             shrink_order: Order::Fill,
-            children: child,
+            children: child.clone(),
         })),
         Node::Glue {
             spec: crate::glue::testing_zero_glue_ref(),
@@ -2833,9 +2855,9 @@ fn promotion_patches_every_child_bearing_compact_row() {
         },
         Node::Disc {
             kind: DiscKind::Discretionary,
-            pre: child,
-            post: child,
-            replace: child,
+            pre: child.clone(),
+            post: child.clone(),
+            replace: child.clone(),
             physical_replace_count: 3,
         },
         Node::Ins {
@@ -2844,25 +2866,25 @@ fn promotion_patches_every_child_bearing_compact_row() {
             split_top_skip: crate::glue::testing_zero_glue_ref(),
             split_max_depth: scaled(11),
             floating_penalty: 12,
-            content: child,
+            content: child.clone(),
         },
         Node::MathNoad(noad),
         Node::FractionNoad(MathFraction {
-            numerator: child,
-            denominator: child,
+            numerator: child.clone(),
+            denominator: child.clone(),
             thickness: FractionThickness::Default,
             left_delimiter: None,
             right_delimiter: None,
         }),
         Node::MathChoice(MathChoice {
-            display: child,
-            text: child,
-            script: child,
-            script_script: child,
+            display: child.clone(),
+            text: child.clone(),
+            script: child.clone(),
+            script_script: child.clone(),
         }),
         Node::MathList(MathListNode {
             display: false,
-            content: child,
+            content: child.clone(),
         }),
         Node::Adjust(crate::node::AdjustNode::ordinary(child)),
     ]);
@@ -2899,6 +2921,8 @@ fn promotion_copies_overlapping_source_spans_independently() {
     let mut stores = Stores::new();
     let whole = stores.freeze_node_list(&[Node::Penalty(10), Node::Penalty(20)]);
     let suffix = stores.nodes.testing_subspan(whole, 1, 1);
+    let whole = stores.node_list_ref(whole);
+    let suffix = stores.node_list_ref(suffix);
     let fields = |children| {
         BoxNode::new(BoxNodeFields {
             width: scaled(1),
@@ -2993,6 +3017,7 @@ fn promotion_handles_pathologically_deep_box_nesting() {
     let mut stores = Stores::new();
     let mut current = one_char(&mut stores, 'x');
     for _ in 0..4096 {
+        let current_ref = stores.node_list_ref(current);
         current = stores.freeze_node_list(&[Node::HList(BoxNode::new(BoxNodeFields {
             width: scaled(1),
             height: scaled(1),
@@ -3002,7 +3027,7 @@ fn promotion_handles_pathologically_deep_box_nesting() {
             glue_set: GlueSetRatio::ZERO,
             glue_sign: Sign::Normal,
             glue_order: Order::Normal,
-            children: current,
+            children: current_ref,
         }))]);
     }
 

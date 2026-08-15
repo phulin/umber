@@ -402,27 +402,6 @@ impl Default for PageBuilderState {
 }
 
 impl PageBuilderState {
-    pub(crate) fn visit_node_lists_mut(
-        &mut self,
-        mut visit: impl FnMut(&mut crate::ids::NodeListId),
-    ) {
-        for node in Arc::make_mut(&mut self.contribution) {
-            node.visit_node_lists_mut(&mut visit);
-        }
-        let current = self.current_page.iter().cloned().collect::<Vec<_>>();
-        self.current_page.clear();
-        for mut node in current {
-            node.visit_node_lists_mut(&mut visit);
-            self.current_page.push(node);
-        }
-        for node in Arc::make_mut(&mut self.page_discards) {
-            node.visit_node_lists_mut(&mut visit);
-        }
-        for node in Arc::make_mut(&mut self.split_discards) {
-            node.visit_node_lists_mut(&mut visit);
-        }
-    }
-
     pub(crate) fn replace_node_owners(&mut self, owners: Vec<SurvivorOwner>) {
         self.node_owners = SurvivorOwners::new(owners);
     }

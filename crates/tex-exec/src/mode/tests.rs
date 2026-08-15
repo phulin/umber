@@ -5,7 +5,7 @@ use super::{
 use std::sync::Arc;
 use tex_command::{ConditionalMode, FatalError};
 use tex_state::Universe;
-use tex_state::ids::{FontId, NodeListId};
+use tex_state::ids::FontId;
 use tex_state::math::FractionThickness;
 use tex_state::node::{KernKind, Node};
 use tex_state::scaled::Scaled;
@@ -344,7 +344,7 @@ fn journal_append_watermarks_restore_scalars_without_append_inverses() {
         );
         list.set_align_state(align_state());
         list.set_incomplete_fraction(IncompleteFraction {
-            numerator: NodeListId::testing_epoch(3, 1),
+            numerator: tex_state::node_arena::NodeListRef::empty(),
             thickness: FractionThickness::Explicit(Scaled::from_raw(4)),
             left_delimiter: Some(5),
             right_delimiter: Some(6),
@@ -355,7 +355,7 @@ fn journal_append_watermarks_restore_scalars_without_append_inverses() {
         });
         list.set_display_eq_no(DisplayEqNo {
             side: EqNoSide::Right,
-            display: NodeListId::testing_epoch(7, 1),
+            display: tex_state::node_arena::NodeListRef::empty(),
         });
     }
 
@@ -456,7 +456,7 @@ fn journal_math_and_display_ownership_transfers_restore() {
     {
         let mut list = nest.current_list_mutation();
         list.set_incomplete_fraction(IncompleteFraction {
-            numerator: NodeListId::testing_epoch(1, 2),
+            numerator: tex_state::node_arena::NodeListRef::empty(),
             thickness: FractionThickness::Default,
             left_delimiter: None,
             right_delimiter: Some(9),
@@ -467,7 +467,7 @@ fn journal_math_and_display_ownership_transfers_restore() {
         });
         list.set_display_eq_no(DisplayEqNo {
             side: EqNoSide::Left,
-            display: NodeListId::testing_epoch(4, 2),
+            display: tex_state::node_arena::NodeListRef::empty(),
         });
     }
     let before = nest.summary();

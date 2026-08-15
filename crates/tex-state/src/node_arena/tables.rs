@@ -5,7 +5,7 @@ use crate::scaled::Scaled;
 
 #[derive(Clone, Debug, Default)]
 pub(super) struct BoxTable {
-    pub(super) rows: Vec<crate::node::BoxNode>,
+    pub(super) rows: Vec<crate::node::BoxNode<NodeListId>>,
 }
 
 impl BoxTable {
@@ -15,7 +15,7 @@ impl BoxTable {
     pub(super) fn reserve(&mut self, additional: usize) {
         self.rows.reserve(additional);
     }
-    pub(super) fn push(&mut self, value: crate::node::BoxNode) -> u32 {
+    pub(super) fn push(&mut self, value: crate::node::BoxNode<NodeListId>) -> u32 {
         let index = checked_len(self.len(), "box sidecar exceeds u32 entries");
         self.rows.push(value);
         index
@@ -57,7 +57,7 @@ impl UnsetTable {
         self.shrink_order.reserve(additional);
         self.children.reserve(additional);
     }
-    pub(super) fn push(&mut self, v: crate::node::UnsetNode) -> u32 {
+    pub(super) fn push(&mut self, v: crate::node::UnsetNode<NodeListId>) -> u32 {
         let i = checked_len(self.len(), "unset sidecar exceeds u32 entries");
         self.kind.push(v.kind);
         self.width.push(v.width);
@@ -153,9 +153,9 @@ impl InsertionTable {
 #[derive(Clone, Debug, Default)]
 pub(super) struct NoadTable {
     pub(super) kind: Vec<crate::math::NoadKind>,
-    pub(super) nucleus: Vec<crate::math::MathField>,
-    pub(super) subscript: Vec<crate::math::MathField>,
-    pub(super) superscript: Vec<crate::math::MathField>,
+    pub(super) nucleus: Vec<crate::math::MathField<NodeListId>>,
+    pub(super) subscript: Vec<crate::math::MathField<NodeListId>>,
+    pub(super) superscript: Vec<crate::math::MathField<NodeListId>>,
 }
 impl NoadTable {
     pub(super) fn len(&self) -> usize {
@@ -167,7 +167,7 @@ impl NoadTable {
         self.subscript.reserve(additional);
         self.superscript.reserve(additional);
     }
-    pub(super) fn push(&mut self, v: crate::math::MathNoad) -> u32 {
+    pub(super) fn push(&mut self, v: crate::math::MathNoad<NodeListId>) -> u32 {
         let i = checked_len(self.len(), "noad sidecar exceeds u32 entries");
         self.kind.push(v.kind);
         self.nucleus.push(v.nucleus);

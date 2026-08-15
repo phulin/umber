@@ -1,8 +1,8 @@
 use tex_arith::WideScaled;
 use tex_state::glue::GlueSpec;
 use tex_state::glue::GlueSpecRef;
-use tex_state::ids::NodeListId;
 use tex_state::node::{KernKind, Node};
+use tex_state::node_arena::NodeListRef;
 use tex_state::node_sequence::NodeSequence;
 use tex_state::scaled::Scaled;
 
@@ -52,7 +52,7 @@ pub struct LineBreakParams {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PostLineBreakParams {
-    pub empty_list: NodeListId,
+    pub empty_list: NodeListRef,
     pub left_skip: GlueSpecRef,
     pub right_skip: GlueSpecRef,
     pub interline_penalty: i32,
@@ -198,17 +198,17 @@ pub struct ParagraphTape {
     materialization: Vec<MaterializationAction>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 struct BreakSite {
     breakpoint: Breakpoint,
     trace: TraceSpan,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 struct TraceSpan {
     display_end: usize,
     next_start: usize,
-    display_suffix: Option<NodeListId>,
+    display_suffix: Option<NodeListRef>,
     breakpoint: TraceBreakpoint,
 }
 
@@ -232,12 +232,12 @@ impl ParagraphTape {
         let break_sites = analyzer
             .by_ref()
             .map(|site| {
-                let display_end = trace_display_end(state, nodes, site);
+                let display_end = trace_display_end(nodes, site);
                 BreakSite {
                     breakpoint: site,
                     trace: TraceSpan {
                         display_end,
-                        next_start: trace_display_next_start(state, nodes, site, display_end),
+                        next_start: trace_display_next_start(nodes, site, display_end),
                         display_suffix: trace_display_suffix(nodes, site),
                         breakpoint: trace_breakpoint(nodes, site),
                     },
@@ -285,7 +285,7 @@ pub enum LineBreakTrace {
     Pass(LineBreakPass),
     Feasible {
         display: core::ops::Range<usize>,
-        display_suffix: Option<NodeListId>,
+        display_suffix: Option<NodeListRef>,
         breakpoint: TraceBreakpoint,
         via: usize,
         badness: Option<i32>,
@@ -574,12 +574,8 @@ fn observe_expansion_fonts<S: TypesetState>(
             Node::Disc {
                 pre, post, replace, ..
             } => {
-                for list in [*pre, *post, *replace] {
-                    let owned: Vec<_> = state
-                        .nodes(list)
-                        .into_iter()
-                        .map(|node| node.to_owned())
-                        .collect();
+                for list in [pre, post, replace] {
+                    let owned = list.to_vec();
                     observe_expansion_fonts(state, &owned, paragraph)?;
                 }
             }
@@ -703,11 +699,9 @@ fn run_pass<S: TypesetState>(
         .flatten();
     let mut displayed_through = 0;
 
-    for &BreakSite {
-        breakpoint: bp,
-        trace: trace_span,
-    } in &tape.break_sites
-    {
+    for site in &tape.break_sites {
+        let bp = site.breakpoint;
+        let trace_span = &site.trace;
         // Background and discretionary material depend only on this
         // breakpoint. Combine them once instead of once per active route.
         let mut breakpoint_width = bp.line_width;
@@ -832,7 +826,7 @@ fn run_pass<S: TypesetState>(
                             // discretionaries (their pre/post lists), even though
                             // width accounting stops before those nodes.
                             display: displayed_through..trace_span.display_end,
-                            display_suffix: trace_span.display_suffix,
+                            display_suffix: trace_span.display_suffix.clone(),
                             breakpoint: trace_span.breakpoint,
                             via: active_candidate.passive.map_or(0, |id| passive[id].serial),
                             badness: (b <= INF_BAD).then_some(b),
@@ -998,7 +992,7 @@ fn run_pass<S: TypesetState>(
     Some(reconstruct(active[chosen], &passive, last_line_fit, memory))
 }
 
-fn trace_display_suffix(nodes: &[Node], bp: Breakpoint) -> Option<NodeListId> {
+fn trace_display_suffix(nodes: &[Node], bp: Breakpoint) -> Option<NodeListRef> {
     // §903's boundary-kern reconstitution keeps the displaced ligature in
     // the automatic discretionary's side list. TeX82's linked list exposes
     // it to §851; Umber carries it as this detached trace suffix instead.
@@ -1021,10 +1015,10 @@ fn trace_display_suffix(nodes: &[Node], bp: Breakpoint) -> Option<NodeListId> {
     else {
         return None;
     };
-    Some(*replace)
+    Some(replace.clone())
 }
 
-fn trace_display_end<S: TypesetState>(state: &S, nodes: &[Node], bp: Breakpoint) -> usize {
+fn trace_display_end(nodes: &[Node], bp: Breakpoint) -> usize {
     let Some(Node::Disc { replace, .. }) = bp
         .position
         .checked_sub(1)
@@ -1045,10 +1039,7 @@ fn trace_display_end<S: TypesetState>(state: &S, nodes: &[Node], bp: Breakpoint)
         // displaced replacement after the discretionary. The trace slice
         // consumes the kern; `trace_display_next_start` advances over the
         // replacement after its detached suffix has been rendered.
-        return bp
-            .position
-            .saturating_add(state.nodes(*replace).len())
-            .min(nodes.len());
+        return bp.position.saturating_add(replace.len()).min(nodes.len());
     }
     if !matches!(
         bp.position
@@ -1059,13 +1050,13 @@ fn trace_display_end<S: TypesetState>(state: &S, nodes: &[Node], bp: Breakpoint)
     {
         return bp.position;
     }
-    let mut replacement_count = state.nodes(*replace).len();
+    let mut replacement_count = replace.len();
     let mut index = bp.position - 1;
     while let Some(previous) = index.checked_sub(1) {
         let Node::Disc { replace, .. } = &nodes[previous] else {
             break;
         };
-        replacement_count = replacement_count.saturating_add(state.nodes(*replace).len());
+        replacement_count = replacement_count.saturating_add(replace.len());
         index = previous;
     }
     bp.position
@@ -1073,19 +1064,14 @@ fn trace_display_end<S: TypesetState>(state: &S, nodes: &[Node], bp: Breakpoint)
         .min(nodes.len())
 }
 
-fn trace_display_next_start<S: TypesetState>(
-    state: &S,
-    nodes: &[Node],
-    bp: Breakpoint,
-    display_end: usize,
-) -> usize {
+fn trace_display_next_start(nodes: &[Node], bp: Breakpoint, display_end: usize) -> usize {
     if trace_display_suffix(nodes, bp).is_some() {
         display_end.saturating_add(1).min(nodes.len())
     } else if let Some(Node::Disc { replace, .. }) = bp
         .position
         .checked_sub(1)
         .and_then(|index| nodes.get(index))
-        && display_end.saturating_sub(bp.position) == state.nodes(*replace).len()
+        && display_end.saturating_sub(bp.position) == replace.len()
     {
         // §851's temporary link surgery may make the current structural slice
         // include nodes used to model `replace_count`; §855 skips them only
@@ -1452,14 +1438,10 @@ fn line_shortfall_for_route(target: Scaled, natural: WideScaled) -> Scaled {
         .unwrap_or(Scaled::from_raw(0))
 }
 
-fn discretionary_post_is_nonempty<S: TypesetState>(
-    state: &S,
-    nodes: &[Node],
-    position: usize,
-) -> bool {
+fn discretionary_post_is_nonempty(nodes: &[Node], position: usize) -> bool {
     matches!(
         position.checked_sub(1).and_then(|index| nodes.get(index)),
-        Some(Node::Disc { post, .. }) if !state.nodes(*post).is_empty()
+        Some(Node::Disc { post, .. }) if !post.is_empty()
     )
 }
 
@@ -1566,12 +1548,11 @@ impl<'a, S: TypesetState> LegalBreakpoints<'a, S> {
         add_width: Widths,
         line_width: Widths,
     ) -> Breakpoint {
-        let next_position =
-            if hyphenated && discretionary_post_is_nonempty(self.state, self.nodes, position) {
-                position
-            } else {
-                next_width_position(self.nodes, position)
-            };
+        let next_position = if hyphenated && discretionary_post_is_nonempty(self.nodes, position) {
+            position
+        } else {
+            next_width_position(self.nodes, position)
+        };
         let mut next_width = line_width;
         for index in width_position..next_position {
             add_node_width(
@@ -1592,9 +1573,9 @@ impl<'a, S: TypesetState> LegalBreakpoints<'a, S> {
         {
             next_width = next_width.sub(line_widths_view(
                 self.state,
-                self.state.nodes(*post),
+                post,
                 0,
-                self.state.nodes(*post).len(),
+                post.len(),
                 self.include_font_expansion,
             ));
         }
@@ -1655,15 +1636,9 @@ impl<S: TypesetState> Iterator for LegalBreakpoints<'_, S> {
                 Node::Disc { pre, .. } => Some((
                     i + 1,
                     i,
-                    discretionary_penalty(self.state.nodes(*pre).is_empty(), self.params),
+                    discretionary_penalty(pre.is_empty(), self.params),
                     true,
-                    line_widths_view(
-                        self.state,
-                        self.state.nodes(*pre),
-                        0,
-                        self.state.nodes(*pre).len(),
-                        self.include_font_expansion,
-                    ),
+                    line_widths_view(self.state, pre, 0, pre.len(), self.include_font_expansion),
                     before,
                 )),
                 Node::MathOff(_) if matches!(self.nodes.get(i + 1), Some(Node::Glue { .. })) => {

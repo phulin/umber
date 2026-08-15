@@ -1,7 +1,7 @@
 use tex_arith::WideScaled;
 use tex_state::glue::{GlueSpec, Order};
 use tex_state::node::Node;
-use tex_state::node_arena::{NodeCursor, NodeList, NodeRef, PackedNode};
+use tex_state::node_arena::{NodeCursor, NodeList, NodeListRef, NodeRef, PackedNode};
 use tex_state::scaled::Scaled;
 
 use crate::TypesetState;
@@ -108,14 +108,15 @@ fn add_scaled(total: WideScaled, value: Scaled) -> WideScaled {
 
 pub(super) fn line_widths_view<S: TypesetState>(
     state: &S,
-    nodes: NodeList<'_>,
+    list: &NodeListRef,
     start: usize,
     end: usize,
     include_font_expansion: bool,
 ) -> Widths {
     line_widths_cursor(
         state,
-        NodeCursor::compact(nodes),
+        NodeCursor::compact(list.nodes()),
+        Some(list),
         start,
         end,
         include_font_expansion,
@@ -125,6 +126,7 @@ pub(super) fn line_widths_view<S: TypesetState>(
 fn line_widths_cursor<S: TypesetState>(
     state: &S,
     nodes: NodeCursor<'_>,
+    owner: Option<&NodeListRef>,
     start: usize,
     end: usize,
     include_font_expansion: bool,
@@ -153,7 +155,14 @@ fn line_widths_cursor<S: TypesetState>(
             }
             index += run_len;
         } else {
-            add_node_width_cursor(&mut widths, state, &nodes, index, include_font_expansion);
+            add_node_width_cursor(
+                &mut widths,
+                state,
+                &nodes,
+                owner,
+                index,
+                include_font_expansion,
+            );
             index += 1;
         }
     }
@@ -161,7 +170,11 @@ fn line_widths_cursor<S: TypesetState>(
 }
 
 pub(super) fn line_widths_nodes<S: TypesetState>(state: &S, nodes: &[Node]) -> Widths {
-    line_widths_cursor(state, NodeCursor::owned(nodes), 0, nodes.len(), true)
+    let mut widths = Widths::zero();
+    for index in 0..nodes.len() {
+        add_node_width(&mut widths, state, nodes, index, true);
+    }
+    widths
 }
 
 pub(super) fn add_node_width<S: TypesetState>(
@@ -171,10 +184,21 @@ pub(super) fn add_node_width<S: TypesetState>(
     index: usize,
     include_font_expansion: bool,
 ) {
+    if let Node::Disc { replace, .. } = &nodes[index] {
+        add_nested_list_widths(
+            widths,
+            state,
+            replace,
+            replace.nodes(),
+            include_font_expansion,
+        );
+        return;
+    }
     add_node_width_cursor(
         widths,
         state,
         &NodeCursor::owned(nodes),
+        None,
         index,
         include_font_expansion,
     );
@@ -184,6 +208,7 @@ fn add_node_width_cursor<S: TypesetState>(
     widths: &mut Widths,
     state: &S,
     nodes: &NodeCursor<'_>,
+    owner: Option<&NodeListRef>,
     index: usize,
     include_font_expansion: bool,
 ) {
@@ -223,7 +248,11 @@ fn add_node_width_cursor<S: TypesetState>(
             widths.natural = add_scaled(widths.natural, unset.width);
         }
         PackedNode::Disc(replace) => {
-            add_nested_list_widths(widths, state, state.nodes(replace), include_font_expansion);
+            let owner = owner.expect("compact discretionary traversal requires its owner");
+            let replacement = owner
+                .child_nodes(replace)
+                .expect("discretionary replacement belongs to its owner payload");
+            add_nested_list_widths(widths, state, owner, replacement, include_font_expansion);
         }
         PackedNode::Image { width, .. } => {
             widths.natural = add_scaled(widths.natural, width);
@@ -237,7 +266,8 @@ fn add_node_width_cursor<S: TypesetState>(
 /// cursor stack remains proportional to depth and has a small fixed frame.
 fn add_nested_list_widths<'a, S: TypesetState>(
     widths: &mut Widths,
-    state: &'a S,
+    state: &S,
+    owner: &'a NodeListRef,
     nodes: NodeList<'a>,
     include_font_expansion: bool,
 ) {
@@ -281,7 +311,10 @@ fn add_nested_list_widths<'a, S: TypesetState>(
                 widths.natural = add_scaled(widths.natural, unset.width);
             }
             PackedNode::Disc(replace) => {
-                stack.push((NodeCursor::compact(state.nodes(replace)), 0));
+                let replacement = owner
+                    .child_nodes(replace)
+                    .expect("nested discretionary replacement belongs to its owner payload");
+                stack.push((NodeCursor::compact(replacement), 0));
             }
             PackedNode::Image { width, .. } => {
                 widths.natural = add_scaled(widths.natural, width);

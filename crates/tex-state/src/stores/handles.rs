@@ -358,6 +358,9 @@ impl Stores {
     }
 
     pub(super) fn assert_live_node_list(&self, id: NodeListId) {
+        if id.is_empty() {
+            return;
+        }
         let live = match id.arena() {
             ArenaRef::Epoch => self.nodes.contains(id),
             ArenaRef::Survivor(_) => self.survivors.contains(id),
@@ -399,6 +402,9 @@ impl Stores {
     }
 
     fn assert_live_child_node_list(&self, id: NodeListId) {
+        if id.is_empty() {
+            return;
+        }
         match id.arena() {
             ArenaRef::Epoch => {
                 assert!(

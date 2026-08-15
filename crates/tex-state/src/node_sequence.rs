@@ -8,13 +8,13 @@ use crate::node::Node;
 ///
 /// This is transient allocator-projection data. It does not participate in
 /// node semantics or any portable format schema.
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub enum DirectHighCellLineage {
     /// A direct row in one semantic/physical paragraph projection.
     Sequence { row: u32, unit: u32 },
     /// A direct row copied from one exact frozen discretionary branch.
     Frozen {
-        list: crate::ids::NodeListId,
+        list: crate::node_arena::NodeListRef,
         row: u32,
         unit: u32,
         role: FrozenListRole,
@@ -37,12 +37,12 @@ pub fn direct_high_cell_overlap(
 ) -> u32 {
     let current = current
         .iter()
-        .copied()
-        .collect::<std::collections::BTreeSet<_>>();
+        .cloned()
+        .collect::<std::collections::HashSet<_>>();
     let predecessor = predecessor
         .iter()
-        .copied()
-        .collect::<std::collections::BTreeSet<_>>();
+        .cloned()
+        .collect::<std::collections::HashSet<_>>();
     u32::try_from(current.intersection(&predecessor).count())
         .expect("direct high-cell overlap exceeds u32")
 }
@@ -201,17 +201,6 @@ impl NodeSequence {
     pub fn replace_channels(&mut self, semantic: Vec<Node>, physical: Vec<Node>) {
         assert_eq!(semantic.len(), physical.len());
         *self = Self::from_channels(semantic, physical);
-    }
-
-    /// Rewrites direct child-list handles while preserving the diagnostic
-    /// physical channel and its semantic-boundary projection.
-    pub fn visit_node_lists_mut(&mut self, mut visit: impl FnMut(&mut crate::ids::NodeListId)) {
-        for node in Arc::make_mut(&mut self.semantic) {
-            node.visit_node_lists_mut(&mut visit);
-        }
-        for node in Arc::make_mut(&mut self.physical) {
-            node.visit_node_lists_mut(&mut visit);
-        }
     }
 
     /// Mutates semantic nodes and atomically resets the physical channel to
@@ -377,13 +366,13 @@ mod tests {
             .semantic_high_cell_lineages()
             .iter()
             .flatten()
-            .copied()
+            .cloned()
             .collect::<Vec<_>>();
         let physical = paired
             .physical_high_cell_lineages()
             .iter()
             .flatten()
-            .copied()
+            .cloned()
             .collect::<Vec<_>>();
         assert_eq!(direct_high_cell_overlap(&semantic, &physical), 3);
 
@@ -406,13 +395,13 @@ mod tests {
             .semantic_high_cell_lineages()
             .iter()
             .flatten()
-            .copied()
+            .cloned()
             .collect::<Vec<_>>();
         let physical = unpaired
             .physical_high_cell_lineages()
             .iter()
             .flatten()
-            .copied()
+            .cloned()
             .collect::<Vec<_>>();
         assert_eq!(direct_high_cell_overlap(&semantic, &physical), 0);
     }

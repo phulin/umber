@@ -107,7 +107,7 @@ pub(crate) fn hpack_with_overfull_rule(
     let params = hpack_params(stores);
     let (mut packed, lr_problems) =
         crate::packing_params::hpack_unreported(stores, children, spec, params);
-    if !stores.nodes(packed.node.children).is_empty()
+    if !packed.node.children.is_empty()
         && params.overfull_rule.raw() > 0
         && packed
             .diagnostics
@@ -116,20 +116,21 @@ pub(crate) fn hpack_with_overfull_rule(
                 matches!(diagnostic, PackDiagnostic::Overfull { excess } if *excess > params.hfuzz)
             })
     {
-        let mut nodes = stores.nodes(packed.node.children).to_vec();
+        let mut nodes = packed.node.children.to_vec();
         nodes.push(Node::Rule {
             width: Some(params.overfull_rule),
             height: None,
             depth: None,
         });
-        packed.node.children = stores.freeze_node_list(&nodes);
+        let children = stores.freeze_node_list(&nodes);
+        packed.node.children = stores.node_list_ref(children);
     }
     // TeX82 §§115/162 stores a discretionary's replacement as the
     // physical nodes immediately following the disc node. Umber keeps that
     // material in `replace` so semantic list traversal cannot count it twice;
     // retain the physical projection separately for §182's diagnostic walk.
     if let Some(diagnostic_children) =
-        physical_discretionary_projection(stores, packed.node.children)
+        physical_discretionary_projection(stores, packed.node.children.clone())
     {
         packed.node.diagnostic_children = Some(diagnostic_children);
     }
@@ -139,9 +140,9 @@ pub(crate) fn hpack_with_overfull_rule(
 
 fn physical_discretionary_projection(
     stores: &mut Universe,
-    children: NodeListId,
-) -> Option<NodeListId> {
-    let nodes = stores.nodes(children).to_vec();
+    children: tex_state::node_arena::NodeListRef,
+) -> Option<tex_state::node_arena::NodeListRef> {
+    let nodes = children.to_vec();
     if !nodes.iter().any(|node| {
         matches!(
             node,
@@ -156,7 +157,7 @@ fn physical_discretionary_projection(
     let mut physical = Vec::with_capacity(nodes.len());
     for node in nodes {
         let replace = match &node {
-            Node::Disc { replace, .. } => Some(stores.nodes(*replace).to_vec()),
+            Node::Disc { replace, .. } => Some(replace.to_vec()),
             _ => None,
         };
         physical.push(node);
@@ -164,7 +165,8 @@ fn physical_discretionary_projection(
             physical.extend(replace);
         }
     }
-    Some(stores.freeze_node_list_owned(&mut physical))
+    let physical = stores.freeze_node_list_owned(&mut physical);
+    Some(stores.node_list_ref(physical))
 }
 
 pub(crate) fn hpack_owned_with_overfull_rule(
@@ -211,6 +213,7 @@ pub(crate) fn hpack_owned_with_overfull_rule(
         crate::pack_report::DiagnosticListLayout::FrozenList
     };
     let children = stores.freeze_node_list_owned(nodes);
+    let children = stores.node_list_ref(children);
     let mut packed = plan.finish(children);
     packed.node.allocator_high_cell_overlap = if diagnostic_nodes.is_some() {
         allocator_high_cell_overlap
@@ -225,24 +228,28 @@ pub(crate) fn hpack_owned_with_overfull_rule(
         line: stores.current_input_line().max(0) as u32,
         source: stores.current_input_source(),
     });
-    let diagnostic_box = diagnostic_nodes.map_or(packed.node, |nodes| {
+    let diagnostic_box = if let Some(nodes) = diagnostic_nodes {
         let diagnostic_children = stores.freeze_node_list(nodes);
+        let diagnostic_children = stores.node_list_ref(diagnostic_children);
         let children = stores.freeze_node_list(
             short_diagnostic_nodes
                 .as_deref()
                 .expect("physical diagnostics have a short-display projection"),
         );
+        let children = stores.node_list_ref(children);
         packed.node.diagnostic_children = Some(diagnostic_children);
         tex_state::node::BoxNode {
             children,
-            ..packed.node
+            ..packed.node.clone()
         }
-    });
+    } else {
+        packed.node.clone()
+    };
     crate::pack_report::report_pack_diagnostics(
         stores,
         crate::pack_report::PackedDirection::Horizontal,
         &packed.diagnostics,
-        &Node::HList(diagnostic_box),
+        &Node::HList(diagnostic_box.clone()),
         diagnostic_list_layout,
     );
     if let Some((missing, extra)) = lr_problems {
@@ -250,7 +257,7 @@ pub(crate) fn hpack_owned_with_overfull_rule(
             stores,
             missing,
             extra,
-            &Node::HList(diagnostic_box),
+            &Node::HList(diagnostic_box.clone()),
             diagnostic_list_layout,
         );
     }
@@ -259,7 +266,7 @@ pub(crate) fn hpack_owned_with_overfull_rule(
 
 pub(crate) fn project_short_diagnostic_discs(physical: &[Node], semantic: &[Node]) -> Vec<Node> {
     let mut semantic_discs = semantic.iter().filter_map(|node| match node {
-        Node::Disc { pre, post, .. } => Some((*pre, *post)),
+        Node::Disc { pre, post, .. } => Some((pre.clone(), post.clone())),
         _ => None,
     });
     physical
@@ -272,12 +279,14 @@ pub(crate) fn project_short_diagnostic_discs(physical: &[Node], semantic: &[Node
                 replace,
                 physical_replace_count,
             } => {
-                let (pre, post) = semantic_discs.next().unwrap_or((*pre, *post));
+                let (pre, post) = semantic_discs
+                    .next()
+                    .unwrap_or_else(|| (pre.clone(), post.clone()));
                 Node::Disc {
                     kind: *kind,
                     pre,
                     post,
-                    replace: *replace,
+                    replace: replace.clone(),
                     physical_replace_count: *physical_replace_count,
                 }
             }
@@ -286,12 +295,10 @@ pub(crate) fn project_short_diagnostic_discs(physical: &[Node], semantic: &[Node
         .collect()
 }
 
-pub(crate) fn first_box_node(stores: &Universe, id: Option<NodeListId>) -> Option<Node> {
+pub(crate) fn first_box_node(stores: &mut Universe, id: Option<NodeListId>) -> Option<Node> {
     let id = id?;
-    stores.nodes(id).first().and_then(|node| match node {
-        tex_state::node_arena::NodeRef::HList(_) | tex_state::node_arena::NodeRef::VList(_) => {
-            Some(node.to_owned())
-        }
-        _ => None,
-    })
+    stores
+        .node_list_ref(id)
+        .get(0)
+        .filter(|node| matches!(node, Node::HList(_) | Node::VList(_)))
 }

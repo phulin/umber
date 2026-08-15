@@ -435,7 +435,7 @@ struct ReplayBoxes {
 
 #[derive(Clone, Debug)]
 struct ActiveDiscretionary {
-    parts: Vec<NodeListId>,
+    parts: Vec<tex_state::node_arena::NodeListRef>,
     rejected: bool,
 }
 
@@ -917,15 +917,6 @@ impl MainControl {
         stores: &mut Universe,
         snapshot: &mut tex_state::LocalRetrySnapshot,
     ) {
-        fn visit_leader(leader: &mut LeaderPayload, mut visit: impl FnMut(&mut NodeListId)) {
-            if let LeaderPayload::HList(node) | LeaderPayload::VList(node) = leader {
-                visit(&mut node.children);
-                if let Some(children) = &mut node.diagnostic_children {
-                    visit(children);
-                }
-            }
-        }
-
         fn visit_alignment(
             alignment: &mut ActiveReplayAlignment,
             mut visit: impl FnMut(&mut NodeListId),
@@ -934,9 +925,6 @@ impl MainControl {
                 for list in row {
                     visit(list);
                 }
-            }
-            for node in &mut alignment.row_migrations {
-                node.visit_node_lists_mut(&mut visit);
             }
         }
 
@@ -948,16 +936,8 @@ impl MainControl {
         if let Some(alignment) = &mut self.active_alignment {
             visit_alignment(alignment, &mut promote);
         }
-        if let Some((_, leader)) = &mut self.boxes.pending_leader {
-            visit_leader(leader, &mut promote);
-        }
         for alignment in &mut self.boxes.suspended_alignments {
             visit_alignment(alignment, &mut promote);
-        }
-        for discretionary in &mut self.active_discretionaries {
-            for part in &mut discretionary.parts {
-                promote(part);
-            }
         }
         self.node_owners =
             tex_state::survivor::SurvivorOwners::new(stores.committed_node_owners(&roots));
@@ -1877,10 +1857,9 @@ impl MainControl {
             // container to preserve TeX's physical-tail view.  This is
             // intentionally distinct from §1105 deletion, which refuses to
             // remove a discretionary replacement suffix.
-            Node::Disc { replace, .. } => stores
-                .nodes(*replace)
-                .last()
-                .map(|node| node.to_owned())
+            Node::Disc { replace, .. } => replace
+                .to_vec()
+                .pop()
                 .and_then(|node| Self::classify_last_node(stores, &node)),
             _ => None,
         }
@@ -2440,6 +2419,7 @@ impl MainControl {
         });
         let prefix_end = first_forbidden.unwrap_or(level.list().nodes().len());
         let nodes = stores.freeze_node_list(&level.list().nodes()[..prefix_end]);
+        let nodes = stores.node_list_ref(nodes);
         let deleted =
             first_forbidden.map(|index| stores.freeze_node_list(&level.list().nodes()[index..]));
         let aftergroup =
@@ -2508,12 +2488,12 @@ impl MainControl {
         if active.rejected {
             return Ok(ReplayStep::Continue);
         }
-        let [pre, post, mut replace]: [NodeListId; 3] = active
+        let [pre, post, mut replace]: [tex_state::node_arena::NodeListRef; 3] = active
             .parts
             .try_into()
             .expect("discretionary completes after exactly three parts");
         if matches!(self.modes.current_mode(), Mode::Math | Mode::DisplayMath)
-            && !stores.nodes(replace).is_empty()
+            && !replace.is_empty()
         {
             // TeX82 §1120 diagnoses and deletes only a nonempty third part
             // in math mode; the discretionary and its first two parts survive.
@@ -2529,18 +2509,18 @@ impl MainControl {
                 ],
                 context,
             )?;
-            replace = stores.freeze_node_list(&[]);
+            replace = tex_state::node_arena::NodeListRef::empty();
         }
+        let physical_replace_count = replace
+            .len()
+            .try_into()
+            .expect("TeX discretionary replacement count fits a quarterword");
         self.modes.current_list_mutation().push(Node::Disc {
             kind: DiscKind::Discretionary,
             pre,
             post,
             replace,
-            physical_replace_count: stores
-                .nodes(replace)
-                .len()
-                .try_into()
-                .expect("TeX discretionary replacement count fits a quarterword"),
+            physical_replace_count,
         });
         Ok(ReplayStep::Continue)
     }
@@ -2584,11 +2564,12 @@ impl MainControl {
             }
             Err(_) => stores.freeze_node_list(&[]),
         };
-        let empty = stores.freeze_node_list(&[]);
+        let pre = stores.node_list_ref(pre);
+        let empty = tex_state::node_arena::NodeListRef::empty();
         self.modes.current_list_mutation().push(Node::Disc {
             kind: DiscKind::ExplicitHyphen,
             pre,
-            post: empty,
+            post: empty.clone(),
             replace: empty,
             physical_replace_count: 0,
         });
@@ -3342,7 +3323,7 @@ impl MainControl {
         &mut self,
         kind: GroupKind,
         stores: &mut Universe,
-    ) -> Result<tex_state::ids::NodeListId, ExecError> {
+    ) -> Result<tex_state::node_arena::NodeListRef, ExecError> {
         // The depth sampled before `push_math`, not the innermost group
         // kind, is what identifies this group's own closing brace: a nested
         // subformula opens another `math_group`, and any brace group inside
@@ -3375,7 +3356,7 @@ impl MainControl {
     fn finish_math_level(
         &mut self,
         stores: &mut Universe,
-    ) -> Result<tex_state::ids::NodeListId, ExecError> {
+    ) -> Result<tex_state::node_arena::NodeListRef, ExecError> {
         self.main_loop_active = false;
         while left_group_open(&self.modes, stores) {
             // The `\right.` applied below is exactly the closer §1065 selects
@@ -3419,7 +3400,7 @@ impl MainControl {
     fn execute_math_choice_branch(
         &mut self,
         stores: &mut Universe,
-    ) -> Result<tex_state::ids::NodeListId, ExecError> {
+    ) -> Result<tex_state::node_arena::NodeListRef, ExecError> {
         self.command_scan_math_choice_group(stores)?;
         self.execute_live_math_group(GroupKind::MathChoice, stores)
     }
@@ -3495,8 +3476,8 @@ impl MainControl {
                 // wrapper whose converted nucleus and scripts become sibling
                 // boxes.
                 if kind == MathTextFieldKind::Ord
-                    && let MathField::SubMlist(list) = field
-                    && let [Node::MathNoad(accent)] = stores.nodes(list).to_vec().as_slice()
+                    && let MathField::SubMlist(ref list) = field
+                    && let [Node::MathNoad(accent)] = list.to_vec().as_slice()
                     && matches!(accent.kind, NoadKind::Accent { .. })
                 {
                     self.modes
@@ -3822,12 +3803,12 @@ impl MainControl {
     fn prepare_math_list(
         &mut self,
         stores: &mut Universe,
-    ) -> Result<tex_state::ids::NodeListId, ExecError> {
+    ) -> Result<tex_state::node_arena::NodeListRef, ExecError> {
         let math_font_context = self.command.output_open_context(&stores.command_context());
         let rejected = crate::math::reject_invalid_math_fonts(stores, math_font_context)?;
         let content = take_finished_math_list(&mut self.modes, stores)?;
         Ok(if rejected {
-            stores.freeze_node_list(&[])
+            tex_state::node_arena::NodeListRef::empty()
         } else {
             content
         })
@@ -3838,7 +3819,13 @@ impl MainControl {
     fn prepare_display_math_list(
         &mut self,
         stores: &mut Universe,
-    ) -> Result<(tex_state::ids::NodeListId, crate::mode::ModeLevelSummary), ExecError> {
+    ) -> Result<
+        (
+            tex_state::node_arena::NodeListRef,
+            crate::mode::ModeLevelSummary,
+        ),
+        ExecError,
+    > {
         let content = self.prepare_math_list(stores)?;
         let level =
             crate::box_runtime::commit_current_list(&mut self.modes, stores, self.fuel.fuel_mut())?;
@@ -3951,7 +3938,7 @@ impl MainControl {
         );
         let math_font_context = self.command.output_open_context(&stores.command_context());
         if crate::math::reject_invalid_math_fonts(stores, math_font_context)? {
-            content = stores.freeze_node_list(&[]);
+            content = tex_state::node_arena::NodeListRef::empty();
         }
         let _ =
             crate::box_runtime::commit_current_list(&mut self.modes, stores, self.fuel.fuel_mut())?;
@@ -3997,10 +3984,10 @@ impl MainControl {
         &mut self,
         stores: &mut Universe,
         eq: crate::mode::DisplayEqNo,
-        content: tex_state::ids::NodeListId,
+        content: tex_state::node_arena::NodeListRef,
     ) -> Result<
         (
-            tex_state::ids::NodeListId,
+            tex_state::node_arena::NodeListRef,
             crate::math::display::FinishedEqNo,
         ),
         ExecError,
@@ -4061,7 +4048,7 @@ impl MainControl {
     fn finish_display_math_content(
         &mut self,
         stores: &mut Universe,
-        mut content: tex_state::ids::NodeListId,
+        mut content: tex_state::node_arena::NodeListRef,
         eq_no: Option<crate::math::display::FinishedEqNo>,
         fonts_checked: bool,
         display_level: Option<crate::mode::ModeLevelSummary>,
@@ -4073,7 +4060,7 @@ impl MainControl {
         // including the saved outer mlist after an equation number.
         let math_font_context = self.command.output_open_context(&stores.command_context());
         if !fonts_checked && crate::math::reject_invalid_math_fonts(stores, math_font_context)? {
-            content = stores.freeze_node_list(&[]);
+            content = tex_state::node_arena::NodeListRef::empty();
         }
         let mut level = match display_level {
             Some(level) => level,
@@ -4281,13 +4268,10 @@ impl MainControl {
                             .unwrap_or(i32::MAX),
                     )?;
                     self.active_math_left_boundaries.push(true);
-                    let segment = stores
-                        .nodes(content)
-                        .into_iter()
-                        .map(|node| node.to_owned());
+                    let segment = content.to_vec();
                     self.modes
                         .current_list_mutation()
-                        .append(segment.chain([Node::MathNoad(MathNoad::new(
+                        .append(segment.into_iter().chain([Node::MathNoad(MathNoad::new(
                             NoadKind::MiddleDelimiter {
                                 delimiter: boundary.delimiter.code,
                             },
@@ -4335,11 +4319,7 @@ impl MainControl {
                         })?;
                 self.active_math_left_boundaries.pop();
                 schedule_aftergroup(&mut self.command_machine(), stores, aftergroup)?;
-                let mut nodes: Vec<_> = stores
-                    .nodes(content)
-                    .into_iter()
-                    .map(|node| node.to_owned())
-                    .collect();
+                let mut nodes = content.to_vec();
                 nodes.push(Node::MathNoad(MathNoad::new(
                     NoadKind::RightDelimiter {
                         delimiter: boundary.delimiter.code,
@@ -4347,6 +4327,7 @@ impl MainControl {
                     MathField::Empty,
                 )));
                 let content = stores.freeze_node_list(&nodes);
+                let content = stores.node_list_ref(content);
                 self.modes
                     .current_list_mutation()
                     .push(Node::MathNoad(MathNoad::new(
@@ -5472,6 +5453,7 @@ fn start_fraction(
         return false;
     }
     let numerator = stores.freeze_node_list(&list.take_nodes());
+    let numerator = stores.node_list_ref(numerator);
     list.set_incomplete_fraction(crate::mode::IncompleteFraction {
         numerator,
         thickness: match fraction.thickness {
@@ -5488,19 +5470,16 @@ fn finish_math_list(
     nodes: &[Node],
     incomplete: Option<&crate::mode::IncompleteFraction>,
     stores: &mut Universe,
-) -> Result<tex_state::ids::NodeListId, ExecError> {
+) -> Result<tex_state::node_arena::NodeListRef, ExecError> {
     let mut output = nodes.to_vec();
     if let Some(fraction) = incomplete {
         let denominator = stores.freeze_node_list(&output);
+        let denominator = stores.node_list_ref(denominator);
         // TeX82 §1185 and e-TeX [48.1185]: `delim_ptr` identifies the most
         // recent `\left` or `\middle` in a math-left group.  Completion moves
         // only the nodes after that boundary into the numerator, then links
         // the fraction noad immediately after the boundary.
-        let mut numerator_nodes: Vec<_> = stores
-            .nodes(fraction.numerator)
-            .into_iter()
-            .map(|node| node.to_owned())
-            .collect();
+        let mut numerator_nodes = fraction.numerator.to_vec();
         let boundary = numerator_nodes.iter().rposition(|node| {
             matches!(
                 node,
@@ -5517,9 +5496,10 @@ fn finish_math_list(
             (Vec::new(), numerator_nodes)
         };
         let numerator = if prefix.is_empty() {
-            fraction.numerator
+            fraction.numerator.clone()
         } else {
-            stores.freeze_node_list(&numerator_nodes)
+            let numerator = stores.freeze_node_list(&numerator_nodes);
+            stores.node_list_ref(numerator)
         };
         let fraction = Node::FractionNoad(MathFraction {
             numerator,
@@ -5530,7 +5510,8 @@ fn finish_math_list(
         });
         output = prefix.into_iter().chain([fraction]).collect();
     }
-    Ok(stores.freeze_node_list(&output))
+    let output = stores.freeze_node_list(&output);
+    Ok(stores.node_list_ref(output))
 }
 
 /// TeX82 §1186's `math_group` singleton-Ord simplification.
@@ -5539,10 +5520,12 @@ fn finish_math_list(
 /// `handle_right_brace` removes braces around exactly one undecorated Ord
 /// noad by copying its nucleus field into the destination. This preserves an
 /// author box as `sub_box` instead of wrapping it in a second natural hpack.
-fn collapse_singleton_math_group(stores: &Universe, list: tex_state::ids::NodeListId) -> MathField {
-    let mut nodes = stores.nodes(list).into_iter();
-    if let Some(tex_state::node_arena::NodeRef::MathNoad(noad)) = nodes.next()
-        && nodes.next().is_none()
+fn collapse_singleton_math_group(
+    _stores: &Universe,
+    list: tex_state::node_arena::NodeListRef,
+) -> MathField {
+    let nodes = list.to_vec();
+    if let [Node::MathNoad(noad)] = nodes.as_slice()
         && noad.kind == NoadKind::Normal(NoadClass::Ord)
         && matches!(noad.subscript, MathField::Empty)
         && matches!(noad.superscript, MathField::Empty)
@@ -5555,7 +5538,7 @@ fn collapse_singleton_math_group(stores: &Universe, list: tex_state::ids::NodeLi
 fn take_finished_math_list(
     modes: &mut ModeNest,
     stores: &mut Universe,
-) -> Result<tex_state::ids::NodeListId, ExecError> {
+) -> Result<tex_state::node_arena::NodeListRef, ExecError> {
     let (nodes, incomplete) = {
         let mut list = modes.current_list_mutation();
         (list.take_nodes(), list.take_incomplete_fraction())
@@ -5680,20 +5663,11 @@ fn left_group_open(modes: &ModeNest, stores: &Universe) -> bool {
             }))
         )
     };
-    let starts_left_ref = |node: Option<tex_state::node_arena::NodeRef<'_>>| {
-        matches!(
-            node,
-            Some(tex_state::node_arena::NodeRef::MathNoad(MathNoad {
-                kind: NoadKind::LeftDelimiter { .. },
-                ..
-            }))
-        )
-    };
     starts_left_node(modes.current_list().nodes().first())
         || modes
             .current_list()
             .incomplete_fraction()
-            .is_some_and(|fraction| starts_left_ref(stores.nodes(fraction.numerator).first()))
+            .is_some_and(|fraction| starts_left_node(fraction.numerator.get(0).as_ref()))
 }
 
 /// TeX82 §1030's parking decision for one scanned step, taken before the step
@@ -7209,7 +7183,7 @@ fn dispatch_main_control_command_inner(
         };
         return Ok(ScannedStep::Leaders {
             kind: *kind,
-            payload: *payload,
+            payload: payload.clone(),
             glue,
         });
     }
@@ -11150,7 +11124,7 @@ fn apply_pdf_form_request(
             let list = stores
                 .take_box_reg_same_level(box_register)
                 .ok_or(ExecError::PdfXFormVoidBox)?;
-            let dimensions = match stores.nodes(list).first().map(|node| node.to_owned()) {
+            let dimensions = match stores.node_list_ref(list).get(0) {
                 Some(Node::HList(node) | Node::VList(node)) => {
                     (node.width, node.height, node.depth)
                 }
@@ -12438,7 +12412,7 @@ fn capture_replay_alignment_cell(
         let material =
             crate::math::finish_math_lists_owned(stores, cell.list_mutation().take_nodes(), false);
         let (retained, mut pre_migrated, migrated) =
-            crate::box_runtime::split_hpack_migrations(stores, material);
+            crate::box_runtime::split_hpack_migrations(material);
         pre_migrated.extend(migrated);
         active.row_migrations.extend(pre_migrated);
         retained
@@ -15864,6 +15838,7 @@ fn apply_scanned_step(
             // payload, nor a `\raise`/`\lower` operand, and the whole box
             // context every other branch below classifies is inapplicable.
             if box_state.kind == ReplayBoxKind::VCenter {
+                let boxed = stores.node_list_ref(boxed);
                 modes
                     .current_list_mutation()
                     .push(Node::MathNoad(MathNoad::new(
@@ -17430,6 +17405,7 @@ fn finish_insert_or_adjust_group(
         ..crate::packing_params::vpack_params(stores)
     };
     let packed = crate::packing_params::vpack(stores, content, PackSpec::Natural, params);
+    let content = stores.node_list_ref(content);
     crate::box_runtime::flush_pending_hchars_with_fuel(modes, stores, command.fuel)?;
     let node = if class == 255 {
         Node::Adjust(tex_state::node::AdjustNode { content, pre })
@@ -18020,7 +17996,7 @@ mod discretionary_hyphen_tests {
         else {
             panic!("canonical replay appended an explicit discretionary hyphen");
         };
-        assert!(stores.nodes(*pre).is_empty());
+        assert!(pre.is_empty());
     }
 
     #[test]
@@ -18050,7 +18026,7 @@ mod discretionary_hyphen_tests {
         let Some(Node::Disc { pre, .. }) = control.modes.current_list().nodes().last() else {
             panic!("canonical replay appended an explicit discretionary hyphen");
         };
-        assert!(stores.nodes(*pre).is_empty());
+        assert!(pre.is_empty());
     }
 
     #[test]

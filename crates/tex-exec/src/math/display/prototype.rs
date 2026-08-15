@@ -33,6 +33,7 @@ pub(crate) fn display_line_prototype(stores: &mut Universe, last_line: BoxNode) 
         boundary(stores, GlueParam::RIGHT_SKIP, GlueKind::RightSkip),
     ];
     let children = stores.freeze_node_list(&children);
+    let children = stores.node_list_ref(children);
     BoxNode::new(BoxNodeFields {
         width: last_line.width,
         height: Scaled::from_raw(0),
@@ -69,9 +70,9 @@ pub(super) fn package_directed_display_line(
     };
 
     let mut payload = if display_line.box_lr == BoxLr::DList {
-        vec![Node::HList(display_line)]
+        vec![Node::HList(display_line.clone())]
     } else {
-        let mut children = stores.nodes(display_line.children).to_vec();
+        let mut children = display_line.children.to_vec();
         if pre_display_direction < 0 {
             children.reverse();
         }
@@ -90,8 +91,8 @@ pub(super) fn package_directed_display_line(
             end_displacement,
             scaled_sub(scaled_sub(prototype.width, display_width), display_indent),
         );
-        let [left, right] = stores
-            .nodes(prototype.children)
+        let [left, right] = prototype
+            .children
             .to_vec()
             .try_into()
             .unwrap_or_else(|_| panic!("e-TeX display prototype has exactly two boundaries"));
@@ -143,7 +144,8 @@ pub(super) fn package_directed_display_line(
             }
             _ => panic!("e-TeX display prototype right boundary is glue or kern"),
         }
-        prototype.children = stores.freeze_node_list_owned(&mut children);
+        let children = stores.freeze_node_list_owned(&mut children);
+        prototype.children = stores.node_list_ref(children);
         return prototype;
     }
 

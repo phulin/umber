@@ -387,7 +387,7 @@ pub(crate) fn indent_in_hmode(
                 u32::from(tex_state::env::banks::DimenParam::PAR_INDENT.raw()),
             ),
         ));
-        let children = stores.freeze_node_list(&[]);
+        let children = tex_state::node_arena::NodeListRef::empty();
         Node::HList(BoxNode::new(BoxNodeFields {
             width: stores.dimen_param(tex_state::env::banks::DimenParam::PAR_INDENT),
             height: Scaled::from_raw(0),
@@ -403,6 +403,7 @@ pub(crate) fn indent_in_hmode(
     if matches!(nest.current_mode(), Mode::Math | Mode::DisplayMath) {
         let indent_box = make_indent_box(stores);
         let list = stores.freeze_node_list(&[indent_box]);
+        let list = stores.node_list_ref(list);
         nest.current_list_mutation()
             .push(Node::MathNoad(MathNoad::new(
                 NoadKind::Normal(NoadClass::Ord),
@@ -1158,11 +1159,11 @@ pub(crate) fn literal_hyphen_disc(
     {
         return None;
     }
-    let empty = stores.freeze_node_list(&[]);
+    let empty = tex_state::node_arena::NodeListRef::empty();
     Some(Node::Disc {
         kind: DiscKind::ExplicitHyphen,
-        pre: empty,
-        post: empty,
+        pre: empty.clone(),
+        post: empty.clone(),
         replace: empty,
         physical_replace_count: 0,
     })

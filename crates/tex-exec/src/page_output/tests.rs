@@ -19,13 +19,15 @@ fn rule(height: i32) -> Node {
 }
 
 fn insertion(stores: &mut Universe, class: u16, height: i32) -> Node {
+    let content = stores.freeze_node_list(&[rule(height)]);
+    let content = stores.node_list_ref(content);
     Node::Ins {
         class,
         size: Scaled::from_raw(height),
         split_top_skip: stores.intern_glue(GlueSpec::ZERO),
         split_max_depth: Scaled::MAX_DIMEN,
         floating_penalty: 0,
-        content: stores.freeze_node_list(&[rule(height)]),
+        content,
     }
 }
 
@@ -52,6 +54,7 @@ fn fire_up_recovers_hbox_insertion_register_before_distribution() {
     stores.record_best_page_break(page_nodes.len(), Scaled::from_raw(0), 0);
 
     let children = stores.freeze_node_list(&[rule(99)]);
+    let children = stores.node_list_ref(children);
     let hbox = BoxNode::new(BoxNodeFields {
         width: Scaled::from_raw(1),
         height: Scaled::from_raw(99),
@@ -76,14 +79,16 @@ fn fire_up_recovers_hbox_insertion_register_before_distribution() {
         .box_reg(class)
         .expect("accepted inserts are repackaged");
     let Node::VList(box_node) = stores
-        .nodes(register)
-        .first()
+        .published_node_list_ref(register)
+        .expect("register retains its immutable owner")
+        .to_vec()
+        .into_iter()
+        .next()
         .expect("register contains its vbox")
-        .to_owned()
     else {
         panic!("insertion register must become a vbox");
     };
-    assert_eq!(stores.nodes(box_node.children), &[rule(11), rule(13)]);
+    assert_eq!(box_node.children.to_vec(), [rule(11), rule(13)]);
     let effects = format!("{:?}", stores.world().effect_records());
     assert!(effects.contains("Insertions can only be added to a vbox"));
     assert!(effects.contains("The following box has been deleted:"));
@@ -129,6 +134,7 @@ fn fire_up_preserves_void_and_vbox_insertion_queues() {
     assert!(stores.box_reg(2).is_none());
 
     let children = stores.freeze_node_list(&[rule(17), Node::Penalty(23)]);
+    let children = stores.node_list_ref(children);
     let vbox = BoxNode::new(BoxNodeFields {
         width: Scaled::from_raw(1),
         height: Scaled::from_raw(17),
@@ -225,7 +231,7 @@ fn job_is_all_over_only_when_page_and_contributions_are_empty() {
         glue_set: GlueSetRatio::ZERO,
         glue_sign: Sign::Normal,
         glue_order: Order::Normal,
-        children: stores.freeze_node_list(&[]),
+        children: tex_state::node_arena::NodeListRef::empty(),
     }));
     stores.append_page_contribution(residual);
     assert!(!job_is_all_over(&stores));

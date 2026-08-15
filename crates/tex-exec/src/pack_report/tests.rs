@@ -8,7 +8,7 @@ use tex_state::glue::{GlueSpec, Order};
 use tex_state::node::{AdjustNode, BoxNode, BoxNodeFields, DiscKind, GlueKind, KernKind, Sign};
 use tex_state::scaled::{GlueSetRatio, Scaled};
 
-fn empty_hbox(stores: &mut Universe) -> Node {
+fn empty_hbox(_stores: &mut Universe) -> Node {
     Node::HList(BoxNode::new(BoxNodeFields {
         width: Scaled::from_raw(0),
         height: Scaled::from_raw(0),
@@ -18,7 +18,7 @@ fn empty_hbox(stores: &mut Universe) -> Node {
         glue_set: GlueSetRatio::ZERO,
         glue_sign: Sign::Normal,
         glue_order: Order::Normal,
-        children: stores.freeze_node_list(&[]),
+        children: tex_state::node_arena::NodeListRef::empty(),
     }))
 }
 
@@ -51,11 +51,12 @@ fn sink_text(stores: &Universe, terminal: bool) -> String {
 #[test]
 fn short_display_skips_the_physical_discretionary_replacement_count() {
     let mut stores = Universe::new();
-    let empty = stores.freeze_node_list(&[]);
+    let empty = tex_state::node_arena::NodeListRef::empty();
     let replacement = stores.freeze_node_list(&[Node::Kern {
         amount: Scaled::from_raw(Scaled::UNITY),
         kind: KernKind::Explicit,
     }]);
+    let replacement = stores.node_list_ref(replacement);
     let space = stores.intern_glue(GlueSpec {
         width: Scaled::from_raw(Scaled::UNITY),
         ..GlueSpec::ZERO
@@ -76,8 +77,8 @@ fn short_display_skips_the_physical_discretionary_replacement_count() {
     nodes.extend([
         Node::Disc {
             kind: DiscKind::Discretionary,
-            pre: empty,
-            post: empty,
+            pre: empty.clone(),
+            post: empty.clone(),
             replace: replacement,
             physical_replace_count: 1,
         },
@@ -94,6 +95,7 @@ fn short_display_skips_the_physical_discretionary_replacement_count() {
     ]);
 
     let list = stores.freeze_node_list(&nodes);
+    let list = stores.node_list_ref(list);
     assert_eq!(
         ShortDisplayRenderer::new().render_list(&stores, list),
         "[][][] [] [] []|"
@@ -108,11 +110,12 @@ fn short_display_retains_rule_after_nonphysical_discretionary_replacement() {
     // immutable replacement remains available, but no replacement node is
     // linked after the disc, and the following rule must print as `|`.
     let mut stores = Universe::new();
-    let empty = stores.freeze_node_list(&[]);
+    let empty = tex_state::node_arena::NodeListRef::empty();
     let replacement = stores.freeze_node_list(&[Node::Kern {
         amount: Scaled::from_raw(Scaled::UNITY),
         kind: KernKind::Explicit,
     }]);
+    let replacement = stores.node_list_ref(replacement);
     let space = stores.intern_glue(GlueSpec {
         width: Scaled::from_raw(Scaled::UNITY),
         ..GlueSpec::ZERO
@@ -133,8 +136,8 @@ fn short_display_retains_rule_after_nonphysical_discretionary_replacement() {
     nodes.extend([
         Node::Disc {
             kind: DiscKind::Discretionary,
-            pre: empty,
-            post: empty,
+            pre: empty.clone(),
+            post: empty.clone(),
             replace: replacement,
             physical_replace_count: 0,
         },
@@ -146,6 +149,7 @@ fn short_display_retains_rule_after_nonphysical_discretionary_replacement() {
     ]);
 
     let list = stores.freeze_node_list(&nodes);
+    let list = stores.node_list_ref(list);
     assert_eq!(
         ShortDisplayRenderer::new().render_list(&stores, list),
         "[][][] [] [] []|"
@@ -158,12 +162,12 @@ fn short_display_physical_count_is_independent_of_empty_side_list() {
     // skipped even when this frozen representation no longer needs to retain
     // their source side list.
     let mut stores = Universe::new();
-    let empty = stores.freeze_node_list(&[]);
+    let empty = tex_state::node_arena::NodeListRef::empty();
     let nodes = [
         Node::Disc {
             kind: DiscKind::Discretionary,
-            pre: empty,
-            post: empty,
+            pre: empty.clone(),
+            post: empty.clone(),
             replace: empty,
             physical_replace_count: 1,
         },
@@ -180,6 +184,7 @@ fn short_display_physical_count_is_independent_of_empty_side_list() {
     ];
 
     let list = stores.freeze_node_list(&nodes);
+    let list = stores.node_list_ref(list);
     assert_eq!(ShortDisplayRenderer::new().render_list(&stores, list), "|");
 }
 
@@ -201,11 +206,12 @@ fn line_trace_projection_renders_detached_replacement_content() {
             .collect::<Vec<_>>()
     };
     let pre = stores.freeze_node_list(&chars("B-"));
-    let empty = stores.freeze_node_list(&[]);
+    let pre = stores.node_list_ref(pre);
+    let empty = tex_state::node_arena::NodeListRef::empty();
     let mut nodes = vec![Node::Disc {
         kind: DiscKind::Discretionary,
         pre,
-        post: empty,
+        post: empty.clone(),
         replace: empty,
         physical_replace_count: 3,
     }];
@@ -235,8 +241,11 @@ fn frozen_line_diagnostic_renders_both_disc_branches_then_skips_replacement() {
             .collect::<Vec<_>>()
     };
     let pre = stores.freeze_node_list(&chars("-"));
+    let pre = stores.node_list_ref(pre);
     let post = stores.freeze_node_list(&chars("B-"));
+    let post = stores.node_list_ref(post);
     let replacement = stores.freeze_node_list(&chars("X"));
+    let replacement = stores.node_list_ref(replacement);
     let mut nodes = chars("BB");
     nodes.push(Node::Disc {
         kind: DiscKind::AutomaticHyphen,
@@ -247,6 +256,7 @@ fn frozen_line_diagnostic_renders_both_disc_branches_then_skips_replacement() {
     });
     nodes.extend(chars("XBBB"));
     let list = stores.freeze_node_list(&nodes);
+    let list = stores.node_list_ref(list);
 
     assert_eq!(
         ShortDisplayRenderer::new().render_list(&stores, list),
@@ -260,7 +270,7 @@ fn frozen_line_diagnostic_renders_both_disc_branches_then_skips_replacement() {
 #[test]
 fn short_display_maps_all_node_classes() {
     let mut stores = Universe::new();
-    let empty = stores.freeze_node_list(&[]);
+    let empty = tex_state::node_arena::NodeListRef::empty();
     let zero_glue = stores.intern_glue(GlueSpec::ZERO);
     let nonzero_glue = stores.intern_glue(GlueSpec {
         width: Scaled::from_raw(Scaled::UNITY),
@@ -272,10 +282,12 @@ fn short_display_maps_all_node_classes() {
         amount: Scaled::from_raw(Scaled::UNITY),
         kind: KernKind::Explicit,
     }]);
+    let pre = stores.node_list_ref(pre);
     let post = stores.freeze_node_list(&[Node::Kern {
         amount: Scaled::from_raw(2 * Scaled::UNITY),
         kind: KernKind::Explicit,
     }]);
+    let post = stores.node_list_ref(post);
     let nodes = [
         empty_hbox(&mut stores),
         Node::Rule {
@@ -300,7 +312,7 @@ fn short_display_maps_all_node_classes() {
             tokens: mark_tokens,
         },
         Node::Adjust(AdjustNode {
-            content: empty,
+            content: empty.clone(),
             pre: false,
         }),
         Node::Disc {

@@ -217,15 +217,23 @@ fn box_child_nodes(stores: &Universe, register: u16) -> Vec<Node> {
         .box_reg(register)
         .unwrap_or_else(|| panic!("box register {register} is nonvoid"));
     let boxed = stores
-        .nodes(list)
-        .first()
-        .unwrap_or_else(|| panic!("box register {register} has a root node"))
-        .to_owned();
+        .published_node_list_ref(list)
+        .unwrap_or_else(|| panic!("box register {register} retains its node owner"))
+        .to_vec()
+        .into_iter()
+        .next()
+        .unwrap_or_else(|| panic!("box register {register} has a root node"));
     let children = match boxed {
         Node::HList(boxed) | Node::VList(boxed) => boxed.children,
         other => panic!("box register {register} has a box root: {other:?}"),
     };
-    stores.nodes(children).to_vec()
+    children.to_vec()
+}
+
+fn first_published_node(stores: &Universe, list: tex_state::ids::NodeListId) -> Option<Node> {
+    stores
+        .published_node_list_ref(list)
+        .and_then(|owner| owner.to_vec().into_iter().next())
 }
 
 fn tabskip_widths(stores: &Universe, nodes: &[Node], widths: &mut Vec<i32>) {
@@ -237,7 +245,7 @@ fn tabskip_widths(stores: &Universe, nodes: &[Node], widths: &mut Vec<i32>) {
                 ..
             } => widths.push(stores.glue(spec).width.raw()),
             Node::HList(boxed) | Node::VList(boxed) => {
-                tabskip_widths(stores, &stores.nodes(boxed.children).to_vec(), widths);
+                tabskip_widths(stores, &boxed.children.to_vec(), widths);
             }
             _ => {}
         }
@@ -328,19 +336,18 @@ enum PackagedRowItem {
 }
 
 fn packaged_row_projection(stores: &Universe, row: &Node) -> Vec<PackagedRowItem> {
-    fn material_widths(stores: &Universe, nodes: tex_state::ids::NodeListId) -> Vec<i32> {
+    fn material_widths(stores: &Universe, nodes: &tex_state::node_arena::NodeListRef) -> Vec<i32> {
         let mut widths = Vec::new();
-        for node in stores.nodes(nodes) {
+        for node in nodes.to_vec() {
             match node {
-                tex_state::node_arena::NodeRef::Kern { amount, .. } => widths.push(amount.raw()),
-                tex_state::node_arena::NodeRef::Glue {
+                Node::Kern { amount, .. } => widths.push(amount.raw()),
+                Node::Glue {
                     spec,
                     kind: GlueKind::Normal,
                     ..
                 } => widths.push(stores.glue(spec).width.raw()),
-                tex_state::node_arena::NodeRef::HList(boxed)
-                | tex_state::node_arena::NodeRef::VList(boxed) => {
-                    widths.extend(material_widths(stores, boxed.children));
+                Node::HList(boxed) | Node::VList(boxed) => {
+                    widths.extend(material_widths(stores, &boxed.children));
                 }
                 _ => {}
             }
@@ -349,7 +356,7 @@ fn packaged_row_projection(stores: &Universe, row: &Node) -> Vec<PackagedRowItem
     }
 
     let children = match row {
-        Node::HList(boxed) | Node::VList(boxed) => stores.nodes(boxed.children).to_vec(),
+        Node::HList(boxed) | Node::VList(boxed) => boxed.children.to_vec(),
         other => panic!("alignment outcome is a packaged row: {other:?}"),
     };
     children
@@ -362,11 +369,11 @@ fn packaged_row_projection(stores: &Universe, row: &Node) -> Vec<PackagedRowItem
             } => Some(PackagedRowItem::TabSkip(stores.glue(spec).width.raw())),
             Node::HList(boxed) => Some(PackagedRowItem::HorizontalCell(material_widths(
                 stores,
-                boxed.children,
+                &boxed.children,
             ))),
             Node::VList(boxed) => Some(PackagedRowItem::VerticalCell(material_widths(
                 stores,
-                boxed.children,
+                &boxed.children,
             ))),
             _ => None,
         })
@@ -374,14 +381,13 @@ fn packaged_row_projection(stores: &Universe, row: &Node) -> Vec<PackagedRowItem
 }
 
 fn alignment_node_projection(stores: &Universe, nodes: &[Node]) -> Vec<AlignmentNodeProjection> {
-    fn kerns(stores: &Universe, nodes: tex_state::ids::NodeListId) -> Vec<i32> {
+    fn kerns(stores: &Universe, nodes: &tex_state::node_arena::NodeListRef) -> Vec<i32> {
         let mut out = Vec::new();
-        for node in stores.nodes(nodes) {
+        for node in nodes.to_vec() {
             match node {
-                tex_state::node_arena::NodeRef::Kern { amount, .. } => out.push(amount.raw()),
-                tex_state::node_arena::NodeRef::HList(boxed)
-                | tex_state::node_arena::NodeRef::VList(boxed) => {
-                    out.extend(kerns(stores, boxed.children));
+                Node::Kern { amount, .. } => out.push(amount.raw()),
+                Node::HList(boxed) | Node::VList(boxed) => {
+                    out.extend(kerns(stores, &boxed.children));
                 }
                 _ => {}
             }
@@ -425,7 +431,7 @@ fn alignment_node_projection(stores: &Universe, nodes: &[Node]) -> Vec<Alignment
             }),
             Node::HList(boxed) | Node::VList(boxed) => Some(AlignmentNodeProjection::Box {
                 shift: boxed.shift.raw(),
-                kerns: kerns(stores, boxed.children),
+                kerns: kerns(stores, &boxed.children),
             }),
             Node::Penalty(value) => Some(AlignmentNodeProjection::Penalty(*value)),
             Node::Kern { amount, .. } => Some(AlignmentNodeProjection::Kern(amount.raw())),
@@ -2176,27 +2182,27 @@ fn discretionary_parts_execute_live_in_disc_group_without_duplicate_delivery() {
         .find_map(|node| match node {
             Node::Disc {
                 pre, post, replace, ..
-            } => Some((*pre, *post, *replace)),
+            } => Some((pre.clone(), post.clone(), replace.clone())),
             _ => None,
         })
         .expect("completed discretionary node");
     assert_eq!(
-        stores
-            .nodes(disc.0)
+        disc.0
+            .to_vec()
             .iter()
             .filter(|node| matches!(
-                node.to_owned(),
+                node,
                 Node::Kern {
                     amount,
                     ..
-                } if amount == Scaled::from_raw(Scaled::UNITY)
+                } if *amount == Scaled::from_raw(Scaled::UNITY)
             ))
             .count(),
         1,
         "unexpandable body command executes exactly once"
     );
-    assert!(stores.nodes(disc.1).is_empty());
-    assert!(stores.nodes(disc.2).is_empty());
+    assert!(disc.1.is_empty());
+    assert!(disc.2.is_empty());
     assert_eq!(stores.innermost_group_kind(), None);
 }
 
@@ -2235,17 +2241,11 @@ fn nested_discretionary_preserves_aftergroup_before_rejecting_the_outer_part() {
         );
     };
     assert!(
-        stores.nodes(*pre).is_empty(),
+        pre.is_empty(),
         "the forbidden nested discretionary and its suffix were pruned"
     );
-    assert!(matches!(
-        stores.nodes(*post).testing_decoded(),
-        [Node::Kern { .. }]
-    ));
-    assert!(matches!(
-        stores.nodes(*replace).testing_decoded(),
-        [Node::Kern { .. }]
-    ));
+    assert!(matches!(post.to_vec().as_slice(), [Node::Kern { .. }]));
+    assert!(matches!(replace.to_vec().as_slice(), [Node::Kern { .. }]));
     assert!(terminal_text(&stores).contains("Improper discretionary list"));
     assert!(
         !terminal_text(&stores).contains("Missing { inserted"),
@@ -2305,7 +2305,7 @@ fn vtop_resets_inherited_parshape_before_display_line_measurement() {
     run_to_end(&mut control, &mut stores);
 
     let root = stores.box_reg(0).expect("vtop is assigned to box 0");
-    let Some(Node::VList(boxed)) = stores.nodes(root).first().map(|node| node.to_owned()) else {
+    let Some(Node::VList(boxed)) = first_published_node(&stores, root) else {
         panic!("box 0 holds a vlist");
     };
     assert_eq!(boxed.width.raw(), 3_276_800);
@@ -2332,7 +2332,7 @@ fn preamble_span_expands_one_token_and_preserves_later_template_meaning() {
     run_to_end(&mut control, &mut stores);
 
     let root = stores.box_reg(0).expect("vbox is assigned");
-    let Some(Node::VList(boxed)) = stores.nodes(root).first().map(|node| node.to_owned()) else {
+    let Some(Node::VList(boxed)) = first_published_node(&stores, root) else {
         panic!("box 0 holds a vlist");
     };
     assert_eq!(boxed.width.raw(), 3 * Scaled::UNITY);
@@ -2360,7 +2360,7 @@ fn span_delimiter_ends_the_pending_ligkern_run() {
     run_to_end(&mut control, &mut stores);
 
     let root = stores.box_reg(0).expect("vbox is assigned");
-    let Some(Node::VList(boxed)) = stores.nodes(root).first().map(|node| node.to_owned()) else {
+    let Some(Node::VList(boxed)) = first_published_node(&stores, root) else {
         panic!("box 0 holds a vlist");
     };
     assert_eq!(boxed.width.raw(), 983_042, "natural width is 15.00003pt");
@@ -2434,7 +2434,7 @@ fn nested_valign_rows_do_not_contribute_baseline_glue_to_outer_cell_width() {
     run_to_end(&mut control, &mut stores);
 
     let root = stores.box_reg(0).expect("outer vbox is assigned");
-    let Some(Node::VList(boxed)) = stores.nodes(root).first().map(|node| node.to_owned()) else {
+    let Some(Node::VList(boxed)) = first_published_node(&stores, root) else {
         panic!("box 0 holds a vlist");
     };
     assert_eq!(boxed.width.raw(), 5 * Scaled::UNITY);
@@ -2807,10 +2807,7 @@ fn init_row_halign_valign_leading_tabskip_template_span_and_aux_matrix() {
             .collect::<Vec<_>>();
         assert_eq!(boxed_rows.len(), 2, "register {register}: {rows:?}");
         for row in boxed_rows {
-            let first = stores
-                .nodes(row.children)
-                .first()
-                .map(|node| node.to_owned());
+            let first = row.children.to_vec().into_iter().next();
             let Some(Node::Glue { spec, kind, .. }) = first else {
                 panic!("row begins with tabskip glue: {rows:?}");
             };
@@ -3287,11 +3284,11 @@ fn vsplit_kernel_separates_result_remainder_and_split_marks() {
         "prefix and remainder have distinct ownership"
     );
     assert!(matches!(
-        stores.nodes(split).first().map(|node| node.to_owned()),
+        first_published_node(&stores, split),
         Some(Node::VList(_))
     ));
     assert!(matches!(
-        stores.nodes(remainder).first().map(|node| node.to_owned()),
+        first_published_node(&stores, remainder),
         Some(Node::VList(_))
     ));
     for mark in [PageMark::SplitFirst, PageMark::SplitBot] {
@@ -4571,6 +4568,7 @@ fn recursive_test_box(stores: &mut Universe) -> tex_state::ids::NodeListId {
             depth: Some(Scaled::from_raw(103)),
         },
     ]);
+    let leaf = stores.node_list_ref(leaf);
     let box_node = |children| {
         BoxNode::new(BoxNodeFields {
             width: Scaled::from_raw(201),
@@ -4607,10 +4605,12 @@ fn recursive_test_box(stores: &mut Universe) -> tex_state::ids::NodeListId {
         ch: 'p',
         origin: tex_state::provenance::OriginRef::unknown(),
     }]);
+    let pre = stores.node_list_ref(pre);
     let post = stores.freeze_node_list(&[Node::Kern {
         amount: Scaled::from_raw(401),
         kind: tex_state::node::KernKind::Explicit,
     }]);
+    let post = stores.node_list_ref(post);
     let replace = stores.freeze_node_list(&[Node::Lig {
         font: NULL_FONT,
         ch: 'L',
@@ -4619,6 +4619,7 @@ fn recursive_test_box(stores: &mut Universe) -> tex_state::ids::NodeListId {
         left_hit: false,
         right_hit: false,
     }]);
+    let replace = stores.node_list_ref(replace);
 
     let children = stores.freeze_node_list(&[
         Node::Rule {
@@ -4629,7 +4630,7 @@ fn recursive_test_box(stores: &mut Universe) -> tex_state::ids::NodeListId {
         Node::Glue {
             spec: glue.clone(),
             kind: GlueKind::Leaders,
-            leader: Some(LeaderPayload::HList(box_node(leaf))),
+            leader: Some(LeaderPayload::HList(box_node(leaf.clone()))),
         },
         Node::Ins {
             class: 7,
@@ -4641,7 +4642,7 @@ fn recursive_test_box(stores: &mut Universe) -> tex_state::ids::NodeListId {
         },
         Node::Mark { class: 9, tokens },
         Node::Adjust(AdjustNode {
-            content: post,
+            content: post.clone(),
             pre: true,
         }),
         Node::MathOn(Scaled::from_raw(601)),
@@ -4657,9 +4658,9 @@ fn recursive_test_box(stores: &mut Universe) -> tex_state::ids::NodeListId {
         },
         Node::Disc {
             kind: DiscKind::Discretionary,
-            pre,
-            post,
-            replace,
+            pre: pre.clone(),
+            post: post.clone(),
+            replace: replace.clone(),
             physical_replace_count: 1,
         },
         Node::HList(box_node(pre)),
@@ -4677,15 +4678,24 @@ fn recursive_test_box(stores: &mut Universe) -> tex_state::ids::NodeListId {
             children: replace,
         })),
     ]);
+    let children = stores.node_list_ref(children);
     stores.freeze_node_list(&[Node::HList(box_node(children))])
 }
 
 fn recursive_node_signature(stores: &Universe, list: tex_state::ids::NodeListId) -> String {
+    let list = stores
+        .published_node_list_ref(list)
+        .expect("published recursive graph retains its immutable owner");
+    recursive_owned_node_signature(stores, &list)
+}
+
+fn recursive_owned_node_signature(
+    stores: &Universe,
+    list: &tex_state::node_arena::NodeListRef,
+) -> String {
     use tex_state::node::{LeaderPayload, Node};
 
-    stores
-        .nodes(list)
-        .testing_decoded()
+    list.to_vec()
         .iter()
         .map(|node| match node {
             Node::HList(box_node) | Node::VList(box_node) => format!(
@@ -4703,7 +4713,7 @@ fn recursive_node_signature(stores: &Universe, list: tex_state::ids::NodeListId)
                 box_node.glue_set,
                 box_node.glue_sign,
                 box_node.glue_order,
-                recursive_node_signature(stores, box_node.children)
+                recursive_owned_node_signature(stores, &box_node.children)
             ),
             Node::Unset(unset) => format!(
                 "unset={:?}/{:?}/{:?}/{:?}/{}/{:?}/{:?}/{:?}/{:?}/children={}",
@@ -4716,10 +4726,10 @@ fn recursive_node_signature(stores: &Universe, list: tex_state::ids::NodeListId)
                 unset.stretch_order,
                 unset.shrink,
                 unset.shrink_order,
-                recursive_node_signature(stores, unset.children)
+                recursive_owned_node_signature(stores, &unset.children)
             ),
             Node::Glue { spec, leader, .. } => {
-                let leader = leader.map(|leader| match leader {
+                let leader = leader.as_ref().map(|leader| match leader {
                     LeaderPayload::HList(box_node) | LeaderPayload::VList(box_node) => format!(
                         "box={}/{:?}/{:?}/{:?}/{:?}/{:?}/{:?}/{:?}/{:?}/children={}",
                         if matches!(leader, LeaderPayload::HList(_)) {
@@ -4735,7 +4745,7 @@ fn recursive_node_signature(stores: &Universe, list: tex_state::ids::NodeListId)
                         box_node.glue_set,
                         box_node.glue_sign,
                         box_node.glue_order,
-                        recursive_node_signature(stores, box_node.children)
+                        recursive_owned_node_signature(stores, &box_node.children)
                     ),
                     LeaderPayload::Rule { .. } => format!("{leader:?}"),
                 });
@@ -4749,9 +4759,9 @@ fn recursive_node_signature(stores: &Universe, list: tex_state::ids::NodeListId)
                 ..
             } => format!(
                 "disc={kind:?}/pre={}/post={}/replace={}",
-                recursive_node_signature(stores, *pre),
-                recursive_node_signature(stores, *post),
-                recursive_node_signature(stores, *replace)
+                recursive_owned_node_signature(stores, pre),
+                recursive_owned_node_signature(stores, post),
+                recursive_owned_node_signature(stores, replace)
             ),
             Node::Mark { class, tokens } => {
                 format!("mark={class}/tokens={:?}", tokens.tokens())
@@ -4766,12 +4776,12 @@ fn recursive_node_signature(stores: &Universe, list: tex_state::ids::NodeListId)
             } => format!(
                 "ins={class}/{size:?}/{:?}/{split_max_depth:?}/{floating_penalty}/content={}",
                 stores.glue(split_top_skip),
-                recursive_node_signature(stores, *content)
+                recursive_owned_node_signature(stores, content)
             ),
             Node::Adjust(adjust) => format!(
                 "adjust={}/content={}",
                 adjust.pre,
-                recursive_node_signature(stores, adjust.content)
+                recursive_owned_node_signature(stores, &adjust.content)
             ),
             _ => format!("{node:?}"),
         })
@@ -4799,10 +4809,14 @@ fn copy_preserves_every_recursive_node_payload_and_source_register() {
         expected,
         "copy retains the exact recursive structure"
     );
-    let [Node::HList(root)] = stores.nodes(copied).testing_decoded() else {
+    let copied_nodes = stores
+        .published_node_list_ref(copied)
+        .expect("copied register retains its immutable owner")
+        .to_vec();
+    let [Node::HList(root)] = copied_nodes.as_slice() else {
         panic!("fixture root should be an hbox")
     };
-    let children = stores.nodes(root.children).testing_decoded();
+    let children = root.children.to_vec();
     assert_eq!(children.len(), 13, "every payload remains in child order");
     assert!(
         matches!(&children[1], Node::Glue { spec, leader: Some(_), .. } if stores.glue(spec).width.raw() == 301)
@@ -4857,10 +4871,14 @@ fn vertical_unbox_in_horizontal_mode_ends_the_paragraph_before_splicing() {
     run_to_end(&mut control, &mut stores);
 
     let box1 = stores.box_reg(1).expect("outer vbox exists");
-    let [tex_state::node::Node::VList(outer)] = stores.nodes(box1).testing_decoded() else {
+    let box1_nodes = stores
+        .published_node_list_ref(box1)
+        .expect("outer vbox retains its immutable owner")
+        .to_vec();
+    let [tex_state::node::Node::VList(outer)] = box1_nodes.as_slice() else {
         panic!("register 1 should hold a vbox");
     };
-    let children = stores.nodes(outer.children).testing_decoded();
+    let children = outer.children.to_vec();
     assert!(
         children
             .iter()
@@ -5709,7 +5727,7 @@ fn test_pdf_image_source() -> tex_state::PdfExternalImageSource {
 }
 
 fn install_test_hbox(stores: &mut Universe, register: u16, width: Scaled) {
-    let children = stores.freeze_node_list(&[]);
+    let children = tex_state::node_arena::NodeListRef::empty();
     let list = stores.freeze_node_list(&[Node::HList(tex_state::node::BoxNode::new(
         tex_state::node::BoxNodeFields {
             width,
@@ -9798,18 +9816,19 @@ fn final_cleanup_reports_nested_condition_kinds_lines_and_order_exactly() {
 /// Collects every `\setlanguage` whatsit inside box register zero.
 fn language_whatsits(stores: &Universe) -> Vec<(u8, u8, u8)> {
     let outer = stores.box_reg(0).expect("box 0 holds the constructed hbox");
-    let Some(Node::HList(boxed)) = stores.nodes(outer).first().map(|node| node.to_owned()) else {
+    let Some(Node::HList(boxed)) = first_published_node(stores, outer) else {
         panic!("box 0 holds an hlist");
     };
-    stores
-        .nodes(boxed.children)
+    boxed
+        .children
+        .to_vec()
         .iter()
-        .filter_map(|node| match node.to_owned() {
+        .filter_map(|node| match node {
             Node::Whatsit(tex_state::node::Whatsit::Language {
                 language,
                 left_hyphen_min,
                 right_hyphen_min,
-            }) => Some((language, left_hyphen_min, right_hyphen_min)),
+            }) => Some((*language, *left_hyphen_min, *right_hyphen_min)),
             _ => None,
         })
         .collect()
@@ -9853,14 +9872,15 @@ fn paragraph_entry_snapshots_language_before_first_character() {
     run_to_end(&mut control, &mut stores);
 
     let outer = stores.box_reg(0).expect("box 0 holds the paragraph vbox");
-    let Some(Node::VList(vbox)) = stores.nodes(outer).first().map(|node| node.to_owned()) else {
+    let Some(Node::VList(vbox)) = first_published_node(&stores, outer) else {
         panic!("box 0 holds a vlist");
     };
-    let lines = stores
-        .nodes(vbox.children)
+    let lines = vbox
+        .children
+        .to_vec()
         .iter()
-        .filter_map(|node| match node.to_owned() {
-            Node::HList(line) => Some(line),
+        .filter_map(|node| match node {
+            Node::HList(line) => Some(line.clone()),
             _ => None,
         })
         .collect::<Vec<_>>();
@@ -9868,15 +9888,15 @@ fn paragraph_entry_snapshots_language_before_first_character() {
     let languages = lines
         .iter()
         .map(|line| {
-            stores
-                .nodes(line.children)
+            line.children
+                .to_vec()
                 .iter()
-                .filter_map(|node| match node.to_owned() {
+                .filter_map(|node| match node {
                     Node::Whatsit(tex_state::node::Whatsit::Language {
                         language,
                         left_hyphen_min,
                         right_hyphen_min,
-                    }) => Some((language, left_hyphen_min, right_hyphen_min)),
+                    }) => Some((*language, *left_hyphen_min, *right_hyphen_min)),
                     _ => None,
                 })
                 .collect::<Vec<_>>()
@@ -9904,14 +9924,15 @@ fn setlanguage_illegal_mode_recovers_without_scan_or_append() {
         "{text}"
     );
     let outer = stores.box_reg(0).expect("box 0 holds the constructed vbox");
-    let Some(Node::VList(boxed)) = stores.nodes(outer).first().map(|node| node.to_owned()) else {
+    let Some(Node::VList(boxed)) = first_published_node(&stores, outer) else {
         panic!("box 0 holds a vlist");
     };
     assert!(
-        !stores
-            .nodes(boxed.children)
+        !boxed
+            .children
+            .to_vec()
             .iter()
-            .any(|node| matches!(node.to_owned(), Node::Whatsit(_))),
+            .any(|node| matches!(node, Node::Whatsit(_))),
         "no whatsit is appended when the mode test fails"
     );
 }
@@ -11278,7 +11299,7 @@ fn misplaced_tab_reports_once_and_drops_only_the_delimiter() {
 #[test]
 fn math_group_collapses_only_one_undecorated_ord_nucleus() {
     let mut stores = Universe::new_with_plain_catcodes();
-    let empty_list = stores.freeze_node_list(&[]);
+    let empty_list = tex_state::node_arena::NodeListRef::empty();
     let ch = MathChar {
         family: 0,
         character: 'x',
@@ -11287,13 +11308,14 @@ fn math_group_collapses_only_one_undecorated_ord_nucleus() {
     for nucleus in [
         MathField::Empty,
         MathField::MathChar(ch),
-        MathField::SubBox(empty_list),
+        MathField::SubBox(empty_list.clone()),
         MathField::SubMlist(empty_list),
     ] {
         let list = stores.freeze_node_list(&[Node::MathNoad(MathNoad::new(
             NoadKind::Normal(NoadClass::Ord),
             nucleus.clone(),
         ))]);
+        let list = stores.node_list_ref(list);
         assert_eq!(collapse_singleton_math_group(&stores, list), nucleus);
     }
 
@@ -11318,8 +11340,9 @@ fn math_group_collapses_only_one_undecorated_ord_nucleus() {
         )),
     ]);
     for list in [scripted, non_ord, multiple] {
+        let list = stores.node_list_ref(list);
         assert_eq!(
-            collapse_singleton_math_group(&stores, list),
+            collapse_singleton_math_group(&stores, list.clone()),
             MathField::SubMlist(list)
         );
     }

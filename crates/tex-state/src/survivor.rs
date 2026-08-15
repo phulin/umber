@@ -149,6 +149,10 @@ impl SurvivorOwner {
     pub fn id(&self) -> NodeListId {
         self.owner.id()
     }
+
+    pub(crate) fn node_ref(&self) -> NodeListRef {
+        self.owner.clone()
+    }
 }
 
 impl PartialEq for SurvivorOwner {
@@ -345,9 +349,9 @@ impl SurvivorArena {
             .root_slots
             .iter()
             .filter_map(|(&root, &index)| {
-                self.slots[index].as_ref().and_then(|slot| {
-                    (slot.refcount == 0 && Arc::strong_count(&slot.payload) == 1).then_some(root)
-                })
+                self.slots[index]
+                    .as_ref()
+                    .and_then(|slot| (slot.refcount == 0).then_some(root))
             })
             .collect::<Vec<_>>();
         for root in dead {
@@ -758,6 +762,9 @@ impl<'a> PromotionCopy<'a> {
     }
 
     fn copy_list(&mut self, id: NodeListId) -> NodeListId {
+        if id.is_empty() {
+            return NodeListRef::empty().id();
+        }
         if let Some(&remapped) = self.remapped.get(&id) {
             return remapped;
         }
@@ -935,7 +942,7 @@ mod tests {
         let semantic_equal = box_node;
         box_node.allocator_high_cell_overlap = 6;
         assert_eq!(box_node, semantic_equal);
-        let source = epoch.append(&[Node::HList(box_node)]);
+        let source = epoch.append_compact(&[Node::HList(box_node)]);
         let mut survivors = SurvivorArena::new();
 
         let promoted = survivors.promote(source, &epoch);

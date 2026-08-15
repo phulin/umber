@@ -365,6 +365,7 @@ fn build_nodes(
     ];
 
     if let Some(slot) = seed.nest_slot.and_then(|slot| choose_list(built, slot)) {
+        let children = stores.node_list_ref(slot.id);
         nodes.push(Node::HList(BoxNode::new(BoxNodeFields {
             width: Scaled::from_raw(1),
             height: Scaled::from_raw(2),
@@ -374,7 +375,7 @@ fn build_nodes(
             glue_set: GlueSetRatio::ZERO,
             glue_sign: Sign::Normal,
             glue_order: Order::Normal,
-            children: slot.id,
+            children,
         })));
         tree.push(TreeNode::HList(slot.tree.clone()));
     }

@@ -330,7 +330,7 @@ fn prepare_insertion(
                     &mut insertion,
                     current_index,
                     node,
-                    *content,
+                    content.clone(),
                     *split_max_depth,
                     error_context,
                 )?;
@@ -446,7 +446,7 @@ fn split_page_insertion(
     insertion: &mut PageInsertion,
     current_index: usize,
     node: &Node,
-    content: tex_state::ids::NodeListId,
+    content: tex_state::node_arena::NodeListRef,
     split_max_depth: Scaled,
     error_context: Option<&str>,
 ) -> Result<Option<Node>, ExecError> {
@@ -469,7 +469,7 @@ fn split_page_insertion(
         capacity = remaining_cap;
     }
 
-    let mut content_nodes = stores.nodes(content).to_vec();
+    let mut content_nodes = content.to_vec();
     let split = vert_break(stores, &content_nodes, capacity, split_max_depth)
         .map_err(vertical_break_error)?;
     if stores.int_param(IntParam::TRACING_PAGES) > 0 {
@@ -607,7 +607,7 @@ fn update_glue_or_kern(
             replacement = Some(Node::Glue {
                 spec: finite_id,
                 kind: *kind,
-                leader: *leader,
+                leader: leader.clone(),
             });
             add_glue_stretch(stores, spec)?;
             let shrink = add(stores.page_dimension(PageDimension::Shrink), spec.shrink)?;
@@ -663,7 +663,7 @@ fn normalize_insert_content_shrink(
         content_nodes[index] = Node::Glue {
             spec: stores.intern_glue(finite),
             kind: *kind,
-            leader: *leader,
+            leader: leader.clone(),
         };
         changed = true;
     }
@@ -682,13 +682,15 @@ fn normalize_insert_content_shrink(
     else {
         return Ok(None);
     };
+    let content = stores.freeze_node_list(content_nodes);
+    let content = stores.node_list_ref(content);
     Ok(Some(Node::Ins {
         class: *class,
         size: *size,
         split_top_skip: split_top_skip.clone(),
         split_max_depth: *split_max_depth,
         floating_penalty: *floating_penalty,
-        content: stores.freeze_node_list(content_nodes),
+        content,
     }))
 }
 

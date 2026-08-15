@@ -50,7 +50,10 @@ impl NodeStorage {
     }
 }
 
-fn replace_math_child(field: &mut MathField, child: Option<crate::ids::NodeListId>) {
+fn replace_math_child(
+    field: &mut MathField<crate::ids::NodeListId>,
+    child: Option<crate::ids::NodeListId>,
+) {
     match (field, child) {
         (MathField::SubBox(id) | MathField::SubMlist(id), Some(child)) => *id = child,
         (MathField::Empty | MathField::MathChar(_) | MathField::MathTextChar(_), None) => {}

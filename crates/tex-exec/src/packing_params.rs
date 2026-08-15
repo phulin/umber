@@ -52,13 +52,14 @@ pub(crate) fn hpack_unreported(
     spec: PackSpec,
     params: HpackParams,
 ) -> (PackedBox, Option<(usize, usize)>) {
-    let mut recovered = stores.nodes(list).to_vec();
+    let mut recovered = stores.node_list_ref(list).to_vec();
     let lr_problems = recover_texxet_directions(stores, &mut recovered);
     let list = if lr_problems.is_some() {
         stores.freeze_node_list(&recovered)
     } else {
         list
     };
+    let list = stores.node_list_ref(list);
     let packed = tex_typeset::hpack(&*stores, list, spec, params);
     stores.set_last_badness(packed.badness);
     stores.record_geometry_observation(GeometryObservation::Hpack {
@@ -80,7 +81,7 @@ pub(crate) fn report_hpack(
         stores,
         PackedDirection::Horizontal,
         &packed.diagnostics,
-        &tex_state::node::Node::HList(packed.node),
+        &tex_state::node::Node::HList(packed.node.clone()),
         DiagnosticListLayout::FrozenList,
     );
     if let Some((missing, extra)) = lr_problems {
@@ -88,7 +89,7 @@ pub(crate) fn report_hpack(
             stores,
             missing,
             extra,
-            &Node::HList(packed.node),
+            &Node::HList(packed.node.clone()),
             DiagnosticListLayout::FrozenList,
         );
     }
@@ -136,6 +137,7 @@ pub(crate) fn vpack(
     spec: PackSpec,
     params: VpackParams,
 ) -> PackedBox {
+    let list = stores.node_list_ref(list);
     let packed = tex_typeset::vpack(&*stores, list, spec, params);
     stores.set_last_badness(packed.badness);
     stores.record_geometry_observation(GeometryObservation::Vpack {
@@ -149,7 +151,7 @@ pub(crate) fn vpack(
         stores,
         PackedDirection::Vertical,
         &packed.diagnostics,
-        &tex_state::node::Node::VList(packed.node),
+        &tex_state::node::Node::VList(packed.node.clone()),
         DiagnosticListLayout::FrozenList,
     );
     packed
@@ -164,6 +166,7 @@ pub(crate) fn vtop(
     // TeX82 packages the vertical list in §668, including observation-worthy
     // dimensions and diagnostics, before §1087 readjusts the returned vtop.
     let mut packed = vpack(stores, list, spec, params);
-    tex_typeset::readjust_vtop(&*stores, list, &mut packed);
+    let children = packed.node.children.clone();
+    tex_typeset::readjust_vtop(&children, &mut packed);
     packed
 }

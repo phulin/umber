@@ -2,9 +2,9 @@ use smallvec::{SmallVec, smallvec};
 use std::sync::Arc;
 use tex_state::glue::GlueSpecRef;
 use tex_state::ids::FontId;
-use tex_state::ids::NodeListId;
 use tex_state::math::FractionThickness;
 use tex_state::node::{BoxNode, Node};
+use tex_state::node_arena::NodeListRef;
 use tex_state::provenance::OriginRef;
 use tex_state::scaled::Scaled;
 use tex_state::token_store::TokenListRef;
@@ -128,24 +128,6 @@ pub struct ModeList {
 }
 
 impl ModeList {
-    fn visit_node_lists_mut(&mut self, mut visit: impl FnMut(&mut NodeListId)) {
-        self.sequence.visit_node_lists_mut(&mut visit);
-        if let Some(fraction) = &mut self.incomplete_fraction {
-            visit(&mut fraction.numerator);
-        }
-        if let Some(interrupt) = &mut self.display_interrupt
-            && let Some(prototype) = &mut interrupt.prototype
-        {
-            visit(&mut prototype.children);
-            if let Some(children) = &mut prototype.diagnostic_children {
-                visit(children);
-            }
-        }
-        if let Some(eq_no) = &mut self.display_eq_no {
-            visit(&mut eq_no.display);
-        }
-    }
-
     #[must_use]
     pub fn nodes(&self) -> &[Node] {
         self.sequence.semantic()
@@ -861,7 +843,7 @@ impl PendingHRunChar {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct IncompleteFraction {
-    pub numerator: NodeListId,
+    pub numerator: NodeListRef,
     pub thickness: FractionThickness,
     pub left_delimiter: Option<u32>,
     pub right_delimiter: Option<u32>,
@@ -873,10 +855,10 @@ pub struct DisplayInterrupt {
     pub prototype: Option<BoxNode>,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DisplayEqNo {
     pub side: EqNoSide,
-    pub display: NodeListId,
+    pub display: NodeListRef,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1014,7 +996,7 @@ fn hash_mode_list(list: &ModeList, projection: &mut EngineBoundaryHasher<'_>) {
     match &list.incomplete_fraction {
         Some(fraction) => {
             projection.bool(true);
-            projection.node_list(fraction.numerator);
+            projection.u64(fraction.numerator.semantic_fingerprint());
             match fraction.thickness {
                 FractionThickness::Default => projection.u8(0),
                 FractionThickness::Explicit(size) => {
@@ -1041,24 +1023,24 @@ fn hash_mode_list(list: &ModeList, projection: &mut EngineBoundaryHasher<'_>) {
                     tex_state::node::Direction::EndM => 5,
                 });
             }
-            match interrupt.prototype {
+            match &interrupt.prototype {
                 Some(prototype) => {
                     projection.bool(true);
-                    projection.nodes(&[Node::HList(prototype)]);
+                    projection.nodes(&[Node::HList(prototype.clone())]);
                 }
                 None => projection.bool(false),
             }
         }
         None => projection.bool(false),
     }
-    match list.display_eq_no {
+    match &list.display_eq_no {
         Some(eq_no) => {
             projection.bool(true);
             projection.u8(match eq_no.side {
                 EqNoSide::Left => 0,
                 EqNoSide::Right => 1,
             });
-            projection.node_list(eq_no.display);
+            projection.u64(eq_no.display.semantic_fingerprint());
         }
         None => projection.bool(false),
     }
@@ -1210,18 +1192,12 @@ impl ModeNest {
 
     pub(crate) fn promote_node_roots(
         &mut self,
-        stores: &mut Universe,
-        snapshot: &mut tex_state::LocalRetrySnapshot,
+        _stores: &mut Universe,
+        _snapshot: &mut tex_state::LocalRetrySnapshot,
     ) {
-        let mut roots = Vec::new();
-        for level in Arc::make_mut(&mut self.levels) {
-            level.list.visit_node_lists_mut(|id| {
-                *id = stores.promote_node_list_for_commit(snapshot, *id);
-                roots.push(*id);
-            });
-        }
-        self.node_owners =
-            tex_state::survivor::SurvivorOwners::new(stores.committed_node_owners(&roots));
+        // Mode nodes and their auxiliary math/box payloads retain structural
+        // owners directly; no nested coordinate promotion walk remains.
+        self.node_owners = tex_state::survivor::SurvivorOwners::default();
     }
 
     #[must_use]

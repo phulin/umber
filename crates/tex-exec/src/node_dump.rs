@@ -14,6 +14,7 @@ use tex_state::math::{
 use tex_state::node::{
     BoxNode, GlueKind, KernKind, LeaderPayload, Node, Sign, UnsetKind, UnsetNode, Whatsit,
 };
+use tex_state::node_arena::NodeListRef;
 use tex_state::scaled::{GlueSetRatio, Scaled};
 use tex_state::token::Token;
 use tex_state::token_show::append_tex_print_char;
@@ -48,9 +49,18 @@ impl DumpConfig {
     }
 }
 
-pub(crate) fn dump_node_list(stores: &Universe, id: NodeListId, config: DumpConfig) -> String {
+pub(crate) fn dump_node_list(stores: &mut Universe, id: NodeListId, config: DumpConfig) -> String {
     let mut out = String::new();
-    dump_list(stores, id, &config, -1, ListContext::Neutral, &mut out);
+    let owner = stores.node_list_ref(id);
+    dump_nodes(
+        stores,
+        &owner.to_vec(),
+        &config,
+        -1,
+        ListContext::Neutral,
+        false,
+        &mut out,
+    );
     out
 }
 
@@ -81,7 +91,7 @@ pub(crate) fn dump_incomplete_fraction(
         fraction.right_delimiter,
         &mut out,
     );
-    dump_fraction_part(stores, fraction.numerator, &config, 0, "\\", &mut out);
+    dump_fraction_part(stores, &fraction.numerator, &config, 0, "\\", &mut out);
     out
 }
 
@@ -92,16 +102,54 @@ enum ListContext {
     VList,
 }
 
-fn dump_list(
+trait DumpListProjection {
+    fn is_empty(&self, stores: &Universe) -> bool;
+    fn dump(
+        &self,
+        stores: &Universe,
+        config: &DumpConfig,
+        depth: i32,
+        context: ListContext,
+        physical_replacement_spans: bool,
+        out: &mut String,
+    );
+}
+
+impl DumpListProjection for NodeListRef {
+    fn is_empty(&self, _stores: &Universe) -> bool {
+        self.is_empty()
+    }
+
+    fn dump(
+        &self,
+        stores: &Universe,
+        config: &DumpConfig,
+        depth: i32,
+        context: ListContext,
+        physical_replacement_spans: bool,
+        out: &mut String,
+    ) {
+        dump_nodes(
+            stores,
+            &self.to_vec(),
+            config,
+            depth,
+            context,
+            physical_replacement_spans,
+            out,
+        );
+    }
+}
+
+fn dump_projected_list<List: DumpListProjection>(
     stores: &Universe,
-    id: NodeListId,
+    list: &List,
     config: &DumpConfig,
     depth: i32,
     context: ListContext,
     out: &mut String,
 ) {
-    let nodes = stores.nodes(id).to_vec();
-    dump_nodes(stores, &nodes, config, depth, context, false, out);
+    list.dump(stores, config, depth, context, false, out);
 }
 
 fn dump_nodes(
@@ -291,8 +339,8 @@ fn dump_node(
             ..
         } => dump_disc(
             stores,
-            *pre,
-            *post,
+            pre,
+            post,
             *physical_replace_count,
             config,
             depth,
@@ -305,9 +353,9 @@ fn dump_node(
             } else {
                 "\\vadjust\n"
             });
-            dump_list(
+            dump_projected_list(
                 stores,
-                adjust.content,
+                &adjust.content,
                 config,
                 depth + 1,
                 ListContext::VList,
@@ -355,7 +403,7 @@ fn dump_node(
                 format_glue(split_top_skip.spec(), ""),
                 format_scaled_without_unit(*split_max_depth),
             );
-            dump_list(stores, *content, config, depth + 1, ListContext::VList, out);
+            dump_projected_list(stores, content, config, depth + 1, ListContext::VList, out);
         }
     }
 }
@@ -433,9 +481,9 @@ fn dump_token_list(stores: &Universe, tokens: TokenListId, out: &mut String) {
     out.push_str("}\n");
 }
 
-fn dump_math_noad(
+fn dump_math_noad<List: DumpListProjection>(
     stores: &Universe,
-    noad: &MathNoad,
+    noad: &MathNoad<List>,
     config: &DumpConfig,
     depth: i32,
     out: &mut String,
@@ -499,9 +547,9 @@ fn dump_math_marker(stores: &Universe, name: &str, width: Scaled, out: &mut Stri
     }
 }
 
-fn dump_leader_payload(
+fn dump_leader_payload<List: DumpListProjection + Clone>(
     stores: &Universe,
-    payload: &LeaderPayload,
+    payload: &LeaderPayload<List>,
     config: &DumpConfig,
     depth: i32,
     context: ListContext,
@@ -563,9 +611,9 @@ fn noad_name(kind: &NoadKind) -> &'static str {
     }
 }
 
-fn dump_math_field(
+fn dump_math_field<List: DumpListProjection>(
     stores: &Universe,
-    field: &MathField,
+    field: &MathField<List>,
     config: &DumpConfig,
     depth: i32,
     marker: char,
@@ -580,12 +628,12 @@ fn dump_math_field(
         }
         MathField::SubBox(list) => {
             let old_len = out.len();
-            dump_list(stores, *list, config, depth, ListContext::Neutral, out);
+            dump_projected_list(stores, list, config, depth, ListContext::Neutral, out);
             mark_subsidiary_lines(out, old_len, depth, marker);
         }
         MathField::SubMlist(list) => {
             let old_len = out.len();
-            dump_list(stores, *list, config, depth, ListContext::Neutral, out);
+            dump_projected_list(stores, list, config, depth, ListContext::Neutral, out);
             if old_len < out.len() {
                 mark_subsidiary_lines(out, old_len, depth, marker);
             } else {
@@ -631,9 +679,9 @@ fn dump_math_char_inline(stores: &Universe, ch: MathChar, out: &mut String) {
     let _ = write!(out, "{} {}", ch.family, dump_char(ch.character));
 }
 
-fn dump_fraction(
+fn dump_fraction<List: DumpListProjection>(
     stores: &Universe,
-    fraction: &MathFraction,
+    fraction: &MathFraction<List>,
     config: &DumpConfig,
     depth: i32,
     out: &mut String,
@@ -645,8 +693,8 @@ fn dump_fraction(
         fraction.right_delimiter,
         out,
     );
-    dump_fraction_part(stores, fraction.numerator, config, depth + 1, "\\", out);
-    dump_fraction_part(stores, fraction.denominator, config, depth + 1, "/", out);
+    dump_fraction_part(stores, &fraction.numerator, config, depth + 1, "\\", out);
+    dump_fraction_part(stores, &fraction.denominator, config, depth + 1, "/", out);
 }
 
 fn dump_fraction_header(
@@ -707,16 +755,16 @@ fn dump_packed_delimiter(prefix: &str, delimiter: u32, out: &mut String) {
     let _ = write!(out, "{prefix}\"{delimiter:X}");
 }
 
-fn dump_fraction_part(
+fn dump_fraction_part<List: DumpListProjection>(
     stores: &Universe,
-    list: NodeListId,
+    list: &List,
     config: &DumpConfig,
     depth: i32,
     marker: &str,
     out: &mut String,
 ) {
     let old_len = out.len();
-    dump_list(stores, list, config, depth, ListContext::Neutral, out);
+    dump_projected_list(stores, list, config, depth, ListContext::Neutral, out);
     if old_len == out.len() {
         // TeX82 §697 passes the numerator and denominator records to §692's
         // subsidiary-data printer as `sub_mlist` fields. A null list is
@@ -738,9 +786,9 @@ fn dump_fraction_part(
     }
 }
 
-fn dump_math_choice(
+fn dump_math_choice<List: DumpListProjection>(
     stores: &Universe,
-    choice: &MathChoice,
+    choice: &MathChoice<List>,
     config: &DumpConfig,
     depth: i32,
     out: &mut String,
@@ -748,22 +796,22 @@ fn dump_math_choice(
     // TeX82 §689's choice-node display calls §63 `print_esc`.
     append_escaped_name(stores, "mathchoice", out);
     out.push('\n');
-    dump_choice_arm(stores, choice.display, config, depth + 1, 'D', out);
-    dump_choice_arm(stores, choice.text, config, depth + 1, 'T', out);
-    dump_choice_arm(stores, choice.script, config, depth + 1, 'S', out);
-    dump_choice_arm(stores, choice.script_script, config, depth + 1, 's', out);
+    dump_choice_arm(stores, &choice.display, config, depth + 1, 'D', out);
+    dump_choice_arm(stores, &choice.text, config, depth + 1, 'T', out);
+    dump_choice_arm(stores, &choice.script, config, depth + 1, 'S', out);
+    dump_choice_arm(stores, &choice.script_script, config, depth + 1, 's', out);
 }
 
-fn dump_choice_arm(
+fn dump_choice_arm<List: DumpListProjection>(
     stores: &Universe,
-    list: NodeListId,
+    list: &List,
     config: &DumpConfig,
     depth: i32,
     marker: char,
     out: &mut String,
 ) {
     let old_len = out.len();
-    dump_list(stores, list, config, depth, ListContext::Neutral, out);
+    dump_projected_list(stores, list, config, depth, ListContext::Neutral, out);
     if old_len < out.len() {
         // Section 689 appends the arm marker to `cur_string` for the entire
         // recursive `show_node_list` call, so it replaces this prefix level
@@ -772,9 +820,9 @@ fn dump_choice_arm(
     }
 }
 
-fn dump_math_list(
+fn dump_math_list<List: DumpListProjection>(
     stores: &Universe,
-    list: &MathListNode,
+    list: &MathListNode<List>,
     config: &DumpConfig,
     depth: i32,
     out: &mut String,
@@ -786,9 +834,9 @@ fn dump_math_list(
     };
     out.push_str(name);
     out.push('\n');
-    dump_list(
+    dump_projected_list(
         stores,
-        list.content,
+        &list.content,
         config,
         depth + 1,
         ListContext::Neutral,
@@ -805,10 +853,10 @@ fn math_style_name(style: MathStyle) -> &'static str {
     }
 }
 
-fn dump_disc(
+fn dump_disc<List: DumpListProjection>(
     stores: &Universe,
-    pre: NodeListId,
-    post: NodeListId,
+    pre: &List,
+    post: &List,
     physical_replace_count: u8,
     config: &DumpConfig,
     depth: i32,
@@ -822,10 +870,10 @@ fn dump_disc(
     } else {
         let _ = writeln!(out, " replacing {physical_replace_count}");
     }
-    dump_list(stores, pre, config, depth + 1, ListContext::Neutral, out);
-    if !stores.nodes(post).is_empty() {
+    dump_projected_list(stores, pre, config, depth + 1, ListContext::Neutral, out);
+    if !post.is_empty(stores) {
         let old_len = out.len();
-        dump_list(stores, post, config, depth + 1, ListContext::Neutral, out);
+        dump_projected_list(stores, post, config, depth + 1, ListContext::Neutral, out);
         let marker_offset = usize::try_from(depth.max(-1) + 1).unwrap_or(0);
         let mut line_start = old_len;
         while line_start < out.len() {
@@ -959,10 +1007,10 @@ fn dump_ligature(
     rendered
 }
 
-fn dump_box(
+fn dump_box<List: DumpListProjection + Clone>(
     name: &str,
     stores: &Universe,
-    box_node: &BoxNode,
+    box_node: &BoxNode<List>,
     config: &DumpConfig,
     depth: i32,
     _context: ListContext,
@@ -970,7 +1018,8 @@ fn dump_box(
 ) {
     let (children, physical_replacement_spans) = box_node
         .diagnostic_children
-        .map_or((box_node.children, false), |children| (children, true));
+        .as_ref()
+        .map_or((&box_node.children, false), |children| (children, true));
     // TeX82 §183 names both list-node kinds through `print_esc`, so the
     // header follows the live `\escapechar` just like whatsit names below.
     append_escaped_name(stores, name, out);
@@ -1001,7 +1050,7 @@ fn dump_box(
         tex_state::node::BoxLr::DList => {}
     }
     if depth + 1 >= config.depth {
-        if !stores.nodes(children).is_empty() {
+        if !children.is_empty(stores) {
             out.push_str(" []");
         }
         out.push('\n');
@@ -1013,10 +1062,8 @@ fn dump_box(
     } else {
         ListContext::VList
     };
-    let nodes = stores.nodes(children).to_vec();
-    dump_nodes(
+    children.dump(
         stores,
-        &nodes,
         config,
         depth + 1,
         child_context,
@@ -1025,9 +1072,9 @@ fn dump_box(
     );
 }
 
-fn dump_unset(
+fn dump_unset<List: DumpListProjection>(
     stores: &Universe,
-    unset: &UnsetNode,
+    unset: &UnsetNode<List>,
     config: &DumpConfig,
     depth: i32,
     out: &mut String,
@@ -1065,7 +1112,7 @@ fn dump_unset(
         );
     }
     if depth + 1 >= config.depth {
-        if !stores.nodes(unset.children).is_empty() {
+        if !unset.children.is_empty(stores) {
             out.push_str(" []");
         }
         out.push('\n');
@@ -1076,9 +1123,9 @@ fn dump_unset(
         UnsetKind::HBox => ListContext::HList,
         UnsetKind::VBox => ListContext::VList,
     };
-    dump_list(
+    dump_projected_list(
         stores,
-        unset.children,
+        &unset.children,
         config,
         depth + 1,
         child_context,
@@ -1086,7 +1133,7 @@ fn dump_unset(
     );
 }
 
-fn write_glue_set(box_node: &BoxNode, out: &mut String) {
+fn write_glue_set<List>(box_node: &BoxNode<List>, out: &mut String) {
     if box_node.glue_sign == Sign::Normal || box_node.glue_set.is_zero() {
         return;
     }
@@ -1279,8 +1326,8 @@ mod unset_diagnostic_tests {
 
     #[test]
     fn vertical_unset_node_uses_tex82_unsetbox_name() {
-        let mut stores = Universe::new();
-        let children = stores.freeze_node_list(&[]);
+        let stores = Universe::new();
+        let children = NodeListRef::empty();
         let unset = Node::Unset(UnsetNode::new(UnsetNodeFields {
             kind: UnsetKind::VBox,
             width: Scaled::from_raw(0),
@@ -1526,7 +1573,7 @@ mod unset_diagnostic_tests {
 
         assert_eq!(
             dump_node_list(
-                &stores,
+                &mut stores,
                 list,
                 DumpConfig {
                     breadth: 5,
@@ -1552,16 +1599,17 @@ mod unset_diagnostic_tests {
                 origin: Default::default(),
             }),
         ))]);
+        let arm = stores.node_list_ref(arm);
         let list = stores.freeze_node_list(&[Node::MathChoice(MathChoice {
-            display: arm,
-            text: arm,
-            script: arm,
+            display: arm.clone(),
+            text: arm.clone(),
+            script: arm.clone(),
             script_script: arm,
         })]);
 
         assert_eq!(
             dump_node_list(
-                &stores,
+                &mut stores,
                 list,
                 DumpConfig {
                     breadth: 100,
@@ -1585,24 +1633,25 @@ mod unset_diagnostic_tests {
     fn fraction_dump_uses_live_escape_character_inside_choice_arm() {
         let mut stores = Universe::new();
         stores.set_int_param(IntParam::ESCAPE_CHAR, i32::from(b'|'));
-        let empty = stores.freeze_node_list(&[]);
+        let empty = NodeListRef::empty();
         let fraction = stores.freeze_node_list(&[Node::FractionNoad(MathFraction {
-            numerator: empty,
-            denominator: empty,
+            numerator: empty.clone(),
+            denominator: empty.clone(),
             thickness: FractionThickness::Default,
             left_delimiter: None,
             right_delimiter: None,
         })]);
+        let fraction = stores.node_list_ref(fraction);
         let list = stores.freeze_node_list(&[Node::MathChoice(MathChoice {
-            display: empty,
-            text: empty,
+            display: empty.clone(),
+            text: empty.clone(),
             script: fraction,
             script_script: empty,
         })]);
 
         assert_eq!(
             dump_node_list(
-                &stores,
+                &mut stores,
                 list,
                 DumpConfig {
                     breadth: 100,

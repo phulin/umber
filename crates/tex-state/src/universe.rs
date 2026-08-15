@@ -3135,14 +3135,8 @@ impl Universe {
     }
 
     fn promote_page_node_roots(&mut self, snapshot: &mut LocalRetrySnapshot) {
-        let mut page = std::mem::take(&mut self.page);
-        let mut roots = Vec::new();
-        page.visit_node_lists_mut(|id| {
-            *id = self.promote_node_list_for_commit(snapshot, *id);
-            roots.push(*id);
-        });
-        page.replace_node_owners(self.committed_node_owners(&roots));
-        self.page = page;
+        let _ = snapshot;
+        self.page.replace_node_owners(Vec::new());
     }
 
     /// Returns whether `snapshot` still names a valid private retry point.
@@ -3483,8 +3477,8 @@ impl Universe {
         let LocalRetrySnapshot {
             rollback,
             patch_operation,
-            node_mark: _,
-            node_promotions: _,
+            node_mark,
+            mut node_promotions,
         } = snapshot;
         assert_eq!(
             rollback.owner,
@@ -3514,6 +3508,8 @@ impl Universe {
             (None, None) => {}
             _ => panic!("local retry patch operation does not match its Universe"),
         }
+        node_promotions.clear();
+        self.stores.finish_operation_nodes(node_mark);
     }
 
     fn rollback_generation_fork(&mut self, snapshot: &Snapshot) {
@@ -6759,6 +6755,25 @@ impl Universe {
         self.stores.freeze_node_list_ref(builder)
     }
 
+    /// Acquires direct immutable ownership of a published aggregate list.
+    ///
+    /// This is the explicit boundary adapter for aggregate state that still
+    /// stores compact coordinates. Nested owned values must retain the
+    /// returned reference instead of copying its private coordinate.
+    pub fn node_list_ref(&mut self, id: NodeListId) -> NodeListRef {
+        self.stores.node_list_ref(id)
+    }
+
+    /// Borrows direct ownership already retained by a published aggregate.
+    ///
+    /// Epoch-local coordinates have not crossed a publication boundary and
+    /// therefore return `None`; callers handling those values must use
+    /// [`Self::node_list_ref`] while they still hold mutable operation state.
+    #[must_use]
+    pub fn published_node_list_ref(&self, id: NodeListId) -> Option<NodeListRef> {
+        self.stores.published_node_list_ref(id)
+    }
+
     /// Captures a handle-free, provenance-free node graph for memo retention.
     pub fn detach_node_list(
         &self,
@@ -8111,11 +8126,7 @@ impl Universe {
                 return Err(crate::MemoValueError::Codec(format!("{error:?}")));
             }
         };
-        let nodes = self
-            .nodes(imported)
-            .into_iter()
-            .map(|node| node.to_owned())
-            .collect();
+        let nodes = self.stores.node_list_ref(imported).to_vec();
         if let Err(error) = self.page.install_memo_parts(nodes, wire.state) {
             self.rollback_scoped(rollback);
             return Err(error);
@@ -8384,7 +8395,7 @@ impl Universe {
         let Some(id) = self.box_reg(index) else {
             return;
         };
-        let Some(mut node) = self.nodes(id).first().map(|node| node.to_owned()) else {
+        let Some(mut node) = self.stores.node_list_ref(id).to_vec().into_iter().next() else {
             return;
         };
         if !set_box_dimension_in_node(&mut node, dimension, value) {

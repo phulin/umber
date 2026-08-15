@@ -24,6 +24,7 @@ fn last_artifact(stores: &Universe) -> PageArtifact {
 
 fn state_box(stores: &mut Universe, children: &[Node], vertical: bool) -> Node {
     let children = stores.freeze_node_list(children);
+    let children = stores.node_list_ref(children);
     let boxed = BoxNode::new(BoxNodeFields {
         width: Scaled::from_raw(1_000),
         height: Scaled::from_raw(100),
@@ -406,11 +407,8 @@ fn base_whatsit_construction_projects_fields_display_size_and_ownership() {
         "nested copy survives original replacement"
     );
     for (register, vertical) in [(1, false), (2, true)] {
-        let root = stores
-            .nodes(stores.box_reg(register).expect("box exists"))
-            .first()
-            .expect("box has a root")
-            .to_owned();
+        let root = first_published_node(&stores, stores.box_reg(register).expect("box exists"))
+            .expect("box has a root");
         let boxed = match (vertical, root) {
             (false, Node::HList(boxed)) | (true, Node::VList(boxed)) => boxed,
             (_, other) => panic!("box {register} has the expected orientation: {other:?}"),

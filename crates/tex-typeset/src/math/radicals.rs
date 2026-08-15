@@ -84,11 +84,15 @@ pub(super) fn make_vcenter(
 
 fn clean_vcenter_box(ctx: &mut Context<'_, impl MathTypesetState>, nucleus: &MathField) -> MathBox {
     if let MathField::SubBox(list) = nucleus
-        && let nodes = ctx.state.nodes(*list)
+        && let nodes = list.nodes()
         && nodes.len() == 1
         && let Some(tex_state::node_arena::NodeRef::VList(boxed)) = nodes.first()
     {
-        let list = source_box_payload(ctx, boxed.children);
+        let list = source_box_payload(
+            ctx,
+            list.resolve(boxed.children)
+                .expect("owned vcenter box child belongs to its source payload"),
+        );
         return MathBox {
             width: boxed.width,
             height: boxed.height,

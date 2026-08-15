@@ -1,4 +1,5 @@
 use super::*;
+use crate::FreezeNodeListRefForTest;
 use tex_fonts::metrics::CharTag;
 use tex_fonts::{CharMetrics, FontMetrics, LoadedFont};
 use tex_state::Universe;
@@ -274,8 +275,8 @@ fn pdf_image_reference_contributes_width_to_line_measurement() {
     let decoded = line_widths_nodes(&universe, std::slice::from_ref(&image));
     assert_eq!(decoded.natural, tex_arith::WideScaled::from_scaled(sp(30)));
 
-    let list = universe.freeze_node_list(&[image]);
-    let compact = line_widths_view(&universe, universe.nodes(list), 0, 1, false);
+    let list = universe.freeze_node_list_ref_for_test(&[image]);
+    let compact = line_widths_view(&universe, &list, 0, 1, false);
     assert_eq!(compact.natural, tex_arith::WideScaled::from_scaled(sp(30)));
 }
 
@@ -335,7 +336,8 @@ fn base_whatsit_line_visitation_is_zero_width_and_never_a_breakpoint() {
 #[test]
 fn etex_penalty_arrays_repeat_and_use_forward_and_reverse_indexes() {
     let mut universe = Universe::new();
-    let empty = universe.freeze_node_list(&[]);
+    let empty = universe.freeze_node_list_ref_for_test(&[]);
+    let zero = universe.intern_glue(GlueSpec::ZERO);
     let breaks = vec![
         BreakDecision {
             position: 1,
@@ -359,9 +361,9 @@ fn etex_penalty_arrays_repeat_and_use_forward_and_reverse_indexes() {
         },
     ];
     let post = PostLineBreakParams {
-        empty_list: empty,
-        left_skip: tex_state::glue::testing_zero_glue_ref(),
-        right_skip: tex_state::glue::testing_zero_glue_ref(),
+        empty_list: empty.clone(),
+        left_skip: zero.clone(),
+        right_skip: zero,
         interline_penalty: 99,
         club_penalty: 999,
         widow_penalties: ordinary_widow_penalties(9999, vec![2000, 1000]),
@@ -394,7 +396,8 @@ fn etex_penalty_arrays_repeat_and_use_forward_and_reverse_indexes() {
 #[test]
 fn etex_display_widow_selector_survives_to_post_line_break() {
     let mut universe = Universe::new();
-    let empty = universe.freeze_node_list(&[]);
+    let empty = universe.freeze_node_list_ref_for_test(&[]);
+    let zero = universe.intern_glue(GlueSpec::ZERO);
     let breaks = (1..=4)
         .map(|position| BreakDecision {
             position,
@@ -403,9 +406,9 @@ fn etex_display_widow_selector_survives_to_post_line_break() {
         })
         .collect::<Vec<_>>();
     let mut params = PostLineBreakParams {
-        empty_list: empty,
-        left_skip: tex_state::glue::testing_zero_glue_ref(),
-        right_skip: tex_state::glue::testing_zero_glue_ref(),
+        empty_list: empty.clone(),
+        left_skip: zero.clone(),
+        right_skip: zero,
         interline_penalty: 7,
         club_penalty: 0,
         widow_penalties: WidowPenalties {
@@ -541,8 +544,8 @@ fn pdftex_hz_modes_have_the_exact_scoring_and_breakpoint_matrix() {
         shrink: sp(10),
         shrink_order: Order::Normal,
     });
-    let empty = universe.freeze_node_list(&[]);
-    let pre = universe.freeze_node_list(&[microtype_char(first, '-')]);
+    let empty = universe.freeze_node_list_ref_for_test(&[]);
+    let pre = universe.freeze_node_list_ref_for_test(&[microtype_char(first, '-')]);
     let scenarios = [
         (
             "stretch",
@@ -618,8 +621,8 @@ fn pdftex_hz_modes_have_the_exact_scoring_and_breakpoint_matrix() {
                 Node::Disc {
                     kind: DiscKind::ExplicitHyphen,
                     pre,
-                    post: empty,
-                    replace: empty,
+                    post: empty.clone(),
+                    replace: empty.clone(),
                     physical_replace_count: 0,
                 },
                 microtype_char(first, 'B'),
@@ -1236,23 +1239,23 @@ fn tracing_display_retains_structural_successors_after_discretionary_cluster() {
     // current discretionary is displayed. The pure breaker's detached cursor
     // must still begin its next fragment at the structural successor.
     let mut universe = Universe::new();
-    let empty = universe.freeze_node_list(&[]);
-    let first_replace = universe.freeze_node_list(&[]);
-    let second_replace = universe.freeze_node_list(&[kern(2), rule(3)]);
+    let empty = universe.freeze_node_list_ref_for_test(&[]);
+    let first_replace = universe.freeze_node_list_ref_for_test(&[]);
+    let second_replace = universe.freeze_node_list_ref_for_test(&[kern(2), rule(3)]);
     let nodes = vec![
         rule(1),
         Node::Disc {
             kind: DiscKind::Discretionary,
-            pre: empty,
-            post: empty,
-            replace: first_replace,
+            pre: empty.clone(),
+            post: empty.clone(),
+            replace: first_replace.clone(),
             physical_replace_count: 0,
         },
         Node::Disc {
             kind: DiscKind::Discretionary,
-            pre: empty,
-            post: empty,
-            replace: second_replace,
+            pre: empty.clone(),
+            post: empty.clone(),
+            replace: second_replace.clone(),
             physical_replace_count: 2,
         },
         kern(1),
@@ -1284,23 +1287,23 @@ fn tracing_display_does_not_repeat_successors_rendered_with_a_discretionary_clus
     // The extended current slice therefore renders nodes beyond its own
     // hidden replacement and advances §851's `printed_node` through them.
     let mut universe = Universe::new();
-    let empty = universe.freeze_node_list(&[]);
-    let first_replace = universe.freeze_node_list(&[kern(1)]);
-    let second_replace = universe.freeze_node_list(&[kern(2), rule(3)]);
+    let empty = universe.freeze_node_list_ref_for_test(&[]);
+    let first_replace = universe.freeze_node_list_ref_for_test(&[kern(1)]);
+    let second_replace = universe.freeze_node_list_ref_for_test(&[kern(2), rule(3)]);
     let nodes = vec![
         rule(1),
         Node::Disc {
             kind: DiscKind::Discretionary,
-            pre: empty,
-            post: empty,
-            replace: first_replace,
+            pre: empty.clone(),
+            post: empty.clone(),
+            replace: first_replace.clone(),
             physical_replace_count: 1,
         },
         Node::Disc {
             kind: DiscKind::Discretionary,
-            pre: empty,
-            post: empty,
-            replace: second_replace,
+            pre: empty.clone(),
+            post: empty.clone(),
+            replace: second_replace.clone(),
             physical_replace_count: 2,
         },
         kern(1),
@@ -1332,8 +1335,8 @@ fn tracing_display_includes_automatic_discretionary_replacement_after_font_kern(
     // discretionary after a font kern; §851 displays that replacement before
     // reporting the feasible discretionary.
     let mut universe = Universe::new();
-    let empty = universe.freeze_node_list(&[]);
-    let replace = universe.freeze_node_list(&[rule(2)]);
+    let empty = universe.freeze_node_list_ref_for_test(&[]);
+    let replace = universe.freeze_node_list_ref_for_test(&[rule(2)]);
     let nodes = vec![
         rule(1),
         Node::Kern {
@@ -1342,9 +1345,9 @@ fn tracing_display_includes_automatic_discretionary_replacement_after_font_kern(
         },
         Node::Disc {
             kind: DiscKind::AutomaticHyphen,
-            pre: empty,
-            post: empty,
-            replace,
+            pre: empty.clone(),
+            post: empty.clone(),
+            replace: replace.clone(),
             physical_replace_count: 1,
         },
         Node::Kern {
@@ -1427,7 +1430,7 @@ fn final_pass_keeps_last_active_route_when_every_route_is_overfull() {
 fn consecutive_discardable_breakpoints_do_not_form_a_backwards_chain() {
     let mut universe = Universe::new();
     let zero = universe.intern_glue(GlueSpec::ZERO);
-    let empty = universe.freeze_node_list(&[]);
+    let empty = universe.freeze_node_list_ref_for_test(&[]);
     let nodes = vec![rule(1), Node::Penalty(0), Node::Penalty(0), rule(1)];
     let mut break_params = params(100);
     break_params.looseness = 2;
@@ -1439,7 +1442,7 @@ fn consecutive_discardable_breakpoints_do_not_form_a_backwards_chain() {
         &nodes,
         &result.breaks,
         PostLineBreakParams {
-            empty_list: empty,
+            empty_list: empty.clone(),
             left_skip: zero.clone(),
             right_skip: zero.clone(),
             interline_penalty: 0,
@@ -1657,8 +1660,8 @@ fn equivalent_line_classes_discard_noncompetitive_fitness_routes() {
 #[test]
 fn active_list_order_matches_tex_for_equal_demerit_discretionary_routes() {
     let mut universe = Universe::new();
-    let empty = universe.freeze_node_list(&[]);
-    let nonempty = universe.freeze_node_list(&[kern(0)]);
+    let empty = universe.freeze_node_list_ref_for_test(&[]);
+    let nonempty = universe.freeze_node_list_ref_for_test(&[kern(0)]);
     let right_skip = GlueSpec {
         stretch: sp(1),
         stretch_order: Order::Fil,
@@ -1668,8 +1671,8 @@ fn active_list_order_matches_tex_for_equal_demerit_discretionary_routes() {
     let disc = |pre| Node::Disc {
         kind: DiscKind::ExplicitHyphen,
         pre,
-        post: empty,
-        replace: empty,
+        post: empty.clone(),
+        replace: empty.clone(),
         physical_replace_count: 0,
     };
     // This is the equal-demerit shape used by TRIP's line-breaking test.
@@ -1677,15 +1680,15 @@ fn active_list_order_matches_tex_for_equal_demerit_discretionary_routes() {
     // position, selecting the early (2, 6) route rather than (6, 13).
     let nodes = vec![
         kern(0),
-        disc(nonempty),
+        disc(nonempty.clone()),
         kern(0),
         rule(0),
-        disc(empty),
-        disc(nonempty),
+        disc(empty.clone()),
+        disc(nonempty.clone()),
         kern(0),
         rule(0),
         rule(0),
-        disc(empty),
+        disc(empty.clone()),
         kern(0),
         rule(0),
         disc(nonempty),
@@ -1978,8 +1981,8 @@ fn discardable_tail_does_not_create_an_empty_final_line() {
 #[test]
 fn looseness_can_select_empty_line_after_terminal_discretionary() {
     let mut universe = Universe::new();
-    let empty = universe.freeze_node_list(&[]);
-    let hyphen = universe.freeze_node_list(&[rule(5)]);
+    let empty = universe.freeze_node_list_ref_for_test(&[]);
+    let hyphen = universe.freeze_node_list_ref_for_test(&[rule(5)]);
     let par_fill = universe.intern_glue(GlueSpec {
         width: sp(0),
         stretch: sp(1),
@@ -1991,9 +1994,9 @@ fn looseness_can_select_empty_line_after_terminal_discretionary() {
         rule(20),
         Node::Disc {
             kind: DiscKind::ExplicitHyphen,
-            pre: hyphen,
-            post: empty,
-            replace: empty,
+            pre: hyphen.clone(),
+            post: empty.clone(),
+            replace: empty.clone(),
             physical_replace_count: 0,
         },
         Node::Penalty(10_000),
@@ -2020,14 +2023,14 @@ fn equal_demerit_easy_line_champion_uses_terminal_discretionary_route() {
     // line/fitness class, and `d<=minimal_demerits` lets the later route via
     // this terminal discretionary replace the direct route.
     let mut universe = Universe::new();
-    let empty = universe.freeze_node_list(&[]);
+    let empty = universe.freeze_node_list_ref_for_test(&[]);
     let par_fill = universe.intern_glue(GlueSpec::ZERO);
     let nodes = vec![
         Node::Disc {
             kind: DiscKind::Discretionary,
-            pre: empty,
-            post: empty,
-            replace: empty,
+            pre: empty.clone(),
+            post: empty.clone(),
+            replace: empty.clone(),
             physical_replace_count: 0,
         },
         Node::Penalty(INF_PENALTY),
@@ -2139,7 +2142,7 @@ fn mathoff_breaks_only_before_following_glue_and_zeroes_break_width() {
     assert_eq!(breakpoints[0].line_width.natural.raw(), 10);
     assert_eq!(breakpoints[0].next_width.natural.raw(), 1015);
     let zero = universe.intern_glue(GlueSpec::ZERO);
-    let empty = universe.freeze_node_list(&[]);
+    let empty = universe.freeze_node_list_ref_for_test(&[]);
     let breaks = vec![
         BreakDecision {
             position: 2,
@@ -2157,7 +2160,7 @@ fn mathoff_breaks_only_before_following_glue_and_zeroes_break_width() {
         &nodes,
         &breaks,
         PostLineBreakParams {
-            empty_list: empty,
+            empty_list: empty.clone(),
             left_skip: zero.clone(),
             right_skip: zero.clone(),
             interline_penalty: 0,
@@ -2309,8 +2312,8 @@ fn final_pass_deactivates_unshrinkable_active_line() {
 #[test]
 fn discretionary_penalty_depends_on_pre_break_text() {
     let mut universe = Universe::new();
-    let pre = universe.freeze_node_list(&[kern(0)]);
-    let empty = universe.freeze_node_list(&[]);
+    let pre = universe.freeze_node_list_ref_for_test(&[kern(0)]);
+    let empty = universe.freeze_node_list_ref_for_test(&[]);
     let mut params = params(20);
     params.pretolerance = -1;
     params.hyphen_penalty = 321;
@@ -2320,8 +2323,8 @@ fn discretionary_penalty_depends_on_pre_break_text() {
         Node::Disc {
             kind: DiscKind::AutomaticHyphen,
             pre,
-            post: empty,
-            replace: empty,
+            post: empty.clone(),
+            replace: empty.clone(),
             physical_replace_count: 0,
         },
         kern(20),
@@ -2334,9 +2337,9 @@ fn discretionary_penalty_depends_on_pre_break_text() {
         kern(20),
         Node::Disc {
             kind: DiscKind::ExplicitHyphen,
-            pre: empty,
-            post: empty,
-            replace: empty,
+            pre: empty.clone(),
+            post: empty.clone(),
+            replace: empty.clone(),
             physical_replace_count: 0,
         },
         kern(20),
@@ -2367,8 +2370,8 @@ fn existing_discretionary_is_available_on_the_pretolerance_pass() {
     }
 
     let mut universe = Universe::new();
-    let pre = universe.freeze_node_list(&[kern(1)]);
-    let empty = universe.freeze_node_list(&[]);
+    let pre = universe.freeze_node_list_ref_for_test(&[kern(1)]);
+    let empty = universe.freeze_node_list_ref_for_test(&[]);
     let par_fill = universe.intern_glue(GlueSpec {
         width: sp(0),
         stretch: sp(1),
@@ -2381,8 +2384,8 @@ fn existing_discretionary_is_available_on_the_pretolerance_pass() {
         Node::Disc {
             kind: DiscKind::ExplicitHyphen,
             pre,
-            post: empty,
-            replace: empty,
+            post: empty.clone(),
+            replace: empty.clone(),
             physical_replace_count: 0,
         },
         rule(20),
@@ -2404,14 +2407,14 @@ fn existing_discretionary_is_available_on_the_pretolerance_pass() {
 #[test]
 fn final_hyphen_demerits_apply_to_penultimate_hyphenated_line() {
     let mut universe = Universe::new();
-    let empty = universe.freeze_node_list(&[]);
+    let empty = universe.freeze_node_list_ref_for_test(&[]);
     let nodes = vec![
         kern(20),
         Node::Disc {
             kind: DiscKind::AutomaticHyphen,
-            pre: empty,
-            post: empty,
-            replace: empty,
+            pre: empty.clone(),
+            post: empty.clone(),
+            replace: empty.clone(),
             physical_replace_count: 0,
         },
         rule(20),
@@ -2494,19 +2497,21 @@ fn final_hyphen_demerits_rank_terminal_routes_before_candidate_pruning() {
 fn post_line_break_keeps_migrating_nodes_for_execution_layer() {
     let mut universe = Universe::new();
     let empty_glue = universe.intern_glue(GlueSpec::ZERO);
-    let empty = universe.freeze_node_list(&[]);
+    let empty = universe.freeze_node_list_ref_for_test(&[]);
     let mark_tokens = universe.intern_token_list_ref(&[Token::Char {
         ch: 'm',
         cat: Catcode::Letter,
     }]);
-    let adjust_content = universe.freeze_node_list(&[kern(7)]);
+    let adjust_content = universe.freeze_node_list_ref_for_test(&[kern(7)]);
     let nodes = vec![
         rule(10),
         Node::Mark {
             class: 0,
             tokens: mark_tokens.clone(),
         },
-        Node::Adjust(tex_state::node::AdjustNode::ordinary(adjust_content)),
+        Node::Adjust(tex_state::node::AdjustNode::ordinary(
+            adjust_content.clone(),
+        )),
         Node::Penalty(-10_000),
         rule(10),
         Node::Penalty(10_000),
@@ -2528,7 +2533,7 @@ fn post_line_break_keeps_migrating_nodes_for_execution_layer() {
         &nodes,
         &breaks,
         PostLineBreakParams {
-            empty_list: empty,
+            empty_list: empty.clone(),
             left_skip: empty_glue.clone(),
             right_skip: empty_glue.clone(),
             interline_penalty: 0,
@@ -2561,17 +2566,17 @@ fn post_line_break_keeps_migrating_nodes_for_execution_layer() {
 fn chosen_discretionary_transplants_nonempty_pre_and_post_lists() {
     let mut universe = Universe::new();
     let zero = universe.intern_glue(GlueSpec::ZERO);
-    let empty = universe.freeze_node_list(&[]);
-    let pre = universe.freeze_node_list(&[rule(11), kern(12)]);
-    let post = universe.freeze_node_list(&[rule(21), kern(22)]);
-    let replacement = universe.freeze_node_list(&[rule(99)]);
+    let empty = universe.freeze_node_list_ref_for_test(&[]);
+    let pre = universe.freeze_node_list_ref_for_test(&[rule(11), kern(12)]);
+    let post = universe.freeze_node_list_ref_for_test(&[rule(21), kern(22)]);
+    let replacement = universe.freeze_node_list_ref_for_test(&[rule(99)]);
     let nodes = vec![
         rule(1),
         Node::Disc {
             kind: DiscKind::ExplicitHyphen,
             pre,
             post,
-            replace: replacement,
+            replace: replacement.clone(),
             physical_replace_count: 1,
         },
         rule(2),
@@ -2595,7 +2600,7 @@ fn chosen_discretionary_transplants_nonempty_pre_and_post_lists() {
         &nodes,
         &breaks,
         PostLineBreakParams {
-            empty_list: empty,
+            empty_list: empty.clone(),
             left_skip: zero.clone(),
             right_skip: zero.clone(),
             interline_penalty: 0,
@@ -2647,9 +2652,9 @@ fn chosen_discretionary_transplants_nonempty_pre_and_post_lists() {
 #[test]
 fn discretionary_post_break_width_participates_in_the_next_line() {
     let mut universe = Universe::new();
-    let pre = universe.freeze_node_list(&[rule(7)]);
-    let post = universe.freeze_node_list(&[rule(4)]);
-    let replace = universe.freeze_node_list(&[rule(6)]);
+    let pre = universe.freeze_node_list_ref_for_test(&[rule(7)]);
+    let post = universe.freeze_node_list_ref_for_test(&[rule(4)]);
+    let replace = universe.freeze_node_list_ref_for_test(&[rule(6)]);
     let nodes = vec![
         rule(3),
         Node::Disc {
@@ -2693,7 +2698,7 @@ fn discretionary_post_break_width_participates_in_the_next_line() {
 fn next_line_discards_all_discardables_but_retains_font_kern() {
     let mut universe = Universe::new();
     let zero = universe.intern_glue(GlueSpec::ZERO);
-    let empty = universe.freeze_node_list(&[]);
+    let empty = universe.freeze_node_list_ref_for_test(&[]);
     let nodes = vec![
         rule(1),
         Node::Penalty(0),
@@ -2738,7 +2743,7 @@ fn next_line_discards_all_discardables_but_retains_font_kern() {
         &nodes,
         &breaks,
         PostLineBreakParams {
-            empty_list: empty,
+            empty_list: empty.clone(),
             left_skip: zero.clone(),
             right_skip: zero.clone(),
             interline_penalty: 0,
@@ -2768,7 +2773,8 @@ fn next_line_discards_all_discardables_but_retains_font_kern() {
 #[test]
 fn two_line_penalty_after_combines_club_widow_and_broken_penalties() {
     let mut universe = Universe::new();
-    let empty = universe.freeze_node_list(&[]);
+    let empty = universe.freeze_node_list_ref_for_test(&[]);
+    let zero = universe.intern_glue(GlueSpec::ZERO);
     let breaks = vec![
         BreakDecision {
             position: 1,
@@ -2782,9 +2788,9 @@ fn two_line_penalty_after_combines_club_widow_and_broken_penalties() {
         },
     ];
     let params = PostLineBreakParams {
-        empty_list: empty,
-        left_skip: tex_state::glue::testing_zero_glue_ref(),
-        right_skip: tex_state::glue::testing_zero_glue_ref(),
+        empty_list: empty.clone(),
+        left_skip: zero.clone(),
+        right_skip: zero,
         interline_penalty: 11,
         club_penalty: 101,
         widow_penalties: ordinary_widow_penalties(1_001, Vec::new()),
@@ -2808,7 +2814,7 @@ fn post_line_break_closes_and_resumes_open_tex_xet_segments() {
 
     let mut universe = Universe::new();
     let zero = universe.intern_glue(GlueSpec::ZERO);
-    let empty = universe.freeze_node_list(&[]);
+    let empty = universe.freeze_node_list_ref_for_test(&[]);
     let nodes = vec![
         Node::Direction(Direction::BeginR),
         rule(1),
@@ -2834,7 +2840,7 @@ fn post_line_break_closes_and_resumes_open_tex_xet_segments() {
         &nodes,
         &breaks,
         PostLineBreakParams {
-            empty_list: empty,
+            empty_list: empty.clone(),
             left_skip: zero.clone(),
             right_skip: zero.clone(),
             interline_penalty: 0,
@@ -2865,15 +2871,15 @@ fn post_line_break_closes_and_resumes_open_tex_xet_segments() {
 fn post_line_break_retains_materialized_unbroken_discretionary_replacement_count() {
     let mut universe = Universe::new();
     let zero = universe.intern_glue(GlueSpec::ZERO);
-    let empty = universe.freeze_node_list(&[]);
-    let replacement = universe.freeze_node_list(&[rule(7)]);
+    let empty = universe.freeze_node_list_ref_for_test(&[]);
+    let replacement = universe.freeze_node_list_ref_for_test(&[rule(7)]);
     let nodes = vec![
         rule(3),
         Node::Disc {
             kind: DiscKind::AutomaticHyphen,
-            pre: empty,
-            post: empty,
-            replace: replacement,
+            pre: empty.clone(),
+            post: empty.clone(),
+            replace: replacement.clone(),
             physical_replace_count: 1,
         },
         Node::Penalty(10_000),
@@ -2889,7 +2895,7 @@ fn post_line_break_retains_materialized_unbroken_discretionary_replacement_count
         &nodes,
         &breaks,
         PostLineBreakParams {
-            empty_list: empty,
+            empty_list: empty.clone(),
             left_skip: zero.clone(),
             right_skip: zero.clone(),
             interline_penalty: 0,
@@ -2919,7 +2925,7 @@ fn post_line_break_retains_materialized_unbroken_discretionary_replacement_count
 fn line_materializer_reuses_the_returned_line_buffer() {
     let mut universe = Universe::new();
     let zero = universe.intern_glue(GlueSpec::ZERO);
-    let empty = universe.freeze_node_list(&[]);
+    let empty = universe.freeze_node_list_ref_for_test(&[]);
     let nodes = vec![rule(1), rule(2), rule(3), rule(4)];
     let breaks = vec![
         BreakDecision {
@@ -2937,7 +2943,7 @@ fn line_materializer_reuses_the_returned_line_buffer() {
         nodes,
         breaks,
         PostLineBreakParams {
-            empty_list: empty,
+            empty_list: empty.clone(),
             left_skip: zero.clone(),
             right_skip: zero.clone(),
             interline_penalty: 0,
@@ -2973,7 +2979,7 @@ fn line_materializer_reuses_the_returned_line_buffer() {
 fn post_line_break_omits_only_zero_leftskip() {
     let mut universe = Universe::new();
     let zero = universe.intern_glue(GlueSpec::ZERO);
-    let empty = universe.freeze_node_list(&[]);
+    let empty = universe.freeze_node_list_ref_for_test(&[]);
     let nonzero = universe.intern_glue(GlueSpec {
         width: sp(3),
         stretch: sp(0),
@@ -2993,7 +2999,7 @@ fn post_line_break_omits_only_zero_leftskip() {
         &nodes,
         &breaks,
         PostLineBreakParams {
-            empty_list: empty,
+            empty_list: empty.clone(),
             left_skip: zero.clone(),
             right_skip: zero.clone(),
             interline_penalty: 0,
@@ -3025,7 +3031,7 @@ fn post_line_break_omits_only_zero_leftskip() {
         &nodes,
         &breaks,
         PostLineBreakParams {
-            empty_list: empty,
+            empty_list: empty.clone(),
             left_skip: nonzero.clone(),
             right_skip: zero.clone(),
             interline_penalty: 0,
@@ -3087,23 +3093,23 @@ fn paragraph_tape_bounds_analysis_storage_for_large_paragraphs() {
 #[test]
 fn paragraph_tape_analyzes_twenty_thousand_nested_replacements_iteratively() {
     let mut universe = Universe::new();
-    let empty = universe.freeze_node_list(&[]);
-    let mut replacement = universe.freeze_node_list(&[rule(1)]);
+    let empty = universe.freeze_node_list_ref_for_test(&[]);
+    let mut replacement = universe.freeze_node_list_ref_for_test(&[rule(1)]);
     for _ in 0..20_000 {
-        replacement = universe.freeze_node_list(&[Node::Disc {
+        replacement = universe.freeze_node_list_ref_for_test(&[Node::Disc {
             kind: DiscKind::Discretionary,
-            pre: empty,
-            post: empty,
-            replace: replacement,
+            pre: empty.clone(),
+            post: empty.clone(),
+            replace: replacement.clone(),
             physical_replace_count: 0,
         }]);
     }
     let nodes = vec![
         Node::Disc {
             kind: DiscKind::Discretionary,
-            pre: empty,
-            post: empty,
-            replace: replacement,
+            pre: empty.clone(),
+            post: empty.clone(),
+            replace: replacement.clone(),
             physical_replace_count: 0,
         },
         Node::Penalty(-10_000),
@@ -3123,7 +3129,7 @@ fn paragraph_tape_analyzes_twenty_thousand_nested_replacements_iteratively() {
 fn paired_materialization_cursor_preserves_physical_diagnostic_topology() {
     let mut universe = Universe::new();
     let zero = universe.intern_glue(GlueSpec::ZERO);
-    let empty = universe.freeze_node_list(&[]);
+    let empty = universe.freeze_node_list_ref_for_test(&[]);
     let parameters = params(100);
     let tape = ParagraphTape::analyze(
         &universe,
@@ -3150,7 +3156,7 @@ fn paired_materialization_cursor_preserves_physical_diagnostic_topology() {
         tape,
         breaks,
         PostLineBreakParams {
-            empty_list: empty,
+            empty_list: empty.clone(),
             left_skip: zero.clone(),
             right_skip: zero.clone(),
             interline_penalty: 0,
@@ -3178,7 +3184,7 @@ fn paired_materialization_cursor_preserves_physical_diagnostic_topology() {
 fn materialized_final_line_preserves_two_direct_and_four_frozen_lig_ptr_cells() {
     let mut universe = Universe::new();
     let zero = universe.intern_glue(GlueSpec::ZERO);
-    let empty = universe.freeze_node_list(&[]);
+    let empty = universe.freeze_node_list_ref_for_test(&[]);
     let lig = |ch, orig: [char; 2]| Node::Lig {
         font: NULL_FONT,
         ch,
@@ -3187,8 +3193,8 @@ fn materialized_final_line_preserves_two_direct_and_four_frozen_lig_ptr_cells() 
         right_hit: false,
         origins: vec![OriginRef::unknown(); 2],
     };
-    let bb = universe.freeze_node_list(&[lig('A', ['B', 'B'])]);
-    let ca = universe.freeze_node_list(&[lig('\u{82}', ['C', 'A'])]);
+    let bb = universe.freeze_node_list_ref_for_test(&[lig('A', ['B', 'B'])]);
+    let ca = universe.freeze_node_list_ref_for_test(&[lig('\u{82}', ['C', 'A'])]);
     let character = |ch| Node::Char {
         font: NULL_FONT,
         ch,
@@ -3196,8 +3202,8 @@ fn materialized_final_line_preserves_two_direct_and_four_frozen_lig_ptr_cells() 
     };
     let disc = |replace| Node::Disc {
         kind: DiscKind::AutomaticHyphen,
-        pre: empty,
-        post: empty,
+        pre: empty.clone(),
+        post: empty.clone(),
         replace,
         physical_replace_count: 1,
     };
@@ -3215,7 +3221,7 @@ fn materialized_final_line_preserves_two_direct_and_four_frozen_lig_ptr_cells() 
             hyphenated: false,
         }],
         PostLineBreakParams {
-            empty_list: empty,
+            empty_list: empty.clone(),
             left_skip: zero.clone(),
             right_skip: zero,
             interline_penalty: 0,

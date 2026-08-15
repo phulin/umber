@@ -18,7 +18,7 @@ fn tex82_prune_page_top_prefix_and_split_skip_matrix() {
         width: sp(2),
         ..GlueSpec::ZERO
     });
-    let children = stores.freeze_node_list(&[]);
+    let children = tex_state::node_arena::NodeListRef::empty();
     let box_node = Node::HList(BoxNode::new(BoxNodeFields {
         width: sp(1),
         height: sp(4),
@@ -79,7 +79,7 @@ fn pdftex_prune_page_top_discards_snapy_but_preserves_other_whatsits() {
         glue_set: GlueSetRatio::ZERO,
         glue_sign: Sign::Normal,
         glue_order: Order::Normal,
-        children: stores.freeze_node_list(&[]),
+        children: tex_state::node_arena::NodeListRef::empty(),
     }));
 
     let (pruned, discarded) = prune_page_top_with_discards(

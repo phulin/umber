@@ -4,9 +4,10 @@ use std::sync::Arc;
 use tex_arith::x_over_n;
 use tex_fonts::CharMetrics;
 use tex_state::font::NULL_FONT;
-use tex_state::ids::{FontId, NodeListId};
+use tex_state::ids::FontId;
 use tex_state::math::{LimitType, MathChar, MathField, MathNoad, NoadClass, NoadKind};
 use tex_state::node::{GlueKind, KernKind, Node};
+use tex_state::node_arena::NodeListRef;
 use tex_state::scaled::Scaled;
 
 use super::{
@@ -39,7 +40,7 @@ pub(crate) enum SourceListRole {
 #[must_use]
 pub fn mlist_to_hlist(
     state: &impl MathTypesetState,
-    input: NodeListId,
+    input: NodeListRef,
     style: Style,
     penalties: bool,
     params: &MathParams,
@@ -49,7 +50,7 @@ pub fn mlist_to_hlist(
 
 fn build_math_layout(
     state: &impl MathTypesetState,
-    input: NodeListId,
+    input: NodeListRef,
     style: Style,
     penalties: bool,
     params: &MathParams,
@@ -69,7 +70,7 @@ fn build_math_layout(
         recovered: Cell::new(false),
         scratch: ConversionScratch::default(),
     };
-    prepare_nested_mlists(&mut ctx, input, style);
+    prepare_nested_mlists(&mut ctx, input.clone(), style);
     let root = convert_mlist_uncached(&mut ctx, input, style, penalties);
     let recovered = ctx.recovered.get();
     let root = if recovered { ctx.layout.empty() } else { root };
@@ -79,7 +80,7 @@ fn build_math_layout(
 
 pub(super) fn convert_mlist<S: MathTypesetState>(
     ctx: &mut Context<'_, S>,
-    input: NodeListId,
+    input: NodeListRef,
     style: Style,
     _penalties: bool,
 ) -> FrozenHList {
@@ -209,14 +210,14 @@ fn captured_replay<T: Clone>(
 
 fn convert_mlist_uncached<S: MathTypesetState>(
     ctx: &mut Context<'_, S>,
-    input: NodeListId,
+    input: NodeListRef,
     style: Style,
     penalties: bool,
 ) -> FrozenHList {
     let saved_style = ctx.style;
     ctx.set_style(style);
     let mut input_view = std::mem::take(&mut ctx.scratch.expansion);
-    expand_math_choices_into(ctx.state, input, style, &mut input_view);
+    expand_math_choices_into(input, style, &mut input_view);
     let mut work = std::mem::take(&mut ctx.scratch.work);
     work.reserve(input_view.nodes.len().saturating_sub(work.capacity()));
     let mut max_height = Scaled::from_raw(0);
@@ -342,7 +343,7 @@ fn first_pass<S: MathTypesetState>(
                 out.push(WorkItem::Node(MathNode::Glue {
                     spec,
                     kind,
-                    leader: *leader,
+                    leader: leader.clone(),
                 }));
             }
             Node::Kern { amount, kind } => {
@@ -475,18 +476,13 @@ impl ExpandedMathView {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct ExpansionFrame {
-    list: NodeListId,
+    list: NodeListRef,
     index: usize,
 }
 
-fn expand_math_choices_into(
-    state: &impl MathTypesetState,
-    root: NodeListId,
-    starting_style: Style,
-    view: &mut ExpandedMathView,
-) {
+fn expand_math_choices_into(root: NodeListRef, starting_style: Style, view: &mut ExpandedMathView) {
     view.clear();
     let mut style = starting_style;
     view.stack.push(ExpansionFrame {
@@ -494,8 +490,7 @@ fn expand_math_choices_into(
         index: 0,
     });
     while let Some(frame) = view.stack.last_mut() {
-        let nodes = state.nodes(frame.list);
-        let Some(node) = nodes.get(frame.index).map(|node| node.to_owned()) else {
+        let Some(node) = frame.list.get(frame.index) else {
             view.stack.pop();
             continue;
         };
@@ -549,13 +544,13 @@ fn expand_math_choices_into(
 /// scanned as inline views, matching rule 4, rather than converted separately.
 fn prepare_nested_mlists<S: MathTypesetState>(
     ctx: &mut Context<'_, S>,
-    root: NodeListId,
+    root: NodeListRef,
     root_style: Style,
 ) {
     let root = (root, root_style);
     let mut visiting = AHashSet::new();
     let mut completed = AHashSet::new();
-    let mut stack = vec![(root, false)];
+    let mut stack = vec![(root.clone(), false)];
     let mut postorder = Vec::new();
     let mut requests = Vec::new();
     let mut request_seen = AHashSet::new();
@@ -563,7 +558,7 @@ fn prepare_nested_mlists<S: MathTypesetState>(
     while let Some((list, expanded)) = stack.pop() {
         if expanded {
             visiting.remove(&list);
-            completed.insert(list);
+            completed.insert(list.clone());
             postorder.push(list);
             continue;
         }
@@ -571,32 +566,31 @@ fn prepare_nested_mlists<S: MathTypesetState>(
             continue;
         }
         assert!(
-            visiting.insert(list),
+            visiting.insert(list.clone()),
             "math source lists must not contain structural cycles"
         );
-        stack.push((list, true));
+        stack.push((list.clone(), true));
         nested_mlist_requests(
-            ctx.state,
-            list.0,
+            list.0.clone(),
             list.1,
             &mut request_view,
             &mut requests,
             &mut request_seen,
         );
-        for &dependency in requests.iter().rev() {
-            stack.push((dependency, false));
+        for dependency in requests.iter().rev() {
+            stack.push((dependency.clone(), false));
         }
     }
     request_view.clear();
     ctx.scratch.expansion = request_view;
 
-    for (list, style) in postorder.into_iter().filter(|key| *key != root) {
+    for (list, style) in postorder.into_iter().filter(|key| key != &root) {
         let observation_start = ctx.layout.pack_observation_count();
         let event_start = ctx.conversion_events.borrow().len();
         ctx.capture_replay = true;
         debug_assert!(ctx.pack_replays.is_empty());
         debug_assert!(ctx.event_replays.borrow().is_empty());
-        let converted = convert_mlist_uncached(ctx, list, style, false);
+        let converted = convert_mlist_uncached(ctx, list.clone(), style, false);
         ctx.capture_replay = false;
         let direct_pack_observations = ctx.layout.take_pack_observations_since(observation_start);
         let pack_observations = captured_replay(
@@ -622,28 +616,27 @@ fn prepare_nested_mlists<S: MathTypesetState>(
 }
 
 fn nested_mlist_requests(
-    state: &impl MathTypesetState,
-    root: NodeListId,
+    root: NodeListRef,
     starting_style: Style,
     view: &mut ExpandedMathView,
-    out: &mut Vec<(NodeListId, Style)>,
-    seen: &mut AHashSet<(NodeListId, Style)>,
+    out: &mut Vec<(NodeListRef, Style)>,
+    seen: &mut AHashSet<(NodeListRef, Style)>,
 ) {
     fn add_field(
         field: &MathField,
         style: Style,
-        out: &mut Vec<(NodeListId, Style)>,
-        seen: &mut AHashSet<(NodeListId, Style)>,
+        out: &mut Vec<(NodeListRef, Style)>,
+        seen: &mut AHashSet<(NodeListRef, Style)>,
     ) {
         if let MathField::SubMlist(list) = field {
-            let request = (*list, style);
-            if seen.insert(request) {
+            let request = (list.clone(), style);
+            if seen.insert(request.clone()) {
                 out.push(request);
             }
         }
     }
 
-    expand_math_choices_into(state, root, starting_style, view);
+    expand_math_choices_into(root, starting_style, view);
     let mut style = starting_style;
     let mut markers = view.marker_styles.iter().copied();
     out.clear();
@@ -685,13 +678,13 @@ fn nested_mlist_requests(
             }
             Node::FractionNoad(fraction) => {
                 add_field(
-                    &MathField::SubMlist(fraction.numerator),
+                    &MathField::SubMlist(fraction.numerator.clone()),
                     style.num_style(),
                     out,
                     seen,
                 );
                 add_field(
-                    &MathField::SubMlist(fraction.denominator),
+                    &MathField::SubMlist(fraction.denominator.clone()),
                     style.denom_style(),
                     out,
                     seen,
@@ -748,13 +741,13 @@ fn translate_noad<S: MathTypesetState>(
             // The source box crossed TeX82 §1086's package seam when it was
             // built. Appendix G reuses that completed box here; it does not
             // publish the historical hpack a second time.
-            source_list(ctx, *list)
+            source_list(ctx, list.clone())
         }
         (_, MathField::SubMlist(list)) => {
             // TeX82's mlist2 branch always hpacks a sub-mlist nucleus. This
             // structural box is distinct from clean_box's later reuse of a
             // sole unshifted box around the completed field.
-            let list = convert_mlist(ctx, *list, ctx.style, false);
+            let list = convert_mlist(ctx, list.clone(), ctx.style, false);
             let boxed = ctx.layout.hpack(list);
             ctx.layout.hlist([MathNode::HList(boxed)])
         }
@@ -926,11 +919,11 @@ pub(crate) fn clean_box(
             }
         }
         MathField::SubBox(list) => {
-            let list = source_list(ctx, *list);
+            let list = source_list(ctx, list.clone());
             clean_hlist(ctx, list)
         }
         MathField::SubMlist(list) => {
-            let list = convert_mlist(ctx, *list, style, false);
+            let list = convert_mlist(ctx, list.clone(), style, false);
             clean_hlist(ctx, list)
         }
     }
@@ -1069,39 +1062,37 @@ pub(crate) fn fetch(
 
 pub(crate) fn source_list(
     ctx: &mut Context<'_, impl MathTypesetState>,
-    list: NodeListId,
+    list: NodeListRef,
 ) -> FrozenHList {
     convert_source_list(ctx, list, SourceListRole::HorizontalField)
 }
 
 pub(crate) fn source_box_payload(
     ctx: &mut Context<'_, impl MathTypesetState>,
-    list: NodeListId,
+    list: NodeListRef,
 ) -> FrozenHList {
     convert_source_list(ctx, list, SourceListRole::BoxPayload)
 }
 
 fn convert_source_list(
     ctx: &mut Context<'_, impl MathTypesetState>,
-    list: NodeListId,
+    list: NodeListRef,
     role: SourceListRole,
 ) -> FrozenHList {
-    if let Some(converted) = ctx.source_lists.get(&(list, role)) {
+    if let Some(converted) = ctx.source_lists.get(&(list.clone(), role)) {
         return *converted;
     }
 
-    let mut stack = vec![(list, role, false)];
+    let mut stack = vec![(list.clone(), role, false)];
     let mut visiting = AHashSet::new();
     while let Some((current, current_role, expanded)) = stack.pop() {
-        let key = (current, current_role);
+        let key = (current.clone(), current_role);
         if ctx.source_lists.contains_key(&key) {
             continue;
         }
         if expanded {
             visiting.remove(&key);
-            let nodes = ctx
-                .state
-                .nodes(current)
+            let nodes = current
                 .to_vec()
                 .into_iter()
                 .map(|node| source_node(ctx, node))
@@ -1114,17 +1105,16 @@ fn convert_source_list(
             continue;
         }
         assert!(
-            visiting.insert(key),
+            visiting.insert(key.clone()),
             "source box lists must not contain structural cycles"
         );
-        stack.push((current, current_role, true));
-        let mut children = ctx
-            .state
-            .nodes(current)
+        stack.push((current.clone(), current_role, true));
+        let mut children = current
+            .nodes()
             .iter()
             .filter_map(|node| match node {
                 tex_state::node_arena::NodeRef::HList(boxed)
-                | tex_state::node_arena::NodeRef::VList(boxed) => Some(boxed.children),
+                | tex_state::node_arena::NodeRef::VList(boxed) => current.resolve(boxed.children),
                 _ => None,
             })
             .collect::<Vec<_>>();
@@ -1243,8 +1233,8 @@ pub(crate) struct Context<'a, S> {
     pub(crate) style: Style,
     pub(crate) mu: Scaled,
     pub(crate) layout: NativeNodeTransaction,
-    pub(crate) converted: AHashMap<(NodeListId, Style), ConvertedMlist>,
-    pub(crate) source_lists: AHashMap<(NodeListId, SourceListRole), FrozenHList>,
+    pub(crate) converted: AHashMap<(NodeListRef, Style), ConvertedMlist>,
+    pub(crate) source_lists: AHashMap<(NodeListRef, SourceListRole), FrozenHList>,
     pub(crate) conversion_events: RefCell<Vec<MathConversionEvent>>,
     pub(crate) capture_replay: bool,
     pub(crate) pack_replays: Vec<ReplayMarker<MathPackObservation>>,

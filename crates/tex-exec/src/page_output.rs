@@ -251,19 +251,14 @@ fn distribute_insertions(
                     split_top_skip: split_top_skip.clone(),
                     split_max_depth,
                     floating_penalty,
-                    content,
+                    content: content.clone(),
                 });
                 if let Some(queue) = queues.get_mut(&class)
                     && queue.accepting
                 {
                     wait = None;
                     let start = queue.nodes.len();
-                    queue.nodes.extend(
-                        stores
-                            .nodes(content)
-                            .into_iter()
-                            .map(|node| node.to_owned()),
-                    );
+                    queue.nodes.extend(content.to_vec());
                     if queue.best_ins_index == index {
                         if let Some(remainder) = split_insertion_remainder(
                             stores,
@@ -312,13 +307,13 @@ fn insertion_box_nodes(
     else {
         return Ok(Vec::new());
     };
-    let Some(node) = stores.nodes(list).first().map(|node| node.to_owned()) else {
+    let Some(node) = stores.node_list_ref(list).get(0) else {
         return Ok(Vec::new());
     };
     match node {
         Node::VList(box_node) => {
             stores.pin_survivor(list);
-            Ok(stores.nodes(box_node.children).to_vec())
+            Ok(box_node.children.to_vec())
         }
         Node::HList(_) => unreachable!("ensure_insertion_vbox rejected the hbox"),
         _ => Ok(Vec::new()),
@@ -353,6 +348,7 @@ fn split_insertion_remainder(
     }
     let content = stores.freeze_node_list(&pruned);
     let size = natural_vlist_size(stores, content)?;
+    let content = stores.node_list_ref(content);
     Ok(Some(Node::Ins {
         class: context.class,
         size,
@@ -516,9 +512,8 @@ pub(crate) fn take_box255_node(stores: &mut Universe) -> Result<Node, ExecError>
         .take_box_reg_same_level(255)
         .ok_or(ExecError::MissingToken { context: "box" })?;
     stores
-        .nodes(id)
-        .first()
-        .map(|node| node.to_owned())
+        .node_list_ref(id)
+        .get(0)
         .ok_or(ExecError::MissingToken { context: "box" })
 }
 
@@ -529,7 +524,7 @@ pub(crate) fn take_box255_node(stores: &mut Universe) -> Result<Node, ExecError>
 /// `tail_append` is a plain list append, so none of §679's `append_to_vlist`
 /// baselineskip interposition applies and `prev_depth` is left alone.
 pub(crate) fn append_end_job_contributions(stores: &mut Universe) {
-    let empty = stores.freeze_node_list(&[]);
+    let empty = tex_state::node_arena::NodeListRef::empty();
     stores.append_page_contribution(Node::HList(BoxNode::new(BoxNodeFields {
         width: stores.dimen_param(DimenParam::H_SIZE),
         height: Scaled::from_raw(0),

@@ -289,14 +289,14 @@ fn shapes(stores: &Universe, nodes: &[Node]) -> Vec<Shape> {
                 height: boxed.height.raw(),
                 depth: boxed.depth.raw(),
                 shift: boxed.shift.raw(),
-                children: shapes(stores, stores.nodes(boxed.children).testing_decoded()),
+                children: shapes(stores, &boxed.children.to_vec()),
             },
             Node::VList(boxed) => Shape::VBox {
                 width: boxed.width.raw(),
                 height: boxed.height.raw(),
                 depth: boxed.depth.raw(),
                 shift: boxed.shift.raw(),
-                children: shapes(stores, stores.nodes(boxed.children).testing_decoded()),
+                children: shapes(stores, &boxed.children.to_vec()),
             },
             Node::Mark { class, tokens } => Shape::Mark(*class, rooted_text(tokens)),
             Node::Ins {
@@ -312,12 +312,9 @@ fn shapes(stores: &Universe, nodes: &[Node]) -> Vec<Shape> {
                 split_top_skip: stores.glue(split_top_skip).width.raw(),
                 split_max_depth: split_max_depth.raw(),
                 floating_penalty: *floating_penalty,
-                content: shapes(stores, stores.nodes(*content).testing_decoded()),
+                content: shapes(stores, &content.to_vec()),
             },
-            Node::Adjust(adjust) => Shape::Adjust(shapes(
-                stores,
-                stores.nodes(adjust.content).testing_decoded(),
-            )),
+            Node::Adjust(adjust) => Shape::Adjust(shapes(stores, &adjust.content.to_vec())),
             Node::Whatsit(Whatsit::Language {
                 language,
                 left_hyphen_min,
@@ -342,15 +339,22 @@ fn shapes(stores: &Universe, nodes: &[Node]) -> Vec<Shape> {
 
 fn register_shapes(stores: &Universe, register: u16) -> Option<Vec<Shape>> {
     let root = stores.box_reg(register)?;
-    Some(shapes(stores, stores.nodes(root).testing_decoded()))
+    let root = stores
+        .published_node_list_ref(root)
+        .expect("box register retains its immutable node owner");
+    Some(shapes(stores, &root.to_vec()))
 }
 
 fn boxed_children(stores: &Universe, register: u16) -> Vec<Node> {
     let root = stores.box_reg(register).expect("box register is nonvoid");
-    let [Node::HList(boxed) | Node::VList(boxed)] = stores.nodes(root).testing_decoded() else {
+    let nodes = stores
+        .published_node_list_ref(root)
+        .expect("box register retains its immutable node owner")
+        .to_vec();
+    let [Node::HList(boxed) | Node::VList(boxed)] = nodes.as_slice() else {
         panic!("box register has exactly one box root")
     };
-    stores.nodes(boxed.children).to_vec()
+    boxed.children.to_vec()
 }
 
 fn terminal(stores: &Universe) -> String {
@@ -1001,8 +1005,12 @@ fn text_outer_vertical_math_illegal_meaning_and_trigger_provenance_matrix() {
 
 fn register_box(stores: &Universe, register: u16) -> tex_state::node::BoxNode {
     let root = stores.box_reg(register).expect("box register");
-    match stores.nodes(root).testing_decoded() {
-        [Node::HList(boxed) | Node::VList(boxed)] => *boxed,
+    let nodes = stores
+        .published_node_list_ref(root)
+        .expect("box register retains its immutable node owner")
+        .to_vec();
+    match nodes.as_slice() {
+        [Node::HList(boxed) | Node::VList(boxed)] => boxed.clone(),
         other => panic!("register {register} root: {other:?}"),
     }
 }
@@ -1991,7 +1999,7 @@ fn insert_and_vadjust_aftergroup_closure_provenance_order_and_once() {
     );
 
     let insert_box = register_box(&stores, 8);
-    let insert_children = stores.nodes(insert_box.children).testing_decoded();
+    let insert_children = insert_box.children.to_vec();
     let [
         Node::Ins { content, .. },
         Node::Glue {
@@ -1999,20 +2007,20 @@ fn insert_and_vadjust_aftergroup_closure_provenance_order_and_once() {
             ..
         },
         Node::HList(insert_line),
-    ] = insert_children
+    ] = insert_children.as_slice()
     else {
         panic!(
             "insert aftergroup closure: {:?}",
-            shapes(&stores, insert_children)
+            shapes(&stores, &insert_children)
         );
     };
     assert_eq!(
-        shapes(&stores, stores.nodes(*content).testing_decoded()),
+        shapes(&stores, &content.to_vec()),
         vec![Shape::Kern(Scaled::UNITY, KernKind::Explicit)]
     );
-    let insert_chars = stores
-        .nodes(insert_line.children)
-        .testing_decoded()
+    let insert_chars = insert_line
+        .children
+        .to_vec()
         .iter()
         .filter_map(|node| match node {
             Node::Char { ch, origin, .. } => Some((*ch, origin.clone())),
@@ -2026,24 +2034,24 @@ fn insert_and_vadjust_aftergroup_closure_provenance_order_and_once() {
     assert!(stores.origin_is_inserted_kind(insert_chars[0].1.id(), InsertedOriginKind::AfterGroup));
 
     let adjust_box = register_box(&stores, 9);
-    let adjust_children = stores.nodes(adjust_box.children).testing_decoded();
+    let adjust_children = adjust_box.children.to_vec();
     let [
         Node::HList(line),
         Node::Kern {
             amount,
             kind: KernKind::Explicit,
         },
-    ] = adjust_children
+    ] = adjust_children.as_slice()
     else {
         panic!(
             "vadjust paragraph closure: {:?}",
-            shapes(&stores, adjust_children)
+            shapes(&stores, &adjust_children)
         );
     };
     assert_eq!(*amount, Scaled::from_raw(4 * Scaled::UNITY));
-    let line_chars = stores
-        .nodes(line.children)
-        .testing_decoded()
+    let line_chars = line
+        .children
+        .to_vec()
         .iter()
         .filter_map(|node| match node {
             Node::Char { ch, origin, .. } => Some((*ch, origin.clone())),

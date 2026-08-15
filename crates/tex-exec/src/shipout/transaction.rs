@@ -467,7 +467,7 @@ fn shipout_key(stores: &mut Universe, node: &Node) -> PureMemoKey {
     )
 }
 
-fn effect_free_shipout_graph(stores: &Universe, root: &Node) -> bool {
+fn effect_free_shipout_graph(_stores: &Universe, root: &Node) -> bool {
     let mut nodes = vec![root.clone()];
     while let Some(node) = nodes.pop() {
         let view = NodeRef::from(&node);
@@ -487,14 +487,7 @@ fn effect_free_shipout_graph(stores: &Universe, root: &Node) -> bool {
         ) {
             return false;
         }
-        for children in view.children() {
-            nodes.extend(
-                stores
-                    .nodes(children)
-                    .into_iter()
-                    .map(|node| node.to_owned()),
-            );
-        }
+        node.visit_node_lists(|children| nodes.extend(children.to_vec()));
     }
     true
 }

@@ -6,7 +6,7 @@ pub(super) struct MissingHyphenDiagnostic {
 }
 
 struct HyphenationProjection<'a> {
-    physical_post_overrides: &'a mut Vec<(usize, tex_state::ids::NodeListId)>,
+    physical_post_overrides: &'a mut Vec<(usize, tex_state::node_arena::NodeListRef)>,
     missing_hyphens: &'a mut Vec<MissingHyphenDiagnostic>,
 }
 
@@ -169,7 +169,7 @@ fn project_physical_pre_break_spans(
         else {
             continue;
         };
-        let replacement = stores.nodes(*replace);
+        let replacement = replace.nodes();
         if replacement.len() != 1
             || !matches!(
                 replacement.first(),
@@ -210,6 +210,7 @@ fn project_physical_pre_break_spans(
             crate::box_runtime::hmode::reconstitute_with_fuel(stores, &pending, true, false, fuel)
                 .map_err(ExecError::Command)?;
         let pre = stores.freeze_node_list(&pre);
+        let pre = stores.node_list_ref(pre);
         let Node::Disc {
             pre: physical_pre, ..
         } = &mut nodes[index]
@@ -607,6 +608,7 @@ fn append_hyphenated_word(
                 fuel,
                 projection.missing_hyphens,
             )?;
+            let physical_post = stores.node_list_ref(physical_post);
             projection
                 .physical_post_overrides
                 .push((out.len(), physical_post));
@@ -781,12 +783,17 @@ fn automatic_discretionary_with_count(
     replace: &[Node],
     physical_replace_count: u8,
 ) -> Option<Node> {
-    (physical_replace_count <= 127).then(|| Node::Disc {
-        kind: DiscKind::AutomaticHyphen,
-        pre: stores.freeze_node_list(pre),
-        post: stores.freeze_node_list(post),
-        replace: stores.freeze_node_list(replace),
-        physical_replace_count,
+    (physical_replace_count <= 127).then(|| {
+        let pre = stores.freeze_node_list(pre);
+        let post = stores.freeze_node_list(post);
+        let replace = stores.freeze_node_list(replace);
+        Node::Disc {
+            kind: DiscKind::AutomaticHyphen,
+            pre: stores.node_list_ref(pre),
+            post: stores.node_list_ref(post),
+            replace: stores.node_list_ref(replace),
+            physical_replace_count,
+        }
     })
 }
 
@@ -824,18 +831,25 @@ fn discretionary_hyphen(
     node_index: usize,
     missing_hyphens: &mut Vec<MissingHyphenDiagnostic>,
 ) -> Node {
-    let empty = stores.freeze_node_list(&[]);
-    let pre =
-        automatic_hyphen_char(stores, font, node_index, missing_hyphens).map_or(empty, |ch| {
-            stores.freeze_node_list(&[Node::Char {
+    let empty = tex_state::node_arena::NodeListRef::empty();
+    let pre = automatic_hyphen_char(stores, font, node_index, missing_hyphens).map_or_else(
+        || empty.clone(),
+        |ch| {
+            let pre = stores.freeze_node_list(&[Node::Char {
                 font,
                 ch,
                 origin: OriginRef::unknown(),
-            }])
-        });
-    let replace = replacement.as_ref().map_or(empty, |node| {
-        stores.freeze_node_list(std::slice::from_ref(node))
-    });
+            }]);
+            stores.node_list_ref(pre)
+        },
+    );
+    let replace = replacement.as_ref().map_or_else(
+        || empty.clone(),
+        |node| {
+            let replace = stores.freeze_node_list(std::slice::from_ref(node));
+            stores.node_list_ref(replace)
+        },
+    );
     Node::Disc {
         kind: DiscKind::AutomaticHyphen,
         pre,

@@ -1,3 +1,4 @@
+use crate::FreezeNodeListRefForTest;
 use tex_state::Universe;
 use tex_state::math::{
     FractionThickness, LimitType, MathChar, MathChoice, MathField, MathFraction, MathNoad,
@@ -19,7 +20,8 @@ fn math_char(ch: char) -> MathChar {
 
 #[test]
 fn tex82_noad_field_layout_initialization_and_release_matrix() {
-    let nucleus = MathField::MathChar(math_char('x'));
+    let nucleus: MathField<tex_state::node_arena::NodeListRef> =
+        MathField::MathChar(math_char('x'));
     let classes = [
         NoadClass::Ord,
         NoadClass::Op,
@@ -63,24 +65,22 @@ fn tex82_noad_field_layout_initialization_and_release_matrix() {
     }
 
     let mut stores = Universe::new();
-    let arms = [1, 2, 3, 4].map(|penalty| stores.freeze_node_list(&[Node::Penalty(penalty)]));
+    let arms =
+        [1, 2, 3, 4].map(|penalty| stores.freeze_node_list_ref_for_test(&[Node::Penalty(penalty)]));
     let choice = MathChoice {
-        display: arms[0],
-        text: arms[1],
-        script: arms[2],
-        script_script: arms[3],
+        display: arms[0].clone(),
+        text: arms[1].clone(),
+        script: arms[2].clone(),
+        script_script: arms[3].clone(),
     };
-    assert_eq!(stores.nodes(choice.display).to_vec(), [Node::Penalty(1)]);
-    assert_eq!(stores.nodes(choice.text).to_vec(), [Node::Penalty(2)]);
-    assert_eq!(stores.nodes(choice.script).to_vec(), [Node::Penalty(3)]);
-    assert_eq!(
-        stores.nodes(choice.script_script).to_vec(),
-        [Node::Penalty(4)]
-    );
+    assert_eq!(choice.display.to_vec(), [Node::Penalty(1)]);
+    assert_eq!(choice.text.to_vec(), [Node::Penalty(2)]);
+    assert_eq!(choice.script.to_vec(), [Node::Penalty(3)]);
+    assert_eq!(choice.script_script.to_vec(), [Node::Penalty(4)]);
 
     let fraction = MathFraction {
-        numerator: arms[0],
-        denominator: arms[1],
+        numerator: arms[0].clone(),
+        denominator: arms[1].clone(),
         thickness: FractionThickness::Explicit(Scaled::from_raw(-1)),
         left_delimiter: Some(0),
         right_delimiter: Some(0x07ff_ffff),

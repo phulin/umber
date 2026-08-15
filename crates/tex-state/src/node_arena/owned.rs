@@ -7,7 +7,7 @@
 use super::{ChildPatch, NodeList, NodeSemanticId, NodeStorage, SidecarNeeds, checked_len};
 use crate::ids::{ArenaRef, NodeListId, SurvivorRootId};
 use crate::node::Node;
-use ahash::AHashMap;
+use ahash::{AHashMap, AHashSet};
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, OnceLock, Weak};
@@ -38,6 +38,20 @@ pub(crate) struct NodeListPayload {
 pub struct NodeListRef {
     id: NodeListId,
     payload: Arc<NodeListPayload>,
+}
+
+impl PartialEq for NodeListRef {
+    fn eq(&self, other: &Self) -> bool {
+        (self.id == other.id && self.shares_payload(other)) || self.exact_semantic_eq(other)
+    }
+}
+
+impl Eq for NodeListRef {}
+
+impl core::hash::Hash for NodeListRef {
+    fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
+        core::hash::Hash::hash(&self.semantic_id(), state);
+    }
 }
 
 impl core::fmt::Debug for NodeListRef {
@@ -98,6 +112,33 @@ impl NodeListRef {
         self.payload.storage.view(self.id.start(), self.id.len())
     }
 
+    /// Materializes this owned list while resolving every direct child through
+    /// the same immutable payload.
+    #[must_use]
+    pub fn to_vec(&self) -> Vec<Node> {
+        self.nodes()
+            .iter()
+            .map(|node| {
+                node.to_owned_with(|child| {
+                    self.resolve(child)
+                        .expect("owned node child is outside its enclosing payload")
+                })
+            })
+            .collect()
+    }
+
+    /// Materializes one node while retaining structural ownership of all of
+    /// its nested lists.
+    #[must_use]
+    pub fn get(&self, index: usize) -> Option<Node> {
+        self.nodes().get(index).map(|node| {
+            node.to_owned_with(|child| {
+                self.resolve(child)
+                    .expect("owned node child is outside its enclosing payload")
+            })
+        })
+    }
+
     #[must_use]
     pub fn len(&self) -> usize {
         self.id.len() as usize
@@ -131,8 +172,8 @@ impl NodeListRef {
     /// lifetime.
     #[must_use]
     pub fn child_nodes(&self, child: NodeListId) -> Option<NodeList<'_>> {
-        if child.len() == 0 {
-            return (child == Self::empty().id).then(|| self.payload.storage.view(0, 0));
+        if child.is_empty() {
+            return Some(self.payload.storage.view(0, 0));
         }
         let ArenaRef::Survivor(root) = child.arena() else {
             return None;
@@ -156,7 +197,7 @@ impl NodeListRef {
     }
 
     /// Resolves an exact child span using only this structural owner.
-    pub(crate) fn resolve(&self, child: NodeListId) -> Option<Self> {
+    pub fn resolve(&self, child: NodeListId) -> Option<Self> {
         self.child_nodes(child)?;
         if child.len() == 0 {
             return Some(Self::empty());
@@ -216,7 +257,36 @@ impl NodeListRef {
         if self.semantic_id() != other.semantic_id() || self.len() != other.len() {
             return false;
         }
-        normalized_graph(self) == normalized_graph(other)
+        let mut pending = vec![(self.clone(), other.clone())];
+        let mut compared = AHashSet::new();
+        while let Some((left, right)) = pending.pop() {
+            if !compared.insert((left.id(), right.id())) {
+                continue;
+            }
+            if left.len() != right.len() {
+                return false;
+            }
+            for (left_node, right_node) in left.nodes().iter().zip(right.nodes().iter()) {
+                if normalized_node(left_node.clone()) != normalized_node(right_node.clone()) {
+                    return false;
+                }
+                let left_children = left_node.physical_children().collect::<Vec<_>>();
+                let right_children = right_node.physical_children().collect::<Vec<_>>();
+                if left_children.len() != right_children.len() {
+                    return false;
+                }
+                for (left_child, right_child) in left_children.into_iter().zip(right_children) {
+                    let Some(left_child) = left.resolve(left_child) else {
+                        return false;
+                    };
+                    let Some(right_child) = right.resolve(right_child) else {
+                        return false;
+                    };
+                    pending.push((left_child, right_child));
+                }
+            }
+        }
+        true
     }
 }
 
@@ -429,33 +499,22 @@ impl DirectGraphCopy {
     }
 }
 
-/// Builds a conservative exact candidate projection. The semantic identity
-/// above decides equality; this second check also retains diagnostic fields
-/// and physical-only children, while normalizing only this payload's private
-/// root coordinate. False negatives merely skip an optional cache reuse.
-fn normalized_graph(owner: &NodeListRef) -> Vec<String> {
+/// Allocation-independent exact-node collision guard. Child coordinates are
+/// compared recursively by [`NodeListRef::exact_semantic_eq`], so the local
+/// projection retains only field order and empty/nonempty shape.
+fn normalized_node(node: super::NodeRef<'_>) -> String {
     let root = SurvivorRootId::new(0);
-    owner
-        .payload
-        .storage
-        .view(
-            0,
-            checked_len(owner.payload.storage.len(), "node payload exceeds u32"),
-        )
-        .iter()
-        .map(|node| {
-            let mut node = node.to_owned();
-            node.visit_node_lists_mut(|id| {
-                let (start, len) = if id.len() == 0 {
-                    (0, 0)
-                } else {
-                    (id.start(), id.len())
-                };
-                *id = NodeListId::new_survivor(root, start, len);
-            });
-            format!("{node:?}")
-        })
-        .collect()
+    let mut node = node.to_compact_owned();
+    let mut child = 0;
+    node.visit_lists_mut(|id| {
+        *id = if id.is_empty() {
+            NodeListId::new_survivor(root, 0, 0)
+        } else {
+            child += 1;
+            NodeListId::new_survivor(root, child, 1)
+        };
+    });
+    format!("{node:?}")
 }
 
 pub(crate) fn allocate_node_payload_root() -> Option<SurvivorRootId> {

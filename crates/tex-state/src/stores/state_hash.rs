@@ -11,6 +11,7 @@ use crate::meaning::{
 #[cfg(test)]
 use crate::node::{BoxNode, LeaderPayload, Whatsit};
 use crate::node::{GlueKind, KernKind, Node, Sign};
+#[cfg(test)]
 use crate::node_arena::NodeRef;
 use crate::state_hash::{StateHashComponent, StateHashFragment, StateHasher};
 use crate::token::{Catcode, Token};
@@ -522,7 +523,7 @@ impl Stores {
         hasher.tag(0x72);
         hasher.usize(len);
         for node in nodes {
-            self.hash_node_semantic_identity(NodeRef::from(node), hasher);
+            self.hash_owned_node_semantic_identity(node, hasher);
         }
         len
     }
@@ -1115,7 +1116,7 @@ impl Stores {
                 hasher.tag(3);
                 self.hash_glue(spec.id(), hasher);
                 hash_glue_kind(kind, hasher);
-                self.hash_leader_payload_ref(leader, hasher, stack);
+                self.hash_leader_payload_ref(leader.as_ref(), hasher, stack);
             }
             NodeRef::Penalty(value) => {
                 hasher.tag(4);
@@ -1246,14 +1247,9 @@ impl Stores {
     }
 
     #[cfg(test)]
-    fn hash_node(&self, node: Node, hasher: &mut StateHasher, stack: &mut Vec<NodeFrame>) {
-        self.hash_node_ref(NodeRef::from(&node), hasher, stack);
-    }
-
-    #[cfg(test)]
     fn hash_math_field(
         &self,
-        field: crate::math::MathField,
+        field: crate::math::MathField<NodeListId>,
         hasher: &mut StateHasher,
         stack: &mut Vec<NodeFrame>,
     ) {
@@ -1282,7 +1278,7 @@ impl Stores {
     fn hash_box_node(
         &self,
         tag: u8,
-        box_node: BoxNode,
+        box_node: BoxNode<NodeListId>,
         hasher: &mut StateHasher,
         stack: &mut Vec<NodeFrame>,
     ) {
@@ -1301,7 +1297,7 @@ impl Stores {
     #[cfg(test)]
     fn hash_leader_payload_ref(
         &self,
-        payload: Option<&LeaderPayload>,
+        payload: Option<&LeaderPayload<NodeListId>>,
         hasher: &mut StateHasher,
         stack: &mut Vec<NodeFrame>,
     ) {
@@ -1654,83 +1650,10 @@ impl Stores {
     }
 
     #[cfg(test)]
-    fn hash_node_tree_from_node(&self, node: Node, hasher: &mut StateHasher) -> usize {
-        let mut stack = Vec::new();
-        self.hash_node(node, hasher, &mut stack);
-        let mut seen = 0_usize;
-        while let Some(frame) = stack.pop() {
-            seen += 1;
-            assert!(
-                seen <= NODE_LIST_MAX_ITEMS,
-                "state hash exceeded maximum node traversal items"
-            );
-            match frame {
-                NodeFrame::List(id) => {
-                    let nodes = self.nodes(id);
-                    hasher.tag(0x70);
-                    hasher.usize(nodes.len());
-                    stack.push(NodeFrame::ListEnd);
-                    for index in (0..nodes.len()).rev() {
-                        stack.push(NodeFrame::NodeAt(id, index));
-                    }
-                }
-                NodeFrame::ListEnd => hasher.tag(0x71),
-                NodeFrame::NodeAt(id, index) => {
-                    let node = self
-                        .nodes(id)
-                        .get(index)
-                        .expect("state-hash node frame is live");
-                    self.hash_node_ref(node, hasher, &mut stack);
-                }
-            }
-        }
-        seen + 1
-    }
-
-    #[cfg(test)]
-    pub(super) fn testing_assert_owned_borrowed_node_hashes_equal(&self, id: NodeListId) {
-        let nodes = self.nodes(id);
-        for index in 0..nodes.len() {
-            let owned = nodes
-                .get(index)
-                .expect("test node index is live")
-                .to_owned();
-            let mut owned_hasher = StateHasher::new(0x6e6f_6465_5f65_7175);
-            self.hash_node_tree_from_node(owned, &mut owned_hasher);
-
-            let mut borrowed_hasher = StateHasher::new(0x6e6f_6465_5f65_7175);
-            let mut stack = Vec::new();
-            self.hash_node_ref(
-                nodes.get(index).expect("test node index is live"),
-                &mut borrowed_hasher,
-                &mut stack,
-            );
-            let mut seen = 0_usize;
-            while let Some(frame) = stack.pop() {
-                seen += 1;
-                assert!(seen <= NODE_LIST_MAX_ITEMS);
-                match frame {
-                    NodeFrame::List(id) => {
-                        let list = self.nodes(id);
-                        borrowed_hasher.tag(0x70);
-                        borrowed_hasher.usize(list.len());
-                        stack.push(NodeFrame::ListEnd);
-                        for child_index in (0..list.len()).rev() {
-                            stack.push(NodeFrame::NodeAt(id, child_index));
-                        }
-                    }
-                    NodeFrame::ListEnd => borrowed_hasher.tag(0x71),
-                    NodeFrame::NodeAt(id, child_index) => self.hash_node_ref(
-                        self.nodes(id)
-                            .get(child_index)
-                            .expect("test child index is live"),
-                        &mut borrowed_hasher,
-                        &mut stack,
-                    ),
-                }
-            }
-            assert_eq!(owned_hasher.finish(), borrowed_hasher.finish());
-        }
+    pub(super) fn testing_assert_owned_borrowed_node_hashes_equal(&mut self, id: NodeListId) {
+        let expected = self.node_list_semantic_fragment(id);
+        let owned = self.node_list_ref(id);
+        assert_eq!(owned.semantic_id().fragment(), expected);
     }
 }
 

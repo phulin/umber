@@ -1,6 +1,6 @@
 //! Math-list node payloads.
 
-use crate::ids::NodeListId;
+use crate::node_arena::NodeListRef;
 use crate::scaled::Scaled;
 use crate::token::OriginId;
 use std::hash::{Hash, Hasher};
@@ -62,13 +62,13 @@ impl Hash for MathChar {
 }
 
 /// A noad field as described by tex.web.
-#[derive(Clone, Debug, PartialEq)]
-pub enum MathField {
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum MathField<List = NodeListRef> {
     Empty,
     MathChar(MathChar),
     MathTextChar(MathChar),
-    SubBox(NodeListId),
-    SubMlist(NodeListId),
+    SubBox(List),
+    SubMlist(List),
 }
 
 /// Ordinary noad classes.
@@ -120,16 +120,16 @@ pub enum NoadKind {
 
 /// A TeX noad with nucleus, subscript, and superscript fields.
 #[derive(Clone, Debug, PartialEq)]
-pub struct MathNoad {
+pub struct MathNoad<List = NodeListRef> {
     pub kind: NoadKind,
-    pub nucleus: MathField,
-    pub subscript: MathField,
-    pub superscript: MathField,
+    pub nucleus: MathField<List>,
+    pub subscript: MathField<List>,
+    pub superscript: MathField<List>,
 }
 
-impl MathNoad {
+impl<List> MathNoad<List> {
     #[must_use]
-    pub fn new(kind: NoadKind, nucleus: MathField) -> Self {
+    pub fn new(kind: NoadKind, nucleus: MathField<List>) -> Self {
         Self {
             kind,
             nucleus,
@@ -137,16 +137,52 @@ impl MathNoad {
             superscript: MathField::Empty,
         }
     }
+
+    pub(crate) fn map_lists<Other>(self, mut map: impl FnMut(List) -> Other) -> MathNoad<Other> {
+        MathNoad {
+            kind: self.kind,
+            nucleus: self.nucleus.map_list(&mut map),
+            subscript: self.subscript.map_list(&mut map),
+            superscript: self.superscript.map_list(map),
+        }
+    }
+}
+
+impl<List> MathField<List> {
+    pub(crate) fn map_list<Other>(self, map: impl FnOnce(List) -> Other) -> MathField<Other> {
+        match self {
+            Self::Empty => MathField::Empty,
+            Self::MathChar(value) => MathField::MathChar(value),
+            Self::MathTextChar(value) => MathField::MathTextChar(value),
+            Self::SubBox(value) => MathField::SubBox(map(value)),
+            Self::SubMlist(value) => MathField::SubMlist(map(value)),
+        }
+    }
 }
 
 /// Generalized fraction noad payload.
-#[derive(Clone, Debug, PartialEq)]
-pub struct MathFraction {
-    pub numerator: NodeListId,
-    pub denominator: NodeListId,
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct MathFraction<List = NodeListRef> {
+    pub numerator: List,
+    pub denominator: List,
     pub thickness: FractionThickness,
     pub left_delimiter: Option<u32>,
     pub right_delimiter: Option<u32>,
+}
+
+impl<List> MathFraction<List> {
+    pub(crate) fn map_lists<Other>(
+        self,
+        mut map: impl FnMut(List) -> Other,
+    ) -> MathFraction<Other> {
+        MathFraction {
+            numerator: map(self.numerator),
+            denominator: map(self.denominator),
+            thickness: self.thickness,
+            left_delimiter: self.left_delimiter,
+            right_delimiter: self.right_delimiter,
+        }
+    }
 }
 
 /// TeX's generalized fraction rule thickness.
@@ -157,17 +193,37 @@ pub enum FractionThickness {
 }
 
 /// A four-way math choice.
-#[derive(Clone, Debug, PartialEq)]
-pub struct MathChoice {
-    pub display: NodeListId,
-    pub text: NodeListId,
-    pub script: NodeListId,
-    pub script_script: NodeListId,
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct MathChoice<List = NodeListRef> {
+    pub display: List,
+    pub text: List,
+    pub script: List,
+    pub script_script: List,
+}
+
+impl<List> MathChoice<List> {
+    pub(crate) fn map_lists<Other>(self, mut map: impl FnMut(List) -> Other) -> MathChoice<Other> {
+        MathChoice {
+            display: map(self.display),
+            text: map(self.text),
+            script: map(self.script),
+            script_script: map(self.script_script),
+        }
+    }
 }
 
 /// A completed math list appended to the enclosing list.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub struct MathListNode {
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct MathListNode<List = NodeListRef> {
     pub display: bool,
-    pub content: NodeListId,
+    pub content: List,
+}
+
+impl<List> MathListNode<List> {
+    pub(crate) fn map_list<Other>(self, map: impl FnOnce(List) -> Other) -> MathListNode<Other> {
+        MathListNode {
+            display: self.display,
+            content: map(self.content),
+        }
+    }
 }

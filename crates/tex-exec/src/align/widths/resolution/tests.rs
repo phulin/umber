@@ -1,8 +1,9 @@
 use super::*;
 use crate::mode::{AlignColumn, AlignmentPackSpec};
 use tex_state::glue::{GlueSpec, GlueSpecRef, Order};
-use tex_state::ids::{NodeListId, TokenListId};
+use tex_state::ids::TokenListId;
 use tex_state::node::{UnsetKind, UnsetNode, UnsetNodeFields};
+use tex_state::node_arena::NodeListRef;
 use tex_state::scaled::Scaled;
 
 fn sp(raw: i32) -> Scaled {
@@ -19,7 +20,7 @@ fn glue(stores: &mut Universe, width: i32) -> GlueSpecRef {
     })
 }
 
-fn cell(empty: NodeListId, width: i32, span_count: u16) -> Node {
+fn cell(empty: NodeListRef, width: i32, span_count: u16) -> Node {
     Node::Unset(UnsetNode::new(UnsetNodeFields {
         kind: UnsetKind::HBox,
         width: sp(width),
@@ -36,6 +37,7 @@ fn cell(empty: NodeListId, width: i32, span_count: u16) -> Node {
 
 fn row(stores: &mut Universe, cells: &[Node]) -> Node {
     let children = stores.freeze_node_list(cells);
+    let children = stores.node_list_ref(children);
     Node::Unset(UnsetNode::new(UnsetNodeFields {
         kind: UnsetKind::HBox,
         width: Scaled::from_raw(0),
@@ -82,18 +84,22 @@ fn span_width_list_orders_counts_and_keeps_maximum() {
             tex_state::glue::testing_zero_glue_ref(),
         ],
     );
-    let empty = stores.freeze_node_list(&[]);
+    let empty = NodeListRef::empty();
     let rows = [
         row(
             &mut stores,
-            &[cell(empty, 2, 1), cell(empty, 3, 1), cell(empty, 4, 1)],
+            &[
+                cell(empty.clone(), 2, 1),
+                cell(empty.clone(), 3, 1),
+                cell(empty.clone(), 4, 1),
+            ],
         ),
-        row(&mut stores, &[cell(empty, 10, 2)]),
-        row(&mut stores, &[cell(empty, 8, 2)]),
+        row(&mut stores, &[cell(empty.clone(), 10, 2)]),
+        row(&mut stores, &[cell(empty.clone(), 8, 2)]),
         row(&mut stores, &[cell(empty, 20, 3)]),
     ];
 
-    let requirements = collect_width_requirements(AlignmentKind::HAlign, &rows, &stores)
+    let requirements = collect_width_requirements(AlignmentKind::HAlign, &rows)
         .expect("valid unset rows produce width requirements");
     assert_eq!(
         requirements
@@ -121,10 +127,13 @@ fn resolve_alignment_widths_applies_tex82_recurrence() {
             tex_state::glue::testing_zero_glue_ref(),
         ],
     );
-    let empty = stores.freeze_node_list(&[]);
+    let empty = NodeListRef::empty();
     let rows = [
-        row(&mut stores, &[cell(empty, 4, 1), cell(empty, 3, 1)]),
-        row(&mut stores, &[cell(empty, 10, 2)]),
+        row(
+            &mut stores,
+            &[cell(empty.clone(), 4, 1), cell(empty.clone(), 3, 1)],
+        ),
+        row(&mut stores, &[cell(empty.clone(), 10, 2)]),
     ];
 
     let resolved = resolve_widths(&state, &rows, &stores).expect("span recurrence resolves");
@@ -153,7 +162,7 @@ fn resolve_alignment_widths_zeroes_null_column_tabskip() {
             trailing,
         ],
     );
-    let empty = stores.freeze_node_list(&[]);
+    let empty = NodeListRef::empty();
     let rows = [row(&mut stores, &[cell(empty, 4, 1)])];
 
     let resolved = resolve_widths(&state, &rows, &stores).expect("null columns resolve to zero");
@@ -181,12 +190,12 @@ fn alignment_width_resolution_negative_zero_and_competing_span_matrix() {
             tex_state::glue::testing_zero_glue_ref(),
         ],
     );
-    let empty = stores.freeze_node_list(&[]);
+    let empty = NodeListRef::empty();
     let rows = [
-        row(&mut stores, &[cell(empty, 10, 1)]),
-        row(&mut stores, &[cell(empty, 5, 2)]),
-        row(&mut stores, &[cell(empty, 18, 2)]),
-        row(&mut stores, &[cell(empty, 25, 3)]),
+        row(&mut stores, &[cell(empty.clone(), 10, 1)]),
+        row(&mut stores, &[cell(empty.clone(), 5, 2)]),
+        row(&mut stores, &[cell(empty.clone(), 18, 2)]),
+        row(&mut stores, &[cell(empty.clone(), 25, 3)]),
     ];
 
     let resolved = resolve_widths(&alignment, &rows, &stores).expect("§802 recurrence resolves");

@@ -14,9 +14,9 @@ use proptest::prelude::*;
 
 #[test]
 fn node_layout_baseline() {
-    assert_eq!(std::mem::size_of::<Node>(), 96);
-    assert_eq!(std::mem::size_of::<BoxNode>(), 64);
-    assert_eq!(std::mem::size_of::<crate::node::UnsetNode>(), 48);
+    assert_eq!(std::mem::size_of::<Node>(), 120);
+    assert_eq!(std::mem::size_of::<BoxNode>(), 80);
+    assert_eq!(std::mem::size_of::<crate::node::UnsetNode>(), 56);
     assert_eq!(std::mem::size_of::<crate::node::Whatsit>(), 48);
     assert_eq!(std::mem::size_of::<NodeListId>(), 16);
 }
@@ -48,8 +48,7 @@ fn nested_lists_build_bottom_up_and_read_back() {
     });
     let inner_id = inner.finish(&mut arena);
 
-    let mut middle = NodeListBuilder::new();
-    middle.push(Node::HList(BoxNode::new(BoxNodeFields {
+    let middle = Node::HList(BoxNode::new(BoxNodeFields {
         width: scaled(10),
         height: scaled(7),
         depth: scaled(3),
@@ -59,11 +58,10 @@ fn nested_lists_build_bottom_up_and_read_back() {
         glue_sign: Sign::Normal,
         glue_order: Order::Normal,
         children: inner_id,
-    })));
-    let middle_id = middle.finish(&mut arena);
+    }));
+    let middle_id = arena.append_compact(&[middle]);
 
-    let mut outer = NodeListBuilder::new();
-    outer.push(Node::VList(BoxNode::new(BoxNodeFields {
+    let outer = Node::VList(BoxNode::new(BoxNodeFields {
         width: scaled(20),
         height: scaled(9),
         depth: scaled(4),
@@ -73,8 +71,8 @@ fn nested_lists_build_bottom_up_and_read_back() {
         glue_sign: Sign::Stretching,
         glue_order: Order::Fil,
         children: middle_id,
-    })));
-    let outer_id = outer.finish(&mut arena);
+    }));
+    let outer_id = arena.append_compact(&[outer]);
 
     assert_eq!(
         arena.get(inner_id, &survivors),
@@ -102,10 +100,7 @@ fn bottom_up_debug_assert_fires_on_hand_constructed_violation() {
     let mut arena = NodeArena::new();
     let future_id = NodeListId::testing_epoch(0, 1);
 
-    let mut builder = NodeListBuilder::new();
-    builder.push(Node::Adjust(crate::node::AdjustNode::ordinary(future_id)));
-
-    let _ = builder.finish(&mut arena);
+    let _ = arena.append_compact(&[Node::Adjust(crate::node::AdjustNode::ordinary(future_id))]);
 }
 
 #[test]
@@ -251,7 +246,17 @@ fn every_inline_kind_uses_only_one_word_and_no_sidecar() {
         Node::Nonscript,
     ];
     let id = arena.append(&nodes);
-    assert_eq!(arena.get_epoch(id), nodes);
+    let decoded = arena
+        .get_epoch(id)
+        .iter()
+        .map(|node| {
+            node.to_owned_with(|child| {
+                assert!(child.is_empty());
+                crate::node_arena::NodeListRef::empty()
+            })
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(format!("{decoded:?}"), format!("{nodes:?}"));
     let owned = NodeCursor::owned(&nodes);
     let compact = NodeCursor::compact(arena.get_epoch(id));
     for index in 0..nodes.len() {
@@ -435,7 +440,7 @@ fn etex_math_boundaries_keep_six_distinct_compact_identities() {
 #[test]
 fn shipout_normalization_predicate_rejects_inert_compact_tags() {
     let mut arena = NodeArena::new();
-    let empty = arena.append(&[]);
+    let empty = crate::node_arena::NodeListRef::empty();
     let inert = arena.append(&[
         Node::Penalty(1),
         Node::MathOn(scaled(2)),
@@ -483,7 +488,7 @@ fn shipout_normalization_predicate_rejects_inert_compact_tags() {
 #[test]
 fn every_rare_kind_round_trips_through_its_sidecar() {
     let mut arena = NodeArena::new();
-    let empty = arena.append(&[]);
+    let empty = crate::node_arena::NodeListRef::empty();
     let mark_tokens = crate::token_store::testing_empty_token_list_ref();
     let mut box_node = BoxNode::new(BoxNodeFields {
         width: scaled(1),
@@ -494,9 +499,9 @@ fn every_rare_kind_round_trips_through_its_sidecar() {
         glue_set: GlueSetRatio::from_raw(5),
         glue_sign: Sign::Shrinking,
         glue_order: Order::Fill,
-        children: empty,
+        children: empty.clone(),
     });
-    box_node.diagnostic_children = Some(empty);
+    box_node.diagnostic_children = Some(empty.clone());
     let unset = UnsetNode::new(UnsetNodeFields {
         kind: UnsetKind::VBox,
         width: scaled(6),
@@ -507,10 +512,10 @@ fn every_rare_kind_round_trips_through_its_sidecar() {
         stretch_order: Order::Filll,
         shrink: scaled(11),
         shrink_order: Order::Fil,
-        children: empty,
+        children: empty.clone(),
     });
     let nodes = vec![
-        Node::HList(box_node),
+        Node::HList(box_node.clone()),
         Node::VList(box_node),
         Node::Unset(unset),
         Node::Rule {
@@ -529,9 +534,9 @@ fn every_rare_kind_round_trips_through_its_sidecar() {
         },
         Node::Disc {
             kind: DiscKind::AutomaticHyphen,
-            pre: empty,
-            post: empty,
-            replace: empty,
+            pre: empty.clone(),
+            post: empty.clone(),
+            replace: empty.clone(),
             physical_replace_count: 3,
         },
         Node::Mark {
@@ -544,7 +549,7 @@ fn every_rare_kind_round_trips_through_its_sidecar() {
             split_top_skip: crate::glue::GlueSpecRef::testing_new(GlueId::testing_new(5)),
             split_max_depth: scaled(16),
             floating_penalty: -17,
-            content: empty,
+            content: empty.clone(),
         },
         Node::Whatsit(Whatsit::Language {
             language: 18,
@@ -556,35 +561,37 @@ fn every_rare_kind_round_trips_through_its_sidecar() {
             MathField::Empty,
         )),
         Node::FractionNoad(MathFraction {
-            numerator: empty,
-            denominator: empty,
+            numerator: empty.clone(),
+            denominator: empty.clone(),
             thickness: FractionThickness::Explicit(scaled(19)),
             left_delimiter: Some(20),
             right_delimiter: None,
         }),
         Node::MathChoice(MathChoice {
-            display: empty,
-            text: empty,
-            script: empty,
-            script_script: empty,
+            display: empty.clone(),
+            text: empty.clone(),
+            script: empty.clone(),
+            script_script: empty.clone(),
         }),
         Node::MathList(MathListNode {
             display: true,
-            content: empty,
+            content: empty.clone(),
         }),
         Node::Adjust(crate::node::AdjustNode::ordinary(empty)),
     ];
     let id = arena.append(&nodes);
-    assert_eq!(arena.get_epoch(id), nodes);
+    let decoded = arena
+        .get_epoch(id)
+        .iter()
+        .map(|node| node.to_owned_with(|_| crate::node_arena::NodeListRef::empty()))
+        .collect::<Vec<_>>();
+    assert_eq!(format!("{decoded:?}"), format!("{nodes:?}"));
     let first = arena
         .get_epoch(id)
         .first()
         .expect("nonempty rare-kind list");
-    assert_eq!(first.children().collect::<Vec<_>>(), [empty]);
-    assert_eq!(
-        first.physical_children().collect::<Vec<_>>(),
-        [empty, empty]
-    );
+    assert_eq!(first.children().count(), 1);
+    assert_eq!(first.physical_children().count(), 2);
     assert!(matches!(
         arena.get_epoch(id).get(5),
         Some(super::NodeRef::Disc {
@@ -592,16 +599,6 @@ fn every_rare_kind_round_trips_through_its_sidecar() {
             ..
         })
     ));
-    let mut semantic_twin = nodes[5].clone();
-    let Node::Disc {
-        physical_replace_count,
-        ..
-    } = &mut semantic_twin
-    else {
-        unreachable!()
-    };
-    *physical_replace_count = 2;
-    assert_eq!(nodes[5], semantic_twin);
     assert_eq!(
         arena.storage.testing_sidecar_lengths(),
         [2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]
@@ -615,7 +612,7 @@ fn every_rare_kind_round_trips_through_its_sidecar() {
 #[test]
 fn rollback_truncates_words_and_every_sidecar_without_a_decoded_mirror() {
     let mut arena = NodeArena::new();
-    let empty = arena.append(&[]);
+    let empty = crate::node_arena::NodeListRef::empty();
     let mark = arena.watermark();
     let rare = [
         Node::Adjust(crate::node::AdjustNode::ordinary(empty)),
@@ -642,7 +639,7 @@ fn capacity_preflight_accepts_boundary_without_mutation() {
 #[test]
 fn append_reserves_every_column_of_selected_sidecar_tables() {
     let mut arena = NodeArena::new();
-    let empty = arena.append(&[]);
+    let empty = crate::node_arena::NodeListRef::empty();
     let boxes = (0..32)
         .map(|raw| {
             Node::HList(BoxNode::new(BoxNodeFields {
@@ -654,7 +651,7 @@ fn append_reserves_every_column_of_selected_sidecar_tables() {
                 glue_set: GlueSetRatio::ZERO,
                 glue_sign: Sign::Normal,
                 glue_order: Order::Normal,
-                children: empty,
+                children: empty.clone(),
             }))
         })
         .collect::<Vec<_>>();
@@ -699,7 +696,9 @@ fn late_invalid_ligature_leaves_complete_arena_state_unchanged() {
                 ch: 'b',
                 origin: crate::provenance::OriginRef::unknown(),
             },
-            Node::Adjust(crate::node::AdjustNode::ordinary(baseline)),
+            Node::Adjust(crate::node::AdjustNode::ordinary(
+                crate::node_arena::NodeListRef::empty(),
+            )),
             Node::Lig {
                 font: FontId::testing_new(2),
                 ch: 'c',
@@ -728,7 +727,7 @@ fn builder_late_invalid_ligature_does_not_publish_valid_prefix_or_sidecar() {
     ];
     for (ch, orig) in invalid_ligatures {
         let mut arena = NodeArena::new();
-        let empty = arena.append(&[]);
+        let empty = crate::node_arena::NodeListRef::empty();
         let mark = arena.watermark();
         let mut builder = NodeListBuilder::new();
         builder.push(Node::Penalty(10));

@@ -3,6 +3,7 @@ use crate::mode::AlignColumn;
 use tex_state::glue::{GlueSpec, GlueSpecRef, Order};
 use tex_state::ids::TokenListId;
 use tex_state::node::{UnsetKind, UnsetNodeFields};
+use tex_state::node_arena::NodeListRef;
 
 fn sp(raw: i32) -> Scaled {
     Scaled::from_raw(raw * Scaled::UNITY)
@@ -31,8 +32,8 @@ fn state(kind: AlignmentKind, spec: AlignmentPackSpec, tabskips: Vec<GlueSpecRef
     )
 }
 
-fn unset(stores: &mut Universe, kind: UnsetKind, natural: i32, span_count: u16) -> Node {
-    let empty = stores.freeze_node_list(&[]);
+fn unset(kind: UnsetKind, natural: i32, span_count: u16) -> Node {
+    let empty = NodeListRef::empty();
     let (width, height) = match kind {
         UnsetKind::HBox => (sp(natural), sp(1)),
         UnsetKind::VBox => (sp(1), sp(natural)),
@@ -70,7 +71,7 @@ fn pack_alignment_prototype_applies_spec_in_both_modes() {
                 flexible,
             ],
         };
-        let empty = stores.freeze_node_list(&[]);
+        let empty = NodeListRef::empty();
 
         let exact = pack_prototype(
             &state(
@@ -79,7 +80,7 @@ fn pack_alignment_prototype_applies_spec_in_both_modes() {
                 resolved.tabskips.clone(),
             ),
             &resolved,
-            empty,
+            &empty,
             &mut stores,
         );
         let exact_extent = match kind {
@@ -101,7 +102,7 @@ fn pack_alignment_prototype_applies_spec_in_both_modes() {
                 resolved.tabskips.clone(),
             ),
             &resolved,
-            empty,
+            &empty,
             &mut stores,
         );
         let spread_extent = match kind {
@@ -136,17 +137,17 @@ fn alignment_prototype_diagnostic_retains_unset_columns() {
                 tex_state::glue::testing_zero_glue_ref(),
             ],
         };
-        let empty = stores.freeze_node_list(&[]);
+        let empty = NodeListRef::empty();
         let prototype = pack_prototype(
             &state(kind, AlignmentPackSpec::Natural, resolved.tabskips.clone()),
             &resolved,
-            empty,
+            &empty,
             &mut stores,
         );
 
-        let dump = crate::node_dump::dump_node_list(
+        let dump = crate::node_dump::dump_node_slice(
             &stores,
-            prototype.box_node.children,
+            &prototype.box_node.children.to_vec(),
             crate::node_dump::DumpConfig {
                 breadth: 10,
                 depth: 10,
@@ -160,8 +161,8 @@ fn alignment_prototype_diagnostic_retains_unset_columns() {
 #[test]
 fn fin_align_orders_groups_packing_pop_and_insertion() {
     let mut stores = Universe::new_with_plain_catcodes();
-    let first = unset(&mut stores, UnsetKind::HBox, 4, 1);
-    let second = unset(&mut stores, UnsetKind::HBox, 6, 1);
+    let first = unset(UnsetKind::HBox, 4, 1);
+    let second = unset(UnsetKind::HBox, 6, 1);
     let row_children = stores.freeze_node_list(&[
         tabskip_node(tex_state::glue::testing_zero_glue_ref()),
         first,
@@ -169,6 +170,7 @@ fn fin_align_orders_groups_packing_pop_and_insertion() {
         second,
         tabskip_node(tex_state::glue::testing_zero_glue_ref()),
     ]);
+    let row_children = stores.node_list_ref(row_children);
     let row = Node::Unset(UnsetNode::new(UnsetNodeFields {
         kind: UnsetKind::HBox,
         width: sp(10),
@@ -199,9 +201,9 @@ fn fin_align_orders_groups_packing_pop_and_insertion() {
     };
     assert_eq!(row.width, sp(12));
     assert!(
-        stores
-            .nodes(row.children)
+        row.children
+            .to_vec()
             .iter()
-            .all(|node| !matches!(node, tex_state::node_arena::NodeRef::Unset(_)))
+            .all(|node| !matches!(node, Node::Unset(_)))
     );
 }

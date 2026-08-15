@@ -1,8 +1,9 @@
 # Compact node-word arena
 
-Status: authoritative contract for the adopted compact node representation and
-installed directly owned substrate. Nested and aggregate owner migration is
-tracked separately and is not claimed here.
+Status: authoritative contract for the adopted compact node representation,
+installed directly owned substrate, and nested-node owner migration. Aggregate
+Env, page, mode, control, PDF-form, and survivor-bridge migration remains
+tracked separately.
 
 An immutable TeX node-list graph is an eight-byte word stream with kind-specific
 sidecars behind `NodeListRef`. The ref directly owns one `Arc` payload plus an
@@ -149,6 +150,32 @@ survivor promotion, but do not participate in node equality or semantic
 identity. Profiling accounts for both the aligned root column and the ragged
 ligature-root allocations. Small nested sum types may remain packed columns
 when splitting them would increase size or branching.
+
+## Nested node ownership
+
+Every decoded owned nested-list field carries `NodeListRef` directly. This
+includes box and unset children, diagnostic box children, leader payloads,
+discretionary branches, insertion and adjustment content, math subboxes and
+sublists, fractions, choices, and completed math-list nodes. The owned `Node`,
+`MathField`, `MathNoad`, `MathFraction`, `MathChoice`, and `MathListNode` values
+therefore have no bare `NodeListId` lifetime authority and are not `Copy` when
+they contain list owners.
+
+Compact sidecars retain private `NodeListId` spans only inside the immutable
+payload which encloses those spans. Decoding an owned node resolves each span
+through that same payload and returns a cloned `NodeListRef`; it never upgrades
+the coordinate through `Universe`, the survivor bridge, or a registry. Direct
+freeze registers the typed child owners before encoding, copies their complete
+graphs into the unpublished destination payload, patches every compact child
+span, validates semantic identities, and publishes only the completed root.
+
+Execution construction moves or clones nested owners at the TeX transition
+which already distinguishes destructive move from copy. Pure packing,
+line-breaking, and math conversion take owned roots at API boundaries and use
+payload-borrowed list projections for compact traversal. Rewriting remains
+builder-then-freeze; no published word or sidecar row is mutated. Aggregate
+owners which still store raw roots use the pre-existing survivor bridge until
+their later migration, but they do not restore nested-node promotion walks.
 
 ## Publication and rollback
 

@@ -15,7 +15,7 @@ use tex_state::node::{
     KernKind as StateKernKind, LeaderPayload as StateLeaderPayload,
     MarginKernSide as StateMarginKernSide, Node, Sign, Whatsit,
 };
-use tex_state::node_arena::{NodeList, NodeRef};
+use tex_state::node_arena::{NodeList, NodeListRef, NodeRef};
 use tex_state::provenance::OriginRef;
 use tex_state::token::{Catcode, Token};
 use tex_state::{EffectRecord, PrintSink, Universe, VerifiedArtifact};
@@ -86,9 +86,8 @@ fn stage_form_inner(
     replay_expander: &mut ReplayTextExpander<'_>,
 ) -> Result<tex_state::PdfFormArtifact, ExecError> {
     let root_node = stores
-        .nodes(form.box_list())
-        .first()
-        .map(|node| node.to_owned())
+        .node_list_ref(form.box_list())
+        .get(0)
         .ok_or(ExecError::PdfXFormVoidBox)?;
     let (root, children, vertical, box_lr) = match root_node {
         Node::HList(node) => (lower_box_header(&node), node.children, false, node.box_lr),
@@ -96,7 +95,7 @@ fn stage_form_inner(
         _ => return Err(ExecError::PdfXFormVoidBox),
     };
     let overlay = normalize_page(
-        children,
+        children.clone(),
         (vertical, box_lr),
         (
             PendingPageEffects {
@@ -131,7 +130,7 @@ fn stage_form_inner(
         anchor: 0,
     };
     encoder.stream_root_nodes(|output| {
-        emit_node_list(stores, &overlay, children, output, &mut emission, false, 1)
+        emit_node_list(stores, &overlay, &children, output, &mut emission, false, 1)
     })?;
     ensure_pdf_font_resources(stores, &emission.live_fonts)?;
     let bytes = encoder
@@ -240,7 +239,7 @@ pub(crate) fn stage_shipout(
     let output_open_context = output_open_context
         .unwrap_or_else(|| crate::diagnostics::show_context(stores, &input_summary));
     let overlay = normalize_page(
-        children,
+        children.clone(),
         (vertical, root_box_lr),
         (pending_effects, output_open_context, announce_openout),
         stores,
@@ -260,7 +259,7 @@ pub(crate) fn stage_shipout(
         u32::try_from(overlay.pending_effect_count).map_err(|_| ExecError::ArithmeticOverflow)?,
     );
     encoder.stream_root_nodes(|output| {
-        emit_node_list(stores, &overlay, children, output, &mut emission, false, 1)
+        emit_node_list(stores, &overlay, &children, output, &mut emission, false, 1)
     })?;
     debug_assert_eq!(
         usize::try_from(emission.anchor).ok(),
@@ -502,7 +501,7 @@ impl EmissionState {
 fn emit_node_list(
     stores: &Universe,
     overlay: &PageOverlay,
-    list: NodeListId,
+    list: &NodeListRef,
     output: &mut ArtifactNodeListEmitter<'_>,
     emission: &mut EmissionState,
     suppress_deferred_streams: bool,
@@ -525,7 +524,7 @@ fn emit_node_list(
         return Ok(());
     }
 
-    let nodes = stores.nodes(list);
+    let nodes = list.nodes();
     let mut index = 0;
     while index < nodes.len() {
         if let Some(run) = nodes.char_run(index) {
@@ -598,7 +597,7 @@ fn emit_char_run(
 fn emit_index(
     stores: &Universe,
     overlay: &PageOverlay,
-    list: NodeListId,
+    list: &NodeListRef,
     index: usize,
     output: &mut ArtifactNodeListEmitter<'_>,
     emission: &mut EmissionState,
@@ -612,15 +611,15 @@ fn emit_index(
         return emit_node_list(
             stores,
             overlay,
-            replacement,
+            &replacement,
             output,
             emission,
             suppress_deferred_streams,
             depth + 1,
         );
     }
-    let node = stores
-        .nodes(list)
+    let node = list
+        .nodes()
         .get(index)
         .expect("emission index belongs to the frozen list");
     match node {
@@ -678,8 +677,9 @@ fn emit_index(
         NodeRef::Glue { spec, kind, leader } => {
             let spec = lower_glue(spec.spec());
             let kind = lower_glue_kind(kind);
-            let leader = leader.cloned();
-            emit_glue(stores, overlay, output, emission, spec, kind, leader, depth)?;
+            emit_glue(
+                stores, overlay, output, emission, spec, kind, leader, list, depth,
+            )?;
         }
         NodeRef::Penalty(value) => {
             emission.node(stores, []);
@@ -701,6 +701,7 @@ fn emit_index(
                 output,
                 emission,
                 box_node,
+                list,
                 vertical,
                 suppress_deferred_streams,
                 depth,
@@ -724,7 +725,9 @@ fn emit_index(
                     emit_node_list(
                         stores,
                         overlay,
-                        pre,
+                        &list
+                            .resolve(pre)
+                            .expect("discretionary pre-break list belongs to its owner"),
                         nodes,
                         emission,
                         suppress_deferred_streams,
@@ -735,7 +738,9 @@ fn emit_index(
                     emit_node_list(
                         stores,
                         overlay,
-                        post,
+                        &list
+                            .resolve(post)
+                            .expect("discretionary post-break list belongs to its owner"),
                         nodes,
                         emission,
                         suppress_deferred_streams,
@@ -746,7 +751,9 @@ fn emit_index(
                     emit_node_list(
                         stores,
                         overlay,
-                        replace,
+                        &list
+                            .resolve(replace)
+                            .expect("discretionary replacement list belongs to its owner"),
                         nodes,
                         emission,
                         suppress_deferred_streams,
@@ -781,7 +788,9 @@ fn emit_index(
                 emit_node_list(
                     stores,
                     overlay,
-                    content,
+                    &list
+                        .resolve(content)
+                        .expect("insertion content belongs to its enclosing owner"),
                     nodes,
                     emission,
                     suppress_deferred_streams,
@@ -812,7 +821,9 @@ fn emit_index(
                 emit_node_list(
                     stores,
                     overlay,
-                    content.content,
+                    &list
+                        .resolve(content.content)
+                        .expect("adjustment content belongs to its enclosing owner"),
                     nodes,
                     emission,
                     suppress_deferred_streams,
@@ -838,7 +849,8 @@ fn emit_box(
     overlay: &PageOverlay,
     output: &mut ArtifactNodeListEmitter<'_>,
     emission: &mut EmissionState,
-    box_node: StateBoxNode,
+    box_node: StateBoxNode<NodeListId>,
+    owner: &NodeListRef,
     vertical: bool,
     suppress_deferred_streams: bool,
     depth: usize,
@@ -849,7 +861,9 @@ fn emit_box(
         emit_node_list(
             stores,
             overlay,
-            box_node.children,
+            &owner
+                .resolve(box_node.children)
+                .expect("box children belong to their enclosing owner"),
             nodes,
             emission,
             suppress_deferred_streams,
@@ -867,9 +881,11 @@ fn emit_glue(
     emission: &mut EmissionState,
     spec: PageGlueSpec,
     kind: PageGlueKind,
-    leader: Option<StateLeaderPayload>,
+    leader: Option<StateLeaderPayload<NodeListId>>,
+    owner: &NodeListRef,
     depth: usize,
 ) -> Result<(), ExecError> {
+    let vertical_leader = matches!(&leader, Some(StateLeaderPayload::VList(_)));
     match leader {
         None => {
             emission.node(stores, []);
@@ -884,14 +900,16 @@ fn emit_glue(
             output.glue_rule_leader(spec, kind, width, height, depth)?;
         }
         Some(StateLeaderPayload::HList(box_node)) | Some(StateLeaderPayload::VList(box_node)) => {
-            let vertical = matches!(leader, Some(StateLeaderPayload::VList(_)));
+            let vertical = vertical_leader;
             let fields = lower_box_header(&box_node);
             emission.node(stores, []);
             output.glue_box_leader(spec, kind, vertical, &fields, |nodes| {
                 emit_node_list(
                     stores,
                     overlay,
-                    box_node.children,
+                    &owner
+                        .resolve(box_node.children)
+                        .expect("leader children belong to their enclosing owner"),
                     nodes,
                     emission,
                     true,
@@ -947,27 +965,31 @@ fn whatsit_is_anchored(whatsit: &Whatsit, suppress_deferred_streams: bool) -> bo
     }
 }
 
-fn permutation_for(overlay: &PageOverlay, list: NodeListId) -> Option<&[usize]> {
+fn permutation_for<'a>(overlay: &'a PageOverlay, list: &NodeListRef) -> Option<&'a [usize]> {
     overlay
         .directions
         .iter()
-        .find(|entry| entry.list == list)
+        .find(|entry| &entry.list == list)
         .map(|entry| entry.order.as_slice())
 }
 
-fn math_substitution(overlay: &PageOverlay, list: NodeListId, index: usize) -> Option<NodeListId> {
+fn math_substitution(
+    overlay: &PageOverlay,
+    list: &NodeListRef,
+    index: usize,
+) -> Option<NodeListRef> {
     overlay
         .math
         .iter()
-        .find(|entry| entry.list == list && entry.index == index)
-        .map(|entry| entry.replacement)
+        .find(|entry| &entry.list == list && entry.index == index)
+        .map(|entry| entry.replacement.clone())
 }
 
-fn omitted_whatsit(overlay: &PageOverlay, list: NodeListId, index: usize) -> bool {
+fn omitted_whatsit(overlay: &PageOverlay, list: &NodeListRef, index: usize) -> bool {
     overlay
         .omitted_whatsits
         .iter()
-        .any(|&(candidate, candidate_index)| candidate == list && candidate_index == index)
+        .any(|(candidate, candidate_index)| candidate == list && *candidate_index == index)
 }
 
 fn font_resource_id(stores: &Universe, font: FontId, emission: &mut EmissionState) -> u32 {

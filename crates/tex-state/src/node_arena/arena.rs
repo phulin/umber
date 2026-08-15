@@ -22,6 +22,15 @@ impl NodeListBuilder {
         }
     }
     pub fn push(&mut self, node: Node) {
+        node.visit_node_lists(|child| {
+            if !self
+                .direct_children
+                .iter()
+                .any(|existing| existing.id() == child.id() && existing.shares_payload(child))
+            {
+                self.direct_children.push(child.clone());
+            }
+        });
         self.buf.push(node)
     }
     pub fn reserve(&mut self, additional: usize) {
@@ -71,7 +80,7 @@ impl NodeListBuilder {
     }
 
     pub(crate) fn direct_child_semantic_id(&self, id: NodeListId) -> Option<NodeSemanticId> {
-        if id.len() == 0 {
+        if id.is_empty() {
             return Some(NodeSemanticId::empty());
         }
         self.direct_children
@@ -141,6 +150,9 @@ impl NodeArena {
         NodeListBuilder::new()
     }
     pub(crate) fn get<'a>(&'a self, id: NodeListId, survivors: &'a SurvivorArena) -> NodeList<'a> {
+        if id.is_empty() {
+            return self.storage.view(0, 0);
+        }
         match id.arena() {
             ArenaRef::Epoch => self.get_epoch(id),
             ArenaRef::Survivor(_) => survivors.get(id),
@@ -257,6 +269,33 @@ impl NodeArena {
         self.append_with_semantic_id(nodes, semantic_id)
     }
 
+    #[cfg(test)]
+    pub(crate) fn append_compact(&mut self, nodes: &[Node<NodeListId>]) -> NodeListId {
+        if nodes.is_empty() {
+            return NodeListId::new_epoch(HandleIdentity::builtin(0));
+        }
+        let new_start = checked_len(self.storage.len(), "node arena exceeds u32 entries");
+        for node in nodes {
+            let _ = node.clone().map_lists(|child| {
+                if let ArenaRef::Epoch = child.arena() {
+                    let span = self.span(child).expect("child node-list id is not live");
+                    let end = span
+                        .start
+                        .checked_add(span.len)
+                        .expect("child span overflow");
+                    assert!(
+                        end <= new_start,
+                        "child node-list span must be frozen below the parent span"
+                    );
+                }
+                child
+            });
+        }
+        let semantic_id = NodeSemanticId::testing(self.spans.len() as u64);
+        let (start, len) = self.storage.append_compact_nodes(nodes);
+        self.mint_span(start, len, semantic_id)
+    }
+
     #[cfg(debug_assertions)]
     fn debug_assert_bottom_up(&self, nodes: &[Node], new_start: u32) {
         for node in nodes {
@@ -290,6 +329,9 @@ impl NodeArena {
     }
 
     pub(crate) fn semantic_id(&self, id: NodeListId, survivors: &SurvivorArena) -> NodeSemanticId {
+        if id.is_empty() {
+            return NodeSemanticId::empty();
+        }
         match id.arena() {
             ArenaRef::Epoch => self.epoch_semantic_id(id),
             ArenaRef::Survivor(_) => survivors.semantic_id(id),

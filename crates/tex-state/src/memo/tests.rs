@@ -167,6 +167,7 @@ fn nested_node_graph_round_trips_across_owners_and_respects_budget_atomically() 
             tokens: tokens.clone(),
         },
     ]);
+    let child = source.node_list_ref(child);
     let root = source.freeze_node_list(&[Node::HList(BoxNode::new(BoxNodeFields {
         width: Scaled::from_raw(20),
         height: Scaled::from_raw(5),
@@ -351,6 +352,7 @@ fn deeply_nested_node_graph_detaches_and_imports_iteratively() {
     let mut source = Universe::new();
     let mut root = source.freeze_node_list(&[]);
     for _ in 0..DEPTH {
+        let children = source.node_list_ref(root);
         root = source.freeze_node_list(&[Node::HList(BoxNode::new(BoxNodeFields {
             width: Scaled::from_raw(0),
             height: Scaled::from_raw(0),
@@ -360,7 +362,7 @@ fn deeply_nested_node_graph_detaches_and_imports_iteratively() {
             glue_set: GlueSetRatio::ZERO,
             glue_sign: crate::node::Sign::Normal,
             glue_order: Order::Normal,
-            children: root,
+            children,
         }))]);
     }
 

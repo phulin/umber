@@ -63,7 +63,8 @@ pub(crate) fn make_unset_node(
             vpack(stores, children, PackSpec::Natural, params)
         }
     };
-    let metrics = measure_unset(stores, children, kind);
+    let metrics = measure_unset(stores, &packed.node.children, kind);
+    let children = packed.node.children.clone();
     Ok(Node::Unset(UnsetNode::new(UnsetNodeFields {
         kind,
         width: packed.node.width,

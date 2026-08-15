@@ -1742,7 +1742,10 @@ impl Stores {
                 .nodes
                 .into_iter()
                 .map(|node| node.restore_with_origins(&content_ids, &node_ids, &mut origins))
-                .collect::<Result<Vec<_>, _>>()?;
+                .collect::<Result<Vec<_>, _>>()?
+                .into_iter()
+                .map(|node| node.map_lists(|child| self.node_list_ref(child)))
+                .collect::<Vec<_>>();
             let id = self.freeze_node_list(&nodes);
             node_ids.insert(list.key, id);
         }
@@ -2386,7 +2389,7 @@ fn install_frozen_sections(
             .into_iter()
             .map(|node| node.restore(&content_ids, &node_ids))
             .collect::<Result<Vec<_>, _>>()?;
-        let (start, len) = storage.append(&nodes);
+        let (start, len) = storage.append_compact_nodes(&nodes);
         if start != id.start() || len != id.len() {
             return Err(StoreFormatError::Invalid("frozen node span metadata"));
         }
@@ -2399,11 +2402,12 @@ fn install_frozen_sections(
     }
     stores.survivors.publish_frozen_root(root, storage, spans);
     for (id, expected_fingerprint) in verified_ids {
-        let nodes = stores.nodes(id).to_vec();
+        let nodes = stores.node_list_ref(id).to_vec();
         let semantic_id = stores.compute_node_semantic_id(&nodes);
         if semantic_id.value() != expected_fingerprint {
             return Err(StoreFormatError::Invalid("frozen node semantic identity"));
         }
+        drop(nodes);
         if id.len() != 0 {
             stores.survivors.set_frozen_semantic_id(id, semantic_id);
         }

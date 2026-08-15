@@ -53,6 +53,7 @@ fn rule(height: i32, depth: i32) -> Node {
 
 fn boxed(stores: &mut Universe, height: i32, depth: i32, vertical: bool) -> Node {
     let children = stores.freeze_node_list(&[]);
+    let children = stores.node_list_ref(children);
     let payload = BoxNode::new(BoxNodeFields {
         width: s(1),
         height: s(height),
@@ -79,6 +80,7 @@ fn ins(
     nodes: &[Node],
 ) -> Node {
     let content = stores.freeze_node_list(nodes);
+    let content = stores.node_list_ref(content);
     Node::Ins {
         class,
         size: s(size),
@@ -424,8 +426,7 @@ fn outer_vertical_contribution_routes_every_node_kind_canonically() {
 
 #[test]
 fn page_builder_rejects_impossible_contribution_nodes_with_page_confusion() {
-    let mut handles = Universe::new();
-    let empty = handles.freeze_node_list(&[]);
+    let empty = tex_state::node_arena::NodeListRef::empty();
     let impossible = [
         Node::Char {
             font: FontId::testing_new(0),
@@ -450,13 +451,13 @@ fn page_builder_rejects_impossible_contribution_nodes_with_page_confusion() {
             stretch_order: Order::Normal,
             shrink: s(0),
             shrink_order: Order::Normal,
-            children: empty,
+            children: empty.clone(),
         })),
         Node::Disc {
             kind: DiscKind::Discretionary,
-            pre: empty,
-            post: empty,
-            replace: empty,
+            pre: empty.clone(),
+            post: empty.clone(),
+            replace: empty.clone(),
             physical_replace_count: 0,
         },
         Node::MathOn(s(1)),
@@ -467,22 +468,22 @@ fn page_builder_rejects_impossible_contribution_nodes_with_page_confusion() {
             MathField::Empty,
         )),
         Node::FractionNoad(MathFraction {
-            numerator: empty,
-            denominator: empty,
+            numerator: empty.clone(),
+            denominator: empty.clone(),
             thickness: FractionThickness::Default,
             left_delimiter: None,
             right_delimiter: None,
         }),
         Node::MathStyle(MathStyle::Text),
         Node::MathChoice(MathChoice {
-            display: empty,
-            text: empty,
-            script: empty,
-            script_script: empty,
+            display: empty.clone(),
+            text: empty.clone(),
+            script: empty.clone(),
+            script_script: empty.clone(),
         }),
         Node::MathList(MathListNode {
             display: false,
-            content: empty,
+            content: empty.clone(),
         }),
         Node::Nonscript,
         Node::Adjust(tex_state::node::AdjustNode {

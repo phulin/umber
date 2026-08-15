@@ -159,6 +159,21 @@ const NODE_LIST_FORMAT_SURVIVOR_NAMESPACE: u64 = 4;
 const _: [(); 16] = [(); core::mem::size_of::<NodeListId>()];
 
 impl NodeListId {
+    /// Whether this coordinate denotes the canonical empty node list.
+    ///
+    /// Live epoch handles intentionally do not expose their compact span, so
+    /// callers must use this identity-aware query instead of reading `len`.
+    pub(crate) fn is_empty(self) -> bool {
+        if self.0.namespace() == NODE_LIST_SURVIVOR_NAMESPACE
+            || self.0.namespace() == NODE_LIST_FORMAT_EPOCH_NAMESPACE
+            || self.0.namespace() == NODE_LIST_FORMAT_SURVIVOR_NAMESPACE
+        {
+            self.len() == 0
+        } else {
+            self.0 == crate::identity::HandleIdentity::builtin(0)
+        }
+    }
+
     pub(crate) const fn new_epoch(identity: crate::identity::HandleIdentity) -> Self {
         assert!(
             identity.namespace() != NODE_LIST_SURVIVOR_NAMESPACE

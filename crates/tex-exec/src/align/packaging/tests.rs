@@ -41,12 +41,13 @@ fn package_unset_cell_records_natural_extent_and_glue_orders() {
             leader: None,
         },
     ]);
+    let children_ref = stores.node_list_ref(children);
 
     for (alignment, kind) in [
         (AlignmentKind::HAlign, UnsetKind::HBox),
         (AlignmentKind::VAlign, UnsetKind::VBox),
     ] {
-        let expected = tex_typeset::measure_unset(&stores, children, kind);
+        let expected = tex_typeset::measure_unset(&stores, &children_ref, kind);
         let Node::Unset(cell) =
             make_unset_node(&mut stores, children, kind, 3, UnsetPackContext::Row)
                 .expect("a three-column span is far inside TeX82 \u{a7}110's max_quarterword")

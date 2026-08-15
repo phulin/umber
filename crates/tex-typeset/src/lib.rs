@@ -26,6 +26,28 @@ pub use packing::{
 };
 pub use vertical_break::{VerticalBreak, VerticalBreakError, vert_break};
 
+#[cfg(test)]
+pub(crate) trait FreezeNodeListRefForTest {
+    fn freeze_node_list_ref_for_test(
+        &mut self,
+        nodes: &[tex_state::node::Node],
+    ) -> tex_state::node_arena::NodeListRef;
+}
+
+#[cfg(test)]
+impl FreezeNodeListRefForTest for Universe {
+    fn freeze_node_list_ref_for_test(
+        &mut self,
+        nodes: &[tex_state::node::Node],
+    ) -> tex_state::node_arena::NodeListRef {
+        let mut builder = self.node_list_builder();
+        for node in nodes {
+            builder.push(node.clone());
+        }
+        self.freeze_node_list_ref(builder)
+    }
+}
+
 /// TeX's infinite badness sentinel.
 pub const INF_BAD: i32 = 10_000;
 

@@ -3446,6 +3446,25 @@ impl Stores {
         ))
     }
 
+    pub(crate) fn node_list_ref(&mut self, id: NodeListId) -> NodeListRef {
+        if id.is_empty() {
+            return NodeListRef::empty();
+        }
+        match id.arena() {
+            crate::ids::ArenaRef::Epoch => {
+                self.survivors.promote_owned(id, &self.nodes).1.node_ref()
+            }
+            crate::ids::ArenaRef::Survivor(_) => self.survivors.owner(id).node_ref(),
+        }
+    }
+
+    pub(crate) fn published_node_list_ref(&self, id: NodeListId) -> Option<NodeListRef> {
+        if id.is_empty() {
+            return Some(NodeListRef::empty());
+        }
+        self.survivor_owner(id).map(|owner| owner.node_ref())
+    }
+
     pub(crate) fn promote_operation_node_list(
         &mut self,
         mark: NodeArenaMark,

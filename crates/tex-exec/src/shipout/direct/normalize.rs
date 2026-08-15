@@ -7,7 +7,7 @@ pub(super) struct PageOverlay {
     pub(super) open_out_occurrences: Vec<(usize, tex_state::EffectPos)>,
     pub(super) math: Vec<MathSubstitution>,
     pub(super) directions: Vec<DirectionPermutation>,
-    pub(super) omitted_whatsits: Vec<(NodeListId, usize)>,
+    pub(super) omitted_whatsits: Vec<(tex_state::node_arena::NodeListRef, usize)>,
     pub(super) diagnostics: Vec<(PrintSink, String)>,
     #[cfg(test)]
     pub(super) base_whatsit_visits: Vec<BaseWhatsitVisit>,
@@ -18,13 +18,13 @@ pub(super) struct PageOverlay {
 }
 
 pub(super) struct MathSubstitution {
-    pub(super) list: NodeListId,
+    pub(super) list: tex_state::node_arena::NodeListRef,
     pub(super) index: usize,
-    pub(super) replacement: NodeListId,
+    pub(super) replacement: tex_state::node_arena::NodeListRef,
 }
 
 pub(super) struct DirectionPermutation {
-    pub(super) list: NodeListId,
+    pub(super) list: tex_state::node_arena::NodeListRef,
     pub(super) order: Vec<usize>,
 }
 
@@ -35,7 +35,7 @@ struct NormalizeExpansion<'a> {
 
 #[allow(clippy::too_many_arguments)] // Output traversal keeps independent immutable/replay inputs.
 pub(super) fn normalize_page(
-    root: NodeListId,
+    root: tex_state::node_arena::NodeListRef,
     root_box: (bool, tex_state::node::BoxLr),
     effects_and_context: (PendingPageEffects, String, bool),
     stores: &mut Universe,
@@ -115,8 +115,13 @@ pub(super) fn normalize_page(
 
 enum NormalizeNode {
     Leaf,
-    List(NodeListId, bool, bool, tex_state::node::BoxLr),
-    Lists([NodeListId; 3]),
+    List(
+        tex_state::node_arena::NodeListRef,
+        bool,
+        bool,
+        tex_state::node::BoxLr,
+    ),
+    Lists([tex_state::node_arena::NodeListRef; 3]),
     Whatsit(Whatsit),
     Math(tex_state::math::MathListNode),
     Unsupported(&'static str),
@@ -139,7 +144,7 @@ struct NormalizeListContext {
 fn normalize_list(
     stores: &mut Universe,
     expansion: &mut NormalizeExpansion<'_>,
-    list: NodeListId,
+    list: tex_state::node_arena::NodeListRef,
     context: NormalizeListContext,
     overlay: &mut PageOverlay,
 ) -> Result<(), ExecError> {
@@ -151,7 +156,7 @@ fn normalize_list(
     } = context;
     check_depth(depth)?;
     let (active_indices, permutation) = {
-        let nodes = stores.nodes(list);
+        let nodes = list.nodes();
         if !nodes.requires_shipout_normalization() {
             return Ok(());
         }
@@ -173,15 +178,16 @@ fn normalize_list(
         (active_indices, permutation)
     };
     if let Some(order) = permutation {
-        overlay
-            .directions
-            .push(DirectionPermutation { list, order });
+        overlay.directions.push(DirectionPermutation {
+            list: list.clone(),
+            order,
+        });
     }
     for index in active_indices {
         normalize_index(
             stores,
             expansion,
-            list,
+            list.clone(),
             index,
             suppress_deferred_streams,
             NormalizeLocation { in_hlist, depth },
@@ -194,7 +200,7 @@ fn normalize_list(
 fn normalize_index(
     stores: &mut Universe,
     expansion: &mut NormalizeExpansion<'_>,
-    list: NodeListId,
+    list: tex_state::node_arena::NodeListRef,
     index: usize,
     suppress_deferred_streams: bool,
     location: NormalizeLocation,
@@ -202,65 +208,64 @@ fn normalize_index(
 ) -> Result<(), ExecError> {
     let NormalizeLocation { in_hlist, depth } = location;
     let action = {
-        let node = stores
-            .nodes(list)
+        let node = list
             .get(index)
             .expect("normalization index belongs to the frozen list");
         match node {
-            NodeRef::HList(box_node) => NormalizeNode::List(
+            Node::HList(box_node) => NormalizeNode::List(
                 box_node.children,
                 suppress_deferred_streams,
                 true,
                 box_node.box_lr,
             ),
-            NodeRef::VList(box_node) => NormalizeNode::List(
+            Node::VList(box_node) => NormalizeNode::List(
                 box_node.children,
                 suppress_deferred_streams,
                 false,
                 box_node.box_lr,
             ),
-            NodeRef::Glue {
+            Node::Glue {
                 leader: Some(StateLeaderPayload::HList(box_node)),
                 ..
             } => NormalizeNode::List(box_node.children, true, true, box_node.box_lr),
-            NodeRef::Glue {
+            Node::Glue {
                 leader: Some(StateLeaderPayload::VList(box_node)),
                 ..
             } => NormalizeNode::List(box_node.children, true, false, box_node.box_lr),
-            NodeRef::Disc {
+            Node::Disc {
                 pre, post, replace, ..
             } => NormalizeNode::Lists([pre, post, replace]),
-            NodeRef::Ins { content, .. } => NormalizeNode::List(
+            Node::Ins { content, .. } => NormalizeNode::List(
                 content,
                 suppress_deferred_streams,
                 in_hlist,
                 tex_state::node::BoxLr::Normal,
             ),
-            NodeRef::Adjust(adjust) => NormalizeNode::List(
+            Node::Adjust(adjust) => NormalizeNode::List(
                 adjust.content,
                 suppress_deferred_streams,
                 in_hlist,
                 tex_state::node::BoxLr::Normal,
             ),
-            NodeRef::Whatsit(whatsit) => NormalizeNode::Whatsit(whatsit.clone()),
-            NodeRef::MathList(math) => NormalizeNode::Math(math),
-            NodeRef::Unset(_) => NormalizeNode::Unsupported("unset alignment"),
-            NodeRef::MathNoad(_)
-            | NodeRef::FractionNoad(_)
-            | NodeRef::MathStyle(_)
-            | NodeRef::MathChoice(_)
-            | NodeRef::Nonscript => NormalizeNode::Unsupported("math"),
-            NodeRef::Char { .. }
-            | NodeRef::Lig { .. }
-            | NodeRef::Kern { .. }
-            | NodeRef::MarginKern { .. }
-            | NodeRef::Glue { .. }
-            | NodeRef::Penalty(_)
-            | NodeRef::Rule { .. }
-            | NodeRef::Mark { .. }
-            | NodeRef::MathOn(_)
-            | NodeRef::MathOff(_)
-            | NodeRef::Direction(_) => NormalizeNode::Leaf,
+            Node::Whatsit(whatsit) => NormalizeNode::Whatsit(whatsit),
+            Node::MathList(math) => NormalizeNode::Math(math),
+            Node::Unset(_) => NormalizeNode::Unsupported("unset alignment"),
+            Node::MathNoad(_)
+            | Node::FractionNoad(_)
+            | Node::MathStyle(_)
+            | Node::MathChoice(_)
+            | Node::Nonscript => NormalizeNode::Unsupported("math"),
+            Node::Char { .. }
+            | Node::Lig { .. }
+            | Node::Kern { .. }
+            | Node::MarginKern { .. }
+            | Node::Glue { .. }
+            | Node::Penalty(_)
+            | Node::Rule { .. }
+            | Node::Mark { .. }
+            | Node::MathOn(_)
+            | Node::MathOff(_)
+            | Node::Direction(_) => NormalizeNode::Leaf,
         }
     };
     match action {
@@ -315,16 +320,17 @@ fn normalize_index(
                 location,
             )?;
             if anchored && overlay.effects.len() == effect_count {
-                overlay.omitted_whatsits.push((list, index));
+                overlay.omitted_whatsits.push((list.clone(), index));
             }
         }
         NormalizeNode::Math(math) => {
             let mut nodes = crate::math::finish_math_list_node(stores, math, false);
             let replacement = stores.freeze_node_list_owned(&mut nodes);
+            let replacement = stores.node_list_ref(replacement);
             overlay.math.push(MathSubstitution {
-                list,
+                list: list.clone(),
                 index,
-                replacement,
+                replacement: replacement.clone(),
             });
             normalize_list(
                 stores,

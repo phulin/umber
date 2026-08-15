@@ -35,7 +35,7 @@ impl ModeListScalars {
             align_state: list.align_state.clone(),
             incomplete_fraction: list.incomplete_fraction.clone(),
             display_interrupt: list.display_interrupt.clone(),
-            display_eq_no: list.display_eq_no,
+            display_eq_no: list.display_eq_no.clone(),
             display_alignment: list.display_alignment,
             prev_depth: list.prev_depth,
             prev_graf: list.prev_graf,

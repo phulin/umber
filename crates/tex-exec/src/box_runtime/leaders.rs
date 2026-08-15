@@ -47,7 +47,7 @@ pub(crate) fn take_register_payload(
     if copy && let Some(id) = id {
         stores.pin_survivor(id);
     }
-    id.and_then(|id| stores.nodes(id).first().map(|node| node.to_owned()))
+    id.and_then(|id| stores.node_list_ref(id).get(0))
         .and_then(payload_from_node)
 }
 

@@ -1,6 +1,5 @@
 use super::{NodeListRef, NodeListWeakIndex};
 use crate::glue::{GlueSpec, Order};
-use crate::ids::NodeListId;
 use crate::math::{
     FractionThickness, MathChoice, MathField, MathFraction, MathListNode, MathNoad, NoadClass,
     NoadKind,
@@ -46,19 +45,18 @@ fn builder_freeze_owns_and_resolves_child_spans_without_survivor_owner() {
     let mut stores = Stores::new();
     let child = freeze(&mut stores, [Node::Penalty(17)]);
     let mut parent_builder = stores.node_list_builder();
-    let child_coordinate = parent_builder.own_child(child.clone());
-    parent_builder.push(Node::Adjust(AdjustNode::ordinary(child_coordinate)));
+    parent_builder.push(Node::Adjust(AdjustNode::ordinary(child.clone())));
 
     let parent = stores.freeze_node_list_ref(parent_builder);
-    let Node::Adjust(adjust) = parent.nodes().first().expect("parent node").to_owned() else {
+    let Node::Adjust(adjust) = parent.get(0).expect("parent node") else {
         panic!("expected adjustment")
     };
-    let resolved = parent.resolve(adjust.content).expect("owned child span");
+    let resolved = adjust.content;
 
     assert_eq!(resolved.nodes().to_vec(), [Node::Penalty(17)]);
     assert_eq!(
         parent
-            .child_nodes(adjust.content)
+            .child_nodes(resolved.id())
             .expect("borrowed child")
             .to_vec(),
         [Node::Penalty(17)]
@@ -74,7 +72,7 @@ fn builder_freeze_owns_and_resolves_child_spans_without_survivor_owner() {
 fn every_child_sidecar_resolves_from_the_frozen_owner() {
     let mut stores = Stores::new();
     let mut builder = stores.node_list_builder();
-    let empty = builder.own_child(NodeListRef::empty());
+    let empty = NodeListRef::empty();
     let glue = stores.intern_glue_in_domain(GlueSpec::ZERO, None);
     let mut box_node = BoxNode::new(BoxNodeFields {
         width: Scaled::from_raw(1),
@@ -85,9 +83,9 @@ fn every_child_sidecar_resolves_from_the_frozen_owner() {
         glue_set: GlueSetRatio::ZERO,
         glue_sign: Sign::Normal,
         glue_order: Order::Normal,
-        children: empty,
+        children: empty.clone(),
     });
-    box_node.diagnostic_children = Some(empty);
+    box_node.diagnostic_children = Some(empty.clone());
     let unset = UnsetNode::new(UnsetNodeFields {
         kind: UnsetKind::HBox,
         width: Scaled::from_raw(5),
@@ -98,17 +96,17 @@ fn every_child_sidecar_resolves_from_the_frozen_owner() {
         stretch_order: Order::Normal,
         shrink: Scaled::from_raw(0),
         shrink_order: Order::Normal,
-        children: empty,
+        children: empty.clone(),
     });
     let noad = MathNoad {
         kind: NoadKind::Normal(NoadClass::Ord),
-        nucleus: MathField::SubBox(empty),
+        nucleus: MathField::SubBox(empty.clone()),
         subscript: MathField::Empty,
         superscript: MathField::Empty,
     };
 
     for node in [
-        Node::HList(box_node),
+        Node::HList(box_node.clone()),
         Node::Unset(unset),
         Node::Glue {
             spec: glue.clone(),
@@ -117,9 +115,9 @@ fn every_child_sidecar_resolves_from_the_frozen_owner() {
         },
         Node::Disc {
             kind: DiscKind::Discretionary,
-            pre: empty,
-            post: empty,
-            replace: empty,
+            pre: empty.clone(),
+            post: empty.clone(),
+            replace: empty.clone(),
             physical_replace_count: 0,
         },
         Node::Ins {
@@ -128,25 +126,25 @@ fn every_child_sidecar_resolves_from_the_frozen_owner() {
             split_top_skip: glue,
             split_max_depth: Scaled::from_raw(0),
             floating_penalty: 0,
-            content: empty,
+            content: empty.clone(),
         },
         Node::MathNoad(noad),
         Node::FractionNoad(MathFraction {
-            numerator: empty,
-            denominator: empty,
+            numerator: empty.clone(),
+            denominator: empty.clone(),
             thickness: FractionThickness::Default,
             left_delimiter: None,
             right_delimiter: None,
         }),
         Node::MathChoice(MathChoice {
-            display: empty,
-            text: empty,
-            script: empty,
-            script_script: empty,
+            display: empty.clone(),
+            text: empty.clone(),
+            script: empty.clone(),
+            script_script: empty.clone(),
         }),
         Node::MathList(MathListNode {
             display: false,
-            content: empty,
+            content: empty.clone(),
         }),
         Node::Adjust(AdjustNode::ordinary(empty)),
     ] {
@@ -165,23 +163,6 @@ fn every_child_sidecar_resolves_from_the_frozen_owner() {
         root.child_nodes(child)
             .is_some_and(crate::node_arena::NodeList::is_empty)
     }));
-}
-
-#[test]
-fn builder_validation_failure_publishes_no_payload() {
-    let mut stores = Stores::new();
-    let mut invalid = stores.node_list_builder();
-    invalid.push(Node::Adjust(AdjustNode::ordinary(
-        NodeListId::testing_survivor((1 << 20) - 2, 0, 1),
-    )));
-
-    let failed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let _ = stores.freeze_node_list_ref(invalid);
-    }));
-    assert!(failed.is_err());
-
-    let valid = freeze(&mut stores, [Node::Penalty(23)]);
-    assert_eq!(valid.nodes().to_vec(), [Node::Penalty(23)]);
 }
 
 #[test]
@@ -276,7 +257,6 @@ fn semantic_identity_ignores_payload_coordinates_and_allocation_order() {
         }
         let child = freeze(stores, [Node::Penalty(41)]);
         let mut builder = stores.node_list_builder();
-        let child = builder.own_child(child);
         builder.push(Node::Adjust(AdjustNode::ordinary(child)));
         stores.freeze_node_list_ref(builder)
     }

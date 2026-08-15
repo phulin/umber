@@ -255,6 +255,7 @@ fn sub(lhs: Scaled, rhs: Scaled) -> Result<Scaled, VerticalBreakError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::FreezeNodeListRefForTest;
     use tex_state::Universe;
     use tex_state::glue::{GlueSpec, Order};
     use tex_state::node::{BoxNode, BoxNodeFields, GlueKind, KernKind, Sign};
@@ -267,7 +268,7 @@ mod tests {
     }
 
     fn hbox(universe: &mut Universe, height: i32, depth: i32) -> Node {
-        let children = universe.freeze_node_list(&[]);
+        let children = universe.freeze_node_list_ref_for_test(&[]);
         Node::HList(BoxNode::new(BoxNodeFields {
             width: sp(10),
             height: sp(height),

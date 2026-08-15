@@ -1,19 +1,13 @@
 use tex_state::Universe;
 use tex_state::glue::Order;
 use tex_state::node::{BoxLr, BoxNode, BoxNodeFields, Direction, KernKind, Node, Sign};
+use tex_state::node_arena::NodeListRef;
 use tex_state::scaled::{GlueSetRatio, Scaled};
 
 use super::{display_line_prototype, package_directed_display_line};
 
-fn box_node(
-    stores: &mut Universe,
-    width: i32,
-    height: i32,
-    depth: i32,
-    shift: i32,
-    box_lr: BoxLr,
-) -> BoxNode {
-    let children = stores.freeze_node_list(&[]);
+fn box_node(width: i32, height: i32, depth: i32, shift: i32, box_lr: BoxLr) -> BoxNode {
+    let children = NodeListRef::empty();
     BoxNode::new(BoxNodeFields {
         width: Scaled::from_raw(width),
         height: Scaled::from_raw(height),
@@ -34,9 +28,9 @@ fn etex_display_prototype_replaces_its_list_without_repacking() {
     // Only the no-prototype control calls hpack to create a new line box.
     let mut stores = Universe::new_with_plain_catcodes();
     stores.enable_geometry_observation();
-    let last_line = box_node(&mut stores, 100, 7, 3, 5, BoxLr::Normal);
+    let last_line = box_node(100, 7, 3, 5, BoxLr::Normal);
     let prototype = display_line_prototype(&mut stores, last_line);
-    let display = box_node(&mut stores, 10, 8, 2, 0, BoxLr::DList);
+    let display = box_node(10, 8, 2, 0, BoxLr::DList);
     let before = stores.geometry_observation_len();
 
     let reused = package_directed_display_line(
@@ -56,7 +50,7 @@ fn etex_display_prototype_replaces_its_list_without_repacking() {
     );
     assert_eq!(reused.shift.raw(), 5);
     assert!(matches!(
-        stores.nodes(reused.children).to_vec().as_slice(),
+        reused.children.to_vec().as_slice(),
         [
             Node::Direction(Direction::BeginM),
             Node::Kern { amount: left, kind: KernKind::Font },
@@ -66,7 +60,7 @@ fn etex_display_prototype_replaces_its_list_without_repacking() {
         ] if left.raw() == 25 && right.raw() == 65
     ));
 
-    let display = box_node(&mut stores, 10, 8, 2, 0, BoxLr::DList);
+    let display = box_node(10, 8, 2, 0, BoxLr::DList);
     let packed = package_directed_display_line(
         &mut stores,
         display,

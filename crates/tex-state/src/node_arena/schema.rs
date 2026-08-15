@@ -666,7 +666,11 @@ fn visit_math_char(ch: &MathChar, visitor: &mut impl NodeSchemaVisitor) {
     );
 }
 
-fn visit_math_field(field: &MathField, role: NodeChildRole, visitor: &mut impl NodeSchemaVisitor) {
+fn visit_math_field(
+    field: &MathField<NodeListId>,
+    role: NodeChildRole,
+    visitor: &mut impl NodeSchemaVisitor,
+) {
     match field {
         MathField::MathChar(ch) | MathField::MathTextChar(ch) => visit_math_char(ch, visitor),
         MathField::SubBox(id) | MathField::SubMlist(id) => child(visitor, role, *id, false),
@@ -781,8 +785,7 @@ mod tests {
 
     #[test]
     fn owned_and_compact_views_have_exhaustively_equivalent_schema() {
-        let mut arena = super::super::NodeArena::new();
-        let empty = arena.append(&[]);
+        let empty = crate::node_arena::NodeListRef::empty();
         let mark_tokens = crate::token_store::testing_empty_token_list_ref();
         let write_tokens = crate::token_store::testing_empty_token_list_ref();
         let mut box_node = BoxNode::new(BoxNodeFields {
@@ -794,9 +797,9 @@ mod tests {
             glue_set: GlueSetRatio::ZERO,
             glue_sign: Sign::Stretching,
             glue_order: Order::Fil,
-            children: empty,
+            children: empty.clone(),
         });
-        box_node.diagnostic_children = Some(empty);
+        box_node.diagnostic_children = Some(empty.clone());
         let unset = UnsetNode::new(UnsetNodeFields {
             kind: UnsetKind::HBox,
             width: Scaled::from_raw(5),
@@ -807,7 +810,7 @@ mod tests {
             stretch_order: Order::Fill,
             shrink: Scaled::from_raw(9),
             shrink_order: Order::Normal,
-            children: empty,
+            children: empty.clone(),
         });
         let origin = crate::provenance::OriginRef::direct(OriginId::from_raw(17));
         let nodes = vec![
@@ -845,14 +848,14 @@ mod tests {
                 height: None,
                 depth: Some(Scaled::from_raw(14)),
             },
-            Node::HList(box_node),
+            Node::HList(box_node.clone()),
             Node::VList(box_node),
             Node::Unset(unset),
             Node::Disc {
                 kind: DiscKind::ExplicitHyphen,
-                pre: empty,
-                post: empty,
-                replace: empty,
+                pre: empty.clone(),
+                post: empty.clone(),
+                replace: empty.clone(),
                 physical_replace_count: 1,
             },
             Node::Mark {
@@ -865,7 +868,7 @@ mod tests {
                 split_top_skip: crate::glue::GlueSpecRef::testing_new(GlueId::testing_new(6)),
                 split_max_depth: Scaled::from_raw(16),
                 floating_penalty: -17,
-                content: empty,
+                content: empty.clone(),
             },
             Node::Whatsit(Whatsit::DeferredWrite {
                 sink: crate::world::PrintSink::TerminalAndLog,
@@ -876,32 +879,33 @@ mod tests {
             Node::Direction(Direction::BeginR),
             Node::MathNoad(MathNoad::new(
                 NoadKind::Normal(NoadClass::Ord),
-                MathField::SubMlist(empty),
+                MathField::SubMlist(empty.clone()),
             )),
             Node::FractionNoad(MathFraction {
-                numerator: empty,
-                denominator: empty,
+                numerator: empty.clone(),
+                denominator: empty.clone(),
                 thickness: FractionThickness::Default,
                 left_delimiter: None,
                 right_delimiter: Some(20),
             }),
             Node::MathStyle(MathStyle::Script),
             Node::MathChoice(MathChoice {
-                display: empty,
-                text: empty,
-                script: empty,
-                script_script: empty,
+                display: empty.clone(),
+                text: empty.clone(),
+                script: empty.clone(),
+                script_script: empty.clone(),
             }),
             Node::MathList(MathListNode {
                 display: true,
-                content: empty,
+                content: empty.clone(),
             }),
             Node::Nonscript,
             Node::Adjust(AdjustNode {
-                content: empty,
+                content: empty.clone(),
                 pre: true,
             }),
         ];
+        let mut arena = super::super::NodeArena::new();
         let list = arena.append(&nodes);
 
         assert_eq!(nodes.len(), NodeKind::ALL.len());
@@ -909,7 +913,10 @@ mod tests {
             let owned_ref = NodeRef::from(owned);
             let compact_ref = list_view(&arena, list, index);
             assert_eq!(owned_ref, compact_ref);
-            assert_eq!(owned, &compact_ref.to_owned());
+            assert_eq!(
+                owned,
+                &compact_ref.to_owned_with(|_| crate::node_arena::NodeListRef::empty())
+            );
             let owned_schema = snapshot(&owned_ref);
             let compact_schema = snapshot(&compact_ref);
             assert_eq!(owned_schema.descriptor, compact_schema.descriptor);
@@ -951,12 +958,11 @@ mod tests {
 
     #[test]
     fn child_order_origin_policy_and_semantic_field_policy_are_exact() {
-        let mut arena = super::super::NodeArena::new();
-        let empty = arena.append(&[]);
+        let empty = crate::node_arena::NodeListRef::empty();
         let node = Node::Disc {
             kind: DiscKind::Discretionary,
-            pre: empty,
-            post: empty,
+            pre: empty.clone(),
+            post: empty.clone(),
             replace: empty,
             physical_replace_count: 9,
         };

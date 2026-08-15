@@ -106,8 +106,8 @@ pub(crate) fn break_current_paragraph(
         let spec = stores.intern_glue(spec);
         decisions.tape.replace_last_par_fill(spec);
     }
-    let empty_list = stores.freeze_node_list(&[]);
-    let post_params = post_line_break_params(&params, widow_penalty_selector, empty_list);
+    let empty_list = tex_state::node_arena::NodeListRef::empty();
+    let post_params = post_line_break_params(&params, widow_penalty_selector, empty_list.clone());
     let mut line_count = 0i32;
     let mut last_line = None;
     let total_lines = decisions.breaks.len();
@@ -135,7 +135,6 @@ pub(crate) fn break_current_paragraph(
             protrudes_chars,
         )?;
         extract_migrating_material(
-            stores,
             &mut broken.nodes,
             &mut pre_migrated,
             &mut migrated,
@@ -152,7 +151,7 @@ pub(crate) fn break_current_paragraph(
             .filter(|node| !matches!(node, Node::Mark { .. } | Node::Ins { .. } | Node::Adjust(_)))
             .collect::<Vec<_>>();
         let needs_physical_diagnostic =
-            discretionary_diagnostics_differ(stores, &diagnostic_nodes, &broken.nodes);
+            discretionary_diagnostics_differ(&diagnostic_nodes, &broken.nodes);
         let allocator_high_cell_overlap = if needs_physical_diagnostic {
             tex_state::node_sequence::direct_high_cell_overlap(
                 &broken.high_cell_lineages,
@@ -163,7 +162,7 @@ pub(crate) fn break_current_paragraph(
         };
         for node in &mut broken.nodes {
             if let Node::Disc { replace, .. } = node {
-                *replace = empty_list;
+                *replace = empty_list.clone();
             }
         }
         let line = hpack_owned_with_overfull_rule(
@@ -179,7 +178,7 @@ pub(crate) fn break_current_paragraph(
         line_count = line_count
             .checked_add(1)
             .expect("paragraph line count exceeds i32");
-        last_line = Some(line);
+        last_line = Some(line.clone());
         for node in pre_migrated.drain(..) {
             append_migrated_contribution(nest, stores, node);
         }
@@ -219,11 +218,7 @@ pub(crate) fn break_current_paragraph(
 /// reconstitution can change pre/post branches while leaving the count
 /// unchanged. Compare the ordered discretionary records explicitly, while
 /// retaining the count-vs-side-list guard for flattened physical topology.
-fn discretionary_diagnostics_differ(
-    stores: &Universe,
-    physical: &[Node],
-    semantic: &[Node],
-) -> bool {
+fn discretionary_diagnostics_differ(physical: &[Node], semantic: &[Node]) -> bool {
     let mut semantic = semantic.iter().filter_map(|node| match node {
         Node::Disc {
             kind,
@@ -231,7 +226,13 @@ fn discretionary_diagnostics_differ(
             post,
             replace,
             physical_replace_count,
-        } => Some((*kind, *pre, *post, *replace, *physical_replace_count)),
+        } => Some((
+            *kind,
+            pre.clone(),
+            post.clone(),
+            replace.clone(),
+            *physical_replace_count,
+        )),
         _ => None,
     });
     for node in physical {
@@ -245,8 +246,15 @@ fn discretionary_diagnostics_differ(
         else {
             continue;
         };
-        if usize::from(*physical_replace_count) != stores.nodes(*replace).len()
-            || semantic.next() != Some((*kind, *pre, *post, *replace, *physical_replace_count))
+        if usize::from(*physical_replace_count) != replace.len()
+            || semantic.next()
+                != Some((
+                    *kind,
+                    pre.clone(),
+                    post.clone(),
+                    replace.clone(),
+                    *physical_replace_count,
+                ))
         {
             return true;
         }
@@ -595,8 +603,8 @@ fn report_line_break_trace(
                 if !display.is_empty()
                     && let Some(suffix) = display_suffix
                 {
-                    let rendered =
-                        short_display.render_line_break_trace_suffix(diagnostic.state(), *suffix);
+                    let rendered = short_display
+                        .render_line_break_trace_suffix(diagnostic.state(), suffix.clone());
                     diagnostic.print_rendered(&rendered);
                 }
                 diagnostic.print_nl("@");
@@ -815,7 +823,6 @@ fn encode_glue_spec(spec: tex_state::glue::GlueSpec, out: &mut Vec<u8>) {
 }
 
 fn extract_migrating_material(
-    stores: &Universe,
     nodes: &mut Vec<Node>,
     pre_migrated: &mut Vec<Node>,
     migrated: &mut Vec<Node>,
@@ -838,12 +845,7 @@ fn extract_migrating_material(
                 } else {
                     &mut *migrated
                 };
-                target.extend(
-                    stores
-                        .nodes(adjust.content)
-                        .into_iter()
-                        .map(|node| node.to_owned()),
-                );
+                target.extend(adjust.content.to_vec());
                 retained.push(Node::Adjust(adjust));
             }
             _ => unreachable!("extract predicate restricts migrating node kinds"),
@@ -991,7 +993,7 @@ fn line_break_params(stores: &Universe, params: &ParagraphParams) -> LineBreakPa
 fn post_line_break_params(
     params: &ParagraphParams,
     widow_penalty_selector: tex_typeset::linebreak::WidowPenaltySelector,
-    empty_list: tex_state::ids::NodeListId,
+    empty_list: tex_state::node_arena::NodeListRef,
 ) -> PostLineBreakParams {
     PostLineBreakParams {
         empty_list,

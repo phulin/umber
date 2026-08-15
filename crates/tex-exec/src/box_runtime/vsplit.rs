@@ -28,7 +28,7 @@ pub(crate) fn split_vbox_register(
         clear_split_marks(stores);
         return Ok(None);
     };
-    let Some(source_node) = stores.nodes(source).first().map(|node| node.to_owned()) else {
+    let Some(source_node) = stores.node_list_ref(source).get(0) else {
         clear_split_marks(stores);
         stores.clear_box_reg_same_level(index);
         return Ok(None);
@@ -50,7 +50,7 @@ pub(crate) fn split_vbox_register(
     };
 
     stores.pin_survivor(source);
-    let mut split_nodes = stores.nodes(source_box.children).to_vec();
+    let mut split_nodes = source_box.children.to_vec();
     let split =
         vert_break(stores, &split_nodes, height, split_max_depth).map_err(vertical_break_error)?;
     normalize_split_infinite_shrink(
@@ -94,7 +94,7 @@ fn normalize_split_infinite_shrink(
         nodes[index] = Node::Glue {
             spec: stores.intern_glue(finite),
             kind: *kind,
-            leader: *leader,
+            leader: leader.clone(),
         };
     }
     Ok(())

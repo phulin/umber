@@ -2,12 +2,13 @@ use super::*;
 use tex_state::glue::Order;
 use tex_state::ids::NodeListId;
 use tex_state::node::{GlueKind, UnsetKind, UnsetNodeFields};
+use tex_state::node_arena::NodeListRef;
 
 fn sp(raw: i32) -> Scaled {
     Scaled::from_raw(raw * Scaled::UNITY)
 }
 
-fn box_node(width: i32, height: i32, empty: NodeListId) -> BoxNode {
+fn box_node(width: i32, height: i32, empty: NodeListRef) -> BoxNode {
     BoxNode::new(BoxNodeFields {
         width: sp(width),
         height: sp(height),
@@ -29,13 +30,13 @@ struct GlueTotals {
     shrink_order: Order,
 }
 
-fn unset_cell(
+fn unset_cell<List>(
     kind: UnsetKind,
     natural: i32,
     span_count: u16,
     glue: GlueTotals,
-    empty: NodeListId,
-) -> UnsetNode {
+    empty: List,
+) -> UnsetNode<List> {
     let (width, height) = match kind {
         UnsetKind::HBox => (sp(natural), sp(1)),
         UnsetKind::VBox => (sp(1), sp(natural)),
@@ -57,7 +58,7 @@ fn unset_cell(
 #[test]
 fn set_alignment_list_extends_running_rules_and_offsets_display_rules() {
     let mut stores = Universe::new_with_plain_catcodes();
-    let empty = stores.freeze_node_list(&[]);
+    let empty = NodeListRef::empty();
 
     let horizontal = set_alignment_nodes(
         AlignmentKind::HAlign,
@@ -81,9 +82,9 @@ fn set_alignment_list_extends_running_rules_and_offsets_display_rules() {
             ],
         },
         &Prototype {
-            box_node: box_node(11, 13, empty),
+            box_node: box_node(11, 13, empty.clone()),
         },
-        empty,
+        empty.clone(),
         Scaled::from_raw(0),
         &mut stores,
     )
@@ -116,9 +117,9 @@ fn set_alignment_list_extends_running_rules_and_offsets_display_rules() {
             ],
         },
         &Prototype {
-            box_node: box_node(11, 13, empty),
+            box_node: box_node(11, 13, empty.clone()),
         },
-        empty,
+        empty.clone(),
         Scaled::from_raw(0),
         &mut stores,
     )
@@ -150,9 +151,9 @@ fn set_alignment_list_extends_running_rules_and_offsets_display_rules() {
             ],
         },
         &Prototype {
-            box_node: box_node(11, 13, empty),
+            box_node: box_node(11, 13, empty.clone()),
         },
-        empty,
+        empty.clone(),
         sp(5),
         &mut stores,
     )
@@ -162,12 +163,12 @@ fn set_alignment_list_extends_running_rules_and_offsets_display_rules() {
     };
     assert_eq!(wrapper.shift, sp(5));
     assert_eq!(wrapper.width, sp(11));
-    let children = stores.nodes(wrapper.children).testing_decoded();
+    let children = wrapper.children.to_vec();
     let [
         Node::Rule {
             width: Some(width), ..
         },
-    ] = children
+    ] = children.as_slice()
     else {
         panic!("the wrapper must hold the one running rule");
     };
@@ -177,7 +178,7 @@ fn set_alignment_list_extends_running_rules_and_offsets_display_rules() {
 #[test]
 fn materialize_spanned_cell_adds_tabskip_and_empty_boxes() {
     let mut stores = Universe::new_with_plain_catcodes();
-    let empty = stores.freeze_node_list(&[]);
+    let empty = NodeListRef::empty();
     let middle = stores.intern_glue(GlueSpec {
         width: sp(1),
         stretch: Scaled::from_raw(0),
@@ -195,13 +196,14 @@ fn materialize_spanned_cell_adds_tabskip_and_empty_boxes() {
             shrink: 0,
             shrink_order: Order::Normal,
         },
-        empty,
+        empty.clone(),
     );
     let row_children = stores.freeze_node_list(&[
         tabskip_node(tex_state::glue::testing_zero_glue_ref()),
         Node::Unset(cell),
         tabskip_node(tex_state::glue::testing_zero_glue_ref()),
     ]);
+    let row_children = stores.node_list_ref(row_children);
     let row = Node::Unset(UnsetNode::new(UnsetNodeFields {
         kind: UnsetKind::HBox,
         width: sp(10),
@@ -223,7 +225,7 @@ fn materialize_spanned_cell_adds_tabskip_and_empty_boxes() {
         ],
     };
     let prototype = Prototype {
-        box_node: box_node(10, 2, empty),
+        box_node: box_node(10, 2, empty.clone()),
     };
 
     let set = set_alignment_nodes(
@@ -231,7 +233,7 @@ fn materialize_spanned_cell_adds_tabskip_and_empty_boxes() {
         &[row],
         &resolved,
         &prototype,
-        empty,
+        empty.clone(),
         sp(5),
         &mut stores,
     )
@@ -242,7 +244,7 @@ fn materialize_spanned_cell_adds_tabskip_and_empty_boxes() {
     // TeX82 §807 closes with `shift_amount(q):=o`, the same §800 offset §806
     // gives a running rule.
     assert_eq!(row.shift, sp(5));
-    let children = stores.nodes(row.children).testing_decoded();
+    let children = row.children.to_vec();
     let [
         Node::Glue {
             kind: GlueKind::TabSkip,
@@ -259,14 +261,14 @@ fn materialize_spanned_cell_adds_tabskip_and_empty_boxes() {
             kind: GlueKind::TabSkip,
             ..
         },
-    ] = children
+    ] = children.as_slice()
     else {
         panic!("span must add one tabskip/empty-box pair, got {children:?}");
     };
     assert_eq!(first.width, sp(4));
     assert_eq!(stores.glue(spec).width, sp(1));
     assert_eq!(blank.width, sp(5));
-    assert!(stores.nodes(blank.children).is_empty());
+    assert!(blank.children.is_empty());
 }
 
 #[test]
@@ -275,7 +277,7 @@ fn set_alignment_preserves_final_node_order_and_running_rules() {
     // retain their relative positions, running rules use prototype dimensions,
     // and each unset row becomes a set box at that same position.
     let mut stores = Universe::new_with_plain_catcodes();
-    let empty = stores.freeze_node_list(&[]);
+    let empty = NodeListRef::empty();
     let cell = Node::Unset(unset_cell(
         UnsetKind::HBox,
         4,
@@ -286,13 +288,14 @@ fn set_alignment_preserves_final_node_order_and_running_rules() {
             shrink: 0,
             shrink_order: Order::Normal,
         },
-        empty,
+        empty.clone(),
     ));
     let children = stores.freeze_node_list(&[
         tabskip_node(tex_state::glue::testing_zero_glue_ref()),
         cell,
         tabskip_node(tex_state::glue::testing_zero_glue_ref()),
     ]);
+    let children = stores.node_list_ref(children);
     let row = Node::Unset(UnsetNode::new(UnsetNodeFields {
         kind: UnsetKind::HBox,
         width: sp(4),
@@ -323,9 +326,9 @@ fn set_alignment_preserves_final_node_order_and_running_rules() {
             tabskips: vec![tex_state::glue::testing_zero_glue_ref(); 2],
         },
         &Prototype {
-            box_node: box_node(9, 2, empty),
+            box_node: box_node(9, 2, empty.clone()),
         },
-        empty,
+        empty.clone(),
         Scaled::from_raw(0),
         &mut stores,
     )
@@ -337,8 +340,7 @@ fn set_alignment_preserves_final_node_order_and_running_rules() {
 
 #[test]
 fn convert_unset_cell_computes_tex82_glue_ratio_matrix() {
-    let mut stores = Universe::new_with_plain_catcodes();
-    let empty = stores.freeze_node_list(&[]);
+    let empty = NodeListId::testing_epoch(0, 0);
     let ordinary = unset_cell(
         UnsetKind::HBox,
         5,

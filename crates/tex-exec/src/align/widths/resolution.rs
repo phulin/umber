@@ -17,7 +17,7 @@ pub(super) fn resolve_widths(
     rows: &[Node],
     stores: &Universe,
 ) -> Result<ResolvedWidths, ExecError> {
-    let requirements = collect_width_requirements(state.kind(), rows, stores)?;
+    let requirements = collect_width_requirements(state.kind(), rows)?;
     let column_count = requirements
         .iter()
         .map(|requirement| requirement.first_column + requirement.span)
@@ -50,7 +50,6 @@ fn initial_tabskips(state: &AlignState, columns: usize) -> Vec<tex_state::glue::
 fn collect_width_requirements(
     kind: AlignmentKind,
     rows: &[Node],
-    stores: &Universe,
 ) -> Result<Vec<AlignmentWidthRequirement>, ExecError> {
     let mut requirements = Vec::new();
     for node in rows {
@@ -58,7 +57,7 @@ fn collect_width_requirements(
             continue;
         };
         let mut column = 0usize;
-        for child in stores.nodes(row.children) {
+        for child in row.children.nodes() {
             let tex_state::node_arena::NodeRef::Unset(cell) = child else {
                 continue;
             };

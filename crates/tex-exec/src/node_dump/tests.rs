@@ -96,7 +96,7 @@ fn noad_dump_renders_the_packed_delimiter_field() {
 
     assert_eq!(
         dump_node_list(
-            &stores,
+            &mut stores,
             list,
             DumpConfig {
                 breadth: 10,
@@ -349,6 +349,7 @@ fn hbox_with_one_point_kern(stores: &mut Universe) -> NodeListId {
         kind: KernKind::Explicit,
     };
     let children = stores.freeze_node_list(&[kern]);
+    let children = stores.node_list_ref(children);
     let hbox = Node::HList(BoxNode::new(BoxNodeFields {
         width: Scaled::from_raw(Scaled::UNITY),
         height: Scaled::from_raw(0),
@@ -370,8 +371,8 @@ fn node_dump_covers_leader_kern_math_penalty_and_adjustment_rows() {
         width: Scaled::from_raw(2 * Scaled::UNITY),
         ..GlueSpec::ZERO
     });
-    let empty = stores.freeze_node_list(&[]);
-    let leader = LeaderPayload::HList(zero_sized_hbox(empty));
+    let empty = NodeListRef::empty();
+    let leader = LeaderPayload::HList(zero_sized_hbox(empty.clone()));
     let adjustment = stores.freeze_node_list(&[
         Node::Kern {
             amount: Scaled::from_raw(Scaled::UNITY),
@@ -379,11 +380,12 @@ fn node_dump_covers_leader_kern_math_penalty_and_adjustment_rows() {
         },
         Node::Penalty(10000),
     ]);
+    let adjustment = stores.node_list_ref(adjustment);
     let nodes = [
         Node::Glue {
             spec: leader_glue.clone(),
             kind: GlueKind::Cleaders,
-            leader: Some(leader),
+            leader: Some(leader.clone()),
         },
         Node::Glue {
             spec: leader_glue.clone(),
@@ -411,7 +413,7 @@ fn node_dump_covers_leader_kern_math_penalty_and_adjustment_rows() {
         Node::MathOn(Scaled::from_raw(3 * Scaled::UNITY)),
         Node::MathOff(Scaled::from_raw(-3 * Scaled::UNITY)),
         Node::Penalty(-10000),
-        Node::Adjust(AdjustNode::ordinary(adjustment)),
+        Node::Adjust(AdjustNode::ordinary(adjustment.clone())),
     ];
 
     assert_eq!(
@@ -448,9 +450,9 @@ fn node_dump_covers_leader_kern_math_penalty_and_adjustment_rows() {
         stores.glue(leader_glue).width,
         Scaled::from_raw(2 * Scaled::UNITY)
     );
-    assert!(stores.nodes(empty).is_empty());
+    assert!(empty.is_empty());
     assert!(matches!(
-        stores.nodes(adjustment).to_vec().as_slice(),
+        adjustment.to_vec().as_slice(),
         [Node::Kern { .. }, Node::Penalty(10000)]
     ));
 }
@@ -536,8 +538,8 @@ fn glue_subtype_dump_matrix_preserves_canonical_subtype_units() {
         width: Scaled::from_raw(Scaled::UNITY),
         ..GlueSpec::ZERO
     });
-    let empty = stores.freeze_node_list(&[]);
-    let leader = LeaderPayload::HList(zero_sized_hbox(empty));
+    let empty = NodeListRef::empty();
+    let leader = LeaderPayload::HList(zero_sized_hbox(empty.clone()));
     let cases = [
         (GlueKind::Normal, None, "\\glue 1.0\n"),
         (GlueKind::SpaceSkip, None, "\\glue(\\spaceskip) 1.0\n"),
@@ -573,12 +575,12 @@ fn glue_subtype_dump_matrix_preserves_canonical_subtype_units() {
         ),
         (
             GlueKind::Leaders,
-            Some(leader),
+            Some(leader.clone()),
             "\\leaders 1.0\n.\\hbox(0.0+0.0)x0.0\n",
         ),
         (
             GlueKind::Cleaders,
-            Some(leader),
+            Some(leader.clone()),
             "\\cleaders 1.0\n.\\hbox(0.0+0.0)x0.0\n",
         ),
         (
@@ -613,7 +615,7 @@ fn glue_subtype_dump_matrix_preserves_canonical_subtype_units() {
             "wrong dump for {kind:?}",
         );
         assert_eq!(stores.glue(&spec).width, Scaled::from_raw(Scaled::UNITY));
-        assert!(stores.nodes(empty).is_empty());
+        assert!(empty.is_empty());
     }
 }
 
@@ -621,7 +623,7 @@ fn glue_subtype_dump_matrix_preserves_canonical_subtype_units() {
 fn zero_glue_dump_distinguishes_nonscript_sentinel_from_printed_specs() {
     let mut stores = Universe::new();
     let zero = stores.intern_glue(GlueSpec::ZERO);
-    let empty = stores.freeze_node_list(&[]);
+    let empty = NodeListRef::empty();
     let leader = LeaderPayload::HList(zero_sized_hbox(empty));
     let cases = [
         (GlueKind::NonScript, None, "\\glue(\\nonscript)\n"),
@@ -817,7 +819,7 @@ fn glue_unit_order_and_sign_matrix_is_exact_and_immutable() {
 #[test]
 fn box_lr_projects_profile_specific_canonical_node_dump_evidence() {
     let mut stores = Universe::new();
-    let empty = stores.freeze_node_list(&[]);
+    let empty = NodeListRef::empty();
     for (box_lr, suffix) in [
         (tex_state::node::BoxLr::Normal, ""),
         (tex_state::node::BoxLr::Reversed, ", reversed"),
@@ -833,10 +835,11 @@ fn box_lr_projects_profile_specific_canonical_node_dump_evidence() {
             glue_set: GlueSetRatio::ZERO,
             glue_sign: Sign::Normal,
             glue_order: Order::Normal,
-            children: empty,
+            children: empty.clone(),
         }))]);
+        let config = DumpConfig::read(&stores);
         assert_eq!(
-            dump_node_list(&stores, list, DumpConfig::read(&stores)),
+            dump_node_list(&mut stores, list, config),
             format!("\\hbox(0.0+0.0)x0.0{suffix}\n"),
         );
     }
@@ -852,12 +855,9 @@ fn box_lr_projects_profile_specific_canonical_node_dump_evidence() {
         glue_order: Order::Normal,
         children: empty,
     }))]);
+    let config = DumpConfig::read(&stores).for_profile(tex_command::CommandProfile::ETEX26);
     assert_eq!(
-        dump_node_list(
-            &stores,
-            display,
-            DumpConfig::read(&stores).for_profile(tex_command::CommandProfile::ETEX26),
-        ),
+        dump_node_list(&mut stores, display, config),
         "\\hbox(0.0+0.0)x0.0, display\n",
     );
 }
@@ -867,7 +867,7 @@ fn shifted_display_box_and_parametric_glue_project_independently() {
     // TeX82 §184 prints the shift but no internal display-list marker;
     // §189 still names neighboring glue from its parameter subtype.
     let mut stores = Universe::new();
-    let empty = stores.freeze_node_list(&[]);
+    let empty = NodeListRef::empty();
     let baseline = stores.intern_glue(GlueSpec {
         width: Scaled::from_raw(10 * Scaled::UNITY),
         stretch: Scaled::from_raw(41 * Scaled::UNITY),
@@ -892,8 +892,9 @@ fn shifted_display_box_and_parametric_glue_project_independently() {
         },
     ]);
 
+    let config = DumpConfig::read(&stores);
     assert_eq!(
-        dump_node_list(&stores, list, DumpConfig::read(&stores)),
+        dump_node_list(&mut stores, list, config),
         "\\hbox(0.0+0.0)x0.0, shifted 50.0\n\\glue(\\baselineskip) 10.0 plus 41.0\n",
     );
 }
@@ -903,7 +904,7 @@ fn stretching_box_dump_preserves_negative_glue_set_ratio() {
     // tex.web §186 prints the signed `glue_set` value independently of
     // `glue_sign`; negative stretch totals can produce this combination.
     let mut stores = Universe::new();
-    let empty = stores.freeze_node_list(&[]);
+    let empty = NodeListRef::empty();
     let list = stores.freeze_node_list(&[Node::HList(BoxNode::new(BoxNodeFields {
         width: Scaled::from_raw(0),
         height: Scaled::from_raw(0),
@@ -916,8 +917,9 @@ fn stretching_box_dump_preserves_negative_glue_set_ratio() {
         children: empty,
     }))]);
 
+    let config = DumpConfig::read(&stores);
     assert_eq!(
-        dump_node_list(&stores, list, DumpConfig::read(&stores)),
+        dump_node_list(&mut stores, list, config),
         "\\hbox(0.0+0.0)x0.0, glue set -2.0\n"
     );
 }
@@ -937,7 +939,7 @@ fn default_show_box_breadth_renders_top_level_box_instead_of_etc() {
 
     let list = hbox_with_one_point_kern(&mut stores);
     let config = DumpConfig::read(&stores);
-    let text = dump_node_list(&stores, list, config);
+    let text = dump_node_list(&mut stores, list, config);
 
     // Real pdftex 1.40.29 writes exactly this line for `\showbox0` after
     // `\setbox0=\hbox{\kern1pt}` (confirmed against the pinned oracle).
@@ -954,7 +956,7 @@ fn negative_show_box_breadth_also_falls_back_to_five() {
     let list = hbox_with_one_point_kern(&mut stores);
     let config = DumpConfig::read(&stores);
     assert_eq!(config.breadth, 5);
-    let text = dump_node_list(&stores, list, config);
+    let text = dump_node_list(&mut stores, list, config);
     assert_eq!(text, "\\hbox(0.0+0.0)x1.0 []\n");
 }
 
@@ -979,7 +981,7 @@ fn explicit_positive_breadth_still_truncates_with_etc() {
         depth: 0,
         profile: tex_command::CommandProfile::TEX82,
     };
-    let text = dump_node_list(&stores, list, config);
+    let text = dump_node_list(&mut stores, list, config);
     assert_eq!(text, "\\kern 1.0\n\\kern 2.0\netc.\n");
 }
 
@@ -994,6 +996,7 @@ fn unset_box_prints_encoded_column_count_and_glue_fields() {
         amount: Scaled::from_raw(Scaled::UNITY),
         kind: KernKind::Explicit,
     }]);
+    let children = stores.node_list_ref(children);
     let unset = |span_count| {
         Node::Unset(UnsetNode::new(UnsetNodeFields {
             kind: UnsetKind::HBox,
@@ -1005,17 +1008,17 @@ fn unset_box_prints_encoded_column_count_and_glue_fields() {
             stretch_order: Order::Fil,
             shrink: Scaled::from_raw(3 * Scaled::UNITY),
             shrink_order: Order::Normal,
-            children,
+            children: children.clone(),
         }))
     };
     let source = [unset(0), unset(1), unset(2)];
     let list = stores.freeze_node_list(&source);
-    let before_source = stores.nodes(list).to_vec();
-    let before_children = stores.nodes(children).to_vec();
+    let before_source = source.clone();
+    let before_children = children.to_vec();
 
     assert_eq!(
         dump_node_list(
-            &stores,
+            &mut stores,
             list,
             DumpConfig {
                 breadth: 100,
@@ -1032,8 +1035,8 @@ fn unset_box_prints_encoded_column_count_and_glue_fields() {
             ".\\kern 1.0\n",
         ),
     );
-    assert_eq!(stores.nodes(list), before_source);
-    assert_eq!(stores.nodes(children), before_children);
+    assert_eq!(stores.node_list_ref(list).to_vec(), before_source);
+    assert_eq!(children.to_vec(), before_children);
 
     assert_eq!(
         dump_node_slice(
@@ -1047,11 +1050,11 @@ fn unset_box_prints_encoded_column_count_and_glue_fields() {
         ),
         "\\unsetbox(5.0+6.0)x4.0 (2 columns), stretch 2.0fil, shrink 3.0 []\n",
     );
-    assert_eq!(stores.nodes(list), before_source);
-    assert_eq!(stores.nodes(children), before_children);
+    assert_eq!(stores.node_list_ref(list).to_vec(), before_source);
+    assert_eq!(children.to_vec(), before_children);
 }
 
-fn zero_sized_hbox(children: NodeListId) -> BoxNode {
+fn zero_sized_hbox(children: NodeListRef) -> BoxNode {
     BoxNode::new(BoxNodeFields {
         width: Scaled::from_raw(0),
         height: Scaled::from_raw(0),
@@ -1077,17 +1080,19 @@ fn showbox_depth_limits_nested_boxes_at_exact_thresholds() {
         kind: KernKind::Explicit,
     };
     let inner_children = stores.freeze_node_list(std::slice::from_ref(&kern));
-    let inner = Node::HList(zero_sized_hbox(inner_children));
+    let inner_children = stores.node_list_ref(inner_children);
+    let inner = Node::HList(zero_sized_hbox(inner_children.clone()));
     let outer_children = stores.freeze_node_list(std::slice::from_ref(&inner));
-    let outer = Node::HList(zero_sized_hbox(outer_children));
+    let outer_children = stores.node_list_ref(outer_children);
+    let outer = Node::HList(zero_sized_hbox(outer_children.clone()));
     let root = stores.freeze_node_list(std::slice::from_ref(&outer));
 
-    let before_root = stores.nodes(root).to_vec();
-    let before_outer = stores.nodes(outer_children).to_vec();
-    let before_inner = stores.nodes(inner_children).to_vec();
-    let render = |depth| {
+    let before_root = vec![outer];
+    let before_outer = vec![inner];
+    let before_inner = vec![kern];
+    let mut render = |depth| {
         dump_node_list(
-            &stores,
+            &mut stores,
             root,
             DumpConfig {
                 breadth: 5,
@@ -1108,9 +1113,9 @@ fn showbox_depth_limits_nested_boxes_at_exact_thresholds() {
             "..\\kern 1.0\n",
         )
     );
-    assert_eq!(stores.nodes(root), before_root);
-    assert_eq!(stores.nodes(outer_children), before_outer);
-    assert_eq!(stores.nodes(inner_children), before_inner);
+    assert_eq!(stores.node_list_ref(root).to_vec(), before_root);
+    assert_eq!(outer_children.to_vec(), before_outer);
+    assert_eq!(inner_children.to_vec(), before_inner);
 }
 
 /// Subsidiary lists use the same exact depth and breadth accounting as box
@@ -1125,24 +1130,25 @@ fn showbox_limits_side_lists_leaders_and_discretionaries_without_mutation() {
         kind: KernKind::Explicit,
     };
     let two_kerns = stores.freeze_node_list(&[kern(1), kern(2)]);
-    let empty = stores.freeze_node_list(&[]);
+    let two_kerns = stores.node_list_ref(two_kerns);
+    let empty = NodeListRef::empty();
     let glue = stores.intern_glue(tex_state::glue::GlueSpec::ZERO);
 
-    let adjust = Node::Adjust(AdjustNode::ordinary(two_kerns));
+    let adjust = Node::Adjust(AdjustNode::ordinary(two_kerns.clone()));
     let leader = Node::Glue {
         spec: glue,
         kind: GlueKind::Leaders,
-        leader: Some(LeaderPayload::HList(zero_sized_hbox(two_kerns))),
+        leader: Some(LeaderPayload::HList(zero_sized_hbox(two_kerns.clone()))),
     };
     let disc = Node::Disc {
         kind: DiscKind::Discretionary,
-        pre: two_kerns,
-        post: two_kerns,
-        replace: two_kerns,
+        pre: two_kerns.clone(),
+        post: two_kerns.clone(),
+        replace: two_kerns.clone(),
         physical_replace_count: 2,
     };
     let source = [adjust, leader, disc];
-    let before = stores.nodes(two_kerns).to_vec();
+    let before = two_kerns.to_vec();
     let render = |node: &Node| {
         dump_node_slice(
             &stores,
@@ -1175,8 +1181,8 @@ fn showbox_limits_side_lists_leaders_and_discretionaries_without_mutation() {
             "|etc.\n",
         )
     );
-    assert_eq!(stores.nodes(two_kerns), before, "dumping must be read-only");
-    assert!(stores.nodes(empty).is_empty());
+    assert_eq!(two_kerns.to_vec(), before, "dumping must be read-only");
+    assert!(empty.is_empty());
 }
 
 #[test]
@@ -1187,13 +1193,16 @@ fn discretionary_dump_suppresses_replacement_and_marks_post_break() {
         kind: KernKind::Explicit,
     };
     let pre = stores.freeze_node_list(&[kern(1)]);
+    let pre = stores.node_list_ref(pre);
     let post = stores.freeze_node_list(&[kern(2), kern(4)]);
+    let post = stores.node_list_ref(post);
     let replace = stores.freeze_node_list(&[kern(3)]);
+    let replace = stores.node_list_ref(replace);
     let disc = Node::Disc {
         kind: DiscKind::Discretionary,
-        pre,
-        post,
-        replace,
+        pre: pre.clone(),
+        post: post.clone(),
+        replace: replace.clone(),
         physical_replace_count: 1,
     };
 
@@ -1209,9 +1218,9 @@ fn discretionary_dump_suppresses_replacement_and_marks_post_break() {
         ),
         "\\discretionary replacing 1\n.\\kern 1.0\n|\\kern 2.0\n|\\kern 4.0\n",
     );
-    assert_eq!(stores.nodes(pre), &[kern(1)]);
-    assert_eq!(stores.nodes(post), &[kern(2), kern(4)]);
-    assert_eq!(stores.nodes(replace), &[kern(3)]);
+    assert_eq!(pre.to_vec(), [kern(1)]);
+    assert_eq!(post.to_vec(), [kern(2), kern(4)]);
+    assert_eq!(replace.to_vec(), [kern(3)]);
     assert!(matches!(
         disc,
         Node::Disc {
@@ -1227,11 +1236,11 @@ fn discretionary_dump_suppresses_replacement_and_marks_post_break() {
 fn discretionary_dump_uses_live_escape_character() {
     let mut stores = Universe::new();
     stores.set_int_param(IntParam::ESCAPE_CHAR, i32::from(b'|'));
-    let empty = stores.freeze_node_list(&[]);
+    let empty = NodeListRef::empty();
     let disc = Node::Disc {
         kind: DiscKind::Discretionary,
-        pre: empty,
-        post: empty,
+        pre: empty.clone(),
+        post: empty.clone(),
         replace: empty,
         physical_replace_count: 0,
     };
@@ -1253,13 +1262,14 @@ fn discretionary_dump_uses_live_escape_character() {
 #[test]
 fn discretionary_dump_retains_the_physical_replacement_span() {
     let mut stores = Universe::new();
-    let empty = stores.freeze_node_list(&[]);
+    let empty = NodeListRef::empty();
     let structured_replace = stores.freeze_node_list(&[Node::Penalty(9)]);
+    let structured_replace = stores.node_list_ref(structured_replace);
     let nodes = [
         Node::Disc {
             kind: DiscKind::AutomaticHyphen,
-            pre: empty,
-            post: empty,
+            pre: empty.clone(),
+            post: empty.clone(),
             replace: structured_replace,
             physical_replace_count: 2,
         },
@@ -1269,6 +1279,7 @@ fn discretionary_dump_retains_the_physical_replacement_span() {
     ];
 
     let diagnostic_children = stores.freeze_node_list(&nodes);
+    let diagnostic_children = stores.node_list_ref(diagnostic_children);
     let mut box_node = zero_sized_hbox(empty);
     box_node.diagnostic_children = Some(diagnostic_children);
     assert_eq!(
@@ -1294,13 +1305,15 @@ fn discretionary_dump_retains_the_physical_replacement_span() {
 #[test]
 fn diagnostic_box_reorders_boundary_disc_and_retains_multi_disc_spans() {
     let mut stores = Universe::new();
-    let empty = stores.freeze_node_list(&[]);
+    let empty = NodeListRef::empty();
     let pre = stores.freeze_node_list(&[Node::Penalty(7)]);
+    let pre = stores.node_list_ref(pre);
     let boundary_kern = Node::Kern {
         amount: Scaled::from_raw(1),
         kind: KernKind::Font,
     };
     let boundary_replace = stores.freeze_node_list(std::slice::from_ref(&boundary_kern));
+    let boundary_replace = stores.node_list_ref(boundary_replace);
     let font = stores.current_font();
     let ligature = || Node::Lig {
         font,
@@ -1311,26 +1324,28 @@ fn diagnostic_box_reorders_boundary_disc_and_retains_multi_disc_spans() {
         right_hit: false,
     };
     let ligature_replace = stores.freeze_node_list(&[ligature()]);
+    let ligature_replace = stores.node_list_ref(ligature_replace);
     let physical = stores.freeze_node_list(&[
         ligature(),
         Node::Disc {
             kind: DiscKind::AutomaticHyphen,
             pre,
-            post: empty,
+            post: empty.clone(),
             replace: boundary_replace,
             physical_replace_count: 2,
         },
         boundary_kern,
         Node::Disc {
             kind: DiscKind::AutomaticHyphen,
-            pre: empty,
-            post: empty,
+            pre: empty.clone(),
+            post: empty.clone(),
             replace: ligature_replace,
             physical_replace_count: 3,
         },
         ligature(),
         Node::Penalty(9),
     ]);
+    let physical = stores.node_list_ref(physical);
     let mut box_node = zero_sized_hbox(empty);
     box_node.diagnostic_children = Some(physical);
 
@@ -1371,7 +1386,7 @@ fn etex_mlr_boundaries_dump_with_exact_identity() {
     ]);
     assert_eq!(
         dump_node_list(
-            &stores,
+            &mut stores,
             list,
             DumpConfig {
                 breadth: 10,
@@ -1396,6 +1411,7 @@ fn pdftex_insertion_and_numbered_mark_dump_exact_identity_in_source_order() {
         height: Some(Scaled::from_raw(5 * Scaled::UNITY)),
         depth: Some(Scaled::from_raw(0)),
     }]);
+    let insertion_content = stores.node_list_ref(insertion_content);
     let mark_tokens = stores.intern_token_list(&[
         tex_state::token::Token::Char {
             ch: 'h',
@@ -1433,10 +1449,10 @@ fn pdftex_insertion_and_numbered_mark_dump_exact_identity_in_source_order() {
         depth: 100,
         profile: tex_command::CommandProfile::TEX82,
     };
-    assert_eq!(dump_node_list(&stores, source, config), expected);
+    assert_eq!(dump_node_list(&mut stores, source, config), expected);
     assert_eq!(
-        stores.nodes(source),
-        nodes.as_slice(),
+        stores.node_list_ref(source).to_vec(),
+        nodes,
         "dumping is immutable"
     );
 }
@@ -1477,7 +1493,7 @@ fn mark_dump_prints_token_list_once() {
 
     assert_eq!(
         dump_node_list(
-            &stores,
+            &mut stores,
             source,
             DumpConfig {
                 breadth: 100,
@@ -1523,19 +1539,20 @@ fn insertion_node_dump_prints_all_web_fields() {
         Node::Penalty(23),
     ];
     let content = stores.freeze_node_list(&children);
+    let content = stores.node_list_ref(content);
     let insertion = Node::Ins {
         class: 7,
         size: Scaled::from_raw(5 * Scaled::UNITY),
         split_top_skip,
         split_max_depth: Scaled::from_raw(4 * Scaled::UNITY),
         floating_penalty: 100,
-        content,
+        content: content.clone(),
     };
     let source = stores.freeze_node_list(std::slice::from_ref(&insertion));
 
     assert_eq!(
         dump_node_list(
-            &stores,
+            &mut stores,
             source,
             DumpConfig {
                 breadth: 100,
@@ -1549,9 +1566,9 @@ fn insertion_node_dump_prints_all_web_fields() {
             ".\\penalty 23\n",
         ),
     );
-    assert_eq!(stores.nodes(source), std::slice::from_ref(&insertion));
-    assert_eq!(stores.nodes(content), children.as_slice());
-    let source_after = stores.nodes(source).to_vec();
+    let source_after = stores.node_list_ref(source).to_vec();
+    assert_eq!(source_after, std::slice::from_ref(&insertion));
+    assert_eq!(content.to_vec(), children);
     let [
         Node::Ins {
             content: attached_content,
@@ -1561,7 +1578,7 @@ fn insertion_node_dump_prints_all_web_fields() {
     else {
         panic!("insertion payload was detached");
     };
-    assert_eq!(*attached_content, content);
+    assert_eq!(attached_content, &content);
 }
 
 /// e-TeX `etex.web` change blocks 21 and 49 extend TeX82's mark node with a
@@ -1590,7 +1607,7 @@ fn etex_numbered_mark_dump_renders_dense_and_sparse_boundary_classes_exactly() {
 
     assert_eq!(
         dump_node_list(
-            &stores,
+            &mut stores,
             list,
             DumpConfig {
                 breadth: 100,
@@ -1621,10 +1638,12 @@ fn showlists_renders_all_math_noad_variants_and_empty_fields() {
         amount: Scaled::from_raw(Scaled::UNITY),
         kind: KernKind::Explicit,
     }]);
+    let sub_box = stores.node_list_ref(sub_box);
     let sub_mlist = stores.freeze_node_list(&[Node::MathNoad(MathNoad::new(
         NoadKind::Normal(NoadClass::Ord),
         MathField::MathChar(math_char(3, 'm')),
     ))]);
+    let sub_mlist = stores.node_list_ref(sub_mlist);
     let mut nodes = Vec::new();
     for class in [
         NoadClass::Ord,
@@ -1675,7 +1694,7 @@ fn showlists_renders_all_math_noad_variants_and_empty_fields() {
 
     assert_eq!(
         dump_node_list(
-            &stores,
+            &mut stores,
             list,
             DumpConfig {
                 breadth: 100,
@@ -1727,7 +1746,7 @@ fn showlists_depth_cutoff_prints_nonempty_math_field_marker() {
 
     assert_eq!(
         dump_node_list(
-            &stores,
+            &mut stores,
             list,
             DumpConfig {
                 breadth: 100,
@@ -1745,7 +1764,7 @@ fn showlists_depth_cutoff_prints_nonempty_math_field_marker() {
 #[test]
 fn math_dump_distinguishes_empty_submlist() {
     let mut stores = Universe::new();
-    let empty = stores.freeze_node_list(&[]);
+    let empty = NodeListRef::empty();
     let list = stores.freeze_node_list(&[
         Node::MathNoad(MathNoad::new(
             NoadKind::Normal(NoadClass::Ord),
@@ -1759,7 +1778,7 @@ fn math_dump_distinguishes_empty_submlist() {
 
     assert_eq!(
         dump_node_list(
-            &stores,
+            &mut stores,
             list,
             DumpConfig {
                 breadth: 100,
@@ -1778,11 +1797,12 @@ fn math_dump_distinguishes_empty_submlist() {
 #[test]
 fn subsidiary_math_field_matrix_preserves_empty_tags_and_indentation() {
     let mut stores = Universe::new();
-    let empty = stores.freeze_node_list(&[]);
+    let empty = NodeListRef::empty();
     let child = stores.freeze_node_list(&[Node::MathNoad(MathNoad::new(
         NoadKind::Normal(NoadClass::Ord),
         MathField::MathChar(math_char(2, 'x')),
     ))]);
+    let child = stores.node_list_ref(child);
     let config = DumpConfig {
         breadth: 100,
         depth: 100,
@@ -1793,10 +1813,16 @@ fn subsidiary_math_field_matrix_preserves_empty_tags_and_indentation() {
         (MathField::Empty, ""),
         (MathField::MathChar(math_char(2, 'x')), "...\\fam2 x\n"),
         (MathField::MathTextChar(math_char(2, 'x')), "...\\fam2 x\n"),
-        (MathField::SubBox(empty), ""),
-        (MathField::SubBox(child), "...\\mathord\n....\\fam2 x\n"),
-        (MathField::SubMlist(empty), "...{}\n"),
-        (MathField::SubMlist(child), "...\\mathord\n....\\fam2 x\n"),
+        (MathField::SubBox(empty.clone()), ""),
+        (
+            MathField::SubBox(child.clone()),
+            "...\\mathord\n....\\fam2 x\n",
+        ),
+        (MathField::SubMlist(empty.clone()), "...{}\n"),
+        (
+            MathField::SubMlist(child.clone()),
+            "...\\mathord\n....\\fam2 x\n",
+        ),
     ] {
         let mut out = String::new();
         dump_math_field(&stores, &field, &config, 2, '.', &mut out);
@@ -1805,8 +1831,8 @@ fn subsidiary_math_field_matrix_preserves_empty_tags_and_indentation() {
 
     for (numerator, denominator, expected) in [
         (
-            empty,
-            child,
+            empty.clone(),
+            child.clone(),
             "\\fraction, thickness = default\n\\{}\n/\\mathord\n/.\\fam2 x\n",
         ),
         (
@@ -1839,7 +1865,9 @@ fn subsidiary_markers_propagate_through_nested_boxes_and_adjacent_noads() {
         amount: Scaled::from_raw(Scaled::UNITY),
         kind: KernKind::Explicit,
     }]);
+    let box_children = stores.node_list_ref(box_children);
     let sub_box = stores.freeze_node_list(&[Node::HList(zero_sized_hbox(box_children))]);
+    let sub_box = stores.node_list_ref(sub_box);
     let sub_mlist = stores.freeze_node_list(&[
         Node::MathNoad(MathNoad::new(
             NoadKind::Normal(NoadClass::Ord),
@@ -1850,16 +1878,17 @@ fn subsidiary_markers_propagate_through_nested_boxes_and_adjacent_noads() {
             MathField::MathChar(math_char(0, '-')),
         )),
     ]);
+    let sub_mlist = stores.node_list_ref(sub_mlist);
     let list = stores.freeze_node_list(&[Node::MathNoad(MathNoad {
         kind: NoadKind::Normal(NoadClass::Ord),
         nucleus: MathField::Empty,
         superscript: MathField::SubBox(sub_box),
-        subscript: MathField::SubMlist(sub_mlist),
+        subscript: MathField::SubMlist(sub_mlist.clone()),
     })]);
 
     assert_eq!(
         dump_node_list(
-            &stores,
+            &mut stores,
             list,
             DumpConfig {
                 breadth: 100,
@@ -1903,10 +1932,11 @@ fn subsidiary_markers_propagate_through_nested_boxes_and_adjacent_noads() {
 fn math_dump_depth_and_choice_arms() {
     let mut stores = Universe::new();
     let arm = |stores: &mut Universe, ch| {
-        stores.freeze_node_list(&[Node::MathNoad(MathNoad::new(
+        let list = stores.freeze_node_list(&[Node::MathNoad(MathNoad::new(
             NoadKind::Normal(NoadClass::Ord),
             MathField::MathChar(math_char(0, ch)),
-        ))])
+        ))]);
+        stores.node_list_ref(list)
     };
     let display = arm(&mut stores, 'D');
     let text = arm(&mut stores, 'T');
@@ -1921,7 +1951,7 @@ fn math_dump_depth_and_choice_arms() {
 
     assert_eq!(
         dump_node_list(
-            &stores,
+            &mut stores,
             list,
             DumpConfig {
                 breadth: 100,

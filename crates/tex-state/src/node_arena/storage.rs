@@ -85,7 +85,7 @@ pub(crate) struct SidecarNeeds {
 }
 
 impl SidecarNeeds {
-    pub(crate) fn preflight_and_count(&mut self, node: &Node) {
+    pub(crate) fn preflight_and_count<List>(&mut self, node: &Node<List>) {
         let target = match node {
             Node::Lig {
                 ch, orig, origins, ..
@@ -191,17 +191,17 @@ pub(crate) struct NodeStorage {
     pub(super) leaders: Vec<(
         crate::glue::GlueSpecRef,
         GlueKind,
-        crate::node::LeaderPayload,
+        crate::node::LeaderPayload<NodeListId>,
     )>,
     pub(super) discs: Vec<(DiscKind, NodeListId, NodeListId, NodeListId, u8)>,
     pub(super) marks: Vec<(u16, TokenListRef)>,
     pub(super) insertions: InsertionTable,
     pub(super) whatsits: Vec<crate::node::Whatsit>,
     pub(super) noads: NoadTable,
-    pub(super) fractions: Vec<crate::math::MathFraction>,
-    pub(super) choices: Vec<crate::math::MathChoice>,
-    pub(super) math_lists: Vec<crate::math::MathListNode>,
-    pub(super) adjusts: Vec<crate::node::AdjustNode>,
+    pub(super) fractions: Vec<crate::math::MathFraction<NodeListId>>,
+    pub(super) choices: Vec<crate::math::MathChoice<NodeListId>>,
+    pub(super) math_lists: Vec<crate::math::MathListNode<NodeListId>>,
+    pub(super) adjusts: Vec<crate::node::AdjustNode<NodeListId>>,
     /// Exact totals for heap allocations owned below ligature and whatsit
     /// sidecar rows. Profiling reads these after every append, so keep the
     /// totals incrementally instead of rescanning all accumulated rows.
@@ -293,17 +293,6 @@ impl NodeStorage {
         self.adjusts.truncate(mark.adjusts as usize);
     }
 
-    pub(crate) fn append(&mut self, nodes: &[Node]) -> (u32, u32) {
-        // Validate every encoding and selected table before reserving or
-        // publishing either rows or words. Publication below is infallible
-        // apart from process-aborting allocation failure.
-        let mut needs = SidecarNeeds::default();
-        for node in nodes {
-            needs.preflight_and_count(node);
-        }
-        self.append_preflighted(nodes, needs)
-    }
-
     pub(crate) fn append_preflighted(&mut self, nodes: &[Node], needs: SidecarNeeds) -> (u32, u32) {
         #[cfg(feature = "profiling")]
         let capacity_before = self.capacity_signature();
@@ -325,7 +314,7 @@ impl NodeStorage {
             self.reserve_sidecars(needs);
         }
         for node in nodes {
-            let word = self.encode(node);
+            let word = self.encode(node, |list: &crate::node_arena::NodeListRef| list.id());
             self.words.push(word);
             self.glue_roots.push(match node {
                 Node::Glue {
@@ -431,6 +420,46 @@ impl NodeStorage {
         (start, len)
     }
 
+    pub(crate) fn append_compact_nodes(&mut self, nodes: &[Node<NodeListId>]) -> (u32, u32) {
+        let mut needs = SidecarNeeds::default();
+        for node in nodes {
+            needs.preflight_and_count(node);
+        }
+        let start = checked_len(self.words.len(), "node arena exceeds u32 entries");
+        let len = checked_len(nodes.len(), "node list exceeds u32 entries");
+        start
+            .checked_add(len)
+            .expect("node arena span overflows u32");
+        self.preflight_sidecars(needs);
+        self.words.reserve(nodes.len());
+        self.origins.reserve(nodes.len());
+        self.origin_roots.reserve(nodes.len());
+        self.glue_roots.reserve(nodes.len());
+        self.reserve_sidecars(needs);
+        for node in nodes {
+            let word = self.encode(node, |id| *id);
+            self.words.push(word);
+            self.glue_roots.push(match node {
+                Node::Glue {
+                    spec, leader: None, ..
+                } => Some(spec.clone()),
+                _ => None,
+            });
+            self.origins.push(match node {
+                Node::Char { origin, .. } => origin.id(),
+                Node::Lig { origins, .. } => {
+                    origins.first().map_or(OriginId::UNKNOWN, OriginRef::id)
+                }
+                _ => OriginId::UNKNOWN,
+            });
+            self.origin_roots.push(match node {
+                Node::Char { origin, .. } => Some(origin.clone()),
+                _ => None,
+            });
+        }
+        (start, len)
+    }
+
     pub(super) fn preflight_sidecars(&self, needs: SidecarNeeds) {
         macro_rules! preflight_if_needed {
             ($field:ident, $message:literal) => {
@@ -483,7 +512,11 @@ impl NodeStorage {
         reserve_if_needed!(adjusts);
     }
 
-    fn encode(&mut self, node: &Node) -> NodeWord {
+    fn encode<List: Clone>(
+        &mut self,
+        node: &Node<List>,
+        child_id: impl Copy + Fn(&List) -> NodeListId,
+    ) -> NodeWord {
         match node {
             Node::Char { font, ch, .. } => {
                 NodeWord::new(0, (*ch as u64) | ((font.raw() as u64) << 21))
@@ -542,9 +575,21 @@ impl NodeStorage {
             Node::Direction(direction) => NodeWord::new(23, *direction as u64),
             Node::MathStyle(style) => NodeWord::new(7, style_code(*style) as u64),
             Node::Nonscript => NodeWord::new(8, 0),
-            Node::HList(value) => NodeWord::sidecar(9, self.boxes.push(*value)),
-            Node::VList(value) => NodeWord::sidecar(10, self.boxes.push(*value)),
-            Node::Unset(value) => NodeWord::sidecar(11, self.unsets.push(*value)),
+            Node::HList(value) => NodeWord::sidecar(
+                9,
+                self.boxes
+                    .push(value.clone().map_lists(|list| child_id(&list))),
+            ),
+            Node::VList(value) => NodeWord::sidecar(
+                10,
+                self.boxes
+                    .push(value.clone().map_lists(|list| child_id(&list))),
+            ),
+            Node::Unset(value) => NodeWord::sidecar(
+                11,
+                self.unsets
+                    .push(value.clone().map_list(|list| child_id(&list))),
+            ),
             Node::Rule {
                 width,
                 height,
@@ -554,7 +599,15 @@ impl NodeStorage {
                 spec,
                 kind,
                 leader: Some(value),
-            } => push_sidecar(13, &mut self.leaders, (spec.clone(), *kind, *value)),
+            } => push_sidecar(
+                13,
+                &mut self.leaders,
+                (
+                    spec.clone(),
+                    *kind,
+                    value.clone().map_lists(|list| child_id(&list)),
+                ),
+            ),
             Node::Disc {
                 kind,
                 pre,
@@ -564,7 +617,13 @@ impl NodeStorage {
             } => push_sidecar(
                 14,
                 &mut self.discs,
-                (*kind, *pre, *post, *replace, *physical_replace_count),
+                (
+                    *kind,
+                    child_id(pre),
+                    child_id(post),
+                    child_id(replace),
+                    *physical_replace_count,
+                ),
             ),
             Node::Mark { class, tokens } => {
                 push_sidecar(15, &mut self.marks, (*class, tokens.clone()))
@@ -584,7 +643,7 @@ impl NodeStorage {
                     split_top_skip.clone(),
                     *split_max_depth,
                     *floating_penalty,
-                    *content,
+                    child_id(content),
                 )),
             ),
             Node::Whatsit(value) => {
@@ -593,11 +652,31 @@ impl NodeStorage {
                 self.record_last_whatsit_payload();
                 word
             }
-            Node::MathNoad(value) => NodeWord::sidecar(18, self.noads.push(value.clone())),
-            Node::FractionNoad(value) => push_sidecar(19, &mut self.fractions, value.clone()),
-            Node::MathChoice(value) => push_sidecar(20, &mut self.choices, value.clone()),
-            Node::MathList(value) => push_sidecar(21, &mut self.math_lists, *value),
-            Node::Adjust(value) => push_sidecar(22, &mut self.adjusts, *value),
+            Node::MathNoad(value) => NodeWord::sidecar(
+                18,
+                self.noads
+                    .push(value.clone().map_lists(|list| child_id(&list))),
+            ),
+            Node::FractionNoad(value) => push_sidecar(
+                19,
+                &mut self.fractions,
+                value.clone().map_lists(|list| child_id(&list)),
+            ),
+            Node::MathChoice(value) => push_sidecar(
+                20,
+                &mut self.choices,
+                value.clone().map_lists(|list| child_id(&list)),
+            ),
+            Node::MathList(value) => push_sidecar(
+                21,
+                &mut self.math_lists,
+                value.clone().map_list(|list| child_id(&list)),
+            ),
+            Node::Adjust(value) => push_sidecar(
+                22,
+                &mut self.adjusts,
+                value.clone().map_list(|list| child_id(&list)),
+            ),
         }
     }
 
@@ -656,9 +735,15 @@ impl NodeStorage {
             Node::Direction(direction) => NodeWord::new(23, direction as u64),
             Node::MathStyle(style) => NodeWord::new(7, style_code(style) as u64),
             Node::Nonscript => NodeWord::new(8, 0),
-            Node::HList(value) => NodeWord::sidecar(9, self.boxes.push(value)),
-            Node::VList(value) => NodeWord::sidecar(10, self.boxes.push(value)),
-            Node::Unset(value) => NodeWord::sidecar(11, self.unsets.push(value)),
+            Node::HList(value) => {
+                NodeWord::sidecar(9, self.boxes.push(value.map_lists(|list| list.id())))
+            }
+            Node::VList(value) => {
+                NodeWord::sidecar(10, self.boxes.push(value.map_lists(|list| list.id())))
+            }
+            Node::Unset(value) => {
+                NodeWord::sidecar(11, self.unsets.push(value.map_list(|list| list.id())))
+            }
             Node::Rule {
                 width,
                 height,
@@ -668,7 +753,11 @@ impl NodeStorage {
                 spec,
                 kind,
                 leader: Some(value),
-            } => push_sidecar(13, &mut self.leaders, (spec, kind, value)),
+            } => push_sidecar(
+                13,
+                &mut self.leaders,
+                (spec, kind, value.map_lists(|list| list.id())),
+            ),
             Node::Disc {
                 kind,
                 pre,
@@ -678,7 +767,13 @@ impl NodeStorage {
             } => push_sidecar(
                 14,
                 &mut self.discs,
-                (kind, pre, post, replace, physical_replace_count),
+                (
+                    kind,
+                    pre.id(),
+                    post.id(),
+                    replace.id(),
+                    physical_replace_count,
+                ),
             ),
             Node::Mark { class, tokens } => push_sidecar(15, &mut self.marks, (class, tokens)),
             Node::Ins {
@@ -696,7 +791,7 @@ impl NodeStorage {
                     split_top_skip,
                     split_max_depth,
                     floating_penalty,
-                    content,
+                    content.id(),
                 )),
             ),
             Node::Whatsit(value) => {
@@ -705,11 +800,21 @@ impl NodeStorage {
                 self.record_last_whatsit_payload();
                 word
             }
-            Node::MathNoad(value) => NodeWord::sidecar(18, self.noads.push(value)),
-            Node::FractionNoad(value) => push_sidecar(19, &mut self.fractions, value),
-            Node::MathChoice(value) => push_sidecar(20, &mut self.choices, value),
-            Node::MathList(value) => push_sidecar(21, &mut self.math_lists, value),
-            Node::Adjust(value) => push_sidecar(22, &mut self.adjusts, value),
+            Node::MathNoad(value) => {
+                NodeWord::sidecar(18, self.noads.push(value.map_lists(|list| list.id())))
+            }
+            Node::FractionNoad(value) => {
+                push_sidecar(19, &mut self.fractions, value.map_lists(|list| list.id()))
+            }
+            Node::MathChoice(value) => {
+                push_sidecar(20, &mut self.choices, value.map_lists(|list| list.id()))
+            }
+            Node::MathList(value) => {
+                push_sidecar(21, &mut self.math_lists, value.map_list(|list| list.id()))
+            }
+            Node::Adjust(value) => {
+                push_sidecar(22, &mut self.adjusts, value.map_list(|list| list.id()))
+            }
         }
     }
 

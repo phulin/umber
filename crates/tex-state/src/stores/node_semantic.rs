@@ -117,6 +117,21 @@ impl Stores {
         self.hash_node_semantic_identity_with(node, hasher, &|child| self.node_semantic_id(child));
     }
 
+    pub(super) fn hash_owned_node_semantic_identity(&self, node: &Node, hasher: &mut StateHasher) {
+        self.hash_node_semantic_identity_with(NodeRef::from(node), hasher, &|child| {
+            if child.is_empty() {
+                return NodeSemanticId::empty();
+            }
+            let mut semantic_id = None;
+            node.visit_node_lists(|owner| {
+                if owner.id() == child {
+                    semantic_id = Some(owner.semantic_id());
+                }
+            });
+            semantic_id.expect("owned node child coordinate lacks its direct owner")
+        });
+    }
+
     fn hash_node_semantic_identity_with(
         &self,
         node: NodeRef<'_>,
@@ -168,7 +183,7 @@ impl Stores {
                 hasher.tag(3);
                 self.hash_glue_semantic(spec.id(), hasher);
                 hash_glue_kind(kind, hasher);
-                self.hash_leader_identity(leader, hasher, child_semantic_id);
+                self.hash_leader_identity(leader.as_ref(), hasher, child_semantic_id);
             }
             NodeRef::Penalty(value) => {
                 hasher.tag(4);
@@ -309,7 +324,7 @@ impl Stores {
     fn hash_box_identity(
         &self,
         tag: u8,
-        box_node: &BoxNode,
+        box_node: &BoxNode<NodeListId>,
         hasher: &mut StateHasher,
         child_semantic_id: &impl Fn(NodeListId) -> NodeSemanticId,
     ) {
@@ -328,7 +343,7 @@ impl Stores {
 
     fn hash_leader_identity(
         &self,
-        payload: Option<&LeaderPayload>,
+        payload: Option<&LeaderPayload<NodeListId>>,
         hasher: &mut StateHasher,
         child_semantic_id: &impl Fn(NodeListId) -> NodeSemanticId,
     ) {
@@ -355,7 +370,7 @@ impl Stores {
 
     fn hash_math_field_identity(
         &self,
-        field: &MathField,
+        field: &MathField<NodeListId>,
         hasher: &mut StateHasher,
         child_semantic_id: &impl Fn(NodeListId) -> NodeSemanticId,
     ) {

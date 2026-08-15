@@ -5,7 +5,7 @@ use tex_state::glue::Order;
 use tex_state::node::{BoxLr, BoxNode, BoxNodeFields, Sign};
 use tex_state::scaled::{GlueSetRatio, Scaled};
 
-fn empty_vbox(stores: &mut Universe) -> Node {
+fn empty_vbox() -> Node {
     Node::VList(BoxNode::new(BoxNodeFields {
         width: Scaled::from_raw(0),
         height: Scaled::MAX_DIMEN,
@@ -15,7 +15,7 @@ fn empty_vbox(stores: &mut Universe) -> Node {
         glue_set: GlueSetRatio::ZERO,
         glue_sign: Sign::Normal,
         glue_order: Order::Normal,
-        children: stores.freeze_node_list(&[]),
+        children: tex_state::node_arena::NodeListRef::empty(),
     }))
 }
 
@@ -55,7 +55,7 @@ fn huge_page_recovery_displays_deleted_box_only_when_not_already_traced() {
     // TeX82 §641: after the huge-page error, `ship_out` calls `show_box(p)`
     // only when §638 did not already do so under positive `\tracingoutput`.
     let mut untraced = Universe::new();
-    let node = empty_vbox(&mut untraced);
+    let node = empty_vbox();
     report_huge_page_deleted_box(&mut untraced, &node, 0);
     let text = pending_text(&untraced);
     assert!(
@@ -65,7 +65,7 @@ fn huge_page_recovery_displays_deleted_box_only_when_not_already_traced() {
 
     let mut traced = Universe::new();
     traced.set_int_param(IntParam::TRACING_OUTPUT, 1);
-    let node = empty_vbox(&mut traced);
+    let node = empty_vbox();
     let tracing_output = traced.int_param(IntParam::TRACING_OUTPUT);
     report_huge_page_deleted_box(&mut traced, &node, tracing_output);
     assert_eq!(pending_text(&traced), "");
@@ -77,7 +77,7 @@ fn huge_page_deleted_box_display_uses_live_escape_character() {
     // `show_box`, whose list-node name is printed through `print_esc`.
     let mut stores = Universe::new();
     stores.set_int_param(IntParam::ESCAPE_CHAR, i32::from(b'|'));
-    let node = empty_vbox(&mut stores);
+    let node = empty_vbox();
 
     report_huge_page_deleted_box(&mut stores, &node, 0);
 

@@ -25,6 +25,7 @@ use crate::node::{
     AdjustNode, BoxLr, BoxNode, BoxNodeFields, GlueKind, KernKind, LeaderPayload, MarginKernSide,
     Node, PdfLiteralMode, Sign, Whatsit,
 };
+use crate::node_arena::NodeListRef;
 use crate::page::{PageDimension, PageInteger, PageMark};
 use crate::provenance::{
     InsertedOriginKind, OriginRecord, SourceOrigin, SynthesizedOriginKind, SyntheticOriginKind,
@@ -40,7 +41,7 @@ use crate::world::{
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;
 
-fn zero_box(children: NodeListId) -> BoxNode {
+fn zero_box(children: NodeListRef) -> BoxNode {
     BoxNode::new(BoxNodeFields {
         width: Scaled::from_raw(0),
         height: Scaled::from_raw(0),
@@ -54,6 +55,11 @@ fn zero_box(children: NodeListId) -> BoxNode {
     })
 }
 
+fn freeze_ref(universe: &mut Universe, nodes: &[Node]) -> NodeListRef {
+    let id = universe.freeze_node_list(nodes);
+    universe.node_list_ref(id)
+}
+
 #[test]
 fn rejected_operation_discards_page_node_builders_exactly() {
     let mut universe = Universe::new();
@@ -63,6 +69,7 @@ fn rejected_operation_discards_page_node_builders_exactly() {
 
     let retry = universe.snapshot_for_local_retry();
     let children = universe.freeze_node_list(&[Node::Penalty(17)]);
+    let children = universe.node_list_ref(children);
     universe.append_page_contribution(Node::HList(zero_box(children)));
     assert!(universe.testing_epoch_node_count() > epoch_baseline);
     universe.rollback_local_retry_snapshot(retry);
@@ -83,26 +90,26 @@ fn committed_page_nodes_promote_and_checkpoint_owners_release_at_zero_roots() {
 
     let operation = universe.snapshot_for_local_retry();
     let children = universe.freeze_node_list(&[Node::Penalty(23)]);
+    let children = universe.node_list_ref(children);
     universe.append_page_contribution(Node::HList(zero_box(children)));
     universe.commit_local_retry_snapshot(operation);
 
     assert_eq!(universe.testing_epoch_node_count(), epoch_baseline);
     let promoted = match universe.page_contribution_front() {
-        Some(Node::HList(node)) => node.children,
+        Some(Node::HList(node)) => node.children.clone(),
         other => panic!("expected committed page hlist, got {other:?}"),
     };
-    assert!(matches!(promoted.arena(), ArenaRef::Survivor(_)));
-    assert_eq!(universe.nodes(promoted).to_vec(), [Node::Penalty(23)]);
-    assert_eq!(universe.testing_live_survivor_slot_count(), 1);
+    assert_eq!(promoted.to_vec(), [Node::Penalty(23)]);
+    assert_eq!(universe.testing_live_survivor_slot_count(), 0);
 
     let checkpoint = universe.snapshot();
     let operation = universe.snapshot_for_local_retry();
     let _ = universe.pop_page_contribution_front();
     universe.commit_local_retry_snapshot(operation);
-    assert_eq!(universe.testing_live_survivor_slot_count(), 1);
+    assert_eq!(universe.testing_live_survivor_slot_count(), 0);
 
     universe.rollback(&checkpoint);
-    assert_eq!(universe.nodes(promoted).to_vec(), [Node::Penalty(23)]);
+    assert_eq!(promoted.to_vec(), [Node::Penalty(23)]);
     let operation = universe.snapshot_for_local_retry();
     let _ = universe.pop_page_contribution_front();
     universe.commit_local_retry_snapshot(operation);
@@ -751,6 +758,7 @@ fn transient_node_allocations_reuse_roots_and_preserve_the_high_water() {
 fn shape_preserving_box_rewrites_reuse_roots_and_preserve_the_high_water() {
     let mut universe = Universe::new();
     let children = universe.freeze_node_list(&vec![Node::Penalty(0); 494]);
+    let children = universe.node_list_ref(children);
     let root = universe.freeze_node_list(&[Node::HList(BoxNode::new(BoxNodeFields {
         width: Scaled::from_raw(1),
         height: Scaled::from_raw(2),
@@ -2089,6 +2097,7 @@ fn semantic_format_is_deterministic_validated_and_world_independent() {
         height: Some(Scaled::from_raw(20)),
         depth: None,
     }]);
+    let child = universe.node_list_ref(child);
     let root = universe.freeze_node_list(&[Node::HList(BoxNode::new(BoxNodeFields {
         width: Scaled::from_raw(10),
         height: Scaled::from_raw(20),
@@ -2110,7 +2119,7 @@ fn semantic_format_is_deterministic_validated_and_world_independent() {
     let second = universe.dump_format().expect("deterministic format encode");
     assert_eq!(first, second, "retained checkpoints are not format state");
 
-    let restored = Universe::from_format(World::memory(), &first).expect("format decode");
+    let mut restored = Universe::from_format(World::memory(), &first).expect("format decode");
     let restored_name = restored.symbol("answer").expect("restored name");
     assert_eq!(restored.meaning(restored_name), Meaning::CountRegister(42));
     assert_eq!(restored.count(42), 1234);
@@ -2121,12 +2130,12 @@ fn semantic_format_is_deterministic_validated_and_world_independent() {
     ));
     let restored_root = restored.box_reg(7).expect("restored box register");
     assert_eq!(restored.stores.node_semantic_id(restored_root), semantic_id);
-    let restored_nodes = restored.nodes(restored_root).to_vec();
-    let Node::HList(restored_box) = restored_nodes[0] else {
+    let restored_nodes = restored.node_list_ref(restored_root).to_vec();
+    let Node::HList(ref restored_box) = restored_nodes[0] else {
         panic!("restored box node kind");
     };
     assert_eq!(
-        restored.nodes(restored_box.children).to_vec(),
+        restored_box.children.to_vec(),
         [Node::Rule {
             width: Some(Scaled::from_raw(10)),
             height: Some(Scaled::from_raw(20)),
@@ -2149,8 +2158,8 @@ fn semantic_format_is_deterministic_validated_and_world_independent() {
 #[test]
 fn format_roundtrip_complete_math_graph() {
     let mut universe = Universe::new();
-    let leaf = universe.freeze_node_list(&[Node::Penalty(17)]);
-    let empty = universe.freeze_node_list(&[]);
+    let leaf = freeze_ref(&mut universe, &[Node::Penalty(17)]);
+    let empty = NodeListRef::empty();
     let math_char = |character| MathChar {
         family: 3,
         character,
@@ -2160,31 +2169,40 @@ fn format_roundtrip_complete_math_graph() {
         kind: NoadKind::Accent {
             accent: math_char('^'),
         },
-        nucleus: MathField::SubMlist(empty),
+        nucleus: MathField::SubMlist(empty.clone()),
         subscript: MathField::MathTextChar(math_char('t')),
         superscript: MathField::SubBox(leaf),
     };
-    let display = universe.freeze_node_list(&[Node::MathNoad(noad.clone())]);
-    let text = universe.freeze_node_list(&[Node::MathNoad(MathNoad::new(
-        NoadKind::Normal(NoadClass::Ord),
-        MathField::Empty,
-    ))]);
-    let script = universe.freeze_node_list(&[Node::MathNoad(MathNoad::new(
-        NoadKind::Normal(NoadClass::Bin),
-        MathField::MathChar(math_char('+')),
-    ))]);
-    let script_script = universe.freeze_node_list(&[Node::MathStyle(MathStyle::ScriptScript)]);
-    let nested = universe.freeze_node_list(&[Node::MathChoice(MathChoice {
-        display,
-        text,
-        script,
-        script_script,
-    })]);
+    let display = freeze_ref(&mut universe, &[Node::MathNoad(noad.clone())]);
+    let text = freeze_ref(
+        &mut universe,
+        &[Node::MathNoad(MathNoad::new(
+            NoadKind::Normal(NoadClass::Ord),
+            MathField::Empty,
+        ))],
+    );
+    let script = freeze_ref(
+        &mut universe,
+        &[Node::MathNoad(MathNoad::new(
+            NoadKind::Normal(NoadClass::Bin),
+            MathField::MathChar(math_char('+')),
+        ))],
+    );
+    let script_script = freeze_ref(&mut universe, &[Node::MathStyle(MathStyle::ScriptScript)]);
+    let nested = freeze_ref(
+        &mut universe,
+        &[Node::MathChoice(MathChoice {
+            display,
+            text,
+            script,
+            script_script,
+        })],
+    );
     let root = universe.freeze_node_list(&[
         Node::MathOn(Scaled::from_raw(1)),
         Node::MathNoad(noad),
         Node::FractionNoad(MathFraction {
-            numerator: nested,
+            numerator: nested.clone(),
             denominator: empty,
             thickness: FractionThickness::Explicit(Scaled::from_raw(2)),
             left_delimiter: Some(0x12345),
@@ -2204,14 +2222,14 @@ fn format_roundtrip_complete_math_graph() {
         .node_semantic_id(universe.box_reg(23).expect("promoted math graph"));
     let image = universe.dump_format().expect("complete math graph encodes");
 
-    let restored =
+    let mut restored =
         Universe::from_format(World::memory(), &image).expect("complete math graph restores");
     let restored_root = restored.box_reg(23).expect("math graph root restores");
     assert_eq!(
         restored.stores.node_semantic_id(restored_root),
         expected_semantic_id
     );
-    assert_eq!(restored.nodes(restored_root).testing_decoded().len(), 7);
+    assert_eq!(restored.node_list_ref(restored_root).len(), 7);
     assert_eq!(
         restored.dump_format().expect("complete math graph redumps"),
         image
@@ -2222,6 +2240,7 @@ fn format_roundtrip_complete_math_graph() {
 fn pdftex_margin_kern_query_owns_the_complete_skipable_edge_rule() {
     fn hbox(universe: &mut Universe, children: Vec<Node>) -> NodeListId {
         let children = universe.freeze_node_list(&children);
+        let children = universe.node_list_ref(children);
         universe.freeze_node_list(&[Node::HList(BoxNode::new(BoxNodeFields {
             width: Scaled::from_raw(0),
             height: Scaled::from_raw(0),
@@ -2238,8 +2257,8 @@ fn pdftex_margin_kern_query_owns_the_complete_skipable_edge_rule() {
     // pdftex.web §470's `cp_skipable` predicate is typed list policy: the
     // command layer must not duplicate compact-node classification details.
     let mut universe = Universe::new();
-    let empty = universe.freeze_node_list(&[]);
-    let replacement = universe.freeze_node_list(&[Node::Penalty(1)]);
+    let empty = NodeListRef::empty();
+    let replacement = freeze_ref(&mut universe, &[Node::Penalty(1)]);
     let zero_glue = universe.intern_glue(GlueSpec::ZERO);
     let nonzero_glue = universe.intern_glue(GlueSpec {
         width: Scaled::from_raw(Scaled::UNITY),
@@ -2254,7 +2273,7 @@ fn pdftex_margin_kern_query_owns_the_complete_skipable_edge_rule() {
         glue_set: GlueSetRatio::ZERO,
         glue_sign: Sign::Normal,
         glue_order: Order::Normal,
-        children: empty,
+        children: empty.clone(),
     }));
     let expected = Scaled::from_raw(-3 * Scaled::UNITY);
     let skipable = vec![
@@ -2264,13 +2283,13 @@ fn pdftex_margin_kern_query_owns_the_complete_skipable_edge_rule() {
             split_top_skip: zero_glue.clone(),
             split_max_depth: Scaled::from_raw(0),
             floating_penalty: 0,
-            content: empty,
+            content: empty.clone(),
         },
         Node::Mark {
             class: 0,
             tokens: universe.token_list_ref(TokenListId::EMPTY),
         },
-        Node::Adjust(AdjustNode::ordinary(empty)),
+        Node::Adjust(AdjustNode::ordinary(empty.clone())),
         Node::Penalty(1),
         Node::Whatsit(Whatsit::PdfLiteral {
             mode: PdfLiteralMode::Origin,
@@ -2278,9 +2297,9 @@ fn pdftex_margin_kern_query_owns_the_complete_skipable_edge_rule() {
         }),
         Node::Disc {
             kind: crate::node::DiscKind::Discretionary,
-            pre: empty,
-            post: empty,
-            replace: empty,
+            pre: empty.clone(),
+            post: empty.clone(),
+            replace: empty.clone(),
             physical_replace_count: 0,
         },
         Node::MathOn(Scaled::from_raw(0)),
@@ -2331,8 +2350,8 @@ fn pdftex_margin_kern_query_owns_the_complete_skipable_edge_rule() {
         }),
         Node::Disc {
             kind: crate::node::DiscKind::Discretionary,
-            pre: empty,
-            post: empty,
+            pre: empty.clone(),
+            post: empty.clone(),
             replace: replacement,
             physical_replace_count: 1,
         },
@@ -2633,6 +2652,7 @@ fn frozen_foundational_sections_restore_ids_and_accept_job_local_additions() {
 fn frozen_node_arena_installs_outside_job_epoch_and_rejects_corrupt_metadata() {
     let mut universe = Universe::new();
     let child = universe.freeze_node_list(&[Node::Penalty(17)]);
+    let child = universe.node_list_ref(child);
     let root = universe.freeze_node_list(&[Node::Adjust(crate::node::AdjustNode::ordinary(child))]);
     universe.set_box_reg(8, root);
     let image = universe.dump_format().expect("frozen node format");
@@ -2640,12 +2660,15 @@ fn frozen_node_arena_installs_outside_job_epoch_and_rejects_corrupt_metadata() {
     let mut loaded = Universe::from_format(World::memory(), &image).expect("load frozen nodes");
     assert_eq!(loaded.testing_epoch_node_count(), 0);
     let frozen_root = loaded.box_reg(8).expect("frozen box root");
-    let local =
-        loaded.freeze_node_list(&[Node::Adjust(crate::node::AdjustNode::ordinary(frozen_root))]);
+    let frozen_root = loaded.node_list_ref(frozen_root);
+    let local = loaded.freeze_node_list(&[Node::Adjust(crate::node::AdjustNode::ordinary(
+        frozen_root.clone(),
+    ))]);
     assert_eq!(loaded.testing_epoch_node_count(), 1);
-    assert!(
-        matches!(loaded.nodes(local).testing_decoded(), [Node::Adjust(adjust)] if adjust.content == frozen_root)
-    );
+    assert!(matches!(
+        loaded.node_list_ref(local).get(0),
+        Some(Node::Adjust(adjust)) if adjust.content == frozen_root
+    ));
 
     for offset in [12_usize, 32 + 24] {
         let mut corrupt = image.clone();
@@ -3340,7 +3363,7 @@ fn semantic_format_validates_and_canonicalizes_glue_set_ratios() {
 
 fn format_with_box_glue_set(glue_set: GlueSetRatio) -> Vec<u8> {
     let mut universe = Universe::with_world(World::memory());
-    let children = universe.freeze_node_list(&[]);
+    let children = NodeListRef::empty();
     let root = universe.freeze_node_list(&[Node::HList(BoxNode::new(BoxNodeFields {
         width: Scaled::from_raw(1),
         height: Scaled::from_raw(2),
@@ -3359,7 +3382,7 @@ fn format_with_box_glue_set(glue_set: GlueSetRatio) -> Vec<u8> {
 #[test]
 fn format_v11_round_trips_tex_web_box_shift_and_rejects_legacy_v10() {
     let mut universe = Universe::with_world(World::memory());
-    let children = universe.freeze_node_list(&[]);
+    let children = NodeListRef::empty();
     let root = universe.freeze_node_list(&[Node::HList(BoxNode::new(BoxNodeFields {
         width: Scaled::from_raw(1),
         height: Scaled::from_raw(2),
@@ -3375,9 +3398,9 @@ fn format_v11_round_trips_tex_web_box_shift_and_rejects_legacy_v10() {
 
     let bytes = universe.dump_format().expect("format encodes");
     assert_eq!(&bytes[8..12], &11_u32.to_le_bytes());
-    let restored = Universe::from_format(World::memory(), &bytes).expect("v11 format restores");
+    let mut restored = Universe::from_format(World::memory(), &bytes).expect("v11 format restores");
     let restored_root = restored.box_reg(19).expect("box register restores");
-    let [Node::HList(boxed)] = restored.nodes(restored_root).testing_decoded() else {
+    let Some(Node::HList(boxed)) = restored.node_list_ref(restored_root).get(0) else {
         panic!("box register should contain an hlist");
     };
     assert_eq!(boxed.shift, Scaled::from_raw(-4));
@@ -6664,6 +6687,7 @@ fn promote_survivor_wrapped_box(universe: &mut Universe) -> NodeListId {
     let child = universe
         .box_reg(0)
         .expect("survivor child should remain live");
+    let child = universe.node_list_ref(child);
     let wrapper = universe.freeze_node_list(&[Node::VList(BoxNode::new(BoxNodeFields {
         width: Scaled::from_raw(10),
         height: Scaled::from_raw(7),
@@ -6687,6 +6711,7 @@ fn grouped_box_take_pins_nested_survivor_children_before_coalesced_release() {
         ch: 'x',
         origin: crate::provenance::OriginRef::unknown(),
     }]);
+    let leader_children = universe.node_list_ref(leader_children);
     let leader = BoxNode::new(BoxNodeFields {
         width: Scaled::from_raw(10),
         height: Scaled::from_raw(7),
@@ -6788,6 +6813,7 @@ fn destructive_unbox_transfers_only_children_before_same_level_clear() {
         ch: 'x',
         origin: crate::provenance::OriginRef::unknown(),
     }]);
+    let leaf = universe.node_list_ref(leaf);
     let nested = universe.freeze_node_list(&[Node::HList(BoxNode::new(BoxNodeFields {
         width: Scaled::from_raw(10),
         height: Scaled::from_raw(7),
@@ -6799,6 +6825,7 @@ fn destructive_unbox_transfers_only_children_before_same_level_clear() {
         glue_order: Order::Normal,
         children: leaf,
     }))]);
+    let nested = universe.node_list_ref(nested);
     let wrapper = universe.freeze_node_list(&[Node::HList(BoxNode::new(BoxNodeFields {
         width: Scaled::from_raw(10),
         height: Scaled::from_raw(7),
@@ -6845,6 +6872,7 @@ fn destructive_unbox_rejects_incompatible_kind_without_mutation() {
         amount: Scaled::from_raw(1),
         kind: KernKind::Explicit,
     }]);
+    let children = universe.node_list_ref(children);
     let wrapper = universe.freeze_node_list(&[Node::VList(BoxNode::new(BoxNodeFields {
         width: Scaled::from_raw(0),
         height: Scaled::from_raw(0),
@@ -6898,6 +6926,7 @@ fn snapshot_state_hash_walks_deep_node_lists_iteratively() {
     }]);
 
     for _ in 0..5000 {
+        let children = universe.node_list_ref(current);
         current = universe.freeze_node_list(&[Node::HList(BoxNode::new(BoxNodeFields {
             width: Scaled::from_raw(1),
             height: Scaled::from_raw(2),
@@ -6907,7 +6936,7 @@ fn snapshot_state_hash_walks_deep_node_lists_iteratively() {
             glue_set: GlueSetRatio::ZERO,
             glue_sign: Sign::Normal,
             glue_order: Order::Normal,
-            children: current,
+            children,
         }))]);
     }
 
@@ -6927,6 +6956,7 @@ fn snapshot_state_hash_ignores_unreachable_epoch_node_allocations() {
             amount: Scaled::from_raw(amount),
             kind: KernKind::Explicit,
         }]);
+        let child = with_discarded_nodes.node_list_ref(child);
         let _discarded =
             with_discarded_nodes.freeze_node_list(&[Node::HList(BoxNode::new(BoxNodeFields {
                 width: Scaled::from_raw(amount),
@@ -6994,6 +7024,7 @@ fn finished_box_assignment_reclaims_only_its_epoch_construction_suffix() {
         amount: Scaled::from_raw(17),
         kind: KernKind::Explicit,
     }]);
+    let children = transaction.node_list_ref(children);
     let root = transaction.freeze_node_list(&[Node::HList(BoxNode::new(BoxNodeFields {
         width: Scaled::from_raw(17),
         height: Scaled::from_raw(0),

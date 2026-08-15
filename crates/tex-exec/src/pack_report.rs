@@ -30,7 +30,6 @@ use std::fmt::Write as _;
 
 use tex_state::Universe;
 use tex_state::env::banks::IntParam;
-use tex_state::ids::NodeListId;
 use tex_state::node::Node;
 use tex_typeset::PackDiagnostic;
 
@@ -106,7 +105,7 @@ pub(crate) fn report_lr_problems(
     let mut headline = format!("\n\\endL or \\endR problem ({missing} missing, {extra} extra");
     headline.push_str(&origin_text(stores));
     headline.push('\n');
-    headline.push_str(&short_display(stores, boxed.children, list_layout));
+    headline.push_str(&short_display(stores, boxed.children.clone(), list_layout));
     headline.push('\n');
     stores.printer().print_rendered(&headline);
 
@@ -128,7 +127,7 @@ fn report_one(
     list_layout: DiagnosticListLayout,
 ) {
     let children = match packed {
-        Node::HList(node) | Node::VList(node) => node.children,
+        Node::HList(node) | Node::VList(node) => node.children.clone(),
         _ => unreachable!("hpack and vpack produce an hlist or a vlist"),
     };
     // §660 and §674 both open with `print_ln`, closing whatever partial line
@@ -226,7 +225,11 @@ fn origin_text(stores: &Universe) -> String {
 /// a discretionary's own pre-break and post-break text followed by skipping
 /// its replacement count. e-TeX 2.6's §175 change prints its L/R direction
 /// subtypes as `[]` instead of ordinary math `$` markers.
-fn short_display(stores: &Universe, list: NodeListId, list_layout: DiagnosticListLayout) -> String {
+fn short_display(
+    stores: &Universe,
+    list: tex_state::node_arena::NodeListRef,
+    list_layout: DiagnosticListLayout,
+) -> String {
     ShortDisplayRenderer::new().render_list_with_layout(stores, list, list_layout)
 }
 
@@ -267,19 +270,24 @@ impl ShortDisplayRenderer {
     pub(crate) fn render_line_break_trace_suffix(
         &mut self,
         stores: &Universe,
-        list: NodeListId,
+        list: tex_state::node_arena::NodeListRef,
     ) -> String {
-        self.render_list(stores, list)
+        self.render_list_with_layout(stores, list, DiagnosticListLayout::FrozenList)
     }
 
-    fn render_list(&mut self, stores: &Universe, list: NodeListId) -> String {
+    #[cfg(test)]
+    fn render_list(
+        &mut self,
+        stores: &Universe,
+        list: tex_state::node_arena::NodeListRef,
+    ) -> String {
         self.render_list_with_layout(stores, list, DiagnosticListLayout::FrozenList)
     }
 
     fn render_list_with_layout(
         &mut self,
         stores: &Universe,
-        list: NodeListId,
+        list: tex_state::node_arena::NodeListRef,
         list_layout: DiagnosticListLayout,
     ) -> String {
         let mut out = String::new();
@@ -290,12 +298,12 @@ impl ShortDisplayRenderer {
 
 fn append_short_display(
     stores: &Universe,
-    list: NodeListId,
+    list: tex_state::node_arena::NodeListRef,
     list_layout: DiagnosticListLayout,
     font_in_short_display: &mut Option<u32>,
     out: &mut String,
 ) {
-    let nodes = stores.nodes(list).to_vec();
+    let nodes = list.to_vec();
     append_short_display_nodes(
         stores,
         &nodes,
@@ -367,14 +375,14 @@ fn append_short_display_nodes(
             } => {
                 append_short_display(
                     stores,
-                    *pre,
+                    pre.clone(),
                     DiagnosticListLayout::FrozenList,
                     font_in_short_display,
                     out,
                 );
                 append_short_display(
                     stores,
-                    *post,
+                    post.clone(),
                     DiagnosticListLayout::FrozenList,
                     font_in_short_display,
                     out,
@@ -385,7 +393,7 @@ fn append_short_display_nodes(
                 // projection whose hidden suffix is described by the
                 // immutable replacement side list.
                 let replacement_count = match disc_layout {
-                    DiscReplacementLayout::DetachedProjection => stores.nodes(*replace).len(),
+                    DiscReplacementLayout::DetachedProjection => replace.len(),
                     DiscReplacementLayout::FrozenList => usize::from(*physical_replace_count),
                 };
                 index = index.saturating_add(replacement_count).min(nodes.len());

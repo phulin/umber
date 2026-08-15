@@ -7,7 +7,7 @@ use crate::ids::MacroDefinitionId;
 use crate::macro_store::MacroMeaning;
 use crate::meaning::{Meaning, MeaningFlags};
 use crate::node::{BoxLr, BoxNode, BoxNodeFields, DiscKind, GlueKind, LeaderPayload, Node, Sign};
-use crate::node_arena::NodeRef;
+use crate::node_arena::{NodeListRef, NodeRef};
 use crate::provenance::OriginRef;
 use crate::scaled::{GlueSetRatio, Scaled};
 use crate::stores::Stores;
@@ -36,14 +36,19 @@ fn frozen_round_trip(stores: &Stores) -> Stores {
     .expect("decode frozen format")
 }
 
+fn freeze_ref(stores: &mut Stores, nodes: &[Node]) -> NodeListRef {
+    let id = stores.freeze_node_list(nodes);
+    stores.node_list_ref(id)
+}
+
 #[test]
 fn format_round_trip_preserves_diagnostic_disc_replacement_count() {
     let mut stores = Stores::new();
-    let empty = stores.freeze_node_list(&[]);
+    let empty = NodeListRef::empty();
     let root = stores.freeze_node_list(&[Node::Disc {
         kind: DiscKind::AutomaticHyphen,
-        pre: empty,
-        post: empty,
+        pre: empty.clone(),
+        post: empty.clone(),
         replace: empty,
         physical_replace_count: 3,
     }]);
@@ -66,8 +71,8 @@ fn format_round_trip_preserves_physical_diagnostic_box_children() {
     // memory graph. Umber's diagnostic list is a second physical pointer:
     // format capture must retain it without changing the semantic child.
     let mut stores = Stores::new();
-    let semantic_children = stores.freeze_node_list(&[Node::Penalty(1)]);
-    let diagnostic_children = stores.freeze_node_list(&[Node::Penalty(2)]);
+    let semantic_children = freeze_ref(&mut stores, &[Node::Penalty(1)]);
+    let diagnostic_children = freeze_ref(&mut stores, &[Node::Penalty(2)]);
     let mut box_node = BoxNode::new(BoxNodeFields {
         width: Scaled::from_raw(0),
         height: Scaled::from_raw(0),
@@ -110,22 +115,28 @@ fn allocator_overlap_changes_only_detached_extent_not_format_bytes() {
             ch,
             origin: OriginRef::unknown(),
         };
-        let semantic_children = stores.freeze_node_list(&[
-            direct('A'),
-            direct('/'),
-            direct('B'),
-            direct('B'),
-            direct('C'),
-            direct('A'),
-        ]);
-        let diagnostic_children = stores.freeze_node_list(&[
-            direct('Z'),
-            direct('Y'),
-            direct('X'),
-            direct('W'),
-            direct('V'),
-            direct('U'),
-        ]);
+        let semantic_children = freeze_ref(
+            &mut stores,
+            &[
+                direct('A'),
+                direct('/'),
+                direct('B'),
+                direct('B'),
+                direct('C'),
+                direct('A'),
+            ],
+        );
+        let diagnostic_children = freeze_ref(
+            &mut stores,
+            &[
+                direct('Z'),
+                direct('Y'),
+                direct('X'),
+                direct('W'),
+                direct('V'),
+                direct('U'),
+            ],
+        );
         let mut box_node = BoxNode::new(BoxNodeFields {
             width: Scaled::from_raw(0),
             height: Scaled::from_raw(0),
@@ -174,7 +185,7 @@ fn recursive_box_copy_composes_with_live_projection_owners() {
         }
     }
 
-    fn box_node(children: crate::ids::NodeListId) -> BoxNode {
+    fn box_node(children: NodeListRef) -> BoxNode {
         BoxNode::new(BoxNodeFields {
             width: Scaled::from_raw(0),
             height: Scaled::from_raw(0),
@@ -189,16 +200,19 @@ fn recursive_box_copy_composes_with_live_projection_owners() {
     }
 
     let mut stores = Stores::new();
-    let ligatures = stores.freeze_node_list(&[Node::Lig {
-        font: crate::font::NULL_FONT,
-        ch: 'A',
-        orig: vec!['A'; 10],
-        left_hit: false,
-        right_hit: false,
-        origins: vec![OriginRef::unknown(); 10],
-    }]);
-    let horizontal = stores.freeze_node_list(&[Node::HList(box_node(ligatures))]);
-    let diagnostic = stores.freeze_node_list(&[direct('x'), direct('y'), direct('z')]);
+    let ligatures = freeze_ref(
+        &mut stores,
+        &[Node::Lig {
+            font: crate::font::NULL_FONT,
+            ch: 'A',
+            orig: vec!['A'; 10],
+            left_hit: false,
+            right_hit: false,
+            origins: vec![OriginRef::unknown(); 10],
+        }],
+    );
+    let horizontal = freeze_ref(&mut stores, &[Node::HList(box_node(ligatures))]);
+    let diagnostic = freeze_ref(&mut stores, &[direct('x'), direct('y'), direct('z')]);
     let mut root_box = box_node(horizontal);
     root_box.diagnostic_children = Some(diagnostic);
     let root = stores.freeze_node_list(&[Node::VList(root_box)]);
@@ -237,25 +251,31 @@ fn recursive_box_copy_composes_with_live_projection_owners() {
 fn recursive_box_copy_peak_depends_on_copied_ligature_units() {
     fn projection_for(orig_len: usize) -> super::CopyNodeListProjection {
         let mut stores = Stores::new();
-        let ligatures = stores.freeze_node_list(&[Node::Lig {
-            font: crate::font::NULL_FONT,
-            ch: 'A',
-            orig: vec!['A'; orig_len],
-            left_hit: false,
-            right_hit: false,
-            origins: vec![OriginRef::unknown(); orig_len],
-        }]);
-        let horizontal = stores.freeze_node_list(&[Node::HList(BoxNode::new(BoxNodeFields {
-            width: Scaled::from_raw(0),
-            height: Scaled::from_raw(0),
-            depth: Scaled::from_raw(0),
-            shift: Scaled::from_raw(0),
-            box_lr: BoxLr::Normal,
-            glue_set: GlueSetRatio::ZERO,
-            glue_sign: Sign::Normal,
-            glue_order: Order::Normal,
-            children: ligatures,
-        }))]);
+        let ligatures = freeze_ref(
+            &mut stores,
+            &[Node::Lig {
+                font: crate::font::NULL_FONT,
+                ch: 'A',
+                orig: vec!['A'; orig_len],
+                left_hit: false,
+                right_hit: false,
+                origins: vec![OriginRef::unknown(); orig_len],
+            }],
+        );
+        let horizontal = freeze_ref(
+            &mut stores,
+            &[Node::HList(BoxNode::new(BoxNodeFields {
+                width: Scaled::from_raw(0),
+                height: Scaled::from_raw(0),
+                depth: Scaled::from_raw(0),
+                shift: Scaled::from_raw(0),
+                box_lr: BoxLr::Normal,
+                glue_set: GlueSetRatio::ZERO,
+                glue_sign: Sign::Normal,
+                glue_order: Order::Normal,
+                children: ligatures,
+            }))],
+        );
         let root = stores.freeze_node_list(&[Node::VList(BoxNode::new(BoxNodeFields {
             width: Scaled::from_raw(0),
             height: Scaled::from_raw(0),
@@ -286,8 +306,8 @@ fn recursive_box_copy_peak_depends_on_copied_ligature_units() {
 #[test]
 fn format_round_trip_preserves_physical_diagnostic_leader_children() {
     let mut stores = Stores::new();
-    let semantic_children = stores.freeze_node_list(&[Node::Penalty(3)]);
-    let diagnostic_children = stores.freeze_node_list(&[Node::Penalty(4)]);
+    let semantic_children = freeze_ref(&mut stores, &[Node::Penalty(3)]);
+    let diagnostic_children = freeze_ref(&mut stores, &[Node::Penalty(4)]);
     let mut leader_box = BoxNode::new(BoxNodeFields {
         width: Scaled::from_raw(0),
         height: Scaled::from_raw(0),
@@ -500,7 +520,7 @@ fn frozen_environment_and_macro_rows_install_exact_token_owners() {
 #[test]
 fn format_round_trip_preserves_all_box_lr_states() {
     let mut stores = Stores::new();
-    let empty = stores.freeze_node_list(&[]);
+    let empty = NodeListRef::empty();
     for (register, box_lr) in [
         (10, BoxLr::Normal),
         (11, BoxLr::Reversed),
@@ -515,7 +535,7 @@ fn format_round_trip_preserves_all_box_lr_states() {
             glue_set: GlueSetRatio::ZERO,
             glue_sign: Sign::Normal,
             glue_order: Order::Normal,
-            children: empty,
+            children: empty.clone(),
         }))]);
         stores.set_box_reg(register, list);
     }

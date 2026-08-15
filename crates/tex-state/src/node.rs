@@ -1,8 +1,9 @@
 //! Immutable TeX node model.
 
 use crate::glue::{GlueSpecRef, Order};
-use crate::ids::{FontId, NodeListId};
+use crate::ids::FontId;
 use crate::math::{MathChoice, MathFraction, MathListNode, MathNoad, MathStyle};
+use crate::node_arena::NodeListRef;
 use crate::provenance::OriginRef;
 use crate::scaled::{GlueSetRatio, Scaled};
 use crate::token_store::TokenListRef;
@@ -74,7 +75,7 @@ impl NodeKind {
 
 /// A frozen TeX node.
 #[derive(Clone, Debug)]
-pub enum Node {
+pub enum Node<List = NodeListRef> {
     Char {
         font: FontId,
         ch: char,
@@ -104,7 +105,7 @@ pub enum Node {
     Glue {
         spec: GlueSpecRef,
         kind: GlueKind,
-        leader: Option<LeaderPayload>,
+        leader: Option<LeaderPayload<List>>,
     },
     Penalty(i32),
     Rule {
@@ -112,14 +113,14 @@ pub enum Node {
         height: Option<Scaled>,
         depth: Option<Scaled>,
     },
-    HList(BoxNode),
-    VList(BoxNode),
-    Unset(UnsetNode),
+    HList(BoxNode<List>),
+    VList(BoxNode<List>),
+    Unset(UnsetNode<List>),
     Disc {
         kind: DiscKind,
-        pre: NodeListId,
-        post: NodeListId,
-        replace: NodeListId,
+        pre: List,
+        post: List,
+        replace: List,
         /// TeX's physical `replace_count`, retained only for diagnostics.
         physical_replace_count: u8,
     },
@@ -133,28 +134,155 @@ pub enum Node {
         split_top_skip: GlueSpecRef,
         split_max_depth: Scaled,
         floating_penalty: i32,
-        content: NodeListId,
+        content: List,
     },
     Whatsit(Whatsit),
     MathOn(Scaled),
     MathOff(Scaled),
     Direction(Direction),
-    MathNoad(MathNoad),
-    FractionNoad(MathFraction),
+    MathNoad(MathNoad<List>),
+    FractionNoad(MathFraction<List>),
     MathStyle(MathStyle),
-    MathChoice(MathChoice),
-    MathList(MathListNode),
+    MathChoice(MathChoice<List>),
+    MathList(MathListNode<List>),
     Nonscript,
-    Adjust(AdjustNode),
+    Adjust(AdjustNode<List>),
 }
 
-impl Node {
+impl Node<NodeListRef> {
+    fn visit_semantic_node_lists(&self, mut visit: impl FnMut(&NodeListRef)) {
+        fn field(field: &crate::math::MathField, visit: &mut impl FnMut(&NodeListRef)) {
+            if let crate::math::MathField::SubBox(list) | crate::math::MathField::SubMlist(list) =
+                field
+            {
+                visit(list);
+            }
+        }
+
+        match self {
+            Self::HList(node) | Self::VList(node) => visit(&node.children),
+            Self::Unset(node) => visit(&node.children),
+            Self::Glue {
+                leader: Some(LeaderPayload::HList(node) | LeaderPayload::VList(node)),
+                ..
+            } => visit(&node.children),
+            Self::Disc {
+                pre, post, replace, ..
+            } => {
+                visit(pre);
+                visit(post);
+                visit(replace);
+            }
+            Self::Ins { content, .. } => visit(content),
+            Self::MathNoad(noad) => {
+                field(&noad.nucleus, &mut visit);
+                field(&noad.subscript, &mut visit);
+                field(&noad.superscript, &mut visit);
+            }
+            Self::FractionNoad(fraction) => {
+                visit(&fraction.numerator);
+                visit(&fraction.denominator);
+            }
+            Self::MathChoice(choice) => {
+                visit(&choice.display);
+                visit(&choice.text);
+                visit(&choice.script);
+                visit(&choice.script_script);
+            }
+            Self::MathList(list) => visit(&list.content),
+            Self::Adjust(adjustment) => visit(&adjustment.content),
+            Self::Char { .. }
+            | Self::Lig { .. }
+            | Self::Kern { .. }
+            | Self::MarginKern { .. }
+            | Self::Glue { .. }
+            | Self::Penalty(_)
+            | Self::Rule { .. }
+            | Self::Mark { .. }
+            | Self::Whatsit(_)
+            | Self::MathOn(_)
+            | Self::MathOff(_)
+            | Self::Direction(_)
+            | Self::MathStyle(_)
+            | Self::Nonscript => {}
+        }
+    }
+
+    /// Visits every direct structurally owned child list.
+    pub fn visit_node_lists(&self, mut visit: impl FnMut(&NodeListRef)) {
+        fn field(field: &crate::math::MathField, visit: &mut impl FnMut(&NodeListRef)) {
+            if let crate::math::MathField::SubBox(list) | crate::math::MathField::SubMlist(list) =
+                field
+            {
+                visit(list);
+            }
+        }
+
+        match self {
+            Self::HList(node) | Self::VList(node) => {
+                visit(&node.children);
+                if let Some(children) = &node.diagnostic_children {
+                    visit(children);
+                }
+            }
+            Self::Unset(node) => visit(&node.children),
+            Self::Glue {
+                leader: Some(LeaderPayload::HList(node) | LeaderPayload::VList(node)),
+                ..
+            } => {
+                visit(&node.children);
+                if let Some(children) = &node.diagnostic_children {
+                    visit(children);
+                }
+            }
+            Self::Disc {
+                pre, post, replace, ..
+            } => {
+                visit(pre);
+                visit(post);
+                visit(replace);
+            }
+            Self::Ins { content, .. } => visit(content),
+            Self::MathNoad(noad) => {
+                field(&noad.nucleus, &mut visit);
+                field(&noad.subscript, &mut visit);
+                field(&noad.superscript, &mut visit);
+            }
+            Self::FractionNoad(fraction) => {
+                visit(&fraction.numerator);
+                visit(&fraction.denominator);
+            }
+            Self::MathChoice(choice) => {
+                visit(&choice.display);
+                visit(&choice.text);
+                visit(&choice.script);
+                visit(&choice.script_script);
+            }
+            Self::MathList(list) => visit(&list.content),
+            Self::Adjust(adjustment) => visit(&adjustment.content),
+            Self::Char { .. }
+            | Self::Lig { .. }
+            | Self::Kern { .. }
+            | Self::MarginKern { .. }
+            | Self::Glue { .. }
+            | Self::Penalty(_)
+            | Self::Rule { .. }
+            | Self::Mark { .. }
+            | Self::Whatsit(_)
+            | Self::MathOn(_)
+            | Self::MathOff(_)
+            | Self::Direction(_)
+            | Self::MathStyle(_)
+            | Self::Nonscript => {}
+        }
+    }
+
     /// Visits every direct child-list handle carried by this owned node.
     ///
     /// The visitor does not recurse into frozen lists.  It is the typed root
     /// projection used when an operation publishes its still-owned nodes.
-    pub fn visit_node_lists_mut(&mut self, mut visit: impl FnMut(&mut NodeListId)) {
-        fn field(field: &mut crate::math::MathField, visit: &mut impl FnMut(&mut NodeListId)) {
+    fn visit_node_lists_mut(&mut self, mut visit: impl FnMut(&mut NodeListRef)) {
+        fn field(field: &mut crate::math::MathField, visit: &mut impl FnMut(&mut NodeListRef)) {
             if let crate::math::MathField::SubBox(list) | crate::math::MathField::SubMlist(list) =
                 field
             {
@@ -222,9 +350,188 @@ impl Node {
     }
 }
 
+impl<List> Node<List> {
+    pub(crate) fn visit_lists_mut(&mut self, mut visit: impl FnMut(&mut List)) {
+        fn field<List>(
+            field: &mut crate::math::MathField<List>,
+            visit: &mut impl FnMut(&mut List),
+        ) {
+            if let crate::math::MathField::SubBox(list) | crate::math::MathField::SubMlist(list) =
+                field
+            {
+                visit(list);
+            }
+        }
+
+        match self {
+            Self::HList(node) | Self::VList(node) => {
+                visit(&mut node.children);
+                if let Some(children) = &mut node.diagnostic_children {
+                    visit(children);
+                }
+            }
+            Self::Unset(node) => visit(&mut node.children),
+            Self::Glue {
+                leader: Some(LeaderPayload::HList(node) | LeaderPayload::VList(node)),
+                ..
+            } => {
+                visit(&mut node.children);
+                if let Some(children) = &mut node.diagnostic_children {
+                    visit(children);
+                }
+            }
+            Self::Disc {
+                pre, post, replace, ..
+            } => {
+                visit(pre);
+                visit(post);
+                visit(replace);
+            }
+            Self::Ins { content, .. } => visit(content),
+            Self::MathNoad(noad) => {
+                field(&mut noad.nucleus, &mut visit);
+                field(&mut noad.subscript, &mut visit);
+                field(&mut noad.superscript, &mut visit);
+            }
+            Self::FractionNoad(fraction) => {
+                visit(&mut fraction.numerator);
+                visit(&mut fraction.denominator);
+            }
+            Self::MathChoice(choice) => {
+                visit(&mut choice.display);
+                visit(&mut choice.text);
+                visit(&mut choice.script);
+                visit(&mut choice.script_script);
+            }
+            Self::MathList(list) => visit(&mut list.content),
+            Self::Adjust(adjustment) => visit(&mut adjustment.content),
+            Self::Char { .. }
+            | Self::Lig { .. }
+            | Self::Kern { .. }
+            | Self::MarginKern { .. }
+            | Self::Glue { .. }
+            | Self::Penalty(_)
+            | Self::Rule { .. }
+            | Self::Mark { .. }
+            | Self::Whatsit(_)
+            | Self::MathOn(_)
+            | Self::MathOff(_)
+            | Self::Direction(_)
+            | Self::MathStyle(_)
+            | Self::Nonscript => {}
+        }
+    }
+
+    pub(crate) fn map_lists<Other>(self, mut map: impl FnMut(List) -> Other) -> Node<Other> {
+        match self {
+            Self::Char { font, ch, origin } => Node::Char { font, ch, origin },
+            Self::Lig {
+                font,
+                ch,
+                orig,
+                left_hit,
+                right_hit,
+                origins,
+            } => Node::Lig {
+                font,
+                ch,
+                orig,
+                left_hit,
+                right_hit,
+                origins,
+            },
+            Self::Kern { amount, kind } => Node::Kern { amount, kind },
+            Self::MarginKern {
+                amount,
+                side,
+                font,
+                ch,
+            } => Node::MarginKern {
+                amount,
+                side,
+                font,
+                ch,
+            },
+            Self::Glue { spec, kind, leader } => Node::Glue {
+                spec,
+                kind,
+                leader: leader.map(|value| value.map_lists(&mut map)),
+            },
+            Self::Penalty(value) => Node::Penalty(value),
+            Self::Rule {
+                width,
+                height,
+                depth,
+            } => Node::Rule {
+                width,
+                height,
+                depth,
+            },
+            Self::HList(value) => Node::HList(value.map_lists(&mut map)),
+            Self::VList(value) => Node::VList(value.map_lists(&mut map)),
+            Self::Unset(value) => Node::Unset(value.map_list(&mut map)),
+            Self::Disc {
+                kind,
+                pre,
+                post,
+                replace,
+                physical_replace_count,
+            } => Node::Disc {
+                kind,
+                pre: map(pre),
+                post: map(post),
+                replace: map(replace),
+                physical_replace_count,
+            },
+            Self::Mark { class, tokens } => Node::Mark { class, tokens },
+            Self::Ins {
+                class,
+                size,
+                split_top_skip,
+                split_max_depth,
+                floating_penalty,
+                content,
+            } => Node::Ins {
+                class,
+                size,
+                split_top_skip,
+                split_max_depth,
+                floating_penalty,
+                content: map(content),
+            },
+            Self::Whatsit(value) => Node::Whatsit(value),
+            Self::MathOn(value) => Node::MathOn(value),
+            Self::MathOff(value) => Node::MathOff(value),
+            Self::Direction(value) => Node::Direction(value),
+            Self::MathNoad(value) => Node::MathNoad(value.map_lists(&mut map)),
+            Self::FractionNoad(value) => Node::FractionNoad(value.map_lists(&mut map)),
+            Self::MathStyle(value) => Node::MathStyle(value),
+            Self::MathChoice(value) => Node::MathChoice(value.map_lists(&mut map)),
+            Self::MathList(value) => Node::MathList(value.map_list(&mut map)),
+            Self::Nonscript => Node::Nonscript,
+            Self::Adjust(value) => Node::Adjust(value.map_list(map)),
+        }
+    }
+}
+
 impl PartialEq for Node {
     fn eq(&self, other: &Self) -> bool {
-        crate::node_arena::NodeRef::from(self) == crate::node_arena::NodeRef::from(other)
+        let empty = NodeListRef::empty();
+        let mut left_shape = self.clone();
+        left_shape.visit_node_lists_mut(|list| *list = empty.clone());
+        let mut right_shape = other.clone();
+        right_shape.visit_node_lists_mut(|list| *list = empty.clone());
+        if crate::node_arena::NodeRef::from(&left_shape)
+            != crate::node_arena::NodeRef::from(&right_shape)
+        {
+            return false;
+        }
+
+        let mut left_children = Vec::new();
+        self.visit_semantic_node_lists(|list| left_children.push(list.clone()));
+        let mut right_children = Vec::new();
+        other.visit_semantic_node_lists(|list| right_children.push(list.clone()));
+        left_children == right_children
     }
 }
 
@@ -272,24 +579,31 @@ pub(crate) fn record_node_append(node: &Node) {
 /// Ordinary TeX adjustments migrate after their containing horizontal box;
 /// pdfTeX's `pre` form migrates before it.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct AdjustNode {
-    pub content: NodeListId,
+pub struct AdjustNode<List = NodeListRef> {
+    pub content: List,
     pub pre: bool,
 }
 
-impl AdjustNode {
+impl<List> AdjustNode<List> {
     #[must_use]
-    pub const fn ordinary(content: NodeListId) -> Self {
+    pub fn ordinary(content: List) -> Self {
         Self {
             content,
             pre: false,
+        }
+    }
+
+    pub(crate) fn map_list<Other>(self, map: impl FnOnce(List) -> Other) -> AdjustNode<Other> {
+        AdjustNode {
+            content: map(self.content),
+            pre: self.pre,
         }
     }
 }
 
 /// A TeX box node payload shared by hlist and vlist nodes.
 #[derive(Clone, Copy, Debug)]
-pub struct BoxNode {
+pub struct BoxNode<List = NodeListRef> {
     pub width: Scaled,
     pub height: Scaled,
     pub depth: Scaled,
@@ -300,18 +614,18 @@ pub struct BoxNode {
     pub glue_set: GlueSetRatio,
     pub glue_sign: Sign,
     pub glue_order: Order,
-    pub children: NodeListId,
-    pub diagnostic_children: Option<NodeListId>,
+    pub children: List,
+    pub diagnostic_children: Option<List>,
     /// Direct high-memory cells shared with `diagnostic_children` by exact
     /// allocator lineage. This allocator projection is nonsemantic and is not
     /// part of the portable format schema.
     pub allocator_high_cell_overlap: u32,
 }
 
-impl BoxNode {
+impl<List> BoxNode<List> {
     /// Creates a box payload.
     #[must_use]
-    pub fn new(fields: BoxNodeFields) -> Self {
+    pub fn new(fields: BoxNodeFields<List>) -> Self {
         Self {
             width: fields.width,
             height: fields.height,
@@ -326,9 +640,25 @@ impl BoxNode {
             allocator_high_cell_overlap: 0,
         }
     }
+
+    pub(crate) fn map_lists<Other>(self, mut map: impl FnMut(List) -> Other) -> BoxNode<Other> {
+        BoxNode {
+            width: self.width,
+            height: self.height,
+            depth: self.depth,
+            shift: self.shift,
+            box_lr: self.box_lr,
+            glue_set: self.glue_set,
+            glue_sign: self.glue_sign,
+            glue_order: self.glue_order,
+            children: map(self.children),
+            diagnostic_children: self.diagnostic_children.map(map),
+            allocator_high_cell_overlap: self.allocator_high_cell_overlap,
+        }
+    }
 }
 
-impl PartialEq for BoxNode {
+impl<List: PartialEq> PartialEq for BoxNode<List> {
     fn eq(&self, other: &Self) -> bool {
         self.width == other.width
             && self.height == other.height
@@ -344,7 +674,7 @@ impl PartialEq for BoxNode {
 
 /// Construction fields for a TeX box node payload.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct BoxNodeFields {
+pub struct BoxNodeFields<List = NodeListRef> {
     pub width: Scaled,
     pub height: Scaled,
     pub depth: Scaled,
@@ -353,7 +683,7 @@ pub struct BoxNodeFields {
     pub glue_set: GlueSetRatio,
     pub glue_sign: Sign,
     pub glue_order: Order,
-    pub children: NodeListId,
+    pub children: List,
 }
 
 /// Direction/reversal identity carried by an e-TeX horizontal box.
@@ -373,9 +703,9 @@ pub enum BoxLr {
 
 /// Repeated material attached to a leader glue node.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub enum LeaderPayload {
-    HList(BoxNode),
-    VList(BoxNode),
+pub enum LeaderPayload<List = NodeListRef> {
+    HList(BoxNode<List>),
+    VList(BoxNode<List>),
     Rule {
         width: Option<Scaled>,
         height: Option<Scaled>,
@@ -383,9 +713,27 @@ pub enum LeaderPayload {
     },
 }
 
+impl<List> LeaderPayload<List> {
+    pub(crate) fn map_lists<Other>(self, map: impl FnMut(List) -> Other) -> LeaderPayload<Other> {
+        match self {
+            Self::HList(value) => LeaderPayload::HList(value.map_lists(map)),
+            Self::VList(value) => LeaderPayload::VList(value.map_lists(map)),
+            Self::Rule {
+                width,
+                height,
+                depth,
+            } => LeaderPayload::Rule {
+                width,
+                height,
+                depth,
+            },
+        }
+    }
+}
+
 /// A TeX unset box used while alignments are being measured and resolved.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct UnsetNode {
+pub struct UnsetNode<List = NodeListRef> {
     pub kind: UnsetKind,
     pub width: Scaled,
     pub height: Scaled,
@@ -396,13 +744,13 @@ pub struct UnsetNode {
     pub stretch_order: Order,
     pub shrink: Scaled,
     pub shrink_order: Order,
-    pub children: NodeListId,
+    pub children: List,
 }
 
-impl UnsetNode {
+impl<List> UnsetNode<List> {
     /// Creates an unset box payload.
     #[must_use]
-    pub fn new(fields: UnsetNodeFields) -> Self {
+    pub fn new(fields: UnsetNodeFields<List>) -> Self {
         Self {
             kind: fields.kind,
             width: fields.width,
@@ -416,11 +764,26 @@ impl UnsetNode {
             children: fields.children,
         }
     }
+
+    pub(crate) fn map_list<Other>(self, map: impl FnOnce(List) -> Other) -> UnsetNode<Other> {
+        UnsetNode {
+            kind: self.kind,
+            width: self.width,
+            height: self.height,
+            depth: self.depth,
+            span_count: self.span_count,
+            stretch: self.stretch,
+            stretch_order: self.stretch_order,
+            shrink: self.shrink,
+            shrink_order: self.shrink_order,
+            children: map(self.children),
+        }
+    }
 }
 
 /// Construction fields for an unset alignment box.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct UnsetNodeFields {
+pub struct UnsetNodeFields<List = NodeListRef> {
     pub kind: UnsetKind,
     pub width: Scaled,
     pub height: Scaled,
@@ -431,7 +794,7 @@ pub struct UnsetNodeFields {
     pub stretch_order: Order,
     pub shrink: Scaled,
     pub shrink_order: Order,
-    pub children: NodeListId,
+    pub children: List,
 }
 
 /// Whether an unset node was packaged with horizontal or vertical metrics.

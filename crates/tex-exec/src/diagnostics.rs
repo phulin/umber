@@ -487,7 +487,7 @@ pub(crate) fn execute_showlists(
                     DumpConfig::read(stores).for_profile(profile),
                 ));
             }
-        } else if let Some(nodes) = showlists_level_nodes(stores, summary.levels(), index) {
+        } else if let Some(nodes) = showlists_level_nodes(summary.levels(), index) {
             if index == 0 {
                 text.push_str("### recent contributions:\n");
             }
@@ -557,7 +557,6 @@ pub(crate) fn execute_showlists(
 /// project Umber's typed `DisplayEqNo` owner back onto that level instead of
 /// displaying the now-empty construction list.
 fn showlists_level_nodes(
-    stores: &Universe,
     levels: &[crate::mode::ModeLevelSummary],
     index: usize,
 ) -> Option<Vec<tex_state::node::Node>> {
@@ -567,7 +566,7 @@ fn showlists_level_nodes(
             .get(index + 1)
             .and_then(|inner| inner.list().display_eq_no())
     {
-        return Some(stores.nodes(eq_no.display).to_vec());
+        return Some(eq_no.display.to_vec());
     }
     (!level.list().physical_nodes().is_empty()).then(|| level.list().physical_nodes().to_vec())
 }

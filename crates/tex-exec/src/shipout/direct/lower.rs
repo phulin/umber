@@ -77,7 +77,7 @@ pub(crate) fn page_counts(stores: &Universe) -> [i32; 10] {
     counts
 }
 
-pub(super) fn lower_box_header(box_node: &StateBoxNode) -> PageBoxNode {
+pub(super) fn lower_box_header<List>(box_node: &StateBoxNode<List>) -> PageBoxNode {
     PageBoxNode {
         width: box_node.width,
         height: box_node.height,

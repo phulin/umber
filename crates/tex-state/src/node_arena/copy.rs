@@ -284,14 +284,14 @@ fn copy_vec_row<T: Clone>(
     NodeWord::sidecar(tag, row)
 }
 
-fn math_field_child(field: &MathField) -> Option<NodeListId> {
+fn math_field_child(field: &MathField<NodeListId>) -> Option<NodeListId> {
     match field {
         MathField::SubBox(id) | MathField::SubMlist(id) => Some(*id),
         MathField::Empty | MathField::MathChar(_) | MathField::MathTextChar(_) => None,
     }
 }
 
-fn leader_child(payload: &crate::node::LeaderPayload) -> Option<NodeListId> {
+fn leader_child(payload: &crate::node::LeaderPayload<NodeListId>) -> Option<NodeListId> {
     match payload {
         crate::node::LeaderPayload::HList(value) | crate::node::LeaderPayload::VList(value) => {
             Some(value.children)

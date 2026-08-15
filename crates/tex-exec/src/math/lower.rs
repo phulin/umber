@@ -6,6 +6,7 @@ use tex_state::ids::GlueId;
 use tex_state::ids::{FontId, NodeListId};
 use tex_state::math::MathListNode;
 use tex_state::node::{BoxNode, BoxNodeFields, GlueKind, Node};
+use tex_state::node_arena::NodeListRef;
 use tex_state::scaled::Scaled;
 use tex_state::{GeometryObservation, Universe};
 use tex_typeset::TypesetState;
@@ -95,7 +96,7 @@ fn finish_math_list_node_with_reads(
 
 pub(super) fn convert_math_hlist_with_error_context(
     stores: &mut Universe,
-    input: NodeListId,
+    input: NodeListRef,
     style: Style,
     penalties: bool,
     params: &MathParams,
@@ -107,7 +108,7 @@ pub(super) fn convert_math_hlist_with_error_context(
 
 fn convert_math_hlist_with_sink(
     sink: &mut LoweredMathSink<'_>,
-    input: NodeListId,
+    input: NodeListRef,
     style: Style,
     penalties: bool,
     params: &MathParams,
@@ -161,6 +162,7 @@ impl<'a> LoweredMathSink<'a> {
                     unreachable!()
                 };
                 let children = self.stores.freeze_node_list(&scratch[start..]);
+                let children = self.stores.node_list_ref(children);
                 scratch.truncate(start);
                 let boxed_node = lower_math_box(&boxed, children);
                 scratch.push(if vertical {
@@ -209,7 +211,7 @@ impl<'a> LoweredMathSink<'a> {
                     scratch.push(Node::Glue {
                         spec: id,
                         kind: lower_math_glue_kind(*kind),
-                        leader: *leader,
+                        leader: leader.clone(),
                     });
                 }
                 MathNode::Penalty(penalty) => scratch.push(Node::Penalty(*penalty)),
@@ -419,7 +421,7 @@ pub(crate) fn finish_math_lists_owned(
     out
 }
 
-fn lower_math_box(boxed: &MathBox, children: tex_state::ids::NodeListId) -> BoxNode {
+fn lower_math_box(boxed: &MathBox, children: NodeListRef) -> BoxNode {
     BoxNode::new(BoxNodeFields {
         width: boxed.width,
         height: boxed.height,

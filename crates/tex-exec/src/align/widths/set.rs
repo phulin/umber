@@ -3,8 +3,8 @@ use tex_state::Universe;
 mod tests;
 
 use tex_state::glue::{GlueSpec, Order};
-use tex_state::ids::NodeListId;
 use tex_state::node::{BoxNode, BoxNodeFields, Node, Sign, UnsetNode};
+use tex_state::node_arena::NodeListRef;
 use tex_state::scaled::{GlueSetRatio, Scaled};
 
 use crate::ExecError;
@@ -15,12 +15,12 @@ use super::{
     tabskip_node, unset_axis_size,
 };
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct SetConfig<'a> {
     kind: AlignmentKind,
     resolved: &'a ResolvedWidths,
     prototype: &'a Prototype,
-    empty: NodeListId,
+    empty: NodeListRef,
     /// TeX82 §800's `o`: `display_indent` when the alignment is a display,
     /// zero otherwise. §807 shifts every row by it and §806 every rule.
     offset: Scaled,
@@ -31,7 +31,7 @@ pub(super) fn set_alignment_nodes(
     rows: &[Node],
     resolved: &ResolvedWidths,
     prototype: &Prototype,
-    empty: NodeListId,
+    empty: NodeListRef,
     offset: Scaled,
     stores: &mut Universe,
 ) -> Result<Vec<Node>, ExecError> {
@@ -46,10 +46,10 @@ pub(super) fn set_alignment_nodes(
     for node in rows {
         match node {
             Node::Unset(row) => {
-                let set = set_row(config, row, stores)?;
+                let set = set_row(&config, row, stores)?;
                 out.push(set);
             }
-            Node::Rule { .. } => out.push(set_running_rule(config, node, stores)),
+            Node::Rule { .. } => out.push(set_running_rule(&config, node, stores)),
             _ => out.push(node.clone()),
         }
     }
@@ -66,7 +66,7 @@ pub(super) fn set_alignment_nodes(
 /// indent one by wrapping it in a box. §807 shifts rows by the same `o`, and
 /// leaving the rule unwrapped left it starting at the margin while every row
 /// beside it was indented (`umber2-jnfg`).
-fn set_running_rule(config: SetConfig<'_>, node: &Node, stores: &mut Universe) -> Node {
+fn set_running_rule(config: &SetConfig<'_>, node: &Node, stores: &mut Universe) -> Node {
     let prototype = &config.prototype.box_node;
     let Node::Rule {
         width,
@@ -100,12 +100,13 @@ fn set_running_rule(config: SetConfig<'_>, node: &Node, stores: &mut Universe) -
 }
 
 fn set_row(
-    config: SetConfig<'_>,
+    config: &SetConfig<'_>,
     row: &UnsetNode,
     stores: &mut Universe,
 ) -> Result<Node, ExecError> {
     let children = set_row_children(config, row, stores)?;
     let children = stores.freeze_node_list(&children);
+    let children = stores.node_list_ref(children);
     let fields = match config.kind {
         AlignmentKind::HAlign => BoxNodeFields {
             width: config.prototype.box_node.width,
@@ -116,7 +117,7 @@ fn set_row(
             glue_set: config.prototype.box_node.glue_set,
             glue_sign: config.prototype.box_node.glue_sign,
             glue_order: config.prototype.box_node.glue_order,
-            children,
+            children: children.clone(),
         },
         AlignmentKind::VAlign => BoxNodeFields {
             width: row.width,
@@ -137,13 +138,13 @@ fn set_row(
 }
 
 fn set_row_children(
-    config: SetConfig<'_>,
+    config: &SetConfig<'_>,
     row: &UnsetNode,
     stores: &Universe,
 ) -> Result<Vec<Node>, ExecError> {
     let mut out = Vec::new();
     let mut column = 0usize;
-    for child in stores.nodes(row.children) {
+    for child in row.children.nodes() {
         match child {
             tex_state::node_arena::NodeRef::Unset(cell) => {
                 let span = usize::from(cell.span_count) + 1;
@@ -156,21 +157,25 @@ fn set_row_children(
                     out.push(empty_column_box(
                         config.kind,
                         config.resolved.columns[spanned_column],
-                        config.empty,
+                        config.empty.clone(),
                     ));
                 }
                 column += span;
             }
-            _ => out.push(child.to_owned()),
+            _ => out.push(child.to_owned_with(|nested| {
+                row.children
+                    .resolve(nested)
+                    .expect("alignment row child belongs to the row payload")
+            })),
         }
     }
     Ok(out)
 }
 
 fn set_cell(
-    config: SetConfig<'_>,
+    config: &SetConfig<'_>,
     row: &UnsetNode,
-    cell: &UnsetNode,
+    cell: &UnsetNode<tex_state::ids::NodeListId>,
     column: usize,
     span: usize,
     stores: &Universe,
@@ -188,7 +193,10 @@ fn set_cell(
             glue_set: glue.ratio,
             glue_sign: glue.sign,
             glue_order: glue.order,
-            children: cell.children,
+            children: row
+                .children
+                .resolve(cell.children)
+                .expect("alignment cell belongs to the row payload"),
         },
         AlignmentKind::VAlign => BoxNodeFields {
             width: row.width,
@@ -199,7 +207,10 @@ fn set_cell(
             glue_set: glue.ratio,
             glue_sign: glue.sign,
             glue_order: glue.order,
-            children: cell.children,
+            children: row
+                .children
+                .resolve(cell.children)
+                .expect("alignment cell belongs to the row payload"),
         },
     };
     Ok(match config.kind {
@@ -249,7 +260,7 @@ struct GlueSetting {
 
 fn cell_glue_setting(
     kind: AlignmentKind,
-    cell: &UnsetNode,
+    cell: &UnsetNode<tex_state::ids::NodeListId>,
     target: Scaled,
 ) -> Result<GlueSetting, ExecError> {
     let natural = unset_axis_size(kind, cell)?;
