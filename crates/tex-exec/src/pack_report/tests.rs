@@ -56,7 +56,6 @@ fn short_display_skips_the_physical_discretionary_replacement_count() {
         amount: Scaled::from_raw(Scaled::UNITY),
         kind: KernKind::Explicit,
     }]);
-    let replacement = stores.node_list_ref(replacement);
     let space = stores.intern_glue(GlueSpec {
         width: Scaled::from_raw(Scaled::UNITY),
         ..GlueSpec::ZERO
@@ -95,7 +94,6 @@ fn short_display_skips_the_physical_discretionary_replacement_count() {
     ]);
 
     let list = stores.freeze_node_list(&nodes);
-    let list = stores.node_list_ref(list);
     assert_eq!(
         ShortDisplayRenderer::new().render_list(&stores, list),
         "[][][] [] [] []|"
@@ -115,7 +113,6 @@ fn short_display_retains_rule_after_nonphysical_discretionary_replacement() {
         amount: Scaled::from_raw(Scaled::UNITY),
         kind: KernKind::Explicit,
     }]);
-    let replacement = stores.node_list_ref(replacement);
     let space = stores.intern_glue(GlueSpec {
         width: Scaled::from_raw(Scaled::UNITY),
         ..GlueSpec::ZERO
@@ -149,7 +146,6 @@ fn short_display_retains_rule_after_nonphysical_discretionary_replacement() {
     ]);
 
     let list = stores.freeze_node_list(&nodes);
-    let list = stores.node_list_ref(list);
     assert_eq!(
         ShortDisplayRenderer::new().render_list(&stores, list),
         "[][][] [] [] []|"
@@ -184,7 +180,6 @@ fn short_display_physical_count_is_independent_of_empty_side_list() {
     ];
 
     let list = stores.freeze_node_list(&nodes);
-    let list = stores.node_list_ref(list);
     assert_eq!(ShortDisplayRenderer::new().render_list(&stores, list), "|");
 }
 
@@ -206,7 +201,6 @@ fn line_trace_projection_renders_detached_replacement_content() {
             .collect::<Vec<_>>()
     };
     let pre = stores.freeze_node_list(&chars("B-"));
-    let pre = stores.node_list_ref(pre);
     let empty = tex_state::node_arena::NodeListRef::empty();
     let mut nodes = vec![Node::Disc {
         kind: DiscKind::Discretionary,
@@ -241,11 +235,8 @@ fn frozen_line_diagnostic_renders_both_disc_branches_then_skips_replacement() {
             .collect::<Vec<_>>()
     };
     let pre = stores.freeze_node_list(&chars("-"));
-    let pre = stores.node_list_ref(pre);
     let post = stores.freeze_node_list(&chars("B-"));
-    let post = stores.node_list_ref(post);
     let replacement = stores.freeze_node_list(&chars("X"));
-    let replacement = stores.node_list_ref(replacement);
     let mut nodes = chars("BB");
     nodes.push(Node::Disc {
         kind: DiscKind::AutomaticHyphen,
@@ -256,7 +247,6 @@ fn frozen_line_diagnostic_renders_both_disc_branches_then_skips_replacement() {
     });
     nodes.extend(chars("XBBB"));
     let list = stores.freeze_node_list(&nodes);
-    let list = stores.node_list_ref(list);
 
     assert_eq!(
         ShortDisplayRenderer::new().render_list(&stores, list),
@@ -282,12 +272,10 @@ fn short_display_maps_all_node_classes() {
         amount: Scaled::from_raw(Scaled::UNITY),
         kind: KernKind::Explicit,
     }]);
-    let pre = stores.node_list_ref(pre);
     let post = stores.freeze_node_list(&[Node::Kern {
         amount: Scaled::from_raw(2 * Scaled::UNITY),
         kind: KernKind::Explicit,
     }]);
-    let post = stores.node_list_ref(post);
     let nodes = [
         empty_hbox(&mut stores),
         Node::Rule {

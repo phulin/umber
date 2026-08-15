@@ -291,7 +291,7 @@ fn chars(text: &str) -> Vec<Token> {
     text.chars().map(other).collect()
 }
 
-fn boxed(universe: &mut Universe, vertical: bool) -> tex_state::ids::NodeListId {
+fn boxed(universe: &mut Universe, vertical: bool) -> tex_state::node_arena::NodeListRef {
     boxed_with_dimensions(
         universe,
         vertical,
@@ -307,7 +307,7 @@ fn boxed_with_dimensions(
     width: tex_state::scaled::Scaled,
     height: tex_state::scaled::Scaled,
     depth: tex_state::scaled::Scaled,
-) -> tex_state::ids::NodeListId {
+) -> tex_state::node_arena::NodeListRef {
     use tex_state::glue::Order;
     use tex_state::node::{BoxNode, BoxNodeFields, Node, Sign};
     use tex_state::scaled::GlueSetRatio;
@@ -1188,7 +1188,7 @@ fn ifdim_scans_box_dimensions_as_internal_dimensions() {
         Scaled::from_raw(2 * Scaled::UNITY),
         Scaled::from_raw(3 * Scaled::UNITY),
     );
-    universe.set_box_reg(3, box_node);
+    universe.set_box_reg_ref(3, box_node);
 
     let mut tokens = Vec::new();
     for (primitive, expected, selected) in [(wd, "1pt", 'w'), (ht, "2pt", 'h'), (dp, "3pt", 'd')] {
@@ -1234,7 +1234,7 @@ fn ifdim_box_dimension_accepts_a_dimension_register_selector() {
         Scaled::from_raw(2 * Scaled::UNITY),
         Scaled::from_raw(0),
     );
-    universe.set_box_reg(0, box_node);
+    universe.set_box_reg_ref(0, box_node);
     push(
         &mut command,
         vec![
@@ -1270,8 +1270,8 @@ fn mode_and_box_predicates_use_host_and_aggregate_queries() {
     let fi = install(&mut universe, "fi", ExpandablePrimitive::Fi);
     let hbox = boxed(&mut universe, false);
     let vbox = boxed(&mut universe, true);
-    universe.set_box_reg(1, hbox);
-    universe.set_box_reg(2, vbox);
+    universe.set_box_reg_ref(1, hbox);
+    universe.set_box_reg_ref(2, vbox);
     push(
         &mut command,
         vec![
@@ -1917,8 +1917,8 @@ fn predicate_dispatch_covers_all_seventeen_kinds_and_state_queries() {
     let mut universe = crate::test_harness::universe();
     let hbox = boxed(&mut universe, false);
     let vbox = boxed(&mut universe, true);
-    universe.set_box_reg(1, hbox);
-    universe.set_box_reg(2, vbox);
+    universe.set_box_reg_ref(1, hbox);
+    universe.set_box_reg_ref(2, vbox);
     universe
         .world_mut()
         .set_memory_file("dispatch-stream.tex", b"line\n".to_vec())
@@ -2258,7 +2258,7 @@ fn box_with_content(
     universe: &mut Universe,
     vertical: bool,
     nonempty: bool,
-) -> tex_state::ids::NodeListId {
+) -> tex_state::node_arena::NodeListRef {
     use tex_state::glue::Order;
     use tex_state::node::{BoxNode, BoxNodeFields, Node, Sign};
     use tex_state::scaled::{GlueSetRatio, Scaled};
@@ -2299,11 +2299,11 @@ fn ifvoid_ifhbox_ifvbox_register_kind_matrix() {
     // observable: an out-of-range selector must answer for register zero,
     // not for the absent register the digits spelled.
     let hbox_recovered = box_with_content(&mut universe, false, true);
-    universe.set_box_reg(0, hbox_recovered);
-    universe.set_box_reg(1, hbox_empty);
-    universe.set_box_reg(2, hbox_nonempty);
-    universe.set_box_reg(3, vbox_empty);
-    universe.set_box_reg(4, vbox_nonempty);
+    universe.set_box_reg_ref(0, hbox_recovered);
+    universe.set_box_reg_ref(1, hbox_empty);
+    universe.set_box_reg_ref(2, hbox_nonempty);
+    universe.set_box_reg_ref(3, vbox_empty);
+    universe.set_box_reg_ref(4, vbox_nonempty);
 
     // The last two selectors are §433's two out-of-range directions, which
     // §505 reaches through `scan_eight_bit_int`: both report "Bad register
@@ -2364,9 +2364,9 @@ fn etex_box_conditionals_read_sparse_register_kinds() {
     let dense_sentinel = box_with_content(&mut universe, true, false);
     let sparse_hbox = box_with_content(&mut universe, false, false);
     let sparse_vbox = box_with_content(&mut universe, true, false);
-    universe.set_box_reg(0, dense_sentinel);
-    universe.set_box_reg(300, sparse_hbox);
-    universe.set_box_reg(301, sparse_vbox);
+    universe.set_box_reg_ref(0, dense_sentinel);
+    universe.set_box_reg_ref(300, sparse_hbox);
+    universe.set_box_reg_ref(301, sparse_vbox);
 
     let mut tokens = Vec::new();
     for (primitive, register) in [

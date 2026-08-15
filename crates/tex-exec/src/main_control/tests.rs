@@ -71,27 +71,23 @@ fn aggregate_step_marks_commit_private_work_and_truncate_failed_suffixes_exactly
 }
 
 #[test]
-fn private_box_construction_promotes_only_committed_lists() {
+fn private_box_construction_retains_only_committed_lists() {
     let mut stores = Universe::new_with_plain_catcodes();
     let mut control = MainControl::tex82_initex(&mut stores);
     stores.begin_private_revision();
-    let baseline = stores.testing_epoch_node_count();
     register_source(&mut control, br"\setbox0=\hbox{\kern1pt}");
 
     run_to_end(&mut control, &mut stores);
 
-    assert_eq!(stores.testing_epoch_node_count(), baseline);
-    let boxed = stores.box_reg(0).expect("completed box is committed");
-    assert!(matches!(
-        boxed.arena(),
-        tex_state::ids::ArenaRef::Survivor(_)
-    ));
-    let children = match stores.nodes(boxed).first() {
-        Some(tex_state::node_arena::NodeRef::HList(node)) => node.children,
+    let boxed = stores.box_reg_ref(0).expect("completed box is committed");
+    let children = match boxed.nodes().first() {
+        Some(tex_state::node_arena::NodeRef::HList(node)) => boxed
+            .resolve(node.children)
+            .expect("hbox children belong to the committed owner"),
         other => panic!("expected committed hbox, got {other:?}"),
     };
     assert!(matches!(
-        stores.nodes(children).first(),
+        children.nodes().first(),
         Some(tex_state::node_arena::NodeRef::Kern { .. })
     ));
 }
@@ -214,11 +210,9 @@ fn box_save_stack_projection_distinguishes_scan_spec_callers() {
 
 fn box_child_nodes(stores: &Universe, register: u16) -> Vec<Node> {
     let list = stores
-        .box_reg(register)
+        .box_reg_ref(register)
         .unwrap_or_else(|| panic!("box register {register} is nonvoid"));
-    let boxed = stores
-        .published_node_list_ref(list)
-        .unwrap_or_else(|| panic!("box register {register} retains its node owner"))
+    let boxed = list
         .to_vec()
         .into_iter()
         .next()
@@ -230,10 +224,11 @@ fn box_child_nodes(stores: &Universe, register: u16) -> Vec<Node> {
     children.to_vec()
 }
 
-fn first_published_node(stores: &Universe, list: tex_state::ids::NodeListId) -> Option<Node> {
-    stores
-        .published_node_list_ref(list)
-        .and_then(|owner| owner.to_vec().into_iter().next())
+fn first_published_node(
+    _stores: &Universe,
+    list: tex_state::node_arena::NodeListRef,
+) -> Option<Node> {
+    list.to_vec().into_iter().next()
 }
 
 fn tabskip_widths(stores: &Universe, nodes: &[Node], widths: &mut Vec<i32>) {
@@ -381,13 +376,13 @@ fn packaged_row_projection(stores: &Universe, row: &Node) -> Vec<PackagedRowItem
 }
 
 fn alignment_node_projection(stores: &Universe, nodes: &[Node]) -> Vec<AlignmentNodeProjection> {
-    fn kerns(stores: &Universe, nodes: &tex_state::node_arena::NodeListRef) -> Vec<i32> {
+    fn kerns(nodes: &tex_state::node_arena::NodeListRef) -> Vec<i32> {
         let mut out = Vec::new();
         for node in nodes.to_vec() {
             match node {
                 Node::Kern { amount, .. } => out.push(amount.raw()),
                 Node::HList(boxed) | Node::VList(boxed) => {
-                    out.extend(kerns(stores, &boxed.children));
+                    out.extend(kerns(&boxed.children));
                 }
                 _ => {}
             }
@@ -431,7 +426,7 @@ fn alignment_node_projection(stores: &Universe, nodes: &[Node]) -> Vec<Alignment
             }),
             Node::HList(boxed) | Node::VList(boxed) => Some(AlignmentNodeProjection::Box {
                 shift: boxed.shift.raw(),
-                kerns: kerns(stores, &boxed.children),
+                kerns: kerns(&boxed.children),
             }),
             Node::Penalty(value) => Some(AlignmentNodeProjection::Penalty(*value)),
             Node::Kern { amount, .. } => Some(AlignmentNodeProjection::Kern(amount.raw())),
@@ -485,7 +480,7 @@ fn setbox_rejects_non_box_command_with_assignment_context_diagnostic() {
         !terminal.contains("A <box> was supposed to be here"),
         "{terminal}"
     );
-    assert!(stores.box_reg(0).is_none());
+    assert!(stores.box_reg_ref(0).is_none());
     assert_eq!(stores.count(0), 7);
     assert_eq!(stores.count(1), 9);
 }
@@ -507,7 +502,7 @@ fn forbidden_setbox_reports_before_reading_the_following_command() {
 
     let terminal = terminal_text(&stores);
     assert!(terminal.contains("Improper \\setbox"), "{terminal}");
-    assert!(stores.box_reg(0).is_none());
+    assert!(stores.box_reg_ref(0).is_none());
     assert_eq!(stores.count(0), 7);
 }
 
@@ -1313,7 +1308,7 @@ fn consuming_current_group_box_preserves_original_void_restore() {
         pending_sink_text(&stores, true),
         "{restoring \\box3=void}\n{restoring \\box2=void}\n"
     );
-    assert!(stores.box_reg(2).is_none());
+    assert!(stores.box_reg_ref(2).is_none());
 }
 
 #[test]
@@ -2304,7 +2299,7 @@ fn vtop_resets_inherited_parshape_before_display_line_measurement() {
 
     run_to_end(&mut control, &mut stores);
 
-    let root = stores.box_reg(0).expect("vtop is assigned to box 0");
+    let root = stores.box_reg_ref(0).expect("vtop is assigned to box 0");
     let Some(Node::VList(boxed)) = first_published_node(&stores, root) else {
         panic!("box 0 holds a vlist");
     };
@@ -2331,7 +2326,7 @@ fn preamble_span_expands_one_token_and_preserves_later_template_meaning() {
 
     run_to_end(&mut control, &mut stores);
 
-    let root = stores.box_reg(0).expect("vbox is assigned");
+    let root = stores.box_reg_ref(0).expect("vbox is assigned");
     let Some(Node::VList(boxed)) = first_published_node(&stores, root) else {
         panic!("box 0 holds a vlist");
     };
@@ -2359,7 +2354,7 @@ fn span_delimiter_ends_the_pending_ligkern_run() {
 
     run_to_end(&mut control, &mut stores);
 
-    let root = stores.box_reg(0).expect("vbox is assigned");
+    let root = stores.box_reg_ref(0).expect("vbox is assigned");
     let Some(Node::VList(boxed)) = first_published_node(&stores, root) else {
         panic!("box 0 holds a vlist");
     };
@@ -2391,26 +2386,25 @@ fn alignment_v_template_continues_the_pending_ligkern_run() {
 
     run_to_end(&mut control, &mut stores);
 
-    fn collect_ligatures(
-        stores: &Universe,
-        nodes: tex_state::ids::NodeListId,
-        found: &mut Vec<Vec<char>>,
-    ) {
-        for node in stores.nodes(nodes) {
+    fn collect_ligatures(nodes: &tex_state::node_arena::NodeListRef, found: &mut Vec<Vec<char>>) {
+        for node in nodes.nodes() {
             match node {
                 tex_state::node_arena::NodeRef::Lig { orig, .. } => found.push(orig.to_vec()),
                 tex_state::node_arena::NodeRef::HList(boxed)
                 | tex_state::node_arena::NodeRef::VList(boxed) => {
-                    collect_ligatures(stores, boxed.children, found);
+                    let children = nodes
+                        .resolve(boxed.children)
+                        .expect("box children belong to the traversed owner");
+                    collect_ligatures(&children, found);
                 }
                 _ => {}
             }
         }
     }
 
-    let root = stores.box_reg(0).expect("vbox is assigned");
+    let root = stores.box_reg_ref(0).expect("vbox is assigned");
     let mut ligatures = Vec::new();
-    collect_ligatures(&stores, root, &mut ligatures);
+    collect_ligatures(&root, &mut ligatures);
     assert_eq!(ligatures, [vec!['f', 'i']]);
 }
 
@@ -2433,7 +2427,7 @@ fn nested_valign_rows_do_not_contribute_baseline_glue_to_outer_cell_width() {
 
     run_to_end(&mut control, &mut stores);
 
-    let root = stores.box_reg(0).expect("outer vbox is assigned");
+    let root = stores.box_reg_ref(0).expect("outer vbox is assigned");
     let Some(Node::VList(boxed)) = first_published_node(&stores, root) else {
         panic!("box 0 holds a vlist");
     };
@@ -3277,8 +3271,10 @@ fn vsplit_kernel_separates_result_remainder_and_split_marks() {
 
     run_to_end(&mut control, &mut stores);
 
-    let split = stores.box_reg(1).expect("split prefix is assigned");
-    let remainder = stores.box_reg(0).expect("split remainder replaces source");
+    let split = stores.box_reg_ref(1).expect("split prefix is assigned");
+    let remainder = stores
+        .box_reg_ref(0)
+        .expect("split remainder replaces source");
     assert_ne!(
         split, remainder,
         "prefix and remainder have distinct ownership"
@@ -3416,7 +3412,7 @@ fn paragraph_boundaries_run_everypar_in_outer_and_internal_vertical_modes() {
 
     assert_eq!(stores.count(0), 2);
     assert_eq!(control.current_mode(), Mode::Vertical);
-    assert!(stores.box_reg(0).is_some());
+    assert!(stores.box_reg_ref(0).is_some());
     assert_eq!(stores.world().artifact_commits().len(), 1);
 }
 
@@ -4551,7 +4547,7 @@ fn stray_endv_in_math_inserts_shift_then_replays_for_off_save() {
     }
 }
 
-fn recursive_test_box(stores: &mut Universe) -> tex_state::ids::NodeListId {
+fn recursive_test_box(stores: &mut Universe) -> tex_state::node_arena::NodeListRef {
     use tex_state::font::NULL_FONT;
     use tex_state::glue::Order;
     use tex_state::node::{
@@ -4568,7 +4564,6 @@ fn recursive_test_box(stores: &mut Universe) -> tex_state::ids::NodeListId {
             depth: Some(Scaled::from_raw(103)),
         },
     ]);
-    let leaf = stores.node_list_ref(leaf);
     let box_node = |children| {
         BoxNode::new(BoxNodeFields {
             width: Scaled::from_raw(201),
@@ -4605,12 +4600,10 @@ fn recursive_test_box(stores: &mut Universe) -> tex_state::ids::NodeListId {
         ch: 'p',
         origin: tex_state::provenance::OriginRef::unknown(),
     }]);
-    let pre = stores.node_list_ref(pre);
     let post = stores.freeze_node_list(&[Node::Kern {
         amount: Scaled::from_raw(401),
         kind: tex_state::node::KernKind::Explicit,
     }]);
-    let post = stores.node_list_ref(post);
     let replace = stores.freeze_node_list(&[Node::Lig {
         font: NULL_FONT,
         ch: 'L',
@@ -4619,7 +4612,6 @@ fn recursive_test_box(stores: &mut Universe) -> tex_state::ids::NodeListId {
         left_hit: false,
         right_hit: false,
     }]);
-    let replace = stores.node_list_ref(replace);
 
     let children = stores.freeze_node_list(&[
         Node::Rule {
@@ -4678,15 +4670,14 @@ fn recursive_test_box(stores: &mut Universe) -> tex_state::ids::NodeListId {
             children: replace,
         })),
     ]);
-    let children = stores.node_list_ref(children);
     stores.freeze_node_list(&[Node::HList(box_node(children))])
 }
 
-fn recursive_node_signature(stores: &Universe, list: tex_state::ids::NodeListId) -> String {
-    let list = stores
-        .published_node_list_ref(list)
-        .expect("published recursive graph retains its immutable owner");
-    recursive_owned_node_signature(stores, &list)
+fn recursive_node_signature(
+    stores: &Universe,
+    list: &tex_state::node_arena::NodeListRef,
+) -> String {
+    recursive_owned_node_signature(stores, list)
 }
 
 fn recursive_owned_node_signature(
@@ -4793,26 +4784,27 @@ fn recursive_owned_node_signature(
 fn copy_preserves_every_recursive_node_payload_and_source_register() {
     let mut stores = Universe::new_with_plain_catcodes();
     let graph = recursive_test_box(&mut stores);
-    stores.set_box_reg(0, graph);
-    let source = stores.box_reg(0).expect("promoted source graph");
+    stores.set_box_reg_ref(0, graph);
+    let source = stores.box_reg_ref(0).expect("promoted source graph");
     let baseline = stores.snapshot();
 
     let mut control = MainControl::tex82_initex(&mut stores);
     register_source(&mut control, br"\setbox1=\copy0");
     run_to_end(&mut control, &mut stores);
-    assert_eq!(stores.box_reg(0), Some(source), "copy retains its source");
-
-    let copied = stores.box_reg(1).expect("copied register");
-    let expected = recursive_node_signature(&stores, copied);
     assert_eq!(
-        recursive_node_signature(&stores, source),
+        stores.box_reg_ref(0).as_ref(),
+        Some(&source),
+        "copy retains its source"
+    );
+
+    let copied = stores.box_reg_ref(1).expect("copied register");
+    let expected = recursive_node_signature(&stores, &copied);
+    assert_eq!(
+        recursive_node_signature(&stores, &source),
         expected,
         "copy retains the exact recursive structure"
     );
-    let copied_nodes = stores
-        .published_node_list_ref(copied)
-        .expect("copied register retains its immutable owner")
-        .to_vec();
+    let copied_nodes = copied.to_vec();
     let [Node::HList(root)] = copied_nodes.as_slice() else {
         panic!("fixture root should be an hbox")
     };
@@ -4828,30 +4820,30 @@ fn copy_preserves_every_recursive_node_payload_and_source_register() {
     let mut control = MainControl::tex82_initex(&mut stores);
     register_source(&mut control, br"\setbox2=\box0");
     run_to_end(&mut control, &mut stores);
-    assert!(stores.box_reg(0).is_none(), "box consumes its source");
+    assert!(stores.box_reg_ref(0).is_none(), "box consumes its source");
     assert_eq!(
-        stores.box_reg(1),
-        Some(copied),
+        stores.box_reg_ref(1),
+        Some(copied.clone()),
         "copy survives source release"
     );
-    let consumed = stores.box_reg(2).expect("consumed destination");
+    let consumed = stores.box_reg_ref(2).expect("consumed destination");
     assert_eq!(
-        recursive_node_signature(&stores, consumed),
+        recursive_node_signature(&stores, &consumed),
         expected,
         "consumption preserves graph"
     );
 
     stores.rollback(&baseline);
-    assert_eq!(stores.box_reg(0), Some(source));
-    assert!(stores.box_reg(1).is_none());
+    assert_eq!(stores.box_reg_ref(0).as_ref(), Some(&source));
+    assert!(stores.box_reg_ref(1).is_none());
 
-    stores.set_box_reg(1, source);
+    stores.set_box_reg_ref(1, source);
     let format = stores.dump_format().expect("recursive graph format dumps");
     let restored = Universe::from_format(tex_state::World::memory(), &format)
         .expect("recursive graph format restores");
-    let restored_graph = restored.box_reg(1).expect("restored recursive graph");
+    let restored_graph = restored.box_reg_ref(1).expect("restored recursive graph");
     assert_eq!(
-        recursive_node_signature(&restored, restored_graph),
+        recursive_node_signature(&restored, &restored_graph),
         expected
     );
     assert_eq!(
@@ -4870,11 +4862,8 @@ fn vertical_unbox_in_horizontal_mode_ends_the_paragraph_before_splicing() {
     );
     run_to_end(&mut control, &mut stores);
 
-    let box1 = stores.box_reg(1).expect("outer vbox exists");
-    let box1_nodes = stores
-        .published_node_list_ref(box1)
-        .expect("outer vbox retains its immutable owner")
-        .to_vec();
+    let box1 = stores.box_reg_ref(1).expect("outer vbox exists");
+    let box1_nodes = box1.to_vec();
     let [tex_state::node::Node::VList(outer)] = box1_nodes.as_slice() else {
         panic!("register 1 should hold a vbox");
     };
@@ -4888,13 +4877,13 @@ fn vertical_unbox_in_horizontal_mode_ends_the_paragraph_before_splicing() {
         "the paragraph line and unboxed vertical child remain sibling vlist nodes"
     );
     assert!(
-        stores.box_reg(0).is_none(),
+        stores.box_reg_ref(0).is_none(),
         "the retried unvbox is destructive"
     );
 }
 
 #[test]
-fn destructive_unbox_shares_nested_survivor_children_without_epoch_clone() {
+fn destructive_unbox_transfers_nested_structural_children() {
     let mut stores = Universe::new_with_plain_catcodes();
     let mut control = MainControl::tex82_initex(&mut stores);
     register_source(
@@ -4902,7 +4891,6 @@ fn destructive_unbox_shares_nested_survivor_children_without_epoch_clone() {
         br"\setbox0=\hbox{\hbox{\kern1pt}}\setbox1=\vbox{\vbox{\kern2pt}}",
     );
     run_to_end(&mut control, &mut stores);
-    let before = stores.testing_epoch_clone_counts();
 
     let mut control = MainControl::tex82_initex(&mut stores);
     register_source(
@@ -4911,25 +4899,20 @@ fn destructive_unbox_shares_nested_survivor_children_without_epoch_clone() {
     );
     run_to_end(&mut control, &mut stores);
 
-    let after = stores.testing_epoch_clone_counts();
-    assert_eq!(after, before, "unbox appends perform no epoch clones");
-    assert!(stores.box_reg(0).is_none());
-    assert!(stores.box_reg(1).is_none());
-    assert!(stores.box_reg(2).is_some());
-    assert!(stores.box_reg(3).is_some());
+    assert!(stores.box_reg_ref(0).is_none());
+    assert!(stores.box_reg_ref(1).is_none());
+    assert!(stores.box_reg_ref(2).is_some());
+    assert!(stores.box_reg_ref(3).is_some());
 }
 
 #[test]
-fn grouped_copy_keeps_survivor_children_without_epoch_clone() {
+fn grouped_copy_keeps_structural_children() {
     let mut stores = Universe::new_with_plain_catcodes();
     let mut control = MainControl::tex82_initex(&mut stores);
-    let before = stores.testing_epoch_clone_counts();
     register_source(&mut control, br"{\setbox0\hbox{X}\copy0}");
     run_to_end(&mut control, &mut stores);
 
-    assert_eq!(stores.box_reg(0), None);
-    assert_eq!(stores.testing_epoch_clone_counts(), before);
-    assert_eq!(stores.testing_survivor_pin_count(), 1);
+    assert_eq!(stores.box_reg_ref(0), None);
 }
 
 #[test]
@@ -4941,8 +4924,8 @@ fn incompatible_unbox_commands_preserve_registers_and_replay_state() {
         br"\setbox0=\vbox{\hbox{}}\setbox1=\hbox{\kern1pt}",
     );
     run_to_end(&mut control, &mut stores);
-    let vbox = stores.box_reg(0);
-    let hbox = stores.box_reg(1);
+    let vbox = stores.box_reg_ref(0);
+    let hbox = stores.box_reg_ref(1);
     let source = "\\unhbox0\\par\\unhcopy0\\par\\unvbox1\\unvcopy1";
 
     let mut control = MainControl::tex82_initex(&mut stores);
@@ -4955,16 +4938,16 @@ fn incompatible_unbox_commands_preserve_registers_and_replay_state() {
         )
         .expect("incompatible unbox source checkpoints");
     run_to_end(&mut control, &mut stores);
-    assert_eq!(stores.box_reg(0), vbox);
-    assert_eq!(stores.box_reg(1), hbox);
+    assert_eq!(stores.box_reg_ref(0), vbox);
+    assert_eq!(stores.box_reg_ref(1), hbox);
     let first_output = terminal_text(&stores);
 
     control
         .restore_checkpoint(&checkpoint, &mut stores)
         .expect("incompatible unbox source restores");
     run_to_end(&mut control, &mut stores);
-    assert_eq!(stores.box_reg(0), vbox);
-    assert_eq!(stores.box_reg(1), hbox);
+    assert_eq!(stores.box_reg_ref(0), vbox);
+    assert_eq!(stores.box_reg_ref(1), hbox);
     assert_eq!(terminal_text(&stores), first_output);
 }
 
@@ -5741,7 +5724,7 @@ fn install_test_hbox(stores: &mut Universe, register: u16, width: Scaled) {
             children,
         },
     ))]);
-    stores.set_box_reg(register, list);
+    stores.set_box_reg_ref(register, list);
 }
 
 fn install_test_form(stores: &mut Universe) {
@@ -6009,7 +5992,7 @@ fn pdf_form_family_rejects_dvi_before_operands_allocation_and_list_mutation() {
         Err(ExecError::PdfExtensionInDviMode("pdfxform"))
     ));
     assert_eq!(create_stores.snapshot().state_hash(), state_before);
-    assert!(create_stores.box_reg(7).is_some());
+    assert!(create_stores.box_reg_ref(7).is_some());
     assert!(create_stores.pdf_forms().next().is_none());
     assert_eq!(create_stores.pdf_last_form(), 0);
     assert!(create.modes.current_list().nodes().is_empty());
@@ -6021,7 +6004,7 @@ fn pdf_form_family_rejects_dvi_before_operands_allocation_and_list_mutation() {
             .expect("PDF retry preserves all form options and the register"),
         MainControlStep::Continue
     );
-    assert!(create_stores.box_reg(7).is_none());
+    assert!(create_stores.box_reg_ref(7).is_none());
     let form = create_stores
         .pdf_form(1)
         .expect("retried form is allocated");
@@ -6086,7 +6069,7 @@ fn immediate_pdf_form_rejects_dvi_before_options_or_allocation() {
         Err(ExecError::PdfExtensionInDviMode("pdfxform"))
     ));
     assert_eq!(stores.snapshot().state_hash(), state_before);
-    assert!(stores.box_reg(9).is_some());
+    assert!(stores.box_reg_ref(9).is_some());
     assert!(stores.pdf_forms().next().is_none());
 
     stores.set_int_param_global(IntParam::PDF_OUTPUT, 1);
@@ -6096,7 +6079,7 @@ fn immediate_pdf_form_rejects_dvi_before_options_or_allocation() {
             .expect("immediate PDF retry preserves every form operand"),
         MainControlStep::Continue
     );
-    assert!(stores.box_reg(9).is_none());
+    assert!(stores.box_reg_ref(9).is_none());
     let form = stores.pdf_form(1).expect("immediate form is allocated");
     assert!(form.immediate());
     assert_eq!(form.width(), Scaled::from_raw(19));
@@ -8080,10 +8063,10 @@ fn etex_sparse_setbox_observes_delayed_and_immediate_commits() {
             (Some("box:302"), Some("void"), false),
         ]
     );
-    assert!(stores.box_reg(20).is_none());
-    assert!(stores.box_reg(300).is_none());
-    assert!(stores.box_reg(301).is_some());
-    assert!(stores.box_reg(302).is_none());
+    assert!(stores.box_reg_ref(20).is_none());
+    assert!(stores.box_reg_ref(300).is_none());
+    assert!(stores.box_reg_ref(301).is_some());
+    assert!(stores.box_reg_ref(302).is_none());
 }
 
 #[test]
@@ -8115,8 +8098,8 @@ fn etex_sparse_copy_keeps_a_nested_constructed_source_box() {
         })
         .collect::<Vec<_>>();
     assert_eq!(mutations, ["occupied", "occupied"]);
-    assert!(stores.box_reg(32101).is_some());
-    assert!(stores.box_reg(32103).is_some());
+    assert!(stores.box_reg_ref(32101).is_some());
+    assert!(stores.box_reg_ref(32103).is_some());
 }
 
 #[test]
@@ -9817,7 +9800,9 @@ fn final_cleanup_reports_nested_condition_kinds_lines_and_order_exactly() {
 
 /// Collects every `\setlanguage` whatsit inside box register zero.
 fn language_whatsits(stores: &Universe) -> Vec<(u8, u8, u8)> {
-    let outer = stores.box_reg(0).expect("box 0 holds the constructed hbox");
+    let outer = stores
+        .box_reg_ref(0)
+        .expect("box 0 holds the constructed hbox");
     let Some(Node::HList(boxed)) = first_published_node(stores, outer) else {
         panic!("box 0 holds an hlist");
     };
@@ -9873,7 +9858,9 @@ fn paragraph_entry_snapshots_language_before_first_character() {
     );
     run_to_end(&mut control, &mut stores);
 
-    let outer = stores.box_reg(0).expect("box 0 holds the paragraph vbox");
+    let outer = stores
+        .box_reg_ref(0)
+        .expect("box 0 holds the paragraph vbox");
     let Some(Node::VList(vbox)) = first_published_node(&stores, outer) else {
         panic!("box 0 holds a vlist");
     };
@@ -9925,7 +9912,9 @@ fn setlanguage_illegal_mode_recovers_without_scan_or_append() {
         text.contains("You can't use `\\setlanguage' in internal vertical mode"),
         "{text}"
     );
-    let outer = stores.box_reg(0).expect("box 0 holds the constructed vbox");
+    let outer = stores
+        .box_reg_ref(0)
+        .expect("box 0 holds the constructed vbox");
     let Some(Node::VList(boxed)) = first_published_node(&stores, outer) else {
         panic!("box 0 holds a vlist");
     };
@@ -10079,8 +10068,14 @@ fn setbox_scope_is_globaldefs_adjusted_before_the_box_is_scanned() {
     );
     run_to_end(&mut control, &mut stores);
 
-    assert!(stores.box_reg(0).is_some(), "positive globaldefs is global");
-    assert!(stores.box_reg(1).is_none(), "negative globaldefs is local");
+    assert!(
+        stores.box_reg_ref(0).is_some(),
+        "positive globaldefs is global"
+    );
+    assert!(
+        stores.box_reg_ref(1).is_none(),
+        "negative globaldefs is local"
+    );
 }
 
 #[test]
@@ -11317,7 +11312,6 @@ fn math_group_collapses_only_one_undecorated_ord_nucleus() {
             NoadKind::Normal(NoadClass::Ord),
             nucleus.clone(),
         ))]);
-        let list = stores.node_list_ref(list);
         assert_eq!(collapse_singleton_math_group(&stores, list), nucleus);
     }
 
@@ -11342,7 +11336,6 @@ fn math_group_collapses_only_one_undecorated_ord_nucleus() {
         )),
     ]);
     for list in [scripted, non_ord, multiple] {
-        let list = stores.node_list_ref(list);
         assert_eq!(
             collapse_singleton_math_group(&stores, list.clone()),
             MathField::SubMlist(list)

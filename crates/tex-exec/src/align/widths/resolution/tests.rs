@@ -37,7 +37,6 @@ fn cell(empty: NodeListRef, width: i32, span_count: u16) -> Node {
 
 fn row(stores: &mut Universe, cells: &[Node]) -> Node {
     let children = stores.freeze_node_list(cells);
-    let children = stores.node_list_ref(children);
     Node::Unset(UnsetNode::new(UnsetNodeFields {
         kind: UnsetKind::HBox,
         width: Scaled::from_raw(0),

@@ -338,19 +338,15 @@ fn shapes(stores: &Universe, nodes: &[Node]) -> Vec<Shape> {
 }
 
 fn register_shapes(stores: &Universe, register: u16) -> Option<Vec<Shape>> {
-    let root = stores.box_reg(register)?;
-    let root = stores
-        .published_node_list_ref(root)
-        .expect("box register retains its immutable node owner");
+    let root = stores.box_reg_ref(register)?;
     Some(shapes(stores, &root.to_vec()))
 }
 
 fn boxed_children(stores: &Universe, register: u16) -> Vec<Node> {
-    let root = stores.box_reg(register).expect("box register is nonvoid");
-    let nodes = stores
-        .published_node_list_ref(root)
-        .expect("box register retains its immutable node owner")
-        .to_vec();
+    let root = stores
+        .box_reg_ref(register)
+        .expect("box register is nonvoid");
+    let nodes = root.to_vec();
     let [Node::HList(boxed) | Node::VList(boxed)] = nodes.as_slice() else {
         panic!("box register has exactly one box root")
     };
@@ -1004,11 +1000,8 @@ fn text_outer_vertical_math_illegal_meaning_and_trigger_provenance_matrix() {
 }
 
 fn register_box(stores: &Universe, register: u16) -> tex_state::node::BoxNode {
-    let root = stores.box_reg(register).expect("box register");
-    let nodes = stores
-        .published_node_list_ref(root)
-        .expect("box register retains its immutable node owner")
-        .to_vec();
+    let root = stores.box_reg_ref(register).expect("box register");
+    let nodes = root.to_vec();
     match nodes.as_slice() {
         [Node::HList(boxed) | Node::VList(boxed)] => boxed.clone(),
         other => panic!("register {register} root: {other:?}"),

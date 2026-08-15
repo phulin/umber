@@ -862,13 +862,12 @@ fn vertical_spacing_consumes_previous_depth() {
 }
 
 #[test]
-fn packed_box_can_round_trip_through_survivor_box_register() {
+fn packed_box_can_round_trip_through_structural_box_register() {
     let mut universe = Universe::new();
     let list = universe.freeze_node_list(&[Node::Kern {
         amount: sp(12),
         kind: KernKind::Explicit,
     }]);
-    let list = universe.node_list_ref(list);
     let packed = hpack(
         &universe,
         list,
@@ -880,10 +879,7 @@ fn packed_box_can_round_trip_through_survivor_box_register() {
         },
     );
     let boxed = universe.freeze_node_list(&[Node::HList(packed.node)]);
-    universe.set_box_reg(0, boxed);
-    let survivor = universe.box_reg(0).expect("box should be stored");
-    assert!(matches!(
-        universe.nodes(survivor).first(),
-        Some(NodeRef::HList(_))
-    ));
+    universe.set_box_reg_ref(0, boxed);
+    let owner = universe.box_reg_ref(0).expect("box should be stored");
+    assert!(matches!(owner.nodes().first(), Some(NodeRef::HList(_))));
 }

@@ -29,7 +29,7 @@ fn ordinary_hpack_reports_once_without_decorating_its_list() {
         amount: Scaled::from_raw(2 * Scaled::UNITY),
         kind: KernKind::Explicit,
     }]);
-    let expected_children = stores.node_list_ref(list);
+    let expected_children = list.clone();
 
     let packed = hpack(
         &mut stores,

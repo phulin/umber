@@ -53,7 +53,6 @@ fn rule(height: i32, depth: i32) -> Node {
 
 fn boxed(stores: &mut Universe, height: i32, depth: i32, vertical: bool) -> Node {
     let children = stores.freeze_node_list(&[]);
-    let children = stores.node_list_ref(children);
     let payload = BoxNode::new(BoxNodeFields {
         width: s(1),
         height: s(height),
@@ -80,7 +79,6 @@ fn ins(
     nodes: &[Node],
 ) -> Node {
     let content = stores.freeze_node_list(nodes);
-    let content = stores.node_list_ref(content);
     Node::Ins {
         class,
         size: s(size),
@@ -304,20 +302,20 @@ fn box_error_and_ensure_vbox_recover_only_invalid_live_boxes() {
     );
     let node = boxed(&mut stores, 11, 3, true);
     let list = stores.freeze_node_list(&[node]);
-    stores.set_box_reg(4, list);
+    stores.set_box_reg_ref(4, list);
     assert_eq!(
         insertion_box_size(&mut stores, 4, None).expect("white-box operation succeeds"),
         s(14)
     );
-    assert!(stores.box_reg(4).is_some());
+    assert!(stores.box_reg_ref(4).is_some());
     let node = boxed(&mut stores, 9, 2, false);
     let list = stores.freeze_node_list(&[node]);
-    stores.set_box_reg(5, list);
+    stores.set_box_reg_ref(5, list);
     assert_eq!(
         insertion_box_size(&mut stores, 5, None).expect("white-box operation succeeds"),
         s(0)
     );
-    assert!(stores.box_reg(5).is_none());
+    assert!(stores.box_reg_ref(5).is_none());
     assert!(effects(&stores).contains("Insertions can only be added to a vbox"));
 }
 
@@ -326,7 +324,7 @@ fn box_error_voids_the_register_without_creating_local_assignment_history() {
     fn install_box(stores: &mut Universe, register: u16, vertical: bool) {
         let node = boxed(stores, 9, 2, vertical);
         let list = stores.freeze_node_list(&[node]);
-        stores.set_box_reg_global(register, list);
+        stores.set_box_reg_ref_global(register, list);
     }
 
     fn log_text(stores: &Universe) -> String {
@@ -363,7 +361,7 @@ fn box_error_voids_the_register_without_creating_local_assignment_history() {
         !recovered_effects.contains("retaining \\box5="),
         "section 993 direct mutation must not create a restore record: {recovered_effects}"
     );
-    assert!(recovered.box_reg(register).is_some());
+    assert!(recovered.box_reg_ref(register).is_some());
 
     // Negative control: the ordinary local assignment barrier must still
     // save and report the retained global value under TeX82 §§275/283.
@@ -773,10 +771,10 @@ fn page_insertion_split_float_penalty_and_invalid_box_recovery_match_tex82() {
     ins_class(&mut stores, 8, 1_000, 100, 0, 0);
     let hbox = boxed(&mut stores, 4, 2, false);
     let list = stores.freeze_node_list(&[hbox]);
-    stores.set_box_reg(8, list);
+    stores.set_box_reg_ref(8, list);
     let invalid = ins(&mut stores, 8, 0, 0, &[]);
     prepare_insertion(&mut stores, &invalid, None).expect("white-box operation succeeds");
-    assert!(stores.box_reg(8).is_none());
+    assert!(stores.box_reg_ref(8).is_none());
     assert!(effects(&stores).contains("Insertions can only be added to a vbox"));
 }
 

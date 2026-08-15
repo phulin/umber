@@ -170,7 +170,6 @@ fn fin_align_orders_groups_packing_pop_and_insertion() {
         second,
         tabskip_node(tex_state::glue::testing_zero_glue_ref()),
     ]);
-    let row_children = stores.node_list_ref(row_children);
     let row = Node::Unset(UnsetNode::new(UnsetNodeFields {
         kind: UnsetKind::HBox,
         width: sp(10),

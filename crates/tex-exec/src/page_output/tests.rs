@@ -20,7 +20,6 @@ fn rule(height: i32) -> Node {
 
 fn insertion(stores: &mut Universe, class: u16, height: i32) -> Node {
     let content = stores.freeze_node_list(&[rule(height)]);
-    let content = stores.node_list_ref(content);
     Node::Ins {
         class,
         size: Scaled::from_raw(height),
@@ -54,7 +53,6 @@ fn fire_up_recovers_hbox_insertion_register_before_distribution() {
     stores.record_best_page_break(page_nodes.len(), Scaled::from_raw(0), 0);
 
     let children = stores.freeze_node_list(&[rule(99)]);
-    let children = stores.node_list_ref(children);
     let hbox = BoxNode::new(BoxNodeFields {
         width: Scaled::from_raw(1),
         height: Scaled::from_raw(99),
@@ -67,7 +65,7 @@ fn fire_up_recovers_hbox_insertion_register_before_distribution() {
         children,
     });
     let register = stores.freeze_node_list(&[Node::HList(hbox)]);
-    stores.set_box_reg(class, register);
+    stores.set_box_reg_ref(class, register);
 
     let distributed = distribute_insertions(&mut stores, page_nodes, Some("fire-up context"))
         .expect("hbox recovery is nonfatal");
@@ -76,11 +74,9 @@ fn fire_up_recovers_hbox_insertion_register_before_distribution() {
     assert_eq!(distributed.heldover, [unrelated, later]);
     assert_eq!(distributed.heldover_count, 2);
     let register = stores
-        .box_reg(class)
+        .box_reg_ref(class)
         .expect("accepted inserts are repackaged");
-    let Node::VList(box_node) = stores
-        .published_node_list_ref(register)
-        .expect("register retains its immutable owner")
+    let Node::VList(box_node) = register
         .to_vec()
         .into_iter()
         .next()
@@ -131,10 +127,9 @@ fn fire_up_preserves_void_and_vbox_insertion_queues() {
         insertion_box_nodes(&mut stores, 2, None).expect("void box is valid"),
         []
     );
-    assert!(stores.box_reg(2).is_none());
+    assert!(stores.box_reg_ref(2).is_none());
 
     let children = stores.freeze_node_list(&[rule(17), Node::Penalty(23)]);
-    let children = stores.node_list_ref(children);
     let vbox = BoxNode::new(BoxNodeFields {
         width: Scaled::from_raw(1),
         height: Scaled::from_raw(17),
@@ -147,15 +142,17 @@ fn fire_up_preserves_void_and_vbox_insertion_queues() {
         children,
     });
     let register = stores.freeze_node_list(&[Node::VList(vbox)]);
-    stores.set_box_reg(2, register);
+    stores.set_box_reg_ref(2, register);
 
     assert_eq!(
         insertion_box_nodes(&mut stores, 2, None).expect("vbox is valid"),
         [rule(17), Node::Penalty(23)]
     );
-    let retained = stores.box_reg(2).expect("vbox register remains populated");
+    let retained = stores
+        .box_reg_ref(2)
+        .expect("vbox register remains populated");
     assert!(matches!(
-        stores.nodes(retained).first(),
+        retained.nodes().first(),
         Some(tex_state::node_arena::NodeRef::VList(_))
     ));
 }

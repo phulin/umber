@@ -1580,7 +1580,7 @@ mod unset_diagnostic_tests {
 
         assert_eq!(
             dump_node_list(
-                &mut stores,
+                &stores,
                 list,
                 DumpConfig {
                     breadth: 5,
@@ -1606,7 +1606,6 @@ mod unset_diagnostic_tests {
                 origin: Default::default(),
             }),
         ))]);
-        let arm = stores.node_list_ref(arm);
         let list = stores.freeze_node_list(&[Node::MathChoice(MathChoice {
             display: arm.clone(),
             text: arm.clone(),
@@ -1616,7 +1615,7 @@ mod unset_diagnostic_tests {
 
         assert_eq!(
             dump_node_list(
-                &mut stores,
+                &stores,
                 list,
                 DumpConfig {
                     breadth: 100,
@@ -1648,7 +1647,6 @@ mod unset_diagnostic_tests {
             left_delimiter: None,
             right_delimiter: None,
         })]);
-        let fraction = stores.node_list_ref(fraction);
         let list = stores.freeze_node_list(&[Node::MathChoice(MathChoice {
             display: empty.clone(),
             text: empty.clone(),
@@ -1658,7 +1656,7 @@ mod unset_diagnostic_tests {
 
         assert_eq!(
             dump_node_list(
-                &mut stores,
+                &stores,
                 list,
                 DumpConfig {
                     breadth: 100,

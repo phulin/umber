@@ -239,7 +239,7 @@ fn unified_operation_preserves_state_output_and_typed_evidence() {
             .any(|record| matches!(record, CommandObservation::Alignment(_)))
     );
     assert_eq!(register_mutation_keys(&evidence.0), ["count:0", "count:1"]);
-    assert!(observed_stores.box_reg(0).is_some());
+    assert!(observed_stores.box_reg_ref(0).is_some());
 }
 
 #[test]

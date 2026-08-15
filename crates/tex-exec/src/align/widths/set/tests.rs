@@ -1,6 +1,5 @@
 use super::*;
 use tex_state::glue::Order;
-use tex_state::ids::NodeListId;
 use tex_state::node::{GlueKind, UnsetKind, UnsetNodeFields};
 use tex_state::node_arena::NodeListRef;
 
@@ -203,7 +202,6 @@ fn materialize_spanned_cell_adds_tabskip_and_empty_boxes() {
         Node::Unset(cell),
         tabskip_node(tex_state::glue::testing_zero_glue_ref()),
     ]);
-    let row_children = stores.node_list_ref(row_children);
     let row = Node::Unset(UnsetNode::new(UnsetNodeFields {
         kind: UnsetKind::HBox,
         width: sp(10),
@@ -295,7 +293,6 @@ fn set_alignment_preserves_final_node_order_and_running_rules() {
         cell,
         tabskip_node(tex_state::glue::testing_zero_glue_ref()),
     ]);
-    let children = stores.node_list_ref(children);
     let row = Node::Unset(UnsetNode::new(UnsetNodeFields {
         kind: UnsetKind::HBox,
         width: sp(4),
@@ -340,7 +337,7 @@ fn set_alignment_preserves_final_node_order_and_running_rules() {
 
 #[test]
 fn convert_unset_cell_computes_tex82_glue_ratio_matrix() {
-    let empty = NodeListId::testing_epoch(0, 0);
+    let empty = tex_state::node_arena::NodeListRef::empty();
     let ordinary = unset_cell(
         UnsetKind::HBox,
         5,
@@ -351,7 +348,7 @@ fn convert_unset_cell_computes_tex82_glue_ratio_matrix() {
             shrink: 2,
             shrink_order: Order::Normal,
         },
-        empty,
+        empty.clone(),
     );
 
     assert_eq!(

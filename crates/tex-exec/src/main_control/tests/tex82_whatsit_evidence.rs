@@ -24,7 +24,6 @@ fn last_artifact(stores: &Universe) -> PageArtifact {
 
 fn state_box(stores: &mut Universe, children: &[Node], vertical: bool) -> Node {
     let children = stores.freeze_node_list(children);
-    let children = stores.node_list_ref(children);
     let boxed = BoxNode::new(BoxNodeFields {
         width: Scaled::from_raw(1_000),
         height: Scaled::from_raw(100),
@@ -403,11 +402,11 @@ fn base_whatsit_construction_projects_fields_display_size_and_ownership() {
     );
     assert!(box_child_nodes(&stores, 0).is_empty());
     assert!(
-        stores.box_reg(2).is_some(),
+        stores.box_reg_ref(2).is_some(),
         "nested copy survives original replacement"
     );
     for (register, vertical) in [(1, false), (2, true)] {
-        let root = first_published_node(&stores, stores.box_reg(register).expect("box exists"))
+        let root = first_published_node(&stores, stores.box_reg_ref(register).expect("box exists"))
             .expect("box has a root");
         let boxed = match (vertical, root) {
             (false, Node::HList(boxed)) | (true, Node::VList(boxed)) => boxed,
@@ -562,7 +561,7 @@ fn hlist_and_vlist_visit_each_base_whatsit_once_in_position() {
         let nodes = base_whatsits(&mut stores);
         let root = state_box(&mut stores, &nodes, vertical);
         let register = stores.freeze_node_list(&[root]);
-        stores.set_box_reg(0, register);
+        stores.set_box_reg_ref(0, register);
         let mut control = MainControl::tex82_initex(&mut stores);
         register_source(&mut control, br"\shipout\box0\end");
         run_to_end(&mut control, &mut stores);
@@ -739,7 +738,7 @@ fn deferred_write_projects_stopper_selector_mode_stream_and_recovery_matrix() {
         1
     );
     assert!(
-        stores.box_reg(9).is_some(),
+        stores.box_reg_ref(9).is_some(),
         "following box scan proves mode restoration"
     );
     let (traced, _, _) = observed_run(

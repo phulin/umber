@@ -257,9 +257,9 @@ struct GlueSetting {
     order: Order,
 }
 
-fn cell_glue_setting(
+fn cell_glue_setting<List>(
     kind: AlignmentKind,
-    cell: &UnsetNode<tex_state::ids::NodeListId>,
+    cell: &UnsetNode<List>,
     target: Scaled,
 ) -> Result<GlueSetting, ExecError> {
     let natural = unset_axis_size(kind, cell)?;

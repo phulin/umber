@@ -421,7 +421,7 @@ fn set_margin_kern_test_box(
     } else {
         Node::VList(boxed)
     }]);
-    universe.set_box_reg(index, root);
+    universe.set_box_reg_ref(index, root);
 }
 
 #[test]
