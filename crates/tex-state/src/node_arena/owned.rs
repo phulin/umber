@@ -251,12 +251,11 @@ impl NodeListRef {
 
         let root =
             allocate_node_payload_root().expect("node-list payload coordinate space exhausted");
-        let mut source = NodeStorage::default();
-        let (_, len) = source.append_owned_preflighted(&mut nodes, needs);
         let mut storage = NodeStorage::default();
+        let (start, len) = storage.append_owned_preflighted(&mut nodes, needs);
+        assert_eq!(start, 0);
         let mut pending = Vec::new();
-        let (start, copied_len) = storage.append_compact(source.view(0, len), &mut pending);
-        assert_eq!((start, copied_len), (0, len));
+        storage.collect_child_patches(start, len, &mut pending);
 
         let root_id = NodeListId::new_owned(root, 0, len);
         let mut copier = DirectGraphCopy::new(root, storage, children);

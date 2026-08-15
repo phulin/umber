@@ -14,6 +14,31 @@ use crate::scaled::{GlueSetRatio, Scaled};
 use crate::stores::Stores;
 use crate::token::OriginId;
 
+#[cfg(feature = "profiling")]
+fn node_append_delta(
+    before: crate::measurement::NodeAppendMeasurement,
+) -> crate::measurement::NodeAppendMeasurement {
+    let after = crate::measurement::node_append_measurement();
+    crate::measurement::NodeAppendMeasurement {
+        calls: after.calls - before.calls,
+        words: after.words - before.words,
+        sidecar_rows: core::array::from_fn(|index| {
+            after.sidecar_rows[index] - before.sidecar_rows[index]
+        }),
+        capacity_growth_events: after.capacity_growth_events - before.capacity_growth_events,
+        capacity_growth_by_column: core::array::from_fn(|index| {
+            after.capacity_growth_by_column[index] - before.capacity_growth_by_column[index]
+        }),
+        compact_copy_calls: after.compact_copy_calls - before.compact_copy_calls,
+        compact_copy_words: after.compact_copy_words - before.compact_copy_words,
+        compact_copy_growth_by_column: core::array::from_fn(|index| {
+            after.compact_copy_growth_by_column[index] - before.compact_copy_growth_by_column[index]
+        }),
+        retained_payload_bytes_grown: after.retained_payload_bytes_grown
+            - before.retained_payload_bytes_grown,
+    }
+}
+
 fn freeze(stores: &mut Stores, nodes: impl IntoIterator<Item = Node>) -> NodeListRef {
     let mut builder = stores.node_list_builder();
     for node in nodes {
@@ -48,8 +73,12 @@ fn builder_freeze_owns_and_resolves_child_spans_without_survivor_owner() {
     let child = freeze(&mut stores, [Node::Penalty(17)]);
     let mut parent_builder = stores.node_list_builder();
     parent_builder.push(Node::Adjust(AdjustNode::ordinary(child.clone())));
+    #[cfg(feature = "profiling")]
+    let before = crate::measurement::node_append_measurement();
 
     let parent = stores.freeze_node_list_ref(parent_builder);
+    #[cfg(feature = "profiling")]
+    let appended = node_append_delta(before);
     let Node::Adjust(adjust) = parent.get(0).expect("parent node") else {
         panic!("expected adjustment")
     };
@@ -68,6 +97,15 @@ fn builder_freeze_owns_and_resolves_child_spans_without_survivor_owner() {
         "freeze is one self-contained graph"
     );
     assert!(resolved.shares_payload(&parent));
+    #[cfg(feature = "profiling")]
+    {
+        assert_eq!((appended.calls, appended.words), (2, 2));
+        assert_eq!(
+            (appended.compact_copy_calls, appended.compact_copy_words),
+            (1, 1),
+            "nested freeze must copy only the preexisting child graph"
+        );
+    }
 }
 
 #[test]
@@ -254,6 +292,8 @@ fn clones_share_exact_data_and_final_drop_rejects_stale_projection() {
 
 #[test]
 fn weak_metadata_plateaus_across_bounded_live_replacements() {
+    #[cfg(feature = "profiling")]
+    let before = crate::measurement::node_append_measurement();
     let mut index = NodeListWeakIndex::new();
     for value in 0..10_000_u64 {
         let root = testing_ref(Node::Penalty(value as i32), NodeSemanticId::testing(value));
@@ -271,11 +311,23 @@ fn weak_metadata_plateaus_across_bounded_live_replacements() {
         capacity <= 64,
         "weak metadata capacity did not plateau: {capacity}"
     );
+    #[cfg(feature = "profiling")]
+    {
+        let appended = node_append_delta(before);
+        assert_eq!((appended.calls, appended.words), (10_001, 10_001));
+        assert_eq!(
+            (appended.compact_copy_calls, appended.compact_copy_words),
+            (0, 0),
+            "flat bounded-live roots must never be materialized twice"
+        );
+    }
 }
 
 #[test]
 fn all_live_roots_grow_by_exact_payload_bytes_and_owner_count() {
     const ROOTS: usize = 2_048;
+    #[cfg(feature = "profiling")]
+    let before = crate::measurement::node_append_measurement();
     let roots = (0..ROOTS)
         .map(|value| {
             testing_ref(
@@ -303,6 +355,19 @@ fn all_live_roots_grow_by_exact_payload_bytes_and_owner_count() {
         ROOTS * retained_per_root
     );
     assert!(roots.iter().all(|root| root.strong_count() == 1));
+    #[cfg(feature = "profiling")]
+    {
+        let appended = node_append_delta(before);
+        assert_eq!(
+            (appended.calls, appended.words),
+            (ROOTS as u64, ROOTS as u64)
+        );
+        assert_eq!(
+            (appended.compact_copy_calls, appended.compact_copy_words),
+            (0, 0),
+            "flat all-live roots must never be materialized twice"
+        );
+    }
 }
 
 #[test]

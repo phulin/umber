@@ -99,6 +99,99 @@ impl ChildPatch {
 }
 
 impl NodeStorage {
+    /// Records the child coordinates in an already encoded span for later
+    /// remapping into the destination payload.
+    pub(crate) fn collect_child_patches(
+        &self,
+        start: u32,
+        len: u32,
+        pending: &mut Vec<ChildPatch>,
+    ) {
+        let start = start as usize;
+        let end = start
+            .checked_add(len as usize)
+            .expect("node-list child patch span overflow");
+        let words = self
+            .words
+            .get(start..end)
+            .expect("node-list child patch span exceeds storage");
+        pending.extend(words.iter().filter_map(|&word| self.child_patch(word)));
+    }
+
+    fn child_patch(&self, word: NodeWord) -> Option<ChildPatch> {
+        let row = word.payload() as usize;
+        match word.tag() {
+            9 | 10 => Some(ChildPatch::Box {
+                row,
+                child: self.boxes.rows[row].children,
+                diagnostic_child: self.boxes.rows[row].diagnostic_children,
+            }),
+            11 => Some(ChildPatch::Unset {
+                row,
+                child: self.unsets.children[row],
+            }),
+            13 => leader_child(&self.leaders[row].2).map(|child| {
+                let diagnostic_child = match &self.leaders[row].2 {
+                    crate::node::LeaderPayload::HList(node)
+                    | crate::node::LeaderPayload::VList(node) => node.diagnostic_children,
+                    crate::node::LeaderPayload::Rule { .. } => None,
+                };
+                ChildPatch::Leader {
+                    row,
+                    child,
+                    diagnostic_child,
+                }
+            }),
+            14 => {
+                let (_, pre, post, replace, _) = self.discs[row];
+                Some(ChildPatch::Disc {
+                    row,
+                    children: [pre, post, replace],
+                })
+            }
+            16 => Some(ChildPatch::Insertion {
+                row,
+                child: self.insertions.content[row],
+            }),
+            18 => {
+                let children = [
+                    math_field_child(&self.noads.nucleus[row]),
+                    math_field_child(&self.noads.subscript[row]),
+                    math_field_child(&self.noads.superscript[row]),
+                ];
+                children
+                    .iter()
+                    .any(Option::is_some)
+                    .then_some(ChildPatch::Noad { row, children })
+            }
+            19 => Some(ChildPatch::Fraction {
+                row,
+                children: [
+                    self.fractions[row].numerator,
+                    self.fractions[row].denominator,
+                ],
+            }),
+            20 => Some(ChildPatch::Choice {
+                row,
+                children: [
+                    self.choices[row].display,
+                    self.choices[row].text,
+                    self.choices[row].script,
+                    self.choices[row].script_script,
+                ],
+            }),
+            21 => Some(ChildPatch::MathList {
+                row,
+                child: self.math_lists[row].content,
+            }),
+            22 => Some(ChildPatch::Adjust {
+                row,
+                child: self.adjusts[row].content,
+            }),
+            _ => None,
+        }
+    }
+
     /// Appends one source span without decoding it to owned `Node` values.
     /// Child-bearing rows are copied shallowly and recorded for later patching.
     pub(crate) fn append_compact(
@@ -140,55 +233,18 @@ impl NodeStorage {
                 }
                 9 | 10 => {
                     let row = self.boxes.copy_row(&source.storage.boxes, side);
-                    pending.push(ChildPatch::Box {
-                        row: row as usize,
-                        child: source.storage.boxes.rows[side].children,
-                        diagnostic_child: source.storage.boxes.rows[side].diagnostic_children,
-                    });
                     NodeWord::sidecar(word.tag(), row)
                 }
                 11 => {
                     let row = self.unsets.copy_row(&source.storage.unsets, side);
-                    pending.push(ChildPatch::Unset {
-                        row: row as usize,
-                        child: source.storage.unsets.children[side],
-                    });
                     NodeWord::sidecar(11, row)
                 }
                 12 => copy_vec_row(12, &mut self.rules, &source.storage.rules, side),
-                13 => {
-                    let row = copy_vec_row(13, &mut self.leaders, &source.storage.leaders, side);
-                    if let Some(child) = leader_child(&self.leaders[row.payload() as usize].2) {
-                        let diagnostic_child = match &self.leaders[row.payload() as usize].2 {
-                            crate::node::LeaderPayload::HList(node)
-                            | crate::node::LeaderPayload::VList(node) => node.diagnostic_children,
-                            crate::node::LeaderPayload::Rule { .. } => None,
-                        };
-                        pending.push(ChildPatch::Leader {
-                            row: row.payload() as usize,
-                            child,
-                            diagnostic_child,
-                        });
-                    }
-                    row
-                }
-                14 => {
-                    let row = copy_vec_row(14, &mut self.discs, &source.storage.discs, side);
-                    let index = row.payload() as usize;
-                    let (_, pre, post, replace, _) = self.discs[index];
-                    pending.push(ChildPatch::Disc {
-                        row: index,
-                        children: [pre, post, replace],
-                    });
-                    row
-                }
+                13 => copy_vec_row(13, &mut self.leaders, &source.storage.leaders, side),
+                14 => copy_vec_row(14, &mut self.discs, &source.storage.discs, side),
                 15 => copy_vec_row(15, &mut self.marks, &source.storage.marks, side),
                 16 => {
                     let row = self.insertions.copy_row(&source.storage.insertions, side);
-                    pending.push(ChildPatch::Insertion {
-                        row: row as usize,
-                        child: source.storage.insertions.content[side],
-                    });
                     NodeWord::sidecar(16, row)
                 }
                 17 => {
@@ -199,67 +255,17 @@ impl NodeStorage {
                 }
                 18 => {
                     let row = self.noads.copy_row(&source.storage.noads, side);
-                    let index = row as usize;
-                    let children = [
-                        math_field_child(&self.noads.nucleus[index]),
-                        math_field_child(&self.noads.subscript[index]),
-                        math_field_child(&self.noads.superscript[index]),
-                    ];
-                    if children.iter().any(Option::is_some) {
-                        pending.push(ChildPatch::Noad {
-                            row: index,
-                            children,
-                        });
-                    }
                     NodeWord::sidecar(18, row)
                 }
-                19 => {
-                    let row =
-                        copy_vec_row(19, &mut self.fractions, &source.storage.fractions, side);
-                    let index = row.payload() as usize;
-                    let fraction = &self.fractions[index];
-                    pending.push(ChildPatch::Fraction {
-                        row: index,
-                        children: [fraction.numerator, fraction.denominator],
-                    });
-                    row
-                }
-                20 => {
-                    let row = copy_vec_row(20, &mut self.choices, &source.storage.choices, side);
-                    let index = row.payload() as usize;
-                    let choice = &self.choices[index];
-                    pending.push(ChildPatch::Choice {
-                        row: index,
-                        children: [
-                            choice.display,
-                            choice.text,
-                            choice.script,
-                            choice.script_script,
-                        ],
-                    });
-                    row
-                }
-                21 => {
-                    let row =
-                        copy_vec_row(21, &mut self.math_lists, &source.storage.math_lists, side);
-                    let index = row.payload() as usize;
-                    pending.push(ChildPatch::MathList {
-                        row: index,
-                        child: self.math_lists[index].content,
-                    });
-                    row
-                }
-                22 => {
-                    let row = copy_vec_row(22, &mut self.adjusts, &source.storage.adjusts, side);
-                    let index = row.payload() as usize;
-                    pending.push(ChildPatch::Adjust {
-                        row: index,
-                        child: self.adjusts[index].content,
-                    });
-                    row
-                }
+                19 => copy_vec_row(19, &mut self.fractions, &source.storage.fractions, side),
+                20 => copy_vec_row(20, &mut self.choices, &source.storage.choices, side),
+                21 => copy_vec_row(21, &mut self.math_lists, &source.storage.math_lists, side),
+                22 => copy_vec_row(22, &mut self.adjusts, &source.storage.adjusts, side),
                 _ => panic!("reserved node-word tag"),
             };
+            if let Some(patch) = self.child_patch(copied) {
+                pending.push(patch);
+            }
             self.words.push(copied);
             self.glue_roots
                 .push(source.storage.glue_roots[source.start + offset].clone());

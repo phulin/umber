@@ -39,6 +39,11 @@ references. Freezing performs these steps atomically:
 3. encode the root and its child payloads into one immutable compact graph;
 4. return one `NodeListRef` for the root span.
 
+The newly owned root rows are move-encoded directly into their final payload
+once. Preexisting child payloads are still flattened compact-to-compact into
+that graph and their coordinates are patched before publication; the root is
+not first materialized in temporary compact storage and copied from there.
+
 Validation failure publishes nothing. A weak, bounded candidate index may
 reuse an exactly equal live payload, but weak entries neither retain payloads
 nor recover dead ones.
