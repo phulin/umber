@@ -23,7 +23,10 @@ use tex_command::{
     RecoveryKind, RegisteredSourceKind, SourceRegistration, canonical_names,
 };
 use tex_exec::{MainControl, MainControlStep, Mode};
-use tex_state::{ContentHash, InputOpenState, InputReadState, Universe, node::Node};
+use tex_state::{
+    ContentHash, InputOpenState, InputReadState, Universe,
+    node_arena::{NodeListRef, NodeRef},
+};
 
 pub mod channels;
 pub mod classify;
@@ -1713,53 +1716,49 @@ pub fn mode_name(mode: Mode) -> String {
     .into()
 }
 
-pub fn node_name(node: &Node) -> String {
+pub fn node_name(node: &NodeRef<'_>) -> String {
     match node {
-        Node::Char { .. } => "char",
-        Node::Lig { .. } => "ligature",
-        Node::Kern { .. } => "kern",
-        Node::MarginKern { .. } => "margin-kern",
-        Node::Glue { .. } => "glue",
-        Node::Penalty(_) => "penalty",
-        Node::Rule { .. } => "rule",
-        Node::HList(_) => "hlist",
-        Node::VList(_) => "vlist",
-        Node::Unset(_) => "unset",
-        Node::Disc { .. } => "discretionary",
-        Node::Mark { .. } => "mark",
-        Node::Ins { .. } => "insertion",
-        Node::Whatsit(_) => "whatsit",
-        Node::MathOn(_) => "math-on",
-        Node::MathOff(_) => "math-off",
-        Node::Direction(_) => "direction",
-        Node::MathNoad(_) => "math-noad",
-        Node::FractionNoad(_) => "fraction-noad",
-        Node::MathStyle(_) => "math-style",
-        Node::MathChoice(_) => "math-choice",
-        Node::MathList(_) => "math-list",
-        Node::Nonscript => "nonscript",
-        Node::Adjust(_) => "adjust",
+        NodeRef::Char { .. } => "char",
+        NodeRef::Lig { .. } => "ligature",
+        NodeRef::Kern { .. } => "kern",
+        NodeRef::MarginKern { .. } => "margin-kern",
+        NodeRef::Glue { .. } => "glue",
+        NodeRef::Penalty(_) => "penalty",
+        NodeRef::Rule { .. } => "rule",
+        NodeRef::HList(_) => "hlist",
+        NodeRef::VList(_) => "vlist",
+        NodeRef::Unset(_) => "unset",
+        NodeRef::Disc { .. } => "discretionary",
+        NodeRef::Mark { .. } => "mark",
+        NodeRef::Ins { .. } => "insertion",
+        NodeRef::Whatsit(_) => "whatsit",
+        NodeRef::MathOn(_) => "math-on",
+        NodeRef::MathOff(_) => "math-off",
+        NodeRef::Direction(_) => "direction",
+        NodeRef::MathNoad(_) => "math-noad",
+        NodeRef::FractionNoad(_) => "fraction-noad",
+        NodeRef::MathStyle(_) => "math-style",
+        NodeRef::MathChoice(_) => "math-choice",
+        NodeRef::MathList(_) => "math-list",
+        NodeRef::Nonscript => "nonscript",
+        NodeRef::Adjust(_) => "adjust",
     }
     .into()
 }
 
-pub fn push_node_outline(
-    universe: &Universe,
-    list: tex_state::ids::NodeListId,
-    prefix: &str,
-    depth: u8,
-    output: &mut Vec<String>,
-) {
-    for (index, node) in universe.nodes(list).iter().enumerate() {
-        let node = node.to_owned();
+pub fn push_node_outline(list: &NodeListRef, prefix: &str, depth: u8, output: &mut Vec<String>) {
+    for (index, node) in list.nodes().iter().enumerate() {
         let path = format!("{prefix}/{index}");
         output.push(format!("{path}:{}", node_name(&node)));
         if depth == 0 {
             continue;
         }
         match &node {
-            Node::HList(boxed) | Node::VList(boxed) => {
-                push_node_outline(universe, boxed.children, &path, depth - 1, output);
+            NodeRef::HList(boxed) | NodeRef::VList(boxed) => {
+                let children = list
+                    .resolve(boxed.children)
+                    .expect("box children belong to the enclosing node-list owner");
+                push_node_outline(&children, &path, depth - 1, output);
             }
             _ => {}
         }
@@ -1785,10 +1784,9 @@ pub fn execution_boundaries(run: &SemanticRun, projection: &Projection) -> Vec<S
         })
         .collect::<Vec<_>>();
     for register in &projection.box_registers {
-        match run.universe.box_reg(*register) {
+        match run.universe.box_reg_ref(*register) {
             Some(list) => push_node_outline(
-                &run.universe,
-                list,
+                &list,
                 &format!("box:{register}"),
                 projection.node_depth.unwrap_or(3),
                 &mut output,
