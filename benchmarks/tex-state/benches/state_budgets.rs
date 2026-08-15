@@ -11,7 +11,6 @@ use tex_state::ProvenanceResolver;
 use tex_state::SourceId;
 use tex_state::cell::{BankTag, CellId};
 use tex_state::glue::Order;
-use tex_state::ids::OriginListId;
 use tex_state::macro_store::{MacroDefinitionProvenance, MacroMeaning};
 use tex_state::math::{MathChar, MathField, MathNoad, NoadClass, NoadKind};
 use tex_state::meaning::Meaning;
@@ -1296,12 +1295,20 @@ fn macro_heavy_case() -> ExpansionCase {
         .map(|index| char_token(char::from(b'a' + (index % 26) as u8)))
         .collect::<Vec<_>>();
     let body = stores.intern_token_list(&body_tokens);
-    let definition_origin = stores.source_origin(SourceId::new(1), 0, 1, 1);
-    let body_origins = stores.allocate_repeated_origin_list(definition_origin, body_tokens.len());
+    let definition_origin_id = stores.source_origin(SourceId::new(1), 0, 1, 1);
+    let definition_origin = stores
+        .origin_ref(definition_origin_id)
+        .expect("fresh definition origin");
+    let body_origin_roots = vec![definition_origin.clone(); body_tokens.len()];
+    let body_origins = stores.allocate_origin_list_ref(&body_origin_roots);
     stores.set_macro_meaning_with_provenance(
         macro_cs,
         MacroMeaning::new(MeaningFlags::EMPTY, params, body),
-        MacroDefinitionProvenance::new(definition_origin, OriginListId::EMPTY, body_origins),
+        MacroDefinitionProvenance::new(
+            definition_origin,
+            tex_state::provenance::OriginListRef::empty(),
+            body_origins,
+        ),
     );
 
     let call_tokens = vec![Token::Cs(macro_cs.symbol()); MACRO_CALLS];

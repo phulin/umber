@@ -4,7 +4,7 @@ use std::fmt::Write as _;
 
 use tex_state::env::banks::IntParam;
 use tex_state::glue::{GlueSpec, Order};
-use tex_state::ids::{MacroDefinitionId, OriginListId, TokenListId};
+use tex_state::ids::{MacroDefinitionId, TokenListId};
 use tex_state::interner::ControlSequenceKind;
 use tex_state::meaning::{ExpandablePrimitive, Meaning, MeaningFlags};
 use tex_state::page::PageMark;
@@ -2159,17 +2159,14 @@ impl CommandProcessor<'_> {
         call_site: OriginRef,
         arguments: MacroArguments,
         replacement_tokens: TokenListId,
-        replacement_origins: OriginListId,
+        replacement_origins: tex_state::provenance::OriginListRef,
     ) -> InputLevelId {
         let definition_origin = self
             .state
             .macro_definition_provenance(definition)
-            .definition_origin();
+            .definition_ref()
+            .clone();
         let parent = self.command.parameters.parent_invocation();
-        let definition_origin = self
-            .state
-            .origin_ref(definition_origin)
-            .unwrap_or_else(|| OriginRef::direct(definition_origin));
         let invocation =
             self.state
                 .macro_invocation_frame(definition, call_site, definition_origin, parent);
@@ -2179,9 +2176,7 @@ impl CommandProcessor<'_> {
             arguments,
             invocation,
             self.state.token_list_ref(replacement_tokens),
-            self.state
-                .origin_list_ref(replacement_origins)
-                .unwrap_or_else(tex_state::provenance::OriginListRef::empty),
+            replacement_origins,
         )
     }
 }

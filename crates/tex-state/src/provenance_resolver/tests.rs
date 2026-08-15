@@ -1,7 +1,7 @@
-use crate::ids::OriginListId;
 use crate::input::{InputFrameSummary, InputSummary, MacroArguments, TokenListReplayKind};
 use crate::macro_store::MacroMeaning;
 use crate::meaning::MeaningFlags;
+use crate::provenance::OriginListRef;
 use crate::provenance::{
     DiagnosticSite, InsertedOriginKind, RelatedLocation, RelatedLocationRole, SourceOrigin,
 };
@@ -207,7 +207,7 @@ fn resolver_renders_bounded_live_macro_trace() {
     stores.set_input_summary(InputSummary::new(
         vec![InputFrameSummary::TokenList {
             token_list: stores.token_list_ref(replacement_text),
-            origin_list: OriginListId::EMPTY,
+            origin_list: OriginListRef::empty(),
             replay_kind: TokenListReplayKind::MacroBody,
             index: 0,
             macro_arguments: MacroArguments::new(),

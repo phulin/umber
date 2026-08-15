@@ -348,9 +348,13 @@ The semantic `Token` remains unchanged.
 
 ### 6.2 Token lists and macro definitions
 
-Frozen token lists continue to use parallel `OriginListId` spans. Those lists
-store opaque `OriginId` values and therefore support direct and arena forms
-without a format change.
+Frozen token lists own immutable `OriginListRef` values beside their semantic
+token roots. Each list keeps its compact ordered `OriginId` projection plus one
+sparse strong `OriginRef` for every distinct arena-backed position. There is no
+append-only provenance-list span or independently resolvable `OriginListId`;
+the id exists only as a live-reference projection or detached DTO-local key.
+Formats require no schema change because they exclude provenance and loaded
+definitions begin with absent provenance.
 
 Macro replacement tokens reuse their definition-time origin list. Macro
 arguments reuse their call-site origin lists. A replay frame carries one shared

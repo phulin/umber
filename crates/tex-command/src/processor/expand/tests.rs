@@ -4455,7 +4455,7 @@ fn macro_activations_allocate_nested_invocation_provenance() {
             tex_state::provenance::OriginRef::unknown(),
             MacroArguments::default(),
             empty,
-            tex_state::ids::OriginListId::EMPTY,
+            tex_state::provenance::OriginListRef::empty(),
         );
         outer_invocation = processor
             .command
@@ -4471,7 +4471,7 @@ fn macro_activations_allocate_nested_invocation_provenance() {
             tex_state::provenance::OriginRef::unknown(),
             MacroArguments::default(),
             empty,
-            tex_state::ids::OriginListId::EMPTY,
+            tex_state::provenance::OriginListRef::empty(),
         );
         inner_invocation = processor
             .command

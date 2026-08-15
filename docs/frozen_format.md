@@ -454,6 +454,13 @@ fresh job-local state, installs the current job clock, and schedules
 `\everyjob`. Later mutable entries live in an overlay; the mapped/frozen bytes
 are never mutated and group rollback applies only to job-local state.
 
+Origin lists have no format section and no runtime arena to restore. A loaded
+macro definition therefore starts with absent diagnostic provenance; a macro
+defined after load owns its immutable definition and parameter/replacement
+`OriginListRef` values directly. Detached continuation origin-list recipe ids
+are serialization-local keys, not format or runtime handles, and materialize
+atomically into destination-local structural owners.
+
 Primitive identity tables are also driver-owned process state rather than
 format payload. After `Universe::from_format` validates and installs the frozen
 stores, the selected TeX82, e-TeX, pdfTeX, LaTeX-DVI, or pdfLaTeX driver

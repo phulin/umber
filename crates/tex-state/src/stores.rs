@@ -61,10 +61,9 @@ use crate::meaning::Meaning;
 use crate::node::Node;
 use crate::node_arena::{NodeListBuilder, NodeListRef, NodeListWeakIndex};
 use crate::provenance::{
-    ExpansionFrameRef, InsertedOrigin, InsertedOriginKind, MacroInvocationOrigin,
-    OriginListBuilder, OriginListRef, OriginRecord, OriginRef, ProvenanceStats, ProvenanceStore,
-    ProvenanceStoreMark, SourceOrigin, SynthesizedOrigin, SynthesizedOriginKind, SyntheticOrigin,
-    SyntheticOriginKind,
+    ExpansionFrameRef, InsertedOrigin, InsertedOriginKind, MacroInvocationOrigin, OriginListRef,
+    OriginRecord, OriginRef, ProvenanceStats, ProvenanceStore, ProvenanceStoreMark, SourceOrigin,
+    SynthesizedOrigin, SynthesizedOriginKind, SyntheticOrigin, SyntheticOriginKind,
 };
 use crate::scaled::Scaled;
 use crate::source_fragments::{FragmentStore, direct_fragment_span};
@@ -1507,27 +1506,17 @@ impl Stores {
     ) -> MacroDefinitionRef {
         self.assert_live_token_list(macro_meaning.parameter_text());
         self.assert_live_token_list(macro_meaning.replacement_text());
-        let provenance_roots = provenance.map(|provenance| {
+        if let Some(provenance) = &provenance {
             self.assert_live_origin(provenance.definition_origin());
-            let definition = self
-                .origin_ref(provenance.definition_origin())
-                .unwrap_or_else(|| OriginRef::direct(provenance.definition_origin()));
-            let parameters = self
-                .origin_list_ref(provenance.parameter_origins())
-                .unwrap_or_else(OriginListRef::empty);
-            let replacement = self
-                .origin_list_ref(provenance.replacement_origins())
-                .unwrap_or_else(OriginListRef::empty);
             self.assert_origin_list_len_matches(
                 macro_meaning.parameter_text(),
-                provenance.parameter_origins(),
+                provenance.parameter_ref(),
             );
             self.assert_origin_list_len_matches(
                 macro_meaning.replacement_text(),
-                provenance.replacement_origins(),
+                provenance.replacement_ref(),
             );
-            (definition, parameters, replacement)
-        });
+        }
         let parameter_tokens = self.tokens(macro_meaning.parameter_text());
         let parameter_pattern = MacroParameterPattern::from_tokens(&parameter_tokens);
         let observation_width = u32::try_from(
@@ -1536,7 +1525,7 @@ impl Stores {
                 + self.tokens(macro_meaning.replacement_text()).len(),
         )
         .expect("macro token list length exceeds u32");
-        let definition = self.macros.intern_with_provenance(
+        self.macros.intern_with_provenance(
             macro_meaning,
             self.tokens
                 .owner(macro_meaning.parameter_text())
@@ -1550,16 +1539,7 @@ impl Stores {
             provenance,
             observation_width,
             domain,
-        );
-        if let Some((definition_root, parameter_roots, replacement_roots)) = provenance_roots {
-            self.macros.set_provenance_roots(
-                definition.id(),
-                definition_root,
-                parameter_roots,
-                replacement_roots,
-            );
-        }
-        definition
+        )
     }
 
     pub(crate) fn macro_definition_ref(&self, id: MacroDefinitionId) -> MacroDefinitionRef {
@@ -1596,25 +1576,25 @@ impl Stores {
         self.macros.parameter_pattern(id)
     }
 
-    /// Reads diagnostic provenance for a macro definition, degrading to
-    /// unknown when the optional side-table entry is absent or stale.
+    /// Reads structurally owned diagnostic provenance for a macro definition,
+    /// degrading to unknown when a loaded definition has none.
     #[must_use]
     pub fn macro_definition_provenance(&self, id: MacroDefinitionId) -> MacroDefinitionProvenance {
-        let Some(provenance) = self.macros.provenance(id) else {
-            return MacroDefinitionProvenance::unknown();
-        };
-        if self.macros.provenance_roots(id).is_some() {
-            provenance
-        } else {
-            MacroDefinitionProvenance::unknown()
-        }
+        self.macros
+            .provenance(id)
+            .unwrap_or_else(MacroDefinitionProvenance::unknown)
     }
 
     pub(crate) fn macro_definition_provenance_roots(
         &self,
         id: MacroDefinitionId,
     ) -> Option<(OriginRef, OriginListRef, OriginListRef)> {
-        self.macros.provenance_roots(id)
+        let provenance = self.macros.provenance(id)?;
+        Some((
+            provenance.definition_ref().clone(),
+            provenance.parameter_ref().clone(),
+            provenance.replacement_ref().clone(),
+        ))
     }
 
     pub(crate) fn set_macro_definition_provenance(
@@ -1623,17 +1603,6 @@ impl Stores {
         provenance: MacroDefinitionProvenance,
     ) {
         self.macros.set_provenance(id, provenance);
-        let definition = self
-            .origin_ref(provenance.definition_origin())
-            .unwrap_or_else(|| OriginRef::direct(provenance.definition_origin()));
-        let parameters = self
-            .origin_list_ref(provenance.parameter_origins())
-            .unwrap_or_else(OriginListRef::empty);
-        let replacement = self
-            .origin_list_ref(provenance.replacement_origins())
-            .unwrap_or_else(OriginListRef::empty);
-        self.macros
-            .set_provenance_roots(id, definition, parameters, replacement);
     }
 
     /// Sets a local macro meaning by freezing its public aggregate first.
@@ -1958,13 +1927,6 @@ impl Stores {
         id
     }
 
-    /// Freezes semantic tokens and per-instance origins directly from their
-    /// packed traced representation.
-    #[cfg(test)]
-    pub fn finish_traced_token_list(&mut self, traced: &[TracedTokenWord]) -> TracedTokenList {
-        self.finish_traced_token_list_in_domain(traced, None)
-    }
-
     pub(crate) fn finish_traced_token_list_in_domain(
         &mut self,
         traced: &[TracedTokenWord],
@@ -1995,7 +1957,7 @@ impl Stores {
         crate::measurement::record_traced_list_finish(traced.len(), 0, 0);
         let origin_list = self
             .provenance
-            .allocate_attached_origin_ids(traced.iter().map(|word| word.origin()));
+            .allocate_unrooted_origin_ids(traced.iter().map(|word| word.origin()));
         TracedTokenList::new(token_list, origin_list)
     }
 
@@ -2027,10 +1989,9 @@ impl Stores {
         );
         #[cfg(feature = "profiling")]
         crate::measurement::record_traced_list_finish(words.len(), 0, 0);
-        let origin_list = self.provenance.allocate_attached_rooted_origin_ids(
-            words.iter().map(|word| word.origin()),
-            traced.roots(),
-        );
+        let origin_list = self
+            .provenance
+            .allocate_rooted_origin_words(words.iter().map(|word| word.origin()), traced.roots());
         TracedTokenList::new(token_list, origin_list)
     }
 
@@ -2518,54 +2479,8 @@ impl Stores {
         }
     }
 
-    /// Allocates an origin-list span.
-    pub fn allocate_origin_list(&mut self, origins: &[OriginId]) -> OriginListId {
-        for &origin in origins {
-            self.assert_live_origin(origin);
-        }
-        self.provenance.allocate_list(origins)
-    }
-
     pub fn allocate_origin_list_ref(&mut self, origins: &[OriginRef]) -> OriginListRef {
         self.provenance.allocate_rooted_list(origins)
-    }
-
-    pub fn origin_list_ref(&self, id: OriginListId) -> Option<OriginListRef> {
-        self.provenance.origin_list_ref(id)
-    }
-
-    /// Allocates an origin-list span by repeating one live origin.
-    pub fn allocate_repeated_origin_list(&mut self, origin: OriginId, len: usize) -> OriginListId {
-        self.assert_live_origin(origin);
-        self.provenance.allocate_repeated_list(origin, len)
-    }
-
-    /// Creates a fresh owned scratch origin-list builder.
-    #[must_use]
-    pub fn origin_list_builder(&self) -> OriginListBuilder {
-        ProvenanceStore::builder()
-    }
-
-    /// Allocates the current origin-list builder value and clears it for reuse.
-    pub fn finish_origin_list(&mut self, builder: &mut OriginListBuilder) -> OriginListId {
-        for &origin in builder.as_slice() {
-            self.assert_live_origin(origin);
-        }
-        builder.finish(&mut self.provenance)
-    }
-
-    /// Reads a live origin-list span.
-    #[must_use]
-    pub fn origin_list(&self, id: OriginListId) -> &[OriginId] {
-        self.provenance
-            .resolve_list(id)
-            .expect("origin list id is not live in this Universe timeline")
-    }
-
-    /// Reads an origin-list span if it is still live on this timeline.
-    #[must_use]
-    pub fn origin_list_if_live(&self, id: OriginListId) -> Option<&[OriginId]> {
-        self.provenance.resolve_list(id)
     }
 
     /// Returns live provenance arena length counters.
@@ -2704,21 +2619,13 @@ impl Stores {
             .map(GeneratedSource::hash)
     }
 
-    fn assert_origin_list_len_matches(&self, token_list: TokenListId, origin_list: OriginListId) {
-        if origin_list == OriginListId::EMPTY {
-            return;
-        }
-        if let Some(origins) = self.origin_list_ref(origin_list) {
-            assert_eq!(
-                self.tokens(token_list).len(),
-                origins.origins().len(),
-                "origin-list length does not match token-list length"
-            );
+    fn assert_origin_list_len_matches(&self, token_list: TokenListId, origins: &OriginListRef) {
+        if origins.id() == OriginListId::EMPTY {
             return;
         }
         assert_eq!(
             self.tokens(token_list).len(),
-            self.origin_list(origin_list).len(),
+            origins.origins().len(),
             "origin-list length does not match token-list length"
         );
     }

@@ -1,5 +1,5 @@
 use super::Stores;
-use crate::ids::{FontId, GlueId, MacroDefinitionId, NodeListId, OriginListId, TokenListId};
+use crate::ids::{FontId, GlueId, MacroDefinitionId, NodeListId, TokenListId};
 use crate::input::{InputFrameSummary, InputSummary, SourceFrameSummary};
 use crate::interner::{Symbol, SymbolId, SymbolReference};
 use crate::meaning::Meaning;
@@ -119,7 +119,13 @@ impl Stores {
                     ..
                 } => {
                     self.assert_live_token_list(token_list.id());
-                    self.assert_live_origin_list(*origin_list);
+                    if origin_list.id() != crate::ids::OriginListId::EMPTY {
+                        assert_eq!(
+                            origin_list.origins().len(),
+                            token_list.tokens().len(),
+                            "input origin-list length does not match token list"
+                        );
+                    }
                     assert!(
                         *index <= token_list.tokens().len(),
                         "input token-list frame index exceeds its live token list"
@@ -348,13 +354,6 @@ impl Stores {
             }
         };
         assert!(live, "origin id is not live in this Universe timeline");
-    }
-
-    pub(super) fn assert_live_origin_list(&self, id: OriginListId) {
-        assert!(
-            self.provenance.resolve_stored_list(id).is_some(),
-            "origin list id is not live in this Universe timeline"
-        );
     }
 
     pub(super) fn assert_live_token(&self, token: Token) {

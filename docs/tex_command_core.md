@@ -1634,8 +1634,8 @@ struct TokenCursor {
 
 enum TokenPayload {
     Stored {
-        tokens: TokenListId,
-        origins: OriginListId,
+        tokens: TokenListRef,
+        origins: OriginListRef,
     },
     Transient(SharedTokenBuffer),
     InlineTransient(TracedTokenWord),

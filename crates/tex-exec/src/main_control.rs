@@ -6166,7 +6166,7 @@ enum ScannedStep {
         global: bool,
         parameter_text: TracedTokenList,
         replacement_text: TracedTokenList,
-        definition_origin: tex_state::token::OriginId,
+        definition_origin: tex_state::provenance::OriginRef,
     },
     CharacterDefinition {
         primitive: UnexpandablePrimitive,
@@ -8956,7 +8956,7 @@ fn scan_command(
                 global,
                 parameter_text: definition.parameter_text,
                 replacement_text: definition.replacement_text,
-                definition_origin: definition.provenance.primary,
+                definition_origin: definition.definition_origin,
             })
         }
         Meaning::UnexpandablePrimitive(
@@ -14648,8 +14648,8 @@ fn apply_scanned_step(
             );
             let provenance = MacroDefinitionProvenance::new(
                 definition_origin,
-                parameter_text.origin_list(),
-                replacement_text.origin_list(),
+                parameter_text.origin_ref().clone(),
+                replacement_text.origin_ref().clone(),
             );
             // TeX82 §1211's generic `prefixed_command` global-scope
             // resolution (the same `\globaldefs` override every other

@@ -1,17 +1,18 @@
 //! Diagnostic token-provenance storage.
 //!
-//! Provenance is rollback-coupled with the aggregate store tuple, but remains
-//! outside TeX semantic state. Allocation never reports capacity errors:
+//! Provenance remains outside TeX semantic state. Origin records retain their
+//! rollback-coupled compatibility archive, while origin lists are immutable
+//! reachability-owned values. Allocation never reports capacity errors:
 //! origin-record overflow degrades to [`OriginId::UNKNOWN`], and origin-list
 //! overflow degrades to [`OriginListId::EMPTY`].
 
-use crate::identity::{HandleIdentity, IdentityAllocator, IdentityMark, ReusableIdentityAllocator};
+use crate::identity::{HandleIdentity, ReusableIdentityAllocator};
 use crate::ids::{MacroDefinitionId, OriginListId};
 use crate::input::{SourceId, TokenListReplayKind};
 use crate::source_map::{SourceMapStats, SourceRegistrationRef, SourceSpan};
 use crate::token::{OriginEncoding, OriginId, Token};
 use crate::world::InputRecordId;
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::mem;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -208,9 +209,6 @@ impl OriginRecordArchive {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct ProvenanceStoreMark {
     records: u32,
-    spans: u32,
-    origins: u32,
-    list_identities: IdentityMark,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -221,7 +219,7 @@ struct OriginRecordStorageStats {
     key_run_capacity: usize,
 }
 
-/// Live provenance arena size counters.
+/// Live compatibility-record and structural provenance size counters.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct ProvenanceStats {
     origin_records: usize,
@@ -343,7 +341,7 @@ impl ProvenanceStats {
     #[must_use]
     pub const fn estimated_bytes(self) -> usize {
         self.origin_records * mem::size_of::<ArchivedOriginRecord>()
-            + self.origin_list_spans * mem::size_of::<(u32, u32)>()
+            + self.origin_list_spans * mem::size_of::<OriginListValue>()
             + self.origin_list_entries * mem::size_of::<OriginId>()
             + self.source_map_bytes
     }
@@ -353,7 +351,7 @@ impl ProvenanceStats {
         self.origin_record_capacity * mem::size_of::<ArchivedOriginRecord>()
             + self.origin_record_archive_metadata_retained_bytes
             + self.origin_key_run_capacity * mem::size_of::<OriginKeyRun>()
-            + self.origin_list_span_capacity * mem::size_of::<(u32, u32)>()
+            + self.origin_list_span_capacity * mem::size_of::<RootedOriginListSlot>()
             + self.origin_list_entry_capacity * mem::size_of::<OriginId>()
             + self.source_map_retained_bytes
     }
@@ -557,69 +555,6 @@ impl MacroInvocationProvenanceStats {
         } else {
             self.retained_bytes.div_ceil(self.invocations)
         }
-    }
-}
-
-/// An owned scratch buffer for building an origin list before freezing it.
-#[derive(Clone, Debug)]
-pub struct OriginListBuilder {
-    buf: Vec<OriginId>,
-}
-
-impl OriginListBuilder {
-    /// Creates an empty reusable origin-list builder.
-    #[must_use]
-    pub(crate) fn new() -> Self {
-        Self { buf: Vec::new() }
-    }
-
-    /// Appends one origin to the unfinished list.
-    pub fn push(&mut self, origin: OriginId) {
-        self.buf.push(origin);
-    }
-
-    /// Appends a contiguous immutable origin span.
-    pub fn extend_from_slice(&mut self, origins: &[OriginId]) {
-        self.buf.extend_from_slice(origins);
-    }
-
-    /// Appends one origin for a complete literal token span.
-    pub fn extend_repeated(&mut self, origin: OriginId, len: usize) {
-        self.buf.extend(std::iter::repeat_n(origin, len));
-    }
-
-    /// Reserves capacity when the caller already knows the remaining size.
-    pub fn reserve(&mut self, additional: usize) {
-        self.buf.reserve(additional);
-    }
-
-    /// Returns the number of origins currently buffered.
-    #[must_use]
-    pub fn len(&self) -> usize {
-        self.buf.len()
-    }
-
-    /// Returns whether the builder currently holds no origins.
-    #[must_use]
-    pub fn is_empty(&self) -> bool {
-        self.buf.is_empty()
-    }
-
-    /// Clears the unfinished list without allocating a span.
-    pub fn clear(&mut self) {
-        self.buf.clear();
-    }
-
-    #[must_use]
-    pub(crate) fn as_slice(&self) -> &[OriginId] {
-        &self.buf
-    }
-
-    /// Allocates the current origin list and clears the builder for reuse.
-    pub(crate) fn finish(&mut self, store: &mut ProvenanceStore) -> OriginListId {
-        let id = store.allocate_list(&self.buf);
-        self.buf.clear();
-        id
     }
 }
 
@@ -1254,7 +1189,6 @@ struct RootedOriginSlot {
 #[derive(Debug)]
 struct RootedOriginListSlot {
     identity: HandleIdentity,
-    owns_identity: bool,
     entry_len: usize,
     value: Weak<OriginListValue>,
 }
@@ -1333,7 +1267,7 @@ const RECORD_CANDIDATE_KEY_BUDGET: usize = 4_096;
 const LIST_CANDIDATE_KEY_BUDGET: usize = 1_024;
 const ROOTED_RECLAIM_WORK_PER_ALLOCATION: usize = 8;
 
-/// Append-only origin-record and origin-list arenas.
+/// Compatibility origin-record archive plus reachability-owned provenance.
 #[derive(Debug)]
 pub(crate) struct ProvenanceStore {
     records: OriginRecordArchive,
@@ -1341,11 +1275,6 @@ pub(crate) struct ProvenanceStore {
     /// keys still resolve through `record_keys`, and every candidate compares
     /// the complete record before reuse.
     record_candidates: HashMap<OriginRecord, Vec<u32>>,
-    spans: Vec<(u32, u32)>,
-    origins: Vec<OriginId>,
-    span_hashes: Vec<u64>,
-    list_candidates: HashMap<u64, Vec<OriginListId>>,
-    list_identities: IdentityAllocator,
     record_keys: OriginKeyRuns,
     next_record_key: u32,
     record_key_lease_end: u32,
@@ -1362,8 +1291,6 @@ pub(crate) struct ProvenanceStore {
     rooted_list_sweep_cursor: usize,
     rooted_list_occupied: usize,
     rooted_list_entries: usize,
-    rooted_attached_lists: HashMap<OriginListId, Weak<OriginListValue>>,
-    rooted_attached_list_order: VecDeque<OriginListId>,
     rooted_list_candidates: HashMap<u64, Vec<Weak<OriginListValue>>>,
     record_limit: usize,
     list_span_limit: usize,
@@ -1379,11 +1306,6 @@ impl Clone for ProvenanceStore {
         Self {
             records: self.records.clone(),
             record_candidates: self.record_candidates.clone(),
-            spans: self.spans.clone(),
-            origins: self.origins.clone(),
-            span_hashes: self.span_hashes.clone(),
-            list_candidates: self.list_candidates.clone(),
-            list_identities: self.list_identities.fork(),
             record_keys: self.record_keys.clone(),
             next_record_key: 0,
             record_key_lease_end: 0,
@@ -1411,7 +1333,6 @@ impl Clone for ProvenanceStore {
                 .map(|slot| {
                     slot.as_ref().map(|slot| RootedOriginListSlot {
                         identity: slot.identity,
-                        owns_identity: slot.owns_identity,
                         entry_len: slot.entry_len,
                         value: slot.value.clone(),
                     })
@@ -1420,8 +1341,6 @@ impl Clone for ProvenanceStore {
             rooted_list_sweep_cursor: self.rooted_list_sweep_cursor,
             rooted_list_occupied: self.rooted_list_occupied,
             rooted_list_entries: self.rooted_list_entries,
-            rooted_attached_lists: self.rooted_attached_lists.clone(),
-            rooted_attached_list_order: self.rooted_attached_list_order.clone(),
             rooted_list_candidates: self.rooted_list_candidates.clone(),
             record_limit: self.record_limit,
             list_span_limit: self.list_span_limit,
@@ -1441,11 +1360,6 @@ impl ProvenanceStore {
         Self {
             records: OriginRecordArchive::default(),
             record_candidates: HashMap::new(),
-            spans: vec![(0, 0)],
-            origins: Vec::new(),
-            span_hashes: vec![origin_list_hash(&[])],
-            list_candidates: HashMap::new(),
-            list_identities: IdentityAllocator::new(1),
             record_keys: OriginKeyRuns::default(),
             next_record_key: 0,
             record_key_lease_end: 0,
@@ -1462,8 +1376,6 @@ impl ProvenanceStore {
             rooted_list_sweep_cursor: 1,
             rooted_list_occupied: 0,
             rooted_list_entries: 0,
-            rooted_attached_lists: HashMap::new(),
-            rooted_attached_list_order: VecDeque::new(),
             rooted_list_candidates: HashMap::new(),
             record_limit: DEFAULT_ORIGIN_RECORD_LIMIT,
             list_span_limit: DEFAULT_ORIGIN_LIST_SPAN_LIMIT,
@@ -1495,12 +1407,6 @@ impl ProvenanceStore {
     #[must_use]
     pub(crate) const fn unknown_id() -> OriginId {
         OriginId::UNKNOWN
-    }
-
-    /// Creates a fresh owned scratch origin-list builder.
-    #[must_use]
-    pub(crate) fn builder() -> OriginListBuilder {
-        OriginListBuilder::new()
     }
 
     /// Allocates a new origin record, saturating capacity overflow to unknown.
@@ -1757,46 +1663,24 @@ impl ProvenanceStore {
         self.allocate_rooted_list_value(ids, owners)
     }
 
-    #[cfg(test)]
-    pub(crate) fn allocate_rooted_origin_ids(
+    pub(crate) fn allocate_unrooted_origin_ids(
         &mut self,
         origins: impl ExactSizeIterator<Item = OriginId>,
     ) -> OriginListRef {
         let mut ids = Vec::with_capacity(origins.len());
         for id in origins {
+            assert!(
+                !matches!(id.decode(), OriginEncoding::Arena(_)),
+                "arena-backed origin requires a structural owner"
+            );
             ids.push(id);
         }
-        let mut owners = Vec::new();
-        for &id in &ids {
-            if let Some(root) = self.origin_ref(id) {
-                Self::insert_distinct_owner(&mut owners, root);
-            }
-        }
-        self.allocate_rooted_list_value(ids, owners)
+        self.allocate_rooted_list_value(ids, Vec::new())
     }
 
-    pub(crate) fn allocate_attached_origin_ids(
-        &mut self,
-        origins: impl ExactSizeIterator<Item = OriginId>,
-    ) -> OriginListRef {
-        let mut ids = Vec::with_capacity(origins.len());
-        let mut owners = Vec::new();
-        for id in origins {
-            ids.push(id);
-            if let Some(root) = self.origin_ref(id) {
-                Self::insert_distinct_owner(&mut owners, root);
-            }
-        }
-        let id = self.allocate_list(&ids);
-        self.attach_rooted_list_value(id, ids, owners)
-    }
-
-    /// Publishes an origin list from an already structurally rooted buffer.
-    ///
-    /// This deliberately keeps the legacy compact-list publication required
-    /// by loaded-format compatibility while deriving every strong owner from
-    /// the value being frozen, never from historical arena lookup.
-    pub(crate) fn allocate_attached_rooted_origin_ids(
+    /// Publishes an immutable origin list from an already structurally rooted
+    /// buffer without creating a separately resolvable historical span.
+    pub(crate) fn allocate_rooted_origin_words(
         &mut self,
         origins: impl ExactSizeIterator<Item = OriginId>,
         roots: &[OriginRef],
@@ -1818,8 +1702,7 @@ impl ProvenanceStore {
                 );
             }
         }
-        let id = self.allocate_list(&ids);
-        self.attach_rooted_list_value(id, ids, roots.to_vec())
+        self.allocate_rooted_list_value(ids, roots.to_vec())
     }
 
     fn insert_distinct_owner(owners: &mut Vec<OriginRef>, root: OriginRef) {
@@ -1904,7 +1787,6 @@ impl ProvenanceStore {
         assert!(self.rooted_list_slots[raw].is_none());
         self.rooted_list_slots[raw] = Some(RootedOriginListSlot {
             identity,
-            owns_identity: true,
             entry_len,
             value: Arc::downgrade(&value),
         });
@@ -1931,76 +1813,6 @@ impl ProvenanceStore {
         }
     }
 
-    pub(crate) fn origin_list_ref(&self, id: OriginListId) -> Option<OriginListRef> {
-        if id == OriginListId::EMPTY {
-            return Some(OriginListRef::empty());
-        }
-        if let Some(value) = self.rooted_attached_lists.get(&id).and_then(Weak::upgrade) {
-            return Some(OriginListRef {
-                id,
-                value: Some(value),
-            });
-        }
-        let slot = self.rooted_list_slots.get(id.raw() as usize)?.as_ref()?;
-        (slot.identity == id.identity()).then_some(())?;
-        let value = slot.value.upgrade()?;
-        debug_assert_eq!(value.id, id);
-        Some(OriginListRef {
-            id,
-            value: Some(value),
-        })
-    }
-
-    #[cfg(test)]
-    pub(crate) fn attach_rooted_list(
-        &mut self,
-        id: OriginListId,
-        roots: &[OriginRef],
-    ) -> OriginListRef {
-        if id == OriginListId::EMPTY {
-            return OriginListRef::empty();
-        }
-        self.reclaim_some_dead_rooted_attached_lists(ROOTED_RECLAIM_WORK_PER_ALLOCATION);
-        if let Some(existing) = self.origin_list_ref(id) {
-            return existing;
-        }
-        let mut owners = Vec::new();
-        for root in roots {
-            Self::insert_distinct_owner(&mut owners, root.clone());
-        }
-        self.attach_rooted_list_value(id, roots.iter().map(OriginRef::id).collect(), owners)
-    }
-
-    fn attach_rooted_list_value(
-        &mut self,
-        id: OriginListId,
-        origins: Vec<OriginId>,
-        owners: Vec<OriginRef>,
-    ) -> OriginListRef {
-        if id == OriginListId::EMPTY {
-            return OriginListRef::empty();
-        }
-        self.reclaim_some_dead_rooted_attached_lists(ROOTED_RECLAIM_WORK_PER_ALLOCATION);
-        if let Some(existing) = self.origin_list_ref(id) {
-            return existing;
-        }
-        let already_tracked = self.rooted_attached_lists.contains_key(&id);
-        let value = Arc::new(OriginListValue {
-            id,
-            origins: origins.into_boxed_slice(),
-            owners: owners.into_boxed_slice(),
-        });
-        self.rooted_attached_lists
-            .insert(id, Arc::downgrade(&value));
-        if !already_tracked {
-            self.rooted_attached_list_order.push_back(id);
-        }
-        OriginListRef {
-            id,
-            value: Some(value),
-        }
-    }
-
     fn reclaim_some_dead_rooted_lists(&mut self, work: usize) -> usize {
         let mut visited = 0;
         while visited < work && self.rooted_list_slots.len() > 1 {
@@ -2019,11 +1831,9 @@ impl ProvenanceStore {
             if occupied.value.strong_count() != 0 {
                 continue;
             }
-            if occupied.owns_identity {
-                self.rooted_list_identities
-                    .release(occupied.identity)
-                    .expect("origin-list weak slot and identity table diverged");
-            }
+            self.rooted_list_identities
+                .release(occupied.identity)
+                .expect("origin-list weak slot and identity table diverged");
             self.rooted_list_entries -= occupied.entry_len;
             self.rooted_list_occupied -= 1;
             *slot = None;
@@ -2031,39 +1841,13 @@ impl ProvenanceStore {
         visited
     }
 
-    fn reclaim_some_dead_rooted_attached_lists(&mut self, work: usize) -> usize {
-        let mut visited = 0;
-        while visited < work {
-            let Some(id) = self.rooted_attached_list_order.pop_front() else {
-                break;
-            };
-            visited += 1;
-            if self
-                .rooted_attached_lists
-                .get(&id)
-                .is_some_and(|value| value.strong_count() != 0)
-            {
-                self.rooted_attached_list_order.push_back(id);
-            } else {
-                self.rooted_attached_lists.remove(&id);
-            }
-        }
-        visited
-    }
-
     fn reclaim_dead_rooted_lists(&mut self) {
         let slot_extent = self.rooted_list_slots.len().saturating_sub(1);
         self.reclaim_some_dead_rooted_lists(slot_extent);
-        let attached_extent = self.rooted_attached_list_order.len();
-        self.reclaim_some_dead_rooted_attached_lists(attached_extent);
         self.rooted_list_candidates.retain(|_, candidates| {
             candidates.retain(|candidate| candidate.strong_count() != 0);
             !candidates.is_empty()
         });
-        debug_assert_eq!(
-            self.rooted_attached_lists.len(),
-            self.rooted_attached_list_order.len()
-        );
     }
 
     #[cfg(test)]
@@ -2112,119 +1896,6 @@ impl ProvenanceStore {
         Some(key)
     }
 
-    fn list_budget_allows(&self, len: usize) -> bool {
-        self.spans.len() < self.list_span_limit
-            && self
-                .origins
-                .len()
-                .checked_add(len)
-                .is_some_and(|end| end <= self.list_entry_limit)
-    }
-
-    /// Allocates an origin-list span, saturating capacity overflow to empty.
-    pub(crate) fn allocate_list(&mut self, origins: &[OriginId]) -> OriginListId {
-        if origins.is_empty() {
-            return OriginListId::EMPTY;
-        }
-        let hash = origin_list_hash(origins);
-        if let Some(existing) = self.exact_list_candidate(hash, origins) {
-            return existing;
-        }
-        if !self.list_budget_allows(origins.len()) {
-            return OriginListId::EMPTY;
-        }
-        let (Some(start), Some(len), Some(_raw)) = (
-            u32_len(self.origins.len()),
-            u32_len(origins.len()),
-            u32_index(self.spans.len()),
-        ) else {
-            return OriginListId::EMPTY;
-        };
-        let Some(_end) = start.checked_add(len) else {
-            return OriginListId::EMPTY;
-        };
-        self.origins.extend_from_slice(origins);
-        self.spans.push((start, len));
-        self.span_hashes.push(hash);
-        let id = OriginListId::from_identity(
-            self.list_identities
-                .allocate()
-                .expect("origin-list span capacity checked"),
-        );
-        self.index_list_candidate(hash, id);
-        id
-    }
-
-    /// Allocates an origin-list span by repeating one live origin.
-    pub(crate) fn allocate_repeated_list(&mut self, origin: OriginId, len: usize) -> OriginListId {
-        if len == 0 {
-            return OriginListId::EMPTY;
-        }
-        let hash = repeated_origin_list_hash(origin, len);
-        if let Some(existing) = self.exact_repeated_list_candidate(hash, origin, len) {
-            return existing;
-        }
-        if !self.list_budget_allows(len) {
-            return OriginListId::EMPTY;
-        }
-        let (Some(start), Some(len), Some(_raw)) = (
-            u32_len(self.origins.len()),
-            u32_len(len),
-            u32_index(self.spans.len()),
-        ) else {
-            return OriginListId::EMPTY;
-        };
-        let Some(_end) = start.checked_add(len) else {
-            return OriginListId::EMPTY;
-        };
-        self.origins
-            .resize(self.origins.len() + len as usize, origin);
-        self.spans.push((start, len));
-        self.span_hashes.push(hash);
-        let id = OriginListId::from_identity(
-            self.list_identities
-                .allocate()
-                .expect("origin-list span capacity checked"),
-        );
-        self.index_list_candidate(hash, id);
-        id
-    }
-
-    fn index_list_candidate(&mut self, hash: u64, id: OriginListId) {
-        if self.list_candidates.len() >= LIST_CANDIDATE_KEY_BUDGET
-            && !self.list_candidates.contains_key(&hash)
-        {
-            self.list_candidates.clear();
-        }
-        self.list_candidates.entry(hash).or_default().push(id);
-    }
-
-    fn exact_list_candidate(&self, hash: u64, origins: &[OriginId]) -> Option<OriginListId> {
-        self.list_candidates.get(&hash).and_then(|candidates| {
-            candidates.iter().copied().find(|&candidate| {
-                self.contains_list(candidate) && self.list_span(candidate) == origins
-            })
-        })
-    }
-
-    fn exact_repeated_list_candidate(
-        &self,
-        hash: u64,
-        origin: OriginId,
-        len: usize,
-    ) -> Option<OriginListId> {
-        self.list_candidates.get(&hash).and_then(|candidates| {
-            candidates.iter().copied().find(|&candidate| {
-                self.contains_list(candidate)
-                    && self.list_span(candidate).len() == len
-                    && self
-                        .list_span(candidate)
-                        .iter()
-                        .all(|candidate| *candidate == origin)
-            })
-        })
-    }
-
     /// Reads a live origin record.
     #[must_use]
     pub(crate) fn get(&self, id: OriginId) -> OriginRecord {
@@ -2247,30 +1918,6 @@ impl ProvenanceStore {
             .expect("live provenance slot exists")
     }
 
-    /// Reads a live origin-list span.
-    #[must_use]
-    #[cfg(test)]
-    pub(crate) fn list(&self, id: OriginListId) -> &[OriginId] {
-        assert!(self.contains_list(id), "origin list id is not live");
-        self.list_span(id)
-    }
-
-    /// Resolves a stored origin-list id and reads its live span.
-    #[must_use]
-    pub(crate) fn resolve_list(&self, id: OriginListId) -> Option<&[OriginId]> {
-        self.resolve_stored_list(id).map(|id| self.list_span(id))
-    }
-
-    fn list_span(&self, id: OriginListId) -> &[OriginId] {
-        let index = id.raw() as usize;
-        assert!(index < self.spans.len(), "origin list id is not live");
-        let (start, len) = self.spans[index];
-        let start = start as usize;
-        let end = start + len as usize;
-        assert!(end <= self.origins.len(), "origin-list span exceeds arena");
-        &self.origins[start..end]
-    }
-
     /// Returns whether `id` names a currently-live origin record.
     #[must_use]
     pub(crate) fn contains_origin(&self, id: OriginId) -> bool {
@@ -2289,39 +1936,30 @@ impl ProvenanceStore {
         }
     }
 
-    /// Returns whether `id` names a currently-live origin-list span.
-    #[must_use]
-    pub(crate) fn contains_list(&self, id: OriginListId) -> bool {
-        self.list_identities.contains(id.identity())
-    }
-
-    pub(crate) fn resolve_stored_list(&self, id: OriginListId) -> Option<OriginListId> {
-        if self.contains_list(id) {
-            return Some(id);
-        }
-        if !id.is_stored() {
-            return None;
-        }
-        self.list_identities
-            .identity_at(id.raw())
-            .map(OriginListId::from_identity)
-    }
-
-    /// Returns live arena length counters.
+    /// Returns live structural provenance counters and retained weak-slot
+    /// capacity. This measurement may scan weak list slots, but production
+    /// ownership and reclamation never do.
     #[must_use]
     pub(crate) fn stats(&self) -> ProvenanceStats {
+        let (origin_list_spans, origin_list_entries) = self
+            .rooted_list_slots
+            .iter()
+            .filter_map(|slot| slot.as_ref()?.value.upgrade())
+            .fold((0_usize, 0_usize), |(lists, entries), value| {
+                (lists + 1, entries.saturating_add(value.origins.len()))
+            });
         ProvenanceStats::with_capacities(
             self.records.len(),
-            self.spans.len(),
-            self.origins.len(),
+            origin_list_spans,
+            origin_list_entries,
             OriginRecordStorageStats {
                 capacity: self.records.capacity(),
                 archive_metadata_retained_bytes: self.records.retained_metadata_bytes(),
                 key_runs: self.record_keys.runs.len(),
                 key_run_capacity: self.record_keys.runs.capacity(),
             },
-            self.spans.capacity(),
-            self.origins.capacity(),
+            self.rooted_list_slots.capacity(),
+            origin_list_entries,
         )
     }
 
@@ -2363,11 +2001,6 @@ impl ProvenanceStore {
         ProvenanceStoreMark {
             records: u32_len(self.records.len())
                 .expect("provenance record arena exceeded representable mark"),
-            spans: u32_len(self.spans.len())
-                .expect("provenance span arena exceeded representable mark"),
-            origins: u32_len(self.origins.len())
-                .expect("provenance origin arena exceeded representable mark"),
-            list_identities: self.list_identities.watermark(),
         }
     }
 
@@ -2401,26 +2034,9 @@ impl ProvenanceStore {
 
     fn truncate_to_inner(&mut self, mark: ProvenanceStoreMark) {
         let records = mark.records as usize;
-        let spans = mark.spans as usize;
-        let origins = mark.origins as usize;
-        assert!(spans >= 1, "provenance mark removes empty origin list");
         assert!(
             records <= self.records.len(),
             "provenance mark has too many records"
-        );
-        assert!(
-            spans <= self.spans.len(),
-            "provenance mark has too many spans"
-        );
-        assert!(
-            origins <= self.origins.len(),
-            "provenance mark has too many origins"
-        );
-        assert!(
-            self.spans[..spans]
-                .last()
-                .is_some_and(|&(start, len)| start + len == mark.origins),
-            "provenance mark does not point to an origin-list boundary"
         );
 
         for slot in records..self.records.len() {
@@ -2435,43 +2051,14 @@ impl ProvenanceStore {
                 }
             }
         }
-        for raw in spans..self.spans.len() {
-            let id = self
-                .list_identities
-                .identity_at(raw as u32)
-                .map(OriginListId::from_identity)
-                .expect("discarded origin-list identity is live");
-            let hash = self.span_hashes[raw];
-            if let Some(candidates) = self.list_candidates.get_mut(&hash) {
-                candidates.retain(|candidate| *candidate != id);
-                if candidates.is_empty() {
-                    self.list_candidates.remove(&hash);
-                }
-            }
-        }
-        self.list_identities
-            .rollback(mark.list_identities)
-            .expect("provenance mark is not an ancestor");
         self.record_keys.truncate(mark.records);
         self.records.truncate(records);
-        self.spans.truncate(spans);
-        self.span_hashes.truncate(spans);
-        self.origins.truncate(origins);
     }
 }
 
 fn origin_list_hash(origins: &[OriginId]) -> u64 {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     origins.hash(&mut hasher);
-    hasher.finish()
-}
-
-fn repeated_origin_list_hash(origin: OriginId, len: usize) -> u64 {
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    len.hash(&mut hasher);
-    for _ in 0..len {
-        origin.hash(&mut hasher);
-    }
     hasher.finish()
 }
 
@@ -2497,11 +2084,6 @@ fn reserve_packed_arena_origins() -> Option<std::ops::Range<u32>> {
 #[cfg(test)]
 fn packed_origin_successor(next: u32) -> Option<u32> {
     (next <= 0x7fff_ffff).then_some(next + 1)
-}
-
-fn u32_index(value: usize) -> Option<u32> {
-    let value = u32_len(value)?;
-    (value < u32::MAX).then_some(value)
 }
 
 #[cfg(any(test, feature = "testing"))]

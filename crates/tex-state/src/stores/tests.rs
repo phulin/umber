@@ -4,7 +4,7 @@ use crate::env::banks::{DimenParam, GlueParam, IntParam};
 use crate::font::NULL_FONT;
 use crate::glue::{GlueSpec, Order};
 use crate::hyphenation::{ExceptionSpec, PatternSpec};
-use crate::ids::{ArenaRef, MacroDefinitionId, NodeListId, OriginListId};
+use crate::ids::{ArenaRef, MacroDefinitionId, NodeListId};
 use crate::macro_store::{MacroDefinitionProvenance, MacroMeaning};
 use crate::math::{
     FractionThickness, MathChoice, MathField, MathFraction, MathListNode, MathNoad, MathStyle,
@@ -21,7 +21,7 @@ use crate::scaled::{GlueSetRatio, Scaled};
 use crate::source_map::SourceDescriptor;
 use crate::state_hash::StateHasher;
 use crate::stores::EngineStackUsage;
-use crate::token::{Catcode, OriginId, Token, TracedTokenWord};
+use crate::token::{Catcode, OriginId, RootedTracedTokenBuffer, RootedTracedTokenWord, Token};
 use crate::world::InputRecordId;
 use crate::{
     input::SourceId,
@@ -509,10 +509,12 @@ fn node_semantic_ids_exclude_token_provenance() {
     };
     let first_origin = stores.synthetic_origin_ref(SyntheticOriginKind::Test);
     let second_origin = stores.synthetic_origin_ref(SyntheticOriginKind::Engine);
-    let first_tokens =
-        stores.finish_traced_token_list(&[TracedTokenWord::pack(token, first_origin.id())]);
-    let second_tokens =
-        stores.finish_traced_token_list(&[TracedTokenWord::pack(token, second_origin.id())]);
+    let first_buffer =
+        RootedTracedTokenBuffer::new([RootedTracedTokenWord::new(token, first_origin)]);
+    let second_buffer =
+        RootedTracedTokenBuffer::new([RootedTracedTokenWord::new(token, second_origin)]);
+    let first_tokens = stores.finish_rooted_traced_token_list_in_domain(&first_buffer, None);
+    let second_tokens = stores.finish_rooted_traced_token_list_in_domain(&second_buffer, None);
     assert_ne!(first_tokens.origin_list(), second_tokens.origin_list());
 
     let first = stores.freeze_node_list(&[Node::Mark {
@@ -1141,9 +1143,6 @@ fn source_origin_direct_boundary_crossing_falls_back_to_one_span_arena() {
         OriginRecord::SourceSpan(_)
     ));
     assert_eq!(after.origin_records(), before.origin_records() + 1);
-
-    let list = stores.allocate_origin_list(&[first, last_direct, first_wide]);
-    assert_eq!(stores.origin_list(list), &[first, last_direct, first_wide]);
 }
 
 #[test]
@@ -1436,7 +1435,7 @@ fn token_list_builder_rejects_equal_slot_foreign_symbol_atomically() {
 }
 
 #[test]
-fn provenance_records_and_lists_round_trip_through_stores_boundary() {
+fn provenance_records_round_trip_through_stores_boundary() {
     let mut stores = Stores::new();
     let symbol = stores.intern("m");
     let params = stores.intern_token_list(&[]);
@@ -1459,7 +1458,6 @@ fn provenance_records_and_lists_round_trip_through_stores_boundary() {
     );
     let synthesized = stores.synthesized_origin(SynthesizedOriginKind::Expansion, inserted);
     let synthetic = stores.synthetic_origin(SyntheticOriginKind::Engine);
-    let list = stores.allocate_origin_list(&[source, macro_origin, inserted, synthesized]);
 
     assert_eq!(stores.bootstrap_origin(), OriginId::UNKNOWN);
     assert_eq!(
@@ -1497,34 +1495,24 @@ fn provenance_records_and_lists_round_trip_through_stores_boundary() {
         stores.origin(synthetic),
         OriginRecord::Synthetic(SyntheticOrigin::new(SyntheticOriginKind::Engine))
     );
-    assert_eq!(
-        stores.origin_list(list),
-        &[source, macro_origin, inserted, synthesized]
-    );
-    assert_eq!(stores.origin_list(OriginListId::EMPTY), &[]);
 }
 
 #[test]
 fn rollback_restores_provenance_as_part_of_snapshot_tuple() {
     let mut stores = Stores::new();
-    let kept = stores.synthetic_origin(SyntheticOriginKind::Engine);
+    let _kept = stores.synthetic_origin(SyntheticOriginKind::Engine);
     let snapshot = stores.checkpoint();
     let stale = stores.synthetic_origin(SyntheticOriginKind::Primitive);
-    let stale_list = stores.allocate_origin_list(&[kept, stale]);
 
     stores.rollback(&snapshot);
     let reused = stores.synthetic_origin(SyntheticOriginKind::Format);
-    let reused_list = stores.allocate_origin_list(&[kept, reused]);
 
     assert_ne!(reused.raw(), stale.raw());
     assert_eq!(stores.origin_if_live(stale), None);
-    assert_eq!(reused_list.raw(), stale_list.raw());
-    assert_ne!(reused_list, stale_list);
     assert_eq!(
         stores.origin(reused),
         OriginRecord::Synthetic(SyntheticOrigin::new(SyntheticOriginKind::Format))
     );
-    assert_eq!(stores.origin_list(reused_list), &[kept, reused]);
 }
 
 #[test]
@@ -1641,25 +1629,25 @@ fn identical_macro_definitions_keep_distinct_provenance() {
     let params = stores.intern_token_list(&[]);
     let body = stores.intern_token_list(&[Token::Cs(symbol.symbol())]);
     let macro_meaning = MacroMeaning::new(MeaningFlags::PROTECTED, params, body);
-    let first_origin = stores.source_origin(SourceId::new(1), 10, 2, 3);
-    let second_origin = stores.source_origin(SourceId::new(2), 20, 4, 5);
-    let first_body_origins = stores.allocate_origin_list(&[first_origin]);
-    let second_body_origins = stores.allocate_origin_list(&[second_origin]);
+    let first_origin = stores.synthetic_origin_ref(SyntheticOriginKind::Engine);
+    let second_origin = stores.synthetic_origin_ref(SyntheticOriginKind::Format);
+    let first_body_origins = stores.allocate_origin_list_ref(std::slice::from_ref(&first_origin));
+    let second_body_origins = stores.allocate_origin_list_ref(std::slice::from_ref(&second_origin));
 
     let first = stores.intern_macro_with_provenance(
         macro_meaning,
         Some(MacroDefinitionProvenance::new(
-            first_origin,
-            OriginListId::EMPTY,
-            first_body_origins,
+            first_origin.clone(),
+            crate::provenance::OriginListRef::empty(),
+            first_body_origins.clone(),
         )),
     );
     let second = stores.intern_macro_with_provenance(
         macro_meaning,
         Some(MacroDefinitionProvenance::new(
-            second_origin,
-            OriginListId::EMPTY,
-            second_body_origins,
+            second_origin.clone(),
+            crate::provenance::OriginListRef::empty(),
+            second_body_origins.clone(),
         )),
     );
 
@@ -1673,13 +1661,13 @@ fn identical_macro_definitions_keep_distinct_provenance() {
         stores
             .macro_definition_provenance(first.id())
             .definition_origin(),
-        first_origin
+        first_origin.id()
     );
     assert_eq!(
         stores
             .macro_definition_provenance(second.id())
             .replacement_origins(),
-        second_body_origins
+        second_body_origins.id()
     );
 }
 

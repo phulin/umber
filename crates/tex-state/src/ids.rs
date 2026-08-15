@@ -1,9 +1,10 @@
 //! Opaque store handles.
 //!
-//! `TokenListId` is minted by the token store. `OriginListId` is minted by the
-//! provenance store. `GlueId` is minted by the glue store. `NodeListId` is
-//! minted by node arenas. `FontId` is minted by the loaded font store.
-//! `SnapshotId` becomes real in State M3.
+//! `TokenListId` is minted by the token store. `OriginListId` is the compact
+//! projection of a live reachability-owned origin list and is not independently
+//! resolvable. `GlueId` is minted by the glue store. `NodeListId` is minted by
+//! node arenas. `FontId` is minted by the loaded font store. `SnapshotId`
+//! becomes real in State M3.
 
 macro_rules! opaque_id {
     ($name:ident) => {
@@ -103,7 +104,7 @@ impl TokenListId {
 }
 
 impl OriginListId {
-    /// The canonical empty origin-list id, preallocated by every provenance store.
+    /// The canonical empty structural origin-list projection.
     pub const EMPTY: Self = Self(crate::identity::HandleIdentity::builtin(0));
 }
 

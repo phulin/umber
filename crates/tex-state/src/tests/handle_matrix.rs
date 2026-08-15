@@ -20,7 +20,6 @@ enum HandleClass {
     MacroDefinition,
     Glue,
     Font,
-    OriginList,
     ArenaOrigin,
     SourcePosition,
     WorldInputRecord,
@@ -32,7 +31,6 @@ const HANDLE_CLASSES: &[HandleClass] = &[
     HandleClass::MacroDefinition,
     HandleClass::Glue,
     HandleClass::Font,
-    HandleClass::OriginList,
     HandleClass::ArenaOrigin,
     HandleClass::SourcePosition,
     HandleClass::WorldInputRecord,
@@ -161,16 +159,6 @@ fn exercise_rollback_reallocate(class: HandleClass) {
             assert_ne!(stale, replacement, "{class:?}");
             assert_panics(class, || _ = universe.font(stale));
         }
-        HandleClass::OriginList => {
-            let mut universe = Universe::new();
-            let snapshot = universe.snapshot();
-            let stale = universe.allocate_origin_list(&[crate::token::OriginId::UNKNOWN]);
-            universe.rollback(&snapshot);
-            let replacement = universe.allocate_origin_list(&[crate::token::OriginId::UNKNOWN]);
-            assert_eq!(stale.raw(), replacement.raw(), "{class:?}");
-            assert_ne!(stale, replacement, "{class:?}");
-            assert!(universe.origin_list_if_live(stale).is_none(), "{class:?}");
-        }
         HandleClass::ArenaOrigin => {
             let mut universe = Universe::new();
             let snapshot = universe.snapshot();
@@ -288,23 +276,6 @@ fn exercise_fork(class: HandleClass) {
             assert_panics(class, || _ = parent.font(child_only));
             assert_panics(class, || _ = child.font(parent_only));
         }
-        HandleClass::OriginList => {
-            let mut parent = Universe::new();
-            let inherited = parent.allocate_origin_list(&[crate::token::OriginId::UNKNOWN]);
-            let mut child = parent.clone();
-            assert!(parent.origin_list_if_live(inherited).is_some(), "{class:?}");
-            assert!(child.origin_list_if_live(inherited).is_some(), "{class:?}");
-            let parent_only = parent.allocate_origin_list(&[crate::token::OriginId::UNKNOWN; 2]);
-            let child_only = child.allocate_origin_list(&[crate::token::OriginId::UNKNOWN; 3]);
-            assert!(
-                parent.origin_list_if_live(child_only).is_none(),
-                "{class:?}"
-            );
-            assert!(
-                child.origin_list_if_live(parent_only).is_none(),
-                "{class:?}"
-            );
-        }
         HandleClass::ArenaOrigin => {
             let mut parent = Universe::new();
             let inherited = parent.synthetic_origin(SyntheticOriginKind::Primitive);
@@ -402,12 +373,6 @@ fn exercise_cross_universe(class: HandleClass) {
             let foreign = owner.intern_font(font("foreign", b"foreign"));
             let other = Universe::new();
             assert_panics(class, || _ = other.font(foreign));
-        }
-        HandleClass::OriginList => {
-            let mut owner = Universe::new();
-            let foreign = owner.allocate_origin_list(&[crate::token::OriginId::UNKNOWN]);
-            let other = Universe::new();
-            assert!(other.origin_list_if_live(foreign).is_none(), "{class:?}");
         }
         HandleClass::ArenaOrigin => {
             let mut owner = Universe::new();

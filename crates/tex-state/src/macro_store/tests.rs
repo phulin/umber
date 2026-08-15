@@ -1,6 +1,7 @@
 use super::{MacroDefinitionProvenance, MacroMeaning};
-use crate::input::SourceId;
+use crate::SourceId;
 use crate::meaning::{Meaning, MeaningFlags};
+use crate::provenance::{OriginListRef, SyntheticOriginKind};
 use crate::stores::Stores;
 use crate::token::{Catcode, Token};
 
@@ -66,23 +67,23 @@ fn provenance_is_occurrence_local_and_not_part_of_body_identity() {
     let mut stores = Stores::new();
     let empty = stores.token_list_ref(crate::ids::TokenListId::EMPTY);
     let replacement = replacement(&mut stores, 3);
-    let first_origin = stores.source_origin(SourceId::new(1), 0, 1, 1);
-    let second_origin = stores.source_origin(SourceId::new(2), 0, 1, 1);
+    let first_origin = stores.synthetic_origin_ref(SyntheticOriginKind::Engine);
+    let second_origin = stores.synthetic_origin_ref(SyntheticOriginKind::Format);
     let meaning = MacroMeaning::new(MeaningFlags::LONG, empty.id(), replacement.id());
     let first = stores.intern_macro_with_provenance(
         meaning,
         Some(MacroDefinitionProvenance::new(
-            first_origin,
-            crate::ids::OriginListId::EMPTY,
-            crate::ids::OriginListId::EMPTY,
+            first_origin.clone(),
+            OriginListRef::empty(),
+            OriginListRef::empty(),
         )),
     );
     let second = stores.intern_macro_with_provenance(
         meaning,
         Some(MacroDefinitionProvenance::new(
-            second_origin,
-            crate::ids::OriginListId::EMPTY,
-            crate::ids::OriginListId::EMPTY,
+            second_origin.clone(),
+            OriginListRef::empty(),
+            OriginListRef::empty(),
         )),
     );
 
@@ -91,13 +92,13 @@ fn provenance_is_occurrence_local_and_not_part_of_body_identity() {
         stores
             .macro_definition_provenance(first.id())
             .definition_origin(),
-        first_origin
+        first_origin.id()
     );
     assert_eq!(
         stores
             .macro_definition_provenance(second.id())
             .definition_origin(),
-        second_origin
+        second_origin.id()
     );
 }
 

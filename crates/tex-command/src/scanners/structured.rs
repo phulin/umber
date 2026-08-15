@@ -82,6 +82,7 @@ pub struct ScannedMacroDefinition {
     pub parameter_text: TracedTokenList,
     pub replacement_text: TracedTokenList,
     pub provenance: StructuredProvenance,
+    pub definition_origin: tex_state::provenance::OriginRef,
 }
 
 /// A completed TeX82 `\let` or `\futurelet` assignment.
@@ -3672,6 +3673,7 @@ impl CommandProcessor<'_> {
             parameter_text: scanned.parameter_text,
             replacement_text: scanned.replacement_text,
             provenance,
+            definition_origin: scanned.primary_root,
         })
     }
 

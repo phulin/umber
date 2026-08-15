@@ -150,14 +150,27 @@ state. The remaining process RSS cannot be assigned to the sparse list or its
 scratch. These receipts prove the producer-level amplifier and its structural
 removal but do not constitute the epic's sub-400 MiB acceptance row.
 
-The old stored-list arena and its rollback identities remain a second lifetime
-authority in this cutover. Trying to stop its writes exposed a distinct owner:
-transient and inline command buffers retain raw `TracedTokenWord` values whose
-root lifetime is currently supplied by that arena. `umber2-3v8z.22.16`
-separately gives those buffers structural provenance ownership;
-`umber2-3v8z.22.15` then retires the legacy format/list-id authority after that
-migration. This cutover retains only the compact compatibility id span and does
-not add another owner sidecar.
+The stored-list arena is now retired. The pre-retirement API audit found
+`allocate_list` only behind list builders and tests, `allocate_repeated_list`
+only in tests and a benchmark, and `resolve_stored_list`/`contains_list` only
+behind raw reads, exact-candidate lookup, and handle validation. The runtime
+owners were macro-definition provenance and input-frame summaries; both now
+store `OriginListRef` directly. Transient and inline command buffers already
+own sparse roots through `RootedTracedTokenBuffer`. Consequently there is no
+append-only origin-list span, span hash, historical candidate table, list
+rollback watermark, or raw-id-to-owner bridge. `OriginListId` remains only the
+compact projection of a live immutable list and as a detached serialization
+key; it is not independently resolvable.
+
+Formats require no schema transition because schema 11 never serialized
+provenance. Dumping continues to exclude definition and input provenance.
+Loading constructs macro definitions with absent provenance, and any
+definition scanned after load installs its `OriginRef`/`OriginListRef` owners
+directly. Detached command continuations keep DTO-local origin-list recipe
+keys, validate and stage the entire recipe graph in a destination fork, and
+publish the newly materialized `OriginListRef` values only with the completed
+summary. Source and loaded execution therefore share the same structural
+lifetime rules without a compatibility sidecar.
 
 #### Transient command owner and transition matrix
 
@@ -275,11 +288,13 @@ command observations, execution effects, or artifact bytes.
 
 ## Retry, rejection, and acceptance
 
-An aggregate operation mark includes provenance allocation ownership. A
+An aggregate operation mark covers the compatibility origin-record archive,
+while structural provenance ownership is part of the typed aggregate state. A
 failed operation first restores command, mode, node, diagnostic, and artifact
-roots, then releases atoms and lists allocated after the mark. Exact local
-retry may lease the discarded packed keys in allocation order, but the lease
-owns no accepted history and is abandoned at the first structural divergence.
+roots, then drops the rejected typed atoms and lists. Origin lists have no
+rollback watermark or historical coordinate. Exact local record retry may
+lease discarded packed keys in allocation order, but the lease owns no
+accepted history and is abandoned at the first structural divergence.
 Successful earlier candidate roots remain once.
 
 Dropping `RevisionCandidate` or `RevisionTransaction` releases every private

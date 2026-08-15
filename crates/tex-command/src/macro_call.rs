@@ -329,7 +329,7 @@ impl CommandProcessor<'_> {
             call.origin_ref().clone(),
             arguments.clone(),
             meaning.replacement_text(),
-            provenance.replacement_origins(),
+            provenance.replacement_ref().clone(),
         );
         observe!(
             self,

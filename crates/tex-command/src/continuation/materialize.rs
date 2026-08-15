@@ -269,9 +269,9 @@ impl<'a> Materializer<'a> {
         self.universe.set_macro_definition_provenance(
             root.id(),
             tex_state::macro_store::MacroDefinitionProvenance::new(
-                definition.id(),
-                parameter_origins.id(),
-                replacement_origins.id(),
+                definition,
+                parameter_origins,
+                replacement_origins,
             ),
         );
         root

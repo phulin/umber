@@ -20,10 +20,7 @@ const MACRO_PARAMETER_SLOTS: usize = 9;
 mod owned;
 
 pub use owned::MacroDefinitionRef;
-use owned::{
-    MacroBodyRef, MacroBodySemanticId, MacroBodyValue, MacroDefinitionProvenanceRoots,
-    MacroDefinitionValue,
-};
+use owned::{MacroBodyRef, MacroBodySemanticId, MacroBodyValue, MacroDefinitionValue};
 
 /// Allocation-free index of parameter markers in frozen macro parameter text.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -170,19 +167,19 @@ impl MacroMeaning {
 }
 
 /// Diagnostic provenance captured while scanning one definition occurrence.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct MacroDefinitionProvenance {
-    definition_origin: OriginId,
-    parameter_origins: OriginListId,
-    replacement_origins: OriginListId,
+    definition_origin: crate::provenance::OriginRef,
+    parameter_origins: crate::provenance::OriginListRef,
+    replacement_origins: crate::provenance::OriginListRef,
 }
 
 impl MacroDefinitionProvenance {
     #[must_use]
     pub const fn new(
-        definition_origin: OriginId,
-        parameter_origins: OriginListId,
-        replacement_origins: OriginListId,
+        definition_origin: crate::provenance::OriginRef,
+        parameter_origins: crate::provenance::OriginListRef,
+        replacement_origins: crate::provenance::OriginListRef,
     ) -> Self {
         Self {
             definition_origin,
@@ -192,27 +189,42 @@ impl MacroDefinitionProvenance {
     }
 
     #[must_use]
-    pub const fn unknown() -> Self {
+    pub fn unknown() -> Self {
         Self {
-            definition_origin: OriginId::UNKNOWN,
-            parameter_origins: OriginListId::EMPTY,
-            replacement_origins: OriginListId::EMPTY,
+            definition_origin: crate::provenance::OriginRef::unknown(),
+            parameter_origins: crate::provenance::OriginListRef::empty(),
+            replacement_origins: crate::provenance::OriginListRef::empty(),
         }
     }
 
     #[must_use]
-    pub const fn definition_origin(self) -> OriginId {
-        self.definition_origin
+    pub fn definition_origin(&self) -> OriginId {
+        self.definition_origin.id()
     }
 
     #[must_use]
-    pub const fn parameter_origins(self) -> OriginListId {
-        self.parameter_origins
+    pub const fn definition_ref(&self) -> &crate::provenance::OriginRef {
+        &self.definition_origin
     }
 
     #[must_use]
-    pub const fn replacement_origins(self) -> OriginListId {
-        self.replacement_origins
+    pub fn parameter_origins(&self) -> OriginListId {
+        self.parameter_origins.id()
+    }
+
+    #[must_use]
+    pub const fn parameter_ref(&self) -> &crate::provenance::OriginListRef {
+        &self.parameter_origins
+    }
+
+    #[must_use]
+    pub fn replacement_origins(&self) -> OriginListId {
+        self.replacement_origins.id()
+    }
+
+    #[must_use]
+    pub const fn replacement_ref(&self) -> &crate::provenance::OriginListRef {
+        &self.replacement_origins
     }
 }
 
@@ -352,7 +364,6 @@ impl MacroStore {
             values.push(MacroDefinitionValue {
                 body,
                 provenance: OnceLock::new(),
-                provenance_roots: OnceLock::new(),
                 observation_operand: operand,
             });
         }
@@ -435,7 +446,6 @@ impl MacroStore {
         let value = MacroDefinitionValue {
             body,
             provenance: provenance_cell,
-            provenance_roots: OnceLock::new(),
             observation_operand: self.next_observation_operand,
         };
         self.next_observation_operand = self
@@ -509,7 +519,7 @@ impl MacroStore {
 
     #[must_use]
     pub(crate) fn provenance(&self, id: MacroDefinitionId) -> Option<MacroDefinitionProvenance> {
-        self.owner(id)?.value.value().provenance.get().copied()
+        self.owner(id)?.value.value().provenance.get().cloned()
     }
 
     pub(crate) fn set_provenance(
@@ -518,47 +528,12 @@ impl MacroStore {
         provenance: MacroDefinitionProvenance,
     ) {
         let root = self.owner(id).expect("macro definition id is not live");
-        if let Err(existing) = root.value.value().provenance.set(provenance) {
+        if let Err(existing) = root.value.value().provenance.set(provenance.clone()) {
             assert_eq!(
                 existing, provenance,
                 "macro provenance changed after publication"
             );
         }
-    }
-
-    pub(crate) fn set_provenance_roots(
-        &mut self,
-        id: MacroDefinitionId,
-        definition: crate::provenance::OriginRef,
-        parameters: crate::provenance::OriginListRef,
-        replacement: crate::provenance::OriginListRef,
-    ) {
-        let root = self.owner(id).expect("macro definition id is not live");
-        let roots = MacroDefinitionProvenanceRoots {
-            definition,
-            parameters,
-            replacement,
-        };
-        if root.value.value().provenance_roots.set(roots).is_err() {
-            panic!("macro provenance roots changed after publication");
-        }
-    }
-
-    pub(crate) fn provenance_roots(
-        &self,
-        id: MacroDefinitionId,
-    ) -> Option<(
-        crate::provenance::OriginRef,
-        crate::provenance::OriginListRef,
-        crate::provenance::OriginListRef,
-    )> {
-        let root = self.owner(id)?;
-        let roots = root.value.value().provenance_roots.get()?;
-        Some((
-            roots.definition.clone(),
-            roots.parameters.clone(),
-            roots.replacement.clone(),
-        ))
     }
 
     #[must_use]

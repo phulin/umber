@@ -233,6 +233,7 @@ pub(crate) struct ScannedToks {
     pub(crate) parameter_text: TracedTokenList,
     pub(crate) replacement_text: TracedTokenList,
     pub(crate) primary: OriginId,
+    pub(crate) primary_root: tex_state::provenance::OriginRef,
     pub(crate) malformed_parameter: bool,
 }
 
@@ -258,7 +259,7 @@ struct ScannedParameterText {
     tokens: crate::state::TracedTokenScratch,
     highest_parameter: u8,
     hash_brace: Option<RootedTracedTokenWord>,
-    primary: OriginId,
+    primary: tex_state::provenance::OriginRef,
     malformed_parameter: bool,
     missing_left_brace: bool,
 }
@@ -368,6 +369,7 @@ impl CommandProcessor<'_> {
             macro_parameters,
             hash_brace,
             primary,
+            primary_root,
             malformed_parameter,
             missing_left_brace,
         ) = match (config.grammar, config.opening) {
@@ -375,12 +377,18 @@ impl CommandProcessor<'_> {
                 // TeX scans the required opening brace through the ordinary
                 // expanded path even when the replacement text itself is
                 // collected unexpanded.
-                let primary = self.scan_left_brace(true)?.origin();
+                let opening = self.scan_left_brace(true)?;
+                let primary = opening.origin();
+                let primary_root = match opening {
+                    ScannedLeftBrace::Consumed(command) => command.origin_ref().clone(),
+                    ScannedLeftBrace::Inserted => tex_state::provenance::OriginRef::unknown(),
+                };
                 (
                     self.traced_token_scratch(),
                     None,
                     None,
                     primary,
+                    primary_root,
                     false,
                     false,
                 )
@@ -411,6 +419,7 @@ impl CommandProcessor<'_> {
                     None,
                     None,
                     primary,
+                    opening.origin_ref().clone(),
                     false,
                     false,
                 )
@@ -427,6 +436,7 @@ impl CommandProcessor<'_> {
                         },
                     )),
                     parameters.hash_brace,
+                    parameters.primary.id(),
                     parameters.primary,
                     parameters.malformed_parameter,
                     parameters.missing_left_brace,
@@ -450,6 +460,7 @@ impl CommandProcessor<'_> {
             parameter_text: self.state.finish_rooted_traced_token_list(&parameter_text),
             replacement_text: self.state.finish_rooted_traced_token_list(&replacement),
             primary,
+            primary_root,
             malformed_parameter,
         })
     }
@@ -527,12 +538,12 @@ impl CommandProcessor<'_> {
     fn scan_parameter_text(&mut self) -> Result<ScannedParameterText, CommandError> {
         let mut output = self.traced_token_scratch();
         let mut next_parameter = 1_u8;
-        let mut primary = OriginId::UNKNOWN;
+        let mut primary = tex_state::provenance::OriginRef::unknown();
         let mut malformed_parameter = false;
         loop {
             let command = self.get_token()?.ok_or(CommandError::input_invariant())?;
-            if primary == OriginId::UNKNOWN {
-                primary = command.origin();
+            if primary.id() == OriginId::UNKNOWN {
+                primary = command.origin_ref().clone();
             }
             let token = command.spelling().semantic_token();
             if is_begin_group(token) {

@@ -1956,8 +1956,8 @@ fn universe_is_send() {
 fn traced_list_finish_reuses_semantics_but_preserves_each_origin_instance() {
     let mut universe = Universe::new();
     let symbol = universe.intern("traced-list-cs");
-    let first_origin = universe.synthetic_origin(SyntheticOriginKind::Test);
-    let second_origin = universe.synthetic_origin(SyntheticOriginKind::Engine);
+    let first_origin = universe.synthetic_origin_ref(SyntheticOriginKind::Test);
+    let second_origin = universe.synthetic_origin_ref(SyntheticOriginKind::Engine);
     let tokens = [
         Token::Char {
             ch: '🦀',
@@ -1968,32 +1968,34 @@ fn traced_list_finish_reuses_semantics_but_preserves_each_origin_instance() {
         Token::frozen_end_template(),
         Token::frozen_endv(),
     ];
-    let first: Vec<_> = tokens
-        .iter()
-        .copied()
-        .map(|token| TracedTokenWord::pack(token, first_origin))
-        .collect();
-    let second: Vec<_> = tokens
-        .iter()
-        .copied()
-        .map(|token| TracedTokenWord::pack(token, second_origin))
-        .collect();
+    let first = RootedTracedTokenBuffer::new(
+        tokens
+            .iter()
+            .copied()
+            .map(|token| RootedTracedTokenWord::new(token, first_origin.clone())),
+    );
+    let second = RootedTracedTokenBuffer::new(
+        tokens
+            .iter()
+            .copied()
+            .map(|token| RootedTracedTokenWord::new(token, second_origin.clone())),
+    );
 
     let bulk = universe.intern_token_list(&tokens);
-    let first_list = universe.finish_traced_token_list(&first);
-    let second_list = universe.finish_traced_token_list(&second);
+    let first_list = universe.finish_rooted_traced_token_list(&first);
+    let second_list = universe.finish_rooted_traced_token_list(&second);
 
     assert_eq!(first_list.token_list(), bulk);
     assert_eq!(second_list.token_list(), bulk);
     assert_ne!(first_list.origin_list(), second_list.origin_list());
     assert_eq!(universe.tokens(first_list.token_list()), tokens);
     assert_eq!(
-        universe.origin_list(first_list.origin_list()),
-        vec![first_origin; tokens.len()]
+        first_list.origin_ref().origins(),
+        vec![first_origin.id(); tokens.len()]
     );
     assert_eq!(
-        universe.origin_list(second_list.origin_list()),
-        vec![second_origin; tokens.len()]
+        second_list.origin_ref().origins(),
+        vec![second_origin.id(); tokens.len()]
     );
 
     let empty = universe.finish_traced_token_list(&[]);
@@ -2083,48 +2085,41 @@ fn rooted_transient_freeze_survives_rollback_without_origin_lookup() {
 #[test]
 fn structural_traced_list_owns_rollback_survivors_and_retry_reuses_only_weak_slots() {
     let mut universe = Universe::new();
-    let legacy_baseline = universe.provenance_stats();
     let snapshot = universe.snapshot();
     let first_root = universe.synthetic_origin_ref(SyntheticOriginKind::Test);
     let first_origin = first_root.id();
-    let first = universe.finish_traced_token_list(&[TracedTokenWord::pack(
+    let first_buffer = RootedTracedTokenBuffer::new([RootedTracedTokenWord::new(
         Token::Char {
             ch: 'x',
             cat: Catcode::Letter,
         },
-        first_origin,
+        first_root.clone(),
     )]);
+    let first = universe.finish_rooted_traced_token_list(&first_buffer);
     let first_list = first.origin_list();
     drop(first_root);
 
     universe.rollback_for_local_retry(&snapshot);
     assert!(universe.origin_ref(first_origin).is_some());
     assert_eq!(first.origin_ref().origins(), [first_origin]);
+    drop(first_buffer);
     drop(first);
-    // The compact compatibility archive remains an explicit lifetime
-    // authority until transient raw token buffers migrate in umber2-3v8z.22.16
-    // and the archive retires in umber2-3v8z.22.15.
-    assert!(universe.origin_ref(first_origin).is_some());
+    assert!(universe.origin_ref(first_origin).is_none());
 
     let retried_root = universe.synthetic_origin_ref(SyntheticOriginKind::Test);
-    let retried = universe.finish_traced_token_list(&[TracedTokenWord::pack(
+    let retried_buffer = RootedTracedTokenBuffer::new([RootedTracedTokenWord::new(
         Token::Char {
             ch: 'x',
             cat: Catcode::Letter,
         },
-        retried_root.id(),
+        retried_root,
     )]);
+    let retried = universe.finish_rooted_traced_token_list(&retried_buffer);
     assert_eq!(retried.origin_list().raw(), first_list.raw());
     assert_ne!(retried.origin_list(), first_list);
     let after_retry = universe.provenance_stats();
-    assert_eq!(
-        after_retry.origin_list_spans(),
-        legacy_baseline.origin_list_spans() + 1
-    );
-    assert_eq!(
-        after_retry.origin_list_entries(),
-        legacy_baseline.origin_list_entries() + 1
-    );
+    assert_eq!(after_retry.origin_list_spans(), 1);
+    assert_eq!(after_retry.origin_list_entries(), 1);
 }
 
 #[test]
@@ -2153,9 +2148,9 @@ fn detached_format_strips_structural_origin_lists_without_retaining_runtime_ids(
     source.set_macro_definition_provenance(
         definition.id(),
         MacroDefinitionProvenance::new(
-            origin.id(),
-            crate::ids::OriginListId::EMPTY,
-            replacement.id(),
+            origin,
+            crate::provenance::OriginListRef::empty(),
+            replacement,
         ),
     );
 
@@ -3009,7 +3004,7 @@ fn semantic_format_rejects_live_input_page_and_job_only_pdf_state() {
     with_input.set_input_summary(InputSummary::new(
         vec![InputFrameSummary::TokenList {
             token_list: with_input.token_list_ref(crate::ids::TokenListId::EMPTY),
-            origin_list: crate::ids::OriginListId::EMPTY,
+            origin_list: crate::provenance::OriginListRef::empty(),
             replay_kind: TokenListReplayKind::Inserted,
             index: 0,
             macro_arguments: MacroArguments::new(),
@@ -3855,18 +3850,14 @@ fn snapshot_round_trip_keeps_active_and_named_meanings_independent() {
 }
 
 #[test]
-fn provenance_is_accessible_through_universe_boundary() {
+fn provenance_records_are_accessible_through_universe_boundary() {
     let mut universe = Universe::new();
     let source = universe.source_origin(crate::input::SourceId::new(11), 80, 6, 4);
-    let synthetic = universe.synthetic_origin(SyntheticOriginKind::Engine);
-    let list = universe.allocate_origin_list(&[source, synthetic]);
-
     assert_eq!(universe.bootstrap_origin(), OriginId::UNKNOWN);
     assert_eq!(
         universe.origin(source),
         OriginRecord::Source(SourceOrigin::new(crate::input::SourceId::new(11), 80, 6, 4))
     );
-    assert_eq!(universe.origin_list(list), &[source, synthetic]);
 }
 
 #[test]
@@ -3876,9 +3867,9 @@ fn semantic_hash_ignores_provenance_allocations() {
     let base_checkpoint_hash = base_snapshot.state_hash();
     let base_testing_hash = universe.snapshot().state_hash();
 
-    let source = universe.source_origin(crate::input::SourceId::new(1), 0, 1, 1);
-    let synthetic = universe.synthetic_origin(SyntheticOriginKind::Engine);
-    let _list = universe.allocate_origin_list(&[source, synthetic]);
+    let source = universe.synthetic_origin_ref(SyntheticOriginKind::Test);
+    let synthetic = universe.synthetic_origin_ref(SyntheticOriginKind::Engine);
+    let _list = universe.allocate_origin_list_ref(&[source, synthetic]);
     let after_snapshot = universe.snapshot();
 
     assert_eq!(after_snapshot.state_hash(), base_checkpoint_hash);
@@ -4173,9 +4164,19 @@ fn input_summary_validation_is_recursive_and_atomic_after_reuse() {
         )
         .expect("register discarded source");
     let stale_symbol = universe.intern("discarded");
-    let stale_origin = universe.synthetic_origin(SyntheticOriginKind::Test);
-    let stale_word = TracedTokenWord::pack(Token::Cs(stale_symbol.symbol()), stale_origin);
-    let stale_list = universe.finish_traced_token_list(&[stale_word]);
+    let stale_origin = universe.synthetic_origin_ref(SyntheticOriginKind::Test);
+    let stale_origin_id = stale_origin.id();
+    let stale_word = TracedTokenWord::pack(Token::Cs(stale_symbol.symbol()), stale_origin_id);
+    let stale_buffer = RootedTracedTokenBuffer::new([RootedTracedTokenWord::new(
+        Token::Char {
+            ch: 's',
+            cat: Catcode::Other,
+        },
+        stale_origin.clone(),
+    )]);
+    let stale_list = universe.finish_rooted_traced_token_list(&stale_buffer);
+    drop(stale_buffer);
+    drop(stale_origin);
     universe.rollback(&mark);
 
     let registration = universe
@@ -4185,9 +4186,13 @@ fn input_summary_validation_is_recursive_and_atomic_after_reuse() {
         )
         .expect("register replacement source");
     let symbol = universe.intern("replacement");
-    let origin = universe.synthetic_origin(SyntheticOriginKind::Engine);
-    let word = TracedTokenWord::pack(Token::Cs(symbol.symbol()), origin);
-    let list = universe.finish_traced_token_list(&[word]);
+    let origin = universe.synthetic_origin_ref(SyntheticOriginKind::Engine);
+    let word = TracedTokenWord::pack(Token::Cs(symbol.symbol()), origin.id());
+    let buffer = RootedTracedTokenBuffer::new([RootedTracedTokenWord::new(
+        Token::Cs(symbol.symbol()),
+        origin.clone(),
+    )]);
+    let list = universe.finish_rooted_traced_token_list(&buffer);
     assert_ne!(registration, stale_registration);
     assert_ne!(list, stale_list);
 
@@ -4208,7 +4213,7 @@ fn input_summary_validation_is_recursive_and_atomic_after_reuse() {
     let token_frame = |traced: TracedTokenList, arguments: MacroArguments, invocation| {
         InputFrameSummary::TokenList {
             token_list: traced.token_ref().clone(),
-            origin_list: traced.origin_list(),
+            origin_list: traced.origin_ref().clone(),
             replay_kind: TokenListReplayKind::MacroBody,
             index: 0,
             macro_arguments: arguments,
@@ -4218,6 +4223,19 @@ fn input_summary_validation_is_recursive_and_atomic_after_reuse() {
     };
 
     let stale_argument = one_macro_argument(stale_word, 1);
+    let structurally_retained = InputSummary::new(
+        vec![token_frame(
+            stale_list,
+            MacroArguments::new(),
+            OriginId::UNKNOWN,
+        )],
+        None,
+        None,
+    );
+    universe.set_input_summary(structurally_retained.clone());
+    assert_eq!(universe.input_summary(), &structurally_retained);
+    universe.set_input_summary(InputSummary::default());
+    drop(structurally_retained);
     let mut invalid = vec![
         InputSummary::new(
             vec![InputFrameSummary::Source {
@@ -4225,15 +4243,6 @@ fn input_summary_validation_is_recursive_and_atomic_after_reuse() {
                 input_record: None,
                 source: source(stale_registration, word),
             }],
-            None,
-            None,
-        ),
-        InputSummary::new(
-            vec![token_frame(
-                stale_list,
-                MacroArguments::new(),
-                OriginId::UNKNOWN,
-            )],
             None,
             None,
         ),
@@ -4246,7 +4255,7 @@ fn input_summary_validation_is_recursive_and_atomic_after_reuse() {
             vec![token_frame(
                 list.clone(),
                 MacroArguments::new(),
-                stale_origin,
+                stale_origin_id,
             )],
             None,
             None,
@@ -4274,9 +4283,14 @@ fn input_summary_validation_is_recursive_and_atomic_after_reuse() {
         )
         .expect("register foreign source");
     let foreign_symbol = foreign.intern("foreign");
-    let foreign_origin = foreign.synthetic_origin(SyntheticOriginKind::Test);
-    let foreign_word = TracedTokenWord::pack(Token::Cs(foreign_symbol.symbol()), foreign_origin);
-    let foreign_list = foreign.finish_traced_token_list(&[foreign_word]);
+    let foreign_origin = foreign.synthetic_origin_ref(SyntheticOriginKind::Test);
+    let foreign_word =
+        TracedTokenWord::pack(Token::Cs(foreign_symbol.symbol()), foreign_origin.id());
+    let foreign_buffer = RootedTracedTokenBuffer::new([RootedTracedTokenWord::new(
+        Token::Cs(foreign_symbol.symbol()),
+        foreign_origin,
+    )]);
+    let foreign_list = foreign.finish_rooted_traced_token_list(&foreign_buffer);
     invalid.extend([
         InputSummary::new(
             vec![InputFrameSummary::Source {
@@ -4318,7 +4332,7 @@ fn input_summary_validation_is_recursive_and_atomic_after_reuse() {
                 input_record: None,
                 source: source(registration, word),
             },
-            token_frame(list, arguments, origin),
+            token_frame(list, arguments, origin.id()),
             InputFrameSummary::Condition {
                 token: crate::input::ConditionFrameToken::new(8),
                 condition: crate::input::ConditionFrameSummary::evaluating_if(word),
@@ -4392,20 +4406,20 @@ fn snapshot_reuses_hash_base_for_origin_only_input_summary_changes() {
     let body = universe.intern_token_list(&[body_token]);
     let params = universe.intern_token_list(&[]);
     let definition = universe.intern_macro(MacroMeaning::new(MeaningFlags::EMPTY, params, body));
-    let left_origin = universe.source_origin(crate::input::SourceId::new(1), 10, 2, 3);
-    let right_origin = universe.source_origin(crate::input::SourceId::new(2), 20, 4, 5);
-    let left_origins = universe.allocate_origin_list(&[left_origin]);
-    let right_origins = universe.allocate_origin_list(&[right_origin]);
+    let left_origin = universe.synthetic_origin_ref(SyntheticOriginKind::Test);
+    let right_origin = universe.synthetic_origin_ref(SyntheticOriginKind::Engine);
+    let left_origins = universe.allocate_origin_list_ref(std::slice::from_ref(&left_origin));
+    let right_origins = universe.allocate_origin_list_ref(std::slice::from_ref(&right_origin));
     let left_invocation = universe.macro_invocation_origin(
         definition.id(),
-        left_origin,
-        left_origin,
+        left_origin.id(),
+        left_origin.id(),
         OriginId::UNKNOWN,
     );
     let right_invocation = universe.macro_invocation_origin(
         definition.id(),
-        right_origin,
-        right_origin,
+        right_origin.id(),
+        right_origin.id(),
         OriginId::UNKNOWN,
     );
     let body_root = universe.token_list_ref(body);
@@ -4413,10 +4427,14 @@ fn snapshot_reuses_hash_base_for_origin_only_input_summary_changes() {
         body_root.clone(),
         left_origins,
         left_invocation,
-        left_origin,
+        left_origin.id(),
     );
-    let right_summary =
-        macro_replay_summary(body_root, right_origins, right_invocation, right_origin);
+    let right_summary = macro_replay_summary(
+        body_root,
+        right_origins,
+        right_invocation,
+        right_origin.id(),
+    );
     assert_eq!(left_summary, right_summary);
 
     universe.set_input_summary(left_summary);
@@ -4428,29 +4446,22 @@ fn snapshot_reuses_hash_base_for_origin_only_input_summary_changes() {
 }
 
 #[test]
-fn universe_rollback_truncates_provenance_without_reviving_origin_ids() {
+fn universe_rollback_truncates_origin_records_without_reviving_ids() {
     let mut universe = Universe::new();
     let mark = universe.snapshot();
 
     let stale = universe.source_origin(crate::input::SourceId::new(7), 70, 8, 9);
-    let stale_list = universe.allocate_origin_list(&[stale]);
     assert!(universe.origin_if_live(stale).is_some());
-    assert!(universe.origin_list_if_live(stale_list).is_some());
 
     universe.rollback(&mark);
     assert_eq!(universe.origin_if_live(stale), None);
-    assert_eq!(universe.origin_list_if_live(stale_list), None);
 
     let replayed = universe.source_origin(crate::input::SourceId::new(7), 70, 8, 9);
-    let replayed_list = universe.allocate_origin_list(&[replayed]);
     assert_ne!(replayed.raw(), stale.raw());
-    assert_eq!(replayed_list.raw(), stale_list.raw());
-    assert_ne!(replayed_list, stale_list);
     assert_eq!(
         universe.origin(replayed),
         OriginRecord::Source(SourceOrigin::new(crate::input::SourceId::new(7), 70, 8, 9))
     );
-    assert_eq!(universe.origin_list(replayed_list), &[replayed]);
 }
 
 #[test]
@@ -7334,7 +7345,7 @@ fn source_summary_with_identity(
 
 fn macro_replay_summary(
     body: crate::token_store::TokenListRef,
-    origins: crate::ids::OriginListId,
+    origins: crate::provenance::OriginListRef,
     invocation: OriginId,
     argument_origin: OriginId,
 ) -> InputSummary {

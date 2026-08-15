@@ -12,7 +12,7 @@ use crate::{
     env::banks::{GlueParam, IntParam, TokParam},
     glue::GlueSpec,
     ids::{FontId, GlueId},
-    ids::{MacroDefinitionId, OriginListId, TokenListId},
+    ids::{MacroDefinitionId, TokenListId},
     interner::{Symbol, SymbolId},
     macro_store::{
         MacroDefinitionProvenance, MacroDefinitionRef, MacroMeaning, MacroParameterPattern,
@@ -1169,15 +1169,6 @@ impl CommandContext<'_> {
         self.universe.math_family_font(size, family)
     }
 
-    /// Returns the parallel provenance words of one stored token list.
-    #[must_use]
-    pub fn origin_list(&self, id: OriginListId) -> &[OriginId] {
-        self.universe.origin_list(id)
-    }
-
-    pub fn origin_list_ref(&self, id: OriginListId) -> Option<crate::provenance::OriginListRef> {
-        self.universe.origin_list_ref(id)
-    }
     /// Returns the mutation stamp for a typed aggregate-state dependency.
     #[must_use]
     pub fn dependency_changed_at(&self, key: DependencyKey) -> ChangedAt {

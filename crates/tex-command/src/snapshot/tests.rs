@@ -170,11 +170,7 @@ fn durable_continuation_roundtrips_source_macro_and_frame_recipes() {
     ));
     universe.set_macro_definition_provenance(
         macro_root.id(),
-        MacroDefinitionProvenance::new(
-            definition.id(),
-            parameter_origins.id(),
-            replacement_origins.id(),
-        ),
+        MacroDefinitionProvenance::new(definition.clone(), parameter_origins, replacement_origins),
     );
     let frame = universe.macro_invocation_frame(
         macro_root.id(),

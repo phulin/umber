@@ -1115,7 +1115,7 @@ pub enum InputFrameSummary {
     },
     TokenList {
         token_list: TokenListRef,
-        origin_list: OriginListId,
+        origin_list: OriginListRef,
         replay_kind: TokenListReplayKind,
         index: usize,
         macro_arguments: MacroArguments,

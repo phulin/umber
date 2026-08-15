@@ -24,7 +24,7 @@ use crate::font::{
 };
 use crate::glue::{GlueSpec, GlueSpecRef, Order};
 use crate::hyphenation::{ExceptionSpec, PatternSpec};
-use crate::ids::{FontId, GlueId, MacroDefinitionId, OriginListId, TokenListId};
+use crate::ids::{FontId, GlueId, MacroDefinitionId, TokenListId};
 use crate::input::{
     ConditionKind, ConditionLimb, InputFrameSummary, InputSemanticRoot, InputSummary, LexerState,
     SourceId, TokenListReplayKind, TracedTokenList,
@@ -48,8 +48,8 @@ use crate::pdf::{
     PdfStateSnapshot, PdfTokenParameter,
 };
 use crate::provenance::{
-    ExpansionFrameRef, InsertedOriginKind, OriginListBuilder, OriginListRef, OriginRecord,
-    OriginRef, SynthesizedOriginKind, SyntheticOriginKind,
+    ExpansionFrameRef, InsertedOriginKind, OriginListRef, OriginRecord, OriginRef,
+    SynthesizedOriginKind, SyntheticOriginKind,
 };
 use crate::provenance::{
     MacroInvocationProvenanceStats, ProvenanceBudgets, ProvenanceDemand, ProvenanceStats,
@@ -5922,46 +5922,8 @@ impl Universe {
         self.stores.origin_if_live(id)
     }
 
-    /// Allocates an origin-list span.
-    pub fn allocate_origin_list(&mut self, origins: &[OriginId]) -> OriginListId {
-        self.stores.allocate_origin_list(origins)
-    }
-
     pub fn allocate_origin_list_ref(&mut self, origins: &[OriginRef]) -> OriginListRef {
         self.stores.allocate_origin_list_ref(origins)
-    }
-
-    #[must_use]
-    pub fn origin_list_ref(&self, id: OriginListId) -> Option<OriginListRef> {
-        self.stores.origin_list_ref(id)
-    }
-
-    /// Allocates an origin-list span by repeating one live origin.
-    pub fn allocate_repeated_origin_list(&mut self, origin: OriginId, len: usize) -> OriginListId {
-        self.stores.allocate_repeated_origin_list(origin, len)
-    }
-
-    /// Creates a fresh owned scratch origin-list builder.
-    #[must_use]
-    pub fn origin_list_builder(&self) -> OriginListBuilder {
-        self.stores.origin_list_builder()
-    }
-
-    /// Allocates the current origin-list builder value and clears it for reuse.
-    pub fn finish_origin_list(&mut self, builder: &mut OriginListBuilder) -> OriginListId {
-        self.stores.finish_origin_list(builder)
-    }
-
-    /// Reads a live origin-list span.
-    #[must_use]
-    pub fn origin_list(&self, id: OriginListId) -> &[OriginId] {
-        self.stores.origin_list(id)
-    }
-
-    /// Reads an origin-list span if it is still live on this timeline.
-    #[must_use]
-    pub fn origin_list_if_live(&self, id: OriginListId) -> Option<&[OriginId]> {
-        self.stores.origin_list_if_live(id)
     }
 
     /// Returns live provenance arena length counters.
