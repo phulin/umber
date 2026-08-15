@@ -401,14 +401,12 @@ or replay its artifact. However, a checkpoint retained from before the
 shipout may still own page-builder, contribution-list, box-register, deferred-
 write, or group-journal references into those node/content arenas.
 
-Logical shipout's node release stays transaction-local: it releases only
-epochs allocated inside the shipout transaction, which lie above every
-published checkpoint watermark, so records retained on a frozen substrate stay
-restorable without per-span pins. Whole-substrate retention keeps every root a
-record could reach; releasing a substrate's last record releases that storage
-through the aggregate `Universe`/`Stores` ownership path. Neither `tex-incr`
-nor `tex-exec` receives raw node marks, survivor handles, or arena rollback
-controls.
+Logical shipout keeps structural references only for the duration of the
+transaction. Successful artifact detachment drops those operation-local refs;
+rollback restores the cloned pre-shipout aggregate and drops the candidate.
+Whole-substrate retention keeps every root a record could reach through its
+ordinary `NodeListRef` fields. Neither `tex-incr` nor `tex-exec` receives raw
+node marks, promotion handles, pins, or arena rollback controls.
 
 ## Root-buffer revisions and input positions
 

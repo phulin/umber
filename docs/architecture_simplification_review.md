@@ -405,7 +405,7 @@ Affected crates: `tex-state`, `tex-typeset`, `tex-exec`, `tex-out`, and `tex-com
 
 **Current design — observed.** The node model is repeated across owned nodes, references, storage, copying, semantic views, handles, and format transport beginning at [`crates/tex-state/src/node.rs:12`](/home/phulin/umber/crates/tex-state/src/node.rs:12). Storage has a separate arena abstraction at [`crates/tex-state/src/node_arena/arena.rs:62`](/home/phulin/umber/crates/tex-state/src/node_arena/arena.rs:62). `tex-typeset` has independent cursor, packing, width, and physical-node paths, including [`crates/tex-typeset/src/packing.rs:363`](/home/phulin/umber/crates/tex-typeset/src/packing.rs:363) and [`crates/tex-typeset/src/packing.rs:477`](/home/phulin/umber/crates/tex-typeset/src/packing.rs:477).
 
-**End state.** Define one declarative node schema containing categories, fields, width/height/depth behavior, and traversal metadata. Use it to centralize exhaustive matches and provide one source-independent `NodeCursor` with semantic, packed, and physical views. Keep distinct storage arenas and semantic/physical meanings initially; do not merge `NodeArena` and `SurvivorArena` as part of this estimate.
+**End state.** Define one declarative node schema containing categories, fields, width/height/depth behavior, and traversal metadata. Use it to centralize exhaustive matches and provide one source-independent `NodeCursor` with semantic, packed, and physical views. Keep semantic and physical traversal meanings distinct.
 
 **Estimated net reduction.** 450–850 production LOC and 150–400 test LOC. Confidence: medium-low. A schema table or generated visitor is valuable only if it deletes existing matches; a new code-generation framework that adds scaffolding is a failure.
 
@@ -427,11 +427,11 @@ Rollback is possible by retaining the existing visitors while the schema feeds o
 
 **Migration status.** Complete. `tex-state` now has one private logical schema
 and a source-independent `NodeCursor` over owned construction lists and compact
-epoch or survivor lists. `NodeRef` supplies shared packed, semantic-child, and
+structural payloads. `NodeRef` supplies shared packed, semantic-child, and
 physical-child views. Horizontal/vertical packing, line-width accumulation,
 state-hash equivalence, page dimensions, and shipout graph traversal use those
-views; their duplicate owned/compact matches were removed. `NodeArena` and
-`SurvivorArena` remain distinct ownership domains.
+views; their duplicate owned/compact matches were removed. `NodeListRef` is the
+sole node-list lifetime authority.
 
 ### 14. Separate native acquisition from format-cache policy
 

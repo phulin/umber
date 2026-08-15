@@ -37,7 +37,7 @@ Group exit is deliberately destructive:
 3. the exiting marker and journal suffix are truncated or compacted;
 4. `\aftergroup` payloads are drained for delivery;
 5. box-journal bookkeeping for the exiting depth is discarded; and
-6. survivor ownership held by truncated records is released by `Stores`.
+6. structural box-root references held only by truncated records are dropped.
 
 Consequently, an `EnvSnapshot` taken inside the group is not a retained state
 root. After exit, its group depth differs from the live depth and its journal
@@ -98,7 +98,7 @@ EngineCheckpoint
 
 `Env` implements assignment and group semantics. `Stores` owns `Env` and the
 resources referenced by its cells and journal records; it validates handles and
-manages survivor ownership. `Universe` is the only production authority that
+coordinates their structural ownership. `Universe` is the only production authority that
 may capture or restore the complete store/world aggregate. `EngineCheckpoint`
 adds the synchronized executor roots and proves that capture occurred at a
 named safe boundary.
@@ -186,9 +186,8 @@ capture and the same semantic journal.
 
 Capturing an environment root seals the current journal tail if necessary and
 clones `JournalCursor`, `GroupStackRoot`, and scalar state. `Stores::snapshot`
-binds this root to matching arena generations, survivor roots, code-table roots,
-and owner identity. Capture performs no traversal of environment cells or open
-groups.
+binds this root to matching structural value roots, code-table roots, and owner
+identity. Capture performs no traversal of environment cells or open groups.
 
 ### Enter group
 
@@ -268,15 +267,13 @@ measurement, but engine-checkpoint capture must remain bounded.
 ## Resource retention and reclamation
 
 Journal values can contain token, glue, macro, font, provenance, source, and
-node-list handles. `Env` may enumerate those references but must not decide
-their liveness independently. `Stores` attaches a retained-resource summary to
-each sealed segment/root and pins the corresponding survivor/content roots.
+node-list handles. Aligned strong roots in current cells and journal records
+decide their lifetimes directly; no retained-resource summary or pin registry
+is involved.
 
-In particular, box-register records must no longer release survivor ownership
-merely because the live branch exits a group. Ownership is released when the
-last live environment root and retained checkpoint that can observe the record
-are both gone. Reclamation must be iterative and bounded; dropping a long
-checkpoint history must not recursively overflow the stack.
+In particular, a box payload is released when the last current cell, journal
+record, snapshot, or checkpoint that can observe its `NodeListRef` is gone.
+Dropping a long checkpoint history must remain iterative and bounded.
 
 The engine session owns checkpoint retention policy. Evicting a checkpoint
 drops its aggregate root; ordinary `Arc`/root reference accounting then makes
@@ -311,8 +308,8 @@ Implementation must proceed conservatively:
    proving grouped prose produces no invalid durable checkpoint.
 2. **Introduce private retained roots.** Add immutable group/journal roots and
    bidirectional change records without changing public checkpoint eligibility.
-3. **Retain resources.** Bind environment roots to store-owned content and
-   survivor ownership; add deterministic eviction and reclamation.
+3. **Retain resources.** Bind environment roots to structurally owned content;
+   add deterministic checkpoint eviction.
 4. **Make restore branch-aware.** Restore retained roots atomically through
    `Stores` and `Universe`, including hash cursors and failure rollback.
 5. **Enable grouped named boundaries.** Replace the depth-zero condition for
@@ -337,7 +334,7 @@ Correctness tests must cover:
 - group kinds and mismatched-close recovery;
 - ordered `\aftergroup`, pending/consumed `\afterassignment`, and rollback;
 - code-table global/local interaction across independently retained roots;
-- box survivor pinning, checkpoint eviction, and exact final reclamation;
+- structural box-root cloning, checkpoint eviction, and exact final reclamation;
 - stale, foreign-timeline, post-rollback-reused, and malformed handles;
 - input, mode, page, stream, effect, and `World` restoration atomicity;
 - equal semantic hashes and byte-identical output versus uninterrupted replay;
@@ -355,8 +352,8 @@ Performance gates must demonstrate:
   measured anchor policy;
 - retained memory scales with unique changed cells/resources, not complete
   environment size times checkpoint count; and
-- eviction returns journal segments and survivor roots to the expected
-  baseline.
+- eviction returns journal segments and structurally owned payloads to the
+  expected baseline.
 
 Run focused `tex-state` normal/shadow/replay suites, `tex-command` and
 `tex-exec` checkpoint/group tests, `cargo test --tests`, `scripts/check.sh`,

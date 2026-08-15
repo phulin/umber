@@ -231,7 +231,7 @@ Immediately before a candidate step, the run captures `StepSavepoint`:
 ```text
 StepSavepoint {
     universe: LocalRetrySnapshot,
-    private-revision allocation operation mark,
+    private-revision non-node allocation operation mark,
     command: CommandStateSnapshot,
     modes: ModeNest rollback root,
     control: execution rollback roots,

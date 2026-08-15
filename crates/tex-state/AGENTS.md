@@ -57,7 +57,7 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/hyphenation/tests.rs`: Unit tests for hyphenation patterns, exceptions, bounds, and overlapping matches.
 - `src/identity.rs`: Shared generation-tagged runtime identity allocator for rollback-truncated stores.
 - `src/identity/tests.rs`: Property and boundary tests for rollback, fork, exhaustion, and foreign-handle rejection.
-- `src/ids.rs`: Opaque ids for token lists, origin lists, macros, glue, fonts, snapshots, survivor roots, and node-list spans.
+- `src/ids.rs`: Opaque ids for token lists, origin lists, macros, glue, fonts, snapshots, and borrow-scoped compact node-payload coordinates.
 - `src/ids/tests.rs`: Unit tests for opaque id raw values and node/origin-list span metadata.
 - `src/input.rs`: Snapshot-ready lexer/input stack summaries with strong token-list roots, macro replay sites and argument slots, source ids, and generic checkpoint future-state comparison.
 - `src/input/tests.rs`: Structural-sharing tests for frozen input-summary roots and source payloads.
@@ -78,7 +78,7 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/node.rs`: Immutable TeX node, box, strongly rooted character/ligature provenance and glue, kern, penalty, rule, strongly token-rooted whatsit/mark/PDF payloads, math-list, discretionary, and list-field model.
 - `src/node_sequence.rs`: Paired semantic and TeX-physical transient node sequences with semantic-only equality.
 - `src/node_arena.rs`: Compact-node module boundary and deliberately narrow re-exports.
-- `src/node_arena/arena.rs`: Epoch arena facade and reusable owned node-list builder.
+- `src/node_arena/builder.rs`: Reusable operation-local builder that collects direct child owners before freezing one immutable graph.
 - `src/node_arena/copy.rs`: Private compact-to-compact span copying and typed child-patch descriptions.
 - `src/node_arena/measurement.rs`: `profiling-stats` compact-column and peak-storage accounting.
 - `src/node_arena/measurement/tests.rs`: Coherence, divergent-maximum, nested-payload, and concurrent peak-measurement tests.
@@ -87,7 +87,7 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/node_arena/owned/tests.rs`: Collision, canonical-empty, transactional freeze, child resolution, clone/final-drop, weak-metadata plateau, all-live, and allocation-independent semantic controls for direct node-list ownership.
 - `src/node_arena/schema.rs`: Exhaustive allocation-free logical node descriptors, typed handle policies, origins, and ordered child traversal.
 - `src/node_arena/semantic.rs`: Versioned, allocation-independent semantic identity for immutable node-list aggregates.
-- `src/node_arena/storage.rs`: Canonical node words, aligned strong provenance/token/glue sidecar coordination, encoding, aggregate watermarks, rollback, and survivor-transfer support.
+- `src/node_arena/storage.rs`: Canonical node words, aligned strong provenance/token/glue sidecar coordination, and immutable payload encoding.
 - `src/node_arena/tables.rs`: Typed structure-of-arrays sidecar tables for boxes, unsets, insertions, and noads.
 - `src/node_arena/view.rs`: Zero-allocation node references, list spans, raw tag predicates, character runs, and iterators.
 - `src/node_arena/tests.rs`: Unit tests for node-list allocation, lookup, rollback, and arena liveness.
@@ -131,9 +131,9 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/source_fragments/tests.rs`: Fragment range, deletion, fork-liveness, anchor, allocator, snapshot, and line-index cache tests.
 - `src/state_hash.rs`: Deterministic semantic state hasher used by snapshots and replay convergence checks.
 - `src/stores.rs`: Internal aggregate store tuple that coordinates interner,
-  env, token, provenance, glue, node, font, survivor rollback pins, input, and
-  rollback/shipout scope state, plus the test-only live-owner and bounded weak
-  metadata census used by long-session gates.
+  env, token, provenance, glue, font, input, and rollback/shipout scope state;
+  node lifetimes remain entirely in the structural `NodeListRef` fields of
+  those aggregates.
 - `src/stores/handles.rs`: Store-boundary liveness checks for symbols, token lists, origins, glue, fonts, macros, and node handles.
 - `src/stores/low_memory.rs`: Compact TeX variable-size free-ring and rover projection.
 - `src/stores/exact_identity.rs`: Commutative current-cell accumulator and constant-size rollback image for canonical identities of non-default environment cells.
@@ -148,7 +148,6 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/stores/format/font_validation.rs`: Pre-publication validation of detached font metrics, identifiers, and serialized Env font banks, plus test-only corruption fixtures.
 - `src/stores/state_hash.rs`: Store snapshot cursor and semantic hashing implementation for changed cells and store-owned slices.
 - `src/stores/tests.rs`: Unit tests for aggregate store rollback, builders, handle validation, parameters, boxes, and state hashes.
-- `src/survivor.rs`: Legacy aggregate bridge for node lists that escape epoch rollback boundaries; its temporary transparent `SurvivorOwner` wrapper adds no authority beyond one `NodeListRef` and is mandatory removal in `.22.4`, while the pre-existing arena root/refcount/recycling path remains only for unmigrated page/mode/control/checkpoint owners.
 - `src/tests.rs`: Crate-level integration-style unit tests for `Universe`, snapshots, world effects, and module test wiring.
 - `src/tests/handle_matrix.rs`: Table-driven aggregate rollback, fork, and cross-Universe liveness coverage for every production opaque handle class.
 - `src/tests/live_boundary.rs`: Unit tests proving live-state capability boundaries and restricted context APIs.
@@ -174,6 +173,7 @@ All production mutation of live TeX state should pass through `Universe` or simi
   allocation-independent dependency projections.
 - `src/world/tests.rs`: Unit tests for world snapshots, file records, streams, printing, randomness, shell escape, effect replay, and snapshot-owned effect-root reclamation.
 - `tests/it.rs`: Integration test harness that includes capability-boundary and live-boundary test modules.
+- `tests/structural_node_lifecycle.rs`: Focused success, committed-failure, rollback, retry, rejection, checkpoint, and generation-fork controls for structural node-list ownership.
 - `tests/it/capability_boundaries.rs`: Compile-fail integration tests asserting restricted input and transaction capabilities fail to compile.
 - `tests/it/handle_serialization.rs`: Downstream compile-fail probe proving serde and private constructors cannot mint live handles or handle-bearing nodes.
 - `tests/it/live_boundary.rs`: Downstream compile-fail assertion ensuring private stores and raw environment mutation stay inaccessible.

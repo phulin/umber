@@ -40,12 +40,13 @@ session-wide registry records old domains.
 
 `Stores` and `World` remain reachable only through `Universe`. Their current
 watermarks, persistent roots, effect positions, and journals stay the semantic
-rollback substrate. Reachability-owned value stores allocate immutable payloads
-in the revision domain. Node construction uses the operation's existing compact
-arena suffix as its patch-local builder: commit promotes explicitly projected
-mode, page, control, and Env roots into immutable survivor chunks and truncates
-the suffix, while retry truncates it directly. The domain does not traverse
-stores, reconstruct indexes, or compact historical allocations.
+rollback substrate. Reachability-owned value stores allocate immutable
+payloads in the revision domain. Node construction uses an operation-local
+`NodeListBuilder`; freezing returns a structural `NodeListRef`, and commit
+moves that reference into the mode, page, control, Env, checkpoint, or output
+aggregate. Retry and rejection drop scratch references normally. The domain
+does not traverse stores, reconstruct indexes, or compact historical
+allocations.
 
 `tex-command::CommandStateSnapshot` continues to own command cursors and
 transient replay. It contains no allocation-domain control. `tex-exec::MainControl`
@@ -133,7 +134,7 @@ weaken memory guards or use a corpus/profile run as a substitute.
 
 ## Deliberate exclusions
 
-Output ledgers and caches remain outside this contract. Node commit promotion
-adds no copying compactor, post-hoc live-state graph traversal,
-historical-generation registry, cache budget, or document-specific reclamation
-rule: it walks only the explicitly named roots of the operation being closed.
+Output ledgers and caches remain outside this contract. Structural node
+ownership adds no copying compactor, post-hoc live-state graph traversal,
+historical-generation registry, cache budget, or document-specific
+reclamation rule.

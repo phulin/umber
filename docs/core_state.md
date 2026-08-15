@@ -31,7 +31,7 @@ ownership. It does not permit untracked mutation or host I/O for performance.
 | Provenance           | rooted origins, frames, source ranges, and lists    | strong roots + weak slots |
 | Source fragments/map | immutable bytes and current editor layout           | roots + watermarks        |
 | Glue store           | canonical immutable glue specs                      | frozen + watermark        |
-| Node arenas          | compact node words, sidecars, semantic identities   | epoch + survivors         |
+| Node payloads        | compact node words, sidecars, semantic identities   | structural `NodeListRef`  |
 | Fonts                | immutable TFM/OpenType selections                   | frozen + watermark        |
 | Hyphenation          | patterns, exceptions, language state                | snapshot-owned roots      |
 | Page state           | contribution queue, marks, insertions, best break   | copy-on-write roots       |
@@ -337,21 +337,19 @@ Glue specs and font selections are immutable content. Font program identity is
 derived from validated OpenType data and remains separate from host paths or
 transport policy.
 
-Node lists live in compact word arenas with typed sidecars. `NodeListId`
-contains owner/generation identity and a span. Epoch nodes are operation-local
-builders: successful operations explicitly project live mode, page, control,
-and Env roots into immutable survivor chunks before truncating the builder
-suffix; failed and retried operations truncate it directly. Each frozen list
-has a canonical semantic identity composed from decoded node values and child
-identities, excluding provenance.
+Node lists live in immutable compact payloads with typed sidecars. `NodeListRef`
+is the sole lifetime owner. `NodeListId` is only a borrow-scoped payload span or
+a dense detached encoding key; it cannot recover a dropped payload. Each
+frozen list has a canonical semantic identity composed from decoded node
+values and child identities, excluding provenance.
 
 Env box cells and undo records directly retain immutable `NodeListRef` payloads;
 their raw words are projections used by semantic hashing and format encoding.
-PDF form records likewise own the box moved from the source register. Mode,
-page, control, and checkpoint aggregates still use the temporary survivor
-bridge pending their aggregate-owner migration. Related Universe forks share
-direct payloads through `Arc`; losing Env/PDF timelines release their complete
-typed closure without a root table, discovery walk, or timeline pin.
+PDF forms, mode/page/control state, checkpoints, generations, retry snapshots,
+revision candidates, and shipout scratch likewise carry structural refs.
+Related Universe forks share payloads through `Arc`; losing every aggregate
+owner releases the complete typed closure without a root table, discovery
+walk, promotion, or timeline pin.
 
 ## 8. External effects: the virtualized world
 
@@ -541,12 +539,12 @@ identity contracts and are merely framed as inputs where needed.
 
 Snapshots are not public restart points. `tex-exec` alone may publish complete
 `EngineCheckpoint`s at `JobStart`, eligible `OuterParagraphEnd`, and outermost
-`ShipoutComplete`. A checkpoint owns or pins every root needed for later
+`ShipoutComplete`. A checkpoint structurally owns every root needed for later
 validation and restoration.
 
-Commit promotes escaping node/content roots, publishes ordered effects and
+Commit moves structural node/content roots, publishes ordered effects and
 artifacts, and releases transaction-local history. Failed validation restores
-the prior aggregate state atomically.
+the prior aggregate state atomically and drops rejected scratch owners.
 
 ### 9.3 Published output and accelerator ownership
 
