@@ -141,6 +141,7 @@ pub(super) struct MainMemoryUsage {
 pub(super) struct MainMemoryProjection {
     usage: MainMemoryUsage,
     macro_refs: Vec<u32>,
+    macro_words: Vec<Option<MacroMemoryProjection>>,
     token_refs: Vec<u32>,
     macro_token_refs: Vec<u32>,
     /// Cached TeX allocator words by physical token slot. Mutation receipts
@@ -167,6 +168,12 @@ struct CopyNodeListProjection {
     high_words: usize,
     /// Maximum concurrent one-word cells, including §204's active heads.
     high_peak: usize,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct MacroMemoryProjection {
+    children: [(usize, usize); 2],
+    words: usize,
 }
 
 const TEX82_UNTYPED_ONE_WORD_SCRATCH_EXTENT: usize = 4;
@@ -197,6 +204,13 @@ pub(super) fn main_memory_usage_with_extra_dynamic_words(
     }
 }
 
+pub(super) fn main_memory_usage_with_scratch_extent(mut usage: MainMemoryUsage) -> MainMemoryUsage {
+    usage.dynamic_extent = usage
+        .dynamic_extent
+        .saturating_add(TEX82_UNTYPED_ONE_WORD_SCRATCH_EXTENT);
+    usage
+}
+
 pub(super) fn main_memory_usage_without_scratch(
     stores: &Stores,
 ) -> Result<MainMemoryProjection, StoreFormatError> {
@@ -225,6 +239,7 @@ fn main_memory_projection_inner(
     let token_count = stores.tokens.slot_len() as usize;
     let macro_count = stores.macros.watermark().definitions as usize;
     let mut macro_refs = vec![0_u32; macro_count];
+    let mut macro_words_by_definition = vec![None; macro_count];
     let mut token_refs = vec![0_u32; token_count];
     if let Some(empty) = token_refs.first_mut() {
         *empty = 1;
@@ -284,14 +299,27 @@ fn main_memory_projection_inner(
             .resolve_stored(MacroDefinitionId::new(raw as u32))
             .ok_or(StoreFormatError::Invalid("macro definition"))?;
         let definition = stores.macros.get(id);
-        for list_id in [definition.parameter_text(), definition.replacement_text()] {
+        let mut children = [(0, 0); 2];
+        for (child, list_id) in children
+            .iter_mut()
+            .zip([definition.parameter_text(), definition.replacement_text()])
+        {
             let list_id = stores.resolve_stored_token_list(list_id);
             let index = list_id.raw() as usize;
             let list = stores.tokens.get(list_id);
+            *child = (index, list.len());
             token_words[index] = list.len().saturating_add(1);
             macro_token_refs[index] = macro_token_refs[index].saturating_add(1);
             macro_words = macro_words.saturating_add(list.len());
         }
+        macro_words_by_definition[raw] = Some(MacroMemoryProjection {
+            children,
+            words: children
+                .iter()
+                .map(|(_, words)| *words)
+                .sum::<usize>()
+                .saturating_add(2),
+        });
     }
     for list in &mut node_lists {
         for node in &mut list.nodes {
@@ -404,6 +432,7 @@ fn main_memory_projection_inner(
             dynamic_extent,
         },
         macro_refs,
+        macro_words: macro_words_by_definition,
         token_refs,
         macro_token_refs,
         token_words,
@@ -778,6 +807,8 @@ impl MainMemoryProjection {
     ) -> Result<bool, StoreFormatError> {
         self.macro_refs
             .resize(stores.macros.watermark().definitions as usize, 0);
+        self.macro_words
+            .resize(stores.macros.watermark().definitions as usize, None);
         let token_count = stores.tokens.slot_len() as usize;
         self.token_refs.resize(token_count, 0);
         self.macro_token_refs.resize(token_count, 0);
@@ -840,10 +871,6 @@ impl MainMemoryProjection {
         else {
             return Ok(());
         };
-        let definition = stores
-            .macros
-            .resolve_stored(definition)
-            .ok_or(StoreFormatError::Invalid("environment macro"))?;
         let index = definition.raw() as usize;
         let refs = *self
             .macro_refs
@@ -851,7 +878,13 @@ impl MainMemoryProjection {
             .ok_or(StoreFormatError::Invalid("environment macro"))?;
         if add {
             if refs == 0 {
-                self.adjust_macro_words(stores, definition, true)?;
+                let definition = stores
+                    .macros
+                    .resolve_stored(definition)
+                    .ok_or(StoreFormatError::Invalid("environment macro"))?;
+                let projection = Self::capture_macro_words(stores, definition)?;
+                self.adjust_macro_words(projection, true)?;
+                self.macro_words[index] = Some(projection);
             }
             self.macro_refs[index] = refs.saturating_add(1);
         } else {
@@ -861,26 +894,47 @@ impl MainMemoryProjection {
             let refs = refs.saturating_sub(1);
             self.macro_refs[index] = refs;
             if refs == 0 {
-                self.adjust_macro_words(stores, definition, false)?;
+                let projection = self.macro_words[index]
+                    .take()
+                    .ok_or(StoreFormatError::Invalid("environment macro allocation"))?;
+                self.adjust_macro_words(projection, false)?;
             }
         }
         Ok(())
     }
 
-    fn adjust_macro_words(
-        &mut self,
+    fn capture_macro_words(
         stores: &Stores,
         definition: MacroDefinitionId,
-        add: bool,
-    ) -> Result<(), StoreFormatError> {
+    ) -> Result<MacroMemoryProjection, StoreFormatError> {
         let definition = stores.macros.get(definition);
-        let mut words = 2_usize;
-        for list_id in [definition.parameter_text(), definition.replacement_text()] {
+        let mut children = [(0, 0); 2];
+        for (child, list_id) in children
+            .iter_mut()
+            .zip([definition.parameter_text(), definition.replacement_text()])
+        {
             let list_id = stores.resolve_stored_token_list(list_id);
             let index = list_id.raw() as usize;
             let list_words = stores.tokens.get(list_id).len();
+            *child = (index, list_words);
+        }
+        Ok(MacroMemoryProjection {
+            children,
+            words: children
+                .iter()
+                .map(|(_, words)| *words)
+                .sum::<usize>()
+                .saturating_add(2),
+        })
+    }
+
+    fn adjust_macro_words(
+        &mut self,
+        projection: MacroMemoryProjection,
+        add: bool,
+    ) -> Result<(), StoreFormatError> {
+        for (index, list_words) in projection.children {
             self.token_words[index] = list_words.saturating_add(1);
-            words = words.saturating_add(list_words);
             let refs = self
                 .macro_token_refs
                 .get_mut(index)
@@ -907,9 +961,9 @@ impl MainMemoryProjection {
             }
         }
         if add {
-            self.usage.dynamic = self.usage.dynamic.saturating_add(words);
+            self.usage.dynamic = self.usage.dynamic.saturating_add(projection.words);
         } else {
-            self.usage.dynamic = self.usage.dynamic.saturating_sub(words);
+            self.usage.dynamic = self.usage.dynamic.saturating_sub(projection.words);
         }
         Ok(())
     }

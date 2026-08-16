@@ -122,8 +122,82 @@ fn lex_dump(path: &str) -> Result<(), CliError> {
     Ok(())
 }
 
+#[cfg(feature = "profiling")]
+struct MainMemoryProjectionReport {
+    enabled: bool,
+    before: tex_state::measurement::MainMemoryProjectionMeasurement,
+}
+
+#[cfg(feature = "profiling")]
+impl MainMemoryProjectionReport {
+    fn new(enabled: bool) -> Self {
+        Self {
+            enabled,
+            before: tex_state::measurement::main_memory_projection_measurement(),
+        }
+    }
+}
+
+#[cfg(feature = "profiling")]
+impl Drop for MainMemoryProjectionReport {
+    fn drop(&mut self) {
+        if !self.enabled {
+            return;
+        }
+        let after = tex_state::measurement::main_memory_projection_measurement();
+        let before = self.before;
+        let delta = tex_state::measurement::MainMemoryProjectionMeasurement {
+            dynamic_observations: after
+                .dynamic_observations
+                .saturating_sub(before.dynamic_observations),
+            base_requests: after.base_requests.saturating_sub(before.base_requests),
+            base_reuses: after.base_reuses.saturating_sub(before.base_reuses),
+            full_rebuilds: after.full_rebuilds.saturating_sub(before.full_rebuilds),
+            operation_boundaries: after
+                .operation_boundaries
+                .saturating_sub(before.operation_boundaries),
+            operation_boundaries_retained: after
+                .operation_boundaries_retained
+                .saturating_sub(before.operation_boundaries_retained),
+            cell_root_updates: after
+                .cell_root_updates
+                .saturating_sub(before.cell_root_updates),
+            cell_root_updates_retained: after
+                .cell_root_updates_retained
+                .saturating_sub(before.cell_root_updates_retained),
+            box_root_updates: after
+                .box_root_updates
+                .saturating_sub(before.box_root_updates),
+            box_root_updates_retained: after
+                .box_root_updates_retained
+                .saturating_sub(before.box_root_updates_retained),
+            cache_losses: core::array::from_fn(|index| {
+                after.cache_losses[index].saturating_sub(before.cache_losses[index])
+            }),
+        };
+        eprintln!(
+            "MAIN_MEMORY_PROJECTION dynamic_observations={} base_requests={} base_reuses={} full_rebuilds={} operation_boundaries={} operation_boundaries_retained={} cell_root_updates={} cell_root_updates_retained={} box_root_updates={} box_root_updates_retained={}",
+            delta.dynamic_observations,
+            delta.base_requests,
+            delta.base_reuses,
+            delta.full_rebuilds,
+            delta.operation_boundaries,
+            delta.operation_boundaries_retained,
+            delta.cell_root_updates,
+            delta.cell_root_updates_retained,
+            delta.box_root_updates,
+            delta.box_root_updates_retained,
+        );
+        for (owner, count) in delta.named_cache_losses() {
+            eprintln!("MAIN_MEMORY_PROJECTION_CACHE_LOSS owner={owner} count={count}");
+        }
+    }
+}
+
 #[allow(clippy::disallowed_methods)] // Process telemetry; TeX state never observes it.
 fn run_tex(opts: &RunCliOptions) -> Result<(), CliError> {
+    #[cfg(feature = "profiling")]
+    let _main_memory_projection_report = MainMemoryProjectionReport::new(opts.profiling_stats);
     let run_started = std::time::Instant::now();
     let mut outputs = if opts.dvi.is_some() {
         umber::OutputCapabilitySet::DVI

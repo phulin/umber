@@ -59,7 +59,7 @@ pub(crate) struct CellMutationReceipt {
     cell: CellId,
     old_word: u64,
     new_word: u64,
-    // Stores may project a box handoff before dropping its old structural owner.
+    // Stores may project a memory-root delta before dropping an old owner.
     main_memory_roots_updated: bool,
     disposition: CellMutationDisposition,
 }

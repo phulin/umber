@@ -71,7 +71,7 @@ fn recursive_box_copy_below_existing_coordinates_does_not_raise_extents() {
     }]);
     stores.install_box(0, root);
     let root = stores.box_owner(0).expect("promoted box root");
-    stores.observe_main_memory(None);
+    stores.observe_main_memory();
 
     // A copy operation only changes §1334's retained coordinates when its
     // concurrent operation peak exceeds them. This is the phase/lifetime

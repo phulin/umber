@@ -693,7 +693,7 @@ impl Stores {
         let font_mark = self.fonts.watermark();
         let fonts = font_mark.len as usize;
         let font_info_words = self.font_info_words();
-        self.observe_main_memory(None);
+        self.observe_main_memory();
         let current = EngineUsageStatistics {
             strings: self.string_pool.used_strings(),
             string_capacity: self.string_pool.string_capacity(),
@@ -717,8 +717,26 @@ impl Stores {
         high_water
     }
 
-    fn observe_main_memory(&mut self, extra_node: Option<&Node>) -> usize {
-        self.record_main_memory_usage(format::main_memory_usage(self, extra_node))
+    fn cached_main_memory_usage(
+        &mut self,
+        extra_nodes: &[Node],
+        include_scratch_extent: bool,
+    ) -> Result<format::MainMemoryUsage, format::StoreFormatError> {
+        let projection = self.take_transient_memory_base()?;
+        let usage = projection.usage_with_extra_nodes(self, extra_nodes);
+        self.transient_memory_base = Some((self.glue.watermark().specs, projection));
+        usage.map(|usage| {
+            if include_scratch_extent {
+                format::main_memory_usage_with_scratch_extent(usage)
+            } else {
+                usage
+            }
+        })
+    }
+
+    fn observe_main_memory(&mut self) -> usize {
+        let usage = self.cached_main_memory_usage(&[], true);
+        self.record_main_memory_usage(usage)
     }
 
     pub(crate) fn observe_main_memory_nodes(&mut self, extra_nodes: &[Node]) -> usize {
@@ -735,7 +753,8 @@ impl Stores {
     }
 
     pub(crate) fn observe_line_break_memory_search(&mut self, memory: &crate::PureBreakMemoryPlan) {
-        let live_words = format::main_memory_usage(self, None)
+        let live_words = self
+            .cached_main_memory_usage(&[], false)
             .map_or(TEX82_STATIC_LOW_MEMORY_WORDS, |usage| usage.variable);
         let mut pending = PendingLowMemoryBreak {
             arena: low_memory::LowMemoryArena::from_live_and_fragments(
@@ -818,6 +837,8 @@ impl Stores {
         // changes; §1334 only observes that allocator state. Scanner-owned
         // transient words therefore extend one reusable live-root base rather
         // than requiring the macro/token closure to be rebuilt per sample.
+        #[cfg(feature = "profiling")]
+        crate::measurement::record_main_memory_dynamic_observation();
         let projection = self.take_transient_memory_base();
         let Ok(projection) = projection else {
             return self.record_main_memory_usage(projection.map(|value| value.usage()));
@@ -854,9 +875,13 @@ impl Stores {
     ) -> Result<format::MainMemoryProjection, format::StoreFormatError> {
         let glue_specs = self.glue.watermark().specs;
         if let Some((cached_glue_specs, mut projection)) = self.transient_memory_base.take() {
+            #[cfg(feature = "profiling")]
+            crate::measurement::record_main_memory_base_request(true);
             projection.update_glue_specs(cached_glue_specs, glue_specs);
             return Ok(projection);
         }
+        #[cfg(feature = "profiling")]
+        crate::measurement::record_main_memory_base_request(false);
         #[cfg(test)]
         {
             self.transient_memory_base_projections =
@@ -872,23 +897,43 @@ impl Stores {
         self.env.for_each_main_memory_root_word(f);
     }
 
-    /// Invalidates the cached TeX82 allocator base after a canonical root
-    /// changes. Immutable store appends are deliberately not roots.
-    pub(crate) fn update_main_memory_roots(&mut self, receipt: crate::env::CellMutationReceipt) {
+    /// Updates the cached TeX82 allocator base after a canonical root changes.
+    /// Immutable store appends are deliberately not roots.
+    pub(crate) fn update_main_memory_roots(
+        &mut self,
+        receipt: crate::env::CellMutationReceipt,
+    ) -> bool {
         if receipt.main_memory_roots_updated() {
-            return;
+            return true;
         }
         let cell = receipt.cell();
+        if !matches!(
+            cell.bank(),
+            crate::cell::BankTag::Meaning
+                | crate::cell::BankTag::Toks
+                | crate::cell::BankTag::TokParam
+                | crate::cell::BankTag::Box
+        ) {
+            return false;
+        }
         let (old_word, new_word) = receipt.words();
         let Some((_, mut projection)) = self.transient_memory_base.take() else {
-            return;
+            return false;
         };
-        if projection
+        let retained = projection
             .update_cell(self, cell, old_word, new_word)
-            .is_ok_and(|updated| updated)
-        {
+            .is_ok_and(|updated| updated);
+        #[cfg(feature = "profiling")]
+        crate::measurement::record_main_memory_cell_root_update(retained);
+        if retained {
             self.transient_memory_base = Some((self.glue.watermark().specs, projection));
+        } else {
+            #[cfg(feature = "profiling")]
+            crate::measurement::record_main_memory_cache_loss(
+                crate::measurement::MainMemoryProjectionLossOwner::CellRootUpdate,
+            );
         }
+        retained
     }
 
     /// Updates one box-register root while its structural graph is still live.
@@ -906,10 +951,17 @@ impl Stores {
         // If this projection has not seen the graph, discard the cache and let
         // the next full root capture borrow Env's owner.
         let update = projection.update_box_root(self, old, new, false);
-        if update.is_ok_and(|updated| updated) {
+        let retained = update.is_ok_and(|updated| updated);
+        #[cfg(feature = "profiling")]
+        crate::measurement::record_main_memory_box_root_update(retained);
+        if retained {
             self.transient_memory_base = Some((self.glue.watermark().specs, projection));
             true
         } else {
+            #[cfg(feature = "profiling")]
+            crate::measurement::record_main_memory_cache_loss(
+                crate::measurement::MainMemoryProjectionLossOwner::BoxRootUpdate,
+            );
             false
         }
     }
@@ -954,12 +1006,13 @@ impl Stores {
     /// than a high-water mark, because `ship_out` compares the values before
     /// and after releasing the shipped box.
     pub(crate) fn shipout_memory_usage(&mut self, shipped_node: Option<&Node>) -> (usize, usize) {
-        let dynamic_usage = self.observe_main_memory(shipped_node);
-        (
-            format::main_memory_usage(self, shipped_node)
-                .map_or(TEX82_STATIC_LOW_MEMORY_WORDS, |usage| usage.variable),
-            dynamic_usage,
-        )
+        let extra_nodes = shipped_node.map_or(&[][..], std::slice::from_ref);
+        let usage = self.cached_main_memory_usage(extra_nodes, true);
+        let variable_usage = usage
+            .as_ref()
+            .map_or(TEX82_STATIC_LOW_MEMORY_WORDS, |usage| usage.variable);
+        let dynamic_usage = self.record_main_memory_usage(usage);
+        (variable_usage, dynamic_usage)
     }
     pub(crate) fn loaded_fonts(&self) -> impl Iterator<Item = &LoadedFont> {
         self.fonts.iter()
@@ -1783,7 +1836,15 @@ impl Stores {
     pub(crate) fn select_string_pool_profile(&mut self, profile: StringPoolProfile) {
         self.string_pool.select_profile(profile);
         self.main_memory_profile = profile;
-        self.transient_memory_base = None;
+        let projection_was_live = self.transient_memory_base.take().is_some();
+        #[cfg(feature = "profiling")]
+        if projection_was_live {
+            crate::measurement::record_main_memory_cache_loss(
+                crate::measurement::MainMemoryProjectionLossOwner::ProfileChange,
+            );
+        }
+        #[cfg(not(feature = "profiling"))]
+        let _ = projection_was_live;
     }
 
     /// Interns a control-sequence name, reporting packed-token capacity exhaustion.
@@ -3860,9 +3921,16 @@ impl Stores {
         true
     }
 
-    /// Clears operation-local diagnostic projections after shipout or box build.
+    /// Finishes one executor operation without discarding its live-root projection.
+    ///
+    /// Transient node and box-copy observations compose usage without adding
+    /// operation-local roots. Canonical Env roots are updated at their write
+    /// barriers, so an unchanged operation boundary has no projection delta.
     pub(crate) fn finish_node_operation(&mut self) {
-        self.transient_memory_base = None;
+        #[cfg(feature = "profiling")]
+        crate::measurement::record_main_memory_operation_boundary(
+            self.transient_memory_base.is_some(),
+        );
     }
 
     /// Rolls all stores back to `snapshot` as one atomic tuple.
@@ -3877,7 +3945,16 @@ impl Stores {
     fn rollback_inner(&mut self, snapshot: &StoreSnapshot, retry: bool) -> MutationReceipts {
         self.assert_valid_snapshot(snapshot);
         let _ = self.engine_usage_statistics();
-        let receipts = self.env.rollback_to(snapshot.env_snapshot.clone());
+        let mut receipts = self.env.rollback_to(snapshot.env_snapshot.clone());
+        // Env restoration still owns every destination root here, before the
+        // rejected immutable-store suffix is truncated. Apply the O(delta)
+        // receipt walk now and mark successful updates so Universe's semantic
+        // mutation fanout does not apply the allocator delta twice.
+        for receipt in &mut receipts {
+            if receipt.changed() && self.update_main_memory_roots(*receipt) {
+                *receipt = receipt.with_main_memory_roots_updated();
+            }
+        }
         self.interner.truncate_to(snapshot.interner_mark);
         while self.string_pool_recycled_journal.len() > snapshot.string_pool_recycled_mark {
             let retained = self
@@ -3924,7 +4001,6 @@ impl Stores {
         // journal slice instead of adding it to the O(1) snapshot tuple.
         self.semantic_hash_cache.clear();
         self.semantic_hash_cache.projections = snapshot.exact_projection_cache.clone();
-        self.transient_memory_base = None;
         receipts
     }
 

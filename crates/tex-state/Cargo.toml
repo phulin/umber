@@ -12,7 +12,8 @@ shadow = []
 # Engine production builds must not enable this feature.
 testing = []
 # Compile-time counters for dedicated profiling builds. These are ephemeral
-# process-wide node counters that never participate in engine state.
+# process-wide allocation and derived-work counters that never participate in
+# engine state.
 profiling = []
 
 [dependencies]

@@ -719,6 +719,65 @@ fn transient_memory_observations_reuse_the_unchanged_allocator_base() {
 }
 
 #[test]
+fn executor_operation_boundaries_retain_the_unchanged_allocator_base() {
+    let mut universe = Universe::new();
+    universe.observe_transient_token_words(600);
+    assert_eq!(universe.testing_transient_memory_base_projections(), 1);
+
+    let committed = universe.snapshot_for_local_retry();
+    universe.commit_local_retry_snapshot(committed);
+    universe.observe_transient_token_words(601);
+    assert_eq!(universe.testing_transient_memory_base_projections(), 1);
+
+    let discarded = universe.snapshot_for_local_retry();
+    universe.discard_local_retry_allocations(discarded);
+    universe.observe_transient_token_words(602);
+    assert_eq!(universe.testing_transient_memory_base_projections(), 1);
+
+    let rolled_back = universe.snapshot_for_local_retry();
+    universe.observe_transient_token_words(603);
+    universe.rollback_local_retry_snapshot(rolled_back);
+    universe.observe_transient_token_words(0);
+    // The rollback receipt updates the projection before rejected dynamic
+    // handles are truncated. Its pre-rollback allocator coordinate still
+    // contributes to §1334's high-water diagnostic.
+    assert_eq!(universe.testing_transient_memory_base_projections(), 1);
+    assert_eq!(universe.engine_usage_statistics().memory_words, 1_644);
+}
+
+#[test]
+fn rollback_updates_allocator_roots_before_truncating_rejected_values() {
+    let mut universe = Universe::new();
+    universe.observe_transient_token_words(0);
+    let symbol = universe.intern("rolled-back-memory-macro");
+    let snapshot = universe.snapshot();
+
+    let tokens = universe.intern_token_list(&vec![
+        Token::Char {
+            ch: 'r',
+            cat: Catcode::Other,
+        };
+        100
+    ]);
+    universe.set_toks_global(0, tokens);
+    universe.set_macro_meaning_global(
+        symbol,
+        MacroMeaning::new(MeaningFlags::EMPTY, TokenListId::EMPTY, tokens),
+    );
+    universe.observe_transient_token_words(0);
+    assert_eq!(universe.testing_transient_memory_base_projections(), 1);
+
+    universe.rollback(&snapshot);
+    universe.observe_transient_token_words(0);
+    assert_eq!(universe.testing_transient_memory_base_projections(), 1);
+    assert_eq!(universe.toks(0), TokenListId::EMPTY);
+    assert_eq!(universe.meaning(symbol), Meaning::Undefined);
+    // The rejected roots are gone, but their live pre-rollback coordinate is
+    // still part of §1334's high-water extent.
+    assert_eq!(universe.engine_usage_statistics().memory_words, 1_147);
+}
+
+#[test]
 fn transient_node_allocations_reuse_roots_and_preserve_the_high_water() {
     let mut universe = Universe::new();
     universe.observe_transient_token_words(0);
@@ -805,13 +864,16 @@ fn box_root_changes_rebuild_the_borrowed_allocator_projection() {
     assert_eq!(universe.testing_transient_memory_base_projections(), 8);
 
     let snapshot = universe.snapshot();
-    universe.freeze_node_list(&[Node::Penalty(4)]);
+    let divergent = universe.freeze_node_list(&[Node::Penalty(4)]);
+    universe.set_box_reg_ref_global(0, divergent);
+    universe.observe_transient_token_words(0);
+    assert_eq!(universe.testing_transient_memory_base_projections(), 9);
     universe.rollback(&snapshot);
     universe.observe_transient_token_words(0);
-    // A timeline rollback can invalidate every cached handle at its
-    // watermark, so it deliberately retains the conservative reconstruction
-    // path instead of reusing a graph contribution from the discarded epoch.
-    assert_eq!(universe.testing_transient_memory_base_projections(), 9);
+    // A box restore remains the negative control: the derived projection has
+    // no independent graph-lifetime registry, so both replacement and restore
+    // rebuild lazily while their Env owners remain authoritative.
+    assert_eq!(universe.testing_transient_memory_base_projections(), 10);
 }
 
 #[test]
@@ -843,12 +905,11 @@ fn box_alias_handoffs_do_not_revisit_unrelated_allocator_roots() {
     let traversals_before_rollback = universe.testing_main_memory_root_traversals();
     universe.rollback(&snapshot);
     universe.observe_transient_token_words(0);
-    // Timeline rollback is the negative control: it first observes the live
-    // pre-rollback high-water, then invalidates handles and makes the next
-    // allocation rebuild the complete projection.
+    // An unrooted allocation suffix changes no allocator root. Rollback keeps
+    // the base and therefore does not revisit unrelated Env cells.
     assert_eq!(
         universe.testing_main_memory_root_traversals(),
-        traversals_before_rollback + 2
+        traversals_before_rollback
     );
 }
 

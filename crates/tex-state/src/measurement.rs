@@ -120,6 +120,52 @@ pub struct TokenStoreMeasurement {
     pub semantic_identity_capacity_bytes_grown: u64,
 }
 
+/// Process-local census of TeX82 diagnostic main-memory projection reuse.
+///
+/// The counters describe derived accounting work only. They do not participate
+/// in engine state, allocator high-water values, snapshots, or formats.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct MainMemoryProjectionMeasurement {
+    pub dynamic_observations: u64,
+    pub base_requests: u64,
+    pub base_reuses: u64,
+    pub full_rebuilds: u64,
+    pub operation_boundaries: u64,
+    pub operation_boundaries_retained: u64,
+    pub cell_root_updates: u64,
+    pub cell_root_updates_retained: u64,
+    pub box_root_updates: u64,
+    pub box_root_updates_retained: u64,
+    pub cache_losses: [u64; MainMemoryProjectionLossOwner::COUNT],
+}
+
+/// Exhaustive owner of a cached main-memory projection loss.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum MainMemoryProjectionLossOwner {
+    ProfileChange,
+    CellRootUpdate,
+    BoxRootUpdate,
+}
+
+impl MainMemoryProjectionLossOwner {
+    pub(crate) const COUNT: usize = 3;
+
+    const fn index(self) -> usize {
+        self as usize
+    }
+}
+
+impl MainMemoryProjectionMeasurement {
+    /// Returns every possible cache-loss owner, including zero-count owners.
+    pub fn named_cache_losses(&self) -> impl Iterator<Item = (&'static str, u64)> + '_ {
+        const NAMES: [&str; MainMemoryProjectionLossOwner::COUNT] =
+            ["profile_change", "cell_root_update", "box_root_update"];
+        [("operation_boundary", 0), ("timeline_rollback", 0)]
+            .into_iter()
+            .chain(NAMES.into_iter().zip(self.cache_losses.iter().copied()))
+    }
+}
+
 static NODE_APPEND_CALLS: AtomicU64 = AtomicU64::new(0);
 static NODE_APPEND_WORDS: AtomicU64 = AtomicU64::new(0);
 static NODE_APPEND_SIDECARS: [AtomicU64; 14] = [const { AtomicU64::new(0) }; 14];
@@ -161,6 +207,56 @@ static TOKEN_MISSES: AtomicU64 = AtomicU64::new(0);
 static TOKEN_REQUESTED: AtomicU64 = AtomicU64::new(0);
 static TOKEN_ARENA_GROWN_BYTES: AtomicU64 = AtomicU64::new(0);
 static TOKEN_SEMANTIC_ID_GROWN_BYTES: AtomicU64 = AtomicU64::new(0);
+static MAIN_MEMORY_DYNAMIC_OBSERVATIONS: AtomicU64 = AtomicU64::new(0);
+static MAIN_MEMORY_BASE_REQUESTS: AtomicU64 = AtomicU64::new(0);
+static MAIN_MEMORY_BASE_REUSES: AtomicU64 = AtomicU64::new(0);
+static MAIN_MEMORY_FULL_REBUILDS: AtomicU64 = AtomicU64::new(0);
+static MAIN_MEMORY_OPERATION_BOUNDARIES: AtomicU64 = AtomicU64::new(0);
+static MAIN_MEMORY_OPERATION_BOUNDARIES_RETAINED: AtomicU64 = AtomicU64::new(0);
+static MAIN_MEMORY_CELL_ROOT_UPDATES: AtomicU64 = AtomicU64::new(0);
+static MAIN_MEMORY_CELL_ROOT_UPDATES_RETAINED: AtomicU64 = AtomicU64::new(0);
+static MAIN_MEMORY_BOX_ROOT_UPDATES: AtomicU64 = AtomicU64::new(0);
+static MAIN_MEMORY_BOX_ROOT_UPDATES_RETAINED: AtomicU64 = AtomicU64::new(0);
+static MAIN_MEMORY_CACHE_LOSSES: [AtomicU64; MainMemoryProjectionLossOwner::COUNT] =
+    [const { AtomicU64::new(0) }; MainMemoryProjectionLossOwner::COUNT];
+
+pub(crate) fn record_main_memory_dynamic_observation() {
+    MAIN_MEMORY_DYNAMIC_OBSERVATIONS.fetch_add(1, Ordering::Relaxed);
+}
+
+pub(crate) fn record_main_memory_base_request(reused: bool) {
+    MAIN_MEMORY_BASE_REQUESTS.fetch_add(1, Ordering::Relaxed);
+    if reused {
+        MAIN_MEMORY_BASE_REUSES.fetch_add(1, Ordering::Relaxed);
+    } else {
+        MAIN_MEMORY_FULL_REBUILDS.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+pub(crate) fn record_main_memory_operation_boundary(retained: bool) {
+    MAIN_MEMORY_OPERATION_BOUNDARIES.fetch_add(1, Ordering::Relaxed);
+    if retained {
+        MAIN_MEMORY_OPERATION_BOUNDARIES_RETAINED.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+pub(crate) fn record_main_memory_cell_root_update(retained: bool) {
+    MAIN_MEMORY_CELL_ROOT_UPDATES.fetch_add(1, Ordering::Relaxed);
+    if retained {
+        MAIN_MEMORY_CELL_ROOT_UPDATES_RETAINED.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+pub(crate) fn record_main_memory_box_root_update(retained: bool) {
+    MAIN_MEMORY_BOX_ROOT_UPDATES.fetch_add(1, Ordering::Relaxed);
+    if retained {
+        MAIN_MEMORY_BOX_ROOT_UPDATES_RETAINED.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+pub(crate) fn record_main_memory_cache_loss(owner: MainMemoryProjectionLossOwner) {
+    MAIN_MEMORY_CACHE_LOSSES[owner.index()].fetch_add(1, Ordering::Relaxed);
+}
 pub(crate) fn record_node_append(
     words: usize,
     sidecars: [u32; 14],
@@ -377,5 +473,25 @@ pub fn token_store_measurement() -> TokenStoreMeasurement {
         arena_capacity_bytes_grown: TOKEN_ARENA_GROWN_BYTES.load(Ordering::Relaxed),
         semantic_identity_capacity_bytes_grown: TOKEN_SEMANTIC_ID_GROWN_BYTES
             .load(Ordering::Relaxed),
+    }
+}
+
+#[must_use]
+pub fn main_memory_projection_measurement() -> MainMemoryProjectionMeasurement {
+    MainMemoryProjectionMeasurement {
+        dynamic_observations: MAIN_MEMORY_DYNAMIC_OBSERVATIONS.load(Ordering::Relaxed),
+        base_requests: MAIN_MEMORY_BASE_REQUESTS.load(Ordering::Relaxed),
+        base_reuses: MAIN_MEMORY_BASE_REUSES.load(Ordering::Relaxed),
+        full_rebuilds: MAIN_MEMORY_FULL_REBUILDS.load(Ordering::Relaxed),
+        operation_boundaries: MAIN_MEMORY_OPERATION_BOUNDARIES.load(Ordering::Relaxed),
+        operation_boundaries_retained: MAIN_MEMORY_OPERATION_BOUNDARIES_RETAINED
+            .load(Ordering::Relaxed),
+        cell_root_updates: MAIN_MEMORY_CELL_ROOT_UPDATES.load(Ordering::Relaxed),
+        cell_root_updates_retained: MAIN_MEMORY_CELL_ROOT_UPDATES_RETAINED.load(Ordering::Relaxed),
+        box_root_updates: MAIN_MEMORY_BOX_ROOT_UPDATES.load(Ordering::Relaxed),
+        box_root_updates_retained: MAIN_MEMORY_BOX_ROOT_UPDATES_RETAINED.load(Ordering::Relaxed),
+        cache_losses: core::array::from_fn(|index| {
+            MAIN_MEMORY_CACHE_LOSSES[index].load(Ordering::Relaxed)
+        }),
     }
 }
