@@ -207,6 +207,10 @@ fn explicit_cache_verifier_authenticates_every_current_blob() {
 }
 
 #[test]
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the corruption control mutates an encoded native cache entry"
+)]
 fn explicit_cache_verifier_rejects_mutation_without_quarantining() {
     let temp = TempDir::new().expect("cache tempdir");
     let store = BlobStore::new(temp.path());

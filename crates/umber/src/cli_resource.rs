@@ -1263,10 +1263,10 @@ impl DistributionResolver {
                         .manifest_lookup_time
                         .saturating_add(manifest_started.elapsed());
                     for key in keys {
-                        if !required.contains_key(&key) {
-                            if let Some(entry) = shard.files.get(&key) {
-                                hints.insert(key, entry.clone());
-                            }
+                        if !required.contains_key(&key)
+                            && let Some(entry) = shard.files.get(&key)
+                        {
+                            hints.insert(key, entry.clone());
                         }
                     }
                 }

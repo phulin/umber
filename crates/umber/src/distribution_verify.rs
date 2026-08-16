@@ -1,5 +1,10 @@
 //! Explicit complete verification for a local immutable distribution.
 
+#![allow(
+    clippy::disallowed_methods,
+    reason = "this module is an explicit native host-side maintenance tool"
+)]
+
 use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
