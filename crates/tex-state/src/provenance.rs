@@ -12,6 +12,7 @@ use crate::input::{SourceId, TokenListReplayKind};
 use crate::source_map::{SourceMapStats, SourceRegistrationRef, SourceSpan};
 use crate::token::{OriginEncoding, OriginId, Token};
 use crate::world::InputRecordId;
+use smallvec::SmallVec;
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::mem;
@@ -944,7 +945,7 @@ pub enum OriginRecord {
 struct OriginValue {
     id: OriginId,
     record: OriginRecord,
-    children: Box<[OriginRef]>,
+    children: SmallVec<[OriginRef; 3]>,
     source_registration: Option<SourceRegistrationRef>,
 }
 
@@ -952,11 +953,40 @@ struct OriginValue {
 ///
 /// Direct source positions and graceful fallbacks allocate no atom. Arena
 /// positions keep their immutable record and structural child roots alive.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct OriginRef {
     id: OriginId,
     value: Option<Arc<OriginValue>>,
     source_registration: Option<SourceRegistrationRef>,
+}
+
+impl Clone for OriginRef {
+    fn clone(&self) -> Self {
+        #[cfg(feature = "profiling")]
+        if let Some(value) = &self.value {
+            crate::measurement::record_provenance_root_retain(matches!(
+                value.record,
+                OriginRecord::MacroInvocation(_)
+            ));
+        }
+        Self {
+            id: self.id,
+            value: self.value.clone(),
+            source_registration: self.source_registration.clone(),
+        }
+    }
+}
+
+impl Drop for OriginRef {
+    fn drop(&mut self) {
+        #[cfg(feature = "profiling")]
+        if let Some(value) = &self.value {
+            crate::measurement::record_provenance_root_release(matches!(
+                value.record,
+                OriginRecord::MacroInvocation(_)
+            ));
+        }
+    }
 }
 
 impl OriginRef {
@@ -997,7 +1027,9 @@ impl OriginRef {
 
     #[must_use]
     pub fn children(&self) -> &[OriginRef] {
-        self.value.as_ref().map_or(&[], |value| &value.children)
+        self.value
+            .as_ref()
+            .map_or(&[], |value| value.children.as_slice())
     }
 
     #[must_use]
@@ -1070,20 +1102,50 @@ struct OriginListValue {
 
 impl OriginListValue {
     fn root(&self, id: OriginId) -> OriginRef {
-        self.owners
-            .binary_search_by_key(&id, OriginRef::id)
+        let mut comparisons = 0;
+        let result = self
+            .owners
+            .binary_search_by(|owner| {
+                comparisons += 1;
+                owner.id().cmp(&id)
+            })
             .map_or_else(
                 |_| OriginRef::direct(id),
                 |index| self.owners[index].clone(),
-            )
+            );
+        #[cfg(feature = "profiling")]
+        crate::measurement::record_provenance_list_resolution(comparisons);
+        result
     }
 }
 
 /// Strong ownership of one immutable exact token-position sequence.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct OriginListRef {
     id: OriginListId,
     value: Option<Arc<OriginListValue>>,
+}
+
+impl Clone for OriginListRef {
+    fn clone(&self) -> Self {
+        #[cfg(feature = "profiling")]
+        if self.value.is_some() {
+            crate::measurement::record_provenance_list_retain();
+        }
+        Self {
+            id: self.id,
+            value: self.value.clone(),
+        }
+    }
+}
+
+impl Drop for OriginListRef {
+    fn drop(&mut self) {
+        #[cfg(feature = "profiling")]
+        if self.value.is_some() {
+            crate::measurement::record_provenance_list_release();
+        }
+    }
 }
 
 impl OriginListRef {
@@ -1265,7 +1327,7 @@ const DEFAULT_ORIGIN_LIST_SPAN_LIMIT: usize = 262_144;
 const DEFAULT_ORIGIN_LIST_ENTRY_LIMIT: usize = 2_097_152;
 const RECORD_CANDIDATE_KEY_BUDGET: usize = 4_096;
 const LIST_CANDIDATE_KEY_BUDGET: usize = 1_024;
-const ROOTED_RECLAIM_WORK_PER_ALLOCATION: usize = 8;
+const ROOTED_RECLAIM_WORK_PER_ALLOCATION: usize = 1;
 
 /// Compatibility origin-record archive plus reachability-owned provenance.
 #[derive(Debug)]
@@ -1489,7 +1551,8 @@ impl ProvenanceStore {
         children: impl IntoIterator<Item = OriginRef>,
         source_registration: Option<SourceRegistrationRef>,
     ) -> OriginRef {
-        self.reclaim_some_dead_rooted_records(ROOTED_RECLAIM_WORK_PER_ALLOCATION);
+        #[cfg(feature = "profiling")]
+        let frame = matches!(record, OriginRecord::MacroInvocation(_));
         let mut exact = None;
         let mut remove_empty_candidates = false;
         if let Some(candidates) = self.rooted_record_candidates.get_mut(&record) {
@@ -1508,12 +1571,18 @@ impl ProvenanceStore {
             self.rooted_record_candidates.remove(&record);
         }
         if let Some(value) = exact {
+            #[cfg(feature = "profiling")]
+            {
+                crate::measurement::record_provenance_intern(frame, true, false);
+                crate::measurement::record_provenance_root_retain(frame);
+            }
             return OriginRef {
                 id: value.id,
                 value: Some(value),
                 source_registration: None,
             };
         }
+        self.reclaim_some_dead_rooted_records(ROOTED_RECLAIM_WORK_PER_ALLOCATION);
         if self.rooted_record_occupied >= self.record_limit
             || (self.rooted_record_free.is_empty()
                 && self.rooted_record_slots.len() >= self.weak_record_slot_limit)
@@ -1524,6 +1593,8 @@ impl ProvenanceStore {
             || (self.rooted_record_free.is_empty()
                 && self.rooted_record_slots.len() >= self.weak_record_slot_limit)
         {
+            #[cfg(feature = "profiling")]
+            crate::measurement::record_provenance_intern(frame, false, false);
             return match record {
                 OriginRecord::Inserted(inserted)
                     if inserted.kind() == InsertedOriginKind::NoExpand =>
@@ -1534,6 +1605,8 @@ impl ProvenanceStore {
             };
         }
         let Some(key) = self.next_packed_arena_origin() else {
+            #[cfg(feature = "profiling")]
+            crate::measurement::record_provenance_intern(frame, false, false);
             return OriginRef::unknown();
         };
         let id = OriginId::arena(key).expect("global packed provenance key is representable");
@@ -1543,6 +1616,8 @@ impl ProvenanceStore {
             children: children.into_iter().collect(),
             source_registration,
         });
+        #[cfg(feature = "profiling")]
+        crate::measurement::record_provenance_intern(frame, false, true);
         let slot = self
             .rooted_record_free
             .pop()
@@ -1580,6 +1655,8 @@ impl ProvenanceStore {
     }
 
     pub(crate) fn origin_ref(&self, id: OriginId) -> Option<OriginRef> {
+        #[cfg(feature = "profiling")]
+        crate::measurement::record_provenance_origin_resolution();
         match id.decode() {
             crate::token::OriginEncoding::Unknown
             | crate::token::OriginEncoding::NoExpandFallback
@@ -1592,6 +1669,11 @@ impl ProvenanceStore {
                     .as_ref()?
                     .value
                     .upgrade()?;
+                #[cfg(feature = "profiling")]
+                crate::measurement::record_provenance_root_retain(matches!(
+                    value.record,
+                    OriginRecord::MacroInvocation(_)
+                ));
                 Some(OriginRef {
                     id,
                     value: Some(value),
@@ -1608,6 +1690,8 @@ impl ProvenanceStore {
     /// limit, where an exact live count is required.
     fn reclaim_some_dead_rooted_records(&mut self, work: usize) -> usize {
         let mut visited = 0;
+        #[cfg(feature = "profiling")]
+        let mut reclaimed = 0;
         while visited < work && !self.rooted_record_slots.is_empty() {
             if self.rooted_record_sweep_cursor >= self.rooted_record_slots.len() {
                 self.rooted_record_sweep_cursor = 0;
@@ -1626,7 +1710,13 @@ impl ProvenanceStore {
             *slot = None;
             self.rooted_record_free.push(index);
             self.rooted_record_occupied -= 1;
+            #[cfg(feature = "profiling")]
+            {
+                reclaimed += 1;
+            }
         }
+        #[cfg(feature = "profiling")]
+        crate::measurement::record_provenance_reclaim(false, visited, reclaimed);
         visited
     }
 
@@ -1687,7 +1777,7 @@ impl ProvenanceStore {
     ) -> OriginListRef {
         let ids = origins.collect::<Vec<_>>();
         for root in roots {
-            assert!(
+            debug_assert!(
                 ids.contains(&root.id()),
                 "transient provenance owner has no packed position"
             );
@@ -1723,7 +1813,6 @@ impl ProvenanceStore {
         if ids.is_empty() {
             return OriginListRef::empty();
         }
-        self.reclaim_some_dead_rooted_lists(ROOTED_RECLAIM_WORK_PER_ALLOCATION);
         let hash = origin_list_hash(&ids);
         let mut exact = None;
         let mut remove_empty_candidates = false;
@@ -1743,11 +1832,17 @@ impl ProvenanceStore {
             self.rooted_list_candidates.remove(&hash);
         }
         if let Some(value) = exact {
+            #[cfg(feature = "profiling")]
+            {
+                crate::measurement::record_provenance_list_intern(true, false);
+                crate::measurement::record_provenance_list_retain();
+            }
             return OriginListRef {
                 id: value.id,
                 value: Some(value),
             };
         }
+        self.reclaim_some_dead_rooted_lists(ROOTED_RECLAIM_WORK_PER_ALLOCATION);
         if self.rooted_list_occupied >= self.list_span_limit
             || self.rooted_list_occupied >= self.weak_list_slot_limit
             || self
@@ -1764,6 +1859,8 @@ impl ProvenanceStore {
                 .checked_add(ids.len())
                 .is_none_or(|entries| entries > self.list_entry_limit)
         {
+            #[cfg(feature = "profiling")]
+            crate::measurement::record_provenance_list_intern(false, false);
             return OriginListRef::empty();
         }
         let identity = self
@@ -1777,6 +1874,8 @@ impl ProvenanceStore {
             origins: ids.into_boxed_slice(),
             owners: owners.into_boxed_slice(),
         });
+        #[cfg(feature = "profiling")]
+        crate::measurement::record_provenance_list_intern(false, true);
         for root in &value.owners {
             self.pending_record_roots.remove(&root.id());
         }
@@ -1815,6 +1914,8 @@ impl ProvenanceStore {
 
     fn reclaim_some_dead_rooted_lists(&mut self, work: usize) -> usize {
         let mut visited = 0;
+        #[cfg(feature = "profiling")]
+        let mut reclaimed = 0;
         while visited < work && self.rooted_list_slots.len() > 1 {
             if self.rooted_list_sweep_cursor < 1
                 || self.rooted_list_sweep_cursor >= self.rooted_list_slots.len()
@@ -1837,7 +1938,13 @@ impl ProvenanceStore {
             self.rooted_list_entries -= occupied.entry_len;
             self.rooted_list_occupied -= 1;
             *slot = None;
+            #[cfg(feature = "profiling")]
+            {
+                reclaimed += 1;
+            }
         }
+        #[cfg(feature = "profiling")]
+        crate::measurement::record_provenance_reclaim(true, visited, reclaimed);
         visited
     }
 
@@ -2057,9 +2164,11 @@ impl ProvenanceStore {
 }
 
 fn origin_list_hash(origins: &[OriginId]) -> u64 {
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    origins.hash(&mut hasher);
-    hasher.finish()
+    // This is a weak candidate-bucket accelerator, not semantic identity.
+    // Exact origin comparison below remains the collision-safety authority.
+    origins.iter().fold(0xcbf2_9ce4_8422_2325, |hash, origin| {
+        (hash ^ u64::from(origin.raw())).wrapping_mul(0x0000_0100_0000_01b3)
+    })
 }
 
 fn u32_len(value: usize) -> Option<u32> {

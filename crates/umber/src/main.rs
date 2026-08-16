@@ -126,6 +126,7 @@ fn lex_dump(path: &str) -> Result<(), CliError> {
 struct MainMemoryProjectionReport {
     enabled: bool,
     before: tex_state::measurement::MainMemoryProjectionMeasurement,
+    provenance_before: tex_state::measurement::ProvenanceLifecycleMeasurement,
 }
 
 #[cfg(feature = "profiling")]
@@ -134,6 +135,7 @@ impl MainMemoryProjectionReport {
         Self {
             enabled,
             before: tex_state::measurement::main_memory_projection_measurement(),
+            provenance_before: tex_state::measurement::provenance_lifecycle_measurement(),
         }
     }
 }
@@ -191,6 +193,36 @@ impl Drop for MainMemoryProjectionReport {
         for (owner, count) in delta.named_cache_losses() {
             eprintln!("MAIN_MEMORY_PROJECTION_CACHE_LOSS owner={owner} count={count}");
         }
+        let provenance = tex_state::measurement::provenance_lifecycle_measurement()
+            .saturating_sub(self.provenance_before);
+        eprintln!(
+            "PROVENANCE_LIFECYCLE atom_intern_calls={} atom_hits={} atom_misses={} atom_allocations={} frame_intern_calls={} frame_hits={} frame_misses={} frame_allocations={} list_intern_calls={} list_hits={} list_misses={} list_allocations={} atom_retains={} atom_releases={} frame_retains={} frame_releases={} list_retains={} list_releases={} atom_reclaim_visits={} atom_reclaims={} list_reclaim_visits={} list_reclaims={} origin_resolutions={} list_resolutions={} list_resolution_comparisons={}",
+            provenance.atom_intern_calls,
+            provenance.atom_intern_hits,
+            provenance.atom_intern_misses,
+            provenance.atom_allocations,
+            provenance.frame_intern_calls,
+            provenance.frame_intern_hits,
+            provenance.frame_intern_misses,
+            provenance.frame_allocations,
+            provenance.list_intern_calls,
+            provenance.list_intern_hits,
+            provenance.list_intern_misses,
+            provenance.list_allocations,
+            provenance.atom_retains,
+            provenance.atom_releases,
+            provenance.frame_retains,
+            provenance.frame_releases,
+            provenance.list_retains,
+            provenance.list_releases,
+            provenance.atom_reclaim_visits,
+            provenance.atom_reclaims,
+            provenance.list_reclaim_visits,
+            provenance.list_reclaims,
+            provenance.origin_resolutions,
+            provenance.list_resolutions,
+            provenance.list_resolution_comparisons,
+        );
     }
 }
 

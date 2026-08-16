@@ -1413,6 +1413,7 @@ fn profiling_stats_are_reported_only_when_requested() {
     assert!(reported.status.success());
     let stderr = String::from_utf8(reported.stderr).expect("stderr is utf-8");
     assert!(stderr.contains("EXPANSION_STATS "));
+    assert!(stderr.contains("PROVENANCE_LIFECYCLE "));
     assert!(stderr.contains("NODE_MEMORY_TOTAL "));
     assert!(stderr.contains("ALLOC_NODE_APPEND "));
 }

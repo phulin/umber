@@ -214,6 +214,104 @@ fn exact_records_and_lists_share_structural_slots() {
 }
 
 #[test]
+fn exact_structural_hits_skip_unrelated_reclamation_work() {
+    let mut store = ProvenanceStore::new();
+    let record = OriginRecord::Synthetic(SyntheticOrigin::new(SyntheticOriginKind::Test));
+    let root = store.allocate_rooted(record, []);
+    let list = store.allocate_rooted_list(std::slice::from_ref(&root));
+
+    let dead = store.allocate_rooted(
+        OriginRecord::Synthetic(SyntheticOrigin::new(SyntheticOriginKind::Engine)),
+        [],
+    );
+    let dead_list = store.allocate_rooted_list(std::slice::from_ref(&dead));
+    drop(dead_list);
+    drop(dead);
+
+    let record_cursor = store.rooted_record_sweep_cursor;
+    let list_cursor = store.rooted_list_sweep_cursor;
+    assert_eq!(store.allocate_rooted(record, []).id(), root.id());
+    assert_eq!(
+        store.allocate_rooted_list(std::slice::from_ref(&root)).id(),
+        list.id()
+    );
+    assert_eq!(store.rooted_record_sweep_cursor, record_cursor);
+    assert_eq!(store.rooted_list_sweep_cursor, list_cursor);
+}
+
+#[test]
+fn expansion_frame_children_fit_the_inline_allocation() {
+    let mut store = ProvenanceStore::new();
+    let frame = store.allocate_rooted(
+        OriginRecord::MacroInvocation(MacroInvocationOrigin::from_nonowning_operand(
+            42,
+            OriginId::UNKNOWN,
+            OriginId::UNKNOWN,
+            OriginId::UNKNOWN,
+        )),
+        [
+            OriginRef::unknown(),
+            OriginRef::unknown(),
+            OriginRef::unknown(),
+        ],
+    );
+    assert_eq!(frame.children().len(), 3);
+    assert!(
+        !frame
+            .value
+            .as_ref()
+            .expect("frame is structurally rooted")
+            .children
+            .spilled()
+    );
+}
+
+#[cfg(feature = "profiling")]
+#[test]
+fn lifecycle_counters_cover_macro_hits_misses_ownership_reclaim_and_resolution() {
+    let before = crate::measurement::provenance_lifecycle_measurement();
+    {
+        let mut store = ProvenanceStore::new();
+        let atom_record = OriginRecord::Synthetic(SyntheticOrigin::new(SyntheticOriginKind::Test));
+        let atom = store.allocate_rooted(atom_record, []);
+        let atom_hit = store.allocate_rooted(atom_record, []);
+        let frame_record =
+            OriginRecord::MacroInvocation(MacroInvocationOrigin::from_nonowning_operand(
+                7,
+                atom.id(),
+                OriginId::UNKNOWN,
+                OriginId::UNKNOWN,
+            ));
+        let frame = store.allocate_rooted(frame_record, [atom.clone()]);
+        let frame_hit = store.allocate_rooted(frame_record, [atom.clone()]);
+        let list = store.allocate_rooted_list(&[frame.clone(), atom.clone()]);
+        let list_hit = store.allocate_rooted_list(&[frame.clone(), atom.clone()]);
+        assert!(store.origin_ref(frame.id()).is_some());
+        assert_eq!(list.root(0).expect("rooted frame").id(), frame.id());
+        drop((list_hit, list, frame_hit, frame, atom_hit, atom));
+        let replacement = store.allocate_rooted(
+            OriginRecord::Synthetic(SyntheticOrigin::new(SyntheticOriginKind::Engine)),
+            [],
+        );
+        drop(replacement);
+    }
+    let work = crate::measurement::provenance_lifecycle_measurement().saturating_sub(before);
+    assert!(work.atom_intern_hits >= 1);
+    assert!(work.atom_intern_misses >= 2);
+    assert!(work.frame_intern_hits >= 1);
+    assert!(work.frame_intern_misses >= 1);
+    assert!(work.list_intern_hits >= 1);
+    assert!(work.list_intern_misses >= 1);
+    assert!(work.atom_retains >= 1 && work.atom_releases >= 1);
+    assert!(work.frame_retains >= 1 && work.frame_releases >= 1);
+    assert!(work.list_retains >= 1 && work.list_releases >= 1);
+    assert!(work.atom_reclaim_visits >= 1);
+    assert!(work.list_reclaim_visits >= 1);
+    assert!(work.origin_resolutions >= 1);
+    assert!(work.list_resolutions >= 1 && work.list_resolution_comparisons >= 1);
+}
+
+#[test]
 fn repeated_macro_expansion_shares_one_structural_frame() {
     let mut store = ProvenanceStore::new();
     let invocation = OriginId::UNKNOWN;
@@ -781,10 +879,14 @@ fn rooted_record_reclamation_is_bounded_and_preserves_live_negative_control() {
     let extent = store.rooted_record_slots.len();
     let mut visited = 0;
     while store.rooted_record_occupied > roots.len() {
-        let step = store.reclaim_some_dead_rooted_records(8);
-        assert!(step <= 8, "ordinary reclamation must have constant work");
+        let step =
+            store.reclaim_some_dead_rooted_records(super::ROOTED_RECLAIM_WORK_PER_ALLOCATION);
+        assert!(
+            step <= 1,
+            "ordinary reclamation must visit at most one slot"
+        );
         visited += step;
-        assert!(visited <= extent + 8, "one sweep must find the dead slot");
+        assert!(visited <= extent + 1, "one sweep must find the dead slot");
     }
 
     assert!(store.origin_ref(transient_id).is_none());

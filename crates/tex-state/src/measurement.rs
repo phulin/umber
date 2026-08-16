@@ -120,6 +120,107 @@ pub struct TokenStoreMeasurement {
     pub semantic_identity_capacity_bytes_grown: u64,
 }
 
+/// Process-local census of structural provenance lifecycle work.
+///
+/// These fixed-width counters are compiled only into profiling builds. They
+/// observe ownership operations without becoming part of engine state,
+/// rollback, formats, or semantic identity.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct ProvenanceLifecycleMeasurement {
+    pub atom_intern_calls: u64,
+    pub atom_intern_hits: u64,
+    pub atom_intern_misses: u64,
+    pub atom_allocations: u64,
+    pub frame_intern_calls: u64,
+    pub frame_intern_hits: u64,
+    pub frame_intern_misses: u64,
+    pub frame_allocations: u64,
+    pub list_intern_calls: u64,
+    pub list_intern_hits: u64,
+    pub list_intern_misses: u64,
+    pub list_allocations: u64,
+    pub atom_retains: u64,
+    pub atom_releases: u64,
+    pub frame_retains: u64,
+    pub frame_releases: u64,
+    pub list_retains: u64,
+    pub list_releases: u64,
+    pub atom_reclaim_visits: u64,
+    pub atom_reclaims: u64,
+    pub list_reclaim_visits: u64,
+    pub list_reclaims: u64,
+    pub origin_resolutions: u64,
+    pub list_resolutions: u64,
+    pub list_resolution_comparisons: u64,
+}
+
+impl ProvenanceLifecycleMeasurement {
+    #[must_use]
+    pub const fn saturating_sub(self, baseline: Self) -> Self {
+        Self {
+            atom_intern_calls: self
+                .atom_intern_calls
+                .saturating_sub(baseline.atom_intern_calls),
+            atom_intern_hits: self
+                .atom_intern_hits
+                .saturating_sub(baseline.atom_intern_hits),
+            atom_intern_misses: self
+                .atom_intern_misses
+                .saturating_sub(baseline.atom_intern_misses),
+            atom_allocations: self
+                .atom_allocations
+                .saturating_sub(baseline.atom_allocations),
+            frame_intern_calls: self
+                .frame_intern_calls
+                .saturating_sub(baseline.frame_intern_calls),
+            frame_intern_hits: self
+                .frame_intern_hits
+                .saturating_sub(baseline.frame_intern_hits),
+            frame_intern_misses: self
+                .frame_intern_misses
+                .saturating_sub(baseline.frame_intern_misses),
+            frame_allocations: self
+                .frame_allocations
+                .saturating_sub(baseline.frame_allocations),
+            list_intern_calls: self
+                .list_intern_calls
+                .saturating_sub(baseline.list_intern_calls),
+            list_intern_hits: self
+                .list_intern_hits
+                .saturating_sub(baseline.list_intern_hits),
+            list_intern_misses: self
+                .list_intern_misses
+                .saturating_sub(baseline.list_intern_misses),
+            list_allocations: self
+                .list_allocations
+                .saturating_sub(baseline.list_allocations),
+            atom_retains: self.atom_retains.saturating_sub(baseline.atom_retains),
+            atom_releases: self.atom_releases.saturating_sub(baseline.atom_releases),
+            frame_retains: self.frame_retains.saturating_sub(baseline.frame_retains),
+            frame_releases: self.frame_releases.saturating_sub(baseline.frame_releases),
+            list_retains: self.list_retains.saturating_sub(baseline.list_retains),
+            list_releases: self.list_releases.saturating_sub(baseline.list_releases),
+            atom_reclaim_visits: self
+                .atom_reclaim_visits
+                .saturating_sub(baseline.atom_reclaim_visits),
+            atom_reclaims: self.atom_reclaims.saturating_sub(baseline.atom_reclaims),
+            list_reclaim_visits: self
+                .list_reclaim_visits
+                .saturating_sub(baseline.list_reclaim_visits),
+            list_reclaims: self.list_reclaims.saturating_sub(baseline.list_reclaims),
+            origin_resolutions: self
+                .origin_resolutions
+                .saturating_sub(baseline.origin_resolutions),
+            list_resolutions: self
+                .list_resolutions
+                .saturating_sub(baseline.list_resolutions),
+            list_resolution_comparisons: self
+                .list_resolution_comparisons
+                .saturating_sub(baseline.list_resolution_comparisons),
+        }
+    }
+}
+
 /// Process-local census of TeX82 diagnostic main-memory projection reuse.
 ///
 /// The counters describe derived accounting work only. They do not participate
@@ -207,6 +308,7 @@ static TOKEN_MISSES: AtomicU64 = AtomicU64::new(0);
 static TOKEN_REQUESTED: AtomicU64 = AtomicU64::new(0);
 static TOKEN_ARENA_GROWN_BYTES: AtomicU64 = AtomicU64::new(0);
 static TOKEN_SEMANTIC_ID_GROWN_BYTES: AtomicU64 = AtomicU64::new(0);
+static PROVENANCE_COUNTERS: [AtomicU64; 25] = [const { AtomicU64::new(0) }; 25];
 static MAIN_MEMORY_DYNAMIC_OBSERVATIONS: AtomicU64 = AtomicU64::new(0);
 static MAIN_MEMORY_BASE_REQUESTS: AtomicU64 = AtomicU64::new(0);
 static MAIN_MEMORY_BASE_REUSES: AtomicU64 = AtomicU64::new(0);
@@ -374,6 +476,114 @@ pub(crate) fn record_token_intern(
     );
 }
 
+const PROV_ATOM_INTERN_CALLS: usize = 0;
+const PROV_ATOM_INTERN_HITS: usize = 1;
+const PROV_ATOM_INTERN_MISSES: usize = 2;
+const PROV_ATOM_ALLOCATIONS: usize = 3;
+const PROV_FRAME_INTERN_CALLS: usize = 4;
+const PROV_FRAME_INTERN_HITS: usize = 5;
+const PROV_FRAME_INTERN_MISSES: usize = 6;
+const PROV_FRAME_ALLOCATIONS: usize = 7;
+const PROV_LIST_INTERN_CALLS: usize = 8;
+const PROV_LIST_INTERN_HITS: usize = 9;
+const PROV_LIST_INTERN_MISSES: usize = 10;
+const PROV_LIST_ALLOCATIONS: usize = 11;
+const PROV_ATOM_RETAINS: usize = 12;
+const PROV_ATOM_RELEASES: usize = 13;
+const PROV_FRAME_RETAINS: usize = 14;
+const PROV_FRAME_RELEASES: usize = 15;
+const PROV_LIST_RETAINS: usize = 16;
+const PROV_LIST_RELEASES: usize = 17;
+const PROV_ATOM_RECLAIM_VISITS: usize = 18;
+const PROV_ATOM_RECLAIMS: usize = 19;
+const PROV_LIST_RECLAIM_VISITS: usize = 20;
+const PROV_LIST_RECLAIMS: usize = 21;
+const PROV_ORIGIN_RESOLUTIONS: usize = 22;
+const PROV_LIST_RESOLUTIONS: usize = 23;
+const PROV_LIST_RESOLUTION_COMPARISONS: usize = 24;
+
+pub(crate) fn record_provenance_intern(frame: bool, hit: bool, allocated: bool) {
+    let (calls, hits, misses, allocations) = if frame {
+        (
+            PROV_FRAME_INTERN_CALLS,
+            PROV_FRAME_INTERN_HITS,
+            PROV_FRAME_INTERN_MISSES,
+            PROV_FRAME_ALLOCATIONS,
+        )
+    } else {
+        (
+            PROV_ATOM_INTERN_CALLS,
+            PROV_ATOM_INTERN_HITS,
+            PROV_ATOM_INTERN_MISSES,
+            PROV_ATOM_ALLOCATIONS,
+        )
+    };
+    PROVENANCE_COUNTERS[calls].fetch_add(1, Ordering::Relaxed);
+    PROVENANCE_COUNTERS[if hit { hits } else { misses }].fetch_add(1, Ordering::Relaxed);
+    if allocated {
+        PROVENANCE_COUNTERS[allocations].fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+pub(crate) fn record_provenance_list_intern(hit: bool, allocated: bool) {
+    PROVENANCE_COUNTERS[PROV_LIST_INTERN_CALLS].fetch_add(1, Ordering::Relaxed);
+    PROVENANCE_COUNTERS[if hit {
+        PROV_LIST_INTERN_HITS
+    } else {
+        PROV_LIST_INTERN_MISSES
+    }]
+    .fetch_add(1, Ordering::Relaxed);
+    if allocated {
+        PROVENANCE_COUNTERS[PROV_LIST_ALLOCATIONS].fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+pub(crate) fn record_provenance_root_retain(frame: bool) {
+    PROVENANCE_COUNTERS[if frame {
+        PROV_FRAME_RETAINS
+    } else {
+        PROV_ATOM_RETAINS
+    }]
+    .fetch_add(1, Ordering::Relaxed);
+}
+
+pub(crate) fn record_provenance_root_release(frame: bool) {
+    PROVENANCE_COUNTERS[if frame {
+        PROV_FRAME_RELEASES
+    } else {
+        PROV_ATOM_RELEASES
+    }]
+    .fetch_add(1, Ordering::Relaxed);
+}
+
+pub(crate) fn record_provenance_list_retain() {
+    PROVENANCE_COUNTERS[PROV_LIST_RETAINS].fetch_add(1, Ordering::Relaxed);
+}
+
+pub(crate) fn record_provenance_list_release() {
+    PROVENANCE_COUNTERS[PROV_LIST_RELEASES].fetch_add(1, Ordering::Relaxed);
+}
+
+pub(crate) fn record_provenance_reclaim(list: bool, visits: usize, reclaimed: usize) {
+    let (visit_index, reclaim_index) = if list {
+        (PROV_LIST_RECLAIM_VISITS, PROV_LIST_RECLAIMS)
+    } else {
+        (PROV_ATOM_RECLAIM_VISITS, PROV_ATOM_RECLAIMS)
+    };
+    PROVENANCE_COUNTERS[visit_index].fetch_add(visits as u64, Ordering::Relaxed);
+    PROVENANCE_COUNTERS[reclaim_index].fetch_add(reclaimed as u64, Ordering::Relaxed);
+}
+
+pub(crate) fn record_provenance_origin_resolution() {
+    PROVENANCE_COUNTERS[PROV_ORIGIN_RESOLUTIONS].fetch_add(1, Ordering::Relaxed);
+}
+
+pub(crate) fn record_provenance_list_resolution(comparisons: usize) {
+    PROVENANCE_COUNTERS[PROV_LIST_RESOLUTIONS].fetch_add(1, Ordering::Relaxed);
+    PROVENANCE_COUNTERS[PROV_LIST_RESOLUTION_COMPARISONS]
+        .fetch_add(comparisons as u64, Ordering::Relaxed);
+}
+
 #[must_use]
 pub fn node_append_measurement() -> NodeAppendMeasurement {
     NodeAppendMeasurement {
@@ -473,6 +683,38 @@ pub fn token_store_measurement() -> TokenStoreMeasurement {
         arena_capacity_bytes_grown: TOKEN_ARENA_GROWN_BYTES.load(Ordering::Relaxed),
         semantic_identity_capacity_bytes_grown: TOKEN_SEMANTIC_ID_GROWN_BYTES
             .load(Ordering::Relaxed),
+    }
+}
+
+#[must_use]
+pub fn provenance_lifecycle_measurement() -> ProvenanceLifecycleMeasurement {
+    let load = |index: usize| PROVENANCE_COUNTERS[index].load(Ordering::Relaxed);
+    ProvenanceLifecycleMeasurement {
+        atom_intern_calls: load(PROV_ATOM_INTERN_CALLS),
+        atom_intern_hits: load(PROV_ATOM_INTERN_HITS),
+        atom_intern_misses: load(PROV_ATOM_INTERN_MISSES),
+        atom_allocations: load(PROV_ATOM_ALLOCATIONS),
+        frame_intern_calls: load(PROV_FRAME_INTERN_CALLS),
+        frame_intern_hits: load(PROV_FRAME_INTERN_HITS),
+        frame_intern_misses: load(PROV_FRAME_INTERN_MISSES),
+        frame_allocations: load(PROV_FRAME_ALLOCATIONS),
+        list_intern_calls: load(PROV_LIST_INTERN_CALLS),
+        list_intern_hits: load(PROV_LIST_INTERN_HITS),
+        list_intern_misses: load(PROV_LIST_INTERN_MISSES),
+        list_allocations: load(PROV_LIST_ALLOCATIONS),
+        atom_retains: load(PROV_ATOM_RETAINS),
+        atom_releases: load(PROV_ATOM_RELEASES),
+        frame_retains: load(PROV_FRAME_RETAINS),
+        frame_releases: load(PROV_FRAME_RELEASES),
+        list_retains: load(PROV_LIST_RETAINS),
+        list_releases: load(PROV_LIST_RELEASES),
+        atom_reclaim_visits: load(PROV_ATOM_RECLAIM_VISITS),
+        atom_reclaims: load(PROV_ATOM_RECLAIMS),
+        list_reclaim_visits: load(PROV_LIST_RECLAIM_VISITS),
+        list_reclaims: load(PROV_LIST_RECLAIMS),
+        origin_resolutions: load(PROV_ORIGIN_RESOLUTIONS),
+        list_resolutions: load(PROV_LIST_RESOLUTIONS),
+        list_resolution_comparisons: load(PROV_LIST_RESOLUTION_COMPARISONS),
     }
 }
 
