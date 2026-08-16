@@ -93,6 +93,11 @@ canonical TeX82/e-TeX/pdfTeX command-machine replacement tracked by Beads epic
 levels, command delivery, expansion, scanners, extensions, provenance,
 incrementality, reference oracles, and optimization promotion.
 
+`engine_architecture_decision.md` selects bounded mutable semantic episodes
+inside the one canonical engine from the `umber2-64v2` prototype evidence. It
+records measurement comparability, retained and rejected substrate, migration
+order, typed barrier/fallback rules, deletion criteria, and promotion gates.
+
 `writeback/` records concise issue-scoped authority notes required by command
 conformance work; each note names the governing TeX82 section and the adopted
 semantic boundary, not temporary implementation plans.

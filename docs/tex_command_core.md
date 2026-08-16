@@ -3431,6 +3431,15 @@ never presented as pdfTeX behavior.
 
 ## 32. Performance architecture
 
+The scalar implementation remains the semantic reference during migration,
+but it is not the selected final execution shape. The measured architecture
+decision in [Canonical Engine Architecture Decision](engine_architecture_decision.md)
+makes bounded mutable semantic episodes the ordinary internal unit of work
+inside this same command machine. That decision does not authorize a runtime
+engine selector, duplicate state, or omitted observable semantics; its typed
+barriers, family-by-family deletion criteria, and promotion gates refine the
+optimization rules below.
+
 The first promoted implementation is the simplest canonical scalar machine.
 Its performance foundations are:
 
