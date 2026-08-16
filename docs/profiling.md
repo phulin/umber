@@ -741,3 +741,44 @@ CARGO_BUILD_JOBS=1 cargo bench \
 Criterion timings remain diagnostic only. The routine regression is the
 deterministic primitive-work test in `tex-state`; acceptance depends on its
 operation counts and semantic outcomes, not a wall-clock guard.
+
+## Scalar command delivery and scanning
+
+Issue `umber2-3v8z.27` added a monotonic command-work vector beside the
+canonical fuel ledger. It distinguishes successful fuel charges, raw
+token-frame steps, completed expanded deliveries, live meaning lookups,
+tokens delivered under a non-normal scanner status, and expandable commands
+executed during deferred-write expansion. These counters are operational
+evidence outside TeX state: checkpoints, rollback, formats, semantic identity,
+corpus inputs, and fuel guards do not contain or alter them.
+
+Exact focused controls exercise 256 macro invocations and 64 macro expansions
+inside deferred write text. Their respective vectors are
+`(513, 512, 256, 256, 0, 0)` and `(131, 131, 1, 64, 130, 64)` in the field
+order above. The tests assert the complete vectors rather than elapsed time.
+The instrumented pdfTeX oracle does not currently export equivalent command
+work counters, so there is no fabricated cross-engine count comparison;
+existing oracle parity remains the semantic gate.
+
+The production endpoint captures used the authenticated pinned distribution,
+format, source, and offline cache. At 6,000,000 fuel they recorded
+`(6000000, 6000000, 556280, 1710443, 5383815, 433)` from 1,356 cycle samples;
+at 12,000,000 fuel they recorded
+`(12000000, 11999815, 1253912, 3485521, 10639579, 1136)` from 2,450 cycle
+samples. Both caller/callee captures lost zero samples. Durable evidence is
+under `target/umber2-3v8z.27/prod-record-fuel-6000000/` and
+`target/umber2-3v8z.27/prod-record-fuel-12000000/`.
+
+The scalar delivery loop formerly cloned the complete top token cursor on
+every step, including its shared token-list and provenance owners. It now
+snapshots only the cursor identity and index, then borrows the unchanged live
+cursor for decoding. Raw and expanded delivery also have separately compiled
+loops beneath the same typed policy entry point, removing the per-token
+optional-mode branch. At the 12M endpoint, the preceding post-projection
+capture attributed 12.16% flat cycles to the shared `delivery_driver_inner`.
+The replacement raw driver, scalar delivery, and typed entry together account
+for 9.02% (2.83%, 5.43%, and 0.76%) on the same canonical work boundary, a
+25.8% relative reduction in that scalar-delivery attribution. The 6M
+replacement total is 7.63% (2.74% and 4.89%; the typed entry is below 0.05%).
+No meaning cache, semantic shortcut, corpus change, or guard change is part of
+the optimization.
