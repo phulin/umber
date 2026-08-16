@@ -1,9 +1,58 @@
 # Native Batch-Kernel Ceiling
 
 The evaluation branch for `umber2-64v2.8`, based on
-`fef7f55637842721d9ec86dc4b40c475c3a80f25`, establishes a production-shaped
-direct-execution ceiling. It is evidence for replacing the production hot path,
-not a supported second engine and not an integration candidate by itself.
+`fef7f55637842721d9ec86dc4b40c475c3a80f25`, established a production-shaped
+direct-execution ceiling. Issue `umber2-64v2.10` independently reproduced that
+ceiling and migrated its first bounded vertical slice into production-owned
+`tex-command` and `tex-exec` code. The result is a migration seam, not a
+supported runtime engine choice.
+
+## Independent audit and migration result
+
+The independent audit rebuilt the original release executable from
+`d3128fdf17b5ee9c158eb72ab49e8e077209b6c6`, ran the exact differential, and
+then collected three fresh guarded processes per row. The direct 6M-fuel
+median was 8.397 s and 225,308 KiB for production versus 133.935 ms and 47,600
+KiB for the prototype: 62.7x faster with 4.73x lower peak RSS. The nested
+median was 2.010 s and 55,892 KiB versus 192.839 ms and 13,144 KiB: 10.42x
+faster with 4.25x lower peak RSS. The smaller direct ratio than the original
+capture is ordinary host variance; exact state, artifact, bytes, DVI, effects,
+terminal, and log comparison still passed.
+
+The audit therefore confirms the claimed order of improvement under the
+stated measurement contract. It does not reinterpret the direct loop as a
+drop-in engine. The prototype deliberately has no per-step checkpoint,
+provenance, reachability, or observation publication inside its coarse
+episode. Those are barriers to batch around or materialize compactly, not work
+that may be silently omitted from an observable incremental episode.
+
+The migrated production seam is split by existing authority:
+
+- `tex-command::NativeBatchProgram` uses the canonical exact-byte tokenizer,
+  current category codes, and end-line policy for a complete pre-mutation
+  admission pass. It then owns the packed macro, expansion, scalar scanner,
+  conditional, count-assignment, group-save, and node-command episode.
+- `tex-exec::run_native_batch_episode` owns font-metric projection, canonical
+  `PageArtifact` validation and serialization, artifact reparsing, and DVI
+  compilation and serialization.
+- `NativeBatchFallback` is the exact boundary for an unsupported character
+  mode, category, control sequence, malformed supported episode, or missing
+  font character. Admission and execution mutate no `Universe` or host output,
+  so a caller can enter canonical stepping from its original state. Effects,
+  resources, observations, and checkpoints are not admitted.
+- The benchmark-local lexer and kernel were deleted. The differential and
+  process runner now call the production seam, preventing benchmark code from
+  becoming a production dependency.
+
+After migration, three fresh guarded samples gave a direct median of 8.055 s
+and 225,284 KiB for canonical stepping versus 178.308 ms and 51,628 KiB for
+the shared production episode: 45.2x faster with 4.36x lower peak RSS. The
+nested medians were 1.902 s and 56,200 KiB versus 204.186 ms and 16,196 KiB:
+9.32x faster with 3.47x lower peak RSS. The direct production-routed slice
+therefore clears the 10x end-to-end gate. The nested reduction from the
+prototype is explained by paying the canonical tokenizer during admission;
+that cost remains inside the measured region rather than being hidden in
+workload construction.
 
 ## Covered semantic slice
 
@@ -19,13 +68,13 @@ macro. Each outer call forwards its argument into two inner calls. This adds a
 macro-body source level, nested argument capture, and two expansion returns
 without changing the observable operation mix.
 
-The native kernel has one byte lexer and direct control-sequence lookup, packed
-32-bit tokens, a packed source/token cursor stack, bump-scoped macro bodies and
-arguments, fixed mutable count and level arrays, and a first-local-write save
-stack. Its fused loop performs lexing, expansion, numeric scanning, condition
-selection, assignment, and dispatch. It constructs character and kern nodes
-directly. Checkpoint, provenance, identity, reachability, and observation
-objects do not cross that loop.
+The original native kernel had one byte lexer and direct control-sequence
+lookup, packed 32-bit tokens, a packed source/token cursor stack, bump-scoped
+macro bodies and arguments, fixed mutable count and level arrays, and a
+first-local-write save stack. The migrated slice replaces its lexer with the
+canonical source tokenizer and retains the direct mutable command episode
+behind typed admission. Checkpoint, provenance, identity, reachability, and
+observation objects do not cross this first bounded loop.
 
 The comparison meets production at canonical boundaries. Both paths return the
 three count values, validated `PageArtifact`, exact serialized artifact bytes,
@@ -107,19 +156,20 @@ must be removed with the layered predecessor they validate. An unsupported or
 observable operation exits a direct episode through a typed barrier into the
 same canonical state; it must not transfer into another live engine.
 
-1. Introduce a private batch-episode interface inside `tex-command` and
-   `tex-exec`. An episode runs until an effect, resource, observation, or named
-   checkpoint barrier. The existing public driver remains the only lifecycle
-   owner.
+1. The first production batch-episode interface now lives in `tex-command` and
+   `tex-exec`. Its closed admission surface stops before an effect, resource,
+   observation, or named checkpoint barrier. The existing public driver
+   remains the only general lifecycle owner.
 2. Make direct scalar banks, level tags, and the save stack the sole backing in
    `tex-state`, beginning with count and integer families. Existing state APIs
    become accessors over that storage; delete the migrated environment-map and
    rollback path in the same change.
 3. Replace the command machine's source/token levels internally with packed
-   cursor frames and bump-scoped expansion values. Preserve canonical token,
-   meaning, scanner, and diagnostic primitives. Add explicit barriers for
-   mutable category codes and external input, then delete each superseded frame
-   representation as its cases pass.
+   cursor frames and bump-scoped expansion values. The first slice already
+   shares canonical source tokenization and refuses unsupported category-code
+   behavior before mutation. Next, make the packed token, meaning, scanner, and
+   diagnostic primitives the canonical implementations, add external-input
+   barriers, and delete each superseded frame representation as its cases pass.
 4. Move the existing main-control aggregate loop onto fused delivery,
    expansion, scanning, and dispatch episodes. Slow commands call canonical
    helpers against the same mutable state and resume the same loop; there is no
@@ -132,9 +182,10 @@ same canonical state; it must not transfer into another live engine.
    checkpoints from compact sidecars only at their named barriers. Incremental
    execution consumes those committed boundaries, not per-command persistent
    wrappers in the batch loop.
-7. Remove this benchmark's fused implementation once production uses the same
-   storage, cursors, loop, and builders. Retain only production regression
-   workloads and the semantic/performance gates.
+7. The benchmark-local fused lexer and executor are removed. Retain the
+   production regression workloads and semantic/performance gates; once main
+   control uses the shared storage, cursors, loop, and builders, remove the
+   comparison adapter and the old layered hot path family by family.
 
 Every stage requires exact result, diagnostic, effect, artifact, and DVI
 differentials; adversarial grouping and scanner tests; 6M/12M scaling; allocation
