@@ -309,11 +309,20 @@ Production uses explicit independent budgets for live structural atoms,
 origin-list entries, weak slot metadata, weak candidate buckets, and detached
 artifact recipes. Exhaustion degrades optional new provenance to unknown and
 never aborts TeX. Weak indexes are bounded and may be cleared at any time. Each
-ordinary allocation advances a fixed-size weak-slot cursor, and exact reuse
-cleans only the candidate bucket it queries. A hard admission limit performs a
-complete sweep before degradation so the limit remains exact. Capacity must
-plateau at the live-root and configured-cache high-water size without making
-allocation cost proportional to an unrelated live prefix.
+ordinary intern miss advances the weak-slot cursor by at most one position;
+exact reuse cleans only the candidate bucket it queries and performs no
+unrelated slot sweep. A hard admission limit performs a complete sweep before
+degradation so the limit remains exact. Capacity must plateau at the live-root
+and configured-cache high-water size without making allocation cost
+proportional to an unrelated live prefix.
+
+The common expansion frame owns exactly three child positions, so those roots
+reside inline with the immutable origin atom rather than in a second heap
+allocation. Origin-list candidate hashing is deliberately a cheap fixed-width
+bucket selector; full ordered `OriginId` comparison remains the collision
+authority. A rooted transient buffer already proves its owner/word alignment,
+so optimized freeze does not repeat the debug-only owner-membership audit.
+These representation choices change neither packed ids nor strong edges.
 
 `ProvenanceStats` reports live rooted atoms, live expansion frames, live
 origin lists and entries, weak slot/index capacity, source registrations,

@@ -782,3 +782,43 @@ for 9.02% (2.83%, 5.43%, and 0.76%) on the same canonical work boundary, a
 replacement total is 7.63% (2.74% and 4.89%; the typed entry is below 0.05%).
 No meaning cache, semantic shortcut, corpus change, or guard change is part of
 the optimization.
+
+## Structural provenance lifecycle
+
+A profiling-feature CLI run with `--profiling-stats` emits one
+`PROVENANCE_LIFECYCLE` line even when the canonical command-fuel guard stops
+the run. Its fixed-width process-local counters separate ordinary origin atoms,
+macro expansion frames, and origin lists: intern calls/hits/misses and actual
+allocations; strong-root retains/releases; bounded weak-slot visits and
+reclaims; raw-origin resolution; and list-root resolutions plus their exact
+owner-search comparisons. The counters are absent from production builds and
+from snapshots, formats, rollback, semantic identity, and observation data.
+
+Focused controls cover atom/frame/list hits and misses, retain/release,
+resolution, one-slot miss-side reclamation, exact hits which do not move an
+unrelated sweep cursor, three inline expansion-frame children, weak-hash
+collisions, rollback/retry, the 10,000-operation bounded-live plateau, and the
+exact all-live negative control. Production list freezing trusts the existing
+rooted-buffer alignment invariant while debug builds retain the complete
+owner-membership audit.
+
+The authenticated offline 2606.12566 census measured 208,214 frame intern
+calls at 6M fuel (1,161 hits and 207,053 misses) and 406,916 at 12M (3,960 hits
+and 402,956 misses). The corresponding list counts were 51,061 calls with
+22,402 hits and 28,659 misses, then 100,897 with 45,250 hits and 55,647 misses.
+At 12M, one-slot miss-side reclamation visited 494,853 atom slots and 55,646
+list slots; list replay performed 1,980,294 root resolutions and 7,959,891
+owner comparisons. These counts establish frame misses as the allocation
+case, exact hits as the no-sweep control, and list resolution as distinct
+borrowed work.
+
+The production-feature comparison retained the exact command-work vectors
+recorded above. The 6M profile collected 1,381 cycle samples with none lost;
+the disjoint provenance owner fell from 512,475,473 weighted cycles (3.20%) on
+the immediately preceding scalar-delivery capture to 426,847,781 (2.62%), a
+16.7% reduction in attributed cycles. The 12M profile collected 2,331 samples
+with none lost and fell from 1,117,490,674 cycles (3.81%) to 751,079,898
+(2.68%), a 32.8% reduction. `allocate_rooted_origin_words` fell from 0.72% to
+0.17% flat at 12M, and the generic SipHash leaf disappeared. Evidence is under
+`target/umber2-3v8z.29/census-fuel-{6000000,12000000}/` and
+`target/umber2-3v8z.29/prod-record-fuel-{6000000,12000000}/`.
