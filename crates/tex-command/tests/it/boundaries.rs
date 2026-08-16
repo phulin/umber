@@ -16,6 +16,7 @@ fn crate_production_dependencies_match_the_command_boundary_allowlist() {
     assert_eq!(
         command_dependencies,
         BTreeSet::from([
+            "bumpalo.workspace",
             "md-5.workspace",
             "posix-regex.workspace",
             "tex-fonts",
