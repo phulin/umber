@@ -1,6 +1,5 @@
 #![allow(clippy::disallowed_methods)] // Host-side resource/cache integration fixtures.
 
-use std::time::Instant;
 use tempfile::TempDir;
 use tex_fonts::{FontFeaturePolicy, FontPurposes, FontRequest, FontRequestKey, VariationSelection};
 use tex_incr::RevisionId;
@@ -966,7 +965,7 @@ fn generic_pdf_asset_uses_the_snapshot_tex_vocabulary() {
 }
 
 #[test]
-fn inline_hint_fetches_without_loading_the_dependency_shard() {
+fn live_lookup_does_not_hash_an_unrequested_inline_hint() {
     let directory = TempDir::new().expect("distribution tempdir");
     let required_bytes = b"required";
     let required_digest = hex_digest(required_bytes);
@@ -988,7 +987,8 @@ fn inline_hint_fetches_without_loading_the_dependency_shard() {
     );
     let objects = directory.path().join("objects");
     std::fs::write(objects.join(required_object), required_bytes).expect("required object");
-    std::fs::write(objects.join(dependency_object), dependency_bytes).expect("dependency object");
+    std::fs::write(objects.join(&dependency_object), b"corrupt-unrequested")
+        .expect("corrupt dependency object");
     let cache = ObjectCache::new(directory.path().join("cache"));
     let mut resolver = DistributionResolver::new(
         cache.clone(),
@@ -1004,26 +1004,31 @@ fn inline_hint_fetches_without_loading_the_dependency_shard() {
             &FetchCancellation::new(),
             &mut telemetry,
         )
-        .expect("inline dependency hint");
+        .expect("required object resolution");
     assert!(matches!(
         resolved.responses.as_slice(),
         [ResourceResponse::File(_)]
     ));
-    assert!(!dependency_bytes.is_empty());
-    assert_eq!(telemetry.object_requests, 2);
+    assert_eq!(telemetry.object_requests, 1);
+    assert_eq!(telemetry.object_hashes, 1);
     assert_eq!(telemetry.object_cache_hits, 0);
     assert!(telemetry.local_lookups > 0);
     assert!(telemetry.manifest_lookups > 0);
-    assert_eq!(
-        cache
-            .load_object(&dependency_digest, dependency_bytes.len() as u64)
-            .expect("hint cache read"),
-        Some(dependency_bytes.to_vec())
+    let dependency_spec = umber_fetch::VerifiedBlobSpec::content_addressed(
+        "objects",
+        dependency_digest,
+        dependency_bytes.len() as u64,
+        dependency_bytes.len() as u64,
+    )
+    .expect("dependency specification");
+    assert!(
+        !cache.entry_path(&dependency_spec).exists(),
+        "an unrequested dependency hint must not enter the live cache"
     );
 }
 
 #[test]
-fn schema_three_format_closure_publishes_local_overrides_and_ignores_stale_hints() {
+fn schema_three_format_closure_does_not_drive_native_live_lookup() {
     let directory = TempDir::new().expect("distribution tempdir");
     let objects = directory.path().join("objects");
     std::fs::create_dir_all(&objects).expect("objects directory");
@@ -1060,8 +1065,6 @@ fn schema_three_format_closure_publishes_local_overrides_and_ignores_stale_hints
         "1".repeat(64)
     );
     std::fs::write(directory.path().join("manifest-v3.json"), root).expect("root");
-    let local_closure = b"local closure";
-    std::fs::write(directory.path().join("latex.ltx"), local_closure).expect("local override");
     let cache = ObjectCache::new(directory.path().join("cache"));
     let mut resolver = DistributionResolver::new(
         cache.clone(),
@@ -1079,37 +1082,34 @@ fn schema_three_format_closure_publishes_local_overrides_and_ignores_stale_hints
         )
         .expect("format resolution");
     assert_eq!(format.bytes, format_bytes);
-    assert_eq!(format.prefetch_hints.len(), 2);
     let responses = resolver
-        .resolve_batch(
+        .resolve_batch_with_prefetch(
             &local_resolver(directory.path()),
             &NeedResources {
                 required: vec![file_request("article.cls")],
                 probes: Vec::new(),
-                prefetch_hints: format.prefetch_hints,
+                prefetch_hints: Vec::new(),
             },
             &FetchCancellation::new(),
+            &mut telemetry,
         )
-        .expect("closure batch");
-    assert_eq!(responses.len(), 2);
-    let closure = responses
-        .iter()
-        .find_map(|response| match response {
-            ResourceResponse::File(file) if file.request.name() == "latex.ltx" => Some(file),
-            _ => None,
-        })
-        .expect("positive closure response");
-    assert_eq!(closure.bytes, local_closure);
-    assert!(responses.iter().all(|response| !matches!(
-        response,
-        ResourceResponse::FileUnavailable(key) if key.name() == "stale.tex"
-    )));
-    assert_eq!(
-        cache
-            .load_object(&closure_digest, closure_bytes.len() as u64)
-            .expect("closure cache"),
-        None,
-        "the local closure must take precedence over distribution speculation"
+        .expect("required batch");
+    assert!(matches!(
+        responses.responses.as_slice(),
+        [ResourceResponse::File(file)] if file.request.name() == "article.cls"
+    ));
+    assert_eq!(telemetry.object_requests, 2, "format plus required file");
+    assert_eq!(telemetry.object_hashes, 2, "format plus required file");
+    let closure_spec = umber_fetch::VerifiedBlobSpec::content_addressed(
+        "objects",
+        closure_digest,
+        closure_bytes.len() as u64,
+        closure_bytes.len() as u64,
+    )
+    .expect("closure specification");
+    assert!(
+        !cache.entry_path(&closure_spec).exists(),
+        "format closure metadata must not cause live object work"
     );
 }
 
@@ -1263,7 +1263,7 @@ fn incompatible_format_schema_is_rejected_before_cache_lookup_or_acquisition() {
 }
 
 #[test]
-fn format_closure_batch_is_installed_for_an_exactly_two_attempt_retry() {
+fn format_closure_is_loaded_only_as_each_input_is_requested() {
     for (engine, closure_len) in [(EngineMode::Latex, 57), (EngineMode::PdfLatex, 60)] {
         let directory = TempDir::new().expect("distribution tempdir");
         let distribution = directory.path().join("distribution");
@@ -1340,21 +1340,20 @@ fn format_closure_batch_is_installed_for_an_exactly_two_attempt_retry() {
             panic!("first attempt must miss the closure head");
         };
         assert_eq!(first.required.len(), 1);
-        assert_eq!(first.prefetch_hints.len(), closure_len - 1);
-        let batch_started = Instant::now();
+        assert!(first.prefetch_hints.is_empty());
         let responses = session
             .distribution
             .resolve_batch(&session.local, &first, &cancellation)
-            .expect("closure batch");
-        let batch_elapsed = batch_started.elapsed();
-        assert_eq!(responses.len(), closure_len);
-        for (digest, bytes) in &closure_objects {
+            .expect("first required input");
+        assert_eq!(responses.len(), 1);
+        for (index, (digest, bytes)) in closure_objects.iter().enumerate() {
+            let spec = umber_fetch::VerifiedBlobSpec::content_addressed(
+                "objects", digest, *bytes, *bytes,
+            )
+            .expect("closure object specification");
             assert!(
-                cache
-                    .load_object(digest, *bytes)
-                    .expect("closure cache lookup")
-                    .is_some(),
-                "the complete closure must be cached by the first host batch"
+                cache.entry_path(&spec).exists() == (index == 0),
+                "only the first requested closure object may be cached"
             );
         }
         session
@@ -1362,18 +1361,8 @@ fn format_closure_batch_is_installed_for_an_exactly_two_attempt_retry() {
             .provide_resources(responses)
             .expect("provide closure head");
 
-        let compile_started = Instant::now();
         session.compile(&cancellation).expect("complete chain");
-        let compile_elapsed = compile_started.elapsed();
-
-        assert_eq!(session.session.attempts(), 2);
-        eprintln!(
-            "format-prefetch-characterization engine={} closure={closure_len} first_batch_us={} attempts={} remaining_compile_us={}",
-            engine.name(),
-            batch_elapsed.as_micros(),
-            session.session.attempts(),
-            compile_elapsed.as_micros()
-        );
+        assert_eq!(session.session.attempts(), closure_len + 1);
     }
 }
 

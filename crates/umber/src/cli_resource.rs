@@ -1,7 +1,7 @@
 //! Native host policy for driving one CLI compile through the resource loop.
 
 use std::cell::RefCell;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::env;
 use std::error::Error;
 use std::fmt;
@@ -15,9 +15,9 @@ use sha2::{Digest, Sha256};
 use tex_fonts::AcceptedFontContainers;
 use tex_state::{Universe, World};
 use umber_distribution::{
-    DependencyHint, FileKind as DistributionFileKind, FileRequestKey as DistributionFileRequestKey,
-    JobRequirement, ManifestMiss, ManifestRequest, ManifestShard, ShardFile, ShardedManifestRoot,
-    select_shard, shard_index_for_key,
+    FileKind as DistributionFileKind, FileRequestKey as DistributionFileRequestKey, ManifestMiss,
+    ManifestRequest, ManifestShard, ShardFile, ShardedManifestRoot, select_shard,
+    shard_index_for_key,
 };
 use umber_fetch::{
     DistributionClient, DistributionClientError, FetchCancellation, FetchClientConfig,
@@ -440,8 +440,8 @@ impl NativeCompileSession {
         let source_read_ns = source_started.elapsed().as_nanos();
         let mut resolver_telemetry = ResolverTelemetry::default();
         let format_started = std::time::Instant::now();
-        let (format, format_prefetch_hints) = match &options.format {
-            Some(path) if path.exists() => (Some(read(path)?), Vec::new()),
+        let format = match &options.format {
+            Some(path) if path.exists() => Some(read(path)?),
             Some(path) => {
                 let resolved = distribution.resolve_format(
                     path,
@@ -449,12 +449,12 @@ impl NativeCompileSession {
                     cancellation,
                     &mut resolver_telemetry,
                 )?;
-                (Some(resolved.bytes), resolved.prefetch_hints)
+                Some(resolved.bytes)
             }
-            None => (None, Vec::new()),
+            None => None,
         };
         let format_read_ns = format_started.elapsed().as_nanos();
-        let mut initial_prefetch_hints = options
+        let initial_prefetch_hints = options
             .initial_prefetch_keys
             .iter()
             .map(|key| {
@@ -463,7 +463,6 @@ impl NativeCompileSession {
                     .and_then(distribution_request)
             })
             .collect::<Result<Vec<_>, _>>()?;
-        initial_prefetch_hints.extend(format_prefetch_hints);
         let clock = World::real().job_clock();
         let name = options
             .input
@@ -1007,7 +1006,6 @@ impl NativeDistributionOwner {
 
 struct ResolvedFormat {
     bytes: Vec<u8>,
-    prefetch_hints: Vec<ResourceRequest>,
 }
 
 struct ResolvedDistributionBatch {
@@ -1204,15 +1202,13 @@ impl DistributionResolver {
                 .push(key);
         }
         let mut required = BTreeMap::<String, ShardFile>::new();
-        let mut hints = BTreeMap::<String, DependencyHint>::new();
+        let mut hints = BTreeMap::<String, ShardFile>::new();
         let mut fallback_files = BTreeMap::<String, Vec<FileRequestKey>>::new();
         let exact_misses = self.select_required_manifest_files(
             keys_by_shard,
-            &mut hinted_keys,
             cancellation,
             telemetry,
             &mut required,
-            &mut hints,
         )?;
         for key in exact_misses {
             let originals = original_files
@@ -1241,11 +1237,9 @@ impl DistributionResolver {
         }
         let fallback_misses = self.select_required_manifest_files(
             fallback_keys_by_shard,
-            &mut hinted_keys,
             cancellation,
             telemetry,
             &mut required,
-            &mut hints,
         )?;
         for key in fallback_misses {
             let originals = fallback_files
@@ -1268,31 +1262,18 @@ impl DistributionResolver {
                     telemetry.manifest_lookup_time = telemetry
                         .manifest_lookup_time
                         .saturating_add(manifest_started.elapsed());
-                    collect_closure_hints(&shard, keys, &required, &mut hints);
+                    for key in keys {
+                        if !required.contains_key(&key) {
+                            if let Some(entry) = shard.files.get(&key) {
+                                hints.insert(key, entry.clone());
+                            }
+                        }
+                    }
                 }
                 Err(NativeRunError::Cancelled) => return Err(NativeRunError::Cancelled),
                 Err(_) => {}
             }
         }
-        let mut locally_shadowed_hints = BTreeSet::new();
-        for manifest_key in hints.keys() {
-            let distribution_key = DistributionFileRequestKey::from_manifest_key(manifest_key)
-                .map_err(|error| NativeRunError::Selection(error.to_string()))?;
-            let ResourceRequest::File(request) = distribution_request(distribution_key)? else {
-                continue;
-            };
-            let started = Instant::now();
-            telemetry.local_lookups = telemetry.local_lookups.saturating_add(1);
-            let resolved = local.resolve(&request);
-            telemetry.local_lookup_time = telemetry
-                .local_lookup_time
-                .saturating_add(started.elapsed());
-            if resolved.is_some() {
-                telemetry.local_hits = telemetry.local_hits.saturating_add(1);
-                locally_shadowed_hints.insert(manifest_key.clone());
-            }
-        }
-        hints.retain(|key, _| !locally_shadowed_hints.contains(key));
         let required_fetches = required
             .iter()
             .map(|(key, entry)| FetchRequest {
@@ -1415,11 +1396,9 @@ impl DistributionResolver {
     fn select_required_manifest_files(
         &mut self,
         keys_by_shard: BTreeMap<u32, Vec<String>>,
-        hinted_keys: &mut BTreeMap<u32, Vec<String>>,
         cancellation: &FetchCancellation,
         telemetry: &mut ResolverTelemetry,
         required: &mut BTreeMap<String, ShardFile>,
-        hints: &mut BTreeMap<String, DependencyHint>,
     ) -> Result<Vec<String>, NativeRunError> {
         let mut misses = Vec::new();
         for (index, keys) in keys_by_shard {
@@ -1446,29 +1425,13 @@ impl DistributionResolver {
             }));
             for job in selection.jobs {
                 let key = job.manifest_key.to_string();
-                match job.requirement {
-                    JobRequirement::Required => {
-                        let entry = shard
-                            .files
-                            .get(&key)
-                            .expect("shared shard selection returns the selected file");
-                        required.insert(key, entry.clone());
-                    }
-                    JobRequirement::DependencyHint => {
-                        hints.entry(key.clone()).or_insert_with(|| DependencyHint {
-                            key,
-                            virtual_path: job
-                                .virtual_path
-                                .expect("file dependency hints carry a virtual path"),
-                            object: job.object.object,
-                            sha256: job.object.sha256,
-                            bytes: job.object.bytes,
-                        });
-                    }
+                if keys.contains(&key) {
+                    let entry = shard
+                        .files
+                        .get(&key)
+                        .expect("shared shard selection returns the selected file");
+                    required.insert(key, entry.clone());
                 }
-            }
-            if let Some(keys) = hinted_keys.remove(&index) {
-                collect_closure_hints(&shard, keys, required, hints);
             }
         }
         Ok(misses)
@@ -1561,22 +1524,6 @@ impl DistributionResolver {
                 engine.name()
             )));
         }
-        let prefetch_hints = entry
-            .input_closure
-            .as_ref()
-            .map(|closure| {
-                closure
-                    .keys
-                    .iter()
-                    .map(|key| {
-                        let key = DistributionFileRequestKey::from_manifest_key(key)
-                            .map_err(|error| NativeRunError::Selection(error.to_string()))?;
-                        distribution_request(key)
-                    })
-                    .collect::<Result<Vec<_>, NativeRunError>>()
-            })
-            .transpose()?
-            .unwrap_or_default();
         telemetry.object_requests = telemetry.object_requests.saturating_add(1);
         if let Some(bytes) = self
             .client
@@ -1586,10 +1533,7 @@ impl DistributionResolver {
         {
             telemetry.object_cache_hits = telemetry.object_cache_hits.saturating_add(1);
             telemetry.object_hashes = telemetry.object_hashes.saturating_add(1);
-            return Ok(ResolvedFormat {
-                bytes,
-                prefetch_hints,
-            });
+            return Ok(ResolvedFormat { bytes });
         }
         let object = umber_distribution::ObjectEntry {
             object: entry.object,
@@ -1605,10 +1549,7 @@ impl DistributionResolver {
                 .map_err(|error| NativeRunError::Cache(error.to_string()))?;
             telemetry.object_hashes = telemetry.object_hashes.saturating_add(1);
             eprintln!("umber: acquired 1 distribution resource(s)");
-            return Ok(ResolvedFormat {
-                bytes,
-                prefetch_hints,
-            });
+            return Ok(ResolvedFormat { bytes });
         }
         if self.offline {
             return Err(NativeRunError::DistributionUnavailable(vec![format!(
@@ -1635,7 +1576,6 @@ impl DistributionResolver {
         }
         Ok(ResolvedFormat {
             bytes: object.bytes,
-            prefetch_hints,
         })
     }
 
@@ -1947,35 +1887,6 @@ fn distribution_request(
     let key = crate::FileRequestKey::new(kind, name)
         .map_err(|error| NativeRunError::Selection(error.to_string()))?;
     Ok(ResourceRequest::File(FileRequest::new(key, name)))
-}
-
-fn collect_closure_hints(
-    shard: &ManifestShard,
-    keys: Vec<String>,
-    required: &BTreeMap<String, ShardFile>,
-    hints: &mut BTreeMap<String, DependencyHint>,
-) {
-    for key in keys {
-        let Some(entry) = shard.files.get(&key) else {
-            continue;
-        };
-        if !required.contains_key(&key) {
-            hints.entry(key.clone()).or_insert_with(|| DependencyHint {
-                key: key.clone(),
-                virtual_path: entry.virtual_path.clone(),
-                object: entry.object.clone(),
-                sha256: entry.sha256.clone(),
-                bytes: entry.bytes,
-            });
-        }
-        for dependency in &entry.dependencies {
-            if !required.contains_key(&dependency.key) {
-                hints
-                    .entry(dependency.key.clone())
-                    .or_insert_with(|| dependency.clone());
-            }
-        }
-    }
 }
 
 fn check_cancelled(cancellation: &FetchCancellation) -> Result<(), NativeRunError> {
