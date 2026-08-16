@@ -673,6 +673,33 @@ Treat the symbolized reduction and focused capacity invariant as the stable
 mechanism evidence; do not use these contended wall means as a latency
 baseline.
 
+## Long loaded-format LaTeX prefixes
+
+Long-document profiles must use an engine work boundary, not a wall timeout.
+Expansion fuel is a suitable boundary when both runs terminate with the exact
+requested fuel count. Use at least two endpoints: fixed distribution and
+format setup can dominate an early prefix and then decline, while command
+delivery and state work should persist or grow.
+
+Keep TeX's simulated main-memory accounting distinct from the Rust allocator.
+`main_memory_projection_inner` reconstructs TeX82's live `mem` occupancy from
+Umber's immutable Env, token, macro, glue, and node owners so canonical
+high-water diagnostics remain correct. It does not report process RSS or
+host-allocation ownership. Expanded `\write` scanning observes transient TeX
+words through `observe_main_memory_dynamic_words`; clearing the retained
+projection at an executor-operation boundary can therefore turn diagnostic
+accounting into a repeated whole-root traversal. Profiles that find this path
+hot should first count observations, full reconstructions, and successful root
+updates. The positive control is repeated observation with unchanged roots;
+box replacement and rollback are required negative controls.
+
+Profile the production feature set with optimized symbols and frame pointers.
+Measure a matched `profiling`-feature build separately; profiling counters are
+evidence only when their retired-instruction and task-clock deltas are small
+relative to run-to-run noise. A useful capture records exact work termination,
+sample count and weight, call graphs, lost-sample count, pin inventories, and
+the production binary hash.
+
 ## Analyze a capture
 
 Use the repository analyzer for a repeatable text report:
