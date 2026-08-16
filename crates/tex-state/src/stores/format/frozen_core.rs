@@ -47,10 +47,6 @@ pub(crate) struct DecodedFrozenCore {
     pub tokens: TokenStore,
     pub macros: MacroStore,
     pub glue: GlueStore,
-    pub names: Vec<FormatName>,
-    pub token_lists: Vec<Vec<FormatToken>>,
-    pub macro_rows: Vec<FormatMacro>,
-    pub glue_rows: Vec<FormatGlue>,
 }
 
 pub(crate) fn encode(format: &StoreFormat) -> Result<EncodedFrozenCore, StoreFormatError> {
@@ -69,19 +65,15 @@ pub(crate) fn decode(
     let name_lookup =
         crate::frozen_lookup::decode(sections.names_lookup, name_count(sections.names)?)
             .map_err(StoreFormatError::Invalid)?;
-    let (interner, names) = decode_names(sections.names, name_lookup, sections.checksum)?;
-    let (tokens, token_lists) = decode_tokens(sections.token_lists, &interner, sections.checksum)?;
-    let (macros, macro_rows) = decode_macros(sections.macros, &tokens)?;
-    let (glue, glue_rows) = decode_glue(sections.glue, sections.checksum)?;
+    let interner = decode_names(sections.names, name_lookup, sections.checksum)?;
+    let tokens = decode_tokens(sections.token_lists, &interner, sections.checksum)?;
+    let macros = decode_macros(sections.macros, &tokens)?;
+    let glue = decode_glue(sections.glue, sections.checksum)?;
     Ok(DecodedFrozenCore {
         interner,
         tokens,
         macros,
         glue,
-        names,
-        token_lists,
-        macro_rows,
-        glue_rows,
     })
 }
 
@@ -158,7 +150,7 @@ fn decode_names(
     bytes: &[u8],
     lookup: crate::frozen_lookup::FrozenLookup,
     checksum: u64,
-) -> Result<(Interner, Vec<FormatName>), StoreFormatError> {
+) -> Result<Interner, StoreFormatError> {
     let (count, strings_offset, strings_len) =
         read_header(bytes, NAMES_HEADER, NAME_RECORD, "frozen names")?;
     if strings_offset
@@ -169,7 +161,7 @@ fn decode_names(
     }
     let arena = String::from_utf8(bytes[strings_offset..].to_vec())
         .map_err(|_| StoreFormatError::Invalid("frozen name bytes are not UTF-8"))?;
-    let mut rows = Vec::with_capacity(count);
+    let mut keys = Vec::with_capacity(count);
     let mut spans = Vec::with_capacity(count);
     let mut kinds = Vec::with_capacity(count);
     let mut atoms = Vec::with_capacity(count);
@@ -209,11 +201,10 @@ fn decode_names(
         if atom != semantic_atom(kind, text) {
             return Err(StoreFormatError::Invalid("frozen name semantic atom"));
         }
-        rows.push(FormatName {
-            active,
-            hash_occupied: bytes[record + 1] == 1,
-            text: text.to_owned(),
-        });
+        let mut key = Vec::with_capacity(text.len() + 1);
+        key.push(u8::from(active));
+        key.extend_from_slice(text.as_bytes());
+        keys.push(key);
         spans.push((start, len));
         kinds.push(kind);
         atoms.push(atom);
@@ -222,15 +213,17 @@ fn decode_names(
         return Err(StoreFormatError::Invalid("unused frozen name bytes"));
     }
     lookup
-        .validate_targets(&rows.iter().map(name_key).collect::<Vec<_>>())
+        .validate_targets(&keys)
         .and_then(|()| lookup.spot_check(checksum))
         .map_err(StoreFormatError::Invalid)?;
-    let hash_entries = rows.iter().map(|name| name.hash_occupied).collect();
+    let hash_entries = (0..count)
+        .map(|index| bytes[NAMES_HEADER + index * NAME_RECORD + 1] == 1)
+        .collect();
     let interner = Interner::from_frozen(arena, spans, kinds, hash_entries, atoms, lookup)
         .map_err(StoreFormatError::Invalid)?;
     #[cfg(feature = "profiling")]
-    crate::measurement::record_format_restore_work(1, count, 7 + count.saturating_mul(2));
-    Ok((interner, rows))
+    crate::measurement::record_format_restore_work(1, 0, 7 + count);
+    Ok(interner)
 }
 
 fn encode_tokens(
@@ -292,7 +285,7 @@ fn decode_tokens(
     bytes: &[u8],
     interner: &Interner,
     checksum: u64,
-) -> Result<(TokenStore, Vec<Vec<FormatToken>>), StoreFormatError> {
+) -> Result<TokenStore, StoreFormatError> {
     if bytes.len() < TOKENS_HEADER {
         return Err(StoreFormatError::Invalid("frozen token lists"));
     }
@@ -320,7 +313,6 @@ fn decode_tokens(
         return Err(StoreFormatError::Invalid("frozen token word range"));
     }
     let mut arena = Vec::with_capacity(word_count);
-    let mut rows = Vec::with_capacity(count);
     let mut spans = Vec::with_capacity(count);
     let mut semantic_ids = Vec::with_capacity(count);
     let mut hashes = Vec::with_capacity(count);
@@ -340,14 +332,12 @@ fn decode_tokens(
         if cursor as usize > word_count {
             return Err(StoreFormatError::Invalid("frozen token span out of bounds"));
         }
-        let mut row = Vec::with_capacity(len as usize);
         let mut semantic = TokenSemanticIdBuilder::new();
         let mut hash = crate::frozen_lookup::FrozenWordHasher::new();
         for word_index in start..cursor {
             let word = read_u32(bytes, words_offset + word_index as usize * 4);
             hash.push_u32(word);
-            let (format, runtime, atom) = decode_token_v2(word, interner)?;
-            row.push(format);
+            let (_, runtime, atom) = decode_token_v2(word, interner)?;
             arena.push(runtime);
             semantic.push(runtime, atom);
         }
@@ -356,7 +346,6 @@ fn decode_tokens(
         if semantic_id.value() != expected {
             return Err(StoreFormatError::Invalid("frozen token semantic identity"));
         }
-        rows.push(row);
         spans.push((start, len));
         semantic_ids.push(semantic_id);
         hashes.push(hash.finish());
@@ -376,16 +365,16 @@ fn decode_tokens(
     #[cfg(feature = "profiling")]
     {
         crate::measurement::record_format_restore_entries(word_count, 0, 0, 0);
-        crate::measurement::record_format_restore_work(1, word_count, 5 + count);
+        crate::measurement::record_format_restore_work(1, 0, 4);
     }
-    Ok((tokens, rows))
+    Ok(tokens)
 }
 
 fn decode_tokens_v1(
     bytes: &[u8],
     interner: &Interner,
     checksum: u64,
-) -> Result<(TokenStore, Vec<Vec<FormatToken>>), StoreFormatError> {
+) -> Result<TokenStore, StoreFormatError> {
     let (count, words_offset, word_count) = read_header(
         bytes,
         TOKENS_HEADER,
@@ -400,7 +389,6 @@ fn decode_tokens_v1(
         return Err(StoreFormatError::Invalid("frozen token word range"));
     }
     let mut arena = Vec::with_capacity(word_count);
-    let mut rows = Vec::with_capacity(count);
     let mut spans = Vec::with_capacity(count);
     let mut semantic_ids = Vec::with_capacity(count);
     let mut keys = Vec::with_capacity(count);
@@ -420,14 +408,12 @@ fn decode_tokens_v1(
         if cursor as usize > word_count {
             return Err(StoreFormatError::Invalid("frozen token span out of bounds"));
         }
-        let mut row = Vec::with_capacity(len as usize);
         let mut semantic = TokenSemanticIdBuilder::new();
         let mut key = Vec::with_capacity(len as usize * 8);
         for word_index in start..cursor {
             let word = read_u64(bytes, words_offset + word_index as usize * 8);
             key.extend_from_slice(&word.to_le_bytes());
-            let (format, runtime, atom) = decode_token(word, interner)?;
-            row.push(format);
+            let (_, runtime, atom) = decode_token(word, interner)?;
             arena.push(runtime);
             semantic.push(runtime, atom);
         }
@@ -436,7 +422,6 @@ fn decode_tokens_v1(
         if semantic_id.value() != expected {
             return Err(StoreFormatError::Invalid("frozen token semantic identity"));
         }
-        rows.push(row);
         spans.push((start, len));
         semantic_ids.push(semantic_id);
         keys.push(key);
@@ -461,9 +446,9 @@ fn decode_tokens_v1(
     #[cfg(feature = "profiling")]
     {
         crate::measurement::record_format_restore_entries(word_count, 0, 0, 0);
-        crate::measurement::record_format_restore_work(1, word_count, 6 + count * 2);
+        crate::measurement::record_format_restore_work(1, 0, 5 + count);
     }
-    Ok((tokens, rows))
+    Ok(tokens)
 }
 
 type SemanticAtom = (u64, ContentHash);
@@ -648,10 +633,7 @@ fn encode_macros(macros: &[FormatMacro]) -> Result<Vec<u8>, StoreFormatError> {
     Ok(out)
 }
 
-fn decode_macros(
-    bytes: &[u8],
-    tokens: &TokenStore,
-) -> Result<(MacroStore, Vec<FormatMacro>), StoreFormatError> {
+fn decode_macros(bytes: &[u8], tokens: &TokenStore) -> Result<MacroStore, StoreFormatError> {
     if bytes.len() < MACROS_HEADER
         || read_u32(bytes, 0) != SECTION_VERSION
         || read_u32(bytes, 8) != MACROS_HEADER as u32
@@ -666,7 +648,6 @@ fn decode_macros(
     {
         return Err(StoreFormatError::Invalid("frozen macro section length"));
     }
-    let mut rows = Vec::with_capacity(count);
     let mut definitions = Vec::with_capacity(count);
     let mut parameter_roots = Vec::with_capacity(count);
     let mut replacement_roots = Vec::with_capacity(count);
@@ -725,7 +706,6 @@ fn decode_macros(
             )
             .map_err(|_| StoreFormatError::Invalid("frozen macro observation width"))?,
         );
-        rows.push(row);
     }
     let macros = MacroStore::from_frozen(
         definitions,
@@ -740,9 +720,9 @@ fn decode_macros(
     #[cfg(feature = "profiling")]
     {
         crate::measurement::record_format_restore_entries(0, count, 0, 0);
-        crate::measurement::record_format_restore_work(1, count, 8);
+        crate::measurement::record_format_restore_work(1, 0, 7);
     }
-    Ok((macros, rows))
+    Ok(macros)
 }
 
 fn encode_glue(glue: &[FormatGlue]) -> Result<Vec<u8>, StoreFormatError> {
@@ -771,10 +751,7 @@ fn encode_glue(glue: &[FormatGlue]) -> Result<Vec<u8>, StoreFormatError> {
     Ok(out)
 }
 
-fn decode_glue(
-    bytes: &[u8],
-    checksum: u64,
-) -> Result<(GlueStore, Vec<FormatGlue>), StoreFormatError> {
+fn decode_glue(bytes: &[u8], checksum: u64) -> Result<GlueStore, StoreFormatError> {
     if bytes.len() < GLUE_HEADER
         || read_u32(bytes, 0) != SECTION_VERSION
         || read_u32(bytes, 8) != GLUE_HEADER as u32
@@ -789,7 +766,6 @@ fn decode_glue(
     if records_end > bytes.len() {
         return Err(StoreFormatError::Invalid("frozen glue section length"));
     }
-    let mut rows = Vec::with_capacity(count);
     let mut specs = Vec::with_capacity(count);
     let mut keys = Vec::with_capacity(count);
     for index in 0..count {
@@ -816,7 +792,6 @@ fn decode_glue(
             shrink: Scaled::from_raw(row.shrink),
             shrink_order: order(row.shrink_order)?,
         });
-        rows.push(row);
         keys.push(bytes[record..record + GLUE_RECORD].to_vec());
     }
     let lookup = crate::frozen_lookup::decode(&bytes[records_end..], count)
@@ -830,9 +805,9 @@ fn decode_glue(
     #[cfg(feature = "profiling")]
     {
         crate::measurement::record_format_restore_entries(0, 0, count, 0);
-        crate::measurement::record_format_restore_work(1, count, 3 + count);
+        crate::measurement::record_format_restore_work(1, 0, 2 + count);
     }
-    Ok((glue, rows))
+    Ok(glue)
 }
 
 fn write_header(

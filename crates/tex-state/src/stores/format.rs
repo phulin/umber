@@ -1415,29 +1415,28 @@ impl Stores {
         node_section: FrozenNodeSection<'_>,
     ) -> Result<Self, StoreFormatError> {
         let env = frozen_env::decode(env_section)?;
-        let mut core = frozen_core::decode(sections)?;
-        let mut non_node = frozen_non_node::decode(non_node_sections, &core.interner)?;
+        let core = frozen_core::decode(sections)?;
+        let non_node = frozen_non_node::decode(non_node_sections, &core.interner)?;
         let node_lists = frozen_node::decode(node_section)?;
-        let format = StoreFormat {
-            names: std::mem::take(&mut core.names),
-            token_lists: std::mem::take(&mut core.token_lists),
-            macros: std::mem::take(&mut core.macro_rows),
-            glue: std::mem::take(&mut core.glue_rows),
-            fonts: std::mem::take(&mut non_node.font_rows),
-            node_lists: node_lists.lists,
-            env,
-            code_tables: std::mem::take(&mut non_node.code_rows),
-            hyphenation: std::mem::take(&mut non_node.hyphenation),
-            prepared_mag: non_node.prepared_mag,
-            last_loaded_font: non_node.last_loaded_font.raw(),
-        };
-        format.validate_references()?;
+        validate_loaded_references(
+            &env,
+            core.interner.len(),
+            core.tokens.slot_len() as usize,
+            core.macros.watermark().definitions as usize,
+            core.glue.slot_len() as usize,
+            non_node.font_rows.len(),
+        )?;
         #[cfg(feature = "profiling")]
         crate::measurement::record_format_restore_work(1, 0, 0);
-        format.validate_font_state()?;
+        font_validation::validate_loaded_font_state(
+            &non_node.font_rows,
+            core.interner.len(),
+            &env,
+            non_node.last_loaded_font.raw(),
+        )?;
         #[cfg(feature = "profiling")]
         crate::measurement::record_format_restore_work(2, 0, 0);
-        install_frozen_sections(format, core, non_node, node_lists.semantic_ids)
+        install_frozen_sections(env, node_lists, core, non_node)
     }
 
     pub(crate) fn encode_memo_node_list(
@@ -2282,14 +2281,14 @@ impl MutableStoreIdentity {
 /// The production loader installs one frozen node root and one immutable
 /// environment base; it never re-enters ordinary node sealing or Env writes.
 fn install_frozen_sections(
-    format: StoreFormat,
+    env: Vec<FormatEnvEntry>,
+    node_lists: frozen_node::DecodedFrozenNodes,
     frozen: frozen_core::DecodedFrozenCore,
     non_node: frozen_non_node::DecodedFrozenNonNode,
-    semantic_ids: Vec<u64>,
 ) -> Result<Stores, StoreFormatError> {
-    let font_count = format.fonts.len();
-    let glue_count = format.glue.len();
-    let token_list_count = format.token_lists.len();
+    let font_count = non_node.font_rows.len();
+    let glue_count = frozen.glue.slot_len() as usize;
+    let token_list_count = frozen.tokens.slot_len() as usize;
     let mut stores = Stores::new();
     stores.interner = frozen.interner;
     stores.tokens = frozen.tokens;
@@ -2303,7 +2302,7 @@ fn install_frozen_sections(
     stores.glue = frozen.glue;
     stores.fonts = non_node.fonts;
     stores.code_tables = non_node.code_tables;
-    stores.hyphenation = format.hyphenation.into();
+    stores.hyphenation = non_node.hyphenation.into();
     stores.prepared_mag = non_node.prepared_mag;
     stores.last_loaded_font = non_node.last_loaded_font;
     let font_ids = (0..font_count)
@@ -2324,15 +2323,15 @@ fn install_frozen_sections(
         token_lists: &token_ids,
     };
 
-    if semantic_ids.len() != format.node_lists.len() {
+    if node_lists.semantic_ids.len() != node_lists.lists.len() {
         return Err(StoreFormatError::Invalid("frozen node identity count"));
     }
     let root = crate::node_arena::allocate_node_payload_root().ok_or(StoreFormatError::Invalid(
         "frozen node root identity space exhausted",
     ))?;
     let mut next_start = 0_u32;
-    let node_ids: std::collections::BTreeMap<_, _> = format
-        .node_lists
+    let node_ids: std::collections::BTreeMap<_, _> = node_lists
+        .lists
         .iter()
         .map(|list| {
             let len = u32::try_from(list.nodes.len())
@@ -2345,9 +2344,9 @@ fn install_frozen_sections(
         })
         .collect::<Result<_, StoreFormatError>>()?;
     let mut storage = crate::node_arena::NodeStorage::default();
-    let mut spans = Vec::with_capacity(format.node_lists.len());
-    let mut verified_ids = Vec::with_capacity(format.node_lists.len());
-    for (list, expected_id) in format.node_lists.into_iter().zip(semantic_ids) {
+    let mut verified_semantics = std::collections::BTreeMap::new();
+    let mut spans = Vec::with_capacity(node_lists.lists.len());
+    for (list, expected_id) in node_lists.lists.into_iter().zip(node_lists.semantic_ids) {
         let id = node_ids
             .get(&list.key)
             .copied()
@@ -2361,50 +2360,45 @@ fn install_frozen_sections(
         if start != id.start() || len != id.len() {
             return Err(StoreFormatError::Invalid("frozen node span metadata"));
         }
+        let invalid_child = std::cell::Cell::new(false);
+        let semantic_id =
+            stores.compute_frozen_node_semantic_id(storage.view(start, len), |child| {
+                if child.is_empty() {
+                    crate::node_arena::NodeSemanticId::empty()
+                } else if let Some(semantic_id) = verified_semantics.get(&child).copied() {
+                    semantic_id
+                } else {
+                    invalid_child.set(true);
+                    crate::node_arena::NodeSemanticId::empty()
+                }
+            });
+        if invalid_child.get() {
+            return Err(StoreFormatError::Invalid(
+                "node child does not precede dependent list",
+            ));
+        }
+        if semantic_id.value() != expected_id {
+            return Err(StoreFormatError::Invalid("frozen node semantic identity"));
+        }
         if len != 0 {
             spans.push(crate::node_arena::OwnedSemanticSpan {
                 start,
                 len,
-                semantic_id: crate::node_arena::NodeSemanticId::unverified_frozen(expected_id),
+                semantic_id,
             });
         }
-        verified_ids.push((id, expected_id));
+        verified_semantics.insert(id, semantic_id);
     }
-    let mut payload = std::sync::Arc::new(crate::node_arena::NodeListPayload::new(
+    let payload = std::sync::Arc::new(crate::node_arena::NodeListPayload::new(
         root,
         storage,
         spans,
         Vec::new(),
     ));
     #[cfg(feature = "profiling")]
-    {
-        let copied_nodes = verified_ids.iter().map(|(id, _)| id.len() as usize).sum();
-        let allocations = verified_ids.iter().filter(|(id, _)| !id.is_empty()).count();
-        crate::measurement::record_format_restore_work(1, copied_nodes, allocations);
-    }
-    for (id, expected_fingerprint) in verified_ids {
-        let semantic_id = {
-            let owner = NodeListRef::from_shared(id, std::sync::Arc::clone(&payload));
-            let nodes = owner.to_vec();
-            stores.compute_node_semantic_id(&nodes)
-        };
-        if semantic_id.value() != expected_fingerprint {
-            return Err(StoreFormatError::Invalid("frozen node semantic identity"));
-        }
-        if id.is_empty() {
-            continue;
-        }
-        let payload_mut = std::sync::Arc::get_mut(&mut payload)
-            .expect("frozen node payload is not published during validation");
-        let span = payload_mut
-            .spans_mut()
-            .iter_mut()
-            .find(|span| span.start == id.start() && span.len == id.len())
-            .expect("validated frozen span exists");
-        span.semantic_id = semantic_id;
-    }
-    let mut base = Vec::with_capacity(format.env.len());
-    for entry in format.env {
+    crate::measurement::record_format_restore_work(1, 0, 0);
+    let mut base = Vec::with_capacity(env.len());
+    for entry in env {
         let dto_cell = crate::cell::CellId::from_raw(entry.cell)
             .ok_or(StoreFormatError::Invalid("unknown environment cell"))?;
         let cell = crate::cell::CellId::new(dto_cell.bank(), dto_cell.index());
@@ -2493,153 +2487,106 @@ fn install_frozen_sections(
     Ok(stores)
 }
 
-impl StoreFormat {
-    fn validate_references(&self) -> Result<(), StoreFormatError> {
-        if self
-            .token_lists
-            .first()
-            .is_none_or(|tokens| !tokens.is_empty())
-        {
-            return Err(StoreFormatError::Invalid(
-                "missing canonical empty token list",
-            ));
+fn validate_loaded_references(
+    env: &[FormatEnvEntry],
+    name_count: usize,
+    token_list_count: usize,
+    macro_count: usize,
+    glue_count: usize,
+    font_count: usize,
+) -> Result<(), StoreFormatError> {
+    for entry in env {
+        let cell = crate::cell::CellId::from_raw(entry.cell)
+            .ok_or(StoreFormatError::Invalid("unknown environment cell"))?;
+        if cell.is_global() {
+            return Err(StoreFormatError::Invalid("global environment cell"));
         }
-        if self.glue.is_empty() {
-            return Err(StoreFormatError::Invalid("missing canonical zero glue"));
-        }
-        for tokens in &self.token_lists {
-            for token in tokens {
-                match token {
-                    FormatToken::Cs(raw) if *raw as usize >= self.names.len() => {
-                        return Err(StoreFormatError::Invalid("token symbol is not live"));
+        let raw = match entry.value {
+            FormatEnvValue::Raw(raw) => raw,
+            FormatEnvValue::Box(_) if cell.bank() == crate::cell::BankTag::Box => continue,
+            FormatEnvValue::Box(_) => {
+                return Err(StoreFormatError::Invalid("box value in non-box bank"));
+            }
+        };
+        use crate::cell::BankTag;
+        match cell.bank() {
+            BankTag::Meaning => {
+                if cell.index() as usize >= name_count {
+                    return Err(StoreFormatError::Invalid("meaning symbol is not live"));
+                }
+                match crate::meaning::Meaning::decode_stored(raw) {
+                    crate::meaning::Meaning::Macro { definition, .. }
+                        if definition.raw() as usize >= macro_count =>
+                    {
+                        return Err(StoreFormatError::Invalid("meaning macro is not live"));
+                    }
+                    crate::meaning::Meaning::Font(font) if font.raw() as usize >= font_count => {
+                        return Err(StoreFormatError::Invalid("meaning font is not live"));
                     }
                     _ => {}
                 }
             }
-        }
-        for definition in &self.macros {
-            if definition.parameter_text as usize >= self.token_lists.len()
-                || definition.replacement_text as usize >= self.token_lists.len()
-            {
-                return Err(StoreFormatError::Invalid("macro token-list reference"));
-            }
-        }
-
-        let mut previous_code = None;
-        for row in &self.code_tables {
-            if char::from_u32(row.code).is_none() {
-                return Err(StoreFormatError::Invalid("codepoint"));
-            }
-            if previous_code.is_some_and(|previous| previous >= row.code) {
-                return Err(StoreFormatError::Invalid("non-canonical code-table order"));
-            }
-            previous_code = Some(row.code);
-            catcode(row.catcode)?;
-        }
-
-        let mut seen_cells = std::collections::BTreeSet::new();
-        for entry in &self.env {
-            let cell = crate::cell::CellId::from_raw(entry.cell)
-                .ok_or(StoreFormatError::Invalid("unknown environment cell"))?;
-            if cell.is_global() {
-                return Err(StoreFormatError::Invalid("global environment cell"));
-            }
-            if !seen_cells.insert((cell.bank() as u8, cell.index())) {
-                return Err(StoreFormatError::Invalid("duplicate environment cell"));
-            }
-            let raw = match entry.value {
-                FormatEnvValue::Raw(raw) => raw,
-                FormatEnvValue::Box(_) if cell.bank() == crate::cell::BankTag::Box => continue,
-                FormatEnvValue::Box(_) => {
-                    return Err(StoreFormatError::Invalid("box value in non-box bank"));
+            BankTag::Count
+            | BankTag::Dimen
+            | BankTag::Skip
+            | BankTag::Toks
+            | BankTag::Box
+            | BankTag::Muskip => {
+                if cell.index() >= 32_768 {
+                    return Err(StoreFormatError::Invalid("register index out of range"));
                 }
-            };
-            use crate::cell::BankTag;
-            match cell.bank() {
-                BankTag::Meaning => {
-                    if cell.index() as usize >= self.names.len() {
-                        return Err(StoreFormatError::Invalid("meaning symbol is not live"));
-                    }
-                    match crate::meaning::Meaning::decode_stored(raw) {
-                        crate::meaning::Meaning::Macro { definition, .. }
-                            if definition.raw() as usize >= self.macros.len() =>
-                        {
-                            return Err(StoreFormatError::Invalid("meaning macro is not live"));
-                        }
-                        crate::meaning::Meaning::Font(font)
-                            if font.raw() as usize >= self.fonts.len() =>
-                        {
-                            return Err(StoreFormatError::Invalid("meaning font is not live"));
-                        }
-                        _ => {}
-                    }
+                if matches!(cell.bank(), BankTag::Skip | BankTag::Muskip)
+                    && (raw > u64::from(u32::MAX) || raw as u32 as usize >= glue_count)
+                {
+                    return Err(StoreFormatError::Invalid("register glue is not live"));
                 }
-                BankTag::Count
-                | BankTag::Dimen
-                | BankTag::Skip
-                | BankTag::Toks
-                | BankTag::Box
-                | BankTag::Muskip => {
-                    if cell.index() >= 32_768 {
-                        return Err(StoreFormatError::Invalid("register index out of range"));
-                    }
-                    if matches!(cell.bank(), BankTag::Skip | BankTag::Muskip)
-                        && (raw > u64::from(u32::MAX) || raw as u32 as usize >= self.glue.len())
-                    {
-                        return Err(StoreFormatError::Invalid("register glue is not live"));
-                    }
-                    if cell.bank() == BankTag::Toks
-                        && (raw > u64::from(u32::MAX)
-                            || raw as u32 as usize >= self.token_lists.len())
-                    {
-                        return Err(StoreFormatError::Invalid("register token list is not live"));
-                    }
-                    if cell.bank() == BankTag::Box {
-                        return Err(StoreFormatError::Invalid("raw box environment value"));
-                    }
+                if cell.bank() == BankTag::Toks
+                    && (raw > u64::from(u32::MAX) || raw as u32 as usize >= token_list_count)
+                {
+                    return Err(StoreFormatError::Invalid("register token list is not live"));
                 }
-                BankTag::IntParam
-                | BankTag::DimenParam
-                | BankTag::GlueParam
-                | BankTag::TokParam => {
-                    if cell.index() >= crate::env::banks::PARAMETER_COUNT as u32 {
-                        return Err(StoreFormatError::Invalid("parameter index out of range"));
-                    }
-                    if cell.bank() == BankTag::GlueParam
-                        && (raw > u64::from(u32::MAX) || raw as u32 as usize >= self.glue.len())
-                    {
-                        return Err(StoreFormatError::Invalid("parameter glue is not live"));
-                    }
-                    if cell.bank() == BankTag::TokParam
-                        && raw != 0
-                        && (raw - 1 > u64::from(u32::MAX)
-                            || (raw - 1) as u32 as usize >= self.token_lists.len())
-                    {
-                        return Err(StoreFormatError::Invalid(
-                            "parameter token list is not live",
-                        ));
-                    }
+                if cell.bank() == BankTag::Box {
+                    return Err(StoreFormatError::Invalid("raw box environment value"));
                 }
-                BankTag::FontDimen
-                | BankTag::FontParamLen
-                | BankTag::FontHyphenChar
-                | BankTag::FontSkewChar
-                | BankTag::PdfLpCode
-                | BankTag::PdfRpCode
-                | BankTag::PdfEfCode
-                | BankTag::PdfTagCode
-                | BankTag::PdfKnbsCode
-                | BankTag::PdfStbsCode
-                | BankTag::PdfShbsCode
-                | BankTag::PdfKnbcCode
-                | BankTag::PdfKnacCode
-                | BankTag::PdfNoLigatures
-                | BankTag::CurrentFont
-                | BankTag::MathFamilyFont => {}
             }
+            BankTag::IntParam | BankTag::DimenParam | BankTag::GlueParam | BankTag::TokParam => {
+                if cell.index() >= crate::env::banks::PARAMETER_COUNT as u32 {
+                    return Err(StoreFormatError::Invalid("parameter index out of range"));
+                }
+                if cell.bank() == BankTag::GlueParam
+                    && (raw > u64::from(u32::MAX) || raw as u32 as usize >= glue_count)
+                {
+                    return Err(StoreFormatError::Invalid("parameter glue is not live"));
+                }
+                if cell.bank() == BankTag::TokParam
+                    && raw != 0
+                    && (raw - 1 > u64::from(u32::MAX)
+                        || (raw - 1) as u32 as usize >= token_list_count)
+                {
+                    return Err(StoreFormatError::Invalid(
+                        "parameter token list is not live",
+                    ));
+                }
+            }
+            BankTag::FontDimen
+            | BankTag::FontParamLen
+            | BankTag::FontHyphenChar
+            | BankTag::FontSkewChar
+            | BankTag::PdfLpCode
+            | BankTag::PdfRpCode
+            | BankTag::PdfEfCode
+            | BankTag::PdfTagCode
+            | BankTag::PdfKnbsCode
+            | BankTag::PdfStbsCode
+            | BankTag::PdfShbsCode
+            | BankTag::PdfKnbcCode
+            | BankTag::PdfKnacCode
+            | BankTag::PdfNoLigatures
+            | BankTag::CurrentFont
+            | BankTag::MathFamilyFont => {}
         }
-        Ok(())
     }
+    Ok(())
 }
 
 fn canonicalize_node_list_keys(node_lists: &mut [FormatNodeList], env: &mut [FormatEnvEntry]) {

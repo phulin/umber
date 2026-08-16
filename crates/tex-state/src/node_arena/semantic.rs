@@ -27,17 +27,6 @@ impl NodeSemanticId {
         hasher.semantic_identity(self.identity);
     }
 
-    /// Temporary identity used only while a frozen graph is being installed.
-    /// The loader replaces it with the recomputed strong identity before the
-    /// restored stores can escape.
-    #[must_use]
-    pub(crate) const fn unverified_frozen(fingerprint: u64) -> Self {
-        Self {
-            fingerprint,
-            identity: ContentHash::new([0; 32]),
-        }
-    }
-
     #[must_use]
     pub(crate) fn empty() -> Self {
         NodeSemanticIdBuilder::new().finish()

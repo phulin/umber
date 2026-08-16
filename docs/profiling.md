@@ -700,6 +700,33 @@ relative to run-to-run noise. A useful capture records exact work termination,
 sample count and weight, call graphs, lost-sample count, pin inventories, and
 the production binary hash.
 
+## Loaded-format restoration census
+
+A profiling-feature CLI run with `--profiling-stats` emits one
+`FORMAT_RESTORE` line even when the command-fuel guard terminates the job. It
+reports successful restore calls and container bytes, token words, macro
+definitions, glue specs, and nodes restored; collection-level validation
+passes; entries copied only to support a later pass; and explicit
+restoration-owned heap buffers. These process-local counters do not enter the
+format image, state, snapshots, rollback, semantic identity, cache identity,
+or INITEX construction path.
+
+The focused schema-11 Plain-format benchmark additionally counts allocator
+calls and requested bytes around exactly one restore, proves a byte-identical
+redump before timing, and then measures repeated fresh-Universe decode:
+
+```bash
+CARGO_BUILD_JOBS=1 cargo bench \
+  --manifest-path benchmarks/format-restore/Cargo.toml \
+  --bench decode -- --noplot
+```
+
+The work vector, rather than elapsed time, is the deterministic regression
+surface. Timing and allocator observations are diagnostic mechanism evidence.
+Production acceptance still uses the authenticated pinned distribution,
+format, source, offline cache, exact command-fuel boundary, unchanged guards,
+and a zero-loss caller/callee capture.
+
 ## Analyze a capture
 
 Use the repository analyzer for a repeatable text report:

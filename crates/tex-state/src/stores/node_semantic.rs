@@ -8,10 +8,11 @@ use super::state_hash::{
 use crate::ids::{FontId, NodeListId};
 use crate::math::MathField;
 use crate::node::{BoxNode, LeaderPayload, Node, Whatsit};
-use crate::node_arena::{NodeRef, NodeSemanticId, NodeSemanticIdBuilder, SidecarNeeds};
+use crate::node_arena::{NodeList, NodeRef, NodeSemanticId, NodeSemanticIdBuilder, SidecarNeeds};
 use crate::state_hash::StateHasher;
 
 impl Stores {
+    #[cfg(test)]
     pub(super) fn compute_node_semantic_id(&self, nodes: &[Node]) -> NodeSemanticId {
         let mut identity = NodeSemanticIdBuilder::new();
         let mut index = 0;
@@ -23,6 +24,41 @@ impl Stores {
             } else {
                 identity.push(|hasher| {
                     self.hash_owned_node_semantic_identity(&nodes[index], hasher);
+                });
+                index += 1;
+            }
+        }
+        identity.finish()
+    }
+
+    /// Recomputes a frozen list's identity directly from compact storage.
+    ///
+    /// Frozen children occur in dependency order, so their already validated
+    /// identities can be supplied without materializing owned `Node` values.
+    pub(super) fn compute_frozen_node_semantic_id(
+        &self,
+        nodes: NodeList<'_>,
+        child_semantic_id: impl Fn(NodeListId) -> NodeSemanticId,
+    ) -> NodeSemanticId {
+        let mut identity = NodeSemanticIdBuilder::new();
+        let mut index = 0;
+        while index < nodes.len() {
+            if let Some(run) = nodes.char_run(index) {
+                identity.push_run(run.len(), |hasher| {
+                    hasher.tag(24);
+                    self.hash_font_semantic(run.font(), hasher);
+                    hasher.usize(run.len());
+                    for code in run.codes() {
+                        hasher.u32(u32::from(code));
+                    }
+                });
+                index += run.len();
+            } else {
+                let node = nodes
+                    .get(index)
+                    .expect("frozen node index is inside the compact span");
+                identity.push(|hasher| {
+                    self.hash_node_semantic_identity_with(node, hasher, &child_semantic_id);
                 });
                 index += 1;
             }

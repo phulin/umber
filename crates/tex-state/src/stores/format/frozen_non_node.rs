@@ -35,7 +35,6 @@ pub(crate) struct DecodedFrozenNonNode {
     pub prepared_mag: Option<i32>,
     pub last_loaded_font: FontId,
     pub font_rows: Vec<FormatFont>,
-    pub code_rows: Vec<FormatCodeTables>,
 }
 
 pub(crate) fn encode(format: &StoreFormat) -> Result<EncodedFrozenNonNode, StoreFormatError> {
@@ -52,7 +51,7 @@ pub(crate) fn decode(
 ) -> Result<DecodedFrozenNonNode, StoreFormatError> {
     let (fonts, font_rows, prepared_mag, last_loaded_font) =
         decode_fonts(sections.fonts, interner)?;
-    let (code_tables, code_rows) = decode_code_tables(sections.code_tables)?;
+    let code_tables = decode_code_tables(sections.code_tables)?;
     let hyphenation = decode_hyphenation(sections.hyphenation)?;
     Ok(DecodedFrozenNonNode {
         fonts,
@@ -61,7 +60,6 @@ pub(crate) fn decode(
         prepared_mag,
         last_loaded_font,
         font_rows,
-        code_rows,
     })
 }
 
@@ -168,9 +166,7 @@ fn encode_code_tables(rows: &[FormatCodeTables]) -> Result<Vec<u8>, StoreFormatE
     Ok(out)
 }
 
-fn decode_code_tables(
-    bytes: &[u8],
-) -> Result<(CodeTables, Vec<FormatCodeTables>), StoreFormatError> {
+fn decode_code_tables(bytes: &[u8]) -> Result<CodeTables, StoreFormatError> {
     if bytes.len() < CODE_TABLES_HEADER
         || read_u32(bytes, 0) != VERSION
         || read_u32(bytes, 8) as usize != CODE_TABLES_HEADER
@@ -188,7 +184,6 @@ fn decode_code_tables(
         return Err(StoreFormatError::Invalid("frozen code-table record range"));
     }
     let mut runtime_rows = Vec::with_capacity(count);
-    let mut format_rows = Vec::with_capacity(count);
     for index in 0..count {
         let at = CODE_TABLES_HEADER + index * CODE_TABLE_RECORD;
         if bytes[at + 5..at + 8]
@@ -213,20 +208,11 @@ fn decode_code_tables(
             delcode: read_i32(bytes, at + 24),
         };
         runtime_rows.push((ch, values));
-        format_rows.push(FormatCodeTables {
-            code: ch as u32,
-            catcode: catcode as u8,
-            lccode: values.lccode,
-            uccode: values.uccode,
-            sfcode: values.sfcode,
-            mathcode: values.mathcode,
-            delcode: values.delcode,
-        });
     }
     let tables = CodeTables::from_frozen(&runtime_rows).map_err(StoreFormatError::Invalid)?;
     #[cfg(feature = "profiling")]
-    crate::measurement::record_format_restore_work(1, count, 2);
-    Ok((tables, format_rows))
+    crate::measurement::record_format_restore_work(1, 0, 1);
+    Ok(tables)
 }
 
 fn encode_hyphenation(table: &HyphenationTable) -> Result<Vec<u8>, StoreFormatError> {

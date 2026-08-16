@@ -234,6 +234,11 @@ These four sections are decoded into validated dense immutable prefixes with
 their canonical record indices. Kind 257 holds the name index; the token-list
 and glue indexes follow the canonical word and record regions inside kinds 272
 and 304. Fresh generation-tagged runtime identities are attached in bulk.
+Section-local DTO values are consumed while those runtime columns are built;
+the loader does not retain parallel name, token, macro, glue, or code-table
+rows for a later generic validation traversal. Cross-section environment and
+font-bank references are validated once against the installed column lengths
+before any `Stores` value is returned.
 Ordinary job-created values append after the prefix and use mutable overlay
 indexes with the existing interning, snapshot, and rollback paths. The
 process-wide compact symbol registry is resolved in one batch for names;
@@ -323,8 +328,13 @@ diagnostic children of ordinary and leader boxes into the validated loaded
 payload before publication. Every zero-length projection is then canonicalized
 to the single empty row before dense DTO keys are assigned.
 
-After validation, all lists are installed into one immutable `NodeListPayload`
-with their precomputed semantic spans. Each nonvoid frozen Env box cell receives
+Each list is restored once into compact storage in dependency order. Its
+semantic identity is recomputed directly over that zero-allocation compact
+view, using only already validated child identities; the loader neither
+materializes a second owned `Vec<Node>` nor temporarily publishes an
+unverified identity. After validation, all lists are installed into one
+immutable `NodeListPayload` with their precomputed semantic spans. Each
+nonvoid frozen Env box cell receives
 the corresponding `NodeListRef` directly when the immutable format base is
 installed. No legacy key map, graph promotion, survivor publication, or
 semantic reseal runs on the load path. Job-local construction begins without
@@ -364,7 +374,9 @@ Store-level round-trip tests call `encode_frozen_format` and
 `decode_frozen_format` directly. Universe-level tests exercise `dump_format`
 and `Universe::from_format`, including malformed-section rejection, immutable
 base and mutable-overlay behavior, rollback, and byte-identical canonical
-redumps. There is no separate DTO restorer or loader-work instrumentation.
+redumps. Profiling builds additionally expose a process-local restoration-work
+census; it is absent from format bytes, snapshots, semantic identity, rollback,
+and production builds.
 
 ## References and structural validation
 

@@ -404,10 +404,6 @@ impl NodeListPayload {
     fn child_roots(&self) -> impl ExactSizeIterator<Item = NodePayloadId> + '_ {
         self.children.iter().map(|child| child.payload.root)
     }
-
-    pub(crate) fn spans_mut(&mut self) -> &mut [OwnedSemanticSpan] {
-        &mut self.semantic_spans
-    }
 }
 
 /// A non-owning coordinate projection. Upgrade succeeds only while a typed
