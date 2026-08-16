@@ -2448,7 +2448,8 @@ mod tests {
                 SessionError::Execution(tex_exec::ExecError::Command(
                     tex_command::CommandError::FuelExhausted {
                         limit: 19,
-                        burned: 19
+                        burned: 19,
+                        ..
                     }
                 ))
             ));

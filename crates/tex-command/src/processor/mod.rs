@@ -186,6 +186,9 @@ pub struct CommandProcessor<'a> {
     /// e-TeX expression result remains pointer-identical to its source.
     pub(crate) scanned_glue_identity: Option<tex_state::ids::GlueId>,
     pub(crate) scanned_glue_skip_index: Option<u16>,
+    /// Nesting of TeX82's artificial deferred-write expansion episode.
+    /// This is operational call-stack state, never snapshot state.
+    pub(crate) write_expansion_depth: u32,
     command_trace_mode_prefix: Option<String>,
     command_trace_printed: bool,
     command_trace_count: usize,
@@ -264,6 +267,13 @@ impl ProcessorFuel<'_> {
         match self {
             Self::Owned(fuel) => fuel.fuel_mut().charge(),
             Self::Shared(fuel) => fuel.charge(),
+        }
+    }
+
+    fn fuel_mut(&mut self) -> &mut CommandFuel {
+        match self {
+            Self::Owned(fuel) => fuel.fuel_mut(),
+            Self::Shared(fuel) => fuel,
         }
     }
 }
@@ -384,6 +394,7 @@ impl<'a> CommandProcessor<'a> {
             is_in_csname: false,
             scanned_glue_identity: None,
             scanned_glue_skip_index: None,
+            write_expansion_depth: 0,
             command_trace_mode_prefix: None,
             command_trace_printed: false,
             command_trace_count: 0,
@@ -406,6 +417,22 @@ impl<'a> CommandProcessor<'a> {
 
     pub(crate) fn charge_command_action(&mut self) -> Result<(), crate::CommandError> {
         self.fuel.charge()
+    }
+
+    pub(crate) fn record_token_frame(&mut self, scanner: bool) {
+        self.fuel.fuel_mut().record_token_frame(scanner);
+    }
+
+    pub(crate) fn record_expanded_delivery(&mut self) {
+        self.fuel.fuel_mut().record_expanded_delivery();
+    }
+
+    pub(crate) fn record_meaning_lookup(&mut self) {
+        self.fuel.fuel_mut().record_meaning_lookup();
+    }
+
+    pub(crate) fn record_write_expansion(&mut self) {
+        self.fuel.fuel_mut().record_write_expansion();
     }
 
     pub(crate) fn traced_token_scratch(&self) -> crate::state::TracedTokenScratch {

@@ -2549,6 +2549,19 @@ impl CommandProcessor<'_> {
         &mut self,
         tokens: TracedTokenList,
     ) -> Result<ExpandedWriteText, CommandError> {
+        self.write_expansion_depth = self
+            .write_expansion_depth
+            .checked_add(1)
+            .ok_or_else(CommandError::input_invariant)?;
+        let result = self.expand_write_text_inner(tokens);
+        self.write_expansion_depth -= 1;
+        result
+    }
+
+    fn expand_write_text_inner(
+        &mut self,
+        tokens: TracedTokenList,
+    ) -> Result<ExpandedWriteText, CommandError> {
         let write_words = tokens.token_ref().tokens().len();
         let endwrite = self
             .state

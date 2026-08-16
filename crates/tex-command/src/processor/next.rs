@@ -298,7 +298,7 @@ impl CommandProcessor<'_> {
             // `loc=null`. A live token either in the v-template itself or in
             // an interposed token-list frame is the canonical interwoven-
             // preamble fatal path, not an internal Rust invariant failure.
-            if self.next_stored_token(cursor).is_some() {
+            if Self::next_stored_token(cursor).is_some() {
                 break;
             }
             if cursor.identity == v_level
@@ -1085,7 +1085,7 @@ impl CommandProcessor<'_> {
         };
 
         let output_has_remaining = match &self.command.input.levels[output_index] {
-            InputLevel::Tokens(cursor) => self.next_stored_token(cursor).is_some(),
+            InputLevel::Tokens(cursor) => Self::next_stored_token(cursor).is_some(),
             InputLevel::Source(_) => unreachable!("output replay is a token level"),
         };
         let levels_above_are_depleted_backups = self.command.input.levels[output_index + 1..]
@@ -1095,7 +1095,7 @@ impl CommandProcessor<'_> {
                     level,
                     InputLevel::Tokens(cursor)
                         if matches!(cursor.behavior, TokenBehavior::BackedUp(_))
-                            && self.next_stored_token(cursor).is_none()
+                            && Self::next_stored_token(cursor).is_none()
                 )
             });
         let unbalanced = output_has_remaining || !levels_above_are_depleted_backups;
@@ -1114,7 +1114,7 @@ impl CommandProcessor<'_> {
                                 InputLevel::Source(_) => unreachable!("output token level"),
                             } =>
                     {
-                        Some(self.next_stored_token(cursor).is_some())
+                        Some(Self::next_stored_token(cursor).is_some())
                     }
                     InputLevel::Source(_) | InputLevel::Tokens(_) => None,
                 })
@@ -1141,7 +1141,7 @@ impl CommandProcessor<'_> {
             return Ok(());
         };
         if !matches!(cursor.behavior, TokenBehavior::BackedUp(_))
-            || self.next_stored_token(cursor).is_some()
+            || Self::next_stored_token(cursor).is_some()
             || !matches!(
                 cursor
                     .payload
@@ -1489,6 +1489,16 @@ impl CommandProcessor<'_> {
 
             let delivery_stamp = DeliveryStamp::new(level.0, position, self.next_delivery_sequence);
             self.next_delivery_sequence = self.next_delivery_sequence.wrapping_add(1);
+            if matches!(
+                spelling.word().semantic_token(),
+                Token::Cs(_)
+                    | Token::Char {
+                        cat: Catcode::Active,
+                        ..
+                    }
+            ) {
+                self.record_meaning_lookup();
+            }
             let mut command = CurrentCommand::resolve_rooted(
                 spelling,
                 delivery_stamp,
@@ -1496,6 +1506,10 @@ impl CommandProcessor<'_> {
                 direct_source,
                 &mut self.state,
             );
+            self.record_token_frame(!matches!(
+                self.command.scanner.status(),
+                crate::processor::ScannerStatus::Normal
+            ));
             if matches!(
                 behavior,
                 TokenBehavior::BackedUp(BackupTreatment::SuppressExpandableControlSequence)
@@ -1564,11 +1578,25 @@ impl CommandProcessor<'_> {
         &mut self,
         allow_control_sequence_creation: bool,
     ) -> Result<Option<DeliveredToken>, CommandError> {
+        enum ActiveInput {
+            Source(Box<crate::input::SourceLevel>),
+            Tokens {
+                identity: InputLevelId,
+                index: usize,
+            },
+        }
+
         loop {
             if self.command.has_ready_replay_completion() {
                 return Ok(None);
             }
-            let Some(level) = self.command.input.levels.last().cloned() else {
+            let Some(level) = self.command.input.levels.last().map(|level| match level {
+                InputLevel::Source(source) => ActiveInput::Source(source.clone()),
+                InputLevel::Tokens(cursor) => ActiveInput::Tokens {
+                    identity: cursor.identity,
+                    index: cursor.index,
+                },
+            }) else {
                 observe!(
                     self,
                     CommandObservation::Input(InputRecord {
@@ -1585,7 +1613,7 @@ impl CommandProcessor<'_> {
                 return Ok(None);
             };
             match level {
-                InputLevel::Source(source) => {
+                ActiveInput::Source(source) => {
                     let identity = source.identity;
                     let position = source.cursor.next_physical_offset;
                     self.ensure_source_registration(&source.cursor.backing);
@@ -1689,11 +1717,17 @@ impl CommandProcessor<'_> {
                         }
                     }
                 }
-                InputLevel::Tokens(cursor) => {
-                    let identity = cursor.identity;
-                    if let Some((spelling, position, behavior, source_provenance)) =
-                        self.next_stored_token(&cursor)
-                    {
+                ActiveInput::Tokens { identity, index } => {
+                    let next = {
+                        let Some(InputLevel::Tokens(cursor)) = self.command.input.levels.last()
+                        else {
+                            unreachable!("inspected token level remains a token level")
+                        };
+                        debug_assert_eq!(cursor.identity, identity);
+                        debug_assert_eq!(cursor.index, index);
+                        Self::next_stored_token(cursor)
+                    };
+                    if let Some((spelling, position, behavior, source_provenance)) = next {
                         let InputLevel::Tokens(cursor) = self
                             .command
                             .input
@@ -1723,7 +1757,7 @@ impl CommandProcessor<'_> {
                                     tex_state::provenance::OriginRef::unknown(),
                                 ),
                                 level,
-                                position: u64::try_from(cursor.index)
+                                position: u64::try_from(index)
                                     .map_err(|_| CommandError::input_invariant())?,
                                 behavior: TokenBehavior::VTemplate,
                                 source_provenance: None,
@@ -1956,7 +1990,6 @@ impl CommandProcessor<'_> {
     }
 
     fn next_stored_token(
-        &self,
         cursor: &TokenCursor,
     ) -> Option<(
         tex_state::token::RootedTracedTokenWord,
@@ -2033,7 +2066,7 @@ impl CommandProcessor<'_> {
             let depleted = match self.command.input.levels.last() {
                 Some(InputLevel::Tokens(cursor))
                     if drains_for_stack_conservation(&cursor.behavior)
-                        && self.next_stored_token(cursor).is_none() =>
+                        && Self::next_stored_token(cursor).is_none() =>
                 {
                     Some(cursor.identity)
                 }

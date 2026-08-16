@@ -47,10 +47,11 @@ print channel of its own outside the borrowed
 - `src/error.rs`: command error and resource-need representation plus the
   shared dimension-scanner recovery diagnostic vocabulary consumed by legacy
   and canonical scanner paths.
-- `src/fuel.rs`: checked finite command-work limits, the constructor-free
-  borrow-only `CommandFuel` capability used by leaf operations, and the
-  top-level `CommandFuelLedger` session owner shared by every canonical
-  processor episode.
+- `src/fuel.rs`: checked finite command-work limits, monotonic scalar command
+  work counters, the constructor-free borrow-only `CommandFuel` capability
+  used by leaf operations, and the top-level `CommandFuelLedger` session owner
+  shared by every canonical processor episode. Fuel and work counters are
+  operational evidence outside semantic state; rollback never refunds them.
 - `src/fatal.rs` and `src/fatal/tests.rs`: TeX82 §93 `fatal_error`,
   §94 `overflow`, and §95 `confusion` as one shared irrecoverable-error
   value, its canonical observation record, and focused label tests. Every
@@ -100,8 +101,10 @@ print channel of its own outside the borrowed
 - `src/input/stack.rs`, `src/input/stack/tests.rs`: exact input retirement,
   retained v-template lifecycle, macro-activation cleanup, `param_start`
   parameter replay ownership, and trace-independence tests.
-- `src/processor/`: public borrow-only processor facade with private raw
-  delivery, expansion, scanner-status, and alignment orchestration.
+- `src/processor/`: public borrow-only processor facade with specialized raw
+  and expanded delivery loops, expansion, scanner-status, and alignment
+  orchestration. The loops share the typed policy boundary but do not test a
+  raw-versus-expanded mode on every token.
   `status.rs` owns the one processor-level scanner episode mechanism for
   typed status entry, observation visibility, recovery re-entry, and complete
   prior-state restoration; scanner families do not open-code that lifecycle.

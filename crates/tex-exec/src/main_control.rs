@@ -1136,6 +1136,12 @@ impl MainControl {
         self.fuel.burned()
     }
 
+    /// Returns the monotonic scalar command-work vector for this session.
+    #[must_use]
+    pub const fn command_work(&self) -> tex_command::CommandWorkCounters {
+        self.fuel.work()
+    }
+
     /// Selects whether shipout also prepares DVI page receipts.
     ///
     /// This is immutable host policy for a retained run, not TeX state, and

@@ -114,6 +114,48 @@ fn absent_observer_does_not_build_raw_or_expanded_delivery_payloads() {
 }
 
 #[test]
+fn macro_heavy_delivery_has_an_exact_monotonic_work_vector() {
+    const INVOCATIONS: u64 = 256;
+
+    let mut command = CommandState::default();
+    let mut universe = Universe::new_with_plain_catcodes();
+    let macro_symbol = install_macro(
+        &mut universe,
+        "workmacro",
+        Token::Char {
+            ch: 'x',
+            cat: Catcode::Letter,
+        },
+    );
+    crate::test_harness::push(
+        &mut command,
+        (0..INVOCATIONS).map(|_| Token::Cs(macro_symbol)),
+    );
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut fuel = crate::CommandFuelLedger::new(10_000).expect("bounded test fuel");
+    {
+        let mut processor =
+            processor(&mut command, &mut universe, &mut capabilities).with_fuel(fuel.fuel_mut());
+        for _ in 0..INVOCATIONS {
+            assert!(processor.get_x_token().expect("macro expands").is_some());
+        }
+        assert!(processor.get_x_token().expect("input ends").is_none());
+    }
+
+    assert_eq!(
+        fuel.work(),
+        crate::CommandWorkCounters {
+            fuel_charges: INVOCATIONS * 2 + 1,
+            token_frame_steps: INVOCATIONS * 2,
+            expanded_deliveries: INVOCATIONS,
+            meaning_lookups: INVOCATIONS,
+            scanner_tokens: 0,
+            write_expansions: 0,
+        }
+    );
+}
+
+#[test]
 fn replay_completion_survives_a_descendant_macro_across_processor_episodes() {
     // TeX82 §§357 and 390: retiring the stored replay before installing the
     // final macro's replacement does not permit the source below that replay
@@ -374,7 +416,13 @@ fn cyclic_macro_exhausts_shared_command_fuel() {
         error,
         crate::CommandError::FuelExhausted {
             limit: 7,
-            burned: 7
+            burned: 7,
+            work: crate::CommandWorkCounters {
+                fuel_charges: 7,
+                token_frame_steps: 7,
+                meaning_lookups: 7,
+                ..crate::CommandWorkCounters::default()
+            },
         }
     );
     assert_eq!(fuel.burned(), 7);

@@ -606,7 +606,7 @@ fn command_fuel_can_only_be_owned_by_a_session_ledger() {
         "command-fuel-fields-forbidden",
         &manifest_dir.join("tests/ui/command_fuel_fields_forbidden.rs"),
         &dependencies,
-        &["fields `limit` and `burned` of struct `CommandFuel` are private"],
+        &["fields `limit` and `work` of struct `CommandFuel` are private"],
     );
 }
 

@@ -2961,11 +2961,13 @@ buffer capacity, timers, and profiling counters are absent.
 Command resource fuel is absent as well. `CommandFuel` is a distinct
 monotonic run ledger lent to every `CommandProcessor` episode. It charges
 before each central raw-delivery attempt, including attempts nested beneath
-expanded delivery, macro matching, and scanners. A failed semantic step may
-restore `CommandState`, but that operation does not restore the ledger. Its
-finite limit and burned count are host telemetry and
-never enter snapshot, checkpoint, format, or semantic identity. Canonical
-sessions default to 100,000,000 actions and accept only
+expanded delivery, macro matching, and scanners. The same ledger counts raw
+token-frame steps, completed expanded deliveries, live meaning lookups,
+non-normal scanner-status tokens, and expandable commands executed inside a
+deferred write. A failed semantic step may restore `CommandState`, but that
+operation does not restore the fuel or work vector. These counters are host
+telemetry and never enter snapshot, checkpoint, format, or semantic identity.
+Canonical sessions default to 100,000,000 actions and accept only
 `1..=1,000,000,000`; zero, larger values, and `u64::MAX` are typed
 configuration errors rather than unlimited sentinels.
 
@@ -3446,6 +3448,11 @@ Its performance foundations are:
 - immutable stored token lists; and
 - the measured bounded process-local traced-token scratch pool described in
   section 9.
+
+The raw and expanded loops are separately compiled specializations beneath
+one typed delivery-policy entry point. Their input mutation and restart rules
+remain canonical, but the expanded hot loop does not branch on a raw-mode
+option for every token and the raw loop does not carry expanded-only policy.
 
 ### 32.1 Optimization promotion
 

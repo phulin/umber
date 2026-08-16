@@ -110,7 +110,11 @@ impl Eq for InputInvariantOrigin {}
 pub enum CommandError {
     /// The command-owned resource ledger cannot fund another canonical
     /// delivery action.
-    FuelExhausted { limit: u64, burned: u64 },
+    FuelExhausted {
+        limit: u64,
+        burned: u64,
+        work: crate::CommandWorkCounters,
+    },
     /// A stale or malformed input-level transition was observed.
     InputInvariant(InputInvariantOrigin),
     /// A backup did not name the most recent raw delivery in this processor.
@@ -180,9 +184,19 @@ impl CommandError {
 impl std::fmt::Display for CommandError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::FuelExhausted { limit, burned } => write!(
+            Self::FuelExhausted {
+                limit,
+                burned,
+                work,
+            } => write!(
                 formatter,
-                "canonical command fuel exhausted after {burned} actions (limit {limit})"
+                "canonical command fuel exhausted after {burned} actions (limit {limit}); command work: fuel_charges={} token_frame_steps={} expanded_deliveries={} meaning_lookups={} scanner_tokens={} write_expansions={}",
+                work.fuel_charges,
+                work.token_frame_steps,
+                work.expanded_deliveries,
+                work.meaning_lookups,
+                work.scanner_tokens,
+                work.write_expansions,
             ),
             Self::InputInvariant(origin) => {
                 write!(

@@ -602,13 +602,13 @@ impl CommandProcessor<'_> {
     ) -> Result<Option<DeliveryEvent>, CommandError> {
         self.last_delivery = None;
         match policy.mode {
-            DeliveryMode::Raw => self.delivery_driver_inner(pending, policy, None),
+            DeliveryMode::Raw => self.raw_delivery_driver(pending, policy),
             DeliveryMode::Expanded(expanded) => {
                 let depth = self.command.transient.active_expansion_depth;
                 self.command.transient.active_expansion_depth = depth
                     .checked_add(1)
                     .ok_or_else(CommandError::input_invariant)?;
-                let result = self.delivery_driver_inner(pending.take(), policy, Some(expanded));
+                let result = self.expanded_delivery_driver(pending.take(), policy, expanded);
                 assert_eq!(
                     self.command.transient.active_expansion_depth,
                     depth + 1,
@@ -620,11 +620,52 @@ impl CommandProcessor<'_> {
         }
     }
 
-    fn delivery_driver_inner(
+    fn raw_delivery_driver(
         &mut self,
         mut pending: Option<CurrentCommand>,
         policy: DeliveryPolicy,
-        expanded: Option<ExpandedDeliveryPolicy>,
+    ) -> Result<Option<DeliveryEvent>, CommandError> {
+        loop {
+            let command = match pending.take() {
+                Some(command) => command,
+                None => {
+                    self.last_delivery = None;
+                    self.charge_command_action()?;
+                    let Some(delivery) = self.get_next_with_control_sequence_creation(matches!(
+                        policy.control_sequence_creation,
+                        ControlSequenceCreation::Allow
+                    ))?
+                    else {
+                        return Ok(None);
+                    };
+                    let CommandReplayDelivery::Command(command) = delivery else {
+                        if policy.replay_completion == ReplayCompletionPolicy::Surface {
+                            let CommandReplayDelivery::Completed(episode) = delivery else {
+                                unreachable!()
+                            };
+                            return Ok(Some(DeliveryEvent::ReplayCompleted(episode)));
+                        }
+                        continue;
+                    };
+                    command
+                }
+            };
+
+            if policy.alignment_interception == AlignmentInterceptionPolicy::Scalar {
+                match self.insert_alignment_entry_v_template(command)? {
+                    Some(command) => return Ok(Some(DeliveryEvent::Command(command))),
+                    None => continue,
+                }
+            }
+            return Ok(Some(DeliveryEvent::Command(command)));
+        }
+    }
+
+    fn expanded_delivery_driver(
+        &mut self,
+        mut pending: Option<CurrentCommand>,
+        policy: DeliveryPolicy,
+        expanded: ExpandedDeliveryPolicy,
     ) -> Result<Option<DeliveryEvent>, CommandError> {
         let expansions_before = self.command.expansion.cumulative_expansions;
         let mut first = true;
@@ -652,16 +693,6 @@ impl CommandProcessor<'_> {
                     };
                     command
                 }
-            };
-
-            let Some(expanded) = expanded else {
-                if policy.alignment_interception == AlignmentInterceptionPolicy::Scalar {
-                    match self.insert_alignment_entry_v_template(command)? {
-                        Some(command) => return Ok(Some(DeliveryEvent::Command(command))),
-                        None => continue,
-                    }
-                }
-                return Ok(Some(DeliveryEvent::Command(command)));
             };
 
             if std::mem::take(&mut first)
@@ -750,6 +781,7 @@ impl CommandProcessor<'_> {
         expansions_before: u64,
         alignment: AlignmentInterceptionPolicy,
     ) -> DeliveryEvent {
+        self.record_expanded_delivery();
         let pending = policy.observation == ExpandedObservationPolicy::DeferIfExpanded
             && self.command.expansion.cumulative_expansions != expansions_before;
         if policy.observation == ExpandedObservationPolicy::Commit
@@ -829,6 +861,9 @@ impl CommandProcessor<'_> {
     /// TeX.web's scalar `expand`: each case changes the active input/state
     /// directly, then returns to [`Self::get_x_token_scalar`].
     pub(crate) fn expand(&mut self, command: CurrentCommand) -> Result<(), CommandError> {
+        if self.write_expansion_depth != 0 {
+            self.record_write_expansion();
+        }
         self.command.expansion.cumulative_expansions = self
             .command
             .expansion

@@ -76,8 +76,8 @@ pub use continuation::{CommandContinuationError, OwnedCommandContinuation};
 pub use error::{CommandError, DimensionDiagnostic, InsertedUnit};
 pub use fatal::{FATAL_SEVERITY, FatalError};
 pub use fuel::{
-    CommandFuel, CommandFuelLedger, CommandFuelLimitError, DEFAULT_COMMAND_FUEL_LIMIT,
-    MAX_COMMAND_FUEL_LIMIT,
+    CommandFuel, CommandFuelLedger, CommandFuelLimitError, CommandWorkCounters,
+    DEFAULT_COMMAND_FUEL_LIMIT, MAX_COMMAND_FUEL_LIMIT,
 };
 pub use host::{
     CommandHostCapabilities, CommandHostContext, ConditionalMode, ConditionalState,

@@ -3563,6 +3563,68 @@ fn unbalanced_write_captures_context_before_recovery_retires_its_levels() {
 }
 
 #[test]
+fn write_heavy_expansion_has_an_exact_monotonic_work_vector() {
+    const INVOCATIONS: u64 = 64;
+
+    let mut command = CommandState::default();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
+    let mut capabilities = CommandHostCapabilities::default();
+    let empty = universe.intern_token_list(&[]);
+    let endwrite = universe.intern_macro(MacroMeaning::new(MeaningFlags::OUTER, empty, empty));
+    universe.register_primitive_meaning(
+        "endwrite",
+        Meaning::Macro {
+            flags: MeaningFlags::OUTER,
+            definition: endwrite.id(),
+        },
+    );
+    let macro_symbol = universe.intern("writework").symbol();
+    let replacement = universe.intern_token_list(&[Token::Char {
+        ch: 'x',
+        cat: Catcode::Letter,
+    }]);
+    let parameters = universe.intern_token_list(&[]);
+    let definition = universe.intern_macro(MacroMeaning::new(
+        MeaningFlags::EMPTY,
+        parameters,
+        replacement,
+    ));
+    universe.set_meaning(
+        macro_symbol,
+        Meaning::Macro {
+            flags: MeaningFlags::EMPTY,
+            definition: definition.id(),
+        },
+    );
+    let words = (0..INVOCATIONS)
+        .map(|_| traced(Token::Cs(macro_symbol)))
+        .collect::<Vec<_>>();
+    let tokens = universe.finish_traced_token_list(&words);
+    let mut fuel = crate::CommandFuelLedger::new(10_000).expect("bounded test fuel");
+    let expanded = processor(&mut command, &mut universe, &mut capabilities)
+        .with_fuel(fuel.fuel_mut())
+        .expand_write_text(tokens)
+        .expect("write text expands");
+
+    assert!(!expanded.unbalanced);
+    assert_eq!(
+        expanded.tokens.token_ref().tokens().len(),
+        INVOCATIONS as usize
+    );
+    assert_eq!(
+        fuel.work(),
+        crate::CommandWorkCounters {
+            fuel_charges: INVOCATIONS * 2 + 3,
+            token_frame_steps: INVOCATIONS * 2 + 3,
+            expanded_deliveries: 1,
+            meaning_lookups: INVOCATIONS,
+            scanner_tokens: INVOCATIONS * 2 + 2,
+            write_expansions: INVOCATIONS,
+        }
+    );
+}
+
+#[test]
 fn restricted_integer_consumers_observe_recovered_zero_before_commit() {
     let mut command = CommandState::default();
     let mut universe = crate::test_harness::universe_with_plain_catcodes();

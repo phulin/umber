@@ -85,8 +85,8 @@ fn raw_delivery_keeps_one_profile_shared_input_path_and_semantic_free_levels() {
         expansion
             .matches("self.get_next_with_control_sequence_creation(")
             .count(),
-        1,
-        "the typed driver must be the only caller of scalar raw delivery"
+        2,
+        "the raw and expanded typed drivers must be the only scalar-delivery callers"
     );
     assert!(
         !next.contains(".trace"),
@@ -178,7 +178,7 @@ fn scalar_macro_call_keeps_one_raw_fallback_matcher() {
 
 #[test]
 #[allow(clippy::disallowed_methods)] // host-side architecture test
-fn command_delivery_has_one_typed_loop_and_direct_input_mutation() {
+fn command_delivery_has_specialized_typed_loops_and_direct_input_mutation() {
     let manifest_dir = test_support::repository_root().join("crates/tex-command");
     let expansion = fs::read_to_string(manifest_dir.join("src/processor/expand.rs"))
         .expect("read ordinary expansion implementation");
@@ -188,9 +188,14 @@ fn command_delivery_has_one_typed_loop_and_direct_input_mutation() {
         .expect("read raw delivery entry points");
 
     assert_eq!(
-        expansion.matches("fn delivery_driver_inner(").count(),
+        expansion.matches("fn raw_delivery_driver(").count(),
         1,
-        "raw and expanded production delivery must share one policy loop"
+        "raw production delivery must have one policy loop"
+    );
+    assert_eq!(
+        expansion.matches("fn expanded_delivery_driver(").count(),
+        1,
+        "expanded production delivery must have one policy loop"
     );
     for (policy_axis, variants) in [
         ("ReplayCompletionPolicy", &["Consume", "Surface"][..]),
