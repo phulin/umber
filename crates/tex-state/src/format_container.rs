@@ -304,6 +304,15 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<DecodedContainer<'_>, ContainerErro
             "non-canonical bytes after final section",
         ));
     }
+    #[cfg(feature = "profiling")]
+    {
+        let owned_sections = sections
+            .iter()
+            .filter(|section| matches!(&section.bytes, Cow::Owned(_)))
+            .count();
+        crate::measurement::record_format_restore_container(bytes.len(), 1 + owned_sections);
+        crate::measurement::record_format_restore_work(2, 0, 0);
+    }
     Ok(DecodedContainer {
         checksum: expected_checksum,
         sections,

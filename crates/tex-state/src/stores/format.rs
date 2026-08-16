@@ -1432,7 +1432,11 @@ impl Stores {
             last_loaded_font: non_node.last_loaded_font.raw(),
         };
         format.validate_references()?;
+        #[cfg(feature = "profiling")]
+        crate::measurement::record_format_restore_work(1, 0, 0);
         format.validate_font_state()?;
+        #[cfg(feature = "profiling")]
+        crate::measurement::record_format_restore_work(2, 0, 0);
         install_frozen_sections(format, core, non_node, node_lists.semantic_ids)
     }
 
@@ -2372,6 +2376,12 @@ fn install_frozen_sections(
         spans,
         Vec::new(),
     ));
+    #[cfg(feature = "profiling")]
+    {
+        let copied_nodes = verified_ids.iter().map(|(id, _)| id.len() as usize).sum();
+        let allocations = verified_ids.iter().filter(|(id, _)| !id.is_empty()).count();
+        crate::measurement::record_format_restore_work(1, copied_nodes, allocations);
+    }
     for (id, expected_fingerprint) in verified_ids {
         let semantic_id = {
             let owner = NodeListRef::from_shared(id, std::sync::Arc::clone(&payload));

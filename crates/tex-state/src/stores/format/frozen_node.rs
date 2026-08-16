@@ -159,6 +159,12 @@ pub(super) fn decode(
     if previous_end != payload_len {
         return Err(StoreFormatError::Invalid("frozen node trailing payload"));
     }
+    #[cfg(feature = "profiling")]
+    {
+        let node_count = lists.iter().map(|list| list.nodes.len()).sum();
+        crate::measurement::record_format_restore_entries(0, 0, 0, node_count);
+        crate::measurement::record_format_restore_work(1, 0, 2 + count);
+    }
     Ok(DecodedFrozenNodes {
         lists,
         semantic_ids,

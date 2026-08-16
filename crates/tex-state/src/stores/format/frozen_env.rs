@@ -102,6 +102,8 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<Vec<FormatEnvEntry>, StoreFormatErr
         };
         entries.push(FormatEnvEntry { cell, value });
     }
+    #[cfg(feature = "profiling")]
+    crate::measurement::record_format_restore_work(1, 0, 1);
     Ok(entries)
 }
 

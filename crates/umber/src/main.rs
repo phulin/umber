@@ -127,6 +127,7 @@ struct MainMemoryProjectionReport {
     enabled: bool,
     before: tex_state::measurement::MainMemoryProjectionMeasurement,
     provenance_before: tex_state::measurement::ProvenanceLifecycleMeasurement,
+    format_restore_before: tex_state::measurement::FormatRestoreMeasurement,
 }
 
 #[cfg(feature = "profiling")]
@@ -136,6 +137,7 @@ impl MainMemoryProjectionReport {
             enabled,
             before: tex_state::measurement::main_memory_projection_measurement(),
             provenance_before: tex_state::measurement::provenance_lifecycle_measurement(),
+            format_restore_before: tex_state::measurement::format_restore_measurement(),
         }
     }
 }
@@ -222,6 +224,20 @@ impl Drop for MainMemoryProjectionReport {
             provenance.origin_resolutions,
             provenance.list_resolutions,
             provenance.list_resolution_comparisons,
+        );
+        let format_restore = tex_state::measurement::format_restore_measurement()
+            .saturating_sub(self.format_restore_before);
+        eprintln!(
+            "FORMAT_RESTORE calls={} bytes_decoded={} token_entries={} macro_entries={} glue_entries={} node_entries={} validation_passes={} copies={} allocations={}",
+            format_restore.calls,
+            format_restore.bytes_decoded,
+            format_restore.token_entries_restored,
+            format_restore.macro_entries_restored,
+            format_restore.glue_entries_restored,
+            format_restore.node_entries_restored,
+            format_restore.validation_passes,
+            format_restore.copies,
+            format_restore.allocations,
         );
     }
 }

@@ -139,6 +139,8 @@ fn decode_fonts(
         .ok_or(StoreFormatError::Invalid(
             "frozen last loaded font is not live",
         ))?;
+    #[cfg(feature = "profiling")]
+    crate::measurement::record_format_restore_work(1, rows.len(), 3);
     Ok((fonts, rows, prepared_mag, last))
 }
 
@@ -222,6 +224,8 @@ fn decode_code_tables(
         });
     }
     let tables = CodeTables::from_frozen(&runtime_rows).map_err(StoreFormatError::Invalid)?;
+    #[cfg(feature = "profiling")]
+    crate::measurement::record_format_restore_work(1, count, 2);
     Ok((tables, format_rows))
 }
 
@@ -261,6 +265,8 @@ fn decode_hyphenation(bytes: &[u8]) -> Result<HyphenationTable, StoreFormatError
         ));
     }
     table.validate_frozen().map_err(StoreFormatError::Invalid)?;
+    #[cfg(feature = "profiling")]
+    crate::measurement::record_format_restore_work(1, 0, 2);
     Ok(table)
 }
 

@@ -120,6 +120,51 @@ pub struct TokenStoreMeasurement {
     pub semantic_identity_capacity_bytes_grown: u64,
 }
 
+/// Process-local census of loaded-format restoration work.
+///
+/// `allocations` counts explicit restoration-owned heap buffers, while
+/// `copies` counts entries materialized solely for a later validation pass.
+/// Allocator-level call and byte counts belong to the focused benchmark.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct FormatRestoreMeasurement {
+    pub calls: u64,
+    pub bytes_decoded: u64,
+    pub token_entries_restored: u64,
+    pub macro_entries_restored: u64,
+    pub glue_entries_restored: u64,
+    pub node_entries_restored: u64,
+    pub validation_passes: u64,
+    pub copies: u64,
+    pub allocations: u64,
+}
+
+impl FormatRestoreMeasurement {
+    #[must_use]
+    pub const fn saturating_sub(self, baseline: Self) -> Self {
+        Self {
+            calls: self.calls.saturating_sub(baseline.calls),
+            bytes_decoded: self.bytes_decoded.saturating_sub(baseline.bytes_decoded),
+            token_entries_restored: self
+                .token_entries_restored
+                .saturating_sub(baseline.token_entries_restored),
+            macro_entries_restored: self
+                .macro_entries_restored
+                .saturating_sub(baseline.macro_entries_restored),
+            glue_entries_restored: self
+                .glue_entries_restored
+                .saturating_sub(baseline.glue_entries_restored),
+            node_entries_restored: self
+                .node_entries_restored
+                .saturating_sub(baseline.node_entries_restored),
+            validation_passes: self
+                .validation_passes
+                .saturating_sub(baseline.validation_passes),
+            copies: self.copies.saturating_sub(baseline.copies),
+            allocations: self.allocations.saturating_sub(baseline.allocations),
+        }
+    }
+}
+
 /// Process-local census of structural provenance lifecycle work.
 ///
 /// These fixed-width counters are compiled only into profiling builds. They
@@ -308,6 +353,15 @@ static TOKEN_MISSES: AtomicU64 = AtomicU64::new(0);
 static TOKEN_REQUESTED: AtomicU64 = AtomicU64::new(0);
 static TOKEN_ARENA_GROWN_BYTES: AtomicU64 = AtomicU64::new(0);
 static TOKEN_SEMANTIC_ID_GROWN_BYTES: AtomicU64 = AtomicU64::new(0);
+static FORMAT_RESTORE_CALLS: AtomicU64 = AtomicU64::new(0);
+static FORMAT_RESTORE_BYTES: AtomicU64 = AtomicU64::new(0);
+static FORMAT_RESTORE_TOKENS: AtomicU64 = AtomicU64::new(0);
+static FORMAT_RESTORE_MACROS: AtomicU64 = AtomicU64::new(0);
+static FORMAT_RESTORE_GLUE: AtomicU64 = AtomicU64::new(0);
+static FORMAT_RESTORE_NODES: AtomicU64 = AtomicU64::new(0);
+static FORMAT_RESTORE_VALIDATION_PASSES: AtomicU64 = AtomicU64::new(0);
+static FORMAT_RESTORE_COPIES: AtomicU64 = AtomicU64::new(0);
+static FORMAT_RESTORE_ALLOCATIONS: AtomicU64 = AtomicU64::new(0);
 static PROVENANCE_COUNTERS: [AtomicU64; 25] = [const { AtomicU64::new(0) }; 25];
 static MAIN_MEMORY_DYNAMIC_OBSERVATIONS: AtomicU64 = AtomicU64::new(0);
 static MAIN_MEMORY_BASE_REQUESTS: AtomicU64 = AtomicU64::new(0);
@@ -474,6 +528,34 @@ pub(crate) fn record_token_intern(
         semantic_identity_capacity_bytes_grown as u64,
         Ordering::Relaxed,
     );
+}
+
+pub(crate) fn record_format_restore_container(bytes: usize, allocations: usize) {
+    FORMAT_RESTORE_CALLS.fetch_add(1, Ordering::Relaxed);
+    FORMAT_RESTORE_BYTES.fetch_add(bytes as u64, Ordering::Relaxed);
+    FORMAT_RESTORE_ALLOCATIONS.fetch_add(allocations as u64, Ordering::Relaxed);
+}
+
+pub(crate) fn record_format_restore_entries(
+    tokens: usize,
+    macros: usize,
+    glue: usize,
+    nodes: usize,
+) {
+    FORMAT_RESTORE_TOKENS.fetch_add(tokens as u64, Ordering::Relaxed);
+    FORMAT_RESTORE_MACROS.fetch_add(macros as u64, Ordering::Relaxed);
+    FORMAT_RESTORE_GLUE.fetch_add(glue as u64, Ordering::Relaxed);
+    FORMAT_RESTORE_NODES.fetch_add(nodes as u64, Ordering::Relaxed);
+}
+
+pub(crate) fn record_format_restore_work(
+    validation_passes: usize,
+    copies: usize,
+    allocations: usize,
+) {
+    FORMAT_RESTORE_VALIDATION_PASSES.fetch_add(validation_passes as u64, Ordering::Relaxed);
+    FORMAT_RESTORE_COPIES.fetch_add(copies as u64, Ordering::Relaxed);
+    FORMAT_RESTORE_ALLOCATIONS.fetch_add(allocations as u64, Ordering::Relaxed);
 }
 
 const PROV_ATOM_INTERN_CALLS: usize = 0;
@@ -683,6 +765,21 @@ pub fn token_store_measurement() -> TokenStoreMeasurement {
         arena_capacity_bytes_grown: TOKEN_ARENA_GROWN_BYTES.load(Ordering::Relaxed),
         semantic_identity_capacity_bytes_grown: TOKEN_SEMANTIC_ID_GROWN_BYTES
             .load(Ordering::Relaxed),
+    }
+}
+
+#[must_use]
+pub fn format_restore_measurement() -> FormatRestoreMeasurement {
+    FormatRestoreMeasurement {
+        calls: FORMAT_RESTORE_CALLS.load(Ordering::Relaxed),
+        bytes_decoded: FORMAT_RESTORE_BYTES.load(Ordering::Relaxed),
+        token_entries_restored: FORMAT_RESTORE_TOKENS.load(Ordering::Relaxed),
+        macro_entries_restored: FORMAT_RESTORE_MACROS.load(Ordering::Relaxed),
+        glue_entries_restored: FORMAT_RESTORE_GLUE.load(Ordering::Relaxed),
+        node_entries_restored: FORMAT_RESTORE_NODES.load(Ordering::Relaxed),
+        validation_passes: FORMAT_RESTORE_VALIDATION_PASSES.load(Ordering::Relaxed),
+        copies: FORMAT_RESTORE_COPIES.load(Ordering::Relaxed),
+        allocations: FORMAT_RESTORE_ALLOCATIONS.load(Ordering::Relaxed),
     }
 }
 

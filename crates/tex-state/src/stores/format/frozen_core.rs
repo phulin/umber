@@ -228,6 +228,8 @@ fn decode_names(
     let hash_entries = rows.iter().map(|name| name.hash_occupied).collect();
     let interner = Interner::from_frozen(arena, spans, kinds, hash_entries, atoms, lookup)
         .map_err(StoreFormatError::Invalid)?;
+    #[cfg(feature = "profiling")]
+    crate::measurement::record_format_restore_work(1, count, 7 + count.saturating_mul(2));
     Ok((interner, rows))
 }
 
@@ -371,6 +373,11 @@ fn decode_tokens(
         crate::token_store::FrozenTokenLookup::Direct(lookup),
     )
     .map_err(StoreFormatError::Invalid)?;
+    #[cfg(feature = "profiling")]
+    {
+        crate::measurement::record_format_restore_entries(word_count, 0, 0, 0);
+        crate::measurement::record_format_restore_work(1, word_count, 5 + count);
+    }
     Ok((tokens, rows))
 }
 
@@ -451,6 +458,11 @@ fn decode_tokens_v1(
         crate::token_store::FrozenTokenLookup::Legacy(lookup),
     )
     .map_err(StoreFormatError::Invalid)?;
+    #[cfg(feature = "profiling")]
+    {
+        crate::measurement::record_format_restore_entries(word_count, 0, 0, 0);
+        crate::measurement::record_format_restore_work(1, word_count, 6 + count * 2);
+    }
     Ok((tokens, rows))
 }
 
@@ -725,6 +737,11 @@ fn decode_macros(
         observation_widths,
     )
     .map_err(StoreFormatError::Invalid)?;
+    #[cfg(feature = "profiling")]
+    {
+        crate::measurement::record_format_restore_entries(0, count, 0, 0);
+        crate::measurement::record_format_restore_work(1, count, 8);
+    }
     Ok((macros, rows))
 }
 
@@ -810,6 +827,11 @@ fn decode_glue(
         })
         .map_err(StoreFormatError::Invalid)?;
     let glue = GlueStore::from_frozen(specs, lookup).map_err(StoreFormatError::Invalid)?;
+    #[cfg(feature = "profiling")]
+    {
+        crate::measurement::record_format_restore_entries(0, 0, count, 0);
+        crate::measurement::record_format_restore_work(1, count, 3 + count);
+    }
     Ok((glue, rows))
 }
 
