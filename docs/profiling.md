@@ -706,3 +706,38 @@ reported rather than guessed.
 Compiler inlining can make broad frames such as `main` or `run` dominate an
 inclusive ranking. Self time is unaffected; use a named subtree when comparing
 the internal costs of a subsystem.
+
+## Reachability-owned lookup
+
+Issue `umber2-3v8z.26` re-profiled token-list and macro-body lookup after the
+TeX82 diagnostic projection lifecycle fix. The production `pdflatex` capture
+used the pinned distribution, format, source, and cache at exactly 12,000,000
+command-fuel units; it reached the canonical fuel limit, collected 2,356 cycle
+samples, and lost none. The evidence is under
+`target/umber2-3v8z.26/prod-record-fuel-12000000/`.
+
+On the preceding post-projection capture, `MacroStore::owner` accounted for
+1.72% self samples, `TokenStore::owner` 0.88%, `MacroStore::get` 0.69%,
+`TokenStore::resolve_stored` 0.42%, `MacroStore::contains` 0.28%, and
+`MacroStore::resolve_stored` 0.27%. After consolidating stored/live resolution,
+the repeated `owner`, token `resolve_stored`, and macro `contains` leaves no
+longer appeared as separate hot work. The new direct leaves were
+`MacroStore::resolve_stored` 0.96%, `MacroStore::get` 0.50%,
+`TokenStore::owner` 0.45%, `MacroStore::resolved_owner` 0.16%, and
+`TokenStore::resolved_owner` 0.09%. Interpret these flat samples as attribution
+evidence, not an additive inclusive total: inlining and the new single lookup
+boundary redistribute samples among symbols.
+
+The focused standalone benchmark exercises live hits, dead weak slots,
+generation mismatches, format holes, and collision-safe lookup for both value
+families:
+
+```bash
+CARGO_BUILD_JOBS=1 cargo bench \
+  --manifest-path benchmarks/reachability-lookup/Cargo.toml \
+  --bench lookup -- --noplot
+```
+
+Criterion timings remain diagnostic only. The routine regression is the
+deterministic primitive-work test in `tex-state`; acceptance depends on its
+operation counts and semantic outcomes, not a wall-clock guard.

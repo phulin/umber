@@ -42,6 +42,27 @@ cursor to the discarded suffix's captured physical extent, so repeated retries
 reuse their warmed high-water slots without scanning an unrelated frozen or
 live prefix.
 
+Lookup preserves two distinct coordinate contracts without probing both. A
+generation-tagged live handle resolves only when its slot still carries the
+exact generation. A reserved stored coordinate first selects the exact frozen
+format row, then falls through to the corresponding weak dynamic slot when the
+format table has a hole. Owner-returning operations perform that resolution
+once and attach any private-patch lease once. Semantic-only reads resolve the
+same immutable object without probing the lease table, because the caller does
+not manufacture a new root. Macro accessors derive the meaning, parameter
+pattern, provenance, and observation operand from that single resolved object;
+aggregate callers likewise do not preflight with `contains` or `resolve_stored`
+before asking for the value.
+
+The focused work gate counts primitive fixed-root probes, generation checks,
+slot probes, weak upgrades, candidate entries, exact comparisons, and patch
+lease probes. Its prepared live-hit, dead-weak-slot, generation-mismatch,
+format-hole, and deliberate-collision cases cover both token lists and macro
+bodies. This is a work-count contract rather than a timing guard: the expected
+totals are respectively `5, 4, 2, 3, 8` for token lists and
+`4, 4, 2, 3, 8` for macro bodies. The existing all-roots-live growth and
+dead-value plateau controls remain the lifecycle authority.
+
 There is no copying compactor, reachability sweep, accepted-generation
 registry, or after-the-fact graph traversal. Every strong edge is installed or
 removed at the typed mutation boundary that already knows both the owner and
