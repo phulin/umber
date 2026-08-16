@@ -12,7 +12,6 @@ debug = 2
 strip = false
 
 [dependencies]
-bumpalo = { version = "3.19", features = ["collections"] }
 criterion = "0.5"
 stats_alloc = "0.1"
 tex-arith = { path = "../../crates/tex-arith" }

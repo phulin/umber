@@ -958,6 +958,7 @@ dependencies = [
 name = "tex-command"
 version = "0.1.0"
 dependencies = [
+ "bumpalo",
  "md-5",
  "posix-regex",
  "tex-fonts",
@@ -974,6 +975,7 @@ version = "0.1.0"
 dependencies = [
  "ahash",
  "smallvec",
+ "tex-arith",
  "tex-command",
  "tex-fonts",
  "tex-out",
@@ -985,7 +987,6 @@ dependencies = [
 name = "tex-exec-benchmarks"
 version = "0.1.0"
 dependencies = [
- "bumpalo",
  "criterion",
  "stats_alloc",
  "tex-arith",

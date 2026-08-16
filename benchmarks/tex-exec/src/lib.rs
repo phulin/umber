@@ -1,18 +1,13 @@
 //! Direct-execution ceiling experiment for a macro-heavy TeX batch slice.
 
-mod fused;
 mod production;
 
 use std::sync::Arc;
 
 use tex_arith::Scaled;
 use tex_fonts::{CharMetrics, FontMetrics, LoadedFont, MetricCharTag};
-use tex_out::{
-    BoxNode, ContentHash, FontResource, FontResourceConstruction, GlueOrder, GlueSetRatio,
-    GlueSign, JobInfo, KernKind, PageArtifact, PageNode, UnvalidatedPageArtifact,
-};
+use tex_out::{ContentHash, PageArtifact};
 
-pub use fused::{FusedError, run_fused};
 pub use production::{ProductionError, run_production};
 pub use tex_command::CommandWorkCounters;
 
@@ -21,7 +16,52 @@ pub const FONT_ID: u32 = 0;
 pub const CHARACTER_WIDTH: i32 = 500;
 pub const CHARACTER_HEIGHT: i32 = 300;
 pub const CHARACTER_DEPTH: i32 = 100;
-const DVI_ONE_INCH: i32 = 4_736_286;
+
+#[derive(Debug)]
+pub enum SharedBatchError {
+    Fallback(tex_exec::NativeBatchFallback),
+    Execute(tex_exec::NativeBatchRunError),
+}
+
+impl std::fmt::Display for SharedBatchError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(formatter, "shared production batch failed: {self:?}")
+    }
+}
+
+impl std::error::Error for SharedBatchError {}
+
+pub fn run_shared(workload: &Workload) -> Result<BatchResult, SharedBatchError> {
+    let stores = tex_state::Universe::new_with_plain_catcodes();
+    let attempt = tex_exec::run_native_batch_episode(
+        &stores,
+        tex_exec::NativeBatchRequest {
+            source: workload.source(),
+            expected_calls: workload.calls(),
+            profile: tex_command::CommandProfile::TEX82,
+            font_id: FONT_ID,
+            font: benchmark_font(),
+        },
+    )
+    .map_err(SharedBatchError::Execute)?;
+    let result = match attempt {
+        tex_exec::NativeBatchAttempt::Completed(result) => result,
+        tex_exec::NativeBatchAttempt::Fallback(barrier) => {
+            return Err(SharedBatchError::Fallback(barrier));
+        }
+    };
+    Ok(BatchResult {
+        counts: result.counts,
+        artifact: result.artifact,
+        artifact_bytes: result.artifact_bytes,
+        dvi: result.dvi,
+        effects: result.effects,
+        terminal: result.terminal,
+        log: result.log,
+        calls: result.calls,
+        command_work: None,
+    })
+}
 
 /// One complete, deterministic macro-heavy source job.
 #[derive(Clone, Debug)]
@@ -141,79 +181,6 @@ pub fn benchmark_font() -> LoadedFont {
     )
 }
 
-pub(crate) fn build_artifact(
-    font: &LoadedFont,
-    counts: [i32; 3],
-    nodes: Vec<PageNode>,
-) -> Result<PageArtifact, tex_out::ArtifactValidationError> {
-    let width = nodes.iter().try_fold(0_i32, |width, node| {
-        let contribution = match node {
-            PageNode::Char { width, .. } => width.raw(),
-            PageNode::Kern { amount, .. } => amount.raw(),
-            _ => unreachable!("the batch slice emits only characters and kerns"),
-        };
-        width.checked_add(contribution)
-    });
-    let width = width.expect("bounded benchmark width must fit a TeX dimension");
-    let root = PageNode::HList(BoxNode {
-        width: Scaled::from_raw(width),
-        height: Scaled::from_raw(CHARACTER_HEIGHT),
-        depth: Scaled::from_raw(CHARACTER_DEPTH),
-        shift: Scaled::from_raw(0),
-        glue_set: GlueSetRatio::ZERO,
-        glue_sign: GlueSign::Normal,
-        glue_order: GlueOrder::Normal,
-        children: nodes,
-    });
-    let mut page_counts = [0; 10];
-    page_counts[..3].copy_from_slice(&counts);
-    UnvalidatedPageArtifact {
-        job: JobInfo {
-            mag: 1000,
-            banner: tex_out::DEFAULT_BANNER.to_owned(),
-            h_offset: Scaled::from_raw(0),
-            v_offset: Scaled::from_raw(0),
-            page_origin_x: Scaled::from_raw(DVI_ONE_INCH),
-            page_origin_y: Scaled::from_raw(DVI_ONE_INCH),
-            page_width: Scaled::from_raw(0),
-            page_height: Scaled::from_raw(0),
-        },
-        fonts: vec![FontResource {
-            font_id: FONT_ID,
-            name: font.name().to_owned(),
-            tfm_content_hash: ContentHash::new(font.content_hash()),
-            tfm_checksum: font.checksum(),
-            design_size: font.design_size(),
-            at_size: font.size(),
-            layout_policy: font.layout_policy(),
-            mapping_fallback: font.mapping_fallback(),
-            opentype: None,
-            semantic_identity: font.source_identity(),
-            construction: FontResourceConstruction::Loaded,
-        }],
-        counts: page_counts,
-        root,
-        effects: Vec::new(),
-        math_events: Vec::new(),
-    }
-    .validate()
-}
-
-pub(crate) fn character_node() -> PageNode {
-    PageNode::Char {
-        font_id: FONT_ID,
-        ch: u32::from(CHARACTER),
-        width: Scaled::from_raw(CHARACTER_WIDTH),
-    }
-}
-
-pub(crate) fn kern_node(amount: i32) -> PageNode {
-    PageNode::Kern {
-        amount: Scaled::from_raw(amount),
-        kind: KernKind::Explicit,
-    }
-}
-
 pub(crate) fn serialize_dvi(
     plan: tex_out::dvi::DviPagePlan,
 ) -> Result<Vec<u8>, tex_out::dvi::DviError> {
@@ -225,22 +192,23 @@ pub(crate) fn serialize_dvi(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tex_out::PageNode;
 
     #[test]
-    fn fused_kernel_matches_the_complete_production_result() {
+    fn shared_kernel_matches_the_complete_production_result() {
         let workload = Workload::new(256, 17);
         let production = run_production(&workload).expect("production slice executes");
-        let fused = run_fused(&workload).expect("fused slice executes");
+        let shared = run_shared(&workload).expect("shared slice executes");
 
         assert_eq!(production.counts, workload.expected_counts());
-        assert_eq!(fused.counts, production.counts);
-        assert_eq!(fused.calls, production.calls);
-        assert_eq!(fused.artifact, production.artifact);
-        assert_eq!(fused.artifact_bytes, production.artifact_bytes);
-        assert_eq!(fused.dvi, production.dvi);
-        assert_eq!(fused.effects, production.effects);
-        assert_eq!(fused.terminal, production.terminal);
-        assert_eq!(fused.log, production.log);
+        assert_eq!(shared.counts, production.counts);
+        assert_eq!(shared.calls, production.calls);
+        assert_eq!(shared.artifact, production.artifact);
+        assert_eq!(shared.artifact_bytes, production.artifact_bytes);
+        assert_eq!(shared.dvi, production.dvi);
+        assert_eq!(shared.effects, production.effects);
+        assert_eq!(shared.terminal, production.terminal);
+        assert_eq!(shared.log, production.log);
         assert_eq!(
             production
                 .command_work
@@ -253,7 +221,7 @@ mod tests {
     #[test]
     fn group_rollback_and_both_conditional_arms_are_observable() {
         let workload = Workload::new(8, 0);
-        let result = run_fused(&workload).expect("fused slice executes");
+        let result = run_shared(&workload).expect("shared slice executes");
 
         assert_eq!(result.counts, [0, 36, 12]);
         let PageNode::HList(root) = &result.artifact.root else {
@@ -266,14 +234,14 @@ mod tests {
     fn nested_argument_forwarding_matches_production_exactly() {
         let workload = Workload::nested(512, 5);
         let production = run_production(&workload).expect("nested production slice executes");
-        let fused = run_fused(&workload).expect("nested fused slice executes");
+        let shared = run_shared(&workload).expect("nested shared slice executes");
 
-        assert_eq!(fused.counts, production.counts);
-        assert_eq!(fused.calls, production.calls);
-        assert_eq!(fused.artifact_bytes, production.artifact_bytes);
-        assert_eq!(fused.dvi, production.dvi);
-        assert_eq!(fused.effects, production.effects);
-        assert_eq!(fused.terminal, production.terminal);
-        assert_eq!(fused.log, production.log);
+        assert_eq!(shared.counts, production.counts);
+        assert_eq!(shared.calls, production.calls);
+        assert_eq!(shared.artifact_bytes, production.artifact_bytes);
+        assert_eq!(shared.dvi, production.dvi);
+        assert_eq!(shared.effects, production.effects);
+        assert_eq!(shared.terminal, production.terminal);
+        assert_eq!(shared.log, production.log);
     }
 }

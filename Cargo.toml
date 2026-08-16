@@ -55,6 +55,7 @@ edition = "2024"
 ahash = "0.8"
 anyhow = "1"
 bincode = "1"
+bumpalo = { version = "3.19", features = ["collections"] }
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 flate2 = "1"
 hayro-syntax = { git = "https://github.com/phulin/hayro.git", rev = "abf6c167f6b877a18a077b9ff76dad36573e271d", default-features = false, features = ["std", "unsafe"] }

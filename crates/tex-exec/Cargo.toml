@@ -9,6 +9,7 @@ profiling = ["tex-state/profiling"]
 [dependencies]
 ahash.workspace = true
 smallvec.workspace = true
+tex-arith = { path = "../tex-arith" }
 tex-command = { path = "../tex-command" }
 tex-fonts = { path = "../tex-fonts" }
 tex-out = { path = "../tex-out" }

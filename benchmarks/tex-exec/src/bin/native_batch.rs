@@ -7,7 +7,7 @@ use std::{
 };
 
 use stats_alloc::{INSTRUMENTED_SYSTEM, Region, Stats, StatsAlloc};
-use tex_exec_benchmarks::{BatchResult, Workload, run_fused, run_production};
+use tex_exec_benchmarks::{BatchResult, Workload, run_production, run_shared};
 
 #[global_allocator]
 static GLOBAL: &StatsAlloc<System> = &INSTRUMENTED_SYSTEM;
@@ -15,7 +15,7 @@ static GLOBAL: &StatsAlloc<System> = &INSTRUMENTED_SYSTEM;
 #[derive(Clone, Copy)]
 enum Engine {
     Production,
-    Fused,
+    Shared,
     Compare,
 }
 
@@ -23,7 +23,7 @@ impl Engine {
     fn parse(value: &str) -> Option<Self> {
         match value {
             "production" => Some(Self::Production),
-            "fused" => Some(Self::Fused),
+            "shared" => Some(Self::Shared),
             "compare" => Some(Self::Compare),
             _ => None,
         }
@@ -68,17 +68,17 @@ fn try_main() -> Result<(), String> {
             let (result, elapsed, stats) = measure(|| run_production(&workload))?;
             print_result("production", &shape, &workload, &result, elapsed, stats);
         }
-        Engine::Fused => {
-            let (result, elapsed, stats) = measure(|| run_fused(&workload))?;
-            print_result("fused", &shape, &workload, &result, elapsed, stats);
+        Engine::Shared => {
+            let (result, elapsed, stats) = measure(|| run_shared(&workload))?;
+            print_result("shared", &shape, &workload, &result, elapsed, stats);
         }
         Engine::Compare => {
             let production = run_production(&workload).map_err(|error| error.to_string())?;
-            let fused = run_fused(&workload).map_err(|error| error.to_string())?;
+            let shared = run_shared(&workload).map_err(|error| error.to_string())?;
             let mut expected = production.clone();
             expected.command_work = None;
-            if fused != expected {
-                return Err("fused result diverged from production".to_owned());
+            if shared != expected {
+                return Err("shared result diverged from canonical stepping".to_owned());
             }
             println!(
                 "compare exact=true shape={} calls={} artifact_bytes={} dvi_bytes={} fuel={}",
@@ -162,6 +162,6 @@ fn parse_usize(value: Option<String>, name: &str) -> Result<usize, String> {
 }
 
 fn usage() -> String {
-    "usage: native_batch <production|fused|compare> <calls> [relax-padding] [direct|nested]"
+    "usage: native_batch <production|shared|compare> <calls> [relax-padding] [direct|nested]"
         .to_owned()
 }

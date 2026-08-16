@@ -23,6 +23,7 @@ mod job_output;
 mod main_control;
 mod math;
 mod mode;
+mod native_batch;
 mod node_dump;
 mod output_provenance;
 mod pack_report;
@@ -83,6 +84,10 @@ pub use main_control::{
 pub use mode::{
     AlignColumn, AlignState, AlignmentKind, AlignmentPackSpec, Mode, ModeLevelSummary, ModeList,
     ModeNest, ModeNestSummary,
+};
+pub use native_batch::{
+    NativeBatchAttempt, NativeBatchFallback, NativeBatchRequest, NativeBatchResult,
+    NativeBatchRunError, run_native_batch_episode,
 };
 pub use paragraph_end::cached_pretolerance_plan;
 pub use retained_resource::{

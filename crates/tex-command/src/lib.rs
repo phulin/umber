@@ -32,6 +32,7 @@ macro_rules! observe {
 mod command;
 mod conditionals;
 mod continuation;
+mod native_batch;
 pub use conditionals::{ActiveCondition, IncompleteCondition};
 mod error;
 mod fatal;
@@ -91,6 +92,9 @@ pub use input::{
     SourceLocation, SourceNameClass, SourceProvenance, SourceRange, SourceRegistration,
     SourceRegistrationError, SourceScalarRange, SourceStepQueries, SourceToken,
     SourceTokenizationStep,
+};
+pub use native_batch::{
+    NativeBatchBarrier, NativeBatchNode, NativeBatchOutcome, NativeBatchProgram,
 };
 /// The single canonical naming vocabulary shared by every observation
 /// producer and transport (`docs/tex_command_core.md` §33.3).
