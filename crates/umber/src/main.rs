@@ -333,7 +333,7 @@ fn finalize_run(
             .saturating_add(host.resolver.content_hash_time)
             .saturating_add(host.resolver.response_build_time);
         eprintln!(
-            "RESOURCE_HOST_TELEMETRY startup_ns={} engine_core_ns={} savepoint_capture_ns={} savepoint_restore_ns={} candidate_restore_ns={} resolver_index_ns={} vfs_stage_ns={} request_extraction_ns={} engine_entry_exit_ns={} resolver_ns={} local_lookup_ns={} manifest_lookup_ns={} object_load_ns={} content_hash_ns={} response_build_ns={} resolver_overhead_ns={} preload_ns={} provision_ns={} accepted_handoff_ns={} cli_overhead_ns={} accepted_phase_sum_ns={} local_lookups={} local_hits={} manifest_lookups={} manifest_cache_hits={} object_requests={} object_cache_hits={}",
+            "RESOURCE_HOST_TELEMETRY startup_ns={} engine_core_ns={} savepoint_capture_ns={} savepoint_restore_ns={} candidate_restore_ns={} resolver_index_ns={} vfs_stage_ns={} request_extraction_ns={} engine_entry_exit_ns={} resolver_ns={} local_lookup_ns={} manifest_lookup_ns={} object_load_ns={} content_hash_ns={} response_build_ns={} resolver_overhead_ns={} preload_ns={} provision_ns={} accepted_handoff_ns={} cli_overhead_ns={} accepted_phase_sum_ns={} local_lookups={} local_hits={} manifest_lookups={} manifest_cache_hits={} authenticated_manifest_hits={} manifest_reads={} manifest_parses={} manifest_authentications={} shard_loads={} object_requests={} object_cache_hits={} object_hashes={}",
             host.startup_time.as_nanos(),
             engine_core.as_nanos(),
             telemetry.execution.savepoint_capture_time.as_nanos(),
@@ -361,8 +361,14 @@ fn finalize_run(
             host.resolver.local_hits,
             host.resolver.manifest_lookups,
             host.resolver.manifest_cache_hits,
+            host.resolver.authenticated_manifest_hits,
+            host.resolver.manifest_reads,
+            host.resolver.manifest_parses,
+            host.resolver.manifest_authentications,
+            host.resolver.shard_loads,
             host.resolver.object_requests,
             host.resolver.object_cache_hits,
+            host.resolver.object_hashes,
         );
     }
     let virtual_font_resources = finalization.virtual_font_resources;

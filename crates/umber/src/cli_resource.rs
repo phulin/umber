@@ -7,6 +7,7 @@ use std::error::Error;
 use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use std::time::Instant;
 
@@ -182,8 +183,20 @@ pub struct ResolverTelemetry {
     pub local_hits: u64,
     pub manifest_lookups: u64,
     pub manifest_cache_hits: u64,
+    /// Authenticated root/shard snapshots reused from the bounded owner.
+    pub authenticated_manifest_hits: u64,
+    /// Root or shard payloads read from local, persistent-cache, or transport bytes.
+    pub manifest_reads: u64,
+    /// Strict root or shard parser invocations.
+    pub manifest_parses: u64,
+    /// Root or shard payload digest authentications.
+    pub manifest_authentications: u64,
+    /// Shards admitted to the authenticated in-memory owner.
+    pub shard_loads: u64,
     pub object_requests: u64,
     pub object_cache_hits: u64,
+    /// Content-addressed object payload authentications, excluding response IDs.
+    pub object_hashes: u64,
 }
 
 impl NativeAcceptedRun {
@@ -390,9 +403,18 @@ impl NativeCompileSession {
         options: &NativeRunOptions,
         cancellation: &FetchCancellation,
     ) -> Result<Self, NativeRunError> {
-        let cache = ObjectCache::from_environment()
-            .map_err(|error| NativeRunError::Cache(error.to_string()))?;
-        Self::new_with_cache(options, cancellation, cache)
+        let owner = NativeDistributionOwner::from_environment(options)?;
+        Self::new_with_distribution_owner(options, cancellation, &owner)
+    }
+
+    /// Starts a fresh engine session while reusing the owner's authenticated
+    /// immutable distribution root and shards.
+    pub fn new_with_distribution_owner(
+        options: &NativeRunOptions,
+        cancellation: &FetchCancellation,
+        owner: &NativeDistributionOwner,
+    ) -> Result<Self, NativeRunError> {
+        Self::new_with_resolver(options, cancellation, owner.resolver(options)?)
     }
 
     #[allow(clippy::disallowed_methods)] // Process telemetry; TeX state never observes it.
@@ -401,21 +423,31 @@ impl NativeCompileSession {
         cancellation: &FetchCancellation,
         cache: ObjectCache,
     ) -> Result<Self, NativeRunError> {
+        let owner = NativeDistributionOwner::with_cache(options, cache);
+        Self::new_with_distribution_owner(options, cancellation, &owner)
+    }
+
+    #[allow(clippy::disallowed_methods)] // Process telemetry; TeX state never observes it.
+    fn new_with_resolver(
+        options: &NativeRunOptions,
+        cancellation: &FetchCancellation,
+        mut distribution: DistributionResolver,
+    ) -> Result<Self, NativeRunError> {
         let setup_started = std::time::Instant::now();
         let source_started = std::time::Instant::now();
         let main = read(&options.input)?;
         let source_read_ns = source_started.elapsed().as_nanos();
-        let mut distribution = DistributionResolver::new(
-            cache,
-            options.distribution.clone(),
-            options.distribution_sha256.clone(),
-            options.offline,
-        );
+        let mut resolver_telemetry = ResolverTelemetry::default();
         let format_started = std::time::Instant::now();
         let (format, format_prefetch_hints) = match &options.format {
             Some(path) if path.exists() => (Some(read(path)?), Vec::new()),
             Some(path) => {
-                let resolved = distribution.resolve_format(path, options.engine, cancellation)?;
+                let resolved = distribution.resolve_format(
+                    path,
+                    options.engine,
+                    cancellation,
+                    &mut resolver_telemetry,
+                )?;
                 (Some(resolved.bytes), resolved.prefetch_hints)
             }
             None => (None, Vec::new()),
@@ -536,6 +568,7 @@ impl NativeCompileSession {
             pending_source: None,
             host_telemetry: NativeHostTelemetry {
                 startup_time,
+                resolver: resolver_telemetry,
                 ..NativeHostTelemetry::default()
             },
         })
@@ -657,6 +690,11 @@ impl NativeCompileSession {
     #[must_use]
     pub fn reuse_metrics(&self) -> Option<tex_incr::ReuseMetrics> {
         self.session.reuse_metrics()
+    }
+
+    #[must_use]
+    pub const fn host_telemetry(&self) -> NativeHostTelemetry {
+        self.host_telemetry
     }
 
     #[must_use]
@@ -894,9 +932,76 @@ fn read_classic_bib_resource(
 
 #[derive(Clone)]
 struct LoadedDistribution {
-    root: ShardedManifestRoot,
+    root: Arc<ShardedManifestRoot>,
     local_root: Option<PathBuf>,
-    shards: BTreeMap<u32, ManifestShard>,
+    shards: BTreeMap<u32, Arc<ManifestShard>>,
+}
+
+#[derive(Default)]
+struct AuthenticatedDistributionState {
+    loaded: Option<LoadedDistribution>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct DistributionOwnerIdentity {
+    source: Option<String>,
+    expected: Option<String>,
+    offline: bool,
+}
+
+impl DistributionOwnerIdentity {
+    fn from_options(options: &NativeRunOptions) -> Self {
+        Self {
+            source: options.distribution.clone(),
+            expected: options.distribution_sha256.clone(),
+            offline: options.offline,
+        }
+    }
+}
+
+/// Explicitly bounded owner for one immutable distribution identity.
+///
+/// Cloned compile sessions share only authenticated root and shard values. Object
+/// bytes still pass through the content-addressed store on every session, so its
+/// ordinary corruption detection and offline/source-selection behavior remain in
+/// force. Dropping this owner drops the reusable manifest state.
+pub struct NativeDistributionOwner {
+    cache: ObjectCache,
+    identity: DistributionOwnerIdentity,
+    authenticated: Arc<Mutex<AuthenticatedDistributionState>>,
+}
+
+impl NativeDistributionOwner {
+    pub fn from_environment(options: &NativeRunOptions) -> Result<Self, NativeRunError> {
+        let cache = ObjectCache::from_environment()
+            .map_err(|error| NativeRunError::Cache(error.to_string()))?;
+        Ok(Self::with_cache(options, cache))
+    }
+
+    #[must_use]
+    pub fn with_cache(options: &NativeRunOptions, cache: ObjectCache) -> Self {
+        Self {
+            cache,
+            identity: DistributionOwnerIdentity::from_options(options),
+            authenticated: Arc::new(Mutex::new(AuthenticatedDistributionState::default())),
+        }
+    }
+
+    fn resolver(&self, options: &NativeRunOptions) -> Result<DistributionResolver, NativeRunError> {
+        let identity = DistributionOwnerIdentity::from_options(options);
+        if identity != self.identity {
+            return Err(NativeRunError::Selection(
+                "distribution owner identity does not match the compile options".to_owned(),
+            ));
+        }
+        Ok(DistributionResolver::with_authenticated_state(
+            self.cache.clone(),
+            identity.source,
+            identity.expected,
+            identity.offline,
+            Arc::clone(&self.authenticated),
+        ))
+    }
 }
 
 struct ResolvedFormat {
@@ -913,7 +1018,7 @@ struct DistributionResolver {
     source: Option<String>,
     expected: Option<String>,
     offline: bool,
-    loaded: Option<LoadedDistribution>,
+    authenticated: Arc<Mutex<AuthenticatedDistributionState>>,
 }
 
 impl DistributionResolver {
@@ -923,12 +1028,28 @@ impl DistributionResolver {
         expected: Option<String>,
         offline: bool,
     ) -> Self {
+        Self::with_authenticated_state(
+            cache,
+            source,
+            expected,
+            offline,
+            Arc::new(Mutex::new(AuthenticatedDistributionState::default())),
+        )
+    }
+
+    fn with_authenticated_state(
+        cache: ObjectCache,
+        source: Option<String>,
+        expected: Option<String>,
+        offline: bool,
+        authenticated: Arc<Mutex<AuthenticatedDistributionState>>,
+    ) -> Self {
         Self {
             client: DistributionClient::new(cache, FetchClientConfig::default()),
             source,
             expected,
             offline,
-            loaded: None,
+            authenticated,
         }
     }
 
@@ -1033,10 +1154,8 @@ impl DistributionResolver {
         }
         let manifest_started = Instant::now();
         telemetry.manifest_lookups = telemetry.manifest_lookups.saturating_add(1);
-        if self.loaded.is_some() {
-            telemetry.manifest_cache_hits = telemetry.manifest_cache_hits.saturating_add(1);
-        }
-        let root = &self.load(cancellation)?.root;
+        let loaded = self.load(cancellation, telemetry)?;
+        let root = &loaded.root;
         let shard_bits = root.shard_bits;
         let objects_base_url = root.objects_base_url.clone();
         telemetry.manifest_lookup_time = telemetry
@@ -1142,19 +1261,12 @@ impl DistributionResolver {
         for (index, keys) in hinted_keys {
             let manifest_started = Instant::now();
             telemetry.manifest_lookups = telemetry.manifest_lookups.saturating_add(1);
-            if self
-                .loaded
-                .as_ref()
-                .is_some_and(|loaded| loaded.shards.contains_key(&index))
-            {
-                telemetry.manifest_cache_hits = telemetry.manifest_cache_hits.saturating_add(1);
-            }
-            match self.load_shard(index, cancellation) {
+            match self.load_shard(index, cancellation, telemetry) {
                 Ok(shard) => {
                     telemetry.manifest_lookup_time = telemetry
                         .manifest_lookup_time
                         .saturating_add(manifest_started.elapsed());
-                    collect_closure_hints(shard, keys, &required, &mut hints);
+                    collect_closure_hints(&shard, keys, &required, &mut hints);
                 }
                 Err(NativeRunError::Cancelled) => return Err(NativeRunError::Cancelled),
                 Err(_) => {}
@@ -1218,14 +1330,18 @@ impl DistributionResolver {
             .object_requests
             .saturating_add(fetch_requests.len() as u64);
         let object_started = Instant::now();
-        let fetched = match self.fetch_objects(&objects_base_url, &fetch_requests, cancellation) {
-            Ok(fetched) => fetched,
-            Err(NativeRunError::Cancelled) => return Err(NativeRunError::Cancelled),
-            Err(_) if fetch_requests.len() > required_fetches.len() => {
-                self.fetch_objects(&objects_base_url, &required_fetches, cancellation)?
-            }
-            Err(error) => return Err(error),
-        };
+        let fetched =
+            match self.fetch_objects(&objects_base_url, &fetch_requests, cancellation, telemetry) {
+                Ok(fetched) => fetched,
+                Err(NativeRunError::Cancelled) => return Err(NativeRunError::Cancelled),
+                Err(_) if fetch_requests.len() > required_fetches.len() => self.fetch_objects(
+                    &objects_base_url,
+                    &required_fetches,
+                    cancellation,
+                    telemetry,
+                )?,
+                Err(error) => return Err(error),
+            };
         telemetry.object_load_time = telemetry
             .object_load_time
             .saturating_add(object_started.elapsed());
@@ -1307,14 +1423,7 @@ impl DistributionResolver {
         for (index, keys) in keys_by_shard {
             let manifest_started = Instant::now();
             telemetry.manifest_lookups = telemetry.manifest_lookups.saturating_add(1);
-            if self
-                .loaded
-                .as_ref()
-                .is_some_and(|loaded| loaded.shards.contains_key(&index))
-            {
-                telemetry.manifest_cache_hits = telemetry.manifest_cache_hits.saturating_add(1);
-            }
-            let shard = self.load_shard(index, cancellation)?;
+            let shard = self.load_shard(index, cancellation, telemetry)?;
             telemetry.manifest_lookup_time = telemetry
                 .manifest_lookup_time
                 .saturating_add(manifest_started.elapsed());
@@ -1326,7 +1435,7 @@ impl DistributionResolver {
                         .map_err(|error| NativeRunError::Selection(error.to_string()))
                 })
                 .collect::<Result<Vec<_>, _>>()?;
-            let selection = select_shard(shard, &requests);
+            let selection = select_shard(&shard, &requests);
             misses.extend(selection.misses.into_iter().map(|miss| {
                 let ManifestMiss::File(key) = miss else {
                     unreachable!("native distribution batch selects only files")
@@ -1357,7 +1466,7 @@ impl DistributionResolver {
                 }
             }
             if let Some(keys) = hinted_keys.remove(&index) {
-                collect_closure_hints(shard, keys, required, hints);
+                collect_closure_hints(&shard, keys, required, hints);
             }
         }
         Ok(misses)
@@ -1415,12 +1524,14 @@ impl DistributionResolver {
         path: &Path,
         engine: EngineMode,
         cancellation: &FetchCancellation,
+        telemetry: &mut ResolverTelemetry,
     ) -> Result<ResolvedFormat, NativeRunError> {
         let name = path
             .file_stem()
             .and_then(|name| name.to_str())
             .ok_or_else(|| NativeRunError::Format("format name is not valid UTF-8".into()))?;
-        let loaded = self.load(cancellation)?.clone();
+        telemetry.manifest_lookups = telemetry.manifest_lookups.saturating_add(1);
+        let loaded = self.load(cancellation, telemetry)?;
         let entry = loaded
             .root
             .formats
@@ -1464,12 +1575,15 @@ impl DistributionResolver {
             })
             .transpose()?
             .unwrap_or_default();
+        telemetry.object_requests = telemetry.object_requests.saturating_add(1);
         if let Some(bytes) = self
             .client
             .store()
             .load_object(&entry.sha256, entry.bytes)
             .map_err(|error| NativeRunError::Cache(error.to_string()))?
         {
+            telemetry.object_cache_hits = telemetry.object_cache_hits.saturating_add(1);
+            telemetry.object_hashes = telemetry.object_hashes.saturating_add(1);
             return Ok(ResolvedFormat {
                 bytes,
                 prefetch_hints,
@@ -1487,6 +1601,7 @@ impl DistributionResolver {
                 .store()
                 .store_object(&object.sha256, object.bytes, &bytes)
                 .map_err(|error| NativeRunError::Cache(error.to_string()))?;
+            telemetry.object_hashes = telemetry.object_hashes.saturating_add(1);
             eprintln!("umber: acquired 1 distribution resource(s)");
             return Ok(ResolvedFormat {
                 bytes,
@@ -1509,6 +1624,10 @@ impl DistributionResolver {
             .map_err(map_fetch_error)?
             .pop()
             .expect("one format result");
+        telemetry.object_hashes = telemetry.object_hashes.saturating_add(1);
+        if object.cache_hit {
+            telemetry.object_cache_hits = telemetry.object_cache_hits.saturating_add(1);
+        }
         if !object.cache_hit {
             eprintln!("umber: acquired 1 distribution resource(s)");
         }
@@ -1523,11 +1642,15 @@ impl DistributionResolver {
         objects_base_url: &str,
         requests: &[FetchRequest],
         cancellation: &FetchCancellation,
+        telemetry: &mut ResolverTelemetry,
     ) -> Result<Vec<(String, Vec<u8>, bool)>, NativeRunError> {
         if requests.is_empty() {
             return Ok(Vec::new());
         }
         let local_root = self
+            .authenticated
+            .lock()
+            .map_err(|_| NativeRunError::Cache("authenticated distribution owner poisoned".into()))?
             .loaded
             .as_ref()
             .and_then(|loaded| loaded.local_root.clone());
@@ -1540,7 +1663,10 @@ impl DistributionResolver {
                 .store()
                 .load_object(&request.object.sha256, request.object.bytes)
             {
-                Ok(Some(bytes)) => found.push((request.request_key.clone(), bytes, true)),
+                Ok(Some(bytes)) => {
+                    telemetry.object_hashes = telemetry.object_hashes.saturating_add(1);
+                    found.push((request.request_key.clone(), bytes, true));
+                }
                 Ok(None) => remaining.push(request.clone()),
                 Err(error) => return Err(NativeRunError::Cache(error.to_string())),
             }
@@ -1557,6 +1683,7 @@ impl DistributionResolver {
                     .store()
                     .store_object(&request.object.sha256, request.object.bytes, &bytes)
                     .map_err(|error| NativeRunError::Cache(error.to_string()))?;
+                telemetry.object_hashes = telemetry.object_hashes.saturating_add(1);
                 found.push((request.request_key, bytes, false));
             }
             return Ok(found);
@@ -1569,34 +1696,36 @@ impl DistributionResolver {
                     .collect(),
             ));
         }
-        self.client
+        let objects = self
+            .client
             .acquire_batch(objects_base_url, &remaining, cancellation)
-            .map_err(map_fetch_error)
-            .map(|objects| {
-                found.extend(
-                    objects
-                        .into_iter()
-                        .map(|object| (object.request_key, object.bytes, object.cache_hit)),
-                );
-                found
-            })
+            .map_err(map_fetch_error)?;
+        telemetry.object_hashes = telemetry.object_hashes.saturating_add(objects.len() as u64);
+        found.extend(
+            objects
+                .into_iter()
+                .map(|object| (object.request_key, object.bytes, object.cache_hit)),
+        );
+        Ok(found)
     }
 
     fn load_shard(
         &mut self,
         index: u32,
         cancellation: &FetchCancellation,
-    ) -> Result<&ManifestShard, NativeRunError> {
+        telemetry: &mut ResolverTelemetry,
+    ) -> Result<Arc<ManifestShard>, NativeRunError> {
         check_cancelled(cancellation)?;
-        let loaded = self.load(cancellation)?;
-        if loaded.shards.contains_key(&index) {
-            return Ok(self
-                .loaded
-                .as_ref()
-                .expect("root loaded before shard")
-                .shards
-                .get(&index)
-                .expect("checked shard remains loaded"));
+        let loaded = self.load(cancellation, telemetry)?;
+        let authenticated = Arc::clone(&self.authenticated);
+        let mut state = authenticated.lock().map_err(|_| {
+            NativeRunError::Cache("authenticated distribution owner poisoned".into())
+        })?;
+        let shared = state.loaded.as_mut().expect("root loaded before shard");
+        if let Some(shard) = shared.shards.get(&index) {
+            telemetry.authenticated_manifest_hits =
+                telemetry.authenticated_manifest_hits.saturating_add(1);
+            return Ok(Arc::clone(shard));
         }
         let shard_bits = loaded.root.shard_bits;
         let local_root = loaded.local_root.clone();
@@ -1610,6 +1739,7 @@ impl DistributionResolver {
             .load_manifest(&digest)
             .map_err(|error| NativeRunError::Cache(error.to_string()))?
         {
+            telemetry.manifest_cache_hits = telemetry.manifest_cache_hits.saturating_add(1);
             bytes
         } else {
             let bytes = if let Some(local_root) = &local_root {
@@ -1622,14 +1752,7 @@ impl DistributionResolver {
                     "shard:{index}"
                 )]));
             } else {
-                let url = format!(
-                    "{}sha256-{digest}",
-                    self.loaded
-                        .as_ref()
-                        .expect("root loaded before shard")
-                        .root
-                        .objects_base_url
-                );
+                let url = format!("{}sha256-{digest}", loaded.root.objects_base_url);
                 self.client
                     .acquire_manifest(&url, &digest, cancellation)
                     .map_err(map_distribution_client_error)?
@@ -1642,16 +1765,16 @@ impl DistributionResolver {
                 .map_err(|error| NativeRunError::Cache(error.to_string()))?;
             bytes
         };
+        telemetry.manifest_reads = telemetry.manifest_reads.saturating_add(1);
+        telemetry.manifest_authentications = telemetry.manifest_authentications.saturating_add(1);
         check_cancelled(cancellation)?;
         let text = std::str::from_utf8(&bytes)
             .map_err(|error| NativeRunError::ManifestParse(error.to_string()))?;
         let shard = ManifestShard::parse(text)
             .map_err(|error| NativeRunError::ManifestParse(error.to_string()))?;
+        telemetry.manifest_parses = telemetry.manifest_parses.saturating_add(1);
         shard
-            .validate_identity(
-                &self.loaded.as_ref().expect("root loaded before shard").root,
-                index,
-            )
+            .validate_identity(&loaded.root, index)
             .map_err(|error| NativeRunError::ManifestParse(error.to_string()))?;
         for key in shard.files.keys() {
             if shard_index_for_key(key, shard_bits)
@@ -1663,26 +1786,28 @@ impl DistributionResolver {
                 )));
             }
         }
-        self.loaded
-            .as_mut()
-            .expect("root loaded before shard")
-            .shards
-            .insert(index, shard.clone());
-        Ok(self
-            .loaded
-            .as_ref()
-            .expect("root loaded before shard")
-            .shards
-            .get(&index)
-            .expect("inserted shard remains loaded"))
+        telemetry.shard_loads = telemetry.shard_loads.saturating_add(1);
+        let shard = Arc::new(shard);
+        shared.shards.insert(index, Arc::clone(&shard));
+        Ok(shard)
     }
 
     fn load(
         &mut self,
         cancellation: &FetchCancellation,
-    ) -> Result<&LoadedDistribution, NativeRunError> {
+        telemetry: &mut ResolverTelemetry,
+    ) -> Result<LoadedDistribution, NativeRunError> {
         check_cancelled(cancellation)?;
-        if self.loaded.is_none() {
+        let authenticated = Arc::clone(&self.authenticated);
+        let mut state = authenticated.lock().map_err(|_| {
+            NativeRunError::Cache("authenticated distribution owner poisoned".into())
+        })?;
+        if let Some(loaded) = &state.loaded {
+            telemetry.authenticated_manifest_hits =
+                telemetry.authenticated_manifest_hits.saturating_add(1);
+            return Ok(loaded.clone());
+        }
+        {
             let source = self
                 .source
                 .clone()
@@ -1715,6 +1840,8 @@ impl DistributionResolver {
                 )?;
                 if let Some(expected) = &expected {
                     verify_manifest_digest(&bytes, expected)?;
+                    telemetry.manifest_authentications =
+                        telemetry.manifest_authentications.saturating_add(1);
                 }
                 (bytes, local_path.parent().map(Path::to_owned))
             } else {
@@ -1725,6 +1852,7 @@ impl DistributionResolver {
                     .load_manifest(&expected)
                     .map_err(|error| NativeRunError::Cache(error.to_string()))?
                 {
+                    telemetry.manifest_cache_hits = telemetry.manifest_cache_hits.saturating_add(1);
                     bytes
                 } else {
                     if self.offline {
@@ -1737,19 +1865,23 @@ impl DistributionResolver {
                         .map_err(map_distribution_client_error)?
                         .bytes
                 };
+                telemetry.manifest_authentications =
+                    telemetry.manifest_authentications.saturating_add(1);
                 (bytes, None)
             };
+            telemetry.manifest_reads = telemetry.manifest_reads.saturating_add(1);
             let text = std::str::from_utf8(&manifest_bytes)
                 .map_err(|error| NativeRunError::ManifestParse(error.to_string()))?;
             let root = ShardedManifestRoot::parse(text)
                 .map_err(|error| NativeRunError::ManifestParse(error.to_string()))?;
-            self.loaded = Some(LoadedDistribution {
-                root,
+            telemetry.manifest_parses = telemetry.manifest_parses.saturating_add(1);
+            state.loaded = Some(LoadedDistribution {
+                root: Arc::new(root),
                 local_root,
                 shards: BTreeMap::new(),
             });
         }
-        Ok(self.loaded.as_ref().expect("distribution loaded"))
+        Ok(state.loaded.as_ref().expect("distribution loaded").clone())
     }
 }
 

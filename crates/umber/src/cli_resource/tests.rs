@@ -135,6 +135,100 @@ fn retained_revision_does_not_refetch_resolved_distribution_file() {
 }
 
 #[test]
+fn bounded_distribution_owner_reuses_authenticated_state_and_preserves_detection_boundaries() {
+    let directory = TempDir::new().expect("temporary project");
+    let distribution = directory.path().join("distribution");
+    std::fs::create_dir_all(&distribution).expect("distribution directory");
+    let package = b"\\def\\sharedmanifeststate{1}";
+    write_single_file_distribution(
+        &distribution,
+        "shared-owner",
+        "tex:package.sty",
+        "/texlive/tex/package.sty",
+        package,
+    );
+    let root_path = distribution.join("manifest-v2.json");
+    let root = std::fs::read(&root_path).expect("root manifest");
+    let input = directory.path().join("main.tex");
+    std::fs::write(&input, b"\\input package.sty \\end").expect("main input");
+    let options = NativeRunOptions {
+        input,
+        format: None,
+        initial_prefetch_keys: Vec::new(),
+        engine: EngineMode::Tex82,
+        outputs: OutputCapabilitySet::DVI,
+        html_asset_directory: None,
+        distribution: Some(distribution.to_string_lossy().into_owned()),
+        distribution_sha256: Some(hex_digest(&root)),
+        offline: true,
+        expansion_fuel: None,
+    };
+    let cache = ObjectCache::new(directory.path().join("cache"));
+    let owner = NativeDistributionOwner::with_cache(&options, cache);
+
+    let cancellation = FetchCancellation::new();
+    let mut cold =
+        NativeCompileSession::new_with_distribution_owner(&options, &cancellation, &owner)
+            .expect("cold session");
+    let cold_output = cold.compile(&cancellation).expect("cold compile");
+    let cold_counters = cold.host_telemetry().resolver;
+    assert_eq!(cold_counters.manifest_reads, 2);
+    assert_eq!(cold_counters.manifest_parses, 2);
+    assert_eq!(cold_counters.manifest_authentications, 2);
+    assert_eq!(cold_counters.shard_loads, 1);
+    assert_eq!(cold_counters.object_hashes, 1);
+    let cache_before = regular_file_inventory(directory.path().join("cache").as_path());
+
+    let mut warm =
+        NativeCompileSession::new_with_distribution_owner(&options, &cancellation, &owner)
+            .expect("same-owner session");
+    let warm_output = warm.compile(&cancellation).expect("same-owner compile");
+    let warm_counters = warm.host_telemetry().resolver;
+    assert_eq!(warm_output, cold_output, "shared state must be zero-loss");
+    assert_eq!(warm_counters.manifest_reads, 0);
+    assert_eq!(warm_counters.manifest_parses, 0);
+    assert_eq!(warm_counters.manifest_authentications, 0);
+    assert_eq!(warm_counters.shard_loads, 0);
+    assert!(warm_counters.authenticated_manifest_hits >= 2);
+    assert_eq!(warm_counters.object_hashes, 1);
+    assert_eq!(warm_counters.object_cache_hits, 1);
+    assert_eq!(
+        regular_file_inventory(directory.path().join("cache").as_path()),
+        cache_before,
+        "same-owner reuse must not rewrite cache bytes"
+    );
+
+    std::fs::write(&root_path, b"mutated root").expect("mutate pinned root");
+    let mut retained =
+        NativeCompileSession::new_with_distribution_owner(&options, &cancellation, &owner)
+            .expect("retained authenticated owner");
+    assert_eq!(
+        retained.compile(&cancellation).expect("immutable snapshot"),
+        cold_output,
+        "source mutation cannot change an already authenticated owner"
+    );
+
+    let fresh_owner = NativeDistributionOwner::with_cache(
+        &options,
+        ObjectCache::new(directory.path().join("fresh-cache")),
+    );
+    let mut fresh =
+        NativeCompileSession::new_with_distribution_owner(&options, &cancellation, &fresh_owner)
+            .expect("fresh session setup");
+    assert!(matches!(
+        fresh.compile(&cancellation),
+        Err(NativeRunError::ManifestDigestMismatch { .. })
+    ));
+
+    let mut mismatched = options.clone();
+    mismatched.offline = false;
+    assert!(matches!(
+        NativeCompileSession::new_with_distribution_owner(&mismatched, &cancellation, &owner),
+        Err(NativeRunError::Selection(_))
+    ));
+}
+
+#[test]
 fn cancelled_pending_revision_can_be_superseded() {
     let directory = TempDir::new().expect("temporary project");
     let input = directory.path().join("watch.tex");
@@ -307,6 +401,34 @@ fn write_single_file_distribution(
         bytes.len()
     );
     write_sharded_root(directory, distribution, 0, &[(shard.as_str(), true)]);
+}
+
+fn regular_file_inventory(root: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
+    fn visit(base: &Path, directory: &Path, files: &mut BTreeMap<PathBuf, Vec<u8>>) {
+        let mut entries = std::fs::read_dir(directory)
+            .expect("read cache directory")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("read cache entries");
+        entries.sort_by_key(std::fs::DirEntry::file_name);
+        for entry in entries {
+            let path = entry.path();
+            let file_type = entry.file_type().expect("cache entry type");
+            if file_type.is_dir() {
+                visit(base, &path, files);
+            } else if file_type.is_file() {
+                files.insert(
+                    path.strip_prefix(base)
+                        .expect("cache-relative path")
+                        .to_owned(),
+                    std::fs::read(path).expect("cache entry bytes"),
+                );
+            }
+        }
+    }
+
+    let mut files = BTreeMap::new();
+    visit(root, root, &mut files);
+    files
 }
 
 #[test]

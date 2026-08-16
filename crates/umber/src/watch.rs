@@ -6,7 +6,9 @@ use std::time::{Duration, Instant};
 
 use tex_incr::RevisionId;
 use umber::EngineMode;
-use umber::cli_resource::{NativeCompileSession, NativeRunError, NativeRunOptions};
+use umber::cli_resource::{
+    NativeCompileSession, NativeDistributionOwner, NativeRunError, NativeRunOptions,
+};
 use umber_fetch::FetchCancellation;
 
 #[allow(clippy::disallowed_methods)] // Host-side polling and latency reporting.
@@ -85,7 +87,12 @@ pub(super) fn run(mut args: impl Iterator<Item = String>) -> Result<(), WatchErr
     let mut candidate_source = std::fs::read_to_string(&input)?;
     let startup_cancellation = FetchCancellation::new();
     set_active(&active, Some(startup_cancellation.clone()));
-    let mut session = NativeCompileSession::new(&options, &startup_cancellation)?;
+    let distribution_owner = NativeDistributionOwner::from_environment(&options)?;
+    let mut session = NativeCompileSession::new_with_distribution_owner(
+        &options,
+        &startup_cancellation,
+        &distribution_owner,
+    )?;
     set_active(&active, None);
     if interrupted.load(Ordering::Acquire) {
         return Ok(());
@@ -154,7 +161,11 @@ pub(super) fn run(mut args: impl Iterator<Item = String>) -> Result<(), WatchErr
                 } else {
                     let cancellation = FetchCancellation::new();
                     set_active(&active, Some(cancellation.clone()));
-                    session = NativeCompileSession::new(&options, &cancellation)?;
+                    session = NativeCompileSession::new_with_distribution_owner(
+                        &options,
+                        &cancellation,
+                        &distribution_owner,
+                    )?;
                     set_active(&active, None);
                 }
                 candidate_source = next;
