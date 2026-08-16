@@ -324,9 +324,10 @@ policy, not architecture:
 ## Advance-pipeline integration semantics
 
 - **Batching.** The resolver answers one deterministic batch per attempt.
-  Required requests are authoritative. Exact format-closure hints may become
-  validated VFS inputs for the next retry; transitive manifest dependencies
-  remain transport-only prefetch.
+  Required requests are authoritative. Native compilation fetches only
+  required requests and explicit `--prefetch-input` requests; it does not turn
+  format closures or transitive manifest dependencies into live cache work.
+  Browser hosts may retain those records as optional transport prefetch.
 - **Progress.** Every response — bytes or unavailable — that satisfies an
   outstanding required request is progress. Network failure (HTTP error,
   timeout, abort) satisfies nothing: the CLI surfaces a typed fetch

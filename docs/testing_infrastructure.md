@@ -727,7 +727,26 @@ owner hits, shard loads, object hashes, and cache hits, and fails unless owner
 reuse reduces every manifest-work counter. It also requires byte-identical DVI
 output and a byte-identical complete cache inventory before and after the
 measurement, so the timing row cannot hide output loss, hash bypass, cache
-rewrites, network acquisition, or corpus prewarming.
+rewrites, network acquisition, or corpus prewarming. Its shard also carries a
+valid unrequested file and dependency hint; both routes must report exactly one
+object hash per compile, proving live work follows the one requested file.
+
+Complete distribution and cache integrity has a separate explicit verifier:
+
+```bash
+CARGO_BUILD_JOBS=1 cargo run-dev -p umber --bin distribution-verify -- \
+  --distribution target/texlive-snapshot \
+  --distribution-sha256 <pinned-root-sha256> \
+  --cache <umber-cache-root>
+```
+
+This command is intentionally outside compilation. It walks every authenticated
+shard and referenced distribution object and every current cache blob, reports
+exact hash counts and bytes, and fails on mutation. Routine hermetic controls
+cover successful complete audits plus corrupt root, unrequested object, and
+cache payload failures. Native resolver controls separately prove that corrupt
+unrequested closure/dependency objects are not opened or hashed by a normal
+compile.
 
 Snapshot scaling has a separate explicit performance tier:
 

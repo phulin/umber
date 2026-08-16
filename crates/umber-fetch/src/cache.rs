@@ -140,6 +140,16 @@ pub struct BlobStore {
     root: PathBuf,
 }
 
+/// Work performed by an explicitly requested complete cache audit.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct CacheVerificationReport {
+    pub blobs: u64,
+    pub object_blobs: u64,
+    pub manifest_blobs: u64,
+    pub other_blobs: u64,
+    pub payload_bytes: u64,
+}
+
 impl BlobStore {
     #[must_use]
     pub fn new(root: impl Into<PathBuf>) -> Self {
@@ -348,6 +358,42 @@ impl BlobStore {
         )
     }
 
+    /// Authenticates every immutable entry in the current cache namespace.
+    ///
+    /// This is an explicit maintenance operation. Ordinary cache lookup calls
+    /// [`Self::load`] for one requested key and never enumerate the namespace.
+    pub fn verify_all(&self) -> Result<CacheVerificationReport, CacheError> {
+        let Some(authority) = self.authority(false)? else {
+            return Ok(CacheVerificationReport::default());
+        };
+        let mut report = CacheVerificationReport::default();
+        for name in authority.entry_names()? {
+            if name.starts_with('.') {
+                continue;
+            }
+            let path = authority.path(&name);
+            let Some(mut file) = authority.open_entry(&name)? else {
+                return Err(CacheError::new(
+                    "verify",
+                    path,
+                    io::Error::new(
+                        io::ErrorKind::NotFound,
+                        "cache entry disappeared during audit",
+                    ),
+                ));
+            };
+            let (namespace, payload_bytes) = verify_encoded_entry(&mut file, &name, &path)?;
+            report.blobs = report.blobs.saturating_add(1);
+            report.payload_bytes = report.payload_bytes.saturating_add(payload_bytes);
+            match namespace.as_str() {
+                "objects" => report.object_blobs = report.object_blobs.saturating_add(1),
+                "manifests" => report.manifest_blobs = report.manifest_blobs.saturating_add(1),
+                _ => report.other_blobs = report.other_blobs.saturating_add(1),
+            }
+        }
+        Ok(report)
+    }
+
     fn authority(&self, create: bool) -> Result<Option<native::Authority>, CacheError> {
         match native::Authority::open(&self.root, create) {
             Ok(authority) => Ok(Some(authority)),
@@ -476,6 +522,96 @@ fn encode_entry(spec: &VerifiedBlobSpec, bytes: &[u8]) -> Vec<u8> {
     entry
 }
 
+fn verify_encoded_entry(
+    file: &mut fs::File,
+    name: &str,
+    path: &Path,
+) -> Result<(String, u64), CacheError> {
+    let encoded_bytes = file
+        .metadata()
+        .map_err(|error| CacheError::new("inspect", path, error))?
+        .len();
+    let mut header = [0_u8; HEADER_LEN];
+    file.read_exact(&mut header)
+        .map_err(|error| CacheError::new("read verification header from", path, error))?;
+    if header[..8] != BLOB_MAGIC
+        || u32::from_le_bytes(header[8..12].try_into().expect("fixed header slice")) != BLOB_SCHEMA
+        || header[16..20] != [0; 4]
+        || header[60..64] != [0; 4]
+    {
+        return Err(invalid_cache_entry(path, "invalid cache envelope header"));
+    }
+    let namespace_len =
+        u16::from_le_bytes(header[12..14].try_into().expect("fixed header slice")) as usize;
+    let key_len =
+        u16::from_le_bytes(header[14..16].try_into().expect("fixed header slice")) as usize;
+    let payload_len = u64::from_le_bytes(header[20..28].try_into().expect("fixed header slice"));
+    let expected_encoded_bytes = (HEADER_LEN as u64)
+        .checked_add(namespace_len as u64)
+        .and_then(|bytes| bytes.checked_add(key_len as u64))
+        .and_then(|bytes| bytes.checked_add(payload_len))
+        .ok_or_else(|| invalid_cache_entry(path, "cache envelope length overflows"))?;
+    if expected_encoded_bytes != encoded_bytes {
+        return Err(invalid_cache_entry(
+            path,
+            "cache envelope length does not match the file",
+        ));
+    }
+    let mut namespace = vec![0; namespace_len];
+    let mut key = vec![0; key_len];
+    file.read_exact(&mut namespace)
+        .and_then(|()| file.read_exact(&mut key))
+        .map_err(|error| CacheError::new("read verification identity from", path, error))?;
+    let namespace = String::from_utf8(namespace)
+        .map_err(|_| invalid_cache_entry(path, "cache namespace is not valid UTF-8"))?;
+    let key = String::from_utf8(key)
+        .map_err(|_| invalid_cache_entry(path, "cache key is not valid UTF-8"))?;
+    let spec = VerifiedBlobSpec::new(namespace.clone(), key.clone(), payload_len)?;
+    if entry_name(&spec) != name {
+        return Err(invalid_cache_entry(
+            path,
+            "cache filename does not match its embedded identity",
+        ));
+    }
+    let mut digest = Sha256::new();
+    let mut remaining = payload_len;
+    let mut buffer = [0_u8; 64 * 1024];
+    while remaining != 0 {
+        let length = usize::try_from(remaining.min(buffer.len() as u64))
+            .expect("bounded verification read length");
+        file.read_exact(&mut buffer[..length])
+            .map_err(|error| CacheError::new("read verification payload from", path, error))?;
+        digest.update(&buffer[..length]);
+        remaining -= length as u64;
+    }
+    let actual: [u8; 32] = digest.finalize().into();
+    if actual.as_slice() != &header[28..60] {
+        return Err(invalid_cache_entry(
+            path,
+            "cache payload does not match its envelope digest",
+        ));
+    }
+    if matches!(namespace.as_str(), "objects" | "manifests") {
+        validate_digest(&key)
+            .map_err(|_| invalid_cache_entry(path, "content-addressed cache key is invalid"))?;
+        if hex_bytes(&actual) != key {
+            return Err(invalid_cache_entry(
+                path,
+                "cache payload does not match its content-addressed key",
+            ));
+        }
+    }
+    Ok((namespace, payload_len))
+}
+
+fn invalid_cache_entry(path: &Path, message: &'static str) -> CacheError {
+    CacheError::new(
+        "verify",
+        path,
+        io::Error::new(io::ErrorKind::InvalidData, message),
+    )
+}
+
 fn decode_entry<'a>(spec: &VerifiedBlobSpec, entry: &'a [u8]) -> Option<&'a [u8]> {
     if entry.len() < HEADER_LEN
         || entry[..8] != BLOB_MAGIC
@@ -498,17 +634,20 @@ fn decode_entry<'a>(spec: &VerifiedBlobSpec, entry: &'a [u8]) -> Option<&'a [u8]
     }
     let payload = &entry[metadata_end..];
     let digest: [u8; 32] = Sha256::digest(payload).into();
-    if digest.as_slice() != &entry[28..60] || verify_payload(spec, payload).is_err() {
+    if digest.as_slice() != &entry[28..60]
+        || !payload_shape_matches(spec, payload)
+        || spec
+            .expected_sha256
+            .as_ref()
+            .is_some_and(|expected| hex_bytes(&digest) != *expected)
+    {
         return None;
     }
     Some(payload)
 }
 
 fn verify_payload(spec: &VerifiedBlobSpec, bytes: &[u8]) -> io::Result<()> {
-    if bytes.len() as u64 > spec.max_bytes
-        || spec
-            .expected_bytes
-            .is_some_and(|expected| expected != bytes.len() as u64)
+    if !payload_shape_matches(spec, bytes)
         || spec
             .expected_sha256
             .as_ref()
@@ -521,6 +660,13 @@ fn verify_payload(spec: &VerifiedBlobSpec, bytes: &[u8]) -> io::Result<()> {
     } else {
         Ok(())
     }
+}
+
+fn payload_shape_matches(spec: &VerifiedBlobSpec, bytes: &[u8]) -> bool {
+    bytes.len() as u64 <= spec.max_bytes
+        && spec
+            .expected_bytes
+            .is_none_or(|expected| expected == bytes.len() as u64)
 }
 
 fn entry_name(spec: &VerifiedBlobSpec) -> String {

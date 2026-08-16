@@ -180,6 +180,63 @@ fn read_only_store_miss_does_not_create_cache_paths() {
 }
 
 #[test]
+fn explicit_cache_verifier_authenticates_every_current_blob() {
+    let temp = TempDir::new().expect("cache tempdir");
+    let store = BlobStore::new(temp.path());
+    let object = b"object payload";
+    let object_digest = hex_digest(object);
+    store
+        .store_object(&object_digest, object.len() as u64, object)
+        .expect("store object");
+    let manifest = br#"{"schema":2}"#;
+    let manifest_digest = hex_digest(manifest);
+    store
+        .store_manifest(&manifest_digest, manifest)
+        .expect("store manifest");
+
+    assert_eq!(
+        store.verify_all().expect("complete cache audit"),
+        CacheVerificationReport {
+            blobs: 2,
+            object_blobs: 1,
+            manifest_blobs: 1,
+            other_blobs: 0,
+            payload_bytes: (object.len() + manifest.len()) as u64,
+        }
+    );
+}
+
+#[test]
+fn explicit_cache_verifier_rejects_mutation_without_quarantining() {
+    let temp = TempDir::new().expect("cache tempdir");
+    let store = BlobStore::new(temp.path());
+    let bytes = b"cache mutation control";
+    let digest = hex_digest(bytes);
+    let spec = VerifiedBlobSpec::content_addressed(
+        "objects",
+        &digest,
+        bytes.len() as u64,
+        bytes.len() as u64,
+    )
+    .expect("object specification");
+    store.store(&spec, bytes).expect("store object");
+    let path = store.entry_path(&spec);
+    let mut encoded = std::fs::read(&path).expect("encoded cache entry");
+    *encoded.last_mut().expect("payload byte") ^= 1;
+    std::fs::write(&path, &encoded).expect("mutate cache entry");
+
+    let error = store
+        .verify_all()
+        .expect_err("mutation must fail explicit audit");
+    assert!(error.to_string().contains("envelope digest"), "{error}");
+    assert_eq!(
+        std::fs::read(&path).expect("audit is read-only"),
+        encoded,
+        "the explicit verifier must not quarantine or rewrite cache bytes"
+    );
+}
+
+#[test]
 #[allow(
     clippy::disallowed_methods,
     reason = "the compatibility test writes the previous native cache layout"

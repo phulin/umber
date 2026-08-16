@@ -105,19 +105,16 @@ schema 2 requires a schema-1 input closure; it validates and canonicalizes the
 keys, then requires every key to resolve to the authoritative published file
 map. The staged verifier repeats the bounds, order, syntax, and existence checks
 against the complete authenticated shard set. After a compatible pinned format
-is selected, native and browser hosts translate its closure into typed file
-requests. The compile session emits the deduplicated closure once in
-`NeedResources.prefetch_hints`, alongside the first actual format-input miss.
-Schema-2 roots simply contribute no hints.
+is selected, browser hosts may translate its closure into typed prefetch
+requests. The native compiler keeps the closure as authenticated publication
+metadata and opens no closure shard or object until the engine requests that
+logical input. Schema-2 roots continue to carry no closure.
 
-Hints remain optional transport advice. Resolvers fetch the authenticated
-closure in one bounded speculative batch and may return positive responses for
-the exact file hints emitted by the session. The session authorizes only that
-one-shot set, validates and installs the complete response batch atomically,
-and still measures retry progress from required requests only. User files are
-removed before hint emission, native local search has first refusal, and stale,
-absent, failed, or over-budget hints produce neither responses nor unavailable
-bindings. Transitive dependency prefetches remain cache-only transport work.
+Hints remain optional browser transport advice. Browser responses are still
+validated and installed atomically, and retry progress still comes from
+required requests only. Native `--prefetch-input` is a separate explicit user
+request; ordinary native compilation does not follow format closures or inline
+dependency hints speculatively.
 
 ## Partition and shard schema
 
@@ -185,13 +182,37 @@ retained by this owner: every fresh engine session still loads them through the
 content-addressed blob store, which rechecks cache bytes and preserves the
 existing local/cache/remote and offline ladders.
 
+The live native resolver reads and authenticates only the pinned root, the
+canonical shards for unresolved required or explicitly prefetched keys, and
+the selected objects. Inline dependency records and format closures do not
+cause background shard or object access. Consequently `shard_loads`,
+`object_requests`, and `object_hashes` are proportional to selected resources,
+apart from the single root and deduplicated shard lookups.
+
 Native resolver telemetry separately counts root/shard reads, strict parses,
 digest authentications, shard loads, authenticated-owner hits, persistent
 manifest cache hits, object payload hashes, and object cache hits. The
 hermetic `distribution-startup-benchmark` compares real cold child processes
 with fresh sessions under one owner and fails unless manifest work decreases,
 all DVI bytes remain identical, and the complete cache byte inventory remains
-unchanged.
+unchanged. Its valid unrequested dependency control must remain outside the
+cache, and each measured compile must report exactly one requested object hash.
+
+Complete immutable-graph and cache auditing is explicit:
+
+```bash
+CARGO_BUILD_JOBS=1 cargo run-dev -p umber --bin distribution-verify -- \
+  --distribution target/texlive-snapshot \
+  --distribution-sha256 <pinned-root-sha256> \
+  --cache <umber-cache-root>
+```
+
+The command requires a root pin, strictly parses canonical root and shard
+bytes, assembles the complete cross-shard graph, streams every referenced
+object digest, and authenticates every current `blobs-v1` cache envelope. It
+is read-only and reports exact root, shard, object, blob, and hashed-byte work.
+Mutation of a root, shard, referenced object, envelope, or payload fails the
+command. Neither `umber run` nor `umber watch` invokes this exhaustive walk.
 
 ## Publisher and release workflow
 

@@ -181,6 +181,12 @@ fn parent() -> Result<(), String> {
     {
         return Err("shared owner did not reduce authenticated manifest startup work".to_owned());
     }
+    if cold_work.object_hashes != SAMPLES as u64 || shared_work.object_hashes != SAMPLES as u64 {
+        return Err(
+            "live distribution object hashes were not proportional to requested resources"
+                .to_owned(),
+        );
+    }
 
     println!(
         "distribution_startup schema=1 samples={SAMPLES} cache_files={} cache_bytes={} cache_sha256={} dvi_sha256={}",
@@ -192,7 +198,7 @@ fn parent() -> Result<(), String> {
     print_result("cold_process", cold_elapsed, cold_work);
     print_result("same_process_shared_owner", shared_elapsed, shared_work);
     println!(
-        "zero_loss=true cache_bytes_unchanged=true manifest_read_reduction={} manifest_parse_reduction={} manifest_authentication_reduction={} shard_load_reduction={}",
+        "zero_loss=true cache_bytes_unchanged=true object_hashes_proportional=true manifest_read_reduction={} manifest_parse_reduction={} manifest_authentication_reduction={} shard_load_reduction={}",
         cold_work.manifest_reads - shared_work.manifest_reads,
         cold_work.manifest_parses - shared_work.manifest_parses,
         cold_work.manifest_authentications - shared_work.manifest_authentications,
@@ -283,12 +289,21 @@ impl Fixture {
         let package_digest = hex_digest(package);
         fs::write(objects.join(format!("sha256-{package_digest}")), package)
             .map_err(|error| error.to_string())?;
+        let unrequested = b"unrequested valid distribution object";
+        let unrequested_digest = hex_digest(unrequested);
+        fs::write(
+            objects.join(format!("sha256-{unrequested_digest}")),
+            unrequested,
+        )
+        .map_err(|error| error.to_string())?;
         let shard = concat!(
-            r#"{"schema":1,"distribution":"startup-benchmark","index":0,"files":{"tex:benchmark.sty":{"virtualPath":"/texlive/tex/benchmark.sty","object":"sha256-$DIGEST","sha256":"$DIGEST","bytes":$BYTES}}}"#,
+            r#"{"schema":1,"distribution":"startup-benchmark","index":0,"files":{"tex:benchmark.sty":{"virtualPath":"/texlive/tex/benchmark.sty","object":"sha256-$DIGEST","sha256":"$DIGEST","bytes":$BYTES,"dependencies":[{"key":"tex:unrequested.sty","virtualPath":"/texlive/tex/unrequested.sty","object":"sha256-$UNREQUESTED_DIGEST","sha256":"$UNREQUESTED_DIGEST","bytes":$UNREQUESTED_BYTES}]},"tex:unrequested.sty":{"virtualPath":"/texlive/tex/unrequested.sty","object":"sha256-$UNREQUESTED_DIGEST","sha256":"$UNREQUESTED_DIGEST","bytes":$UNREQUESTED_BYTES}}}"#,
             "\n"
         )
         .replace("$DIGEST", &package_digest)
-        .replace("$BYTES", &package.len().to_string());
+        .replace("$BYTES", &package.len().to_string())
+        .replace("$UNREQUESTED_DIGEST", &unrequested_digest)
+        .replace("$UNREQUESTED_BYTES", &unrequested.len().to_string());
         let shard_digest = hex_digest(shard.as_bytes());
         fs::write(objects.join(format!("sha256-{shard_digest}")), shard)
             .map_err(|error| error.to_string())?;

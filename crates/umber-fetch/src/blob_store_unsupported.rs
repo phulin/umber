@@ -24,6 +24,10 @@ impl Authority {
         unreachable!("unsupported authority cannot be constructed")
     }
 
+    pub(super) fn entry_names(&self) -> Result<Vec<String>, CacheError> {
+        unreachable!("unsupported authority cannot be constructed")
+    }
+
     pub(super) fn quarantine(&self, _: &str) -> Result<(), CacheError> {
         unreachable!("unsupported authority cannot be constructed")
     }

@@ -1347,10 +1347,9 @@ fn format_closure_is_loaded_only_as_each_input_is_requested() {
             .expect("first required input");
         assert_eq!(responses.len(), 1);
         for (index, (digest, bytes)) in closure_objects.iter().enumerate() {
-            let spec = umber_fetch::VerifiedBlobSpec::content_addressed(
-                "objects", digest, *bytes, *bytes,
-            )
-            .expect("closure object specification");
+            let spec =
+                umber_fetch::VerifiedBlobSpec::content_addressed("objects", digest, *bytes, *bytes)
+                    .expect("closure object specification");
             assert!(
                 cache.entry_path(&spec).exists() == (index == 0),
                 "only the first requested closure object may be cached"

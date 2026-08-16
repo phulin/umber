@@ -25,6 +25,53 @@ fn exits_successfully() {
 }
 
 #[test]
+#[allow(clippy::disallowed_methods)] // CLI boundary intentionally launches the explicit verifier.
+fn distribution_verifier_is_an_explicit_positive_and_negative_cache_control() {
+    let directory = tempfile::tempdir().expect("cache verification fixture");
+    let cache = directory.path().join("cache");
+    let store = umber_fetch::BlobStore::new(&cache);
+    let bytes = b"explicit verifier fixture";
+    let digest = format!("{:x}", Sha256::digest(bytes));
+    let spec = umber_fetch::VerifiedBlobSpec::content_addressed(
+        "objects",
+        &digest,
+        bytes.len() as u64,
+        bytes.len() as u64,
+    )
+    .expect("cache object specification");
+    store.store(&spec, bytes).expect("cache object");
+
+    let positive = Command::new(env!("CARGO_BIN_EXE_distribution-verify"))
+        .args(["--cache", cache.to_str().expect("cache path")])
+        .output()
+        .expect("run explicit verifier");
+    assert!(positive.status.success());
+    assert_eq!(
+        positive.stdout,
+        format!(
+            "cache blobs=1 objects=1 manifests=0 other=0 payload_bytes={}\n",
+            bytes.len()
+        )
+        .as_bytes()
+    );
+
+    let path = store.entry_path(&spec);
+    let mut encoded = fs::read(&path).expect("encoded cache object");
+    *encoded.last_mut().expect("payload byte") ^= 1;
+    fs::write(&path, encoded).expect("mutate cache object");
+    let negative = Command::new(env!("CARGO_BIN_EXE_distribution-verify"))
+        .args(["--cache", cache.to_str().expect("cache path")])
+        .output()
+        .expect("run explicit verifier against corruption");
+    assert!(!negative.status.success());
+    assert!(
+        String::from_utf8_lossy(&negative.stderr).contains("envelope digest"),
+        "{}",
+        String::from_utf8_lossy(&negative.stderr)
+    );
+}
+
+#[test]
 #[allow(clippy::disallowed_methods)] // CLI boundary intentionally launches the built Umber binary.
 fn reserved_format_worker_invocations_are_owned_before_application_dispatch() {
     let directory = tempfile::tempdir().expect("create isolated worker cache root");

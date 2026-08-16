@@ -69,9 +69,11 @@ the canonical key and distinguish hit, miss, and publication.
 
 The full native TeX Live snapshot and WASM bundle builders invoke this same
 pinned builder, so they share cache selection and deterministic publication.
-Runtime distribution acquisition remains a separate object-cache workflow: a
-published schema-3 format closure is still offered as prefetch hints and is
-installed with the required input in the established two-attempt compile path.
+Runtime distribution acquisition remains a separate object-cache workflow.
+The native compiler validates schema-3 closure metadata with its root but does
+not fetch closure objects speculatively; each input enters the cache only after
+the engine or an explicit `--prefetch-input` request selects it. Browser hosts
+may retain the closure as optional transport advice.
 The cache does not mask bootstrap failures: misses, `--force`, and `--check`
 all exercise source initialization and report any failure normally. Format
 generation uses the accepted bounded 500,000,000 cumulative-fuel budget for

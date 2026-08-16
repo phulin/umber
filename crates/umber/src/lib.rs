@@ -18,6 +18,8 @@ use tex_state::{
 
 #[cfg(not(target_arch = "wasm32"))]
 pub mod cli_resource;
+#[cfg(not(target_arch = "wasm32"))]
+mod distribution_verify;
 mod editor_session;
 mod engine_session;
 mod fixed_point;
@@ -44,6 +46,10 @@ mod virtual_compile;
 
 pub const PACKAGE_VERSION: &str = env!("CARGO_PKG_VERSION");
 
+#[cfg(not(target_arch = "wasm32"))]
+pub use distribution_verify::{
+    DistributionVerificationError, DistributionVerificationReport, verify_distribution,
+};
 pub use editor_session::{
     EditorCompileSession, EditorResourceError, EditorSessionOptions, EditorSessionStatus,
     EditorStabilizationAttempt,

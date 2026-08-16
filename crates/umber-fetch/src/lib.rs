@@ -6,7 +6,7 @@ mod downloader;
 mod fetch;
 mod manifest;
 
-pub use cache::{BlobStore, CacheError, ObjectCache, VerifiedBlobSpec};
+pub use cache::{BlobStore, CacheError, CacheVerificationReport, ObjectCache, VerifiedBlobSpec};
 pub use distribution_client::{AcquiredManifest, DistributionClient, DistributionClientError};
 pub use fetch::{
     BatchFetchError, FetchCancellation, FetchClient, FetchClientConfig, FetchDiagnostic,

@@ -16,6 +16,12 @@ path = "src/bin/distribution_startup_benchmark.rs"
 test = false
 bench = false
 
+[[bin]]
+name = "distribution-verify"
+path = "src/bin/distribution_verify.rs"
+test = false
+bench = false
+
 [features]
 default = []
 shadow = ["tex-state/shadow"]

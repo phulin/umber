@@ -112,6 +112,34 @@ impl Authority {
         }
     }
 
+    pub(super) fn entry_names(&self) -> Result<Vec<String>, CacheError> {
+        let mut directory = rustix::fs::Dir::read_from(&self.namespace).map_err(|error| {
+            CacheError::io(
+                "enumerate anchored namespace",
+                &self.display,
+                io::Error::from(error),
+            )
+        })?;
+        let mut names = Vec::new();
+        for entry in &mut directory {
+            let entry = entry.map_err(|error| {
+                CacheError::io(
+                    "enumerate anchored namespace",
+                    &self.display,
+                    io::Error::from(error),
+                )
+            })?;
+            let name = entry.file_name().to_str().map_err(|_| {
+                authority_error(&self.display, "cache entry name is not valid UTF-8")
+            })?;
+            if name != "." && name != ".." {
+                names.push(name.to_owned());
+            }
+        }
+        names.sort();
+        Ok(names)
+    }
+
     pub(super) fn quarantine(&self, name: &str) -> Result<(), CacheError> {
         static NONCE: AtomicU64 = AtomicU64::new(0);
         let quarantine = format!(
