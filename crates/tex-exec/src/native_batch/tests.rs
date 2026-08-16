@@ -63,9 +63,9 @@ fn production_episode_matches_canonical_state_artifact_dvi_effects_and_channels(
     writer.write_page_plan(&plan).expect("DVI page writes");
     let canonical_dvi = writer.finish().expect("DVI stream finishes");
 
-    let admission_stores = tex_state::Universe::new_with_plain_catcodes();
+    let mut admission_stores = tex_state::Universe::new_with_plain_catcodes();
     let attempt = run_native_batch_episode(
-        &admission_stores,
+        &mut admission_stores,
         NativeBatchRequest {
             source: Arc::<[u8]>::from(SOURCE),
             expected_calls: 8,
@@ -80,6 +80,14 @@ fn production_episode_matches_canonical_state_artifact_dvi_effects_and_channels(
     };
 
     assert_eq!(shared.counts, [0, 36, 12]);
+    assert_eq!(
+        [
+            admission_stores.count(0),
+            admission_stores.count(1),
+            admission_stores.count(2)
+        ],
+        shared.counts
+    );
     assert_eq!(shared.calls, 8);
     assert_eq!(shared.artifact, canonical_artifact);
     assert_eq!(shared.artifact_bytes, committed.bytes());
@@ -102,12 +110,38 @@ fn production_episode_matches_canonical_state_artifact_dvi_effects_and_channels(
 }
 
 #[test]
+fn execution_barrier_rolls_canonical_count_and_group_state_back() {
+    let mut stores = tex_state::Universe::new_with_plain_catcodes();
+    stores.set_count(0, 17);
+    let before_hash = stores.snapshot().state_hash();
+    let attempt = run_native_batch_episode(
+        &mut stores,
+        NativeBatchRequest {
+            source: Arc::<[u8]>::from(&br"\count0=41\shipout\hbox{A\end"[..]),
+            expected_calls: 1,
+            profile: CommandProfile::TEX82,
+            font_id: 0,
+            font: test_font(),
+        },
+    )
+    .expect("runtime fallback is not an execution failure");
+
+    assert!(matches!(
+        attempt,
+        NativeBatchAttempt::Fallback(NativeBatchFallback::Command(_))
+    ));
+    assert_eq!(stores.count(0), 17);
+    assert_eq!(stores.group_depth(), 0);
+    assert_eq!(stores.snapshot().state_hash(), before_hash);
+}
+
+#[test]
 fn observable_command_falls_back_before_mutation() {
-    let stores = tex_state::Universe::new_with_plain_catcodes();
+    let mut stores = tex_state::Universe::new_with_plain_catcodes();
     let before_counts = [stores.count(0), stores.count(1), stores.count(2)];
     let before_effects = stores.world().effect_records().len();
     let attempt = run_native_batch_episode(
-        &stores,
+        &mut stores,
         NativeBatchRequest {
             source: Arc::<[u8]>::from(&br"\message{barrier}\end"[..]),
             expected_calls: 0,

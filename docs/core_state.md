@@ -125,6 +125,16 @@ survives group compaction without changing the group-exit value. Box ownership
 remains attached to the box write outcome but does not replace this semantic
 receipt.
 
+A borrow-scoped count/group episode is an accessor over these same structures,
+not a second environment. It writes the fixed count bank through the ordinary
+barrier and opens/closes the same typed journal markers as scalar `Universe`
+calls. Because the episode admits no observation or checkpoint inside it,
+changed-at and exact-identity publication may coalesce until its next group or
+completion boundary; the visible value and undo records never do. Active
+tracked regions and group/restoration tracing force canonical scalar execution.
+An enclosing local-retry snapshot restores the complete aggregate if a later
+episode or output barrier fails.
+
 The journal also owns an incremental projection of TeX82 §§273--280's physical
 save-stack words for §1334's diagnostic high-water accounting. Appending a
 group marker, local save, global supersession, or box save updates that derived

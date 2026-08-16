@@ -172,9 +172,10 @@ pub use stores::{FontParameterError, GroupFrame, GroupKind, GroupMismatch, Prepa
 #[cfg(any(test, feature = "testing"))]
 pub use stores::{TestingOwnershipCensus, TestingValuePoolCensus};
 pub use universe::{
-    BoxBuildTransaction, BoxDimension, EngineBoundaryHasher, FormatError, GenerationForkError,
-    GenerationSubstrate, GeometryObservation, InputOpenContext, InputOpenState, InputReadState,
-    InteractionMode, LocalRetrySnapshot, ParagraphShapeLine, PenaltyArrayKind, PreparedPageSuffix,
+    BoxBuildTransaction, BoxDimension, CountGroupEpisode, CountGroupEpisodeBarrier,
+    EngineBoundaryHasher, FormatError, GenerationForkError, GenerationSubstrate,
+    GeometryObservation, InputOpenContext, InputOpenState, InputReadState, InteractionMode,
+    LocalRetrySnapshot, ParagraphShapeLine, PenaltyArrayKind, PreparedPageSuffix,
     PrivateRevisionAcceptanceError, ReplayProbeTransaction, ShipoutTransaction, Snapshot,
     TakeUnboxResult, TrackedEnvironmentWrite, TrackedRegionError, TrackedRegionMark,
     TrackedRegionRecord, UnboxKind, Universe, WorldMut,

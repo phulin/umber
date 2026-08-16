@@ -8,6 +8,7 @@ use std::sync::Arc;
 
 use bumpalo::{Bump, collections::Vec as BumpVec};
 use tex_state::token::Catcode;
+use tex_state::{CountGroupEpisode, CountGroupEpisodeBarrier, GroupKind, Universe};
 
 use crate::input::{
     CatcodeQueries, LineBackingRegistry, RegisteredSource, SourceCursor, SourceToken,
@@ -37,6 +38,7 @@ pub enum NativeBatchBarrier {
     MissingEnd,
     Malformed(&'static str),
     ArithmeticOverflow,
+    State(CountGroupEpisodeBarrier),
 }
 
 /// One node emitted by the shared command-side batch semantics.
@@ -124,10 +126,13 @@ impl NativeBatchProgram {
         })
     }
 
-    /// Executes an already admitted program in one mutation-free host episode.
-    pub fn execute(&self) -> Result<NativeBatchOutcome, NativeBatchBarrier> {
+    /// Executes an already admitted program against canonical engine state.
+    pub fn execute(&self, stores: &mut Universe) -> Result<NativeBatchOutcome, NativeBatchBarrier> {
         let bump = Bump::new();
-        Kernel::new(&bump, &self.tokens, self.expected_calls).execute()
+        let state = stores
+            .count_group_episode()
+            .map_err(NativeBatchBarrier::State)?;
+        Kernel::new(&bump, &self.tokens, self.expected_calls, state).execute()
     }
 }
 
@@ -212,6 +217,8 @@ enum Control {
     Kern,
     Relax,
     End,
+    BeginGroup,
+    EndGroup,
 }
 
 impl Control {
@@ -231,6 +238,8 @@ impl Control {
             "kern" => Self::Kern,
             "relax" => Self::Relax,
             "end" => Self::End,
+            "begingroup" => Self::BeginGroup,
+            "endgroup" => Self::EndGroup,
             _ => return None,
         })
     }
@@ -251,6 +260,8 @@ impl Control {
             11 => Self::Kern,
             12 => Self::Relax,
             13 => Self::End,
+            14 => Self::BeginGroup,
+            15 => Self::EndGroup,
             _ => unreachable!("validated packed control id"),
         }
     }
@@ -272,22 +283,13 @@ enum Frame<'a> {
     },
 }
 
-#[derive(Clone, Copy)]
-struct SaveEntry {
-    index: u8,
-    old_value: i32,
-    old_level: u16,
-}
-
-struct Kernel<'a> {
+struct Kernel<'a, 'state> {
     bump: &'a Bump,
+    state: CountGroupEpisode<'state>,
+    initial_group_depth: u32,
     frames: Vec<Frame<'a>>,
     backup: Option<Token>,
     macro_bodies: [Option<&'a [Token]>; 2],
-    eqtb: [i32; 256],
-    eq_levels: [u16; 256],
-    save_entries: Vec<SaveEntry>,
-    group_marks: Vec<usize>,
     nodes: Vec<NativeBatchNode>,
     global_prefix: bool,
     pending_shipout: bool,
@@ -295,10 +297,18 @@ struct Kernel<'a> {
     calls: usize,
 }
 
-impl<'a> Kernel<'a> {
-    fn new(bump: &'a Bump, tokens: &'a [Token], expected_calls: usize) -> Self {
+impl<'a, 'state> Kernel<'a, 'state> {
+    fn new(
+        bump: &'a Bump,
+        tokens: &'a [Token],
+        expected_calls: usize,
+        state: CountGroupEpisode<'state>,
+    ) -> Self {
+        let initial_group_depth = state.group_depth();
         Self {
             bump,
+            state,
+            initial_group_depth,
             frames: vec![Frame::Packed {
                 tokens,
                 cursor: 0,
@@ -306,10 +316,6 @@ impl<'a> Kernel<'a> {
             }],
             backup: None,
             macro_bodies: [None; 2],
-            eqtb: [0; 256],
-            eq_levels: [1; 256],
-            save_entries: Vec::with_capacity(16),
-            group_marks: Vec::with_capacity(4),
             nodes: Vec::with_capacity(expected_calls.saturating_mul(2)),
             global_prefix: false,
             pending_shipout: false,
@@ -332,7 +338,10 @@ impl<'a> Kernel<'a> {
                 return Err(NativeBatchBarrier::Malformed("dispatch character"));
             }
             if token.tag() == TAG_END_GROUP {
-                self.end_group()?;
+                if !self.in_hbox || self.state.group_depth() <= self.initial_group_depth {
+                    return Err(NativeBatchBarrier::Malformed("unmatched group end"));
+                }
+                self.end_group(GroupKind::HBox)?;
                 self.in_hbox = false;
                 continue;
             }
@@ -350,15 +359,21 @@ impl<'a> Kernel<'a> {
                 Control::Shipout => self.pending_shipout = true,
                 Control::Hbox => self.begin_hbox()?,
                 Control::Kern => self.emit_kern()?,
+                Control::BeginGroup => self.begin_group()?,
+                Control::EndGroup => self.end_group(GroupKind::SemiSimple)?,
                 Control::End => break,
                 Control::EmitE | Control::EmitF => unreachable!("macro expands before dispatch"),
             }
         }
-        if self.in_hbox || !self.group_marks.is_empty() {
+        if self.in_hbox || self.state.group_depth() != self.initial_group_depth {
             return Err(NativeBatchBarrier::Malformed("hbox group"));
         }
         Ok(NativeBatchOutcome {
-            counts: [self.eqtb[0], self.eqtb[1], self.eqtb[2]],
+            counts: [
+                self.state.count(0),
+                self.state.count(1),
+                self.state.count(2),
+            ],
             nodes: self.nodes,
             calls: self.calls,
         })
@@ -512,7 +527,9 @@ impl<'a> Kernel<'a> {
         self.expect_expanded_char(b'b', "advance keyword")?;
         self.expect_expanded_char(b'y', "advance keyword")?;
         let amount = self.scan_number()?;
-        let value = self.eqtb[usize::from(index)]
+        let value = self
+            .state
+            .count(index)
             .checked_add(amount)
             .ok_or(NativeBatchBarrier::ArithmeticOverflow)?;
         self.write_count(index, value);
@@ -579,25 +596,30 @@ impl<'a> Kernel<'a> {
         if opener.tag() != TAG_BEGIN_GROUP {
             return Err(NativeBatchBarrier::Malformed("hbox opener"));
         }
-        self.group_marks.push(self.save_entries.len());
+        self.state.enter_group(GroupKind::HBox);
         self.pending_shipout = false;
         self.in_hbox = true;
         Ok(())
     }
 
-    fn end_group(&mut self) -> Result<(), NativeBatchBarrier> {
-        let mark = self
-            .group_marks
-            .pop()
-            .ok_or(NativeBatchBarrier::Malformed("unmatched group end"))?;
-        for entry in self.save_entries.drain(mark..).rev() {
-            let slot = usize::from(entry.index);
-            if self.eq_levels[slot] != 1 {
-                self.eqtb[slot] = entry.old_value;
-                self.eq_levels[slot] = entry.old_level;
-            }
+    fn begin_group(&mut self) -> Result<(), NativeBatchBarrier> {
+        if self.global_prefix {
+            return Err(NativeBatchBarrier::Malformed("prefix before group"));
         }
+        self.state.enter_group(GroupKind::SemiSimple);
         Ok(())
+    }
+
+    fn end_group(&mut self, expected: GroupKind) -> Result<(), NativeBatchBarrier> {
+        if self.global_prefix || self.state.group_depth() <= self.initial_group_depth {
+            return Err(NativeBatchBarrier::Malformed("unmatched group end"));
+        }
+        if self.state.innermost_group_kind() != Some(expected) {
+            return Err(NativeBatchBarrier::Malformed("mismatched group end"));
+        }
+        self.state
+            .leave_group(expected)
+            .map_err(|_| NativeBatchBarrier::Malformed("mismatched group end"))
     }
 
     fn emit_kern(&mut self) -> Result<(), NativeBatchBarrier> {
@@ -643,23 +665,7 @@ impl<'a> Kernel<'a> {
     }
 
     fn write_count(&mut self, index: u8, value: i32) {
-        let slot = usize::from(index);
-        let current_level = self.group_marks.len() as u16 + 1;
-        if !self.global_prefix
-            && !self.group_marks.is_empty()
-            && self.eq_levels[slot] != current_level
-        {
-            self.save_entries.push(SaveEntry {
-                index,
-                old_value: self.eqtb[slot],
-                old_level: self.eq_levels[slot],
-            });
-            self.eq_levels[slot] = current_level;
-        }
-        self.eqtb[slot] = value;
-        if self.global_prefix {
-            self.eq_levels[slot] = 1;
-        }
+        self.state.set_count(index, value, self.global_prefix);
         self.global_prefix = false;
     }
 

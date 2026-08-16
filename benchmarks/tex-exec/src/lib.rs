@@ -32,9 +32,9 @@ impl std::fmt::Display for SharedBatchError {
 impl std::error::Error for SharedBatchError {}
 
 pub fn run_shared(workload: &Workload) -> Result<BatchResult, SharedBatchError> {
-    let stores = tex_state::Universe::new_with_plain_catcodes();
+    let mut stores = tex_state::Universe::new_with_plain_catcodes();
     let attempt = tex_exec::run_native_batch_episode(
-        &stores,
+        &mut stores,
         tex_exec::NativeBatchRequest {
             source: workload.source(),
             expected_calls: workload.calls(),

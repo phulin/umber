@@ -77,7 +77,7 @@ impl std::error::Error for NativeBatchRunError {}
 /// before direct execution. Every command-side refusal is returned as a typed
 /// fallback while `stores` and all host-visible output remain unchanged.
 pub fn run_native_batch_episode(
-    stores: &Universe,
+    stores: &mut Universe,
     request: NativeBatchRequest,
 ) -> Result<NativeBatchAttempt, NativeBatchRunError> {
     let program = match NativeBatchProgram::compile(
@@ -99,114 +99,126 @@ pub fn run_native_batch_episode(
             )));
         }
     };
-    let outcome = match program.execute() {
-        Ok(outcome) => outcome,
-        Err(barrier) => {
-            return Ok(NativeBatchAttempt::Fallback(NativeBatchFallback::Command(
-                barrier,
-            )));
-        }
-    };
     let Some(metrics) = request.font.character_metrics('A') else {
         return Ok(NativeBatchAttempt::Fallback(
             NativeBatchFallback::MissingCharacter(b'A'),
         ));
     };
 
-    let mut width = 0_i32;
-    let mut nodes = Vec::with_capacity(outcome.nodes.len());
-    for node in outcome.nodes {
-        let (page_node, contribution) = match node {
-            NativeBatchNode::Character(ch) => (
-                PageNode::Char {
-                    font_id: request.font_id,
-                    ch: u32::from(ch),
-                    width: metrics.width,
-                },
-                metrics.width.raw(),
-            ),
-            NativeBatchNode::Kern(amount) => (
-                PageNode::Kern {
-                    amount: Scaled::from_raw(amount),
-                    kind: KernKind::Explicit,
-                },
-                amount,
-            ),
+    let rollback = stores.snapshot_for_local_retry();
+    let attempt = (|| {
+        let outcome = match program.execute(stores) {
+            Ok(outcome) => outcome,
+            Err(barrier) => {
+                return Ok(NativeBatchAttempt::Fallback(NativeBatchFallback::Command(
+                    barrier,
+                )));
+            }
         };
-        width = width
-            .checked_add(contribution)
-            .ok_or(NativeBatchRunError::DimensionOverflow)?;
-        nodes.push(page_node);
+
+        let mut width = 0_i32;
+        let mut nodes = Vec::with_capacity(outcome.nodes.len());
+        for node in outcome.nodes {
+            let (page_node, contribution) = match node {
+                NativeBatchNode::Character(ch) => (
+                    PageNode::Char {
+                        font_id: request.font_id,
+                        ch: u32::from(ch),
+                        width: metrics.width,
+                    },
+                    metrics.width.raw(),
+                ),
+                NativeBatchNode::Kern(amount) => (
+                    PageNode::Kern {
+                        amount: Scaled::from_raw(amount),
+                        kind: KernKind::Explicit,
+                    },
+                    amount,
+                ),
+            };
+            width = width
+                .checked_add(contribution)
+                .ok_or(NativeBatchRunError::DimensionOverflow)?;
+            nodes.push(page_node);
+        }
+        let root = PageNode::HList(BoxNode {
+            width: Scaled::from_raw(width),
+            height: metrics.height,
+            depth: metrics.depth,
+            shift: Scaled::from_raw(0),
+            glue_set: GlueSetRatio::ZERO,
+            glue_sign: GlueSign::Normal,
+            glue_order: GlueOrder::Normal,
+            children: nodes,
+        });
+        let mut page_counts = [0; 10];
+        page_counts[..3].copy_from_slice(&outcome.counts);
+        let artifact = UnvalidatedPageArtifact {
+            job: JobInfo {
+                mag: 1000,
+                banner: tex_out::DEFAULT_BANNER.to_owned(),
+                h_offset: Scaled::from_raw(0),
+                v_offset: Scaled::from_raw(0),
+                page_origin_x: Scaled::from_raw(DVI_ONE_INCH),
+                page_origin_y: Scaled::from_raw(DVI_ONE_INCH),
+                page_width: Scaled::from_raw(0),
+                page_height: Scaled::from_raw(0),
+            },
+            fonts: vec![FontResource {
+                font_id: request.font_id,
+                name: request.font.name().to_owned(),
+                tfm_content_hash: ContentHash::new(request.font.content_hash()),
+                tfm_checksum: request.font.checksum(),
+                design_size: request.font.design_size(),
+                at_size: request.font.size(),
+                layout_policy: request.font.layout_policy(),
+                mapping_fallback: request.font.mapping_fallback(),
+                opentype: None,
+                semantic_identity: request.font.source_identity(),
+                construction: FontResourceConstruction::Loaded,
+            }],
+            counts: page_counts,
+            root,
+            effects: Vec::new(),
+            math_events: Vec::new(),
+        }
+        .validate()
+        .map_err(NativeBatchRunError::Artifact)?;
+        let artifact_bytes = artifact
+            .to_bytes()
+            .map_err(NativeBatchRunError::Serialize)?;
+        let artifact =
+            PageArtifact::from_bytes(&artifact_bytes).map_err(NativeBatchRunError::Parse)?;
+        let plan =
+            tex_out::dvi::DviPagePlan::compile(&artifact).map_err(NativeBatchRunError::Dvi)?;
+        let mut writer = tex_out::dvi::DviStreamWriter::new(Vec::new());
+        writer
+            .write_page_plan(&plan)
+            .map_err(NativeBatchRunError::Dvi)?;
+        let dvi = writer.finish().map_err(NativeBatchRunError::Dvi)?;
+        let terminal = format!(
+            "[{}.{}.{}]",
+            outcome.counts[0], outcome.counts[1], outcome.counts[2]
+        )
+        .into_bytes();
+        let log = terminal.clone();
+        Ok(NativeBatchAttempt::Completed(Box::new(NativeBatchResult {
+            counts: outcome.counts,
+            artifact,
+            artifact_bytes,
+            dvi,
+            effects: Vec::new(),
+            terminal,
+            log,
+            calls: outcome.calls,
+        })))
+    })();
+    if matches!(&attempt, Ok(NativeBatchAttempt::Completed(_))) {
+        stores.commit_local_retry_snapshot(rollback);
+    } else {
+        stores.rollback_local_retry_snapshot(rollback);
     }
-    let root = PageNode::HList(BoxNode {
-        width: Scaled::from_raw(width),
-        height: metrics.height,
-        depth: metrics.depth,
-        shift: Scaled::from_raw(0),
-        glue_set: GlueSetRatio::ZERO,
-        glue_sign: GlueSign::Normal,
-        glue_order: GlueOrder::Normal,
-        children: nodes,
-    });
-    let mut page_counts = [0; 10];
-    page_counts[..3].copy_from_slice(&outcome.counts);
-    let artifact = UnvalidatedPageArtifact {
-        job: JobInfo {
-            mag: 1000,
-            banner: tex_out::DEFAULT_BANNER.to_owned(),
-            h_offset: Scaled::from_raw(0),
-            v_offset: Scaled::from_raw(0),
-            page_origin_x: Scaled::from_raw(DVI_ONE_INCH),
-            page_origin_y: Scaled::from_raw(DVI_ONE_INCH),
-            page_width: Scaled::from_raw(0),
-            page_height: Scaled::from_raw(0),
-        },
-        fonts: vec![FontResource {
-            font_id: request.font_id,
-            name: request.font.name().to_owned(),
-            tfm_content_hash: ContentHash::new(request.font.content_hash()),
-            tfm_checksum: request.font.checksum(),
-            design_size: request.font.design_size(),
-            at_size: request.font.size(),
-            layout_policy: request.font.layout_policy(),
-            mapping_fallback: request.font.mapping_fallback(),
-            opentype: None,
-            semantic_identity: request.font.source_identity(),
-            construction: FontResourceConstruction::Loaded,
-        }],
-        counts: page_counts,
-        root,
-        effects: Vec::new(),
-        math_events: Vec::new(),
-    }
-    .validate()
-    .map_err(NativeBatchRunError::Artifact)?;
-    let artifact_bytes = artifact
-        .to_bytes()
-        .map_err(NativeBatchRunError::Serialize)?;
-    let artifact = PageArtifact::from_bytes(&artifact_bytes).map_err(NativeBatchRunError::Parse)?;
-    let plan = tex_out::dvi::DviPagePlan::compile(&artifact).map_err(NativeBatchRunError::Dvi)?;
-    let mut writer = tex_out::dvi::DviStreamWriter::new(Vec::new());
-    writer
-        .write_page_plan(&plan)
-        .map_err(NativeBatchRunError::Dvi)?;
-    let dvi = writer.finish().map_err(NativeBatchRunError::Dvi)?;
-    let terminal = format!(
-        "[{}.{}.{}]",
-        outcome.counts[0], outcome.counts[1], outcome.counts[2]
-    )
-    .into_bytes();
-    let log = terminal.clone();
-    Ok(NativeBatchAttempt::Completed(Box::new(NativeBatchResult {
-        counts: outcome.counts,
-        artifact,
-        artifact_bytes,
-        dvi,
-        effects: Vec::new(),
-        terminal,
-        log,
-        calls: outcome.calls,
-    })))
+    attempt
 }
 
 #[cfg(test)]

@@ -41,6 +41,8 @@ source. Both implementations then create fresh engine state and the same
 synthetic font, execute, retain all reported state and output, validate and
 serialize the canonical page artifact, parse the serialized artifact, compile
 and serialize DVI, and retain terminal text, log text, and effects. The batch
-episode is deliberately not a supported engine choice. Its canonical
-tokenization seam, typed fallback boundary, measurements, and deletion-oriented
-migration plan are recorded in `docs/native_batch_kernel.md`.
+episode mutates the same canonical count bank and group journal as scalar
+`MainControl`; it is deliberately not a supported engine choice. Its canonical
+tokenization/state seams, typed fallback boundary, measurements, and
+deletion-oriented migration plan are recorded in
+`docs/native_batch_kernel.md`.

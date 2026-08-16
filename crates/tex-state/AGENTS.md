@@ -167,6 +167,9 @@ All production mutation of live TeX state should pass through `Universe` or simi
   artifact-root resolution, and the input-open capability context. Restoration traces resolve
   named parameters through the installed primitive registry rather than a
   state-local spelling table.
+- `src/universe/count_group_episode.rs`: Borrow-scoped coarse access to the
+  canonical count bank and environment group journal, with mutation
+  publication at group and episode barriers.
 - `src/universe/tests.rs`: Unit tests for `Universe` mutation, snapshots, contexts, effects, and boundary behavior.
 - `src/world.rs`: External-effect boundary for files, atomic downstream
   file-set publication, streams, clocks, randomness, shell policy, printing,

@@ -54,6 +54,35 @@ prototype is explained by paying the canonical tokenizer during admission;
 that cost remains inside the measured region rather than being hidden in
 workload construction.
 
+## Canonical count and group migration
+
+Issue `umber2-64v2.11` removed the episode's private 256-word count table,
+per-cell level table, first-local-write save vector, and group-mark vector.
+`tex-state::CountGroupEpisode` now borrows the live `Universe`: count reads and
+writes address `Env`'s canonical fixed bank, while `\hbox`, `\begingroup`, and
+their matching exits use the ordinary typed group markers and undo journal.
+The scalar `Universe` assignment/group APIs and the packed episode therefore
+observe one value and one restoration history. There is no synchronization
+between semantic stores because there is no second semantic store.
+
+The coarse borrow coalesces dependency and exact-identity publication only
+until the next group or episode boundary. Tracked observations and observable
+group/restoration tracing are typed admission barriers. The enclosing
+`tex-exec` operation owns a canonical local-retry snapshot, so a semantic
+barrier or artifact/DVI failure restores the count bank, group stack, journal,
+dependency tracker, and state-hash roots atomically. Completed state passes
+adversarial nested local/global restoration, format round-trip, exact state
+hash, and snapshot rollback tests.
+
+A fresh guarded 6M-fuel differential remained exact after the migration.
+Canonical stepping took 8.226 s and 225,272 KiB peak RSS; the shared episode
+took 241.339 ms and 85,612 KiB. The canonical-state path is therefore 34.1x
+faster and uses 2.63x less peak RSS. Its 234 allocation calls remain five
+orders of magnitude below canonical stepping's 8,423,813. The increased bytes
+and peak versus the private-array ceiling are the real cost of retaining the
+canonical global-assignment journal until the enclosing hbox closes, rather
+than an omitted rollback obligation.
+
 ## Covered semantic slice
 
 The direct workload is a complete INITEX job. It initializes count registers,
@@ -72,9 +101,10 @@ The original native kernel had one byte lexer and direct control-sequence
 lookup, packed 32-bit tokens, a packed source/token cursor stack, bump-scoped
 macro bodies and arguments, fixed mutable count and level arrays, and a
 first-local-write save stack. The migrated slice replaces its lexer with the
-canonical source tokenizer and retains the direct mutable command episode
-behind typed admission. Checkpoint, provenance, identity, reachability, and
-observation objects do not cross this first bounded loop.
+canonical source tokenizer; the later count/group migration replaces all four
+private count/restoration structures with `tex-state`'s direct bank and
+journal. Checkpoint, provenance, reachability, and observation objects do not
+cross the bounded loop; their canonical publications occur at its barriers.
 
 The comparison meets production at canonical boundaries. Both paths return the
 three count values, validated `PageArtifact`, exact serialized artifact bytes,
@@ -160,10 +190,10 @@ same canonical state; it must not transfer into another live engine.
    `tex-exec`. Its closed admission surface stops before an effect, resource,
    observation, or named checkpoint barrier. The existing public driver
    remains the only general lifecycle owner.
-2. Make direct scalar banks, level tags, and the save stack the sole backing in
-   `tex-state`, beginning with count and integer families. Existing state APIs
-   become accessors over that storage; delete the migrated environment-map and
-   rollback path in the same change.
+2. The count family now uses direct `tex-state` bank and journal storage for
+   both scalar and packed execution, and its private rollback path is deleted.
+   Continue the same delete-as-migrated rule when later integer families enter
+   coarse episodes.
 3. Replace the command machine's source/token levels internally with packed
    cursor frames and bump-scoped expansion values. The first slice already
    shares canonical source tokenization and refuses unsupported category-code

@@ -6,6 +6,10 @@
 //! public timeline tuple lives here so future World/effect/input state cannot
 //! grow a partial rollback API beside the store tuple.
 
+mod count_group_episode;
+
+pub use count_group_episode::{CountGroupEpisode, CountGroupEpisodeBarrier};
+
 use crate::cell::{BankTag, CellId};
 use crate::code_tables::{CodeTableGenerations, DelCode, LcCode, MathCode, SfCode, UcCode};
 use crate::dependency::{
@@ -1452,6 +1456,18 @@ impl Default for Universe {
 }
 
 impl Universe {
+    /// Opens a coarse mutation episode over the canonical count bank and
+    /// environment group journal.
+    ///
+    /// The episode admits no nested dependency observation or group tracing;
+    /// callers must use the ordinary scalar APIs at either boundary.
+    #[doc(hidden)]
+    pub fn count_group_episode(
+        &mut self,
+    ) -> Result<CountGroupEpisode<'_>, CountGroupEpisodeBarrier> {
+        CountGroupEpisode::begin(self)
+    }
+
     /// Selects optional provenance consumers and their independent limits for
     /// subsequent job execution.
     ///
