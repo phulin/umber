@@ -712,6 +712,23 @@ deep-sublist, and flat-math ceilings. The incremental pure-memo edit diagnostic
 is separately runnable from its owner with
 `cargo bench --manifest-path benchmarks/tex-incr/Cargo.toml --bench pure_memo_edit`.
 
+Authenticated native distribution startup has a focused hermetic benchmark:
+
+```bash
+CARGO_BUILD_JOBS=1 cargo run --release -p umber --bin distribution-startup-benchmark
+```
+
+It creates a synthetic one-shard pinned distribution and warms only its owned
+temporary cache. The cold route launches five actual child processes; the
+same-process route starts five fresh compile sessions under one bounded
+`NativeDistributionOwner`. Both routes consume the identical verified cache
+inventory. The executable reports manifest reads, parses, authentications,
+owner hits, shard loads, object hashes, and cache hits, and fails unless owner
+reuse reduces every manifest-work counter. It also requires byte-identical DVI
+output and a byte-identical complete cache inventory before and after the
+measurement, so the timing row cannot hide output loss, hash bypass, cache
+rewrites, network acquisition, or corpus prewarming.
+
 Snapshot scaling has a separate explicit performance tier:
 
 ```bash

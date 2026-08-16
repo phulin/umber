@@ -165,6 +165,34 @@ wrong partition membership, duplicate keys, missing or stale dependencies,
 and any shard, file, or format whose bytes differ from its declared digest.
 Thus the root digest transitively pins every shard and every fetchable object.
 
+### Native authenticated-state ownership
+
+Native multi-session hosts may retain parsed root and shard values in one
+explicit `NativeDistributionOwner`. The owner is bound at construction to one
+exact distribution source, optional root digest, and offline policy; a session
+whose three fields differ is rejected before resolution. Its lifetime is the
+reuse bound: dropping it drops all authenticated catalogue state. Watch-mode
+replacement sessions share this owner, while ordinary one-shot CLI runs create
+an owner scoped to that run.
+
+The retained values are immutable authenticated snapshots. Root and shard byte
+bounds, strict parsing, root-digest verification, shard-digest verification,
+identity validation, and partition validation all run before publication into
+the owner. Mutation of a local root cannot alter a published snapshot, and a
+fresh owner re-reads and re-authenticates the pinned root, so a mutation is
+detected rather than silently adopted. Object payloads are deliberately not
+retained by this owner: every fresh engine session still loads them through the
+content-addressed blob store, which rechecks cache bytes and preserves the
+existing local/cache/remote and offline ladders.
+
+Native resolver telemetry separately counts root/shard reads, strict parses,
+digest authentications, shard loads, authenticated-owner hits, persistent
+manifest cache hits, object payload hashes, and object cache hits. The
+hermetic `distribution-startup-benchmark` compares real cold child processes
+with fresh sessions under one owner and fails unless manifest work decreases,
+all DVI bytes remain identical, and the complete cache byte inventory remains
+unchanged.
+
 ## Publisher and release workflow
 
 `tools/texlive-wasm-publish` emits schema-3 roots directly. Root values, shard

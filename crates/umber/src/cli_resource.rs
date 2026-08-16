@@ -417,6 +417,7 @@ impl NativeCompileSession {
         Self::new_with_resolver(options, cancellation, owner.resolver(options)?)
     }
 
+    #[cfg(test)]
     #[allow(clippy::disallowed_methods)] // Process telemetry; TeX state never observes it.
     fn new_with_cache(
         options: &NativeRunOptions,
@@ -1022,6 +1023,7 @@ struct DistributionResolver {
 }
 
 impl DistributionResolver {
+    #[cfg(test)]
     fn new(
         cache: ObjectCache,
         source: Option<String>,

@@ -500,7 +500,12 @@ fn native_image_resolution_preserves_local_precedence() {
     assert_eq!(file.bytes, b"local image");
     assert_eq!(file.virtual_path, "/texlive/local/image/figure.pdf");
     assert!(
-        resolver.loaded.is_none(),
+        resolver
+            .authenticated
+            .lock()
+            .expect("authenticated distribution state")
+            .loaded
+            .is_none(),
         "local hit must not load distribution"
     );
 }
@@ -761,7 +766,11 @@ fn exact_snapshot_delivers_corpus_tex_tfm_type1_and_vf_requests_offline() {
                 _ => None,
             })
             .expect("typed snapshot response");
-        let entry = resolver
+        let authenticated = resolver
+            .authenticated
+            .lock()
+            .expect("authenticated distribution state");
+        let entry = authenticated
             .loaded
             .as_ref()
             .expect("loaded snapshot")
@@ -1060,11 +1069,13 @@ fn schema_three_format_closure_publishes_local_overrides_and_ignores_stale_hints
         None,
         false,
     );
+    let mut telemetry = ResolverTelemetry::default();
     let format = resolver
         .resolve_format(
             Path::new("latex.fmt"),
             EngineMode::Latex,
             &FetchCancellation::new(),
+            &mut telemetry,
         )
         .expect("format resolution");
     assert_eq!(format.bytes, format_bytes);
@@ -1226,10 +1237,12 @@ fn incompatible_format_schema_is_rejected_before_cache_lookup_or_acquisition() {
         None,
         false,
     );
+    let mut telemetry = ResolverTelemetry::default();
     let error = match resolver.resolve_format(
         Path::new("latex.fmt"),
         EngineMode::Latex,
         &FetchCancellation::new(),
+        &mut telemetry,
     ) {
         Ok(_) => panic!("incompatible format schema was accepted"),
         Err(error) => error,
