@@ -15,6 +15,10 @@ Samply wrapper, prerequisites, counters, measurement controls, and capture
 analysis workflow. Historical measurements belong in Git history or Beads,
 not as chronological release receipts in `docs/`.
 
+`native_batch_kernel.md` records the evaluation-only direct mutable batch
+ceiling, its semantic and measurement fairness contract, and the staged
+single-engine migration that deletes each layered predecessor as it lands.
+
 `cargo_feature_axes.md` is the contract for what a Cargo feature may mean:
 the four axes, the crate that owns each declaration, why `required-features`
 is not one of them, and why no engine crate has a non-empty `default`. Read it
