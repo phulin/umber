@@ -314,7 +314,7 @@ impl Stores {
 
     pub(crate) fn assert_live_token_list(&self, id: TokenListId) {
         assert!(
-            self.tokens.resolve_stored(id).is_some(),
+            self.tokens.resolved_owner(id).is_some(),
             "token list is not live in this Universe timeline"
         );
     }
@@ -335,7 +335,7 @@ impl Stores {
 
     pub(super) fn assert_live_macro_definition(&self, id: MacroDefinitionId) {
         assert!(
-            self.macros.contains(id),
+            self.macros.resolved_owner(id).is_some(),
             "macro definition id is not live in this Universe timeline: {id:?}"
         );
     }

@@ -45,7 +45,7 @@ impl MacroBodySemanticId {
         }
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "testing"))]
     pub(super) fn testing_collision() -> Self {
         Self {
             fingerprint: 0,

@@ -1570,25 +1570,27 @@ impl Stores {
                 provenance.replacement_ref(),
             );
         }
-        let parameter_tokens = self.tokens(macro_meaning.parameter_text());
-        let parameter_pattern = MacroParameterPattern::from_tokens(&parameter_tokens);
-        let observation_width = u32::try_from(
-            1_usize
-                + self.tokens(macro_meaning.parameter_text()).len()
-                + self.tokens(macro_meaning.replacement_text()).len(),
-        )
-        .expect("macro token list length exceeds u32");
+        let parameter_root = self
+            .tokens
+            .resolved_owner(macro_meaning.parameter_text())
+            .expect("macro parameter tokens have a live owner");
+        let replacement_root = self
+            .tokens
+            .resolved_owner(macro_meaning.replacement_text())
+            .expect("macro replacement tokens have a live owner");
+        let parameter_pattern = MacroParameterPattern::from_tokens(parameter_root.tokens());
+        let observation_width =
+            u32::try_from(1_usize + parameter_root.len() + replacement_root.len())
+                .expect("macro token list length exceeds u32");
+        let parameter_semantic_id = parameter_root.semantic_id();
+        let replacement_semantic_id = replacement_root.semantic_id();
         self.macros.intern_with_provenance(
             macro_meaning,
-            self.tokens
-                .owner(macro_meaning.parameter_text())
-                .expect("macro parameter tokens have a live owner"),
-            self.tokens
-                .owner(macro_meaning.replacement_text())
-                .expect("macro replacement tokens have a live owner"),
+            parameter_root,
+            replacement_root,
             parameter_pattern,
-            self.tokens.semantic_id(macro_meaning.parameter_text()),
-            self.tokens.semantic_id(macro_meaning.replacement_text()),
+            parameter_semantic_id,
+            replacement_semantic_id,
             provenance,
             observation_width,
             domain,
@@ -1596,26 +1598,20 @@ impl Stores {
     }
 
     pub(crate) fn macro_definition_ref(&self, id: MacroDefinitionId) -> MacroDefinitionRef {
-        let id = self
-            .macros
-            .resolve_stored(id)
-            .expect("stored macro-definition slot is not live");
         self.macros
-            .owner(id)
+            .resolved_owner(id)
             .expect("macro definition id is not live")
     }
 
     /// Reads a live frozen macro definition.
     #[must_use]
     pub fn macro_definition(&self, id: MacroDefinitionId) -> MacroMeaning {
-        self.assert_live_macro_definition(id);
         self.macros.get(id)
     }
 
     /// Returns TeX82's definition-head identity for command observation.
     #[must_use]
     pub fn macro_definition_observation_operand(&self, id: MacroDefinitionId) -> i64 {
-        self.assert_live_macro_definition(id);
         self.macros.observation_operand(id)
     }
 
@@ -1625,7 +1621,6 @@ impl Stores {
         &self,
         id: MacroDefinitionId,
     ) -> MacroParameterPattern {
-        self.assert_live_macro_definition(id);
         self.macros.parameter_pattern(id)
     }
 
@@ -2057,30 +2052,27 @@ impl Stores {
     }
 
     pub(crate) fn token_list_ref(&self, id: TokenListId) -> TokenListRef {
-        let id = self.resolve_stored_token_list(id);
-        self.tokens.owner(id).expect("token list id is not live")
+        self.tokens
+            .resolved_owner(id)
+            .expect("token list id is not live")
     }
 
     /// Reads a live frozen token list.
     #[must_use]
     pub fn tokens(&self, id: TokenListId) -> TokenListRef {
-        let id = self.resolve_stored_token_list(id);
         self.tokens.get(id)
     }
 
     pub(crate) fn token_list_semantic_id_value(&self, id: TokenListId) -> u64 {
-        let id = self.resolve_stored_token_list(id);
         self.tokens.semantic_id(id).value()
     }
 
     pub(crate) fn token_list_semantic_fragment(&self, id: TokenListId) -> StateHashFragment {
-        let id = self.resolve_stored_token_list(id);
         self.tokens.semantic_id(id).fragment()
     }
 
     #[cfg(test)]
     pub(crate) fn testing_token_semantic_id(&self, id: TokenListId) -> TokenSemanticId {
-        let id = self.resolve_stored_token_list(id);
         self.tokens.semantic_id(id)
     }
 

@@ -294,19 +294,14 @@ fn main_memory_projection_inner(
             continue;
         }
         live_macro_count = live_macro_count.saturating_add(1);
-        let id = stores
-            .macros
-            .resolve_stored(MacroDefinitionId::new(raw as u32))
-            .ok_or(StoreFormatError::Invalid("macro definition"))?;
-        let definition = stores.macros.get(id);
+        let definition = stores.macros.get(MacroDefinitionId::new(raw as u32));
         let mut children = [(0, 0); 2];
         for (child, list_id) in children
             .iter_mut()
             .zip([definition.parameter_text(), definition.replacement_text()])
         {
-            let list_id = stores.resolve_stored_token_list(list_id);
-            let index = list_id.raw() as usize;
             let list = stores.tokens.get(list_id);
+            let index = list.id().raw() as usize;
             *child = (index, list.len());
             token_words[index] = list.len().saturating_add(1);
             macro_token_refs[index] = macro_token_refs[index].saturating_add(1);
@@ -339,8 +334,11 @@ fn main_memory_projection_inner(
         .enumerate()
         .filter(|(index, refs)| **refs != 0 && *index != 0 && macro_token_refs[*index] == 0)
         .map(|(index, _)| {
-            let id = stores.resolve_stored_token_list(TokenListId::new(index as u32));
-            let words = stores.tokens.get(id).len().saturating_add(1);
+            let words = stores
+                .tokens
+                .get(TokenListId::new(index as u32))
+                .len()
+                .saturating_add(1);
             token_words[index] = words;
             words
         })
@@ -913,9 +911,9 @@ impl MainMemoryProjection {
             .iter_mut()
             .zip([definition.parameter_text(), definition.replacement_text()])
         {
-            let list_id = stores.resolve_stored_token_list(list_id);
-            let index = list_id.raw() as usize;
-            let list_words = stores.tokens.get(list_id).len();
+            let list = stores.tokens.get(list_id);
+            let index = list.id().raw() as usize;
+            let list_words = list.len();
             *child = (index, list_words);
         }
         Ok(MacroMemoryProjection {
@@ -987,8 +985,11 @@ impl MainMemoryProjection {
             .get_mut(index)
             .ok_or(StoreFormatError::Invalid("environment token list"))?;
         let words = if add {
-            let id = stores.resolve_stored_token_list(TokenListId::new(raw));
-            let words = stores.tokens.get(id).len().saturating_add(1);
+            let words = stores
+                .tokens
+                .get(TokenListId::new(raw))
+                .len()
+                .saturating_add(1);
             self.token_words[index] = words;
             words
         } else {
@@ -2421,8 +2422,7 @@ fn install_frozen_sections(
             crate::cell::BankTag::Toks => Some(
                 stores
                     .tokens
-                    .resolve_stored(TokenListId::new(word as u32))
-                    .and_then(|id| stores.tokens.owner(id))
+                    .resolved_owner(TokenListId::new(word as u32))
                     .ok_or(StoreFormatError::Invalid(
                         "frozen environment token-register owner",
                     ))?,
@@ -2430,8 +2430,7 @@ fn install_frozen_sections(
             crate::cell::BankTag::TokParam if word != 0 => Some(
                 stores
                     .tokens
-                    .resolve_stored(TokenListId::new((word - 1) as u32))
-                    .and_then(|id| stores.tokens.owner(id))
+                    .resolved_owner(TokenListId::new((word - 1) as u32))
                     .ok_or(StoreFormatError::Invalid(
                         "frozen environment token-parameter owner",
                     ))?,
@@ -2444,8 +2443,7 @@ fn install_frozen_sections(
                 crate::meaning::Meaning::Macro { definition, .. } => Some(
                     stores
                         .macros
-                        .resolve_stored(definition)
-                        .and_then(|id| stores.macros.owner(id))
+                        .resolved_owner(definition)
                         .ok_or(StoreFormatError::Invalid("frozen environment macro owner"))?,
                 ),
                 _ => None,

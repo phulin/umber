@@ -8,6 +8,8 @@ use crate::ids::TokenListId;
 use crate::patch_domain::{
     PatchAllocationDomain, PatchHandle, PatchRoot, PatchRootLease, PatchRootWeak,
 };
+#[cfg(any(test, feature = "testing"))]
+use crate::reachable_value::LookupWork;
 use crate::reachable_value::{ReachableValuePool, ReachableValueRef};
 use crate::state_hash::{StateHashFragment, StateHasher};
 use crate::token::{Token, TracedTokenWord};
@@ -49,8 +51,8 @@ impl TokenSemanticId {
         hasher.semantic_identity(self.identity);
     }
 
-    #[cfg(test)]
-    fn testing(fingerprint: u64) -> Self {
+    #[cfg(any(test, feature = "testing"))]
+    pub(crate) fn testing(fingerprint: u64) -> Self {
         Self {
             fingerprint,
             identity: crate::state_hash::semantic_identity_bytes(
@@ -666,7 +668,7 @@ impl TokenStore {
     /// Reads a value while a typed owner keeps its weak slot live.
     #[must_use]
     pub(crate) fn get(&self, id: TokenListId) -> TokenListRef {
-        self.owner(id)
+        self.resolved_owner(id)
             .expect("token list id has no live typed owner")
     }
 
@@ -702,6 +704,43 @@ impl TokenStore {
         })
     }
 
+    /// Clones the owner named either by a live identity or a compact stored
+    /// coordinate. Stored words deliberately bypass the generation lookup:
+    /// their reserved identity is only a format/Env projection of the slot.
+    pub(crate) fn resolved_owner(&self, id: TokenListId) -> Option<TokenListRef> {
+        if !id.is_stored() {
+            return self.owner(id);
+        }
+        self.frozen_roots
+            .get(id.raw() as usize)
+            .cloned()
+            .or_else(|| {
+                self.pool.resolve_slot(id.raw()).map(|value| {
+                    let resolved = TokenListId::from_identity(value.identity());
+                    TokenListRef {
+                        value,
+                        patch_root: self
+                            .patch_root_leases
+                            .get(&resolved)
+                            .and_then(PatchRootWeak::upgrade),
+                    }
+                })
+            })
+    }
+
+    fn resolved_value(&self, id: TokenListId) -> Option<ReachableValueRef<TokenListValue>> {
+        if !id.is_stored() {
+            if let Some(root) = self.frozen_root(id) {
+                return Some(root.value.clone());
+            }
+            return self.pool.resolve(id.identity());
+        }
+        self.frozen_roots
+            .get(id.raw() as usize)
+            .map(|root| root.value.clone())
+            .or_else(|| self.pool.resolve_slot(id.raw()))
+    }
+
     fn frozen_root(&self, id: TokenListId) -> Option<&TokenListRef> {
         self.frozen_roots
             .get(id.raw() as usize)
@@ -710,12 +749,14 @@ impl TokenStore {
 
     /// Returns the canonical semantic identity stored with a live token list.
     pub(crate) fn semantic_id(&self, id: TokenListId) -> TokenSemanticId {
-        self.owner(id)
+        self.resolved_value(id)
             .expect("token list id is not live")
-            .semantic_id()
+            .value()
+            .semantic_id
     }
 
     /// Returns whether `id` names a currently-live token-list slot.
+    #[cfg(test)]
     #[must_use]
     pub(crate) fn contains(&self, id: TokenListId) -> bool {
         self.owner(id).is_some()
@@ -723,13 +764,8 @@ impl TokenStore {
 
     #[must_use]
     pub(crate) fn resolve_stored(&self, id: TokenListId) -> Option<TokenListId> {
-        if self.contains(id) {
-            return Some(id);
-        }
-        if !id.is_stored() {
-            return None;
-        }
-        self.id_at(id.raw())
+        self.resolved_value(id)
+            .map(|value| TokenListId::from_identity(value.identity()))
     }
 
     /// Takes a rollback watermark over weak slots and private metadata.
@@ -794,17 +830,6 @@ impl TokenStore {
         self.hash_state.hash_one(tokens)
     }
 
-    fn id_at(&self, raw: u32) -> Option<TokenListId> {
-        self.frozen_roots
-            .get(raw as usize)
-            .map(TokenListRef::id)
-            .or_else(|| {
-                self.pool
-                    .resolve_slot(raw)
-                    .map(|value| TokenListId::from_identity(value.identity()))
-            })
-    }
-
     #[cfg(any(test, feature = "testing"))]
     pub(crate) fn testing_pool_shape(&self) -> (usize, usize, usize, usize, usize, usize) {
         self.pool.testing_shape()
@@ -815,14 +840,70 @@ impl TokenStore {
         self.pool.testing_live_totals(TokenListValue::logical_bytes)
     }
 
-    #[cfg(test)]
-    fn testing_owned(
+    #[cfg(any(test, feature = "testing"))]
+    pub(crate) fn testing_owned(
         &mut self,
         tokens: &[Token],
         semantic_id: TokenSemanticId,
         domain: Option<&mut PatchAllocationDomain>,
     ) -> TokenListRef {
         self.intern_owned_with_semantic_id(tokens, semantic_id, 0, None, domain)
+    }
+
+    #[cfg(any(test, feature = "testing"))]
+    pub(crate) fn testing_resolved_owner(
+        &self,
+        id: TokenListId,
+    ) -> (Option<TokenListRef>, LookupWork) {
+        let mut work = LookupWork {
+            fixed_root_probes: 1,
+            ..LookupWork::default()
+        };
+        if let Some(root) = self
+            .frozen_roots
+            .get(id.raw() as usize)
+            .filter(|root| id.is_stored() || root.id() == id)
+        {
+            return (Some(root.clone()), work);
+        }
+        let (value, pool_work) = if id.is_stored() {
+            self.pool.testing_resolve_slot(id.raw())
+        } else {
+            self.pool.testing_resolve(id.identity())
+        };
+        work.generation_checks += pool_work.generation_checks;
+        work.slot_probes += pool_work.slot_probes;
+        work.weak_upgrades += pool_work.weak_upgrades;
+        let root = value.map(|value| {
+            work.patch_lease_probes += 1;
+            let resolved = TokenListId::from_identity(value.identity());
+            TokenListRef {
+                value,
+                patch_root: self
+                    .patch_root_leases
+                    .get(&resolved)
+                    .and_then(PatchRootWeak::upgrade),
+            }
+        });
+        (root, work)
+    }
+
+    #[cfg(any(test, feature = "testing"))]
+    pub(crate) fn testing_collision_lookup(
+        &self,
+        tokens: &[Token],
+        semantic_id: TokenSemanticId,
+    ) -> (Option<TokenListRef>, LookupWork) {
+        let (value, work) = self.pool.testing_find_exact(&semantic_id, |candidate| {
+            candidate.tokens.as_ref() == tokens
+        });
+        (
+            value.map(|value| TokenListRef {
+                value,
+                patch_root: None,
+            }),
+            work,
+        )
     }
 }
 

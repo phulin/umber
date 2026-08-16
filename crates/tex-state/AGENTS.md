@@ -66,6 +66,7 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/journal.rs`: Append-only journal records, markers, undo entries, token-, macro-, and glue-valued old/new root sidecars, and rollback/group replay support.
 - `src/journal/tests.rs`: Unit tests for journal positions, markers, entry traversal, and truncation.
 - `src/lib.rs`: Public module declarations and re-exports forming the `tex-state` API surface.
+- `src/lookup_benchmark.rs`: Testing-feature fixtures and deterministic work-count gates for token-list and macro-definition live, dead, stale-generation, stored-hole, and collision-safe lookup.
 - `src/macro_store.rs`: Reachability-owned exact macro bodies and definition occurrences, optional diagnostic provenance, weak collision-safe lookup, reusable slots, and private-patch transfer.
 - `src/macro_store/owned.rs`: Immutable macro-body and definition-occurrence payloads plus their strong typed references and logical allocation accounting.
 - `src/macro_store/tests.rs`: Exact/collision body dedup, occurrence-local provenance, typed binding release, bounded-live plateau, and all-roots-live controls.

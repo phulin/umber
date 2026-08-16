@@ -495,7 +495,6 @@ impl Stores {
     }
 
     pub(crate) fn hash_token_list_semantic(&self, id: TokenListId, hasher: &mut StateHasher) {
-        let id = self.resolve_stored_token_list(id);
         hasher.tag(0x50);
         self.tokens.semantic_id(id).apply(hasher);
     }
@@ -1046,7 +1045,6 @@ impl Stores {
     }
 
     fn hash_macro_definition(&self, id: MacroDefinitionId, hasher: &mut StateHasher) {
-        self.assert_live_macro_definition(id);
         let definition = self.macros.get(id);
         hasher.u8(definition.flags().bits());
         self.hash_portable_token_list(definition.parameter_text(), hasher);
@@ -1054,7 +1052,6 @@ impl Stores {
     }
 
     fn hash_portable_token_list(&self, id: TokenListId, hasher: &mut StateHasher) {
-        let id = self.resolve_stored_token_list(id);
         let tokens = self.tokens.get(id);
         hasher.tag(0x50);
         hasher.usize(tokens.len());

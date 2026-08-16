@@ -12,6 +12,8 @@ use crate::identity::HandleIdentity;
 use crate::ids::{MacroDefinitionId, OriginListId, TokenListId};
 use crate::meaning::MeaningFlags;
 use crate::patch_domain::{PatchAllocationDomain, PatchHandle, PatchRoot, PatchRootWeak};
+#[cfg(any(test, feature = "testing"))]
+use crate::reachable_value::LookupWork;
 use crate::reachable_value::ReachableValuePool;
 use crate::token::{OriginId, Token};
 use crate::token_store::{TokenListRef, TokenSemanticId};
@@ -259,7 +261,7 @@ pub struct MacroStore {
     definition_patch_handles: HashMap<MacroDefinitionId, PatchHandle<MacroDefinitionValue>>,
     definition_patch_leases: HashMap<MacroDefinitionId, PatchRootWeak>,
     patch_order: Vec<PatchEvent>,
-    #[cfg(test)]
+    #[cfg(any(test, feature = "testing"))]
     force_candidate_collision: bool,
 }
 
@@ -280,7 +282,7 @@ impl Clone for MacroStore {
             definition_patch_handles: HashMap::new(),
             definition_patch_leases: HashMap::new(),
             patch_order: Vec::new(),
-            #[cfg(test)]
+            #[cfg(any(test, feature = "testing"))]
             force_candidate_collision: self.force_candidate_collision,
         }
     }
@@ -300,7 +302,7 @@ impl MacroStore {
             definition_patch_handles: HashMap::new(),
             definition_patch_leases: HashMap::new(),
             patch_order: Vec::new(),
-            #[cfg(test)]
+            #[cfg(any(test, feature = "testing"))]
             force_candidate_collision: false,
         }
     }
@@ -386,7 +388,7 @@ impl MacroStore {
             definition_patch_handles: HashMap::new(),
             definition_patch_leases: HashMap::new(),
             patch_order: Vec::new(),
-            #[cfg(test)]
+            #[cfg(any(test, feature = "testing"))]
             force_candidate_collision: false,
         })
     }
@@ -411,7 +413,7 @@ impl MacroStore {
             parameter_semantic_id,
             replacement_semantic_id,
         );
-        #[cfg(test)]
+        #[cfg(any(test, feature = "testing"))]
         let semantic_id = if self.force_candidate_collision {
             MacroBodySemanticId::testing_collision()
         } else {
@@ -466,8 +468,12 @@ impl MacroStore {
 
     #[must_use]
     pub(crate) fn get(&self, id: MacroDefinitionId) -> MacroMeaning {
-        self.owner(id)
+        self.resolved_value(id)
             .expect("macro definition id is not live")
+            .value()
+            .body
+            .value
+            .value()
             .meaning()
     }
 
@@ -484,6 +490,45 @@ impl MacroStore {
                         .and_then(PatchRootWeak::upgrade),
                 })
         })
+    }
+
+    /// Clones the owner named either by a live identity or a compact stored
+    /// coordinate without first attempting the reserved stored identity.
+    pub(crate) fn resolved_owner(&self, id: MacroDefinitionId) -> Option<MacroDefinitionRef> {
+        if !id.is_stored() {
+            return self.owner(id);
+        }
+        self.frozen_roots
+            .get(id.raw() as usize)
+            .cloned()
+            .or_else(|| {
+                self.definitions.resolve_slot(id.raw()).map(|value| {
+                    let resolved = MacroDefinitionId::from_identity(value.identity());
+                    MacroDefinitionRef {
+                        value,
+                        patch_root: self
+                            .definition_patch_leases
+                            .get(&resolved)
+                            .and_then(PatchRootWeak::upgrade),
+                    }
+                })
+            })
+    }
+
+    fn resolved_value(
+        &self,
+        id: MacroDefinitionId,
+    ) -> Option<crate::reachable_value::ReachableValueRef<MacroDefinitionValue>> {
+        if !id.is_stored() {
+            if let Some(root) = self.frozen_root(id) {
+                return Some(root.value.clone());
+            }
+            return self.definitions.resolve(id.identity());
+        }
+        self.frozen_roots
+            .get(id.raw() as usize)
+            .map(|root| root.value.clone())
+            .or_else(|| self.definitions.resolve_slot(id.raw()))
     }
 
     fn frozen_root(&self, id: MacroDefinitionId) -> Option<&MacroDefinitionRef> {
@@ -506,9 +551,8 @@ impl MacroStore {
 
     #[must_use]
     pub(crate) fn parameter_pattern(&self, id: MacroDefinitionId) -> MacroParameterPattern {
-        self.owner(id)
+        self.resolved_value(id)
             .expect("macro definition id is not live")
-            .value
             .value()
             .body
             .value
@@ -519,7 +563,7 @@ impl MacroStore {
 
     #[must_use]
     pub(crate) fn provenance(&self, id: MacroDefinitionId) -> Option<MacroDefinitionProvenance> {
-        self.owner(id)?.value.value().provenance.get().cloned()
+        self.resolved_value(id)?.value().provenance.get().cloned()
     }
 
     pub(crate) fn set_provenance(
@@ -527,8 +571,10 @@ impl MacroStore {
         id: MacroDefinitionId,
         provenance: MacroDefinitionProvenance,
     ) {
-        let root = self.owner(id).expect("macro definition id is not live");
-        if let Err(existing) = root.value.value().provenance.set(provenance.clone()) {
+        let root = self
+            .resolved_value(id)
+            .expect("macro definition id is not live");
+        if let Err(existing) = root.value().provenance.set(provenance.clone()) {
             assert_eq!(
                 existing, provenance,
                 "macro provenance changed after publication"
@@ -538,13 +584,13 @@ impl MacroStore {
 
     #[must_use]
     pub(crate) fn observation_operand(&self, id: MacroDefinitionId) -> i64 {
-        self.owner(id)
+        self.resolved_value(id)
             .expect("macro definition id is not live")
-            .value
             .value()
             .observation_operand
     }
 
+    #[cfg(test)]
     #[must_use]
     pub(crate) fn contains(&self, id: MacroDefinitionId) -> bool {
         self.owner(id).is_some()
@@ -552,13 +598,8 @@ impl MacroStore {
 
     #[must_use]
     pub(crate) fn resolve_stored(&self, id: MacroDefinitionId) -> Option<MacroDefinitionId> {
-        if self.contains(id) {
-            return Some(id);
-        }
-        if !id.is_stored() {
-            return None;
-        }
-        self.stored_slot(id.raw()).map(|root| root.id())
+        self.resolved_value(id)
+            .map(|value| MacroDefinitionId::from_identity(value.identity()))
     }
 
     #[must_use]
@@ -701,9 +742,69 @@ impl MacroStore {
         )
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "testing"))]
     pub(crate) fn testing_force_candidate_collision(&mut self) {
         self.force_candidate_collision = true;
+    }
+
+    #[cfg(any(test, feature = "testing"))]
+    pub(crate) fn testing_resolved_value(
+        &self,
+        id: MacroDefinitionId,
+    ) -> (Option<MacroMeaning>, LookupWork) {
+        let mut work = LookupWork {
+            fixed_root_probes: 1,
+            ..LookupWork::default()
+        };
+        if let Some(root) = self
+            .frozen_roots
+            .get(id.raw() as usize)
+            .filter(|root| id.is_stored() || root.id() == id)
+        {
+            return (Some(root.meaning()), work);
+        }
+        let (value, pool_work) = if id.is_stored() {
+            self.definitions.testing_resolve_slot(id.raw())
+        } else {
+            self.definitions.testing_resolve(id.identity())
+        };
+        work.generation_checks += pool_work.generation_checks;
+        work.slot_probes += pool_work.slot_probes;
+        work.weak_upgrades += pool_work.weak_upgrades;
+        let meaning = value.map(|value| value.value().body.value.value().meaning());
+        (meaning, work)
+    }
+
+    #[cfg(any(test, feature = "testing"))]
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn testing_body_collision_lookup(
+        &self,
+        meaning: MacroMeaning,
+        parameter_root: TokenListRef,
+        replacement_root: TokenListRef,
+        parameter_pattern: MacroParameterPattern,
+        parameter_semantic_id: TokenSemanticId,
+        replacement_semantic_id: TokenSemanticId,
+    ) -> (Option<MacroMeaning>, LookupWork) {
+        let semantic_id = if self.force_candidate_collision {
+            MacroBodySemanticId::testing_collision()
+        } else {
+            MacroBodySemanticId::new(
+                meaning.flags(),
+                parameter_semantic_id,
+                replacement_semantic_id,
+            )
+        };
+        let candidate = MacroBodyValue {
+            flags: meaning.flags(),
+            parameter_text: parameter_root,
+            replacement_text: replacement_root,
+            parameter_pattern,
+        };
+        let (found, work) = self
+            .bodies
+            .testing_find_exact(&semantic_id, |value| value.exact_eq(&candidate));
+        (found.map(|body| body.value().meaning()), work)
     }
 }
 

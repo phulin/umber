@@ -14,6 +14,32 @@ const DEFAULT_INDEX_KEY_BUDGET: usize = 1_024;
 const INDEX_BUCKET_ENTRY_BUDGET: usize = 64;
 const RECLAIM_WORK_PER_OPERATION: usize = 8;
 
+/// Deterministic primitive work performed by one weak-pool lookup.
+#[cfg(any(test, feature = "testing"))]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) struct LookupWork {
+    pub(crate) fixed_root_probes: usize,
+    pub(crate) generation_checks: usize,
+    pub(crate) slot_probes: usize,
+    pub(crate) weak_upgrades: usize,
+    pub(crate) candidate_entries: usize,
+    pub(crate) exact_comparisons: usize,
+    pub(crate) patch_lease_probes: usize,
+}
+
+#[cfg(any(test, feature = "testing"))]
+impl LookupWork {
+    pub(crate) const fn total(self) -> usize {
+        self.fixed_root_probes
+            + self.generation_checks
+            + self.slot_probes
+            + self.weak_upgrades
+            + self.candidate_entries
+            + self.exact_comparisons
+            + self.patch_lease_probes
+    }
+}
+
 /// One owning reference to an immutable exact-content value.
 pub(crate) struct ReachableValueRef<T> {
     object: Arc<ReachableValueObject<T>>,
@@ -278,6 +304,40 @@ where
         })
     }
 
+    /// Executes the production identity-resolution branches while reporting
+    /// deterministic primitive work for focused regression gates.
+    #[cfg(any(test, feature = "testing"))]
+    pub(crate) fn testing_resolve(
+        &self,
+        identity: HandleIdentity,
+    ) -> (Option<ReachableValueRef<T>>, LookupWork) {
+        let mut work = LookupWork {
+            generation_checks: 1,
+            ..LookupWork::default()
+        };
+        if !self.identities.contains(identity) {
+            return (None, work);
+        }
+        work.slot_probes += 1;
+        let Some(slot) = self
+            .slots
+            .get(identity.slot() as usize)
+            .and_then(Option::as_ref)
+        else {
+            return (None, work);
+        };
+        if slot.identity != identity {
+            return (None, work);
+        }
+        work.weak_upgrades += 1;
+        (
+            slot.value
+                .upgrade()
+                .map(|object| ReachableValueRef { object }),
+            work,
+        )
+    }
+
     /// Resolves the currently live value in one physical slot.
     ///
     /// This is a compact-coordinate projection, not an ownership query: the
@@ -287,6 +347,59 @@ where
         Some(ReachableValueRef {
             object: slot.value.upgrade()?,
         })
+    }
+
+    /// Executes the production stored-slot branches with deterministic work
+    /// accounting for a benchmark or regression gate.
+    #[cfg(any(test, feature = "testing"))]
+    pub(crate) fn testing_resolve_slot(
+        &self,
+        raw: u32,
+    ) -> (Option<ReachableValueRef<T>>, LookupWork) {
+        let mut work = LookupWork {
+            slot_probes: 1,
+            ..LookupWork::default()
+        };
+        let Some(slot) = self.slots.get(raw as usize).and_then(Option::as_ref) else {
+            return (None, work);
+        };
+        work.weak_upgrades += 1;
+        (
+            slot.value
+                .upgrade()
+                .map(|object| ReachableValueRef { object }),
+            work,
+        )
+    }
+
+    /// Probes one collision bucket with the same exact-content policy as
+    /// `find_exact`, without advancing reclamation for benchmark repeatability.
+    #[cfg(any(test, feature = "testing"))]
+    pub(crate) fn testing_find_exact(
+        &self,
+        key: &K,
+        exact_eq: impl Fn(&T) -> bool,
+    ) -> (Option<ReachableValueRef<T>>, LookupWork) {
+        let mut work = LookupWork::default();
+        let mut exact = None;
+        if let Some(candidates) = self.index.get(key) {
+            for &raw in candidates {
+                work.candidate_entries += 1;
+                work.slot_probes += 1;
+                let Some(slot) = self.slots.get(raw as usize).and_then(Option::as_ref) else {
+                    continue;
+                };
+                work.weak_upgrades += 1;
+                let Some(candidate) = slot.value.upgrade() else {
+                    continue;
+                };
+                work.exact_comparisons += 1;
+                if exact.is_none() && exact_eq(&candidate.value) {
+                    exact = Some(ReachableValueRef { object: candidate });
+                }
+            }
+        }
+        (exact, work)
     }
 
     /// Returns the physical slot-table extent used by compact projections.

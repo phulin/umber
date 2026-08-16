@@ -69,6 +69,8 @@ pub mod ids;
 pub mod input;
 pub mod interner;
 pub(crate) mod journal;
+#[cfg(any(test, feature = "testing"))]
+pub mod lookup_benchmark;
 pub mod macro_store;
 pub mod math;
 pub mod meaning;
