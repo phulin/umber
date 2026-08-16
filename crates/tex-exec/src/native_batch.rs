@@ -36,7 +36,7 @@ pub enum NativeBatchFallback {
 /// Result of attempting the bounded production batch path.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum NativeBatchAttempt {
-    Completed(NativeBatchResult),
+    Completed(Box<NativeBatchResult>),
     Fallback(NativeBatchFallback),
 }
 
@@ -197,7 +197,7 @@ pub fn run_native_batch_episode(
     )
     .into_bytes();
     let log = terminal.clone();
-    Ok(NativeBatchAttempt::Completed(NativeBatchResult {
+    Ok(NativeBatchAttempt::Completed(Box::new(NativeBatchResult {
         counts: outcome.counts,
         artifact,
         artifact_bytes,
@@ -206,7 +206,7 @@ pub fn run_native_batch_episode(
         terminal,
         log,
         calls: outcome.calls,
-    }))
+    })))
 }
 
 #[cfg(test)]

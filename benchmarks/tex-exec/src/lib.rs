@@ -45,7 +45,7 @@ pub fn run_shared(workload: &Workload) -> Result<BatchResult, SharedBatchError> 
     )
     .map_err(SharedBatchError::Execute)?;
     let result = match attempt {
-        tex_exec::NativeBatchAttempt::Completed(result) => result,
+        tex_exec::NativeBatchAttempt::Completed(result) => *result,
         tex_exec::NativeBatchAttempt::Fallback(barrier) => {
             return Err(SharedBatchError::Fallback(barrier));
         }
