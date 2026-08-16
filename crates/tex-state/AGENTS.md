@@ -74,7 +74,7 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/meaning/tests.rs`: Unit tests for meaning round trips, flag packing, and primitive encoding.
 - `src/memo.rs`: Opaque schema-versioned detached memo envelopes, handle-free transition/effect/result DTOs, and aggregate token/glue/macro/node/font import APIs.
 - `src/memo/tests.rs`: Cold/fork/rollback Cross-Universe memo import, provenance stripping, corruption, bounds, kind, and semantic round-trip tests.
-- `src/measurement.rs`: `profiling-stats` process-local allocation-owner counters used by dedicated profiling builds.
+- `src/measurement.rs`: `profiling-stats` process-local allocation-owner and TeX82 diagnostic-projection reuse/loss counters used by dedicated profiling builds.
 - `src/node.rs`: Immutable TeX node, box, strongly rooted character/ligature provenance and glue, kern, penalty, rule, strongly token-rooted whatsit/mark/PDF payloads, math-list, discretionary, and list-field model.
 - `src/node_sequence.rs`: Paired semantic and TeX-physical transient node sequences with semantic-only equality.
 - `src/node_arena.rs`: Compact-node module boundary and deliberately narrow re-exports.
@@ -133,7 +133,8 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/stores.rs`: Internal aggregate store tuple that coordinates interner,
   env, token, provenance, glue, font, input, and rollback/shipout scope state;
   node lifetimes remain entirely in the structural `NodeListRef` fields of
-  those aggregates.
+  those aggregates, while the derived TeX82 memory projection survives
+  unchanged operation boundaries and follows canonical root mutations.
 - `src/stores/handles.rs`: Store-boundary liveness checks for symbols, token lists, origins, glue, fonts, macros, and node handles.
 - `src/stores/low_memory.rs`: Compact TeX variable-size free-ring and rover projection.
 - `src/stores/exact_identity.rs`: Commutative current-cell accumulator and constant-size rollback image for canonical identities of non-default environment cells.

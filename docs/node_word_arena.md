@@ -120,8 +120,13 @@ direct-owner slots allocated by that payload, without recursively charging a
 shared child payload again.
 Process-wide peak instrumentation observes allocations without retaining them.
 There is deliberately no all-live node registry: aggregate memory is accounted
-from the roots already in scope, and a derived accounting cache is discarded
-when a box-root handoff cannot be updated without adding lifetime metadata.
+from the roots already in scope. Its derived accounting cache survives
+ordinary executor-operation boundaries, applies meaning and token-list Env
+deltas at their existing write barriers, and refreshes the glue watermark on
+the next observation. The cache is discarded when a box-root handoff cannot be
+updated without adding lifetime metadata, including a box restoration during
+aggregate rollback. Non-box rollback applies its root receipts before rejected
+immutable-store suffixes are truncated.
 The optional node candidate index reports its weak-entry count and retained
 capacity to testing censuses only. Bounded-live controls require both values to
 plateau; all-live controls sum exact logical and allocator-retained bytes over

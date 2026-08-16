@@ -161,6 +161,36 @@ initialization, expansion, execution, shipout, and final DVI generation without
 repeated host-file staging. The runner verifies output against the pinned
 Gentle fixture.
 
+## TeX82 diagnostic memory-projection census
+
+A `profiling` build of the `umber` CLI accepts `--profiling-stats` and emits a
+process-local `MAIN_MEMORY_PROJECTION` census. The report is owned by the CLI
+run scope, so it is printed on exact command-fuel exhaustion as well as normal
+completion. This makes bounded endpoints directly comparable without changing
+the document, authenticated distribution, cache, or execution guards.
+
+`base_requests`, `base_reuses`, and `full_rebuilds` account for every request
+for the live-root allocator base. `dynamic_observations` names scanner-owned
+one-word samples. Operation-boundary, cell-root, and box-root fields report
+attempts and retained projections. One initial cold construction plus the
+reported cache losses account for the full rebuilds in a single-run census.
+Separate
+`MAIN_MEMORY_PROJECTION_CACHE_LOSS` lines exhaustively name
+`operation_boundary`, `timeline_rollback`, `profile_change`,
+`cell_root_update`, and `box_root_update`, including owners whose count is
+zero. These counters observe derived work only and never enter snapshots,
+formats, semantic hashes, or TeX82 high-water values.
+
+Build and run a pinned endpoint with one Cargo job and the normal isolated
+resource guard, adding only the profiling feature and report flag:
+
+```bash
+CARGO_BUILD_JOBS=1 cargo build --profile profiling \
+  --features profiling -p umber --bin umber
+target/profiling/umber run --profiling-stats \
+  --expansion-fuel 6000000 <the unchanged pinned run arguments>
+```
+
 ## Checkpoint and incremental modes
 
 Pass `--checkpoints` to exercise named-boundary capture. The runner consumes

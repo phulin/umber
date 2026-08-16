@@ -63,6 +63,20 @@ termination. Section 283 `unsave` restores or frees existing allocator-owned
 values; it does not rescan the complete live closure to rediscover a coordinate
 that was already recorded when the value was allocated.
 
+The live-root portion of that diagnostic is a derived projection retained
+across ordinary executor operations. Meaning and token-list Env changes update
+it at the existing mutation barrier, while the glue watermark is refreshed on
+the next observation; transient scanner words and unfinished nodes compose
+against it without installing a root. A box-root replacement remains a
+conservative lazy rebuild because the projection owns no second node-lifetime
+registry. Aggregate rollback applies
+its Env restoration receipts while destination owners are still live and
+before rejected store suffixes are truncated, so non-box rollback is likewise
+O(delta); a restored box root takes the same conservative rebuild path as an
+ordinary box assignment. The projection is neither semantic state nor snapshot
+payload; its recorded TeX82 high-water coordinates remain authoritative when
+it is discarded.
+
 Mutable font parameter banks share a process-configured `font_info` capacity:
 TeX82's compiled default is 20,000 words, while the pinned Web2C pdfTeX
 configuration selects 8,000,000. The limit is operational and is neither

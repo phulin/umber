@@ -113,7 +113,12 @@ allocator extent. The format persists both INITEX extents, so loading does not
 reinterpret immutable backing history as live TeX memory. The dense canonical
 empty-list identity does not consume a TeX word. Immutable glue-value interning
 is projected through the reachable closure rather than treated as a third host
-arena.
+arena. The job-local live-root projection that accelerates later allocator
+observations is not serialized or snapshotted: format load constructs it lazily
+from the validated frozen roots, ordinary writes update it incrementally, and
+timeline rollback applies restoration deltas before truncating rejected store
+suffixes. A box-root restore may still discard it without changing the
+persisted extents or high-water semantics.
 The PDF DTO retains allocation counters, raw objects, forms, external images,
 and ToUnicode mappings; token lists and node graphs are embedded as validated
 handle-free semantic envelopes. It contains no store or environment data.
