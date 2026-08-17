@@ -107,7 +107,7 @@ impl OutputLedger {
 
     pub fn commit_job_start(
         &mut self,
-        control: &MainControl,
+        control: &mut MainControl,
         universe: &mut Universe,
         sink: &mut dyn CheckpointSink,
     ) -> Result<bool, CommandSummaryError> {
@@ -181,7 +181,7 @@ impl OutputLedger {
 
     fn publish(
         &self,
-        control: &MainControl,
+        control: &mut MainControl,
         universe: &mut Universe,
         sink: &mut dyn CheckpointSink,
         boundaries: &[EngineBoundary],

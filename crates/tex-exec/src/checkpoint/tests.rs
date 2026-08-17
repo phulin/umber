@@ -47,7 +47,7 @@ fn retained_checkpoint_restores_command_and_mode_token_roots() {
     let checkpoint = EngineCheckpoint::capture_checkpoint(
         EngineBoundary::JobStart,
         &command,
-        &modes,
+        &mut modes,
         &mut universe,
         ExecutionBudgetCounters::default(),
         true,

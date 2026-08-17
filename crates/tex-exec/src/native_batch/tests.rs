@@ -216,8 +216,13 @@ fn execution_coverage_refusal_rolls_back_the_outer_main_control_transaction() {
     let before_hash = stores.snapshot().state_hash();
     let program = compile(&stores, source);
     let rollback = stores.snapshot_for_local_retry();
-    let attempt = execute_packed_episode(&mut stores, &program, 0, &test_font())
-        .expect("coverage refusal is typed");
+    let attempt = execute_packed_episode(
+        &mut stores,
+        &program,
+        tex_state::font::NULL_FONT,
+        &test_font(),
+    )
+    .expect("coverage refusal is typed");
     let PackedEpisodeAttempt::Coverage(protocol) = attempt else {
         panic!("malformed supported vocabulary must refuse coverage");
     };
@@ -237,8 +242,13 @@ fn active_observer_is_a_required_barrier_before_mutation() {
     stores.set_count(0, 31);
     let program = compile(&stores, br"\count0=99\end");
     let tracked = stores.begin_tracked_region().expect("observer begins");
-    let attempt = execute_packed_episode(&mut stores, &program, 0, &test_font())
-        .expect("observer refusal is typed");
+    let attempt = execute_packed_episode(
+        &mut stores,
+        &program,
+        tex_state::font::NULL_FONT,
+        &test_font(),
+    )
+    .expect("observer refusal is typed");
     assert_eq!(
         attempt,
         PackedEpisodeAttempt::Barrier(SemanticEpisodeBarrier::Observer)
@@ -257,10 +267,20 @@ fn schema_11_loaded_and_fresh_packed_state_are_exactly_equal() {
     let loaded_program = compile(&loaded, SOURCE);
     let fresh_program = compile(&fresh, SOURCE);
 
-    let loaded_result = execute_packed_episode(&mut loaded, &loaded_program, 0, &test_font())
-        .expect("loaded episode executes");
-    let fresh_result = execute_packed_episode(&mut fresh, &fresh_program, 0, &test_font())
-        .expect("fresh episode executes");
+    let loaded_result = execute_packed_episode(
+        &mut loaded,
+        &loaded_program,
+        tex_state::font::NULL_FONT,
+        &test_font(),
+    )
+    .expect("loaded episode executes");
+    let fresh_result = execute_packed_episode(
+        &mut fresh,
+        &fresh_program,
+        tex_state::font::NULL_FONT,
+        &test_font(),
+    )
+    .expect("fresh episode executes");
     assert_eq!(loaded_result, fresh_result);
     assert_eq!(
         loaded.dump_format().expect("loaded result redumps"),

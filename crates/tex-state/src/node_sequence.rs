@@ -1,8 +1,7 @@
 //! Paired semantic and TeX-physical node sequences.
 
-use std::sync::Arc;
-
 use crate::node::Node;
+use crate::node_arena::NodeListBuilder;
 
 /// Allocation identity for one direct TeX82 high-memory cell.
 ///
@@ -51,11 +50,13 @@ pub fn direct_high_cell_overlap(
 /// channel preserves TeX's linked-list topology for diagnostics.
 #[derive(Clone, Debug)]
 pub struct NodeSequence {
-    semantic: Arc<Vec<Node>>,
-    physical: Arc<Vec<Node>>,
-    physical_boundaries: Arc<Vec<usize>>,
-    semantic_high_cell_lineages: Arc<Vec<Vec<DirectHighCellLineage>>>,
-    physical_high_cell_lineages: Arc<Vec<Vec<DirectHighCellLineage>>>,
+    semantic: NodeListBuilder,
+    physical: NodeListBuilder,
+    frozen_semantic: Option<crate::node_arena::NodeListRef>,
+    frozen_physical: Option<crate::node_arena::NodeListRef>,
+    physical_boundaries: Vec<usize>,
+    semantic_high_cell_lineages: Vec<Vec<DirectHighCellLineage>>,
+    physical_high_cell_lineages: Vec<Vec<DirectHighCellLineage>>,
     next_sequence_lineage_row: u32,
 }
 
@@ -102,11 +103,13 @@ impl NodeSequence {
         let (semantic_high_cell_lineages, physical_high_cell_lineages, next_sequence_lineage_row) =
             projected_high_cell_lineages(&semantic, &physical, &physical_boundaries);
         Self {
-            semantic: Arc::new(semantic),
-            physical: Arc::new(physical),
-            physical_boundaries: Arc::new(physical_boundaries),
-            semantic_high_cell_lineages: Arc::new(semantic_high_cell_lineages),
-            physical_high_cell_lineages: Arc::new(physical_high_cell_lineages),
+            semantic: builder_from_nodes(semantic),
+            physical: builder_from_nodes(physical),
+            frozen_semantic: None,
+            frozen_physical: None,
+            physical_boundaries,
+            semantic_high_cell_lineages,
+            physical_high_cell_lineages,
             next_sequence_lineage_row,
         }
     }
@@ -134,12 +137,12 @@ impl NodeSequence {
 
     #[must_use]
     pub fn semantic(&self) -> &[Node] {
-        &self.semantic
+        self.semantic.as_slice()
     }
 
     #[must_use]
     pub fn physical(&self) -> &[Node] {
-        &self.physical
+        self.physical.as_slice()
     }
 
     #[must_use]
@@ -158,10 +161,7 @@ impl NodeSequence {
     }
 
     pub fn take(self) -> (Vec<Node>, Vec<Node>) {
-        (
-            Arc::try_unwrap(self.semantic).unwrap_or_else(|nodes| (*nodes).clone()),
-            Arc::try_unwrap(self.physical).unwrap_or_else(|nodes| (*nodes).clone()),
-        )
+        (self.semantic.into_nodes(), self.physical.into_nodes())
     }
 
     pub fn into_parts(self) -> (Vec<Node>, Vec<Node>, Vec<usize>) {
@@ -171,25 +171,26 @@ impl NodeSequence {
             physical_boundaries,
             ..
         } = self;
-        let semantic = Arc::try_unwrap(semantic).unwrap_or_else(|nodes| (*nodes).clone());
-        let physical = Arc::try_unwrap(physical).unwrap_or_else(|nodes| (*nodes).clone());
-        let boundaries =
-            Arc::try_unwrap(physical_boundaries).unwrap_or_else(|boundaries| (*boundaries).clone());
-        (semantic, physical, boundaries)
+        (
+            semantic.into_nodes(),
+            physical.into_nodes(),
+            physical_boundaries,
+        )
     }
 
     pub fn push_mirrored(&mut self, node: Node) {
+        self.invalidate_frozen_sidecars();
         let row = self.next_sequence_lineage_row;
         self.next_sequence_lineage_row = self
             .next_sequence_lineage_row
             .checked_add(1)
             .expect("node sequence lineage rows exceed u32");
         let lineages = direct_high_cell_lineages(&node, row);
-        Arc::make_mut(&mut self.semantic).push(node.clone());
-        Arc::make_mut(&mut self.physical).push(node);
-        Arc::make_mut(&mut self.physical_boundaries).push(self.physical.len());
-        Arc::make_mut(&mut self.semantic_high_cell_lineages).push(lineages.clone());
-        Arc::make_mut(&mut self.physical_high_cell_lineages).push(lineages);
+        self.semantic.push(node.clone());
+        self.physical.push(node);
+        self.physical_boundaries.push(self.physical.len());
+        self.semantic_high_cell_lineages.push(lineages.clone());
+        self.physical_high_cell_lineages.push(lineages);
     }
 
     pub fn extend_mirrored(&mut self, nodes: impl IntoIterator<Item = Node>) {
@@ -207,32 +208,68 @@ impl NodeSequence {
     /// the resulting topology. Callers that perform a topology-aware rewrite
     /// replace both channels explicitly instead.
     pub fn mutate_semantic<R>(&mut self, mutate: impl FnOnce(&mut Vec<Node>) -> R) -> R {
-        let result = mutate(Arc::make_mut(&mut self.semantic));
-        self.physical = Arc::new((*self.semantic).clone());
-        self.physical_boundaries = Arc::new((0..=self.semantic.len()).collect());
-        let (semantic, physical, next_sequence_lineage_row) =
-            projected_high_cell_lineages(&self.semantic, &self.physical, &self.physical_boundaries);
-        self.semantic_high_cell_lineages = Arc::new(semantic);
-        self.physical_high_cell_lineages = Arc::new(physical);
+        self.invalidate_frozen_sidecars();
+        let result = mutate(self.semantic.as_mut_vec());
+        self.physical = self.semantic.clone();
+        self.physical_boundaries = (0..=self.semantic.len()).collect();
+        let (semantic, physical, next_sequence_lineage_row) = projected_high_cell_lineages(
+            self.semantic.as_slice(),
+            self.physical.as_slice(),
+            &self.physical_boundaries,
+        );
+        self.semantic_high_cell_lineages = semantic;
+        self.physical_high_cell_lineages = physical;
         self.next_sequence_lineage_row = next_sequence_lineage_row;
         result
     }
 
     pub fn truncate(&mut self, semantic_len: usize, physical_len: usize) {
-        Arc::make_mut(&mut self.semantic).truncate(semantic_len);
-        Arc::make_mut(&mut self.physical).truncate(physical_len);
-        Arc::make_mut(&mut self.physical_boundaries).truncate(semantic_len + 1);
-        Arc::make_mut(&mut self.semantic_high_cell_lineages).truncate(semantic_len);
-        Arc::make_mut(&mut self.physical_high_cell_lineages).truncate(physical_len);
+        self.invalidate_frozen_sidecars();
+        self.semantic.truncate(semantic_len);
+        self.physical.truncate(physical_len);
+        self.physical_boundaries.truncate(semantic_len + 1);
+        self.semantic_high_cell_lineages.truncate(semantic_len);
+        self.physical_high_cell_lineages.truncate(physical_len);
     }
 
-    pub fn semantic_arc(&self) -> Arc<Vec<Node>> {
-        self.semantic.clone()
+    /// Materializes immutable node/reachability/provenance sidecars at an
+    /// externally visible episode boundary while retaining this builder as
+    /// the sole mutable continuation.
+    pub fn freeze_sidecars(&mut self, stores: &mut crate::Universe) {
+        if self.frozen_semantic.is_none() {
+            self.frozen_semantic = Some(stores.freeze_node_list(self.semantic()));
+        }
+        if self.frozen_physical.is_none() {
+            self.frozen_physical = Some(stores.freeze_node_list(self.physical()));
+        }
     }
 
-    pub fn physical_arc(&self) -> Arc<Vec<Node>> {
-        self.physical.clone()
+    #[must_use]
+    pub fn frozen_sidecars(
+        &self,
+    ) -> Option<(
+        &crate::node_arena::NodeListRef,
+        &crate::node_arena::NodeListRef,
+    )> {
+        Some((
+            self.frozen_semantic.as_ref()?,
+            self.frozen_physical.as_ref()?,
+        ))
     }
+
+    fn invalidate_frozen_sidecars(&mut self) {
+        self.frozen_semantic = None;
+        self.frozen_physical = None;
+    }
+}
+
+fn builder_from_nodes(nodes: Vec<Node>) -> NodeListBuilder {
+    let mut builder = NodeListBuilder::default();
+    builder.reserve(nodes.len());
+    for node in nodes {
+        builder.push(node);
+    }
+    builder
 }
 
 fn projected_high_cell_lineages(
@@ -309,13 +346,13 @@ mod tests {
     }
 
     #[test]
-    fn equality_and_clone_identity_are_semantic_only() {
+    fn equality_and_clone_are_semantic_only() {
         let left = NodeSequence::from_channels(vec![Node::Penalty(1)], vec![Node::Penalty(2)]);
         let right = NodeSequence::from_channels(vec![Node::Penalty(1)], vec![Node::Penalty(3)]);
         assert_eq!(left, right);
         let clone = left.clone();
-        assert!(Arc::ptr_eq(&left.semantic_arc(), &clone.semantic_arc()));
-        assert!(Arc::ptr_eq(&left.physical_arc(), &clone.physical_arc()));
+        assert_eq!(left.semantic(), clone.semantic());
+        assert_eq!(left.physical(), clone.physical());
     }
 
     #[test]

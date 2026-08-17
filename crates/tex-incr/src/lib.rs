@@ -687,7 +687,7 @@ impl RevisionCandidate {
                 CandidateSink::Advance(sink) => sink,
             };
             self.output_ledger
-                .commit_job_start(&self.control, &mut self.universe, sink)?;
+                .commit_job_start(&mut self.control, &mut self.universe, sink)?;
         }
         self.prune_cold_history_at_boundary();
         // A fulfilled or authoritatively unavailable capability must make the

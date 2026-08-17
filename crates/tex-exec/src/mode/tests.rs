@@ -30,20 +30,21 @@ fn nest_usage_records_tex82_pre_push_depth_and_survives_pop() {
 }
 
 #[test]
-fn mode_summary_shares_roots_and_restored_mutation_detaches() {
+fn mode_summary_shares_frozen_level_root_and_restored_builder_detaches() {
     let mut nest = ModeNest::new();
     nest.push(Mode::Horizontal).expect("test mode push");
     nest.current_list_mutation().push(kern(1));
     let summary = nest.summary();
 
     assert!(Arc::ptr_eq(&nest.levels, &summary.levels));
-    let shared_nodes = summary
+    let snapshot_nodes = summary
         .levels
         .last()
         .expect("horizontal level")
         .list
         .sequence
-        .semantic_arc();
+        .semantic()
+        .to_vec();
 
     let mut restored = ModeNest::from_summary(summary.clone()).expect("restore mode nest");
     assert!(Arc::ptr_eq(&restored.levels, &summary.levels));
@@ -56,8 +57,8 @@ fn mode_summary_shares_roots_and_restored_mutation_detaches() {
         .expect("horizontal level")
         .list
         .sequence
-        .semantic_arc();
-    assert!(!Arc::ptr_eq(&restored_nodes, &shared_nodes));
+        .semantic();
+    assert_eq!(snapshot_nodes.len(), 1);
     assert_eq!(
         summary
             .levels
@@ -69,6 +70,37 @@ fn mode_summary_shares_roots_and_restored_mutation_detaches() {
         1
     );
     assert_eq!(restored_nodes.len(), 2);
+}
+
+#[test]
+fn episode_boundary_freezes_builder_sidecars_and_mutation_invalidates_them() {
+    let mut stores = Universe::new();
+    let mut nest = ModeNest::new();
+    nest.current_list_mutation().push(kern(11));
+    assert!(nest.levels[0].list.sequence.frozen_sidecars().is_none());
+
+    nest.freeze_node_sidecars(&mut stores);
+    let (semantic, physical) = nest.levels[0]
+        .list
+        .sequence
+        .frozen_sidecars()
+        .expect("boundary materializes both projections");
+    assert_eq!(semantic.to_vec(), vec![kern(11)]);
+    assert_eq!(physical.to_vec(), vec![kern(11)]);
+
+    nest.current_list_mutation().push(kern(13));
+    assert!(nest.levels[0].list.sequence.frozen_sidecars().is_none());
+    nest.freeze_node_sidecars(&mut stores);
+    assert_eq!(
+        nest.levels[0]
+            .list
+            .sequence
+            .frozen_sidecars()
+            .expect("next boundary refreezes the changed builder")
+            .0
+            .to_vec(),
+        vec![kern(11), kern(13)]
+    );
 }
 
 #[test]

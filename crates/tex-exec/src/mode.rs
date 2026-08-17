@@ -1184,6 +1184,15 @@ impl ModeNest {
         }
     }
 
+    /// Freezes every live native node builder at an externally visible
+    /// episode boundary. The immutable roots are sidecars carried by the mode
+    /// summary; subsequent mutation invalidates only the affected sidecar.
+    pub(crate) fn freeze_node_sidecars(&mut self, stores: &mut Universe) {
+        for level in Arc::make_mut(&mut self.levels) {
+            level.list.sequence.freeze_sidecars(stores);
+        }
+    }
+
     #[must_use]
     pub fn depth(&self) -> usize {
         self.levels.len()

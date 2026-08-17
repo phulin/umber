@@ -2,8 +2,33 @@ use std::sync::Arc;
 
 use tex_state::{GroupKind, TrackedRegionBarrier, TrackedRegionError, Universe, World};
 
-use super::{NativeBatchBarrier, NativeBatchNode, NativeBatchProgram, NativeBatchRequiredBarrier};
+use super::{
+    NativeBatchBarrier, NativeBatchNodeSink, NativeBatchProgram, NativeBatchRequiredBarrier,
+};
 use crate::{CharacterCode, CommandProfile};
+
+#[derive(Debug, Eq, PartialEq)]
+enum TestNode {
+    Character(u8),
+    Kern(i32),
+}
+
+#[derive(Default)]
+struct TestNodeSink(Vec<TestNode>);
+
+impl NativeBatchNodeSink for TestNodeSink {
+    fn reserve(&mut self, additional: usize) {
+        self.0.reserve(additional);
+    }
+
+    fn character(&mut self, ch: u8) {
+        self.0.push(TestNode::Character(ch));
+    }
+
+    fn kern(&mut self, amount: i32) {
+        self.0.push(TestNode::Kern(amount));
+    }
+}
 
 fn compile(source: &[u8], calls: usize) -> Result<NativeBatchProgram, NativeBatchBarrier> {
     let stores = Universe::new_with_plain_catcodes();
@@ -24,8 +49,9 @@ fn canonical_lexer_feeds_grouped_assignment_macro_and_output_episode() {
     let source = br"\count0=0\count1=0\count2=0\def\e#1{\advance\count0by#1\global\advance\count1by#1\ifnum#1<5\global\advance\count2by1\else\global\advance\count2by2\fi A\kern#1sp}\shipout\hbox{\e{1}\e{2}\e{3}\e{4}\e{5}\e{6}\e{7}\e{8}}\end";
     let program = compile(source, 8).expect("supported program admits");
     let mut stores = Universe::new_with_plain_catcodes();
+    let mut nodes = TestNodeSink::default();
     let outcome = program
-        .execute(&mut stores)
+        .execute(&mut stores, &mut nodes)
         .expect("admitted program executes");
 
     assert_eq!(outcome.counts, [0, 36, 12]);
@@ -34,9 +60,9 @@ fn canonical_lexer_feeds_grouped_assignment_macro_and_output_episode() {
         outcome.counts
     );
     assert_eq!(outcome.calls, 8);
-    assert_eq!(outcome.nodes.len(), 16);
-    assert!(matches!(outcome.nodes[0], NativeBatchNode::Character(b'A')));
-    assert!(matches!(outcome.nodes[1], NativeBatchNode::Kern(1)));
+    assert_eq!(nodes.0.len(), 16);
+    assert_eq!(nodes.0[0], TestNode::Character(b'A'));
+    assert_eq!(nodes.0[1], TestNode::Kern(1));
 }
 
 #[test]
@@ -44,8 +70,9 @@ fn native_and_scalar_count_group_paths_share_format_hash_and_restoration() {
     let source = br"\count0=10\begingroup\count0=20\count1=1\begingroup\count0=30\global\count1=7\count1=9\endgroup\count2=4\endgroup\end";
     let program = compile(source, 0).expect("group program admits");
     let mut native = Universe::new_with_plain_catcodes();
+    let mut nodes = TestNodeSink::default();
     let outcome = program
-        .execute(&mut native)
+        .execute(&mut native, &mut nodes)
         .expect("native group program executes");
 
     let mut scalar = Universe::new_with_plain_catcodes();
@@ -104,7 +131,7 @@ fn canonical_snapshot_rolls_native_count_episode_back_exactly() {
     let checkpoint = stores.snapshot_with_exact_identity();
 
     program
-        .execute(&mut stores)
+        .execute(&mut stores, &mut TestNodeSink::default())
         .expect("native rollback program executes");
     assert_eq!(
         [stores.count(0), stores.count(1), stores.count(2)],
@@ -132,7 +159,7 @@ fn active_incremental_observation_is_a_typed_episode_barrier() {
         .expect("tracked region begins");
 
     let error = program
-        .execute(&mut stores)
+        .execute(&mut stores, &mut TestNodeSink::default())
         .expect_err("native episode refuses active observation");
 
     assert_eq!(

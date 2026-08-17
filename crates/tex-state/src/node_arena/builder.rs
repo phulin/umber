@@ -1,31 +1,23 @@
-use super::{NodeListRef, NodeSemanticId};
-use crate::ids::NodeListId;
+use super::NodeListRef;
 use crate::node::Node;
 
-/// One operation-local builder for an immutable structurally owned node list.
+/// The sole mutable builder for native node material.
+///
+/// Child ownership, semantic identity, and compact storage sidecars are
+/// deliberately absent while a semantic episode is live. The aggregate
+/// freeze boundary derives them once from `buf` before publishing an
+/// immutable [`NodeListRef`].
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct NodeListBuilder {
     buf: Vec<Node>,
-    direct_children: Vec<NodeListRef>,
 }
 
 impl NodeListBuilder {
     pub(crate) fn new() -> Self {
-        Self {
-            buf: Vec::new(),
-            direct_children: Vec::new(),
-        }
+        Self { buf: Vec::new() }
     }
 
     pub fn push(&mut self, node: Node) {
-        node.visit_node_lists(|child| {
-            if !self
-                .direct_children
-                .iter()
-                .any(|existing| existing.id() == child.id() && existing.shares_payload(child))
-            {
-                self.direct_children.push(child.clone());
-            }
-        });
         self.buf.push(node)
     }
 
@@ -44,33 +36,37 @@ impl NodeListBuilder {
     }
 
     #[must_use]
-    pub(crate) fn as_slice(&self) -> &[Node] {
+    pub fn as_slice(&self) -> &[Node] {
         &self.buf
+    }
+
+    pub(crate) fn as_mut_vec(&mut self) -> &mut Vec<Node> {
+        &mut self.buf
+    }
+
+    pub(crate) fn truncate(&mut self, len: usize) {
+        self.buf.truncate(len)
+    }
+
+    pub(crate) fn into_nodes(self) -> Vec<Node> {
+        self.buf
     }
 
     pub fn clear(&mut self) {
         self.buf.clear();
-        self.direct_children.clear();
     }
 
-    pub(crate) fn owns_direct_child(&self, id: NodeListId) -> bool {
-        id.is_empty()
-            || self
-                .direct_children
-                .iter()
-                .any(|owner| owner.resolve(id).is_some())
-    }
-
-    pub(crate) fn direct_child_semantic_id(&self, id: NodeListId) -> Option<NodeSemanticId> {
-        if id.is_empty() {
-            return Some(NodeSemanticId::empty());
+    pub(crate) fn direct_children(&self) -> Vec<NodeListRef> {
+        let mut direct_children = Vec::new();
+        for node in &self.buf {
+            node.visit_node_lists(|child| {
+                if !direct_children.iter().any(|existing: &NodeListRef| {
+                    existing.id() == child.id() && existing.shares_payload(child)
+                }) {
+                    direct_children.push(child.clone());
+                }
+            });
         }
-        self.direct_children
-            .iter()
-            .find_map(|owner| owner.resolve(id).map(|child| child.semantic_id()))
-    }
-
-    pub(crate) fn into_direct_parts(self) -> (Vec<Node>, Vec<NodeListRef>) {
-        (self.buf, self.direct_children)
+        direct_children
     }
 }

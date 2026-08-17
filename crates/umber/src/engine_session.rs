@@ -696,7 +696,7 @@ impl<'a> EngineSession<'a> {
                 self.terminal_text_cursor = self.stores.world().effect_pos();
             }
             self.output_ledger
-                .commit_job_start(&self.control, self.stores, checkpoints)?;
+                .commit_job_start(&mut self.control, self.stores, checkpoints)?;
         }
         Ok(())
     }

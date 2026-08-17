@@ -63,18 +63,21 @@ impl NativeBatchRequiredBarrier {
     }
 }
 
-/// One node emitted by the shared command-side batch semantics.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum NativeBatchNode {
-    Character(u8),
-    Kern(i32),
+/// Borrowed node-construction capability supplied by the canonical executor.
+///
+/// The command core names semantic material but owns no node vector or node
+/// store. The executor routes these calls into the same mutable builder used
+/// by ordinary mode construction.
+pub trait NativeBatchNodeSink {
+    fn reserve(&mut self, additional: usize);
+    fn character(&mut self, ch: u8);
+    fn kern(&mut self, amount: i32);
 }
 
 /// Complete semantic result of an admitted batch episode.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct NativeBatchOutcome {
     pub counts: [i32; 3],
-    pub nodes: Vec<NativeBatchNode>,
     pub calls: usize,
     pub fuel_charges: u64,
 }
@@ -150,12 +153,16 @@ impl NativeBatchProgram {
     }
 
     /// Executes an already admitted program against canonical engine state.
-    pub fn execute(&self, stores: &mut Universe) -> Result<NativeBatchOutcome, NativeBatchBarrier> {
+    pub fn execute(
+        &self,
+        stores: &mut Universe,
+        nodes: &mut dyn NativeBatchNodeSink,
+    ) -> Result<NativeBatchOutcome, NativeBatchBarrier> {
         let bump = Bump::new();
         let state = stores
             .count_group_episode()
             .map_err(NativeBatchBarrier::State)?;
-        Kernel::new(&bump, &self.tokens, self.expected_calls, state).execute()
+        Kernel::new(&bump, &self.tokens, self.expected_calls, state, nodes).execute()
     }
 }
 
@@ -309,14 +316,14 @@ enum Frame<'a> {
     },
 }
 
-struct Kernel<'a, 'state> {
+struct Kernel<'a, 'state, 'nodes> {
     bump: &'a Bump,
     state: CountGroupEpisode<'state>,
     initial_group_depth: u32,
     frames: Vec<Frame<'a>>,
     backup: Option<Token>,
     macro_bodies: [Option<&'a [Token]>; 2],
-    nodes: Vec<NativeBatchNode>,
+    nodes: &'nodes mut dyn NativeBatchNodeSink,
     global_prefix: bool,
     pending_shipout: bool,
     in_hbox: bool,
@@ -326,14 +333,16 @@ struct Kernel<'a, 'state> {
     forwarder_calls: u64,
 }
 
-impl<'a, 'state> Kernel<'a, 'state> {
+impl<'a, 'state, 'nodes> Kernel<'a, 'state, 'nodes> {
     fn new(
         bump: &'a Bump,
         tokens: &'a [Token],
         expected_calls: usize,
         state: CountGroupEpisode<'state>,
+        nodes: &'nodes mut dyn NativeBatchNodeSink,
     ) -> Self {
         let initial_group_depth = state.group_depth();
+        nodes.reserve(expected_calls.saturating_mul(2));
         Self {
             bump,
             state,
@@ -345,7 +354,7 @@ impl<'a, 'state> Kernel<'a, 'state> {
             }],
             backup: None,
             macro_bodies: [None; 2],
-            nodes: Vec::with_capacity(expected_calls.saturating_mul(2)),
+            nodes,
             global_prefix: false,
             pending_shipout: false,
             in_hbox: false,
@@ -363,7 +372,7 @@ impl<'a, 'state> Kernel<'a, 'state> {
                 .ok_or(NativeBatchBarrier::Malformed("explicit \\end"))?;
             if let Some(ch) = token.as_char() {
                 if self.in_hbox && ch == b'A' {
-                    self.nodes.push(NativeBatchNode::Character(ch));
+                    self.nodes.character(ch);
                     self.calls += 1;
                     continue;
                 }
@@ -407,7 +416,6 @@ impl<'a, 'state> Kernel<'a, 'state> {
                 self.state.count(1),
                 self.state.count(2),
             ],
-            nodes: self.nodes,
             calls: self.calls,
             // This admitted family has a fixed canonical delivery shape.
             // Setup/end consumes 73 charges, every emitted macro call 67,
@@ -677,7 +685,7 @@ impl<'a, 'state> Kernel<'a, 'state> {
         let amount = self.scan_number()?;
         self.expect_expanded_char(b's', "scaled-point unit")?;
         self.expect_expanded_char(b'p', "scaled-point unit")?;
-        self.nodes.push(NativeBatchNode::Kern(amount));
+        self.nodes.kern(amount);
         Ok(())
     }
 

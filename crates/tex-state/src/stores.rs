@@ -3384,8 +3384,9 @@ impl Stores {
     /// immutable compact graph. No aggregate destination is changed if
     /// validation fails.
     pub fn freeze_node_list_ref(&mut self, builder: NodeListBuilder) -> NodeListRef {
-        let (semantic_id, needs) = self.validate_and_plan_direct_node_list(&builder);
-        let (nodes, children) = builder.into_direct_parts();
+        let children = builder.direct_children();
+        let (semantic_id, needs) = self.validate_and_plan_direct_node_list(&builder, &children);
+        let nodes = builder.into_nodes();
         self.node_ref_index.intern(NodeListRef::freeze_builder(
             nodes,
             children,

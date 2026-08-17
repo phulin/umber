@@ -2,23 +2,21 @@
 
 use std::fmt;
 
-use tex_arith::Scaled;
 use tex_command::{
-    NativeBatchBarrier, NativeBatchNode, NativeBatchProgram, NativeBatchRequiredBarrier,
+    NativeBatchBarrier, NativeBatchNodeSink, NativeBatchProgram, NativeBatchRequiredBarrier,
 };
 use tex_fonts::LoadedFont;
-use tex_out::{
-    BoxNode, ContentHash, FontResource, FontResourceConstruction, GlueOrder, GlueSetRatio,
-    GlueSign, JobInfo, KernKind, PageArtifact, PageNode, UnvalidatedPageArtifact,
-};
 use tex_state::Universe;
+use tex_state::glue::Order;
+use tex_state::ids::FontId;
+use tex_state::node::{BoxLr, BoxNode, BoxNodeFields, KernKind, Node, Sign};
+use tex_state::node_arena::NodeListBuilder;
+use tex_state::provenance::OriginRef;
 
 use crate::{EpisodeCoverageFallback, EpisodeCoverageFamily, SemanticEpisodeBarrier};
 
-const DVI_ONE_INCH: i32 = 4_736_286;
-
 /// Result of executing one already-admitted packed program.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) enum PackedEpisodeAttempt {
     Completed(Box<PackedEpisodeOutput>),
     Coverage(EpisodeCoverageFallback),
@@ -26,11 +24,10 @@ pub(crate) enum PackedEpisodeAttempt {
 }
 
 /// Page output produced inside MainControl's aggregate transaction.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) struct PackedEpisodeOutput {
     pub counts: [i32; 3],
-    pub artifact: PageArtifact,
-    pub artifact_bytes: Vec<u8>,
+    pub root: Node,
     pub fuel_charges: u64,
 }
 
@@ -38,21 +35,12 @@ pub(crate) struct PackedEpisodeOutput {
 #[derive(Debug)]
 pub enum NativeBatchRunError {
     DimensionOverflow,
-    Artifact(tex_out::ArtifactValidationError),
-    Serialize(tex_out::SerializeError),
 }
 
 impl fmt::Display for NativeBatchRunError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::DimensionOverflow => formatter.write_str("packed episode dimension overflow"),
-            Self::Artifact(error) => write!(formatter, "invalid packed episode artifact: {error}"),
-            Self::Serialize(error) => {
-                write!(
-                    formatter,
-                    "unable to serialize packed episode artifact: {error}"
-                )
-            }
         }
     }
 }
@@ -65,7 +53,7 @@ impl std::error::Error for NativeBatchRunError {}
 pub(crate) fn execute_packed_episode(
     stores: &mut Universe,
     program: &NativeBatchProgram,
-    font_id: u32,
+    font_id: FontId,
     font: &LoadedFont,
 ) -> Result<PackedEpisodeAttempt, NativeBatchRunError> {
     let Some(metrics) = font.character_metrics('A') else {
@@ -74,7 +62,11 @@ pub(crate) fn execute_packed_episode(
         ));
     };
     (|| {
-        let outcome = match program.execute(stores) {
+        let mut nodes = CanonicalNodeSink {
+            builder: stores.node_list_builder(),
+            font: font_id,
+        };
+        let outcome = match program.execute(stores, &mut nodes) {
             Ok(outcome) => outcome,
             Err(barrier) => {
                 if let Some(required) = semantic_barrier(&barrier) {
@@ -85,86 +77,65 @@ pub(crate) fn execute_packed_episode(
             }
         };
 
-        let mut width = 0_i32;
-        let mut nodes = Vec::with_capacity(outcome.nodes.len());
-        for node in outcome.nodes {
-            let (page_node, contribution) = match node {
-                NativeBatchNode::Character(ch) => (
-                    PageNode::Char {
-                        font_id,
-                        ch: u32::from(ch),
-                        width: metrics.width,
-                    },
-                    metrics.width.raw(),
-                ),
-                NativeBatchNode::Kern(amount) => (
-                    PageNode::Kern {
-                        amount: Scaled::from_raw(amount),
-                        kind: KernKind::Explicit,
-                    },
-                    amount,
-                ),
-            };
-            width = width
-                .checked_add(contribution)
-                .ok_or(NativeBatchRunError::DimensionOverflow)?;
-            nodes.push(page_node);
-        }
-        let root = PageNode::HList(BoxNode {
-            width: Scaled::from_raw(width),
+        let width = nodes
+            .builder
+            .as_slice()
+            .iter()
+            .try_fold(0_i32, |width, node| {
+                let contribution = match node {
+                    Node::Char { .. } => metrics.width.raw(),
+                    Node::Kern { amount, .. } => amount.raw(),
+                    _ => unreachable!("packed sink emits only migrated native families"),
+                };
+                width.checked_add(contribution)
+            })
+            .ok_or(NativeBatchRunError::DimensionOverflow)?;
+        let children = stores.freeze_node_list_ref(nodes.builder);
+        let root = Node::HList(BoxNode::new(BoxNodeFields {
+            width: tex_arith::Scaled::from_raw(width),
             height: metrics.height,
             depth: metrics.depth,
-            shift: Scaled::from_raw(0),
-            glue_set: GlueSetRatio::ZERO,
-            glue_sign: GlueSign::Normal,
-            glue_order: GlueOrder::Normal,
-            children: nodes,
-        });
-        let mut page_counts = [0; 10];
-        page_counts[..3].copy_from_slice(&outcome.counts);
-        let artifact = UnvalidatedPageArtifact {
-            job: JobInfo {
-                mag: 1000,
-                banner: tex_out::DEFAULT_BANNER.to_owned(),
-                h_offset: Scaled::from_raw(0),
-                v_offset: Scaled::from_raw(0),
-                page_origin_x: Scaled::from_raw(DVI_ONE_INCH),
-                page_origin_y: Scaled::from_raw(DVI_ONE_INCH),
-                page_width: Scaled::from_raw(0),
-                page_height: Scaled::from_raw(0),
-            },
-            fonts: vec![FontResource {
-                font_id,
-                name: font.name().to_owned(),
-                tfm_content_hash: ContentHash::new(font.content_hash()),
-                tfm_checksum: font.checksum(),
-                design_size: font.design_size(),
-                at_size: font.size(),
-                layout_policy: font.layout_policy(),
-                mapping_fallback: font.mapping_fallback(),
-                opentype: None,
-                semantic_identity: font.source_identity(),
-                construction: FontResourceConstruction::Loaded,
-            }],
-            counts: page_counts,
-            root,
-            effects: Vec::new(),
-            math_events: Vec::new(),
-        }
-        .validate()
-        .map_err(NativeBatchRunError::Artifact)?;
-        let artifact_bytes = artifact
-            .to_bytes()
-            .map_err(NativeBatchRunError::Serialize)?;
+            shift: tex_arith::Scaled::from_raw(0),
+            box_lr: BoxLr::Normal,
+            glue_set: tex_arith::GlueSetRatio::ZERO,
+            glue_sign: Sign::Normal,
+            glue_order: Order::Normal,
+            children,
+        }));
         Ok(PackedEpisodeAttempt::Completed(Box::new(
             PackedEpisodeOutput {
                 counts: outcome.counts,
-                artifact,
-                artifact_bytes,
+                root,
                 fuel_charges: outcome.fuel_charges,
             },
         )))
     })()
+}
+
+struct CanonicalNodeSink {
+    builder: NodeListBuilder,
+    font: FontId,
+}
+
+impl NativeBatchNodeSink for CanonicalNodeSink {
+    fn reserve(&mut self, additional: usize) {
+        self.builder.reserve(additional);
+    }
+
+    fn character(&mut self, ch: u8) {
+        self.builder.push(Node::Char {
+            font: self.font,
+            ch: char::from(ch),
+            origin: OriginRef::unknown(),
+        });
+    }
+
+    fn kern(&mut self, amount: i32) {
+        self.builder.push(Node::Kern {
+            amount: tex_arith::Scaled::from_raw(amount),
+            kind: KernKind::Explicit,
+        });
+    }
 }
 
 pub(crate) fn semantic_barrier(barrier: &NativeBatchBarrier) -> Option<SemanticEpisodeBarrier> {

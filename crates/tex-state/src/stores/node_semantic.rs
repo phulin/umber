@@ -69,6 +69,7 @@ impl Stores {
     pub(super) fn validate_and_plan_direct_node_list(
         &mut self,
         builder: &crate::node_arena::NodeListBuilder,
+        direct_children: &[crate::node_arena::NodeListRef],
     ) -> (NodeSemanticId, SidecarNeeds) {
         let nodes = builder.as_slice();
         let mut identity = NodeSemanticIdBuilder::new();
@@ -83,11 +84,21 @@ impl Stores {
             } else {
                 let node = &nodes[index];
                 needs.preflight_and_count(node);
-                self.assert_live_handles_in_direct_node(node, |id| builder.owns_direct_child(id));
+                self.assert_live_handles_in_direct_node(node, |id| {
+                    id.is_empty()
+                        || direct_children
+                            .iter()
+                            .any(|owner| owner.resolve(id).is_some())
+                });
                 identity.push(|hasher| {
                     self.hash_node_semantic_identity_with(NodeRef::from(node), hasher, &|child| {
-                        builder
-                            .direct_child_semantic_id(child)
+                        if child.is_empty() {
+                            return NodeSemanticId::empty();
+                        }
+                        direct_children
+                            .iter()
+                            .find_map(|owner| owner.resolve(child))
+                            .map(|child| child.semantic_id())
                             .expect("direct node-list child coordinate is stale or unowned")
                     });
                 });

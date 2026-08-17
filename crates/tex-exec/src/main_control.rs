@@ -1196,7 +1196,7 @@ impl MainControl {
 
     /// Captures a quiescent named checkpoint for this command processor.
     pub fn capture_checkpoint(
-        &self,
+        &mut self,
         boundary: crate::EngineBoundary,
         stores: &mut Universe,
         budget_counters: crate::ExecutionBudgetCounters,
@@ -1204,7 +1204,7 @@ impl MainControl {
         crate::EngineCheckpoint::capture_checkpoint(
             boundary,
             &self.command,
-            &self.modes,
+            &mut self.modes,
             stores,
             budget_counters,
             false,
@@ -1214,7 +1214,7 @@ impl MainControl {
     /// Captures a quiescent named checkpoint with the strong optional state
     /// identity required by incremental suffix-adoption comparisons.
     pub fn capture_checkpoint_with_exact_identity(
-        &self,
+        &mut self,
         boundary: crate::EngineBoundary,
         stores: &mut Universe,
         budget_counters: crate::ExecutionBudgetCounters,
@@ -1222,7 +1222,7 @@ impl MainControl {
         crate::EngineCheckpoint::capture_checkpoint(
             boundary,
             &self.command,
-            &self.modes,
+            &mut self.modes,
             stores,
             budget_counters,
             true,
@@ -2833,6 +2833,21 @@ impl MainControl {
         }
         match applied {
             Ok(step) => {
+                if matches!(
+                    commit_boundary,
+                    crate::EpisodeCommitBoundary::NamedCheckpoint(_)
+                        | crate::EpisodeCommitBoundary::Terminal
+                        | crate::EpisodeCommitBoundary::Semantic(
+                            crate::SemanticEpisodeBarrier::Effect
+                                | crate::SemanticEpisodeBarrier::Observer
+                                | crate::SemanticEpisodeBarrier::Diagnostic
+                                | crate::SemanticEpisodeBarrier::Format
+                                | crate::SemanticEpisodeBarrier::Output
+                                | crate::SemanticEpisodeBarrier::StateIdentity
+                        )
+                ) {
+                    self.modes.freeze_node_sidecars(stores);
+                }
                 let tracked_result = tracked_mark.map(|mark| stores.finish_tracked_region(mark));
                 self.commit_step(snapshot, stores);
                 self.episode_telemetry
@@ -3172,14 +3187,7 @@ impl MainControl {
         let font_id = stores.current_font();
         let font = stores.font(font_id).clone();
         let aggregate = stores.snapshot_for_local_retry();
-        let attempt = crate::execute_packed_episode(
-            stores,
-            &episode.program,
-            // Canonical artifacts number loaded fonts densely from zero;
-            // live `FontId` reserves zero for nullfont and is one-based.
-            font_id.raw().saturating_sub(1),
-            &font,
-        );
+        let attempt = crate::execute_packed_episode(stores, &episode.program, font_id, &font);
         let result = match attempt {
             Ok(crate::PackedEpisodeAttempt::Completed(result)) => result,
             Ok(crate::PackedEpisodeAttempt::Coverage(protocol)) => {
@@ -3206,46 +3214,65 @@ impl MainControl {
 
         let mut counts = [0_i32; 10];
         counts[..3].copy_from_slice(&result.counts);
-        print_ship_out_marker_open(stores, 0, &counts, None);
-        let plan = match tex_out::dvi::DviPagePlan::compile(&result.artifact) {
-            Ok(plan) => plan,
+        let pending_end = stores.world().effect_records().len();
+        let marker_start = print_ship_out_marker_open(stores, 0, &counts, None);
+        let input_summary = stores.input_summary().clone();
+        let output_open_context = self.command.output_open_context(&stores.command_context());
+        let emit_dvi = self
+            .emit_dvi_override
+            .unwrap_or(!self.command_profile().capabilities().supports_pdftex());
+        let mut write = |_stores: &mut Universe,
+                         _sink: tex_state::PrintSink,
+                         _tokens: TokenListId|
+         -> Result<crate::shipout::ExpandedWrite, ExecError> {
+            unreachable!("admitted packed nodes cannot contain deferred writes")
+        };
+        let mut replay = |_stores: &mut Universe,
+                          _kind: crate::shipout::ReplayTextKind,
+                          _tokens: TokenListId|
+         -> Result<crate::shipout::ExpandedReplayText, ExecError> {
+            unreachable!("admitted packed nodes cannot contain replay text")
+        };
+        let publication = crate::shipout::ShipoutTransaction::new(&mut write, &mut replay)
+            .stage_page(
+                result.root,
+                input_summary,
+                crate::shipout::ShipoutOrigin {
+                    output_open_context: Some(output_open_context),
+                    pending_end,
+                    announce_openout: self.command_profile().capabilities().supports_pdftex(),
+                },
+                stores,
+                emit_dvi,
+            );
+        let mut publication = match publication {
+            Ok(Some(publication)) => publication,
+            Ok(None) => {
+                stores.rollback_local_retry_snapshot(aggregate);
+                return Some(Err(ExecError::InvalidShipoutArtifact(
+                    "packed episode page was rejected".to_owned(),
+                )));
+            }
             Err(error) => {
                 stores.rollback_local_retry_snapshot(aggregate);
-                return Some(Err(ExecError::InvalidShipoutArtifact(error.to_string())));
+                return Some(Err(error));
             }
         };
-        let (hash, _receipt, publication) = match stores.commit_replayed_artifact(
-            result.artifact_bytes,
-            Vec::new(),
-            tex_state::OutputProvenanceRecipe::default(),
-            None,
-        ) {
-            Ok(committed) => committed,
-            Err(error) => {
-                stores.rollback_local_retry_snapshot(aggregate);
-                return Some(Err(ExecError::World(error)));
-            }
-        };
-        // Canonical main control has opened the transcript by the time §638
-        // closes the marker. Packed root execution bypasses that setup scan,
-        // so publish through the already-resolved canonical sink explicitly.
+        print_ship_out_marker_close(stores, 0);
+        stores.world_mut().claim_effect_publication_boundary(
+            pending_end..marker_start,
+            marker_start,
+            publication.artifact.effect(),
+            publication
+                .effect_output_attempt
+                .expect("shipout assigns output-attempt ownership"),
+        );
+        publication.effects = marker_start..stores.world().effect_records().len();
         stores
             .world_mut()
-            .write_text(tex_state::PrintSink::TerminalAndLog, "]");
-        if self
-            .emit_dvi_override
-            .unwrap_or(!self.command_profile().capabilities().supports_pdftex())
-        {
-            push_prepared_dvi_page(
-                &mut self.prepared_dvi_pages,
-                crate::dispatch::PreparedDviPage {
-                    hash,
-                    plan,
-                    committed_effects: Box::new([]),
-                    publication,
-                    receipt: publication.receipt(),
-                },
-            );
+            .claim_effect_publication(publication.effects.clone(), publication.artifact.effect());
+        if let Some(page) = publication.dvi {
+            push_prepared_dvi_page(&mut self.prepared_dvi_pages, page);
         }
         self.completed_boundaries
             .push(crate::EngineBoundary::ShipoutComplete);

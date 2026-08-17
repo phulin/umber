@@ -94,7 +94,7 @@ pub use input::{
     SourceTokenizationStep,
 };
 pub use native_batch::{
-    NativeBatchBarrier, NativeBatchNode, NativeBatchOutcome, NativeBatchProgram,
+    NativeBatchBarrier, NativeBatchNodeSink, NativeBatchOutcome, NativeBatchProgram,
     NativeBatchRequiredBarrier,
 };
 /// The single canonical naming vocabulary shared by every observation
