@@ -350,6 +350,20 @@ impl RootedTracedTokenBuffer {
         self.extend(tokens.into_iter().map(RootedTracedTokenWord::unowned));
     }
 
+    /// Appends another rooted buffer without expanding it into per-token
+    /// owner pairs. The packed words move as one run and only the sparse,
+    /// distinct structural-owner sets are merged.
+    pub fn append_buffer(&mut self, mut other: Self) {
+        if self.is_empty() {
+            *self = other;
+            return;
+        }
+        self.words.append(&mut other.words);
+        for root in other.roots {
+            self.insert_root(root);
+        }
+    }
+
     pub fn pop(&mut self) -> Option<RootedTracedTokenWord> {
         let word = self.words.pop()?;
         let rooted = self.root_word(word);

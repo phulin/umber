@@ -137,6 +137,29 @@ impl MacroArgumentBuilder {
         slot: u8,
         argument: impl IntoIterator<Item = tex_state::token::RootedTracedTokenWord>,
     ) -> Result<(), MacroArgumentBuildError> {
+        self.validate_slot(slot)?;
+        let start = self.tokens.len();
+        self.tokens.extend(argument);
+        self.finish_slot(slot, start);
+        Ok(())
+    }
+
+    /// Completes an argument by transferring the matcher's canonical packed
+    /// buffer. This is the production macro-call seam; it avoids rebuilding
+    /// per-token owner pairs between matching and activation replay.
+    fn complete_buffer(
+        &mut self,
+        slot: u8,
+        argument: RootedTracedTokenBuffer,
+    ) -> Result<(), MacroArgumentBuildError> {
+        self.validate_slot(slot)?;
+        let start = self.tokens.len();
+        self.tokens.append_buffer(argument);
+        self.finish_slot(slot, start);
+        Ok(())
+    }
+
+    fn validate_slot(&self, slot: u8) -> Result<(), MacroArgumentBuildError> {
         if !(1..=9).contains(&slot) {
             return Err(MacroArgumentBuildError::InvalidSlot(slot));
         }
@@ -147,12 +170,12 @@ impl MacroArgumentBuilder {
                 actual: slot,
             });
         }
-        let start = self.tokens.len();
-        self.tokens.extend(argument);
-        let end = self.tokens.len();
-        self.ranges[usize::from(slot - 1)] = MacroArgumentRange::new(start, end);
-        self.next_slot = slot;
         Ok(())
+    }
+
+    fn finish_slot(&mut self, slot: u8, start: usize) {
+        self.ranges[usize::from(slot - 1)] = MacroArgumentRange::new(start, self.tokens.len());
+        self.next_slot = slot;
     }
 
     /// Freezes the single shared argument allocation for one activation.
@@ -430,7 +453,7 @@ impl CommandProcessor<'_> {
                 }),
             );
             arguments
-                .complete((parameter + 1) as u8, argument)
+                .complete_buffer((parameter + 1) as u8, argument)
                 .map_err(|_| CommandError::input_invariant())?;
         }
         Ok(arguments.finish())

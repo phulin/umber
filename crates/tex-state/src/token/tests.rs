@@ -234,3 +234,37 @@ fn mutable_rooted_buffer_churn_keeps_direct_storage_empty_and_live_growth_exact(
     }
     assert_eq!(live.roots().len(), 128);
 }
+
+#[test]
+fn rooted_buffer_append_moves_words_and_merges_distinct_owners() {
+    let mut universe = crate::Universe::new();
+    let first_token = Token::Char {
+        ch: 'a',
+        cat: Catcode::Letter,
+    };
+    let second_token = Token::Char {
+        ch: 'b',
+        cat: Catcode::Letter,
+    };
+    let first = universe.inserted_origin_ref(
+        InsertedOriginKind::Unread,
+        first_token,
+        OriginRef::unknown(),
+    );
+    let second = universe.inserted_origin_ref(
+        InsertedOriginKind::Unread,
+        second_token,
+        OriginRef::unknown(),
+    );
+    let mut target =
+        RootedTracedTokenBuffer::new([RootedTracedTokenWord::new(first_token, first.clone())]);
+    let source = RootedTracedTokenBuffer::new([
+        RootedTracedTokenWord::new(first_token, first.clone()),
+        RootedTracedTokenWord::new(second_token, second.clone()),
+    ]);
+
+    target.append_buffer(source);
+
+    assert_eq!(target.words().len(), 3);
+    assert_eq!(target.roots(), &[first, second]);
+}
