@@ -317,12 +317,25 @@ The detailed work vectors and allocation counts are in
 
 The implementation deletes the superseded node vectors and passes the exact
 semantic/output comparisons plus the allocation, RSS, and absolute-speed
-gates. Its guarded medians retain 27.5x/28.1x/8.93x speedups and
-26.9%/27.0%/34.9% of scalar RSS. The `.12` non-regression row remains open:
-isolated timing assigns 29.890 ms of the 6M run to the canonical DVI compiler
-reparsing the artifact bytes just emitted at shipout. Linked issue
-`umber2-ujwo` owns the `tex-out` co-emission repair and forbids restoring a
-parallel page-node authority.
+gates. Its original guarded medians retained 27.5x/28.1x/8.93x speedups and
+26.9%/27.0%/34.9% of scalar RSS. The linked `umber2-ujwo` repair then removed
+the ordinary fresh-shipout reparse: `tex-out::DviPagePlanCoEmitter` consumes the
+same scalar events as the canonical artifact encoder while the immutable node
+root is borrowed. Artifact bytes remain the sole serialized authority and the
+operation-local plan retains no `PageNode` or engine handle. DVI leaders, whose
+semantics require subtree replay, switch only that operation to the existing
+bounded canonical-byte adapter rather than retaining a compatibility tree.
+
+A same-host rebuild of the actual `.12` commit (`faf269be4`) and the repaired
+tree used one release binary per revision, fresh guarded processes, CPU 4
+affinity, identical work vectors, and five order-balanced samples per row. The
+`.12`/repaired medians were 258.668/263.858 ms at 6M (+2.01%),
+498.207/521.703 ms at 12M (+4.72%), and 197.083/198.514 ms for nested forwarding
+(+0.73%). Exact state, artifact, DVI, effect, terminal, log, and fuel comparison
+passed at all three points. The repaired direct rows requested
+156,407,429/310,320,757 bytes versus `.12`'s
+182,893,123/363,300,819 (-14.48%/-14.58%), so the five-percent stage gate is
+closed without restoring a parallel node authority.
 
 ### Final deletion and compatibility
 

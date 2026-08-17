@@ -23,7 +23,7 @@ Use this crate for stable, driver-facing artifact structures and serialization c
 - `src/dvi/leaders.rs`: TeX.web hlist/vlist leader repetition loops for aligned, centered, expanded, rule, and degenerate leader cases.
 - `src/dvi/movement.rs`: TeX.web-style DVI `movement()` lookback stack and w/x/y/z command optimization.
 - `src/dvi/opcodes.rs`: Private DVI opcode and file unit constants shared by the writer modules and tests.
-- `src/dvi/plan.rs`: The common page-plan currency, owned and canonical-artifact adapters, first-use font-definition relocations, and final file assembly.
+- `src/dvi/plan.rs`: The common page-plan currency, operation-local fresh-shipout co-emitter, owned and canonical-artifact adapters, first-use font-definition relocations, and final file assembly. The co-emitter consumes the artifact encoder's scalar events without retaining nodes; subtree-replaying leaders switch that operation to the canonical streaming-byte adapter.
 - `src/dvi/tests.rs`: Byte-level DVI writer tests for file structure, traversal, movement optimization, rules, fonts, glue, and specials.
 - `src/dvi/traversal.rs`: The sole explicit-frame DVI body traversal for boxes, rules, specials, glue, leaders, movement synchronization, and coordinate inspection.
 - `src/geometry.rs`: Shared geometry authority for artifact ordinals, snap lookahead, checked coordinates, and exact leader placement.
@@ -58,6 +58,11 @@ Use this crate for stable, driver-facing artifact structures and serialization c
   engine token lists, read referenced files/artifacts, and acquire validated
   font/image resources before crossing into this crate.
 - Keep binary format changes explicit, versioned, and covered by round-trip tests.
+- Canonical artifact bytes remain the sole serialized page authority. A fresh
+  shipout may retain one operation-local `DviPagePlan` sidecar co-emitted while
+  the live node root is borrowed, but the sidecar must never serialize into the
+  artifact, retain live engine handles, or introduce a second semantic node
+  store.
 - Use `tex-arith::Scaled` raw values consistently for serialized dimensions.
 
 ## Validation

@@ -209,6 +209,44 @@ to artifact emission, about 10.36 ms to builder freeze, and 29.890 ms to
 without restoring a `PageNode` store; `.13` does not conceal that remaining
 output-owner gate.
 
+## Canonical DVI plan co-emission
+
+Issue `umber2-ujwo` closed that output-owner gate. Fresh ordinary and packed
+shipout now create one operation-local `tex-out::DviPagePlanCoEmitter` beside
+the artifact encoder. The existing immutable `NodeListRef` traversal feeds
+artifact bytes and page-local DVI decisions together: font registration,
+characters and ligatures, kerns, glue, rules, boxes, math movement, and DVI
+specials are compiled without reading the completed artifact stream. The
+sidecar owns only the detached DVI plan under construction; it retains no live
+node coordinate or `PageNode`, never enters artifact or format bytes, and is
+moved into the ordinary prepared-DVI transaction only after artifact emission
+succeeds.
+
+This does not make DVI a second semantic authority. Canonical artifact bytes
+remain the committed page representation and remain byte-identical. Loaded or
+restored artifacts necessarily use their canonical bytes because no live node
+borrow exists. Box and rule leaders also use the same bounded streaming-byte
+adapter for that operation: TeX's leader algorithm replays a subtree at each
+placement, so the adapter avoids either retaining a compatibility tree or
+adding another source traversal. Every other fresh page finishes the already
+co-emitted plan directly.
+
+The repair was measured against a same-host release rebuild of `.12` commit
+`faf269be4`, not against historical samples from another host epoch. Five
+fresh, CPU-4-affined, order-balanced samples per revision and row produced:
+
+| Workload          | `.12` median | Co-emitted median | Stage change | `.12`/co-emitted requested bytes |
+| ----------------- | -----------: | ----------------: | -----------: | -------------------------------: |
+| Direct, 6M fuel   |   258.668 ms |        263.858 ms |       +2.01% |      182,893,123 / 156,407,429 B |
+| Direct, 12M fuel  |   498.207 ms |        521.703 ms |       +4.72% |      363,300,819 / 310,320,757 B |
+| Nested, 1,380,089 |   197.083 ms |        198.514 ms |       +0.73% |        45,339,378 / 39,416,690 B |
+
+All rows therefore satisfy the `.13` no-more-than-five-percent stage gate.
+Direct requested bytes fell by 14.48%/14.58%. Exact comparisons passed for
+state, 1,701,713/3,403,201/380,244 artifact bytes,
+246,448/492,716/50,180 serialized DVI bytes, effects, terminal, log, and the
+6,000,000/12,000,000/1,380,089 fuel ledgers.
+
 ## Covered semantic slice
 
 The direct workload is a complete INITEX job. It initializes count registers,
