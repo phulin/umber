@@ -102,6 +102,33 @@ fn canonical_input_feeds_grouped_assignment_and_output_episode() {
 }
 
 #[test]
+fn episode_uses_the_canonical_integer_keyword_and_dimension_scanners() {
+    let source = br"\count 0 = -'10\advance\count0 BY +2\shipout\hbox{A\kern.5pt}\end";
+    let (mut command, mut stores, mut capabilities) = rig(source);
+    let mut nodes = TestNodeSink::default();
+    let outcome = execute(&mut command, &mut stores, &mut capabilities, 1, &mut nodes)
+        .expect("canonical scanners execute inside the episode");
+
+    assert_eq!(outcome.counts, [-6, 0, 0]);
+    assert_eq!(nodes.0, [TestNode::Character(b'A'), TestNode::Kern(32_768)]);
+}
+
+#[test]
+fn scanner_recovery_returns_a_command_barrier_instead_of_coverage_fallback() {
+    let (mut command, mut stores, mut capabilities) = rig(br"\count0=x\end");
+    let error = execute(
+        &mut command,
+        &mut stores,
+        &mut capabilities,
+        0,
+        &mut TestNodeSink::default(),
+    )
+    .expect_err("missing-number recovery must publish its diagnostic");
+
+    assert!(matches!(error, NativeBatchBarrier::Command(_)));
+}
+
+#[test]
 fn canonical_and_scalar_count_group_paths_share_format_hash_and_restoration() {
     let source = br"\count0=10\begingroup\count0=20\count1=1\begingroup\count0=30\global\count1=7\count1=9\endgroup\count2=4\endgroup\end";
     let (mut command, mut native, mut capabilities) = rig(source);

@@ -219,11 +219,12 @@ impl<'processor, 'state, 'nodes, S: NativeBatchNodeSink> Kernel<'processor, 'sta
             .episode_work()
             .fuel_charges
             // The canonical processor accounts raw and expanded delivery.
-            // This retained execution slice still owns the completed count,
-            // kern, character, box, shipout, and end actions. Its established
-            // differential work vector charges sixteen such actions per
-            // emitted call plus the output/end pair.
-            .saturating_add(16_u64.saturating_mul(self.calls as u64))
+            // Its scalar integer, keyword, and dimension scanners now also
+            // account the fourteen scan actions per emitted call which the
+            // retired episode-local scanner used to leave to this receipt.
+            // The retained executor slice owns only the character/kern pair,
+            // plus the output/end pair after the loop.
+            .saturating_add(2_u64.saturating_mul(self.calls as u64))
             .saturating_add(2);
         let state = self.state.take().expect("episode state finishes once");
         self.processor.finish_count_group_episode(state);
@@ -239,6 +240,11 @@ impl<'processor, 'state, 'nodes, S: NativeBatchNodeSink> Kernel<'processor, 'sta
             .processor
             .get_x_token()
             .map_err(NativeBatchBarrier::Command)?;
+        self.check_command_barrier()?;
+        Ok(command)
+    }
+
+    fn check_command_barrier(&mut self) -> Result<(), NativeBatchBarrier> {
         if self.processor.episode_has_pending_diagnostic() {
             return Err(NativeBatchBarrier::Required(
                 NativeBatchRequiredBarrier::Diagnostic,
@@ -251,14 +257,15 @@ impl<'processor, 'state, 'nodes, S: NativeBatchNodeSink> Kernel<'processor, 'sta
                 NativeBatchRequiredBarrier::Effect,
             ));
         }
-        Ok(command)
+        Ok(())
     }
 
     fn assign_count(&mut self) -> Result<(), NativeBatchBarrier> {
         let index = self.scan_register_index()?;
-        if self.peek_expanded_char()? == Some(b'=') {
-            let _ = self.next_expanded()?;
-        }
+        self.processor
+            .scan_optional_equals()
+            .map_err(NativeBatchBarrier::Command)?;
+        self.check_command_barrier()?;
         let value = self.scan_number()?;
         self.write_count(index, value);
         Ok(())
@@ -267,8 +274,14 @@ impl<'processor, 'state, 'nodes, S: NativeBatchNodeSink> Kernel<'processor, 'sta
     fn advance_count(&mut self) -> Result<(), NativeBatchBarrier> {
         self.expect_expanded_control(Control::Count, "advance target")?;
         let index = self.scan_register_index()?;
-        self.expect_expanded_char(b'b', "advance keyword")?;
-        self.expect_expanded_char(b'y', "advance keyword")?;
+        let by = self
+            .processor
+            .scan_keyword("by")
+            .map_err(NativeBatchBarrier::Command)?;
+        self.check_command_barrier()?;
+        if !by.value {
+            return Err(NativeBatchBarrier::Malformed("advance keyword"));
+        }
         let amount = self.scan_number()?;
         let value = self
             .count(index)
@@ -331,10 +344,12 @@ impl<'processor, 'state, 'nodes, S: NativeBatchNodeSink> Kernel<'processor, 'sta
         if !self.in_hbox {
             return Err(NativeBatchBarrier::Malformed("kern outside hbox"));
         }
-        let amount = self.scan_number()?;
-        self.expect_expanded_char(b's', "scaled-point unit")?;
-        self.expect_expanded_char(b'p', "scaled-point unit")?;
-        self.nodes.kern(amount);
+        let amount = self
+            .processor
+            .scan_dimension()
+            .map_err(NativeBatchBarrier::Command)?;
+        self.check_command_barrier()?;
+        self.nodes.kern(amount.value.raw());
         Ok(())
     }
 
@@ -344,35 +359,12 @@ impl<'processor, 'state, 'nodes, S: NativeBatchNodeSink> Kernel<'processor, 'sta
     }
 
     fn scan_number(&mut self) -> Result<i32, NativeBatchBarrier> {
-        let mut value = 0_i32;
-        let mut saw_digit = false;
-        loop {
-            let command = self
-                .next_expanded()?
-                .ok_or(NativeBatchBarrier::Malformed("integer"))?;
-            let Some((ch, catcode)) = command_character(&command) else {
-                self.processor
-                    .back_input(command)
-                    .map_err(NativeBatchBarrier::Command)?;
-                break;
-            };
-            if !ch.is_ascii_digit() {
-                if catcode != Catcode::Space {
-                    self.processor
-                        .back_input(command)
-                        .map_err(NativeBatchBarrier::Command)?;
-                }
-                break;
-            }
-            saw_digit = true;
-            value = value
-                .checked_mul(10)
-                .and_then(|value| value.checked_add(i32::from(ch - b'0')))
-                .ok_or(NativeBatchBarrier::ArithmeticOverflow)?;
-        }
-        saw_digit
-            .then_some(value)
-            .ok_or(NativeBatchBarrier::Malformed("integer"))
+        let scanned = self
+            .processor
+            .scan_integer()
+            .map_err(NativeBatchBarrier::Command)?;
+        self.check_command_barrier()?;
+        Ok(scanned.value)
     }
 
     fn write_count(&mut self, index: u8, value: i32) {
@@ -388,32 +380,6 @@ impl<'processor, 'state, 'nodes, S: NativeBatchNodeSink> Kernel<'processor, 'sta
 
     fn group_depth(&self) -> u32 {
         self.processor.episode_group_depth(self.state())
-    }
-
-    fn peek_expanded_char(&mut self) -> Result<Option<u8>, NativeBatchBarrier> {
-        let Some(command) = self.next_expanded()? else {
-            return Ok(None);
-        };
-        let ch = command_character(&command).map(|(ch, _)| ch);
-        self.processor
-            .back_input(command)
-            .map_err(NativeBatchBarrier::Command)?;
-        Ok(ch)
-    }
-
-    fn expect_expanded_char(
-        &mut self,
-        expected: u8,
-        context: &'static str,
-    ) -> Result<(), NativeBatchBarrier> {
-        let actual = self
-            .next_expanded()?
-            .as_ref()
-            .and_then(command_character)
-            .map(|(ch, _)| ch);
-        (actual == Some(expected))
-            .then_some(())
-            .ok_or(NativeBatchBarrier::Malformed(context))
     }
 
     fn expect_expanded_control(
