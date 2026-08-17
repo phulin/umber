@@ -175,6 +175,16 @@ mutation receipts, and returning a typed result to the same `MainControl` and
 `EngineSession`. A resource or recoverable failure rolls the same aggregate
 back to its local-retry mark. No barrier serializes state into a second engine.
 
+The implemented boundary is `tex-exec`'s `EpisodeCommit`,
+`EpisodeCommitBoundary`, `SemanticEpisodeBarrier`, and `EpisodeTelemetry`.
+Main control's existing aggregate savepoint is the sole rollback authority and
+includes command, mode/builder, page/PDF/DVI, effect/artifact,
+provenance/dependency/observation, diagnostic, checkpoint-schedule, and private
+allocation roots. `EpisodeCoverageFallback` separately carries its temporary
+semantic family and a mechanically checked mutation-free-admission or exact-
+aggregate-rollback proof. These protocol values are operational evidence, not
+format or checkpoint state.
+
 A coverage fallback is allowed only when its enum variant names an unmigrated
 semantic family and one of these mechanically checked conditions holds:
 

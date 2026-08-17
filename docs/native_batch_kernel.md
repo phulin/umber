@@ -83,6 +83,44 @@ and peak versus the private-array ceiling are the real cost of retaining the
 canonical global-assignment journal until the enclosing hbox closes, rather
 than an omitted rollback obligation.
 
+## Canonical commit and barrier protocol
+
+Issue `umber2-64v2.15` made the production episode boundary explicit on the
+same live `MainControl` and `Universe`. The existing aggregate savepoint is the
+only transaction: it covers command input and replay state, mode and builder
+continuations, page/PDF state, prepared DVI receipts, named boundaries,
+diagnostic context, effects and artifacts, provenance watermarks, dependency
+tracking, geometry observations, and private-revision allocations. Commit
+freezes those canonical roots in place. Rollback restores the complete tuple
+before the same scalar engine retries; no serialized transfer or second engine
+state exists.
+
+`SemanticEpisodeBarrier` distinguishes resource, effect, observer, diagnostic,
+checkpoint, format, output, cancellation, fuel, and required state-identity
+boundaries. `EpisodeCommit` names the primary boundary and completed operation
+count. Fixed-size `EpisodeTelemetry` counts attempts, operations, commits,
+rollbacks, every semantic barrier, bounded-slice returns, terminal returns,
+temporary coverage boundaries, and coverage fallback by family. The counters
+are operational like command fuel: rollback never refunds them and they enter
+neither formats nor checkpoints.
+
+Temporary migration debt has a separate `EpisodeCoverageFamily` vocabulary.
+A `NativeBatchFallback` cannot be constructed without either
+`MutationFreeAdmission` or `ExactAggregateRollback`. Group- and rollback-lineage
+stops after an already committed atomic action are typed coverage boundaries,
+not permission to execute that action twice. Required barriers return as
+barriers, never as coverage fallback. Focused perturbation tests cover each
+class, exact resource/fuel rollback, observer and dependency admission,
+diagnostic/effect/format publication, schema-11 fresh/load/redump equality, and
+the canonical state/artifact/DVI/channel differential.
+
+The protocol retained the no-barrier ceiling. Three fresh isolated samples per
+row produced median canonical/shared times of 8.524 s/266.205 ms at 6M fuel,
+16.105 s/519.695 ms at 12M fuel, and 1.981 s/211.831 ms for the nested workload:
+32.0x, 31.0x, and 9.35x respectively. Exact state, artifact bytes, DVI, effects,
+terminal, and log comparison passed at all three points. The shared path used
+234/235 direct allocation calls and 232 nested calls.
+
 ## Covered semantic slice
 
 The direct workload is a complete INITEX job. It initializes count registers,

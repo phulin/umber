@@ -43,6 +43,7 @@ serialize the canonical page artifact, parse the serialized artifact, compile
 and serialize DVI, and retain terminal text, log text, and effects. The batch
 episode mutates the same canonical count bank and group journal as scalar
 `MainControl`; it is deliberately not a supported engine choice. Its canonical
-tokenization/state seams, typed fallback boundary, measurements, and
-deletion-oriented migration plan are recorded in
+tokenization/state seams, typed semantic barriers, counted coverage fallback
+with mandatory admission/rollback proof, measurements, and deletion-oriented
+migration plan are recorded in
 `docs/native_batch_kernel.md`.
