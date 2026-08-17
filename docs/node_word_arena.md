@@ -35,14 +35,20 @@ format or memo bytes.
 
 ## Construction
 
-`NodeListBuilder` owns ordinary `Node` values and records their strong child
-references. Freezing performs these steps atomically:
+`NodeListBuilder` is the sole mutable native-node builder. Ordinary mode
+construction and packed command episodes append `Node` values directly to it;
+there is no persistent per-command node vector or packed-only page-node
+builder. General and mixed material uses native rows. Character/kern-only
+episodes use an eight-byte inline row in the same builder and promote in place
+if another node family arrives. Freezing performs these steps atomically:
 
-1. validate non-node handles and direct child ownership;
-2. compute allocation-independent semantic identity;
-3. move-encode the root rows into one new immutable compact payload and attach
+1. collect and deduplicate direct child owners, materializing the reachability
+   sidecar once;
+2. validate non-node handles and direct child ownership;
+3. compute allocation-independent semantic identity;
+4. move-encode the root rows into one new immutable compact payload and attach
    the sorted distinct direct child-payload owners;
-4. return one `NodeListRef` for the root span.
+5. return one `NodeListRef` for the root span.
 
 The newly owned root rows are move-encoded directly into their final payload
 once. Preexisting immutable child payloads retain their existing coordinates
@@ -52,6 +58,16 @@ transitive descendants.
 Validation failure publishes nothing. A weak, bounded candidate index may
 reuse an exactly equal live payload, but weak entries neither retain payloads
 nor recover dead ones.
+
+Mode lists retain TeX's distinct semantic and physical diagnostic projections
+as two uses of this same builder type. Their projection boundary/allocator
+lineage vectors are nonsemantic sidecars, not a second node authority. Page,
+shipout, named checkpoint, effect, observer/diagnostic, format,
+state-identity/incremental, and terminal barriers cache immutable semantic and
+physical `NodeListRef` sidecars. The next mutation invalidates only the
+affected cache. Main-control rollback truncates the mutable builders through
+its existing mode-journal marks and drops rejected frozen roots; it creates no
+node-specific transaction or store.
 
 ## Aggregate transitions
 

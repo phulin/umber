@@ -55,7 +55,8 @@ print channel of its own outside the borrowed
 - `src/native_batch.rs` and `src/native_batch/tests.rs`: the immutable packed
   command program retained by production `MainControl`; canonical exact-byte
   admission, macro/argument frames, expansion and scalar scanning, typed
-  barriers, canonical `tex-state` count/group access, and focused parity.
+  barriers, canonical `tex-state` count/group access, borrow-scoped native
+  node-sink calls with no command-owned node vector, and focused parity.
 - `src/fatal.rs` and `src/fatal/tests.rs`: TeX82 §93 `fatal_error`,
   §94 `overflow`, and §95 `confusion` as one shared irrecoverable-error
   value, its canonical observation record, and focused label tests. Every

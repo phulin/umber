@@ -29,9 +29,11 @@ Command operands are scanned by `tex-command` into typed request and result valu
 - `src/main_control.rs`: sole production command delivery and execution driver, including complete-job versus fragment root completion, bounded terminal-input continuation, loaded-profile versus canonical engine-binary semantic selection, typed committed mutation/effect observations, strong macro owners across scanned assignment apply seams, the execution-owned memo capability, and the ordinary-operation tracked-region lifecycle and mode projection.
 - `src/canonical_step.rs`: shared bounded-step result protocol and output ledger for checkpoint publication, resource fulfillment, suspension accounting, and cancellation.
 - `src/native_batch.rs` and `src/native_batch/tests.rs`: private packed-output
-  lowering inside `MainControl`'s aggregate transaction; typed execution
-  refusal and exact canonical state/artifact/byte/DVI/effect/channel coverage.
-  No standalone runner, engine selector, or independent lifecycle lives here.
+  construction inside `MainControl`'s aggregate transaction through the
+  canonical mutable node builder and ordinary shipout transaction; typed
+  execution refusal and exact state/artifact/byte/DVI/effect/channel coverage.
+  No packed node vector, detached artifact builder, standalone runner, engine
+  selector, or independent lifecycle lives here.
 - `src/assignments/`: the `AssignmentCommitter` authority for scoped writes,
   e-TeX redundant-local decisions, tracing, and typed mutation receipts, plus
   primitive registration delegated from `tex-command`'s integrated catalogue.
@@ -63,7 +65,11 @@ Command operands are scanned by `tex-command` into typed request and result valu
 - `src/execution_receipt.rs`: crate-private typed operation receipts assembled
   and consumed by the unified executor's optional append-bounded evidence
   publication seam; every allocating category closes before operation commit.
-- `src/mode.rs` and `src/mode/`: mode nest, strongly glue-rooted paragraph/alignment metadata, strongly provenance-rooted pending horizontal characters, summaries, and rollback journal. Alignment brace depth belongs only to `tex-command`.
+- `src/mode.rs` and `src/mode/`: mode nest, mutable native semantic/physical
+  node builders, barrier-frozen node sidecars, strongly glue-rooted
+  paragraph/alignment metadata, strongly provenance-rooted pending horizontal
+  characters, summaries, and rollback journal. Alignment brace depth belongs
+  only to `tex-command`.
 - `src/job.rs` and `src/job_output.rs`: TeX job framing, terminal continuation, final cleanup, and lazy DVI/transcript output. See `docs/job_framing.md`.
 - `src/page_builder.rs`, `src/splitting.rs`, `src/vertical.rs`, `src/packing_params.rs`, and `src/pack_report.rs`: page accounting, vertical splitting/contribution, packing snapshots, and box diagnostics.
 - `src/host_api.rs`, `src/retained_resource.rs`, and `src/session_api.rs`: host resource contracts, retained fulfillment, execution budgets, cancellation, and interrupts.

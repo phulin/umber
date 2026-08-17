@@ -77,9 +77,13 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/memo/tests.rs`: Cold/fork/rollback Cross-Universe memo import, provenance stripping, corruption, bounds, kind, and semantic round-trip tests.
 - `src/measurement.rs`: `profiling-stats` process-local allocation-owner, loaded-format restoration-work, and TeX82 diagnostic-projection reuse/loss counters used by dedicated profiling builds.
 - `src/node.rs`: Immutable TeX node, box, strongly rooted character/ligature provenance and glue, kern, penalty, rule, strongly token-rooted whatsit/mark/PDF payloads, math-list, discretionary, and list-field model.
-- `src/node_sequence.rs`: Paired semantic and TeX-physical transient node sequences with semantic-only equality.
+- `src/node_sequence.rs`: Paired semantic and TeX-physical projections over
+  the sole mutable `NodeListBuilder`, barrier-frozen immutable sidecars,
+  TeX-cell lineage metadata, and semantic-only equality.
 - `src/node_arena.rs`: Compact-node module boundary and deliberately narrow re-exports.
-- `src/node_arena/builder.rs`: Reusable operation-local builder that collects direct child owners before freezing one immutable graph.
+- `src/node_arena/builder.rs`: Sole mutable native-node builder shared by mode
+  construction and packed episodes; freeze derives direct-child reachability
+  before publishing one immutable graph.
 - `src/node_arena/copy.rs`: Test-only compact-copy and child-patch machinery retained for node-storage measurement coverage; production freeze does not copy immutable child payloads.
 - `src/node_arena/measurement.rs`: `profiling-stats` compact-column and peak-storage accounting.
 - `src/node_arena/measurement/tests.rs`: Coherence, divergent-maximum, nested-payload, and concurrent peak-measurement tests.

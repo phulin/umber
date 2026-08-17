@@ -3376,7 +3376,7 @@ impl Stores {
 
     /// Freezes the current node-list builder value and clears it for reuse.
     pub fn finish_node_list(&mut self, builder: &mut NodeListBuilder) -> NodeListRef {
-        let owned = core::mem::replace(builder, NodeListBuilder::new());
+        let owned = core::mem::take(builder);
         self.freeze_node_list_ref(owned)
     }
 

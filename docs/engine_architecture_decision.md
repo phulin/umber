@@ -315,6 +315,15 @@ The detailed work vectors and allocation counts are in
 - the exact 6M/12M document gate from `.12` does not regress by more than 5%
   and no old persistent per-command builder remains for migrated node families.
 
+The implementation deletes the superseded node vectors and passes the exact
+semantic/output comparisons plus the allocation, RSS, and absolute-speed
+gates. Its guarded medians retain 27.5x/28.1x/8.93x speedups and
+26.9%/27.0%/34.9% of scalar RSS. The `.12` non-regression row remains open:
+isolated timing assigns 29.890 ms of the 6M run to the canonical DVI compiler
+reparsing the artifact bytes just emitted at shipout. Linked issue
+`umber2-ujwo` owns the `tex-out` co-emission repair and forbids restoring a
+parallel page-node authority.
+
 ### Final deletion and compatibility
 
 `cargo test -q --tests` must pass after every stage. The committed canonical

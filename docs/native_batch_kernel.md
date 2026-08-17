@@ -159,6 +159,56 @@ output barrier, one terminal commit, and zero coverage fallback for every
 migrated family in focused MainControl and EngineSession tests. Schema-11 fresh
 and loaded execution remains byte- and redump-identical.
 
+## Canonical mutable node builder
+
+Issue `umber2-64v2.13` deleted the packed episode's `NativeBatchNode` vector,
+detached `PageNode` vector, private artifact construction, and private DVI
+compilation. `tex-command` now receives only a borrow-scoped
+`NativeBatchNodeSink`; `tex-exec` implements it with the same
+`tex-state::NodeListBuilder` used by ordinary mode-list character, ligature,
+kern, glue, rule, and box construction. The command loop therefore names
+character and kern actions but owns no node storage.
+
+The builder owns one mutable row stream. General and mixed material uses native
+`Node` rows; an admitted character/kern-only run stays in the same builder as
+an eight-byte inline row and promotes in place if mixed material arrives. At
+freeze, `tex-state` derives direct-child reachability, validates handles,
+computes allocation-independent semantic identity, and move-encodes one
+immutable `NodeListRef`. Mode-list semantic and TeX-physical projections use
+the same builder implementation and retain only their required
+projection/allocator metadata. Output, effect, observer/diagnostic, format,
+state-identity, terminal, and named-checkpoint barriers materialize immutable
+node sidecars before publication. Subsequent mutation invalidates them; the
+existing aggregate savepoint and mode-journal lengths remain the only rollback
+authority.
+
+Packed output freezes the hbox children, constructs the canonical live
+`Node::HList`, and enters the ordinary `ShipoutTransaction`. Artifact
+validation/serialization, render provenance, geometry observations, effect
+publication, and DVI planning now have one implementation for scalar and
+packed execution.
+
+Three fresh guarded release processes per row after the builder cutover gave
+these medians. All exact state, artifact-byte, DVI, effect, terminal, log, and
+fuel comparisons passed:
+
+| Workload          | Canonical | Production episode | Speedup | Canonical/episode RSS | Canonical/episode allocations |
+| ----------------- | --------- | ------------------ | ------- | --------------------- | ----------------------------- |
+| Direct, 6M fuel   | 8.224 s   | 299.003 ms         | 27.5x   | 285,348/76,652 KiB    | 8,602,915/5,395               |
+| Direct, 12M fuel  | 16.378 s  | 583.866 ms         | 28.1x   | 541,896/146,448 KiB   | 17,200,149/5,396              |
+| Nested, 1,380,089 | 1.999 s   | 223.853 ms         | 8.93x   | 69,412/24,256 KiB     | 1,885,969/5,393               |
+
+The rows retain 26.9%, 27.0%, and 34.9% of scalar RSS and less than 0.29% of
+scalar allocation calls, so the node construction, allocation, RSS, and
+absolute speed gates pass. They are 19.4%, 10.8%, and 7.0% slower than `.12`'s
+production episode medians, however, so the separate five-percent stage gate
+does not pass. Isolated 6M timings assign 0.137 ms to normalization, 9.512 ms
+to artifact emission, about 10.36 ms to builder freeze, and 29.890 ms to
+`DviPagePlan::compile_v10` reparsing the just-emitted artifact. Beads issue
+`umber2-ujwo`, discovered from `.13`, owns co-emitting the canonical DVI plan
+without restoring a `PageNode` store; `.13` does not conceal that remaining
+output-owner gate.
+
 ## Covered semantic slice
 
 The direct workload is a complete INITEX job. It initializes count registers,
