@@ -1199,7 +1199,6 @@ mod tests {
         }
     }
 
-
     #[test]
     fn retained_session_enters_packed_episode_and_resumes_after_output_checkpoint() {
         let source = Arc::<[u8]>::from(

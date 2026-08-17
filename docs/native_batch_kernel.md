@@ -32,14 +32,16 @@ The migrated production seam is split by existing authority:
   current category codes, and end-line policy for a complete pre-mutation
   admission pass. It then owns the packed macro, expansion, scalar scanner,
   conditional, count-assignment, group-save, and node-command episode.
-- `tex-exec::run_native_batch_episode` owns font-metric projection, canonical
-  `PageArtifact` validation and serialization, artifact reparsing, and DVI
-  compilation and serialization.
-- `NativeBatchFallback` is the exact boundary for an unsupported character
-  mode, category, control sequence, malformed supported episode, or missing
-  font character. Admission and execution mutate no `Universe` or host output,
-  so a caller can enter canonical stepping from its original state. Effects,
-  resources, observations, and checkpoints are not admitted.
+- Production `MainControl` retains the admitted program, owns its aggregate
+  rollback point, projects font metrics, validates and serializes the canonical
+  `PageArtifact`, commits it through the ordinary shipout transaction, and
+  retains the ordinary DVI page plan.
+- Typed admission and execution refusals are the exact boundaries for an
+  unsupported character mode, category, control sequence, malformed supported
+  episode, or missing font character. Admission is mutation-free and execution
+  refusal restores the aggregate transaction before the same `MainControl`
+  continues canonical stepping. Effects, resources, observations, and
+  checkpoints remain typed barriers.
 - The benchmark-local lexer and kernel were deleted. The differential and
   process runner now call the production seam, preventing benchmark code from
   becoming a production dependency.
@@ -105,8 +107,8 @@ are operational like command fuel: rollback never refunds them and they enter
 neither formats nor checkpoints.
 
 Temporary migration debt has a separate `EpisodeCoverageFamily` vocabulary.
-A `NativeBatchFallback` cannot be constructed without either
-`MutationFreeAdmission` or `ExactAggregateRollback`. Group- and rollback-lineage
+A coverage refusal cannot be constructed without either `MutationFreeAdmission`
+or `ExactAggregateRollback`. Group- and rollback-lineage
 stops after an already committed atomic action are typed coverage boundaries,
 not permission to execute that action twice. Required barriers return as
 barriers, never as coverage fallback. Focused perturbation tests cover each
@@ -120,6 +122,42 @@ row produced median canonical/shared times of 8.524 s/266.205 ms at 6M fuel,
 32.0x, 31.0x, and 9.35x respectively. Exact state, artifact bytes, DVI, effects,
 terminal, and log comparison passed at all three points. The shared path used
 234/235 direct allocation calls and 232 nested calls.
+
+## MainControl and EngineSession cutover
+
+Issue `umber2-64v2.12` promoted the admitted exact-byte family into the real
+native batch lifecycle. `EngineSession` and the CLI startup path now register
+the root through `MainControl`, which tokenizes and admits it once and retains
+the resulting `NativeBatchProgram`. `advance_episode` executes that program
+against the same live `Universe`, count bank, group journal, font store, fuel
+ledger, artifact ledger, DVI queue, effect world, command finalizer, and
+checkpoint publisher used by scalar execution. Output returns a semantic
+barrier commit; the retained session then resumes and returns the terminal
+commit on its next advance.
+
+The standalone `run_native_batch_episode` request/result/fallback API and the
+benchmark `shared` engine selector are deleted. Output lowering is a private
+MainControl helper with no lifecycle or state owner. Observed, diagnostic, and
+tracked scalar entry points invalidate an unconsumed packed plan before they
+touch command input, so one root can never be consumed by both paths. Admission
+and aggregate execution refusals record their typed semantic or coverage
+counters before canonical stepping resumes from the untouched or restored
+state.
+
+The exact differential now also checks the operational fuel ledger. Three
+fresh guarded release processes per row produced these medians:
+
+| Workload          | Canonical | Production episode | Speedup | Canonical/episode RSS | Canonical/episode allocations |
+| ----------------- | --------- | ------------------ | ------- | --------------------- | ----------------------------- |
+| Direct, 6M fuel   | 8.205 s   | 250.378 ms         | 32.8x   | 225,312/76,568 KiB    | 8,423,813/5,380               |
+| Direct, 12M fuel  | 16.549 s  | 526.948 ms         | 31.4x   | 421,560/141,884 KiB   | 16,841,943/5,381              |
+| Nested, 1,380,089 | 1.982 s   | 209.160 ms         | 9.48x   | 56,012/23,644 KiB     | 1,845,969/5,378               |
+
+Exact count/group state, artifact bytes, DVI, effects, terminal, log, and fuel
+comparisons passed at all three points. The production episode recorded one
+output barrier, one terminal commit, and zero coverage fallback for every
+migrated family in focused MainControl and EngineSession tests. Schema-11 fresh
+and loaded execution remains byte- and redump-identical.
 
 ## Covered semantic slice
 
@@ -224,10 +262,10 @@ must be removed with the layered predecessor they validate. An unsupported or
 observable operation exits a direct episode through a typed barrier into the
 same canonical state; it must not transfer into another live engine.
 
-1. The first production batch-episode interface now lives in `tex-command` and
-   `tex-exec`. Its closed admission surface stops before an effect, resource,
-   observation, or named checkpoint barrier. The existing public driver
-   remains the only general lifecycle owner.
+1. The packed program lives in `tex-command` and its output lowering is private
+   to `tex-exec`. Its closed admission surface stops before an effect, resource,
+   observation, or named checkpoint barrier. `MainControl` is the only owner
+   and `EngineSession` is the only general lifecycle driver.
 2. The count family now uses direct `tex-state` bank and journal storage for
    both scalar and packed execution, and its private rollback path is deleted.
    Continue the same delete-as-migrated rule when later integer families enter
@@ -238,10 +276,10 @@ same canonical state; it must not transfer into another live engine.
    behavior before mutation. Next, make the packed token, meaning, scanner, and
    diagnostic primitives the canonical implementations, add external-input
    barriers, and delete each superseded frame representation as its cases pass.
-4. Move the existing main-control aggregate loop onto fused delivery,
-   expansion, scanning, and dispatch episodes. Slow commands call canonical
-   helpers against the same mutable state and resume the same loop; there is no
-   engine selector or parallel command implementation.
+4. The admitted exact-byte root now enters fused delivery, expansion, scanning,
+   and dispatch from the existing main-control aggregate loop. Unsupported and
+   observable roots remain on canonical scalar helpers against the same mutable
+   state; there is no engine selector or state transfer.
 5. Give mode lists mutable native builders and construct ordinary character,
    kern, glue, rule, and box nodes directly. Freeze once at page, checkpoint,
    or externally observed boundaries, retaining `PageArtifact` and DVI as the
@@ -250,10 +288,10 @@ same canonical state; it must not transfer into another live engine.
    checkpoints from compact sidecars only at their named barriers. Incremental
    execution consumes those committed boundaries, not per-command persistent
    wrappers in the batch loop.
-7. The benchmark-local fused lexer and executor are removed. Retain the
-   production regression workloads and semantic/performance gates; once main
-   control uses the shared storage, cursors, loop, and builders, remove the
-   comparison adapter and the old layered hot path family by family.
+7. The benchmark-local fused lexer and executor, standalone production runner,
+   and `shared` selector are removed. The retained differential compares scalar
+   stepping with the real MainControl route. Continue deleting layered scalar
+   families as later admission coverage replaces them.
 
 Every stage requires exact result, diagnostic, effect, artifact, and DVI
 differentials; adversarial grouping and scanner tests; 6M/12M scaling; allocation

@@ -1,9 +1,7 @@
 use std::sync::Arc;
 
 use tex_arith::Scaled;
-use tex_command::{
-    CommandProfile, NativeBatchProgram, RegisteredSourceKind, SourceRegistration,
-};
+use tex_command::{CommandProfile, NativeBatchProgram, RegisteredSourceKind, SourceRegistration};
 use tex_fonts::{CharMetrics, FontMetrics, LoadedFont, MetricCharTag};
 use tex_out::ContentHash;
 
@@ -63,7 +61,8 @@ fn finish(control: &mut MainControl, stores: &mut tex_state::Universe, packed: b
         }
     } else {
         while let MainControlStep::Continue = control.step(stores).expect("canonical step advances")
-        {}
+        {
+        }
     }
 }
 
@@ -90,19 +89,31 @@ fn main_control_packed_root_matches_canonical_artifact_dvi_effects_and_channels(
     packed_control
         .register_root_source_for_batch(
             &packed,
-            SourceRegistration::new(
-                RegisteredSourceKind::Generated,
-                Arc::<[u8]>::from(SOURCE),
-            ),
+            SourceRegistration::new(RegisteredSourceKind::Generated, Arc::<[u8]>::from(SOURCE)),
         )
         .expect("packed root registers");
     finish(&mut packed_control, &mut packed, true);
 
-    assert_eq!([packed.count(0), packed.count(1), packed.count(2)], [0, 36, 12]);
-    assert_eq!(packed.world().committed_artifacts(), canonical.world().committed_artifacts());
-    assert_eq!(packed.world().effect_records(), canonical.world().effect_records());
-    assert_eq!(packed.world().memory_terminal_output(), canonical.world().memory_terminal_output());
-    assert_eq!(packed.world().memory_log_output(), canonical.world().memory_log_output());
+    assert_eq!(
+        [packed.count(0), packed.count(1), packed.count(2)],
+        [0, 36, 12]
+    );
+    assert_eq!(
+        packed.world().committed_artifacts(),
+        canonical.world().committed_artifacts()
+    );
+    assert_eq!(
+        packed.world().effect_records(),
+        canonical.world().effect_records()
+    );
+    assert_eq!(
+        packed.world().memory_terminal_output(),
+        canonical.world().memory_terminal_output()
+    );
+    assert_eq!(
+        packed.world().memory_log_output(),
+        canonical.world().memory_log_output()
+    );
     let mut packed_pages = packed_control.take_prepared_dvi_pages();
     let mut canonical_pages = canonical_control.take_prepared_dvi_pages();
     assert_eq!(packed_pages.len(), 1);
@@ -123,23 +134,27 @@ fn main_control_batch_resumes_after_output_without_fallback() {
     control
         .register_root_source_for_batch(
             &stores,
-            SourceRegistration::new(
-                RegisteredSourceKind::Generated,
-                Arc::<[u8]>::from(SOURCE),
-            ),
+            SourceRegistration::new(RegisteredSourceKind::Generated, Arc::<[u8]>::from(SOURCE)),
         )
         .expect("production root registers");
 
     assert_eq!(
-        control.advance_episode(&mut stores).expect("output commits"),
+        control
+            .advance_episode(&mut stores)
+            .expect("output commits"),
         crate::StepResult::Progress(MainControlStep::Continue)
     );
     assert_eq!(
-        control.advance_episode(&mut stores).expect("session resumes"),
+        control
+            .advance_episode(&mut stores)
+            .expect("session resumes"),
         crate::StepResult::Progress(MainControlStep::End)
     );
     let telemetry = control.episode_telemetry();
-    assert_eq!(telemetry.semantic_barriers(SemanticEpisodeBarrier::Output), 1);
+    assert_eq!(
+        telemetry.semantic_barriers(SemanticEpisodeBarrier::Output),
+        1
+    );
     assert_eq!(telemetry.terminals(), 1);
     for family in [
         EpisodeCoverageFamily::CharacterProfile,
@@ -155,6 +170,45 @@ fn main_control_batch_resumes_after_output_without_fallback() {
 }
 
 #[test]
+fn shipout_checkpoint_restores_the_packed_root_terminal_continuation() {
+    let mut stores = tex_state::Universe::new_with_plain_catcodes();
+    let font_id = stores.intern_font(test_font());
+    let mut control = MainControl::tex82_initex(&mut stores);
+    stores.set_current_font_global(font_id);
+    control.set_dvi_output(true);
+    control
+        .register_root_source_for_batch(
+            &stores,
+            SourceRegistration::new(RegisteredSourceKind::Generated, Arc::<[u8]>::from(SOURCE)),
+        )
+        .expect("production root registers");
+    assert_eq!(
+        control
+            .advance_episode(&mut stores)
+            .expect("output commits"),
+        crate::StepResult::Progress(MainControlStep::Continue)
+    );
+    let checkpoint = control
+        .capture_checkpoint(
+            crate::EngineBoundary::ShipoutComplete,
+            &mut stores,
+            crate::ExecutionBudgetCounters::default(),
+        )
+        .expect("output checkpoint captures");
+
+    let mut restored = MainControl::with_profile(CommandProfile::TEX82);
+    restored
+        .restore_checkpoint(&checkpoint, &mut stores)
+        .expect("output checkpoint restores");
+    assert_eq!(
+        restored
+            .advance_episode(&mut stores)
+            .expect("restored job terminates"),
+        crate::StepResult::Progress(MainControlStep::End)
+    );
+}
+
+#[test]
 fn execution_coverage_refusal_rolls_back_the_outer_main_control_transaction() {
     let source = br"\count0=41\shipout\hbox{A\end";
     let mut stores = tex_state::Universe::new_with_plain_catcodes();
@@ -167,7 +221,10 @@ fn execution_coverage_refusal_rolls_back_the_outer_main_control_transaction() {
     let PackedEpisodeAttempt::Coverage(protocol) = attempt else {
         panic!("malformed supported vocabulary must refuse coverage");
     };
-    assert_eq!(protocol.safety(), CoverageFallbackSafety::ExactAggregateRollback);
+    assert_eq!(
+        protocol.safety(),
+        CoverageFallbackSafety::ExactAggregateRollback
+    );
     assert_eq!(protocol.family(), EpisodeCoverageFamily::ScannerOrExpansion);
     stores.rollback_local_retry_snapshot(rollback);
     assert_eq!(stores.count(0), 17);
@@ -182,7 +239,10 @@ fn active_observer_is_a_required_barrier_before_mutation() {
     let tracked = stores.begin_tracked_region().expect("observer begins");
     let attempt = execute_packed_episode(&mut stores, &program, 0, &test_font())
         .expect("observer refusal is typed");
-    assert_eq!(attempt, PackedEpisodeAttempt::Barrier(SemanticEpisodeBarrier::Observer));
+    assert_eq!(
+        attempt,
+        PackedEpisodeAttempt::Barrier(SemanticEpisodeBarrier::Observer)
+    );
     assert_eq!(stores.count(0), 31);
     let _ = stores.finish_tracked_region(tracked);
 }

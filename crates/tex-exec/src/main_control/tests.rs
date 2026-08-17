@@ -4340,7 +4340,9 @@ fn production_batch_uses_one_retry_point_for_multiple_ordinary_commands() {
     register_source(&mut control, br"\count0=11 \count1=22 \end");
 
     assert_eq!(
-        control.advance_episode(&mut stores).expect("batch completes"),
+        control
+            .advance_episode(&mut stores)
+            .expect("batch completes"),
         StepResult::Progress(ReplayStep::End)
     );
     assert_eq!(stores.count(0), 11);
@@ -4355,7 +4357,9 @@ fn production_batch_rolls_back_its_bounded_prefix_on_resource_need() {
     let mut control = MainControl::tex82_initex(&mut stores);
     register_source(&mut control, br"\count0=11 \input child\end");
 
-    let batch_step = control.advance_episode(&mut stores).expect("batch suspends");
+    let batch_step = control
+        .advance_episode(&mut stores)
+        .expect("batch suspends");
     assert!(
         matches!(
             batch_step,
@@ -4398,7 +4402,9 @@ fn production_batch_returns_after_a_world_effect() {
     register_source(&mut control, br"\message{effect}\count0=11 \end");
 
     assert_eq!(
-        control.advance_episode(&mut stores).expect("effect commits"),
+        control
+            .advance_episode(&mut stores)
+            .expect("effect commits"),
         StepResult::Progress(ReplayStep::Continue)
     );
     assert_eq!(

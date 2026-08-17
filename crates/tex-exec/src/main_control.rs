@@ -1238,6 +1238,11 @@ impl MainControl {
         stores: &mut Universe,
     ) -> Result<(), crate::CheckpointRestoreError> {
         checkpoint.restore_state(&mut self.command, &mut self.modes, stores)?;
+        // Admission plans are operational and deliberately absent from
+        // durable checkpoints. A restore may move this same control behind
+        // or ahead of its former packed root, so no pre-restore plan or
+        // terminal continuation may survive it.
+        self.discard_packed_root_episode();
         self.active_alignment = None;
         self.boxes = ReplayBoxes::default();
         self.pending_shipout_boundary = false;

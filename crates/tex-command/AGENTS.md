@@ -52,10 +52,10 @@ print channel of its own outside the borrowed
   used by leaf operations, and the top-level `CommandFuelLedger` session owner
   shared by every canonical processor episode. Fuel and work counters are
   operational evidence outside semantic state; rollback never refunds them.
-- `src/native_batch.rs` and `src/native_batch/tests.rs`: bounded direct batch
-  migration, canonical tokenizer admission, typed pre-mutation barriers,
-  packed macro/scanner semantics, canonical `tex-state` count/group access,
-  and focused parity and fallback coverage.
+- `src/native_batch.rs` and `src/native_batch/tests.rs`: the immutable packed
+  command program retained by production `MainControl`; canonical exact-byte
+  admission, macro/argument frames, expansion and scalar scanning, typed
+  barriers, canonical `tex-state` count/group access, and focused parity.
 - `src/fatal.rs` and `src/fatal/tests.rs`: TeX82 §93 `fatal_error`,
   §94 `overflow`, and §95 `confusion` as one shared irrecoverable-error
   value, its canonical observation record, and focused label tests. Every

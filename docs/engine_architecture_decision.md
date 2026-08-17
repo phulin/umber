@@ -270,6 +270,19 @@ in the evidence table.
 
 ### `.15` and `.12`: barrier protocol and canonical command episodes
 
+The `.12` closed-root cutover is now production-owned. Native `EngineSession`
+startup admits once into a program retained by `MainControl`; the live driver
+executes it under the same aggregate `Universe` transaction, publishes through
+the ordinary artifact/DVI/effect/checkpoint seams, returns at output, and
+resumes the same session to terminal. The standalone batch runner and benchmark
+engine selector are deleted. Fresh exact-work medians are 32.8x at 6M fuel,
+31.4x at 12M fuel, and 9.48x for nested forwarding, with episode RSS at
+34.0%, 33.7%, and 42.2% of scalar stepping respectively. Focused admitted-family
+tests record one output barrier, one terminal commit, and zero coverage
+fallback; scalar observed entry invalidates admission before consuming input.
+The detailed work vectors and allocation counts are in
+[`native_batch_kernel.md`](native_batch_kernel.md).
+
 - the committed command-semantic fixtures, canonical event ordering with an
   observer, all scanner/condition/alignment/recovery cases, and exact
   diagnostic context pass through the episode path;

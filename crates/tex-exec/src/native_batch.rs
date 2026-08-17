@@ -13,9 +13,7 @@ use tex_out::{
 };
 use tex_state::Universe;
 
-use crate::{
-    EpisodeCoverageFallback, EpisodeCoverageFamily, SemanticEpisodeBarrier,
-};
+use crate::{EpisodeCoverageFallback, EpisodeCoverageFamily, SemanticEpisodeBarrier};
 
 const DVI_ONE_INCH: i32 = 4_736_286;
 
@@ -50,7 +48,10 @@ impl fmt::Display for NativeBatchRunError {
             Self::DimensionOverflow => formatter.write_str("packed episode dimension overflow"),
             Self::Artifact(error) => write!(formatter, "invalid packed episode artifact: {error}"),
             Self::Serialize(error) => {
-                write!(formatter, "unable to serialize packed episode artifact: {error}")
+                write!(
+                    formatter,
+                    "unable to serialize packed episode artifact: {error}"
+                )
             }
         }
     }
@@ -155,12 +156,14 @@ pub(crate) fn execute_packed_episode(
         let artifact_bytes = artifact
             .to_bytes()
             .map_err(NativeBatchRunError::Serialize)?;
-        Ok(PackedEpisodeAttempt::Completed(Box::new(PackedEpisodeOutput {
-            counts: outcome.counts,
-            artifact,
-            artifact_bytes,
-            fuel_charges: outcome.fuel_charges,
-        })))
+        Ok(PackedEpisodeAttempt::Completed(Box::new(
+            PackedEpisodeOutput {
+                counts: outcome.counts,
+                artifact,
+                artifact_bytes,
+                fuel_charges: outcome.fuel_charges,
+            },
+        )))
     })()
 }
 
