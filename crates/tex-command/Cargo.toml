@@ -4,7 +4,6 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
-bumpalo.workspace = true
 md-5.workspace = true
 posix-regex.workspace = true
 tex-fonts = { path = "../tex-fonts" }

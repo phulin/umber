@@ -5,9 +5,10 @@
 //! they represent typed reads or mutations of [`Universe`] state.
 
 use crate::{
-    ChangedAt, DependencyCodeTable, DependencyEngineField, DependencyFontField, DependencyKey,
-    DependencyValue, DependencyWorldField, JobClock, TracedTokenList, TrackedRegionBarrier,
-    Universe,
+    ChangedAt, CountGroupEpisode, CountGroupEpisodeBarrier, DependencyCodeTable,
+    DependencyEngineField, DependencyFontField, DependencyKey, DependencyValue,
+    DependencyWorldField, GroupKind, GroupMismatch, JobClock, TracedTokenList,
+    TrackedRegionBarrier, Universe,
     cell::{BankTag, CellId},
     env::banks::{GlueParam, IntParam, TokParam},
     glue::GlueSpec,
@@ -37,6 +38,82 @@ pub struct CommandContext<'a> {
 }
 
 impl CommandContext<'_> {
+    /// Returns the current rollback-coupled effect position for an episode
+    /// barrier check. The position is operational evidence, not command
+    /// state; callers may only compare it inside this borrow.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn episode_effect_pos(&self) -> crate::EffectPos {
+        self.universe.world().effect_pos()
+    }
+
+    /// Opens the publication sidecar for a fused count/group episode.
+    ///
+    /// The returned value owns no semantic state and no universe borrow. It
+    /// can remain live while canonical input and expansion continue through
+    /// this same command context.
+    #[doc(hidden)]
+    pub fn begin_count_group_episode(
+        &mut self,
+    ) -> Result<CountGroupEpisode, CountGroupEpisodeBarrier> {
+        CountGroupEpisode::begin(self.universe)
+    }
+
+    /// Reads one count through an admitted fused episode.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn episode_count(&self, episode: &CountGroupEpisode, index: u8) -> i32 {
+        episode.count(self.universe, index)
+    }
+
+    /// Writes one count through an admitted fused episode.
+    #[doc(hidden)]
+    pub fn episode_set_count(
+        &mut self,
+        episode: &mut CountGroupEpisode,
+        index: u8,
+        value: i32,
+        global: bool,
+    ) {
+        episode.set_count(self.universe, index, value, global);
+    }
+
+    /// Returns the live canonical environment-group depth.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn episode_group_depth(&self, episode: &CountGroupEpisode) -> u32 {
+        episode.group_depth(self.universe)
+    }
+
+    /// Returns the live canonical innermost environment-group kind.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn episode_innermost_group_kind(&self, episode: &CountGroupEpisode) -> Option<GroupKind> {
+        episode.innermost_group_kind(self.universe)
+    }
+
+    /// Enters one canonical environment group through a fused episode.
+    #[doc(hidden)]
+    pub fn episode_enter_group(&mut self, episode: &mut CountGroupEpisode, kind: GroupKind) {
+        episode.enter_group(self.universe, kind);
+    }
+
+    /// Leaves one canonical environment group through a fused episode.
+    #[doc(hidden)]
+    pub fn episode_leave_group(
+        &mut self,
+        episode: &mut CountGroupEpisode,
+        expected: GroupKind,
+    ) -> Result<(), GroupMismatch> {
+        episode.leave_group(self.universe, expected)
+    }
+
+    /// Publishes coalesced count mutations at a successful episode boundary.
+    #[doc(hidden)]
+    pub fn finish_count_group_episode(&mut self, episode: CountGroupEpisode) {
+        episode.finish(self.universe);
+    }
+
     fn observe_dependency(&mut self, key: DependencyKey) {
         if !self.universe.dependency_region_is_active() {
             return;

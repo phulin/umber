@@ -1624,48 +1624,23 @@ impl MainControl {
         Ok(id)
     }
 
-    /// Registers the production root and mutation-freely admits the packed
-    /// command episode used by unobserved batch sessions.
+    /// Registers the production root and retains a canonical-input episode
+    /// marker for unobserved batch sessions.
     ///
-    /// Admission uses the canonical tokenizer against the live profile,
-    /// end-line policy, and category-code bank. A refusal does not consume or
-    /// mutate the registered root, so ordinary main control starts from the
-    /// same command state with no transfer or reconstruction.
+    /// There is no admission tokenizer or second cursor. Both fused and
+    /// ordinary execution consume this one registered `CommandState` root,
+    /// and every speculative attempt is protected by the aggregate snapshot.
     pub fn register_root_source_for_batch(
         &mut self,
-        stores: &Universe,
+        _stores: &Universe,
         source: SourceRegistration,
     ) -> Result<tex_state::SourceId, SourceRegistrationError> {
-        let bytes = source.shared_bytes();
-        let expected_calls = bytes.len().saturating_div(5).max(1);
-        let admission = tex_command::NativeBatchProgram::compile(
-            Arc::clone(&bytes),
-            self.command_profile(),
-            stores.endlinechar(),
-            |code| {
-                let byte = code
-                    .to_byte()
-                    .expect("exact-byte episode admission checks its profile first");
-                stores.catcode(char::from(byte))
-            },
-            expected_calls,
-        );
-        self.packed_root_episode = match admission {
-            Ok(program) => Some(PackedRootEpisode { program }),
-            Err(barrier) => {
-                if let Some(required) = crate::native_batch::semantic_barrier(&barrier) {
-                    self.episode_telemetry.record_semantic_barrier(required);
-                } else {
-                    self.episode_telemetry.record_fallback(
-                        crate::EpisodeCoverageFallback::mutation_free(
-                            crate::native_batch::coverage_family(&barrier),
-                        ),
-                    );
-                }
-                None
-            }
-        };
-        self.register_root_source(source)
+        let expected_calls = source.shared_bytes().len().saturating_div(5).max(1);
+        let id = self.register_root_source(source)?;
+        self.packed_root_episode = Some(PackedRootEpisode {
+            program: tex_command::NativeBatchProgram::new(expected_calls),
+        });
+        Ok(id)
     }
 
     /// Publishes source-open framing after root registration without
@@ -3186,27 +3161,38 @@ impl MainControl {
         self.episode_telemetry.record_attempt();
         let font_id = stores.current_font();
         let font = stores.font(font_id).clone();
-        let aggregate = stores.snapshot_for_local_retry();
-        let attempt = crate::execute_packed_episode(stores, &episode.program, font_id, &font);
+        let aggregate = self.snapshot_step(stores);
+        let attempt = crate::execute_packed_episode(
+            stores,
+            &mut self.command,
+            &mut self.capabilities,
+            &episode.program,
+            font_id,
+            &font,
+        );
         let result = match attempt {
             Ok(crate::PackedEpisodeAttempt::Completed(result)) => result,
             Ok(crate::PackedEpisodeAttempt::Coverage(protocol)) => {
-                stores.rollback_local_retry_snapshot(aggregate);
+                self.rollback_step(aggregate, stores);
+                self.packed_root_episode = Some(episode);
                 self.episode_telemetry.record_fallback(protocol);
                 return None;
             }
-            Ok(crate::PackedEpisodeAttempt::Barrier(barrier)) => {
-                stores.rollback_local_retry_snapshot(aggregate);
-                self.episode_telemetry.record_semantic_barrier(barrier);
+            Ok(crate::PackedEpisodeAttempt::Barrier(_))
+            | Ok(crate::PackedEpisodeAttempt::RootCompletion) => {
+                self.rollback_step(aggregate, stores);
+                self.packed_root_episode = Some(episode);
                 return None;
             }
             Err(error) => {
-                stores.rollback_local_retry_snapshot(aggregate);
+                self.rollback_step(aggregate, stores);
+                self.packed_root_episode = Some(episode);
                 return Some(Err(ExecError::InvalidShipoutArtifact(error.to_string())));
             }
         };
         if let Err(error) = self.fuel.fuel_mut().charge_many(result.fuel_charges) {
-            stores.rollback_local_retry_snapshot(aggregate);
+            self.rollback_step(aggregate, stores);
+            self.packed_root_episode = Some(episode);
             self.episode_telemetry
                 .record_rollback(crate::SemanticEpisodeBarrier::Fuel);
             return Some(Err(command_error(error)));
@@ -3248,13 +3234,15 @@ impl MainControl {
         let mut publication = match publication {
             Ok(Some(publication)) => publication,
             Ok(None) => {
-                stores.rollback_local_retry_snapshot(aggregate);
+                self.rollback_step(aggregate, stores);
+                self.packed_root_episode = Some(episode);
                 return Some(Err(ExecError::InvalidShipoutArtifact(
                     "packed episode page was rejected".to_owned(),
                 )));
             }
             Err(error) => {
-                stores.rollback_local_retry_snapshot(aggregate);
+                self.rollback_step(aggregate, stores);
+                self.packed_root_episode = Some(episode);
                 return Some(Err(error));
             }
         };
@@ -3292,10 +3280,11 @@ impl MainControl {
         self.drain_file_framing_events(stores);
         self.end_of_job_final_cleanup(stores, false, incomplete_conditions);
         if let Err(error) = stores.commit_effects(stores.world().effect_pos()) {
-            stores.rollback_local_retry_snapshot(aggregate);
+            self.rollback_step(aggregate, stores);
+            self.packed_root_episode = Some(episode);
             return Some(Err(ExecError::World(error)));
         }
-        stores.commit_local_retry_snapshot(aggregate);
+        self.commit_step(aggregate, stores);
         self.packed_root_terminal_pending = true;
         let commit = crate::EpisodeCommit::new(
             1,
@@ -3328,13 +3317,23 @@ impl MainControl {
         if let Some(result) = self.advance_packed_root(stores) {
             return result;
         }
-        self.execute_operation(
+        let packed_retry_pending = self.packed_root_episode.is_some();
+        let result = self.execute_operation(
             stores,
             OperationDelivery::Replay(None),
             OperationTransaction::Advance,
-            256,
+            if packed_retry_pending { 1 } else { 256 },
             None,
-        )
+        );
+        if matches!(
+            result,
+            Ok(StepResult::Progress(
+                ReplayStep::End | ReplayStep::EndOfInput
+            ))
+        ) {
+            self.discard_packed_root_episode();
+        }
+        result
     }
 
     /// Attempts one ordinary main-control operation while collecting detached

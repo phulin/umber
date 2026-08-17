@@ -23,19 +23,21 @@ pub enum CountGroupEpisodeBarrier {
     ObservableGroupTracing,
 }
 
-/// A borrow-scoped coarse episode over the canonical count bank and journal.
+/// Publication sidecar for one coarse episode over the canonical count bank
+/// and journal.
 ///
-/// This type deliberately owns no semantic state. Dropping it publishes any
-/// pending count mutations, including on an error path before an enclosing
-/// aggregate rollback restores the operation snapshot.
+/// This value deliberately owns no semantic state and does not borrow the
+/// universe.  The command processor can therefore retain it while it lends
+/// the same universe to canonical source delivery and expansion.  Mutations
+/// still address the live canonical banks; the sidecar merely coalesces their
+/// dependency and exact-identity publication until the episode commits.
 #[doc(hidden)]
-pub struct CountGroupEpisode<'a> {
-    universe: &'a mut Universe,
+pub struct CountGroupEpisode {
     changed_counts: [u64; DENSE_COUNT_WORDS],
 }
 
-impl<'a> CountGroupEpisode<'a> {
-    pub(super) fn begin(universe: &'a mut Universe) -> Result<Self, CountGroupEpisodeBarrier> {
+impl CountGroupEpisode {
+    pub(crate) fn begin(universe: &mut Universe) -> Result<Self, CountGroupEpisodeBarrier> {
         if universe.dependency_region_is_active() {
             universe.poison_tracked_region(TrackedRegionBarrier::UnsupportedExecutionState);
             return Err(CountGroupEpisodeBarrier::ActiveTrackedRegion);
@@ -46,24 +48,29 @@ impl<'a> CountGroupEpisode<'a> {
             return Err(CountGroupEpisodeBarrier::ObservableGroupTracing);
         }
         Ok(Self {
-            universe,
             changed_counts: [0; DENSE_COUNT_WORDS],
         })
     }
 
     /// Reads one live canonical count register without opening an observation.
     #[must_use]
-    pub fn count(&self, index: u8) -> i32 {
-        self.universe.stores.count(u16::from(index))
+    pub(crate) fn count(&self, universe: &Universe, index: u8) -> i32 {
+        universe.stores.count(u16::from(index))
     }
 
     /// Applies one local or global write to the canonical count bank.
-    pub fn set_count(&mut self, index: u8, value: i32, global: bool) {
+    pub(crate) fn set_count(
+        &mut self,
+        universe: &mut Universe,
+        index: u8,
+        value: i32,
+        global: bool,
+    ) {
         let index = u16::from(index);
         let receipt = if global {
-            self.universe.stores.set_count_global(index, value)
+            universe.stores.set_count_global(index, value)
         } else {
-            self.universe.stores.set_count(index, value)
+            universe.stores.set_count(index, value)
         };
         if receipt.changed() {
             let index = usize::from(index);
@@ -73,26 +80,30 @@ impl<'a> CountGroupEpisode<'a> {
 
     /// Returns the live canonical group depth.
     #[must_use]
-    pub fn group_depth(&self) -> u32 {
-        self.universe.stores.env_group_depth()
+    pub(crate) fn group_depth(&self, universe: &Universe) -> u32 {
+        universe.stores.env_group_depth()
     }
 
     /// Returns the live canonical innermost group kind.
     #[must_use]
-    pub fn innermost_group_kind(&self) -> Option<GroupKind> {
-        self.universe.stores.innermost_group_kind()
+    pub(crate) fn innermost_group_kind(&self, universe: &Universe) -> Option<GroupKind> {
+        universe.stores.innermost_group_kind()
     }
 
     /// Enters one group through the ordinary aggregate state boundary.
-    pub fn enter_group(&mut self, kind: GroupKind) {
-        self.flush_count_mutations();
-        self.universe.enter_group_with_kind(kind);
+    pub(crate) fn enter_group(&mut self, universe: &mut Universe, kind: GroupKind) {
+        self.flush_count_mutations(universe);
+        universe.enter_group_with_kind(kind);
     }
 
     /// Leaves one group through the ordinary aggregate restoration boundary.
-    pub fn leave_group(&mut self, expected: GroupKind) -> Result<(), GroupMismatch> {
-        self.flush_count_mutations();
-        let aftergroup = self.universe.leave_group_with_kind(expected)?;
+    pub(crate) fn leave_group(
+        &mut self,
+        universe: &mut Universe,
+        expected: GroupKind,
+    ) -> Result<(), GroupMismatch> {
+        self.flush_count_mutations(universe);
+        let aftergroup = universe.leave_group_with_kind(expected)?;
         debug_assert!(
             aftergroup.is_empty(),
             "native count/group episode does not admit aftergroup payloads"
@@ -101,17 +112,16 @@ impl<'a> CountGroupEpisode<'a> {
     }
 
     /// Publishes the episode's last coalesced count mutation set.
-    pub fn finish(mut self) {
-        self.flush_count_mutations();
+    pub(crate) fn finish(mut self, universe: &mut Universe) {
+        self.flush_count_mutations(universe);
     }
 
-    fn flush_count_mutations(&mut self) {
+    fn flush_count_mutations(&mut self, universe: &mut Universe) {
         if self.changed_counts.iter().all(|word| *word == 0) {
             return;
         }
-        self.universe.stores.synchronize_exact_env_identity();
-        let dependencies = self
-            .universe
+        universe.stores.synchronize_exact_env_identity();
+        let dependencies = universe
             .dependencies
             .get_mut()
             .expect("dependency runtime mutex is not poisoned");
@@ -127,11 +137,5 @@ impl<'a> CountGroupEpisode<'a> {
                 pending &= pending - 1;
             }
         }
-    }
-}
-
-impl Drop for CountGroupEpisode<'_> {
-    fn drop(&mut self) {
-        self.flush_count_mutations();
     }
 }

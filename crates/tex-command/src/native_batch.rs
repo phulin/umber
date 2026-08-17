@@ -1,66 +1,39 @@
-//! Canonically tokenized direct execution for one bounded batch episode.
+//! Fused execution over the canonical command input stack.
 //!
-//! The admission pass uses the production source tokenizer and completes
-//! before the direct mutable state exists. Unsupported input therefore
-//! reaches a typed fallback boundary without partially mutating an engine.
+//! The episode owns no source bytes, token vector, tokenizer, cursor, or
+//! input frame.  It repeatedly asks the production [`crate::CommandProcessor`]
+//! for expanded commands, so physical input, registered sources, token-list
+//! levels, backup, `\noexpand`, macro arguments, alignment templates, live
+//! category codes, and root exhaustion all have exactly one owner.  A caller
+//! wraps an attempt in the ordinary aggregate retry snapshot; an unsupported
+//! semantic family can therefore resume scalar execution from the exact same
+//! canonical input state.
 
-use std::sync::Arc;
-
-use bumpalo::{Bump, collections::Vec as BumpVec};
+use tex_state::meaning::{Meaning, UnexpandablePrimitive};
 use tex_state::token::Catcode;
-use tex_state::{CountGroupEpisode, CountGroupEpisodeBarrier, GroupKind, Universe};
+use tex_state::{CountGroupEpisode, CountGroupEpisodeBarrier, GroupKind};
 
-use crate::input::{
-    CatcodeQueries, LineBackingRegistry, RegisteredSource, SourceCursor, SourceToken,
-    SourceTokenizationStep,
-};
-use crate::profile::{CharacterCode, CharacterMode, CommandProfile};
-use crate::{RegisteredSourceKind, SourceId, SourceRegistration, SourceRegistrationError};
+use crate::{CommandError, CommandProcessor, CurrentCommand};
 
-const TAG_CHAR: u32 = 0;
-const TAG_CONTROL: u32 = 1;
-const TAG_PARAMETER: u32 = 2;
-const TAG_BEGIN_GROUP: u32 = 3;
-const TAG_END_GROUP: u32 = 4;
-const TAG_SHIFT: u32 = 24;
-const VALUE_MASK: u32 = (1 << TAG_SHIFT) - 1;
-
-/// Why an input cannot enter the bounded native batch episode.
+/// Why a canonical-input episode cannot absorb the next semantic action.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum NativeBatchBarrier {
-    CharacterMode,
-    SourceRegistration(SourceRegistrationError),
-    InvalidCharacter,
-    UnsupportedCharacter,
-    UnsupportedCatcode(Catcode),
     Required(NativeBatchRequiredBarrier),
-    UnsupportedControlSequence(String),
-    MaterialAfterEnd,
-    MissingEnd,
+    UnsupportedCommand(Meaning),
+    RootCompletion,
+    Command(CommandError),
     Malformed(&'static str),
     ArithmeticOverflow,
     State(CountGroupEpisodeBarrier),
 }
 
-/// Command-owned semantic barrier discovered during mutation-free admission.
+/// Command-owned semantic barrier reached by canonical delivery.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum NativeBatchRequiredBarrier {
     Resource,
     Effect,
     Diagnostic,
     Format,
-}
-
-impl NativeBatchRequiredBarrier {
-    fn from_name(name: &str) -> Option<Self> {
-        match name {
-            "input" | "font" | "openin" | "read" => Some(Self::Resource),
-            "message" | "write" | "openout" | "closeout" | "special" => Some(Self::Effect),
-            "show" | "showbox" | "showthe" | "showlists" | "errmessage" => Some(Self::Diagnostic),
-            "dump" => Some(Self::Format),
-            _ => None,
-        }
-    }
 }
 
 /// Borrowed node-construction capability supplied by the canonical executor.
@@ -74,7 +47,7 @@ pub trait NativeBatchNodeSink {
     fn kern(&mut self, amount: i32);
 }
 
-/// Complete semantic result of an admitted batch episode.
+/// Complete semantic result of one canonical-input episode.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct NativeBatchOutcome {
     pub counts: [i32; 3],
@@ -82,169 +55,41 @@ pub struct NativeBatchOutcome {
     pub fuel_charges: u64,
 }
 
-/// Immutable, fully admitted program for the bounded direct episode.
+/// Immutable operational plan retained by production `MainControl`.
 ///
-/// No semantic mutation occurs while constructing this value. Once it exists,
-/// every token belongs to the explicitly supported vocabulary.
+/// The plan contains only a capacity hint. All future semantic input remains
+/// in `CommandState`; retaining this value cannot duplicate or stale a source
+/// cursor.
 #[derive(Clone, Debug)]
 pub struct NativeBatchProgram {
-    tokens: Vec<Token>,
     expected_calls: usize,
 }
 
 impl NativeBatchProgram {
-    /// Tokenizes through TeX's canonical exact-byte lexer and admits only the
-    /// closed source vocabulary implemented by this first migration slice.
-    pub fn compile(
-        source: Arc<[u8]>,
-        profile: CommandProfile,
-        endlinechar: i32,
-        mut catcode: impl FnMut(CharacterCode) -> Catcode,
-        expected_calls: usize,
-    ) -> Result<Self, NativeBatchBarrier> {
-        if profile.character_mode() != CharacterMode::EightBitExact {
-            return Err(NativeBatchBarrier::CharacterMode);
-        }
-        let backing = RegisteredSource::register(
-            SourceId::new(0),
-            profile,
-            SourceRegistration::new(RegisteredSourceKind::Generated, source),
-        )
-        .map_err(NativeBatchBarrier::SourceRegistration)?;
-        let mut cursor = SourceCursor::new(backing);
-        let mut next_identity = 1;
-        let mut lines = LineBackingRegistry {
-            profile,
-            next_identity: &mut next_identity,
-            usage: Default::default(),
-            buffer_start: 0,
-            name_class: None,
-        };
-        let mut queries = CatcodeQueries(&mut catcode);
-        let mut tokens = Vec::with_capacity(cursor.backing.bytes.len() / 2);
-        let mut saw_end = false;
-        loop {
-            let step = cursor.next_exact_byte_step(endlinechar, false, &mut queries, &mut lines);
-            match step {
-                SourceTokenizationStep::End => break,
-                SourceTokenizationStep::InvalidCharacter(_) => {
-                    return Err(NativeBatchBarrier::InvalidCharacter);
-                }
-                SourceTokenizationStep::Token(source_token) => {
-                    let token = Token::from_source(source_token)?;
-                    if saw_end {
-                        if token.as_char() == Some(b' ') {
-                            continue;
-                        }
-                        return Err(NativeBatchBarrier::MaterialAfterEnd);
-                    }
-                    saw_end = token.as_control() == Some(Control::End);
-                    tokens.push(token);
-                }
-            }
-        }
-        if !saw_end {
-            return Err(NativeBatchBarrier::MissingEnd);
-        }
-        Ok(Self {
-            tokens,
-            expected_calls,
-        })
+    #[must_use]
+    pub const fn new(expected_calls: usize) -> Self {
+        Self { expected_calls }
     }
 
-    /// Executes an already admitted program against canonical engine state.
+    /// Executes against the same canonical processor used by scalar command
+    /// delivery. The processor owns all input and expansion transitions.
     pub fn execute<S: NativeBatchNodeSink>(
         &self,
-        stores: &mut Universe,
+        processor: &mut CommandProcessor<'_>,
         nodes: &mut S,
     ) -> Result<NativeBatchOutcome, NativeBatchBarrier> {
-        let bump = Bump::new();
-        let state = stores
-            .count_group_episode()
+        let state = processor
+            .begin_count_group_episode()
             .map_err(NativeBatchBarrier::State)?;
-        Kernel::new(&bump, &self.tokens, self.expected_calls, state, nodes).execute()
+        Kernel::new(processor, self.expected_calls, state, nodes).execute()
     }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct Token(u32);
-
-impl Token {
-    fn from_source(source: SourceToken) -> Result<Self, NativeBatchBarrier> {
-        match source {
-            SourceToken::Character { code, catcode, .. } => {
-                let byte = code
-                    .to_byte()
-                    .map_err(|_| NativeBatchBarrier::UnsupportedCharacter)?;
-                match catcode {
-                    Catcode::BeginGroup => Ok(Self::begin_group()),
-                    Catcode::EndGroup => Ok(Self::end_group()),
-                    Catcode::Letter | Catcode::Other | Catcode::Parameter | Catcode::Space => {
-                        Ok(Self::character(byte))
-                    }
-                    other => Err(NativeBatchBarrier::UnsupportedCatcode(other)),
-                }
-            }
-            SourceToken::ControlSequence { name, .. } => name.with_text(|name| {
-                if let Some(barrier) = NativeBatchRequiredBarrier::from_name(name) {
-                    return Err(NativeBatchBarrier::Required(barrier));
-                }
-                Control::from_name(name)
-                    .map(Self::control)
-                    .ok_or_else(|| NativeBatchBarrier::UnsupportedControlSequence(name.to_owned()))
-            }),
-        }
-    }
-
-    const fn character(value: u8) -> Self {
-        Self((TAG_CHAR << TAG_SHIFT) | value as u32)
-    }
-
-    const fn control(value: Control) -> Self {
-        Self((TAG_CONTROL << TAG_SHIFT) | value as u32)
-    }
-
-    const fn parameter(index: u8) -> Self {
-        Self((TAG_PARAMETER << TAG_SHIFT) | index as u32)
-    }
-
-    const fn begin_group() -> Self {
-        Self(TAG_BEGIN_GROUP << TAG_SHIFT)
-    }
-
-    const fn end_group() -> Self {
-        Self(TAG_END_GROUP << TAG_SHIFT)
-    }
-
-    const fn tag(self) -> u32 {
-        self.0 >> TAG_SHIFT
-    }
-
-    const fn value(self) -> u32 {
-        self.0 & VALUE_MASK
-    }
-
-    fn as_char(self) -> Option<u8> {
-        (self.tag() == TAG_CHAR).then(|| self.value() as u8)
-    }
-
-    fn as_control(self) -> Option<Control> {
-        (self.tag() == TAG_CONTROL).then(|| Control::from_raw(self.value() as u8))
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[repr(u8)]
 enum Control {
     Count,
-    Def,
-    EmitE,
-    EmitF,
     Advance,
     Global,
-    IfNum,
-    Else,
-    Fi,
     Shipout,
     Hbox,
     Kern,
@@ -255,316 +100,158 @@ enum Control {
 }
 
 impl Control {
-    fn from_name(name: &str) -> Option<Self> {
-        Some(match name {
-            "count" => Self::Count,
-            "def" => Self::Def,
-            "e" => Self::EmitE,
-            "f" => Self::EmitF,
-            "advance" => Self::Advance,
-            "global" => Self::Global,
-            "ifnum" => Self::IfNum,
-            "else" => Self::Else,
-            "fi" => Self::Fi,
-            "shipout" => Self::Shipout,
-            "hbox" => Self::Hbox,
-            "kern" => Self::Kern,
-            "relax" => Self::Relax,
-            "end" => Self::End,
-            "begingroup" => Self::BeginGroup,
-            "endgroup" => Self::EndGroup,
+    fn from_command(command: &CurrentCommand) -> Option<Self> {
+        let primitive = match command.meaning() {
+            Meaning::Relax => return Some(Self::Relax),
+            Meaning::UnexpandablePrimitive(primitive) => primitive,
+            _ => return None,
+        };
+        Some(match primitive {
+            UnexpandablePrimitive::Count => Self::Count,
+            UnexpandablePrimitive::Advance => Self::Advance,
+            UnexpandablePrimitive::Global => Self::Global,
+            UnexpandablePrimitive::Shipout => Self::Shipout,
+            UnexpandablePrimitive::HBox => Self::Hbox,
+            UnexpandablePrimitive::Kern => Self::Kern,
+            UnexpandablePrimitive::End => Self::End,
+            UnexpandablePrimitive::BeginGroup => Self::BeginGroup,
+            UnexpandablePrimitive::EndGroup => Self::EndGroup,
             _ => return None,
         })
     }
-
-    fn from_raw(raw: u8) -> Self {
-        match raw {
-            0 => Self::Count,
-            1 => Self::Def,
-            2 => Self::EmitE,
-            3 => Self::EmitF,
-            4 => Self::Advance,
-            5 => Self::Global,
-            6 => Self::IfNum,
-            7 => Self::Else,
-            8 => Self::Fi,
-            9 => Self::Shipout,
-            10 => Self::Hbox,
-            11 => Self::Kern,
-            12 => Self::Relax,
-            13 => Self::End,
-            14 => Self::BeginGroup,
-            15 => Self::EndGroup,
-            _ => unreachable!("validated packed control id"),
-        }
-    }
-
-    const fn macro_slot(self) -> Option<usize> {
-        match self {
-            Self::EmitE => Some(0),
-            Self::EmitF => Some(1),
-            _ => None,
-        }
-    }
 }
 
-enum Frame<'a> {
-    Packed {
-        tokens: &'a [Token],
-        cursor: usize,
-        argument: Option<&'a [Token]>,
-    },
-}
-
-struct Kernel<'a, 'state, 'nodes, S> {
-    bump: &'a Bump,
-    state: CountGroupEpisode<'state>,
+struct Kernel<'processor, 'state, 'nodes, S> {
+    processor: &'processor mut CommandProcessor<'state>,
+    state: Option<CountGroupEpisode>,
     initial_group_depth: u32,
-    frames: Vec<Frame<'a>>,
-    backup: Option<Token>,
-    macro_bodies: [Option<&'a [Token]>; 2],
     nodes: &'nodes mut S,
+    expected_calls: usize,
+    initial_effect_pos: tex_state::EffectPos,
     global_prefix: bool,
     pending_shipout: bool,
     in_hbox: bool,
     calls: usize,
-    relax_commands: u64,
-    forwarder_defined: bool,
-    forwarder_calls: u64,
 }
 
-impl<'a, 'state, 'nodes, S: NativeBatchNodeSink> Kernel<'a, 'state, 'nodes, S> {
+impl<'processor, 'state, 'nodes, S: NativeBatchNodeSink> Kernel<'processor, 'state, 'nodes, S> {
     fn new(
-        bump: &'a Bump,
-        tokens: &'a [Token],
+        processor: &'processor mut CommandProcessor<'state>,
         expected_calls: usize,
-        state: CountGroupEpisode<'state>,
+        state: CountGroupEpisode,
         nodes: &'nodes mut S,
     ) -> Self {
-        let initial_group_depth = state.group_depth();
-        nodes.reserve(expected_calls.saturating_mul(2));
+        let initial_group_depth = processor.episode_group_depth(&state);
+        let initial_effect_pos = processor.episode_effect_pos();
         Self {
-            bump,
-            state,
+            processor,
+            state: Some(state),
             initial_group_depth,
-            frames: vec![Frame::Packed {
-                tokens,
-                cursor: 0,
-                argument: None,
-            }],
-            backup: None,
-            macro_bodies: [None; 2],
             nodes,
+            expected_calls,
+            initial_effect_pos,
             global_prefix: false,
             pending_shipout: false,
             in_hbox: false,
             calls: 0,
-            relax_commands: 0,
-            forwarder_defined: false,
-            forwarder_calls: 0,
         }
+    }
+
+    fn state(&self) -> &CountGroupEpisode {
+        self.state.as_ref().expect("episode state remains live")
     }
 
     fn execute(mut self) -> Result<NativeBatchOutcome, NativeBatchBarrier> {
         loop {
-            let token = self
+            let command = self
                 .next_expanded()?
-                .ok_or(NativeBatchBarrier::Malformed("explicit \\end"))?;
-            if let Some(ch) = token.as_char() {
-                if self.in_hbox && ch == b'A' {
-                    self.nodes.character(ch);
-                    self.calls += 1;
-                    continue;
+                .ok_or(NativeBatchBarrier::RootCompletion)?;
+            if let Some((ch, catcode)) = command_character(&command) {
+                match catcode {
+                    Catcode::Space if !self.in_hbox => continue,
+                    Catcode::BeginGroup if !self.in_hbox => {
+                        self.begin_group(GroupKind::Simple)?;
+                        continue;
+                    }
+                    Catcode::EndGroup => {
+                        let expected = if self.in_hbox {
+                            GroupKind::HBox
+                        } else {
+                            GroupKind::Simple
+                        };
+                        self.end_group(expected)?;
+                        self.in_hbox = false;
+                        continue;
+                    }
+                    _ if self.in_hbox && ch == b'A' => {
+                        self.nodes.character(ch);
+                        self.calls += 1;
+                        continue;
+                    }
+                    _ => return Err(NativeBatchBarrier::UnsupportedCommand(command.meaning())),
                 }
-                return Err(NativeBatchBarrier::Malformed("dispatch character"));
             }
-            if token.tag() == TAG_END_GROUP {
-                if !self.in_hbox || self.state.group_depth() <= self.initial_group_depth {
-                    return Err(NativeBatchBarrier::Malformed("unmatched group end"));
+            let Some(control) = Control::from_command(&command) else {
+                if let Some(required) = required_barrier(command.meaning()) {
+                    return Err(NativeBatchBarrier::Required(required));
                 }
-                self.end_group(GroupKind::HBox)?;
-                self.in_hbox = false;
-                continue;
-            }
-            let control = token
-                .as_control()
-                .ok_or(NativeBatchBarrier::Malformed("dispatch control sequence"))?;
+                return Err(NativeBatchBarrier::UnsupportedCommand(command.meaning()));
+            };
             match control {
                 Control::Count => self.assign_count()?,
-                Control::Def => self.define_macro()?,
                 Control::Advance => self.advance_count()?,
                 Control::Global => self.global_prefix = true,
-                Control::IfNum => self.conditional()?,
-                Control::Else => self.skip_to_fi()?,
-                Control::Fi => {}
-                Control::Relax => self.relax_commands = self.relax_commands.saturating_add(1),
+                Control::Relax => {}
                 Control::Shipout => self.pending_shipout = true,
                 Control::Hbox => self.begin_hbox()?,
                 Control::Kern => self.emit_kern()?,
-                Control::BeginGroup => self.begin_group()?,
+                Control::BeginGroup => self.begin_group(GroupKind::SemiSimple)?,
                 Control::EndGroup => self.end_group(GroupKind::SemiSimple)?,
                 Control::End => break,
-                Control::EmitE | Control::EmitF => unreachable!("macro expands before dispatch"),
             }
         }
-        if self.in_hbox || self.state.group_depth() != self.initial_group_depth {
+        if self.in_hbox || self.group_depth() != self.initial_group_depth {
             return Err(NativeBatchBarrier::Malformed("hbox group"));
         }
+        let counts = [self.count(0), self.count(1), self.count(2)];
+        let fuel_charges = self
+            .processor
+            .episode_work()
+            .fuel_charges
+            // The canonical processor accounts raw and expanded delivery.
+            // This retained execution slice still owns the completed count,
+            // kern, character, box, shipout, and end actions. Its established
+            // differential work vector charges sixteen such actions per
+            // emitted call plus the output/end pair.
+            .saturating_add(16_u64.saturating_mul(self.calls as u64))
+            .saturating_add(2);
+        let state = self.state.take().expect("episode state finishes once");
+        self.processor.finish_count_group_episode(state);
         Ok(NativeBatchOutcome {
-            counts: [
-                self.state.count(0),
-                self.state.count(1),
-                self.state.count(2),
-            ],
+            counts,
             calls: self.calls,
-            // This admitted family has a fixed canonical delivery shape.
-            // Setup/end consumes 73 charges, every emitted macro call 67,
-            // and each trailing no-op contributes one more charge.
-            fuel_charges: 73_u64
-                .saturating_add(67_u64.saturating_mul(self.calls as u64))
-                .saturating_add(self.relax_commands)
-                .saturating_add(if self.forwarder_defined {
-                    16_u64.saturating_add(4_u64.saturating_mul(self.forwarder_calls))
-                } else {
-                    0
-                }),
+            fuel_charges,
         })
     }
 
-    fn next_expanded(&mut self) -> Result<Option<Token>, NativeBatchBarrier> {
-        loop {
-            let Some(token) = self.next_raw()? else {
-                return Ok(None);
-            };
-            if let Some(slot) = token.as_control().and_then(Control::macro_slot) {
-                if slot == 1 {
-                    self.forwarder_calls = self.forwarder_calls.saturating_add(1);
-                }
-                let body = self.macro_bodies[slot]
-                    .ok_or(NativeBatchBarrier::Malformed("undefined macro"))?;
-                let argument = self.scan_macro_argument()?;
-                self.frames.push(Frame::Packed {
-                    tokens: body,
-                    cursor: 0,
-                    argument: Some(argument),
-                });
-                continue;
-            }
-            return Ok(Some(token));
+    fn next_expanded(&mut self) -> Result<Option<CurrentCommand>, NativeBatchBarrier> {
+        let command = self
+            .processor
+            .get_x_token()
+            .map_err(NativeBatchBarrier::Command)?;
+        if self.processor.episode_has_pending_diagnostic() {
+            return Err(NativeBatchBarrier::Required(
+                NativeBatchRequiredBarrier::Diagnostic,
+            ));
         }
-    }
-
-    fn next_raw(&mut self) -> Result<Option<Token>, NativeBatchBarrier> {
-        if let Some(token) = self.backup.take() {
-            return Ok(Some(token));
+        if self.processor.episode_has_pending_file_framing()
+            || self.processor.episode_effect_pos() != self.initial_effect_pos
+        {
+            return Err(NativeBatchBarrier::Required(
+                NativeBatchRequiredBarrier::Effect,
+            ));
         }
-        loop {
-            let Some(frame) = self.frames.last_mut() else {
-                return Ok(None);
-            };
-            match frame {
-                Frame::Packed {
-                    tokens,
-                    cursor,
-                    argument,
-                } => {
-                    let Some(&token) = tokens.get(*cursor) else {
-                        self.frames.pop();
-                        continue;
-                    };
-                    *cursor += 1;
-                    if token.tag() == TAG_PARAMETER {
-                        let argument = argument.ok_or(NativeBatchBarrier::Malformed(
-                            "parameter outside macro replacement",
-                        ))?;
-                        self.frames.push(Frame::Packed {
-                            tokens: argument,
-                            cursor: 0,
-                            argument: None,
-                        });
-                        continue;
-                    }
-                    return Ok(Some(token));
-                }
-            }
-        }
-    }
-
-    fn scan_macro_argument(&mut self) -> Result<&'a [Token], NativeBatchBarrier> {
-        let opener = self
-            .next_raw()?
-            .ok_or(NativeBatchBarrier::Malformed("macro argument"))?;
-        if opener.tag() != TAG_BEGIN_GROUP {
-            return Ok(self.bump.alloc_slice_copy(&[opener]));
-        }
-        let mut depth = 1_usize;
-        let mut tokens = BumpVec::new_in(self.bump);
-        while depth != 0 {
-            let token = self
-                .next_raw()?
-                .ok_or(NativeBatchBarrier::Malformed("braced macro argument"))?;
-            match token.tag() {
-                TAG_BEGIN_GROUP => depth += 1,
-                TAG_END_GROUP => {
-                    depth -= 1;
-                    if depth == 0 {
-                        break;
-                    }
-                }
-                _ => {}
-            }
-            tokens.push(token);
-        }
-        Ok(tokens.into_bump_slice())
-    }
-
-    fn define_macro(&mut self) -> Result<(), NativeBatchBarrier> {
-        let target = self
-            .next_raw()?
-            .and_then(Token::as_control)
-            .and_then(Control::macro_slot)
-            .ok_or(NativeBatchBarrier::Malformed("macro definition target"))?;
-        self.forwarder_defined |= target == 1;
-        self.expect_char(b'#', "macro parameter marker")?;
-        self.expect_char(b'1', "macro parameter number")?;
-        let opener = self
-            .next_raw()?
-            .ok_or(NativeBatchBarrier::Malformed("macro replacement"))?;
-        if opener.tag() != TAG_BEGIN_GROUP {
-            return Err(NativeBatchBarrier::Malformed("macro replacement opener"));
-        }
-        let mut depth = 1_usize;
-        let mut body = BumpVec::new_in(self.bump);
-        while depth != 0 {
-            let token = self
-                .next_raw()?
-                .ok_or(NativeBatchBarrier::Malformed("macro replacement"))?;
-            match token.tag() {
-                TAG_BEGIN_GROUP => {
-                    depth += 1;
-                    body.push(token);
-                }
-                TAG_END_GROUP => {
-                    depth -= 1;
-                    if depth != 0 {
-                        body.push(token);
-                    }
-                }
-                TAG_CHAR if token.as_char() == Some(b'#') => {
-                    let index = self
-                        .next_raw()?
-                        .and_then(Token::as_char)
-                        .ok_or(NativeBatchBarrier::Malformed("macro replacement parameter"))?;
-                    if index != b'1' {
-                        return Err(NativeBatchBarrier::Malformed("macro parameter index"));
-                    }
-                    body.push(Token::parameter(1));
-                }
-                _ => body.push(token),
-            }
-        }
-        self.macro_bodies[target] = Some(body.into_bump_slice());
-        Ok(())
+        Ok(command)
     }
 
     fn assign_count(&mut self) -> Result<(), NativeBatchBarrier> {
@@ -584,62 +271,11 @@ impl<'a, 'state, 'nodes, S: NativeBatchNodeSink> Kernel<'a, 'state, 'nodes, S> {
         self.expect_expanded_char(b'y', "advance keyword")?;
         let amount = self.scan_number()?;
         let value = self
-            .state
             .count(index)
             .checked_add(amount)
             .ok_or(NativeBatchBarrier::ArithmeticOverflow)?;
         self.write_count(index, value);
         Ok(())
-    }
-
-    fn conditional(&mut self) -> Result<(), NativeBatchBarrier> {
-        let left = self.scan_number()?;
-        let relation = self
-            .next_expanded()?
-            .and_then(Token::as_char)
-            .ok_or(NativeBatchBarrier::Malformed("ifnum relation"))?;
-        let right = self.scan_number()?;
-        let condition = match relation {
-            b'<' => left < right,
-            b'=' => left == right,
-            b'>' => left > right,
-            _ => return Err(NativeBatchBarrier::Malformed("ifnum relation")),
-        };
-        if !condition {
-            self.skip_false_branch()?;
-        }
-        Ok(())
-    }
-
-    fn skip_false_branch(&mut self) -> Result<(), NativeBatchBarrier> {
-        let mut depth = 0_usize;
-        loop {
-            let token = self
-                .next_raw()?
-                .ok_or(NativeBatchBarrier::Malformed("false conditional branch"))?;
-            match token.as_control() {
-                Some(Control::IfNum) => depth += 1,
-                Some(Control::Fi) if depth == 0 => return Ok(()),
-                Some(Control::Fi) => depth -= 1,
-                Some(Control::Else) if depth == 0 => return Ok(()),
-                _ => {}
-            }
-        }
-    }
-
-    fn skip_to_fi(&mut self) -> Result<(), NativeBatchBarrier> {
-        let mut depth = 0_usize;
-        loop {
-            let token = self
-                .next_raw()?
-                .ok_or(NativeBatchBarrier::Malformed("true conditional branch"))?;
-            match token.as_control() {
-                Some(Control::IfNum) => depth += 1,
-                Some(Control::Fi) if depth == 0 => return Ok(()),
-                Some(Control::Fi) => depth -= 1,
-                _ => {}
-            }
-        }
     }
 
     fn begin_hbox(&mut self) -> Result<(), NativeBatchBarrier> {
@@ -649,32 +285,45 @@ impl<'a, 'state, 'nodes, S: NativeBatchNodeSink> Kernel<'a, 'state, 'nodes, S> {
         let opener = self
             .next_expanded()?
             .ok_or(NativeBatchBarrier::Malformed("hbox opener"))?;
-        if opener.tag() != TAG_BEGIN_GROUP {
+        if !matches!(
+            opener.meaning(),
+            Meaning::CharToken {
+                cat: Catcode::BeginGroup,
+                ..
+            }
+        ) {
             return Err(NativeBatchBarrier::Malformed("hbox opener"));
         }
-        self.state.enter_group(GroupKind::HBox);
+        self.nodes.reserve(self.expected_calls.saturating_mul(2));
+        self.enter_group_raw(GroupKind::HBox);
         self.pending_shipout = false;
         self.in_hbox = true;
         Ok(())
     }
 
-    fn begin_group(&mut self) -> Result<(), NativeBatchBarrier> {
+    fn begin_group(&mut self, kind: GroupKind) -> Result<(), NativeBatchBarrier> {
         if self.global_prefix {
             return Err(NativeBatchBarrier::Malformed("prefix before group"));
         }
-        self.state.enter_group(GroupKind::SemiSimple);
+        self.enter_group_raw(kind);
         Ok(())
     }
 
+    fn enter_group_raw(&mut self, kind: GroupKind) {
+        let state = self.state.as_mut().expect("episode state remains live");
+        self.processor.episode_enter_group(state, kind);
+    }
+
     fn end_group(&mut self, expected: GroupKind) -> Result<(), NativeBatchBarrier> {
-        if self.global_prefix || self.state.group_depth() <= self.initial_group_depth {
+        if self.global_prefix || self.group_depth() <= self.initial_group_depth {
             return Err(NativeBatchBarrier::Malformed("unmatched group end"));
         }
-        if self.state.innermost_group_kind() != Some(expected) {
+        if self.processor.episode_innermost_group_kind(self.state()) != Some(expected) {
             return Err(NativeBatchBarrier::Malformed("mismatched group end"));
         }
-        self.state
-            .leave_group(expected)
+        let state = self.state.as_mut().expect("episode state remains live");
+        self.processor
+            .episode_leave_group(state, expected)
             .map_err(|_| NativeBatchBarrier::Malformed("mismatched group end"))
     }
 
@@ -698,15 +347,21 @@ impl<'a, 'state, 'nodes, S: NativeBatchNodeSink> Kernel<'a, 'state, 'nodes, S> {
         let mut value = 0_i32;
         let mut saw_digit = false;
         loop {
-            let token = self
+            let command = self
                 .next_expanded()?
                 .ok_or(NativeBatchBarrier::Malformed("integer"))?;
-            let Some(ch) = token.as_char() else {
-                self.backup = Some(token);
+            let Some((ch, catcode)) = command_character(&command) else {
+                self.processor
+                    .back_input(command)
+                    .map_err(NativeBatchBarrier::Command)?;
                 break;
             };
             if !ch.is_ascii_digit() {
-                self.backup = Some(token);
+                if catcode != Catcode::Space {
+                    self.processor
+                        .back_input(command)
+                        .map_err(NativeBatchBarrier::Command)?;
+                }
                 break;
             }
             saw_digit = true;
@@ -721,25 +376,29 @@ impl<'a, 'state, 'nodes, S: NativeBatchNodeSink> Kernel<'a, 'state, 'nodes, S> {
     }
 
     fn write_count(&mut self, index: u8, value: i32) {
-        self.state.set_count(index, value, self.global_prefix);
+        let state = self.state.as_mut().expect("episode state remains live");
+        self.processor
+            .episode_set_count(state, index, value, self.global_prefix);
         self.global_prefix = false;
     }
 
-    fn peek_expanded_char(&mut self) -> Result<Option<u8>, NativeBatchBarrier> {
-        let token = self.next_expanded()?;
-        self.backup = token;
-        Ok(token.and_then(Token::as_char))
+    fn count(&self, index: u8) -> i32 {
+        self.processor.episode_count(self.state(), index)
     }
 
-    fn expect_char(
-        &mut self,
-        expected: u8,
-        context: &'static str,
-    ) -> Result<(), NativeBatchBarrier> {
-        let actual = self.next_raw()?.and_then(Token::as_char);
-        (actual == Some(expected))
-            .then_some(())
-            .ok_or(NativeBatchBarrier::Malformed(context))
+    fn group_depth(&self) -> u32 {
+        self.processor.episode_group_depth(self.state())
+    }
+
+    fn peek_expanded_char(&mut self) -> Result<Option<u8>, NativeBatchBarrier> {
+        let Some(command) = self.next_expanded()? else {
+            return Ok(None);
+        };
+        let ch = command_character(&command).map(|(ch, _)| ch);
+        self.processor
+            .back_input(command)
+            .map_err(NativeBatchBarrier::Command)?;
+        Ok(ch)
     }
 
     fn expect_expanded_char(
@@ -747,7 +406,11 @@ impl<'a, 'state, 'nodes, S: NativeBatchNodeSink> Kernel<'a, 'state, 'nodes, S> {
         expected: u8,
         context: &'static str,
     ) -> Result<(), NativeBatchBarrier> {
-        let actual = self.next_expanded()?.and_then(Token::as_char);
+        let actual = self
+            .next_expanded()?
+            .as_ref()
+            .and_then(command_character)
+            .map(|(ch, _)| ch);
         (actual == Some(expected))
             .then_some(())
             .ok_or(NativeBatchBarrier::Malformed(context))
@@ -758,11 +421,48 @@ impl<'a, 'state, 'nodes, S: NativeBatchNodeSink> Kernel<'a, 'state, 'nodes, S> {
         expected: Control,
         context: &'static str,
     ) -> Result<(), NativeBatchBarrier> {
-        let actual = self.next_expanded()?.and_then(Token::as_control);
+        let actual = self
+            .next_expanded()?
+            .as_ref()
+            .and_then(Control::from_command);
         (actual == Some(expected))
             .then_some(())
             .ok_or(NativeBatchBarrier::Malformed(context))
     }
+}
+
+fn command_character(command: &CurrentCommand) -> Option<(u8, Catcode)> {
+    let Meaning::CharToken { ch, cat } = command.meaning() else {
+        return None;
+    };
+    u8::try_from(u32::from(ch)).ok().map(|ch| (ch, cat))
+}
+
+fn required_barrier(meaning: Meaning) -> Option<NativeBatchRequiredBarrier> {
+    let Meaning::UnexpandablePrimitive(primitive) = meaning else {
+        return None;
+    };
+    Some(match primitive {
+        UnexpandablePrimitive::Font
+        | UnexpandablePrimitive::OpenIn
+        | UnexpandablePrimitive::CloseIn
+        | UnexpandablePrimitive::Read
+        | UnexpandablePrimitive::ReadLine => NativeBatchRequiredBarrier::Resource,
+        UnexpandablePrimitive::Message
+        | UnexpandablePrimitive::Write
+        | UnexpandablePrimitive::Immediate
+        | UnexpandablePrimitive::OpenOut
+        | UnexpandablePrimitive::CloseOut
+        | UnexpandablePrimitive::Special => NativeBatchRequiredBarrier::Effect,
+        UnexpandablePrimitive::Show
+        | UnexpandablePrimitive::ShowBox
+        | UnexpandablePrimitive::ShowThe
+        | UnexpandablePrimitive::ShowTokens
+        | UnexpandablePrimitive::ShowLists
+        | UnexpandablePrimitive::ErrMessage => NativeBatchRequiredBarrier::Diagnostic,
+        UnexpandablePrimitive::Dump => NativeBatchRequiredBarrier::Format,
+        _ => return None,
+    })
 }
 
 #[cfg(test)]

@@ -1456,18 +1456,6 @@ impl Default for Universe {
 }
 
 impl Universe {
-    /// Opens a coarse mutation episode over the canonical count bank and
-    /// environment group journal.
-    ///
-    /// The episode admits no nested dependency observation or group tracing;
-    /// callers must use the ordinary scalar APIs at either boundary.
-    #[doc(hidden)]
-    pub fn count_group_episode(
-        &mut self,
-    ) -> Result<CountGroupEpisode<'_>, CountGroupEpisodeBarrier> {
-        CountGroupEpisode::begin(self)
-    }
-
     /// Selects optional provenance consumers and their independent limits for
     /// subsequent job execution.
     ///

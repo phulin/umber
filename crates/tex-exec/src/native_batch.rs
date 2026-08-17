@@ -3,6 +3,7 @@
 use std::fmt;
 
 use tex_command::{
+    CommandHostCapabilities, CommandHostContext, CommandProcessor, CommandState,
     NativeBatchBarrier, NativeBatchNodeSink, NativeBatchProgram, NativeBatchRequiredBarrier,
 };
 use tex_fonts::LoadedFont;
@@ -14,12 +15,13 @@ use tex_state::node_arena::NodeListBuilder;
 
 use crate::{EpisodeCoverageFallback, EpisodeCoverageFamily, SemanticEpisodeBarrier};
 
-/// Result of executing one already-admitted packed program.
+/// Result of executing one canonical-input episode attempt.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum PackedEpisodeAttempt {
     Completed(Box<PackedEpisodeOutput>),
     Coverage(EpisodeCoverageFallback),
     Barrier(SemanticEpisodeBarrier),
+    RootCompletion,
 }
 
 /// Page output produced inside MainControl's aggregate transaction.
@@ -30,7 +32,7 @@ pub(crate) struct PackedEpisodeOutput {
     pub fuel_charges: u64,
 }
 
-/// Failure after a program has completed its typed admission boundary.
+/// Failure while lowering the completed episode into output.
 #[derive(Debug)]
 pub enum NativeBatchRunError {
     DimensionOverflow,
@@ -46,11 +48,13 @@ impl fmt::Display for NativeBatchRunError {
 
 impl std::error::Error for NativeBatchRunError {}
 
-/// Executes one already-admitted packed program inside its caller's aggregate
-/// transaction. Main control owns that transaction so state, output, and the
-/// typed barrier all cross one rollback boundary.
+/// Executes one canonical-input episode inside its caller's aggregate
+/// transaction. Main control owns that transaction so command input, state,
+/// output, and the typed barrier all cross one rollback boundary.
 pub(crate) fn execute_packed_episode(
     stores: &mut Universe,
+    command: &mut CommandState,
+    capabilities: &mut CommandHostCapabilities,
     program: &NativeBatchProgram,
     font_id: FontId,
     font: &LoadedFont,
@@ -65,8 +69,19 @@ pub(crate) fn execute_packed_episode(
             builder: stores.node_list_builder(),
             font: font_id,
         };
-        let outcome = match program.execute(stores, &mut nodes) {
+        let outcome = {
+            let mut processor = CommandProcessor::new(
+                command,
+                stores.command_context(),
+                CommandHostContext::new(capabilities),
+            );
+            program.execute(&mut processor, &mut nodes)
+        };
+        let outcome = match outcome {
             Ok(outcome) => outcome,
+            Err(NativeBatchBarrier::RootCompletion) => {
+                return Ok(PackedEpisodeAttempt::RootCompletion);
+            }
             Err(barrier) => {
                 if let Some(required) = semantic_barrier(&barrier) {
                     return Ok(PackedEpisodeAttempt::Barrier(required));
@@ -135,14 +150,22 @@ pub(crate) fn semantic_barrier(barrier: &NativeBatchBarrier) -> Option<SemanticE
             NativeBatchRequiredBarrier::Diagnostic => SemanticEpisodeBarrier::Diagnostic,
             NativeBatchRequiredBarrier::Format => SemanticEpisodeBarrier::Format,
         }),
-        NativeBatchBarrier::CharacterMode
-        | NativeBatchBarrier::SourceRegistration(_)
-        | NativeBatchBarrier::InvalidCharacter
-        | NativeBatchBarrier::UnsupportedCharacter
-        | NativeBatchBarrier::UnsupportedCatcode(_)
-        | NativeBatchBarrier::UnsupportedControlSequence(_)
-        | NativeBatchBarrier::MaterialAfterEnd
-        | NativeBatchBarrier::MissingEnd
+        NativeBatchBarrier::Command(error) => Some(match error {
+            tex_command::CommandError::MissingInput { .. }
+            | tex_command::CommandError::MissingInputProbe(_) => SemanticEpisodeBarrier::Resource,
+            tex_command::CommandError::FuelExhausted { .. } => SemanticEpisodeBarrier::Fuel,
+            tex_command::CommandError::InputInvariant(_)
+            | tex_command::CommandError::StaleDelivery
+            | tex_command::CommandError::MacroPrefixMismatch
+            | tex_command::CommandError::ParagraphInMacroArgument
+            | tex_command::CommandError::OuterInMacroArgument
+            | tex_command::CommandError::AtOrigin { .. }
+            | tex_command::CommandError::UnsupportedExpandablePrimitive(_)
+            | tex_command::CommandError::PdfNavigation(_)
+            | tex_command::CommandError::Fatal(_) => SemanticEpisodeBarrier::Diagnostic,
+        }),
+        NativeBatchBarrier::UnsupportedCommand(_)
+        | NativeBatchBarrier::RootCompletion
         | NativeBatchBarrier::Malformed(_)
         | NativeBatchBarrier::ArithmeticOverflow => None,
     }
@@ -150,18 +173,15 @@ pub(crate) fn semantic_barrier(barrier: &NativeBatchBarrier) -> Option<SemanticE
 
 pub(crate) fn coverage_family(barrier: &NativeBatchBarrier) -> EpisodeCoverageFamily {
     match barrier {
-        NativeBatchBarrier::CharacterMode => EpisodeCoverageFamily::CharacterProfile,
-        NativeBatchBarrier::SourceRegistration(_)
-        | NativeBatchBarrier::InvalidCharacter
-        | NativeBatchBarrier::UnsupportedCharacter
-        | NativeBatchBarrier::UnsupportedCatcode(_)
-        | NativeBatchBarrier::MaterialAfterEnd
-        | NativeBatchBarrier::MissingEnd => EpisodeCoverageFamily::SourceTokenization,
-        NativeBatchBarrier::UnsupportedControlSequence(_) => {
-            EpisodeCoverageFamily::CommandVocabulary
-        }
+        NativeBatchBarrier::UnsupportedCommand(_) => EpisodeCoverageFamily::CommandVocabulary,
         NativeBatchBarrier::Required(_) => {
             unreachable!("required barriers are never coverage fallback")
+        }
+        NativeBatchBarrier::Command(_) => {
+            unreachable!("command failures are semantic barriers, never coverage fallback")
+        }
+        NativeBatchBarrier::RootCompletion => {
+            unreachable!("root completion returns to canonical main control")
         }
         NativeBatchBarrier::Malformed(_) | NativeBatchBarrier::ArithmeticOverflow => {
             EpisodeCoverageFamily::ScannerOrExpansion
