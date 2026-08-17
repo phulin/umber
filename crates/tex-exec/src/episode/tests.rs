@@ -50,7 +50,6 @@ fn fixed_telemetry_counts_every_required_barrier_and_fallback_family() {
         EpisodeCoverageFamily::SourceTokenization,
         EpisodeCoverageFamily::CommandVocabulary,
         EpisodeCoverageFamily::ScannerOrExpansion,
-        EpisodeCoverageFamily::NodeOrFont,
         EpisodeCoverageFamily::GroupLineage,
         EpisodeCoverageFamily::RollbackLineage,
     ] {

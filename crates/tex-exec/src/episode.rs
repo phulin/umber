@@ -38,13 +38,12 @@ pub enum EpisodeCoverageFamily {
     SourceTokenization,
     CommandVocabulary,
     ScannerOrExpansion,
-    NodeOrFont,
     GroupLineage,
     RollbackLineage,
 }
 
 impl EpisodeCoverageFamily {
-    const COUNT: usize = 7;
+    const COUNT: usize = 6;
 
     const fn index(self) -> usize {
         self as usize

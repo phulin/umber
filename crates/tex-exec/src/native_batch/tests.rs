@@ -161,7 +161,6 @@ fn main_control_batch_resumes_after_output_without_fallback() {
         EpisodeCoverageFamily::SourceTokenization,
         EpisodeCoverageFamily::CommandVocabulary,
         EpisodeCoverageFamily::ScannerOrExpansion,
-        EpisodeCoverageFamily::NodeOrFont,
         EpisodeCoverageFamily::GroupLineage,
         EpisodeCoverageFamily::RollbackLineage,
     ] {
