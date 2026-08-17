@@ -110,9 +110,9 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/print/error_context.rs`: tex.web §§310--318's `show_context` two-line pseudoprint, bounded eager before/after projections captured at the live input seam, §314's token-list labels, and §310's `\errorcontextlines` elision, shared by every input-stack owner.
 - `src/print/tests.rs`: Unit tests for context widths, selector routing, help routing, and error-report completion.
 - `src/provenance.rs`: Reachability-owned structural origin records and lists,
-  bounded incremental weak candidate/slot reclamation, compatibility record
-  storage without a provenance-list arena, demand policy, explicit provenance
-  budgets, and record retry leases.
+  bounded incremental weak candidate/slot reclamation with inline-small weak
+  candidate buckets, compatibility record storage without a provenance-list
+  arena, demand policy, explicit provenance budgets, and record retry leases.
 - `src/provenance/tests.rs`: Structural sharing, collision, packed-key,
   allocation, readback, retry, fork, and rollback provenance controls.
 - `src/pure_memo.rs`: Optional entry/byte-bounded pure-query caches for pretolerance, page-breaking, and shipout results, bounded eviction telemetry, explicit cache release, and stable output-provenance recipes.
