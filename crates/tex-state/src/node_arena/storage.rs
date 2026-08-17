@@ -1,3 +1,4 @@
+use super::builder::CompactBuilderNode;
 use super::tables::{BoxTable, InsertionTable, NoadTable, UnsetTable};
 use super::view::NodeList;
 use super::{checked_len, preflight_capacity};
@@ -246,6 +247,60 @@ impl NodeStorage {
             crate::measurement::record_node_append(
                 len as usize,
                 needs.as_array(),
+                growth_by_column,
+                retained_after.saturating_sub(retained_before),
+                false,
+            );
+            self.record_peak();
+        }
+        (start, len)
+    }
+
+    pub(crate) fn append_compact_builder(&mut self, rows: Vec<CompactBuilderNode>) -> (u32, u32) {
+        #[cfg(feature = "profiling")]
+        let capacity_before = self.capacity_signature();
+        #[cfg(feature = "profiling")]
+        let retained_before = self.retained_payload_bytes();
+        let start = checked_len(self.words.len(), "node arena exceeds u32 entries");
+        let len = checked_len(rows.len(), "node list exceeds u32 entries");
+        start
+            .checked_add(len)
+            .expect("node arena span overflows u32");
+        self.words.reserve(rows.len());
+        self.origins.reserve(rows.len());
+        self.origin_roots.reserve(rows.len());
+        self.glue_roots.reserve(rows.len());
+        for row in rows {
+            let (word, origin_root) = if let Some((font, ch)) = row.as_character() {
+                (
+                    NodeWord::new(0, (ch as u64) | ((font.raw() as u64) << 21)),
+                    Some(OriginRef::unknown()),
+                )
+            } else {
+                let (amount, kind) = row.as_kern().expect("compact builder row has a node tag");
+                (
+                    NodeWord::new(
+                        2,
+                        amount.raw() as u32 as u64 | ((kern_code(kind) as u64) << 32),
+                    ),
+                    None,
+                )
+            };
+            self.words.push(word);
+            self.glue_roots.push(None);
+            self.origins.push(OriginId::UNKNOWN);
+            self.origin_roots.push(origin_root);
+        }
+        #[cfg(feature = "profiling")]
+        {
+            let capacity_after = self.capacity_signature();
+            let growth_by_column = core::array::from_fn(|index| {
+                u8::from(capacity_before[index] != capacity_after[index])
+            });
+            let retained_after = self.retained_payload_bytes();
+            crate::measurement::record_node_append(
+                len as usize,
+                SidecarNeeds::default().as_array(),
                 growth_by_column,
                 retained_after.saturating_sub(retained_before),
                 false,

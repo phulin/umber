@@ -1850,6 +1850,51 @@ fn node_list_builder_finishes_through_stores_boundary() {
 }
 
 #[test]
+fn compact_builder_freezes_with_owned_semantics_and_promotes_for_mixed_material() {
+    let mut stores = Stores::new();
+    let mut compact = stores.node_list_builder();
+    compact.push_unknown_character(NULL_FONT, 'A');
+    compact.push_kern(Scaled::from_raw(-17), KernKind::Explicit);
+    assert_eq!(
+        compact.compact_width(Scaled::from_raw(101)),
+        Some(Scaled::from_raw(84))
+    );
+    let frozen = stores.freeze_node_list_ref(compact);
+
+    let expected = [
+        Node::Char {
+            font: NULL_FONT,
+            ch: 'A',
+            origin: crate::provenance::OriginRef::unknown(),
+        },
+        Node::Kern {
+            amount: Scaled::from_raw(-17),
+            kind: KernKind::Explicit,
+        },
+    ];
+    assert_eq!(frozen.nodes(), &expected);
+    let owned = stores.freeze_node_list(&expected);
+    assert_eq!(frozen.semantic_fingerprint(), owned.semantic_fingerprint());
+    assert!(frozen.shares_payload(&owned));
+
+    let mut mixed = stores.node_list_builder();
+    mixed.push_unknown_character(NULL_FONT, 'B');
+    mixed.push(Node::Penalty(9));
+    assert_eq!(mixed.as_slice().len(), 2);
+    assert_eq!(
+        stores.freeze_node_list_ref(mixed).nodes(),
+        &[
+            Node::Char {
+                font: NULL_FONT,
+                ch: 'B',
+                origin: crate::provenance::OriginRef::unknown(),
+            },
+            Node::Penalty(9),
+        ]
+    );
+}
+
+#[test]
 #[should_panic(expected = "glue id is not live in this Universe timeline")]
 fn freeze_node_list_rejects_stale_rolled_back_glue_id() {
     let mut stores = Stores::new();

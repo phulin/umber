@@ -125,6 +125,8 @@ fn stage_form_inner(
         fonts: Vec::new(),
         live_fonts: Vec::new(),
         font_slots: Vec::new(),
+        direct_font: None,
+        direct_glyph: None,
         render_origin_ends: None,
         render_origins: tex_state::RenderProvenanceBuilder::default(),
         anchor: 0,
@@ -446,6 +448,8 @@ struct EmissionState {
     fonts: Vec<FontResource>,
     live_fonts: Vec<FontId>,
     font_slots: Vec<Option<u32>>,
+    direct_font: Option<(FontId, u32, bool)>,
+    direct_glyph: Option<(FontId, u8, tex_state::scaled::Scaled)>,
     anchor: u32,
     render_origin_ends: Option<Vec<u32>>,
     render_origins: tex_state::RenderProvenanceBuilder,
@@ -457,6 +461,8 @@ impl EmissionState {
             fonts: Vec::new(),
             live_fonts: Vec::new(),
             font_slots: Vec::new(),
+            direct_font: None,
+            direct_glyph: None,
             // The artifact root is a synthetic box header preceding its children.
             // Batch jobs retain no column at all; editor sessions select it once.
             render_origin_ends: rendered_source.then(|| vec![0]),
@@ -487,6 +493,12 @@ impl EmissionState {
                 .checked_add(len)
                 .expect("artifact render provenance exceeds u32 entries"),
         );
+    }
+
+    fn character_node(&mut self, stores: &Universe, origin: &OriginRef) {
+        if self.render_origin_ends.is_some() {
+            self.node(stores, [origin.clone()]);
+        }
     }
 
     fn node_empty(&mut self) {
@@ -525,11 +537,18 @@ fn emit_node_list(
     }
 
     let nodes = list.nodes();
+    let unmodified = overlay.math.is_empty()
+        && overlay.directions.is_empty()
+        && overlay.omitted_whatsits.is_empty();
     let mut index = 0;
     while index < nodes.len() {
         if let Some(run) = nodes.char_run(index) {
             emit_char_run(stores, run, output, emission)?;
             index += run.len();
+        } else if unmodified && let Some(NodeRef::Kern { amount, kind }) = nodes.get(index) {
+            emission.node_empty();
+            output.kern(amount, lower_kern_kind(kind))?;
+            index += 1;
         } else {
             emit_index(
                 stores,
@@ -555,19 +574,38 @@ fn emit_char_run(
 ) -> Result<(), ExecError> {
     let font = run.font();
     let loaded = stores.font(font);
-    if !matches!(
-        loaded.construction(),
-        tex_fonts::FontConstruction::Letterspaced { .. }
-    ) {
+    let (font_id, letterspaced) = if let Some((cached_font, font_id, letterspaced)) =
+        emission.direct_font
+        && cached_font == font
+    {
+        (font_id, letterspaced)
+    } else {
+        let letterspaced = matches!(
+            loaded.construction(),
+            tex_fonts::FontConstruction::Letterspaced { .. }
+        );
         let font_id = font_resource_id(stores, font, emission);
+        emission.direct_font = Some((font, font_id, letterspaced));
+        (font_id, letterspaced)
+    };
+    if !letterspaced {
         for (code, origin) in run.codes().zip(run.origin_roots()) {
-            let width = loaded
-                .character_metrics(char::from(code))
-                .map(|metrics| metrics.width)
-                .ok_or(ExecError::UnsupportedShipoutNode {
-                    node: "missing character metrics",
-                })?;
-            emission.node(stores, [origin.clone()]);
+            let width = if let Some((cached_font, cached_code, width)) = emission.direct_glyph
+                && cached_font == font
+                && cached_code == code
+            {
+                width
+            } else {
+                let width = loaded
+                    .character_metrics(char::from(code))
+                    .map(|metrics| metrics.width)
+                    .ok_or(ExecError::UnsupportedShipoutNode {
+                        node: "missing character metrics",
+                    })?;
+                emission.direct_glyph = Some((font, code, width));
+                width
+            };
+            emission.character_node(stores, origin);
             output.char(font_id, u32::from(code), width)?;
         }
         return Ok(());

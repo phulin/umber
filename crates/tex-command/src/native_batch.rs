@@ -153,10 +153,10 @@ impl NativeBatchProgram {
     }
 
     /// Executes an already admitted program against canonical engine state.
-    pub fn execute(
+    pub fn execute<S: NativeBatchNodeSink>(
         &self,
         stores: &mut Universe,
-        nodes: &mut dyn NativeBatchNodeSink,
+        nodes: &mut S,
     ) -> Result<NativeBatchOutcome, NativeBatchBarrier> {
         let bump = Bump::new();
         let state = stores
@@ -316,14 +316,14 @@ enum Frame<'a> {
     },
 }
 
-struct Kernel<'a, 'state, 'nodes> {
+struct Kernel<'a, 'state, 'nodes, S> {
     bump: &'a Bump,
     state: CountGroupEpisode<'state>,
     initial_group_depth: u32,
     frames: Vec<Frame<'a>>,
     backup: Option<Token>,
     macro_bodies: [Option<&'a [Token]>; 2],
-    nodes: &'nodes mut dyn NativeBatchNodeSink,
+    nodes: &'nodes mut S,
     global_prefix: bool,
     pending_shipout: bool,
     in_hbox: bool,
@@ -333,13 +333,13 @@ struct Kernel<'a, 'state, 'nodes> {
     forwarder_calls: u64,
 }
 
-impl<'a, 'state, 'nodes> Kernel<'a, 'state, 'nodes> {
+impl<'a, 'state, 'nodes, S: NativeBatchNodeSink> Kernel<'a, 'state, 'nodes, S> {
     fn new(
         bump: &'a Bump,
         tokens: &'a [Token],
         expected_calls: usize,
         state: CountGroupEpisode<'state>,
-        nodes: &'nodes mut dyn NativeBatchNodeSink,
+        nodes: &'nodes mut S,
     ) -> Self {
         let initial_group_depth = state.group_depth();
         nodes.reserve(expected_calls.saturating_mul(2));

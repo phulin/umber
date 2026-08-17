@@ -16,6 +16,7 @@ mod storage;
 mod tables;
 mod view;
 
+pub(crate) use builder::CompactBuilderNode;
 pub use builder::NodeListBuilder;
 #[cfg(feature = "profiling")]
 pub use measurement::{NodeMemoryColumn, NodeStorageObservation, peak_node_storage_measurement};

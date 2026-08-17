@@ -8,7 +8,9 @@ use super::state_hash::{
 use crate::ids::{FontId, NodeListId};
 use crate::math::MathField;
 use crate::node::{BoxNode, LeaderPayload, Node, Whatsit};
-use crate::node_arena::{NodeList, NodeRef, NodeSemanticId, NodeSemanticIdBuilder, SidecarNeeds};
+use crate::node_arena::{
+    CompactBuilderNode, NodeList, NodeRef, NodeSemanticId, NodeSemanticIdBuilder, SidecarNeeds,
+};
 use crate::state_hash::StateHasher;
 
 impl Stores {
@@ -71,6 +73,12 @@ impl Stores {
         builder: &crate::node_arena::NodeListBuilder,
         direct_children: &[crate::node_arena::NodeListRef],
     ) -> (NodeSemanticId, SidecarNeeds) {
+        if let Some(rows) = builder.compact_rows() {
+            return (
+                self.validate_compact_builder_identity(rows),
+                SidecarNeeds::default(),
+            );
+        }
         let nodes = builder.as_slice();
         let mut identity = NodeSemanticIdBuilder::new();
         let mut needs = SidecarNeeds::default();
@@ -106,6 +114,47 @@ impl Stores {
             }
         }
         (identity.finish(), needs)
+    }
+
+    fn validate_compact_builder_identity(&self, rows: &[CompactBuilderNode]) -> NodeSemanticId {
+        let mut identity = NodeSemanticIdBuilder::new();
+        let mut index = 0;
+        while index < rows.len() {
+            if let Some((font, _)) = rows[index].as_character() {
+                let mut end = index + 1;
+                while rows
+                    .get(end)
+                    .and_then(|row| row.as_character())
+                    .is_some_and(|(next, _)| next == font)
+                {
+                    end += 1;
+                }
+                self.assert_live_font(font);
+                identity.push_run(end - index, |hasher| {
+                    hasher.tag(24);
+                    self.hash_font_semantic(font, hasher);
+                    hasher.usize(end - index);
+                    for row in &rows[index..end] {
+                        let (_, ch) = row
+                            .as_character()
+                            .expect("compact character run contains only characters");
+                        hasher.u32(ch as u32);
+                    }
+                });
+                index = end;
+            } else {
+                let (amount, kind) = rows[index]
+                    .as_kern()
+                    .expect("compact builder row has a node tag");
+                identity.push(|hasher| {
+                    hasher.tag(2);
+                    hasher.i32(amount.raw());
+                    hash_kern_kind(kind, hasher);
+                });
+                index += 1;
+            }
+        }
+        identity.finish()
     }
 
     fn push_char_run_identity(

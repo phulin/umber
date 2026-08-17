@@ -4,6 +4,7 @@
 //! projections validated against its payload and cannot recover a dropped
 //! graph. The optional candidate index below stores only bounded weak entries.
 
+use super::builder::CompactBuilderNode;
 use super::{NodeList, NodeSemanticId, NodeStorage, SidecarNeeds};
 use crate::ids::{ArenaRef, NodeListId, NodePayloadId};
 use crate::node::Node;
@@ -274,6 +275,35 @@ impl NodeListRef {
                 semantic_id,
             }],
             children,
+        );
+        Self::from_payload(root_id, payload, semantic_id)
+    }
+
+    pub(crate) fn freeze_compact_builder(
+        rows: Vec<CompactBuilderNode>,
+        semantic_id: NodeSemanticId,
+    ) -> Self {
+        if rows.is_empty() {
+            assert_eq!(semantic_id, NodeSemanticId::empty());
+            return Self::empty();
+        }
+
+        let root =
+            allocate_node_payload_root().expect("node-list payload coordinate space exhausted");
+        let mut storage = NodeStorage::default();
+        let (start, len) = storage.append_compact_builder(rows);
+        assert_eq!(start, 0);
+
+        let root_id = NodeListId::new_owned(root, 0, len);
+        let payload = NodeListPayload::new(
+            root,
+            storage,
+            vec![OwnedSemanticSpan {
+                start: 0,
+                len,
+                semantic_id,
+            }],
+            Vec::new(),
         );
         Self::from_payload(root_id, payload, semantic_id)
     }

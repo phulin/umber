@@ -3346,10 +3346,10 @@ impl Stores {
             .sum()
     }
 
-    /// Creates a fresh owned scratch node-list builder.
+    /// Creates a fresh mutable scratch node-list builder.
     #[must_use]
     pub fn node_list_builder(&self) -> NodeListBuilder {
-        NodeListBuilder::new()
+        NodeListBuilder::new_compact()
     }
 
     /// Freezes a node list as one directly owned immutable compact graph.
@@ -3386,13 +3386,15 @@ impl Stores {
     pub fn freeze_node_list_ref(&mut self, builder: NodeListBuilder) -> NodeListRef {
         let children = builder.direct_children();
         let (semantic_id, needs) = self.validate_and_plan_direct_node_list(&builder, &children);
-        let nodes = builder.into_nodes();
-        self.node_ref_index.intern(NodeListRef::freeze_builder(
-            nodes,
-            children,
-            semantic_id,
-            needs,
-        ))
+        let frozen = match builder.into_compact_rows() {
+            Ok(rows) => {
+                debug_assert!(children.is_empty());
+                debug_assert_eq!(needs, crate::node_arena::SidecarNeeds::default());
+                NodeListRef::freeze_compact_builder(rows, semantic_id)
+            }
+            Err(nodes) => NodeListRef::freeze_builder(nodes, children, semantic_id, needs),
+        };
+        self.node_ref_index.intern(frozen)
     }
 
     /// Enters a TeX group.

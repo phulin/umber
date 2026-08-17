@@ -11,7 +11,6 @@ use tex_state::glue::Order;
 use tex_state::ids::FontId;
 use tex_state::node::{BoxLr, BoxNode, BoxNodeFields, KernKind, Node, Sign};
 use tex_state::node_arena::NodeListBuilder;
-use tex_state::provenance::OriginRef;
 
 use crate::{EpisodeCoverageFallback, EpisodeCoverageFamily, SemanticEpisodeBarrier};
 
@@ -79,20 +78,11 @@ pub(crate) fn execute_packed_episode(
 
         let width = nodes
             .builder
-            .as_slice()
-            .iter()
-            .try_fold(0_i32, |width, node| {
-                let contribution = match node {
-                    Node::Char { .. } => metrics.width.raw(),
-                    Node::Kern { amount, .. } => amount.raw(),
-                    _ => unreachable!("packed sink emits only migrated native families"),
-                };
-                width.checked_add(contribution)
-            })
+            .compact_width(metrics.width)
             .ok_or(NativeBatchRunError::DimensionOverflow)?;
         let children = stores.freeze_node_list_ref(nodes.builder);
         let root = Node::HList(BoxNode::new(BoxNodeFields {
-            width: tex_arith::Scaled::from_raw(width),
+            width,
             height: metrics.height,
             depth: metrics.depth,
             shift: tex_arith::Scaled::from_raw(0),
@@ -123,18 +113,13 @@ impl NativeBatchNodeSink for CanonicalNodeSink {
     }
 
     fn character(&mut self, ch: u8) {
-        self.builder.push(Node::Char {
-            font: self.font,
-            ch: char::from(ch),
-            origin: OriginRef::unknown(),
-        });
+        self.builder
+            .push_unknown_character(self.font, char::from(ch));
     }
 
     fn kern(&mut self, amount: i32) {
-        self.builder.push(Node::Kern {
-            amount: tex_arith::Scaled::from_raw(amount),
-            kind: KernKind::Explicit,
-        });
+        self.builder
+            .push_kern(tex_arith::Scaled::from_raw(amount), KernKind::Explicit);
     }
 }
 
