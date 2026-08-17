@@ -5,7 +5,8 @@ use tex_state::Universe;
 
 use crate::{
     Cancellation, CheckpointSink, EngineBoundary, ExecError, ExecutionBudgetCounters, MainControl,
-    MainControlStep, ResourceFulfillment, ResourceNeed, StepResult, canonical_font_resource_path,
+    MainControlStep, ResourceFulfillment, ResourceNeed, SemanticEpisodeBarrier, StepResult,
+    canonical_font_resource_path,
 };
 
 /// Checkpoint identity policy retained by one revision/output transaction.
@@ -277,6 +278,8 @@ impl<'a> CanonicalStepRunner<'a> {
         observer: Option<&mut dyn CommandObserver>,
     ) -> CanonicalStepResult {
         if cancellation.is_cancelled() {
+            self.control
+                .record_external_episode_barrier(SemanticEpisodeBarrier::Cancellation);
             return CanonicalStepResult::Failed(CanonicalStepFailure::Execution(
                 ExecError::ExecutionCancelled,
             ));
@@ -299,6 +302,8 @@ impl<'a> CanonicalStepRunner<'a> {
             .ledger
             .publish(self.control, self.universe, sink, &boundaries)
         {
+            self.control
+                .record_external_episode_barrier(SemanticEpisodeBarrier::Checkpoint);
             return CanonicalStepResult::Failed(CanonicalStepFailure::Checkpoint(error));
         }
         if matches!(step, MainControlStep::End | MainControlStep::EndOfInput) {

@@ -20,6 +20,7 @@ pub const CHARACTER_DEPTH: i32 = 100;
 #[derive(Debug)]
 pub enum SharedBatchError {
     Fallback(tex_exec::NativeBatchFallback),
+    Barrier(tex_exec::SemanticEpisodeBarrier),
     Execute(tex_exec::NativeBatchRunError),
 }
 
@@ -48,6 +49,9 @@ pub fn run_shared(workload: &Workload) -> Result<BatchResult, SharedBatchError> 
         tex_exec::NativeBatchAttempt::Completed(result) => *result,
         tex_exec::NativeBatchAttempt::Fallback(barrier) => {
             return Err(SharedBatchError::Fallback(barrier));
+        }
+        tex_exec::NativeBatchAttempt::Barrier { barrier, .. } => {
+            return Err(SharedBatchError::Barrier(barrier));
         }
     };
     Ok(BatchResult {

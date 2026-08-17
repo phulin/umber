@@ -4355,10 +4355,14 @@ fn production_batch_rolls_back_its_bounded_prefix_on_resource_need() {
     let mut control = MainControl::tex82_initex(&mut stores);
     register_source(&mut control, br"\count0=11 \input child\end");
 
-    assert!(matches!(
-        control.advance_batch(&mut stores).expect("batch suspends"),
-        StepResult::Suspended(ResourceNeed::Input { name, .. }) if name == "child.tex"
-    ));
+    let batch_step = control.advance_batch(&mut stores).expect("batch suspends");
+    assert!(
+        matches!(
+            batch_step,
+            StepResult::Suspended(ResourceNeed::Input { ref name, .. }) if name == "child.tex"
+        ),
+        "unexpected batch step: {batch_step:?}"
+    );
     assert_eq!(stores.count(0), 0, "the whole bounded prefix rolls back");
     let suspended = control.advance_telemetry();
     assert_eq!(suspended.rollbacks, 1);

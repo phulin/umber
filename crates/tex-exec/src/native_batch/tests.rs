@@ -6,9 +6,12 @@ use tex_fonts::{CharMetrics, FontMetrics, LoadedFont, MetricCharTag};
 use tex_out::ContentHash;
 
 use super::{
-    NativeBatchAttempt, NativeBatchFallback, NativeBatchRequest, run_native_batch_episode,
+    NativeBatchAttempt, NativeBatchFallbackReason, NativeBatchRequest, run_native_batch_episode,
 };
-use crate::{MainControl, MainControlStep};
+use crate::{
+    CoverageFallbackSafety, EpisodeCommitBoundary, EpisodeCoverageFamily, MainControl,
+    MainControlStep, SemanticEpisodeBarrier,
+};
 
 const SOURCE: &[u8] = br"\count0=0\count1=0\count2=0\def\e#1{\advance\count0by#1\global\advance\count1by#1\ifnum#1<5\global\advance\count2by1\else\global\advance\count2by2\fi A\kern#1sp}\shipout\hbox{\e{1}\e{2}\e{3}\e{4}\e{5}\e{6}\e{7}\e{8}}\end";
 
@@ -62,6 +65,18 @@ fn production_episode_matches_canonical_state_artifact_dvi_effects_and_channels(
     let mut writer = tex_out::dvi::DviStreamWriter::new(Vec::new());
     writer.write_page_plan(&plan).expect("DVI page writes");
     let canonical_dvi = writer.finish().expect("DVI stream finishes");
+    assert_eq!(
+        control
+            .episode_telemetry()
+            .semantic_barriers(SemanticEpisodeBarrier::Output),
+        1
+    );
+    assert_eq!(
+        control
+            .episode_telemetry()
+            .semantic_barriers(SemanticEpisodeBarrier::Checkpoint),
+        1
+    );
 
     let mut admission_stores = tex_state::Universe::new_with_plain_catcodes();
     let attempt = run_native_batch_episode(
@@ -89,6 +104,19 @@ fn production_episode_matches_canonical_state_artifact_dvi_effects_and_channels(
         shared.counts
     );
     assert_eq!(shared.calls, 8);
+    assert_eq!(
+        shared.commit.boundary(),
+        EpisodeCommitBoundary::Semantic(SemanticEpisodeBarrier::Output)
+    );
+    assert_eq!(shared.telemetry.attempts(), 1);
+    assert_eq!(shared.telemetry.commits(), 1);
+    assert_eq!(shared.telemetry.rollbacks(), 0);
+    assert_eq!(
+        shared
+            .telemetry
+            .semantic_barriers(SemanticEpisodeBarrier::Output),
+        1
+    );
     assert_eq!(shared.artifact, canonical_artifact);
     assert_eq!(shared.artifact_bytes, committed.bytes());
     assert_eq!(shared.dvi, canonical_dvi);
@@ -126,10 +154,24 @@ fn execution_barrier_rolls_canonical_count_and_group_state_back() {
     )
     .expect("runtime fallback is not an execution failure");
 
+    let NativeBatchAttempt::Fallback(fallback) = attempt else {
+        panic!("malformed supported vocabulary must be a coverage fallback");
+    };
     assert!(matches!(
-        attempt,
-        NativeBatchAttempt::Fallback(NativeBatchFallback::Command(_))
+        fallback.reason,
+        NativeBatchFallbackReason::Command(_)
     ));
+    assert_eq!(
+        fallback.protocol.safety(),
+        CoverageFallbackSafety::ExactAggregateRollback
+    );
+    assert_eq!(fallback.telemetry.rollbacks(), 1);
+    assert_eq!(
+        fallback
+            .telemetry
+            .coverage_fallbacks(EpisodeCoverageFamily::ScannerOrExpansion),
+        1
+    );
     assert_eq!(stores.count(0), 17);
     assert_eq!(stores.group_depth(), 0);
     assert_eq!(stores.snapshot().state_hash(), before_hash);
@@ -152,14 +194,111 @@ fn observable_command_falls_back_before_mutation() {
     )
     .expect("fallback is not an execution failure");
 
-    assert!(matches!(
-        attempt,
-        NativeBatchAttempt::Fallback(NativeBatchFallback::Command(_))
-    ));
+    let NativeBatchAttempt::Barrier { barrier, telemetry } = attempt else {
+        panic!("message must be a required effect barrier");
+    };
+    assert_eq!(barrier, SemanticEpisodeBarrier::Effect);
+    assert_eq!(
+        telemetry.semantic_barriers(SemanticEpisodeBarrier::Effect),
+        1
+    );
     assert_eq!(
         [stores.count(0), stores.count(1), stores.count(2)],
         before_counts
     );
     assert_eq!(stores.world().effect_records().len(), before_effects);
     assert!(stores.world().committed_artifacts().is_empty());
+}
+
+#[test]
+fn unknown_command_fallback_is_mutation_free_typed_and_counted() {
+    let mut stores = tex_state::Universe::new_with_plain_catcodes();
+    stores.set_count(0, 23);
+    let before_hash = stores.snapshot().state_hash();
+    let attempt = run_native_batch_episode(
+        &mut stores,
+        NativeBatchRequest {
+            source: Arc::<[u8]>::from(&br"\unknown\end"[..]),
+            expected_calls: 0,
+            profile: CommandProfile::TEX82,
+            font_id: 0,
+            font: test_font(),
+        },
+    )
+    .expect("coverage fallback is not execution failure");
+
+    let NativeBatchAttempt::Fallback(fallback) = attempt else {
+        panic!("unknown command is temporary command-vocabulary coverage");
+    };
+    assert_eq!(
+        fallback.protocol.safety(),
+        CoverageFallbackSafety::MutationFreeAdmission
+    );
+    assert_eq!(
+        fallback.protocol.family(),
+        EpisodeCoverageFamily::CommandVocabulary
+    );
+    assert_eq!(stores.count(0), 23);
+    assert_eq!(stores.snapshot().state_hash(), before_hash);
+}
+
+#[test]
+fn active_observer_is_a_required_barrier_with_exact_aggregate_rollback() {
+    let mut stores = tex_state::Universe::new_with_plain_catcodes();
+    stores.set_count(0, 31);
+    let before_hash = stores.snapshot().state_hash();
+    let tracked = stores.begin_tracked_region().expect("observer begins");
+    let attempt = run_native_batch_episode(
+        &mut stores,
+        NativeBatchRequest {
+            source: Arc::<[u8]>::from(&br"\count0=99\end"[..]),
+            expected_calls: 0,
+            profile: CommandProfile::TEX82,
+            font_id: 0,
+            font: test_font(),
+        },
+    )
+    .expect("observer barrier is not execution failure");
+
+    let NativeBatchAttempt::Barrier { barrier, telemetry } = attempt else {
+        panic!("tracked execution requires observer publication");
+    };
+    assert_eq!(barrier, SemanticEpisodeBarrier::Observer);
+    assert_eq!(telemetry.rollbacks(), 1);
+    assert_eq!(stores.count(0), 31);
+    assert_eq!(stores.snapshot().state_hash(), before_hash);
+    let _ = stores.finish_tracked_region(tracked);
+}
+
+#[test]
+fn schema_11_loaded_and_fresh_episode_commits_are_exactly_equal() {
+    let initializer = tex_state::Universe::new_with_plain_catcodes();
+    let image = initializer.dump_format().expect("schema-11 format dumps");
+    let mut loaded = tex_state::Universe::from_format(tex_state::World::memory(), &image)
+        .expect("schema-11 format loads");
+    let mut fresh = tex_state::Universe::new_with_plain_catcodes();
+    let request = NativeBatchRequest {
+        source: Arc::<[u8]>::from(SOURCE),
+        expected_calls: 8,
+        profile: CommandProfile::TEX82,
+        font_id: 0,
+        font: test_font(),
+    };
+
+    let NativeBatchAttempt::Completed(fresh_result) =
+        run_native_batch_episode(&mut fresh, request.clone()).expect("fresh episode commits")
+    else {
+        panic!("fresh episode must be covered");
+    };
+    let NativeBatchAttempt::Completed(loaded_result) =
+        run_native_batch_episode(&mut loaded, request).expect("loaded episode commits")
+    else {
+        panic!("loaded episode must be covered");
+    };
+
+    assert_eq!(loaded_result, fresh_result);
+    assert_eq!(
+        loaded.dump_format().expect("loaded result redumps"),
+        fresh.dump_format().expect("fresh result dumps")
+    );
 }

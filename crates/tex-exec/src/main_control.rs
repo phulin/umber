@@ -276,6 +276,9 @@ pub struct MainControl {
     /// Operational accounting only; snapshots and durable checkpoints never
     /// observe it.
     advance_telemetry: AdvanceTelemetry,
+    /// Monotonic evidence for bounded semantic episode admission and return.
+    /// Like command fuel, this is operational and rollback never refunds it.
+    episode_telemetry: crate::EpisodeTelemetry,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -944,6 +947,19 @@ impl MainControl {
         self.advance_telemetry
     }
 
+    /// Reports why bounded semantic episodes returned to their live session.
+    #[must_use]
+    pub const fn episode_telemetry(&self) -> crate::EpisodeTelemetry {
+        self.episode_telemetry
+    }
+
+    pub(crate) fn record_external_episode_barrier(
+        &mut self,
+        barrier: crate::SemanticEpisodeBarrier,
+    ) {
+        self.episode_telemetry.record_semantic_barrier(barrier);
+    }
+
     /// Samples host cancellation before creating a savepoint or mutating
     /// command, mode, or Universe state.
     pub fn advance_when(
@@ -952,6 +968,8 @@ impl MainControl {
         readiness: AdvanceReadiness,
     ) -> Result<AdvanceOutcome, ExecError> {
         if readiness == AdvanceReadiness::Cancelled {
+            self.episode_telemetry
+                .record_semantic_barrier(crate::SemanticEpisodeBarrier::Cancellation);
             return Ok(AdvanceOutcome::Cancelled);
         }
         if readiness == AdvanceReadiness::Interrupted {
@@ -2562,6 +2580,83 @@ impl MainControl {
         self.max_save_stack = self.max_save_stack.max(checked);
     }
 
+    #[allow(clippy::too_many_arguments)]
+    fn episode_commit_boundary(
+        &self,
+        stores: &Universe,
+        snapshot: &StepSnapshot,
+        applied: &Result<ReplayStep, ExecError>,
+        operations: usize,
+        max_operations: usize,
+        initial_group_depth: u32,
+        initial_boundaries: usize,
+        initial_effect_pos: tex_state::EffectPos,
+        initial_artifacts: usize,
+        initial_format_dump: bool,
+        initial_diagnostic: bool,
+        initial_error_count: i32,
+        tracked: bool,
+    ) -> Option<crate::EpisodeCommitBoundary> {
+        if applied.is_err() {
+            return None;
+        }
+        if self.dumped_format.is_some() != initial_format_dump {
+            return Some(crate::EpisodeCommitBoundary::Semantic(
+                crate::SemanticEpisodeBarrier::Format,
+            ));
+        }
+        if self.fatal.is_some() {
+            return Some(crate::EpisodeCommitBoundary::Semantic(
+                crate::SemanticEpisodeBarrier::Diagnostic,
+            ));
+        }
+        if self.first_causal_context.is_some() != initial_diagnostic
+            || stores.world().error_channel().error_count() != initial_error_count
+        {
+            return Some(crate::EpisodeCommitBoundary::Semantic(
+                crate::SemanticEpisodeBarrier::Diagnostic,
+            ));
+        }
+        if matches!(applied, Ok(ReplayStep::End | ReplayStep::EndOfInput)) {
+            return Some(crate::EpisodeCommitBoundary::Terminal);
+        }
+        if stores.world().artifact_commits().len() != initial_artifacts {
+            return Some(crate::EpisodeCommitBoundary::Semantic(
+                crate::SemanticEpisodeBarrier::Output,
+            ));
+        }
+        if self.completed_boundaries.len() != initial_boundaries {
+            let boundary = self.completed_boundaries[initial_boundaries];
+            return Some(crate::EpisodeCommitBoundary::NamedCheckpoint(boundary));
+        }
+        if stores.world().effect_pos() != initial_effect_pos {
+            return Some(crate::EpisodeCommitBoundary::Semantic(
+                crate::SemanticEpisodeBarrier::Effect,
+            ));
+        }
+        if self.operation_observations.is_some() {
+            return Some(crate::EpisodeCommitBoundary::Semantic(
+                crate::SemanticEpisodeBarrier::Observer,
+            ));
+        }
+        if tracked {
+            return Some(crate::EpisodeCommitBoundary::Semantic(
+                crate::SemanticEpisodeBarrier::StateIdentity,
+            ));
+        }
+        if stores.group_depth() != initial_group_depth {
+            return Some(crate::EpisodeCommitBoundary::CoverageBoundary(
+                crate::EpisodeCoverageFamily::GroupLineage,
+            ));
+        }
+        if !snapshot.can_rollback(stores) {
+            return Some(crate::EpisodeCommitBoundary::CoverageBoundary(
+                crate::EpisodeCoverageFamily::RollbackLineage,
+            ));
+        }
+        (operations >= max_operations).then_some(crate::EpisodeCommitBoundary::SliceLimit)
+    }
+
     fn execute_operation(
         &mut self,
         stores: &mut Universe,
@@ -2583,6 +2678,7 @@ impl MainControl {
         }
 
         let tracks_telemetry = matches!(transaction, OperationTransaction::Advance);
+        self.episode_telemetry.record_attempt();
         if tracks_telemetry {
             self.advance_telemetry.attempts += 1;
             self.advance_telemetry.live_savepoints += 1;
@@ -2623,9 +2719,13 @@ impl MainControl {
         let initial_group_depth = stores.group_depth();
         let initial_boundaries = self.completed_boundaries.len();
         let initial_effect_pos = stores.world().effect_pos();
+        let initial_artifacts = stores.world().artifact_commits().len();
+        let initial_format_dump = self.dumped_format.is_some();
+        let initial_diagnostic = self.first_causal_context.is_some();
+        let initial_error_count = stores.world().error_channel().error_count();
         let mut operations = 0_usize;
         let mut next_delivery = Some(delivery);
-        let mut applied = loop {
+        let (mut applied, commit_boundary) = loop {
             let applied = self.apply_operation(
                 stores,
                 next_delivery
@@ -2634,16 +2734,26 @@ impl MainControl {
             );
             operations += 1;
             self.record_save_stack_usage(stores);
-            let continue_batch = matches!(applied, Ok(ReplayStep::Continue))
-                && batch_enabled
-                && operations < max_operations
-                && self.fatal.is_none()
-                && stores.group_depth() == initial_group_depth
-                && self.completed_boundaries.len() == initial_boundaries
-                && stores.world().effect_pos() == initial_effect_pos
-                && snapshot.can_rollback(stores);
-            if !continue_batch {
-                break applied;
+            let boundary = self.episode_commit_boundary(
+                stores,
+                &snapshot,
+                &applied,
+                operations,
+                max_operations,
+                initial_group_depth,
+                initial_boundaries,
+                initial_effect_pos,
+                initial_artifacts,
+                initial_format_dump,
+                initial_diagnostic,
+                initial_error_count,
+                tracked_region.is_some(),
+            );
+            if !batch_enabled || applied.is_err() || boundary.is_some() {
+                break (
+                    applied,
+                    boundary.unwrap_or(crate::EpisodeCommitBoundary::SliceLimit),
+                );
             }
             next_delivery = Some(OperationDelivery::Replay(None));
         };
@@ -2664,6 +2774,40 @@ impl MainControl {
             Ok(step) => {
                 let tracked_result = tracked_mark.map(|mark| stores.finish_tracked_region(mark));
                 self.commit_step(snapshot, stores);
+                self.episode_telemetry
+                    .record_commit(crate::EpisodeCommit::new(
+                        operations
+                            .try_into()
+                            .expect("bounded episode operation count fits u16"),
+                        commit_boundary,
+                    ));
+                if stores.world().artifact_commits().len() != initial_artifacts
+                    && commit_boundary
+                        != crate::EpisodeCommitBoundary::Semantic(
+                            crate::SemanticEpisodeBarrier::Output,
+                        )
+                {
+                    self.episode_telemetry
+                        .record_semantic_barrier(crate::SemanticEpisodeBarrier::Output);
+                }
+                if self.completed_boundaries.len() != initial_boundaries
+                    && !matches!(
+                        commit_boundary,
+                        crate::EpisodeCommitBoundary::NamedCheckpoint(_)
+                    )
+                {
+                    self.episode_telemetry
+                        .record_semantic_barrier(crate::SemanticEpisodeBarrier::Checkpoint);
+                }
+                if stores.world().effect_pos() != initial_effect_pos
+                    && commit_boundary
+                        != crate::EpisodeCommitBoundary::Semantic(
+                            crate::SemanticEpisodeBarrier::Effect,
+                        )
+                {
+                    self.episode_telemetry
+                        .record_semantic_barrier(crate::SemanticEpisodeBarrier::Effect);
+                }
                 if tracks_telemetry {
                     self.advance_telemetry.live_savepoints -= 1;
                     self.advance_telemetry.commits += 1;
@@ -2679,11 +2823,35 @@ impl MainControl {
                 if let Some(fatal) = error.as_fatal() {
                     let _ = self.admit_observed_receipt(stores, OperationTermination::Fatal(fatal));
                     self.commit_step(snapshot, stores);
+                    self.episode_telemetry
+                        .record_commit(crate::EpisodeCommit::new(
+                            operations
+                                .try_into()
+                                .expect("bounded episode operation count fits u16"),
+                            crate::EpisodeCommitBoundary::Semantic(
+                                crate::SemanticEpisodeBarrier::Diagnostic,
+                            ),
+                        ));
                 } else if !snapshot.can_rollback(stores) {
                     let _ = self.admit_observed_receipt(stores, OperationTermination::Failed);
                     self.commit_failed_step(snapshot, stores);
+                    self.episode_telemetry
+                        .record_commit(crate::EpisodeCommit::new(
+                            operations
+                                .try_into()
+                                .expect("bounded episode operation count fits u16"),
+                            crate::EpisodeCommitBoundary::CoverageBoundary(
+                                crate::EpisodeCoverageFamily::RollbackLineage,
+                            ),
+                        ));
                 } else {
                     self.rollback_step(snapshot, stores);
+                    let barrier = if execution_error_is_fuel(&error) {
+                        crate::SemanticEpisodeBarrier::Fuel
+                    } else {
+                        crate::SemanticEpisodeBarrier::Diagnostic
+                    };
+                    self.episode_telemetry.record_rollback(barrier);
                 }
                 Err(error)
             }
@@ -2729,6 +2897,15 @@ impl MainControl {
                         stores.finish_tracked_region(mark)
                     });
                     self.commit_step(snapshot, stores);
+                    self.episode_telemetry
+                        .record_commit(crate::EpisodeCommit::new(
+                            operations
+                                .try_into()
+                                .expect("bounded episode operation count fits u16"),
+                            crate::EpisodeCommitBoundary::Semantic(
+                                crate::SemanticEpisodeBarrier::Diagnostic,
+                            ),
+                        ));
                     self.finish_operation_telemetry(false);
                     let terminal = self.succumb(fatal);
                     if let (Some(outcome), Some(result)) =
@@ -2752,7 +2929,30 @@ impl MainControl {
                         }
                     }
                 }
+                let fuel_failure = execution_error_is_fuel(&error);
                 let mut result = self.finish_failed_step(snapshot, stores, error);
+                match &result {
+                    Ok(StepResult::Suspended(_)) => self
+                        .episode_telemetry
+                        .record_rollback(crate::SemanticEpisodeBarrier::Resource),
+                    Err(_) if fuel_failure => self
+                        .episode_telemetry
+                        .record_rollback(crate::SemanticEpisodeBarrier::Fuel),
+                    Err(_) if rolled_back => self
+                        .episode_telemetry
+                        .record_rollback(crate::SemanticEpisodeBarrier::Diagnostic),
+                    Err(_) | Ok(StepResult::Progress(_)) => {
+                        self.episode_telemetry
+                            .record_commit(crate::EpisodeCommit::new(
+                                operations
+                                    .try_into()
+                                    .expect("bounded episode operation count fits u16"),
+                                crate::EpisodeCommitBoundary::CoverageBoundary(
+                                    crate::EpisodeCoverageFamily::RollbackLineage,
+                                ),
+                            ))
+                    }
+                }
                 if let Ok(StepResult::Suspended(resource)) = &result
                     && let Some(pending) = self.operation_observations.as_mut()
                 {
@@ -17916,6 +18116,15 @@ fn command_error(error: CommandError) -> ExecError {
         | CommandError::ParagraphInMacroArgument
         | CommandError::OuterInMacroArgument
         | CommandError::UnsupportedExpandablePrimitive(_) => ExecError::Command(error),
+    }
+}
+
+fn execution_error_is_fuel(error: &ExecError) -> bool {
+    match error {
+        ExecError::Captured { error, .. } => execution_error_is_fuel(error),
+        ExecError::CumulativeFuelExceeded { .. }
+        | ExecError::Command(CommandError::FuelExhausted { .. }) => true,
+        _ => false,
     }
 }
 

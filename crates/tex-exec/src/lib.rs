@@ -13,6 +13,7 @@ mod checkpoint;
 mod diagnostics;
 mod dispatch;
 mod effective_tail;
+mod episode;
 mod error;
 mod error_report;
 mod execution_receipt;
@@ -64,6 +65,10 @@ pub use dispatch::{
     ArtifactLedger, DispatchAction, ExecutionStats, PreparedDviPage, RevisionOutputPatch,
     RevisionOutputPatchError,
 };
+pub use episode::{
+    CoverageFallbackSafety, EpisodeCommit, EpisodeCommitBoundary, EpisodeCoverageFallback,
+    EpisodeCoverageFamily, EpisodeTelemetry, SemanticEpisodeBarrier,
+};
 pub use error::{
     ExecError, FrozenDiagnosticContext, FrozenDiagnosticEvidence, FrozenDiagnosticGroup,
     FrozenDiagnosticOrigin,
@@ -86,8 +91,8 @@ pub use mode::{
     ModeNest, ModeNestSummary,
 };
 pub use native_batch::{
-    NativeBatchAttempt, NativeBatchFallback, NativeBatchRequest, NativeBatchResult,
-    NativeBatchRunError, run_native_batch_episode,
+    NativeBatchAttempt, NativeBatchFallback, NativeBatchFallbackReason, NativeBatchRequest,
+    NativeBatchResult, NativeBatchRunError, run_native_batch_episode,
 };
 pub use paragraph_end::cached_pretolerance_plan;
 pub use retained_resource::{

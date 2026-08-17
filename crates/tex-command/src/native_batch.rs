@@ -33,12 +33,34 @@ pub enum NativeBatchBarrier {
     InvalidCharacter,
     UnsupportedCharacter,
     UnsupportedCatcode(Catcode),
+    Required(NativeBatchRequiredBarrier),
     UnsupportedControlSequence(String),
     MaterialAfterEnd,
     MissingEnd,
     Malformed(&'static str),
     ArithmeticOverflow,
     State(CountGroupEpisodeBarrier),
+}
+
+/// Command-owned semantic barrier discovered during mutation-free admission.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum NativeBatchRequiredBarrier {
+    Resource,
+    Effect,
+    Diagnostic,
+    Format,
+}
+
+impl NativeBatchRequiredBarrier {
+    fn from_name(name: &str) -> Option<Self> {
+        match name {
+            "input" | "font" | "openin" | "read" => Some(Self::Resource),
+            "message" | "write" | "openout" | "closeout" | "special" => Some(Self::Effect),
+            "show" | "showbox" | "showthe" | "showlists" | "errmessage" => Some(Self::Diagnostic),
+            "dump" => Some(Self::Format),
+            _ => None,
+        }
+    }
 }
 
 /// One node emitted by the shared command-side batch semantics.
@@ -156,6 +178,9 @@ impl Token {
                 }
             }
             SourceToken::ControlSequence { name, .. } => name.with_text(|name| {
+                if let Some(barrier) = NativeBatchRequiredBarrier::from_name(name) {
+                    return Err(NativeBatchBarrier::Required(barrier));
+                }
                 Control::from_name(name)
                     .map(Self::control)
                     .ok_or_else(|| NativeBatchBarrier::UnsupportedControlSequence(name.to_owned()))

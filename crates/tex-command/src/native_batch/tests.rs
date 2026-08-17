@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use tex_state::{GroupKind, TrackedRegionBarrier, TrackedRegionError, Universe, World};
 
-use super::{NativeBatchBarrier, NativeBatchNode, NativeBatchProgram};
+use super::{NativeBatchBarrier, NativeBatchNode, NativeBatchProgram, NativeBatchRequiredBarrier};
 use crate::{CharacterCode, CommandProfile};
 
 fn compile(source: &[u8], calls: usize) -> Result<NativeBatchProgram, NativeBatchBarrier> {
@@ -154,7 +154,7 @@ fn unsupported_control_sequence_stops_before_execution() {
         .expect_err("observable command is outside the episode");
     assert_eq!(
         error,
-        NativeBatchBarrier::UnsupportedControlSequence("message".to_owned())
+        NativeBatchBarrier::Required(NativeBatchRequiredBarrier::Effect)
     );
 }
 

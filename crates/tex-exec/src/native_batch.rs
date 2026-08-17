@@ -6,6 +6,7 @@ use std::sync::Arc;
 use tex_arith::Scaled;
 use tex_command::{
     CharacterCode, CommandProfile, NativeBatchBarrier, NativeBatchNode, NativeBatchProgram,
+    NativeBatchRequiredBarrier,
 };
 use tex_fonts::LoadedFont;
 use tex_out::{
@@ -13,6 +14,11 @@ use tex_out::{
     GlueSign, JobInfo, KernKind, PageArtifact, PageNode, UnvalidatedPageArtifact,
 };
 use tex_state::{EffectRecord, Universe};
+
+use crate::{
+    EpisodeCommit, EpisodeCommitBoundary, EpisodeCoverageFallback, EpisodeCoverageFamily,
+    EpisodeTelemetry, SemanticEpisodeBarrier,
+};
 
 const DVI_ONE_INCH: i32 = 4_736_286;
 
@@ -26,11 +32,18 @@ pub struct NativeBatchRequest {
     pub font: LoadedFont,
 }
 
-/// Typed pre-mutation fallback from the native episode to canonical stepping.
+/// Exact implementation reason for a temporary native-episode coverage gap.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum NativeBatchFallback {
+pub enum NativeBatchFallbackReason {
     Command(NativeBatchBarrier),
-    MissingCharacter(u8),
+}
+
+/// Typed and counted fallback from the native episode to canonical stepping.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NativeBatchFallback {
+    pub reason: NativeBatchFallbackReason,
+    pub protocol: EpisodeCoverageFallback,
+    pub telemetry: EpisodeTelemetry,
 }
 
 /// Result of attempting the bounded production batch path.
@@ -38,6 +51,10 @@ pub enum NativeBatchFallback {
 pub enum NativeBatchAttempt {
     Completed(Box<NativeBatchResult>),
     Fallback(NativeBatchFallback),
+    Barrier {
+        barrier: SemanticEpisodeBarrier,
+        telemetry: EpisodeTelemetry,
+    },
 }
 
 /// Complete state, artifact, byte, DVI, effect, and diagnostic projection.
@@ -51,6 +68,8 @@ pub struct NativeBatchResult {
     pub terminal: Vec<u8>,
     pub log: Vec<u8>,
     pub calls: usize,
+    pub commit: EpisodeCommit,
+    pub telemetry: EpisodeTelemetry,
 }
 
 /// Failure after a program has completed its typed admission boundary.
@@ -80,6 +99,8 @@ pub fn run_native_batch_episode(
     stores: &mut Universe,
     request: NativeBatchRequest,
 ) -> Result<NativeBatchAttempt, NativeBatchRunError> {
+    let mut telemetry = EpisodeTelemetry::default();
+    telemetry.record_attempt();
     let program = match NativeBatchProgram::compile(
         Arc::clone(&request.source),
         request.profile,
@@ -94,15 +115,28 @@ pub fn run_native_batch_episode(
     ) {
         Ok(program) => program,
         Err(barrier) => {
-            return Ok(NativeBatchAttempt::Fallback(NativeBatchFallback::Command(
-                barrier,
-            )));
+            if let Some(required) = semantic_barrier(&barrier) {
+                telemetry.record_semantic_barrier(required);
+                return Ok(NativeBatchAttempt::Barrier {
+                    barrier: required,
+                    telemetry,
+                });
+            }
+            let protocol = EpisodeCoverageFallback::mutation_free(coverage_family(&barrier));
+            telemetry.record_fallback(protocol);
+            return Ok(NativeBatchAttempt::Fallback(NativeBatchFallback {
+                reason: NativeBatchFallbackReason::Command(barrier),
+                protocol,
+                telemetry,
+            }));
         }
     };
     let Some(metrics) = request.font.character_metrics('A') else {
-        return Ok(NativeBatchAttempt::Fallback(
-            NativeBatchFallback::MissingCharacter(b'A'),
-        ));
+        telemetry.record_semantic_barrier(SemanticEpisodeBarrier::Diagnostic);
+        return Ok(NativeBatchAttempt::Barrier {
+            barrier: SemanticEpisodeBarrier::Diagnostic,
+            telemetry,
+        });
     };
 
     let rollback = stores.snapshot_for_local_retry();
@@ -110,9 +144,18 @@ pub fn run_native_batch_episode(
         let outcome = match program.execute(stores) {
             Ok(outcome) => outcome,
             Err(barrier) => {
-                return Ok(NativeBatchAttempt::Fallback(NativeBatchFallback::Command(
-                    barrier,
-                )));
+                if let Some(required) = semantic_barrier(&barrier) {
+                    return Ok(NativeBatchAttempt::Barrier {
+                        barrier: required,
+                        telemetry,
+                    });
+                }
+                let protocol = EpisodeCoverageFallback::rolled_back(coverage_family(&barrier));
+                return Ok(NativeBatchAttempt::Fallback(NativeBatchFallback {
+                    reason: NativeBatchFallbackReason::Command(barrier),
+                    protocol,
+                    telemetry,
+                }));
             }
         };
 
@@ -202,6 +245,10 @@ pub fn run_native_batch_episode(
         )
         .into_bytes();
         let log = terminal.clone();
+        let commit = EpisodeCommit::new(
+            1,
+            EpisodeCommitBoundary::Semantic(SemanticEpisodeBarrier::Output),
+        );
         Ok(NativeBatchAttempt::Completed(Box::new(NativeBatchResult {
             counts: outcome.counts,
             artifact,
@@ -211,6 +258,8 @@ pub fn run_native_batch_episode(
             terminal,
             log,
             calls: outcome.calls,
+            commit,
+            telemetry,
         })))
     })();
     if matches!(&attempt, Ok(NativeBatchAttempt::Completed(_))) {
@@ -218,7 +267,72 @@ pub fn run_native_batch_episode(
     } else {
         stores.rollback_local_retry_snapshot(rollback);
     }
-    attempt
+    match attempt {
+        Ok(NativeBatchAttempt::Completed(mut result)) => {
+            result.telemetry.record_commit(result.commit);
+            Ok(NativeBatchAttempt::Completed(result))
+        }
+        Ok(NativeBatchAttempt::Fallback(mut fallback)) => {
+            fallback.telemetry.record_fallback(fallback.protocol);
+            fallback.telemetry.record_coverage_rollback();
+            Ok(NativeBatchAttempt::Fallback(fallback))
+        }
+        Ok(NativeBatchAttempt::Barrier {
+            barrier,
+            mut telemetry,
+        }) => {
+            telemetry.record_rollback(barrier);
+            Ok(NativeBatchAttempt::Barrier { barrier, telemetry })
+        }
+        Err(error) => Err(error),
+    }
+}
+
+fn semantic_barrier(barrier: &NativeBatchBarrier) -> Option<SemanticEpisodeBarrier> {
+    match barrier {
+        NativeBatchBarrier::State(
+            tex_state::CountGroupEpisodeBarrier::ActiveTrackedRegion
+            | tex_state::CountGroupEpisodeBarrier::ObservableGroupTracing,
+        ) => Some(SemanticEpisodeBarrier::Observer),
+        NativeBatchBarrier::Required(required) => Some(match required {
+            NativeBatchRequiredBarrier::Resource => SemanticEpisodeBarrier::Resource,
+            NativeBatchRequiredBarrier::Effect => SemanticEpisodeBarrier::Effect,
+            NativeBatchRequiredBarrier::Diagnostic => SemanticEpisodeBarrier::Diagnostic,
+            NativeBatchRequiredBarrier::Format => SemanticEpisodeBarrier::Format,
+        }),
+        NativeBatchBarrier::CharacterMode
+        | NativeBatchBarrier::SourceRegistration(_)
+        | NativeBatchBarrier::InvalidCharacter
+        | NativeBatchBarrier::UnsupportedCharacter
+        | NativeBatchBarrier::UnsupportedCatcode(_)
+        | NativeBatchBarrier::UnsupportedControlSequence(_)
+        | NativeBatchBarrier::MaterialAfterEnd
+        | NativeBatchBarrier::MissingEnd
+        | NativeBatchBarrier::Malformed(_)
+        | NativeBatchBarrier::ArithmeticOverflow => None,
+    }
+}
+
+fn coverage_family(barrier: &NativeBatchBarrier) -> EpisodeCoverageFamily {
+    match barrier {
+        NativeBatchBarrier::CharacterMode => EpisodeCoverageFamily::CharacterProfile,
+        NativeBatchBarrier::SourceRegistration(_)
+        | NativeBatchBarrier::InvalidCharacter
+        | NativeBatchBarrier::UnsupportedCharacter
+        | NativeBatchBarrier::UnsupportedCatcode(_)
+        | NativeBatchBarrier::MaterialAfterEnd
+        | NativeBatchBarrier::MissingEnd => EpisodeCoverageFamily::SourceTokenization,
+        NativeBatchBarrier::UnsupportedControlSequence(_) => {
+            EpisodeCoverageFamily::CommandVocabulary
+        }
+        NativeBatchBarrier::Required(_) => {
+            unreachable!("required barriers are never coverage fallback")
+        }
+        NativeBatchBarrier::Malformed(_) | NativeBatchBarrier::ArithmeticOverflow => {
+            EpisodeCoverageFamily::ScannerOrExpansion
+        }
+        NativeBatchBarrier::State(_) => EpisodeCoverageFamily::RollbackLineage,
+    }
 }
 
 #[cfg(test)]

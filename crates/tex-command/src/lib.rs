@@ -95,6 +95,7 @@ pub use input::{
 };
 pub use native_batch::{
     NativeBatchBarrier, NativeBatchNode, NativeBatchOutcome, NativeBatchProgram,
+    NativeBatchRequiredBarrier,
 };
 /// The single canonical naming vocabulary shared by every observation
 /// producer and transport (`docs/tex_command_core.md` §33.3).
