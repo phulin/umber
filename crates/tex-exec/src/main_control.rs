@@ -879,6 +879,13 @@ impl CommandMachine<'_> {
         &mut self,
         receipt: crate::assignments::committer::MutationReceipt,
     ) {
+        // Receipt payloads are detached instrumentation.  In particular,
+        // indexed registers defer formatting their canonical key until this
+        // operation actually has an observer; the ordinary execution path
+        // must not pay to serialize a mutation that nobody can consume.
+        if self.assignment_receipts.is_none() && self.observations.is_none() {
+            return;
+        }
         let Some(record) = receipt.into_record() else {
             return;
         };
@@ -11669,7 +11676,10 @@ fn committed_stream_effect_observations(
         .get(before..)
         .unwrap_or_default();
     if shipped.is_empty() {
-        direct.iter().filter_map(stream_effect_observation).collect()
+        direct
+            .iter()
+            .filter_map(stream_effect_observation)
+            .collect()
     } else {
         shipped
             .iter()

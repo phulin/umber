@@ -18,17 +18,54 @@ use super::tracing;
 
 /// The result of one authoritative assignment commit.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct MutationReceipt(Option<MutationRecord>);
+pub(crate) enum MutationReceipt {
+    Silent,
+    Ready(MutationRecord),
+    IndexedRegister {
+        class: &'static str,
+        index: u16,
+        value: ObservationValue,
+        global: bool,
+    },
+}
 
 impl MutationReceipt {
-    pub(crate) const SILENT: Self = Self(None);
+    pub(crate) const SILENT: Self = Self::Silent;
 
     pub(crate) fn observed(record: MutationRecord) -> Self {
-        Self(Some(record))
+        Self::Ready(record)
+    }
+
+    fn indexed_register(
+        class: &'static str,
+        index: u16,
+        value: ObservationValue,
+        global: bool,
+    ) -> Self {
+        Self::IndexedRegister {
+            class,
+            index,
+            value,
+            global,
+        }
     }
 
     pub(crate) fn into_record(self) -> Option<MutationRecord> {
-        self.0
+        match self {
+            Self::Silent => None,
+            Self::Ready(record) => Some(record),
+            Self::IndexedRegister {
+                class,
+                index,
+                value,
+                global,
+            } => Some(MutationRecord {
+                target: MutationTarget::Register,
+                key: ObservationValue::Name(format!("{class}:{index}")),
+                value,
+                global,
+            }),
+        }
     }
 }
 
@@ -87,7 +124,7 @@ impl<'a> AssignmentCommitter<'a> {
         Write: FnOnce(&mut Universe),
     {
         write(self.stores);
-        MutationReceipt(record)
+        record.map_or(MutationReceipt::SILENT, MutationReceipt::observed)
     }
 
     pub(crate) fn try_unscoped<E, Write>(
@@ -99,7 +136,7 @@ impl<'a> AssignmentCommitter<'a> {
         Write: FnOnce(&mut Universe) -> Result<(), E>,
     {
         write(self.stores)?;
-        Ok(MutationReceipt(record))
+        Ok(record.map_or(MutationReceipt::SILENT, MutationReceipt::observed))
     }
 
     pub(crate) fn count(&mut self, index: u16, value: i32, global: bool) -> MutationReceipt {
@@ -114,12 +151,12 @@ impl<'a> AssignmentCommitter<'a> {
         if redundant && index <= 255 {
             MutationReceipt::SILENT
         } else {
-            MutationReceipt::observed(MutationRecord {
-                target: MutationTarget::Register,
-                key: ObservationValue::Name(format!("count:{index}")),
-                value: ObservationValue::Integer(i64::from(value)),
+            MutationReceipt::indexed_register(
+                "count",
+                index,
+                ObservationValue::Integer(i64::from(value)),
                 global,
-            })
+            )
         }
     }
 
@@ -135,12 +172,12 @@ impl<'a> AssignmentCommitter<'a> {
         if redundant && index <= 255 {
             MutationReceipt::SILENT
         } else {
-            MutationReceipt::observed(MutationRecord {
-                target: MutationTarget::Register,
-                key: ObservationValue::Name(format!("dimen:{index}")),
-                value: ObservationValue::Scaled(i64::from(value.raw())),
+            MutationReceipt::indexed_register(
+                "dimen",
+                index,
+                ObservationValue::Scaled(i64::from(value.raw())),
                 global,
-            })
+            )
         }
     }
 
