@@ -1,5 +1,13 @@
 # Native Batch-Kernel Ceiling
 
+The final deletion audit in
+[`writeback/umber2-64v2.16.md`](writeback/umber2-64v2.16.md) establishes that
+the measurements in this document cover the closed sixteen-control workload,
+not all supported-profile semantics. The benchmark's temporary whole-job
+scalar comparison adapter and runtime selector have now been deleted. Its
+production-only 6M/12M/nested workload remains a performance regression gate;
+external fixtures and oracle workloads remain the correctness authority.
+
 The evaluation branch for `umber2-64v2.8`, based on
 `fef7f55637842721d9ec86dc4b40c475c3a80f25`, established a production-shaped
 direct-execution ceiling. Issue `umber2-64v2.10` independently reproduced that
