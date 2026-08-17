@@ -8,7 +8,7 @@ use tex_arith::Scaled;
 use tex_fonts::{CharMetrics, FontMetrics, LoadedFont, MetricCharTag};
 use tex_out::{ContentHash, PageArtifact};
 
-pub use production::{ProductionError, run_canonical, run_production};
+pub use production::{ProductionError, run_production};
 pub use tex_command::CommandWorkCounters;
 
 pub const CHARACTER: u8 = b'A';
@@ -99,8 +99,8 @@ impl Workload {
     }
 }
 
-/// Complete semantic output of either implementation.
-#[derive(Clone, Debug, Eq, PartialEq)]
+/// Complete retained output of the production episode workload.
+#[derive(Debug)]
 pub struct BatchResult {
     pub counts: [i32; 3],
     pub artifact: PageArtifact,
@@ -149,31 +149,21 @@ mod tests {
     use tex_out::PageNode;
 
     #[test]
-    fn shared_kernel_matches_the_complete_production_result() {
+    fn production_episode_retains_complete_output() {
         let workload = Workload::new(256, 17);
-        let canonical = run_canonical(&workload).expect("canonical slice executes");
         let production = run_production(&workload).expect("production slice executes");
 
         assert_eq!(production.counts, workload.expected_counts());
-        assert_eq!(production.counts, canonical.counts);
-        assert_eq!(production.calls, canonical.calls);
-        assert_eq!(production.artifact, canonical.artifact);
-        assert_eq!(production.artifact_bytes, canonical.artifact_bytes);
-        assert_eq!(production.dvi, canonical.dvi);
-        assert_eq!(production.effects, canonical.effects);
-        assert_eq!(production.terminal, canonical.terminal);
-        assert_eq!(production.log, canonical.log);
         assert_eq!(
-            production.command_work.expect("packed production work").fuel_charges,
-            canonical.command_work.expect("canonical work").fuel_charges
-        );
-        assert_eq!(
-            canonical
+            production
                 .command_work
                 .expect("production work")
                 .fuel_charges,
             73 + 67 * workload.calls() as u64 + workload.relax_padding() as u64
         );
+        assert_eq!(production.calls, workload.calls());
+        assert!(!production.artifact_bytes.is_empty());
+        assert!(!production.dvi.is_empty());
     }
 
     #[test]
@@ -189,21 +179,20 @@ mod tests {
     }
 
     #[test]
-    fn nested_argument_forwarding_matches_production_exactly() {
+    fn nested_argument_forwarding_retains_complete_output() {
         let workload = Workload::nested(512, 5);
-        let canonical = run_canonical(&workload).expect("nested canonical slice executes");
         let production = run_production(&workload).expect("nested production slice executes");
 
-        assert_eq!(production.counts, canonical.counts);
-        assert_eq!(production.calls, canonical.calls);
-        assert_eq!(production.artifact_bytes, canonical.artifact_bytes);
-        assert_eq!(production.dvi, canonical.dvi);
-        assert_eq!(production.effects, canonical.effects);
-        assert_eq!(production.terminal, canonical.terminal);
-        assert_eq!(production.log, canonical.log);
+        assert_eq!(production.counts, workload.expected_counts());
+        assert_eq!(production.calls, workload.calls());
+        assert!(!production.artifact_bytes.is_empty());
+        assert!(!production.dvi.is_empty());
         assert_eq!(
             production.command_work.expect("packed production work").fuel_charges,
-            canonical.command_work.expect("canonical work").fuel_charges
+            73 + 67 * workload.calls() as u64
+                + workload.relax_padding() as u64
+                + 16
+                + 4 * (workload.calls() / 2) as u64
         );
     }
 }

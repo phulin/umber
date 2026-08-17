@@ -7,28 +7,10 @@ use std::{
 };
 
 use stats_alloc::{INSTRUMENTED_SYSTEM, Region, Stats, StatsAlloc};
-use tex_exec_benchmarks::{BatchResult, Workload, run_canonical, run_production};
+use tex_exec_benchmarks::{BatchResult, Workload, run_production};
 
 #[global_allocator]
 static GLOBAL: &StatsAlloc<System> = &INSTRUMENTED_SYSTEM;
-
-#[derive(Clone, Copy)]
-enum Engine {
-    Canonical,
-    Production,
-    Compare,
-}
-
-impl Engine {
-    fn parse(value: &str) -> Option<Self> {
-        match value {
-            "canonical" => Some(Self::Canonical),
-            "production" => Some(Self::Production),
-            "compare" => Some(Self::Compare),
-            _ => None,
-        }
-    }
-}
 
 fn main() -> ExitCode {
     match try_main() {
@@ -42,11 +24,6 @@ fn main() -> ExitCode {
 
 fn try_main() -> Result<(), String> {
     let mut args = env::args().skip(1);
-    let engine = args
-        .next()
-        .as_deref()
-        .and_then(Engine::parse)
-        .ok_or_else(usage)?;
     let calls = parse_usize(args.next(), "calls")?;
     let padding = args
         .next()
@@ -63,38 +40,8 @@ fn try_main() -> Result<(), String> {
         "nested" => Workload::nested(calls, padding),
         _ => return Err(format!("invalid workload shape {shape:?}")),
     };
-    match engine {
-        Engine::Canonical => {
-            let (result, elapsed, stats) = measure(|| run_canonical(&workload))?;
-            print_result("canonical", &shape, &workload, &result, elapsed, stats);
-        }
-        Engine::Production => {
-            let (result, elapsed, stats) = measure(|| run_production(&workload))?;
-            print_result("production", &shape, &workload, &result, elapsed, stats);
-        }
-        Engine::Compare => {
-            let canonical = run_canonical(&workload).map_err(|error| error.to_string())?;
-            let mut production = run_production(&workload).map_err(|error| error.to_string())?;
-            let mut expected = canonical.clone();
-            expected.command_work = None;
-            production.command_work = None;
-            if production != expected {
-                return Err("production episode diverged from canonical stepping".to_owned());
-            }
-            println!(
-                "compare exact=true shape={} calls={} artifact_bytes={} dvi_bytes={} fuel={}",
-                shape,
-                calls,
-                canonical
-                    .artifact
-                    .to_bytes()
-                    .map_err(|error| error.to_string())?
-                    .len(),
-                canonical.dvi.len(),
-                canonical.command_work.map_or(0, |work| work.fuel_charges)
-            );
-        }
-    }
+    let (result, elapsed, stats) = measure(|| run_production(&workload))?;
+    print_result(&shape, &workload, &result, elapsed, stats);
     Ok(())
 }
 
@@ -116,7 +63,6 @@ where
 }
 
 fn print_result(
-    engine: &str,
     shape: &str,
     workload: &Workload,
     result: &BatchResult,
@@ -125,7 +71,7 @@ fn print_result(
 ) {
     let work = result.command_work.unwrap_or_default();
     println!(
-        "engine={engine} shape={shape} calls={} padding={} elapsed_ns={} allocations={} bytes_allocated={} max_rss_kib={} fuel={} raw_steps={} expanded={} lookups={} nodes={} artifact_bytes={} dvi_bytes={}",
+        "shape={shape} calls={} padding={} elapsed_ns={} allocations={} bytes_allocated={} max_rss_kib={} fuel={} raw_steps={} expanded={} lookups={} nodes={} artifact_bytes={} dvi_bytes={}",
         workload.calls(),
         workload.relax_padding(),
         elapsed.as_nanos(),
@@ -163,6 +109,5 @@ fn parse_usize(value: Option<String>, name: &str) -> Result<usize, String> {
 }
 
 fn usage() -> String {
-    "usage: native_batch <canonical|production|compare> <calls> [relax-padding] [direct|nested]"
-        .to_owned()
+    "usage: native_batch <calls> [relax-padding] [direct|nested]".to_owned()
 }

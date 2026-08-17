@@ -27,46 +27,28 @@ impl fmt::Display for ProductionError {
 
 impl std::error::Error for ProductionError {}
 
-pub fn run_canonical(workload: &Workload) -> Result<BatchResult, ProductionError> {
-    run_workload(workload, false)
-}
-
 pub fn run_production(workload: &Workload) -> Result<BatchResult, ProductionError> {
-    run_workload(workload, true)
-}
-
-fn run_workload(workload: &Workload, packed: bool) -> Result<BatchResult, ProductionError> {
     let mut stores = Universe::new_with_plain_catcodes();
     let font = stores.intern_font(benchmark_font());
     let mut control = MainControl::tex82_initex(&mut stores);
     stores.set_current_font_global(font);
     control.set_dvi_output(true);
     let source = SourceRegistration::new(RegisteredSourceKind::Generated, workload.source());
-    if packed {
-        control.register_root_source_for_batch(&stores, source)
-    } else {
-        control.register_root_source(source)
-    }
-    .map_err(ProductionError::Register)?;
+    control
+        .register_root_source_for_batch(&stores, source)
+        .map_err(ProductionError::Register)?;
 
-    if packed {
-        loop {
-            match control
-                .advance_episode(&mut stores)
-                .map_err(ProductionError::Execute)?
-            {
-                StepResult::Progress(MainControlStep::Continue) => {}
-                StepResult::Progress(MainControlStep::End | MainControlStep::EndOfInput) => break,
-                StepResult::Suspended(need) => {
-                    return Err(ProductionError::UnexpectedResource(need));
-                }
+    loop {
+        match control
+            .advance_episode(&mut stores)
+            .map_err(ProductionError::Execute)?
+        {
+            StepResult::Progress(MainControlStep::Continue) => {}
+            StepResult::Progress(MainControlStep::End | MainControlStep::EndOfInput) => break,
+            StepResult::Suspended(need) => {
+                return Err(ProductionError::UnexpectedResource(need));
             }
         }
-    } else {
-        while let MainControlStep::Continue = control
-            .step(&mut stores)
-            .map_err(ProductionError::Execute)?
-        {}
     }
 
     let artifacts = stores.world().committed_artifacts();
