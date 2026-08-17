@@ -7,7 +7,6 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use tex_state::CommandContext;
 use tex_state::input::TracedTokenList;
-use tex_state::token::TracedTokenWord;
 
 use crate::AlignmentRecord;
 use crate::conditionals::ConditionStack;
@@ -2084,7 +2083,7 @@ const MAX_RETAINED_TRACED_TOKEN_CAPACITY: usize = 4_096;
 
 #[derive(Debug, Default)]
 struct TracedTokenBufferPool {
-    buffers: Mutex<[Option<Vec<TracedTokenWord>>; TRACED_TOKEN_POOL_SLOTS]>,
+    buffers: Mutex<[Option<tex_state::token::RootedTracedTokenBuffer>; TRACED_TOKEN_POOL_SLOTS]>,
 }
 
 pub(crate) struct TracedTokenScratch {
@@ -2108,11 +2107,11 @@ impl DerefMut for TracedTokenScratch {
 
 impl Drop for TracedTokenScratch {
     fn drop(&mut self) {
-        let buffer = self.buffer.take().expect("checked-out buffer is present");
+        let mut buffer = self.buffer.take().expect("checked-out buffer is present");
         if buffer.capacity() > MAX_RETAINED_TRACED_TOKEN_CAPACITY {
             return;
         }
-        let buffer = buffer.into_cleared_words();
+        buffer.clear();
         if let Some(slot) = self
             .pool
             .buffers
@@ -2148,9 +2147,7 @@ fn traced_token_scratch_from(pool: Arc<TracedTokenBufferPool>) -> TracedTokenScr
         .unwrap_or_default();
     TracedTokenScratch {
         pool,
-        buffer: Some(tex_state::token::RootedTracedTokenBuffer::from_empty_words(
-            buffer,
-        )),
+        buffer: Some(buffer),
     }
 }
 

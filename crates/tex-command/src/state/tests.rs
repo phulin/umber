@@ -42,7 +42,7 @@ fn retained_capacities(pool: &TracedTokenBufferPool) -> Vec<usize> {
         .lock()
         .expect("traced-token pool lock is not poisoned")
         .iter()
-        .filter_map(|buffer| buffer.as_ref().map(Vec::capacity))
+        .filter_map(|buffer| buffer.as_ref().map(|buffer| buffer.capacity()))
         .collect()
 }
 

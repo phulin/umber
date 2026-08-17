@@ -38,8 +38,9 @@ print channel of its own outside the borrowed
   semantics that survive loading an older format, capabilities, stable
   fingerprints, and focused value/identity tests.
 - `src/state.rs`: persistent command state, cross-processor executor-owned
-  replay-completion fences, and the process-local bounded traced-token scratch
-  pool.
+  replay-completion fences, and the process-local bounded rooted-token scratch
+  pool, which retains the complete inline-or-spilled buffer rather than a
+  second words-only storage shape.
   Also owns `\tracingnesting`'s `record_source_open_depths`/
   `source_open_depths`, the `grp_stack`/`if_stack` recording e-TeX 2.6
   [23.328] compares at a source level's `end_file_reading`.
@@ -94,7 +95,8 @@ print channel of its own outside the borrowed
   and focused conformance tests.
 - `src/input/levels.rs`, `src/input/levels/tests.rs`: dense source/token-list
   levels, strong stored-token roots plus transient/argument payload ownership,
-  orthogonal delivery and retirement behavior, bounded eager TeX82
+  inline-small shared rooted argument storage, orthogonal delivery and
+  retirement behavior, bounded eager TeX82
   error-context projection, replay explanations, and focused ownership tests. A
   source level's `open_depths` field is `\tracingnesting`'s own record; see
   `src/tracing_nesting.rs`.

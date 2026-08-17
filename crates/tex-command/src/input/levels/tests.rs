@@ -43,8 +43,8 @@ fn shared_transient_buffers_own_only_distinct_structural_origins() {
     let rooted = SharedTokenBuffer::new_rooted([first, second]);
     let direct = SharedTokenBuffer::new([traced('c'), traced('d')]);
 
-    assert_eq!(rooted.0.roots.len(), 1);
-    assert!(direct.0.roots.is_empty());
+    assert_eq!(rooted.0.buffer.roots().len(), 1);
+    assert!(direct.0.buffer.roots().is_empty());
     drop(universe);
     assert!(
         rooted
@@ -70,7 +70,7 @@ fn transferred_rooted_buffer_preserves_words_and_structural_owners() {
     let shared = SharedTokenBuffer::from_rooted_buffer(source);
 
     assert_eq!(shared.words().len(), 2);
-    assert_eq!(shared.0.roots.len(), 1);
+    assert_eq!(shared.0.buffer.roots().len(), 1);
     drop(universe);
     assert!(
         shared

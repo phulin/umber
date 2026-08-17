@@ -1,5 +1,7 @@
 //! Token and catcode values.
 
+use smallvec::SmallVec;
+
 use crate::interner::Symbol;
 
 /// Inaccessible TeX82 control tokens used only by engine-owned input replay.
@@ -275,8 +277,8 @@ pub struct RootedTracedTokenWord {
 /// Direct and unknown origins therefore add no side allocation or owner.
 #[derive(Clone, Debug, Default, Eq, Hash, PartialEq)]
 pub struct RootedTracedTokenBuffer {
-    words: Vec<TracedTokenWord>,
-    roots: Vec<crate::provenance::OriginRef>,
+    words: SmallVec<[TracedTokenWord; 4]>,
+    roots: SmallVec<[crate::provenance::OriginRef; 2]>,
 }
 
 impl RootedTracedTokenBuffer {
@@ -353,12 +355,12 @@ impl RootedTracedTokenBuffer {
     /// Appends another rooted buffer without expanding it into per-token
     /// owner pairs. The packed words move as one run and only the sparse,
     /// distinct structural-owner sets are merged.
-    pub fn append_buffer(&mut self, mut other: Self) {
+    pub fn append_buffer(&mut self, other: Self) {
         if self.is_empty() {
             *self = other;
             return;
         }
-        self.words.append(&mut other.words);
+        self.words.extend(other.words);
         for root in other.roots {
             self.insert_root(root);
         }
@@ -407,37 +409,6 @@ impl RootedTracedTokenBuffer {
     #[must_use]
     pub fn capacity(&self) -> usize {
         self.words.capacity()
-    }
-
-    /// Transfers the packed words and their sparse structural owners without
-    /// rebuilding either allocation.
-    ///
-    /// This is the ownership seam for freezing a transient scanner buffer.
-    /// Callers must keep the two vectors paired: `roots` is sorted, distinct,
-    /// and owns every arena-backed origin referenced by `words`.
-    #[doc(hidden)]
-    #[must_use]
-    pub fn into_storage_parts(self) -> (Vec<TracedTokenWord>, Vec<crate::provenance::OriginRef>) {
-        (self.words, self.roots)
-    }
-
-    /// Returns the cleared word allocation for process-local scratch reuse.
-    #[doc(hidden)]
-    #[must_use]
-    pub fn into_cleared_words(mut self) -> Vec<TracedTokenWord> {
-        self.clear();
-        self.words
-    }
-
-    /// Reuses an empty process-local word allocation.
-    #[doc(hidden)]
-    #[must_use]
-    pub fn from_empty_words(words: Vec<TracedTokenWord>) -> Self {
-        assert!(words.is_empty(), "scratch allocation must be empty");
-        Self {
-            words,
-            roots: Vec::new(),
-        }
     }
 
     #[must_use]

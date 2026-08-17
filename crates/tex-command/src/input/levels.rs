@@ -315,10 +315,10 @@ impl TokenPayload {
 /// tokens. A macro activation and its parameter cursors may share this value.
 #[derive(Debug, Eq, Hash, PartialEq)]
 struct SharedTokenBufferValue {
-    words: Box<[TracedTokenWord]>,
-    /// Sorted, distinct structural owners. Direct, fallback, and unknown
+    /// Inline-small scanner storage retained directly by the shared owner.
+    /// Its roots remain sorted and distinct; direct, fallback, and unknown
     /// positions are represented by their packed words alone.
-    roots: Box<[OriginRef]>,
+    buffer: tex_state::token::RootedTracedTokenBuffer,
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -359,21 +359,8 @@ impl SharedTokenBuffer {
     }
 
     pub(crate) fn new_rooted(tokens: impl IntoIterator<Item = RootedTracedTokenWord>) -> Self {
-        let mut words = Vec::new();
-        let mut roots = Vec::new();
-        for token in tokens {
-            let (word, root) = token.into_parts();
-            words.push(word);
-            if root.record().is_some() {
-                match roots.binary_search_by_key(&root.id(), OriginRef::id) {
-                    Ok(_) => {}
-                    Err(index) => roots.insert(index, root),
-                }
-            }
-        }
         Self(Arc::new(SharedTokenBufferValue {
-            words: words.into_boxed_slice(),
-            roots: roots.into_boxed_slice(),
+            buffer: tex_state::token::RootedTracedTokenBuffer::new(tokens),
         }))
     }
 
@@ -382,36 +369,23 @@ impl SharedTokenBuffer {
     /// already established the same sorted-root invariant while collecting
     /// arguments, so replay need not iterate, clone roots, and rebuild words.
     pub(crate) fn from_rooted_buffer(buffer: tex_state::token::RootedTracedTokenBuffer) -> Self {
-        let (words, roots) = buffer.into_storage_parts();
-        Self(Arc::new(SharedTokenBufferValue {
-            words: words.into_boxed_slice(),
-            roots: roots.into_boxed_slice(),
-        }))
+        Self(Arc::new(SharedTokenBufferValue { buffer }))
     }
 
     pub(crate) fn len(&self) -> usize {
-        self.0.words.len()
+        self.0.buffer.len()
     }
 
     pub(crate) fn get(&self, index: usize) -> Option<TracedTokenWord> {
-        self.0.words.get(index).copied()
+        self.0.buffer.get(index)
     }
 
     pub(crate) fn get_rooted(&self, index: usize) -> Option<RootedTracedTokenWord> {
-        let word = self.get(index)?;
-        let root = self
-            .0
-            .roots
-            .binary_search_by_key(&word.origin(), OriginRef::id)
-            .map_or_else(
-                |_| OriginRef::direct(word.origin()),
-                |index| self.0.roots[index].clone(),
-            );
-        Some(RootedTracedTokenWord::from_word(word, root))
+        self.0.buffer.get_rooted(index)
     }
 
     pub(crate) fn words(&self) -> &[TracedTokenWord] {
-        &self.0.words
+        self.0.buffer.words()
     }
 
     pub(crate) fn rooted_words(&self) -> impl ExactSizeIterator<Item = RootedTracedTokenWord> + '_ {
@@ -422,12 +396,13 @@ impl SharedTokenBuffer {
     }
 
     pub(crate) fn adopt_matching_origins(&mut self, live: &Self) -> Option<()> {
-        if self.0.words.len() != live.0.words.len()
+        if self.0.buffer.len() != live.0.buffer.len()
             || self
                 .0
-                .words
+                .buffer
+                .words()
                 .iter()
-                .zip(live.0.words.iter())
+                .zip(live.0.buffer.words().iter())
                 .any(|(recorded, live)| recorded.token() != live.token())
         {
             return None;
