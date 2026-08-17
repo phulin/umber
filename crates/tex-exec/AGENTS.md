@@ -29,11 +29,13 @@ Command operands are scanned by `tex-command` into typed request and result valu
 - `src/main_control.rs`: sole production command delivery and execution driver, including complete-job versus fragment root completion, bounded terminal-input continuation, loaded-profile versus canonical engine-binary semantic selection, typed committed mutation/effect observations, strong macro owners across scanned assignment apply seams, the execution-owned memo capability, and the ordinary-operation tracked-region lifecycle and mode projection.
 - `src/canonical_step.rs`: shared bounded-step result protocol and output ledger for checkpoint publication, resource fulfillment, suspension accounting, and cancellation.
 - `src/native_batch.rs` and `src/native_batch/tests.rs`: private packed-output
-  construction inside `MainControl`'s aggregate transaction through the
-  canonical mutable node builder and ordinary shipout transaction; typed
-  execution refusal and exact state/artifact/byte/DVI/effect/channel coverage.
-  No packed node vector, detached artifact builder, standalone runner, engine
-  selector, or independent lifecycle lives here.
+  construction inside `MainControl`'s full command/state/mode aggregate
+  transaction through the production `CommandProcessor`, canonical mutable
+  node builder, and ordinary shipout transaction; typed execution refusal,
+  exact input rollback, and exact state/artifact/byte/DVI/effect/channel
+  coverage. No private tokenizer/input frame, packed token/node vector,
+  detached artifact builder, standalone runner, engine selector, or
+  independent lifecycle lives here.
 - `src/assignments/`: the `AssignmentCommitter` authority for scoped writes,
   e-TeX redundant-local decisions, tracing, and typed mutation receipts, plus
   primitive registration delegated from `tex-command`'s integrated catalogue.

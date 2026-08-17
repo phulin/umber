@@ -30,29 +30,31 @@ The following are canonical production owners and remain in scope:
   selected corpora, TRIP/e-TRIP, and artifact/DVI/PDF fixtures remain external
   evidence. They are not executable substitutes for production semantics.
 
-## Migration-only path still live
+## Remaining migration-only path
 
 `tex_command::NativeBatchProgram` is not yet the canonical command machine.
-It is a root-only admitted program with its own `Vec<Token>`, `Frame` stack,
-bump-owned macro arguments and bodies, `next_raw`, `next_expanded`, integer
-scanner, conditional skipper, and `Control` dispatcher. Its complete literal
-control vocabulary is:
+After `umber2-uvfm` it owns no source bytes, admitted token vector, tokenizer,
+cursor, input frame, macro body or argument. It retains only a capacity hint
+and consumes the production `CommandProcessor` source/token-list stack,
+expanded delivery, backup, macro/argument, and alignment-template levels. Its
+remaining private integer scanner and `Control` dispatcher recognize this
+smaller literal control vocabulary:
 
 ```text
-count def e f advance global ifnum else fi shipout hbox kern relax end begingroup endgroup
+count advance global shipout hbox kern relax end begingroup endgroup
 ```
 
-The two one-letter controls are fixed benchmark macro slots rather than
-ordinary control-sequence meanings. State access is limited to the count bank
-and hbox/semi-simple group journal. Node construction accepts only character
-`A` and explicit kerns inside one shipped hbox. The executor then synthesizes
-the root box and uses the ordinary shipout transaction.
+Canonical expansion now supplies ordinary macro meanings; there are no fixed
+benchmark macro slots. State access remains limited to the count bank and
+hbox/semi-simple group journal. Node construction accepts only character `A`
+and explicit kerns inside one shipped hbox. The executor then synthesizes the
+root box and uses the ordinary shipout transaction.
 
-`EngineSession` admits every root through this program. Admission or execution
-refusal restores or leaves untouched the aggregate and resumes the complete
-`CommandProcessor` path. That is a safe migration protocol, but it is still a
-live coverage fallback between two delivery, expansion, scanning, and dispatch
-implementations.
+`EngineSession` registers every root once in `CommandState` and retains this
+capacity-only episode marker. Execution refusal restores the full
+command/state/mode aggregate and resumes ordinary dispatch on the same input
+stack. Source delivery and expansion therefore have one owner; scanner and
+dispatch coverage fallback remains migration debt.
 
 The benchmark-local whole-job scalar comparison adapter and its
 `canonical|production|compare` selector are deleted by this audit. The
@@ -62,46 +64,55 @@ correctness stays with external fixtures and oracle workloads. The unused
 
 ## Exhaustive fallback inventory
 
-| Family               | Producer and present boundary                                                                                                         | Supported-profile gap                                                                                                                                                                                                 | Deletion proof required                                                                                                       |
-| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| `CharacterProfile`   | `CharacterMode` admission refusal                                                                                                     | UnicodeExtended is refused. It is outside the three exact-profile acceptance rows but remains a supported Umber mode and cannot be silently consumed.                                                                 | Give Unicode a typed noncoverage disposition or canonical episode representation; no runtime selector.                        |
-| `SourceTokenization` | source registration, invalid/unsupported character or catcode, material after `\end`, or missing `\end`                               | Only one generated exact-byte root is represented. Files, streams, terminal input, `\scantokens`, category changes, backup/template levels, and complete root framing remain in `CommandState`.                       | Zero fallback in physical-input, recovery, command fixtures, and selected corpus; one source/input frame owner.               |
-| `CommandVocabulary`  | every control sequence outside the sixteen-name table                                                                                 | Nearly the complete TeX82 vocabulary and every e-TeX/pdfTeX extension reject. Some resource/effect/diagnostic names are separately classified as required barriers, but that small name list is not family coverage.  | Exhaustive static profile dispatch plus property, fixture, adversarial, and corpus zero-fallback evidence.                    |
-| `ScannerOrExpansion` | malformed admitted grammar or arithmetic overflow after mutation begins                                                               | Only one-argument fixed-slot macros, unsigned decimal integers, count assignment/advance, and `\ifnum` exist. Canonical macro grammar, expansion, scanners, conditions, alignments, and their recovery remain scalar. | Exact observer/event/diagnostic parity and deletion of the private frame, macro, scanner, and conditional implementations.    |
-| `GroupLineage`       | committed ordinary-operation coverage boundary                                                                                        | This is not an admission fallback. It stops a bounded scalar episode after a group mutation so it cannot replay a committed action.                                                                                   | Replace the implementation-only stop only after canonical group and builder publication can continue safely.                  |
-| `RollbackLineage`    | committed-failure ordinary-operation coverage boundary; the packed state barrier maps here only after required-barrier classification | This is primarily scalar aggregate-lifecycle evidence, not permission to run a second engine.                                                                                                                         | Preserve the sole aggregate retry authority; remove only migration-only boundary accounting proven unreachable after cutover. |
+| Family               | Producer and present boundary                                                                                                         | Supported-profile gap                                                                                                                                                                                                                    | Deletion proof required                                                                                                       |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `CharacterProfile`   | no producer                                                                                                                           | Exact TeX82, e-TeX 2.6, and pdfTeX 1.40.29 profiles all enter through their production `CommandState`; there is no episode character-mode selector. UnicodeExtended remains outside this issue's exact-profile acceptance set.           | Retain the zero counter until the final telemetry deletion pass.                                                              |
+| `SourceTokenization` | no producer                                                                                                                           | Closed by `umber2-uvfm`: physical roots, registered files and streams, terminal and `\scantokens` input, category changes, backup/noexpand/template levels, suspension, retirement, and root completion use one `CommandState` stack.    | Retain property, fixture, adversarial, and selected-corpus zero evidence until final deletion.                                |
+| `CommandVocabulary`  | every meaning outside the retained ten-control dispatcher                                                                             | Nearly the complete TeX82 vocabulary and every e-TeX/pdfTeX extension reject. Resource/effect/diagnostic meanings are separately classified as required barriers, but that is not family coverage.                                       | Exhaustive static profile dispatch plus property, fixture, adversarial, and corpus zero-fallback evidence.                    |
+| `ScannerOrExpansion` | malformed retained integer/dimension grammar or arithmetic overflow after mutation begins                                             | Canonical macro grammar and expansion now feed the episode, but only unsigned decimal integers and count assignment/advance are consumed there. Canonical scanners, conditions, alignments, and recovery still resume ordinary dispatch. | Exact observer/event/diagnostic parity and deletion of the remaining private scanners and conditional/dispatch boundaries.    |
+| `GroupLineage`       | committed ordinary-operation coverage boundary                                                                                        | This is not an admission fallback. It stops a bounded scalar episode after a group mutation so it cannot replay a committed action.                                                                                                      | Replace the implementation-only stop only after canonical group and builder publication can continue safely.                  |
+| `RollbackLineage`    | committed-failure ordinary-operation coverage boundary; the packed state barrier maps here only after required-barrier classification | This is primarily scalar aggregate-lifecycle evidence, not permission to run a second engine.                                                                                                                                            | Preserve the sole aggregate retry authority; remove only migration-only boundary accounting proven unreachable after cutover. |
 
 `NodeOrFont` had no producer: it appeared only in telemetry enumeration tests.
 It was genuinely unreachable and is removed now. A missing `A` metric is a
 typed diagnostic barrier, while all other material rejects earlier as command
 or grammar coverage.
 
-Required `Resource`, `Effect`, `Diagnostic`, and `Format` admission barriers
-are not coverage fallback. They remain, but their current recognition by a
-small spelling list is not evidence that the corresponding semantic families
-execute through the packed command machine.
+Required `Resource`, `Effect`, `Diagnostic`, and `Format` execution barriers
+are not coverage fallback. They are recognized from canonical primitive
+meanings and processor errors, but that classification alone is not evidence
+that the corresponding command families execute through the retained
+dispatcher.
 
 ## Evidence limitation
 
 The `.12` and `.15` exact comparisons and 6M/12M/nested measurements are valid
 for the closed workload above. They prove one state owner, aggregate rollback,
-typed barriers, output equality, and the performance ceiling for that slice.
-They do not prove supported-profile closure.
+typed barriers, output equality, and the historical performance ceiling for
+that slice. The canonical source/input cutover deliberately invalidates those
+old performance numbers until `umber2-3gln` optimizes the now-shared expansion
+and scanner machinery. It does not prove complete supported-profile command
+closure.
 
 The command-semantic runner constructs `MainControl` with
 `register_root_source` and drives `step_with_observer`. An observer is a
 required episode barrier, so those fixtures deliberately exercise the
 complete scalar `CommandProcessor` and never attempt packed admission. A zero
-fallback count from that route is therefore vacuous. The property catalogue,
-focused adversarial tests, and most corpus jobs likewise do not currently
-assert that each supported family entered the packed implementation.
+fallback count from that route is therefore vacuous for command/dispatcher
+coverage. It is no longer vacuous for source ownership: production
+`EngineSession` always registers its root through the capacity-only episode
+marker, and the episode has no alternative source/input implementation to
+select. Focused tests additionally force re-entry after category changes,
+registered-file and read-stream levels, `\noexpand`, alignment templates,
+resource suspension, and root completion while asserting the retained source
+fallback counter remains zero.
 
 ## Ordered blockers
 
 The remaining cutover is split by semantic ownership, with dependencies in
 Beads:
 
-1. `umber2-uvfm` canonicalizes source and input frames for supported exact
+1. `umber2-uvfm` canonicalized source and input frames for supported exact
    profiles.
 2. `umber2-3gln` depends on it and canonicalizes expansion, scanners,
    conditions, and alignments.

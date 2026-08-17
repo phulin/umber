@@ -15,6 +15,44 @@ ceiling and migrated its first bounded vertical slice into production-owned
 `tex-command` and `tex-exec` code. The result is a migration seam, not a
 supported runtime engine choice.
 
+## Canonical source and input ownership
+
+Issue `umber2-uvfm` deleted the episode's complete admitted-token program:
+the root-byte copy, ahead-of-time tokenizer, `Vec<Token>`, private cursor and
+backup slot, bump-owned macro bodies and arguments, and private input-frame
+stack no longer exist. `NativeBatchProgram` retains only a node-capacity hint.
+Each attempt constructs the production `CommandProcessor` over the live
+`CommandState` and obtains commands through its ordinary expanded-delivery
+entry point.
+
+Physical roots, registered files, numbered read streams, terminal and
+`\scantokens` sources, live category-code changes, source retirement, macro
+and argument levels, backup and `\noexpand`, alignment templates, and root
+completion consequently have one representation and one cursor. A resource
+request is a typed semantic barrier rather than source coverage fallback.
+`MainControl` snapshots and restores the full command/state/mode aggregate
+around each attempt, retains the episode marker after a refusal, and lets one
+ordinary operation advance before trying the same canonical input again. This
+preserves exact rollback without transferring or rebuilding input state.
+
+Focused tests exercise all three exact profiles, live category-code mutation,
+nested registered input suspension and retry, numbered read streams,
+`\noexpand` backup, alignment template levels, fragment root completion, and
+post-mutation resource rollback. `CharacterProfile` and
+`SourceTokenization` remain fixed telemetry counters until the final deletion
+pass, but neither has a producer after this cutover and both remain zero. The
+full property, command-fixture, and oracle suites exercise the production
+`EngineSession` registration path, which now installs the same marker for
+every root.
+
+This cutover deliberately exposes the cost of canonical macro expansion to
+the retained native dispatcher. A guarded release sample of the 1,000-call
+direct workload took 36.072 ms, allocated 7,083,440 bytes in 35,185 calls, and
+reported 11,328 KiB runtime peak RSS. That is a real intermediate regression
+from the private-frame ceiling. Issue `umber2-3gln` owns the next refactor:
+optimize the one canonical expansion/scanner/conditional/alignment machinery
+instead of restoring a second fast path.
+
 ## Independent audit and migration result
 
 The independent audit rebuilt the original release executable from
@@ -36,20 +74,19 @@ that may be silently omitted from an observable incremental episode.
 
 The migrated production seam is split by existing authority:
 
-- `tex-command::NativeBatchProgram` uses the canonical exact-byte tokenizer,
-  current category codes, and end-line policy for a complete pre-mutation
-  admission pass. It then owns the packed macro, expansion, scalar scanner,
-  conditional, count-assignment, group-save, and node-command episode.
-- Production `MainControl` retains the admitted program, owns its aggregate
+- `tex-command::NativeBatchProgram` retains only an execution-capacity hint.
+  It consumes the live production `CommandProcessor` source/token stack and
+  expansion machinery, then owns only the still-migrating count/group/node
+  dispatcher slice.
+- Production `MainControl` retains the capacity-only marker, owns its aggregate
   rollback point, projects font metrics, validates and serializes the canonical
   `PageArtifact`, commits it through the ordinary shipout transaction, and
   retains the ordinary DVI page plan.
-- Typed admission and execution refusals are the exact boundaries for an
-  unsupported character mode, category, control sequence, malformed supported
-  episode, or missing font character. Admission is mutation-free and execution
-  refusal restores the aggregate transaction before the same `MainControl`
-  continues canonical stepping. Effects, resources, observations, and
-  checkpoints remain typed barriers.
+- Typed execution refusals are the exact boundaries for an unsupported
+  command family, malformed supported episode, or missing font character.
+  Refusal restores the full aggregate transaction before the same
+  `MainControl` continues canonical stepping. Effects, resources,
+  observations, and checkpoints remain typed barriers.
 - The benchmark-local lexer and kernel were deleted. The differential and
   process runner now call the production seam, preventing benchmark code from
   becoming a production dependency.
@@ -68,12 +105,19 @@ workload construction.
 
 Issue `umber2-64v2.11` removed the episode's private 256-word count table,
 per-cell level table, first-local-write save vector, and group-mark vector.
-`tex-state::CountGroupEpisode` now borrows the live `Universe`: count reads and
+`tex-state::CountGroupEpisode` addresses the live `Universe`: count reads and
 writes address `Env`'s canonical fixed bank, while `\hbox`, `\begingroup`, and
 their matching exits use the ordinary typed group markers and undo journal.
 The scalar `Universe` assignment/group APIs and the packed episode therefore
 observe one value and one restoration history. There is no synchronization
 between semantic stores because there is no second semantic store.
+
+The source/input cutover changed this object from a long-lived `Universe`
+borrow into a state-free publication sidecar. Canonical delivery can now lend
+the same aggregate to `CommandProcessor` between count/group operations. The
+sidecar owns only a fixed dirty-count bitset and coalesces dependency and exact
+identity publication; semantic values and restoration records never leave the
+ordinary banks and journal.
 
 The coarse borrow coalesces dependency and exact-identity publication only
 until the next group or episode boundary. Tracked observations and observable
@@ -133,12 +177,12 @@ terminal, and log comparison passed at all three points. The shared path used
 
 ## MainControl and EngineSession cutover
 
-Issue `umber2-64v2.12` promoted the admitted exact-byte family into the real
-native batch lifecycle. `EngineSession` and the CLI startup path now register
-the root through `MainControl`, which tokenizes and admits it once and retains
-the resulting `NativeBatchProgram`. `advance_episode` executes that program
-against the same live `Universe`, count bank, group journal, font store, fuel
-ledger, artifact ledger, DVI queue, effect world, command finalizer, and
+Issue `umber2-64v2.12` promoted the original admitted exact-byte family into
+the real native batch lifecycle. After `umber2-uvfm`, `EngineSession` and the
+CLI startup path register the root once in `CommandState` and retain only the
+capacity-only `NativeBatchProgram` marker. `advance_episode` executes against
+that same live input stack, `Universe`, count bank, group journal, font store,
+fuel ledger, artifact ledger, DVI queue, effect world, command finalizer, and
 checkpoint publisher used by scalar execution. Output returns a semantic
 barrier commit; the retained session then resumes and returns the terminal
 commit on its next advance.
@@ -146,11 +190,10 @@ commit on its next advance.
 The standalone `run_native_batch_episode` request/result/fallback API and the
 benchmark `shared` engine selector are deleted. Output lowering is a private
 MainControl helper with no lifecycle or state owner. Observed, diagnostic, and
-tracked scalar entry points invalidate an unconsumed packed plan before they
-touch command input, so one root can never be consumed by both paths. Admission
-and aggregate execution refusals record their typed semantic or coverage
-counters before canonical stepping resumes from the untouched or restored
-state.
+tracked scalar entry points invalidate an unconsumed episode marker before
+they touch command input. Aggregate execution refusals record their typed
+semantic or coverage counters before ordinary dispatch resumes from the
+restored canonical state.
 
 The exact differential now also checks the operational fuel ledger. Three
 fresh guarded release processes per row produced these medians:

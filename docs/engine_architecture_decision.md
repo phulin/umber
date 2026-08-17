@@ -271,16 +271,21 @@ in the evidence table.
 ### `.15` and `.12`: barrier protocol and canonical command episodes
 
 The `.12` closed-root cutover is now production-owned. Native `EngineSession`
-startup admits once into a program retained by `MainControl`; the live driver
-executes it under the same aggregate `Universe` transaction, publishes through
-the ordinary artifact/DVI/effect/checkpoint seams, returns at output, and
-resumes the same session to terminal. The standalone batch runner and benchmark
-engine selector are deleted. Fresh exact-work medians are 32.8x at 6M fuel,
+startup registers one canonical `CommandState` root and retains a
+capacity-only episode marker in `MainControl`; the live driver executes it
+under the full command/state/mode aggregate transaction, publishes through the
+ordinary artifact/DVI/effect/checkpoint seams, returns at output, and resumes
+the same session to terminal. `umber2-uvfm` deleted the former admission
+tokenizer, token vector, private cursor, macro/argument frames, and backup
+slot. The standalone batch runner and benchmark engine selector are also
+deleted. The historical pre-source-cutover medians were 32.8x at 6M fuel,
 31.4x at 12M fuel, and 9.48x for nested forwarding, with episode RSS at
-34.0%, 33.7%, and 42.2% of scalar stepping respectively. Focused admitted-family
-tests record one output barrier, one terminal commit, and zero coverage
-fallback; scalar observed entry invalidates admission before consuming input.
-The detailed work vectors and allocation counts are in
+34.0%, 33.7%, and 42.2% of scalar stepping respectively. Canonical expansion
+now exposes a real intermediate regression owned by `umber2-3gln`; no second
+input or expansion path may be restored to recover those numbers. Focused
+tests record zero character-profile and source-tokenization fallback across
+all exact profiles and adversarial source/input levels. The detailed work
+vectors and allocation counts are in
 [`native_batch_kernel.md`](native_batch_kernel.md).
 
 - the committed command-semantic fixtures, canonical event ordering with an
