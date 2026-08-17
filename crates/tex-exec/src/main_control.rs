@@ -7617,7 +7617,15 @@ fn prepare_command_trace(
     mode: Mode,
     shown_mode: Option<Mode>,
 ) {
-    let mode_prefix = (shown_mode != Some(mode)).then(|| mode_text_for_command_trace(mode).into());
+    // The mode text is owned because expansion may retain it until a later
+    // command in this processor episode.  Do not allocate that ownership when
+    // neither command nor conditional tracing can consume the prefix: this is
+    // the ordinary production path and this boundary is crossed once per
+    // main-control operation.
+    let tracing_can_consume_prefix = processor.int_param(IntParam::TRACING_COMMANDS) > 0
+        || processor.int_param(IntParam::TRACING_IFS) > 0;
+    let mode_prefix = (tracing_can_consume_prefix && shown_mode != Some(mode))
+        .then(|| mode_text_for_command_trace(mode).into());
     processor.set_command_trace_mode_prefix(mode_prefix);
 }
 
@@ -11660,16 +11668,15 @@ fn committed_stream_effect_observations(
         .effect_records()
         .get(before..)
         .unwrap_or_default();
-    let records: Box<dyn Iterator<Item = &tex_state::EffectRecord> + '_> = if shipped.is_empty() {
-        Box::new(direct.iter())
+    if shipped.is_empty() {
+        direct.iter().filter_map(stream_effect_observation).collect()
     } else {
-        Box::new(
-            shipped
-                .iter()
-                .flat_map(|page| page.committed_effects.iter()),
-        )
-    };
-    records.filter_map(stream_effect_observation).collect()
+        shipped
+            .iter()
+            .flat_map(|page| page.committed_effects.iter())
+            .filter_map(stream_effect_observation)
+            .collect()
+    }
 }
 
 fn stream_effect_observation(record: &tex_state::EffectRecord) -> Option<EffectRecord> {
