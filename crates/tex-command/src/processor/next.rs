@@ -1579,7 +1579,11 @@ impl CommandProcessor<'_> {
         allow_control_sequence_creation: bool,
     ) -> Result<Option<DeliveredToken>, CommandError> {
         enum ActiveInput {
-            Source(Box<crate::input::SourceLevel>),
+            Source {
+                identity: InputLevelId,
+                position: u64,
+                backing: crate::input::RegisteredSource,
+            },
             Tokens {
                 identity: InputLevelId,
                 index: usize,
@@ -1591,7 +1595,18 @@ impl CommandProcessor<'_> {
                 return Ok(None);
             }
             let Some(level) = self.command.input.levels.last().map(|level| match level {
-                InputLevel::Source(source) => ActiveInput::Source(source.clone()),
+                // Delivery needs only the stable level coordinates and the
+                // immutable physical registration. Cloning `SourceLevel`
+                // here used to allocate a fresh `Box` and copy the complete
+                // mutable lexer/line cursor for every source token, even
+                // though `next_source_step` immediately advanced the live
+                // cursor instead. Keep the live level canonical and retain
+                // only the cheap Arc-backed registration across that call.
+                InputLevel::Source(source) => ActiveInput::Source {
+                    identity: source.identity,
+                    position: source.cursor.next_physical_offset,
+                    backing: source.cursor.backing.clone(),
+                },
                 InputLevel::Tokens(cursor) => ActiveInput::Tokens {
                     identity: cursor.identity,
                     index: cursor.index,
@@ -1613,10 +1628,12 @@ impl CommandProcessor<'_> {
                 return Ok(None);
             };
             match level {
-                ActiveInput::Source(source) => {
-                    let identity = source.identity;
-                    let position = source.cursor.next_physical_offset;
-                    self.ensure_source_registration(&source.cursor.backing);
+                ActiveInput::Source {
+                    identity,
+                    position,
+                    backing,
+                } => {
+                    self.ensure_source_registration(&backing);
                     match self.next_source_step() {
                         SourceTokenizationStep::Token(token) => {
                             self.ensure_replacement_line_registration();
@@ -1678,9 +1695,15 @@ impl CommandProcessor<'_> {
                                 .int_param(tex_state::env::banks::IntParam::TRACING_NESTING)
                                 > 1
                             {
-                                let context = self
-                                    .command
-                                    .output_retiring_source_context(&source, &self.state);
+                                let context = match self.command.input.levels.last() {
+                                    Some(InputLevel::Source(source))
+                                        if source.identity == identity =>
+                                    {
+                                        self.command
+                                            .output_retiring_source_context(source, &self.state)
+                                    }
+                                    _ => return Err(CommandError::input_invariant()),
+                                };
                                 self.pending_file_warning_context = Some((identity, context));
                             }
                             let restart = self.retire_and_restart(identity)?;
