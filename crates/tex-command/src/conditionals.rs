@@ -582,7 +582,7 @@ impl CommandProcessor<'_> {
             .ok_or(CommandError::input_invariant())?;
         let branch = if result { "true" } else { "false" };
         self.trace_boolean_result(branch);
-        self.observe_condition("branch", &evaluating, Some(branch.into()));
+        self.observe_condition("branch", &evaluating, Some(branch));
         if !result {
             return self.resume_after_skip(condition);
         }
@@ -646,7 +646,7 @@ impl CommandProcessor<'_> {
                 .cloned()
                 .ok_or(CommandError::input_invariant())?;
             self.observe_condition("limit", &frame, None);
-            self.observe_condition("branch", &frame, Some("case".into()));
+            self.observe_condition("branch", &frame, Some("case"));
         }
         Ok(())
     }
@@ -1288,7 +1288,7 @@ impl CommandProcessor<'_> {
     fn observe_pass_text_branch(&mut self, delimiter: ConditionalDelimiter) {
         if let Some(frame) = self.command.conditions.current().cloned() {
             self.trace_conditional_close(delimiter, &frame, true);
-            self.observe_condition("branch", &frame, Some(delimiter.canonical_branch().into()));
+            self.observe_condition("branch", &frame, Some(delimiter.canonical_branch()));
         }
     }
 
@@ -1444,7 +1444,7 @@ impl CommandProcessor<'_> {
         &mut self,
         transition: &'static str,
         frame: &ConditionFrame,
-        branch: Option<String>,
+        branch: Option<&'static str>,
     ) {
         // e-TeX 2.6 etex.ch [17.4713--4751] stores `\unless` by adding
         // `unless_code` to `cur_if`. The immediate boolean-result observation
@@ -1453,20 +1453,19 @@ impl CommandProcessor<'_> {
         // `cur_if` and therefore retain the prefix.
         let evaluating_boolean_result = transition == "branch"
             && frame.limit == IfLimit::Evaluating
-            && matches!(branch.as_deref(), Some("true" | "false"));
-        let condition = if frame.inverted && !evaluating_boolean_result {
-            format!("unless_{}", frame.kind.canonical_name())
-        } else {
-            frame.kind.canonical_name().into()
-        };
+            && matches!(branch, Some("true" | "false"));
         observe!(
             self,
             CommandObservation::Condition(ConditionRecord {
                 transition,
                 identity: frame.identity.0,
-                condition,
+                condition: if frame.inverted && !evaluating_boolean_result {
+                    format!("unless_{}", frame.kind.canonical_name())
+                } else {
+                    frame.kind.canonical_name().into()
+                },
                 limit: frame.limit.canonical_name(),
-                branch,
+                branch: branch.map(str::to_owned),
             }),
         );
     }
