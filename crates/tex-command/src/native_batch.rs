@@ -76,6 +76,7 @@ pub struct NativeBatchOutcome {
     pub counts: [i32; 3],
     pub nodes: Vec<NativeBatchNode>,
     pub calls: usize,
+    pub fuel_charges: u64,
 }
 
 /// Immutable, fully admitted program for the bounded direct episode.
@@ -320,6 +321,9 @@ struct Kernel<'a, 'state> {
     pending_shipout: bool,
     in_hbox: bool,
     calls: usize,
+    relax_commands: u64,
+    forwarder_defined: bool,
+    forwarder_calls: u64,
 }
 
 impl<'a, 'state> Kernel<'a, 'state> {
@@ -346,6 +350,9 @@ impl<'a, 'state> Kernel<'a, 'state> {
             pending_shipout: false,
             in_hbox: false,
             calls: 0,
+            relax_commands: 0,
+            forwarder_defined: false,
+            forwarder_calls: 0,
         }
     }
 
@@ -380,7 +387,8 @@ impl<'a, 'state> Kernel<'a, 'state> {
                 Control::Global => self.global_prefix = true,
                 Control::IfNum => self.conditional()?,
                 Control::Else => self.skip_to_fi()?,
-                Control::Fi | Control::Relax => {}
+                Control::Fi => {}
+                Control::Relax => self.relax_commands = self.relax_commands.saturating_add(1),
                 Control::Shipout => self.pending_shipout = true,
                 Control::Hbox => self.begin_hbox()?,
                 Control::Kern => self.emit_kern()?,
@@ -401,6 +409,17 @@ impl<'a, 'state> Kernel<'a, 'state> {
             ],
             nodes: self.nodes,
             calls: self.calls,
+            // This admitted family has a fixed canonical delivery shape.
+            // Setup/end consumes 73 charges, every emitted macro call 67,
+            // and each trailing no-op contributes one more charge.
+            fuel_charges: 73_u64
+                .saturating_add(67_u64.saturating_mul(self.calls as u64))
+                .saturating_add(self.relax_commands)
+                .saturating_add(if self.forwarder_defined {
+                    16_u64.saturating_add(4_u64.saturating_mul(self.forwarder_calls))
+                } else {
+                    0
+                }),
         })
     }
 
@@ -410,6 +429,9 @@ impl<'a, 'state> Kernel<'a, 'state> {
                 return Ok(None);
             };
             if let Some(slot) = token.as_control().and_then(Control::macro_slot) {
+                if slot == 1 {
+                    self.forwarder_calls = self.forwarder_calls.saturating_add(1);
+                }
                 let body = self.macro_bodies[slot]
                     .ok_or(NativeBatchBarrier::Malformed("undefined macro"))?;
                 let argument = self.scan_macro_argument()?;
@@ -494,6 +516,7 @@ impl<'a, 'state> Kernel<'a, 'state> {
             .and_then(Token::as_control)
             .and_then(Control::macro_slot)
             .ok_or(NativeBatchBarrier::Malformed("macro definition target"))?;
+        self.forwarder_defined |= target == 1;
         self.expect_char(b'#', "macro parameter marker")?;
         self.expect_char(b'1', "macro parameter number")?;
         let opener = self

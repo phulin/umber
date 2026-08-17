@@ -73,7 +73,7 @@ fn main_control_slice_and_group_boundary_are_typed_commits() {
     source.extend_from_slice(br"\end");
     let (mut control, mut stores) = control_for(&source);
     control
-        .advance_batch(&mut stores)
+        .advance_episode(&mut stores)
         .expect("closed slice commits");
     let telemetry = control.episode_telemetry();
     assert_eq!(telemetry.commits(), 1);
@@ -86,7 +86,7 @@ fn main_control_slice_and_group_boundary_are_typed_commits() {
 
     let (mut grouped, mut grouped_stores) = control_for(br"\begingroup\relax\endgroup\end");
     grouped
-        .advance_batch(&mut grouped_stores)
+        .advance_episode(&mut grouped_stores)
         .expect("group entry commits");
     let telemetry = grouped.episode_telemetry();
     assert_eq!(
@@ -101,7 +101,7 @@ fn resource_fuel_observer_and_cancellation_return_without_state_drift() {
     let (mut resource, mut resource_stores) = control_for(br"\input child\end");
     let before = resource_stores.snapshot().state_hash();
     let resource_step = resource
-        .advance_batch(&mut resource_stores)
+        .advance_episode(&mut resource_stores)
         .expect("suspends");
     assert!(
         matches!(
@@ -122,7 +122,7 @@ fn resource_fuel_observer_and_cancellation_return_without_state_drift() {
     let (mut fuel, mut fuel_stores) = control_for(br"\relax\end");
     fuel.set_fuel_limit(1).expect("positive fuel limit");
     let before = fuel_stores.snapshot().state_hash();
-    fuel.advance_batch(&mut fuel_stores)
+    fuel.advance_episode(&mut fuel_stores)
         .expect_err("fuel exhaustion is typed failure");
     assert_eq!(fuel_stores.snapshot().state_hash(), before);
     assert_eq!(
@@ -162,7 +162,7 @@ fn resource_fuel_observer_and_cancellation_return_without_state_drift() {
 fn effect_diagnostic_format_and_state_identity_are_distinct_barriers() {
     let (mut effect, mut effect_stores) = control_for(br"\message{visible}\end");
     effect
-        .advance_batch(&mut effect_stores)
+        .advance_episode(&mut effect_stores)
         .expect("effect episode commits");
     assert_eq!(
         effect
@@ -174,7 +174,7 @@ fn effect_diagnostic_format_and_state_identity_are_distinct_barriers() {
     let (mut diagnostic, mut diagnostic_stores) = control_for(br"\undefined\end");
     diagnostic_stores.set_interaction_mode(tex_state::InteractionMode::Nonstop);
     diagnostic
-        .advance_batch(&mut diagnostic_stores)
+        .advance_episode(&mut diagnostic_stores)
         .expect("recoverable diagnostic commits");
     assert_eq!(
         diagnostic
@@ -187,7 +187,7 @@ fn effect_diagnostic_format_and_state_identity_are_distinct_barriers() {
 
     let (mut format, mut format_stores) = control_for(br"\dump");
     format
-        .advance_batch(&mut format_stores)
+        .advance_episode(&mut format_stores)
         .expect("INITEX format dump commits");
     assert!(format.dumped_format());
     assert_eq!(

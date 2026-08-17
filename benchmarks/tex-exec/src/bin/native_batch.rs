@@ -7,23 +7,23 @@ use std::{
 };
 
 use stats_alloc::{INSTRUMENTED_SYSTEM, Region, Stats, StatsAlloc};
-use tex_exec_benchmarks::{BatchResult, Workload, run_production, run_shared};
+use tex_exec_benchmarks::{BatchResult, Workload, run_canonical, run_production};
 
 #[global_allocator]
 static GLOBAL: &StatsAlloc<System> = &INSTRUMENTED_SYSTEM;
 
 #[derive(Clone, Copy)]
 enum Engine {
+    Canonical,
     Production,
-    Shared,
     Compare,
 }
 
 impl Engine {
     fn parse(value: &str) -> Option<Self> {
         match value {
+            "canonical" => Some(Self::Canonical),
             "production" => Some(Self::Production),
-            "shared" => Some(Self::Shared),
             "compare" => Some(Self::Compare),
             _ => None,
         }
@@ -64,33 +64,34 @@ fn try_main() -> Result<(), String> {
         _ => return Err(format!("invalid workload shape {shape:?}")),
     };
     match engine {
+        Engine::Canonical => {
+            let (result, elapsed, stats) = measure(|| run_canonical(&workload))?;
+            print_result("canonical", &shape, &workload, &result, elapsed, stats);
+        }
         Engine::Production => {
             let (result, elapsed, stats) = measure(|| run_production(&workload))?;
             print_result("production", &shape, &workload, &result, elapsed, stats);
         }
-        Engine::Shared => {
-            let (result, elapsed, stats) = measure(|| run_shared(&workload))?;
-            print_result("shared", &shape, &workload, &result, elapsed, stats);
-        }
         Engine::Compare => {
-            let production = run_production(&workload).map_err(|error| error.to_string())?;
-            let shared = run_shared(&workload).map_err(|error| error.to_string())?;
-            let mut expected = production.clone();
+            let canonical = run_canonical(&workload).map_err(|error| error.to_string())?;
+            let mut production = run_production(&workload).map_err(|error| error.to_string())?;
+            let mut expected = canonical.clone();
             expected.command_work = None;
-            if shared != expected {
-                return Err("shared result diverged from canonical stepping".to_owned());
+            production.command_work = None;
+            if production != expected {
+                return Err("production episode diverged from canonical stepping".to_owned());
             }
             println!(
                 "compare exact=true shape={} calls={} artifact_bytes={} dvi_bytes={} fuel={}",
                 shape,
                 calls,
-                production
+                canonical
                     .artifact
                     .to_bytes()
                     .map_err(|error| error.to_string())?
                     .len(),
-                production.dvi.len(),
-                production.command_work.map_or(0, |work| work.fuel_charges)
+                canonical.dvi.len(),
+                canonical.command_work.map_or(0, |work| work.fuel_charges)
             );
         }
     }
@@ -162,6 +163,6 @@ fn parse_usize(value: Option<String>, name: &str) -> Result<usize, String> {
 }
 
 fn usage() -> String {
-    "usage: native_batch <production|shared|compare> <calls> [relax-padding] [direct|nested]"
+    "usage: native_batch <canonical|production|compare> <calls> [relax-padding] [direct|nested]"
         .to_owned()
 }

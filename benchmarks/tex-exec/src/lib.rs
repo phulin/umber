@@ -8,7 +8,7 @@ use tex_arith::Scaled;
 use tex_fonts::{CharMetrics, FontMetrics, LoadedFont, MetricCharTag};
 use tex_out::{ContentHash, PageArtifact};
 
-pub use production::{ProductionError, run_production};
+pub use production::{ProductionError, run_canonical, run_production};
 pub use tex_command::CommandWorkCounters;
 
 pub const CHARACTER: u8 = b'A';
@@ -16,56 +16,6 @@ pub const FONT_ID: u32 = 0;
 pub const CHARACTER_WIDTH: i32 = 500;
 pub const CHARACTER_HEIGHT: i32 = 300;
 pub const CHARACTER_DEPTH: i32 = 100;
-
-#[derive(Debug)]
-pub enum SharedBatchError {
-    Fallback(tex_exec::NativeBatchFallback),
-    Barrier(tex_exec::SemanticEpisodeBarrier),
-    Execute(tex_exec::NativeBatchRunError),
-}
-
-impl std::fmt::Display for SharedBatchError {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(formatter, "shared production batch failed: {self:?}")
-    }
-}
-
-impl std::error::Error for SharedBatchError {}
-
-pub fn run_shared(workload: &Workload) -> Result<BatchResult, SharedBatchError> {
-    let mut stores = tex_state::Universe::new_with_plain_catcodes();
-    let attempt = tex_exec::run_native_batch_episode(
-        &mut stores,
-        tex_exec::NativeBatchRequest {
-            source: workload.source(),
-            expected_calls: workload.calls(),
-            profile: tex_command::CommandProfile::TEX82,
-            font_id: FONT_ID,
-            font: benchmark_font(),
-        },
-    )
-    .map_err(SharedBatchError::Execute)?;
-    let result = match attempt {
-        tex_exec::NativeBatchAttempt::Completed(result) => *result,
-        tex_exec::NativeBatchAttempt::Fallback(barrier) => {
-            return Err(SharedBatchError::Fallback(barrier));
-        }
-        tex_exec::NativeBatchAttempt::Barrier { barrier, .. } => {
-            return Err(SharedBatchError::Barrier(barrier));
-        }
-    };
-    Ok(BatchResult {
-        counts: result.counts,
-        artifact: result.artifact,
-        artifact_bytes: result.artifact_bytes,
-        dvi: result.dvi,
-        effects: result.effects,
-        terminal: result.terminal,
-        log: result.log,
-        calls: result.calls,
-        command_work: None,
-    })
-}
 
 /// One complete, deterministic macro-heavy source job.
 #[derive(Clone, Debug)]
@@ -201,20 +151,24 @@ mod tests {
     #[test]
     fn shared_kernel_matches_the_complete_production_result() {
         let workload = Workload::new(256, 17);
+        let canonical = run_canonical(&workload).expect("canonical slice executes");
         let production = run_production(&workload).expect("production slice executes");
-        let shared = run_shared(&workload).expect("shared slice executes");
 
         assert_eq!(production.counts, workload.expected_counts());
-        assert_eq!(shared.counts, production.counts);
-        assert_eq!(shared.calls, production.calls);
-        assert_eq!(shared.artifact, production.artifact);
-        assert_eq!(shared.artifact_bytes, production.artifact_bytes);
-        assert_eq!(shared.dvi, production.dvi);
-        assert_eq!(shared.effects, production.effects);
-        assert_eq!(shared.terminal, production.terminal);
-        assert_eq!(shared.log, production.log);
+        assert_eq!(production.counts, canonical.counts);
+        assert_eq!(production.calls, canonical.calls);
+        assert_eq!(production.artifact, canonical.artifact);
+        assert_eq!(production.artifact_bytes, canonical.artifact_bytes);
+        assert_eq!(production.dvi, canonical.dvi);
+        assert_eq!(production.effects, canonical.effects);
+        assert_eq!(production.terminal, canonical.terminal);
+        assert_eq!(production.log, canonical.log);
         assert_eq!(
-            production
+            production.command_work.expect("packed production work").fuel_charges,
+            canonical.command_work.expect("canonical work").fuel_charges
+        );
+        assert_eq!(
+            canonical
                 .command_work
                 .expect("production work")
                 .fuel_charges,
@@ -225,7 +179,7 @@ mod tests {
     #[test]
     fn group_rollback_and_both_conditional_arms_are_observable() {
         let workload = Workload::new(8, 0);
-        let result = run_shared(&workload).expect("shared slice executes");
+        let result = run_production(&workload).expect("production slice executes");
 
         assert_eq!(result.counts, [0, 36, 12]);
         let PageNode::HList(root) = &result.artifact.root else {
@@ -237,15 +191,19 @@ mod tests {
     #[test]
     fn nested_argument_forwarding_matches_production_exactly() {
         let workload = Workload::nested(512, 5);
+        let canonical = run_canonical(&workload).expect("nested canonical slice executes");
         let production = run_production(&workload).expect("nested production slice executes");
-        let shared = run_shared(&workload).expect("nested shared slice executes");
 
-        assert_eq!(shared.counts, production.counts);
-        assert_eq!(shared.calls, production.calls);
-        assert_eq!(shared.artifact_bytes, production.artifact_bytes);
-        assert_eq!(shared.dvi, production.dvi);
-        assert_eq!(shared.effects, production.effects);
-        assert_eq!(shared.terminal, production.terminal);
-        assert_eq!(shared.log, production.log);
+        assert_eq!(production.counts, canonical.counts);
+        assert_eq!(production.calls, canonical.calls);
+        assert_eq!(production.artifact_bytes, canonical.artifact_bytes);
+        assert_eq!(production.dvi, canonical.dvi);
+        assert_eq!(production.effects, canonical.effects);
+        assert_eq!(production.terminal, canonical.terminal);
+        assert_eq!(production.log, canonical.log);
+        assert_eq!(
+            production.command_work.expect("packed production work").fuel_charges,
+            canonical.command_work.expect("canonical work").fuel_charges
+        );
     }
 }

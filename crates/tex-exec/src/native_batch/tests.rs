@@ -1,16 +1,16 @@
 use std::sync::Arc;
 
 use tex_arith::Scaled;
-use tex_command::{CommandProfile, RegisteredSourceKind, SourceRegistration};
+use tex_command::{
+    CommandProfile, NativeBatchProgram, RegisteredSourceKind, SourceRegistration,
+};
 use tex_fonts::{CharMetrics, FontMetrics, LoadedFont, MetricCharTag};
 use tex_out::ContentHash;
 
-use super::{
-    NativeBatchAttempt, NativeBatchFallbackReason, NativeBatchRequest, run_native_batch_episode,
-};
+use super::{PackedEpisodeAttempt, execute_packed_episode};
 use crate::{
-    CoverageFallbackSafety, EpisodeCommitBoundary, EpisodeCoverageFamily, MainControl,
-    MainControlStep, SemanticEpisodeBarrier,
+    CoverageFallbackSafety, EpisodeCoverageFamily, MainControl, MainControlStep,
+    SemanticEpisodeBarrier,
 };
 
 const SOURCE: &[u8] = br"\count0=0\count1=0\count2=0\def\e#1{\advance\count0by#1\global\advance\count1by#1\ifnum#1<5\global\advance\count2by1\else\global\advance\count2by2\fi A\kern#1sp}\shipout\hbox{\e{1}\e{2}\e{3}\e{4}\e{5}\e{6}\e{7}\e{8}}\end";
@@ -36,266 +36,171 @@ fn test_font() -> LoadedFont {
     )
 }
 
+fn compile(stores: &tex_state::Universe, source: &[u8]) -> NativeBatchProgram {
+    NativeBatchProgram::compile(
+        Arc::<[u8]>::from(source),
+        CommandProfile::TEX82,
+        stores.endlinechar(),
+        |code| {
+            let byte = code.to_byte().expect("TeX82 admission is exact byte");
+            stores.catcode(char::from(byte))
+        },
+        source.len().saturating_div(5).max(1),
+    )
+    .expect("source admits")
+}
+
+fn finish(control: &mut MainControl, stores: &mut tex_state::Universe, packed: bool) {
+    if packed {
+        loop {
+            match control.advance_episode(stores).expect("episode advances") {
+                crate::StepResult::Progress(MainControlStep::Continue) => {}
+                crate::StepResult::Progress(MainControlStep::End | MainControlStep::EndOfInput) => {
+                    break;
+                }
+                crate::StepResult::Suspended(need) => panic!("unexpected suspension: {need:?}"),
+            }
+        }
+    } else {
+        while let MainControlStep::Continue = control.step(stores).expect("canonical step advances")
+        {}
+    }
+}
+
 #[test]
-fn production_episode_matches_canonical_state_artifact_dvi_effects_and_channels() {
-    let font = test_font();
-    let mut canonical_stores = tex_state::Universe::new_with_plain_catcodes();
-    let font_id = canonical_stores.intern_font(font.clone());
-    let mut control = MainControl::tex82_initex(&mut canonical_stores);
-    canonical_stores.set_current_font_global(font_id);
-    control.set_dvi_output(true);
-    control
+fn main_control_packed_root_matches_canonical_artifact_dvi_effects_and_channels() {
+    let mut canonical = tex_state::Universe::new_with_plain_catcodes();
+    let canonical_font = canonical.intern_font(test_font());
+    let mut canonical_control = MainControl::tex82_initex(&mut canonical);
+    canonical.set_current_font_global(canonical_font);
+    canonical_control.set_dvi_output(true);
+    canonical_control
         .register_root_source(SourceRegistration::new(
             RegisteredSourceKind::Generated,
             Arc::<[u8]>::from(SOURCE),
         ))
-        .expect("canonical source registers");
-    while let MainControlStep::Continue = control
-        .step(&mut canonical_stores)
-        .expect("canonical step executes")
-    {}
-    let [committed] = canonical_stores.world().committed_artifacts() else {
-        panic!("canonical run must ship exactly one page");
-    };
-    let canonical_artifact =
-        tex_out::PageArtifact::from_bytes(committed.bytes()).expect("canonical artifact parses");
-    let mut plans = control.take_prepared_dvi_pages();
-    assert_eq!(plans.len(), 1);
-    let plan = plans.pop().expect("one canonical DVI plan").into_plan();
-    let mut writer = tex_out::dvi::DviStreamWriter::new(Vec::new());
-    writer.write_page_plan(&plan).expect("DVI page writes");
-    let canonical_dvi = writer.finish().expect("DVI stream finishes");
-    assert_eq!(
-        control
-            .episode_telemetry()
-            .semantic_barriers(SemanticEpisodeBarrier::Output),
-        1
-    );
-    assert_eq!(
-        control
-            .episode_telemetry()
-            .semantic_barriers(SemanticEpisodeBarrier::Checkpoint),
-        1
-    );
+        .expect("canonical root registers");
+    finish(&mut canonical_control, &mut canonical, false);
 
-    let mut admission_stores = tex_state::Universe::new_with_plain_catcodes();
-    let attempt = run_native_batch_episode(
-        &mut admission_stores,
-        NativeBatchRequest {
-            source: Arc::<[u8]>::from(SOURCE),
-            expected_calls: 8,
-            profile: CommandProfile::TEX82,
-            font_id: 0,
-            font,
-        },
-    )
-    .expect("production batch output succeeds");
-    let NativeBatchAttempt::Completed(shared) = attempt else {
-        panic!("supported source must enter the production batch episode");
-    };
+    let mut packed = tex_state::Universe::new_with_plain_catcodes();
+    let packed_font = packed.intern_font(test_font());
+    let mut packed_control = MainControl::tex82_initex(&mut packed);
+    packed.set_current_font_global(packed_font);
+    packed_control.set_dvi_output(true);
+    packed_control
+        .register_root_source_for_batch(
+            &packed,
+            SourceRegistration::new(
+                RegisteredSourceKind::Generated,
+                Arc::<[u8]>::from(SOURCE),
+            ),
+        )
+        .expect("packed root registers");
+    finish(&mut packed_control, &mut packed, true);
 
-    assert_eq!(shared.counts, [0, 36, 12]);
+    assert_eq!([packed.count(0), packed.count(1), packed.count(2)], [0, 36, 12]);
+    assert_eq!(packed.world().committed_artifacts(), canonical.world().committed_artifacts());
+    assert_eq!(packed.world().effect_records(), canonical.world().effect_records());
+    assert_eq!(packed.world().memory_terminal_output(), canonical.world().memory_terminal_output());
+    assert_eq!(packed.world().memory_log_output(), canonical.world().memory_log_output());
+    let mut packed_pages = packed_control.take_prepared_dvi_pages();
+    let mut canonical_pages = canonical_control.take_prepared_dvi_pages();
+    assert_eq!(packed_pages.len(), 1);
+    assert_eq!(canonical_pages.len(), 1);
     assert_eq!(
-        [
-            admission_stores.count(0),
-            admission_stores.count(1),
-            admission_stores.count(2)
-        ],
-        shared.counts
-    );
-    assert_eq!(shared.calls, 8);
-    assert_eq!(
-        shared.commit.boundary(),
-        EpisodeCommitBoundary::Semantic(SemanticEpisodeBarrier::Output)
-    );
-    assert_eq!(shared.telemetry.attempts(), 1);
-    assert_eq!(shared.telemetry.commits(), 1);
-    assert_eq!(shared.telemetry.rollbacks(), 0);
-    assert_eq!(
-        shared
-            .telemetry
-            .semantic_barriers(SemanticEpisodeBarrier::Output),
-        1
-    );
-    assert_eq!(shared.artifact, canonical_artifact);
-    assert_eq!(shared.artifact_bytes, committed.bytes());
-    assert_eq!(shared.dvi, canonical_dvi);
-    assert_eq!(shared.effects, canonical_stores.world().effect_records());
-    assert_eq!(
-        shared.terminal,
-        canonical_stores
-            .world()
-            .memory_terminal_output()
-            .unwrap_or_default()
-    );
-    assert_eq!(
-        shared.log,
-        canonical_stores
-            .world()
-            .memory_log_output()
-            .unwrap_or_default()
+        packed_pages.pop().expect("packed page").into_plan(),
+        canonical_pages.pop().expect("canonical page").into_plan()
     );
 }
 
 #[test]
-fn execution_barrier_rolls_canonical_count_and_group_state_back() {
+fn main_control_batch_resumes_after_output_without_fallback() {
+    let mut stores = tex_state::Universe::new_with_plain_catcodes();
+    let font_id = stores.intern_font(test_font());
+    let mut control = MainControl::tex82_initex(&mut stores);
+    stores.set_current_font_global(font_id);
+    control.set_dvi_output(true);
+    control
+        .register_root_source_for_batch(
+            &stores,
+            SourceRegistration::new(
+                RegisteredSourceKind::Generated,
+                Arc::<[u8]>::from(SOURCE),
+            ),
+        )
+        .expect("production root registers");
+
+    assert_eq!(
+        control.advance_episode(&mut stores).expect("output commits"),
+        crate::StepResult::Progress(MainControlStep::Continue)
+    );
+    assert_eq!(
+        control.advance_episode(&mut stores).expect("session resumes"),
+        crate::StepResult::Progress(MainControlStep::End)
+    );
+    let telemetry = control.episode_telemetry();
+    assert_eq!(telemetry.semantic_barriers(SemanticEpisodeBarrier::Output), 1);
+    assert_eq!(telemetry.terminals(), 1);
+    for family in [
+        EpisodeCoverageFamily::CharacterProfile,
+        EpisodeCoverageFamily::SourceTokenization,
+        EpisodeCoverageFamily::CommandVocabulary,
+        EpisodeCoverageFamily::ScannerOrExpansion,
+        EpisodeCoverageFamily::NodeOrFont,
+        EpisodeCoverageFamily::GroupLineage,
+        EpisodeCoverageFamily::RollbackLineage,
+    ] {
+        assert_eq!(telemetry.coverage_fallbacks(family), 0);
+    }
+}
+
+#[test]
+fn execution_coverage_refusal_rolls_back_the_outer_main_control_transaction() {
+    let source = br"\count0=41\shipout\hbox{A\end";
     let mut stores = tex_state::Universe::new_with_plain_catcodes();
     stores.set_count(0, 17);
     let before_hash = stores.snapshot().state_hash();
-    let attempt = run_native_batch_episode(
-        &mut stores,
-        NativeBatchRequest {
-            source: Arc::<[u8]>::from(&br"\count0=41\shipout\hbox{A\end"[..]),
-            expected_calls: 1,
-            profile: CommandProfile::TEX82,
-            font_id: 0,
-            font: test_font(),
-        },
-    )
-    .expect("runtime fallback is not an execution failure");
-
-    let NativeBatchAttempt::Fallback(fallback) = attempt else {
-        panic!("malformed supported vocabulary must be a coverage fallback");
+    let program = compile(&stores, source);
+    let rollback = stores.snapshot_for_local_retry();
+    let attempt = execute_packed_episode(&mut stores, &program, 0, &test_font())
+        .expect("coverage refusal is typed");
+    let PackedEpisodeAttempt::Coverage(protocol) = attempt else {
+        panic!("malformed supported vocabulary must refuse coverage");
     };
-    assert!(matches!(
-        fallback.reason,
-        NativeBatchFallbackReason::Command(_)
-    ));
-    assert_eq!(
-        fallback.protocol.safety(),
-        CoverageFallbackSafety::ExactAggregateRollback
-    );
-    assert_eq!(fallback.telemetry.rollbacks(), 1);
-    assert_eq!(
-        fallback
-            .telemetry
-            .coverage_fallbacks(EpisodeCoverageFamily::ScannerOrExpansion),
-        1
-    );
+    assert_eq!(protocol.safety(), CoverageFallbackSafety::ExactAggregateRollback);
+    assert_eq!(protocol.family(), EpisodeCoverageFamily::ScannerOrExpansion);
+    stores.rollback_local_retry_snapshot(rollback);
     assert_eq!(stores.count(0), 17);
-    assert_eq!(stores.group_depth(), 0);
     assert_eq!(stores.snapshot().state_hash(), before_hash);
 }
 
 #[test]
-fn observable_command_falls_back_before_mutation() {
-    let mut stores = tex_state::Universe::new_with_plain_catcodes();
-    let before_counts = [stores.count(0), stores.count(1), stores.count(2)];
-    let before_effects = stores.world().effect_records().len();
-    let attempt = run_native_batch_episode(
-        &mut stores,
-        NativeBatchRequest {
-            source: Arc::<[u8]>::from(&br"\message{barrier}\end"[..]),
-            expected_calls: 0,
-            profile: CommandProfile::TEX82,
-            font_id: 0,
-            font: test_font(),
-        },
-    )
-    .expect("fallback is not an execution failure");
-
-    let NativeBatchAttempt::Barrier { barrier, telemetry } = attempt else {
-        panic!("message must be a required effect barrier");
-    };
-    assert_eq!(barrier, SemanticEpisodeBarrier::Effect);
-    assert_eq!(
-        telemetry.semantic_barriers(SemanticEpisodeBarrier::Effect),
-        1
-    );
-    assert_eq!(
-        [stores.count(0), stores.count(1), stores.count(2)],
-        before_counts
-    );
-    assert_eq!(stores.world().effect_records().len(), before_effects);
-    assert!(stores.world().committed_artifacts().is_empty());
-}
-
-#[test]
-fn unknown_command_fallback_is_mutation_free_typed_and_counted() {
-    let mut stores = tex_state::Universe::new_with_plain_catcodes();
-    stores.set_count(0, 23);
-    let before_hash = stores.snapshot().state_hash();
-    let attempt = run_native_batch_episode(
-        &mut stores,
-        NativeBatchRequest {
-            source: Arc::<[u8]>::from(&br"\unknown\end"[..]),
-            expected_calls: 0,
-            profile: CommandProfile::TEX82,
-            font_id: 0,
-            font: test_font(),
-        },
-    )
-    .expect("coverage fallback is not execution failure");
-
-    let NativeBatchAttempt::Fallback(fallback) = attempt else {
-        panic!("unknown command is temporary command-vocabulary coverage");
-    };
-    assert_eq!(
-        fallback.protocol.safety(),
-        CoverageFallbackSafety::MutationFreeAdmission
-    );
-    assert_eq!(
-        fallback.protocol.family(),
-        EpisodeCoverageFamily::CommandVocabulary
-    );
-    assert_eq!(stores.count(0), 23);
-    assert_eq!(stores.snapshot().state_hash(), before_hash);
-}
-
-#[test]
-fn active_observer_is_a_required_barrier_with_exact_aggregate_rollback() {
+fn active_observer_is_a_required_barrier_before_mutation() {
     let mut stores = tex_state::Universe::new_with_plain_catcodes();
     stores.set_count(0, 31);
-    let before_hash = stores.snapshot().state_hash();
+    let program = compile(&stores, br"\count0=99\end");
     let tracked = stores.begin_tracked_region().expect("observer begins");
-    let attempt = run_native_batch_episode(
-        &mut stores,
-        NativeBatchRequest {
-            source: Arc::<[u8]>::from(&br"\count0=99\end"[..]),
-            expected_calls: 0,
-            profile: CommandProfile::TEX82,
-            font_id: 0,
-            font: test_font(),
-        },
-    )
-    .expect("observer barrier is not execution failure");
-
-    let NativeBatchAttempt::Barrier { barrier, telemetry } = attempt else {
-        panic!("tracked execution requires observer publication");
-    };
-    assert_eq!(barrier, SemanticEpisodeBarrier::Observer);
-    assert_eq!(telemetry.rollbacks(), 1);
+    let attempt = execute_packed_episode(&mut stores, &program, 0, &test_font())
+        .expect("observer refusal is typed");
+    assert_eq!(attempt, PackedEpisodeAttempt::Barrier(SemanticEpisodeBarrier::Observer));
     assert_eq!(stores.count(0), 31);
-    assert_eq!(stores.snapshot().state_hash(), before_hash);
     let _ = stores.finish_tracked_region(tracked);
 }
 
 #[test]
-fn schema_11_loaded_and_fresh_episode_commits_are_exactly_equal() {
+fn schema_11_loaded_and_fresh_packed_state_are_exactly_equal() {
     let initializer = tex_state::Universe::new_with_plain_catcodes();
     let image = initializer.dump_format().expect("schema-11 format dumps");
     let mut loaded = tex_state::Universe::from_format(tex_state::World::memory(), &image)
         .expect("schema-11 format loads");
     let mut fresh = tex_state::Universe::new_with_plain_catcodes();
-    let request = NativeBatchRequest {
-        source: Arc::<[u8]>::from(SOURCE),
-        expected_calls: 8,
-        profile: CommandProfile::TEX82,
-        font_id: 0,
-        font: test_font(),
-    };
+    let loaded_program = compile(&loaded, SOURCE);
+    let fresh_program = compile(&fresh, SOURCE);
 
-    let NativeBatchAttempt::Completed(fresh_result) =
-        run_native_batch_episode(&mut fresh, request.clone()).expect("fresh episode commits")
-    else {
-        panic!("fresh episode must be covered");
-    };
-    let NativeBatchAttempt::Completed(loaded_result) =
-        run_native_batch_episode(&mut loaded, request).expect("loaded episode commits")
-    else {
-        panic!("loaded episode must be covered");
-    };
-
+    let loaded_result = execute_packed_episode(&mut loaded, &loaded_program, 0, &test_font())
+        .expect("loaded episode executes");
+    let fresh_result = execute_packed_episode(&mut fresh, &fresh_program, 0, &test_font())
+        .expect("fresh episode executes");
     assert_eq!(loaded_result, fresh_result);
     assert_eq!(
         loaded.dump_format().expect("loaded result redumps"),

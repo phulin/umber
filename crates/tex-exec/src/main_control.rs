@@ -89,6 +89,13 @@ fn take_prepared_dvi_pages(pages: &mut PreparedDviPages) -> Vec<crate::dispatch:
 #[derive(Debug, Default)]
 pub struct MainControl {
     command: CommandState,
+    /// Mutation-free admission for the packed exact-byte root episode.
+    ///
+    /// This is an execution plan over the same `CommandState`/`Universe`
+    /// owner, not a second engine. Unsupported roots leave this empty and
+    /// continue through ordinary canonical delivery from the untouched root.
+    packed_root_episode: Option<PackedRootEpisode>,
+    packed_root_terminal_pending: bool,
     /// Operational memo service owned by the execution/session layer.
     pure_memo: Arc<std::sync::Mutex<tex_state::PureMemoRuntime>>,
     pure_memo_initialized: bool,
@@ -279,6 +286,11 @@ pub struct MainControl {
     /// Monotonic evidence for bounded semantic episode admission and return.
     /// Like command fuel, this is operational and rollback never refunds it.
     episode_telemetry: crate::EpisodeTelemetry,
+}
+
+#[derive(Clone, Debug)]
+struct PackedRootEpisode {
+    program: tex_command::NativeBatchProgram,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -1607,6 +1619,50 @@ impl MainControl {
         Ok(id)
     }
 
+    /// Registers the production root and mutation-freely admits the packed
+    /// command episode used by unobserved batch sessions.
+    ///
+    /// Admission uses the canonical tokenizer against the live profile,
+    /// end-line policy, and category-code bank. A refusal does not consume or
+    /// mutate the registered root, so ordinary main control starts from the
+    /// same command state with no transfer or reconstruction.
+    pub fn register_root_source_for_batch(
+        &mut self,
+        stores: &Universe,
+        source: SourceRegistration,
+    ) -> Result<tex_state::SourceId, SourceRegistrationError> {
+        let bytes = source.shared_bytes();
+        let expected_calls = bytes.len().saturating_div(5).max(1);
+        let admission = tex_command::NativeBatchProgram::compile(
+            Arc::clone(&bytes),
+            self.command_profile(),
+            stores.endlinechar(),
+            |code| {
+                let byte = code
+                    .to_byte()
+                    .expect("exact-byte episode admission checks its profile first");
+                stores.catcode(char::from(byte))
+            },
+            expected_calls,
+        );
+        self.packed_root_episode = match admission {
+            Ok(program) => Some(PackedRootEpisode { program }),
+            Err(barrier) => {
+                if let Some(required) = crate::native_batch::semantic_barrier(&barrier) {
+                    self.episode_telemetry.record_semantic_barrier(required);
+                } else {
+                    self.episode_telemetry.record_fallback(
+                        crate::EpisodeCoverageFallback::mutation_free(
+                            crate::native_batch::coverage_family(&barrier),
+                        ),
+                    );
+                }
+                None
+            }
+        };
+        self.register_root_source(source)
+    }
+
     /// Publishes source-open framing after root registration without
     /// consuming the first command, allowing hosts to checkpoint JobStart.
     pub fn flush_pending_file_framing(&mut self, stores: &mut Universe) {
@@ -1679,7 +1735,7 @@ impl MainControl {
         if let Some(extension) = path.extension().and_then(|value| value.to_str()) {
             stores.remember_string_pool_string(&format!(".{extension}"));
         }
-        let id = self.register_root_source(source)?;
+        let id = self.register_root_source_for_batch(stores, source)?;
         if has_resolved_name {
             self.command
                 .render_file_framing_events(&mut stores.command_context());
@@ -3075,6 +3131,7 @@ impl MainControl {
     /// remain ordinary diagnostics. In either case the next call creates a
     /// fresh command processor; no delivered `CurrentCommand` is retained.
     pub fn advance(&mut self, stores: &mut Universe) -> Result<StepResult, ExecError> {
+        self.discard_packed_root_episode();
         if !self.pure_memo_initialized {
             let runtime = stores.take_pure_memo_config().map_or_else(
                 tex_state::PureMemoRuntime::default,
@@ -3095,10 +3152,136 @@ impl MainControl {
         )
     }
 
+    fn advance_packed_root(
+        &mut self,
+        stores: &mut Universe,
+    ) -> Option<Result<StepResult, ExecError>> {
+        if std::mem::take(&mut self.packed_root_terminal_pending) {
+            let commit = crate::EpisodeCommit::new(1, crate::EpisodeCommitBoundary::Terminal);
+            self.episode_telemetry.record_attempt();
+            self.episode_telemetry.record_commit(commit);
+            return Some(Ok(StepResult::Progress(ReplayStep::End)));
+        }
+        let episode = self.packed_root_episode.take()?;
+        self.episode_telemetry.record_attempt();
+        let font_id = stores.current_font();
+        let font = stores.font(font_id).clone();
+        let aggregate = stores.snapshot_for_local_retry();
+        let attempt = crate::execute_packed_episode(
+            stores,
+            &episode.program,
+            // Canonical artifacts number loaded fonts densely from zero;
+            // live `FontId` reserves zero for nullfont and is one-based.
+            font_id.raw().saturating_sub(1),
+            &font,
+        );
+        let result = match attempt {
+            Ok(crate::PackedEpisodeAttempt::Completed(result)) => result,
+            Ok(crate::PackedEpisodeAttempt::Coverage(protocol)) => {
+                stores.rollback_local_retry_snapshot(aggregate);
+                self.episode_telemetry.record_fallback(protocol);
+                return None;
+            }
+            Ok(crate::PackedEpisodeAttempt::Barrier(barrier)) => {
+                stores.rollback_local_retry_snapshot(aggregate);
+                self.episode_telemetry.record_semantic_barrier(barrier);
+                return None;
+            }
+            Err(error) => {
+                stores.rollback_local_retry_snapshot(aggregate);
+                return Some(Err(ExecError::InvalidShipoutArtifact(error.to_string())));
+            }
+        };
+        if let Err(error) = self.fuel.fuel_mut().charge_many(result.fuel_charges) {
+            stores.rollback_local_retry_snapshot(aggregate);
+            self.episode_telemetry
+                .record_rollback(crate::SemanticEpisodeBarrier::Fuel);
+            return Some(Err(command_error(error)));
+        }
+
+        let mut counts = [0_i32; 10];
+        counts[..3].copy_from_slice(&result.counts);
+        print_ship_out_marker_open(stores, 0, &counts, None);
+        let plan = match tex_out::dvi::DviPagePlan::compile(&result.artifact) {
+            Ok(plan) => plan,
+            Err(error) => {
+                stores.rollback_local_retry_snapshot(aggregate);
+                return Some(Err(ExecError::InvalidShipoutArtifact(error.to_string())));
+            }
+        };
+        let (hash, _receipt, publication) = match stores.commit_replayed_artifact(
+            result.artifact_bytes,
+            Vec::new(),
+            tex_state::OutputProvenanceRecipe::default(),
+            None,
+        ) {
+            Ok(committed) => committed,
+            Err(error) => {
+                stores.rollback_local_retry_snapshot(aggregate);
+                return Some(Err(ExecError::World(error)));
+            }
+        };
+        // Canonical main control has opened the transcript by the time §638
+        // closes the marker. Packed root execution bypasses that setup scan,
+        // so publish through the already-resolved canonical sink explicitly.
+        stores
+            .world_mut()
+            .write_text(tex_state::PrintSink::TerminalAndLog, "]");
+        if self
+            .emit_dvi_override
+            .unwrap_or(!self.command_profile().capabilities().supports_pdftex())
+        {
+            push_prepared_dvi_page(
+                &mut self.prepared_dvi_pages,
+                crate::dispatch::PreparedDviPage {
+                    hash,
+                    plan,
+                    committed_effects: Box::new([]),
+                    publication,
+                    receipt: publication.receipt(),
+                },
+            );
+        }
+        self.completed_boundaries
+            .push(crate::EngineBoundary::ShipoutComplete);
+
+        // The packed root has consumed the logical `\end`. Retire the same
+        // canonical input state rather than manufacturing a second terminal
+        // engine state, then let the retained session observe terminal return
+        // on its next bounded advance.
+        let incomplete_conditions = command_processor(
+            &mut self.command,
+            self.fuel.fuel_mut(),
+            &mut self.capabilities,
+            &mut self.operation_observations,
+            stores,
+        )
+        .final_cleanup();
+        self.drain_file_framing_events(stores);
+        self.end_of_job_final_cleanup(stores, false, incomplete_conditions);
+        if let Err(error) = stores.commit_effects(stores.world().effect_pos()) {
+            stores.rollback_local_retry_snapshot(aggregate);
+            return Some(Err(ExecError::World(error)));
+        }
+        stores.commit_local_retry_snapshot(aggregate);
+        self.packed_root_terminal_pending = true;
+        let commit = crate::EpisodeCommit::new(
+            1,
+            crate::EpisodeCommitBoundary::Semantic(crate::SemanticEpisodeBarrier::Output),
+        );
+        self.episode_telemetry.record_commit(commit);
+        Some(Ok(StepResult::Progress(ReplayStep::Continue)))
+    }
+
+    fn discard_packed_root_episode(&mut self) {
+        self.packed_root_episode = None;
+        self.packed_root_terminal_pending = false;
+    }
+
     /// Advances one production driver chunk under a single bounded retry
     /// point. The public one-operation [`Self::advance`] contract remains
     /// available to diagnostic and focused-test callers.
-    pub(crate) fn advance_batch(&mut self, stores: &mut Universe) -> Result<StepResult, ExecError> {
+    pub fn advance_episode(&mut self, stores: &mut Universe) -> Result<StepResult, ExecError> {
         if !self.pure_memo_initialized {
             let runtime = stores.take_pure_memo_config().map_or_else(
                 tex_state::PureMemoRuntime::default,
@@ -3109,6 +3292,9 @@ impl MainControl {
         stores.attach_pure_memo_capability(&self.pure_memo);
         if self.fatal.is_some() {
             return Ok(StepResult::Progress(MainControlStep::End));
+        }
+        if let Some(result) = self.advance_packed_root(stores) {
+            return result;
         }
         self.execute_operation(
             stores,
@@ -3129,6 +3315,7 @@ impl MainControl {
         &mut self,
         stores: &mut Universe,
     ) -> Result<TrackedStepResult, ExecError> {
+        self.discard_packed_root_episode();
         if !self.pure_memo_initialized {
             let runtime = stores.take_pure_memo_config().map_or_else(
                 tex_state::PureMemoRuntime::default,
@@ -3162,6 +3349,7 @@ impl MainControl {
         &mut self,
         stores: &mut Universe,
     ) -> Result<DiagnosticStepResult, ExecError> {
+        self.discard_packed_root_episode();
         let snapshot = self.snapshot_step(stores);
         let operation = (|| {
             self.refresh_host_capabilities(stores);
@@ -4584,6 +4772,7 @@ impl MainControl {
         stores: &mut Universe,
         observer: &mut dyn CommandObserver,
     ) -> Result<StepResult, ExecError> {
+        self.discard_packed_root_episode();
         if !self.pure_memo_initialized {
             let runtime = stores.take_pure_memo_config().map_or_else(
                 tex_state::PureMemoRuntime::default,

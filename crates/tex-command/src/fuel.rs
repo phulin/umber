@@ -124,6 +124,27 @@ impl CommandFuel {
         Ok(())
     }
 
+    /// Charges a proven packed episode without replaying one counter update
+    /// per canonical transition.
+    ///
+    /// The packed command processor computes the exact transition count in
+    /// its admitted vocabulary. Fuel remains monotonic and a rejected charge
+    /// burns the remaining budget, exactly as repeated scalar charges would
+    /// before reporting exhaustion.
+    pub fn charge_many(&mut self, amount: u64) -> Result<(), crate::CommandError> {
+        let remaining = self.limit.saturating_sub(self.work.fuel_charges);
+        if amount > remaining {
+            self.work.fuel_charges = self.limit;
+            return Err(crate::CommandError::FuelExhausted {
+                limit: self.limit,
+                burned: self.work.fuel_charges,
+                work: self.work,
+            });
+        }
+        self.work.fuel_charges = self.work.fuel_charges.saturating_add(amount);
+        Ok(())
+    }
+
     pub(crate) fn record_token_frame(&mut self, scanner: bool) {
         self.work.token_frame_steps = self.work.token_frame_steps.saturating_add(1);
         if scanner {

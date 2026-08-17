@@ -90,10 +90,7 @@ pub use mode::{
     AlignColumn, AlignState, AlignmentKind, AlignmentPackSpec, Mode, ModeLevelSummary, ModeList,
     ModeNest, ModeNestSummary,
 };
-pub use native_batch::{
-    NativeBatchAttempt, NativeBatchFallback, NativeBatchFallbackReason, NativeBatchRequest,
-    NativeBatchResult, NativeBatchRunError, run_native_batch_episode,
-};
+pub(crate) use native_batch::{PackedEpisodeAttempt, execute_packed_episode};
 pub use paragraph_end::cached_pretolerance_plan;
 pub use retained_resource::{
     ResourceFulfillment, ResourceHost, ResourceOutcome, ResourceWorld, canonical_font_resource_path,

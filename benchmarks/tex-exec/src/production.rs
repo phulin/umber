@@ -1,7 +1,7 @@
 use std::fmt;
 
 use tex_command::{RegisteredSourceKind, SourceRegistration};
-use tex_exec::{MainControl, MainControlStep};
+use tex_exec::{MainControl, MainControlStep, StepResult};
 use tex_state::Universe;
 
 use crate::{BatchResult, Workload, benchmark_font, serialize_dvi};
@@ -10,6 +10,7 @@ use crate::{BatchResult, Workload, benchmark_font, serialize_dvi};
 pub enum ProductionError {
     Register(tex_command::SourceRegistrationError),
     Execute(tex_exec::ExecError),
+    UnexpectedResource(tex_exec::ResourceNeed),
     MissingArtifact,
     ExtraArtifacts(usize),
     Artifact(tex_out::ParseError),
@@ -26,23 +27,47 @@ impl fmt::Display for ProductionError {
 
 impl std::error::Error for ProductionError {}
 
+pub fn run_canonical(workload: &Workload) -> Result<BatchResult, ProductionError> {
+    run_workload(workload, false)
+}
+
 pub fn run_production(workload: &Workload) -> Result<BatchResult, ProductionError> {
+    run_workload(workload, true)
+}
+
+fn run_workload(workload: &Workload, packed: bool) -> Result<BatchResult, ProductionError> {
     let mut stores = Universe::new_with_plain_catcodes();
     let font = stores.intern_font(benchmark_font());
     let mut control = MainControl::tex82_initex(&mut stores);
     stores.set_current_font_global(font);
     control.set_dvi_output(true);
-    control
-        .register_root_source(SourceRegistration::new(
-            RegisteredSourceKind::Generated,
-            workload.source(),
-        ))
-        .map_err(ProductionError::Register)?;
+    let source = SourceRegistration::new(RegisteredSourceKind::Generated, workload.source());
+    if packed {
+        control.register_root_source_for_batch(&stores, source)
+    } else {
+        control.register_root_source(source)
+    }
+    .map_err(ProductionError::Register)?;
 
-    while let MainControlStep::Continue = control
-        .step(&mut stores)
-        .map_err(ProductionError::Execute)?
-    {}
+    if packed {
+        loop {
+            match control
+                .advance_episode(&mut stores)
+                .map_err(ProductionError::Execute)?
+            {
+                StepResult::Progress(MainControlStep::Continue) => {}
+                StepResult::Progress(MainControlStep::End | MainControlStep::EndOfInput) => break,
+                StepResult::Suspended(need) => {
+                    return Err(ProductionError::UnexpectedResource(need));
+                }
+            }
+        }
+    } else {
+        while let MainControlStep::Continue = control
+            .step(&mut stores)
+            .map_err(ProductionError::Execute)?
+        {}
+    }
 
     let artifacts = stores.world().committed_artifacts();
     let (artifact, artifact_bytes) = match artifacts {

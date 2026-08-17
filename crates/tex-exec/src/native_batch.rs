@@ -1,75 +1,39 @@
 //! Production output seam for the first bounded native batch episode.
 
 use std::fmt;
-use std::sync::Arc;
 
 use tex_arith::Scaled;
 use tex_command::{
-    CharacterCode, CommandProfile, NativeBatchBarrier, NativeBatchNode, NativeBatchProgram,
-    NativeBatchRequiredBarrier,
+    NativeBatchBarrier, NativeBatchNode, NativeBatchProgram, NativeBatchRequiredBarrier,
 };
 use tex_fonts::LoadedFont;
 use tex_out::{
     BoxNode, ContentHash, FontResource, FontResourceConstruction, GlueOrder, GlueSetRatio,
     GlueSign, JobInfo, KernKind, PageArtifact, PageNode, UnvalidatedPageArtifact,
 };
-use tex_state::{EffectRecord, Universe};
+use tex_state::Universe;
 
 use crate::{
-    EpisodeCommit, EpisodeCommitBoundary, EpisodeCoverageFallback, EpisodeCoverageFamily,
-    EpisodeTelemetry, SemanticEpisodeBarrier,
+    EpisodeCoverageFallback, EpisodeCoverageFamily, SemanticEpisodeBarrier,
 };
 
 const DVI_ONE_INCH: i32 = 4_736_286;
 
-/// Complete immutable input to the bounded production batch runner.
-#[derive(Clone, Debug)]
-pub struct NativeBatchRequest {
-    pub source: Arc<[u8]>,
-    pub expected_calls: usize,
-    pub profile: CommandProfile,
-    pub font_id: u32,
-    pub font: LoadedFont,
+/// Result of executing one already-admitted packed program.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum PackedEpisodeAttempt {
+    Completed(Box<PackedEpisodeOutput>),
+    Coverage(EpisodeCoverageFallback),
+    Barrier(SemanticEpisodeBarrier),
 }
 
-/// Exact implementation reason for a temporary native-episode coverage gap.
+/// Page output produced inside MainControl's aggregate transaction.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum NativeBatchFallbackReason {
-    Command(NativeBatchBarrier),
-}
-
-/// Typed and counted fallback from the native episode to canonical stepping.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct NativeBatchFallback {
-    pub reason: NativeBatchFallbackReason,
-    pub protocol: EpisodeCoverageFallback,
-    pub telemetry: EpisodeTelemetry,
-}
-
-/// Result of attempting the bounded production batch path.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum NativeBatchAttempt {
-    Completed(Box<NativeBatchResult>),
-    Fallback(NativeBatchFallback),
-    Barrier {
-        barrier: SemanticEpisodeBarrier,
-        telemetry: EpisodeTelemetry,
-    },
-}
-
-/// Complete state, artifact, byte, DVI, effect, and diagnostic projection.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct NativeBatchResult {
+pub(crate) struct PackedEpisodeOutput {
     pub counts: [i32; 3],
     pub artifact: PageArtifact,
     pub artifact_bytes: Vec<u8>,
-    pub dvi: Vec<u8>,
-    pub effects: Vec<EffectRecord>,
-    pub terminal: Vec<u8>,
-    pub log: Vec<u8>,
-    pub calls: usize,
-    pub commit: EpisodeCommit,
-    pub telemetry: EpisodeTelemetry,
+    pub fuel_charges: u64,
 }
 
 /// Failure after a program has completed its typed admission boundary.
@@ -78,84 +42,45 @@ pub enum NativeBatchRunError {
     DimensionOverflow,
     Artifact(tex_out::ArtifactValidationError),
     Serialize(tex_out::SerializeError),
-    Parse(tex_out::ParseError),
-    Dvi(tex_out::dvi::DviError),
 }
 
 impl fmt::Display for NativeBatchRunError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(formatter, "native batch episode failed: {self:?}")
+        match self {
+            Self::DimensionOverflow => formatter.write_str("packed episode dimension overflow"),
+            Self::Artifact(error) => write!(formatter, "invalid packed episode artifact: {error}"),
+            Self::Serialize(error) => {
+                write!(formatter, "unable to serialize packed episode artifact: {error}")
+            }
+        }
     }
 }
 
 impl std::error::Error for NativeBatchRunError {}
 
-/// Attempts one atomic, effect-free batch episode.
-///
-/// Canonical tokenization and the complete supported-vocabulary check happen
-/// before direct execution. Every command-side refusal is returned as a typed
-/// fallback while `stores` and all host-visible output remain unchanged.
-pub fn run_native_batch_episode(
+/// Executes one already-admitted packed program inside its caller's aggregate
+/// transaction. Main control owns that transaction so state, output, and the
+/// typed barrier all cross one rollback boundary.
+pub(crate) fn execute_packed_episode(
     stores: &mut Universe,
-    request: NativeBatchRequest,
-) -> Result<NativeBatchAttempt, NativeBatchRunError> {
-    let mut telemetry = EpisodeTelemetry::default();
-    telemetry.record_attempt();
-    let program = match NativeBatchProgram::compile(
-        Arc::clone(&request.source),
-        request.profile,
-        stores.endlinechar(),
-        |code: CharacterCode| {
-            let Ok(byte) = code.to_byte() else {
-                unreachable!("exact-byte admission checked first");
-            };
-            stores.catcode(char::from(byte))
-        },
-        request.expected_calls,
-    ) {
-        Ok(program) => program,
-        Err(barrier) => {
-            if let Some(required) = semantic_barrier(&barrier) {
-                telemetry.record_semantic_barrier(required);
-                return Ok(NativeBatchAttempt::Barrier {
-                    barrier: required,
-                    telemetry,
-                });
-            }
-            let protocol = EpisodeCoverageFallback::mutation_free(coverage_family(&barrier));
-            telemetry.record_fallback(protocol);
-            return Ok(NativeBatchAttempt::Fallback(NativeBatchFallback {
-                reason: NativeBatchFallbackReason::Command(barrier),
-                protocol,
-                telemetry,
-            }));
-        }
+    program: &NativeBatchProgram,
+    font_id: u32,
+    font: &LoadedFont,
+) -> Result<PackedEpisodeAttempt, NativeBatchRunError> {
+    let Some(metrics) = font.character_metrics('A') else {
+        return Ok(PackedEpisodeAttempt::Barrier(
+            SemanticEpisodeBarrier::Diagnostic,
+        ));
     };
-    let Some(metrics) = request.font.character_metrics('A') else {
-        telemetry.record_semantic_barrier(SemanticEpisodeBarrier::Diagnostic);
-        return Ok(NativeBatchAttempt::Barrier {
-            barrier: SemanticEpisodeBarrier::Diagnostic,
-            telemetry,
-        });
-    };
-
-    let rollback = stores.snapshot_for_local_retry();
-    let attempt = (|| {
+    (|| {
         let outcome = match program.execute(stores) {
             Ok(outcome) => outcome,
             Err(barrier) => {
                 if let Some(required) = semantic_barrier(&barrier) {
-                    return Ok(NativeBatchAttempt::Barrier {
-                        barrier: required,
-                        telemetry,
-                    });
+                    return Ok(PackedEpisodeAttempt::Barrier(required));
                 }
                 let protocol = EpisodeCoverageFallback::rolled_back(coverage_family(&barrier));
-                return Ok(NativeBatchAttempt::Fallback(NativeBatchFallback {
-                    reason: NativeBatchFallbackReason::Command(barrier),
-                    protocol,
-                    telemetry,
-                }));
+                return Ok(PackedEpisodeAttempt::Coverage(protocol));
             }
         };
 
@@ -165,7 +90,7 @@ pub fn run_native_batch_episode(
             let (page_node, contribution) = match node {
                 NativeBatchNode::Character(ch) => (
                     PageNode::Char {
-                        font_id: request.font_id,
+                        font_id,
                         ch: u32::from(ch),
                         width: metrics.width,
                     },
@@ -208,16 +133,16 @@ pub fn run_native_batch_episode(
                 page_height: Scaled::from_raw(0),
             },
             fonts: vec![FontResource {
-                font_id: request.font_id,
-                name: request.font.name().to_owned(),
-                tfm_content_hash: ContentHash::new(request.font.content_hash()),
-                tfm_checksum: request.font.checksum(),
-                design_size: request.font.design_size(),
-                at_size: request.font.size(),
-                layout_policy: request.font.layout_policy(),
-                mapping_fallback: request.font.mapping_fallback(),
+                font_id,
+                name: font.name().to_owned(),
+                tfm_content_hash: ContentHash::new(font.content_hash()),
+                tfm_checksum: font.checksum(),
+                design_size: font.design_size(),
+                at_size: font.size(),
+                layout_policy: font.layout_policy(),
+                mapping_fallback: font.mapping_fallback(),
                 opentype: None,
-                semantic_identity: request.font.source_identity(),
+                semantic_identity: font.source_identity(),
                 construction: FontResourceConstruction::Loaded,
             }],
             counts: page_counts,
@@ -230,65 +155,16 @@ pub fn run_native_batch_episode(
         let artifact_bytes = artifact
             .to_bytes()
             .map_err(NativeBatchRunError::Serialize)?;
-        let artifact =
-            PageArtifact::from_bytes(&artifact_bytes).map_err(NativeBatchRunError::Parse)?;
-        let plan =
-            tex_out::dvi::DviPagePlan::compile(&artifact).map_err(NativeBatchRunError::Dvi)?;
-        let mut writer = tex_out::dvi::DviStreamWriter::new(Vec::new());
-        writer
-            .write_page_plan(&plan)
-            .map_err(NativeBatchRunError::Dvi)?;
-        let dvi = writer.finish().map_err(NativeBatchRunError::Dvi)?;
-        let terminal = format!(
-            "[{}.{}.{}]",
-            outcome.counts[0], outcome.counts[1], outcome.counts[2]
-        )
-        .into_bytes();
-        let log = terminal.clone();
-        let commit = EpisodeCommit::new(
-            1,
-            EpisodeCommitBoundary::Semantic(SemanticEpisodeBarrier::Output),
-        );
-        Ok(NativeBatchAttempt::Completed(Box::new(NativeBatchResult {
+        Ok(PackedEpisodeAttempt::Completed(Box::new(PackedEpisodeOutput {
             counts: outcome.counts,
             artifact,
             artifact_bytes,
-            dvi,
-            effects: Vec::new(),
-            terminal,
-            log,
-            calls: outcome.calls,
-            commit,
-            telemetry,
+            fuel_charges: outcome.fuel_charges,
         })))
-    })();
-    if matches!(&attempt, Ok(NativeBatchAttempt::Completed(_))) {
-        stores.commit_local_retry_snapshot(rollback);
-    } else {
-        stores.rollback_local_retry_snapshot(rollback);
-    }
-    match attempt {
-        Ok(NativeBatchAttempt::Completed(mut result)) => {
-            result.telemetry.record_commit(result.commit);
-            Ok(NativeBatchAttempt::Completed(result))
-        }
-        Ok(NativeBatchAttempt::Fallback(mut fallback)) => {
-            fallback.telemetry.record_fallback(fallback.protocol);
-            fallback.telemetry.record_coverage_rollback();
-            Ok(NativeBatchAttempt::Fallback(fallback))
-        }
-        Ok(NativeBatchAttempt::Barrier {
-            barrier,
-            mut telemetry,
-        }) => {
-            telemetry.record_rollback(barrier);
-            Ok(NativeBatchAttempt::Barrier { barrier, telemetry })
-        }
-        Err(error) => Err(error),
-    }
+    })()
 }
 
-fn semantic_barrier(barrier: &NativeBatchBarrier) -> Option<SemanticEpisodeBarrier> {
+pub(crate) fn semantic_barrier(barrier: &NativeBatchBarrier) -> Option<SemanticEpisodeBarrier> {
     match barrier {
         NativeBatchBarrier::State(
             tex_state::CountGroupEpisodeBarrier::ActiveTrackedRegion
@@ -313,7 +189,7 @@ fn semantic_barrier(barrier: &NativeBatchBarrier) -> Option<SemanticEpisodeBarri
     }
 }
 
-fn coverage_family(barrier: &NativeBatchBarrier) -> EpisodeCoverageFamily {
+pub(crate) fn coverage_family(barrier: &NativeBatchBarrier) -> EpisodeCoverageFamily {
     match barrier {
         NativeBatchBarrier::CharacterMode => EpisodeCoverageFamily::CharacterProfile,
         NativeBatchBarrier::SourceRegistration(_)

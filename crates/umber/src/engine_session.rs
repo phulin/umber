@@ -427,6 +427,13 @@ impl<'a> EngineSession<'a> {
         self.control.fuel_burned()
     }
 
+    /// Reports why production command episodes returned to this retained
+    /// session. The counters are operational and never enter checkpoints.
+    #[must_use]
+    pub const fn episode_telemetry(&self) -> tex_exec::EpisodeTelemetry {
+        self.control.episode_telemetry()
+    }
+
     #[must_use]
     pub fn stores(&self) -> &Universe {
         self.stores
@@ -527,7 +534,9 @@ impl<'a> EngineSession<'a> {
             startup_input_name,
             source.name(),
         );
-        let source = self.control.register_root_source(source)?;
+        let source = self
+            .control
+            .register_root_source_for_batch(self.stores, source)?;
         self.root_registered = true;
         self.startup_input_name = Some(startup_input_name.to_owned());
         self.startup_invocation_line = Some(startup_invocation_line.to_owned());
@@ -1072,6 +1081,27 @@ mod tests {
 
     const CMR10: &[u8] = include_bytes!("../../tex-fonts/tests/fixtures/cm/cmr10.tfm");
 
+    fn packed_episode_font() -> tex_fonts::LoadedFont {
+        let mut characters = vec![None; 256];
+        characters[usize::from(b'A')] = Some(tex_fonts::CharMetrics {
+            width: tex_state::scaled::Scaled::from_raw(500),
+            height: tex_state::scaled::Scaled::from_raw(300),
+            depth: tex_state::scaled::Scaled::from_raw(100),
+            italic_correction: tex_state::scaled::Scaled::from_raw(0),
+            tag: tex_fonts::MetricCharTag::None,
+        });
+        tex_fonts::LoadedFont::new(
+            "batchfont",
+            "batchfont.tfm",
+            tex_out::ContentHash::from_bytes(b"batchfont").bytes(),
+            0x64b2_0012,
+            tex_state::scaled::Scaled::from_raw(10 * tex_state::scaled::Scaled::UNITY),
+            tex_state::scaled::Scaled::from_raw(10 * tex_state::scaled::Scaled::UNITY),
+            vec![tex_state::scaled::Scaled::from_raw(0); 7],
+            tex_fonts::FontMetrics::new(characters, Vec::new(), None, None, Vec::new()),
+        )
+    }
+
     struct WorldHost;
 
     struct StartupLines {
@@ -1167,6 +1197,45 @@ mod tests {
                 ),
             }
         }
+    }
+
+
+    #[test]
+    fn retained_session_enters_packed_episode_and_resumes_after_output_checkpoint() {
+        let source = Arc::<[u8]>::from(
+            &br"\count0=0\count1=0\count2=0\def\e#1{\advance\count0by#1\global\advance\count1by#1\ifnum#1<5\global\advance\count2by1\else\global\advance\count2by2\fi A\kern#1sp}\shipout\hbox{\e{1}\e{8}}\end"[..],
+        );
+        let mut stores = Universe::new_with_plain_catcodes();
+        let mut session = EngineSession::tex82_initex(&mut stores);
+        let font = session.stores.intern_font(packed_episode_font());
+        session.stores.set_current_font_global(font);
+        session
+            .register_authored_job("packed.tex", source)
+            .expect("root registers");
+        let mut checkpoints = Vec::new();
+        let result = session
+            .run(&mut WorldHost, &mut checkpoints)
+            .expect("retained batch job completes");
+
+        assert_eq!(result.artifacts.len(), 1);
+        assert_eq!(result.dvi_pages.len(), 1);
+        assert_eq!(
+            checkpoints
+                .iter()
+                .map(tex_exec::EngineCheckpoint::boundary)
+                .collect::<Vec<_>>(),
+            [EngineBoundary::JobStart, EngineBoundary::ShipoutComplete]
+        );
+        let telemetry = session.episode_telemetry();
+        assert_eq!(
+            telemetry.semantic_barriers(tex_exec::SemanticEpisodeBarrier::Output),
+            1
+        );
+        assert_eq!(telemetry.terminals(), 1);
+        assert_eq!(
+            telemetry.coverage_fallbacks(tex_exec::EpisodeCoverageFamily::ScannerOrExpansion),
+            0
+        );
     }
 
     fn startup_session(interaction: tex_state::InteractionMode) -> Universe {

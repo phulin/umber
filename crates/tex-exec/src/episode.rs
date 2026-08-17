@@ -206,10 +206,6 @@ impl EpisodeTelemetry {
         self.record_semantic_barrier(barrier);
     }
 
-    pub(crate) fn record_coverage_rollback(&mut self) {
-        self.rollbacks = self.rollbacks.saturating_add(1);
-    }
-
     pub(crate) fn record_semantic_barrier(&mut self, barrier: SemanticEpisodeBarrier) {
         let index = barrier.index();
         self.semantic_barriers[index] = self.semantic_barriers[index].saturating_add(1);
