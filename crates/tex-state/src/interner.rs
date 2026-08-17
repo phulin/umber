@@ -325,7 +325,10 @@ impl Interner {
             self.rebuild_index();
         }
 
-        if let Some(slot) = self.frozen_lookup.get(&lookup_key(kind, name)) {
+        if let Some(slot) = self
+            .frozen_lookup
+            .get_prefixed(kind_tag(kind), name.as_bytes())
+        {
             let stored = self.symbols[slot as usize];
             let identity = self
                 .identities
@@ -394,7 +397,10 @@ impl Interner {
     }
 
     fn get_key(&self, kind: ControlSequenceKind, name: &str) -> Option<SymbolId> {
-        if let Some(slot) = self.frozen_lookup.get(&lookup_key(kind, name)) {
+        if let Some(slot) = self
+            .frozen_lookup
+            .get_prefixed(kind_tag(kind), name.as_bytes())
+        {
             let stored = *self.symbols.get(slot as usize)?;
             let identity = self.identities.identity_at(slot)?;
             return Some(SymbolId::from_identity(identity, stored));
@@ -584,17 +590,14 @@ impl Interner {
     }
 }
 
-fn lookup_key(kind: ControlSequenceKind, name: &str) -> Vec<u8> {
-    let mut key = Vec::with_capacity(name.len() + 1);
-    key.push(match kind {
+const fn kind_tag(kind: ControlSequenceKind) -> u8 {
+    match kind {
         ControlSequenceKind::Null
         | ControlSequenceKind::SingleCharacter
         | ControlSequenceKind::Named => 0,
         ControlSequenceKind::ActiveCharacter => 1,
         ControlSequenceKind::Internal => 2,
-    });
-    key.extend_from_slice(name.as_bytes());
-    key
+    }
 }
 
 pub(crate) fn semantic_atom(kind: ControlSequenceKind, name: &str) -> u64 {
@@ -612,13 +615,7 @@ pub(crate) fn semantic_atom(kind: ControlSequenceKind, name: &str) -> u64 {
 
 fn semantic_identity(kind: ControlSequenceKind, name: &str) -> ContentHash {
     let mut bytes = Vec::with_capacity(name.len() + 1);
-    bytes.push(match kind {
-        ControlSequenceKind::Null
-        | ControlSequenceKind::SingleCharacter
-        | ControlSequenceKind::Named => 0,
-        ControlSequenceKind::ActiveCharacter => 1,
-        ControlSequenceKind::Internal => 2,
-    });
+    bytes.push(kind_tag(kind));
     bytes.extend_from_slice(name.as_bytes());
     crate::state_hash::semantic_identity_bytes(b"umber-control-sequence-v1", &bytes)
 }

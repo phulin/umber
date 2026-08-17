@@ -26,6 +26,23 @@ fn generation_is_deterministic_and_lookup_equivalent() {
 }
 
 #[test]
+fn prefixed_lookup_matches_a_materialized_composite_key() {
+    let encoded = encode([
+        ([b"\0".as_slice(), b"count"].concat(), 0),
+        ([b"\x01".as_slice(), b"~"].concat(), 1),
+        ([b"\x02".as_slice(), b"frozen"].concat(), 2),
+    ])
+    .expect("encode prefixed lookup");
+    let lookup = decode(&encoded, 3).expect("decode prefixed lookup");
+
+    assert_eq!(lookup.get_prefixed(0, b"count"), Some(0));
+    assert_eq!(lookup.get_prefixed(1, b"~"), Some(1));
+    assert_eq!(lookup.get_prefixed(2, b"frozen"), Some(2));
+    assert_eq!(lookup.get_prefixed(0, b"missing"), None);
+    assert_eq!(lookup.get_prefixed(1, b"count"), None);
+}
+
+#[test]
 fn complete_structure_and_bounds_are_validated() {
     let valid = encode(entries()).expect("encode lookup");
     for offset in [0, 4, 8, 16, 20, 24, 28, HEADER_LEN] {

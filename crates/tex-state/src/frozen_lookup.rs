@@ -172,6 +172,31 @@ impl FrozenLookup {
         None
     }
 
+    /// Looks up the concatenation of one tag byte and a borrowed spelling
+    /// without materializing that composite key.
+    #[must_use]
+    pub(crate) fn get_prefixed(&self, prefix: u8, spelling: &[u8]) -> Option<u32> {
+        let mask = self.buckets.len() - 1;
+        let mut value = hash_byte(SEED, prefix);
+        for &byte in spelling {
+            value = hash_byte(value, byte);
+        }
+        let mut bucket = value as usize & mask;
+        for _ in 0..self.buckets.len() {
+            let entry = self.buckets[bucket];
+            if entry == EMPTY {
+                return None;
+            }
+            let entry = entry as usize;
+            let key = &self.keys[entry];
+            if key.first() == Some(&prefix) && key.get(1..) == Some(spelling) {
+                return Some(self.targets[entry]);
+            }
+            bucket = (bucket + 1) & mask;
+        }
+        None
+    }
+
     pub(crate) fn spot_check(&self, checksum: u64) -> Result<(), &'static str> {
         if self.keys.is_empty() {
             return Ok(());
@@ -386,10 +411,13 @@ fn bucket_count_for_decode(entry_count: usize) -> Result<usize, &'static str> {
 fn hash(bytes: &[u8]) -> u64 {
     let mut value = SEED;
     for &byte in bytes {
-        value ^= u64::from(byte);
-        value = value.wrapping_mul(FNV_PRIME);
+        value = hash_byte(value, byte);
     }
     value
+}
+
+const fn hash_byte(value: u64, byte: u8) -> u64 {
+    (value ^ byte as u64).wrapping_mul(FNV_PRIME)
 }
 
 fn put_u32(bytes: &mut [u8], offset: usize, value: u32) {
