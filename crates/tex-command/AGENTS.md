@@ -55,9 +55,14 @@ print channel of its own outside the borrowed
 - `src/native_batch.rs` and `src/native_batch/tests.rs`: the capacity-only
   episode plan retained by production `MainControl`; delivery and expansion
   through the live canonical `CommandProcessor` source/token-list stack,
-  canonical backup/noexpand/macro/template levels, typed barriers, canonical
+  canonical backup/noexpand/macro/template levels, canonical integer,
+  optional-equals, keyword, and dimension scanners, typed barriers, canonical
   `tex-state` count/group access, borrow-scoped native node-sink calls with no
-  command-owned token/frame/node vector, and focused parity.
+  command-owned token/frame/node vector, and focused parity. Its exact fixture
+  debt is four `CommandVocabulary` fallbacks: three retries that roll back the
+  count prefix, followed by scalar delivery of the initial macro definition.
+  Completing that cutover depends on persistent canonical executor delivery,
+  not a second definition scanner or macro store.
 - `src/fatal.rs` and `src/fatal/tests.rs`: TeX82 §93 `fatal_error`,
   §94 `overflow`, and §95 `confusion` as one shared irrecoverable-error
   value, its canonical observation record, and focused label tests. Every

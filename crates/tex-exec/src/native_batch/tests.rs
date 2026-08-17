@@ -199,9 +199,10 @@ fn main_control_batch_resumes_after_scalar_definition_boundaries() {
     ] {
         assert_eq!(telemetry.coverage_fallbacks(family), 0);
     }
-    assert!(
-        telemetry.coverage_fallbacks(EpisodeCoverageFamily::CommandVocabulary) > 0,
-        "definitions remain the next ordered migration family"
+    assert_eq!(
+        telemetry.coverage_fallbacks(EpisodeCoverageFamily::CommandVocabulary),
+        4,
+        "three rolled-back count prefixes and the initial macro definition are the exact remaining packed-command fallbacks"
     );
 }
 

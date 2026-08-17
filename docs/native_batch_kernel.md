@@ -53,6 +53,48 @@ from the private-frame ceiling. Issue `umber2-3gln` owns the next refactor:
 optimize the one canonical expansion/scanner/conditional/alignment machinery
 instead of restoring a second fast path.
 
+## Canonical expansion and scanner episode
+
+Issue `umber2-3gln` moved the retained count, advance, and kern operands onto
+the sole `CommandProcessor` scanner family. Optional equals, signed and radix
+integers, `by`, and dimensions now use `scan_optional_equals`, `scan_integer`,
+`scan_keyword`, and `scan_dimension`, including their ordinary recovery,
+diagnostic, fuel, and backup behavior. Macro matching, conditional evaluation,
+and alignment-template delivery already enter through the same live expanded
+delivery driver. The episode owns no replacement matcher, condition stack, or
+alignment frame.
+
+Profiling then removed allocation work inside those canonical implementations
+rather than adding a fast executor. Physical token delivery no longer clones a
+boxed source level or allocates a temporary source-buffer projection. Frozen
+control-sequence lookup hashes borrowed prefixed spellings. Macro matching
+moves its packed argument words and sparse provenance roots through collection
+and immutable replay instead of reconstructing them twice. Conditional
+observation names remain borrowed until the runtime observer guard, so an
+unobserved condition builds no record strings.
+
+On the same host and exact 1,000-call direct work, allocation calls fell from
+35,185 to 11,309 and requested bytes from 7,083,440 to 5,263,939. Five final
+release processes took 41.72, 42.48, 43.29, 44.16, and 60.29 ms, with
+11,136--11,328 KiB peak RSS and unchanged 67,073 fuel, artifact bytes, and DVI
+bytes. The timing is host-variable and does not establish a speedup over the
+earlier single 39.17 ms sample; the 67.9% allocation-call reduction is exact.
+
+The focused production fixture now pins the honest remaining coverage result:
+zero `ScannerOrExpansion` fallback and exactly four `CommandVocabulary`
+fallbacks. The unsupported initial macro definition makes each attempt roll
+back its prefix; ordinary execution commits the three preceding count
+assignments one at a time, and a fourth refusal hands the definition itself to
+ordinary execution. The closed dispatcher cannot apply that scanned
+definition, or a general alignment/mode transition, while the processor
+exclusively borrows the aggregate and its local whole-hbox loop owns execution.
+Retrying after aggregate rollback is still exact, but relabeling the retry
+would make the counter vacuous. `umber2-c1p8` therefore blocks completion of
+`umber2-3gln`: it must first provide persistent canonical main-control and mode
+delivery. Both issues remain open, and the legacy-deletion epic remains blocked
+until the resulting real property, fixture, adversarial, and corpus evidence
+reaches zero fallback.
+
 ## Independent audit and migration result
 
 The independent audit rebuilt the original release executable from
