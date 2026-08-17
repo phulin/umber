@@ -1782,35 +1782,11 @@ impl CommandState {
     }
 
     fn active_buffer_lines(&self) -> Vec<(usize, bool)> {
-        let mut lines = Vec::new();
-        for level in &self.input.levels {
-            let InputLevel::Source(source) = level else {
-                continue;
-            };
-            let Some(line) = source.cursor.line.as_ref() else {
-                continue;
-            };
-            let start = line.physical.content_range().start();
-            let retained = line.retained_end.saturating_sub(start);
-            let len = match source.cursor.current_backing().mode {
-                crate::CharacterMode::EightBitExact => {
-                    usize::try_from(retained).unwrap_or(usize::MAX)
-                }
-                crate::CharacterMode::UnicodeExtended => {
-                    let start = usize::try_from(start).unwrap_or(usize::MAX);
-                    let end = usize::try_from(line.retained_end).unwrap_or(usize::MAX);
-                    source
-                        .cursor
-                        .current_backing()
-                        .bytes
-                        .get(start..end)
-                        .and_then(|bytes| std::str::from_utf8(bytes).ok())
-                        .map_or(usize::MAX, |text| text.chars().count())
-                }
-            };
-            lines.push((len, line.endline.is_some()));
-        }
-        lines
+        self.input
+            .levels
+            .iter()
+            .filter_map(source_buffer_line)
+            .collect()
     }
 
     /// Reads one byte-domain character or decoded Unicode scalar from the
@@ -1953,17 +1929,31 @@ impl CommandState {
         Option<&mut crate::input::SourceCursor>,
         crate::input::LineBackingRegistry<'_>,
     ) {
-        let buffer_start = 1_usize
-            .saturating_add(self.usage.terminal_buffer_slots())
-            .saturating_add(self.active_buffer_lines().into_iter().rev().skip(1).fold(
-                0_usize,
-                |total, (len, endline)| {
+        // This method runs for every physical token. The old
+        // `active_buffer_lines` projection allocated a temporary Vec merely
+        // to reverse it. The last input level is the source cursor we are
+        // about to advance; fold the lower levels in place and do not count
+        // that cursor's current line toward its own buffer base. Skipping the
+        // level rather than the first _present line_ is also correct while a
+        // newly opened top source has not loaded its first line yet.
+        let occupied_below_active =
+            self.input
+                .levels
+                .iter()
+                .rev()
+                .skip(1)
+                .fold(0_usize, |total, level| {
+                    let Some((len, endline)) = source_buffer_line(level) else {
+                        return total;
+                    };
                     total
                         .saturating_add(len)
                         .saturating_add(usize::from(endline))
                         .saturating_add(1)
-                },
-            ));
+                });
+        let buffer_start = 1_usize
+            .saturating_add(self.usage.terminal_buffer_slots())
+            .saturating_add(occupied_below_active);
         let name_class = self.input.levels.last().and_then(|level| match level {
             InputLevel::Source(source) => Some(source.name_class),
             InputLevel::Tokens(_) => None,
@@ -2018,6 +2008,30 @@ impl CommandState {
         self.profile()
             .validate_fingerprint(CommandProfileBoundary::Checkpoint, found)
     }
+}
+
+fn source_buffer_line(level: &InputLevel) -> Option<(usize, bool)> {
+    let InputLevel::Source(source) = level else {
+        return None;
+    };
+    let line = source.cursor.line.as_ref()?;
+    let start = line.physical.content_range().start();
+    let retained = line.retained_end.saturating_sub(start);
+    let len = match source.cursor.current_backing().mode {
+        crate::CharacterMode::EightBitExact => usize::try_from(retained).unwrap_or(usize::MAX),
+        crate::CharacterMode::UnicodeExtended => {
+            let start = usize::try_from(start).unwrap_or(usize::MAX);
+            let end = usize::try_from(line.retained_end).unwrap_or(usize::MAX);
+            source
+                .cursor
+                .current_backing()
+                .bytes
+                .get(start..end)
+                .and_then(|bytes| std::str::from_utf8(bytes).ok())
+                .map_or(usize::MAX, |text| text.chars().count())
+        }
+    };
+    Some((len, line.endline.is_some()))
 }
 
 /// An input level referred to a source absent from retained registration.
