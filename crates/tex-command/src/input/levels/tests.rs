@@ -3,7 +3,7 @@ use std::sync::Arc;
 use tex_state::Universe;
 use tex_state::ids::TokenListId;
 use tex_state::provenance::SyntheticOriginKind;
-use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
+use tex_state::token::{Catcode, OriginId, RootedTracedTokenBuffer, Token, TracedTokenWord};
 
 use super::{
     BackedUpToken, BackupTreatment, InputLevel, InputLevelId, ReplayTrace, RetirementBehavior,
@@ -50,6 +50,43 @@ fn shared_transient_buffers_own_only_distinct_structural_origins() {
         rooted
             .rooted_words()
             .all(|word| word.origin_ref().record().is_some())
+    );
+}
+
+#[test]
+fn transferred_rooted_buffer_preserves_words_and_structural_owners() {
+    let mut universe = Universe::new();
+    let root = universe.synthetic_origin_ref(SyntheticOriginKind::Test);
+    let token = tex_state::token::RootedTracedTokenWord::new(
+        Token::Char {
+            ch: 'a',
+            cat: Catcode::Other,
+        },
+        root,
+    );
+    let mut source = RootedTracedTokenBuffer::new([token]);
+    source.push_unowned(traced('b'));
+
+    let shared = SharedTokenBuffer::from_rooted_buffer(source);
+
+    assert_eq!(shared.words().len(), 2);
+    assert_eq!(shared.0.roots.len(), 1);
+    drop(universe);
+    assert!(
+        shared
+            .get_rooted(0)
+            .expect("first word")
+            .origin_ref()
+            .record()
+            .is_some()
+    );
+    assert!(
+        shared
+            .get_rooted(1)
+            .expect("second word")
+            .origin_ref()
+            .record()
+            .is_none()
     );
 }
 

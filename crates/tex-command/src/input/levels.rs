@@ -377,6 +377,18 @@ impl SharedTokenBuffer {
         }))
     }
 
+    /// Freezes a scanner-owned buffer by transferring its paired word and
+    /// provenance-root allocations. Macro matching is the hot caller: it has
+    /// already established the same sorted-root invariant while collecting
+    /// arguments, so replay need not iterate, clone roots, and rebuild words.
+    pub(crate) fn from_rooted_buffer(buffer: tex_state::token::RootedTracedTokenBuffer) -> Self {
+        let (words, roots) = buffer.into_storage_parts();
+        Self(Arc::new(SharedTokenBufferValue {
+            words: words.into_boxed_slice(),
+            roots: roots.into_boxed_slice(),
+        }))
+    }
+
     pub(crate) fn len(&self) -> usize {
         self.0.words.len()
     }

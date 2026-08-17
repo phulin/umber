@@ -159,7 +159,7 @@ impl MacroArgumentBuilder {
     #[must_use]
     pub(crate) fn finish(self) -> MacroArguments {
         MacroArguments {
-            buffer: SharedTokenBuffer::new_rooted(self.tokens.rooted_words()),
+            buffer: SharedTokenBuffer::from_rooted_buffer(self.tokens),
             ranges: self.ranges,
         }
     }

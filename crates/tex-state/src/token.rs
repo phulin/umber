@@ -395,6 +395,18 @@ impl RootedTracedTokenBuffer {
         self.words.capacity()
     }
 
+    /// Transfers the packed words and their sparse structural owners without
+    /// rebuilding either allocation.
+    ///
+    /// This is the ownership seam for freezing a transient scanner buffer.
+    /// Callers must keep the two vectors paired: `roots` is sorted, distinct,
+    /// and owns every arena-backed origin referenced by `words`.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn into_storage_parts(self) -> (Vec<TracedTokenWord>, Vec<crate::provenance::OriginRef>) {
+        (self.words, self.roots)
+    }
+
     /// Returns the cleared word allocation for process-local scratch reuse.
     #[doc(hidden)]
     #[must_use]
