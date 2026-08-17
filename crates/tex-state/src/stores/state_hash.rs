@@ -839,6 +839,9 @@ impl Stores {
             self.env.journal_baseline_serial(),
             "exact environment cursor belongs to a retired journal baseline"
         );
+        // Scalar assignment episodes ordinarily advance only a handful of
+        // journal cells. Keep that exact sort/dedup projection inline and
+        // spill only for an unusually broad delta.
         let mut cells = self
             .env
             .journal_entries_since(journal_pos)
@@ -851,7 +854,7 @@ impl Stores {
                 )),
                 Entry::Marker(_) => None,
             })
-            .collect::<Vec<_>>();
+            .collect::<smallvec::SmallVec<[CellId; 8]>>();
         cells.sort_unstable();
         cells.dedup();
         for cell in cells {
