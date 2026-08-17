@@ -275,6 +275,7 @@ impl DviBodyCompiler {
         self.direct_end_box(&mut state)
     }
 
+    #[inline]
     pub(super) fn direct_char(
         &mut self,
         state: &mut DirectStreamState,
@@ -295,6 +296,7 @@ impl DviBodyCompiler {
         Ok(())
     }
 
+    #[inline]
     pub(super) fn direct_kern(
         &mut self,
         state: &DirectStreamState,

@@ -23,7 +23,7 @@ mod opcodes;
 mod plan;
 mod traversal;
 
-pub use plan::{DviPagePlan, DviPagePlanBuilder};
+pub use plan::{DviPagePlan, DviPagePlanBuilder, DviPagePlanCoEmitter};
 
 /// DVI emission failure.
 #[derive(Clone, Debug, Eq, PartialEq)]

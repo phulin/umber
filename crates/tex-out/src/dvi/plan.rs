@@ -41,6 +41,151 @@ pub struct DviPagePlanBuilder {
     indexed_fonts: usize,
 }
 
+/// Operation-local DVI sidecar emitted alongside canonical artifact bytes.
+///
+/// The active builder consumes the same scalar node events as the artifact
+/// encoder and owns no page-node representation. Box leaders require subtree
+/// replay by definition; those uncommon pages fall back to the canonical
+/// streaming-byte compiler rather than retaining a second node authority.
+pub struct DviPagePlanCoEmitter {
+    state: CoEmissionState,
+}
+
+enum CoEmissionState {
+    Disabled,
+    Active(DviPagePlanBuilder),
+    ReplayRequired,
+}
+
+impl DviPagePlanCoEmitter {
+    #[must_use]
+    pub const fn disabled() -> Self {
+        Self {
+            state: CoEmissionState::Disabled,
+        }
+    }
+
+    pub fn new(
+        job: JobInfo,
+        counts: [i32; 10],
+        root: &BoxNode,
+        vertical: bool,
+        effects: &[PageEffect],
+        enabled: bool,
+    ) -> Result<Self, DviError> {
+        let state = if enabled {
+            let mut builder = DviPagePlanBuilder::new(job, counts, root, vertical)?;
+            builder.set_snap_reference(effects);
+            CoEmissionState::Active(builder)
+        } else {
+            CoEmissionState::Disabled
+        };
+        Ok(Self { state })
+    }
+
+    #[inline]
+    pub fn add_fonts(&mut self, fonts: &[FontResource]) -> Result<(), DviError> {
+        match &mut self.state {
+            CoEmissionState::Active(builder) => builder.add_fonts(fonts),
+            CoEmissionState::Disabled | CoEmissionState::ReplayRequired => Ok(()),
+        }
+    }
+
+    #[inline]
+    pub fn char(
+        &mut self,
+        font_id: u32,
+        ch: u32,
+        width: tex_arith::Scaled,
+    ) -> Result<(), DviError> {
+        match &mut self.state {
+            CoEmissionState::Active(builder) => builder.char(font_id, ch, width),
+            CoEmissionState::Disabled | CoEmissionState::ReplayRequired => Ok(()),
+        }
+    }
+
+    #[inline]
+    pub fn kern(&mut self, amount: tex_arith::Scaled) -> Result<(), DviError> {
+        match &mut self.state {
+            CoEmissionState::Active(builder) => builder.kern(amount),
+            CoEmissionState::Disabled | CoEmissionState::ReplayRequired => Ok(()),
+        }
+    }
+
+    pub fn math(&mut self, amount: tex_arith::Scaled) -> Result<(), DviError> {
+        match &mut self.state {
+            CoEmissionState::Active(builder) => builder.math(amount),
+            CoEmissionState::Disabled | CoEmissionState::ReplayRequired => Ok(()),
+        }
+    }
+
+    pub fn rule(
+        &mut self,
+        width: Option<tex_arith::Scaled>,
+        height: Option<tex_arith::Scaled>,
+        depth: Option<tex_arith::Scaled>,
+    ) -> Result<(), DviError> {
+        match &mut self.state {
+            CoEmissionState::Active(builder) => builder.rule(width, height, depth),
+            CoEmissionState::Disabled | CoEmissionState::ReplayRequired => Ok(()),
+        }
+    }
+
+    pub fn glue(&mut self, spec: crate::GlueSpec) -> Result<(), DviError> {
+        match &mut self.state {
+            CoEmissionState::Active(builder) => builder.glue(spec),
+            CoEmissionState::Disabled | CoEmissionState::ReplayRequired => Ok(()),
+        }
+    }
+
+    pub fn begin_box(
+        &mut self,
+        fields: &BoxNode,
+        vertical: bool,
+        empty: bool,
+    ) -> Result<(), DviError> {
+        if let CoEmissionState::Active(builder) = &mut self.state {
+            let entered = builder.begin_box(fields, vertical, empty)?;
+            debug_assert_eq!(entered, !empty);
+        }
+        Ok(())
+    }
+
+    pub fn end_box(&mut self) -> Result<(), DviError> {
+        match &mut self.state {
+            CoEmissionState::Active(builder) => builder.end_box(),
+            CoEmissionState::Disabled | CoEmissionState::ReplayRequired => Ok(()),
+        }
+    }
+
+    /// Marks a subtree-replaying leader for canonical streaming compilation.
+    /// No semantic node storage is retained while switching adapters.
+    pub fn leader_requires_replay(&mut self) {
+        if matches!(self.state, CoEmissionState::Active(_)) {
+            self.state = CoEmissionState::ReplayRequired;
+        }
+    }
+
+    pub fn whatsit(&mut self, effect_index: u32, effects: &[PageEffect]) -> Result<(), DviError> {
+        match &mut self.state {
+            CoEmissionState::Active(builder) => builder.whatsit(effect_index, effects),
+            CoEmissionState::Disabled | CoEmissionState::ReplayRequired => Ok(()),
+        }
+    }
+
+    pub fn finish(
+        self,
+        fonts: &[FontResource],
+        artifact_bytes: &[u8],
+    ) -> Result<Option<DviPagePlan>, DviError> {
+        match self.state {
+            CoEmissionState::Disabled => Ok(None),
+            CoEmissionState::Active(builder) => builder.finish(fonts).map(Some),
+            CoEmissionState::ReplayRequired => DviPagePlan::compile_v10(artifact_bytes).map(Some),
+        }
+    }
+}
+
 impl DviPagePlanBuilder {
     pub fn new(
         job: JobInfo,
@@ -90,8 +235,13 @@ impl DviPagePlanBuilder {
         Ok(())
     }
 
+    #[inline]
     pub fn add_fonts(&mut self, fonts: &[FontResource]) -> Result<(), DviError> {
         self.sync_fonts(fonts)
+    }
+
+    fn set_snap_reference(&mut self, effects: &[PageEffect]) {
+        self.writer.snap_reference = crate::snapping::initial_reference(effects);
     }
 
     fn push_owned_node(&mut self, node: &PageNode, effects: &[PageEffect]) -> Result<(), DviError> {
@@ -114,6 +264,7 @@ impl DviPagePlanBuilder {
         )
     }
 
+    #[inline]
     pub fn char(
         &mut self,
         font_id: u32,
@@ -128,6 +279,7 @@ impl DviPagePlanBuilder {
         )
     }
 
+    #[inline]
     pub fn kern(&mut self, amount: tex_arith::Scaled) -> Result<(), DviError> {
         self.writer
             .direct_kern(self.state.as_ref().expect("unfinished page plan"), amount)

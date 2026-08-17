@@ -1,5 +1,5 @@
 use tex_command::DimensionDiagnostic;
-use tex_out::dvi::DviPagePlan;
+use tex_out::dvi::{DviPagePlan, DviPagePlanCoEmitter};
 use tex_out::{
     ArtifactEmitter, ArtifactNodeListEmitter, BoxNode as PageBoxNode,
     ContentHash as PageContentHash, DEFAULT_BANNER, DiscKind as PageDiscKind, EffectSink,
@@ -127,12 +127,23 @@ fn stage_form_inner(
         font_slots: Vec::new(),
         direct_font: None,
         direct_glyph: None,
+        dvi_font_count: 0,
         render_origin_ends: None,
         render_origins: tex_state::RenderProvenanceBuilder::default(),
         anchor: 0,
     };
+    let mut dvi_emitter = DviPagePlanCoEmitter::disabled();
     encoder.stream_root_nodes(|output| {
-        emit_node_list(stores, &overlay, &children, output, &mut emission, false, 1)
+        emit_node_list(
+            stores,
+            &overlay,
+            &children,
+            output,
+            &mut dvi_emitter,
+            &mut emission,
+            false,
+            1,
+        )
     })?;
     ensure_pdf_font_resources(stores, &emission.live_fonts)?;
     let bytes = encoder
@@ -255,13 +266,31 @@ pub(crate) fn stage_shipout(
 
     // Phase B holds only an immutable state view. One compact-list walk emits
     // the canonical artifact; every downstream driver consumes those bytes.
+    let mut dvi_emitter = DviPagePlanCoEmitter::new(
+        job.clone(),
+        counts,
+        &root,
+        vertical,
+        &overlay.effects,
+        emit_dvi,
+    )
+    .map_err(invalid_artifact)?;
     let mut encoder = ArtifactEmitter::new(job, counts, &root, vertical);
     let mut emission = EmissionState::page(
         stores.provenance_demand().rendered_source(),
         u32::try_from(overlay.pending_effect_count).map_err(|_| ExecError::ArithmeticOverflow)?,
     );
     encoder.stream_root_nodes(|output| {
-        emit_node_list(stores, &overlay, &children, output, &mut emission, false, 1)
+        emit_node_list(
+            stores,
+            &overlay,
+            &children,
+            output,
+            &mut dvi_emitter,
+            &mut emission,
+            false,
+            1,
+        )
     })?;
     debug_assert_eq!(
         usize::try_from(emission.anchor).ok(),
@@ -274,7 +303,9 @@ pub(crate) fn stage_shipout(
     let artifact_bytes = encoder
         .finish(&emission.fonts, &overlay.effects)
         .map_err(invalid_artifact)?;
-    let dvi_plan = compile_dvi_plan(&artifact_bytes, emit_dvi)?;
+    let dvi_plan = dvi_emitter
+        .finish(&emission.fonts, &artifact_bytes)
+        .map_err(invalid_artifact)?;
     if needs_positioned_shipout(&overlay.effects) {
         let artifact =
             tex_out::PageArtifact::from_bytes(&artifact_bytes).map_err(invalid_artifact)?;
@@ -450,6 +481,7 @@ struct EmissionState {
     font_slots: Vec<Option<u32>>,
     direct_font: Option<(FontId, u32, bool)>,
     direct_glyph: Option<(FontId, u8, tex_state::scaled::Scaled)>,
+    dvi_font_count: usize,
     anchor: u32,
     render_origin_ends: Option<Vec<u32>>,
     render_origins: tex_state::RenderProvenanceBuilder,
@@ -463,6 +495,7 @@ impl EmissionState {
             font_slots: Vec::new(),
             direct_font: None,
             direct_glyph: None,
+            dvi_font_count: 0,
             // The artifact root is a synthetic box header preceding its children.
             // Batch jobs retain no column at all; editor sessions select it once.
             render_origin_ends: rendered_source.then(|| vec![0]),
@@ -507,6 +540,14 @@ impl EmissionState {
         };
         ends.push(ends.last().copied().unwrap_or(0));
     }
+
+    fn sync_dvi_fonts(&mut self, dvi: &mut DviPagePlanCoEmitter) -> Result<(), ExecError> {
+        if self.dvi_font_count != self.fonts.len() {
+            dvi.add_fonts(&self.fonts).map_err(invalid_artifact)?;
+            self.dvi_font_count = self.fonts.len();
+        }
+        Ok(())
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -515,6 +556,7 @@ fn emit_node_list(
     overlay: &PageOverlay,
     list: &NodeListRef,
     output: &mut ArtifactNodeListEmitter<'_>,
+    dvi: &mut DviPagePlanCoEmitter,
     emission: &mut EmissionState,
     suppress_deferred_streams: bool,
     depth: usize,
@@ -528,6 +570,7 @@ fn emit_node_list(
                 list,
                 index,
                 output,
+                dvi,
                 emission,
                 suppress_deferred_streams,
                 depth,
@@ -543,11 +586,12 @@ fn emit_node_list(
     let mut index = 0;
     while index < nodes.len() {
         if let Some(run) = nodes.char_run(index) {
-            emit_char_run(stores, run, output, emission)?;
+            emit_char_run(stores, run, output, dvi, emission)?;
             index += run.len();
         } else if unmodified && let Some(NodeRef::Kern { amount, kind }) = nodes.get(index) {
             emission.node_empty();
             output.kern(amount, lower_kern_kind(kind))?;
+            dvi.kern(amount).map_err(invalid_artifact)?;
             index += 1;
         } else {
             emit_index(
@@ -556,6 +600,7 @@ fn emit_node_list(
                 list,
                 index,
                 output,
+                dvi,
                 emission,
                 suppress_deferred_streams,
                 depth,
@@ -570,6 +615,7 @@ fn emit_char_run(
     stores: &Universe,
     run: tex_state::node_arena::CharRun<'_>,
     output: &mut ArtifactNodeListEmitter<'_>,
+    dvi: &mut DviPagePlanCoEmitter,
     emission: &mut EmissionState,
 ) -> Result<(), ExecError> {
     let font = run.font();
@@ -607,6 +653,9 @@ fn emit_char_run(
             };
             emission.character_node(stores, origin);
             output.char(font_id, u32::from(code), width)?;
+            emission.sync_dvi_fonts(dvi)?;
+            dvi.char(font_id, u32::from(code), width)
+                .map_err(invalid_artifact)?;
         }
         return Ok(());
     }
@@ -625,6 +674,7 @@ fn emit_char_run(
             width,
             [origin.clone()],
             output,
+            dvi,
             emission,
         )?;
     }
@@ -638,6 +688,7 @@ fn emit_index(
     list: &NodeListRef,
     index: usize,
     output: &mut ArtifactNodeListEmitter<'_>,
+    dvi: &mut DviPagePlanCoEmitter,
     emission: &mut EmissionState,
     suppress_deferred_streams: bool,
     depth: usize,
@@ -651,6 +702,7 @@ fn emit_index(
             overlay,
             &replacement,
             output,
+            dvi,
             emission,
             suppress_deferred_streams,
             depth + 1,
@@ -675,6 +727,7 @@ fn emit_index(
                 width,
                 [origin_root.clone()],
                 output,
+                dvi,
                 emission,
             )?;
         }
@@ -694,12 +747,14 @@ fn emit_index(
                 width,
                 origin_roots.iter().cloned(),
                 output,
+                dvi,
                 emission,
             )?;
         }
         NodeRef::Kern { amount, kind } => {
             emission.node(stores, []);
             output.kern(amount, lower_kern_kind(kind))?;
+            dvi.kern(amount).map_err(invalid_artifact)?;
         }
         NodeRef::MarginKern {
             amount,
@@ -711,12 +766,13 @@ fn emit_index(
             let projection = glyph_projection(stores, font, code, width, emission)?;
             emission.node(stores, []);
             output.margin_kern(amount, lower_margin_kern_side(side), projection.font_id, ch)?;
+            dvi.kern(amount).map_err(invalid_artifact)?;
         }
         NodeRef::Glue { spec, kind, leader } => {
             let spec = lower_glue(spec.spec());
             let kind = lower_glue_kind(kind);
             emit_glue(
-                stores, overlay, output, emission, spec, kind, leader, list, depth,
+                stores, overlay, output, dvi, emission, spec, kind, leader, list, depth,
             )?;
         }
         NodeRef::Penalty(value) => {
@@ -730,6 +786,7 @@ fn emit_index(
         } => {
             emission.node(stores, []);
             output.rule(width, height, depth)?;
+            dvi.rule(width, height, depth).map_err(invalid_artifact)?;
         }
         NodeRef::HList(box_node) | NodeRef::VList(box_node) => {
             let vertical = matches!(node, NodeRef::VList(_));
@@ -737,6 +794,7 @@ fn emit_index(
                 stores,
                 overlay,
                 output,
+                dvi,
                 emission,
                 box_node,
                 list,
@@ -758,6 +816,8 @@ fn emit_index(
             ..
         } => {
             emission.node(stores, []);
+            let dvi_font_count = emission.dvi_font_count;
+            let mut ignored_dvi = DviPagePlanCoEmitter::disabled();
             output.disc(lower_disc_kind(kind), |disc| {
                 disc.pre(|nodes| {
                     emit_node_list(
@@ -767,6 +827,7 @@ fn emit_index(
                             .resolve(pre)
                             .expect("discretionary pre-break list belongs to its owner"),
                         nodes,
+                        &mut ignored_dvi,
                         emission,
                         suppress_deferred_streams,
                         depth + 1,
@@ -780,6 +841,7 @@ fn emit_index(
                             .resolve(post)
                             .expect("discretionary post-break list belongs to its owner"),
                         nodes,
+                        &mut ignored_dvi,
                         emission,
                         suppress_deferred_streams,
                         depth + 1,
@@ -793,12 +855,14 @@ fn emit_index(
                             .resolve(replace)
                             .expect("discretionary replacement list belongs to its owner"),
                         nodes,
+                        &mut ignored_dvi,
                         emission,
                         suppress_deferred_streams,
                         depth + 1,
                     )
                 })
             })?;
+            emission.dvi_font_count = dvi_font_count;
         }
         NodeRef::Mark { class, tokens } => {
             emission.node(stores, []);
@@ -822,6 +886,8 @@ fn emit_index(
         }
         NodeRef::Ins { class, content, .. } => {
             emission.node(stores, []);
+            let dvi_font_count = emission.dvi_font_count;
+            let mut ignored_dvi = DviPagePlanCoEmitter::disabled();
             output.insert(class, |nodes| {
                 emit_node_list(
                     stores,
@@ -830,11 +896,13 @@ fn emit_index(
                         .resolve(content)
                         .expect("insertion content belongs to its enclosing owner"),
                     nodes,
+                    &mut ignored_dvi,
                     emission,
                     suppress_deferred_streams,
                     depth + 1,
                 )
             })?;
+            emission.dvi_font_count = dvi_font_count;
         }
         NodeRef::Whatsit(whatsit) => {
             if let Some(effect_index) =
@@ -842,19 +910,25 @@ fn emit_index(
             {
                 emission.node(stores, []);
                 output.whatsit_anchor(effect_index)?;
+                dvi.whatsit(effect_index, &overlay.effects)
+                    .map_err(invalid_artifact)?;
             }
         }
         NodeRef::MathOn(width) => {
             emission.node(stores, []);
             output.math_on(width)?;
+            dvi.math(width).map_err(invalid_artifact)?;
         }
         NodeRef::MathOff(width) => {
             emission.node(stores, []);
             output.math_off(width)?;
+            dvi.math(width).map_err(invalid_artifact)?;
         }
         NodeRef::Direction(_) => {}
         NodeRef::Adjust(content) => {
             emission.node(stores, []);
+            let dvi_font_count = emission.dvi_font_count;
+            let mut ignored_dvi = DviPagePlanCoEmitter::disabled();
             output.adjust(|nodes| {
                 emit_node_list(
                     stores,
@@ -863,11 +937,13 @@ fn emit_index(
                         .resolve(content.content)
                         .expect("adjustment content belongs to its enclosing owner"),
                     nodes,
+                    &mut ignored_dvi,
                     emission,
                     suppress_deferred_streams,
                     depth + 1,
                 )
             })?;
+            emission.dvi_font_count = dvi_font_count;
         }
         NodeRef::MathList(_) => unreachable!("phase A records every math-list substitution"),
         NodeRef::MathNoad(_)
@@ -886,6 +962,7 @@ fn emit_box(
     stores: &Universe,
     overlay: &PageOverlay,
     output: &mut ArtifactNodeListEmitter<'_>,
+    dvi: &mut DviPagePlanCoEmitter,
     emission: &mut EmissionState,
     box_node: StateBoxNode<NodeListId>,
     owner: &NodeListRef,
@@ -894,20 +971,27 @@ fn emit_box(
     depth: usize,
 ) -> Result<(), ExecError> {
     let fields = lower_box_header(&box_node);
+    let children = owner
+        .resolve(box_node.children)
+        .expect("box children belong to their enclosing owner");
+    dvi.begin_box(&fields, vertical, children.is_empty())
+        .map_err(invalid_artifact)?;
     emission.node_empty();
     output.box_node(vertical, &fields, |nodes| {
         emit_node_list(
             stores,
             overlay,
-            &owner
-                .resolve(box_node.children)
-                .expect("box children belong to their enclosing owner"),
+            &children,
             nodes,
+            dvi,
             emission,
             suppress_deferred_streams,
             depth + 1,
         )
     })?;
+    if !children.is_empty() {
+        dvi.end_box().map_err(invalid_artifact)?;
+    }
     Ok(())
 }
 
@@ -916,6 +1000,7 @@ fn emit_glue(
     stores: &Universe,
     overlay: &PageOverlay,
     output: &mut ArtifactNodeListEmitter<'_>,
+    dvi: &mut DviPagePlanCoEmitter,
     emission: &mut EmissionState,
     spec: PageGlueSpec,
     kind: PageGlueKind,
@@ -928,6 +1013,7 @@ fn emit_glue(
         None => {
             emission.node(stores, []);
             output.glue(spec, kind)?;
+            dvi.glue(spec).map_err(invalid_artifact)?;
         }
         Some(StateLeaderPayload::Rule {
             width,
@@ -936,11 +1022,13 @@ fn emit_glue(
         }) => {
             emission.node(stores, []);
             output.glue_rule_leader(spec, kind, width, height, depth)?;
+            dvi.leader_requires_replay();
         }
         Some(StateLeaderPayload::HList(box_node)) | Some(StateLeaderPayload::VList(box_node)) => {
             let vertical = vertical_leader;
             let fields = lower_box_header(&box_node);
             emission.node(stores, []);
+            dvi.leader_requires_replay();
             output.glue_box_leader(spec, kind, vertical, &fields, |nodes| {
                 emit_node_list(
                     stores,
@@ -949,6 +1037,7 @@ fn emit_glue(
                         .resolve(box_node.children)
                         .expect("leader children belong to their enclosing owner"),
                     nodes,
+                    dvi,
                     emission,
                     true,
                     depth + 1,
@@ -1105,13 +1194,17 @@ fn emit_glyph(
     logical_width: tex_state::scaled::Scaled,
     origins: impl IntoIterator<Item = OriginRef>,
     output: &mut ArtifactNodeListEmitter<'_>,
+    dvi: &mut DviPagePlanCoEmitter,
     emission: &mut EmissionState,
 ) -> Result<(), ExecError> {
     let projection = glyph_projection(stores, font, ch, logical_width, emission)?;
-    emit_projection_kern(projection.left, output, emission)?;
+    emit_projection_kern(projection.left, output, dvi, emission)?;
     emission.node(stores, origins);
     output.char(projection.font_id, ch, projection.width)?;
-    emit_projection_kern(projection.right, output, emission)
+    emission.sync_dvi_fonts(dvi)?;
+    dvi.char(projection.font_id, ch, projection.width)
+        .map_err(invalid_artifact)?;
+    emit_projection_kern(projection.right, output, dvi, emission)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1123,10 +1216,11 @@ fn emit_ligature(
     logical_width: tex_state::scaled::Scaled,
     origins: impl IntoIterator<Item = OriginRef>,
     output: &mut ArtifactNodeListEmitter<'_>,
+    dvi: &mut DviPagePlanCoEmitter,
     emission: &mut EmissionState,
 ) -> Result<(), ExecError> {
     let projection = glyph_projection(stores, font, ch, logical_width, emission)?;
-    emit_projection_kern(projection.left, output, emission)?;
+    emit_projection_kern(projection.left, output, dvi, emission)?;
     emission.node(stores, origins);
     output.lig(
         projection.font_id,
@@ -1134,12 +1228,16 @@ fn emit_ligature(
         source.iter().map(|source| *source as u32),
         projection.width,
     )?;
-    emit_projection_kern(projection.right, output, emission)
+    emission.sync_dvi_fonts(dvi)?;
+    dvi.char(projection.font_id, ch, projection.width)
+        .map_err(invalid_artifact)?;
+    emit_projection_kern(projection.right, output, dvi, emission)
 }
 
 fn emit_projection_kern(
     amount: tex_state::scaled::Scaled,
     output: &mut ArtifactNodeListEmitter<'_>,
+    dvi: &mut DviPagePlanCoEmitter,
     emission: &mut EmissionState,
 ) -> Result<(), ExecError> {
     if amount.raw() == 0 {
@@ -1147,6 +1245,7 @@ fn emit_projection_kern(
     }
     emission.node_empty();
     output.kern(amount, PageKernKind::Explicit)?;
+    dvi.kern(amount).map_err(invalid_artifact)?;
     Ok(())
 }
 

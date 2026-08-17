@@ -553,6 +553,7 @@ impl<'a> V10NodeListWriter<'a> {
         }
     }
 
+    #[inline]
     fn begin_node(&mut self) -> Result<(), SerializeError> {
         if self.depth > self.writer.limits.max_depth {
             return Err(SerializeError::LimitExceeded {
@@ -596,6 +597,7 @@ impl<'a> V10NodeListWriter<'a> {
         Ok(())
     }
 
+    #[inline]
     pub fn char(&mut self, font_id: u32, ch: u32, width: Scaled) -> Result<(), SerializeError> {
         self.begin_node()?;
         let mut bytes = [0; 13];
@@ -632,6 +634,7 @@ impl<'a> V10NodeListWriter<'a> {
         Ok(())
     }
 
+    #[inline]
     pub fn kern(&mut self, amount: Scaled, kind: KernKind) -> Result<(), SerializeError> {
         self.begin_node()?;
         self.writer.u8(wire::node::KERN);

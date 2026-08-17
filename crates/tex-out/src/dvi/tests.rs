@@ -3,7 +3,9 @@ use super::opcodes::{
     FNT4, ID_BYTE, NUM, POP, POST, POST_POST, PRE, PUSH, PUT_RULE, RIGHT1, SET_RULE, SET1, XXX1,
     XXX4,
 };
-use super::{DviError, DviPagePlan, DviPagePlanBuilder, DviStreamWriter, write_dvi};
+use super::{
+    DviError, DviPagePlan, DviPagePlanBuilder, DviPagePlanCoEmitter, DviStreamWriter, write_dvi,
+};
 use crate::{
     BoxNode, ContentHash, FontResource, GlueKind, GlueOrder, GlueSetRatio, GlueSign, GlueSpec,
     JobInfo, LeaderPayload, PageArtifact, PageEffect, PageNode,
@@ -139,6 +141,125 @@ fn incremental_event_plan_matches_owned_compilation() {
     assert_eq!(
         incremental,
         DviPagePlan::compile(&page).expect("compile owned plan")
+    );
+}
+
+#[test]
+fn co_emitted_scalar_plan_matches_owned_compilation_without_byte_replay() {
+    let glue = GlueSpec {
+        width: sp(7),
+        stretch: sp(0),
+        stretch_order: GlueOrder::Normal,
+        shrink: sp(0),
+        shrink_order: GlueOrder::Normal,
+    };
+    let nested = box_node(50, 20, 5, vec![char_node(3, b'B' as u32, 40)]);
+    let mut page = glyph_page(19);
+    page.testing_mut().root = hlist(
+        300,
+        100,
+        30,
+        vec![
+            char_node(3, b'A' as u32, 50),
+            kern_node(3),
+            PageNode::Glue {
+                spec: glue,
+                kind: GlueKind::Normal,
+                leader: None,
+            },
+            rule_node(4, 5, 1),
+            PageNode::HList(nested.clone()),
+            PageNode::WhatsitAnchor { effect_index: 0 },
+            PageNode::MathOn(sp(2)),
+        ],
+    );
+    page.testing_mut().effects = vec![PageEffect::Special {
+        class: "dvi".to_owned(),
+        payload: b"co-emitted".to_vec(),
+    }];
+    let PageNode::HList(root) = &page.root else {
+        unreachable!("test page has an hlist root")
+    };
+    let mut co_emitter = DviPagePlanCoEmitter::new(
+        page.job.clone(),
+        page.counts,
+        root,
+        false,
+        &page.effects,
+        true,
+    )
+    .expect("start co-emitted plan");
+    co_emitter
+        .add_fonts(&page.fonts)
+        .expect("register co-emitted font");
+    co_emitter
+        .char(3, b'A' as u32, sp(50))
+        .expect("co-emit character");
+    co_emitter.kern(sp(3)).expect("co-emit kern");
+    co_emitter.glue(glue).expect("co-emit glue");
+    co_emitter
+        .rule(Some(sp(4)), Some(sp(5)), Some(sp(1)))
+        .expect("co-emit rule");
+    co_emitter
+        .begin_box(&nested, false, false)
+        .expect("begin co-emitted box");
+    co_emitter
+        .char(3, b'B' as u32, sp(40))
+        .expect("co-emit nested character");
+    co_emitter.end_box().expect("end co-emitted box");
+    co_emitter
+        .whatsit(0, &page.effects)
+        .expect("co-emit special");
+    co_emitter.math(sp(2)).expect("co-emit math boundary");
+    let bytes = page.to_bytes().expect("serialize unchanged artifact");
+    let co_emitted = co_emitter
+        .finish(&page.fonts, &bytes)
+        .expect("finish co-emitted plan")
+        .expect("DVI sidecar is enabled");
+
+    assert_eq!(
+        co_emitted,
+        DviPagePlan::compile(&page).expect("compile owned reference plan")
+    );
+    assert_eq!(
+        bytes,
+        page.to_bytes().expect("artifact serialization stays exact")
+    );
+}
+
+#[test]
+fn co_emitted_leader_uses_operation_local_streaming_replay() {
+    let mut page = empty_page(23);
+    page.testing_mut().root = hlist(
+        40,
+        10,
+        0,
+        vec![leader_glue(
+            GlueKind::Leaders,
+            40,
+            LeaderPayload::HList(box_node(10, 10, 0, vec![rule_node(10, 10, 0)])),
+        )],
+    );
+    let PageNode::HList(root) = &page.root else {
+        unreachable!("test page has an hlist root")
+    };
+    let mut co_emitter = DviPagePlanCoEmitter::new(
+        page.job.clone(),
+        page.counts,
+        root,
+        false,
+        &page.effects,
+        true,
+    )
+    .expect("start leader plan");
+    co_emitter.leader_requires_replay();
+    let bytes = page.to_bytes().expect("serialize leader artifact");
+
+    assert_eq!(
+        co_emitter
+            .finish(&page.fonts, &bytes)
+            .expect("finish replayed leader plan"),
+        Some(DviPagePlan::compile_v10(&bytes).expect("stream leader reference"))
     );
 }
 
