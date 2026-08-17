@@ -112,6 +112,12 @@ pub(crate) fn trace_int_param(
     old: i32,
     new: i32,
 ) {
+    // `\tracingassigns` itself can change the live gate.  Preserve both
+    // etex.ch checks, but do not render names and values when neither the
+    // pre-image nor post-image requests a trace.
+    if !tracing_before && stores.int_param(IntParam::TRACING_ASSIGNS) <= 0 {
+        return;
+    }
     let name = escaped(stores, &int_param_name(index));
     trace_scalar(
         stores,
@@ -131,10 +137,13 @@ pub(crate) fn trace_int_register(
     old: i32,
     new: i32,
 ) {
-    let name = escaped(stores, &format!("count{index}"));
     // Count registers cannot alias `\tracingassigns` itself, so the live gate
     // at call time already equals its pre-write value.
     let tracing_before = stores.int_param(IntParam::TRACING_ASSIGNS) > 0;
+    if !tracing_before {
+        return;
+    }
+    let name = escaped(stores, &format!("count{index}"));
     trace_scalar(
         stores,
         tracing_before,
@@ -153,8 +162,11 @@ pub(crate) fn trace_dimen_param(
     old: Scaled,
     new: Scaled,
 ) {
-    let name = escaped(stores, &dimen_param_name(index));
     let tracing_before = stores.int_param(IntParam::TRACING_ASSIGNS) > 0;
+    if !tracing_before {
+        return;
+    }
+    let name = escaped(stores, &dimen_param_name(index));
     trace_scalar(
         stores,
         tracing_before,
@@ -173,8 +185,11 @@ pub(crate) fn trace_dimen_register(
     old: Scaled,
     new: Scaled,
 ) {
-    let name = escaped(stores, &format!("dimen{index}"));
     let tracing_before = stores.int_param(IntParam::TRACING_ASSIGNS) > 0;
+    if !tracing_before {
+        return;
+    }
+    let name = escaped(stores, &format!("dimen{index}"));
     trace_scalar(
         stores,
         tracing_before,
@@ -204,9 +219,12 @@ pub(crate) fn trace_glue_param(
     new: GlueSpec,
     changed: bool,
 ) {
+    let tracing_before = stores.int_param(IntParam::TRACING_ASSIGNS) > 0;
+    if !tracing_before {
+        return;
+    }
     let (raw_name, unit) = glue_param_name(index);
     let name = escaped(stores, &raw_name);
-    let tracing_before = stores.int_param(IntParam::TRACING_ASSIGNS) > 0;
     let old_text = format_glue_with_unit(old, unit);
     let new_text = format_glue_with_unit(new, unit);
     trace_scalar(
@@ -229,8 +247,11 @@ pub(crate) fn trace_glue_register(
     new: GlueSpec,
     changed: bool,
 ) {
-    let name = escaped(stores, &format!("skip{index}"));
     let tracing_before = stores.int_param(IntParam::TRACING_ASSIGNS) > 0;
+    if !tracing_before {
+        return;
+    }
+    let name = escaped(stores, &format!("skip{index}"));
     let old_text = format_glue_with_unit(old, "pt");
     let new_text = format_glue_with_unit(new, "pt");
     trace_scalar(
@@ -253,8 +274,11 @@ pub(crate) fn trace_muglue_register(
     new: GlueSpec,
     changed: bool,
 ) {
-    let name = escaped(stores, &format!("muskip{index}"));
     let tracing_before = stores.int_param(IntParam::TRACING_ASSIGNS) > 0;
+    if !tracing_before {
+        return;
+    }
+    let name = escaped(stores, &format!("muskip{index}"));
     let old_text = format_glue_with_unit(old, "mu");
     let new_text = format_glue_with_unit(new, "mu");
     trace_scalar(
@@ -275,8 +299,11 @@ pub(crate) fn trace_tok_param(
     old: &TokenListRef,
     new: &TokenListRef,
 ) {
-    let name = escaped(stores, &tok_param_name(index));
     let tracing_before = stores.int_param(IntParam::TRACING_ASSIGNS) > 0;
+    if !tracing_before {
+        return;
+    }
+    let name = escaped(stores, &tok_param_name(index));
     let old_text = tokens_text(stores, old.tokens());
     let new_text = tokens_text(stores, new.tokens());
     trace_scalar(
@@ -297,8 +324,11 @@ pub(crate) fn trace_toks_register(
     old: &TokenListRef,
     new: &TokenListRef,
 ) {
-    let name = escaped(stores, &format!("toks{index}"));
     let tracing_before = stores.int_param(IntParam::TRACING_ASSIGNS) > 0;
+    if !tracing_before {
+        return;
+    }
+    let name = escaped(stores, &format!("toks{index}"));
     let old_text = tokens_text(stores, old.tokens());
     let new_text = tokens_text(stores, new.tokens());
     trace_scalar(
@@ -340,6 +370,10 @@ pub(crate) fn trace_box_write(
     }
 
     let tracing_before = stores.int_param(IntParam::TRACING_ASSIGNS) > 0;
+    if !tracing_before {
+        write(stores);
+        return;
+    }
     let old = stores.box_reg_ref(index);
     let name = escaped(stores, &format!("box{index}"));
     let old_text = stores.box_assignment_trace_text(old.as_ref());
@@ -393,6 +427,10 @@ pub(crate) fn trace_penalty_array(
     old: &[i32],
     new: &[i32],
 ) {
+    let tracing_before = stores.int_param(IntParam::TRACING_ASSIGNS) > 0;
+    if !tracing_before {
+        return;
+    }
     let raw_name = match kind {
         PenaltyArrayKind::InterLine => "interlinepenalties",
         PenaltyArrayKind::Club => "clubpenalties",
@@ -400,7 +438,6 @@ pub(crate) fn trace_penalty_array(
         PenaltyArrayKind::DisplayWidow => "displaywidowpenalties",
     };
     let name = escaped(stores, raw_name);
-    let tracing_before = stores.int_param(IntParam::TRACING_ASSIGNS) > 0;
     let old_text = penalty_array_text(stores, old);
     let new_text = penalty_array_text(stores, new);
     trace_scalar(
@@ -435,8 +472,11 @@ pub(crate) fn trace_code(
     old: i32,
     new: i32,
 ) {
-    let name = escaped(stores, &format!("{primitive_name}{}", ch as u32));
     let tracing_before = stores.int_param(IntParam::TRACING_ASSIGNS) > 0;
+    if !tracing_before {
+        return;
+    }
+    let name = escaped(stores, &format!("{primitive_name}{}", ch as u32));
     trace_scalar(
         stores,
         tracing_before,

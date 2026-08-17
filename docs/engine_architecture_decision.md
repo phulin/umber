@@ -355,3 +355,18 @@ ignored oracle as a pass.
 The final deletion stage reruns the `.12` exact-work performance gates and the
 complete correctness hierarchy. It is complete only when the static deletion
 criteria above hold, not merely when the fast path is the default.
+
+## Implemented convergence
+
+Issue `umber2-c1p8` removed the remaining closed-root executor. Production no
+longer contains `NativeBatchProgram`, its private control dispatcher or
+scanner grammar, `CountGroupEpisode`, its character/kern sink, synthesized
+shipout, packed-root continuation, or coverage-fallback telemetry. All roots
+run the complete static profile vocabulary through the bounded
+`MainControl::advance_episode` loop and its sole aggregate rollback owner.
+
+Required semantic barriers remain. Group-lineage and nonrollbackable changes
+are internal early-commit reasons, not selection of another executor. The
+historical `.8`--`.13` rows therefore remain prototype and migration evidence;
+the maintained performance workload is `canonical_episode`, which measures
+the converged production route.

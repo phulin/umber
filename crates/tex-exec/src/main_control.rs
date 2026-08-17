@@ -89,13 +89,6 @@ fn take_prepared_dvi_pages(pages: &mut PreparedDviPages) -> Vec<crate::dispatch:
 #[derive(Debug, Default)]
 pub struct MainControl {
     command: CommandState,
-    /// Mutation-free admission for the packed exact-byte root episode.
-    ///
-    /// This is an execution plan over the same `CommandState`/`Universe`
-    /// owner, not a second engine. Unsupported roots leave this empty and
-    /// continue through ordinary canonical delivery from the untouched root.
-    packed_root_episode: Option<PackedRootEpisode>,
-    packed_root_terminal_pending: bool,
     /// Operational memo service owned by the execution/session layer.
     pure_memo: Arc<std::sync::Mutex<tex_state::PureMemoRuntime>>,
     pure_memo_initialized: bool,
@@ -286,11 +279,6 @@ pub struct MainControl {
     /// Monotonic evidence for bounded semantic episode admission and return.
     /// Like command fuel, this is operational and rollback never refunds it.
     episode_telemetry: crate::EpisodeTelemetry,
-}
-
-#[derive(Clone, Debug)]
-struct PackedRootEpisode {
-    program: tex_command::NativeBatchProgram,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -1238,11 +1226,6 @@ impl MainControl {
         stores: &mut Universe,
     ) -> Result<(), crate::CheckpointRestoreError> {
         checkpoint.restore_state(&mut self.command, &mut self.modes, stores)?;
-        // Admission plans are operational and deliberately absent from
-        // durable checkpoints. A restore may move this same control behind
-        // or ahead of its former packed root, so no pre-restore plan or
-        // terminal continuation may survive it.
-        self.discard_packed_root_episode();
         self.active_alignment = None;
         self.boxes = ReplayBoxes::default();
         self.pending_shipout_boundary = false;
@@ -1624,25 +1607,6 @@ impl MainControl {
         Ok(id)
     }
 
-    /// Registers the production root and retains a canonical-input episode
-    /// marker for unobserved batch sessions.
-    ///
-    /// There is no admission tokenizer or second cursor. Both fused and
-    /// ordinary execution consume this one registered `CommandState` root,
-    /// and every speculative attempt is protected by the aggregate snapshot.
-    pub fn register_root_source_for_batch(
-        &mut self,
-        _stores: &Universe,
-        source: SourceRegistration,
-    ) -> Result<tex_state::SourceId, SourceRegistrationError> {
-        let expected_calls = source.shared_bytes().len().saturating_div(5).max(1);
-        let id = self.register_root_source(source)?;
-        self.packed_root_episode = Some(PackedRootEpisode {
-            program: tex_command::NativeBatchProgram::new(expected_calls),
-        });
-        Ok(id)
-    }
-
     /// Publishes source-open framing after root registration without
     /// consuming the first command, allowing hosts to checkpoint JobStart.
     pub fn flush_pending_file_framing(&mut self, stores: &mut Universe) {
@@ -1715,7 +1679,7 @@ impl MainControl {
         if let Some(extension) = path.extension().and_then(|value| value.to_str()) {
             stores.remember_string_pool_string(&format!(".{extension}"));
         }
-        let id = self.register_root_source_for_batch(stores, source)?;
+        let id = self.register_root_source(source)?;
         if has_resolved_name {
             self.command
                 .render_file_framing_events(&mut stores.command_context());
@@ -2681,13 +2645,13 @@ impl MainControl {
             ));
         }
         if stores.group_depth() != initial_group_depth {
-            return Some(crate::EpisodeCommitBoundary::CoverageBoundary(
-                crate::EpisodeCoverageFamily::GroupLineage,
+            return Some(crate::EpisodeCommitBoundary::InternalStop(
+                crate::EpisodeInternalStop::GroupLineage,
             ));
         }
         if !snapshot.can_rollback(stores) {
-            return Some(crate::EpisodeCommitBoundary::CoverageBoundary(
-                crate::EpisodeCoverageFamily::RollbackLineage,
+            return Some(crate::EpisodeCommitBoundary::InternalStop(
+                crate::EpisodeInternalStop::RollbackLineage,
             ));
         }
         (operations >= max_operations).then_some(crate::EpisodeCommitBoundary::SliceLimit)
@@ -2891,8 +2855,8 @@ impl MainControl {
                             operations
                                 .try_into()
                                 .expect("bounded episode operation count fits u16"),
-                            crate::EpisodeCommitBoundary::CoverageBoundary(
-                                crate::EpisodeCoverageFamily::RollbackLineage,
+                            crate::EpisodeCommitBoundary::InternalStop(
+                                crate::EpisodeInternalStop::RollbackLineage,
                             ),
                         ));
                 } else {
@@ -2998,8 +2962,8 @@ impl MainControl {
                                 operations
                                     .try_into()
                                     .expect("bounded episode operation count fits u16"),
-                                crate::EpisodeCommitBoundary::CoverageBoundary(
-                                    crate::EpisodeCoverageFamily::RollbackLineage,
+                                crate::EpisodeCommitBoundary::InternalStop(
+                                    crate::EpisodeInternalStop::RollbackLineage,
                                 ),
                             ))
                     }
@@ -3126,7 +3090,6 @@ impl MainControl {
     /// remain ordinary diagnostics. In either case the next call creates a
     /// fresh command processor; no delivered `CurrentCommand` is retained.
     pub fn advance(&mut self, stores: &mut Universe) -> Result<StepResult, ExecError> {
-        self.discard_packed_root_episode();
         if !self.pure_memo_initialized {
             let runtime = stores.take_pure_memo_config().map_or_else(
                 tex_state::PureMemoRuntime::default,
@@ -3147,158 +3110,6 @@ impl MainControl {
         )
     }
 
-    fn advance_packed_root(
-        &mut self,
-        stores: &mut Universe,
-    ) -> Option<Result<StepResult, ExecError>> {
-        if std::mem::take(&mut self.packed_root_terminal_pending) {
-            let commit = crate::EpisodeCommit::new(1, crate::EpisodeCommitBoundary::Terminal);
-            self.episode_telemetry.record_attempt();
-            self.episode_telemetry.record_commit(commit);
-            return Some(Ok(StepResult::Progress(ReplayStep::End)));
-        }
-        let episode = self.packed_root_episode.take()?;
-        self.episode_telemetry.record_attempt();
-        let font_id = stores.current_font();
-        let font = stores.font(font_id).clone();
-        let aggregate = self.snapshot_step(stores);
-        let attempt = crate::execute_packed_episode(
-            stores,
-            &mut self.command,
-            &mut self.capabilities,
-            &episode.program,
-            font_id,
-            &font,
-        );
-        let result = match attempt {
-            Ok(crate::PackedEpisodeAttempt::Completed(result)) => result,
-            Ok(crate::PackedEpisodeAttempt::Coverage(protocol)) => {
-                self.rollback_step(aggregate, stores);
-                self.packed_root_episode = Some(episode);
-                self.episode_telemetry.record_fallback(protocol);
-                return None;
-            }
-            Ok(crate::PackedEpisodeAttempt::Barrier(_))
-            | Ok(crate::PackedEpisodeAttempt::RootCompletion) => {
-                self.rollback_step(aggregate, stores);
-                self.packed_root_episode = Some(episode);
-                return None;
-            }
-            Err(error) => {
-                self.rollback_step(aggregate, stores);
-                self.packed_root_episode = Some(episode);
-                return Some(Err(ExecError::InvalidShipoutArtifact(error.to_string())));
-            }
-        };
-        if let Err(error) = self.fuel.fuel_mut().charge_many(result.fuel_charges) {
-            self.rollback_step(aggregate, stores);
-            self.packed_root_episode = Some(episode);
-            self.episode_telemetry
-                .record_rollback(crate::SemanticEpisodeBarrier::Fuel);
-            return Some(Err(command_error(error)));
-        }
-
-        let mut counts = [0_i32; 10];
-        counts[..3].copy_from_slice(&result.counts);
-        let pending_end = stores.world().effect_records().len();
-        let marker_start = print_ship_out_marker_open(stores, 0, &counts, None);
-        let input_summary = stores.input_summary().clone();
-        let output_open_context = self.command.output_open_context(&stores.command_context());
-        let emit_dvi = self
-            .emit_dvi_override
-            .unwrap_or(!self.command_profile().capabilities().supports_pdftex());
-        let mut write = |_stores: &mut Universe,
-                         _sink: tex_state::PrintSink,
-                         _tokens: TokenListId|
-         -> Result<crate::shipout::ExpandedWrite, ExecError> {
-            unreachable!("admitted packed nodes cannot contain deferred writes")
-        };
-        let mut replay = |_stores: &mut Universe,
-                          _kind: crate::shipout::ReplayTextKind,
-                          _tokens: TokenListId|
-         -> Result<crate::shipout::ExpandedReplayText, ExecError> {
-            unreachable!("admitted packed nodes cannot contain replay text")
-        };
-        let publication = crate::shipout::ShipoutTransaction::new(&mut write, &mut replay)
-            .stage_page(
-                result.root,
-                input_summary,
-                crate::shipout::ShipoutOrigin {
-                    output_open_context: Some(output_open_context),
-                    pending_end,
-                    announce_openout: self.command_profile().capabilities().supports_pdftex(),
-                },
-                stores,
-                emit_dvi,
-            );
-        let mut publication = match publication {
-            Ok(Some(publication)) => publication,
-            Ok(None) => {
-                self.rollback_step(aggregate, stores);
-                self.packed_root_episode = Some(episode);
-                return Some(Err(ExecError::InvalidShipoutArtifact(
-                    "packed episode page was rejected".to_owned(),
-                )));
-            }
-            Err(error) => {
-                self.rollback_step(aggregate, stores);
-                self.packed_root_episode = Some(episode);
-                return Some(Err(error));
-            }
-        };
-        print_ship_out_marker_close(stores, 0);
-        stores.world_mut().claim_effect_publication_boundary(
-            pending_end..marker_start,
-            marker_start,
-            publication.artifact.effect(),
-            publication
-                .effect_output_attempt
-                .expect("shipout assigns output-attempt ownership"),
-        );
-        publication.effects = marker_start..stores.world().effect_records().len();
-        stores
-            .world_mut()
-            .claim_effect_publication(publication.effects.clone(), publication.artifact.effect());
-        if let Some(page) = publication.dvi {
-            push_prepared_dvi_page(&mut self.prepared_dvi_pages, page);
-        }
-        self.completed_boundaries
-            .push(crate::EngineBoundary::ShipoutComplete);
-
-        // The packed root has consumed the logical `\end`. Retire the same
-        // canonical input state rather than manufacturing a second terminal
-        // engine state, then let the retained session observe terminal return
-        // on its next bounded advance.
-        let incomplete_conditions = command_processor(
-            &mut self.command,
-            self.fuel.fuel_mut(),
-            &mut self.capabilities,
-            &mut self.operation_observations,
-            stores,
-        )
-        .final_cleanup();
-        self.drain_file_framing_events(stores);
-        self.end_of_job_final_cleanup(stores, false, incomplete_conditions);
-        if let Err(error) = stores.commit_effects(stores.world().effect_pos()) {
-            self.rollback_step(aggregate, stores);
-            self.packed_root_episode = Some(episode);
-            return Some(Err(ExecError::World(error)));
-        }
-        self.commit_step(aggregate, stores);
-        self.packed_root_terminal_pending = true;
-        let commit = crate::EpisodeCommit::new(
-            1,
-            crate::EpisodeCommitBoundary::Semantic(crate::SemanticEpisodeBarrier::Output),
-        );
-        self.episode_telemetry.record_commit(commit);
-        Some(Ok(StepResult::Progress(ReplayStep::Continue)))
-    }
-
-    fn discard_packed_root_episode(&mut self) {
-        self.packed_root_episode = None;
-        self.packed_root_terminal_pending = false;
-    }
-
     /// Advances one production driver chunk under a single bounded retry
     /// point. The public one-operation [`Self::advance`] contract remains
     /// available to diagnostic and focused-test callers.
@@ -3314,25 +3125,13 @@ impl MainControl {
         if self.fatal.is_some() {
             return Ok(StepResult::Progress(MainControlStep::End));
         }
-        if let Some(result) = self.advance_packed_root(stores) {
-            return result;
-        }
-        let packed_retry_pending = self.packed_root_episode.is_some();
         let result = self.execute_operation(
             stores,
             OperationDelivery::Replay(None),
             OperationTransaction::Advance,
-            if packed_retry_pending { 1 } else { 256 },
+            256,
             None,
         );
-        if matches!(
-            result,
-            Ok(StepResult::Progress(
-                ReplayStep::End | ReplayStep::EndOfInput
-            ))
-        ) {
-            self.discard_packed_root_episode();
-        }
         result
     }
 
@@ -3346,7 +3145,6 @@ impl MainControl {
         &mut self,
         stores: &mut Universe,
     ) -> Result<TrackedStepResult, ExecError> {
-        self.discard_packed_root_episode();
         if !self.pure_memo_initialized {
             let runtime = stores.take_pure_memo_config().map_or_else(
                 tex_state::PureMemoRuntime::default,
@@ -3380,7 +3178,6 @@ impl MainControl {
         &mut self,
         stores: &mut Universe,
     ) -> Result<DiagnosticStepResult, ExecError> {
-        self.discard_packed_root_episode();
         let snapshot = self.snapshot_step(stores);
         let operation = (|| {
             self.refresh_host_capabilities(stores);
@@ -4803,7 +4600,6 @@ impl MainControl {
         stores: &mut Universe,
         observer: &mut dyn CommandObserver,
     ) -> Result<StepResult, ExecError> {
-        self.discard_packed_root_episode();
         if !self.pure_memo_initialized {
             let runtime = stores.take_pure_memo_config().map_or_else(
                 tex_state::PureMemoRuntime::default,

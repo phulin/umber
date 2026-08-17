@@ -24,18 +24,11 @@ Command operands are scanned by `tex-command` into typed request and result valu
 - `Cargo.toml`: execution-layer dependencies and workspace lints; neither normal nor development dependencies include a retired command crate.
 - `src/lib.rs`: public surface and module wiring. Do not add a second command front or a crate-wide dead-code allowance.
 - `src/episode.rs` and `src/episode/tests.rs`: typed semantic commit/barrier
-  protocol, temporary coverage-fallback safety proofs, fixed-size operational
-  counters, and focused rollback/publication perturbation tests.
+  protocol, internal group/rollback stops, fixed-size operational counters,
+  and focused rollback/publication perturbation tests. Coverage fallback is
+  structurally absent: every retained root uses this same dispatcher loop.
 - `src/main_control.rs`: sole production command delivery and execution driver, including complete-job versus fragment root completion, bounded terminal-input continuation, loaded-profile versus canonical engine-binary semantic selection, typed committed mutation/effect observations, strong macro owners across scanned assignment apply seams, the execution-owned memo capability, and the ordinary-operation tracked-region lifecycle and mode projection.
 - `src/canonical_step.rs`: shared bounded-step result protocol and output ledger for checkpoint publication, resource fulfillment, suspension accounting, and cancellation.
-- `src/native_batch.rs` and `src/native_batch/tests.rs`: private packed-output
-  construction inside `MainControl`'s full command/state/mode aggregate
-  transaction through the production `CommandProcessor`, canonical mutable
-  node builder, and ordinary shipout transaction; typed execution refusal,
-  exact input rollback, and exact state/artifact/byte/DVI/effect/channel
-  coverage. No private tokenizer/input frame, packed token/node vector,
-  detached artifact builder, standalone runner, engine selector, or
-  independent lifecycle lives here.
 - `src/assignments/`: the `AssignmentCommitter` authority for scoped writes,
   e-TeX redundant-local decisions, tracing, and typed mutation receipts, plus
   primitive registration delegated from `tex-command`'s integrated catalogue.

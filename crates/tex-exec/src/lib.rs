@@ -24,7 +24,6 @@ mod job_output;
 mod main_control;
 mod math;
 mod mode;
-mod native_batch;
 mod node_dump;
 mod output_provenance;
 mod pack_report;
@@ -66,8 +65,8 @@ pub use dispatch::{
     RevisionOutputPatchError,
 };
 pub use episode::{
-    CoverageFallbackSafety, EpisodeCommit, EpisodeCommitBoundary, EpisodeCoverageFallback,
-    EpisodeCoverageFamily, EpisodeTelemetry, SemanticEpisodeBarrier,
+    EpisodeCommit, EpisodeCommitBoundary, EpisodeInternalStop, EpisodeTelemetry,
+    SemanticEpisodeBarrier,
 };
 pub use error::{
     ExecError, FrozenDiagnosticContext, FrozenDiagnosticEvidence, FrozenDiagnosticGroup,
@@ -90,7 +89,6 @@ pub use mode::{
     AlignColumn, AlignState, AlignmentKind, AlignmentPackSpec, Mode, ModeLevelSummary, ModeList,
     ModeNest, ModeNestSummary,
 };
-pub(crate) use native_batch::{PackedEpisodeAttempt, execute_packed_episode};
 pub use paragraph_end::cached_pretolerance_plan;
 pub use retained_resource::{
     ResourceFulfillment, ResourceHost, ResourceOutcome, ResourceWorld, canonical_font_resource_path,

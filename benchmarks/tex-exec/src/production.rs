@@ -35,7 +35,7 @@ pub fn run_production(workload: &Workload) -> Result<BatchResult, ProductionErro
     control.set_dvi_output(true);
     let source = SourceRegistration::new(RegisteredSourceKind::Generated, workload.source());
     control
-        .register_root_source_for_batch(&stores, source)
+        .register_root_source(source)
         .map_err(ProductionError::Register)?;
 
     loop {

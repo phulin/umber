@@ -109,5 +109,5 @@ fn parse_usize(value: Option<String>, name: &str) -> Result<usize, String> {
 }
 
 fn usage() -> String {
-    "usage: native_batch <calls> [relax-padding] [direct|nested]".to_owned()
+    "usage: canonical_episode <calls> [relax-padding] [direct|nested]".to_owned()
 }

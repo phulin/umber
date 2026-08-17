@@ -125,3 +125,22 @@ Beads:
 Until those blockers close, the valid deletion boundary is narrow: delete
 only adapters with no semantic caller, retain scalar semantics, and keep every
 fallback explicit and counted.
+
+## Cutover update
+
+Issue `umber2-c1p8` subsequently removed the migration-only path inventoried
+above. Every production and test root now enters the complete bounded
+`MainControl` dispatcher directly; there is no command-vocabulary admission,
+packed root marker, packed terminal continuation, or coverage-fallback
+counter. The ten-control kernel, count/group sidecar, A/kern-only sink, and
+synthesized shipout path are deleted. `umber2-64v2.16` may now perform its
+final static and performance audit against the one canonical executor.
+
+The final same-tree 10,000-call comparison changes only the public driver.
+Direct scalar/episode medians are 893.157/514.320 ms, 615,016/286,436
+allocation calls, 194,979,672/81,861,980 requested bytes, and 40,860/38,996
+KiB peak RSS. Nested scalar/episode medians are 902.073/536.304 ms,
+615,074/286,489 calls, 203,546,559/80,474,939 bytes, and 39,588/37,916 KiB peak
+RSS. Exact fuel and output-work fields agree. The episode therefore recovers a
+1.74x direct and 1.68x nested CPU gain while removing 53.4% of allocation calls
+and 58.0--60.5% of requested bytes without retaining a second executor.

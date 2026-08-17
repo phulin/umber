@@ -1,4 +1,4 @@
-//! Typed commit, barrier, and coverage-fallback vocabulary for semantic episodes.
+//! Typed commit and barrier vocabulary for canonical semantic episodes.
 //!
 //! These values are operational evidence. They describe why the one live
 //! `MainControl` transaction returned to its session owner; they are not
@@ -30,67 +30,19 @@ impl SemanticEpisodeBarrier {
     }
 }
 
-/// Temporary reason an episode cannot absorb the following scalar work.
+/// Internal reason the canonical dispatcher commits before the slice limit.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 #[repr(u8)]
-pub enum EpisodeCoverageFamily {
-    CharacterProfile,
-    SourceTokenization,
-    CommandVocabulary,
-    ScannerOrExpansion,
+pub enum EpisodeInternalStop {
     GroupLineage,
     RollbackLineage,
 }
 
-impl EpisodeCoverageFamily {
-    const COUNT: usize = 6;
+impl EpisodeInternalStop {
+    const COUNT: usize = 2;
 
     const fn index(self) -> usize {
         self as usize
-    }
-}
-
-/// Proof that canonical scalar execution may safely resume after fallback.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub enum CoverageFallbackSafety {
-    /// Admission published no mutation, allocation, effect, or observation.
-    MutationFreeAdmission,
-    /// The complete command/execution/Universe aggregate was restored first.
-    ExactAggregateRollback,
-}
-
-/// One typed temporary fallback with its mandatory safety proof.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub struct EpisodeCoverageFallback {
-    family: EpisodeCoverageFamily,
-    safety: CoverageFallbackSafety,
-}
-
-impl EpisodeCoverageFallback {
-    #[must_use]
-    pub const fn mutation_free(family: EpisodeCoverageFamily) -> Self {
-        Self {
-            family,
-            safety: CoverageFallbackSafety::MutationFreeAdmission,
-        }
-    }
-
-    #[must_use]
-    pub const fn rolled_back(family: EpisodeCoverageFamily) -> Self {
-        Self {
-            family,
-            safety: CoverageFallbackSafety::ExactAggregateRollback,
-        }
-    }
-
-    #[must_use]
-    pub const fn family(self) -> EpisodeCoverageFamily {
-        self.family
-    }
-
-    #[must_use]
-    pub const fn safety(self) -> CoverageFallbackSafety {
-        self.safety
     }
 }
 
@@ -105,9 +57,9 @@ pub enum EpisodeCommitBoundary {
     NamedCheckpoint(EngineBoundary),
     /// The job reached its canonical terminal or fragment boundary.
     Terminal,
-    /// Temporary coverage stopped batching after a committed atomic action.
-    /// This is not scalar fallback and carries no fallback-safety proof.
-    CoverageBoundary(EpisodeCoverageFamily),
+    /// The canonical dispatcher committed after an atomic action because the
+    /// next operation needs a fresh rollback or group-lineage root.
+    InternalStop(EpisodeInternalStop),
 }
 
 /// Receipt for one committed bounded episode.
@@ -147,8 +99,7 @@ pub struct EpisodeTelemetry {
     rollbacks: u64,
     operations: u64,
     semantic_barriers: [u64; SemanticEpisodeBarrier::COUNT],
-    coverage_boundaries: [u64; EpisodeCoverageFamily::COUNT],
-    coverage_fallbacks: [u64; EpisodeCoverageFamily::COUNT],
+    internal_stops: [u64; EpisodeInternalStop::COUNT],
     slice_limits: u64,
     terminals: u64,
     last_commit: Option<EpisodeCommit>,
@@ -162,8 +113,7 @@ impl Default for EpisodeTelemetry {
             rollbacks: 0,
             operations: 0,
             semantic_barriers: [0; SemanticEpisodeBarrier::COUNT],
-            coverage_boundaries: [0; EpisodeCoverageFamily::COUNT],
-            coverage_fallbacks: [0; EpisodeCoverageFamily::COUNT],
+            internal_stops: [0; EpisodeInternalStop::COUNT],
             slice_limits: 0,
             terminals: 0,
             last_commit: None,
@@ -192,9 +142,9 @@ impl EpisodeTelemetry {
             EpisodeCommitBoundary::Terminal => {
                 self.terminals = self.terminals.saturating_add(1);
             }
-            EpisodeCommitBoundary::CoverageBoundary(family) => {
-                let index = family.index();
-                self.coverage_boundaries[index] = self.coverage_boundaries[index].saturating_add(1);
+            EpisodeCommitBoundary::InternalStop(reason) => {
+                let index = reason.index();
+                self.internal_stops[index] = self.internal_stops[index].saturating_add(1);
             }
         }
         self.last_commit = Some(commit);
@@ -208,11 +158,6 @@ impl EpisodeTelemetry {
     pub(crate) fn record_semantic_barrier(&mut self, barrier: SemanticEpisodeBarrier) {
         let index = barrier.index();
         self.semantic_barriers[index] = self.semantic_barriers[index].saturating_add(1);
-    }
-
-    pub(crate) fn record_fallback(&mut self, fallback: EpisodeCoverageFallback) {
-        let index = fallback.family.index();
-        self.coverage_fallbacks[index] = self.coverage_fallbacks[index].saturating_add(1);
     }
 
     #[must_use]
@@ -241,13 +186,8 @@ impl EpisodeTelemetry {
     }
 
     #[must_use]
-    pub const fn coverage_boundaries(self, family: EpisodeCoverageFamily) -> u64 {
-        self.coverage_boundaries[family.index()]
-    }
-
-    #[must_use]
-    pub const fn coverage_fallbacks(self, family: EpisodeCoverageFamily) -> u64 {
-        self.coverage_fallbacks[family.index()]
+    pub const fn internal_stops(self, reason: EpisodeInternalStop) -> u64 {
+        self.internal_stops[reason.index()]
     }
 
     #[must_use]

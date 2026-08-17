@@ -3431,13 +3431,11 @@ never presented as pdfTeX behavior.
 
 ## 32. Performance architecture
 
-The scalar implementation remains the semantic reference during migration,
-but it is not the selected final execution shape. The measured architecture
-decision in [Canonical Engine Architecture Decision](engine_architecture_decision.md)
-makes bounded mutable semantic episodes the ordinary internal unit of work
-inside this same command machine. That decision does not authorize a runtime
-engine selector, duplicate state, or omitted observable semantics; its typed
-barriers, family-by-family deletion criteria, and promotion gates refine the
+The canonical implementation uses bounded mutable semantic episodes as its
+ordinary internal unit of work. The measured architecture decision in
+[Canonical Engine Architecture Decision](engine_architecture_decision.md)
+does not authorize a runtime engine selector, duplicate state, or omitted
+observable semantics; its typed barriers and promotion gates refine the
 optimization rules below.
 
 The first promoted implementation is the simplest canonical scalar machine.
@@ -3480,7 +3478,7 @@ Promotion requires all of:
 
 1. identical semantic oracle events with an external observer attached;
 2. identical diagnostics, effects, DVI, and PDF fixtures;
-3. a retained scalar fallback or a mechanically obvious equivalence boundary;
+3. a mechanically obvious equivalence boundary inside the canonical machine;
 4. no new semantic state in a discardable cache;
 5. focused microbench evidence explaining the expected win;
 6. controlled whole-workload profiling under `docs/profiling.md`;
@@ -3496,9 +3494,9 @@ compiled in every build.
 
 ## 33. Main-control integration
 
-`tex-exec` owns main control. For each scalar operation it asks
+`tex-exec` owns main control. Each bounded episode repeatedly asks
 `CommandProcessor` for an unexpandable `CurrentCommand`, dispatches its
-meaning, and performs stomach semantics.
+meaning, and performs stomach semantics under one aggregate rollback root.
 
 Execution may call narrow processor APIs to:
 
@@ -3527,16 +3525,22 @@ An explicit `CurrentCommand` is consumed once. Re-execution after resource
 rollback begins from the enclosing executor step, not from a retained command
 value.
 
-Each bounded `MainControl` operation captures the aggregate command
+Each bounded `MainControl` episode captures the aggregate command
 state, discardable command runtime, mode nest, Universe roots, replay-local
 box/alignment/output state, and pending World effects/artifacts before it
 creates a processor. A command-core `MissingInput` is translated to a typed
 suspension only after that complete rollback; observer records are buffered
 until the structural application commits. The next attempt constructs a fresh
-processor episode and begins again through `get_next`/`get_x_token`, following
+processor and begins again through `get_next`/`get_x_token`, following
 TeX82 §§24--25 rather than retaining a delivered command. Host capabilities
 remain borrow-scoped outside this snapshot, so supplying a resource changes
 only the next attempt's capability set.
+
+There is no coverage fallback. Every TeX82, e-TeX, and pdfTeX meaning enters
+this loop, including definitions, assignments, groups, alignments, mode and
+node construction, page/PDF output, resources, effects, diagnostics, and
+retry. Required semantic barriers and internal group/rollback stops commit or
+restore the same state machine; neither selects another dispatcher.
 
 ### 33.1 Canonical main-control coverage matrix
 

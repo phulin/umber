@@ -189,13 +189,18 @@ fn unified_operation_preserves_state_output_and_typed_evidence() {
     let (mut ordinary, mut ordinary_stores) = etex_session(source);
     loop {
         match ordinary
-            .step(&mut ordinary_stores)
-            .expect("ordinary execution")
+            .advance_episode(&mut ordinary_stores)
+            .expect("canonical episode execution")
         {
-            MainControlStep::End | MainControlStep::EndOfInput => break,
-            MainControlStep::Continue => {}
+            StepResult::Progress(MainControlStep::End | MainControlStep::EndOfInput) => break,
+            StepResult::Progress(MainControlStep::Continue) => {}
+            StepResult::Suspended(need) => panic!("unexpected resource suspension: {need:?}"),
         }
     }
+    assert!(
+        ordinary.episode_telemetry().operations() > ordinary.episode_telemetry().commits(),
+        "the broad e-TeX fixture must exercise multi-operation canonical episodes"
+    );
 
     let (mut observed, mut observed_stores) = etex_session(source);
     let mut evidence = ObservationCollector::default();
@@ -290,6 +295,42 @@ fn predecessor_operation_branches_are_absent() {
         assert!(
             !source.contains(predecessor),
             "retained predecessor: {predecessor}"
+        );
+    }
+}
+
+#[test]
+fn canonical_episode_has_no_admission_executor_or_coverage_fallback() {
+    let control = include_str!("../src/main_control.rs");
+    let facade = include_str!("../src/lib.rs");
+    let command_facade = include_str!("../../tex-command/src/lib.rs");
+    let episode = include_str!("../src/episode.rs");
+
+    assert!(control.contains("fn execute_operation("));
+    assert!(control.contains("pub fn advance_episode("));
+    for retired in [
+        "NativeBatchProgram",
+        "PackedRootEpisode",
+        "advance_packed_root",
+        "execute_packed_episode",
+        "register_root_source_for_batch",
+        "EpisodeCoverageFallback",
+    ] {
+        assert!(
+            !control.contains(retired),
+            "retained executor path: {retired}"
+        );
+        assert!(
+            !facade.contains(retired),
+            "retained executor export: {retired}"
+        );
+        assert!(
+            !command_facade.contains(retired),
+            "retained command executor export: {retired}"
+        );
+        assert!(
+            !episode.contains(retired),
+            "retained fallback protocol: {retired}"
         );
     }
 }

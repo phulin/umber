@@ -534,9 +534,7 @@ impl<'a> EngineSession<'a> {
             startup_input_name,
             source.name(),
         );
-        let source = self
-            .control
-            .register_root_source_for_batch(self.stores, source)?;
+        let source = self.control.register_root_source(source)?;
         self.root_registered = true;
         self.startup_input_name = Some(startup_input_name.to_owned());
         self.startup_invocation_line = Some(startup_invocation_line.to_owned());
@@ -1231,10 +1229,6 @@ mod tests {
             1
         );
         assert_eq!(telemetry.terminals(), 1);
-        assert_eq!(
-            telemetry.coverage_fallbacks(tex_exec::EpisodeCoverageFamily::ScannerOrExpansion),
-            0
-        );
     }
 
     fn startup_session(interaction: tex_state::InteractionMode) -> Universe {

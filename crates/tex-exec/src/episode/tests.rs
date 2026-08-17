@@ -2,10 +2,7 @@ use std::sync::Arc;
 
 use tex_command::{CommandObservation, CommandObserver, RegisteredSourceKind, SourceRegistration};
 
-use super::{
-    CoverageFallbackSafety, EpisodeCommitBoundary, EpisodeCoverageFallback, EpisodeCoverageFamily,
-    SemanticEpisodeBarrier,
-};
+use super::{EpisodeCommitBoundary, EpisodeInternalStop, SemanticEpisodeBarrier};
 use crate::{AdvanceOutcome, AdvanceReadiness, MainControl, ResourceNeed, StepResult};
 
 fn control_for(source: &[u8]) -> (MainControl, tex_state::Universe) {
@@ -28,7 +25,7 @@ impl CommandObserver for Observer {
 }
 
 #[test]
-fn fixed_telemetry_counts_every_required_barrier_and_fallback_family() {
+fn fixed_telemetry_counts_every_required_barrier() {
     let mut telemetry = super::EpisodeTelemetry::default();
     for barrier in [
         SemanticEpisodeBarrier::Resource,
@@ -44,22 +41,6 @@ fn fixed_telemetry_counts_every_required_barrier_and_fallback_family() {
     ] {
         telemetry.record_semantic_barrier(barrier);
         assert_eq!(telemetry.semantic_barriers(barrier), 1);
-    }
-    for family in [
-        EpisodeCoverageFamily::CharacterProfile,
-        EpisodeCoverageFamily::SourceTokenization,
-        EpisodeCoverageFamily::CommandVocabulary,
-        EpisodeCoverageFamily::ScannerOrExpansion,
-        EpisodeCoverageFamily::GroupLineage,
-        EpisodeCoverageFamily::RollbackLineage,
-    ] {
-        let fallback = EpisodeCoverageFallback::mutation_free(family);
-        assert_eq!(
-            fallback.safety(),
-            CoverageFallbackSafety::MutationFreeAdmission
-        );
-        telemetry.record_fallback(fallback);
-        assert_eq!(telemetry.coverage_fallbacks(family), 1);
     }
 }
 
@@ -89,7 +70,7 @@ fn main_control_slice_and_group_boundary_are_typed_commits() {
         .expect("group entry commits");
     let telemetry = grouped.episode_telemetry();
     assert_eq!(
-        telemetry.coverage_boundaries(EpisodeCoverageFamily::GroupLineage),
+        telemetry.internal_stops(EpisodeInternalStop::GroupLineage),
         1
     );
     assert_eq!(grouped_stores.group_depth(), 1);

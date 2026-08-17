@@ -479,3 +479,46 @@ differentials; adversarial grouping and scanner tests; 6M/12M scaling; allocatio
 and RSS gates; and incremental named-boundary recovery tests. Promotion proceeds
 by semantic family, and a family is complete only when its old hot path is
 deleted. This preserves canonical primitives while converging on one engine.
+
+## Final canonical cutover
+
+Issue `umber2-c1p8` completed the convergence. The capacity-only
+`NativeBatchProgram`, ten-control dispatcher, count/group publication sidecar,
+character/kern node sink, synthesized hbox/shipout path, packed-root marker,
+coverage-fallback protocol, and packed terminal continuation were deleted.
+Every retained root now enters `MainControl::advance_episode` directly.
+
+The canonical loop keeps one aggregate retry snapshot across at most 256
+ordinary operations and stops earlier at typed resource, effect, observer,
+diagnostic, checkpoint, format, output, fuel, cancellation, state-identity,
+group-lineage, or nonrollbackable boundaries. The operation body remains the
+complete TeX82/e-TeX/pdfTeX dispatcher and uses the sole `CommandProcessor`,
+`CommandState`, `Universe`, mode nest, `NodeListBuilder`, page/PDF state,
+shipout transaction, effect journal, and output ledgers. There is no command
+vocabulary admission test and therefore no runtime route that can fall back to
+a different semantic executor.
+
+The production workload is now named `canonical_episode`; its old
+`native_batch` name described the deleted migration kernel. Historical ceiling
+measurements above remain evidence for selecting the episode architecture, not
+claims about a surviving second implementation.
+
+The final same-tree comparison used identical 10,000-call sources and output
+checks with only the public driver changed between one-operation `advance` and
+bounded `advance_episode`. For the direct shape, the scalar and episode medians
+were 893.157 ms and 514.320 ms (1.74x); allocation calls were 615,016 and
+286,436 (-53.4%), requested bytes were 194,979,672 and 81,861,980 (-58.0%),
+and peak RSS medians were 40,860 and 38,996 KiB (-4.6%). For nested forwarding,
+the medians were 902.073 ms and 536.304 ms (1.68x), allocation calls fell from
+615,074 to 286,489 (-53.4%), requested bytes fell from 203,546,559 to
+80,474,939 (-60.5%), and peak RSS fell from 39,588 to 37,916 KiB (-4.2%). Fuel,
+raw steps, expanded deliveries, lookups, nodes, artifact bytes, and DVI bytes
+were identical in each pair.
+
+Profiling also found an orthogonal shared-path cost: assignment tracing
+rendered escaped register names and old/new values even when
+`\tracingassigns` was zero. Gating that rendering before string construction
+reduced the direct episode from 406,448 to 286,436 allocation calls (-29.5%)
+with essentially unchanged median CPU time. This optimization lives in the
+sole assignment committer used by scalar and episode drivers; it is not an
+admission shortcut.

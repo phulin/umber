@@ -22,8 +22,8 @@ tex-out = { path = "../../crates/tex-out" }
 tex-state = { path = "../../crates/tex-state" }
 
 [[bin]]
-name = "native_batch"
-path = "src/bin/native_batch.rs"
+name = "canonical_episode"
+path = "src/bin/canonical_episode.rs"
 
 [[bench]]
 name = "shipout"

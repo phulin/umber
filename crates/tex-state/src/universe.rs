@@ -6,10 +6,6 @@
 //! public timeline tuple lives here so future World/effect/input state cannot
 //! grow a partial rollback API beside the store tuple.
 
-mod count_group_episode;
-
-pub use count_group_episode::{CountGroupEpisode, CountGroupEpisodeBarrier};
-
 use crate::cell::{BankTag, CellId};
 use crate::code_tables::{CodeTableGenerations, DelCode, LcCode, MathCode, SfCode, UcCode};
 use crate::dependency::{
