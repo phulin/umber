@@ -48,20 +48,16 @@ pub struct DviPagePlanBuilder {
 /// replay by definition; those uncommon pages fall back to the canonical
 /// streaming-byte compiler rather than retaining a second node authority.
 pub struct DviPagePlanCoEmitter {
-    state: CoEmissionState,
-}
-
-enum CoEmissionState {
-    Disabled,
-    Active(DviPagePlanBuilder),
-    ReplayRequired,
+    builder: Option<DviPagePlanBuilder>,
+    replay_required: bool,
 }
 
 impl DviPagePlanCoEmitter {
     #[must_use]
     pub const fn disabled() -> Self {
         Self {
-            state: CoEmissionState::Disabled,
+            builder: None,
+            replay_required: false,
         }
     }
 
@@ -73,22 +69,24 @@ impl DviPagePlanCoEmitter {
         effects: &[PageEffect],
         enabled: bool,
     ) -> Result<Self, DviError> {
-        let state = if enabled {
+        let builder = if enabled {
             let mut builder = DviPagePlanBuilder::new(job, counts, root, vertical)?;
             builder.set_snap_reference(effects);
-            CoEmissionState::Active(builder)
+            Some(builder)
         } else {
-            CoEmissionState::Disabled
+            None
         };
-        Ok(Self { state })
+        Ok(Self {
+            builder,
+            replay_required: false,
+        })
     }
 
     #[inline]
     pub fn add_fonts(&mut self, fonts: &[FontResource]) -> Result<(), DviError> {
-        match &mut self.state {
-            CoEmissionState::Active(builder) => builder.add_fonts(fonts),
-            CoEmissionState::Disabled | CoEmissionState::ReplayRequired => Ok(()),
-        }
+        self.builder
+            .as_mut()
+            .map_or(Ok(()), |builder| builder.add_fonts(fonts))
     }
 
     #[inline]
@@ -98,25 +96,22 @@ impl DviPagePlanCoEmitter {
         ch: u32,
         width: tex_arith::Scaled,
     ) -> Result<(), DviError> {
-        match &mut self.state {
-            CoEmissionState::Active(builder) => builder.char(font_id, ch, width),
-            CoEmissionState::Disabled | CoEmissionState::ReplayRequired => Ok(()),
-        }
+        self.builder
+            .as_mut()
+            .map_or(Ok(()), |builder| builder.char(font_id, ch, width))
     }
 
     #[inline]
     pub fn kern(&mut self, amount: tex_arith::Scaled) -> Result<(), DviError> {
-        match &mut self.state {
-            CoEmissionState::Active(builder) => builder.kern(amount),
-            CoEmissionState::Disabled | CoEmissionState::ReplayRequired => Ok(()),
-        }
+        self.builder
+            .as_mut()
+            .map_or(Ok(()), |builder| builder.kern(amount))
     }
 
     pub fn math(&mut self, amount: tex_arith::Scaled) -> Result<(), DviError> {
-        match &mut self.state {
-            CoEmissionState::Active(builder) => builder.math(amount),
-            CoEmissionState::Disabled | CoEmissionState::ReplayRequired => Ok(()),
-        }
+        self.builder
+            .as_mut()
+            .map_or(Ok(()), |builder| builder.math(amount))
     }
 
     pub fn rule(
@@ -125,17 +120,15 @@ impl DviPagePlanCoEmitter {
         height: Option<tex_arith::Scaled>,
         depth: Option<tex_arith::Scaled>,
     ) -> Result<(), DviError> {
-        match &mut self.state {
-            CoEmissionState::Active(builder) => builder.rule(width, height, depth),
-            CoEmissionState::Disabled | CoEmissionState::ReplayRequired => Ok(()),
-        }
+        self.builder
+            .as_mut()
+            .map_or(Ok(()), |builder| builder.rule(width, height, depth))
     }
 
     pub fn glue(&mut self, spec: crate::GlueSpec) -> Result<(), DviError> {
-        match &mut self.state {
-            CoEmissionState::Active(builder) => builder.glue(spec),
-            CoEmissionState::Disabled | CoEmissionState::ReplayRequired => Ok(()),
-        }
+        self.builder
+            .as_mut()
+            .map_or(Ok(()), |builder| builder.glue(spec))
     }
 
     pub fn begin_box(
@@ -144,7 +137,7 @@ impl DviPagePlanCoEmitter {
         vertical: bool,
         empty: bool,
     ) -> Result<(), DviError> {
-        if let CoEmissionState::Active(builder) = &mut self.state {
+        if let Some(builder) = &mut self.builder {
             let entered = builder.begin_box(fields, vertical, empty)?;
             debug_assert_eq!(entered, !empty);
         }
@@ -152,25 +145,23 @@ impl DviPagePlanCoEmitter {
     }
 
     pub fn end_box(&mut self) -> Result<(), DviError> {
-        match &mut self.state {
-            CoEmissionState::Active(builder) => builder.end_box(),
-            CoEmissionState::Disabled | CoEmissionState::ReplayRequired => Ok(()),
-        }
+        self.builder
+            .as_mut()
+            .map_or(Ok(()), DviPagePlanBuilder::end_box)
     }
 
     /// Marks a subtree-replaying leader for canonical streaming compilation.
     /// No semantic node storage is retained while switching adapters.
     pub fn leader_requires_replay(&mut self) {
-        if matches!(self.state, CoEmissionState::Active(_)) {
-            self.state = CoEmissionState::ReplayRequired;
+        if self.builder.take().is_some() {
+            self.replay_required = true;
         }
     }
 
     pub fn whatsit(&mut self, effect_index: u32, effects: &[PageEffect]) -> Result<(), DviError> {
-        match &mut self.state {
-            CoEmissionState::Active(builder) => builder.whatsit(effect_index, effects),
-            CoEmissionState::Disabled | CoEmissionState::ReplayRequired => Ok(()),
-        }
+        self.builder
+            .as_mut()
+            .map_or(Ok(()), |builder| builder.whatsit(effect_index, effects))
     }
 
     pub fn finish(
@@ -178,10 +169,12 @@ impl DviPagePlanCoEmitter {
         fonts: &[FontResource],
         artifact_bytes: &[u8],
     ) -> Result<Option<DviPagePlan>, DviError> {
-        match self.state {
-            CoEmissionState::Disabled => Ok(None),
-            CoEmissionState::Active(builder) => builder.finish(fonts).map(Some),
-            CoEmissionState::ReplayRequired => DviPagePlan::compile_v10(artifact_bytes).map(Some),
+        if self.replay_required {
+            DviPagePlan::compile_v10(artifact_bytes).map(Some)
+        } else {
+            self.builder
+                .map(|builder| builder.finish(fonts))
+                .transpose()
         }
     }
 }
