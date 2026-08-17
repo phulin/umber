@@ -3125,14 +3125,13 @@ impl MainControl {
         if self.fatal.is_some() {
             return Ok(StepResult::Progress(MainControlStep::End));
         }
-        let result = self.execute_operation(
+        self.execute_operation(
             stores,
             OperationDelivery::Replay(None),
             OperationTransaction::Advance,
             256,
             None,
-        );
-        result
+        )
     }
 
     /// Attempts one ordinary main-control operation while collecting detached
