@@ -36,6 +36,9 @@ pub(crate) struct ParameterState {
     /// while old owners remain in `admitted_macros` for active replacement
     /// levels and detached-continuation publication.
     admitted_macro_chunks: Vec<u32>,
+    admitted_macro_versions: Vec<u32>,
+    admitted_macro_definitions: Vec<Option<AdmittedMacroDefinition>>,
+    retained_macro_definitions: Vec<AdmittedMacroDefinition>,
     argument_chunks: Vec<std::sync::Arc<ArgumentChunk>>,
     argument_chunk_cursor: u32,
     argument_scratch: RootedTracedTokenBuffer,
@@ -43,6 +46,13 @@ pub(crate) struct ParameterState {
 
 const ARGUMENT_CHUNK_WORDS: usize = 4096;
 const ARGUMENT_CHUNK_RECORDS: usize = 256;
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+struct AdmittedMacroDefinition {
+    definition: MacroDefinitionId,
+    owner: u32,
+    version: u32,
+}
 
 #[derive(Clone, Debug, Default, Eq, Hash, PartialEq)]
 struct ArgumentChunk {
@@ -319,24 +329,67 @@ impl Default for MacroArguments {
 }
 
 impl ParameterState {
+    fn admitted_definition_owner(
+        &self,
+        entry: AdmittedMacroDefinition,
+    ) -> Option<(usize, &PackedMacroChunkOwner)> {
+        let index = entry.owner as usize;
+        (self.admitted_macro_versions.get(index).copied() == Some(entry.version))
+            .then(|| (index, &self.admitted_macros[index]))
+    }
+
     fn indexed_macro_owner(
         &self,
         definition: MacroDefinitionId,
     ) -> Option<(usize, &PackedMacroChunkOwner)> {
-        let chunk = PackedMacroChunkOwner::chunk_index(definition) as usize;
-        let encoded = *self.admitted_macro_chunks.get(chunk)?;
-        let index = usize::try_from(encoded.checked_sub(1)?).ok()?;
-        let owner = self.admitted_macros.get(index)?;
-        owner.contains(definition).then_some((index, owner))
+        let current = self
+            .admitted_macro_definitions
+            .get(definition.raw() as usize)
+            .copied()
+            .flatten();
+        if let Some(entry) = current.filter(|entry| entry.definition == definition)
+            && let Some(owner) = self.admitted_definition_owner(entry)
+        {
+            return Some(owner);
+        }
+        self.retained_macro_definitions
+            .iter()
+            .copied()
+            .find(|entry| entry.definition == definition)
+            .and_then(|entry| self.admitted_definition_owner(entry))
     }
 
-    fn index_macro_owner(&mut self, definition: MacroDefinitionId, index: usize) {
+    fn index_macro_chunk(&mut self, definition: MacroDefinitionId, index: usize) {
         let chunk = PackedMacroChunkOwner::chunk_index(definition) as usize;
         if self.admitted_macro_chunks.len() <= chunk {
             self.admitted_macro_chunks.resize(chunk + 1, 0);
         }
-        self.admitted_macro_chunks[chunk] =
-            u32::try_from(index + 1).expect("admitted macro chunks exceed u32");
+        if self.admitted_macro_chunks[chunk] == 0 {
+            self.admitted_macro_chunks[chunk] =
+                u32::try_from(index + 1).expect("admitted macro chunks exceed u32");
+        }
+    }
+
+    fn index_macro_definition(&mut self, definition: MacroDefinitionId, index: usize) {
+        let slot = definition.raw() as usize;
+        if self.admitted_macro_definitions.len() <= slot {
+            self.admitted_macro_definitions.resize(slot + 1, None);
+        }
+        let entry = AdmittedMacroDefinition {
+            definition,
+            owner: u32::try_from(index).expect("admitted macro chunks exceed u32"),
+            version: self.admitted_macro_versions[index],
+        };
+        if let Some(displaced) = self.admitted_macro_definitions[slot].replace(entry)
+            && displaced.definition != definition
+            && self.admitted_definition_owner(displaced).is_some()
+            && !self
+                .retained_macro_definitions
+                .iter()
+                .any(|candidate| *candidate == displaced)
+        {
+            self.retained_macro_definitions.push(displaced);
+        }
     }
 
     pub(crate) fn admit_macro(
@@ -356,7 +409,7 @@ impl ParameterState {
             .iter()
             .position(|candidate| candidate.contains(definition))
         {
-            self.index_macro_owner(definition, index);
+            self.index_macro_definition(definition, index);
             return u32::try_from(index).expect("admitted macro chunks exceed u32");
         }
         if self.activations.is_empty()
@@ -370,13 +423,17 @@ impl ParameterState {
                 .get(index)
                 .is_some_and(|candidate| candidate.owns_definition_slot(definition))
         {
+            self.admitted_macro_versions[index] =
+                self.admitted_macro_versions[index].wrapping_add(1);
             self.admitted_macros[index] = owner();
-            self.index_macro_owner(definition, index);
+            self.index_macro_definition(definition, index);
             return u32::try_from(index).expect("admitted macro chunks exceed u32");
         }
         self.admitted_macros.push(owner());
+        self.admitted_macro_versions.push(0);
         let index = self.admitted_macros.len() - 1;
-        self.index_macro_owner(definition, index);
+        self.index_macro_chunk(definition, index);
+        self.index_macro_definition(definition, index);
         u32::try_from(index).expect("admitted macro chunks exceed u32")
     }
 
