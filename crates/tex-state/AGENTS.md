@@ -53,6 +53,17 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/frozen_lookup/tests.rs`: Deterministic generation, lookup equivalence, and malformed literal-table validation tests.
 - `src/glue.rs`: Reachability-owned immutable glue-spec values, explicit frozen roots, collision-safe weak lookup, reusable generation-safe slots, and typed private-acceptance leases.
 - `src/glue/tests.rs`: Unit tests for exact glue deduplication and collisions, canonical zero ownership, final release, format bases, private rollback/rejection/selection, and bounded-live versus all-live pressure.
+- `src/hot_core/arena.rs`: Generic append-only typed region arena with
+  compact namespace/generation coordinates, accepted sealed chunk bases,
+  candidate-local overlays, suffix rollback, and reusable chunk slots.
+- `src/hot_core/arena/layout.rs`: Fixed-width typed coordinates, spans,
+  reservations, rollback marks, validation errors, and logical/retained
+  accounting values for the region arena.
+- `src/hot_core/arena/tests.rs`: Coordinate validation, accepted-base sharing,
+  candidate isolation, rollback, plateau, and exact-growth controls for the
+  HotCore arena substrate.
+- `src/hot_core/mod.rs`: Private HotCore storage module boundary; command
+  semantics remain outside this substrate.
 - `src/hyphenation.rs`: Hyphenation pattern trie and exception table implementing Liang-style position lookup.
 - `src/hyphenation/tests.rs`: Unit tests for hyphenation patterns, exceptions, bounds, and overlapping matches.
 - `src/identity.rs`: Shared generation-tagged runtime identity allocator for rollback-truncated stores.

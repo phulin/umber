@@ -215,6 +215,44 @@ Arena growth is geometric and capacity is reused after rollback. Bounded-live
 work must plateau both live bytes and registry metadata. All-live controls must
 grow by the exact documented payload and segment overhead.
 
+### Region arena ownership contract
+
+The implemented generic substrate in `tex-state::hot_core::arena` makes a
+chunk the allocation and ownership unit and a frozen region a half-open span
+within one chunk. A typed coordinate contains a 64-bit namespace, 32-bit chunk
+slot, 32-bit nonzero generation, and 32-bit offset. It is a non-owning runtime
+capability and is never a format or detached-checkpoint identifier. Coordinates
+and spans add no `Arc`, `Weak`, hash, or owner field per stored value.
+
+An accepted arena is an immutable chain of sealed chunk layers held by one
+`Arc` per accepted layer. Creating sibling candidates clones only that layer
+owner. Each candidate owns a fresh namespace and a mutable append-only overlay;
+therefore it resolves inherited accepted coordinates but rejects another
+candidate's overlay coordinates as foreign. Acceptance moves whole chunk
+buffers into a new sealed layer without moving their payload allocations.
+
+Reservation establishes an upper bound before append, so appends, region
+freeze, and direct resolution cannot grow a payload buffer. Admission validates
+the namespace, slot, generation, and span bounds once and returns a borrowed
+slice for repeated indexing. A rollback mark records the candidate namespace,
+live-chunk count, tail slot and generation, and tail length. Truncation clears
+whole suffix chunks for later slot reuse. A partially truncated tail is sealed:
+its discarded offsets are never appended into again under the same generation.
+Reusing a wholly retired slot mints a fresh generation. These rules prevent
+both stale-coordinate revival and cross-candidate reinterpretation.
+
+Arena accounting uses two deliberately separate measures. _Logical values_
+and _logical value bytes_ count only live initialized elements and
+`len * size_of::<T>()`. _Retained payload_ counts the capacities of accepted,
+live-overlay, and reusable-overlay value buffers. _Retained registry bytes_
+counts accepted slot-table entries plus the capacities of the candidate slot
+table and live-order vector. It excludes allocator bookkeeping, the outer arena
+value, and the `Arc` header. Thus all-live controls can state exact logical
+growth, while bounded-live controls must show unchanged payload and registry
+capacities. Once a suitable reusable chunk and metadata capacity have warmed,
+the arena itself performs no heap growth during reserve, append, freeze, or
+truncate cycles.
+
 ## Snapshot and rollback model
 
 ### Fixed-size mark
