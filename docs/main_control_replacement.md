@@ -481,14 +481,18 @@ missing, extra, or foreign owner/mark projection. The protocol is copy-only and
 allocates nothing; command-family migration onto those marks belongs to
 `umber2-awgc.4.2` and `umber2-awgc.4.3`.
 
-The ordinary/group cutover is now active in `MainControl`. Raw delivery first
-settles a command and applies the exhaustive capability record before operand
-scanning. Successful ordinary assignments, material commands, and group entry
-or exit mutate canonical state directly: they create neither `StepSnapshot`
-nor `CommandStateSnapshot`. Their admission advances the compact environment
-write epoch and commit advances the node-operation watermark; TeX's save stack remains the sole
-owner of local/global group restoration. Group depth is no longer an episode
-stop, so one bounded episode may enter, mutate inside, and leave nested groups.
+The ordinary/group cutover is now active in `MainControl`. Capability preflight
+starts from raw delivery, but it completes TeX82 §1030's `get_x_token` or
+§1038's `x_token` settlement before classifying an already unexpandable
+command. This preserves the canonical expanded-delivery accounting boundary;
+only a command requiring expansion remains raw while preflight selects the
+retry adapter that protects that expansion. Successful ordinary assignments,
+material commands, and group entry or exit then mutate canonical state
+directly: they create neither `StepSnapshot` nor `CommandStateSnapshot`. Their
+admission advances the compact environment write epoch and commit advances the
+node-operation watermark; TeX's save stack remains the sole owner of
+local/global group restoration. Group depth is no longer an episode stop, so
+one bounded episode may enter, mutate inside, and leave nested groups.
 
 Commands whose raw spelling still requires expansion or prefix/reswitch
 settlement, resource acquisition, PDF/effect/output publication, ErrorStop

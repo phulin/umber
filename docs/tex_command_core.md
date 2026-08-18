@@ -3801,6 +3801,14 @@ the alignment cell's `get_x_alignment_delivery`. An alignment cell body is
 ordinary `main_control` material, and neither of that path's recovery
 predicates can fire for the three commands §1038 accepts raw.
 
+The direct-operation capability preflight also honors those labels. It may use
+raw delivery to learn that a command requires protected expansion, but an
+already unexpandable command completes §1030's `get_x_token` or §1038's
+`x_token` settlement before the executor selects its transaction authority.
+Static capability classification must not turn preflight's intermediate raw
+command into a third main-control fetch label or omit a completed expanded
+delivery.
+
 The label is not parked across command steps while an alignment scanner is
 active. TeX82 §1038's inner loop calls scalar `get_next`, whose §341 delivery
 performs alignment interception and brace accounting. Umber's horizontal

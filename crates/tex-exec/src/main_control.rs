@@ -721,6 +721,18 @@ struct PreflightDelivery {
     capabilities: crate::transaction_protocol::CommandCapabilities,
 }
 
+/// Whether TeX82 §380 must execute expansion or recovery before the
+/// command's static execution capabilities are known.
+const fn preflight_requires_expansion(meaning: Meaning) -> bool {
+    matches!(
+        meaning,
+        Meaning::Macro { .. }
+            | Meaning::ExpandablePrimitive(_)
+            | Meaning::Undefined
+            | Meaning::Unknown(_)
+    )
+}
+
 #[derive(Clone, Copy)]
 enum OperationTransaction {
     Advance,
@@ -5235,6 +5247,7 @@ impl MainControl {
         self.refresh_host_capabilities(stores);
 
         let mut diagnostics = Vec::new();
+        let main_loop = self.main_loop_active;
         let delivery = {
             let mut processor = command_processor(
                 &mut self.command,
@@ -5246,6 +5259,16 @@ impl MainControl {
             let delivery = processor
                 .get_next_with_replay_completion()
                 .map_err(command_error)?;
+            let delivery = match delivery {
+                Some(tex_command::CommandReplayDelivery::Command(command))
+                    if !preflight_requires_expansion(command.meaning()) =>
+                {
+                    processor
+                        .settle_preflight_command(command, main_loop)
+                        .map_err(command_error)?
+                }
+                delivery => delivery,
+            };
             diagnostics.extend(
                 processor
                     .take_semantic_diagnostics()
@@ -5278,13 +5301,7 @@ impl MainControl {
             }));
         };
 
-        if matches!(
-            command.meaning(),
-            Meaning::Macro { .. }
-                | Meaning::ExpandablePrimitive(_)
-                | Meaning::Undefined
-                | Meaning::Unknown(_)
-        ) {
+        if preflight_requires_expansion(command.meaning()) {
             let capabilities =
                 crate::transaction_protocol::canonical_command_capabilities(command.meaning());
             return Ok(Some(PreflightDelivery {
