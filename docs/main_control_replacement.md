@@ -362,6 +362,31 @@ that may suspend must either:
 This lets episodes cross group entry and exit. A group change is semantic work,
 not an external commit barrier.
 
+The executor-side migration contract is
+`tex_exec::transaction_protocol`. Its exhaustive classifier assigns every
+canonical `Meaning` and `UnexpandablePrimitive` a fixed mutation, resource,
+effect, output, and recovery capability set before execution. Preflight is a
+read-only classification step with three typed results:
+
+- an ordinary command carries its capability record directly and has no
+  transaction value;
+- a resource command names the retry projection needed while its operands are
+  scanned and its immutable resource is acquired; and
+- an operation that can fail after mutation names a narrow transaction before
+  it runs.
+
+The transaction vocabulary mirrors the fixed fields of `HotSnapshot` without
+exposing snapshot internals across crates. State owners select their marks;
+callers cannot independently assemble the two sets. Input, parameter,
+condition, group, save, and mode owners select their respective stack marks;
+dense state selects the first-write journal; source, resource, page, PDF,
+effect, and output owners select their external journal cursors; and the input,
+parameter, mode/page/PDF, and provenance owners select the token, argument,
+node, and provenance arena watermarks they can change. Admission rejects any
+missing, extra, or foreign owner/mark projection. The protocol is copy-only and
+allocates nothing; command-family migration onto those marks belongs to
+`umber2-awgc.4.2` and `umber2-awgc.4.3`.
+
 ### Durable checkpoints
 
 A named incremental checkpoint is created only when scanners and transient

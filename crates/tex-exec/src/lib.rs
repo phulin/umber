@@ -38,6 +38,7 @@ mod splitting;
 #[cfg(feature = "profiling")]
 mod step_snapshot_measurement;
 mod timing;
+pub mod transaction_protocol;
 mod vertical;
 
 #[cfg(test)]
