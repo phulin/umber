@@ -1086,26 +1086,6 @@ impl MacroStore {
     }
 
     #[must_use]
-    pub(crate) fn resolve_packed_stored(&self, id: MacroDefinitionId) -> Option<MacroDefinitionId> {
-        if id.is_stored() {
-            if let Some(definition) = self
-                .packed_chunks
-                .get(id.raw() as usize / PACKED_MACRO_CHUNK_RECORDS)
-                .and_then(|chunk| {
-                    chunk.records[id.raw() as usize % PACKED_MACRO_CHUNK_RECORDS]
-                        .as_ref()
-                        .map(|record| record.definition)
-                })
-            {
-                return Some(definition);
-            }
-        } else if self.packed_record(id).is_some() {
-            return Some(id);
-        }
-        None
-    }
-
-    #[must_use]
     pub(crate) fn watermark(&self) -> MacroStoreMark {
         MacroStoreMark {
             bodies: u32::try_from(self.bodies.slot_len()).expect("macro body slots exceed u32"),

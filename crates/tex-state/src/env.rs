@@ -24,7 +24,7 @@ use self::overflow::{REGISTER_COUNT, SparseBank};
 use crate::cell::{BankTag, CellId};
 use crate::epoch::Epoch;
 use crate::glue::GlueSpecRef;
-use crate::ids::{FontId, GlueId, NodeListId, TokenListId};
+use crate::ids::{FontId, GlueId, MacroDefinitionId, NodeListId, TokenListId};
 use crate::interner::Symbol;
 use crate::journal::{Journal, UndoRec};
 use crate::macro_store::MacroDefinitionRef;
@@ -1166,6 +1166,12 @@ impl Env {
         let cell = cell.without_assignment_scope();
         debug_assert_eq!(cell.bank(), BankTag::Meaning);
         self.macro_roots.get(&cell).cloned()
+    }
+
+    pub(crate) fn macro_root_id(&self, cell: CellId) -> Option<MacroDefinitionId> {
+        let cell = cell.without_assignment_scope();
+        debug_assert_eq!(cell.bank(), BankTag::Meaning);
+        self.macro_roots.get(&cell).map(MacroDefinitionRef::id)
     }
 
     pub(crate) fn set_macro_root(&mut self, cell: CellId, root: Option<MacroDefinitionRef>) {

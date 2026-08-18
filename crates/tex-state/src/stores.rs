@@ -1469,7 +1469,21 @@ impl Stores {
     #[must_use]
     pub fn meaning(&self, symbol: impl SymbolReference) -> Meaning {
         let symbol = self.resolve_symbol_reference(symbol);
-        self.resolve_stored_meaning(self.env.get_meaning_slot(symbol.raw()))
+        let stored = self.env.get_meaning_slot(symbol.raw());
+        match stored {
+            Meaning::Macro { definition, flags } => Meaning::Macro {
+                definition: self
+                    .env
+                    .macro_root_id(crate::cell::CellId::new(
+                        crate::cell::BankTag::Meaning,
+                        symbol.raw(),
+                    ))
+                    .filter(|live| live.raw() == definition.raw())
+                    .expect("macro meaning cell has no matching live root"),
+                flags,
+            },
+            other => self.resolve_stored_meaning(other),
+        }
     }
 
     pub(crate) fn symbol_at_slot(&self, slot: u32) -> Option<Symbol> {
