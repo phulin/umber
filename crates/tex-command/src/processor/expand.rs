@@ -2383,19 +2383,14 @@ impl CommandProcessor<'_> {
         arguments: MacroArguments,
         admitted: u32,
     ) -> InputLevelId {
-        let definition_origin = self
-            .command
-            .parameters
-            .macro_owner(definition)
+        let owner = self.command.parameters.admitted_macro(admitted);
+        let definition_origin = owner
             .provenance(definition)
             .map_or(OriginId::UNKNOWN, |provenance| {
                 provenance.definition_ref().id()
             });
         let parent = self.command.parameters.parent_invocation();
-        let definition_operand = self
-            .command
-            .parameters
-            .macro_owner(definition)
+        let definition_operand = owner
             .observation_operand(definition)
             .expect("active macro definition has an admitted observation operand")
             as u64;
