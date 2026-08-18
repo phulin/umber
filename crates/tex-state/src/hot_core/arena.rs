@@ -17,7 +17,7 @@ static NEXT_ARENA_NAMESPACE: AtomicU64 = AtomicU64::new(FIRST_ARENA_NAMESPACE);
 
 mod layout;
 
-use layout::*;
+pub(crate) use layout::*;
 
 struct ChunkSlot<T> {
     generation: NonZeroU32,
@@ -262,6 +262,21 @@ impl<T> RegionArena<T> {
         Ok(())
     }
 
+    /// Validates a rollback watermark without changing arena state.
+    ///
+    /// Aggregate snapshots use this preflight before mutating any component.
+    pub(crate) fn validate_mark(&self, mark: RegionArenaMark) -> Result<(), RegionArenaError> {
+        self.validate_mark_inner(mark)
+    }
+
+    /// Validates that this overlay can be sealed into its accepted base.
+    pub(crate) fn validate_accept(&self) -> Result<(), RegionArenaError> {
+        if self.active.is_some() {
+            return Err(RegionArenaError::ReservationActive);
+        }
+        Ok(())
+    }
+
     pub(crate) fn resolve(&self, coordinate: RegionCoordinate<T>) -> Result<&T, RegionArenaError> {
         let values = self.resolve_chunk(coordinate.key)?;
         values
@@ -468,7 +483,7 @@ impl<T> RegionArena<T> {
         Ok(())
     }
 
-    fn validate_mark(&self, mark: RegionArenaMark) -> Result<(), RegionArenaError> {
+    fn validate_mark_inner(&self, mark: RegionArenaMark) -> Result<(), RegionArenaError> {
         if mark.namespace != self.namespace || mark.live_chunks as usize > self.live_slots.len() {
             return Err(RegionArenaError::InvalidMark);
         }

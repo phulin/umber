@@ -105,10 +105,16 @@ impl<T: Copy> PodStack<T> {
     }
 
     pub(crate) fn truncate(&mut self, mark: PodStackMark) -> Result<(), PodStackError> {
+        self.validate_mark(mark)?;
+        self.entries.truncate(mark.0 as usize);
+        Ok(())
+    }
+
+    /// Validates a stack watermark without changing the stack.
+    pub(crate) fn validate_mark(&self, mark: PodStackMark) -> Result<(), PodStackError> {
         if mark.0 as usize > self.entries.len() {
             return Err(PodStackError::InvalidMark);
         }
-        self.entries.truncate(mark.0 as usize);
         Ok(())
     }
 

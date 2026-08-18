@@ -65,6 +65,8 @@ mod frozen_lookup;
 pub mod glue;
 #[allow(dead_code)] // Storage substrate is consumed as HotCore families migrate.
 pub(crate) mod hot_core;
+#[cfg(any(test, feature = "testing"))]
+pub mod hot_core_benchmark;
 pub mod hyphenation;
 pub(crate) mod identity;
 pub mod ids;

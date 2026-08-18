@@ -202,7 +202,7 @@ pub(crate) struct RegionArenaAccounting {
 }
 
 impl RegionArenaAccounting {
-    pub(super) fn plus(self, other: Self) -> Self {
+    pub(crate) fn plus(self, other: Self) -> Self {
         Self {
             logical_values: self.logical_values.saturating_add(other.logical_values),
             logical_value_bytes: self

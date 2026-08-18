@@ -68,6 +68,8 @@ The project also uses bd (beads) for issue tracking; see below for full instruct
 - `benchmarks/`: opt-in standalone benchmark crates kept outside the root workspace.
 - `benchmarks/edit-restart`: paired Plain TeX edit workloads for incremental restart measurement.
 - `benchmarks/format-restore`: focused schema-11 loaded-format decode work and allocation benchmark.
+- `benchmarks/hot-core-snapshot`: fixed-size HotCore mark latency and
+  assertion-bearing warmed allocation/plateau gate.
 - `benchmarks/tex-command`: bounded generated-source descriptor identity reuse benchmark.
 - `benchmarks/tex-exec`: focused shipout-lowering diagnostic.
 - `benchmarks/tex-incr`: accepted-edit pure-memo diagnostic.

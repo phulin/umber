@@ -101,6 +101,7 @@ pub(crate) struct FirstWriteJournalAccounting {
     pub(crate) active_marks: usize,
     pub(crate) retained_inverse_heap_entries: usize,
     pub(crate) retained_mark_heap_entries: usize,
+    pub(crate) retained_heap_bytes: usize,
 }
 
 /// Nested first-write inverse history for one generation-checked target.
@@ -203,6 +204,16 @@ impl<T: JournalTarget> FirstWriteJournal<T> {
         Ok(())
     }
 
+    /// Validates an exact rollback without changing the journal or target.
+    pub(crate) fn validate_rollback(
+        &self,
+        target: &T,
+        mark: FirstWriteMark<T::Owner>,
+    ) -> Result<(), FirstWriteJournalError<T::Error>> {
+        self.validate_active_mark(target, mark)?;
+        self.validate_suffix(target, mark.inverse_cursor as usize)
+    }
+
     pub(crate) fn commit(
         &mut self,
         target: &mut T,
@@ -248,7 +259,22 @@ impl<T: JournalTarget> FirstWriteJournal<T> {
         Ok(())
     }
 
+    /// Returns whether no transaction mark owns journal history.
+    pub(crate) fn is_idle(&self) -> bool {
+        self.marks.is_empty()
+    }
+
     pub(crate) fn accounting(&self) -> FirstWriteJournalAccounting {
+        let retained_inverse_heap_entries = if self.inverses.spilled() {
+            self.inverses.capacity()
+        } else {
+            0
+        };
+        let retained_mark_heap_entries = if self.marks.spilled() {
+            self.marks.capacity()
+        } else {
+            0
+        };
         FirstWriteJournalAccounting {
             logical_inverses: self.inverses.len(),
             logical_inverse_bytes: self
@@ -256,16 +282,13 @@ impl<T: JournalTarget> FirstWriteJournal<T> {
                 .len()
                 .saturating_mul(size_of::<InverseRecord<T::Coordinate, T::Value>>()),
             active_marks: self.marks.len(),
-            retained_inverse_heap_entries: if self.inverses.spilled() {
-                self.inverses.capacity()
-            } else {
-                0
-            },
-            retained_mark_heap_entries: if self.marks.spilled() {
-                self.marks.capacity()
-            } else {
-                0
-            },
+            retained_inverse_heap_entries,
+            retained_mark_heap_entries,
+            retained_heap_bytes: retained_inverse_heap_entries
+                .saturating_mul(size_of::<InverseRecord<T::Coordinate, T::Value>>())
+                .saturating_add(
+                    retained_mark_heap_entries.saturating_mul(size_of::<JournalFrame>()),
+                ),
         }
     }
 
