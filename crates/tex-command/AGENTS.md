@@ -97,9 +97,8 @@ print channel of its own outside the borrowed
   and focused conformance tests.
 - `src/input/levels.rs`, `src/input/levels/tests.rs`: canonical fixed-width
   source/token cursors over chunk-owned packed traced words, cold backup source
-  coordinates, orthogonal delivery/retirement classifications, and the
-  remaining rich macro-body/argument admission forms assigned to
-  `umber2-awgc.3.3`. A source level's `open_depths` field is
+  coordinates, orthogonal delivery/retirement classifications, and compact
+  admitted-macro replacement and argument-span coordinates. A source level's `open_depths` field is
   `\tracingnesting`'s own record; see `src/tracing_nesting.rs`.
 - `src/input/stack.rs`, `src/input/stack/tests.rs`: exact input retirement,
   centralized packed-chunk admission, retained v-template lifecycle,
@@ -179,8 +178,9 @@ print channel of its own outside the borrowed
   caller that starts from a broader notion and subtracts them by hand is
   re-deriving this predicate one exception at a time.
 - `src/macro_call.rs`, `src/macro_call/tests.rs`: private canonical scalar
-  macro matcher, strong definition/replacement and argument activation ownership,
-  and focused tests.
+  macro matcher, admitted 64-record definition chunks, reusable argument
+  chunks, packed invocation-record coordinates, compact activation/replay
+  coordinates, and focused tests.
 - `src/conditionals.rs`: private independent condition-stack machine; also
   renders e-TeX 2.6's `\tracingifs` `{...}` trace lines at conditional entry
   and at each `\or`/`\else`/`\fi` delimiter resolution, printed directly

@@ -57,7 +57,12 @@ handle-free and reconstruct fresh frames from their portable identity and
 token position. Runtime frames derive no serialization and cannot enter
 schema-11 formats. Foreign and stale spans reject at arena admission; admitted
 traversal performs no repeated generation lookup. Macro-body and argument
-chunk ownership remain the ordered `umber2-awgc.3.3` migration.
+delivery now use admitted 64-record macro chunks, 16-byte argument-span
+coordinates, 48-byte activations, and reusable argument/invocation chunks.
+The packed macro cache owns no semantic child by itself: the environment root
+remains authoritative until one command-level chunk admission retains the live
+token and provenance closure. Continuation and schema-11 DTOs remain
+handle-free and reconstruct fresh runtime chunks.
 
 A private incremental revision additionally owns one disposable allocation
 domain. The domain is absent from templates and accepted generations at rest.

@@ -167,29 +167,63 @@ larger replay is a span in an episode arena.
 
 ### Macro storage and arguments
 
-Macro definitions are immutable records in an append-only chunk arena:
+Macro definitions are immutable records in 64-record chunks:
 
 ```text
 MacroRecord {
-  flags,
-  parameter_program_span,
-  replacement_span,
-  provenance_coordinate,
+  definition: MacroDefinitionId,
+  flags: MeaningFlags,
+  parameter_roots: (u32, u32),
+  parameter_program: PackedMacroPattern,
+  text_allocation: (u32, u32),
+  text_lengths: (u32, u32),
+  observation_operand: i64,
+  allocation_serial: u64,
 }
 ```
 
-The environment owns a compact macro coordinate. Reading a macro validates the
-owning chunk at episode admission and then borrows its spans directly. It does
-not hash or upgrade an owner on every invocation.
+`PackedMacroRecord` is fixed at 112 bytes and `PackedMacroPattern` at 52 bytes.
+The chunk stores 8-byte traced parameter and replacement words plus compact
+token-list ids; it does not retain semantic children by itself. The existing
+environment definition root remains the lifetime authority until command
+admission collects every live definition and provenance root in that chunk
+under one `PackedMacroChunkOwner`. Reading an admitted macro then borrows the
+copy-only pattern and spans directly, without hashing, weak upgrade, or a
+per-definition owner operation. Reclaimed definition slots overwrite warmed
+text allocations, while an allocation serial invalidates post-mark records on
+rollback without a growing undo log.
 
-Arguments are spans in the current episode arena. An argument that becomes
-future state is promoted by retaining or sealing its chunk, not by copying
-each token into individually owned buffers.
+Arguments are spans in reusable 4,096-word, 256-record command chunks.
+`MacroArguments` is a fixed 16-byte `(chunk, start, len, record)` coordinate;
+the record contains nine optional half-open ranges. `MacroActivation` is 48
+bytes and stores only the definition coordinate, argument coordinate, and
+invocation-origin coordinate. Replacement input carries an admitted macro
+chunk index and replacement length; parameter input carries the argument
+coordinate and range. Neither payload owns a per-value `Arc` buffer.
+
+Invocation frames append one copy-only `OriginRecord::MacroInvocation` to the
+packed provenance archive and remain `OriginId` coordinates in activations.
+They bypass the weak rooted-value graph and its exact-candidate allocations;
+their dedicated 256-key leases keep an ordinary fresh job in one affine key
+run even when cold rooted origins are allocated between invocations. Recent
+exact retry candidates occupy four inline entries and create no weak bucket.
+Node, diagnostic, and continuation publication materialize a structural root
+only at that cold boundary. Matcher scratch, argument words, and argument
+records retain their warmed capacities. Retirement removes only compact
+activation entries; the next quiescent top-level call clears and reuses the
+argument chunks.
 
 Runtime definitions append. Exact-content interning is not part of ordinary
 execution. If format capture or incremental convergence benefits from content
 identity, it computes or reuses a chunk fingerprint at that publication
 boundary.
+
+The `benchmarks/tex-command` `macro_argument_matching` row warms two complete
+invocations, backs up the already materialized third call token, and measures
+matching plus first replacement delivery. Its unobserved configuration must
+report zero allocation calls and zero requested bytes; external observation is
+reported separately because constructing owned observation payloads is a cold
+evidence boundary.
 
 ### Dense state
 
@@ -281,9 +315,9 @@ templates, inserted recovery, and every-hook payloads to chunk-owned packed
 traced words. Backup keeps physical source coordinates in a sparse cold
 sidecar, so ordinary word delivery does not construct diagnostic ranges.
 Resource suspension detaches handle-free words and coordinates, and resume
-admits a fresh chunk/frame at the exact portable cursor. Macro-body and
-argument spans intentionally remain for
-`umber2-awgc.3.3`; transaction marks remain for `umber2-awgc.4.2`.
+admits fresh input, macro, argument, and invocation chunks at the exact
+portable cursors. Runtime chunk identities never enter the continuation or
+schema-11 format DTOs. Transaction marks remain for `umber2-awgc.4.2`.
 
 Arena accounting uses two deliberately separate measures. _Logical values_
 and _logical value bytes_ count only live initialized elements and

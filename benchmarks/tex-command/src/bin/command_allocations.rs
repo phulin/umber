@@ -305,7 +305,11 @@ fn run_case(workload: Workload, configuration: Configuration, case: &mut Case, p
                 Workload::OutputReplayExpansion => {
                     black_box(
                         processor
-                            .expand_output_replay(case.replay.expect("replay fixture is present"))
+                            .expand_output_replay(
+                                case.replay
+                                    .clone()
+                                    .expect("replay fixture is present"),
+                            )
                             .expect("output replay expands"),
                     );
                 }
@@ -333,7 +337,9 @@ fn build_case(workload: Workload) -> Case {
     let mut universe = Universe::new_with_plain_catcodes();
     let source = match workload {
         Workload::SingleTokenBackup => "x",
-        Workload::MacroArgumentMatching => r"\m{abcdefghijklmnop}",
+        Workload::MacroArgumentMatching => {
+            r"\m{abcdefghijklmnop}\m{abcdefghijklmnop}\m{abcdefghijklmnop}"
+        }
         Workload::ScanToksAbsorption => "{abcdefghijklmnop}",
         Workload::KeywordScanning => "dimension ",
         Workload::DimensionScanning => "123.5pt ",
@@ -433,28 +439,51 @@ fn build_case(workload: Workload) -> Case {
             .expect("benchmark source opens");
     }
 
-    Case::Processor(Box::new(ProcessorCase {
+    let mut case = ProcessorCase {
         universe,
         command,
         capabilities,
         replay,
-    }))
+    };
+    if matches!(workload, Workload::MacroArgumentMatching) {
+        let mut processor = CommandProcessor::new(
+            &mut case.command,
+            case.universe.command_context(),
+            CommandHostContext::new(&mut case.capabilities),
+        );
+        for _ in 0..32 {
+            black_box(
+                processor
+                    .get_x_token()
+                    .expect("macro warmup succeeds")
+                    .expect("macro warmup token is present"),
+            );
+        }
+        let pending = processor
+            .get_next()
+            .expect("warmed macro call delivers")
+            .expect("warmed macro call is present");
+        processor
+            .back_input(pending)
+            .expect("warmed macro call backs up");
+    }
+    Case::Processor(Box::new(case))
 }
 
 fn install_macro(universe: &mut Universe) {
     let name = universe.intern("m").symbol();
-    let parameters = universe.intern_token_list(&[Token::param(1)]);
-    let replacement = universe.intern_token_list(&[Token::param(1)]);
+    let parameters = universe.intern_token_list_ref(&[Token::param(1)]);
+    let replacement = universe.intern_token_list_ref(&[Token::param(1)]);
     let definition = universe.intern_macro(MacroMeaning::new(
         MeaningFlags::EMPTY,
-        parameters,
-        replacement,
+        parameters.id(),
+        replacement.id(),
     ));
     universe.set_meaning(
         name,
         Meaning::Macro {
             flags: MeaningFlags::EMPTY,
-            definition,
+            definition: definition.id(),
         },
     );
 }

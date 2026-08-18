@@ -102,7 +102,7 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/journal/tests.rs`: Unit tests for journal positions, markers, entry traversal, and truncation.
 - `src/lib.rs`: Public module declarations and re-exports forming the `tex-state` API surface.
 - `src/lookup_benchmark.rs`: Testing-feature fixtures and deterministic work-count gates for token-list and macro-definition live, dead, stale-generation, stored-hole, and collision-safe lookup.
-- `src/macro_store.rs`: Reachability-owned exact macro bodies and definition occurrences, optional diagnostic provenance, weak collision-safe lookup, reusable slots, and private-patch transfer.
+- `src/macro_store.rs`: Reachability-owned exact macro bodies and definition occurrences; 64-record handle-free packed runtime chunks with admitted chunk-level token/provenance owners; serial-exact rollback, reusable text slots, optional diagnostic provenance, weak collision-safe cold lookup, and private-patch transfer.
 - `src/macro_store/owned.rs`: Immutable macro-body and definition-occurrence payloads plus their strong typed references and logical allocation accounting.
 - `src/macro_store/tests.rs`: Exact/collision body dedup, occurrence-local provenance, typed binding release, bounded-live plateau, and all-roots-live controls.
 - `src/math.rs`: Immutable math-list model for noads, fields, fractions, styles, choices, and math font families.
@@ -152,8 +152,9 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/print/tests.rs`: Unit tests for context widths, selector routing, help routing, and error-report completion.
 - `src/provenance.rs`: Reachability-owned structural origin records and lists,
   bounded incremental weak candidate/slot reclamation with inline-small weak
-  candidate buckets, compatibility record storage without a provenance-list
-  arena, demand policy, explicit provenance budgets, and record retry leases.
+  candidate buckets, packed macro-invocation records with cold root
+  materialization, compatibility record storage without a provenance-list arena,
+  demand policy, explicit provenance budgets, and record retry leases.
 - `src/provenance/tests.rs`: Structural sharing, collision, packed-key,
   allocation, readback, retry, fork, and rollback provenance controls.
 - `src/pure_memo.rs`: Optional entry/byte-bounded pure-query caches for pretolerance, page-breaking, and shipout results, bounded eviction telemetry, explicit cache release, and stable output-provenance recipes.

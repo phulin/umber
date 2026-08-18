@@ -1643,12 +1643,17 @@ enum TokenPayload {
         tokens: TokenListRef,
         origins: OriginListRef,
     },
+    MacroReplacement {
+        admitted: u32,
+        definition: MacroDefinitionId,
+        len: u32,
+    },
     Transient(SharedTokenBuffer),
     InlineTransient(TracedTokenWord),
     BackedUp(SharedBackedUpBuffer),
     InlineBackedUp(BackedUpToken),
     ArgumentRange {
-        buffer: SharedTokenBuffer,
+        arguments: MacroArguments,
         range: MacroArgumentRange,
     },
 }
@@ -1692,8 +1697,9 @@ stored every-hooks, output replay, and other source-adjacent replay into a
 structural roots once per chunk. Backed-up physical source coordinates occupy a
 cold inline-small sidecar and are materialized only for diagnostic rendering.
 The former rich transient/inline/backup payloads may be used only as private
-pre-admission values; they cannot survive in a canonical live level. Stored
-macro bodies and argument ranges remain rich until `umber2-awgc.3.3`.
+pre-admission values; they cannot survive in a canonical live level. Macro
+replacement and argument-range payloads likewise contain only admitted chunk
+and span coordinates; they carry no shared token buffer.
 
 Detached resource continuations deliberately do not serialize a runtime frame
 or arena coordinate. Detachment projects packed words, backup coordinates,
@@ -1704,13 +1710,14 @@ their exact physical byte/scalar/line cursor and rebuild the source frame after
 registration, preserving diagnostic positions without publishing runtime
 coordinates.
 
-The implemented ownership model keeps `MacroActivation` values in the
-`ParameterState` activation chain and stores a typed activation identity in
-`TokenBehavior::MacroBody`. This preserves one owner for each activation while
-letting its `MacroArguments` and any live `ArgumentRange` payloads retain the
-same reference-counted contiguous traced-token allocation. `InputLevelId` is
-typed separately from source identity and is present on both source and token
-levels. Exact-byte and Unicode source cursors use this identical enum.
+The implemented ownership model keeps copy-only `MacroActivation` values in
+the `ParameterState` activation chain and stores a typed activation identity
+in `TokenBehavior::MacroBody`. One admitted owner retains up to 64 macro
+records and their live token/provenance closure. `MacroArguments` and every
+live `ArgumentRange` name the same command-owned argument chunk by compact
+coordinates. `InputLevelId` is typed separately from source identity and is
+present on both source and token levels. Exact-byte and Unicode source cursors
+use this identical enum.
 
 The centralized transient and backed-up constructors still avoid caller-side
 staging for fixed insertions, but level admission immediately moves their words
@@ -1765,30 +1772,38 @@ local observation state.
 
 ### 12.3 Macro parameters
 
-A macro activation owns one shared argument buffer and at most nine ranges:
+A macro activation owns one compact argument record with at most nine ranges:
 
 ```rust
 struct MacroActivation {
     definition: MacroDefinitionId,
     arguments: MacroArguments,
-    invocation: InvocationOriginId,
+    invocation: OriginId,
 }
 
 struct MacroArguments {
-    buffer: SharedTokenBuffer,
-    ranges: [Option<MacroArgumentRange>; 9],
+    chunk: u32,
+    start: u32,
+    len: u32,
+    record: u32,
 }
 ```
 
-The scalar matcher accumulates completed arguments in definition order through
-one `MacroArgumentBuilder`, then freezes that builder into the activation's
-single shared buffer. Empty arguments retain empty half-open ranges. A compact
+`MacroArguments` is fixed at 16 bytes, `MacroActivation` at 48 bytes, and each
+argument record stores `[Option<MacroArgumentRange>; 9]` beside one contiguous
+traced-word span. The scalar matcher accumulates completed arguments in
+definition order through one reusable `MacroArgumentBuilder`, then copies them
+once into the warmed command chunk. Empty arguments retain empty half-open
+ranges. A compact
 `OutParameter(u8)` remains distinct from a literal parameter character emitted
 by the canonical `##` escape, so replay can substitute only the former without
-rewriting immutable macro definition token lists. The processor allocates the
-invocation provenance node using the active activation's invocation as parent,
-then installs the activation owner before exposing its immutable replacement
-body level.
+rewriting immutable macro definition token lists. Argument chunks hold 4,096
+words and 256 records. Quiescent top-level calls clear lengths but retain every
+warmed allocation. The processor appends one fixed-width invocation provenance
+record using the active activation's invocation coordinate as parent; no rooted
+weak value is created on replay. Node, diagnostic, and continuation boundaries
+materialize a structural root on demand. The activation is installed before
+its immutable replacement-body span becomes visible.
 
 An `OutParameter` read directly from a macro body pushes a parameter range.
 An `OutParameter` read from other nested token input resolves against the
@@ -2223,7 +2238,7 @@ owners before later recovery input can be read.
 7. enforces the narrow paragraph exception and `\long`;
 8. applies the `#{` delimiter/brace rule;
 9. strips one complete outer group when required;
-10. stores every completed argument once in one shared packed buffer;
+10. stores every completed argument once in one compact command-arena span;
 11. retires any exhausted macro-body level before placing the replacement
     list above its caller, while preserving the independently observable
     backup and recovery lifecycles;
@@ -2272,7 +2287,7 @@ The shared e-TeX and pdfTeX transition fixtures independently bind matching
 entry/restoration, completed arguments, activation, delimiter completion, and
 overlap recovery to their canonical observers. Crate tests additionally prove
 that rollback before a successful call replays the same activation and
-argument ranges while allocating exactly one new invocation origin per replay;
+argument ranges while appending exactly one compact invocation record per replay;
 an architecture gate preserves one raw scalar fallback and rejects alternate
 matcher types.
 
