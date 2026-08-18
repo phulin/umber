@@ -49,9 +49,24 @@ trip_run_with_progress() {
   "$@" &
   command_pid=$!
   (
+    # Killing a shell that is blocked in a foreground `sleep` does not kill
+    # that child.  Own the timer explicitly so a guarded caller never sees a
+    # heartbeat sleeper survive the oracle build it was observing.
+    heartbeat_sleep_pid=
+    trap '
+      trap - TERM INT EXIT
+      if [ -n "$heartbeat_sleep_pid" ]; then
+        kill "$heartbeat_sleep_pid" 2>/dev/null || :
+        wait "$heartbeat_sleep_pid" 2>/dev/null || :
+      fi
+      exit 0
+    ' TERM INT EXIT
     while kill -0 "$command_pid" 2>/dev/null; do
       printf '%s\n' "$progress_label"
-      sleep "$heartbeat_seconds"
+      sleep "$heartbeat_seconds" &
+      heartbeat_sleep_pid=$!
+      wait "$heartbeat_sleep_pid" 2>/dev/null || :
+      heartbeat_sleep_pid=
     done
   ) &
   heartbeat_pid=$!

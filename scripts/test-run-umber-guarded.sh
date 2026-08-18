@@ -82,6 +82,15 @@ UMBER_TRIP_HEARTBEAT_SECONDS=0.2 \
   sh "$trip_common" "$heartbeat_progress"
 rm -f "$heartbeat_progress"
 
+# A long heartbeat timer must be reaped with its completed command.  This is
+# the production shape exercised when an already-provisioned oracle finishes
+# well before the default 60-second heartbeat interval.
+UMBER_TRIP_HEARTBEAT_SECONDS=60 \
+  python3 "$guard" --timeout-seconds 10 --max-rss-mib 128 \
+  --term-grace-seconds 0.2 -- sh -c \
+  '. "$1"; trip_run_with_progress "oracle build heartbeat" sh -c "sleep 0.2"' \
+  sh "$trip_common"
+
 progress="$root/target/guard-self-test-progress"
 : > "$progress"
 set +e
