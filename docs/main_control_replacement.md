@@ -503,7 +503,14 @@ delivery-order cursor with the typed continuation, so it neither clones the
 observer root nor changes raw/expanded provenance. Retry therefore neither
 rewinds input nor rescans operands. Nested expanded token collectors retain
 their accumulator and special-splice route, while `\expandafter` and `\csname`
-retain their consumed operands and partial name respectively. Semantic apply
+retain their consumed operands and partial name respectively. Expandable
+`\number` and `\romannumeral` scans likewise retain their sign and provenance
+before the first expanded number token and their accumulated value, radix,
+vacuous flag, and overflow state while probing for the next digit. TeX82
+§442's alphabetic constant also keeps its completed character code while its
+following expanded optional-space probe is suspended. A resumed conversion therefore continues
+at the exact expanded-token boundary instead of restarting after an
+already-consumed sign, digit, or character constant. Semantic apply
 begins only after resource resolution and uses direct owner journals;
 output-capable box closing, ErrorStop recovery, observed and tracked commands,
 and private revisions use the same path. A private revision opens only a

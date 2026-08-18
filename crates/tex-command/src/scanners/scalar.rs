@@ -35,6 +35,29 @@ const IMPROPER_AUXILIARY_HELP: &[&str] = &[
 /// open to callers with longer strings and moves to `spill` when necessary.
 const KEYWORD_PREFIX_INLINE_CAPACITY: usize = 13;
 
+/// TeX82 §§440--445 scalar state whose next expanded token crossed an
+/// immutable host boundary.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub(crate) enum PendingIntegerScan {
+    Leading {
+        negative: bool,
+        provenance: OriginId,
+    },
+    Radix {
+        negative: bool,
+        provenance: OriginId,
+        radix: u8,
+        value: i32,
+        vacuous: bool,
+        overflowed: bool,
+    },
+    CharacterOptionalSpace {
+        negative: bool,
+        provenance: OriginId,
+        value: i32,
+    },
+}
+
 struct MatchedKeywordPrefix {
     inline: [Option<CurrentCommand>; KEYWORD_PREFIX_INLINE_CAPACITY],
     len: usize,
@@ -494,10 +517,91 @@ impl CommandProcessor<'_> {
 
     /// Scans an integer or an internal integer quantity.
     pub fn scan_integer(&mut self) -> Result<ScannedScalar<i32>, CommandError> {
-        let mut negative = false;
-        let mut provenance = OriginId::UNKNOWN;
+        self.scan_integer_with_resource_continuation(false)
+    }
+
+    /// Scans the operand of an expandable integer conversion whose opener is
+    /// retained by the expanded-delivery machine across immutable host input.
+    pub(crate) fn scan_expanded_integer(&mut self) -> Result<ScannedScalar<i32>, CommandError> {
+        self.scan_integer_with_resource_continuation(true)
+    }
+
+    fn scan_integer_with_resource_continuation(
+        &mut self,
+        retain_continuation: bool,
+    ) -> Result<ScannedScalar<i32>, CommandError> {
+        let pending = retain_continuation
+            .then(|| self.command.pending_integer_scans.pop())
+            .flatten();
+        if let Some(PendingIntegerScan::Radix {
+            negative,
+            provenance,
+            radix,
+            value,
+            vacuous,
+            overflowed,
+        }) = pending
+        {
+            let (value, vacuous) = self.scan_radix_tail_from(
+                value,
+                vacuous,
+                overflowed,
+                radix,
+                Some((negative, provenance)),
+            )?;
+            if vacuous {
+                self.missing_number_error()?;
+                return Ok(self.inserted_zero_integer(provenance));
+            }
+            return Ok(self.finish_integer(value, negative, provenance, ScalarRecovery::None));
+        }
+        if let Some(PendingIntegerScan::CharacterOptionalSpace {
+            negative,
+            provenance,
+            value,
+        }) = pending
+        {
+            if let Err(error) = self.scan_optional_space() {
+                if error.is_resource_suspension() {
+                    self.command.pending_integer_scans.push(
+                        PendingIntegerScan::CharacterOptionalSpace {
+                            negative,
+                            provenance,
+                            value,
+                        },
+                    );
+                }
+                return Err(error);
+            }
+            return Ok(self.finish_integer(value, negative, provenance, ScalarRecovery::None));
+        }
+        let (mut negative, mut provenance) = match pending {
+            Some(PendingIntegerScan::Leading {
+                negative,
+                provenance,
+            }) => (negative, provenance),
+            None => (false, OriginId::UNKNOWN),
+            Some(
+                PendingIntegerScan::Radix { .. }
+                | PendingIntegerScan::CharacterOptionalSpace { .. },
+            ) => unreachable!(),
+        };
         let first = loop {
-            let Some(command) = self.get_x_token()? else {
+            let command = match self.get_x_token() {
+                Ok(command) => command,
+                Err(error) => {
+                    if retain_continuation && error.is_resource_suspension() {
+                        self.command
+                            .pending_integer_scans
+                            .push(PendingIntegerScan::Leading {
+                                negative,
+                                provenance,
+                            });
+                    }
+                    return Err(error);
+                }
+            };
+            let Some(command) = command else {
                 return Ok(ScannedScalar {
                     value: 0,
                     recovery: ScalarRecovery::InsertedZero,
@@ -515,7 +619,9 @@ impl CommandProcessor<'_> {
                 _ => break command,
             }
         };
-        Ok(self.complete_integer(first, negative, provenance)?.0)
+        Ok(self
+            .complete_integer(first, negative, provenance, retain_continuation)?
+            .0)
     }
 
     /// TeX82 §440's `scan_int` body, from the token its
@@ -533,6 +639,7 @@ impl CommandProcessor<'_> {
         first: CurrentCommand,
         negative: bool,
         provenance: OriginId,
+        retain_continuation: bool,
     ) -> Result<(ScannedScalar<i32>, u8), CommandError> {
         // TeX82 §440's `scan_int` calls `scan_something_internal(int_val,
         // false)`, so §413's §429 loop lowers every numeric level to an
@@ -554,8 +661,12 @@ impl CommandProcessor<'_> {
                         ch,
                         cat: Catcode::Other,
                     } if ch.is_ascii_digit() => (
-                        self.scan_radix_tail(Some(ch as u8 - b'0'), DECIMAL_RADIX)?
-                            .0,
+                        self.scan_radix_tail(
+                            Some(ch as u8 - b'0'),
+                            DECIMAL_RADIX,
+                            retain_continuation.then_some((negative, provenance)),
+                        )?
+                        .0,
                         DECIMAL_RADIX,
                         ScalarRecovery::None,
                     ),
@@ -567,7 +678,11 @@ impl CommandProcessor<'_> {
                         ch: '\'',
                         cat: Catcode::Other,
                     } => {
-                        let (value, vacuous) = self.scan_radix_tail(None, 8)?;
+                        let (value, vacuous) = self.scan_radix_tail(
+                            None,
+                            8,
+                            retain_continuation.then_some((negative, provenance)),
+                        )?;
                         if vacuous {
                             self.missing_number_error()?;
                             return Ok((self.inserted_zero_integer(provenance), 8));
@@ -578,7 +693,11 @@ impl CommandProcessor<'_> {
                         ch: '"',
                         cat: Catcode::Other,
                     } => {
-                        let (value, vacuous) = self.scan_radix_tail(None, 16)?;
+                        let (value, vacuous) = self.scan_radix_tail(
+                            None,
+                            16,
+                            retain_continuation.then_some((negative, provenance)),
+                        )?;
                         if vacuous {
                             self.missing_number_error()?;
                             return Ok((self.inserted_zero_integer(provenance), 16));
@@ -594,7 +713,19 @@ impl CommandProcessor<'_> {
                         ch: '`',
                         cat: Catcode::Other,
                     } => {
-                        let (value, recovery) = self.scan_character_code()?;
+                        let (value, recovery, optional_space) = self.scan_character_code()?;
+                        if optional_space && let Err(error) = self.scan_optional_space() {
+                            if retain_continuation && error.is_resource_suspension() {
+                                self.command.pending_integer_scans.push(
+                                    PendingIntegerScan::CharacterOptionalSpace {
+                                        negative,
+                                        provenance,
+                                        value,
+                                    },
+                                );
+                            }
+                            return Err(error);
+                        }
                         (value, NO_RADIX, recovery)
                     }
                     _ => {
@@ -606,6 +737,17 @@ impl CommandProcessor<'_> {
                     }
                 },
             };
+        let scanned = self.finish_integer(value, negative, provenance, recovery);
+        Ok((scanned, radix))
+    }
+
+    fn finish_integer(
+        &mut self,
+        value: i32,
+        negative: bool,
+        provenance: OriginId,
+        recovery: ScalarRecovery,
+    ) -> ScannedScalar<i32> {
         let scanned = ScannedScalar {
             value: if negative {
                 value.saturating_neg()
@@ -624,7 +766,7 @@ impl CommandProcessor<'_> {
                 value: ObservationValue::Integer(i64::from(scanned.value)),
             }),
         );
-        Ok((scanned, radix))
+        scanned
     }
 
     /// TeX82 §416's and §446's shared outcome: the offending token has
@@ -851,7 +993,8 @@ impl CommandProcessor<'_> {
             (0, true, ScalarRecovery::None)
         } else {
             let replayed = self.get_x_token()?.ok_or(CommandError::input_invariant())?;
-            let (scanned, radix) = self.complete_integer(replayed, false, provenance.primary)?;
+            let (scanned, radix) =
+                self.complete_integer(replayed, false, provenance.primary, false)?;
             let decimal = radix == DECIMAL_RADIX
                 && self
                     .last_integer_terminator
@@ -1235,12 +1378,47 @@ impl CommandProcessor<'_> {
         &mut self,
         first: Option<u8>,
         radix: u8,
+        integer_continuation: Option<(bool, OriginId)>,
     ) -> Result<(i32, bool), CommandError> {
-        let mut value = i32::from(first.unwrap_or(0));
-        let mut vacuous = first.is_none();
-        let mut overflowed = false;
+        self.scan_radix_tail_from(
+            i32::from(first.unwrap_or(0)),
+            first.is_none(),
+            false,
+            radix,
+            integer_continuation,
+        )
+    }
+
+    fn scan_radix_tail_from(
+        &mut self,
+        mut value: i32,
+        mut vacuous: bool,
+        mut overflowed: bool,
+        radix: u8,
+        integer_continuation: Option<(bool, OriginId)>,
+    ) -> Result<(i32, bool), CommandError> {
         loop {
-            let Some(command) = self.get_x_token()? else {
+            let command = match self.get_x_token() {
+                Ok(command) => command,
+                Err(error) => {
+                    if error.is_resource_suspension()
+                        && let Some((negative, provenance)) = integer_continuation
+                    {
+                        self.command
+                            .pending_integer_scans
+                            .push(PendingIntegerScan::Radix {
+                                negative,
+                                provenance,
+                                radix,
+                                value,
+                                vacuous,
+                                overflowed,
+                            });
+                    }
+                    return Err(error);
+                }
+            };
+            let Some(command) = command else {
                 break;
             };
             match Self::radix_digit(&command) {
@@ -1299,9 +1477,9 @@ impl CommandProcessor<'_> {
         }
     }
 
-    fn scan_character_code(&mut self) -> Result<(i32, ScalarRecovery), CommandError> {
+    fn scan_character_code(&mut self) -> Result<(i32, ScalarRecovery, bool), CommandError> {
         let Some(command) = self.get_next_character_code()? else {
-            return Ok((0, ScalarRecovery::None));
+            return Ok((0, ScalarRecovery::None, false));
         };
         // TeX82 §442 tests `cur_tok`, not `cur_cmd`: an active character is
         // represented by a control-sequence meaning, but remains a valid
@@ -1317,23 +1495,22 @@ impl CommandProcessor<'_> {
                     _ => {
                         self.back_input(command)?;
                         self.improper_alphabetic_constant_error()?;
-                        return Ok((0, ScalarRecovery::InsertedZero));
+                        return Ok((0, ScalarRecovery::InsertedZero, false));
                     }
                 }
             }
             _ => {
                 self.back_input(command)?;
                 self.improper_alphabetic_constant_error()?;
-                return Ok((0, ScalarRecovery::InsertedZero));
+                return Ok((0, ScalarRecovery::InsertedZero, false));
             }
         };
         if value > i32::from(u8::MAX) && !self.command.profile().capabilities().supports_unicode() {
             self.back_input(command)?;
             self.improper_alphabetic_constant_error()?;
-            return Ok((0, ScalarRecovery::InsertedZero));
+            return Ok((0, ScalarRecovery::InsertedZero, false));
         }
-        self.scan_optional_space()?;
-        Ok((value, ScalarRecovery::None))
+        Ok((value, ScalarRecovery::None, true))
     }
 
     fn scan_decimal_dimension(

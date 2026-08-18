@@ -40,7 +40,9 @@ print channel of its own outside the borrowed
 - `src/state.rs`: persistent command state, cross-processor executor-owned
   replay-completion fences, and the process-local bounded rooted-token scratch
   pool, which retains the complete inline-or-spilled buffer rather than a
-  second words-only storage shape.
+  second words-only storage shape. Resource continuations also retain nested
+  token collectors, expansion operands, names, and integer-scan prefixes here;
+  they are process-local command state, never format or summary payload.
   Also owns `\tracingnesting`'s `record_source_open_depths`/
   `source_open_depths`, the `grp_stack`/`if_stack` recording e-TeX 2.6
   [23.328] compares at a source level's `end_file_reading`.
@@ -150,7 +152,11 @@ print channel of its own outside the borrowed
   §444's `⟨Scan a numeric constant⟩`, and §452's `⟨Scan decimal fraction⟩`
   all end a numeric scan with that one rule, so every numeric scan routes its
   terminator through it rather than choosing per call site whether to absorb
-  a space. The test is on the command, so it is the category code and never
+  a space. Expandable `\number` and `\romannumeral` scans retain their leading
+  sign/provenance, radix-tail accumulator, or completed §442 character code
+  awaiting its expanded optional-space probe when delivery suspends on an
+  immutable host request, so retry resumes the exact TeX82 §§440--445 token probe. The terminator test is
+  on the command, so it is the category code and never
   the character: §207 makes `spacer` the command a category-10 character
   carries, and §349 is what normalizes such a character's `cur_chr` to a
   space inside §341's `get_next`.

@@ -94,6 +94,9 @@ pub struct CommandState {
     /// host resolution. Corrected dump ranges are retained with the request
     /// so retry neither rescans operands nor repeats diagnostics.
     pub(crate) pending_file_enquiry: Option<PendingFileEnquiry>,
+    /// TeX82 §§440--445 integer scan state retained when an expandable number
+    /// conversion's operand delivery asks the immutable host.
+    pub(crate) pending_integer_scans: Vec<crate::scanners::PendingIntegerScan>,
     /// Expanded token collectors suspended at an immutable host boundary.
     ///
     /// Nested collectors append their continuation while unwinding, so the

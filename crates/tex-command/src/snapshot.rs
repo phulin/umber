@@ -391,6 +391,7 @@ impl CommandState {
         }
         if self.pending_input_open.is_some()
             || self.pending_file_enquiry.is_some()
+            || !self.pending_integer_scans.is_empty()
             || !self.pending_scan_toks.is_empty()
             || !self.pending_expansions.is_empty()
             || !self.pending_expandafters.is_empty()
@@ -458,6 +459,7 @@ impl CommandState {
             name_in_progress: false,
             pending_input_open: None,
             pending_file_enquiry: None,
+            pending_integer_scans: Vec::new(),
             pending_scan_toks: Vec::new(),
             pending_expansions: Vec::new(),
             pending_expandafters: Vec::new(),

@@ -4467,13 +4467,16 @@ fn prepared_openin_probe_resumes_after_the_blocked_macro_command() {
 }
 
 #[test]
-fn nested_file_probe_resumes_expandafter_collector_and_csname_frames() {
+fn nested_file_probe_resumes_expandafter_collector_csname_and_integer_frames() {
     // e-TeX [27.465] enters a nested general-text collector for `\unexpanded`.
     // Its expanded opener may suspend inside pdfTeX §1590 file enquiry; retry
     // must resume the special direct-splice route rather than expand the
     // retained `\unexpanded` command as an ordinary command. TeX82 §§368 and
     // 372 must likewise retain `\expandafter`'s first operand and `\csname`'s
-    // accumulated name when their nested expansion suspends.
+    // accumulated name when their nested expansion suspends. TeX82 §§440--445
+    // also retain a leading scan, consumed radix prefix, or §442 character
+    // constant whose expanded optional-space probe suspended. Restarting the
+    // opcode would treat the resolved terminator as a fresh number.
     let child = SourceRegistration::new(
         RegisteredSourceKind::Generated,
         Arc::<[u8]>::from(&b"AB"[..]),
@@ -4517,6 +4520,20 @@ fn nested_file_probe_resumes_expandafter_collector_and_csname_frames() {
             br"\edef\result{\csname a\pdffiledump length 2{child}b\endcsname}\message{[\meaning\result]}\end"
                 .as_slice(),
             "a4142b",
+        ),
+        (
+            br"\edef\result{\romannumeral\pdffilesize{child}}\message{[\result]}\end".as_slice(),
+            "[ii]",
+        ),
+        (
+            br"\nonstopmode\def\gobble#1X{Z}\def\term{\expandafter\gobble\pdffilesize{child}X}\edef\result{\romannumeral0\term}\message{[\result]}\end"
+                .as_slice(),
+            "[Z]",
+        ),
+        (
+            br"\catcode0=13 \protected\def^^@{}\edef\result{\romannumeral`^^@\pdffilesize{child}}\message{[\result]}\end"
+                .as_slice(),
+            "[2]",
         ),
     ] {
         let uninterrupted = run(source, true);

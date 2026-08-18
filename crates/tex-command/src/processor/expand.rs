@@ -1701,7 +1701,7 @@ impl CommandProcessor<'_> {
     }
 
     fn expand_number(&mut self, opener: CurrentCommand, roman: bool) -> Result<(), CommandError> {
-        let value = self.scan_integer()?.value;
+        let value = self.scan_expanded_integer()?.value;
         let text = if roman {
             roman_numeral(value)
         } else {

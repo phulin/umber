@@ -10,6 +10,7 @@ mod token_list;
 
 pub use hyphenation::{HyphenationDataKind, ScannedHyphenationData};
 pub use restricted::{RestrictedInteger, RestrictedIntegerClass};
+pub(crate) use scalar::PendingIntegerScan;
 pub use scalar::{InternalValue, ScalarProvenance, ScalarRecovery, ScannedScalar};
 pub use structured::{
     AlignmentCellOpening, EquationNumberSide, ExpandedWriteText, FileNameComponents,
