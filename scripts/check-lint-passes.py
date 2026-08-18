@@ -82,6 +82,7 @@ PASSES = (
 # gate.  Every entry must name a feature some workspace member declares, and
 # every declared feature that no pass enables must appear here.
 UNCOVERED_ENABLED_FEATURES = {
+    "tex-command/profiling": "profiling-only counters; enabled by scripts/check-tools.sh through `umber`",
     "tex-exec/profiling": "profiling-only counters; enabled by scripts/check-tools.sh through `umber`",
     "tex-state/shadow": "verification-only mirror; enabled by scripts/check-tools.sh through `umber`",
     "tex-state/profiling": "profiling-only counters; enabled by scripts/check-tools.sh through `umber`",

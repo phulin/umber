@@ -195,7 +195,7 @@ target/profiling/umber run --profiling-stats \
 
 A `profiling` build of the `umber` CLI also emits one `HOT_CORE_CENSUS`
 record when `run --profiling-stats` is requested. The text after that prefix is
-a compact schema-1 JSON object, so a census consumer parses the JSON rather
+a compact schema-2 JSON object, so a census consumer parses the JSON rather
 than scraping field positions. The report is owned by the same run-scope guard
 as `MAIN_MEMORY_PROJECTION`; normal completion, typed failure, and exact fuel
 exhaustion all publish the delta, while a run without `--profiling-stats`
@@ -240,6 +240,22 @@ The JSON fields have these semantics:
   are each counted when they actually reach that loop; expanded-away macros
   remain visible through the separate command-work vector rather than being
   fabricated as dispatches.
+- `expansion_opcodes` counts each real macro expansion and every expandable
+  primitive by its stable serialized operand and Rust catalogue name.
+  `dispatch_opcodes.unexpandable_primitives` does the same for each primitive
+  that reaches main control. Zero-count opcodes are retained in the fixed
+  counter arrays but omitted from the JSON map. Operand bounds are asserted in
+  profiling builds, so extending either primitive catalogue without extending
+  the census fails loudly.
+- `materializations` counts the command value handed to expansion, the
+  universal `ScannedStep`, its `PreparedOperation` wrapper, and the
+  `ScannedStep` clone passed to semantic apply. These are structural events,
+  not fuel, and exist to prove which DTO seams fused dispatch removes.
+- `interpreter.constructions` counts session-owned interpreter construction;
+  `interpreter.operation_entries` counts borrow-scoped processor entries over
+  that owner. The latter may exceed prepared operations because scanners open
+  nested, nonoverlapping processor borrows. Both are monotonic profiling-only
+  evidence and never enter the interpreter lifecycle or semantic state.
 - `phase_boundaries` retains the historical step-snapshot slot for schema
   comparison, but production must report zero entries there. Delivery/scanning,
   semantic apply, evidence publication, and barrier decision remain active.

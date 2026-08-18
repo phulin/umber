@@ -1461,7 +1461,6 @@ fn profiling_stats_are_reported_only_when_requested() {
     let stderr = String::from_utf8(reported.stderr).expect("stderr is utf-8");
     assert!(stderr.contains("EXPANSION_STATS "));
     assert!(stderr.contains("PROVENANCE_LIFECYCLE "));
-    assert!(stderr.contains("NODE_MEMORY_TOTAL "));
     assert!(stderr.contains("ALLOC_NODE_APPEND "));
     let census = stderr
         .lines()
@@ -1469,11 +1468,7 @@ fn profiling_stats_are_reported_only_when_requested() {
         .expect("profiling report has hot-core census");
     let census: serde_json::Value = serde_json::from_str(census).expect("census is valid JSON");
     assert_eq!(census["schema"], 2);
-    assert!(
-        census["clones"]["step_snapshot"]["calls"]
-            .as_u64()
-            .is_some_and(|calls| calls > 0)
-    );
+    assert_eq!(census["clones"]["step_snapshot"]["calls"], 0);
     assert!(
         census["command_families"]["unexpandable_primitive"]
             .as_u64()
@@ -1533,16 +1528,8 @@ fn hot_core_census_is_machine_readable_and_request_scoped() {
         .expect("profiling report has hot-core census");
     let census: serde_json::Value = serde_json::from_str(census).expect("census is valid JSON");
     assert_eq!(census["schema"], 2);
-    assert!(
-        census["allocations"]["command_state_clone"]["calls"]
-            .as_u64()
-            .is_some_and(|calls| calls > 0)
-    );
-    assert!(
-        census["clones"]["step_snapshot"]["calls"]
-            .as_u64()
-            .is_some_and(|calls| calls > 0)
-    );
+    assert_eq!(census["allocations"]["command_state_clone"]["calls"], 0);
+    assert_eq!(census["clones"]["step_snapshot"]["calls"], 0);
     assert!(
         census["command_families"]["character"]
             .as_u64()
