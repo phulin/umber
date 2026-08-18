@@ -4502,6 +4502,35 @@ fn group_entry_local_restore_and_exit_open_no_aggregate_savepoint() {
 }
 
 #[test]
+fn deferred_effect_and_ordinary_pdf_commands_open_no_aggregate_savepoint() {
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
+    let mut control = MainControl::tex82_initex(&mut stores);
+    register_source(&mut control, br"\openout0=deferred");
+
+    assert_eq!(
+        control.advance(&mut stores).expect("deferred open commits"),
+        StepResult::Progress(ReplayStep::Continue)
+    );
+    assert_eq!(control.advance_telemetry().maximum_live_savepoints, 0);
+
+    let mut pdf_stores = crate::test_harness::universe_with_plain_catcodes();
+    let mut pdf_control = pdftex_graphics_control(&mut pdf_stores);
+    pdf_stores.set_int_param_global(IntParam::PDF_OUTPUT, 1);
+    register_source(&mut pdf_control, br"\pdfliteral direct{q Q}");
+
+    assert_eq!(
+        pdf_control
+            .advance(&mut pdf_stores)
+            .expect("ordinary PDF node commits"),
+        StepResult::Progress(ReplayStep::Continue)
+    );
+    assert_eq!(
+        pdf_control.advance_telemetry().maximum_live_savepoints,
+        0
+    );
+}
+
+#[test]
 fn production_batch_returns_after_a_world_effect() {
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
     let mut control = MainControl::tex82_initex(&mut stores);

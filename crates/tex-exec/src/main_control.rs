@@ -2725,7 +2725,7 @@ impl MainControl {
         (operations >= max_operations).then_some(crate::EpisodeCommitBoundary::SliceLimit)
     }
 
-    fn command_requires_legacy_retry_adapter(
+    fn command_requires_transaction(
         &self,
         stores: &Universe,
         capabilities: crate::transaction_protocol::CommandCapabilities,
@@ -2737,11 +2737,14 @@ impl MainControl {
         ) {
             return true;
         }
+        // pdfTeX's `check_pdfoutput` fails before operand scanning. ErrorStop
+        // can change `\pdfoutput` and retry that untouched command, so DVI
+        // mode retains the retry transaction; an enabled ordinary PDF
+        // command cannot take that recovery edge and commits directly.
         if capabilities
             .mutation()
             .contains(crate::transaction_protocol::StateOwners::PDF)
-            || !capabilities.effects().is_empty()
-            || !capabilities.output().is_empty()
+            && stores.int_param(IntParam::PDF_OUTPUT) <= 0
         {
             return true;
         }
@@ -2893,10 +2896,11 @@ impl MainControl {
     }
 
     /// Executes successful ordinary commands directly on canonical state.
-    /// Group entry and exit are ordinary journal/save-stack mutations, so the
-    /// bounded loop deliberately has no group-depth stop and owns no retry
-    /// snapshot. Classified resource/publication/late-failure work is handed
-    /// to the legacy adapter one operation at a time for .4.3 to replace.
+    /// Group entry and exit, deferred effects, and nonpublishing PDF ledger
+    /// mutations are ordinary journal/save-stack mutations, so the bounded
+    /// loop deliberately has no group-depth stop and owns no retry snapshot.
+    /// Only a capability with an explicit transaction specification, dynamic
+    /// output continuation, or unsettled expansion leaves this path.
     fn execute_direct_episode(
         &mut self,
         stores: &mut Universe,
@@ -2963,7 +2967,7 @@ impl MainControl {
                 preflight
             };
 
-            if self.command_requires_legacy_retry_adapter(
+            if self.command_requires_transaction(
                 stores,
                 preflight.capabilities,
                 &preflight.delivery,
