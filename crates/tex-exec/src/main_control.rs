@@ -224,6 +224,14 @@ pub struct MainControl {
     /// Live-store boundaries used to close the typed receipt before the
     /// operation savepoint commits. Absent for ordinary execution.
     operation_receipt_start: Option<OperationReceiptStart>,
+    /// Observation evidence moved across a typed resource suspension.
+    ///
+    /// Preflight has committed delivery and scanning when one of the narrow
+    /// resource continuations is installed, so an observed retry cannot
+    /// discard that prefix and reconstruct it by replay. Moving the sole
+    /// buffer owner keeps publication atomic without cloning any evidence
+    /// aggregate.
+    suspended_operation_observation: Option<(ObservationBuffer, OperationReceiptStart)>,
     completed_replay_episode: Option<tex_command::CommandReplayEpisode>,
     /// Detached DVI receipts whose artifact commits have survived an entire
     /// aggregate operation. This is replay state so rollback drops
@@ -703,12 +711,17 @@ type ObservationSlot = Option<ObservationBuffer>;
 /// snapshotting, application, publication, rollback, and evidence are shared.
 enum OperationDelivery {
     Replay(Option<tex_command::CurrentCommand>),
+    /// TeX82 §1038's main-loop lookahead delivered this command with bare
+    /// `get_next`; it must not acquire an expanded-delivery observation when
+    /// the scanner borrow resumes.
+    Raw(tex_command::CurrentCommand),
     /// Expansion settled during the same borrow as raw preflight delivery,
     /// including its canonical expanded observation.
     Settled(tex_command::CurrentCommand),
     Expanding {
         command: tex_command::CurrentCommand,
         main_loop: bool,
+        cursor: tex_command::CommandDeliveryCursor,
     },
     /// `\immediate` already consumed its recursive PDF command before a
     /// pre-operand DVI rejection. Retry resumes that PDF operand scanner
@@ -723,9 +736,11 @@ enum OperationDelivery {
 #[derive(Clone, Debug)]
 enum PendingPreflightCommand {
     Settled(tex_command::CurrentCommand),
+    Raw(tex_command::CurrentCommand),
     Expanding {
         command: tex_command::CurrentCommand,
         main_loop: bool,
+        cursor: tex_command::CommandDeliveryCursor,
     },
     ImmediatePdfRetry(UnexpandablePrimitive),
 }
@@ -2204,11 +2219,39 @@ impl MainControl {
 
     fn finish_resource_preflight_failure(
         &mut self,
-        stores: &Universe,
+        stores: &mut Universe,
         error: ExecError,
     ) -> Result<StepResult, ExecError> {
         let error =
             error.freeze_diagnostic_origin(stores, self.command.diagnostic_input_context(8));
+        if let Some(fatal) = error.as_fatal() {
+            let context = self.command.output_open_context(&stores.command_context());
+            crate::diagnostics::report_irrecoverable_error(stores, fatal, context);
+            self.captured_fatal_origin = match &error {
+                ExecError::Captured { site, frozen, .. } if fatal != FatalError::TooManyErrors => {
+                    Some((
+                        site.clone(),
+                        frozen
+                            .as_deref()
+                            .and_then(|evidence| evidence.origin.clone()),
+                        self.first_causal_context.clone().or_else(|| {
+                            frozen
+                                .as_deref()
+                                .and_then(|evidence| evidence.context.clone())
+                        }),
+                    ))
+                }
+                _ => None,
+            };
+            self.observe_committed([
+                CommandObservation::Diagnostic(fatal.record()),
+                CommandObservation::Effect(engine_termination_effect()),
+            ]);
+            let evidence_error =
+                self.admit_observed_receipt(stores, OperationTermination::Fatal(fatal));
+            let terminal = self.succumb(fatal);
+            return evidence_error.map_or(Ok(StepResult::Progress(terminal)), Err);
+        }
         match error {
             ExecError::Captured {
                 error,
@@ -3149,15 +3192,26 @@ impl MainControl {
                         ),
                         delivery: OperationDelivery::Replay(Some(command)),
                     },
-                    PendingPreflightCommand::Expanding { command, main_loop } => {
-                        PreflightDelivery {
-                            capabilities:
-                                crate::transaction_protocol::canonical_command_capabilities(
-                                    command.meaning(),
-                                ),
-                            delivery: OperationDelivery::Expanding { command, main_loop },
-                        }
-                    }
+                    PendingPreflightCommand::Raw(command) => PreflightDelivery {
+                        capabilities: crate::transaction_protocol::canonical_command_capabilities(
+                            command.meaning(),
+                        ),
+                        delivery: OperationDelivery::Raw(command),
+                    },
+                    PendingPreflightCommand::Expanding {
+                        command,
+                        main_loop,
+                        cursor,
+                    } => PreflightDelivery {
+                        capabilities: crate::transaction_protocol::canonical_command_capabilities(
+                            command.meaning(),
+                        ),
+                        delivery: OperationDelivery::Expanding {
+                            command,
+                            main_loop,
+                            cursor,
+                        },
+                    },
                     PendingPreflightCommand::ImmediatePdfRetry(primitive) => {
                         let meaning = Meaning::UnexpandablePrimitive(primitive);
                         PreflightDelivery {
@@ -3244,12 +3298,18 @@ impl MainControl {
                     OperationDelivery::Replay(Some(command)) => {
                         Some(PendingPreflightCommand::Settled(command.clone()))
                     }
-                    OperationDelivery::Expanding { command, main_loop } => {
-                        Some(PendingPreflightCommand::Expanding {
-                            command: command.clone(),
-                            main_loop: *main_loop,
-                        })
+                    OperationDelivery::Raw(command) => {
+                        Some(PendingPreflightCommand::Raw(command.clone()))
                     }
+                    OperationDelivery::Expanding {
+                        command,
+                        main_loop,
+                        cursor,
+                    } => Some(PendingPreflightCommand::Expanding {
+                        command: command.clone(),
+                        main_loop: *main_loop,
+                        cursor: *cursor,
+                    }),
                     OperationDelivery::ImmediatePdfRetry(primitive) => {
                         Some(PendingPreflightCommand::ImmediatePdfRetry(*primitive))
                     }
@@ -3372,12 +3432,18 @@ impl MainControl {
                     OperationDelivery::Replay(Some(command)) => {
                         Some(PendingPreflightCommand::Settled(command.clone()))
                     }
-                    OperationDelivery::Expanding { command, main_loop } => {
-                        Some(PendingPreflightCommand::Expanding {
-                            command: command.clone(),
-                            main_loop: *main_loop,
-                        })
+                    OperationDelivery::Raw(command) => {
+                        Some(PendingPreflightCommand::Raw(command.clone()))
                     }
+                    OperationDelivery::Expanding {
+                        command,
+                        main_loop,
+                        cursor,
+                    } => Some(PendingPreflightCommand::Expanding {
+                        command: command.clone(),
+                        main_loop: *main_loop,
+                        cursor: *cursor,
+                    }),
                     OperationDelivery::ImmediatePdfRetry(primitive) => {
                         Some(PendingPreflightCommand::ImmediatePdfRetry(*primitive))
                     }
@@ -3609,6 +3675,13 @@ impl MainControl {
         max_operations: usize,
         tracked_region: Option<&mut Option<Result<TrackedRegionRecord, TrackedRegionError>>>,
     ) -> Result<StepResult, ExecError> {
+        if self.operation_observations.is_none() {
+            // A caller may resume an observed resource suspension through
+            // the unobserved API. The semantic continuation is independent
+            // of instrumentation, so drop the moved evidence owner instead
+            // of publishing it into some later unrelated observed step.
+            self.suspended_operation_observation = None;
+        }
         if matches!(transaction, OperationTransaction::Advance)
             && matches!(&delivery, OperationDelivery::Replay(None))
             && !(self.operation_observations.is_some() && self.active_alignment.is_some())
@@ -5608,12 +5681,17 @@ impl MainControl {
         // Occupying the slot is what makes this operation observed. Every
         // command-processor episode the operation runs, including the nested
         // ones a host-applied step runs, publishes into this one buffer.
-        self.operation_observations = Some(ObservationBuffer::default());
-        self.operation_receipt_start = Some(OperationReceiptStart {
-            effect: effect_start.raw(),
-            artifact: artifact_start,
-            geometry: geometry_start,
-        });
+        if let Some((pending, start)) = self.suspended_operation_observation.take() {
+            self.operation_observations = Some(pending);
+            self.operation_receipt_start = Some(start);
+        } else {
+            self.operation_observations = Some(ObservationBuffer::default());
+            self.operation_receipt_start = Some(OperationReceiptStart {
+                effect: effect_start.raw(),
+                artifact: artifact_start,
+                geometry: geometry_start,
+            });
+        }
         let stepped = self.execute_operation(
             stores,
             OperationDelivery::Replay(None),
@@ -5622,7 +5700,15 @@ impl MainControl {
             None,
         );
         let mut pending = self.operation_observations.take().unwrap_or_default();
-        self.operation_receipt_start = None;
+        let receipt_start = self.operation_receipt_start.take();
+        if matches!(stepped, Ok(StepResult::Suspended(_)))
+            && (self.pending_resource_operation.is_some()
+                || self.pending_preflight_command.is_some())
+        {
+            let start = receipt_start.expect("observed operation owns a receipt start");
+            self.suspended_operation_observation = Some((pending, start));
+            return stepped;
+        }
         match &stepped {
             Ok(StepResult::Progress(_)) => {}
             Ok(StepResult::Suspended(_)) => {}
@@ -5769,6 +5855,7 @@ impl MainControl {
         self.refresh_host_capabilities(stores);
 
         let mut diagnostics = Vec::new();
+        let raw_main_loop_delivery = self.main_loop_active;
         let (delivery, settled_in_preflight) = {
             let mut processor = command_processor(
                 &mut self.command,
@@ -5794,10 +5881,7 @@ impl MainControl {
                             | Meaning::Unknown(_)
                     ) =>
                 {
-                    let retry = PendingPreflightCommand::Expanding {
-                        command: command.clone(),
-                        main_loop: self.main_loop_active,
-                    };
+                    let retained = command.clone();
                     prepare_command_trace(&mut processor, mode, self.shown_mode);
                     match processor.settle_current_command(command) {
                         Ok(settled) => {
@@ -5805,6 +5889,11 @@ impl MainControl {
                             settled.map(tex_command::CommandReplayDelivery::Command)
                         }
                         Err(error) => {
+                            let retry = PendingPreflightCommand::Expanding {
+                                command: retained,
+                                main_loop: self.main_loop_active,
+                                cursor: processor.delivery_cursor(),
+                            };
                             drop(processor);
                             self.pending_preflight_command = Some(retry);
                             return Err(command_error(error));
@@ -5894,6 +5983,8 @@ impl MainControl {
         Ok(Some(PreflightDelivery {
             delivery: if settled_in_preflight {
                 OperationDelivery::Settled(command)
+            } else if raw_main_loop_delivery && continues_main_loop {
+                OperationDelivery::Raw(command)
             } else {
                 OperationDelivery::Replay(Some(command))
             },
@@ -6034,6 +6125,22 @@ impl MainControl {
                         self.set_box_forbidden_depth == 0,
                     )?
                 }
+                OperationDelivery::Raw(command) => {
+                    processor.resume_current_command(&command);
+                    dispatch_main_control_command(
+                        &mut processor,
+                        command,
+                        mode,
+                        &self.boxes,
+                        innermost_group,
+                        job_is_all_over,
+                        self.modes.current_list().display_eq_no().is_some(),
+                        &mut self.shown_mode,
+                        &mut diagnostics,
+                        None,
+                        self.set_box_forbidden_depth == 0,
+                    )?
+                }
                 OperationDelivery::Replay(None) if display_alignment_tail => match processor
                     .next_do_assignments_command()
                     .map_err(command_error)?
@@ -6082,7 +6189,12 @@ impl MainControl {
                     &mut self.shown_mode,
                     &mut diagnostics,
                 )?,
-                OperationDelivery::Expanding { command, main_loop } => {
+                OperationDelivery::Expanding {
+                    command,
+                    main_loop,
+                    cursor,
+                } => {
+                    processor.resume_delivery_cursor(cursor);
                     prepare_command_trace(&mut processor, mode, self.shown_mode);
                     settle_preflight_step(
                         &mut processor,

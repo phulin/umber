@@ -4468,6 +4468,41 @@ fn production_batch_keeps_ordinary_prefix_on_resource_need() {
 }
 
 #[test]
+fn observed_resource_retry_moves_the_unpublished_prefix_exactly_once() {
+    let source = br"\input child\end";
+    let child =
+        SourceRegistration::new(RegisteredSourceKind::Generated, Arc::<[u8]>::from(&b""[..]));
+
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
+    let mut control = MainControl::tex82_initex(&mut stores);
+    register_source(&mut control, source);
+    let mut retried = ObservationRecorder::default();
+    assert!(matches!(
+        control
+            .advance_with_observer(&mut stores, &mut retried)
+            .expect("missing input suspends"),
+        StepResult::Suspended(ResourceNeed::Input { ref name, .. }) if name == "child.tex"
+    ));
+    assert!(
+        retried.0.is_empty(),
+        "a suspended observed operation publishes no prefix"
+    );
+    control
+        .capabilities_mut()
+        .register_input("child.tex", child.clone());
+    run_to_end_observed(&mut control, &mut stores, &mut retried);
+
+    let mut direct_stores = crate::test_harness::universe_with_plain_catcodes();
+    let mut direct = MainControl::tex82_initex(&mut direct_stores);
+    direct.capabilities_mut().register_input("child.tex", child);
+    register_source(&mut direct, source);
+    let mut direct_observations = ObservationRecorder::default();
+    run_to_end_observed(&mut direct, &mut direct_stores, &mut direct_observations);
+
+    assert_eq!(retried.0, direct_observations.0);
+}
+
+#[test]
 fn ordinary_assignment_opens_no_aggregate_savepoint() {
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
     let mut control = MainControl::tex82_initex(&mut stores);

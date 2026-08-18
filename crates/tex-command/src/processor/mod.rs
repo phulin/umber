@@ -196,7 +196,28 @@ pub struct CommandProcessor<'a> {
     observation_payloads_built: usize,
 }
 
+/// Opaque observation-order cursor retained when executor preflight suspends
+/// a command-processor episode after consuming scanner input.
+///
+/// It carries no input or semantic owner: those remain in [`CommandState`].
+/// Restoring it only keeps delivery sequence metadata continuous when the
+/// typed command continuation resumes in a fresh borrow episode.
+#[derive(Clone, Copy, Debug)]
+pub struct CommandDeliveryCursor(u64);
+
 impl CommandProcessor<'_> {
+    /// Captures the next observation delivery sequence for a typed retry.
+    #[must_use]
+    pub const fn delivery_cursor(&self) -> CommandDeliveryCursor {
+        CommandDeliveryCursor(self.next_delivery_sequence)
+    }
+
+    /// Restores observation ordering for a typed retry in a fresh borrow.
+    pub fn resume_delivery_cursor(&mut self, cursor: CommandDeliveryCursor) {
+        self.last_delivery = None;
+        self.next_delivery_sequence = cursor.0;
+    }
+
     /// Continues scanning an executor-retained settled command in a fresh
     /// borrow episode.
     ///
