@@ -397,6 +397,15 @@ exhaustive, and its episode histogram preserves every length from zero through
 the canonical 256-operation bound. The production feature resolution contains
 none of its counters, scopes, allocator wrapper, fields, or calls.
 
+The immutable integrated comparison authority is
+[`umber2-awgc.1.3`](writeback/umber2-awgc.1.3.md), with the complete schema-1
+census in
+[`umber2-awgc.1.3-census.json`](writeback/umber2-awgc.1.3-census.json). It
+fixes the exact 12,000,000-fuel structural/profile boundary, the separate
+100,000,000-fuel production wall/RSS authority, the disjoint zero-loss CPU
+attribution, and the owner-specific promotion budget for every later child.
+The two boundaries must be reported together but never treated as equal work.
+
 The same optimized profile, CPU affinity policy, source, format, distribution,
 offline cache, environment, and guards are used for before/after measurements.
 Synthetic benchmarks are retained for focused asymptotic controls only.

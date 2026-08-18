@@ -252,6 +252,18 @@ are `#[cfg(feature = "profiling")]`, so the production feature resolution
 contains no additional hot-path field, branch, call, allocation hook, or
 reference-count operation.
 
+The pinned integrated authority for later HotCore work is
+[`writeback/umber2-awgc.1.3.md`](writeback/umber2-awgc.1.3.md), with its exact
+machine-readable baseline in
+[`writeback/umber2-awgc.1.3-census.json`](writeback/umber2-awgc.1.3-census.json).
+A successor repeats the exact 12,000,000-fuel work/output identity and reports
+the complete schema rather than comparing selected favorable counters. CPU
+attribution assigns each sample's complete weight to one nearest recognized
+application owner, retaining an explicit unresolved-runtime bucket so the
+owners remain disjoint and sum to 100%. The separate production-default
+100,000,000-fuel wall/RSS guard remains a different boundary and must not be
+presented as equal work.
+
 ## Checkpoint and incremental modes
 
 Pass `--checkpoints` to exercise named-boundary capture. The runner consumes
