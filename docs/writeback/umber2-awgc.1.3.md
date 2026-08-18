@@ -159,8 +159,16 @@ and `c488f019c6e6d056d3023fd61204f828f1f7f5a7053249a3c6e6d9234817cc8c`.
 
 ## Promotion budgets
 
-Every later child repeats the same pins and exact work/output identity before
-claiming a measured improvement. A generic 15% fixed-prefix promotion requires
+This receipt preserves the pre-direct-transaction six-counter vector as
+historical evidence. Later rows that retain the same transaction policy repeat
+the complete vector exactly. A transaction cutover that deliberately removes
+aggregate replay instead uses the versioned contract in
+[`umber2-awgc.12`](umber2-awgc.12.md): fuel and raw token-frame position remain
+exact, semantic/output identities remain exact, and every replay-sensitive
+delta is attributed without restoring or synthetically charging eliminated
+work.
+
+A generic 15% fixed-prefix promotion requires
 at most 21,770,209,404 weighted cycles, 277,916 KiB peak RSS, 5,179,057 named
 allocation calls, or 809,294,357 named requested bytes. On the unchanged
 100M production command, the corresponding baseline RSS threshold is 560,296

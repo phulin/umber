@@ -652,6 +652,27 @@ fixes the exact 12,000,000-fuel structural/profile boundary, the separate
 attribution, and the owner-specific promotion budget for every later child.
 The two boundaries must be reported together but never treated as equal work.
 
+The fixed-prefix promotion contract is versioned at transaction cutovers.
+Before direct-prefix commit, all six command-work counters were comparable
+only while both rows replayed the same aggregate prefixes. After
+`umber2-awgc.4.2`, successful ordinary commands commit before a later resource
+transaction. A resource miss therefore no longer rolls back or re-executes
+that prefix. The post-cutover contract preserves exactly:
+
+- the 12,000,000 fuel boundary and 11,999,815 raw token-frame position;
+- all exhaustive semantic, diagnostic, state, effect, artifact, DVI, and PDF
+  identities; and
+- the historical six-counter vector as evidence, never as work to recreate.
+
+Expanded deliveries, meaning lookups, scanner-status tokens, and deferred-write
+expansions are replay-sensitive classifications at that fixed raw-work
+boundary. A promotion reports each delta against the historical vector and
+attributes every increase as well as every decrease to the changed endpoint
+mix. A focused resource-retry control must prove that the new transaction adds
+no work unrelated to the retained prefix. Restoring aggregate replay or
+synthetically charging eliminated work is forbidden. The decision and first
+exact receipt are [`umber2-awgc.12`](writeback/umber2-awgc.12.md).
+
 The same optimized profile, CPU affinity policy, source, format, distribution,
 offline cache, environment, and guards are used for before/after measurements.
 Synthetic benchmarks are retained for focused asymptotic controls only.

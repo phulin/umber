@@ -879,6 +879,24 @@ executed during deferred-write expansion. These counters are operational
 evidence outside TeX state: checkpoints, rollback, formats, semantic identity,
 corpus inputs, and fuel guards do not contain or alter them.
 
+Their comparison contract depends on transaction demand. When both binaries
+roll back the same prefixes, all six fields must match before a CPU or
+allocation comparison is accepted. Once an architecture change deliberately
+commits a successful prefix before a later resource transaction, replaying
+that prefix is no longer actual work. The versioned direct-prefix contract
+therefore keeps fuel and raw token-frame steps exact, keeps semantic/output
+identity exact, and reports the other four fields as replay-sensitive deltas
+against the preserved historical vector. It never fabricates the eliminated
+transitions by incrementing counters.
+
+Because scanner-status tokens are a subset of raw frames, advancing farther
+under the same raw-frame limit can increase that field while expanded
+deliveries or meaning lookups decrease. Such an increase is acceptable only
+when the exact raw-frame position is unchanged, the semantic gates are exact,
+and a focused transaction control attributes the redistribution while proving
+that direct retry adds no unrelated work. See
+[`umber2-awgc.12`](writeback/umber2-awgc.12.md).
+
 Exact focused controls exercise 256 macro invocations and 64 macro expansions
 inside deferred write text. Their respective vectors are
 `(513, 512, 256, 256, 0, 0)` and `(131, 131, 1, 64, 130, 64)` in the field

@@ -4393,10 +4393,78 @@ fn production_batch_keeps_ordinary_prefix_on_resource_need() {
     assert_eq!(retried, StepResult::Progress(ReplayStep::End));
     assert_eq!(stores.count(0), 11);
     let telemetry = control.advance_telemetry();
+    let direct_work = control.command_work();
+    assert_eq!(
+        direct_work,
+        tex_command::CommandWorkCounters {
+            fuel_charges: 24,
+            token_frame_steps: 24,
+            expanded_deliveries: 21,
+            meaning_lookups: 6,
+            scanner_tokens: 0,
+            write_expansions: 0,
+        },
+        "the direct prefix and one-command retry have exact actual work"
+    );
     assert_eq!(telemetry.rollbacks, 1);
     assert_eq!(telemetry.resource_replayed_delivered_tokens, 1);
     assert_eq!(telemetry.resource_replayed_dispatches, 1);
     assert_eq!(telemetry.attempts, telemetry.commits + telemetry.rollbacks);
+
+    // Negative control for the superseded transaction boundary. The same
+    // current compatibility adapter, widened to the historical 256-operation
+    // rollback root, must redo the successful assignment after the resource
+    // miss. These exact deltas prove that direct-prefix commit eliminates real
+    // command work; production must neither restore nor synthetically charge
+    // it merely to reproduce a pre-cutover fixed-fuel vector.
+    let mut aggregate_stores = crate::test_harness::universe_with_plain_catcodes();
+    let mut aggregate = MainControl::tex82_initex(&mut aggregate_stores);
+    register_source(&mut aggregate, br"\count0=11 \input child\end");
+    assert!(matches!(
+        aggregate
+            .execute_aggregate_operation(
+                &mut aggregate_stores,
+                OperationDelivery::Replay(None),
+                OperationTransaction::Advance,
+                256,
+                None,
+            )
+            .expect("aggregate batch suspends"),
+        StepResult::Suspended(ResourceNeed::Input { .. })
+    ));
+    aggregate.capabilities_mut().register_input(
+        "child.tex",
+        SourceRegistration::new(RegisteredSourceKind::Generated, Arc::<[u8]>::from(&b""[..])),
+    );
+    loop {
+        match aggregate
+            .execute_aggregate_operation(
+                &mut aggregate_stores,
+                OperationDelivery::Replay(None),
+                OperationTransaction::Advance,
+                256,
+                None,
+            )
+            .expect("aggregate retry executes")
+        {
+            StepResult::Progress(MainControlStep::End | MainControlStep::EndOfInput) => break,
+            StepResult::Progress(MainControlStep::Continue) => {}
+            StepResult::Suspended(need) => panic!("unexpected second suspension: {need:?}"),
+        }
+    }
+    assert_eq!(aggregate_stores.count(0), 11);
+    assert_eq!(
+        aggregate.command_work(),
+        tex_command::CommandWorkCounters {
+            fuel_charges: direct_work.fuel_charges + 8,
+            token_frame_steps: direct_work.token_frame_steps + 8,
+            expanded_deliveries: direct_work.expanded_deliveries + 9,
+            meaning_lookups: direct_work.meaning_lookups + 2,
+            scanner_tokens: direct_work.scanner_tokens,
+            write_expansions: direct_work.write_expansions,
+        },
+        "aggregate retry adds only the attributed replay work"
+    );
 }
 
 #[test]

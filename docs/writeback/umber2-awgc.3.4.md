@@ -2,8 +2,9 @@
 
 ## Outcome
 
-The packed ownership cutover is structurally complete, but promotion is
-blocked. Production token levels now have only three payload forms: a packed
+The packed ownership cutover is structurally complete, and its former
+work-vector blocker is resolved by the versioned direct-prefix contract in
+[`umber2-awgc.12`](umber2-awgc.12.md). Production token levels now have only three payload forms: a packed
 token chunk, an admitted macro replacement, or an admitted argument range.
 The former stored, transient, inline-transient, backed-up, inline-backed-up,
 and shared-buffer owners have been deleted from production. Source-adjacent
@@ -11,11 +12,10 @@ constructors build packed chunks directly, and detachment remains a portable
 projection rather than a second runtime owner.
 
 The four-row warmed structural gate passes exactly, and the exhaustive
-canonical command tracer is clean. The immutable arXiv prefix does not match
-the frozen command-work vector, however. `umber2-awgc.12` records the P0
-transaction/accounting defect and blocks this issue. `umber2-awgc.3.4` and its
-parent `.3` therefore remain open; tracer cleanliness is not a substitute for
-the pinned-prefix identity gate.
+canonical command tracer is clean. The immutable arXiv prefix retains exact
+fuel and raw-frame position. Its secondary counter changes are now attributed
+to aggregate replay eliminated by the already accepted direct-operation
+cutover, rather than misclassified as packed-token work.
 
 ## Ownership and lifetime repairs
 
@@ -79,10 +79,16 @@ input record was published.
 | Scanner-status tokens |    10,639,582 |    10,902,207 |
 | Write expansions      |         1,136 |         1,050 |
 
-This is a failed semantic/performance identity gate. The current row took
+This satisfies the versioned direct-prefix gate: fuel and raw frame position
+are exact, the exhaustive semantic tracer is clean, and the secondary deltas
+are recorded without charging work that no longer occurs. Relative to the
+historical vector, expanded deliveries are `-35,929`, meaning lookups are
+`-226,313`, scanner-status tokens are `+262,625`, and write expansions are
+`-86`. The scanner increase is an endpoint-mix redistribution within the exact
+11,999,815 raw frames, not additional raw work. The current row took
 34.07 seconds wall with 707,760 KiB peak RSS under the unchanged 120-second,
-1,536-MiB guard, but those timing values are diagnostic because the work vector
-changed. The local evidence is under `target/umber2-awgc.3.4`; its
+1,536-MiB guard; those timing values remain diagnostic across the transaction
+contract change. The local evidence is under `target/umber2-awgc.3.4`; its
 `evidence.sha256` file has SHA-256
 `f467191567a0f5a85c92d394ba92bc6e2e028b36952aeec7af08e7245f80259b`.
 
@@ -101,9 +107,11 @@ history check then established the transaction boundary:
 | `4ab5d3362` | Integrated packed ownership has the same stale diagnostic stop.                                                                             |
 | `55154ac7b` | The lifetime defect is fixed; the run reaches fuel and exposes the changed transaction/accounting vector above.                             |
 
-Restoring that command-demand/accounting identity belongs to
-`umber2-awgc.12`, not to this packed ownership issue. No transaction counter
-tuning or fused-interpreter work is included here.
+`umber2-awgc.12` proved that the transition is the first resource miss after a
+successful direct prefix. The old aggregate transaction rolled back and later
+re-executed the whole prefix; the direct path commits it and retries only the
+blocked command. That eliminated work must not be restored or synthetically
+charged. Packed ownership neither owns nor caused the delta.
 
 ## Validation
 
