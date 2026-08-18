@@ -62,8 +62,18 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/hot_core/arena/tests.rs`: Coordinate validation, accepted-base sharing,
   candidate isolation, rollback, plateau, and exact-growth controls for the
   HotCore arena substrate.
+- `src/hot_core/journal.rs`: Inline-small first-write inverse records, strictly
+  nested marks, exact rollback, and parent-epoch transfer over typed mutable
+  targets.
 - `src/hot_core/mod.rs`: Private HotCore storage module boundary; command
   semantics remain outside this substrate.
+- `src/hot_core/stack.rs` and `src/hot_core/stack/tests.rs`: Copy-only compact
+  stacks with 32-bit marks, inline common storage, spill reuse, accounting, and
+  bounded-cycle controls.
+- `src/hot_core/state.rs` and `src/hot_core/state/tests.rs`: Fixed-length
+  inline-small dense mutable banks, typed namespace/generation coordinates,
+  first-write journal integration, stale rejection, nested rollback, and
+  plateau controls.
 - `src/hyphenation.rs`: Hyphenation pattern trie and exception table implementing Liang-style position lookup.
 - `src/hyphenation/tests.rs`: Unit tests for hyphenation patterns, exceptions, bounds, and overlapping matches.
 - `src/identity.rs`: Shared generation-tagged runtime identity allocator for rollback-truncated stores.

@@ -253,6 +253,42 @@ capacities. Once a suitable reusable chunk and metadata capacity have warmed,
 the arena itself performs no heap growth during reserve, append, freeze, or
 truncate cycles.
 
+### Compact stack, dense-bank, and journal contract
+
+The storage-only substrate in `tex-state::hot_core::{stack,state,journal}`
+provides the mutable companions to the region arena without moving any TeX
+command semantics. `PodStack<T>` accepts only copyable entries. Its first eight
+entries are inline, its mark is a 32-bit length, and truncation retains any
+warmed spill capacity. Input, save, condition, group, and mode owners will use
+separate typed stack instances; the substrate does not combine those semantic
+families or expose them through a detached DTO.
+
+`DenseBank<T>` is a fixed-length direct-indexed store. Its first 32 cells are
+inline and larger banks use one retained contiguous spill allocation. A typed
+runtime coordinate contains a 64-bit bank namespace, a nonzero 32-bit bank
+generation, and a 32-bit dense index. Reads validate foreign namespaces, stale
+generations, and bounds. Resetting a quiescent bank generation retains its
+allocation, clears write epochs, and makes every prior coordinate stale. The
+coordinate is a non-owning runtime capability: it derives no serialization
+and is not a format or detached-checkpoint identifier.
+
+`FirstWriteJournal<Target>` owns only inline-small copyable inverse records and
+nested mark frames. The target continues to own values and one 32-bit write
+epoch per cell. The first write to a cell under the active mark records its old
+packed value and prior epoch; later writes under that mark coalesce. A nested
+rollback restores inverse records backward and truncates the suffix. A nested
+commit retains its inverses for the parent and transfers their write epochs to
+the parent, while a root commit retains values but retires inverse history.
+Marks are strictly LIFO and target-generation checked. After spill warmup,
+bounded mark/write/rollback cycles reuse both inverse and mark capacity.
+
+Accounting keeps logical payload separate from retained storage. Stack and
+journal reports expose live entries plus retained spill capacity; dense-bank
+logical bytes count packed values, while retained heap bytes include each
+cell's write epoch. None of these per-entry representations contains `Arc`,
+`Weak`, a hash, or a serialized handle. Fixed-size `HotSnapshot` aggregation,
+checkpoint sealing, and command-state adoption remain later migration work.
+
 ## Snapshot and rollback model
 
 ### Fixed-size mark

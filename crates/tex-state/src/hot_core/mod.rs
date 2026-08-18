@@ -5,3 +5,6 @@
 //! stages.
 
 pub(crate) mod arena;
+pub(crate) mod journal;
+pub(crate) mod stack;
+pub(crate) mod state;
