@@ -908,18 +908,28 @@ impl InputState {
             let TokenBehavior::MacroBody(activation) = tokens.behavior else {
                 return None;
             };
+            let TokenPayload::MacroReplacement {
+                admitted,
+                definition,
+                ..
+            } = &tokens.payload
+            else {
+                return None;
+            };
             let activation = parameters
                 .activations
                 .iter()
                 .find(|candidate| candidate.identity == activation)?;
+            if activation.definition != *definition {
+                return None;
+            }
             Some((
                 crate::processor::expand::token_list_token_text(
                     stores,
                     tex_state::token::Token::Cs(activation.name),
                 ),
-                stores
-                    .macro_definition(activation.definition)
-                    .parameter_text(),
+                *admitted,
+                *definition,
             ))
         } else {
             None
@@ -961,14 +971,16 @@ impl InputState {
                 before.prepend_str(&rendered);
             }
         }
-        if let Some((_, parameter_text)) = &macro_context {
+        if let Some((_, admitted, definition)) = &macro_context {
             if !before.is_complete() {
                 before.prepend_str("->");
             }
-            for &token in stores.tokens(*parameter_text).iter().rev() {
+            let owner = parameters.admitted_macro(*admitted);
+            for index in (0..owner.parameter_len(*definition)?).rev() {
                 if before.is_complete() {
                     break;
                 }
+                let token = owner.parameter_token(*definition, index)?;
                 render_token(stores, token, &mut raw, &mut rendered);
                 before.prepend_str(&rendered);
             }
@@ -981,7 +993,7 @@ impl InputState {
             before.prepend_str(&rendered);
         }
         let (before, before_chars) = before.finish();
-        let label = if let Some((label, _)) = &macro_context {
+        let label = if let Some((label, _, _)) = &macro_context {
             label.clone()
         } else {
             match tokens.trace {

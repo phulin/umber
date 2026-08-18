@@ -20,6 +20,55 @@ fn retired_root_context_reaches_the_retained_startup_terminal_line() {
 }
 
 #[test]
+fn macro_context_reads_the_admitted_chunk_after_definition_retirement() {
+    let mut command = CommandState::default();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
+    let name = universe.intern("retired");
+    let replacement = universe.intern_token_list_ref(&[tex_state::token::Token::Char {
+        ch: 'x',
+        cat: tex_state::token::Catcode::Letter,
+    }]);
+    let root = universe.intern_macro(tex_state::macro_store::MacroMeaning::new(
+        tex_state::meaning::MeaningFlags::EMPTY,
+        tex_state::ids::TokenListId::EMPTY,
+        replacement.id(),
+    ));
+    let definition = root.id();
+    let first = universe.snapshot_for_local_retry();
+    universe.set_meaning(
+        name,
+        tex_state::meaning::Meaning::Macro {
+            flags: tex_state::meaning::MeaningFlags::EMPTY,
+            definition,
+        },
+    );
+    universe.commit_local_retry_snapshot(first);
+
+    let admitted = command
+        .parameters
+        .admit_macro(definition, || universe.packed_macro_owner(definition));
+    let arguments = command.parameters.store_arguments(
+        tex_state::token::RootedTracedTokenBuffer::default(),
+        [None; 9],
+    );
+    command.push_macro_activation(
+        name.symbol(),
+        definition,
+        arguments,
+        tex_state::token::OriginId::UNKNOWN,
+        admitted,
+    );
+
+    let second = universe.snapshot_for_local_retry();
+    universe.set_meaning(name, tex_state::meaning::Meaning::Relax);
+    drop(root);
+    universe.commit_local_retry_snapshot(second);
+
+    let context = command.output_open_context(&universe.command_context());
+    assert_eq!(context, "\n\\retired ->\n           x");
+}
+
+#[test]
 fn cropped_pseudoprint_preserves_the_location_label() {
     let widths = ErrorContextWidths::new(79, 35).expect("TeX82 context widths");
     let output = render_error_context(
