@@ -6,6 +6,7 @@ edition.workspace = true
 [dependencies]
 md-5.workspace = true
 posix-regex.workspace = true
+smallvec.workspace = true
 tex-fonts = { path = "../tex-fonts" }
 tex-state = { path = "../tex-state" }
 

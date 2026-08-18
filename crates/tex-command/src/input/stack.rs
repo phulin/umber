@@ -201,13 +201,15 @@ impl CommandState {
         // TeX82 §321 checks `input_ptr` before `push_input` increments it.
         self.usage.record_input_push(self.input.levels.len());
         let identity = self.allocate_input_level_identity();
+        let payload = payload.packed_for_frame(&behavior);
+        let frame =
+            super::packed_token_frame(identity, payload.frame_len(), &behavior, retirement, &trace);
         self.input.levels.push(InputLevel::Tokens(TokenCursor {
             payload,
             behavior,
             retirement,
             trace,
-            index: 0,
-            identity,
+            frame,
         }));
         identity
     }
@@ -395,6 +397,9 @@ impl CommandState {
                 unreachable!("the inspected top level was a token cursor");
             };
             cursor.retirement = RetirementBehavior::AwaitingVTemplateRetirement;
+            cursor
+                .frame
+                .add_flags(tex_state::packed_input::InputFrameFlags::RETAIN_AT_END);
             return Ok(InputRetirement {
                 identity: expected,
                 action: InputRetirementAction::VTemplateRetained,
@@ -549,8 +554,8 @@ fn input_retirement_reason(behavior: &TokenBehavior, trace: &ReplayTrace) -> Inp
 
 pub(crate) fn input_level_identity(level: &InputLevel) -> InputLevelId {
     match level {
-        InputLevel::Source(level) => level.identity,
-        InputLevel::Tokens(level) => level.identity,
+        InputLevel::Source(level) => level.identity(),
+        InputLevel::Tokens(level) => level.identity(),
     }
 }
 

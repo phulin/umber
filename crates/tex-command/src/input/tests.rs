@@ -244,7 +244,7 @@ fn retained_v_template_pseudoprints_its_current_endtemplate_token() {
     let InputLevel::Tokens(cursor) = command.input.levels.last_mut().expect("v-template") else {
         panic!("token-list level expected");
     };
-    cursor.index = 1;
+    cursor.frame.advance().expect("template cursor advances");
     assert_eq!(
         command.output_open_context(&universe.command_context()),
         "\n<template> \\A \n              \\endtemplate "
@@ -272,8 +272,8 @@ fn retained_v_template_pseudoprints_its_current_endtemplate_token() {
     let InputLevel::Tokens(cursor) = command.input.levels.last_mut().expect("backup") else {
         panic!("token-list level expected");
     };
-    assert_eq!(cursor.identity, backup);
-    cursor.index = 1;
+    assert_eq!(cursor.identity(), backup);
+    cursor.frame.advance().expect("backup cursor advances");
     assert_eq!(
         command.output_open_context(&universe.command_context()),
         "\n<recently read> \\endtemplate \n                             \n<template> \\A \\endtemplate \n                           "
@@ -461,7 +461,7 @@ fn context_projection_is_snapshot_neutral_and_rollback_exact() {
     let InputLevel::Tokens(cursor) = command.input.levels.last_mut().expect("token level") else {
         panic!("token level expected");
     };
-    cursor.index = 1;
+    cursor.frame.advance().expect("token cursor advances");
     let advanced = command.output_open_context(&universe.command_context());
     assert_ne!(advanced, before);
     command.rollback(snapshot).expect("snapshot rolls back");

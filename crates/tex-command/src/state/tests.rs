@@ -320,7 +320,7 @@ fn register_named(state: &mut CommandState, name: &str, bytes: &[u8]) -> tex_sta
 
 fn source_level_identity(state: &CommandState) -> crate::input::InputLevelId {
     match state.input.levels.last().expect("source level opened") {
-        crate::input::InputLevel::Source(level) => level.identity,
+        crate::input::InputLevel::Source(level) => level.identity(),
         crate::input::InputLevel::Tokens(_) => panic!("opened source is not a source level"),
     }
 }

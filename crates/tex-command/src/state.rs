@@ -1226,7 +1226,7 @@ impl CommandState {
         let retained_v_template = |level: &InputLevel| {
             matches!(level,
                 InputLevel::Tokens(cursor)
-                    if cursor.identity == v_level
+                    if cursor.identity() == v_level
                         && matches!(cursor.behavior, TokenBehavior::VTemplate)
                         && matches!(cursor.retirement, RetirementBehavior::AwaitingVTemplateRetirement)
             )
@@ -1243,7 +1243,7 @@ impl CommandState {
                     && cursor
                         .payload
                         .backed_up_len()
-                        .is_some_and(|len| cursor.index >= len)
+                        .is_some_and(|len| cursor.position() >= len)
         );
         if exhausted_backed_up_endv
             && self
@@ -1496,7 +1496,7 @@ impl CommandState {
         let Some(InputLevel::Source(active)) = self.input.levels.last_mut() else {
             unreachable!("the inserted replacement source was just pushed");
         };
-        assert_eq!(active.identity, identity);
+        assert_eq!(active.identity(), identity);
         active.cursor.pending_acquired_line = true;
         Ok(())
     }
@@ -1520,7 +1520,8 @@ impl CommandState {
             unreachable!("begin_read_line keeps its source level active during acquisition");
         };
         assert_eq!(
-            active.identity, level,
+            active.identity(),
+            level,
             "begin_read_line keeps the exact source level active during acquisition"
         );
         active.name_class = name_class;
@@ -1554,7 +1555,7 @@ impl CommandState {
         let InputLevel::Source(level) = self.input.levels.last_mut()? else {
             return None;
         };
-        if level.identity != source {
+        if level.identity() != source {
             return None;
         }
         let every_eof = level.every_eof.take()?;
@@ -1607,16 +1608,14 @@ impl CommandState {
             self.file_framing_events
                 .push(FileFramingEvent::Open { name });
         }
-        self.input
-            .levels
-            .push(InputLevel::Source(Box::new(SourceLevel {
-                identity,
-                cursor: SourceCursor::new(registered),
-                name_class,
-                retirement,
-                every_eof,
-                open_depths: None,
-            })));
+        self.input.levels.push(InputLevel::Source(SourceLevel {
+            frame: crate::input::PackedInputFrame::source(identity.0, registered.id),
+            cursor: SourceCursor::new(registered),
+            name_class,
+            retirement,
+            every_eof,
+            open_depths: None,
+        }));
         identity
     }
 
@@ -1634,7 +1633,7 @@ impl CommandState {
     ) {
         for entry in &mut self.input.levels {
             if let InputLevel::Source(source) = entry
-                && source.identity == level
+                && source.identity() == level
             {
                 source.open_depths = Some(Box::new(crate::input::SourceOpenDepths {
                     group_lineages,
@@ -1652,7 +1651,7 @@ impl CommandState {
         level: InputLevelId,
     ) -> Option<crate::input::SourceOpenDepths> {
         self.input.levels.iter().find_map(|entry| match entry {
-            InputLevel::Source(source) if source.identity == level => {
+            InputLevel::Source(source) if source.identity() == level => {
                 source.open_depths.as_deref().cloned()
             }
             _ => None,

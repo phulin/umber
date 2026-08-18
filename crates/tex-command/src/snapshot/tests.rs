@@ -77,11 +77,12 @@ fn durable_continuation_roundtrip_preserves_inline_payloads() {
         });
     assert!(matches!(
         payloads.next(),
-        Some(TokenPayload::InlineTransient(word)) if word.word() == inline_word('t')
+        Some(TokenPayload::Packed(chunk)) if chunk.word(0) == Some(inline_word('t'))
     ));
     assert!(matches!(
         payloads.next(),
-        Some(TokenPayload::InlineBackedUp(word)) if word.token().spelling == inline_word('b')
+        Some(TokenPayload::Packed(chunk)) if chunk.word(0) == Some(inline_word('b'))
+            && chunk.is_backed_up()
     ));
 }
 
@@ -90,7 +91,6 @@ fn durable_continuation_materializes_canonical_stored_content_into_new_roots() {
     let mut universe = tex_state::Universe::new();
     let symbol = universe.intern("detached-root").symbol();
     let source_root = universe.intern_token_list_ref(&[Token::Cs(symbol)]);
-    let source_id = source_root.id();
     let mut state = CommandState::default();
     state.push_token_level(
         TokenPayload::Stored {
@@ -117,18 +117,13 @@ fn durable_continuation_materializes_canonical_stored_content_into_new_roots() {
     else {
         panic!("materialized the wrong level kind");
     };
-    let TokenPayload::Stored { tokens, .. } = &cursor.payload else {
+    let TokenPayload::Packed(tokens) = &cursor.payload else {
         panic!("materialized the wrong payload kind");
     };
-    assert_ne!(
-        tokens.id(),
-        source_id,
-        "destination coordinate must be local"
-    );
-    let [Token::Cs(restored_symbol)] = tokens.tokens() else {
+    let Some(Token::Cs(restored_symbol)) = tokens.word(0).map(|word| word.semantic_token()) else {
         panic!("stored control sequence did not materialize");
     };
-    assert_eq!(restored_universe.resolve(*restored_symbol), "detached-root");
+    assert_eq!(restored_universe.resolve(restored_symbol), "detached-root");
 }
 
 #[test]

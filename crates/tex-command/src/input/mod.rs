@@ -16,9 +16,10 @@ mod tokenizer;
 mod tests;
 
 pub(crate) use levels::{
-    BackedUpToken, BackupTreatment, InputLevel, InputLevelId, ReplayTrace, RetirementBehavior,
-    RootedBackedUpToken, SharedBackedUpBuffer, SharedTokenBuffer, SourceLevel, SourceOpenDepths,
-    SourceRetirement, StoredReplayReason, TokenBehavior, TokenCursor, TokenPayload,
+    BackedUpToken, BackupTreatment, InputLevel, InputLevelId, PackedInputFrame, ReplayTrace,
+    RetirementBehavior, RootedBackedUpToken, SharedBackedUpBuffer, SharedTokenBuffer, SourceLevel,
+    SourceOpenDepths, SourceRetirement, StoredReplayReason, TokenBehavior, TokenCursor,
+    TokenPayload, packed_token_frame,
 };
 pub(crate) use lines::{ReducedSourceSpelling, SourceLineState};
 pub(crate) use source::{
@@ -363,7 +364,7 @@ fn project_token_cursor(
     cursor: &TokenCursor,
     state: &tex_state::CommandContext<'_>,
 ) -> Option<()> {
-    hash.u64(cursor.index as u64);
+    hash.u64(u64::from(cursor.frame.position()));
     hash.byte(match cursor.retirement {
         RetirementBehavior::Pop => 0,
         RetirementBehavior::StopAtEnd => 1,
@@ -381,6 +382,11 @@ fn project_token_cursor(
         }
     });
     match &cursor.payload {
+        TokenPayload::Packed(chunk) => {
+            for index in 0..chunk.len() {
+                project_token(hash, chunk.word(index)?.token()?, state)?;
+            }
+        }
         TokenPayload::Stored { tokens, .. } => {
             for &token in tokens.tokens() {
                 project_token(hash, token, state)?;
@@ -533,9 +539,9 @@ impl InputState {
     ) -> String {
         let mut levels = self.levels.clone();
         if let Some(InputLevel::Source(source)) = levels.iter_mut().find(|level| {
-            matches!(level, InputLevel::Source(source) if source.identity == retiring.identity)
+            matches!(level, InputLevel::Source(source) if source.identity() == retiring.identity())
         }) {
-            **source = retiring.clone();
+            *source = retiring.clone();
             if let Some(line) = source.cursor.line.as_mut() {
                 line.physical = line.physical.with_number(source.cursor.next_line_number);
             }
@@ -855,6 +861,7 @@ impl InputState {
     ) -> Option<tex_state::print::ErrorContextLevel> {
         fn payload_len(_stores: &tex_state::CommandContext<'_>, tokens: &TokenCursor) -> usize {
             match &tokens.payload {
+                TokenPayload::Packed(chunk) => chunk.len(),
                 TokenPayload::Stored { tokens, .. } => tokens.tokens().len(),
                 TokenPayload::Transient(words) => words.len(),
                 TokenPayload::InlineTransient(_) | TokenPayload::InlineBackedUp(_) => 1,
@@ -871,6 +878,7 @@ impl InputState {
             index: usize,
         ) -> Option<tex_state::token::Token> {
             match &tokens.payload {
+                TokenPayload::Packed(chunk) => chunk.word(index).map(|word| word.semantic_token()),
                 TokenPayload::Stored { tokens, .. } => tokens.tokens().get(index).copied(),
                 TokenPayload::Transient(words) => {
                     words.get(index).map(|word| word.semantic_token())
@@ -934,7 +942,7 @@ impl InputState {
             None
         };
         let count = payload_len(stores, tokens);
-        let split = tokens.index.min(count);
+        let split = tokens.position().min(count);
         let noexpand_marker = matches!(
             tokens.behavior,
             TokenBehavior::BackedUp(BackupTreatment::SuppressExpandableControlSequence)

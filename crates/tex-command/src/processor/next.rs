@@ -301,7 +301,7 @@ impl CommandProcessor<'_> {
             if Self::next_stored_token(cursor).is_some() {
                 break;
             }
-            if cursor.identity == v_level
+            if cursor.identity() == v_level
                 && matches!(cursor.behavior, TokenBehavior::VTemplate)
                 && matches!(
                     cursor.retirement,
@@ -856,6 +856,7 @@ impl CommandProcessor<'_> {
         };
         self.back_input_rooted_token(last)?;
         if self.profile().capabilities().supports_etex() {
+            let prepended = tokens.len();
             for spelling in tokens.iter().rev() {
                 self.command.alignment.undo_delivery(
                     AlignmentDeliveryState::back_input_adjustment(spelling.word().semantic_token()),
@@ -865,7 +866,8 @@ impl CommandProcessor<'_> {
                 unreachable!("back_input above installed a token-list level");
             };
             assert_eq!(
-                cursor.index, 0,
+                cursor.position(),
+                0,
                 "no delivery occurs while e-TeX links aftergroup tokens"
             );
             if cursor
@@ -883,6 +885,12 @@ impl CommandProcessor<'_> {
                 .is_none()
             {
                 unreachable!("back_input above installed a backed-up payload");
+            }
+            let Ok(prepended) = u32::try_from(prepended) else {
+                return Err(CommandError::input_invariant());
+            };
+            if cursor.frame.extend_limit(prepended).is_none() {
+                return Err(CommandError::input_invariant());
             }
         } else {
             for spelling in tokens.into_iter().rev() {
@@ -1108,9 +1116,9 @@ impl CommandProcessor<'_> {
                 .iter()
                 .find_map(|level| match level {
                     InputLevel::Tokens(cursor)
-                        if cursor.identity
+                        if cursor.identity()
                             == match &self.command.input.levels[output_index] {
-                                InputLevel::Tokens(output) => output.identity,
+                                InputLevel::Tokens(output) => output.identity(),
                                 InputLevel::Source(_) => unreachable!("output token level"),
                             } =>
                     {
@@ -1155,7 +1163,7 @@ impl CommandProcessor<'_> {
         {
             return Ok(());
         }
-        match self.retire_and_restart(cursor.identity)? {
+        match self.retire_and_restart(cursor.identity())? {
             RetirementRestart::Continue => Ok(()),
             RetirementRestart::Stop | RetirementRestart::EndV(_) | RetirementRestart::Completed => {
                 Err(CommandError::input_invariant())
@@ -1603,13 +1611,13 @@ impl CommandProcessor<'_> {
                 // cursor instead. Keep the live level canonical and retain
                 // only the cheap Arc-backed registration across that call.
                 InputLevel::Source(source) => ActiveInput::Source {
-                    identity: source.identity,
+                    identity: source.identity(),
                     position: source.cursor.next_physical_offset,
                     backing: source.cursor.backing.clone(),
                 },
                 InputLevel::Tokens(cursor) => ActiveInput::Tokens {
-                    identity: cursor.identity,
-                    index: cursor.index,
+                    identity: cursor.identity(),
+                    index: cursor.position(),
                 },
             }) else {
                 observe!(
@@ -1639,6 +1647,16 @@ impl CommandProcessor<'_> {
                             self.ensure_replacement_line_registration();
                             let spelling =
                                 self.source_spelling(&token, allow_control_sequence_creation);
+                            let Some(InputLevel::Source(source)) =
+                                self.command.input.levels.last_mut()
+                            else {
+                                return Err(CommandError::input_invariant());
+                            };
+                            if source.frame.identity() != identity.0
+                                || source.frame.advance().is_none()
+                            {
+                                return Err(CommandError::input_invariant());
+                            }
                             return Ok(Some(DeliveredToken {
                                 spelling,
                                 level: identity,
@@ -1697,7 +1715,7 @@ impl CommandProcessor<'_> {
                             {
                                 let context = match self.command.input.levels.last() {
                                     Some(InputLevel::Source(source))
-                                        if source.identity == identity =>
+                                        if source.identity() == identity =>
                                     {
                                         self.command
                                             .output_retiring_source_context(source, &self.state)
@@ -1746,8 +1764,8 @@ impl CommandProcessor<'_> {
                         else {
                             unreachable!("inspected token level remains a token level")
                         };
-                        debug_assert_eq!(cursor.identity, identity);
-                        debug_assert_eq!(cursor.index, index);
+                        debug_assert_eq!(cursor.identity(), identity);
+                        debug_assert_eq!(cursor.position(), index);
                         Self::next_stored_token(cursor)
                     };
                     if let Some((spelling, position, behavior, source_provenance)) = next {
@@ -1760,7 +1778,9 @@ impl CommandProcessor<'_> {
                         else {
                             unreachable!("inspected token level remains a token level");
                         };
-                        cursor.index += 1;
+                        if cursor.frame.advance().map(|position| position as usize) != Some(index) {
+                            return Err(CommandError::input_invariant());
+                        }
                         return Ok(Some(DeliveredToken {
                             spelling,
                             level: identity,
@@ -2020,37 +2040,39 @@ impl CommandProcessor<'_> {
         TokenBehavior,
         Option<SourceProvenance>,
     )> {
-        let position = u64::try_from(cursor.index).ok()?;
+        let index = cursor.position();
+        let position = u64::try_from(index).ok()?;
         let spelling = match &cursor.payload {
-            TokenPayload::Transient(buffer) => buffer
-                .get_rooted(cursor.index)
-                .map(|spelling| (spelling, None)),
-            TokenPayload::InlineTransient(spelling) => {
-                (cursor.index == 0).then(|| (spelling.clone(), None))
+            TokenPayload::Packed(chunk) => chunk.get(index),
+            TokenPayload::Transient(buffer) => {
+                buffer.get_rooted(index).map(|spelling| (spelling, None))
             }
-            TokenPayload::BackedUp(buffer) => buffer.get_rooted(cursor.index).map(|rooted| {
+            TokenPayload::InlineTransient(spelling) => {
+                (index == 0).then(|| (spelling.clone(), None))
+            }
+            TokenPayload::BackedUp(buffer) => buffer.get_rooted(index).map(|rooted| {
                 let (token, root) = rooted.into_parts();
                 (
                     tex_state::token::RootedTracedTokenWord::from_word(token.spelling, root),
                     token.source_provenance,
                 )
             }),
-            TokenPayload::InlineBackedUp(token) => (cursor.index == 0).then(|| {
+            TokenPayload::InlineBackedUp(token) => (index == 0).then(|| {
                 let (token, root) = token.clone().into_parts();
                 (
                     tex_state::token::RootedTracedTokenWord::from_word(token.spelling, root),
                     token.source_provenance,
                 )
             }),
-            TokenPayload::ArgumentRange { buffer, range } => (cursor.index
+            TokenPayload::ArgumentRange { buffer, range } => (index
                 < range.end().saturating_sub(range.start()))
-            .then(|| buffer.get_rooted(range.start() + cursor.index))
+            .then(|| buffer.get_rooted(range.start() + index))
             .flatten()
             .map(|spelling| (spelling, None)),
             TokenPayload::Stored { tokens, origins } => {
-                let token = *tokens.tokens().get(cursor.index)?;
+                let token = *tokens.tokens().get(index)?;
                 let origin = origins
-                    .root(cursor.index)
+                    .root(index)
                     .unwrap_or_else(tex_state::provenance::OriginRef::unknown);
                 Some((
                     tex_state::token::RootedTracedTokenWord::new(token, origin),
@@ -2091,7 +2113,7 @@ impl CommandProcessor<'_> {
                     if drains_for_stack_conservation(&cursor.behavior)
                         && Self::next_stored_token(cursor).is_none() =>
                 {
-                    Some(cursor.identity)
+                    Some(cursor.identity())
                 }
                 Some(InputLevel::Tokens(_)) | Some(InputLevel::Source(_)) | None => None,
             };
@@ -2141,7 +2163,7 @@ impl CommandProcessor<'_> {
             matches!(
                 level,
                 InputLevel::Source(source)
-                    if source.identity.0 == command.delivery_stamp().input_level()
+                    if source.identity().0 == command.delivery_stamp().input_level()
                         && matches!(source.name_class, SourceNameClass::ReadStream(_))
             )
         });
@@ -3905,14 +3927,15 @@ mod tests {
         let Some(InputLevel::Tokens(cursor)) = processor.command.input.levels.last() else {
             panic!("aftergroup backup is a token level");
         };
-        assert!(matches!(cursor.payload, TokenPayload::BackedUp(_)));
+        assert!(matches!(cursor.payload, TokenPayload::Packed(ref chunk) if chunk.is_backed_up()));
         assert_eq!(
-            cursor
-                .payload
-                .backed_up_words()
-                .expect("aftergroup uses backed-up storage")
-                .iter()
-                .map(|token| token.spelling.semantic_token())
+            (0..3)
+                .map(|index| cursor
+                    .payload
+                    .backed_up_get(index)
+                    .expect("aftergroup uses backed-up storage")
+                    .spelling
+                    .semantic_token())
                 .collect::<Vec<_>>(),
             words.map(|word| word.word().semantic_token())
         );

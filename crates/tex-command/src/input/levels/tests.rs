@@ -8,7 +8,7 @@ use tex_state::token::{Catcode, OriginId, RootedTracedTokenBuffer, Token, Traced
 use super::{
     BackedUpToken, BackupTreatment, InputLevel, InputLevelId, ReplayTrace, RetirementBehavior,
     RootedBackedUpToken, SharedBackedUpBuffer, SharedTokenBuffer, StoredReplayReason,
-    TokenBehavior, TokenCursor, TokenPayload,
+    TokenBehavior, TokenCursor, TokenPayload, packed_token_frame,
 };
 use crate::macro_call::MacroArgumentRange;
 
@@ -100,16 +100,22 @@ fn rooted_backup(ch: char) -> RootedBackedUpToken {
 #[test]
 fn token_cursor_classifies_orthogonal_ownership_domains() {
     let universe = Universe::new();
+    let behavior = TokenBehavior::BackedUp(BackupTreatment::SuppressExpandableControlSequence);
+    let retirement = RetirementBehavior::StopAtEnd;
+    let trace = ReplayTrace::Stored(StoredReplayReason::EveryJob);
+    let mut frame = packed_token_frame(InputLevelId(5), 3, &behavior, retirement, &trace);
+    for _ in 0..3 {
+        let _ = frame.advance();
+    }
     let cursor = TokenCursor {
         payload: TokenPayload::Stored {
             tokens: universe.token_list_ref(TokenListId::EMPTY),
             origins: tex_state::provenance::OriginListRef::empty(),
         },
-        behavior: TokenBehavior::BackedUp(BackupTreatment::SuppressExpandableControlSequence),
-        retirement: RetirementBehavior::StopAtEnd,
-        trace: ReplayTrace::Stored(StoredReplayReason::EveryJob),
-        index: 3,
-        identity: InputLevelId(5),
+        behavior,
+        retirement,
+        trace,
+        frame,
     };
 
     let TokenCursor {
@@ -117,8 +123,7 @@ fn token_cursor_classifies_orthogonal_ownership_domains() {
         behavior,
         retirement,
         trace,
-        index,
-        identity,
+        frame,
     } = cursor;
     assert!(matches!(payload, TokenPayload::Stored { .. }));
     assert!(matches!(
@@ -127,8 +132,9 @@ fn token_cursor_classifies_orthogonal_ownership_domains() {
     ));
     assert_eq!(retirement, RetirementBehavior::StopAtEnd);
     assert_eq!(trace, ReplayTrace::Stored(StoredReplayReason::EveryJob));
-    assert_eq!(index, 3);
-    assert_eq!(identity, InputLevelId(5));
+    assert_eq!(frame.position(), 3);
+    assert_eq!(frame.identity(), 5);
+    assert_eq!(frame.position(), 3);
 }
 
 #[test]
@@ -308,8 +314,13 @@ fn the_dense_level_enum_has_only_source_and_token_variants() {
         behavior: TokenBehavior::Ordinary,
         retirement: RetirementBehavior::Pop,
         trace: ReplayTrace::Inserted,
-        index: 0,
-        identity: InputLevelId(0),
+        frame: packed_token_frame(
+            InputLevelId(0),
+            0,
+            &TokenBehavior::Ordinary,
+            RetirementBehavior::Pop,
+            &ReplayTrace::Inserted,
+        ),
     });
     assert_eq!(classify(&level), "tokens");
 }

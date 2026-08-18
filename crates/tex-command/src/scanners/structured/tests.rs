@@ -3402,13 +3402,13 @@ fn shift_case_rewrites_characters_and_backs_the_shifted_list_up() {
     let Some(crate::input::InputLevel::Tokens(cursor)) = command.input.levels.last() else {
         panic!("shift_case pushes a token level");
     };
-    let crate::input::TokenPayload::Transient(buffer) = &cursor.payload else {
-        panic!("`back_list` owns a temporary list, not immutable storage");
+    let crate::input::TokenPayload::Packed(buffer) = &cursor.payload else {
+        panic!("`back_list` owns one packed temporary chunk");
     };
     let shifted: Vec<_> = (0..3)
         .map(|index| {
             buffer
-                .get(index)
+                .word(index)
                 .expect("the shifted list retains every token")
                 .semantic_token()
         })
@@ -3436,6 +3436,8 @@ fn shift_case_rewrites_characters_and_backs_the_shifted_list_up() {
             buffer
                 .get(index)
                 .expect("the shifted list retains every origin")
+                .0
+                .word()
                 .origin()
         })
         .collect::<Vec<_>>();
@@ -3463,7 +3465,7 @@ fn shift_case_rewrites_characters_and_backs_the_shifted_list_up() {
         .filter_map(|observation| match observation {
             CommandObservation::Input(record)
                 if record.reason == crate::InputReason::Backup
-                    && record.level == cursor.identity.0 =>
+                    && record.level == cursor.identity().0 =>
             {
                 Some(record.transition)
             }

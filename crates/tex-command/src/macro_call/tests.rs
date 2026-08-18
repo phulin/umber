@@ -133,7 +133,7 @@ fn activation_boundary_owns_arguments_before_exposing_its_body() {
     else {
         panic!("macro activation must push a token body level");
     };
-    assert_eq!(cursor.identity, body);
+    assert_eq!(cursor.identity(), body);
     assert_eq!(
         cursor.behavior,
         crate::input::TokenBehavior::MacroBody(owner.identity)
@@ -826,7 +826,7 @@ fn macro_argument_recovery_emits_exact_extra_brace_and_runaway_reports() {
     let recovered_par = extra.input.levels.last().and_then(|level| match level {
         crate::input::InputLevel::Tokens(cursor) => cursor
             .payload
-            .backed_up_get(cursor.index)
+            .backed_up_get(cursor.position())
             .map(|token| token.spelling.semantic_token()),
         crate::input::InputLevel::Source(_) => None,
     });

@@ -84,6 +84,8 @@ pub mod memo;
 pub mod node;
 pub mod node_arena;
 pub mod node_sequence;
+#[doc(hidden)]
+pub mod packed_input;
 pub mod page;
 mod patch_domain;
 mod pdf;

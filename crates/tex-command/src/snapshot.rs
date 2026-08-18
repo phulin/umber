@@ -113,7 +113,19 @@ impl CommandSummary {
                         return false;
                     }
                 }
-                (InputLevel::Source(_), InputLevel::Source(_)) => {}
+                (InputLevel::Source(left), InputLevel::Source(right)) => {
+                    // The source cursor below is the complete future-semantic
+                    // coordinate. The compact frame's current offset counts
+                    // delivered tokens, so unchanged future input reached
+                    // after an edited comment may have a different historical
+                    // count. Preserve the exact level identity, then adopt the
+                    // comparison cursor just as backed-up provenance adopts
+                    // allocation-local roots above.
+                    if left.identity() != right.identity() {
+                        return false;
+                    }
+                    left.frame = right.frame;
+                }
                 _ => return false,
             }
         }

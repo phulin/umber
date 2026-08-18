@@ -3,8 +3,10 @@
 
 use std::sync::Arc;
 
+use smallvec::SmallVec;
+use tex_state::packed_input::{InputFrameFlags, InputFrameKind};
 use tex_state::provenance::{OriginListRef, OriginRef};
-use tex_state::token::{RootedTracedTokenWord, TracedTokenWord};
+use tex_state::token::{RootedTracedTokenBuffer, RootedTracedTokenWord, TracedTokenWord};
 use tex_state::token_store::TokenListRef;
 
 use crate::macro_call::{MacroActivationId, MacroArgumentRange};
@@ -18,20 +20,80 @@ use super::{
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub(crate) struct InputLevelId(pub(crate) u64);
 
+pub(crate) use tex_state::packed_input::InputFrame as PackedInputFrame;
+
+fn packed_frame_kind(behavior: &TokenBehavior, trace: &ReplayTrace) -> InputFrameKind {
+    match behavior {
+        TokenBehavior::Parameter => InputFrameKind::Parameter,
+        TokenBehavior::UTemplate => InputFrameKind::AlignmentUTemplate,
+        TokenBehavior::VTemplate => InputFrameKind::AlignmentVTemplate,
+        TokenBehavior::BackedUp(_) => InputFrameKind::BackedUp,
+        TokenBehavior::Recovery => InputFrameKind::Inserted,
+        TokenBehavior::MacroBody(_) => InputFrameKind::Macro,
+        TokenBehavior::Ordinary => match trace {
+            ReplayTrace::Inserted | ReplayTrace::Transient(_) => InputFrameKind::Inserted,
+            ReplayTrace::Stored(reason) => match reason {
+                StoredReplayReason::OutputRoutine => InputFrameKind::OutputRoutine,
+                StoredReplayReason::EveryPar => InputFrameKind::EveryPar,
+                StoredReplayReason::EveryMath => InputFrameKind::EveryMath,
+                StoredReplayReason::EveryDisplay => InputFrameKind::EveryDisplay,
+                StoredReplayReason::EveryHBox => InputFrameKind::EveryHBox,
+                StoredReplayReason::EveryVBox => InputFrameKind::EveryVBox,
+                StoredReplayReason::EveryJob => InputFrameKind::EveryJob,
+                StoredReplayReason::EveryCr => InputFrameKind::EveryCr,
+                StoredReplayReason::EveryEof => InputFrameKind::EveryEof,
+                StoredReplayReason::Mark => InputFrameKind::Mark,
+                StoredReplayReason::Write => InputFrameKind::Write,
+                StoredReplayReason::Discretionary => InputFrameKind::UmberReplay,
+            },
+            ReplayTrace::MacroReplacement => InputFrameKind::Macro,
+            ReplayTrace::MacroParameter { .. } => InputFrameKind::Parameter,
+            ReplayTrace::BackedUp => InputFrameKind::BackedUp,
+            ReplayTrace::UTemplate => InputFrameKind::AlignmentUTemplate,
+            ReplayTrace::VTemplate | ReplayTrace::OmitTemplate => {
+                InputFrameKind::AlignmentVTemplate
+            }
+        },
+    }
+}
+
+pub(crate) fn packed_token_frame(
+    identity: InputLevelId,
+    len: usize,
+    behavior: &TokenBehavior,
+    retirement: RetirementBehavior,
+    trace: &ReplayTrace,
+) -> PackedInputFrame {
+    let len = u32::try_from(len).expect("input token chunk exceeds the packed offset domain");
+    let mut flags = match behavior {
+        TokenBehavior::BackedUp(BackupTreatment::SuppressExpandableControlSequence) => {
+            InputFrameFlags::SUPPRESS_EXPANDABLE_CONTROL_SEQUENCE
+        }
+        _ => InputFrameFlags::empty(),
+    };
+    flags = flags.union(match retirement {
+        RetirementBehavior::StopAtEnd => InputFrameFlags::STOP_AT_END,
+        RetirementBehavior::RetainExhaustedVTemplate
+        | RetirementBehavior::AwaitingVTemplateRetirement => InputFrameFlags::RETAIN_AT_END,
+        RetirementBehavior::Pop => InputFrameFlags::empty(),
+    });
+    PackedInputFrame::tokens(identity.0, len, packed_frame_kind(behavior, trace), flags)
+}
+
 /// One future-relevant input level.
 ///
 /// Conditions, caches, scanner policy, and paragraph transitions cannot be
 /// represented here. Both character profiles use this same level structure.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub(crate) enum InputLevel {
-    Source(Box<SourceLevel>),
+    Source(SourceLevel),
     Tokens(TokenCursor),
 }
 
 /// One registered-source level and its exact delivery identity.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub(crate) struct SourceLevel {
-    pub(crate) identity: InputLevelId,
+    pub(crate) frame: PackedInputFrame,
     pub(crate) cursor: SourceCursor,
     /// tex.web §303's `name` classification for this level. A token-list
     /// level has no counterpart: §307 reuses `name` there as the eqtb address
@@ -49,6 +111,12 @@ pub(crate) struct SourceLevel {
     /// `None` until the opener records it (this crate has no `Universe`
     /// access at construction time; see `CommandState::record_source_open_depths`).
     pub(crate) open_depths: Option<Box<SourceOpenDepths>>,
+}
+
+impl SourceLevel {
+    pub(crate) fn identity(&self) -> InputLevelId {
+        InputLevelId(self.frame.identity())
+    }
 }
 
 /// e-TeX 2.6's `grp_stack`/`if_stack` entry for one open source level.
@@ -85,13 +153,26 @@ pub(crate) struct TokenCursor {
     pub(crate) behavior: TokenBehavior,
     pub(crate) retirement: RetirementBehavior,
     pub(crate) trace: ReplayTrace,
-    pub(crate) index: usize,
-    pub(crate) identity: InputLevelId,
+    pub(crate) frame: PackedInputFrame,
+}
+
+impl TokenCursor {
+    pub(crate) fn identity(&self) -> InputLevelId {
+        InputLevelId(self.frame.identity())
+    }
+
+    pub(crate) fn position(&self) -> usize {
+        self.frame.position() as usize
+    }
 }
 
 /// Storage owning the tokens delivered by a token-list level.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub(crate) enum TokenPayload {
+    /// Chunk-owned packed words used by canonical source-adjacent replay,
+    /// hooks, templates, insertions, and backup. The sparse roots are owned
+    /// once by the chunk rather than by each input frame or delivered word.
+    Packed(PackedTokenChunk),
     /// Immutable semantic tokens and their parallel immutable origins.
     Stored {
         tokens: TokenListRef,
@@ -113,7 +194,149 @@ pub(crate) enum TokenPayload {
     },
 }
 
+/// One packed token chunk and the cold source coordinates needed only when a
+/// backed-up delivery is rendered. Ordinary delivery indexes the packed word
+/// slice directly and does not clone this owner.
+#[derive(Clone, Debug, Default, Eq, Hash, PartialEq)]
+pub(crate) struct PackedTokenChunk {
+    words: RootedTracedTokenBuffer,
+    source_provenance: SmallVec<[Option<SourceProvenance>; 2]>,
+    backed_up: bool,
+}
+
+impl PackedTokenChunk {
+    fn from_payload(payload: TokenPayload) -> TokenPayload {
+        match payload {
+            TokenPayload::Packed(chunk) => TokenPayload::Packed(chunk),
+            TokenPayload::Transient(buffer) => TokenPayload::Packed(Self {
+                words: RootedTracedTokenBuffer::new(buffer.rooted_words()),
+                source_provenance: smallvec::smallvec![None; buffer.len()],
+                backed_up: false,
+            }),
+            TokenPayload::InlineTransient(word) => TokenPayload::Packed(Self {
+                words: RootedTracedTokenBuffer::new([word]),
+                source_provenance: smallvec::smallvec![None],
+                backed_up: false,
+            }),
+            TokenPayload::BackedUp(buffer) => {
+                let len = buffer.words().len();
+                let rooted = (0..len).map(|index| {
+                    let token = buffer
+                        .get_rooted(index)
+                        .expect("index from packed backup length");
+                    let (token, root) = token.into_parts();
+                    RootedTracedTokenWord::from_word(token.spelling, root)
+                });
+                let source_provenance = buffer
+                    .words()
+                    .iter()
+                    .map(|token| token.source_provenance)
+                    .collect();
+                TokenPayload::Packed(Self {
+                    words: RootedTracedTokenBuffer::new(rooted),
+                    source_provenance,
+                    backed_up: true,
+                })
+            }
+            TokenPayload::InlineBackedUp(token) => {
+                let (token, root) = token.into_parts();
+                TokenPayload::Packed(Self {
+                    words: RootedTracedTokenBuffer::new([RootedTracedTokenWord::from_word(
+                        token.spelling,
+                        root,
+                    )]),
+                    source_provenance: smallvec::smallvec![token.source_provenance],
+                    backed_up: true,
+                })
+            }
+            payload @ (TokenPayload::Stored { .. } | TokenPayload::ArgumentRange { .. }) => payload,
+        }
+    }
+
+    fn from_stored(tokens: TokenListRef, origins: OriginListRef) -> Self {
+        let words = tokens
+            .tokens()
+            .iter()
+            .copied()
+            .enumerate()
+            .map(|(index, token)| {
+                RootedTracedTokenWord::new(
+                    token,
+                    origins.root(index).unwrap_or_else(OriginRef::unknown),
+                )
+            });
+        let len = tokens.tokens().len();
+        Self {
+            words: RootedTracedTokenBuffer::new(words),
+            source_provenance: smallvec::smallvec![None; len],
+            backed_up: false,
+        }
+    }
+
+    pub(crate) fn len(&self) -> usize {
+        self.words.len()
+    }
+
+    pub(crate) fn get(
+        &self,
+        index: usize,
+    ) -> Option<(RootedTracedTokenWord, Option<SourceProvenance>)> {
+        Some((
+            self.words.get_rooted(index)?,
+            self.source_provenance.get(index).copied().flatten(),
+        ))
+    }
+
+    pub(crate) fn word(&self, index: usize) -> Option<TracedTokenWord> {
+        self.words.get(index)
+    }
+
+    fn backed_up_token(&self, index: usize) -> Option<BackedUpToken> {
+        if !self.backed_up {
+            return None;
+        }
+        Some(BackedUpToken {
+            spelling: self.words.get(index)?,
+            source_provenance: self.source_provenance.get(index).copied().flatten(),
+        })
+    }
+
+    pub(crate) fn rooted_words(&self) -> impl ExactSizeIterator<Item = RootedTracedTokenWord> + '_ {
+        self.words.rooted_words()
+    }
+
+    pub(crate) fn source_provenance(&self) -> &[Option<SourceProvenance>] {
+        &self.source_provenance
+    }
+
+    pub(crate) const fn is_backed_up(&self) -> bool {
+        self.backed_up
+    }
+}
+
 impl TokenPayload {
+    pub(crate) fn packed_for_frame(self, behavior: &TokenBehavior) -> Self {
+        match self {
+            Self::Stored { tokens, origins }
+                if !matches!(behavior, TokenBehavior::MacroBody(_)) =>
+            {
+                Self::Packed(PackedTokenChunk::from_stored(tokens, origins))
+            }
+            payload => PackedTokenChunk::from_payload(payload),
+        }
+    }
+
+    pub(crate) fn frame_len(&self) -> usize {
+        match self {
+            Self::Packed(chunk) => chunk.len(),
+            Self::Stored { tokens, .. } => tokens.tokens().len(),
+            Self::Transient(words) => words.len(),
+            Self::InlineTransient(_) | Self::InlineBackedUp(_) => 1,
+            Self::BackedUp(words) => words.words().len(),
+            Self::ArgumentRange { range, .. } => range.end().saturating_sub(range.start()),
+        }
+    }
+
     /// Selects inline storage for one transient token and shared storage for
     /// empty or multi-token payloads. The fixed two-token case constructs its
     /// shared slice directly from an array; longer iterators materialize the
@@ -185,6 +408,7 @@ impl TokenPayload {
 
     pub(crate) fn transient_words(&self) -> Option<&[TracedTokenWord]> {
         match self {
+            Self::Packed(chunk) if !chunk.backed_up => Some(chunk.words.words()),
             Self::Transient(words) => Some(words.words()),
             Self::InlineTransient(_) => None,
             _ => None,
@@ -193,6 +417,7 @@ impl TokenPayload {
 
     pub(crate) fn transient_len(&self) -> Option<usize> {
         match self {
+            Self::Packed(chunk) if !chunk.backed_up => Some(chunk.len()),
             Self::Transient(words) => Some(words.len()),
             Self::InlineTransient(_) => Some(1),
             _ => None,
@@ -201,6 +426,7 @@ impl TokenPayload {
 
     pub(crate) fn backed_up_words(&self) -> Option<&[BackedUpToken]> {
         match self {
+            Self::Packed(_) => None,
             Self::BackedUp(words) => Some(words.words()),
             Self::InlineBackedUp(_) => None,
             _ => None,
@@ -209,6 +435,7 @@ impl TokenPayload {
 
     pub(crate) fn backed_up_len(&self) -> Option<usize> {
         match self {
+            Self::Packed(chunk) if chunk.backed_up => Some(chunk.len()),
             Self::BackedUp(words) => Some(words.words().len()),
             Self::InlineBackedUp(_) => Some(1),
             _ => None,
@@ -217,6 +444,7 @@ impl TokenPayload {
 
     pub(crate) fn backed_up_get(&self, index: usize) -> Option<BackedUpToken> {
         match self {
+            Self::Packed(chunk) => chunk.backed_up_token(index),
             Self::BackedUp(words) => words.get(index),
             Self::InlineBackedUp(word) => (index == 0).then(|| word.token()),
             _ => None,
@@ -224,7 +452,8 @@ impl TokenPayload {
     }
 
     pub(crate) fn is_backed_up(&self) -> bool {
-        matches!(self, Self::BackedUp(_) | Self::InlineBackedUp(_))
+        matches!(self, Self::Packed(chunk) if chunk.backed_up)
+            || matches!(self, Self::BackedUp(_) | Self::InlineBackedUp(_))
     }
 
     /// Prepends e-TeX aftergroup tokens, promoting inline storage when the
@@ -235,6 +464,20 @@ impl TokenPayload {
     ) -> Option<()> {
         let mut prefix = prefix.into_iter().collect::<Vec<_>>();
         match self {
+            Self::Packed(chunk) if chunk.backed_up => {
+                let mut words = RootedTracedTokenBuffer::default();
+                let mut provenance = SmallVec::new();
+                for token in prefix.drain(..) {
+                    let (token, root) = token.into_parts();
+                    words.push(RootedTracedTokenWord::from_word(token.spelling, root));
+                    provenance.push(token.source_provenance);
+                }
+                words.append_buffer(std::mem::take(&mut chunk.words));
+                provenance.extend(chunk.source_provenance.drain(..));
+                chunk.words = words;
+                chunk.source_provenance = provenance;
+            }
+            Self::Packed(_) => return None,
             Self::BackedUp(words) => words.prepend(prefix),
             Self::InlineBackedUp(word) => {
                 prefix.push(word.clone());
@@ -251,6 +494,12 @@ impl TokenPayload {
         byte_delta: i64,
     ) -> Option<()> {
         match self {
+            Self::Packed(chunk) if chunk.backed_up => {
+                for provenance in chunk.source_provenance.iter_mut().flatten() {
+                    provenance.rehome(source, byte_delta)?;
+                }
+                Some(())
+            }
             Self::BackedUp(words) => words.rehome_source(source, byte_delta),
             Self::InlineBackedUp(word) => {
                 if let Some(provenance) = &mut word.token.source_provenance {
@@ -263,6 +512,22 @@ impl TokenPayload {
     }
 
     pub(crate) fn adopt_matching_origins(&mut self, live: &Self) -> Option<()> {
+        if let (Self::Packed(recorded), Self::Packed(live)) = (&*self, live) {
+            if recorded.words.words().len() != live.words.words().len()
+                || recorded
+                    .words
+                    .words()
+                    .iter()
+                    .zip(live.words.words())
+                    .any(|(recorded, live)| recorded.token() != live.token())
+                || recorded.source_provenance != live.source_provenance
+                || recorded.backed_up != live.backed_up
+            {
+                return None;
+            }
+            *self = Self::Packed(live.clone());
+            return Some(());
+        }
         if let (Self::InlineTransient(recorded), Self::InlineTransient(live)) = (&*self, live) {
             if recorded.word().token() != live.word().token() {
                 return None;

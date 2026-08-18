@@ -56,6 +56,19 @@ pub(crate) struct ChunkOwner {
 }
 
 impl ChunkOwner {
+    pub(in crate::hot_core) fn runtime_input(identity: u64) -> Self {
+        Self {
+            namespace: NonZeroU64::new(identity.checked_add(1).expect("input identity exhausted"))
+                .expect("input identity offset is nonzero"),
+            slot: 0,
+            generation: NonZeroU32::MIN,
+        }
+    }
+
+    pub(in crate::hot_core) const fn runtime_input_identity(self) -> u64 {
+        self.namespace.get() - 1
+    }
+
     pub(in crate::hot_core) const fn coordinate<T>(self, offset: u32) -> RegionCoordinate<T> {
         RegionCoordinate {
             key: self,

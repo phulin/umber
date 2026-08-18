@@ -3395,7 +3395,8 @@ fn the_toks_pushes_immutable_stored_input_without_reading_beyond_target() {
     processor.expand(opener).expect("the inserts stored list");
     assert!(
         matches!(processor.command.input.levels.last(), Some(crate::input::InputLevel::Tokens(cursor))
-        if matches!(&cursor.payload, TokenPayload::Stored { tokens, .. } if tokens.id() == stored))
+        if matches!(&cursor.payload, TokenPayload::Packed(chunk)
+            if chunk.word(0).map(|word| word.semantic_token()) == Some(Token::Char { ch: 'x', cat: Catcode::Letter })))
     );
     // TeX82 §467 hands §465's copy to `ins_list`, so the level carries
     // §307's `inserted` token type and retires as a recovery, never as an

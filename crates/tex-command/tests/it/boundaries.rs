@@ -18,6 +18,7 @@ fn crate_production_dependencies_match_the_command_boundary_allowlist() {
         BTreeSet::from([
             "md-5.workspace",
             "posix-regex.workspace",
+            "smallvec.workspace",
             "tex-fonts",
             "tex-state",
         ]),

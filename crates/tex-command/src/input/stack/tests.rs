@@ -269,7 +269,10 @@ fn transient_payload_drops_with_its_last_input_owner() {
         ReplayTrace::Inserted,
     );
     drop(allocation);
-    assert!(weak.is_live());
+    assert!(
+        !weak.is_live(),
+        "packed input drops the superseded Arc owner at admission"
+    );
 
     state
         .retire_exhausted_input(identity)
@@ -292,10 +295,15 @@ fn snapshot_ownership_keeps_transient_payload_live_past_stack_retirement() {
     let snapshot = state.snapshot();
     drop(allocation);
 
+    assert!(
+        !weak.is_live(),
+        "snapshot retains the packed chunk, not its former Arc payload"
+    );
+
     state
         .retire_exhausted_input(identity)
         .expect("live cursor retires");
-    assert!(weak.is_live());
+    assert!(!weak.is_live());
     drop(snapshot);
     assert!(!weak.is_live());
 }
@@ -367,7 +375,7 @@ fn parameter_replay_uses_nearest_macro_body_param_start() {
     else {
         panic!("parameter replay was not a token level");
     };
-    assert_eq!(cursor.identity, parameter);
+    assert_eq!(cursor.identity(), parameter);
     assert_eq!(cursor.behavior, TokenBehavior::Parameter);
     assert_eq!(cursor.trace, ReplayTrace::MacroParameter { slot: 2 });
     let TokenPayload::ArgumentRange { buffer, range } = &cursor.payload else {
@@ -635,10 +643,13 @@ fn stored_token_reference_lifetime_survives_redefinition_and_replay() {
     else {
         panic!("stored replay changed level kind");
     };
-    let TokenPayload::Stored { tokens, .. } = &cursor.payload else {
-        panic!("stored replay changed payload kind");
+    let TokenPayload::Packed(chunk) = &cursor.payload else {
+        panic!("stored replay was not admitted to a packed chunk");
     };
-    assert_eq!(tokens.tokens(), &[Token::Cs(symbol)]);
+    assert_eq!(
+        chunk.word(0).map(|word| word.semantic_token()),
+        Some(Token::Cs(symbol))
+    );
     assert_eq!(universe.meaning(symbol), Meaning::CharGiven('B'));
     assert_eq!(
         state
@@ -677,15 +688,15 @@ fn snapshot_restores_strong_stored_root_after_live_cursor_retires() {
     let InputLevel::Tokens(cursor) = state.input.levels.last().expect("restored cursor") else {
         panic!("snapshot restored the wrong level kind");
     };
-    let TokenPayload::Stored { tokens, .. } = &cursor.payload else {
+    let TokenPayload::Packed(chunk) = &cursor.payload else {
         panic!("snapshot restored the wrong payload kind");
     };
     assert_eq!(
-        tokens.tokens(),
-        &[Token::Char {
+        chunk.word(0).map(|word| word.semantic_token()),
+        Some(Token::Char {
             ch: 'R',
             cat: Catcode::Other,
-        }]
+        })
     );
 }
 
@@ -713,7 +724,7 @@ fn source_level_begin_end_restore_line_and_terminal_state() {
         .open_registered_source(inner)
         .expect("inner source opens");
     let inner_identity = match state.input.levels.last().expect("inner level") {
-        InputLevel::Source(source) => source.identity,
+        InputLevel::Source(source) => source.identity(),
         InputLevel::Tokens(_) => panic!("opened source is not a source level"),
     };
     assert_eq!(state.input.levels.len(), 2);
@@ -736,7 +747,7 @@ fn source_level_begin_end_restore_line_and_terminal_state() {
             .physical,
         outer_line
     );
-    let outer_identity = source.identity;
+    let outer_identity = source.identity();
     state
         .retire_exhausted_input(outer_identity)
         .expect("outer source retires");
@@ -776,7 +787,7 @@ fn source_retirement_reports_tex_web_303_name_classification() {
             panic!("opened source is not a source level");
         };
         assert_eq!(level.name_class, class);
-        let identity = level.identity;
+        let identity = level.identity();
         let retired = state
             .retire_exhausted_input(identity)
             .expect("source retires");

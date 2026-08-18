@@ -1252,6 +1252,7 @@ dependencies = [
  "md-5",
  "posix-regex",
  "serde",
+ "smallvec",
  "test-support",
  "tex-fonts",
  "tex-state",

@@ -395,7 +395,7 @@ impl<'a> Detacher<'a> {
     fn level(&mut self, level: &InputLevel) -> OwnedInputLevel {
         match level {
             InputLevel::Source(source) => OwnedInputLevel::Source(Box::new(OwnedSourceLevel {
-                identity: source.identity,
+                identity: source.identity(),
                 cursor: OwnedSourceCursor {
                     backing: self.registered_source(&source.cursor.backing),
                     line_backing: source
@@ -435,14 +435,33 @@ impl<'a> Detacher<'a> {
                 behavior: cursor.behavior.clone(),
                 retirement: cursor.retirement,
                 trace: cursor.trace.clone(),
-                index: cursor.index,
-                identity: cursor.identity,
+                index: cursor.position(),
+                identity: cursor.identity(),
             }),
         }
     }
 
     fn payload(&mut self, payload: &TokenPayload) -> OwnedTokenPayload {
         match payload {
+            TokenPayload::Packed(chunk) if chunk.is_backed_up() => OwnedTokenPayload::BackedUp(
+                chunk
+                    .rooted_words()
+                    .zip(chunk.source_provenance())
+                    .map(|(word, source_provenance)| {
+                        let (spelling, root) = word.into_parts();
+                        self.backed_up(crate::input::RootedBackedUpToken::new(
+                            crate::input::BackedUpToken {
+                                spelling,
+                                source_provenance: *source_provenance,
+                            },
+                            root,
+                        ))
+                    })
+                    .collect(),
+            ),
+            TokenPayload::Packed(chunk) => OwnedTokenPayload::Transient(
+                chunk.rooted_words().map(|word| self.word(word)).collect(),
+            ),
             TokenPayload::Stored { tokens, origins } => OwnedTokenPayload::Stored {
                 tokens: self.token_list(tokens),
                 origins: self.origin_list(origins),

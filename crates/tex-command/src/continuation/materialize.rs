@@ -422,53 +422,70 @@ impl<'a> Materializer<'a> {
 
     fn level(&mut self, level: &OwnedInputLevel) -> Result<InputLevel, CommandContinuationError> {
         Ok(match level {
-            OwnedInputLevel::Source(source) => InputLevel::Source(Box::new(SourceLevel {
-                identity: source.identity,
-                cursor: crate::input::SourceCursor {
-                    backing: self.registered_source(&source.cursor.backing)?,
-                    line_backing: source
-                        .cursor
-                        .line_backing
-                        .as_ref()
-                        .map(|line| self.registered_source(line))
-                        .transpose()?,
-                    pending_acquired_line: source.cursor.pending_acquired_line,
-                    next_physical_offset: source.cursor.next_physical_offset,
-                    next_line_number: source.cursor.next_line_number,
-                    line: source
-                        .cursor
-                        .line
-                        .as_ref()
-                        .map(|line| self.source_line(line)),
-                    lexer_state: source.cursor.lexer_state,
-                    end_after_line: source.cursor.end_after_line,
-                },
-                name_class: source.name_class,
-                retirement: source.retirement,
-                every_eof: source.every_eof.map(|(tokens, origins)| {
-                    tex_state::TracedTokenList::new(
-                        self.token_list(tokens),
-                        self.origin_list(origins),
-                    )
-                }),
-                open_depths: source.open_depths.as_ref().map(|depths| {
-                    Box::new(SourceOpenDepths {
-                        group_lineages: depths.group_lineages.clone().into_boxed_slice(),
-                        conditional_identities: depths
-                            .conditional_identities
-                            .clone()
-                            .into_boxed_slice(),
-                    })
-                }),
-            })),
-            OwnedInputLevel::Tokens(cursor) => InputLevel::Tokens(TokenCursor {
-                payload: self.payload(&cursor.payload),
-                behavior: cursor.behavior.clone(),
-                retirement: cursor.retirement,
-                trace: cursor.trace.clone(),
-                index: cursor.index,
-                identity: cursor.identity,
-            }),
+            OwnedInputLevel::Source(source) => {
+                let backing = self.registered_source(&source.cursor.backing)?;
+                let frame = crate::input::PackedInputFrame::source(source.identity.0, backing.id);
+                InputLevel::Source(SourceLevel {
+                    frame,
+                    cursor: crate::input::SourceCursor {
+                        backing,
+                        line_backing: source
+                            .cursor
+                            .line_backing
+                            .as_ref()
+                            .map(|line| self.registered_source(line))
+                            .transpose()?,
+                        pending_acquired_line: source.cursor.pending_acquired_line,
+                        next_physical_offset: source.cursor.next_physical_offset,
+                        next_line_number: source.cursor.next_line_number,
+                        line: source
+                            .cursor
+                            .line
+                            .as_ref()
+                            .map(|line| self.source_line(line)),
+                        lexer_state: source.cursor.lexer_state,
+                        end_after_line: source.cursor.end_after_line,
+                    },
+                    name_class: source.name_class,
+                    retirement: source.retirement,
+                    every_eof: source.every_eof.map(|(tokens, origins)| {
+                        tex_state::TracedTokenList::new(
+                            self.token_list(tokens),
+                            self.origin_list(origins),
+                        )
+                    }),
+                    open_depths: source.open_depths.as_ref().map(|depths| {
+                        Box::new(SourceOpenDepths {
+                            group_lineages: depths.group_lineages.clone().into_boxed_slice(),
+                            conditional_identities: depths
+                                .conditional_identities
+                                .clone()
+                                .into_boxed_slice(),
+                        })
+                    }),
+                })
+            }
+            OwnedInputLevel::Tokens(cursor) => {
+                let behavior = cursor.behavior.clone();
+                let payload = self.payload(&cursor.payload).packed_for_frame(&behavior);
+                let mut frame = crate::input::packed_token_frame(
+                    cursor.identity,
+                    payload.frame_len(),
+                    &behavior,
+                    cursor.retirement,
+                    &cursor.trace,
+                );
+                for _ in 0..cursor.index {
+                    let _ = frame.advance();
+                }
+                InputLevel::Tokens(TokenCursor {
+                    payload,
+                    behavior,
+                    retirement: cursor.retirement,
+                    trace: cursor.trace.clone(),
+                    frame,
+                })
+            }
         })
     }
 

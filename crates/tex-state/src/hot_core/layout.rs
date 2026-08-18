@@ -67,7 +67,7 @@ impl TokenSpan {
 /// use values outside that closed TeX82 range.
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub(crate) enum InputFrameKind {
+pub enum InputFrameKind {
     Parameter = 0,
     AlignmentUTemplate = 1,
     AlignmentVTemplate = 2,
@@ -92,23 +92,23 @@ pub(crate) enum InputFrameKind {
 /// Orthogonal delivery and retirement flags for a compact input frame.
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
-pub(crate) struct InputFrameFlags(u8);
+pub struct InputFrameFlags(u8);
 
 impl InputFrameFlags {
-    pub(crate) const EXPAND: Self = Self(1 << 0);
-    pub(crate) const SUPPRESS_EXPANDABLE_CONTROL_SEQUENCE: Self = Self(1 << 1);
-    pub(crate) const STOP_AT_END: Self = Self(1 << 2);
-    pub(crate) const RETAIN_AT_END: Self = Self(1 << 3);
+    pub const EXPAND: Self = Self(1 << 0);
+    pub const SUPPRESS_EXPANDABLE_CONTROL_SEQUENCE: Self = Self(1 << 1);
+    pub const STOP_AT_END: Self = Self(1 << 2);
+    pub const RETAIN_AT_END: Self = Self(1 << 3);
 
-    pub(crate) const fn empty() -> Self {
+    pub const fn empty() -> Self {
         Self(0)
     }
 
-    pub(crate) const fn union(self, other: Self) -> Self {
+    pub const fn union(self, other: Self) -> Self {
         Self(self.0 | other.0)
     }
 
-    pub(crate) const fn contains(self, other: Self) -> bool {
+    pub const fn contains(self, other: Self) -> bool {
         self.0 & other.0 == other.0
     }
 }
@@ -120,7 +120,7 @@ impl InputFrameFlags {
 /// activation, or argument slot). The command-input migration owns those
 /// interpretations; this layout value cannot itself deliver a token.
 #[repr(C)]
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(crate) struct InputFrame {
     owner: ChunkOwner,
     start: u32,
@@ -134,6 +134,26 @@ pub(crate) struct InputFrame {
 }
 
 impl InputFrame {
+    pub(crate) fn runtime(
+        identity: u64,
+        len: u32,
+        kind: InputFrameKind,
+        flags: InputFrameFlags,
+        auxiliary: u32,
+    ) -> Self {
+        Self {
+            owner: ChunkOwner::runtime_input(identity),
+            start: 0,
+            current: 0,
+            limit: len,
+            auxiliary,
+            trace: SourceCoordinate::UNKNOWN,
+            kind,
+            flags,
+            reserved: 0,
+        }
+    }
+
     pub(crate) fn new(
         span: TokenSpan,
         kind: InputFrameKind,
@@ -205,6 +225,19 @@ impl InputFrame {
         let coordinate = self.owner.coordinate(self.current);
         self.current += 1;
         Some(coordinate)
+    }
+
+    pub(crate) const fn runtime_identity(self) -> u64 {
+        self.owner.runtime_input_identity()
+    }
+
+    pub(crate) fn add_flags(&mut self, flags: InputFrameFlags) {
+        self.flags = self.flags.union(flags);
+    }
+
+    pub(crate) fn extend_limit(&mut self, additional: u32) -> Option<()> {
+        self.limit = self.limit.checked_add(additional)?;
+        Some(())
     }
 }
 
