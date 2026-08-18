@@ -493,16 +493,27 @@ write epoch and commit advances the node-operation watermark; TeX's save stack r
 owner of local/global group restoration. Group depth is no longer an episode
 stop, so one bounded episode may enter, mutate inside, and leave nested groups.
 
-Commands whose raw spelling still requires expansion or prefix/reswitch
-settlement, resource acquisition, PDF/effect/output publication, ErrorStop
-input recovery, or private-revision allocation use the existing one-operation
-aggregate adapter. The adapter retains only that preflighted command across
-retry, so an earlier separately dispatched ordinary command is not replayed or
-rolled back. A box-body closing brace is dynamically promoted to this adapter:
-although the token is a group transition, packaging that box may run the page
-builder or complete an explicit shipout and therefore inherits its output and
-late-failure authority. Replacing those remaining aggregate roots with exact
-narrow marks belongs to `umber2-awgc.4.3`.
+The resource/effect/PDF/checkpoint cutover is also active. Expandable delivery
+settles in the same command-processor borrow as raw preflight, then operand
+scanning produces one typed prepared operation. Missing fonts, input streams,
+PDF images, and `\input` files retain that completed request across host
+acquisition; `\immediate` additionally retains the already-consumed nested PDF
+command. Observed retry moves its unpublished evidence buffer and opaque
+delivery-order cursor with the typed continuation, so it neither clones the
+observer root nor changes raw/expanded provenance. Retry therefore neither
+rewinds input nor rescans operands. Nested expanded token collectors retain
+their accumulator and special-splice route, while `\expandafter` and `\csname`
+retain their consumed operands and partial name respectively. Semantic apply
+begins only after resource resolution and uses direct owner journals;
+output-capable box closing, ErrorStop recovery, observed and tracked commands,
+and private revisions use the same path. A private revision opens only a
+fixed-size allocation-suffix mark, never an aggregate state root.
+
+The compatibility aggregate is now confined to the `active_alignment` branch
+of `execute_operation`/`execute_aggregate_operation` and the explicit
+`diagnostic_expand_step` host API. Their separate removal is tracked by P0
+`umber2-awgc.4.5`, which blocks `.4.4` and parent completion; they are not an
+alternate executor for the migrated command families.
 
 ### Durable checkpoints
 

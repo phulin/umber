@@ -257,11 +257,16 @@ StepSavepoint {
 advance a semantic state hash. Only a named checkpoint asks `Universe` for the
 durable `Snapshot` identity described in the core-state contract. The
 unobserved production runner commits ordinary commands without this value.
-The compatibility adapter is limited to one preflighted command; diagnostic
-and observed-delivery entry points retain their existing aggregate boundary.
-For an incremental candidate it also owns the only active mark in that
-revision's disposable allocation domain. A successful step closes the mark
-and keeps its suffix once. When that mark is the only level-zero environment
+The compatibility adapter is confined to active-alignment and
+diagnostic-expansion entry points. Ordinary, resource, effect, PDF/page,
+ErrorStop, observed, tracked, checkpoint-crossing, and output-capable
+box-closing commands settle and scan before direct semantic apply. Typed
+resource continuations retain completed operands without restoring command
+input; an observed continuation also moves its unpublished evidence and opaque
+delivery-order cursor rather than cloning or reconstructing them. For an
+incremental candidate, `DirectOperationMark` owns the only active mark in that
+revision's disposable allocation domain. A successful step closes the mark and
+keeps its suffix once. When that mark is the only level-zero environment
 rollback root, successful commit establishes the current cells as the next
 journal baseline and retires the closed history. Open groups, delivered named
 checkpoints, and inherited fork-prefix authority keep their exact restoration

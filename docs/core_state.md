@@ -490,7 +490,8 @@ group. Rollback may unwind descendant groups entered after capture, while an
 exited-and-replaced enclosing group invalidates the snapshot even if the live
 stack later returns to the same depth and journal position.
 
-The executor's private bounded retry point uses `LocalRetrySnapshot`. It
+The active-alignment and diagnostic-expansion compatibility paths use
+`LocalRetrySnapshot`. It
 captures the same rollback substrate and group-lineage capability, but it does
 not publish, compute, or advance the durable semantic state identity. When a
 private revision domain is active, the same opaque snapshot owns its single
@@ -502,12 +503,14 @@ restore it; otherwise it leaves that history intact. Canonical partial-state
 error paths may retain their specified semantic scalars but still discard
 allocations owned by the failed operation. TeX82
 §§1030--1038 dispatch commands within `main_control`; only the named checkpoint
-schedule is a semantic hashing boundary. The unobserved production driver
-therefore reuses one private retry point across at most 256 operations and
-stops earlier at a named boundary, group-lineage change, terminal result,
-observation boundary, or world effect. Returning after an effect preserves the
-host boundary at which same-run output becomes readable and effect budgets are
-enforced.
+schedule is a semantic hashing boundary. Migrated production commands use no
+private aggregate retry point: raw/expanded delivery and typed operand
+preflight complete first, resource misses retain their prepared request, and
+semantic apply commits the exact owners directly. Returning after an effect
+preserves the host boundary at which same-run output becomes readable and
+effect budgets are enforced. A private incremental revision pairs the direct
+operation only with `DirectOperationMark`, the fixed-size disposable-allocation
+suffix coordinate.
 
 The string-pool store follows the same bound. TeX82 §44's pool coordinates and
 Web2C tex.ch [29.517]'s `search_string` membership are semantic state, but a

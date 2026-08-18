@@ -107,13 +107,16 @@ against a newer universe timeline. TeX82 §81 fatal propagation commits the
 mode savepoint and partial aggregate state before publishing buffered
 observations and the fatal diagnostic.
 
-Successful ordinary commands and group transitions create no mode savepoint.
-They mutate the authoritative `ModeNest` directly after state-layer admission
-advances the write epoch, then commit the node-operation watermark. Since that path
-has no rollback owner, append-only builders retain neither a cloned prefix nor
-an inverse frame. Resource, PDF/effect/output, ErrorStop, observed, tracked,
-private-revision, and output-capable box-closing operations keep the journaled
-aggregate adapter until the narrow transaction migration completes.
+Successful ordinary, resource, PDF/effect/output, ErrorStop, observed,
+tracked, private-revision, and output-capable box-closing commands create no
+aggregate mode savepoint. Preflight settles delivery and scanning before
+semantic apply; the authoritative `ModeNest` then mutates directly after
+state-layer admission advances the write epoch. Commit advances the
+node-operation watermark, while a private revision additionally commits its
+fixed-size allocation-suffix mark. Append-only builders retain neither a
+cloned prefix nor an aggregate inverse frame. The compatibility savepoint is
+confined to active-alignment and diagnostic-expansion entry points pending
+`umber2-awgc.4.5`.
 
 ## Implementation sequence
 
