@@ -551,6 +551,16 @@ while budget remains {
 }
 ```
 
+The first ownership cutover is active: `MainControl` owns one
+`PersistentInterpreter` for the complete engine session. `CommandProcessor`
+is now only a borrow-scoped facade over that owner and the matching `Universe`
+command context. Processor facades may end at semantic-apply or host barriers,
+but they do not reconstruct, clone, or replace command state. Assertion-bearing
+lifecycle accounting rejects overlapping facades and proves that group and
+resource transitions retire every borrow before semantic mutation, rollback,
+or host fulfillment. Later dispatch fusion can lengthen those borrows without
+introducing another executor or state owner.
+
 Expansion and scanners are methods over the same input and state views.
 Common primitives scan operands and apply their mutation directly. They do not
 construct a universal `ScannedStep` value.

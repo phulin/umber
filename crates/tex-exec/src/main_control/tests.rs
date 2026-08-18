@@ -4414,6 +4414,35 @@ fn production_batch_commits_ordinary_prefix_before_terminal_transaction() {
 }
 
 #[test]
+fn production_batch_reuses_one_interpreter_across_group_operations() {
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
+    let mut control = MainControl::tex82_initex(&mut stores);
+    register_source(
+        &mut control,
+        br"\begingroup\count0=11 \begingroup\count0=22\endgroup\endgroup\end",
+    );
+
+    assert_eq!(
+        control
+            .advance_episode(&mut stores)
+            .expect("grouped batch completes"),
+        StepResult::Progress(ReplayStep::End)
+    );
+
+    let lifecycle = control.command.lifecycle_stats();
+    assert!(
+        lifecycle.processor_entries >= 5,
+        "the batch crossed several command borrow scopes: {lifecycle:?}"
+    );
+    assert_eq!(
+        lifecycle.processor_entries, lifecycle.processor_completions,
+        "every command facade retires before the episode barrier"
+    );
+    assert_eq!(lifecycle.live_processors, 0);
+    assert_eq!(lifecycle.maximum_live_processors, 1);
+}
+
+#[test]
 fn production_batch_keeps_ordinary_prefix_on_resource_need() {
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
     let mut control = MainControl::tex82_initex(&mut stores);
@@ -4439,6 +4468,12 @@ fn production_batch_keeps_ordinary_prefix_on_resource_need() {
     assert_eq!(suspended.rollbacks, 1);
     assert_eq!(suspended.resource_replayed_delivered_tokens, 0);
     assert_eq!(suspended.resource_replayed_dispatches, 0);
+    let suspended_interpreter = control.command.lifecycle_stats();
+    assert_eq!(
+        suspended_interpreter.processor_entries, suspended_interpreter.processor_completions,
+        "resource suspension retires the interpreter facade"
+    );
+    assert_eq!(suspended_interpreter.live_processors, 0);
 
     control.capabilities_mut().register_input(
         "child.tex",
@@ -4456,6 +4491,17 @@ fn production_batch_keeps_ordinary_prefix_on_resource_need() {
     assert_eq!(retried, StepResult::Progress(ReplayStep::End));
     assert_eq!(stores.count(0), 11);
     let telemetry = control.advance_telemetry();
+    let resumed_interpreter = control.command.lifecycle_stats();
+    assert!(
+        resumed_interpreter.processor_entries > suspended_interpreter.processor_entries,
+        "retry resumes the same persistent interpreter through new borrow scopes"
+    );
+    assert_eq!(
+        resumed_interpreter.processor_entries,
+        resumed_interpreter.processor_completions
+    );
+    assert_eq!(resumed_interpreter.live_processors, 0);
+    assert_eq!(resumed_interpreter.maximum_live_processors, 1);
     let direct_work = control.command_work();
     assert_eq!(
         direct_work,

@@ -62,6 +62,7 @@ use crate::font_support::{
     FontLoadFailure, GlyphToUnicodeParse, parse_glyph_to_unicode, report_font_capacity,
     report_font_not_loadable_with_context, warn_pdf_destination_duplicate,
 };
+use crate::interpreter::{InterpreterProcessor, PersistentInterpreter};
 use crate::mode::{AlignColumn, AlignState, AlignmentKind, AlignmentPackSpec};
 use crate::vertical::is_outer_vertical;
 use crate::{ExecError, Mode, ModeNest};
@@ -88,7 +89,10 @@ fn take_prepared_dvi_pages(pages: &mut PreparedDviPages) -> Vec<crate::dispatch:
 /// Production command main control with command-owned source consumption.
 #[derive(Debug, Default)]
 pub struct MainControl {
-    command: CommandState,
+    /// The one session-lived canonical input, expansion, and scanner owner.
+    /// Individual [`CommandProcessor`] values are borrow-only facades over
+    /// this interpreter and cannot survive semantic or host barriers.
+    command: PersistentInterpreter,
     /// Operational memo service owned by the execution/session layer.
     pure_memo: Arc<std::sync::Mutex<tex_state::PureMemoRuntime>>,
     pure_memo_initialized: bool,
@@ -944,7 +948,7 @@ impl CommandObserver for ObservationBuffer {
 /// takes this instead, so passing the command machine along costs one
 /// parameter instead of four.
 struct CommandMachine<'a> {
-    state: &'a mut CommandState,
+    state: &'a mut PersistentInterpreter,
     fuel: &'a mut tex_command::CommandFuel,
     capabilities: &'a mut CommandHostCapabilities,
     observations: &'a mut ObservationSlot,
@@ -958,7 +962,7 @@ struct CommandMachine<'a> {
 }
 
 impl CommandMachine<'_> {
-    fn processor<'a>(&'a mut self, stores: &'a mut Universe) -> CommandProcessor<'a> {
+    fn processor<'a>(&'a mut self, stores: &'a mut Universe) -> InterpreterProcessor<'a> {
         command_processor(
             self.state,
             self.fuel,
@@ -991,22 +995,21 @@ impl CommandMachine<'_> {
 }
 
 fn command_processor<'a>(
-    command: &'a mut CommandState,
+    command: &'a mut PersistentInterpreter,
     fuel: &'a mut tex_command::CommandFuel,
     capabilities: &'a mut CommandHostCapabilities,
     observations: &'a mut ObservationSlot,
     stores: &'a mut Universe,
-) -> CommandProcessor<'a> {
-    let processor = CommandProcessor::new(
-        command,
+) -> InterpreterProcessor<'a> {
+    let observer = observations
+        .as_mut()
+        .map(|buffer| buffer as &mut dyn CommandObserver);
+    command.processor(
         stores.command_context(),
         CommandHostContext::new(capabilities),
+        fuel,
+        observer,
     )
-    .with_fuel(fuel);
-    match observations.as_mut() {
-        Some(buffer) => processor.with_observer(buffer),
-        None => processor,
-    }
 }
 
 impl MainControl {
@@ -1185,7 +1188,7 @@ impl MainControl {
     #[must_use]
     pub fn with_profile(profile: CommandProfile) -> Self {
         Self {
-            command: CommandState::new(profile),
+            command: PersistentInterpreter::new(profile),
             ..Self::default()
         }
     }
@@ -1195,7 +1198,7 @@ impl MainControl {
     #[must_use]
     pub fn prepared_initex(profile: CommandProfile) -> Self {
         Self {
-            command: CommandState::new(profile),
+            command: PersistentInterpreter::new(profile),
             next_alignment_identity: 1,
             initex: true,
             ..Self::default()
@@ -1211,7 +1214,7 @@ impl MainControl {
         tex_command::install_tex82_expandable_primitives(stores);
         crate::install_unexpandable_primitives(stores);
         Self {
-            command: CommandState::new(CommandProfile::TEX82),
+            command: PersistentInterpreter::new(CommandProfile::TEX82),
             next_alignment_identity: 1,
             initex: true,
             ..Self::default()
@@ -1221,7 +1224,7 @@ impl MainControl {
     /// Borrows command state for source registration and snapshots.
     #[must_use]
     pub fn command_mut(&mut self) -> &mut CommandState {
-        &mut self.command
+        self.command.state_mut()
     }
 
     /// Returns the number of live TeX input levels.
@@ -1233,7 +1236,7 @@ impl MainControl {
     /// Returns the immutable profile of this command processor.
     #[must_use]
     pub const fn command_profile(&self) -> CommandProfile {
-        self.command.profile()
+        self.command.state().profile()
     }
 
     /// Replaces the command-work ledger before or during a run.
@@ -4211,6 +4214,10 @@ impl MainControl {
                     let opened = processor
                         .begin_selected_output_routine()
                         .map_err(command_error);
+                    // The selected output routine is now installed in the
+                    // persistent interpreter. Retire its borrow facade before
+                    // opening the matching semantic group and mode barriers.
+                    drop(processor);
                     if enclosing.is_some() {
                         let mut deferred =
                             std::mem::replace(&mut self.operation_observations, enclosing)
@@ -6433,6 +6440,7 @@ impl MainControl {
         );
         let exhausted = processor.get_x_token();
         let exhausted = exhausted.map_err(command_error);
+        drop(processor);
         self.operation_observations = silenced;
         let terminal_exhausted = exhausted?.is_none();
         if !terminal_exhausted {
@@ -17884,7 +17892,7 @@ fn warn_cross_file_group_close(stores: &mut Universe, command: &mut CommandMachi
 /// assignment has committed. TeX82 §1269 assigns it to `cur_tok` and invokes
 /// §325 `back_input`, so it must use the ordinary canonical backup level.
 fn schedule_afterassignment(
-    command: &mut CommandState,
+    command: &mut PersistentInterpreter,
     fuel: &mut tex_command::CommandFuel,
     capabilities: &mut CommandHostCapabilities,
     observations: &mut ObservationSlot,

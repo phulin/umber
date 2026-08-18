@@ -57,6 +57,9 @@ print channel of its own outside the borrowed
 - `src/processor/mod.rs`: processor construction plus the opaque delivery
   cursor moved across an executor-owned typed resource continuation; it
   restores observation ordering but owns no command/input semantics.
+  Production borrows use `CommandProcessor::borrowed`, which takes the
+  session-owned fuel and observer directly and constructs no temporary owned
+  ledger.
 - `src/error.rs`: command error and resource-need representation plus the
   shared dimension-scanner recovery diagnostic vocabulary consumed by legacy
   and canonical scanner paths.

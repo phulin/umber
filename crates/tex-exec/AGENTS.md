@@ -74,6 +74,9 @@ Command operands are scanned by `tex-command` into typed request and result valu
 - `src/job.rs` and `src/job_output.rs`: TeX job framing, terminal continuation, final cleanup, and lazy DVI/transcript output. See `docs/job_framing.md`.
 - `src/page_builder.rs`, `src/splitting.rs`, `src/vertical.rs`, `src/packing_params.rs`, and `src/pack_report.rs`: page accounting, vertical splitting/contribution, packing snapshots, and box diagnostics.
 - `src/host_api.rs`, `src/retained_resource.rs`, and `src/session_api.rs`: host resource contracts, retained fulfillment, execution budgets, cancellation, and interrupts.
+- `src/interpreter.rs`: session-lived canonical command-state ownership,
+  borrow-scoped processor facades, and assertion-bearing interpreter lifecycle
+  accounting across semantic and host barriers.
 - `src/**/tests.rs` and crate-local `#[cfg(test)]` modules: active semantic,
   replay, diagnostic, state, and exact-operand regression coverage selected by
   the library test target.

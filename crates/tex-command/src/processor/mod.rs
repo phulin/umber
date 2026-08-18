@@ -419,16 +419,49 @@ impl<'a> CommandProcessor<'a> {
     #[must_use]
     pub fn new(
         command: &'a mut CommandState,
+        state: CommandContext<'a>,
+        host: CommandHostContext<'a>,
+    ) -> Self {
+        Self::from_parts(
+            command,
+            state,
+            host,
+            ProcessorFuel::Owned(CommandFuelLedger::default()),
+            None,
+        )
+    }
+
+    /// Borrows a session-owned command interpreter without constructing an
+    /// intermediate owned fuel ledger or independently selecting evidence.
+    ///
+    /// Production main control uses this constructor for every short-lived
+    /// `Universe` borrow facade. The command state, fuel, and optional
+    /// observer all remain owned by the persistent engine session.
+    #[must_use]
+    pub fn borrowed(
+        command: &'a mut CommandState,
+        state: CommandContext<'a>,
+        host: CommandHostContext<'a>,
+        fuel: &'a mut CommandFuel,
+        observer: Option<&'a mut dyn CommandObserver>,
+    ) -> Self {
+        Self::from_parts(command, state, host, ProcessorFuel::Shared(fuel), observer)
+    }
+
+    fn from_parts(
+        command: &'a mut CommandState,
         mut state: CommandContext<'a>,
         host: CommandHostContext<'a>,
+        fuel: ProcessorFuel<'a>,
+        observer: Option<&'a mut dyn CommandObserver>,
     ) -> Self {
         command.observe_tracked_dependencies(&mut state);
         Self {
             command,
             state,
             host,
-            observer: None,
-            fuel: ProcessorFuel::Owned(CommandFuelLedger::default()),
+            observer,
+            fuel,
             immediate_write_retirement: None,
             pending_file_warning_context: None,
             last_delivery: None,
