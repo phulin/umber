@@ -67,6 +67,10 @@ All production mutation of live TeX state should pass through `Universe` or simi
   targets.
 - `src/hot_core/mod.rs`: Private HotCore storage module boundary; command
   semantics remain outside this substrate.
+- `src/hot_core/snapshot.rs` and `src/hot_core/snapshot/tests.rs`: Storage-only
+  HotCore aggregate, 192-byte runtime snapshots, atomic restore preflight,
+  accepted-base lifecycle, exact-growth controls, and warmed aggregate plateau
+  coverage.
 - `src/hot_core/stack.rs` and `src/hot_core/stack/tests.rs`: Copy-only compact
   stacks with 32-bit marks, inline common storage, spill reuse, accounting, and
   bounded-cycle controls.
@@ -74,6 +78,9 @@ All production mutation of live TeX state should pass through `Universe` or simi
   inline-small dense mutable banks, typed namespace/generation coordinates,
   first-write journal integration, stale rejection, nested rollback, and
   plateau controls.
+- `src/hot_core_benchmark.rs`: Testing-feature scalar facade for the standalone
+  HotCore snapshot latency and allocation gates; live runtime coordinates stay
+  crate-private.
 - `src/hyphenation.rs`: Hyphenation pattern trie and exception table implementing Liang-style position lookup.
 - `src/hyphenation/tests.rs`: Unit tests for hyphenation patterns, exceptions, bounds, and overlapping matches.
 - `src/identity.rs`: Shared generation-tagged runtime identity allocator for rollback-truncated stores.
@@ -229,3 +236,6 @@ All production mutation of live TeX state should pass through `Universe` or simi
 
 Run `cargo test --tests -p tex-state` for state changes. For boundary-sensitive changes, include the live-boundary, replay, shadow, and compile-fail coverage that exercises the affected facade.
 State performance benchmarks live in the standalone `benchmarks/tex-state` crate and are run explicitly with `cargo bench --manifest-path benchmarks/tex-state/Cargo.toml --bench state_budgets`.
+The fixed-size HotCore substrate has an independent assertion-bearing gate at
+`cargo run --manifest-path benchmarks/hot-core-snapshot/Cargo.toml`; its
+Criterion rows compile with `cargo bench --manifest-path benchmarks/hot-core-snapshot/Cargo.toml --bench snapshots --no-run`.
