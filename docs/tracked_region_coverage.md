@@ -15,13 +15,13 @@ The supported region is one _ordinary outer main-control operation_: one call
 to `MainControl::advance`, internally owned by the non-nested `Advance`
 transaction in `MainControl::execute_operation`.
 
-The region begins after that operation's aggregate `StepSnapshot` has been
-captured and immediately before `apply_operation`. It ends after command
-delivery, expansion and scanning, executor application, nested command
-episodes, diagnostics, page/output tails, and receipt admission have all
-completed, but before the aggregate savepoint commits. `MainControl` is the
-begin/finish owner because it is the lowest layer that surrounds both
-`tex-command` and `tex-exec`; the command crate cannot depend on the executor.
+The region begins before the operation's fixed-size direct-operation mark and
+delivery preflight. It ends after command delivery, expansion and scanning,
+executor application, nested command episodes, diagnostics, page/output tails,
+receipt admission, and the direct commit have all completed. It owns no
+rollback root. `MainControl` is the begin/finish owner because it is the lowest
+layer that surrounds both `tex-command` and `tex-exec`; the command crate cannot
+depend on the executor.
 
 The following are part of the one parent region and must not begin nested
 regions:
@@ -41,8 +41,8 @@ stomach and page/output reads are known.
 
 ### Completion and failure
 
-On ordinary `Progress`, the owner finishes the tracked region before committing
-the savepoint, then publishes a successful detached record only after the TeX
+On ordinary `Progress`, the owner finishes the tracked region after the direct
+operation commit, then publishes a successful detached record only after the TeX
 operation commits. Record publication is a call-local optional sink operation
 and cannot make an already valid TeX operation fail.
 

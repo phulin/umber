@@ -2,10 +2,11 @@
 
 ## Status
 
-Promotion is blocked. The source audit and focused transaction controls pass,
-but clean main does not reach the immutable 12,000,000-fuel arXiv endpoint and
-the exhaustive Gentle command trace is not clean. The blocking defects are
-`umber2-awgc.15` and `umber2-awgc.16`; neither gate is weakened here.
+Promoted on main at `12ad19ace`. The source audit, focused transaction
+controls, immutable 100,000- and 12,000,000-fuel arXiv endpoints, exhaustive
+command stream, full native suite, and repository gates all pass. The two
+independently reduced blockers were fixed without restoring an aggregate
+retry authority.
 
 ## Residual audit
 
@@ -43,24 +44,38 @@ by `Vec::truncate`/weak-slot reclamation in the three migrated private value
 stores. Environment rollback remains O(changed cells) through the inverse
 journal.
 
-## Pinned evidence and blockers
+## Pinned evidence
 
 The immutable source, schema-11 format, schema-3 distribution, ordered 105-key
-closure, and offline 528-file cache match the SHA-256 authority in
-`umber2-awgc.12`. The accepted `.12` binary reaches fuel with 12,000,000 fuel
-charges and 11,999,815 token-frame steps. A freshly rebuilt clean-main
-`8a46fd3c0` binary instead stops after the first resource rollback with
-`emergency-stop(End of file on the terminal!)`; its causal digest is
-`987c4bc01cbc0258b8073d5838d9cc6f455538ab38a3f5eb0abf97c2e0d51676`.
-The same result appears at a reduced 100,000-fuel bound. Independently
-disabling the new direct journal retirement and private-suffix cleanup leaves
-that exact fingerprint unchanged, so `.4.4` did not introduce it.
+closure, and offline cache match the SHA-256 authority in `umber2-awgc.12`.
+The final profiling binary reaches the required endpoint with 12,000,000 fuel
+charges and 11,999,815 token-frame steps. Stdout is empty; the typed status is
+the expected fuel-exhaustion failure; and no PDF or input-record artifact is
+published. The guarded profiling process takes 48.23 wall seconds and peaks at
+873,660 KiB RSS. These are phase `.4` validation measurements, not the final
+epic performance target.
 
-The partial profiling row reaches 68 delivery/scan boundaries and one resource
-rollback before that defect. Within the observed prefix, command-state and
-step-snapshot clone calls, logical bytes, and allocations are all zero;
-step-snapshot phase entries are zero; both internal-lineage stop counts are
-zero. This is useful structural evidence but is not substituted for the full
-pinned endpoint. The clean-main exhaustive tracer also reports one Gentle
-backup-input retirement divergence at oracle event 204893. The corresponding
-defects block `.4.4` and parent `.4` from closing.
+The full row records zero command-state clone calls, zero step-snapshot clone
+calls, zero logical clone bytes, zero snapshot allocation calls or bytes, zero
+step-snapshot phase entries, and zero internal group- or rollback-lineage
+stops. It crosses 129,903 delivery/scan boundaries, 129,812 semantic-apply
+boundaries, and 111 typed resource rollbacks. The secondary work vector is
+`(1,177,349 expanded deliveries, 3,506,292 meaning lookups, 10,599,869
+scanner-status tokens, 1,182 write expansions)` under the versioned
+direct-prefix contract in `umber2-awgc.12`; fuel and raw token-frame position
+remain exact, while eliminated or retained replay is not synthetically
+charged.
+
+`umber2-awgc.15` fixed the resource blocker in `46ba1b765`: TeX82 §§440--445
+expanded integer and alphabetic-constant scans now retain typed leading,
+radix-tail, and completed-character continuation state across host suspension.
+`umber2-awgc.16` fixed the independent Gentle trace blocker in `12ad19ace`:
+TeX82 §§1123--1124/1270 nested accent assignment dispatch now hands the settled
+font command through without an extra expanded observation. Neither fix adds a
+snapshot, fallback executor, or counter adjustment.
+
+The exhaustive `tex-command-stream` comparison reports `VERDICT: CLEAN` after
+comparing every registered fixture through Gentle to exhaustion: zero ordered
+gating divergences and zero advisory geometry differences. The focused
+command, state, and executor suites pass; `cargo test -q --tests` passes; and
+`scripts/check.sh` reports all four gates passed.

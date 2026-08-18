@@ -469,11 +469,14 @@ that would need to be undone.
 
 ## Command-state cutover
 
-The cutover is complete: canonical candidates retain `CommandState`, private
-step rollback uses `CommandStateSnapshot`, and named checkpoints store a
-validated `CommandSummary`. `tex-incr` and Umber resume through that aggregate
+The cutover is complete: canonical candidates retain `CommandState`, resource
+suspension moves typed scanner or expansion continuations, and named
+checkpoints store a validated `CommandSummary`. Isolated shipout text expansion
+may snapshot and restore only its nested synthetic input transaction; it is not
+a main-control retry authority. `tex-incr` and Umber resume through the durable
 checkpoint plus explicit executor/runtime roots. There is no lexer/expander
-snapshot, reconstruction adapter, or whole-revision compatibility restart.
+retry snapshot, reconstruction adapter, or whole-revision compatibility
+restart.
 
 ## Focused tests and failure injection
 

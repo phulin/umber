@@ -2,8 +2,9 @@
 //!
 //! TeX82 §24 (`get_next`) and §25 (`expand`/`get_x_token`) retain input and
 //! expansion inside the command machine.  §1030 (`main_control`) consumes the
-//! resulting command.  Consequently this host owns only immutable resource
-//! registrations and aggregate retry policy; it has no token-delivery API.
+//! resulting command. Consequently this host owns only immutable resource
+//! registration and typed continuation fulfillment; it has no token-delivery
+//! or aggregate retry API.
 
 use std::fmt;
 use std::sync::Arc;

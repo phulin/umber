@@ -524,9 +524,9 @@ command plus delivery cursor or its fully scanned operation. Both paths use
 the private-revision allocation suffix and the existing mode journal where
 semantic assignment apply can fail; neither constructs `StepSnapshot`,
 `CommandStateSnapshot`, or `LocalRetrySnapshot`. The compatibility aggregate
-executor and its forced negative controls have been deleted. Final profiling
-and pinned-prefix consolidation is the promotion gate owned by
-`umber2-awgc.4.4`.
+executor and its forced negative controls have been deleted. The final
+profiling, exhaustive command-stream, and pinned-prefix consolidation passed
+under `umber2-awgc.4.4`; the journaled transaction cutover is promoted.
 
 ### Durable checkpoints
 
