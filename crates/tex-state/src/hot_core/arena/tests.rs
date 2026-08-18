@@ -184,7 +184,7 @@ fn foreign_and_non_ancestor_marks_reject_without_mutation() {
 }
 
 #[test]
-fn ten_thousand_dead_regions_plateau_registry_payload_and_growth_events() {
+fn ten_thousand_dead_regions_plateau_without_arena_owned_heap_growth() {
     let base = AcceptedRegionArena::new(capacity(8));
     let mut arena = base.candidate().expect("namespace remains available");
     let empty = arena.mark().expect("empty mark exists");
@@ -196,8 +196,19 @@ fn ten_thousand_dead_regions_plateau_registry_payload_and_growth_events() {
     let growth_events = arena.testing_storage_growth_events();
 
     for cycle in 0..10_000_u64 {
-        let (coordinates, _) = append_region(&mut arena, &[cycle, cycle + 1, cycle + 2, cycle + 3]);
-        assert_eq!(arena.resolve(coordinates[3]), Ok(&(cycle + 3)));
+        let reservation = arena.reserve(capacity(4)).expect("warm chunk reserves");
+        let _ = arena.append(reservation, cycle).expect("first append fits");
+        let _ = arena
+            .append(reservation, cycle + 1)
+            .expect("second append fits");
+        let _ = arena
+            .append(reservation, cycle + 2)
+            .expect("third append fits");
+        let last = arena
+            .append(reservation, cycle + 3)
+            .expect("fourth append fits");
+        let _ = arena.freeze(reservation).expect("region freezes");
+        assert_eq!(arena.resolve(last), Ok(&(cycle + 3)));
         arena.truncate(empty).expect("bounded suffix truncates");
     }
 
