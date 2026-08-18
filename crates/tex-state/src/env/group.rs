@@ -645,37 +645,40 @@ impl Env {
         self.journal_rollback_roots = std::sync::Arc::new(super::JournalRollbackRoots::default());
     }
 
-    pub(crate) fn can_retire_committed_snapshot(&self, snapshot: &EnvSnapshot) -> bool {
-        self.group_depth == 0 && self.can_discard_derived_snapshot_history(snapshot)
+    /// Opens one direct executor operation without registering a rollback root.
+    pub(crate) fn begin_direct_operation(&mut self) -> super::DirectJournalMark {
+        self.bump_epoch();
+        super::DirectJournalMark {
+            journal_pos: self.journal.pos(),
+            lineage: self.journal_lineage,
+        }
     }
 
-    /// Returns whether consuming `snapshot` leaves no aggregate rollback root
-    /// on the current journal baseline.
+    /// Returns whether this operation, rather than earlier setup, changed the
+    /// current journal suffix or crossed a journal lineage boundary.
+    pub(crate) fn direct_operation_changed(&self, mark: super::DirectJournalMark) -> bool {
+        self.journal.pos() != mark.journal_pos || self.journal_lineage != mark.lineage
+    }
+
+    pub(crate) fn can_retire_direct_operation(&self) -> bool {
+        self.group_depth == 0
+            && self.journal.len() != 0
+            && self.can_discard_direct_derived_history()
+    }
+
+    /// Returns whether the current journal baseline has no aggregate rollback
+    /// root.
     ///
     /// Derived mutation journals may discard their suffix at this boundary
     /// even while an open TeX group keeps Env's own save stack live.
-    pub(crate) fn can_discard_derived_snapshot_history(&self, snapshot: &EnvSnapshot) -> bool {
-        let snapshot_owns_current = snapshot
-            .rollback_roots
-            .as_ref()
-            .is_some_and(|roots| std::sync::Arc::ptr_eq(&self.journal_rollback_roots, roots));
-        snapshot.journal_baseline_serial == self.journal_baseline_serial
-            && self
-                .journal_rollback_roots
-                .is_only(usize::from(snapshot_owns_current))
+    pub(crate) fn can_discard_direct_derived_history(&self) -> bool {
+        self.journal_rollback_roots.is_only(0)
     }
 
-    /// Retires closed journal history after one successful aggregate operation.
-    ///
-    /// The consumed operation mark must be the only snapshot on this baseline;
-    /// otherwise a retained checkpoint still owns the journal suffix. Open TeX
-    /// groups keep their marker and restoration records regardless.
-    pub(crate) fn retire_committed_snapshot(&mut self, snapshot: EnvSnapshot) -> Option<()> {
-        assert!(
-            snapshot.journal_baseline_serial == self.journal_baseline_serial,
-            "committed environment snapshot belongs to a retired baseline"
-        );
-        if !self.can_retire_committed_snapshot(&snapshot) {
+    /// Retires closed journal history after one successful direct operation.
+    /// Retained checkpoints and open TeX groups keep their exact history.
+    pub(crate) fn retire_direct_operation(&mut self) -> Option<()> {
+        if !self.can_retire_direct_operation() {
             return None;
         }
         self.journal.clear_committed();

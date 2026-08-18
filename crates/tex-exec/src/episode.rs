@@ -30,22 +30,6 @@ impl SemanticEpisodeBarrier {
     }
 }
 
-/// Internal reason the canonical dispatcher commits before the slice limit.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-#[repr(u8)]
-pub enum EpisodeInternalStop {
-    GroupLineage,
-    RollbackLineage,
-}
-
-impl EpisodeInternalStop {
-    const COUNT: usize = 2;
-
-    const fn index(self) -> usize {
-        self as usize
-    }
-}
-
 /// Why a successfully frozen episode returned to its owner.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum EpisodeCommitBoundary {
@@ -57,9 +41,6 @@ pub enum EpisodeCommitBoundary {
     NamedCheckpoint(EngineBoundary),
     /// The job reached its canonical terminal or fragment boundary.
     Terminal,
-    /// The canonical dispatcher committed after an atomic action because the
-    /// next operation needs a fresh rollback or group-lineage root.
-    InternalStop(EpisodeInternalStop),
 }
 
 /// Receipt for one committed bounded episode.
@@ -99,7 +80,6 @@ pub struct EpisodeTelemetry {
     rollbacks: u64,
     operations: u64,
     semantic_barriers: [u64; SemanticEpisodeBarrier::COUNT],
-    internal_stops: [u64; EpisodeInternalStop::COUNT],
     slice_limits: u64,
     terminals: u64,
     last_commit: Option<EpisodeCommit>,
@@ -113,7 +93,6 @@ impl Default for EpisodeTelemetry {
             rollbacks: 0,
             operations: 0,
             semantic_barriers: [0; SemanticEpisodeBarrier::COUNT],
-            internal_stops: [0; EpisodeInternalStop::COUNT],
             slice_limits: 0,
             terminals: 0,
             last_commit: None,
@@ -146,10 +125,6 @@ impl EpisodeTelemetry {
             }
             EpisodeCommitBoundary::Terminal => {
                 self.terminals = self.terminals.saturating_add(1);
-            }
-            EpisodeCommitBoundary::InternalStop(reason) => {
-                let index = reason.index();
-                self.internal_stops[index] = self.internal_stops[index].saturating_add(1);
             }
         }
         self.last_commit = Some(commit);
@@ -202,11 +177,6 @@ impl EpisodeTelemetry {
     }
 
     #[must_use]
-    pub const fn internal_stops(self, reason: EpisodeInternalStop) -> u64 {
-        self.internal_stops[reason.index()]
-    }
-
-    #[must_use]
     pub const fn slice_limits(self) -> u64 {
         self.slice_limits
     }
@@ -244,12 +214,6 @@ fn hot_core_commit_reason(
         },
         EpisodeCommitBoundary::NamedCheckpoint(_) => Reason::NamedCheckpoint,
         EpisodeCommitBoundary::Terminal => Reason::Terminal,
-        EpisodeCommitBoundary::InternalStop(EpisodeInternalStop::GroupLineage) => {
-            Reason::InternalGroupLineage
-        }
-        EpisodeCommitBoundary::InternalStop(EpisodeInternalStop::RollbackLineage) => {
-            Reason::InternalRollbackLineage
-        }
     }
 }
 

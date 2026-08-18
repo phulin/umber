@@ -1342,7 +1342,6 @@ pub(crate) struct ProvenanceStore {
     record_key_lease_end: u32,
     next_unique_record_key: u32,
     unique_record_key_lease_end: u32,
-    retry_records: Vec<ArchivedOriginRecord>,
     unique_candidates: SmallVec<[(OriginRecord, OriginId); 4]>,
     rooted_record_slots: Vec<Option<RootedOriginSlot>>,
     rooted_record_free: Vec<usize>,
@@ -1376,7 +1375,6 @@ impl Clone for ProvenanceStore {
             record_key_lease_end: 0,
             next_unique_record_key: 0,
             unique_record_key_lease_end: 0,
-            retry_records: Vec::new(),
             unique_candidates: self.unique_candidates.clone(),
             rooted_record_slots: self
                 .rooted_record_slots
@@ -1433,7 +1431,6 @@ impl ProvenanceStore {
             record_key_lease_end: 0,
             next_unique_record_key: 0,
             unique_record_key_lease_end: 0,
-            retry_records: Vec::new(),
             unique_candidates: SmallVec::new(),
             rooted_record_slots: Vec::new(),
             rooted_record_free: Vec::new(),
@@ -1495,21 +1492,8 @@ impl ProvenanceStore {
                 _ => OriginId::UNKNOWN,
             };
         }
-        let key = if self
-            .retry_records
-            .last()
-            .is_some_and(|(_, expected)| *expected == record)
-        {
-            self.retry_records
-                .pop()
-                .expect("matching retry record is present")
-                .0
-        } else {
-            self.retry_records.clear();
-            let Some(key) = self.next_packed_arena_origin() else {
-                return OriginId::UNKNOWN;
-            };
-            key
+        let Some(key) = self.next_packed_arena_origin() else {
+            return OriginId::UNKNOWN;
         };
         let slot = u32::try_from(self.records.len())
             .expect("global origin key capacity bounds provenance record slots");
@@ -1541,21 +1525,8 @@ impl ProvenanceStore {
         if self.records.len() >= self.record_limit {
             return OriginId::UNKNOWN;
         }
-        let key = if self
-            .retry_records
-            .last()
-            .is_some_and(|(_, expected)| *expected == record)
-        {
-            self.retry_records
-                .pop()
-                .expect("matching retry record is present")
-                .0
-        } else {
-            self.retry_records.clear();
-            let Some(key) = self.next_unique_packed_arena_origin() else {
-                return OriginId::UNKNOWN;
-            };
-            key
+        let Some(key) = self.next_unique_packed_arena_origin() else {
+            return OriginId::UNKNOWN;
         };
         let slot = u32::try_from(self.records.len())
             .expect("global origin key capacity bounds provenance record slots");
@@ -2268,29 +2239,6 @@ impl ProvenanceStore {
 
     /// Truncates to a previously-taken aggregate snapshot watermark.
     pub(crate) fn truncate_to(&mut self, mark: ProvenanceStoreMark) {
-        self.retry_records.clear();
-        self.truncate_to_inner(mark);
-    }
-
-    /// Rolls back records while leasing the exact discarded allocation
-    /// sequence to the immediately retried atomic operation.
-    pub(crate) fn truncate_to_for_retry(&mut self, mark: ProvenanceStoreMark) {
-        self.retry_records = (mark.records as usize..self.records.len())
-            .filter_map(|slot| self.records.get_slot(slot).map(|record| (slot, record)))
-            .map(|(slot, record)| {
-                let key = self
-                    .record_keys
-                    .runs
-                    .iter()
-                    .find_map(|run| {
-                        let offset = u32::try_from(slot).ok()?.checked_sub(run.first_slot)?;
-                        (offset < run.len).then(|| run.first_key + offset)
-                    })
-                    .expect("live provenance slot has a packed key");
-                (key, record)
-            })
-            .rev()
-            .collect();
         self.truncate_to_inner(mark);
     }
 

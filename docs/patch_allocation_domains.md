@@ -48,13 +48,13 @@ aggregate. Retry and rejection drop scratch references normally. The domain
 does not traverse stores, reconstruct indexes, or compact historical
 allocations.
 
-`tex-command::CommandStateSnapshot` continues to own command cursors and
-transient replay. It contains no allocation-domain control. `tex-exec::MainControl`
-pairs it with one `Universe::LocalRetrySnapshot`; that aggregate retry snapshot
-begins the domain operation mark. Successful operation commit closes the mark
-without releasing earlier private work. Ordinary failure, cancellation, hard
-limit, and `NeedResource` rollback truncate the domain to the mark before
-command or mode roots are restored.
+`tex-command::CommandState` owns command cursors and typed resource
+continuations. It contains no allocation-domain control. `tex-exec::MainControl`
+opens one fixed-size `Universe::DirectOperationMark` after preflight. Successful
+operation commit closes the private suffix without releasing earlier work.
+Ordinary failure and cancellation discard only unpublished operation
+allocations; resource suspension retains the fully prepared continuation and
+does not restore aggregate command, state, or mode roots.
 
 `tex-incr::RevisionCandidate` owns the `Universe`, command state, speculative
 checkpoints, and detached candidate output across resource suspensions. A
@@ -73,9 +73,9 @@ domain merely because one allocation survives.
 Node-list payloads need no allocation-domain transfer ledger. A private
 candidate's mode, page, command, Env, PDF, checkpoint, and output staging
 values own their `NodeListRef` fields directly. Success moves those references,
-rollback or retry restores the cloned aggregate before scratch drops,
-rejection drops the candidate closure, and acceptance moves the selected
-aggregate. Detached format, memo, DVI, PDF, and HTML values contain no runtime
+resource retry retains its typed continuation, rejection drops the candidate
+closure, and acceptance moves the selected aggregate. Detached format, memo,
+DVI, PDF, and HTML values contain no runtime
 node coordinate that the domain could retain.
 
 ## Operation marks

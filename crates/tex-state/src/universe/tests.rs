@@ -1,6 +1,6 @@
 use super::{
-    BoxDimension, FormatError, GenerationForkError, GeometryObservation, TakeUnboxResult,
-    UnboxKind, Universe, utf8_scalar_len_at,
+    BoxDimension, FormatError, GenerationForkError, TakeUnboxResult, UnboxKind, Universe,
+    utf8_scalar_len_at,
 };
 use crate::PdfDocumentFragmentKind;
 use crate::env::banks::{IntParam, TokParam};
@@ -62,14 +62,14 @@ fn freeze_ref(universe: &mut Universe, nodes: &[Node]) -> NodeListRef {
 }
 
 #[test]
-fn rejected_operation_discards_page_node_builders_exactly() {
+fn rejected_direct_operation_discards_unpublished_page_node_builders_exactly() {
     let mut universe = Universe::new();
     universe.begin_private_revision();
 
-    let retry = universe.snapshot_for_local_retry();
-    let children = universe.freeze_node_list(&[Node::Penalty(17)]);
-    universe.append_page_contribution(Node::HList(zero_box(children)));
-    universe.rollback_local_retry_snapshot(retry);
+    let operation = universe.begin_direct_operation();
+    let rejected = universe.freeze_node_list(&[Node::Penalty(17)]);
+    drop(rejected);
+    universe.discard_direct_operation_allocations(operation);
 
     assert!(universe.page_contributions().is_empty());
 }
@@ -79,10 +79,10 @@ fn committed_page_nodes_remain_owned_across_checkpoint_rollback() {
     let mut universe = Universe::new();
     universe.begin_private_revision();
 
-    let operation = universe.snapshot_for_local_retry();
+    let operation = universe.begin_direct_operation();
     let children = universe.freeze_node_list(&[Node::Penalty(23)]);
     universe.append_page_contribution(Node::HList(zero_box(children)));
-    universe.commit_local_retry_snapshot(operation);
+    universe.commit_direct_operation(operation);
 
     let promoted = match universe.page_contribution_front() {
         Some(Node::HList(node)) => node.children.clone(),
@@ -91,35 +91,35 @@ fn committed_page_nodes_remain_owned_across_checkpoint_rollback() {
     assert_eq!(promoted.to_vec(), [Node::Penalty(23)]);
 
     let checkpoint = universe.snapshot();
-    let operation = universe.snapshot_for_local_retry();
+    let operation = universe.begin_direct_operation();
     let _ = universe.pop_page_contribution_front();
-    universe.commit_local_retry_snapshot(operation);
+    universe.commit_direct_operation(operation);
 
     universe.rollback(&checkpoint);
     assert_eq!(promoted.to_vec(), [Node::Penalty(23)]);
-    let operation = universe.snapshot_for_local_retry();
+    let operation = universe.begin_direct_operation();
     let _ = universe.pop_page_contribution_front();
-    universe.commit_local_retry_snapshot(operation);
+    universe.commit_direct_operation(operation);
     drop(checkpoint);
 
-    let operation = universe.snapshot_for_local_retry();
-    universe.commit_local_retry_snapshot(operation);
+    let operation = universe.begin_direct_operation();
+    universe.commit_direct_operation(operation);
 }
 
 #[test]
 fn committed_level_zero_operations_retire_journal_history_at_a_bounded_baseline() {
     let mut universe = Universe::new();
-    let first = universe.snapshot_for_local_retry();
+    let first = universe.begin_direct_operation();
     universe.set_count_global(0, 1);
-    universe.commit_local_retry_snapshot(first);
+    universe.commit_direct_operation(first);
     assert_eq!(universe.env_journal_entry_count(), 0);
     let retained_bytes = universe.env_journal_bytes();
 
     for value in 2..=10_000 {
-        let operation = universe.snapshot_for_local_retry();
+        let operation = universe.begin_direct_operation();
         universe.set_count_global(0, value);
         universe.set_count_global(1, -value);
-        universe.commit_local_retry_snapshot(operation);
+        universe.commit_direct_operation(operation);
         assert_eq!(universe.env_journal_entry_count(), 0);
         assert_eq!(universe.stores.testing_exact_env_undo_entries(), 0);
     }
@@ -142,13 +142,13 @@ fn closed_groups_retire_but_open_groups_and_retained_checkpoints_keep_exact_hist
         cat: Catcode::Other,
     };
 
-    let committed = universe.snapshot_for_local_retry();
+    let committed = universe.begin_direct_operation();
     universe.enter_group();
     universe.set_count(0, 11);
     universe.push_aftergroup(after_x);
     assert_eq!(universe.leave_group(), vec![after_x]);
     universe.set_count_global(1, 22);
-    universe.commit_local_retry_snapshot(committed);
+    universe.commit_direct_operation(committed);
     assert!(universe.env_journal_entry_count() > 0);
     universe.rollback(&retained);
     assert_eq!(universe.count(0), 0);
@@ -156,27 +156,27 @@ fn closed_groups_retire_but_open_groups_and_retained_checkpoints_keep_exact_hist
     drop(retained);
 
     universe.enter_group();
-    let open = universe.snapshot_for_local_retry();
+    let open = universe.begin_direct_operation();
     universe.set_count(0, 33);
     universe.push_aftergroup(after_y);
     let invalidated_inside_group = universe.snapshot();
-    universe.commit_local_retry_snapshot(open);
+    universe.commit_direct_operation(open);
     assert!(universe.env_journal_entry_count() > 0);
     assert_eq!(universe.leave_group(), vec![after_y]);
     assert_eq!(universe.count(0), 0);
     assert!(!universe.can_rollback_to(&invalidated_inside_group));
 
-    let baseline = universe.snapshot_for_local_retry();
+    let baseline = universe.begin_direct_operation();
     universe.set_count_global(2, 44);
-    universe.commit_local_retry_snapshot(baseline);
+    universe.commit_direct_operation(baseline);
     assert_eq!(universe.env_journal_entry_count(), 0);
     assert_eq!(universe.count(2), 44);
     drop(invalidated_inside_group);
 
     universe.enter_group();
-    let open_without_retained_snapshot = universe.snapshot_for_local_retry();
+    let open_without_retained_snapshot = universe.begin_direct_operation();
     universe.set_count(3, 55);
-    universe.commit_local_retry_snapshot(open_without_retained_snapshot);
+    universe.commit_direct_operation(open_without_retained_snapshot);
     assert_eq!(
         universe.stores.testing_exact_env_undo_entries(),
         0,
@@ -191,9 +191,9 @@ fn journal_retirement_preserves_the_named_checkpoint_hash_schedule() {
     let mut uninterrupted = Universe::new();
 
     for value in 1..=128 {
-        let operation = retired.snapshot_for_local_retry();
+        let operation = retired.begin_direct_operation();
         retired.set_count_global((value % 4) as u16, value);
-        retired.commit_local_retry_snapshot(operation);
+        retired.commit_direct_operation(operation);
         uninterrupted.set_count_global((value % 4) as u16, value);
     }
 
@@ -203,12 +203,12 @@ fn journal_retirement_preserves_the_named_checkpoint_hash_schedule() {
     assert_eq!(retired_hash, uninterrupted_hash);
 
     let original = retired.count(0);
-    let first = retired.snapshot_for_local_retry();
+    let first = retired.begin_direct_operation();
     retired.set_count_global(0, 999);
-    retired.commit_local_retry_snapshot(first);
-    let second = retired.snapshot_for_local_retry();
+    retired.commit_direct_operation(first);
+    let second = retired.begin_direct_operation();
     retired.set_count_global(0, original);
-    retired.commit_local_retry_snapshot(second);
+    retired.commit_direct_operation(second);
     uninterrupted.set_count_global(0, 999);
     uninterrupted.set_count_global(0, original);
     assert_eq!(
@@ -235,7 +235,7 @@ fn journal_retirement_releases_superseded_reachability_owned_values() {
     ));
     let old_macro_id = old_macro.id();
     let name = universe.intern("retired-macro");
-    let first = universe.snapshot_for_local_retry();
+    let first = universe.begin_direct_operation();
     universe.set_toks(7, old_tokens);
     universe.set_skip(7, old_glue);
     universe.set_meaning(
@@ -247,7 +247,7 @@ fn journal_retirement_releases_superseded_reachability_owned_values() {
     );
     drop(old_tokens_root);
     drop(old_macro);
-    universe.commit_local_retry_snapshot(first);
+    universe.commit_direct_operation(first);
 
     let new_tokens_root = universe.intern_token_list_ref(&[Token::Char {
         ch: 'b',
@@ -260,7 +260,7 @@ fn journal_retirement_releases_superseded_reachability_owned_values() {
         TokenListId::EMPTY,
         TokenListId::EMPTY,
     ));
-    let second = universe.snapshot_for_local_retry();
+    let second = universe.begin_direct_operation();
     universe.set_toks(7, new_tokens);
     universe.set_skip(7, new_glue);
     universe.set_meaning(
@@ -272,7 +272,7 @@ fn journal_retirement_releases_superseded_reachability_owned_values() {
     );
     drop(new_tokens_root);
     drop(new_macro);
-    universe.commit_local_retry_snapshot(second);
+    universe.commit_direct_operation(second);
 
     assert!(catch_unwind(AssertUnwindSafe(|| universe.tokens(old_tokens))).is_err());
     assert!(catch_unwind(AssertUnwindSafe(|| universe.glue(old_glue_id))).is_err());
@@ -285,17 +285,17 @@ fn journal_retirement_releases_superseded_reachability_owned_values() {
 }
 
 #[test]
-fn private_token_roots_retry_and_accept_through_the_aggregate_boundary() {
+fn private_token_roots_accept_and_rejected_direct_suffixes_do_not_publish() {
     let mut universe = Universe::new();
     universe.begin_private_revision();
 
-    let first_operation = universe.snapshot_for_local_retry();
+    let first_operation = universe.begin_direct_operation();
     let retained = universe.intern_token_list(&[Token::Char {
         ch: 'k',
         cat: Catcode::Letter,
     }]);
     universe.set_toks(7, retained);
-    universe.commit_local_retry_snapshot(first_operation);
+    universe.commit_direct_operation(first_operation);
     let retained_hash = universe.snapshot().state_hash();
     let retained_effects = universe.world.effect_records().len();
     let retained_stats = universe
@@ -303,7 +303,7 @@ fn private_token_roots_retry_and_accept_through_the_aggregate_boundary() {
         .expect("private domain is live");
     assert_eq!(retained_stats.0, 1);
 
-    let failed_operation = universe.snapshot_for_local_retry();
+    let failed_operation = universe.begin_direct_operation();
     let failed = universe.intern_token_list(&[
         Token::Char {
             ch: 'x',
@@ -314,9 +314,7 @@ fn private_token_roots_retry_and_accept_through_the_aggregate_boundary() {
             cat: Catcode::Letter,
         },
     ]);
-    universe.set_toks(7, failed);
-    assert_eq!(universe.toks(7), failed);
-    universe.rollback_local_retry_snapshot(failed_operation);
+    universe.discard_direct_operation_allocations(failed_operation);
     assert_eq!(
         universe.testing_private_revision_domain_stats(),
         Some(retained_stats)
@@ -341,25 +339,25 @@ fn private_token_roots_retry_and_accept_through_the_aggregate_boundary() {
 }
 
 #[test]
-fn private_glue_roots_retry_and_selected_acceptance_follow_env_ownership() {
+fn private_glue_roots_accept_and_rejected_direct_suffixes_do_not_publish() {
     let mut universe = Universe::new();
     universe.begin_private_revision();
 
-    let retained_operation = universe.snapshot_for_local_retry();
+    let retained_operation = universe.begin_direct_operation();
     let retained = universe.intern_glue(glue(101));
     let retained_id = retained.id();
     universe.set_skip(7, retained);
-    universe.commit_local_retry_snapshot(retained_operation);
+    universe.commit_direct_operation(retained_operation);
     let retained_stats = universe
         .testing_private_revision_domain_stats()
         .expect("private glue domain is live");
     assert_eq!(retained_stats.0, 1);
 
-    let failed_operation = universe.snapshot_for_local_retry();
+    let failed_operation = universe.begin_direct_operation();
     let failed = universe.intern_glue(glue(102));
     let failed_id = failed.id();
-    universe.set_skip(7, failed);
-    universe.rollback_local_retry_snapshot(failed_operation);
+    drop(failed);
+    universe.discard_direct_operation_allocations(failed_operation);
     assert_eq!(universe.skip(7), retained_id);
     assert_eq!(universe.glue(retained_id), glue(101));
     assert!(catch_unwind(AssertUnwindSafe(|| universe.glue(failed_id))).is_err());
@@ -368,11 +366,11 @@ fn private_glue_roots_retry_and_selected_acceptance_follow_env_ownership() {
         Some(retained_stats)
     );
 
-    let unselected_operation = universe.snapshot_for_local_retry();
+    let unselected_operation = universe.begin_direct_operation();
     let unselected = universe.intern_glue(glue(103));
     let unselected_id = unselected.id();
     drop(unselected);
-    universe.commit_local_retry_snapshot(unselected_operation);
+    universe.commit_direct_operation(unselected_operation);
     assert_eq!(
         universe
             .testing_private_revision_domain_stats()
@@ -425,12 +423,12 @@ fn glue_current_undo_page_and_checkpoint_edges_are_structural_roots() {
 }
 
 #[test]
-fn private_macro_roots_retry_reject_and_accept_through_the_aggregate_boundary() {
+fn private_macro_roots_accept_and_rejected_direct_suffixes_do_not_publish() {
     let mut universe = Universe::new();
     let name = universe.intern("private-macro");
     universe.begin_private_revision();
 
-    let retained_operation = universe.snapshot_for_local_retry();
+    let retained_operation = universe.begin_direct_operation();
     let retained_body = universe.intern_token_list(&[Token::Char {
         ch: 'r',
         cat: Catcode::Letter,
@@ -462,7 +460,7 @@ fn private_macro_roots_retry_reject_and_accept_through_the_aggregate_boundary() 
         },
     );
     drop(retained);
-    universe.commit_local_retry_snapshot(retained_operation);
+    universe.commit_direct_operation(retained_operation);
     let retained_stats = universe
         .testing_private_revision_domain_stats()
         .expect("private macro domain is live");
@@ -471,7 +469,7 @@ fn private_macro_roots_retry_reject_and_accept_through_the_aggregate_boundary() 
         "token, body, and two occurrences are private"
     );
 
-    let failed_operation = universe.snapshot_for_local_retry();
+    let failed_operation = universe.begin_direct_operation();
     let failed_body = universe.intern_token_list(&[Token::Char {
         ch: 'f',
         cat: Catcode::Letter,
@@ -481,16 +479,9 @@ fn private_macro_roots_retry_reject_and_accept_through_the_aggregate_boundary() 
         TokenListId::EMPTY,
         failed_body,
     ));
-    universe.set_meaning(
-        name,
-        Meaning::Macro {
-            flags: MeaningFlags::OUTER,
-            definition: failed.id(),
-        },
-    );
     let failed_id = failed.id();
     drop(failed);
-    universe.rollback_local_retry_snapshot(failed_operation);
+    universe.discard_direct_operation_allocations(failed_operation);
     assert_eq!(
         universe.testing_private_revision_domain_stats(),
         Some(retained_stats)
@@ -724,19 +715,19 @@ fn executor_operation_boundaries_retain_the_unchanged_allocator_base() {
     universe.observe_transient_token_words(600);
     assert_eq!(universe.testing_transient_memory_base_projections(), 1);
 
-    let committed = universe.snapshot_for_local_retry();
-    universe.commit_local_retry_snapshot(committed);
+    let committed = universe.begin_direct_operation();
+    universe.commit_direct_operation(committed);
     universe.observe_transient_token_words(601);
     assert_eq!(universe.testing_transient_memory_base_projections(), 1);
 
-    let discarded = universe.snapshot_for_local_retry();
-    universe.discard_local_retry_allocations(discarded);
+    let discarded = universe.begin_direct_operation();
+    universe.discard_direct_operation_allocations(discarded);
     universe.observe_transient_token_words(602);
     assert_eq!(universe.testing_transient_memory_base_projections(), 1);
 
-    let rolled_back = universe.snapshot_for_local_retry();
+    let rolled_back = universe.snapshot();
     universe.observe_transient_token_words(603);
-    universe.rollback_local_retry_snapshot(rolled_back);
+    universe.rollback(&rolled_back);
     universe.observe_transient_token_words(0);
     // The rollback receipt updates the projection before rejected dynamic
     // handles are truncated. Its pre-rollback allocator coordinate still
@@ -2119,68 +2110,6 @@ fn traced_list_finish_rejects_rolled_back_origins_before_publishing() {
     let finished = universe.finish_traced_token_list(&[valid]);
     assert_eq!(finished.token_list().raw(), 1);
     assert_eq!(finished.origin_list().raw(), 1);
-}
-
-#[test]
-fn rooted_transient_freeze_survives_rollback_without_origin_lookup() {
-    let mut universe = Universe::new();
-    let snapshot = universe.snapshot();
-    let token = Token::Char {
-        ch: 'x',
-        cat: Catcode::Letter,
-    };
-    let root = universe.synthetic_origin_ref(SyntheticOriginKind::Test);
-    let origin = root.id();
-    let transient = RootedTracedTokenBuffer::new([RootedTracedTokenWord::new(token, root)]);
-
-    universe.rollback_for_local_retry(&snapshot);
-    let frozen = universe.finish_rooted_traced_token_list(&transient);
-    assert_eq!(frozen.token_ref().tokens(), [token]);
-    assert_eq!(frozen.origin_ref().origins(), [origin]);
-    assert_eq!(
-        frozen.origin_ref().root(0).expect("aligned root").id(),
-        origin
-    );
-}
-
-#[test]
-fn structural_traced_list_owns_rollback_survivors_and_retry_reuses_only_weak_slots() {
-    let mut universe = Universe::new();
-    let snapshot = universe.snapshot();
-    let first_root = universe.synthetic_origin_ref(SyntheticOriginKind::Test);
-    let first_origin = first_root.id();
-    let first_buffer = RootedTracedTokenBuffer::new([RootedTracedTokenWord::new(
-        Token::Char {
-            ch: 'x',
-            cat: Catcode::Letter,
-        },
-        first_root.clone(),
-    )]);
-    let first = universe.finish_rooted_traced_token_list(&first_buffer);
-    let first_list = first.origin_list();
-    drop(first_root);
-
-    universe.rollback_for_local_retry(&snapshot);
-    assert!(universe.origin_ref(first_origin).is_some());
-    assert_eq!(first.origin_ref().origins(), [first_origin]);
-    drop(first_buffer);
-    drop(first);
-    assert!(universe.origin_ref(first_origin).is_none());
-
-    let retried_root = universe.synthetic_origin_ref(SyntheticOriginKind::Test);
-    let retried_buffer = RootedTracedTokenBuffer::new([RootedTracedTokenWord::new(
-        Token::Char {
-            ch: 'x',
-            cat: Catcode::Letter,
-        },
-        retried_root,
-    )]);
-    let retried = universe.finish_rooted_traced_token_list(&retried_buffer);
-    assert_eq!(retried.origin_list().raw(), first_list.raw());
-    assert_ne!(retried.origin_list(), first_list);
-    let after_retry = universe.provenance_stats();
-    assert_eq!(after_retry.origin_list_spans(), 1);
-    assert_eq!(after_retry.origin_list_entries(), 1);
 }
 
 #[test]
@@ -4580,77 +4509,30 @@ fn generation_fork_accepts_persistent_snapshot_behind_effect_barrier() {
 }
 
 #[test]
-fn local_retry_reuses_only_an_identical_provenance_allocation_sequence() {
-    let mut universe = Universe::new();
-    let provenance_before = universe.provenance_stats();
-    let snapshot = universe.snapshot();
-    let first = universe.source_origin(crate::input::SourceId::new(7), 70, 8, 9);
+fn fixed_size_direct_operation_mark_does_not_add_a_checkpoint_hash_boundary() {
+    let mut with_mark = Universe::new();
+    let mut without_mark = Universe::new();
 
-    universe.rollback_for_local_retry(&snapshot);
-    assert_eq!(universe.provenance_stats(), provenance_before);
-    let retried = universe.source_origin(crate::input::SourceId::new(7), 70, 8, 9);
-    assert_eq!(retried, first);
-
-    universe.rollback_for_local_retry(&snapshot);
-    let divergent = universe.source_origin(crate::input::SourceId::new(8), 80, 9, 10);
-    assert_ne!(divergent, first);
-}
-
-#[test]
-fn private_local_retry_snapshot_does_not_add_a_checkpoint_hash_boundary() {
-    let mut with_retry_point = Universe::new();
-    let mut without_retry_point = Universe::new();
-
-    with_retry_point.set_count(0, 11);
-    without_retry_point.set_count(0, 11);
-    let snapshot_serial = with_retry_point.next_snapshot_serial;
-    let checkpoint_hash = with_retry_point.state_hash_base.checkpoint_hash;
-    let retry_point = with_retry_point.snapshot_for_local_retry();
-    drop(retry_point);
-    assert_eq!(with_retry_point.next_snapshot_serial, snapshot_serial);
-    assert_eq!(
-        with_retry_point.state_hash_base.checkpoint_hash,
-        checkpoint_hash
+    with_mark.set_count(0, 11);
+    without_mark.set_count(0, 11);
+    let snapshot_serial = with_mark.next_snapshot_serial;
+    let checkpoint_hash = with_mark.state_hash_base.checkpoint_hash;
+    let mark = with_mark.begin_direct_operation();
+    assert!(
+        std::mem::size_of_val(&mark) <= 16 * std::mem::size_of::<usize>(),
+        "direct operation cursor must remain fixed and small"
     );
-    with_retry_point.set_count(1, 22);
-    without_retry_point.set_count(1, 22);
+    with_mark.commit_direct_operation(mark);
+    assert_eq!(with_mark.next_snapshot_serial, snapshot_serial);
+    assert_eq!(with_mark.state_hash_base.checkpoint_hash, checkpoint_hash);
+    with_mark.set_count(1, 22);
+    without_mark.set_count(1, 22);
 
     assert_eq!(
-        with_retry_point.snapshot().state_hash(),
-        without_retry_point.snapshot().state_hash(),
-        "TeX82 §§1030--1038 private command delivery must not alter the named checkpoint schedule"
+        with_mark.snapshot().state_hash(),
+        without_mark.snapshot().state_hash(),
+        "direct command delivery must not alter the named checkpoint schedule"
     );
-}
-
-#[test]
-fn private_local_retry_snapshot_restores_state_and_provenance_for_replay() {
-    let mut retried = Universe::new();
-    let mut untouched = Universe::new();
-    retried.enable_geometry_observation();
-    untouched.enable_geometry_observation();
-    let retry_point = retried.snapshot_for_local_retry();
-
-    retried.set_count(0, 42);
-    let first = retried.source_origin(crate::input::SourceId::new(7), 70, 8, 9);
-    retried.record_geometry_observation(GeometryObservation::Hpack {
-        width_sp: 1,
-        height_sp: 2,
-        depth_sp: 3,
-        line: 4,
-        source: None,
-    });
-    retried.rollback_local_retry_snapshot(retry_point);
-
-    assert_eq!(retried.count(0), 0);
-    assert!(retried.geometry_observations_since(0).is_empty());
-    assert_eq!(
-        retried.source_origin(crate::input::SourceId::new(7), 70, 8, 9),
-        first,
-        "an identical immediate retry preserves its provenance allocation identity"
-    );
-    let retried_hash = retried.snapshot().state_hash();
-    let _ = untouched.source_origin(crate::input::SourceId::new(7), 70, 8, 9);
-    assert_eq!(retried_hash, untouched.snapshot().state_hash());
 }
 
 #[test]

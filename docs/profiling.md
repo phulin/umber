@@ -224,10 +224,10 @@ The JSON fields have these semantics:
   episodes. `stop_reasons` is exhaustive and includes slice, every semantic
   barrier, named checkpoint, terminal, both internal lineage stops, and typed
   resource, diagnostic, and fuel rollback.
-- `clones.command_state` and `clones.step_snapshot` record calls, elapsed
-  nanoseconds, and the fixed logical Rust value bytes presented at each clone
-  boundary. Their owner-scoped allocator fields separately report the dynamic
-  allocations caused by those clones.
+- `clones.command_state` and `clones.step_snapshot` are frozen schema slots.
+  After the journaled transaction cutover both must remain exactly zero; any
+  nonzero call, elapsed time, logical byte, or corresponding owner allocation
+  is a regression.
 - `weak_graph` counts strong `Arc` retains, weak retains, and weak-upgrade
   calls/hits in the reachability-owned token, macro, and glue value substrate.
   `weak_index` counts exact-index calls, candidate entries, exact comparisons,
@@ -240,10 +240,9 @@ The JSON fields have these semantics:
   are each counted when they actually reach that loop; expanded-away macros
   remain visible through the separate command-work vector rather than being
   fabricated as dispatches.
-- `phase_boundaries` counts entry to step snapshot, delivery/scanning,
-  semantic apply, evidence publication, and barrier decision. Nested command
-  operations can enter phases without taking another aggregate step snapshot,
-  which is an intended structural signal rather than a balance defect.
+- `phase_boundaries` retains the historical step-snapshot slot for schema
+  comparison, but production must report zero entries there. Delivery/scanning,
+  semantic apply, evidence publication, and barrier decision remain active.
 
 The allocator forwarding implementation is isolated in
 `crates/tex-state/profiling-allocator`; it is selected only by the existing

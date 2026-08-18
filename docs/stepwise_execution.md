@@ -31,12 +31,10 @@ exit are no longer yield points: ordinary episodes cross them while the save
 stack preserves their restoration records. Named checkpoints are staged and
 delivered only after that bounded operation chunk returns successfully.
 The command core retains its bounded traced-token scratch pool outside
-`MainControl`, semantic state, step snapshots, and named checkpoints. Step
-rollback therefore has no discardable command capability to reconstruct.
+`MainControl`, semantic state, direct-operation cursors, and named checkpoints.
 Font, image, and read-recorder host capabilities remain borrow-scoped.
-`CommandStateSnapshot` captures the complete owned command state for private
-step rollback, while validated `CommandSummary` is the only durable
-named-checkpoint continuation.
+Typed prepared continuations own resource retry, while validated
+`CommandSummary` is the only durable named-checkpoint continuation.
 
 `MainControl` preflights each settled command before operand scanning.
 Successful ordinary commands run directly after advancing the environment
@@ -135,7 +133,7 @@ remain on the stack lives in `MainControl`, `Universe`, or the retained session:
 | `ExecutionStats`     | Delivered and fully dispatched token counts, text-span counts, dump flag, committed prepared DVI page plans, shipped-artifact suffix, and final DVI plans. Candidate increments are not published early.                                                                 |
 | checkpoint publisher | Whether `JobStart` has been emitted, the cached mode projection, boundary occurrence/schedule state, staged `EngineCheckpoint`s, and stop-after-boundary policy. The caller-owned `CheckpointSink` is not retained.                                                      |
 | run artifact state   | The artifact/effect prefixes at run entry, prepared-page queues keyed by artifact identity, and the committed prefix belonging to the current run.                                                                                                                       |
-| command runtime      | The discardable two-slot traced-token scratch pool retained across successful calls. It enters neither step snapshots nor named checkpoints, and rollback replaces it with a fresh empty runtime before replaying the restored `CommandState`.                           |
+| command runtime      | The discardable two-slot traced-token scratch pool retained across successful calls. It enters neither direct-operation cursors nor named checkpoints and is cleared at its owning command boundary.                                                                     |
 | lifecycle            | The next `ExecutionStep`, whether `\end` or `\dump` was seen, end/output cleanup progress, terminal result, and cancellation latch. Recursive output, alignment, math, and scanner frames never appear here: a step either unwinds them successfully or rolls them back. |
 | output state         | Pending page fire-up already represented in `Universe`, prepared DVI pages in stats, recoverable/terminal diagnostics in the virtual `World`, and generated output/effect prefixes in the private build stage.                                                           |
 | accounting           | Committed execution statistics, cumulative fuel, hard fuel limit, advance count, suspension serial, and optional failure-injection sequence.                                                                                                                             |
@@ -233,61 +231,39 @@ remain effect-free. Their inputs are owned values or roots. Expensive loops
 must have existing structural limits or gain explicit hard input/work limits;
 they are not made interruptible by retaining an iterator frame.
 
-## Savepoint and rollback protocol
+## Direct operation and rollback protocol
 
-Only a capability requiring rollback enters the compatibility adapter and
-captures `StepSavepoint`:
+Production execution has no aggregate step savepoint. Ordinary, resource,
+effect, PDF/page, ErrorStop, observed, tracked, checkpoint-crossing,
+active-alignment, diagnostic-expansion, and output-capable box-closing commands
+settle delivery and scanning before direct semantic apply. Typed resource
+continuations retain completed operands without restoring command input; an
+observed continuation also moves its unpublished evidence and opaque
+delivery-order cursor rather than cloning or reconstructing them.
 
-```text
-StepSavepoint {
-    universe: LocalRetrySnapshot,
-    private-revision non-node allocation operation mark,
-    command: CommandStateSnapshot,
-    modes: ModeNest rollback root,
-    control: execution rollback roots,
-    stats: ExecutionStats rollback root,
-    checkpoint_publisher: publisher rollback root,
-    artifact/effect/prepared-page prefixes,
-    generated-stage savepoint,
-    next_step and end flags,
-}
-```
+`DirectOperationMark` is fixed-size and non-restoring. It owns the current
+environment-journal cursor and, for an incremental candidate, disposable
+private-allocation watermarks. It registers no aggregate rollback root and
+does not construct or advance semantic state identity. A successful operation
+closes the private mark and may establish a new level-zero journal baseline
+only when no named checkpoint or fork prefix retains the old one. Open groups,
+delivered checkpoints, and inherited fork authority preserve their exact
+restoration records. A failed operation drops unpublished scratch allocations;
+canonical partial semantic state and an already prepared resource
+continuation remain authoritative.
 
-`LocalRetrySnapshot` retains the rollback roots but does not construct or
-advance a semantic state hash. Only a named checkpoint asks `Universe` for the
-durable `Snapshot` identity described in the core-state contract. The
-unobserved production runner commits ordinary commands without this value.
-The compatibility adapter is confined to active-alignment and
-diagnostic-expansion entry points. Ordinary, resource, effect, PDF/page,
-ErrorStop, observed, tracked, checkpoint-crossing, and output-capable
-box-closing commands settle and scan before direct semantic apply. Typed
-resource continuations retain completed operands without restoring command
-input; an observed continuation also moves its unpublished evidence and opaque
-delivery-order cursor rather than cloning or reconstructing them. For an
-incremental candidate, `DirectOperationMark` owns the only active mark in that
-revision's disposable allocation domain. A successful step closes the mark and
-keeps its suffix once. When that mark is the only level-zero environment
-rollback root, successful commit establishes the current cells as the next
-journal baseline and retires the closed history. Open groups, delivered named
-checkpoints, and inherited fork-prefix authority keep their exact restoration
-records. A resource need, cancellation, hard failure, or rollback-capable
-command error truncates every allocation after the mark; earlier committed
-private work stays owned by the same candidate across suspension. TeX paths
-whose semantic save-stack state must partially commit still discard the failed
-allocation suffix.
-The chunk also returns after a world effect so the host can publish same-run
+The episode returns after a world effect so the host can publish same-run
 output before a later command probes it and can enforce the pending-effect
-budget at the first exceeding operation.
-
-The savepoint excludes cumulative accounting and the cancellation latch. A
-candidate accumulates named checkpoints, read-recorder observations, and
-diagnostic/effect output in private state. The completion protocol is:
+budget at the first exceeding operation. Cumulative accounting and the
+cancellation latch are monotonic operational state. A candidate accumulates
+named checkpoints, read-recorder observations, and diagnostic/effect output in
+private state. The completion protocol is:
 
 1. validate the candidate's mode/group invariants, prepared artifact mapping,
    limits, and next phase;
 2. commit the semantic roots and generated-stage suffix;
 3. increment committed `ExecutionStats` and advance `next_step`;
-4. release the savepoint; then
+4. close the direct operation; then
 5. deliver detached checkpoints and committed read observations to call-local
    sinks.
 
@@ -296,10 +272,10 @@ must decline it through `wants_checkpoint` before capture; it cannot make an
 already committed TeX step fail. A checkpoint sink's stop decision is sampled
 for the next return only.
 
-On a typed resource need, the run first detaches the request payload, then
-restores every field in `StepSavepoint` and enters `AwaitingResources`. No
-restoration calls host policy. A diagnostic-oriented runner returns a captured
-TeX82 §93 fatal with its source site after restoring the failed candidate step.
+On a typed resource need, the run retains the prepared request and enters
+`AwaitingResources`. No restoration calls host policy. A diagnostic-oriented
+runner returns a captured TeX82 §93 fatal with its source site after closing
+the failed direct operation.
 The retained complete-job owner instead uses the runner's fatal-completing
 entry: §81's `jump_out` latches semantic completion at §1332's `end_of_TEX`,
 then the owner performs §1333 cleanup. Neither path retries the unavailable
@@ -307,19 +283,8 @@ input. Host-protocol and execution-budget failures enter `Failed`.
 Cancellation is checked before mutation. A Rust panic is not a supported
 suspension and does not promise recovery.
 
-On native hosts, observational telemetry times savepoint capture and rollback
-separately from the remaining engine step body. This distinguishes local retry
-cost from host resource resolution without changing the savepoint boundary or
-allowing a retry to skip restoration.
-
-The `Universe` and command snapshots must be taken and restored as one
-aggregate operation. No caller may roll back command state, modes, execution
-state, or `Universe` independently. A resource lookup may suspend
-after the blocked operation has entered nested TeX groups; the environment's
-lineage check admits rollback through those still-live descendants while
-rejecting a savepoint whose enclosing group was exited. The existing
-lifetime-bound `ExecutionTransaction` remains useful inside recursive submodes
-but does not replace this aggregate outer savepoint.
+The existing lifetime-bound `ExecutionTransaction` remains useful inside
+recursive submodes but is not an aggregate outer savepoint.
 
 ## Resource protocol and request sites
 

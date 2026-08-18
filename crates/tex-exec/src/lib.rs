@@ -35,8 +35,6 @@ mod retained_resource;
 mod session_api;
 mod shipout;
 mod splitting;
-#[cfg(feature = "profiling")]
-mod step_snapshot_measurement;
 mod timing;
 pub mod transaction_protocol;
 mod vertical;
@@ -46,9 +44,6 @@ mod test_harness;
 
 #[cfg(feature = "profiling")]
 pub use align::{AlignmentTemplateMeasurement, alignment_template_measurement};
-#[cfg(feature = "profiling")]
-pub use step_snapshot_measurement::{StepSnapshotMeasurement, step_snapshot_measurement};
-
 pub use assignments::{
     install_etex_unexpandable_primitives, install_unexpandable_primitives,
     register_etex_unexpandable_primitives, register_unexpandable_primitives,
@@ -65,10 +60,7 @@ pub use dispatch::{
     ArtifactLedger, DispatchAction, ExecutionStats, PreparedDviPage, RevisionOutputPatch,
     RevisionOutputPatchError,
 };
-pub use episode::{
-    EpisodeCommit, EpisodeCommitBoundary, EpisodeInternalStop, EpisodeTelemetry,
-    SemanticEpisodeBarrier,
-};
+pub use episode::{EpisodeCommit, EpisodeCommitBoundary, EpisodeTelemetry, SemanticEpisodeBarrier};
 pub use error::{
     ExecError, FrozenDiagnosticContext, FrozenDiagnosticEvidence, FrozenDiagnosticGroup,
     FrozenDiagnosticOrigin,

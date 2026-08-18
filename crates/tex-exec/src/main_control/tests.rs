@@ -4318,6 +4318,7 @@ fn production_batch_keeps_ordinary_prefix_on_resource_need() {
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
     let mut control = MainControl::tex82_initex(&mut stores);
     register_source(&mut control, br"\count0=11 \input child\end");
+    stores.begin_private_revision();
 
     let batch_step = control
         .advance_episode(&mut stores)

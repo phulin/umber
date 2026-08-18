@@ -96,17 +96,6 @@ journal generation, cursors, log length, and capacity remain excluded from
 `Debug`, equality, summaries, semantic hashes, formats, and durable
 checkpoints.
 
-`StepSnapshot` begins an opaque mode savepoint only for a capability routed to
-the compatibility retry adapter. It captures the command root before
-execution. On success it commits that savepoint before
-publishing observers, geometry, prepared pages, effects, artifacts, or named
-checkpoints. On ordinary error or typed resource suspension it first rolls
-back `Universe`, then command state, then the mode savepoint, and finally the
-remaining aggregate fields; no restored provenance identifier is observable
-against a newer universe timeline. TeX82 §81 fatal propagation commits the
-mode savepoint and partial aggregate state before publishing buffered
-observations and the fatal diagnostic.
-
 Successful ordinary, resource, PDF/effect/output, ErrorStop, observed,
 tracked, private-revision, and output-capable box-closing commands create no
 aggregate mode savepoint. Preflight settles delivery and scanning before
@@ -114,9 +103,10 @@ semantic apply; the authoritative `ModeNest` then mutates directly after
 state-layer admission advances the write epoch. Commit advances the
 node-operation watermark, while a private revision additionally commits its
 fixed-size allocation-suffix mark. Append-only builders retain neither a
-cloned prefix nor an aggregate inverse frame. The compatibility savepoint is
-confined to active-alignment and diagnostic-expansion entry points pending
-`umber2-awgc.4.5`.
+cloned prefix nor an aggregate inverse frame. Active alignment and diagnostic
+expansion use this same direct path; no production `StepSnapshot` or aggregate
+mode retry owner remains. TeX82 §81 fatal propagation commits partial
+canonical state before publishing buffered observations and the diagnostic.
 
 ## Implementation sequence
 
@@ -130,8 +120,8 @@ The first phase replaced direct `&mut Node` access by index and at
 the tail with closure-scoped write barriers, then moved every remaining mode
 list mutation behind the typed capability. The second phase implemented and
 exhaustively tested the disabled journal. The final promotion removed the
-retained `ModeNest` clone from `StepSnapshot`; production now has one
-authoritative rollback path.
+retained `ModeNest` clone and compatibility `StepSnapshot`; production now has
+one authoritative mode journal.
 
 The acceptance baseline is the integrated five-fixture command-stream report:
 `CLEAN`, zero ordered divergences, and zero root sites. The older

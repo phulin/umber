@@ -24,8 +24,9 @@ Command operands are scanned by `tex-command` into typed request and result valu
 - `Cargo.toml`: execution-layer dependencies and workspace lints; neither normal nor development dependencies include a retired command crate.
 - `src/lib.rs`: public surface and module wiring. Do not add a second command front or a crate-wide dead-code allowance.
 - `src/episode.rs` and `src/episode/tests.rs`: typed semantic commit/barrier
-  protocol, internal group/rollback stops, fixed-size operational counters,
-  and focused rollback/publication perturbation tests. Coverage fallback is
+  protocol, fixed-size operational counters, and focused
+  rollback/publication perturbation tests. Internal group/rollback stops are
+  retired. Coverage fallback is
   structurally absent: every retained root uses this same dispatcher loop.
 - `src/main_control.rs`: sole production command delivery and execution driver, including same-borrow expandable preflight, typed resource, alignment, diagnostic-assignment, and nested-immediate continuations, snapshot-free direct episodes, complete-job versus fragment root completion, bounded terminal-input continuation, loaded-profile versus canonical engine-binary semantic selection, typed committed mutation/effect observations, strong macro owners across scanned assignment apply seams, the execution-owned memo capability, and direct tracked-region lifecycle and mode projection.
 - `src/canonical_step.rs`: shared bounded-step result protocol and output ledger for checkpoint publication, resource fulfillment, suspension accounting, and cancellation.
@@ -44,10 +45,6 @@ Command operands are scanned by `tex-command` into typed request and result valu
 - `src/output_provenance.rs` and `src/output_provenance/tests.rs`: explicitly
   budgeted stable diagnostic provenance recipes for detached shipout
   artifacts and focused admission controls.
-- `src/step_snapshot_measurement.rs`: compatibility projection of profiling-only
-  step-snapshot attribution. The complete allocation, clone, episode,
-  command-family, and phase census is owned by
-  `tex-state::measurement::hot_core`.
 - `src/page_output.rs`: input-free page-output selection, `\box255` packaging, insertion distribution, held-over material, page marks, diagnostics, and final `\end` state.
 - `src/shipout.rs` and `src/shipout/`: typed page/PDF-form staging, direct
   canonical artifact emission, normalization, lowering, fresh-shipout DVI

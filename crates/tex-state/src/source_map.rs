@@ -343,15 +343,6 @@ pub(crate) struct SourceMap {
     next_pos: u64,
     forced_next_pos: bool,
     identities: IdentityAllocator,
-    retry_registrations: Vec<RetrySourceRegistration>,
-}
-
-#[derive(Clone, Debug)]
-struct RetrySourceRegistration {
-    source: SourceId,
-    descriptor: SourceDescriptor,
-    line_starts: Arc<[usize]>,
-    start: u64,
 }
 
 impl Default for SourceMap {
@@ -365,7 +356,6 @@ impl Default for SourceMap {
             next_pos: 0,
             forced_next_pos: false,
             identities: IdentityAllocator::new(0),
-            retry_registrations: Vec::new(),
         }
     }
 }
@@ -381,7 +371,6 @@ impl Clone for SourceMap {
             next_pos: self.next_pos,
             forced_next_pos: self.forced_next_pos,
             identities: self.identities.fork(),
-            retry_registrations: Vec::new(),
         }
     }
 }
@@ -435,23 +424,7 @@ impl SourceMap {
 
         let byte_len = descriptor.byte_len();
         let owned_descriptor = descriptor.clone();
-        let retry_start = self.retry_registrations.last().and_then(|retry| {
-            (retry.source == source
-                && retry.descriptor == descriptor
-                && retry.line_starts == line_starts)
-                .then_some(retry.start)
-        });
-        let (start, next_pos) = if let Some(start) = retry_start {
-            self.retry_registrations.pop();
-            let next_pos = start
-                .checked_add(byte_len)
-                .and_then(|anchor| anchor.checked_add(1))
-                .ok_or(SourceMapError::LogicalPositionExhausted)?;
-            (start, next_pos)
-        } else {
-            self.retry_registrations.clear();
-            self.reserve_positions(byte_len)?
-        };
+        let (start, next_pos) = self.reserve_positions(byte_len)?;
         let backing = match descriptor {
             SourceDescriptor::World { input_record, .. } => SourceBacking::World(input_record),
             SourceDescriptor::Generated(generated) => {
@@ -688,34 +661,6 @@ impl SourceMap {
     }
 
     pub(crate) fn truncate_to(&mut self, mark: SourceMapMark) {
-        self.retry_registrations.clear();
-        self.truncate_to_inner(mark);
-    }
-
-    pub(crate) fn truncate_to_for_retry(&mut self, mark: SourceMapMark) {
-        self.retry_registrations = self.regions[mark.regions..]
-            .iter()
-            .enumerate()
-            .map(|(offset, region)| {
-                let descriptor = match region.backing {
-                    SourceBacking::World(input_record) => {
-                        SourceDescriptor::world(input_record, region.byte_len)
-                    }
-                    SourceBacking::Generated(id) => SourceDescriptor::Generated(
-                        self.generated(id)
-                            .expect("live source region has generated backing")
-                            .clone(),
-                    ),
-                };
-                RetrySourceRegistration {
-                    source: region.source,
-                    descriptor,
-                    line_starts: Arc::clone(&self.line_starts[mark.regions + offset]),
-                    start: region.start.0,
-                }
-            })
-            .rev()
-            .collect();
         self.truncate_to_inner(mark);
     }
 

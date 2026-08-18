@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use tex_command::{CommandObservation, CommandObserver, RegisteredSourceKind, SourceRegistration};
 
-use super::{EpisodeCommitBoundary, EpisodeInternalStop, SemanticEpisodeBarrier};
+use super::{EpisodeCommitBoundary, SemanticEpisodeBarrier};
 use crate::{AdvanceOutcome, AdvanceReadiness, MainControl, ResourceNeed, StepResult};
 
 fn control_for(source: &[u8]) -> (MainControl, tex_state::Universe) {
@@ -69,10 +69,6 @@ fn main_control_slice_is_bounded_and_groups_do_not_stop_the_episode() {
         .advance_episode(&mut grouped_stores)
         .expect("group-spanning episode commits");
     let telemetry = grouped.episode_telemetry();
-    assert_eq!(
-        telemetry.internal_stops(EpisodeInternalStop::GroupLineage),
-        0
-    );
     assert_eq!(telemetry.operations(), 4);
     assert_eq!(grouped_stores.group_depth(), 0);
 }

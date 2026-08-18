@@ -490,27 +490,20 @@ group. Rollback may unwind descendant groups entered after capture, while an
 exited-and-replaced enclosing group invalidates the snapshot even if the live
 stack later returns to the same depth and journal position.
 
-The active-alignment and diagnostic-expansion compatibility paths use
-`LocalRetrySnapshot`. It
-captures the same rollback substrate and group-lineage capability, but it does
-not publish, compute, or advance the durable semantic state identity. When a
-private revision domain is active, the same opaque snapshot owns its single
-allocation-operation mark. Rollback truncates that domain suffix before the
-restored command and mode roots become observable; commit closes the mark
-without copying the retained prefix. At level zero, commit also retires the
-closed environment-journal history when no named checkpoint or fork prefix can
-restore it; otherwise it leaves that history intact. Canonical partial-state
-error paths may retain their specified semantic scalars but still discard
-allocations owned by the failed operation. TeX82
-§§1030--1038 dispatch commands within `main_control`; only the named checkpoint
-schedule is a semantic hashing boundary. Migrated production commands use no
-private aggregate retry point: raw/expanded delivery and typed operand
-preflight complete first, resource misses retain their prepared request, and
-semantic apply commits the exact owners directly. Returning after an effect
-preserves the host boundary at which same-run output becomes readable and
-effect budgets are enforced. A private incremental revision pairs the direct
-operation only with `DirectOperationMark`, the fixed-size disposable-allocation
-suffix coordinate.
+Production command delivery has no private aggregate retry snapshot. Raw or
+expanded delivery and typed operand preflight complete first; resource misses
+retain their prepared request, and semantic apply commits exact owners
+directly. `DirectOperationMark` is a fixed-size, non-restoring cursor over the
+operation's environment-journal activity and private immutable-store suffix.
+It registers no rollback root, clones no aggregate state, and does not publish,
+compute, or advance durable semantic identity. At level zero, a changed direct
+operation may retire closed environment-journal history only when no named
+checkpoint or fork prefix can restore it. Open groups and retained checkpoints
+keep their exact records. Failed private operations discard only their
+unpublished allocation suffix; canonical partial-state error paths retain the
+semantic scalars TeX specifies. TeX82 §§1030--1038 remain the command-dispatch
+authority, and only the named checkpoint schedule is a semantic hashing
+boundary.
 
 The string-pool store follows the same bound. TeX82 §44's pool coordinates and
 Web2C tex.ch [29.517]'s `search_string` membership are semantic state, but a

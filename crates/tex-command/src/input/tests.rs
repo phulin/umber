@@ -34,7 +34,7 @@ fn macro_context_reads_the_admitted_chunk_after_definition_retirement() {
         replacement.id(),
     ));
     let definition = root.id();
-    let first = universe.snapshot_for_local_retry();
+    let first = universe.begin_direct_operation();
     universe.set_meaning(
         name,
         tex_state::meaning::Meaning::Macro {
@@ -42,7 +42,7 @@ fn macro_context_reads_the_admitted_chunk_after_definition_retirement() {
             definition,
         },
     );
-    universe.commit_local_retry_snapshot(first);
+    universe.commit_direct_operation(first);
 
     let admitted = command
         .parameters
@@ -59,10 +59,10 @@ fn macro_context_reads_the_admitted_chunk_after_definition_retirement() {
         admitted,
     );
 
-    let second = universe.snapshot_for_local_retry();
+    let second = universe.begin_direct_operation();
     universe.set_meaning(name, tex_state::meaning::Meaning::Relax);
     drop(root);
-    universe.commit_local_retry_snapshot(second);
+    universe.commit_direct_operation(second);
 
     let context = command.output_open_context(&universe.command_context());
     assert_eq!(context, "\n\\retired ->\n           x");

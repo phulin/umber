@@ -286,6 +286,9 @@ fn unified_operation_resource_suspension_is_observation_independent() {
 #[test]
 fn predecessor_operation_branches_are_absent() {
     let source = include_str!("../src/main_control.rs");
+    let episode = include_str!("../src/episode.rs");
+    let universe = include_str!("../../tex-state/src/universe.rs");
+    let state_facade = include_str!("../../tex-state/src/lib.rs");
     assert!(source.contains("fn execute_operation("));
     for predecessor in [
         "fn step_once(",
@@ -298,6 +301,27 @@ fn predecessor_operation_branches_are_absent() {
         assert!(
             !source.contains(predecessor),
             "retained predecessor: {predecessor}"
+        );
+    }
+    for predecessor in [
+        "struct LocalRetrySnapshot",
+        "snapshot_for_local_retry(",
+        "rollback_for_local_retry(",
+        "rollback_local_retry_snapshot(",
+    ] {
+        assert!(
+            !universe.contains(predecessor),
+            "retained state retry predecessor: {predecessor}"
+        );
+        assert!(
+            !state_facade.contains(predecessor),
+            "retained state retry export: {predecessor}"
+        );
+    }
+    for predecessor in ["EpisodeInternalStop", "InternalStop("] {
+        assert!(
+            !episode.contains(predecessor),
+            "retained episode-lineage predecessor: {predecessor}"
         );
     }
 }

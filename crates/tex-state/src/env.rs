@@ -78,6 +78,15 @@ pub(crate) struct JournalRegionMark {
     lineage: u64,
 }
 
+/// Fixed-size cursor used only to decide whether one direct operation added
+/// retireable environment history. Unlike a checkpoint, this owns no rollback
+/// root and cannot restore state.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct DirectJournalMark {
+    journal_pos: crate::journal::JournalPos,
+    lineage: u64,
+}
+
 /// The journal lineage changed while a tracked region was active.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct JournalRegionInvalidated;

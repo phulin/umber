@@ -518,7 +518,8 @@ the private-revision allocation suffix and the existing mode journal where
 semantic assignment apply can fail; neither constructs `StepSnapshot`,
 `CommandStateSnapshot`, or `LocalRetrySnapshot`. The compatibility aggregate
 executor and its forced negative controls have been deleted. Final profiling
-and pinned-prefix consolidation remains with `umber2-awgc.4.4`.
+and pinned-prefix consolidation is the promotion gate owned by
+`umber2-awgc.4.4`.
 
 ### Durable checkpoints
 

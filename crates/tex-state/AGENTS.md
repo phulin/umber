@@ -29,9 +29,9 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/diagnostic/tests.rs`: Destination-selection, `print_nl` line-break, and scalar-formatting tests for the diagnostic channel.
 - `src/env.rs`: Barriered mutable environment storage for meanings, registers, parameters, font values, grouping, journals, and tracked-region journal lineage; typed writes produce canonical semantic mutation receipts, while token-, macro-, and glue-valued current cells and immutable format-base cells carry strong owners beside compact words.
 - `src/engine_state.rs`: Read-only execution mode and state projection consumed by expansion-time enquiries.
-- `src/universe.rs`: aggregate state facade, durable and compatibility
-  snapshots, tracked regions, and the fixed-size `DirectOperationMark` that
-  owns only a private-revision allocation suffix for migrated executor paths.
+- `src/universe.rs`: aggregate state facade, durable snapshots, tracked
+  regions, and the fixed-size, non-restoring `DirectOperationMark` that owns
+  only an environment-journal cursor and private-revision allocation suffix.
 - `src/expansion_diagnostic.rs`: Detached recoverable expansion diagnostic
   values shared by command expansion and execution-side presentation.
 - `src/expansion_recovery.rs`: Detached main-control recovery vocabulary that

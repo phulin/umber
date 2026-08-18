@@ -233,14 +233,6 @@ impl PatchAllocationDomain {
         Ok(())
     }
 
-    pub(crate) fn can_close_operation(&self, mark: &PatchOperationMark) -> bool {
-        self.owner_matches(&mark.owner)
-            && self
-                .active_operation
-                .as_ref()
-                .is_some_and(|operation| operation.serial == mark.serial)
-    }
-
     #[allow(dead_code)] // Typed store migrations consume this generic hook in later epic children.
     pub(crate) fn allocate<T>(
         &mut self,

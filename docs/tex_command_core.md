@@ -1238,17 +1238,12 @@ pub struct CommandState {
 }
 ```
 
-This is the command half of an executor savepoint. It is never independently
-committed from the paired `Universe`, mode nest, execution state, effects,
-generated writes, and output state.
-
-Main control enforces that rule with one private
-`StepSnapshot`: capture records `CommandState` and the aggregate
-`Universe` watermark together, and rollback restores both before returning to
-the host. In particular, a resource suspension after nested macro expansion
-cannot retain either the activation/argument ranges or the invocation records
-created by that attempt. A retry starts from the same semantic input and
-aggregate provenance prefix.
+This is the command owner for direct execution. It is never independently
+restored against a different `Universe`, mode nest, execution state, effect,
+generated-write, or output timeline. Main control settles expansion and
+scanning before semantic apply. Resource suspension retains an explicit typed
+continuation over the exact activation, argument, input, and provenance owners
+already consumed; it does not clone or rewind aggregate command state.
 
 ### 8.1 Input state
 
@@ -2969,35 +2964,15 @@ projection and barrier policy entirely.
 
 There are two snapshot forms.
 
-### 28.1 Executor-step snapshot
+### 28.1 Direct operation cursor
 
-`CommandStateSnapshot` owns the exact live command state over already retained
-source and token backing. Capture is bounded by live command-state structure,
-not total input bytes. Rollback does not reopen sources or consult host policy.
-The snapshot is an owned clone of `CommandState`; its trait bounds and private
-fields admit no `CommandProcessor` borrow, `CommandHostContext`, or
-`CurrentCommand`.
-
-Rollback first compares the captured profile fingerprint with the fixed job
-profile. A mismatch rejects the snapshot without mutating live state.
-
-It is paired atomically with:
-
-- `Universe` snapshot;
-- mode and execution roots;
-- page/output state;
-- staged effects and artifacts;
-- generated-file stage;
-- statistics; and
-- checkpoint publication state.
-
-The pairing includes provenance even though provenance is excluded from the
-semantic state hash. Named checkpoint restoration therefore preserves the
-exact committed origin prefix, removes every later record, and restores the
-command continuation that can reference only that live prefix. Durable command
-summaries do not serialize a second provenance arena or raw provenance
-watermark; the owning `Universe` snapshot is the sole serialized/snapshot
-owner.
+Ordinary execution owns no `CommandStateSnapshot`. `Universe` exposes a
+fixed-size, non-restoring direct-operation cursor for journal retirement and
+private-allocation rejection; command state retains typed blocked
+continuations at resource boundaries. Named incremental checkpoints remain the
+only aggregate restoration authority. They preserve the exact committed
+command and provenance prefix, while durable command summaries serialize no
+second provenance arena or raw provenance watermark.
 
 ### 28.2 Durable summary
 
@@ -3582,22 +3557,21 @@ An explicit `CurrentCommand` is consumed once. Re-execution after resource
 rollback begins from the enclosing executor step, not from a retained command
 value.
 
-Each bounded `MainControl` episode captures the aggregate command
-state, discardable command runtime, mode nest, Universe roots, replay-local
-box/alignment/output state, and pending World effects/artifacts before it
-creates a processor. A command-core `MissingInput` is translated to a typed
-suspension only after that complete rollback; observer records are buffered
-until the structural application commits. The next attempt constructs a fresh
-processor and begins again through `get_next`/`get_x_token`, following
-TeX82 §§24--25 rather than retaining a delivered command. Host capabilities
-remain borrow-scoped outside this snapshot, so supplying a resource changes
-only the next attempt's capability set.
+Each bounded `MainControl` episode settles commands through the sole live
+command, mode, Universe, output, and World owners. A command-core
+`MissingInput` becomes a typed suspension carrying its prepared continuation;
+observer records remain buffered until structural application commits. Retry
+resumes that continuation without reconstructing a delivered command or
+rolling back an already committed ordinary prefix. Host capabilities remain
+borrow-scoped, so supplying a resource changes only the resumed operation's
+capability set.
 
 There is no coverage fallback. Every TeX82, e-TeX, and pdfTeX meaning enters
 this loop, including definitions, assignments, groups, alignments, mode and
 node construction, page/PDF output, resources, effects, diagnostics, and
-retry. Required semantic barriers and internal group/rollback stops commit or
-restore the same state machine; neither selects another dispatcher.
+retry. Required semantic barriers and typed rollback outcomes use this same
+state machine; group entry and exit are not episode stops, and no boundary
+selects another dispatcher.
 
 ### 33.1 Canonical main-control coverage matrix
 

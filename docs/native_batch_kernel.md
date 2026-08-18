@@ -488,11 +488,11 @@ character/kern node sink, synthesized hbox/shipout path, packed-root marker,
 coverage-fallback protocol, and packed terminal continuation were deleted.
 Every retained root now enters `MainControl::advance_episode` directly.
 
-The canonical loop keeps one aggregate retry snapshot across at most 256
-ordinary operations and stops earlier at typed resource, effect, observer,
-diagnostic, checkpoint, format, output, fuel, cancellation, state-identity,
-group-lineage, or nonrollbackable boundaries. The operation body remains the
-complete TeX82/e-TeX/pdfTeX dispatcher and uses the sole `CommandProcessor`,
+The canonical loop commits ordinary operations directly in bounded episodes
+and stops only at typed resource, effect, observer, diagnostic, checkpoint,
+format, output, fuel, cancellation, state-identity, slice, or terminal
+boundaries. Group entry and exit are ordinary semantic work inside an episode.
+The operation body remains the complete TeX82/e-TeX/pdfTeX dispatcher and uses the sole `CommandProcessor`,
 `CommandState`, `Universe`, mode nest, `NodeListBuilder`, page/PDF state,
 shipout transaction, effect journal, and output ledgers. There is no command
 vocabulary admission test and therefore no runtime route that can fall back to

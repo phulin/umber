@@ -40,7 +40,7 @@ fn box_register_penalty(universe: &Universe) -> i32 {
 }
 
 #[test]
-fn aggregate_transitions_use_structural_node_ownership() {
+fn checkpoint_and_direct_transitions_use_structural_node_ownership() {
     let mut universe = Universe::default();
     let baseline = boxed_penalty(&mut universe, 10);
     universe.set_box_reg_ref(0, baseline);
@@ -52,16 +52,10 @@ fn aggregate_transitions_use_structural_node_ownership() {
     universe.rollback(&rollback);
     assert_eq!(box_register_penalty(&universe), 10);
 
-    let retry = universe.snapshot_for_local_retry();
-    let retried = boxed_penalty(&mut universe, 30);
-    universe.set_box_reg_ref(0, retried);
-    universe.rollback_local_retry_snapshot(retry);
-    assert_eq!(box_register_penalty(&universe), 10);
-
-    let committed_failure = universe.snapshot_for_local_retry();
+    let committed = universe.begin_direct_operation();
     let partial = boxed_penalty(&mut universe, 40);
     universe.set_box_reg_ref(0, partial);
-    universe.discard_local_retry_allocations(committed_failure);
+    universe.commit_direct_operation(committed);
     assert_eq!(box_register_penalty(&universe), 40);
 
     {
@@ -73,6 +67,13 @@ fn aggregate_transitions_use_structural_node_ownership() {
     let mut accepted = universe.begin_box_build();
     let installed = boxed_penalty(&mut accepted, 60);
     accepted.finish(0, Some(installed), false);
+    assert_eq!(box_register_penalty(&universe), 60);
+
+    universe.begin_private_revision();
+    let rejected = universe.begin_direct_operation();
+    let scratch = boxed_penalty(&mut universe, 70);
+    universe.discard_direct_operation_allocations(rejected);
+    assert!(std::panic::catch_unwind(|| scratch.to_vec()).is_err());
     assert_eq!(box_register_penalty(&universe), 60);
 }
 

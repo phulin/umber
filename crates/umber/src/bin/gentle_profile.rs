@@ -10,10 +10,7 @@ use std::time::{Duration, Instant};
 
 use tex_command::SourceRegistration;
 #[cfg(feature = "profiling")]
-use tex_exec::{
-    AlignmentTemplateMeasurement, StepSnapshotMeasurement, alignment_template_measurement,
-    step_snapshot_measurement,
-};
+use tex_exec::{AlignmentTemplateMeasurement, alignment_template_measurement};
 use tex_exec::{CheckpointSink, EngineCheckpoint};
 use tex_incr::{
     AcceptedOutput, BoundaryKey, Edit, ReuseMetrics, RevisionId, SameHistoryStop, Session,
@@ -515,9 +512,6 @@ fn run_cold_memo_policy(
     let mut last_memo = PureMemoStats::default();
     #[cfg(feature = "profiling")]
     let mut last_state_hash = StateHashMeasurement::default();
-    #[cfg(feature = "profiling")]
-    let replay_measurement_before = step_snapshot_measurement();
-
     for run in 0..total_runs {
         let mut session = incremental_session(
             template,
@@ -578,10 +572,6 @@ fn run_cold_memo_policy(
             last_state_hash.changed_cells,
             last_state_hash.peak_changed_cell_scratch_bytes,
         );
-        print_step_snapshot_measurement(
-            "isolated cold",
-            step_snapshot_delta(step_snapshot_measurement(), replay_measurement_before),
-        );
     }
     Ok(())
 }
@@ -629,8 +619,6 @@ fn run_incremental_path(
     let mut durations = Vec::with_capacity(options.iterations);
     let mut stages = Vec::with_capacity(options.iterations);
     let mut last_reuse = ReuseMetrics::default();
-    #[cfg(feature = "profiling")]
-    let replay_measurement_before = step_snapshot_measurement();
     for step_index in 0..total_steps {
         let (from, to, expected_dvi) = if on_left {
             (left, right, right_dvi.as_slice())
@@ -701,11 +689,6 @@ fn run_incremental_path(
         last_reuse.trace_subtree_hits,
         last_reuse.suffixes_adopted,
     );
-    #[cfg(feature = "profiling")]
-    print_step_snapshot_measurement(
-        &format!("isolated {}", path_kind.name()),
-        step_snapshot_delta(step_snapshot_measurement(), replay_measurement_before),
-    );
     Ok(())
 }
 
@@ -740,8 +723,6 @@ fn run_edit_restart_workload(
         options.memo_recording,
     )?;
     let mut resolvers = FileSessionResolvers::new(&source_path, Vec::new(), Vec::new());
-    #[cfg(feature = "profiling")]
-    let measurement_before = step_snapshot_measurement();
     let initial_started = Instant::now();
     let initial = session
         .cold_with_resolvers(&mut resolvers)
@@ -831,11 +812,6 @@ fn run_edit_restart_workload(
         mean_stages.executor.as_micros(),
         mean_stages.dvi_materialization.as_micros(),
     );
-    #[cfg(feature = "profiling")]
-    print_step_snapshot_measurement(
-        workload.name(),
-        step_snapshot_delta(step_snapshot_measurement(), measurement_before),
-    );
     Ok(())
 }
 
@@ -884,26 +860,6 @@ fn mean_incremental_stages(samples: &[IncrementalStages]) -> IncrementalStages {
         unaccounted: mean(samples, |sample| sample.unaccounted),
         dvi_materialization: mean(samples, |sample| sample.dvi_materialization),
     }
-}
-
-#[cfg(feature = "profiling")]
-fn step_snapshot_delta(
-    after: StepSnapshotMeasurement,
-    before: StepSnapshotMeasurement,
-) -> StepSnapshotMeasurement {
-    StepSnapshotMeasurement {
-        calls: after.calls.saturating_sub(before.calls),
-        nanos: after.nanos.saturating_sub(before.nanos),
-        logical_bytes: after.logical_bytes.saturating_sub(before.logical_bytes),
-    }
-}
-
-#[cfg(feature = "profiling")]
-fn print_step_snapshot_measurement(name: &str, measurement: StepSnapshotMeasurement) {
-    eprintln!(
-        "gentle-profile step snapshots: workload={name:?} calls={} nanos={} logical_bytes={}",
-        measurement.calls, measurement.nanos, measurement.logical_bytes,
-    );
 }
 
 fn replacement_edit(

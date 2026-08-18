@@ -91,7 +91,7 @@ fn registration_is_idempotent_but_rejects_conflicting_backing() {
 }
 
 #[test]
-fn sparse_source_index_tracks_registration_rollback_retry_and_fork() {
+fn sparse_source_index_tracks_registration_rollback_and_fork() {
     let mut map = SourceMap::default();
     map.register(SourceId::new(40), generated(b"root"))
         .expect("sparse source registers");
@@ -126,7 +126,7 @@ fn sparse_source_index_tracks_registration_rollback_retry_and_fork() {
         None
     );
 
-    map.truncate_to_for_retry(mark);
+    map.truncate_to(mark);
     assert_eq!(map.region_by_source.get(&SourceId::new(40)), Some(&0));
     assert!(!map.region_by_source.contains_key(&SourceId::new(3)));
     assert_eq!(
@@ -134,10 +134,10 @@ fn sparse_source_index_tracks_registration_rollback_retry_and_fork() {
         Err(SourceMapError::UnknownSource)
     );
 
-    let retried = map
+    let registered_again = map
         .register(SourceId::new(3), generated(b"retry"))
-        .expect("retry source registers");
-    assert_eq!(retried, discarded);
+        .expect("source registers after rollback");
+    assert!(registered_again > discarded);
     assert_eq!(map.region_by_source.get(&SourceId::new(3)), Some(&1));
 }
 

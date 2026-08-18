@@ -180,10 +180,10 @@ pub use stores::{TestingOwnershipCensus, TestingValuePoolCensus};
 pub use universe::{
     BoxBuildTransaction, BoxDimension, DirectOperationMark, EngineBoundaryHasher, FormatError,
     GenerationForkError, GenerationSubstrate, GeometryObservation, InputOpenContext,
-    InputOpenState, InputReadState, InteractionMode, LocalRetrySnapshot, ParagraphShapeLine,
-    PenaltyArrayKind, PreparedPageSuffix, PrivateRevisionAcceptanceError, ReplayProbeTransaction,
-    ShipoutTransaction, Snapshot, TakeUnboxResult, TrackedEnvironmentWrite, TrackedRegionError,
-    TrackedRegionMark, TrackedRegionRecord, UnboxKind, Universe, WorldMut,
+    InputOpenState, InputReadState, InteractionMode, ParagraphShapeLine, PenaltyArrayKind,
+    PreparedPageSuffix, PrivateRevisionAcceptanceError, ReplayProbeTransaction, ShipoutTransaction,
+    Snapshot, TakeUnboxResult, TrackedEnvironmentWrite, TrackedRegionError, TrackedRegionMark,
+    TrackedRegionRecord, UnboxKind, Universe, WorldMut,
 };
 #[cfg(feature = "profiling")]
 pub use world::ProfilingTimer;

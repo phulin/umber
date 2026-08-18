@@ -63,9 +63,9 @@ use crate::state_hash::{
     CachedProjection, INITIAL_STATE_HASH, StateHashComponent, StateHashFragment, StateHasher,
     combine,
 };
-use crate::stores::StoreStateHashCursor;
 #[cfg(any(test, feature = "testing"))]
 use crate::stores::TestingOwnershipCensus;
+use crate::stores::{DirectStoreOperationMark, StorePatchOperationMark, StoreStateHashCursor};
 use crate::stores::{
     FontParameterError, GroupKind, GroupMismatch, PrepareMagDiagnostic, StoreFormatError,
     StoreSnapshot, Stores,
@@ -306,29 +306,18 @@ pub struct Snapshot {
     state_hash_base: StateHashBase,
 }
 
-/// One private executor-step rollback point.
-///
-/// Unlike [`Snapshot`], this capability does not publish or advance a
-/// semantic checkpoint identity. TeX82 §§1030--1038 deliver and dispatch
-/// commands without creating an observable checkpoint at every command; the
-/// executor retains this rollback-only state solely so a resource suspension
-/// can replay that bounded operation atomically.
-#[doc(hidden)]
-#[derive(Debug)]
-pub struct LocalRetrySnapshot {
-    rollback: ScopedRollback,
-    patch_operation: Option<PatchOperationMark>,
-}
-
 /// Fixed-size allocation-domain mark for one preflighted executor operation.
 ///
 /// Semantic owners commit directly or through their own journals. This mark
-/// owns only the disposable private-revision allocation suffix and therefore
-/// retains no aggregate state roots.
+/// owns only a non-restoring environment-journal cursor and the disposable
+/// private-revision allocation suffix, and therefore retains no aggregate
+/// state roots.
 #[doc(hidden)]
 #[derive(Debug)]
 pub struct DirectOperationMark {
+    store: DirectStoreOperationMark,
     patch_operation: Option<PatchOperationMark>,
+    patch_store: Option<StorePatchOperationMark>,
 }
 
 /// One immutable accepted-generation state substrate shared by O(1) snapshots.
@@ -3073,38 +3062,6 @@ impl Universe {
             && self.world.snapshot_is_retained(&snapshot.world)
     }
 
-    /// Captures a private bounded-operation rollback point without computing
-    /// a durable checkpoint hash.
-    #[doc(hidden)]
-    #[must_use]
-    pub fn snapshot_for_local_retry(&mut self) -> LocalRetrySnapshot {
-        let patch_operation = self.private_revision_domain.as_mut().map(|domain| {
-            domain
-                .begin_operation()
-                .expect("private revision owns one aggregate operation mark")
-        });
-        LocalRetrySnapshot {
-            rollback: self.capture_scoped_rollback(),
-            patch_operation,
-        }
-    }
-
-    /// Returns whether `snapshot` still names a valid private retry point.
-    #[doc(hidden)]
-    #[must_use]
-    pub fn can_rollback_to_local_retry(&self, snapshot: &LocalRetrySnapshot) -> bool {
-        let patch_operation_is_live =
-            match (&self.private_revision_domain, &snapshot.patch_operation) {
-                (Some(domain), Some(mark)) => domain.can_close_operation(mark),
-                (None, None) => true,
-                _ => false,
-            };
-        patch_operation_is_live
-            && snapshot.rollback.owner == self.owner.snapshot_owner()
-            && self.stores.can_restore_snapshot(&snapshot.rollback.store)
-            && self.world.snapshot_is_retained(&snapshot.rollback.world)
-    }
-
     /// Installs one fresh allocation owner for a private revision.
     ///
     /// This is an engine/session lifecycle hook, not a store or host
@@ -3145,35 +3102,6 @@ impl Universe {
         Ok(())
     }
 
-    /// Commits the private allocation suffix paired with one successful
-    /// executor operation.
-    #[doc(hidden)]
-    pub fn commit_local_retry_snapshot(&mut self, snapshot: LocalRetrySnapshot) {
-        let LocalRetrySnapshot {
-            rollback,
-            patch_operation,
-        } = snapshot;
-        // A generation fork may later retarget every retained prefix record at
-        // or before its anchor onto this timeline. `fork_origin` is that live
-        // restoration authority even before those checkpoint values are
-        // rehomed, so its shared prefix cannot become a fresh baseline here.
-        if self.fork_origin.is_none()
-            && self
-                .stores
-                .commit_local_retry_snapshot(rollback.store, &self.state_hash_base.store)
-        {
-            self.retarget_hash_base_after_group_compaction();
-        }
-        match (&mut self.private_revision_domain, patch_operation) {
-            (Some(domain), Some(mark)) => domain
-                .commit_operation(mark)
-                .expect("local retry owns the active patch operation"),
-            (None, None) => {}
-            _ => panic!("local retry patch operation does not match its Universe"),
-        }
-        self.stores.finish_node_operation();
-    }
-
     /// Commits an ordinary successful executor operation without creating an
     /// aggregate rollback snapshot.
     #[must_use]
@@ -3187,68 +3115,87 @@ impl Universe {
     #[doc(hidden)]
     #[must_use]
     pub fn begin_direct_operation(&mut self) -> DirectOperationMark {
-        let patch_operation = self.private_revision_domain.as_mut().map(|domain| {
-            domain
-                .begin_operation()
-                .expect("private revision owns one direct operation mark")
-        });
-        self.stores.begin_direct_operation();
-        DirectOperationMark { patch_operation }
+        let (patch_operation, patch_store) =
+            self.private_revision_domain
+                .as_mut()
+                .map_or((None, None), |domain| {
+                    let operation = domain
+                        .begin_operation()
+                        .expect("private revision owns one direct operation mark");
+                    (Some(operation), Some(self.stores.begin_patch_operation()))
+                });
+        let store = self.stores.begin_direct_operation();
+        DirectOperationMark {
+            store,
+            patch_operation,
+            patch_store,
+        }
     }
 
     /// Commits an ordinary successful executor operation without creating an
     /// aggregate rollback snapshot.
     #[doc(hidden)]
     pub fn commit_direct_operation(&mut self, mark: DirectOperationMark) {
-        match (&mut self.private_revision_domain, mark.patch_operation) {
-            (Some(domain), Some(mark)) => domain
+        let DirectOperationMark {
+            store,
+            patch_operation,
+            patch_store,
+        } = mark;
+        match (
+            &mut self.private_revision_domain,
+            patch_operation,
+            patch_store,
+        ) {
+            (Some(domain), Some(mark), Some(_)) => domain
                 .commit_operation(mark)
                 .expect("direct operation owns the active patch allocation mark"),
-            (None, None) => {}
+            (None, None, None) => {}
             _ => panic!("direct operation mark does not match its Universe"),
         }
-        self.stores.finish_direct_operation();
+        self.finish_direct_operation(store);
     }
 
     /// Discards private-revision allocations from a failed direct operation.
     /// Canonical partial semantic state is retained.
     #[doc(hidden)]
     pub fn discard_direct_operation_allocations(&mut self, mark: DirectOperationMark) {
-        match (&mut self.private_revision_domain, mark.patch_operation) {
-            (Some(domain), Some(mark)) => domain
-                .rollback_operation(mark)
-                .expect("direct operation owns the active patch allocation mark"),
-            (None, None) => {}
+        let DirectOperationMark {
+            store,
+            patch_operation,
+            patch_store,
+        } = mark;
+        match (
+            &mut self.private_revision_domain,
+            patch_operation,
+            patch_store,
+        ) {
+            (Some(domain), Some(mark), Some(store_mark)) => {
+                self.stores.discard_patch_operation_allocations(store_mark);
+                domain
+                    .rollback_operation(mark)
+                    .expect("direct operation owns the active patch allocation mark");
+            }
+            (None, None, None) => {}
             _ => panic!("direct operation mark does not match its Universe"),
         }
-        self.stores.finish_direct_operation();
+        self.finish_direct_operation(store);
     }
 
-    /// Discards only allocations made by a failed private operation while
-    /// retaining its canonical partial semantic state.
-    ///
-    /// TeX has a small number of nonfatal paths whose save-stack timeline can
-    /// no longer roll back, plus pdfTeX's reserved-object error. Those paths
-    /// still do not acquire ownership of failed patch allocations.
-    #[doc(hidden)]
-    pub fn discard_local_retry_allocations(&mut self, snapshot: LocalRetrySnapshot) {
-        let LocalRetrySnapshot {
-            rollback,
-            patch_operation,
-        } = snapshot;
-        assert_eq!(
-            rollback.owner,
-            self.owner.snapshot_owner(),
-            "local retry snapshot belongs to a different Universe instance"
-        );
-        match (&mut self.private_revision_domain, patch_operation) {
-            (Some(domain), Some(mark)) => domain
-                .rollback_operation(mark)
-                .expect("local retry owns the active patch operation"),
-            (None, None) => {}
-            _ => panic!("local retry patch operation does not match its Universe"),
+    fn finish_direct_operation(&mut self, store: DirectStoreOperationMark) {
+        // A generation fork may later retarget every retained prefix record at
+        // or before its anchor onto this timeline. `fork_origin` is that live
+        // restoration authority even before those checkpoint values are
+        // rehomed, so its shared prefix cannot become a fresh baseline here.
+        if self.fork_origin.is_none() && !self.dependency_region_is_active() {
+            if self
+                .stores
+                .commit_direct_operation(store, &self.state_hash_base.store)
+            {
+                self.retarget_hash_base_after_group_compaction();
+            }
+        } else {
+            self.stores.finish_node_operation();
         }
-        self.stores.finish_node_operation();
     }
 
     #[must_use]
@@ -3437,68 +3384,6 @@ impl Universe {
             .restore_tracker(&snapshot.dependency_tracker);
         self.geometry_observations
             .truncate(snapshot.geometry_observations_len);
-    }
-
-    /// Rolls the whole timeline back for an immediate retry of the same
-    /// bounded operation, preserving only verified provenance allocation
-    /// identities from the discarded attempt.
-    pub fn rollback_for_local_retry(&mut self, snapshot: &Snapshot) {
-        self.assert_valid_snapshot(snapshot);
-        self.world.assert_snapshot_retained(&snapshot.world);
-        let receipts = self.stores.rollback_for_retry(&snapshot.store);
-        self.consume_env_mutations(receipts);
-        self.world.rollback(&snapshot.world);
-        self.input_summary = snapshot.input_summary.clone();
-        self.interaction_mode = snapshot.interaction_mode;
-        self.page = snapshot.page.clone();
-        self.pdf.rollback(snapshot.pdf.clone());
-        self.state_hash_base = snapshot.state_hash_base.clone();
-        self.state_hash_projection_cache = snapshot.state_hash_projection_cache.clone();
-        self.dependencies
-            .get_mut()
-            .expect("dependency runtime mutex is not poisoned")
-            .restore_tracker(&snapshot.dependency_tracker);
-        self.geometry_observations
-            .truncate(snapshot.geometry_observations_len);
-    }
-
-    /// Restores a private executor-step rollback point while retaining only
-    /// provenance identities verified for immediate same-step replay.
-    #[doc(hidden)]
-    pub fn rollback_local_retry_snapshot(&mut self, snapshot: LocalRetrySnapshot) {
-        let LocalRetrySnapshot {
-            rollback,
-            patch_operation,
-        } = snapshot;
-        assert_eq!(
-            rollback.owner,
-            self.owner.snapshot_owner(),
-            "local retry snapshot belongs to a different Universe instance"
-        );
-        self.world.assert_snapshot_retained(&rollback.world);
-        let receipts = self.stores.rollback_for_retry(&rollback.store);
-        self.consume_env_mutations(receipts);
-        self.world.rollback(&rollback.world);
-        self.input_summary = rollback.input_summary;
-        self.interaction_mode = rollback.interaction_mode;
-        self.page = rollback.page;
-        self.pdf.rollback(rollback.pdf);
-        self.state_hash_base = rollback.state_hash_base;
-        self.state_hash_projection_cache = rollback.state_hash_projection_cache;
-        self.dependencies
-            .get_mut()
-            .expect("dependency runtime mutex is not poisoned")
-            .restore_tracker(&rollback.dependency_tracker);
-        self.geometry_observations
-            .truncate(rollback.geometry_observations_len);
-        match (&mut self.private_revision_domain, patch_operation) {
-            (Some(domain), Some(mark)) => domain
-                .rollback_operation(mark)
-                .expect("local retry owns the active patch operation"),
-            (None, None) => {}
-            _ => panic!("local retry patch operation does not match its Universe"),
-        }
-        self.stores.finish_node_operation();
     }
 
     fn rollback_generation_fork(&mut self, snapshot: &Snapshot) {

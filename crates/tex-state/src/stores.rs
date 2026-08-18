@@ -10,7 +10,7 @@ use crate::code_tables::{
 };
 use crate::env::banks::{DimenParam, GlueParam, IntParam, TokParam};
 use crate::env::group::MutationReceipts;
-use crate::env::{CellMutationReceipt, Env, EnvSnapshot};
+use crate::env::{CellMutationReceipt, DirectJournalMark, Env, EnvSnapshot};
 use crate::font::{
     CharMetrics, CharTag, ExtensibleRecipe, FontMetrics, FontMetricsValidationError,
     FontSourceIdentity, FontStore, FontStoreMark, LigKernChar, LigKernCommand, LigKernIter,
@@ -122,6 +122,23 @@ pub(crate) struct StoreSnapshot {
     last_loaded_font: FontId,
     exact_env_identity: exact_identity::ExactEnvSnapshot,
     exact_projection_cache: state_hash::StoreProjectionCache,
+}
+
+/// Fixed-size direct-operation cursor. This is not a rollback snapshot and
+/// owns no aggregate state root.
+#[derive(Debug)]
+pub(crate) struct DirectStoreOperationMark {
+    env: DirectJournalMark,
+}
+
+/// Fixed-size immutable-store suffix coordinates for a private operation.
+/// These marks own no values and are used only when the allocation domain
+/// rejects an unpublished suffix.
+#[derive(Debug)]
+pub(crate) struct StorePatchOperationMark {
+    tokens: TokenStoreMark,
+    macros: MacroStoreMark,
+    glue: GlueStoreMark,
 }
 
 #[derive(Clone, Debug)]
@@ -2126,6 +2143,20 @@ impl Stores {
         self.glue.clear_patch_allocations();
     }
 
+    pub(crate) fn begin_patch_operation(&self) -> StorePatchOperationMark {
+        StorePatchOperationMark {
+            tokens: self.tokens.watermark(),
+            macros: self.macros.watermark(),
+            glue: self.glue.watermark(),
+        }
+    }
+
+    pub(crate) fn discard_patch_operation_allocations(&mut self, mark: StorePatchOperationMark) {
+        self.tokens.truncate_to(mark.tokens);
+        self.macros.truncate_to(mark.macros);
+        self.glue.truncate_to(mark.glue);
+    }
+
     fn token_list_semantic_id(&self, tokens: impl IntoIterator<Item = Token>) -> TokenSemanticId {
         let mut identity = TokenSemanticIdBuilder::new();
         let mut cached_symbol = None;
@@ -3920,32 +3951,28 @@ impl Stores {
         }
     }
 
-    /// Consumes one successful operation rollback root and retires environment
-    /// history when no group or independently retained checkpoint still owns
-    /// that baseline.
-    pub(crate) fn commit_local_retry_snapshot(
+    /// Retires direct-operation history when no group, checkpoint, or fork
+    /// still owns the current journal baseline.
+    pub(crate) fn commit_direct_operation(
         &mut self,
-        snapshot: StoreSnapshot,
+        mark: DirectStoreOperationMark,
         hash_base: &StoreStateHashCursor,
     ) -> bool {
-        let discard_exact_history = self
-            .env
-            .can_discard_derived_snapshot_history(&snapshot.env_snapshot);
-        if !self
-            .env
-            .can_retire_committed_snapshot(&snapshot.env_snapshot)
-        {
+        let discard_exact_history = self.env.can_discard_direct_derived_history();
+        if !self.env.direct_operation_changed(mark.env) || !self.env.can_retire_direct_operation() {
             if discard_exact_history {
                 self.discard_exact_env_undo_history();
             }
+            self.finish_node_operation();
             return false;
         }
         self.preserve_retired_env_journal_hash_delta(hash_base);
         self.env
-            .retire_committed_snapshot(snapshot.env_snapshot)
-            .expect("retirement eligibility was checked above");
+            .retire_direct_operation()
+            .expect("direct retirement eligibility was checked above");
         self.discard_exact_env_undo_history();
         self.mark_exact_env_journal_current();
+        self.finish_node_operation();
         true
     }
 
@@ -3964,24 +3991,18 @@ impl Stores {
     /// Opens one executor operation that owns no retry root. The TeX save
     /// stack keeps open-group history; advancing the compact write epoch
     /// prevents first-write coalescing from crossing command boundaries.
-    pub(crate) fn begin_direct_operation(&mut self) {
-        self.env.bump_epoch();
-    }
-
-    pub(crate) fn finish_direct_operation(&mut self) {
-        self.finish_node_operation();
+    pub(crate) fn begin_direct_operation(&mut self) -> DirectStoreOperationMark {
+        DirectStoreOperationMark {
+            env: self.env.begin_direct_operation(),
+        }
     }
 
     /// Rolls all stores back to `snapshot` as one atomic tuple.
     pub(crate) fn rollback(&mut self, snapshot: &StoreSnapshot) -> MutationReceipts {
-        self.rollback_inner(snapshot, false)
+        self.rollback_inner(snapshot)
     }
 
-    pub(crate) fn rollback_for_retry(&mut self, snapshot: &StoreSnapshot) -> MutationReceipts {
-        self.rollback_inner(snapshot, true)
-    }
-
-    fn rollback_inner(&mut self, snapshot: &StoreSnapshot, retry: bool) -> MutationReceipts {
+    fn rollback_inner(&mut self, snapshot: &StoreSnapshot) -> MutationReceipts {
         self.assert_valid_snapshot(snapshot);
         let _ = self.engine_usage_statistics();
         let mut receipts = self.env.rollback_to(snapshot.env_snapshot.clone());
@@ -4007,15 +4028,8 @@ impl Stores {
         }
         self.string_pool.rollback_to(snapshot.string_pool);
         self.tokens.truncate_to(snapshot.token_mark);
-        if retry {
-            self.provenance
-                .truncate_to_for_retry(snapshot.provenance_mark);
-            self.source_map
-                .truncate_to_for_retry(snapshot.source_map_mark);
-        } else {
-            self.provenance.truncate_to(snapshot.provenance_mark);
-            self.source_map.truncate_to(snapshot.source_map_mark);
-        }
+        self.provenance.truncate_to(snapshot.provenance_mark);
+        self.source_map.truncate_to(snapshot.source_map_mark);
         self.macros.truncate_to(snapshot.macro_mark);
         self.glue.truncate_to(snapshot.glue_mark);
         self.fonts.truncate_to(snapshot.font_mark);
