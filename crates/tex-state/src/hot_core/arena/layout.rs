@@ -43,16 +43,40 @@ impl fmt::Display for RegionArenaError {
 
 impl std::error::Error for RegionArenaError {}
 
+/// Copy-only identity of the arena chunk that owns a coordinate or span.
+///
+/// The accepted layer or mutable candidate retains the allocation once. This
+/// value is deliberately not an `Arc`, `Weak`, serialized handle, or liveness
+/// root; consumers validate it at arena admission.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub(super) struct ChunkKey {
-    pub(super) namespace: NonZeroU64,
-    pub(super) slot: u32,
-    pub(super) generation: NonZeroU32,
+pub(crate) struct ChunkOwner {
+    pub(in crate::hot_core) namespace: NonZeroU64,
+    pub(in crate::hot_core) slot: u32,
+    pub(in crate::hot_core) generation: NonZeroU32,
+}
+
+impl ChunkOwner {
+    pub(in crate::hot_core) const fn coordinate<T>(self, offset: u32) -> RegionCoordinate<T> {
+        RegionCoordinate {
+            key: self,
+            offset,
+            marker: PhantomData,
+        }
+    }
+
+    pub(in crate::hot_core) const fn span<T>(self, start: u32, len: u32) -> RegionSpan<T> {
+        RegionSpan {
+            key: self,
+            start,
+            len,
+            marker: PhantomData,
+        }
+    }
 }
 
 /// A compact typed coordinate naming one value.
 pub(crate) struct RegionCoordinate<T> {
-    pub(super) key: ChunkKey,
+    pub(super) key: ChunkOwner,
     pub(super) offset: u32,
     pub(super) marker: PhantomData<fn() -> T>,
 }
@@ -109,13 +133,21 @@ impl<T> Hash for RegionCoordinate<T> {
 
 /// A compact typed half-open span in one chunk.
 pub(crate) struct RegionSpan<T> {
-    pub(super) key: ChunkKey,
+    pub(super) key: ChunkOwner,
     pub(super) start: u32,
     pub(super) len: u32,
     pub(super) marker: PhantomData<fn() -> T>,
 }
 
 impl<T> RegionSpan<T> {
+    pub(crate) const fn owner(self) -> ChunkOwner {
+        self.key
+    }
+
+    pub(crate) const fn start(self) -> u32 {
+        self.start
+    }
+
     pub(crate) const fn len(self) -> u32 {
         self.len
     }
@@ -165,7 +197,7 @@ pub(crate) struct RegionArenaMark {
 
 /// An exclusive append reservation. It owns no payload.
 pub(crate) struct RegionReservation<T> {
-    pub(super) key: ChunkKey,
+    pub(super) key: ChunkOwner,
     pub(super) start: u32,
     pub(super) limit: u32,
     pub(super) marker: PhantomData<fn() -> T>,

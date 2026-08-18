@@ -27,8 +27,8 @@ struct ChunkSlot<T> {
 }
 
 impl<T> ChunkSlot<T> {
-    fn key(&self, namespace: NonZeroU64, slot: u32) -> ChunkKey {
-        ChunkKey {
+    fn key(&self, namespace: NonZeroU64, slot: u32) -> ChunkOwner {
+        ChunkOwner {
             namespace,
             slot,
             generation: self.generation,
@@ -87,7 +87,7 @@ impl<T> AcceptedRegionArena<T> {
             .map_or_else(RegionArenaAccounting::default, |layer| layer.accounting)
     }
 
-    fn resolve_chunk(&self, key: ChunkKey) -> Result<&[T], RegionArenaError> {
+    fn resolve_chunk(&self, key: ChunkOwner) -> Result<&[T], RegionArenaError> {
         let mut cursor = self.newest.as_ref();
         while let Some(layer) = cursor {
             if layer.namespace == key.namespace {
@@ -119,7 +119,7 @@ impl<T> AcceptedRegionArena<T> {
 }
 
 struct ActiveReservation {
-    key: ChunkKey,
+    key: ChunkOwner,
     start: u32,
     limit: u32,
 }
@@ -503,7 +503,7 @@ impl<T> RegionArena<T> {
         Ok(())
     }
 
-    fn resolve_chunk(&self, key: ChunkKey) -> Result<&[T], RegionArenaError> {
+    fn resolve_chunk(&self, key: ChunkOwner) -> Result<&[T], RegionArenaError> {
         if key.namespace != self.namespace {
             return self.base.resolve_chunk(key);
         }
@@ -521,7 +521,7 @@ impl<T> RegionArena<T> {
     }
 
     #[cfg(test)]
-    fn testing_storage_growth_events(&self) -> usize {
+    pub(crate) fn testing_storage_growth_events(&self) -> usize {
         self.storage_growth_events
     }
 }

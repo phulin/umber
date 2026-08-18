@@ -164,6 +164,107 @@ impl Token {
 
 const _: () = assert!(core::mem::size_of::<Token>() == 8);
 
+/// Canonical token-only word used by the compact command core.
+///
+/// Bits 31..30 identify character, control-sequence, parameter, or frozen
+/// tokens. Bits 29..0 contain the exact operand. Source and provenance
+/// coordinates deliberately live beside this value rather than inside it.
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct TokenWord(u32);
+
+impl TokenWord {
+    const KIND_SHIFT: u32 = 30;
+    const PAYLOAD_MASK: u32 = (1 << Self::KIND_SHIFT) - 1;
+    const KIND_CHAR: u32 = 0;
+    const KIND_CS: u32 = 1;
+    const KIND_PARAM: u32 = 2;
+    const KIND_FROZEN: u32 = 3;
+    const CATCODE_BITS: u32 = 4;
+
+    /// Packs one exact semantic token without source or provenance ownership.
+    #[must_use]
+    pub fn pack(token: Token) -> Self {
+        let (kind, payload) = match token {
+            Token::Char { ch, cat } => (
+                Self::KIND_CHAR,
+                ((ch as u32) << Self::CATCODE_BITS) | cat as u32,
+            ),
+            Token::Cs(symbol) => {
+                assert!(
+                    symbol.raw() <= Self::PAYLOAD_MASK,
+                    "control-sequence symbol exceeds packed token capacity"
+                );
+                (Self::KIND_CS, symbol.raw())
+            }
+            Token::Param(slot) => {
+                assert!(
+                    (1..=9).contains(&slot),
+                    "parameter token slot must be in 1..=9"
+                );
+                (Self::KIND_PARAM, u32::from(slot))
+            }
+            Token::Frozen(token) => (Self::KIND_FROZEN, u32::from(token.raw())),
+        };
+        debug_assert!(payload <= Self::PAYLOAD_MASK);
+        Self((kind << Self::KIND_SHIFT) | payload)
+    }
+
+    /// Unpacks a token word after validating its kind-specific operand.
+    #[must_use]
+    pub fn token(self) -> Option<Token> {
+        let kind = self.0 >> Self::KIND_SHIFT;
+        let payload = self.0 & Self::PAYLOAD_MASK;
+        match kind {
+            Self::KIND_CHAR => unpack_char_payload(payload),
+            Self::KIND_CS => Some(Token::Cs(Symbol::new(payload))),
+            Self::KIND_PARAM => match payload {
+                1..=9 => Some(Token::Param(payload as u8)),
+                _ => None,
+            },
+            Self::KIND_FROZEN if payload <= u16::MAX as u32 => {
+                Some(Token::Frozen(FrozenToken::from_raw(payload as u16)))
+            }
+            _ => None,
+        }
+    }
+
+    /// Decodes a word whose validity was established at construction or
+    /// arena admission.
+    #[must_use]
+    #[inline(always)]
+    pub fn semantic_token(self) -> Token {
+        let kind = self.0 >> Self::KIND_SHIFT;
+        let payload = self.0 & Self::PAYLOAD_MASK;
+        match kind {
+            Self::KIND_CHAR => {
+                let raw_cat = (payload & 0xF) as usize;
+                let ch = char::from_u32(payload >> Self::CATCODE_BITS)
+                    .expect("packed token scalar is valid");
+                Token::Char {
+                    ch,
+                    cat: ALL_CATCODES[raw_cat],
+                }
+            }
+            Self::KIND_CS => Token::Cs(Symbol::new(payload)),
+            Self::KIND_PARAM => Token::Param(payload as u8),
+            Self::KIND_FROZEN => Token::Frozen(FrozenToken::from_raw(payload as u16)),
+            _ => unreachable!("two-bit packed-token kind"),
+        }
+    }
+
+    pub(crate) const fn raw(self) -> u32 {
+        self.0
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn from_raw(raw: u32) -> Self {
+        Self(raw)
+    }
+}
+
+const _: () = assert!(core::mem::size_of::<TokenWord>() == 4);
+
 /// Provenance origin handle carried by traced token words.
 ///
 /// `OriginId(0)` is reserved for the Unknown/Bootstrap origin. Later
@@ -521,41 +622,18 @@ impl RootedTracedTokenWord {
 }
 
 impl TracedTokenWord {
-    const KIND_SHIFT: u32 = 62;
     const PAYLOAD_SHIFT: u32 = 32;
-    const PAYLOAD_MASK: u32 = (1 << 30) - 1;
-    const KIND_CHAR: u64 = 0;
-    const KIND_CS: u64 = 1;
-    const KIND_PARAM: u64 = 2;
-    const KIND_FROZEN: u64 = 3;
-    const CATCODE_BITS: u32 = 4;
-    const USV_BITS: u32 = 21;
-    const USV_MASK: u32 = (1 << Self::USV_BITS) - 1;
 
     /// Packs a semantic token with its origin.
     #[must_use]
     pub fn pack(token: Token, origin: OriginId) -> Self {
-        let (kind, payload) = match token {
-            Token::Char { ch, cat } => {
-                let payload = ((ch as u32) << Self::CATCODE_BITS) | cat as u32;
-                debug_assert!(payload <= Self::PAYLOAD_MASK);
-                (Self::KIND_CHAR, payload)
-            }
-            Token::Cs(symbol) => {
-                debug_assert!(symbol.raw() <= Self::PAYLOAD_MASK);
-                (Self::KIND_CS, symbol.raw())
-            }
-            Token::Param(slot) => {
-                debug_assert!(slot < 16);
-                (Self::KIND_PARAM, u32::from(slot))
-            }
-            Token::Frozen(token) => (Self::KIND_FROZEN, u32::from(token.0)),
-        };
-        Self(
-            (kind << Self::KIND_SHIFT)
-                | (u64::from(payload) << Self::PAYLOAD_SHIFT)
-                | u64::from(origin.raw()),
-        )
+        Self::from_parts(TokenWord::pack(token), origin)
+    }
+
+    /// Combines independently packed semantic and source-coordinate words.
+    #[must_use]
+    pub(crate) const fn from_parts(token: TokenWord, origin: OriginId) -> Self {
+        Self((token.raw() as u64) << Self::PAYLOAD_SHIFT | origin.raw() as u64)
     }
 
     /// Reconstructs a traced word from raw bits.
@@ -571,23 +649,16 @@ impl TracedTokenWord {
         OriginId::from_raw(self.0 as u32)
     }
 
+    /// Returns the token-only word without changing its semantic identity.
+    #[must_use]
+    pub const fn token_word(self) -> TokenWord {
+        TokenWord((self.0 >> Self::PAYLOAD_SHIFT) as u32)
+    }
+
     /// Unpacks the semantic token, or `None` if the raw word is not a valid token.
     #[must_use]
     pub fn token(self) -> Option<Token> {
-        let kind = self.0 >> Self::KIND_SHIFT;
-        let payload = ((self.0 >> Self::PAYLOAD_SHIFT) as u32) & Self::PAYLOAD_MASK;
-        match kind {
-            Self::KIND_CHAR => unpack_char_payload(payload),
-            Self::KIND_CS => Some(Token::Cs(Symbol::new(payload))),
-            Self::KIND_PARAM => match payload {
-                1..=9 => Some(Token::Param(payload as u8)),
-                _ => None,
-            },
-            Self::KIND_FROZEN if payload <= u16::MAX as u32 => {
-                Some(Token::Frozen(FrozenToken(payload as u16)))
-            }
-            _ => None,
-        }
+        self.token_word().token()
     }
 
     /// Unpacks the semantic token through the validity invariant established
@@ -596,21 +667,7 @@ impl TracedTokenWord {
     #[must_use]
     #[inline(always)]
     pub fn semantic_token(self) -> Token {
-        let kind = self.0 >> Self::KIND_SHIFT;
-        let payload = ((self.0 >> Self::PAYLOAD_SHIFT) as u32) & Self::PAYLOAD_MASK;
-        match kind {
-            Self::KIND_CHAR => {
-                let raw_cat = (payload & 0xF) as usize;
-                let usv = (payload >> Self::CATCODE_BITS) & Self::USV_MASK;
-                let ch = char::from_u32(usv).expect("packed traced-token scalar is valid");
-                let cat = ALL_CATCODES[raw_cat];
-                Token::Char { ch, cat }
-            }
-            Self::KIND_CS => Token::Cs(Symbol::new(payload)),
-            Self::KIND_PARAM => Token::Param(payload as u8),
-            Self::KIND_FROZEN => Token::Frozen(FrozenToken(payload as u16)),
-            _ => unreachable!("two-bit traced-token kind"),
-        }
+        self.token_word().semantic_token()
     }
 
     /// Unpacks both token and origin, or `None` if the raw token bits are invalid.
@@ -619,6 +676,8 @@ impl TracedTokenWord {
         Some((self.token()?, self.origin()))
     }
 }
+
+const _: () = assert!(core::mem::size_of::<TracedTokenWord>() == 8);
 
 const ALL_CATCODES: [Catcode; 16] = [
     Catcode::Escape,
@@ -639,11 +698,9 @@ const ALL_CATCODES: [Catcode; 16] = [
     Catcode::Invalid,
 ];
 
-const _: () = assert!(core::mem::size_of::<TracedTokenWord>() == 8);
-
 fn unpack_char_payload(payload: u32) -> Option<Token> {
     let cat = catcode_from_raw((payload & 0xF) as u8)?;
-    let usv = (payload >> TracedTokenWord::CATCODE_BITS) & TracedTokenWord::USV_MASK;
+    let usv = payload >> TokenWord::CATCODE_BITS;
     Some(Token::Char {
         ch: char::from_u32(usv)?,
         cat,

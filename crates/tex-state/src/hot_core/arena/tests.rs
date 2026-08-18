@@ -27,7 +27,7 @@ fn append_region<T: Copy>(
 
 #[test]
 fn coordinates_and_marks_have_fixed_compact_layouts() {
-    assert_eq!(core::mem::size_of::<ChunkKey>(), 16);
+    assert_eq!(core::mem::size_of::<ChunkOwner>(), 16);
     assert_eq!(core::mem::size_of::<RegionCoordinate<u8>>(), 24);
     assert_eq!(core::mem::size_of::<RegionSpan<u8>>(), 24);
     assert_eq!(core::mem::size_of::<RegionReservation<u8>>(), 24);

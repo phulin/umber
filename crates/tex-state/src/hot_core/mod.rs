@@ -6,6 +6,7 @@
 
 pub(crate) mod arena;
 pub(crate) mod journal;
+pub(crate) mod layout;
 pub(crate) mod snapshot;
 pub(crate) mod stack;
 pub(crate) mod state;

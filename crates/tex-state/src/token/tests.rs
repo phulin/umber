@@ -1,5 +1,6 @@
 use super::{
-    Catcode, OriginId, RootedTracedTokenBuffer, RootedTracedTokenWord, Token, TracedTokenWord,
+    Catcode, OriginId, RootedTracedTokenBuffer, RootedTracedTokenWord, Token, TokenWord,
+    TracedTokenWord,
 };
 use crate::interner::Symbol;
 use crate::provenance::{InsertedOriginKind, OriginRef};
@@ -7,8 +8,92 @@ use crate::provenance::{InsertedOriginKind, OriginRef};
 #[test]
 fn token_is_one_word() {
     assert_eq!(core::mem::size_of::<Token>(), 8);
+    assert_eq!(core::mem::size_of::<TokenWord>(), 4);
     assert_eq!(core::mem::size_of::<OriginId>(), 4);
     assert_eq!(core::mem::size_of::<TracedTokenWord>(), 8);
+}
+
+#[test]
+fn token_word_round_trips_every_category_code() {
+    let catcodes = [
+        Catcode::Escape,
+        Catcode::BeginGroup,
+        Catcode::EndGroup,
+        Catcode::MathShift,
+        Catcode::AlignmentTab,
+        Catcode::EndLine,
+        Catcode::Parameter,
+        Catcode::Superscript,
+        Catcode::Subscript,
+        Catcode::Ignored,
+        Catcode::Space,
+        Catcode::Letter,
+        Catcode::Other,
+        Catcode::Active,
+        Catcode::Comment,
+        Catcode::Invalid,
+    ];
+    for cat in catcodes {
+        for ch in ['\0', 'x', '\u{10ffff}'] {
+            let token = Token::Char { ch, cat };
+            let word = TokenWord::pack(token);
+            assert_eq!(word.token(), Some(token));
+            assert_eq!(word.semantic_token(), token);
+        }
+    }
+}
+
+#[test]
+fn token_word_round_trips_every_control_sequence_form() {
+    use crate::interner::ControlSequenceKind;
+
+    let mut universe = crate::Universe::new();
+    let symbols = [
+        universe.intern("").symbol(),
+        universe.intern("x").symbol(),
+        universe.intern("named").symbol(),
+        universe.intern_active_character('~').symbol(),
+        universe.intern_internal_control_sequence("frozen").symbol(),
+    ];
+    let expected_kinds = [
+        ControlSequenceKind::Null,
+        ControlSequenceKind::SingleCharacter,
+        ControlSequenceKind::Named,
+        ControlSequenceKind::ActiveCharacter,
+        ControlSequenceKind::Internal,
+    ];
+
+    for (symbol, expected_kind) in symbols.into_iter().zip(expected_kinds) {
+        let token = Token::Cs(symbol);
+        assert_eq!(universe.control_sequence_kind(symbol), expected_kind);
+        assert_eq!(TokenWord::pack(token).semantic_token(), token);
+    }
+
+    let boundary = Token::Cs(Symbol::new((1 << 30) - 1));
+    assert_eq!(TokenWord::pack(boundary).token(), Some(boundary));
+}
+
+#[test]
+fn traced_words_are_exact_token_and_source_coordinate_composition() {
+    let tokens = [
+        Token::Char {
+            ch: '🙂',
+            cat: Catcode::Active,
+        },
+        Token::Cs(Symbol::new((1 << 30) - 1)),
+        Token::param(9),
+        Token::frozen_endv(),
+    ];
+    let origin = OriginId::from_raw(0xfeed_beef);
+
+    for token in tokens {
+        let word = TokenWord::pack(token);
+        let traced = TracedTokenWord::from_parts(word, origin);
+        assert_eq!(traced.token_word(), word);
+        assert_eq!(traced.semantic_token(), token);
+        assert_eq!(traced.origin(), origin);
+        assert_eq!(traced, TracedTokenWord::pack(token, origin));
+    }
 }
 
 #[test]
@@ -162,6 +247,11 @@ fn packed_token_decode_rejects_unrepresentable_payloads() {
     let bad_param_zero = TracedTokenWord::from_raw(2_u64 << 62);
     let bad_param_ten = TracedTokenWord::from_raw((2_u64 << 62) | (10_u64 << 32));
     let bad_char_scalar = TracedTokenWord::from_raw(0x11_0000_u64 << 36);
+
+    assert_eq!(TokenWord::from_raw((3_u32 << 30) | 0x1_0000).token(), None);
+    assert_eq!(TokenWord::from_raw(2_u32 << 30).token(), None);
+    assert_eq!(TokenWord::from_raw((2_u32 << 30) | 10).token(), None);
+    assert_eq!(TokenWord::from_raw(0x11_0000_u32 << 4).token(), None);
 
     assert_eq!(bad_frozen.origin(), origin);
     assert_eq!(bad_frozen.unpack(), None);
