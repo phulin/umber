@@ -95,16 +95,16 @@ print channel of its own outside the borrowed
   tokenization, semantic control-sequence spelling, profile-specific
   superscript notation, invalid-character recovery steps, byte/scalar ranges,
   and focused conformance tests.
-- `src/input/levels.rs`, `src/input/levels/tests.rs`: dense source/token-list
-  levels, strong stored-token roots plus transient/argument payload ownership,
-  inline-small shared rooted argument storage, orthogonal delivery and
-  retirement behavior, bounded eager TeX82
-  error-context projection, replay explanations, and focused ownership tests. A
-  source level's `open_depths` field is `\tracingnesting`'s own record; see
-  `src/tracing_nesting.rs`.
+- `src/input/levels.rs`, `src/input/levels/tests.rs`: canonical fixed-width
+  source/token cursors over chunk-owned packed traced words, cold backup source
+  coordinates, orthogonal delivery/retirement classifications, and the
+  remaining rich macro-body/argument admission forms assigned to
+  `umber2-awgc.3.3`. A source level's `open_depths` field is
+  `\tracingnesting`'s own record; see `src/tracing_nesting.rs`.
 - `src/input/stack.rs`, `src/input/stack/tests.rs`: exact input retirement,
-  retained v-template lifecycle, macro-activation cleanup, `param_start`
-  parameter replay ownership, and trace-independence tests.
+  centralized packed-chunk admission, retained v-template lifecycle,
+  macro-activation cleanup, `param_start` parameter replay ownership, and
+  trace-independence tests.
 - `src/processor/`: public borrow-only processor facade with specialized raw
   and expanded delivery loops, expansion, scanner-status, and alignment
   orchestration. The loops share the typed policy boundary but do not test a

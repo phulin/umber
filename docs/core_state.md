@@ -41,16 +41,23 @@ ownership. It does not permit untracked mutation or host I/O for performance.
 Only aggregate APIs on `Universe` and its owned `Stores` facade may coordinate
 changes across these stores.
 
-The private HotCore substrate additionally defines the runtime values that the
-ordered command-input migration will adopt. `TokenWord` is a 4-byte exact
+The private HotCore substrate additionally defines the runtime values adopted
+by canonical command-input delivery. `TokenWord` is a 4-byte exact
 token-only encoding and composes with the existing 4-byte origin into the
 unchanged 8-byte traced word. A source coordinate is 4 bytes, a generation-
 checked token span is 24 bytes, and a compact input frame is 40 bytes. Frames
 and spans carry only copyable chunk identities; the arena candidate or accepted
-layer owns each allocation once. These values are not yet live input storage,
-derive no serialization, and cannot enter schema-11 formats or detached command
-continuations. Foreign and stale spans reject at arena admission; admitted
-traversal performs no repeated generation lookup.
+layer owns each allocation once. `tex-command` reaches the canonical frame
+layout through `packed_input`: live source, backup, noexpand, template,
+inserted-hook, and ordinary stored-replay levels use the frame as their sole
+level identity, and token levels use its 32-bit position as their sole delivery
+cursor. Source levels retain the exact 64-bit physical cursor required for
+large inputs and diagnostic reconstruction. Detached continuations remain
+handle-free and reconstruct fresh frames from their portable identity and
+token position. Runtime frames derive no serialization and cannot enter
+schema-11 formats. Foreign and stale spans reject at arena admission; admitted
+traversal performs no repeated generation lookup. Macro-body and argument
+chunk ownership remain the ordered `umber2-awgc.3.3` migration.
 
 A private incremental revision additionally owns one disposable allocation
 domain. The domain is absent from templates and accepted generations at rest.

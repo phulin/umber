@@ -69,6 +69,9 @@ All production mutation of live TeX state should pass through `Universe` or simi
   32-bit token words, compact source coordinates, chunk-owned token spans,
   fixed 40-byte input frames, exact TeX input-kind values, and focused layout,
   generation-rejection, and warmed traversal controls.
+- `src/packed_input.rs`: Narrow borrow-safe runtime seam through which the
+  command input machine uses the canonical 40-byte frame layout without
+  exposing arena ownership, reservations, or runtime coordinates.
 - `src/hot_core/mod.rs`: Private HotCore storage module boundary; command
   semantics remain outside this substrate.
 - `src/hot_core/snapshot.rs` and `src/hot_core/snapshot/tests.rs`: Storage-only

@@ -269,6 +269,22 @@ its discarded offsets are never appended into again under the same generation.
 Reusing a wholly retired slot mints a fresh generation. These rules prevent
 both stale-coordinate revival and cross-candidate reinterpretation.
 
+Canonical command input now consumes this frame layout through a narrow
+`tex-state::packed_input` seam. A live source or token level has one 40-byte
+frame; its copy-only owner identity is the sole live level identity, and its
+32-bit current offset is the sole token-level cursor. Source levels retain the
+existing exact 64-bit byte/scalar/line cursor as their cold physical sidecar;
+the frame's current offset is only a delivered-token count and is normalized
+when unchanged future state converges across comment edits. Centralized level
+admission converts file-adjacent stored replay, backup/noexpand, alignment
+templates, inserted recovery, and every-hook payloads to chunk-owned packed
+traced words. Backup keeps physical source coordinates in a sparse cold
+sidecar, so ordinary word delivery does not construct diagnostic ranges.
+Resource suspension detaches handle-free words and coordinates, and resume
+admits a fresh chunk/frame at the exact portable cursor. Macro-body and
+argument spans intentionally remain for
+`umber2-awgc.3.3`; transaction marks remain for `umber2-awgc.4.2`.
+
 Arena accounting uses two deliberately separate measures. _Logical values_
 and _logical value bytes_ count only live initialized elements and
 `len * size_of::<T>()`. _Retained payload_ counts the capacities of accepted,

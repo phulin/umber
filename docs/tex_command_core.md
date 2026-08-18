@@ -1555,7 +1555,7 @@ Input is a dense stack:
 
 ```rust
 enum InputLevel {
-    Source(SourceCursor),
+    Source(SourceLevel),
     Tokens(TokenCursor),
 }
 ```
@@ -1576,6 +1576,12 @@ struct SourceCursor {
     lexer: LexerState,
     end_after_line: bool,
     trace: SourceTrace,
+}
+
+struct SourceLevel {
+    frame: PackedInputFrame,
+    cursor: SourceCursor,
+    // source classification and cold diagnostic state
 }
 ```
 
@@ -1628,11 +1634,11 @@ struct TokenCursor {
     behavior: TokenBehavior,
     retirement: RetirementBehavior,
     trace: ReplayTrace,
-    index: usize,
-    identity: InputLevelId,
+    frame: PackedInputFrame,
 }
 
 enum TokenPayload {
+    Packed(PackedTokenChunk),
     Stored {
         tokens: TokenListRef,
         origins: OriginListRef,
@@ -1666,6 +1672,38 @@ enum RetirementBehavior {
 }
 ```
 
+The implemented `PackedInputFrame` is the canonical fixed 40-byte frame from
+`tex-state`. Its copy-only owner coordinate is the level identity and its
+32-bit current offset is the sole live token delivery cursor; `SourceLevel`
+and `TokenCursor` carry no duplicate identity, and `TokenCursor` carries no
+duplicate index. A source retains its exact 64-bit byte/scalar/line cursor in
+the physical sidecar because source sizes are not bounded by the frame's token
+offset domain. The source frame's current offset is a delivered-token count,
+not future semantics; unchanged future-state comparison normalizes that count
+after verifying the exact source cursor and frame identity. TeX82's token types
+retain their exact values, with disjoint source, `everyeof`, and Umber replay
+kinds. Flags represent noexpand suppression, terminal-stop retirement, and
+retained v-template retirement independently of storage.
+
+`CommandState::push_token_level` is the single live admission boundary. It
+converts transient insertions, backup/noexpand levels, alignment templates,
+stored every-hooks, output replay, and other source-adjacent replay into a
+`PackedTokenChunk`. Packed traced words are position-aligned and retain sparse
+structural roots once per chunk. Backed-up physical source coordinates occupy a
+cold inline-small sidecar and are materialized only for diagnostic rendering.
+The former rich transient/inline/backup payloads may be used only as private
+pre-admission values; they cannot survive in a canonical live level. Stored
+macro bodies and argument ranges remain rich until `umber2-awgc.3.3`.
+
+Detached resource continuations deliberately do not serialize a runtime frame
+or arena coordinate. Detachment projects packed words, backup coordinates,
+portable identity, and current offset into the existing handle-free DTO;
+materialization creates a fresh packed chunk/frame and advances it to that
+offset. Command snapshots clone the frame directly. Source continuations retain
+their exact physical byte/scalar/line cursor and rebuild the source frame after
+registration, preserving diagnostic positions without publishing runtime
+coordinates.
+
 The implemented ownership model keeps `MacroActivation` values in the
 `ParameterState` activation chain and stores a typed activation identity in
 `TokenBehavior::MacroBody`. This preserves one owner for each activation while
@@ -1674,19 +1712,13 @@ same reference-counted contiguous traced-token allocation. `InputLevelId` is
 typed separately from source identity and is present on both source and token
 levels. Exact-byte and Unicode source cursors use this identical enum.
 
-The centralized transient and backed-up constructors store a one-token payload
-directly in the cursor, so TeX's common insertion and `back_input` paths do not
-allocate a temporary vector or reference-counted slice. Empty and multi-token
-payloads remain shared and unbounded. Exactly two transient tokens move from an
-iterator into an array-backed `Arc` allocation directly; longer transient
-iterators materialize only the owned buffer that becomes shared storage. The
-recovery and rendered-value helpers therefore accept iterators, so fixed
-insertions use array literals and dynamic renderings do not build a caller-side
-staging vector. e-TeX's optimized `\aftergroup` prepend promotes an inline
-backed-up payload to shared storage while preserving save order; snapshot
-normalization, durable continuation remapping, origin adoption, and
-edited-source rehoming treat the two storage forms as the same semantic
-payload.
+The centralized transient and backed-up constructors still avoid caller-side
+staging for fixed insertions, but level admission immediately moves their words
+into the packed chunk and releases superseded shared payload ownership. e-TeX's
+optimized `\aftergroup` prepend extends the same packed backup chunk while
+preserving save order and its compact frame identity. Snapshot normalization,
+durable continuation remapping, origin adoption, and edited-source rehoming
+treat the packed representation as the canonical semantic payload.
 
 `EveryPar`, `EveryHBox`, `EveryVBox`, `EveryJob`, `EveryCr`, `Mark`,
 `OutputRoutine`, and similar explanations belong in `ReplayTrace` unless they
