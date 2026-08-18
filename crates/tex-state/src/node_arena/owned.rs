@@ -39,7 +39,9 @@ pub(crate) struct NodeListPayload {
 #[derive(Clone)]
 pub struct NodeListRef {
     id: NodeListId,
-    payload: Arc<NodeListPayload>,
+    // `None` exists only while `Drop` moves the payload into its iterative
+    // release worklist. Every observable owner retains `Some`.
+    payload: Option<Arc<NodeListPayload>>,
 }
 
 impl PartialEq for NodeListRef {
@@ -86,20 +88,11 @@ impl NodeListRef {
     /// Returns the explicitly owned canonical empty list.
     #[must_use]
     pub fn empty() -> Self {
-        static EMPTY: OnceLock<NodeListRef> = OnceLock::new();
-        EMPTY
-            .get_or_init(|| {
-                let root = allocate_node_payload_root()
-                    .expect("node-list payload coordinate space exhausted");
-                let semantic_id = NodeSemanticId::empty();
-                let id = NodeListId::new_owned(root, 0, 0);
-                Self::from_payload(
-                    id,
-                    NodeListPayload::new(root, NodeStorage::default(), Vec::new(), Vec::new()),
-                    semantic_id,
-                )
-            })
-            .clone()
+        let payload = empty_payload();
+        Self {
+            id: NodeListId::new_owned(payload.root, 0, 0),
+            payload: Some(Arc::clone(payload)),
+        }
     }
 
     pub(crate) fn from_payload(
@@ -109,7 +102,7 @@ impl NodeListRef {
     ) -> Self {
         let owner = Self {
             id,
-            payload: Arc::new(payload),
+            payload: Some(Arc::new(payload)),
         };
         assert_eq!(
             owner.semantic_id(),
@@ -120,14 +113,17 @@ impl NodeListRef {
     }
 
     pub(crate) fn from_shared(id: NodeListId, payload: Arc<NodeListPayload>) -> Self {
-        let owner = Self { id, payload };
+        let owner = Self {
+            id,
+            payload: Some(payload),
+        };
         let _ = owner.semantic_id();
         owner
     }
 
     #[must_use]
     pub fn nodes(&self) -> NodeList<'_> {
-        self.payload.storage.view(self.id.start(), self.id.len())
+        self.payload().storage.view(self.id.start(), self.id.len())
     }
 
     /// Materializes this owned list while resolving every direct child through
@@ -176,13 +172,13 @@ impl NodeListRef {
     /// Reports the logical compact bytes owned directly by this payload.
     #[must_use]
     pub fn logical_payload_bytes(&self) -> usize {
-        self.payload.logical_bytes
+        self.payload().logical_bytes
     }
 
     /// Reports allocator-retained bytes owned directly by this payload.
     #[must_use]
     pub fn retained_payload_bytes(&self) -> usize {
-        self.payload.retained_bytes
+        self.payload().retained_bytes
     }
 
     /// Resolves a compact child coordinate for the duration of this owner
@@ -191,15 +187,15 @@ impl NodeListRef {
     #[must_use]
     pub fn child_nodes(&self, child: NodeListId) -> Option<NodeList<'_>> {
         if child.is_empty() {
-            return Some(self.payload.storage.view(0, 0));
+            return Some(self.payload().storage.view(0, 0));
         }
         let ArenaRef::Owned(root) = child.arena() else {
             return None;
         };
-        if root == self.payload.root && self.payload.semantic_span(child).is_some() {
-            return Some(self.payload.storage.view(child.start(), child.len()));
+        if root == self.payload().root && self.payload().semantic_span(child).is_some() {
+            return Some(self.payload().storage.view(child.start(), child.len()));
         }
-        self.payload.child_owner(root)?.child_nodes(child)
+        self.payload().child_owner(root)?.child_nodes(child)
     }
 
     pub(crate) fn id(&self) -> NodeListId {
@@ -210,7 +206,7 @@ impl NodeListRef {
         if self.id.is_empty() {
             return NodeSemanticId::empty();
         }
-        self.payload
+        self.payload()
             .semantic_span(self.id)
             .expect("node-list owner span is not part of its payload")
             .semantic_id
@@ -224,28 +220,34 @@ impl NodeListRef {
         let ArenaRef::Owned(root) = child.arena() else {
             return None;
         };
-        if root == self.payload.root {
+        if root == self.payload().root {
             self.child_nodes(child)?;
-            return Some(Self::from_shared(child, Arc::clone(&self.payload)));
+            return Some(Self::from_shared(child, Arc::clone(self.payload())));
         }
-        self.payload.child_owner(root)?.resolve(child)
+        self.payload().child_owner(root)?.resolve(child)
     }
 
     pub(crate) fn downgrade(&self) -> NodeListWeak {
         NodeListWeak {
             id: self.id,
             semantic_id: self.semantic_id(),
-            payload: Arc::downgrade(&self.payload),
+            payload: Arc::downgrade(self.payload()),
         }
     }
 
     #[cfg(test)]
     pub(crate) fn strong_count(&self) -> usize {
-        Arc::strong_count(&self.payload)
+        Arc::strong_count(self.payload())
     }
 
     pub(crate) fn shares_payload(&self, other: &Self) -> bool {
-        Arc::ptr_eq(&self.payload, &other.payload)
+        Arc::ptr_eq(self.payload(), other.payload())
+    }
+
+    fn payload(&self) -> &Arc<NodeListPayload> {
+        self.payload
+            .as_ref()
+            .expect("live node-list owner must retain its payload")
     }
 
     pub(crate) fn freeze_builder(
@@ -345,6 +347,57 @@ impl NodeListRef {
     }
 }
 
+impl Drop for NodeListRef {
+    fn drop(&mut self) {
+        let Some(payload) = self.payload.take() else {
+            return;
+        };
+        let Ok(mut payload) = Arc::try_unwrap(payload) else {
+            return;
+        };
+        let mut pending = Vec::new();
+
+        loop {
+            // Disarm the child owners before dropping the payload itself, then
+            // release their Arcs from this explicit worklist. Otherwise each
+            // final child would recursively enter Rust's field destructor.
+            for child in &mut payload.children {
+                pending.push(
+                    child
+                        .payload
+                        .take()
+                        .expect("owned child must retain its payload"),
+                );
+            }
+            drop(payload);
+
+            loop {
+                let Some(next) = pending.pop() else {
+                    return;
+                };
+                if let Ok(next) = Arc::try_unwrap(next) {
+                    payload = next;
+                    break;
+                }
+            }
+        }
+    }
+}
+
+fn empty_payload() -> &'static Arc<NodeListPayload> {
+    static EMPTY: OnceLock<Arc<NodeListPayload>> = OnceLock::new();
+    EMPTY.get_or_init(|| {
+        let root =
+            allocate_node_payload_root().expect("node-list payload coordinate space exhausted");
+        Arc::new(NodeListPayload::new(
+            root,
+            NodeStorage::default(),
+            Vec::new(),
+            Vec::new(),
+        ))
+    })
+}
+
 impl NodeListPayload {
     pub(crate) fn new(
         root: NodePayloadId,
@@ -373,9 +426,9 @@ impl NodeListPayload {
             );
         }
         children.retain(|child| !child.is_empty());
-        children.sort_unstable_by_key(|child| child.payload.root);
+        children.sort_unstable_by_key(|child| child.payload().root);
         children.dedup_by(|left, right| {
-            if left.payload.root != right.payload.root {
+            if left.payload().root != right.payload().root {
                 return false;
             }
             assert!(
@@ -425,14 +478,14 @@ impl NodeListPayload {
 
     fn child_owner(&self, root: NodePayloadId) -> Option<&NodeListRef> {
         self.children
-            .binary_search_by_key(&root, |child| child.payload.root)
+            .binary_search_by_key(&root, |child| child.payload().root)
             .ok()
             .map(|index| &self.children[index])
     }
 
     #[cfg(test)]
     fn child_roots(&self) -> impl ExactSizeIterator<Item = NodePayloadId> + '_ {
-        self.children.iter().map(|child| child.payload.root)
+        self.children.iter().map(|child| child.payload().root)
     }
 }
 

@@ -16,7 +16,11 @@ typed sidecars, semantic spans, and a sorted, deduplicated set of strong
 `NodeListRef` owners for the payloads named directly by those rows. Each child
 payload owns its own direct children in turn. Cloning the reference clones
 structural ownership; dropping the final root clone releases that closure when
-no independently held child reference remains.
+no independently held child reference remains. Final-owner release drains that
+closure with an explicit payload stack. A shared child stops the drain at that
+edge and remains owned by its independent reference, while uniquely owned
+descendants are reclaimed iteratively in work proportional to the released
+closure rather than through Rust's recursive field destruction.
 
 `NodeListId` is not an owner. It is a private compact coordinate used while a
 `NodeListRef` is borrowed and in packed node sidecars. Detached codecs use a

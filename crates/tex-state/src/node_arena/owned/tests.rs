@@ -116,8 +116,8 @@ fn direct_child_owners_are_sorted_and_deduplicated_by_payload() {
     builder.push(Node::Adjust(AdjustNode::ordinary(second.clone())));
 
     let parent = stores.freeze_node_list_ref(builder);
-    let child_roots = parent.payload.child_roots().collect::<Vec<_>>();
-    let mut expected = vec![first.payload.root, second.payload.root];
+    let child_roots = parent.payload().child_roots().collect::<Vec<_>>();
+    let mut expected = vec![first.payload().root, second.payload().root];
     expected.sort_unstable();
 
     assert_eq!(child_roots, expected);
@@ -171,6 +171,45 @@ fn parent_lifetime_retains_the_exact_nested_payload_chain() {
     drop(parent);
     assert!(child_weak.upgrade().is_none());
     assert!(grandchild_weak.upgrade().is_none());
+}
+
+#[test]
+fn final_root_release_is_iterative_at_the_deep_list_limit() {
+    let mut stores = Stores::new();
+    let mut root = freeze(&mut stores, [Node::Penalty(1)]);
+    let leaf = root.downgrade();
+    for _ in 0..20_000 {
+        root = freeze(&mut stores, [Node::Adjust(AdjustNode::ordinary(root))]);
+    }
+
+    let released = std::thread::Builder::new()
+        .name("deep-node-list-release".into())
+        .stack_size(64 * 1024)
+        .spawn(move || {
+            drop(root);
+            leaf.upgrade().is_none()
+        })
+        .expect("deep release control thread")
+        .join()
+        .expect("deep release must not overflow its bounded stack");
+
+    assert!(released, "final root release must visit the whole chain");
+}
+
+#[test]
+fn parent_release_preserves_an_independently_owned_child() {
+    let mut stores = Stores::new();
+    let child = freeze(&mut stores, [Node::Penalty(23)]);
+    let child_weak = child.downgrade();
+    let parent = freeze(
+        &mut stores,
+        [Node::Adjust(AdjustNode::ordinary(child.clone()))],
+    );
+
+    drop(parent);
+    assert!(child_weak.upgrade().is_some());
+    drop(child);
+    assert!(child_weak.upgrade().is_none());
 }
 
 #[test]
@@ -453,7 +492,7 @@ fn bounded_live_nested_payloads_never_copy_child_words() {
             [Node::Adjust(AdjustNode::ordinary(child.clone()))],
         );
         assert_eq!(child.strong_count(), 2);
-        assert_eq!(parent.payload.child_roots().len(), 1);
+        assert_eq!(parent.payload().child_roots().len(), 1);
         drop(parent);
         assert_eq!(child.strong_count(), 1);
     }
@@ -527,7 +566,7 @@ fn all_live_nested_payloads_grow_by_exact_direct_owner_bytes() {
     assert!(graphs.iter().all(|(child, parent)| {
         child.strong_count() == 2
             && parent.strong_count() == 1
-            && parent.payload.child_roots().len() == 1
+            && parent.payload().child_roots().len() == 1
     }));
     #[cfg(feature = "profiling")]
     {
