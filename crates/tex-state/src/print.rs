@@ -961,6 +961,13 @@ impl ErrorChannel {
         self.pending_recovery.take()
     }
 
+    /// Whether canonical delivery must apply an ErrorStop input mutation
+    /// before it may preflight the next command.
+    #[must_use]
+    pub const fn has_pending_recovery(&self) -> bool {
+        self.pending_recovery.is_some()
+    }
+
     /// tex.web §82's `incr(error_count)`, returning the incremented count so
     /// the report owner can perform the 100-error terminal transition.
     pub const fn record_scrolled_error(&mut self) -> i32 {

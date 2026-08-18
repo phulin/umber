@@ -44,7 +44,9 @@ print channel of its own outside the borrowed
   Also owns `\tracingnesting`'s `record_source_open_depths`/
   `source_open_depths`, the `grp_stack`/`if_stack` recording e-TeX 2.6
   [23.328] compares at a source level's `end_file_reading`.
-- `src/command.rs`: public opaque, ephemeral current-command representation.
+- `src/command.rs`: public opaque, ephemeral current-command representation;
+  its cloneable value crosses only executor preflight/retry seams and never a
+  durable snapshot or format boundary.
 - `src/error.rs`: command error and resource-need representation plus the
   shared dimension-scanner recovery diagnostic vocabulary consumed by legacy
   and canonical scanner paths.
@@ -107,6 +109,8 @@ print channel of its own outside the borrowed
   and expanded delivery loops, expansion, scanner-status, and alignment
   orchestration. The loops share the typed policy boundary but do not test a
   raw-versus-expanded mode on every token.
+  The facade also resumes an executor-retained settled delivery and settles a
+  raw preflight command without backing it up or delivering it twice.
   `status.rs` owns the one processor-level scanner episode mechanism for
   typed status entry, observation visibility, recovery re-entry, and complete
   prior-state restoration; scanner families do not open-code that lifecycle.

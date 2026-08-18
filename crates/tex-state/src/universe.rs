@@ -3163,6 +3163,36 @@ impl Universe {
         self.stores.finish_node_operation();
     }
 
+    /// Commits an ordinary successful executor operation without creating an
+    /// aggregate rollback snapshot.
+    #[must_use]
+    #[doc(hidden)]
+    pub const fn direct_operation_supported(&self) -> bool {
+        self.private_revision_domain.is_none()
+    }
+
+    /// Opens an ordinary operation after capability preflight has established
+    /// that it needs no rollback mark.
+    #[doc(hidden)]
+    pub fn begin_direct_operation(&mut self) {
+        assert!(
+            self.private_revision_domain.is_none(),
+            "private revisions require a rollback-capable operation mark"
+        );
+        self.stores.begin_direct_operation();
+    }
+
+    /// Commits an ordinary successful executor operation without creating an
+    /// aggregate rollback snapshot.
+    #[doc(hidden)]
+    pub fn commit_direct_operation(&mut self) {
+        assert!(
+            self.private_revision_domain.is_none(),
+            "private revisions require a rollback-capable operation mark"
+        );
+        self.stores.finish_direct_operation();
+    }
+
     /// Discards only allocations made by a failed private operation while
     /// retaining its canonical partial semantic state.
     ///

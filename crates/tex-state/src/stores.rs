@@ -3928,6 +3928,17 @@ impl Stores {
         );
     }
 
+    /// Opens one executor operation that owns no retry root. The TeX save
+    /// stack keeps open-group history; advancing the compact write epoch
+    /// prevents first-write coalescing from crossing command boundaries.
+    pub(crate) fn begin_direct_operation(&mut self) {
+        self.env.bump_epoch();
+    }
+
+    pub(crate) fn finish_direct_operation(&mut self) {
+        self.finish_node_operation();
+    }
+
     /// Rolls all stores back to `snapshot` as one atomic tuple.
     pub(crate) fn rollback(&mut self, snapshot: &StoreSnapshot) -> MutationReceipts {
         self.rollback_inner(snapshot, false)

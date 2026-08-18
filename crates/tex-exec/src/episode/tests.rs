@@ -45,7 +45,7 @@ fn fixed_telemetry_counts_every_required_barrier() {
 }
 
 #[test]
-fn main_control_slice_and_group_boundary_are_typed_commits() {
+fn main_control_slice_is_bounded_and_groups_do_not_stop_the_episode() {
     let mut source = Vec::new();
     for _ in 0..300 {
         source.extend_from_slice(br"\relax");
@@ -67,13 +67,14 @@ fn main_control_slice_and_group_boundary_are_typed_commits() {
     let (mut grouped, mut grouped_stores) = control_for(br"\begingroup\relax\endgroup\end");
     grouped
         .advance_episode(&mut grouped_stores)
-        .expect("group entry commits");
+        .expect("group-spanning episode commits");
     let telemetry = grouped.episode_telemetry();
     assert_eq!(
         telemetry.internal_stops(EpisodeInternalStop::GroupLineage),
-        1
+        0
     );
-    assert_eq!(grouped_stores.group_depth(), 1);
+    assert_eq!(telemetry.operations(), 4);
+    assert_eq!(grouped_stores.group_depth(), 0);
 }
 
 #[test]

@@ -15,7 +15,7 @@ use crate::{SourceLocation, SourceProvenance, SourceRange};
 /// intentionally has no serialization or snapshot representation. Its
 /// delivery stamp identifies the exact live cursor transition and is not
 /// reconstructed from token equality.
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CurrentCommand {
     spelling: TracedTokenWord,
     origin: OriginRef,

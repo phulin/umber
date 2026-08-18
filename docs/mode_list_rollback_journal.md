@@ -8,8 +8,8 @@ change TeX semantics or the atomic boundary in
 
 ## Measured problem
 
-`StepSnapshot::capture` clones `ModeNest` before every atomic
-operation. Its `Arc` roots make capture cheap, but retaining the old mode-list
+Historically, `StepSnapshot::capture` cloned `ModeNest` before every atomic
+operation. Its `Arc` roots made capture cheap, but retaining the old mode-list
 root forces the first successful mutation to copy the complete `Vec<Node>`.
 The `umber2-johp.298` symbolized profile attributed 5.79% self time to that
 copy below `Arc::make_mut`, with 4.24% through ordinary character append and
@@ -96,8 +96,9 @@ journal generation, cursors, log length, and capacity remain excluded from
 `Debug`, equality, summaries, semantic hashes, formats, and durable
 checkpoints.
 
-`StepSnapshot` begins an opaque mode savepoint after capturing the
-command root and before execution. On success it commits that savepoint before
+`StepSnapshot` begins an opaque mode savepoint only for a capability routed to
+the compatibility retry adapter. It captures the command root before
+execution. On success it commits that savepoint before
 publishing observers, geometry, prepared pages, effects, artifacts, or named
 checkpoints. On ordinary error or typed resource suspension it first rolls
 back `Universe`, then command state, then the mode savepoint, and finally the
@@ -105,6 +106,14 @@ remaining aggregate fields; no restored provenance identifier is observable
 against a newer universe timeline. TeX82 §81 fatal propagation commits the
 mode savepoint and partial aggregate state before publishing buffered
 observations and the fatal diagnostic.
+
+Successful ordinary commands and group transitions create no mode savepoint.
+They mutate the authoritative `ModeNest` directly after state-layer admission
+advances the write epoch, then commit the node-operation watermark. Since that path
+has no rollback owner, append-only builders retain neither a cloned prefix nor
+an inverse frame. Resource, PDF/effect/output, ErrorStop, observed, tracked,
+private-revision, and output-capable box-closing operations keep the journaled
+aggregate adapter until the narrow transaction migration completes.
 
 ## Implementation sequence
 

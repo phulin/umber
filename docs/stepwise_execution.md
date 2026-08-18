@@ -26,9 +26,9 @@ native and `wasm32-unknown-unknown` targets.
 `JobStart`, `MainControl`, `FinishEnd`, and `Finalize` lifecycle. Retained
 sessions drive this state machine directly. Main control yields after at most
 256 fully dispatched tokens or fixed 256-token text spans, and yields
-immediately after a named paragraph or shipout boundary;
-it also yields whenever TeX's execution-group depth changes so the environment
-snapshot remains a valid rollback root. Named checkpoints are staged and
+immediately after a named paragraph or shipout boundary. TeX group entry and
+exit are no longer yield points: ordinary episodes cross them while the save
+stack preserves their restoration records. Named checkpoints are staged and
 delivered only after that bounded operation chunk returns successfully.
 The command core retains its bounded traced-token scratch pool outside
 `MainControl`, semantic state, step snapshots, and named checkpoints. Step
@@ -38,9 +38,18 @@ Font, image, and read-recorder host capabilities remain borrow-scoped.
 step rollback, while validated `CommandSummary` is the only durable
 named-checkpoint continuation.
 
-`MainControl` wraps every candidate operation in a private aggregate
-step savepoint. `CanonicalStepRunner` and its `OutputLedger` are the shared
-native/incremental publication protocol above that transition. A typed resource need restores the matching `Universe`,
+`MainControl` preflights each settled command before operand scanning.
+Successful ordinary commands run directly after advancing the environment
+write epoch and commit the node-operation watermark; they own no aggregate
+savepoint.
+Commands that may expand or settle a prefix/reswitch command into a resource
+request, publish PDF/effect/output state, apply ErrorStop recovery, or allocate
+in a private revision retain the one-operation aggregate adapter pending their
+narrow-mark migration. The closing brace of an active box is promoted to that
+adapter when packaging can run the page or explicit-shipout pipeline; ordinary
+groups nested inside the box remain on the direct path.
+`CanonicalStepRunner` and its `OutputLedger` are the shared native/incremental
+publication protocol above that transition. A typed resource need restores the matching `Universe`,
 command-state, mode-nest, execution, statistics, checkpoint-publisher, prepared
 page, diagnostic/effect/artifact, and lifecycle roots before returning
 `AwaitingResources`; the suspension serial remains monotonic and replay uses
@@ -198,9 +207,9 @@ The four step kinds have these exact commit boundaries:
    ordinary expanded delivery. It processes at most 256 fully expanded
    delivered tokens or fixed-size text-span chunks, including dispatch and all
    pending output work caused by each operation.
-   It commits early after a named paragraph or shipout boundary or any
-   execution-group depth change. End-of-input flushing is also one main-control
-   step.
+   It commits early after a named paragraph or shipout boundary. Group changes
+   are ordinary journal/save-stack transitions within the same bounded
+   episode. End-of-input flushing is also one main-control step.
 3. `FinishEnd` performs the current `finish_end`, including final paragraph,
    page-builder, output-routine, recursive dispatch, and shipout work. If this
    proves too large under focused measurements it may be decomposed into
@@ -226,7 +235,8 @@ they are not made interruptible by retaining an iterator frame.
 
 ## Savepoint and rollback protocol
 
-Immediately before a candidate step, the run captures `StepSavepoint`:
+Only a capability requiring rollback enters the compatibility adapter and
+captures `StepSavepoint`:
 
 ```text
 StepSavepoint {
@@ -246,17 +256,17 @@ StepSavepoint {
 `LocalRetrySnapshot` retains the rollback roots but does not construct or
 advance a semantic state hash. Only a named checkpoint asks `Universe` for the
 durable `Snapshot` identity described in the core-state contract. The
-unobserved production runner holds one local retry snapshot across its bounded
-256-operation chunk; diagnostic one-operation and observed-delivery entry
-points retain their narrower boundary.
+unobserved production runner commits ordinary commands without this value.
+The compatibility adapter is limited to one preflighted command; diagnostic
+and observed-delivery entry points retain their existing aggregate boundary.
 For an incremental candidate it also owns the only active mark in that
 revision's disposable allocation domain. A successful step closes the mark
 and keeps its suffix once. When that mark is the only level-zero environment
 rollback root, successful commit establishes the current cells as the next
 journal baseline and retires the closed history. Open groups, delivered named
 checkpoints, and inherited fork-prefix authority keep their exact restoration
-records. A resource need, cancellation, hard failure, or
-ordinary error truncates every allocation after the mark; earlier committed
+records. A resource need, cancellation, hard failure, or rollback-capable
+command error truncates every allocation after the mark; earlier committed
 private work stays owned by the same candidate across suspension. TeX paths
 whose semantic save-stack state must partially commit still discard the failed
 allocation suffix.

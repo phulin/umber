@@ -197,6 +197,20 @@ pub struct CommandProcessor<'a> {
 }
 
 impl CommandProcessor<'_> {
+    /// Continues scanning an executor-retained settled command in a fresh
+    /// borrow episode.
+    ///
+    /// `CurrentCommand` fields are private and its delivery stamp was minted
+    /// by this command machine, so the executor can move the ephemeral value
+    /// across its mutation-free preflight seam without backing up or
+    /// redelivering the token. The next scanner delivery remains strictly
+    /// later than the resumed stamp.
+    pub fn resume_current_command(&mut self, command: &crate::CurrentCommand) {
+        let stamp = command.delivery_stamp();
+        self.last_delivery = Some(stamp);
+        self.next_delivery_sequence = stamp.sequence().wrapping_add(1);
+    }
+
     /// Captures TeX82 §82's `show_context` while this processor still owns
     /// the live command input cursor.
     #[must_use]

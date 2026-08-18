@@ -4334,7 +4334,7 @@ fn bare_macro_parameter_commit_survives_later_input_retry_without_duplication() 
 }
 
 #[test]
-fn production_batch_uses_one_retry_point_for_multiple_ordinary_commands() {
+fn production_batch_commits_ordinary_prefix_before_terminal_transaction() {
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
     let mut control = MainControl::tex82_initex(&mut stores);
     register_source(&mut control, br"\count0=11 \count1=22 \end");
@@ -4347,12 +4347,12 @@ fn production_batch_uses_one_retry_point_for_multiple_ordinary_commands() {
     );
     assert_eq!(stores.count(0), 11);
     assert_eq!(stores.count(1), 22);
-    assert_eq!(control.advance_telemetry().attempts, 1);
-    assert_eq!(control.advance_telemetry().commits, 1);
+    assert_eq!(control.advance_telemetry().attempts, 2);
+    assert_eq!(control.advance_telemetry().commits, 2);
 }
 
 #[test]
-fn production_batch_rolls_back_its_bounded_prefix_on_resource_need() {
+fn production_batch_keeps_ordinary_prefix_on_resource_need() {
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
     let mut control = MainControl::tex82_initex(&mut stores);
     register_source(&mut control, br"\count0=11 \input child\end");
@@ -4367,11 +4367,15 @@ fn production_batch_rolls_back_its_bounded_prefix_on_resource_need() {
         ),
         "unexpected batch step: {batch_step:?}"
     );
-    assert_eq!(stores.count(0), 0, "the whole bounded prefix rolls back");
+    assert_eq!(
+        stores.count(0),
+        11,
+        "the successful ordinary prefix commits"
+    );
     let suspended = control.advance_telemetry();
     assert_eq!(suspended.rollbacks, 1);
-    assert_eq!(suspended.resource_replayed_delivered_tokens, 2);
-    assert_eq!(suspended.resource_replayed_dispatches, 2);
+    assert_eq!(suspended.resource_replayed_delivered_tokens, 1);
+    assert_eq!(suspended.resource_replayed_dispatches, 1);
 
     control.capabilities_mut().register_input(
         "child.tex",
@@ -4390,9 +4394,43 @@ fn production_batch_rolls_back_its_bounded_prefix_on_resource_need() {
     assert_eq!(stores.count(0), 11);
     let telemetry = control.advance_telemetry();
     assert_eq!(telemetry.rollbacks, 1);
-    assert_eq!(telemetry.resource_replayed_delivered_tokens, 2);
-    assert_eq!(telemetry.resource_replayed_dispatches, 2);
+    assert_eq!(telemetry.resource_replayed_delivered_tokens, 1);
+    assert_eq!(telemetry.resource_replayed_dispatches, 1);
     assert_eq!(telemetry.attempts, telemetry.commits + telemetry.rollbacks);
+}
+
+#[test]
+fn ordinary_assignment_opens_no_aggregate_savepoint() {
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
+    let mut control = MainControl::tex82_initex(&mut stores);
+    register_source(&mut control, br"\count0=11");
+
+    assert_eq!(
+        control.advance(&mut stores).expect("assignment commits"),
+        StepResult::Progress(ReplayStep::Continue)
+    );
+    assert_eq!(stores.count(0), 11);
+    assert_eq!(control.advance_telemetry().attempts, 1);
+    assert_eq!(control.advance_telemetry().commits, 1);
+    assert_eq!(control.advance_telemetry().maximum_live_savepoints, 0);
+}
+
+#[test]
+fn group_entry_local_restore_and_exit_open_no_aggregate_savepoint() {
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
+    let mut control = MainControl::tex82_initex(&mut stores);
+    register_source(&mut control, br"{\count0=11}");
+
+    control.advance(&mut stores).expect("group enters");
+    assert_eq!(stores.group_depth(), 1);
+    control
+        .advance(&mut stores)
+        .expect("local assignment commits");
+    assert_eq!(stores.count(0), 11);
+    control.advance(&mut stores).expect("group exits");
+    assert_eq!(stores.group_depth(), 0);
+    assert_eq!(stores.count(0), 0);
+    assert_eq!(control.advance_telemetry().maximum_live_savepoints, 0);
 }
 
 #[test]

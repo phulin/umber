@@ -244,6 +244,10 @@ pub struct MainControl {
     /// retained outside snapshots so a host protocol no-progress invariant
     /// can still identify the command whose retry failed to advance.
     pending_resource_site: Option<tex_state::provenance::DiagnosticSite>,
+    /// Settled command retained across the legacy resource retry adapter.
+    /// Preflight has already committed its delivery, so retry resumes operand
+    /// scanning without cloning or replaying earlier ordinary commands.
+    pending_preflight_command: Option<PendingPreflightCommand>,
     /// TeX82 §76's `history=fatal_error_stop`, carrying §93/§94/§95's payload.
     ///
     /// `succumb` ends the job through §81's `jump_out`, which a library engine
@@ -693,7 +697,28 @@ type ObservationSlot = Option<ObservationBuffer>;
 /// snapshotting, application, publication, rollback, and evidence are shared.
 enum OperationDelivery {
     Replay(Option<tex_command::CurrentCommand>),
+    Expanding {
+        command: tex_command::CurrentCommand,
+        main_loop: bool,
+    },
     Alignment(AlignmentIdentity),
+    /// Delivery completed during mutation-free capability preflight. The
+    /// semantic step still runs through the sole executor below.
+    Prepared(Box<ScannedStep>),
+}
+
+#[derive(Clone, Debug)]
+enum PendingPreflightCommand {
+    Settled(tex_command::CurrentCommand),
+    Expanding {
+        command: tex_command::CurrentCommand,
+        main_loop: bool,
+    },
+}
+
+struct PreflightDelivery {
+    delivery: OperationDelivery,
+    capabilities: crate::transaction_protocol::CommandCapabilities,
 }
 
 #[derive(Clone, Copy)]
@@ -2629,11 +2654,10 @@ impl MainControl {
     fn episode_commit_boundary(
         &self,
         stores: &Universe,
-        snapshot: &StepSnapshot,
+        retry_root: Option<&StepSnapshot>,
         applied: &Result<ReplayStep, ExecError>,
         operations: usize,
         max_operations: usize,
-        initial_group_depth: u32,
         initial_boundaries: usize,
         initial_effect_pos: tex_state::EffectPos,
         initial_artifacts: usize,
@@ -2693,12 +2717,7 @@ impl MainControl {
                 crate::SemanticEpisodeBarrier::StateIdentity,
             ));
         }
-        if stores.group_depth() != initial_group_depth {
-            return Some(crate::EpisodeCommitBoundary::InternalStop(
-                crate::EpisodeInternalStop::GroupLineage,
-            ));
-        }
-        if !snapshot.can_rollback(stores) {
+        if retry_root.is_some_and(|snapshot| !snapshot.can_rollback(stores)) {
             return Some(crate::EpisodeCommitBoundary::InternalStop(
                 crate::EpisodeInternalStop::RollbackLineage,
             ));
@@ -2706,7 +2725,378 @@ impl MainControl {
         (operations >= max_operations).then_some(crate::EpisodeCommitBoundary::SliceLimit)
     }
 
+    fn command_requires_legacy_retry_adapter(
+        &self,
+        stores: &Universe,
+        capabilities: crate::transaction_protocol::CommandCapabilities,
+        delivery: &OperationDelivery,
+    ) -> bool {
+        if !matches!(
+            capabilities.preflight(),
+            crate::transaction_protocol::CommandPreflight::Ordinary(_)
+        ) {
+            return true;
+        }
+        if capabilities
+            .mutation()
+            .contains(crate::transaction_protocol::StateOwners::PDF)
+            || !capabilities.effects().is_empty()
+            || !capabilities.output().is_empty()
+        {
+            return true;
+        }
+        if matches!(delivery, OperationDelivery::Expanding { .. }) {
+            return true;
+        }
+        // A right brace normally owns only the save stack and group state,
+        // but the brace that packages an active box can also run the page or
+        // explicit-shipout pipeline. That dynamic continuation owns the PDF,
+        // effect, and output capabilities of `\shipout`; .4.3 retains its
+        // late-failure adapter. Braces inside the box remain ordinary because
+        // their innermost save-stack group does not name the box body.
+        if let OperationDelivery::Replay(Some(command)) = delivery
+            && matches!(
+                command.meaning(),
+                Meaning::CharToken {
+                    cat: Catcode::EndGroup,
+                    ..
+                }
+            )
+            && self
+                .boxes
+                .active_boxes
+                .last()
+                .is_some_and(|active| stores.innermost_group_kind() == Some(active.group_kind))
+        {
+            return true;
+        }
+        matches!(
+            delivery,
+            OperationDelivery::Replay(Some(command))
+                if matches!(
+                    command.meaning(),
+                    Meaning::UnexpandablePrimitive(
+                        UnexpandablePrimitive::Global
+                            | UnexpandablePrimitive::Long
+                            | UnexpandablePrimitive::Outer
+                            | UnexpandablePrimitive::Protected
+                            | UnexpandablePrimitive::IgnoreSpaces
+                            | UnexpandablePrimitive::NoBoundary
+                    )
+                )
+        )
+    }
+
+    fn record_direct_episode_commit(
+        &mut self,
+        stores: &mut Universe,
+        operations: usize,
+        boundary: crate::EpisodeCommitBoundary,
+        initial_artifacts: usize,
+        initial_boundaries: usize,
+        initial_effect_pos: tex_state::EffectPos,
+    ) {
+        if matches!(
+            boundary,
+            crate::EpisodeCommitBoundary::NamedCheckpoint(_)
+                | crate::EpisodeCommitBoundary::Terminal
+                | crate::EpisodeCommitBoundary::Semantic(
+                    crate::SemanticEpisodeBarrier::Effect
+                        | crate::SemanticEpisodeBarrier::Observer
+                        | crate::SemanticEpisodeBarrier::Diagnostic
+                        | crate::SemanticEpisodeBarrier::Format
+                        | crate::SemanticEpisodeBarrier::Output
+                        | crate::SemanticEpisodeBarrier::StateIdentity
+                )
+        ) {
+            self.modes.freeze_node_sidecars(stores);
+        }
+        self.episode_telemetry
+            .record_commit(crate::EpisodeCommit::new(
+                operations
+                    .try_into()
+                    .expect("bounded episode operation count fits u16"),
+                boundary,
+            ));
+        if stores.world().artifact_commits().len() != initial_artifacts
+            && boundary
+                != crate::EpisodeCommitBoundary::Semantic(crate::SemanticEpisodeBarrier::Output)
+        {
+            self.episode_telemetry
+                .record_semantic_barrier(crate::SemanticEpisodeBarrier::Output);
+        }
+        if self.completed_boundaries.len() != initial_boundaries
+            && !matches!(boundary, crate::EpisodeCommitBoundary::NamedCheckpoint(_))
+        {
+            self.episode_telemetry
+                .record_semantic_barrier(crate::SemanticEpisodeBarrier::Checkpoint);
+        }
+        if stores.world().effect_pos() != initial_effect_pos
+            && boundary
+                != crate::EpisodeCommitBoundary::Semantic(crate::SemanticEpisodeBarrier::Effect)
+        {
+            self.episode_telemetry
+                .record_semantic_barrier(crate::SemanticEpisodeBarrier::Effect);
+        }
+        self.advance_telemetry.commits += 1;
+    }
+
+    fn finish_direct_failure(
+        &mut self,
+        stores: &mut Universe,
+        error: ExecError,
+        operations: usize,
+        initial_artifacts: usize,
+        initial_boundaries: usize,
+        initial_effect_pos: tex_state::EffectPos,
+    ) -> Result<StepResult, ExecError> {
+        let error =
+            error.freeze_diagnostic_origin(stores, self.command.diagnostic_input_context(8));
+        let Some(fatal) = error.as_fatal() else {
+            return Err(error);
+        };
+        let context = self.command.output_open_context(&stores.command_context());
+        crate::diagnostics::report_irrecoverable_error(stores, fatal, context);
+        self.captured_fatal_origin = match &error {
+            ExecError::Captured { site, frozen, .. } if fatal != FatalError::TooManyErrors => {
+                Some((
+                    site.clone(),
+                    frozen
+                        .as_deref()
+                        .and_then(|evidence| evidence.origin.clone()),
+                    self.first_causal_context.clone().or_else(|| {
+                        frozen
+                            .as_deref()
+                            .and_then(|evidence| evidence.context.clone())
+                    }),
+                ))
+            }
+            _ => None,
+        };
+        self.observe_committed([
+            CommandObservation::Diagnostic(fatal.record()),
+            CommandObservation::Effect(engine_termination_effect()),
+        ]);
+        let evidence_error =
+            self.admit_observed_receipt(stores, OperationTermination::Fatal(fatal));
+        stores.commit_direct_operation();
+        self.record_direct_episode_commit(
+            stores,
+            operations,
+            crate::EpisodeCommitBoundary::Semantic(crate::SemanticEpisodeBarrier::Diagnostic),
+            initial_artifacts,
+            initial_boundaries,
+            initial_effect_pos,
+        );
+        let terminal = self.succumb(fatal);
+        evidence_error.map_or(Ok(StepResult::Progress(terminal)), Err)
+    }
+
+    /// Executes successful ordinary commands directly on canonical state.
+    /// Group entry and exit are ordinary journal/save-stack mutations, so the
+    /// bounded loop deliberately has no group-depth stop and owns no retry
+    /// snapshot. Classified resource/publication/late-failure work is handed
+    /// to the legacy adapter one operation at a time for .4.3 to replace.
+    fn execute_direct_episode(
+        &mut self,
+        stores: &mut Universe,
+        max_operations: usize,
+    ) -> Result<StepResult, ExecError> {
+        let initial_boundaries = self.completed_boundaries.len();
+        let initial_effect_pos = stores.world().effect_pos();
+        let initial_artifacts = stores.world().artifact_commits().len();
+        let initial_format_dump = self.dumped_format.is_some();
+        let initial_diagnostic = self.first_causal_context.is_some();
+        let initial_error_count = stores.world().error_channel().error_count();
+        let mut operations = 0_usize;
+        let mut direct_attempt_recorded = false;
+
+        loop {
+            let preflight = if let Some(command) = self.pending_preflight_command.take() {
+                match command {
+                    PendingPreflightCommand::Settled(command) => PreflightDelivery {
+                        capabilities: crate::transaction_protocol::canonical_command_capabilities(
+                            command.meaning(),
+                        ),
+                        delivery: OperationDelivery::Replay(Some(command)),
+                    },
+                    PendingPreflightCommand::Expanding { command, main_loop } => {
+                        PreflightDelivery {
+                            capabilities:
+                                crate::transaction_protocol::canonical_command_capabilities(
+                                    command.meaning(),
+                                ),
+                            delivery: OperationDelivery::Expanding { command, main_loop },
+                        }
+                    }
+                }
+            } else {
+                let preflight = match self.preflight_replay_delivery(stores) {
+                    Ok(preflight) => preflight,
+                    Err(error) => {
+                        if execution_error_is_fuel(&error) {
+                            self.episode_telemetry
+                                .record_semantic_barrier(crate::SemanticEpisodeBarrier::Fuel);
+                        }
+                        return Err(error);
+                    }
+                };
+                let Some(preflight) = preflight else {
+                    if operations != 0 {
+                        self.record_direct_episode_commit(
+                            stores,
+                            operations,
+                            crate::EpisodeCommitBoundary::SliceLimit,
+                            initial_artifacts,
+                            initial_boundaries,
+                            initial_effect_pos,
+                        );
+                    }
+                    return self.execute_aggregate_operation(
+                        stores,
+                        OperationDelivery::Replay(None),
+                        OperationTransaction::Advance,
+                        1,
+                        None,
+                    );
+                };
+                preflight
+            };
+
+            if self.command_requires_legacy_retry_adapter(
+                stores,
+                preflight.capabilities,
+                &preflight.delivery,
+            ) {
+                if operations != 0 {
+                    self.record_direct_episode_commit(
+                        stores,
+                        operations,
+                        crate::EpisodeCommitBoundary::SliceLimit,
+                        initial_artifacts,
+                        initial_boundaries,
+                        initial_effect_pos,
+                    );
+                }
+                let retry_command = match &preflight.delivery {
+                    OperationDelivery::Replay(Some(command)) => {
+                        Some(PendingPreflightCommand::Settled(command.clone()))
+                    }
+                    OperationDelivery::Expanding { command, main_loop } => {
+                        Some(PendingPreflightCommand::Expanding {
+                            command: command.clone(),
+                            main_loop: *main_loop,
+                        })
+                    }
+                    OperationDelivery::Replay(None)
+                    | OperationDelivery::Alignment(_)
+                    | OperationDelivery::Prepared(_) => None,
+                };
+                let result = self.execute_aggregate_operation(
+                    stores,
+                    preflight.delivery,
+                    OperationTransaction::Advance,
+                    1,
+                    None,
+                );
+                let retryable_failure = match &result {
+                    Err(error) => {
+                        let preserves_xform_reservation =
+                            matches!(error, ExecError::PdfXFormVoidBox)
+                                || matches!(
+                                    error,
+                                    ExecError::Captured { error, .. }
+                                        if matches!(error.as_ref(), ExecError::PdfXFormVoidBox)
+                                );
+                        error.as_fatal().is_none() && !preserves_xform_reservation
+                    }
+                    Ok(_) => false,
+                };
+                if matches!(result, Ok(StepResult::Suspended(_))) || retryable_failure {
+                    self.pending_preflight_command = retry_command;
+                }
+                return result;
+            }
+
+            if !direct_attempt_recorded {
+                self.episode_telemetry.record_attempt();
+                self.advance_telemetry.attempts += 1;
+                direct_attempt_recorded = true;
+            }
+            stores.begin_direct_operation();
+            let applied = self.apply_operation(stores, preflight.delivery);
+            operations += 1;
+            self.record_save_stack_usage(stores);
+            let boundary = self.episode_commit_boundary(
+                stores,
+                None,
+                &applied,
+                operations,
+                max_operations,
+                initial_boundaries,
+                initial_effect_pos,
+                initial_artifacts,
+                initial_format_dump,
+                initial_diagnostic,
+                initial_error_count,
+                false,
+            );
+            let step = match applied {
+                Ok(step) => step,
+                Err(error) => {
+                    return self.finish_direct_failure(
+                        stores,
+                        error,
+                        operations,
+                        initial_artifacts,
+                        initial_boundaries,
+                        initial_effect_pos,
+                    );
+                }
+            };
+            stores.commit_direct_operation();
+            if let Some(boundary) = boundary {
+                self.record_direct_episode_commit(
+                    stores,
+                    operations,
+                    boundary,
+                    initial_artifacts,
+                    initial_boundaries,
+                    initial_effect_pos,
+                );
+                return Ok(StepResult::Progress(step));
+            }
+        }
+    }
+
     fn execute_operation(
+        &mut self,
+        stores: &mut Universe,
+        delivery: OperationDelivery,
+        transaction: OperationTransaction,
+        max_operations: usize,
+        tracked_region: Option<&mut Option<Result<TrackedRegionRecord, TrackedRegionError>>>,
+    ) -> Result<StepResult, ExecError> {
+        if matches!(transaction, OperationTransaction::Advance)
+            && matches!(&delivery, OperationDelivery::Replay(None))
+            && tracked_region.is_none()
+            && self.operation_observations.is_none()
+            && !stores.world().error_channel().has_pending_recovery()
+            && stores.direct_operation_supported()
+        {
+            self.execute_direct_episode(stores, max_operations)
+        } else {
+            self.execute_aggregate_operation(
+                stores,
+                delivery,
+                transaction,
+                max_operations,
+                tracked_region,
+            )
+        }
+    }
+
+    fn execute_aggregate_operation(
         &mut self,
         stores: &mut Universe,
         delivery: OperationDelivery,
@@ -2765,7 +3155,6 @@ impl MainControl {
             && matches!(transaction, OperationTransaction::Advance)
             && tracked_region.is_none()
             && self.operation_observations.is_none();
-        let initial_group_depth = stores.group_depth();
         let initial_boundaries = self.completed_boundaries.len();
         let initial_effect_pos = stores.world().effect_pos();
         let initial_artifacts = stores.world().artifact_commits().len();
@@ -2785,11 +3174,10 @@ impl MainControl {
             self.record_save_stack_usage(stores);
             let boundary = self.episode_commit_boundary(
                 stores,
-                &snapshot,
+                Some(&snapshot),
                 &applied,
                 operations,
                 max_operations,
-                initial_group_depth,
                 initial_boundaries,
                 initial_effect_pos,
                 initial_artifacts,
@@ -4815,6 +5203,150 @@ impl MainControl {
         })
     }
 
+    /// Delivers the next settled command before choosing rollback authority.
+    ///
+    /// This is deliberately narrower than scanning: expanded delivery and
+    /// command tracing mutate only the command/input machine, while operand
+    /// scanning and semantic application begin after the returned static
+    /// capability has selected direct execution or the legacy retry adapter.
+    /// Alignment-owned scanner phases retain that adapter until their narrow
+    /// transaction migration in the next child issue.
+    fn preflight_replay_delivery(
+        &mut self,
+        stores: &mut Universe,
+    ) -> Result<Option<PreflightDelivery>, ExecError> {
+        let mode = self.modes.current_mode();
+        if alignment_preamble(self.active_alignment.as_mut()).is_some()
+            || (mode == Mode::DisplayMath && self.modes.current_list().has_display_alignment())
+        {
+            return Ok(None);
+        }
+
+        if self.enter_main_control(stores) {
+            let entry_records: Vec<CommandObservation> = self
+                .command
+                .publish_named_token_list_pushes(&mut stores.command_context())
+                .into_iter()
+                .map(CommandObservation::Input)
+                .collect();
+            self.observe_committed(entry_records);
+        }
+        self.drain_file_framing_events(stores);
+        self.refresh_host_capabilities(stores);
+
+        let mut diagnostics = Vec::new();
+        let delivery = {
+            let mut processor = command_processor(
+                &mut self.command,
+                self.fuel.fuel_mut(),
+                &mut self.capabilities,
+                &mut self.operation_observations,
+                stores,
+            );
+            let delivery = processor
+                .get_next_with_replay_completion()
+                .map_err(command_error)?;
+            diagnostics.extend(
+                processor
+                    .take_semantic_diagnostics()
+                    .into_iter()
+                    .map(PendingDiagnostic::Command),
+            );
+            delivery
+        };
+        self.capture_first_causal_context(stores, &diagnostics);
+        report_pending_diagnostics(stores, diagnostics)?;
+        self.drain_file_framing_events(stores);
+
+        let passive =
+            || crate::transaction_protocol::canonical_command_capabilities(Meaning::Relax);
+        let Some(delivery) = delivery else {
+            return Ok(Some(PreflightDelivery {
+                delivery: OperationDelivery::Prepared(Box::new(ScannedStep::EndOfInput)),
+                capabilities: passive(),
+            }));
+        };
+        let tex_command::CommandReplayDelivery::Command(command) = delivery else {
+            let tex_command::CommandReplayDelivery::Completed(episode) = delivery else {
+                unreachable!();
+            };
+            return Ok(Some(PreflightDelivery {
+                delivery: OperationDelivery::Prepared(Box::new(ScannedStep::ReplayCompleted(
+                    episode,
+                ))),
+                capabilities: passive(),
+            }));
+        };
+
+        if matches!(
+            command.meaning(),
+            Meaning::Macro { .. }
+                | Meaning::ExpandablePrimitive(_)
+                | Meaning::Undefined
+                | Meaning::Unknown(_)
+        ) {
+            let capabilities =
+                crate::transaction_protocol::canonical_command_capabilities(command.meaning());
+            return Ok(Some(PreflightDelivery {
+                delivery: OperationDelivery::Expanding {
+                    command,
+                    main_loop: self.main_loop_active,
+                },
+                capabilities,
+            }));
+        }
+
+        let continues_main_loop = self.main_loop_active
+            && matches!(
+                command.meaning(),
+                Meaning::CharToken {
+                    cat: Catcode::Letter | Catcode::Other,
+                    ..
+                } | Meaning::CharGiven(_)
+                    | Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Char)
+            );
+        if !continues_main_loop {
+            let mut processor = command_processor(
+                &mut self.command,
+                self.fuel.fuel_mut(),
+                &mut self.capabilities,
+                &mut self.operation_observations,
+                stores,
+            );
+            prepare_command_trace(&mut processor, mode, self.shown_mode);
+            report_main_control_command_trace(
+                &mut processor,
+                mode,
+                &command,
+                &self.boxes,
+                &mut self.shown_mode,
+            );
+        }
+
+        if self.main_loop_active
+            && matches!(mode, Mode::Horizontal | Mode::RestrictedHorizontal)
+            && matches!(
+                command.meaning(),
+                Meaning::UnexpandablePrimitive(UnexpandablePrimitive::NoBoundary)
+            )
+        {
+            return Ok(Some(PreflightDelivery {
+                delivery: OperationDelivery::Prepared(Box::new(ScannedStep::NoBoundary {
+                    suppress_right: true,
+                })),
+                capabilities: crate::transaction_protocol::canonical_command_capabilities(
+                    command.meaning(),
+                ),
+            }));
+        }
+        let capabilities =
+            crate::transaction_protocol::canonical_command_capabilities(command.meaning());
+        Ok(Some(PreflightDelivery {
+            delivery: OperationDelivery::Replay(Some(command)),
+            capabilities,
+        }))
+    }
+
     /// Returns the effect cursor immediately before final-cleanup framing.
     #[must_use]
     pub const fn job_body_effect_end(&self) -> Option<tex_state::EffectPos> {
@@ -4902,19 +5434,22 @@ impl MainControl {
                 && mode == Mode::DisplayMath
                 && self.modes.current_list().has_display_alignment();
             let scanned = match delivery {
-                OperationDelivery::Replay(Some(command)) => dispatch_main_control_command(
-                    &mut processor,
-                    command,
-                    mode,
-                    &self.boxes,
-                    innermost_group,
-                    job_is_all_over,
-                    self.modes.current_list().display_eq_no().is_some(),
-                    &mut self.shown_mode,
-                    &mut diagnostics,
-                    None,
-                    self.set_box_forbidden_depth == 0,
-                )?,
+                OperationDelivery::Replay(Some(command)) => {
+                    processor.resume_current_command(&command);
+                    dispatch_main_control_command(
+                        &mut processor,
+                        command,
+                        mode,
+                        &self.boxes,
+                        innermost_group,
+                        job_is_all_over,
+                        self.modes.current_list().display_eq_no().is_some(),
+                        &mut self.shown_mode,
+                        &mut diagnostics,
+                        None,
+                        self.set_box_forbidden_depth == 0,
+                    )?
+                }
                 OperationDelivery::Replay(None) if display_alignment_tail => match processor
                     .next_do_assignments_command()
                     .map_err(command_error)?
@@ -4963,6 +5498,21 @@ impl MainControl {
                     &mut self.shown_mode,
                     &mut diagnostics,
                 )?,
+                OperationDelivery::Expanding { command, main_loop } => {
+                    prepare_command_trace(&mut processor, mode, self.shown_mode);
+                    settle_preflight_step(
+                        &mut processor,
+                        command,
+                        main_loop,
+                        mode,
+                        &self.boxes,
+                        innermost_group,
+                        job_is_all_over,
+                        self.modes.current_list().display_eq_no().is_some(),
+                        &mut self.shown_mode,
+                        &mut diagnostics,
+                    )?
+                }
                 OperationDelivery::Alignment(alignment) => scan_alignment_delivery_step(
                     &mut processor,
                     alignment,
@@ -4974,6 +5524,7 @@ impl MainControl {
                     &mut self.shown_mode,
                     &mut diagnostics,
                 )?,
+                OperationDelivery::Prepared(scanned) => *scanned,
             };
             diagnostics.extend(
                 processor
@@ -7276,6 +7827,69 @@ fn scan_alignment_delivery_event(
             Ok(ScannedStep::MissingAlignmentCr)
         }
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn settle_preflight_step(
+    processor: &mut CommandProcessor<'_>,
+    command: tex_command::CurrentCommand,
+    main_loop: bool,
+    mode: Mode,
+    boxes: &ReplayBoxes,
+    innermost_group: Option<GroupKind>,
+    job_is_all_over: bool,
+    display_eq_no: bool,
+    shown_mode: &mut Option<Mode>,
+    diagnostics: &mut Vec<PendingDiagnostic>,
+) -> Result<ScannedStep, ExecError> {
+    let delivery = processor
+        .settle_preflight_command(command, main_loop)
+        .map_err(command_error)?;
+    let Some(delivery) = delivery else {
+        return Ok(ScannedStep::EndOfInput);
+    };
+    let tex_command::CommandReplayDelivery::Command(command) = delivery else {
+        let tex_command::CommandReplayDelivery::Completed(episode) = delivery else {
+            unreachable!();
+        };
+        return Ok(ScannedStep::ReplayCompleted(episode));
+    };
+    let continues_main_loop = main_loop
+        && matches!(
+            command.meaning(),
+            Meaning::CharToken {
+                cat: Catcode::Letter | Catcode::Other,
+                ..
+            } | Meaning::CharGiven(_)
+                | Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Char)
+        );
+    if !continues_main_loop {
+        report_main_control_command_trace(processor, mode, &command, boxes, shown_mode);
+    }
+    if main_loop
+        && matches!(mode, Mode::Horizontal | Mode::RestrictedHorizontal)
+        && matches!(
+            command.meaning(),
+            Meaning::UnexpandablePrimitive(UnexpandablePrimitive::NoBoundary)
+        )
+    {
+        return Ok(ScannedStep::NoBoundary {
+            suppress_right: true,
+        });
+    }
+    dispatch_main_control_command(
+        processor,
+        command,
+        mode,
+        boxes,
+        innermost_group,
+        job_is_all_over,
+        display_eq_no,
+        shown_mode,
+        diagnostics,
+        None,
+        true,
+    )
 }
 
 #[allow(clippy::too_many_arguments)] // carries command-owned replay facts

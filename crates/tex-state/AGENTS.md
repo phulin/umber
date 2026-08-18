@@ -177,7 +177,9 @@ All production mutation of live TeX state should pass through `Universe` or simi
   env, token, provenance, glue, font, input, and rollback/shipout scope state;
   node lifetimes remain entirely in the structural `NodeListRef` fields of
   those aggregates, while the derived TeX82 memory projection survives
-  unchanged operation boundaries and follows canonical root mutations.
+  unchanged operation boundaries and follows canonical root mutations. Its
+  direct-operation admission/commit advances the environment first-write
+  epoch and node watermark without creating an aggregate snapshot.
 - `src/stores/handles.rs`: Store-boundary liveness checks for symbols, token lists, origins, glue, fonts, macros, and node handles.
 - `src/stores/low_memory.rs`: Compact TeX variable-size free-ring and rover projection.
 - `src/stores/exact_identity.rs`: Commutative current-cell accumulator and constant-size rollback image for canonical identities of non-default environment cells.
@@ -210,7 +212,8 @@ All production mutation of live TeX state should pass through `Universe` or simi
   primitive-registry sidecar, immutable provenance demand/budgets, direct
   artifact-root resolution, and the input-open capability context. Restoration traces resolve
   named parameters through the installed primitive registry rather than a
-  state-local spelling table.
+  state-local spelling table. It also admits snapshot-free direct-operation
+  commit only outside private revision allocation domains.
 - `src/universe/tests.rs`: Unit tests for `Universe` mutation, snapshots, contexts, effects, and boundary behavior.
 - `src/world.rs`: External-effect boundary for files, atomic downstream
   file-set publication, streams, clocks, randomness, shell policy, printing,

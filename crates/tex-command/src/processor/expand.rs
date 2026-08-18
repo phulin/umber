@@ -555,6 +555,43 @@ impl CommandProcessor<'_> {
         }))
     }
 
+    /// Settles a raw command retained by the executor's capability preflight.
+    ///
+    /// This is TeX82's `x_token` entry with `cur_cmd` already set. It neither
+    /// backs up nor redelivers the retained token. `main_loop` selects §1038's
+    /// character fast-path policy for the first command only.
+    pub fn settle_preflight_command(
+        &mut self,
+        command: CurrentCommand,
+        main_loop: bool,
+    ) -> Result<Option<CommandReplayDelivery>, CommandError> {
+        self.apply_error_stop_recovery()?;
+        let result = self.delivery_driver(
+            Some(command),
+            DeliveryPolicy {
+                mode: DeliveryMode::Expanded(ExpandedDeliveryPolicy {
+                    fetch: ExpandedFetch::XToken,
+                    protected_macros: ProtectedMacroHandling::Expand,
+                    undefined: UndefinedHandling::Diagnose,
+                    observation: ExpandedObservationPolicy::Commit,
+                    first_command: if main_loop {
+                        FirstCommandPolicy::MainLoopCharacter
+                    } else {
+                        FirstCommandPolicy::Ordinary
+                    },
+                }),
+                replay_completion: ReplayCompletionPolicy::Surface,
+                control_sequence_creation: ControlSequenceCreation::Forbid,
+                alignment_interception: AlignmentInterceptionPolicy::Scalar,
+            },
+        )?;
+        Ok(result.map(|event| match event {
+            DeliveryEvent::Command(command) => CommandReplayDelivery::Command(command),
+            DeliveryEvent::ReplayCompleted(episode) => CommandReplayDelivery::Completed(episode),
+            _ => unreachable!("preflight settlement has no alignment event"),
+        }))
+    }
+
     /// Delivers one command through TeX82 §1038's `main_loop_lookahead`.
     ///
     /// `main_control`'s inner character loop (§1034) never returns to

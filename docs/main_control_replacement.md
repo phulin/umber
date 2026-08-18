@@ -48,9 +48,9 @@ merges.
 
 ## Why replacement is necessary
 
-The current `advance_episode` amortizes one aggregate savepoint across up to
-256 scalar operations. It does not change the representations inside the
-loop. One ordinary operation still:
+Before the ordinary-command cutover, `advance_episode` amortized one aggregate
+savepoint across up to 256 scalar operations. It did not change the
+representations inside the loop. One ordinary operation still:
 
 1. constructs a command-processor borrow;
 2. delivers a rich traced token and resolves owned meaning/provenance values;
@@ -63,8 +63,8 @@ loop. One ordinary operation still:
 `CommandState::snapshot` clones the full rich command state. Token and macro
 values use fine-grained strong owners and weak exact indexes. `CurrentCommand`
 contains an owned origin, source metadata, resolved meaning, delivery identity,
-and alignment state. A group-depth change ends the current episode because the
-aggregate retry root cannot span the consumed group lineage.
+and alignment state. A group-depth change ended the episode because the
+aggregate retry root could not span the consumed group lineage.
 
 This is safe and semantically explicit, but it prevents the compiler from
 keeping the actual TeX machine in registers and cache. It also makes optional
@@ -414,6 +414,26 @@ node, and provenance arena watermarks they can change. Admission rejects any
 missing, extra, or foreign owner/mark projection. The protocol is copy-only and
 allocates nothing; command-family migration onto those marks belongs to
 `umber2-awgc.4.2` and `umber2-awgc.4.3`.
+
+The ordinary/group cutover is now active in `MainControl`. Raw delivery first
+settles a command and applies the exhaustive capability record before operand
+scanning. Successful ordinary assignments, material commands, and group entry
+or exit mutate canonical state directly: they create neither `StepSnapshot`
+nor `CommandStateSnapshot`. Their admission advances the compact environment
+write epoch and commit advances the node-operation watermark; TeX's save stack remains the sole
+owner of local/global group restoration. Group depth is no longer an episode
+stop, so one bounded episode may enter, mutate inside, and leave nested groups.
+
+Commands whose raw spelling still requires expansion or prefix/reswitch
+settlement, resource acquisition, PDF/effect/output publication, ErrorStop
+input recovery, or private-revision allocation use the existing one-operation
+aggregate adapter. The adapter retains only that preflighted command across
+retry, so an earlier separately dispatched ordinary command is not replayed or
+rolled back. A box-body closing brace is dynamically promoted to this adapter:
+although the token is a group transition, packaging that box may run the page
+builder or complete an explicit shipout and therefore inherits its output and
+late-failure authority. Replacing those remaining aggregate roots with exact
+narrow marks belongs to `umber2-awgc.4.3`.
 
 ### Durable checkpoints
 
