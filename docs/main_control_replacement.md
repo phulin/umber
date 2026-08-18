@@ -309,15 +309,31 @@ frame; its copy-only owner identity is the sole live level identity, and its
 32-bit current offset is the sole token-level cursor. Source levels retain the
 existing exact 64-bit byte/scalar/line cursor as their cold physical sidecar;
 the frame's current offset is only a delivered-token count and is normalized
-when unchanged future state converges across comment edits. Centralized level
-admission converts file-adjacent stored replay, backup/noexpand, alignment
-templates, inserted recovery, and every-hook payloads to chunk-owned packed
-traced words. Backup keeps physical source coordinates in a sparse cold
-sidecar, so ordinary word delivery does not construct diagnostic ranges.
-Resource suspension detaches handle-free words and coordinates, and resume
-admits fresh input, macro, argument, and invocation chunks at the exact
+when unchanged future state converges across comment edits. Token-level
+factories construct chunk-owned packed traced words directly for stored replay,
+backup/noexpand, alignment templates, inserted recovery, and every-hook
+payloads. Production `TokenPayload` has only packed, macro-replacement, and
+argument-range representations; no parallel rich token owner survives level
+construction or admission. Backup keeps physical source coordinates in a
+sparse cold sidecar, so ordinary word delivery does not construct diagnostic
+ranges. Resource suspension detaches handle-free words and coordinates, and
+resume admits fresh input, macro, argument, and invocation chunks at the exact
 portable cursors. Runtime chunk identities never enter the continuation or
-schema-11 format DTOs. Transaction marks remain for `umber2-awgc.4.2`.
+schema-11 format DTOs. Live macro meaning and diagnostic reads use the existing
+environment root and admitted macro owner; only cold detached or stale APIs
+repeat identity validation. Transaction marks remain for `umber2-awgc.4.2`.
+
+The packed cutover itself has an assertion-bearing warmed gate for ordinary
+source delivery, packed backup/replay, stored replay, and macro matching,
+argument replay, and expansion. All four rows require exactly zero allocation,
+requested bytes, `Arc` and weak retains, weak upgrades, weak-index work, exact
+comparisons, and content hashes. The structural gate passes, but promotion is
+blocked by `umber2-awgc.12`: the immutable 12,000,000-fuel arXiv prefix retains
+the exact frame-step boundary while its other command-work counters differ
+from the frozen census after the direct-operation transaction cutover. The
+audit and exact vectors are published in
+[`umber2-awgc.3.4`](writeback/umber2-awgc.3.4.md); neither `.3.4` nor `.3` is
+accepted on tracer cleanliness alone.
 
 Arena accounting uses two deliberately separate measures. _Logical values_
 and _logical value bytes_ count only live initialized elements and

@@ -1690,16 +1690,19 @@ retain their exact values, with disjoint source, `everyeof`, and Umber replay
 kinds. Flags represent noexpand suppression, terminal-stop retirement, and
 retained v-template retirement independently of storage.
 
-`CommandState::push_token_level` is the single live admission boundary. It
-converts transient insertions, backup/noexpand levels, alignment templates,
-stored every-hooks, output replay, and other source-adjacent replay into a
-`PackedTokenChunk`. Packed traced words are position-aligned and retain sparse
-structural roots once per chunk. Backed-up physical source coordinates occupy a
-cold inline-small sidecar and are materialized only for diagnostic rendering.
-The former rich transient/inline/backup payloads may be used only as private
-pre-admission values; they cannot survive in a canonical live level. Macro
-replacement and argument-range payloads likewise contain only admitted chunk
-and span coordinates; they carry no shared token buffer.
+`CommandState::push_token_level` is the single live admission boundary. Token
+factories directly construct a `PackedTokenChunk` for transient insertions,
+backup/noexpand levels, alignment templates, stored every-hooks, output replay,
+and other source-adjacent replay. Packed traced words are position-aligned and
+retain sparse structural roots once per chunk. Backed-up physical source
+coordinates occupy a cold inline-small sidecar and are materialized only for
+diagnostic rendering. Production `TokenPayload` is exhaustively packed,
+macro-replacement, or argument-range; the former rich stored, transient,
+inline, backup, and shared-buffer owners have no production representation.
+Tests may stage a rooted rich buffer to exercise pre-admission compatibility,
+but it is compiled out of runtime ownership. Macro replacement and
+argument-range payloads likewise contain only admitted chunk and span
+coordinates; they carry no shared token buffer.
 
 Detached resource continuations deliberately do not serialize a runtime frame
 or arena coordinate. Detachment projects packed words, backup coordinates,
@@ -1719,13 +1722,20 @@ coordinates. `InputLevelId` is typed separately from source identity and is
 present on both source and token levels. Exact-byte and Unicode source cursors
 use this identical enum.
 
-The centralized transient and backed-up constructors still avoid caller-side
-staging for fixed insertions, but level admission immediately moves their words
-into the packed chunk and releases superseded shared payload ownership. e-TeX's
-optimized `\aftergroup` prepend extends the same packed backup chunk while
-preserving save order and its compact frame identity. Snapshot normalization,
-durable continuation remapping, origin adoption, and edited-source rehoming
-treat the packed representation as the canonical semantic payload.
+An executing macro resolves its generation-safe meaning identifier through the
+strong environment root already held for that meaning, without cloning the
+root or upgrading a weak entry. Diagnostic parameter/replacement context is
+rendered from the admitted packed macro owner, so retirement of the original
+definition-store entry cannot invalidate an active input level. General cold
+and stale lookup APIs retain their validation and rejection behavior.
+
+The centralized transient and backed-up constructors avoid caller-side rich
+staging for fixed insertions and create the packed chunk as the canonical
+payload. e-TeX's optimized `\aftergroup` prepend extends the same packed backup
+chunk while preserving save order and its compact frame identity. Snapshot
+normalization, durable continuation remapping, origin adoption, and
+edited-source rehoming treat the packed representation as the canonical
+semantic payload.
 
 `EveryPar`, `EveryHBox`, `EveryVBox`, `EveryJob`, `EveryCr`, `Mark`,
 `OutputRoutine`, and similar explanations belong in `ReplayTrace` unless they
