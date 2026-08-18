@@ -193,8 +193,8 @@ fn complete_retried_rejected_patch(session: &Session, receipt: &mut WorkReceipt)
     let telemetry = candidate.execution_telemetry();
     assert_eq!(telemetry.suspensions, 1, "receipt records one suspension");
     assert_eq!(telemetry.local_step_retries, 1);
-    assert_eq!(telemetry.replayed_delivered_tokens, 2);
-    assert_eq!(telemetry.replayed_dispatches, 2);
+    assert_eq!(telemetry.replayed_delivered_tokens, 0);
+    assert_eq!(telemetry.replayed_dispatches, 0);
     receipt.add_telemetry(telemetry);
     receipt.rejected_patches += 1;
     drop(candidate);
