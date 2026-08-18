@@ -127,6 +127,11 @@ impl EpisodeTelemetry {
     }
 
     pub(crate) fn record_commit(&mut self, commit: EpisodeCommit) {
+        #[cfg(feature = "profiling")]
+        tex_state::measurement::record_hot_core_episode(
+            usize::from(commit.operations),
+            hot_core_commit_reason(commit.boundary),
+        );
         self.commits = self.commits.saturating_add(1);
         self.operations = self.operations.saturating_add(u64::from(commit.operations));
         match commit.boundary {
@@ -150,6 +155,17 @@ impl EpisodeTelemetry {
         self.last_commit = Some(commit);
     }
 
+    #[cfg(feature = "profiling")]
+    pub(crate) fn record_rollback(&mut self, barrier: SemanticEpisodeBarrier, operations: usize) {
+        tex_state::measurement::record_hot_core_episode(
+            operations,
+            hot_core_rollback_reason(barrier),
+        );
+        self.rollbacks = self.rollbacks.saturating_add(1);
+        self.record_semantic_barrier(barrier);
+    }
+
+    #[cfg(not(feature = "profiling"))]
     pub(crate) fn record_rollback(&mut self, barrier: SemanticEpisodeBarrier) {
         self.rollbacks = self.rollbacks.saturating_add(1);
         self.record_semantic_barrier(barrier);
@@ -203,6 +219,57 @@ impl EpisodeTelemetry {
     #[must_use]
     pub const fn last_commit(self) -> Option<EpisodeCommit> {
         self.last_commit
+    }
+}
+
+#[cfg(feature = "profiling")]
+fn hot_core_commit_reason(
+    boundary: EpisodeCommitBoundary,
+) -> tex_state::measurement::HotCoreStopReason {
+    use tex_state::measurement::HotCoreStopReason as Reason;
+
+    match boundary {
+        EpisodeCommitBoundary::SliceLimit => Reason::SliceLimit,
+        EpisodeCommitBoundary::Semantic(barrier) => match barrier {
+            SemanticEpisodeBarrier::Resource => Reason::SemanticResource,
+            SemanticEpisodeBarrier::Effect => Reason::SemanticEffect,
+            SemanticEpisodeBarrier::Observer => Reason::SemanticObserver,
+            SemanticEpisodeBarrier::Diagnostic => Reason::SemanticDiagnostic,
+            SemanticEpisodeBarrier::Checkpoint => Reason::SemanticCheckpoint,
+            SemanticEpisodeBarrier::Format => Reason::SemanticFormat,
+            SemanticEpisodeBarrier::Output => Reason::SemanticOutput,
+            SemanticEpisodeBarrier::Cancellation => Reason::SemanticCancellation,
+            SemanticEpisodeBarrier::Fuel => Reason::SemanticFuel,
+            SemanticEpisodeBarrier::StateIdentity => Reason::SemanticStateIdentity,
+        },
+        EpisodeCommitBoundary::NamedCheckpoint(_) => Reason::NamedCheckpoint,
+        EpisodeCommitBoundary::Terminal => Reason::Terminal,
+        EpisodeCommitBoundary::InternalStop(EpisodeInternalStop::GroupLineage) => {
+            Reason::InternalGroupLineage
+        }
+        EpisodeCommitBoundary::InternalStop(EpisodeInternalStop::RollbackLineage) => {
+            Reason::InternalRollbackLineage
+        }
+    }
+}
+
+#[cfg(feature = "profiling")]
+fn hot_core_rollback_reason(
+    barrier: SemanticEpisodeBarrier,
+) -> tex_state::measurement::HotCoreStopReason {
+    use tex_state::measurement::HotCoreStopReason as Reason;
+
+    match barrier {
+        SemanticEpisodeBarrier::Resource => Reason::RollbackResource,
+        SemanticEpisodeBarrier::Fuel => Reason::RollbackFuel,
+        SemanticEpisodeBarrier::Diagnostic => Reason::RollbackDiagnostic,
+        SemanticEpisodeBarrier::Effect
+        | SemanticEpisodeBarrier::Observer
+        | SemanticEpisodeBarrier::Checkpoint
+        | SemanticEpisodeBarrier::Format
+        | SemanticEpisodeBarrier::Output
+        | SemanticEpisodeBarrier::Cancellation
+        | SemanticEpisodeBarrier::StateIdentity => Reason::RollbackDiagnostic,
     }
 }
 

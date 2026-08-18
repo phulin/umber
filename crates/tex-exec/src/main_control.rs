@@ -566,8 +566,32 @@ impl StepSnapshot {
     fn capture(control: &mut MainControl, stores: &mut Universe) -> Self {
         #[cfg(feature = "profiling")]
         let started = std::time::Instant::now();
+        #[cfg(feature = "profiling")]
+        tex_state::measurement::record_hot_core_phase(
+            tex_state::measurement::HotCorePhase::StepSnapshot,
+        );
+        #[cfg(feature = "profiling")]
+        let _snapshot_allocations = tex_state::measurement::hot_core_allocation_scope(
+            tex_state::measurement::HotCoreAllocationOwner::StepSnapshotClone,
+        );
+        let command = {
+            #[cfg(feature = "profiling")]
+            let command_started = std::time::Instant::now();
+            #[cfg(feature = "profiling")]
+            let _command_allocations = tex_state::measurement::hot_core_allocation_scope(
+                tex_state::measurement::HotCoreAllocationOwner::CommandStateClone,
+            );
+            let command = control.command.snapshot();
+            #[cfg(feature = "profiling")]
+            tex_state::measurement::record_hot_core_snapshot_clone(
+                true,
+                command_started.elapsed(),
+                std::mem::size_of::<CommandStateSnapshot>(),
+            );
+            command
+        };
         let snapshot = Self {
-            command: control.command.snapshot(),
+            command,
             mode_savepoint: control.modes.begin_journal(),
             next_alignment_identity: control.next_alignment_identity,
             active_alignment: control.active_alignment.clone(),
@@ -590,6 +614,12 @@ impl StepSnapshot {
         };
         #[cfg(feature = "profiling")]
         crate::step_snapshot_measurement::record_step_snapshot(
+            started.elapsed(),
+            std::mem::size_of::<Self>(),
+        );
+        #[cfg(feature = "profiling")]
+        tex_state::measurement::record_hot_core_snapshot_clone(
+            false,
             started.elapsed(),
             std::mem::size_of::<Self>(),
         );
@@ -2285,6 +2315,14 @@ impl MainControl {
             || (stores.page_fire_up().is_some() && !self.boxes.output_routine_active);
         self.fire_pending_page_output(stores)?;
         {
+            #[cfg(feature = "profiling")]
+            tex_state::measurement::record_hot_core_phase(
+                tex_state::measurement::HotCorePhase::EvidencePublication,
+            );
+            #[cfg(feature = "profiling")]
+            let _allocation_scope = tex_state::measurement::hot_core_allocation_scope(
+                tex_state::measurement::HotCoreAllocationOwner::EvidencePublication,
+            );
             // Host-owned transitions are still complete main-control steps.
             // In particular, §1145's display-math `init_math` installs
             // `every_display` here, and §323 traces that list before the next
@@ -2604,6 +2642,10 @@ impl MainControl {
         initial_error_count: i32,
         tracked: bool,
     ) -> Option<crate::EpisodeCommitBoundary> {
+        #[cfg(feature = "profiling")]
+        tex_state::measurement::record_hot_core_phase(
+            tex_state::measurement::HotCorePhase::BarrierDecision,
+        );
         if applied.is_err() {
             return None;
         }
@@ -2873,6 +2915,9 @@ impl MainControl {
                     } else {
                         crate::SemanticEpisodeBarrier::Diagnostic
                     };
+                    #[cfg(feature = "profiling")]
+                    self.episode_telemetry.record_rollback(barrier, operations);
+                    #[cfg(not(feature = "profiling"))]
                     self.episode_telemetry.record_rollback(barrier);
                 }
                 Err(error)
@@ -2954,15 +2999,30 @@ impl MainControl {
                 let fuel_failure = execution_error_is_fuel(&error);
                 let mut result = self.finish_failed_step(snapshot, stores, error);
                 match &result {
-                    Ok(StepResult::Suspended(_)) => self
-                        .episode_telemetry
-                        .record_rollback(crate::SemanticEpisodeBarrier::Resource),
-                    Err(_) if fuel_failure => self
-                        .episode_telemetry
-                        .record_rollback(crate::SemanticEpisodeBarrier::Fuel),
-                    Err(_) if rolled_back => self
-                        .episode_telemetry
-                        .record_rollback(crate::SemanticEpisodeBarrier::Diagnostic),
+                    Ok(StepResult::Suspended(_)) => {
+                        #[cfg(feature = "profiling")]
+                        self.episode_telemetry
+                            .record_rollback(crate::SemanticEpisodeBarrier::Resource, operations);
+                        #[cfg(not(feature = "profiling"))]
+                        self.episode_telemetry
+                            .record_rollback(crate::SemanticEpisodeBarrier::Resource);
+                    }
+                    Err(_) if fuel_failure => {
+                        #[cfg(feature = "profiling")]
+                        self.episode_telemetry
+                            .record_rollback(crate::SemanticEpisodeBarrier::Fuel, operations);
+                        #[cfg(not(feature = "profiling"))]
+                        self.episode_telemetry
+                            .record_rollback(crate::SemanticEpisodeBarrier::Fuel);
+                    }
+                    Err(_) if rolled_back => {
+                        #[cfg(feature = "profiling")]
+                        self.episode_telemetry
+                            .record_rollback(crate::SemanticEpisodeBarrier::Diagnostic, operations);
+                        #[cfg(not(feature = "profiling"))]
+                        self.episode_telemetry
+                            .record_rollback(crate::SemanticEpisodeBarrier::Diagnostic);
+                    }
                     Err(_) | Ok(StepResult::Progress(_)) => {
                         self.episode_telemetry
                             .record_commit(crate::EpisodeCommit::new(
@@ -4823,6 +4883,14 @@ impl MainControl {
         let job_is_all_over = crate::page_output::job_is_all_over(stores);
         let mut diagnostics = Vec::new();
         let scanned = {
+            #[cfg(feature = "profiling")]
+            tex_state::measurement::record_hot_core_phase(
+                tex_state::measurement::HotCorePhase::DeliveryAndScan,
+            );
+            #[cfg(feature = "profiling")]
+            let _allocation_scope = tex_state::measurement::hot_core_allocation_scope(
+                tex_state::measurement::HotCoreAllocationOwner::DeliveryAndScan,
+            );
             let mut processor = command_processor(
                 &mut self.command,
                 self.fuel.fuel_mut(),
@@ -4943,6 +5011,14 @@ impl MainControl {
         let artifact_count = stores.world().artifact_commits().len();
         let effect_count = stores.world().effect_records().len();
         let prepared_page_count = self.prepared_dvi_pages.len();
+        #[cfg(feature = "profiling")]
+        tex_state::measurement::record_hot_core_phase(
+            tex_state::measurement::HotCorePhase::SemanticApply,
+        );
+        #[cfg(feature = "profiling")]
+        let _semantic_allocation_scope = tex_state::measurement::hot_core_allocation_scope(
+            tex_state::measurement::HotCoreAllocationOwner::SemanticApply,
+        );
         let scanned = match self.apply_host_owned_step(scanned, stores) {
             ControlFlow::Break(applied) => {
                 return self.finish_host_owned_step(
@@ -5124,6 +5200,14 @@ impl MainControl {
             .ok()
             .filter(|_| completes_alignment_cell)
             .and_then(|_| self.command.take_alignment_extra_tab_recovery_observation());
+        #[cfg(feature = "profiling")]
+        tex_state::measurement::record_hot_core_phase(
+            tex_state::measurement::HotCorePhase::EvidencePublication,
+        );
+        #[cfg(feature = "profiling")]
+        let _evidence_allocation_scope = tex_state::measurement::hot_core_allocation_scope(
+            tex_state::measurement::HotCoreAllocationOwner::EvidencePublication,
+        );
         if result.is_ok() {
             // These records are produced by applying the step, after the
             // command-processor episode's own borrow has ended. They are
@@ -7341,6 +7425,38 @@ fn dispatch_main_control_command(
     .map_err(|error| error.capture_command_origin_ref(origin))
 }
 
+#[cfg(feature = "profiling")]
+fn hot_core_command_family(meaning: Meaning) -> tex_state::measurement::HotCoreCommandFamily {
+    use tex_state::measurement::HotCoreCommandFamily as Family;
+
+    match meaning {
+        Meaning::CharGiven(_) | Meaning::CharToken { .. } | Meaning::MathCharGiven(_) => {
+            Family::Character
+        }
+        Meaning::Relax => Family::Relax,
+        Meaning::Undefined => Family::Undefined,
+        Meaning::Macro { .. } => Family::Macro,
+        Meaning::ExpandablePrimitive(_) => Family::ExpandablePrimitive,
+        Meaning::UnexpandablePrimitive(_) => Family::UnexpandablePrimitive,
+        Meaning::CountRegister(_)
+        | Meaning::DimenRegister(_)
+        | Meaning::SkipRegister(_)
+        | Meaning::MuskipRegister(_)
+        | Meaning::ToksRegister(_)
+        | Meaning::IntParam(_)
+        | Meaning::DimenParam(_)
+        | Meaning::GlueParam(_)
+        | Meaning::MuGlueParam(_)
+        | Meaning::TokParam(_)
+        | Meaning::PageDimension(_)
+        | Meaning::PageInteger(_) => Family::RegisterOrParameter,
+        Meaning::Font(_) => Family::Font,
+        Meaning::InternalInteger(_) => Family::InternalQuantity,
+        Meaning::EndV => Family::EndTemplate,
+        Meaning::Unknown(_) => Family::Unknown,
+    }
+}
+
 #[allow(clippy::too_many_arguments)] // carries command-owned replay facts
 fn dispatch_main_control_command_inner(
     processor: &mut CommandProcessor<'_>,
@@ -7382,6 +7498,10 @@ fn dispatch_main_control_command_inner(
         let mut global = false;
         let mut flags = MeaningFlags::EMPTY;
         loop {
+            #[cfg(feature = "profiling")]
+            tex_state::measurement::record_hot_core_command_family(hot_core_command_family(
+                command.meaning(),
+            ));
             match command.meaning() {
                 Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Global) => global = true,
                 Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Long) => {

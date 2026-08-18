@@ -1657,7 +1657,11 @@ impl ProvenanceStore {
     pub(crate) fn origin_ref(&self, id: OriginId) -> Option<OriginRef> {
         #[cfg(feature = "profiling")]
         crate::measurement::record_provenance_origin_resolution();
-        match id.decode() {
+        #[cfg(feature = "profiling")]
+        let _allocation_scope = crate::measurement::hot_core_allocation_scope(
+            crate::measurement::HotCoreAllocationOwner::ProvenanceMaterialization,
+        );
+        let resolved = match id.decode() {
             crate::token::OriginEncoding::Unknown
             | crate::token::OriginEncoding::NoExpandFallback
             | crate::token::OriginEncoding::DirectSource(_) => Some(OriginRef::direct(id)),
@@ -1680,7 +1684,10 @@ impl ProvenanceStore {
                     source_registration: None,
                 })
             }
-        }
+        };
+        #[cfg(feature = "profiling")]
+        crate::measurement::record_hot_core_provenance_materialization(resolved.is_some());
+        resolved
     }
 
     /// Advances a bounded weak-slot sweep. Dead roots do not require prompt
@@ -1813,6 +1820,8 @@ impl ProvenanceStore {
         if ids.is_empty() {
             return OriginListRef::empty();
         }
+        #[cfg(feature = "profiling")]
+        crate::measurement::record_hot_core_content_hash();
         let hash = origin_list_hash(&ids);
         let mut exact = None;
         let mut remove_empty_candidates = false;

@@ -39,7 +39,10 @@ Command operands are scanned by `tex-command` into typed request and result valu
 - `src/output_provenance.rs` and `src/output_provenance/tests.rs`: explicitly
   budgeted stable diagnostic provenance recipes for detached shipout
   artifacts and focused admission controls.
-- `src/step_snapshot_measurement.rs`: profiling-only process-local step-snapshot attribution.
+- `src/step_snapshot_measurement.rs`: compatibility projection of profiling-only
+  step-snapshot attribution. The complete allocation, clone, episode,
+  command-family, and phase census is owned by
+  `tex-state::measurement::hot_core`.
 - `src/page_output.rs`: input-free page-output selection, `\box255` packaging, insertion distribution, held-over material, page marks, diagnostics, and final `\end` state.
 - `src/shipout.rs` and `src/shipout/`: typed page/PDF-form staging, direct
   canonical artifact emission, normalization, lowering, fresh-shipout DVI

@@ -14,7 +14,7 @@ testing = []
 # Compile-time counters for dedicated profiling builds. These are ephemeral
 # process-wide allocation and derived-work counters that never participate in
 # engine state.
-profiling = []
+profiling = ["dep:umber-hot-core-allocator"]
 
 [dependencies]
 ahash.workspace = true
@@ -26,6 +26,7 @@ smallvec.workspace = true
 tex-arith = { path = "../tex-arith" }
 tex-content = { path = "../tex-content" }
 tex-fonts = { path = "../tex-fonts" }
+umber-hot-core-allocator = { path = "profiling-allocator", optional = true }
 unicode-width.workspace = true
 
 [lints]

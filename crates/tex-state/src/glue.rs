@@ -470,6 +470,8 @@ fn lookup_key(spec: &GlueSpec) -> [u8; 24] {
 }
 
 fn content_hash(spec: &GlueSpec) -> u64 {
+    #[cfg(feature = "profiling")]
+    crate::measurement::record_hot_core_content_hash();
     let mut hasher = AHasher::default();
     spec.hash(&mut hasher);
     hasher.finish()

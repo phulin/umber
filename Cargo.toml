@@ -1,6 +1,7 @@
 [workspace]
 members = [
   "crates/*",
+  "crates/tex-state/profiling-allocator",
   "tools/parity-harness",
   "tools/profile-analyzer",
   "tools/refexec",
@@ -30,6 +31,7 @@ default-members = [
   "crates/tex-observe",
   "crates/tex-out",
   "crates/tex-state",
+  "crates/tex-state/profiling-allocator",
   "crates/tex-typeset",
   "crates/umber",
   "crates/umber-distribution",

@@ -52,6 +52,8 @@ struct ReachableValueObject<T> {
 
 impl<T> Clone for ReachableValueRef<T> {
     fn clone(&self) -> Self {
+        #[cfg(feature = "profiling")]
+        crate::measurement::record_hot_core_arc_retain();
         Self {
             object: Arc::clone(&self.object),
         }
@@ -78,6 +80,8 @@ impl<T> ReachableValueRef<T> {
     }
 
     pub(crate) fn shared(&self) -> Arc<T> {
+        #[cfg(feature = "profiling")]
+        crate::measurement::record_hot_core_arc_retain();
         Arc::clone(&self.object.value)
     }
 
@@ -134,7 +138,11 @@ where
                 .map(|slot| {
                     slot.as_ref().map(|slot| WeakSlot {
                         identity: slot.identity,
-                        value: slot.value.clone(),
+                        value: {
+                            #[cfg(feature = "profiling")]
+                            crate::measurement::record_hot_core_weak_retain();
+                            slot.value.clone()
+                        },
                     })
                 })
                 .collect(),
@@ -176,7 +184,11 @@ where
             });
             slots.push(Some(WeakSlot {
                 identity,
-                value: Arc::downgrade(&value),
+                value: {
+                    #[cfg(feature = "profiling")]
+                    crate::measurement::record_hot_core_weak_retain();
+                    Arc::downgrade(&value)
+                },
             }));
             roots.push(ReachableValueRef { object: value });
         }
@@ -232,17 +244,32 @@ where
         key: &K,
         exact_eq: impl Fn(&T) -> bool,
     ) -> Option<ReachableValueRef<T>> {
+        #[cfg(feature = "profiling")]
+        let mut candidate_entries = 0;
+        #[cfg(feature = "profiling")]
+        let mut exact_comparisons = 0;
         self.reclaim_some_dead_slots(RECLAIM_WORK_PER_OPERATION);
         let mut exact = None;
         let mut remove_empty_candidates = false;
         if let Some(candidates) = self.index.get_mut(key) {
             candidates.retain(|&raw| {
+                #[cfg(feature = "profiling")]
+                {
+                    candidate_entries += 1;
+                }
                 let Some(slot) = self.slots.get(raw as usize).and_then(Option::as_ref) else {
                     return false;
                 };
-                let Some(candidate) = slot.value.upgrade() else {
+                let upgraded = slot.value.upgrade();
+                #[cfg(feature = "profiling")]
+                crate::measurement::record_hot_core_weak_upgrade(upgraded.is_some());
+                let Some(candidate) = upgraded else {
                     return false;
                 };
+                #[cfg(feature = "profiling")]
+                {
+                    exact_comparisons += 1;
+                }
                 if exact.is_none() && exact_eq(&candidate.value) {
                     exact = Some(ReachableValueRef { object: candidate });
                 }
@@ -253,11 +280,17 @@ where
         if remove_empty_candidates {
             self.index.remove(key);
         }
+        #[cfg(feature = "profiling")]
+        crate::measurement::record_hot_core_weak_index(candidate_entries, exact_comparisons);
         exact
     }
 
     /// Installs a value after the caller has performed exact candidate lookup.
     pub(crate) fn insert_new(&mut self, key: K, value: T) -> ReachableValueRef<T> {
+        #[cfg(feature = "profiling")]
+        let _allocation_scope = crate::measurement::hot_core_allocation_scope(
+            crate::measurement::HotCoreAllocationOwner::WeakValueStore,
+        );
         self.reclaim_some_dead_slots(RECLAIM_WORK_PER_OPERATION);
         let identity = self
             .identities
@@ -275,7 +308,11 @@ where
         assert!(self.slots[raw].is_none(), "reusable value slot is occupied");
         self.slots[raw] = Some(WeakSlot {
             identity,
-            value: Arc::downgrade(&shared),
+            value: {
+                #[cfg(feature = "profiling")]
+                crate::measurement::record_hot_core_weak_retain();
+                Arc::downgrade(&shared)
+            },
         });
         if self.index_key_budget != 0 {
             if self.index.len() >= self.index_key_budget && !self.index.contains_key(&key) {
@@ -299,9 +336,10 @@ where
         if slot.identity != identity {
             return None;
         }
-        Some(ReachableValueRef {
-            object: slot.value.upgrade()?,
-        })
+        let upgraded = slot.value.upgrade();
+        #[cfg(feature = "profiling")]
+        crate::measurement::record_hot_core_weak_upgrade(upgraded.is_some());
+        Some(ReachableValueRef { object: upgraded? })
     }
 
     /// Executes the production identity-resolution branches while reporting
@@ -344,9 +382,10 @@ where
     /// weak slot upgrades only while a typed semantic owner already exists.
     pub(crate) fn resolve_slot(&self, raw: u32) -> Option<ReachableValueRef<T>> {
         let slot = self.slots.get(raw as usize)?.as_ref()?;
-        Some(ReachableValueRef {
-            object: slot.value.upgrade()?,
-        })
+        let upgraded = slot.value.upgrade();
+        #[cfg(feature = "profiling")]
+        crate::measurement::record_hot_core_weak_upgrade(upgraded.is_some());
+        Some(ReachableValueRef { object: upgraded? })
     }
 
     /// Executes the production stored-slot branches with deterministic work

@@ -14,6 +14,11 @@ use tex_state::{FormatError, Universe, World, WorldError};
 use umber::EngineMode as RunEngine;
 use umber::{DriverFile, MemoryOutputFile, PlannedFinalization};
 
+#[cfg(feature = "profiling")]
+#[global_allocator]
+static HOT_CORE_ALLOCATOR: tex_state::measurement::HotCoreAllocator =
+    tex_state::measurement::HotCoreAllocator;
+
 mod bib;
 mod classic_bib;
 mod expand_dump;
@@ -128,6 +133,7 @@ struct MainMemoryProjectionReport {
     before: tex_state::measurement::MainMemoryProjectionMeasurement,
     provenance_before: tex_state::measurement::ProvenanceLifecycleMeasurement,
     format_restore_before: tex_state::measurement::FormatRestoreMeasurement,
+    hot_core_before: tex_state::measurement::HotCoreCensus,
 }
 
 #[cfg(feature = "profiling")]
@@ -138,6 +144,7 @@ impl MainMemoryProjectionReport {
             before: tex_state::measurement::main_memory_projection_measurement(),
             provenance_before: tex_state::measurement::provenance_lifecycle_measurement(),
             format_restore_before: tex_state::measurement::format_restore_measurement(),
+            hot_core_before: tex_state::measurement::hot_core_census(),
         }
     }
 }
@@ -239,7 +246,100 @@ impl Drop for MainMemoryProjectionReport {
             format_restore.copies,
             format_restore.allocations,
         );
+        let hot_core =
+            tex_state::measurement::hot_core_census().saturating_sub(self.hot_core_before);
+        eprintln!("HOT_CORE_CENSUS {}", hot_core_census_json(&hot_core));
     }
+}
+
+#[cfg(feature = "profiling")]
+fn hot_core_census_json(census: &tex_state::measurement::HotCoreCensus) -> String {
+    use std::fmt::Write as _;
+
+    fn separator(output: &mut String, first: &mut bool) {
+        if !std::mem::replace(first, false) {
+            output.push(',');
+        }
+    }
+
+    let mut output = String::from("{\"schema\":1,\"allocations\":{");
+    let mut first = true;
+    for (name, measurement) in tex_state::measurement::HotCoreAllocationOwner::NAMES
+        .into_iter()
+        .zip(census.allocations)
+    {
+        separator(&mut output, &mut first);
+        write!(
+            output,
+            "\"{name}\":{{\"calls\":{},\"requested_bytes\":{}}}",
+            measurement.calls, measurement.requested_bytes
+        )
+        .expect("writing to a String cannot fail");
+    }
+    output.push_str("},\"episode_lengths\":{");
+    first = true;
+    for (length, count) in census.episode_lengths.iter().copied().enumerate() {
+        if count == 0 {
+            continue;
+        }
+        separator(&mut output, &mut first);
+        write!(output, "\"{length}\":{count}").expect("writing to a String cannot fail");
+    }
+    output.push_str("},\"stop_reasons\":{");
+    first = true;
+    for (name, count) in tex_state::measurement::HotCoreStopReason::NAMES
+        .into_iter()
+        .zip(census.stop_reasons)
+    {
+        separator(&mut output, &mut first);
+        write!(output, "\"{name}\":{count}").expect("writing to a String cannot fail");
+    }
+    write!(
+        output,
+        "}},\"clones\":{{\"command_state\":{{\"calls\":{},\"nanos\":{},\"logical_bytes\":{}}},\"step_snapshot\":{{\"calls\":{},\"nanos\":{},\"logical_bytes\":{}}}}},",
+        census.command_state_clones.calls,
+        census.command_state_clones.nanos,
+        census.command_state_clones.logical_bytes,
+        census.step_snapshot_clones.calls,
+        census.step_snapshot_clones.nanos,
+        census.step_snapshot_clones.logical_bytes,
+    )
+    .expect("writing to a String cannot fail");
+    write!(
+        output,
+        "\"weak_graph\":{{\"arc_retains\":{},\"weak_retains\":{},\"upgrade_calls\":{},\"upgrade_hits\":{}}},\"weak_index\":{{\"calls\":{},\"candidate_entries\":{},\"exact_comparisons\":{},\"content_hash_calls\":{}}},\"provenance_materialization\":{{\"calls\":{},\"hits\":{}}},",
+        census.weak_graph.arc_retains,
+        census.weak_graph.weak_retains,
+        census.weak_graph.weak_upgrade_calls,
+        census.weak_graph.weak_upgrade_hits,
+        census.weak_index.calls,
+        census.weak_index.candidate_entries,
+        census.weak_index.exact_comparisons,
+        census.weak_index.content_hash_calls,
+        census.provenance_materialization_calls,
+        census.provenance_materialization_hits,
+    )
+    .expect("writing to a String cannot fail");
+    output.push_str("\"command_families\":{");
+    first = true;
+    for (name, count) in tex_state::measurement::HotCoreCommandFamily::NAMES
+        .into_iter()
+        .zip(census.command_families)
+    {
+        separator(&mut output, &mut first);
+        write!(output, "\"{name}\":{count}").expect("writing to a String cannot fail");
+    }
+    output.push_str("},\"phase_boundaries\":{");
+    first = true;
+    for (name, count) in tex_state::measurement::HotCorePhase::NAMES
+        .into_iter()
+        .zip(census.phase_boundaries)
+    {
+        separator(&mut output, &mut first);
+        write!(output, "\"{name}\":{count}").expect("writing to a String cannot fail");
+    }
+    output.push_str("}}");
+    output
 }
 
 #[allow(clippy::disallowed_methods)] // Process telemetry; TeX state never observes it.

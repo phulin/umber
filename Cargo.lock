@@ -1383,6 +1383,7 @@ dependencies = [
  "tex-arith",
  "tex-content",
  "tex-fonts",
+ "umber-hot-core-allocator",
  "unicode-width",
 ]
 
@@ -1545,6 +1546,10 @@ dependencies = [
  "umber-distribution",
  "ureq",
 ]
+
+[[package]]
+name = "umber-hot-core-allocator"
+version = "0.0.0"
 
 [[package]]
 name = "umber-interrupt"

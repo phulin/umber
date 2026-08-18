@@ -75,7 +75,13 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/meaning/tests.rs`: Unit tests for meaning round trips, flag packing, and primitive encoding.
 - `src/memo.rs`: Opaque schema-versioned detached memo envelopes, handle-free transition/effect/result DTOs, and aggregate token/glue/macro/node/font import APIs.
 - `src/memo/tests.rs`: Cold/fork/rollback Cross-Universe memo import, provenance stripping, corruption, bounds, kind, and semantic round-trip tests.
-- `src/measurement.rs`: `profiling-stats` process-local allocation-owner, loaded-format restoration-work, and TeX82 diagnostic-projection reuse/loss counters used by dedicated profiling builds.
+- `src/measurement.rs` and `src/measurement/hot_core.rs`: `profiling-stats`
+  process-local allocation-owner, loaded-format restoration-work, TeX82
+  diagnostic-projection reuse/loss, and current main-control structural
+  counters used by dedicated profiling builds.
+- `profiling-allocator/`: isolated profiling-only `GlobalAlloc` forwarding
+  shim used by executable profiling builds to attribute allocation calls and
+  requested bytes to nested hot-core owner scopes.
 - `src/node.rs`: Immutable TeX node, box, strongly rooted character/ligature provenance and glue, kern, penalty, rule, strongly token-rooted whatsit/mark/PDF payloads, math-list, discretionary, and list-field model.
 - `src/node_sequence.rs`: Paired semantic and TeX-physical projections over
   the sole mutable `NodeListBuilder`, barrier-frozen immutable sidecars,

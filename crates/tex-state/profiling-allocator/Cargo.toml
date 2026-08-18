@@ -1,0 +1,9 @@
+[package]
+name = "umber-hot-core-allocator"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[lints]
+# The allocator shim is the isolated owner of the unsafe `GlobalAlloc`
+# forwarding contract; engine crates remain `unsafe_code = "forbid"`.

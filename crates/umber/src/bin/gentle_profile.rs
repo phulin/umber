@@ -31,6 +31,11 @@ use tex_state::{MemoLayerStats, PureMemoLayer};
 use umber::ExpansionStats;
 use umber::{EngineSession, FileSessionResolvers, dvi_from_page_plans};
 
+#[cfg(feature = "profiling")]
+#[global_allocator]
+static HOT_CORE_ALLOCATOR: tex_state::measurement::HotCoreAllocator =
+    tex_state::measurement::HotCoreAllocator;
+
 const JOB_DIR: &str = "/gentle-profile";
 const JOB_FILE: &str = "profile-job.tex";
 const DEFAULT_ITERATIONS: usize = 50;

@@ -1463,6 +1463,81 @@ fn profiling_stats_are_reported_only_when_requested() {
     assert!(stderr.contains("PROVENANCE_LIFECYCLE "));
     assert!(stderr.contains("NODE_MEMORY_TOTAL "));
     assert!(stderr.contains("ALLOC_NODE_APPEND "));
+    let census = stderr
+        .lines()
+        .find_map(|line| line.strip_prefix("HOT_CORE_CENSUS "))
+        .expect("profiling report has hot-core census");
+    let census: serde_json::Value = serde_json::from_str(census).expect("census is valid JSON");
+    assert_eq!(census["schema"], 1);
+    assert!(
+        census["clones"]["step_snapshot"]["calls"]
+            .as_u64()
+            .is_some_and(|calls| calls > 0)
+    );
+    assert!(
+        census["command_families"]["unexpandable_primitive"]
+            .as_u64()
+            .is_some_and(|calls| calls > 0)
+    );
+    assert!(
+        census["phase_boundaries"]["delivery_and_scan"]
+            .as_u64()
+            .is_some_and(|calls| calls > 0)
+    );
+}
+
+#[cfg(feature = "profiling")]
+#[test]
+#[allow(clippy::disallowed_methods)] // host-side temporary file and command execution.
+fn hot_core_census_is_machine_readable_and_request_scoped() {
+    let temp_dir = tempfile::tempdir().expect("create hot-core census temp dir");
+    let source = temp_dir.path().join("hot-core-census.tex");
+    fs::write(&source, "A\\end\n").expect("write hot-core census fixture");
+
+    let quiet = Command::new(env!("CARGO_BIN_EXE_umber"))
+        .env("SOURCE_DATE_EPOCH", PINNED_SOURCE_DATE_EPOCH)
+        .arg("run")
+        .arg(&source)
+        .output()
+        .expect("run profiling build without census request");
+    assert!(quiet.status.success());
+    assert!(!String::from_utf8_lossy(&quiet.stderr).contains("HOT_CORE_CENSUS "));
+
+    let reported = Command::new(env!("CARGO_BIN_EXE_umber"))
+        .env("SOURCE_DATE_EPOCH", PINNED_SOURCE_DATE_EPOCH)
+        .arg("run")
+        .arg("--profiling-stats")
+        .arg(&source)
+        .output()
+        .expect("run profiling build with census request");
+    assert!(reported.status.success());
+    let stderr = String::from_utf8(reported.stderr).expect("stderr is utf-8");
+    let census = stderr
+        .lines()
+        .find_map(|line| line.strip_prefix("HOT_CORE_CENSUS "))
+        .expect("profiling report has hot-core census");
+    let census: serde_json::Value = serde_json::from_str(census).expect("census is valid JSON");
+    assert_eq!(census["schema"], 1);
+    assert!(
+        census["allocations"]["command_state_clone"]["calls"]
+            .as_u64()
+            .is_some_and(|calls| calls > 0)
+    );
+    assert!(
+        census["clones"]["step_snapshot"]["calls"]
+            .as_u64()
+            .is_some_and(|calls| calls > 0)
+    );
+    assert!(
+        census["command_families"]["character"]
+            .as_u64()
+            .is_some_and(|calls| calls > 0)
+    );
+    assert!(
+        census["phase_boundaries"]["barrier_decision"]
+            .as_u64()
+            .is_some_and(|calls| calls > 0)
+    );
 }
 
 #[test]

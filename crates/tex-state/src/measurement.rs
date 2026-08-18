@@ -1,12 +1,26 @@
 //! Feature-gated process-local performance-owner measurements.
 //!
-//! These counters describe allocation owners without intercepting the global
-//! allocator. They are absent from normal builds and never participate in
-//! snapshots, rollback, replay, or semantic hashing.
+//! These counters are absent from normal builds and never participate in
+//! snapshots, rollback, replay, or semantic hashing. Most describe explicit
+//! structural owners; `hot_core` additionally consumes the profiling
+//! executable's isolated allocation wrapper inside named current-core scopes.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::state_hash::StateHashComponent;
+
+mod hot_core;
+
+pub use hot_core::{
+    HotCoreAllocationMeasurement, HotCoreAllocationOwner, HotCoreAllocator, HotCoreCensus,
+    HotCoreCloneMeasurement, HotCoreCommandFamily, HotCorePhase, HotCoreStopReason,
+    HotCoreWeakGraphMeasurement, HotCoreWeakIndexMeasurement, hot_core_allocation_scope,
+    hot_core_census, record_hot_core_allocation, record_hot_core_arc_retain,
+    record_hot_core_command_family, record_hot_core_content_hash, record_hot_core_episode,
+    record_hot_core_phase, record_hot_core_provenance_materialization,
+    record_hot_core_snapshot_clone, record_hot_core_weak_index, record_hot_core_weak_retain,
+    record_hot_core_weak_upgrade,
+};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct NodeAppendMeasurement {

@@ -44,6 +44,8 @@ The project also uses bd (beads) for issue tracking; see below for full instruct
 - `crates/tex-observe`: detached command-observation translation into portable
   normalized semantic and geometry evidence.
 - `crates/tex-state`: engine state layer substrate.
+- `crates/tex-state/profiling-allocator`: profiling-only global-allocation
+  attribution shim for named hot-core scopes; engine crates remain unsafe-free.
 - `crates/tex-fonts`: immutable validated font contexts, metrics, and OpenType shaping.
 - `crates/tex-exec`: stomach execution, mode nest, main-control dispatch, assignments, and h/v-mode material construction.
 - `crates/tex-incr`: named-boundary editor sessions, revision mapping, convergence, pruning, and suffix reuse.
