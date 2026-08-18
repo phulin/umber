@@ -23,6 +23,48 @@ use crate::{
     SourceRegistration,
 };
 
+#[test]
+fn pinned_ranked_expansion_set_uses_the_borrowed_dispatch_lane() {
+    assert!(is_ranked_fused_expansion(Meaning::Macro {
+        flags: MeaningFlags::EMPTY,
+        definition: tex_state::ids::MacroDefinitionId::testing_new(1),
+    }));
+    let ranked = [
+        ExpandablePrimitive::ExpandAfter,
+        ExpandablePrimitive::Fi,
+        ExpandablePrimitive::IfX,
+        ExpandablePrimitive::IfNum,
+        ExpandablePrimitive::If,
+        ExpandablePrimitive::CsName,
+        ExpandablePrimitive::NoExpand,
+        ExpandablePrimitive::Detokenize,
+        ExpandablePrimitive::String,
+        ExpandablePrimitive::IfFalse,
+        ExpandablePrimitive::RomanNumeral,
+        ExpandablePrimitive::Else,
+        ExpandablePrimitive::Expanded,
+        ExpandablePrimitive::IfCsName,
+        ExpandablePrimitive::Number,
+        ExpandablePrimitive::The,
+    ];
+    for primitive in ranked {
+        assert!(
+            is_ranked_fused_expansion(Meaning::ExpandablePrimitive(primitive)),
+            "{primitive:?} must stay on the borrowed expansion lane"
+        );
+    }
+    for primitive in [
+        ExpandablePrimitive::Input,
+        ExpandablePrimitive::Scantokens,
+        ExpandablePrimitive::PdfMatch,
+    ] {
+        assert!(
+            !is_ranked_fused_expansion(Meaning::ExpandablePrimitive(primitive)),
+            "{primitive:?} is an explicit cold fallback"
+        );
+    }
+}
+
 fn install_macro(
     universe: &mut Universe,
     name: &str,
@@ -3392,7 +3434,7 @@ fn the_toks_pushes_immutable_stored_input_without_reading_beyond_target() {
     let mut capabilities = CommandHostCapabilities::default();
     let mut processor = processor(&mut command, &mut universe, &mut capabilities);
     let opener = processor.get_next().expect("raw the").expect("the command");
-    processor.expand(opener).expect("the inserts stored list");
+    processor.expand(&opener).expect("the inserts stored list");
     assert!(
         matches!(processor.command.input.levels.last(), Some(crate::input::InputLevel::Tokens(cursor))
         if matches!(&cursor.payload, TokenPayload::Packed(chunk)
@@ -3510,7 +3552,7 @@ fn the_renders_dimensions_glue_orders_and_mu_units_exactly() {
     // Stop at the direct splice boundary: ordinary expanded delivery would
     // expand this macro on its next step, but §466 copies its token verbatim.
     let opener = processor.get_next().expect("raw the").expect("the command");
-    processor.expand(opener).expect("the inserts stored list");
+    processor.expand(&opener).expect("the inserts stored list");
     assert_eq!(processor.state.tokens(stored), &[Token::Cs(copied_macro)]);
     assert_eq!(
         processor
@@ -3556,7 +3598,7 @@ fn the_toks_publishes_an_inserted_push_naming_its_leading_control_sequence() {
         let mut processor =
             processor(&mut command, &mut universe, &mut capabilities).with_observer(&mut recorder);
         let opener = processor.get_next().expect("raw the").expect("the command");
-        processor.expand(opener).expect("the inserts its copy");
+        processor.expand(&opener).expect("the inserts its copy");
     }
     let push = recorder
         .0

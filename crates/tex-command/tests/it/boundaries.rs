@@ -228,9 +228,16 @@ fn command_delivery_has_specialized_typed_loops_and_direct_input_mutation() {
         !format!("{expansion}\n{raw}").contains("pending_expanded_delivery"),
         "pending observation ownership must be typed, never a boolean"
     );
+    assert!(expansion.contains("fn expand(&mut self, command: &CurrentCommand)"));
     assert!(expansion.contains("match self.macro_call(command)?"));
     assert!(expansion.contains("MacroCallOutcome::Activated"));
     assert!(expansion.contains("MacroCallOutcome::PrefixMismatchRecovered"));
+    assert!(expansion.contains("match self.expand(&command)"));
+    assert!(expansion.contains("self.command.retain_pending_expansion(command);"));
+    assert!(
+        !expansion.contains("let retry = command.clone();"),
+        "ordinary expansion must move the live command only at a typed retry barrier"
+    );
     assert!(expansion.contains("fn expand_noexpand("));
     assert!(expansion.contains("fn expand_expandafter("));
     for forbidden in ["Dispatch::Push", "Dispatch::PushTransient", "ExpansionMode"] {
@@ -262,7 +269,7 @@ fn scan_toks_keeps_its_one_step_collector_and_direct_splice_boundary() {
     assert!(collector.contains("match self.get_next()"));
     assert!(collector.contains("pending_expansion.take()"));
     assert!(collector.contains("PendingCollectorExpansion"));
-    assert!(collector.contains("self.expand(command)"));
+    assert!(collector.contains("self.expand(&command)"));
     assert!(collector.contains("self.append_direct_the_toks(&mut output)"));
     assert!(
         !collector.contains("self.get_x_token()?"),

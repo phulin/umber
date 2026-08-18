@@ -591,9 +591,12 @@ impl CommandProcessor<'_> {
 
     /// TeX.web's scalar `macro_call` path for compulsory parameter text,
     /// literal argument matching, and replacement activation.
+    /// Executes a live macro command without cloning its structural origin.
+    /// The ordinary expansion loop owns the command for the complete call and
+    /// moves it into retry state only when a typed resource barrier is hit.
     pub(crate) fn macro_call(
         &mut self,
-        call: crate::CurrentCommand,
+        call: &crate::CurrentCommand,
     ) -> Result<MacroCallOutcome, CommandError> {
         let Meaning::Macro { definition, .. } = call.meaning() else {
             return Err(CommandError::input_invariant());
@@ -665,7 +668,7 @@ impl CommandProcessor<'_> {
                         context,
                     },
                 );
-                self.observe_command_diagnostic("macro_prefix_mismatch", &call);
+                self.observe_command_diagnostic("macro_prefix_mismatch", call);
                 if let Some(episode) = episode {
                     self.finish_scanner_episode(episode);
                 }

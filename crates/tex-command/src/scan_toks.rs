@@ -956,7 +956,6 @@ impl CommandProcessor<'_> {
                             }
                             _ => CollectorExpansionRoute::Ordinary,
                         });
-                    let retry = command.clone();
                     if route == CollectorExpansionRoute::The {
                         // TeX82 §478 handles `\the` directly in `scan_toks`
                         // instead of routing it through §380's ordinary
@@ -972,10 +971,7 @@ impl CommandProcessor<'_> {
                                     &mut output,
                                     depth,
                                     &mut pending_parameter,
-                                    Some(PendingCollectorExpansion {
-                                        command: retry,
-                                        route,
-                                    }),
+                                    Some(PendingCollectorExpansion { command, route }),
                                 ));
                             }
                         }
@@ -989,10 +985,7 @@ impl CommandProcessor<'_> {
                                     &mut output,
                                     depth,
                                     &mut pending_parameter,
-                                    Some(PendingCollectorExpansion {
-                                        command: retry,
-                                        route,
-                                    }),
+                                    Some(PendingCollectorExpansion { command, route }),
                                 ));
                             }
                         }
@@ -1006,10 +999,7 @@ impl CommandProcessor<'_> {
                                     &mut output,
                                     depth,
                                     &mut pending_parameter,
-                                    Some(PendingCollectorExpansion {
-                                        command: retry,
-                                        route,
-                                    }),
+                                    Some(PendingCollectorExpansion { command, route }),
                                 ));
                             }
                         }
@@ -1037,7 +1027,7 @@ impl CommandProcessor<'_> {
                         // outer-validity recovery. Both return to §380's
                         // get_x_token loop; this inlined expanded collector is
                         // that loop's owner while scan_toks is active.
-                        match self.expand(command) {
+                        match self.expand(&command) {
                             Ok(()) | Err(CommandError::ParagraphInMacroArgument) => continue,
                             Err(CommandError::OuterInMacroArgument) => {
                                 self.resume_scanner_episode_after_recovery(episode);
@@ -1049,10 +1039,7 @@ impl CommandProcessor<'_> {
                                     &mut output,
                                     depth,
                                     &mut pending_parameter,
-                                    Some(PendingCollectorExpansion {
-                                        command: retry,
-                                        route,
-                                    }),
+                                    Some(PendingCollectorExpansion { command, route }),
                                 ));
                             }
                         }

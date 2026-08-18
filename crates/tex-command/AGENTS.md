@@ -51,9 +51,11 @@ print channel of its own outside the borrowed
   durable snapshot or format boundary.
 - `src/processor/expand.rs`: canonical expanded delivery, including the
   same-borrow preflight settlement that preserves undefined commands for the
-  executor's single diagnostic boundary, and the typed `\expandafter` operand
-  and `\csname` accumulator frames retained when expansion suspends on
-  immutable host acquisition.
+  executor's single diagnostic boundary. The ordinary driver owns one live
+  current command and lends it through macro and ranked primitive expansion;
+  it moves that value into continuation state only after a typed immutable-host
+  suspension. The same rule covers the typed `\expandafter` operand and
+  `\csname` accumulator frames.
 - `src/processor/mod.rs`: processor construction plus the opaque delivery
   cursor moved across an executor-owned typed resource continuation; it
   restores observation ordering but owns no command/input semantics.

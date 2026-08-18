@@ -336,7 +336,7 @@ fn run_macro_call(
         let call = processor
             .get_next()?
             .ok_or(CommandError::input_invariant())?;
-        processor.macro_call(call)
+        processor.macro_call(&call)
     };
     result.map(|arguments| (command, arguments))
 }
@@ -420,7 +420,7 @@ fn run_observed_macro_call_with_parameters(
             .get_next()
             .expect("macro call delivery")
             .expect("macro token");
-        processor.macro_call(call)
+        processor.macro_call(&call)
     };
     (command, outcome, recorder)
 }
@@ -557,7 +557,7 @@ fn parameterless_macro_pushes_replacement_without_matching_status() {
         .expect("macro call delivery")
         .expect("macro token");
     processor
-        .macro_call(call)
+        .macro_call(&call)
         .expect("parameterless macro activates");
 
     assert!(recorder.0.iter().any(|observation| {
@@ -615,7 +615,7 @@ fn active_macro_delivery_keeps_original_replacement_after_redefinition() {
             .expect("macro call delivery")
             .expect("macro token");
         processor
-            .macro_call(call)
+            .macro_call(&call)
             .expect("original macro activates");
     }
 
@@ -704,7 +704,7 @@ fn matching_transition_retains_the_enclosing_definition_status() {
         .get_next()
         .expect("macro call delivery")
         .expect("macro token");
-    processor.macro_call(call).expect("macro argument matches");
+    processor.macro_call(&call).expect("macro argument matches");
 
     assert!(recorder.0.iter().any(|observation| matches!(
         observation,
@@ -1076,7 +1076,7 @@ fn non_long_argument_rejection_uses_par_token_identity_not_meaning() {
                 .get_next()
                 .expect("macro call delivery")
                 .expect("macro token");
-            processor.macro_call(call)
+            processor.macro_call(&call)
         };
         (command, outcome, alias)
     }
@@ -1211,7 +1211,7 @@ fn non_long_paragraph_backs_up_before_restoring_matching_status() {
         .expect("macro call delivery")
         .expect("macro token");
     assert_eq!(
-        processor.macro_call(call),
+        processor.macro_call(&call),
         Err(CommandError::ParagraphInMacroArgument)
     );
 
@@ -1305,7 +1305,7 @@ fn matching_outer_recovery_reports_before_backing_up_the_forbidden_control_seque
         .expect("macro call delivery")
         .expect("macro token");
     assert_eq!(
-        processor.macro_call(call),
+        processor.macro_call(&call),
         Err(CommandError::OuterInMacroArgument)
     );
 
@@ -1385,7 +1385,8 @@ fn successful_call_activates_canonical_replacement_and_replays_parameter_range()
             .get_next()
             .expect("macro call delivery")
             .expect("macro token");
-        let MacroCallOutcome::Activated = processor.macro_call(call).expect("macro matches") else {
+        let MacroCallOutcome::Activated = processor.macro_call(&call).expect("macro matches")
+        else {
             panic!("matching macro must activate");
         };
         let arguments = &processor
@@ -1456,7 +1457,7 @@ fn successful_call_activates_canonical_replacement_and_replays_parameter_range()
             .expect("rolled-back macro call delivery")
             .expect("rolled-back macro token");
         processor
-            .macro_call(call)
+            .macro_call(&call)
             .expect("rolled-back macro call matches again");
         assert_eq!(processor.command.input, activated.input);
         assert_eq!(processor.command.scanner, activated.scanner);
@@ -1617,12 +1618,12 @@ fn nested_calls_keep_out_parameter_ownership_and_invocation_provenance() {
             .get_next()
             .expect("outer delivery")
             .expect("outer token");
-        processor.macro_call(outer_call).expect("outer matches");
+        processor.macro_call(&outer_call).expect("outer matches");
         let inner_call = processor
             .get_next()
             .expect("inner delivery")
             .expect("inner token");
-        processor.macro_call(inner_call).expect("inner matches");
+        processor.macro_call(&inner_call).expect("inner matches");
         // TeX82 §390 drains every depleted token list before the callee body
         // is pushed. Matching `\inner`'s argument exhausts both the replayed
         // parameter level and the caller's macro body, so `end_token_list`

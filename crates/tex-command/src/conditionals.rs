@@ -488,7 +488,7 @@ impl CommandProcessor<'_> {
     /// those scans may recursively expand another conditional.
     pub(crate) fn expand_conditional(
         &mut self,
-        command: crate::CurrentCommand,
+        command: &crate::CurrentCommand,
         inverted: bool,
     ) -> Result<(), CommandError> {
         let Meaning::ExpandablePrimitive(primitive) = command.meaning() else {
@@ -528,7 +528,7 @@ impl CommandProcessor<'_> {
     /// prefix diagnostic, and leaves the conditional stack untouched.
     pub(crate) fn expand_unless(
         &mut self,
-        _command: crate::CurrentCommand,
+        _command: &crate::CurrentCommand,
     ) -> Result<(), CommandError> {
         // The following conditional is an operand of `\unless`, not an
         // ordinary expansion result: preserve its primitive command for the
@@ -564,7 +564,7 @@ impl CommandProcessor<'_> {
                 &next,
             ));
         }
-        self.expand_conditional(next, true)
+        self.expand_conditional(&next, true)
     }
 
     fn complete_boolean(
@@ -1087,7 +1087,7 @@ impl CommandProcessor<'_> {
 
     pub(crate) fn expand_conditional_delimiter(
         &mut self,
-        command: crate::CurrentCommand,
+        command: &crate::CurrentCommand,
         primitive: ExpandablePrimitive,
     ) -> Result<(), CommandError> {
         let delimiter = match primitive {
@@ -1111,7 +1111,7 @@ impl CommandProcessor<'_> {
             // delimiter is replayed below the inserted frozen `\relax`.
             // That ordering matters because the resumed operand scanner must
             // see the delimiter through ordinary raw delivery after recovery.
-            self.back_input(command)?;
+            self.back_input(command.copy_for_backup())?;
             self.recover_incomplete_if()?;
             return Ok(());
         }

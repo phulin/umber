@@ -3517,7 +3517,7 @@ impl CommandProcessor<'_> {
                 return Ok(None);
             };
             if crate::processor::expand::is_expandable_command(&next) {
-                self.expand(next)?;
+                self.expand(&next)?;
                 command = self.get_token()?;
             } else {
                 command = Some(next);

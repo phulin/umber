@@ -226,6 +226,39 @@ pub(super) enum UndefinedHandling {
     Preserve,
 }
 
+/// The finite expansion set selected by the pinned structural census.
+///
+/// These families execute against the borrowed live command in the one
+/// processor episode. Everything else remains a cold arm in this same
+/// interpreter; the profiling materialization counter records only that
+/// explicit fallback boundary.
+#[inline(always)]
+#[cfg(any(feature = "profiling", test))]
+const fn is_ranked_fused_expansion(meaning: Meaning) -> bool {
+    matches!(
+        meaning,
+        Meaning::Macro { .. }
+            | Meaning::ExpandablePrimitive(
+                ExpandablePrimitive::ExpandAfter
+                    | ExpandablePrimitive::Fi
+                    | ExpandablePrimitive::IfX
+                    | ExpandablePrimitive::IfNum
+                    | ExpandablePrimitive::If
+                    | ExpandablePrimitive::CsName
+                    | ExpandablePrimitive::NoExpand
+                    | ExpandablePrimitive::Detokenize
+                    | ExpandablePrimitive::String
+                    | ExpandablePrimitive::IfFalse
+                    | ExpandablePrimitive::RomanNumeral
+                    | ExpandablePrimitive::Else
+                    | ExpandablePrimitive::Expanded
+                    | ExpandablePrimitive::IfCsName
+                    | ExpandablePrimitive::Number
+                    | ExpandablePrimitive::The
+            )
+    )
+}
+
 impl CommandProcessor<'_> {
     /// Settles one raw command already delivered by the same processor
     /// episode. This is the capability-preflight seam: macro/expandable
@@ -846,8 +879,7 @@ impl CommandProcessor<'_> {
             // bookkeeping, then resumes the enclosing expanded-token loop.
             // A user paragraph has been backed up for that loop; an EOF
             // recovery paragraph was consumed by the failed match instead.
-            let retry = command.clone();
-            match self.expand(command) {
+            match self.expand(&command) {
                 // TeX82 §394 resumes expanded delivery after both an ordinary
                 // runaway paragraph and §23's outer-validity recovery has
                 // aborted a macro match. The latter leaves the recovered
@@ -857,7 +889,7 @@ impl CommandProcessor<'_> {
                 | Err(CommandError::OuterInMacroArgument) => {}
                 Err(error) => {
                     if error.is_resource_suspension() {
-                        self.command.retain_pending_expansion(retry);
+                        self.command.retain_pending_expansion(command);
                     }
                     return Err(error);
                 }
@@ -952,12 +984,14 @@ impl CommandProcessor<'_> {
 
     /// TeX.web's scalar `expand`: each case changes the active input/state
     /// directly, then returns to [`Self::get_x_token_scalar`].
-    pub(crate) fn expand(&mut self, command: CurrentCommand) -> Result<(), CommandError> {
+    pub(crate) fn expand(&mut self, command: &CurrentCommand) -> Result<(), CommandError> {
         #[cfg(feature = "profiling")]
         {
-            tex_state::measurement::record_hot_core_materialization(
-                tex_state::measurement::HotCoreMaterialization::ExpansionCommand,
-            );
+            if !is_ranked_fused_expansion(command.meaning()) {
+                tex_state::measurement::record_hot_core_materialization(
+                    tex_state::measurement::HotCoreMaterialization::ExpansionCommand,
+                );
+            }
             match command.meaning() {
                 Meaning::ExpandablePrimitive(primitive) => {
                     tex_state::measurement::record_hot_core_expandable_opcode(
@@ -995,7 +1029,7 @@ impl CommandProcessor<'_> {
                     if primitive != ExpandablePrimitive::EndTemplate
             ) || matches!(command.meaning(), Meaning::Undefined))
         {
-            self.print_command_trace(crate::PrintCommand::from_current(&command));
+            self.print_command_trace(crate::PrintCommand::from_current(command));
         }
         match command.meaning() {
             Meaning::ExpandablePrimitive(primitive)
@@ -1056,7 +1090,7 @@ impl CommandProcessor<'_> {
                 self.expand_scantokens()
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::FontName) => {
-                self.expand_fontname(command)
+                self.expand_fontname(command.copy_for_backup())
             }
             // pdftex.web §470's `pdf_font_size_code` conversion prints the
             // selected font size as an ordinary scaled dimension.
@@ -1087,7 +1121,9 @@ impl CommandProcessor<'_> {
                 self.push_rendered_text(&format_scaled(amount), command.origin_ref());
                 Ok(())
             }
-            Meaning::ExpandablePrimitive(ExpandablePrimitive::Input) => self.expand_input(command),
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::Input) => {
+                self.expand_input(command.copy_for_backup())
+            }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::EndInput) => self.expand_endinput(),
             Meaning::ExpandablePrimitive(ExpandablePrimitive::JobName) => {
                 self.state.unsupported_host_capability();
@@ -1158,40 +1194,40 @@ impl CommandProcessor<'_> {
                 Ok(())
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::StringCompare) => {
-                self.expand_string_compare(command)
+                self.expand_string_compare(command.copy_for_backup())
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfEscapeString) => {
-                self.expand_pdf_escape_string(command)
+                self.expand_pdf_escape_string(command.copy_for_backup())
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfEscapeHex) => {
-                self.expand_pdf_escape_hex(command)
+                self.expand_pdf_escape_hex(command.copy_for_backup())
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfUnescapeHex) => {
-                self.expand_pdf_unescape_hex(command)
+                self.expand_pdf_unescape_hex(command.copy_for_backup())
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfColorStackInit) => {
-                self.expand_pdf_color_stack_init(command)
+                self.expand_pdf_color_stack_init(command.copy_for_backup())
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfMatch) => {
-                self.expand_pdf_match(command)
+                self.expand_pdf_match(command.copy_for_backup())
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfLastMatch) => {
-                self.expand_pdf_last_match(command)
+                self.expand_pdf_last_match(command.copy_for_backup())
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfFileDump) => {
-                self.expand_pdf_file_dump(command)
+                self.expand_pdf_file_dump(command.copy_for_backup())
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::FileSize) => {
-                self.expand_pdf_file_size(command)
+                self.expand_pdf_file_size(command.copy_for_backup())
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfFileModificationDate) => {
-                self.expand_pdf_file_modification_date(command)
+                self.expand_pdf_file_modification_date(command.copy_for_backup())
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfMdFiveSum) => {
-                self.expand_pdf_md_five_sum(command)
+                self.expand_pdf_md_five_sum(command.copy_for_backup())
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfInsertHeight) => {
-                self.expand_pdf_insert_height(command)
+                self.expand_pdf_insert_height(command.copy_for_backup())
             }
             // pdftex.web §470's `pdf_ximage_bbox_code` conversion scans an
             // existing image object before its one-based page-box coordinate.
@@ -1402,7 +1438,7 @@ impl CommandProcessor<'_> {
     /// the frozen spelling exactly as for `\scantokens`, and `str_toks`
     /// projects the resulting string to category-10 spaces and category-12
     /// other characters.
-    fn expand_detokenize(&mut self, opener: CurrentCommand) -> Result<(), CommandError> {
+    fn expand_detokenize(&mut self, opener: &CurrentCommand) -> Result<(), CommandError> {
         let scanned = self.scan_toks(crate::scan_toks::ScanToksMode::GeneralText {
             purpose: "detokenize",
         })?;
@@ -1614,17 +1650,14 @@ impl CommandProcessor<'_> {
             )
         };
         if is_expandable_command(&second) {
-            let retry = PendingExpandAfter {
-                first,
-                second: second.clone(),
-            };
-            if let Err(error) = self.expand(second) {
+            if let Err(error) = self.expand(&second) {
                 if error.is_resource_suspension() {
-                    self.command.retain_pending_expandafter(retry);
+                    self.command
+                        .retain_pending_expandafter(PendingExpandAfter { first, second });
                 }
                 return Err(error);
             }
-            self.replay_expandafter_first(retry.first)?;
+            self.replay_expandafter_first(first)?;
         } else {
             self.back_input(second)?;
             self.replay_expandafter_first(first)?;
@@ -1635,7 +1668,7 @@ impl CommandProcessor<'_> {
     /// TeX.web's `\\csname`: collect ordinary expanded character commands
     /// until the inaccessible `\\endcsname` boundary, then inject the one
     /// named control-sequence token through normal input delivery.
-    fn expand_csname(&mut self, opener: CurrentCommand) -> Result<(), CommandError> {
+    fn expand_csname(&mut self, opener: &CurrentCommand) -> Result<(), CommandError> {
         let name = self.scan_csname_characters()?;
         let symbol = self.state.intern_relaxed_control_sequence(&name);
         let origin = self.state.synthesized_origin_ref(
@@ -1699,7 +1732,7 @@ impl CommandProcessor<'_> {
     }
 
     /// `\\string` observes spelling, never an effective control-sequence meaning.
-    fn expand_string(&mut self, opener: CurrentCommand) -> Result<(), CommandError> {
+    fn expand_string(&mut self, opener: &CurrentCommand) -> Result<(), CommandError> {
         let target = self
             .get_token_with_normal_scanner_status()?
             .ok_or(CommandError::input_invariant())?;
@@ -1710,7 +1743,7 @@ impl CommandProcessor<'_> {
         Ok(())
     }
 
-    fn expand_meaning(&mut self, opener: CurrentCommand) -> Result<(), CommandError> {
+    fn expand_meaning(&mut self, opener: &CurrentCommand) -> Result<(), CommandError> {
         let target = self
             .get_token_with_normal_scanner_status()?
             .ok_or(CommandError::input_invariant())?;
@@ -1719,7 +1752,7 @@ impl CommandProcessor<'_> {
         Ok(())
     }
 
-    fn expand_number(&mut self, opener: CurrentCommand, roman: bool) -> Result<(), CommandError> {
+    fn expand_number(&mut self, opener: &CurrentCommand, roman: bool) -> Result<(), CommandError> {
         let value = self.scan_expanded_integer()?.value;
         let text = if roman {
             roman_numeral(value)
@@ -1737,9 +1770,9 @@ impl CommandProcessor<'_> {
     /// before it backs up the next source token and installs rendered output.
     /// Reaching into the target meaning here would leave that index to a later
     /// scanner and changes the observable input ordering.
-    fn expand_the(&mut self, opener: CurrentCommand) -> Result<(), CommandError> {
+    fn expand_the(&mut self, opener: &CurrentCommand) -> Result<(), CommandError> {
         let target = self.scan_internal_value_or_zero()?;
-        self.expand_the_value(opener.origin_ref().clone(), target.value)
+        self.expand_the_value(opener.origin_ref(), target.value)
     }
 
     /// Installs one TeX82 §467 `ins_the_toks` result.
@@ -1752,11 +1785,11 @@ impl CommandProcessor<'_> {
     /// input level.
     pub(crate) fn expand_the_value(
         &mut self,
-        opener: tex_state::provenance::OriginRef,
+        opener: &tex_state::provenance::OriginRef,
         value: crate::InternalValue,
     ) -> Result<(), CommandError> {
         if let Some(text) = render_the_value(&value) {
-            self.push_rendered_text(&text, &opener);
+            self.push_rendered_text(&text, opener);
         } else {
             match value {
                 // §466 copies the register's list rather than sharing its
@@ -1770,7 +1803,7 @@ impl CommandProcessor<'_> {
                     );
                 }
                 crate::InternalValue::Font(symbol) => {
-                    self.push_rendered_tokens([Token::Cs(symbol)], &opener);
+                    self.push_rendered_tokens([Token::Cs(symbol)], opener);
                 }
                 _ => unreachable!("non-token internal values are rendered above"),
             }
