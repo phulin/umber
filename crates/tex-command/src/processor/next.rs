@@ -644,7 +644,8 @@ impl CommandProcessor<'_> {
 
     /// Applies tex.web §§84/87's ErrorStop input mutation at the sole raw
     /// command/input ownership boundary.
-    pub(crate) fn apply_error_stop_recovery(&mut self) -> Result<(), CommandError> {
+    #[doc(hidden)]
+    pub fn apply_error_stop_recovery(&mut self) -> Result<(), CommandError> {
         while let Some(request) = self.state.take_error_recovery_request() {
             match request {
                 tex_state::print::ErrorRecoveryRequest::Delete(count) => {

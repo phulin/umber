@@ -248,6 +248,10 @@ pub struct MainControl {
     /// Preflight has already committed its delivery, so retry resumes operand
     /// scanning without cloning or replaying earlier ordinary commands.
     pending_preflight_command: Option<PendingPreflightCommand>,
+    /// Fully scanned resource operation retained across host acquisition.
+    /// The command/input cursor is already committed, so retry resolves this
+    /// typed operand and never replays delivery or scanning work.
+    pending_resource_operation: Option<PendingResourceOperation>,
     /// TeX82 §76's `history=fatal_error_stop`, carrying §93/§94/§95's payload.
     ///
     /// `succumb` ends the job through §81's `jump_out`, which a library engine
@@ -539,7 +543,7 @@ pub enum DiagnosticStepResult {
 /// Host capabilities are intentionally absent: their borrow ends before this
 /// checkpoint can be restored.
 struct StepSnapshot {
-    command: CommandStateSnapshot,
+    command: Option<CommandStateSnapshot>,
     mode_savepoint: crate::mode::ModeSavepoint,
     next_alignment_identity: u64,
     active_alignment: Option<ActiveReplayAlignment>,
@@ -567,7 +571,7 @@ struct StepSnapshot {
 }
 
 impl StepSnapshot {
-    fn capture(control: &mut MainControl, stores: &mut Universe) -> Self {
+    fn capture(control: &mut MainControl, stores: &mut Universe, captures_command: bool) -> Self {
         #[cfg(feature = "profiling")]
         let started = std::time::Instant::now();
         #[cfg(feature = "profiling")]
@@ -578,7 +582,7 @@ impl StepSnapshot {
         let _snapshot_allocations = tex_state::measurement::hot_core_allocation_scope(
             tex_state::measurement::HotCoreAllocationOwner::StepSnapshotClone,
         );
-        let command = {
+        let command = captures_command.then(|| {
             #[cfg(feature = "profiling")]
             let command_started = std::time::Instant::now();
             #[cfg(feature = "profiling")]
@@ -593,7 +597,7 @@ impl StepSnapshot {
                 std::mem::size_of::<CommandStateSnapshot>(),
             );
             command
-        };
+        });
         let snapshot = Self {
             command,
             mode_savepoint: control.modes.begin_journal(),
@@ -636,10 +640,12 @@ impl StepSnapshot {
         // state with a restored command and a newer provenance timeline is
         // observable outside this method.
         stores.rollback_local_retry_snapshot(self.universe);
-        control
-            .command
-            .rollback(self.command)
-            .expect("step snapshot keeps its command profile");
+        if let Some(command) = self.command {
+            control
+                .command
+                .rollback(command)
+                .expect("step snapshot keeps its command profile");
+        }
         control
             .modes
             .rollback_journal(self.mode_savepoint)
@@ -697,10 +703,17 @@ type ObservationSlot = Option<ObservationBuffer>;
 /// snapshotting, application, publication, rollback, and evidence are shared.
 enum OperationDelivery {
     Replay(Option<tex_command::CurrentCommand>),
+    /// Expansion settled during the same borrow as raw preflight delivery,
+    /// including its canonical expanded observation.
+    Settled(tex_command::CurrentCommand),
     Expanding {
         command: tex_command::CurrentCommand,
         main_loop: bool,
     },
+    /// `\immediate` already consumed its recursive PDF command before a
+    /// pre-operand DVI rejection. Retry resumes that PDF operand scanner
+    /// directly; rewinding the outer command/input aggregate is unnecessary.
+    ImmediatePdfRetry(UnexpandablePrimitive),
     Alignment(AlignmentIdentity),
     /// Delivery completed during mutation-free capability preflight. The
     /// semantic step still runs through the sole executor below.
@@ -714,11 +727,71 @@ enum PendingPreflightCommand {
         command: tex_command::CurrentCommand,
         main_loop: bool,
     },
+    ImmediatePdfRetry(UnexpandablePrimitive),
 }
 
 struct PreflightDelivery {
     delivery: OperationDelivery,
     capabilities: crate::transaction_protocol::CommandCapabilities,
+}
+
+struct PreparedOperation {
+    scanned: ScannedStep,
+    outer_paragraph_was_active: bool,
+    artifact_count: usize,
+    effect_count: usize,
+    prepared_page_count: usize,
+}
+
+struct PendingResourceOperation {
+    scanned: Box<ScannedStep>,
+    capabilities: crate::transaction_protocol::CommandCapabilities,
+}
+
+impl std::fmt::Debug for PendingResourceOperation {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("PendingResourceOperation")
+            .field("family", &self.capabilities.family())
+            .finish_non_exhaustive()
+    }
+}
+
+struct UnavailablePreparedResource {
+    error: ExecError,
+    scanned: Box<ScannedStep>,
+}
+
+struct PrepareOperationError {
+    error: Box<ExecError>,
+    unavailable: Option<Box<ScannedStep>>,
+}
+
+#[derive(Clone, Copy)]
+struct DirectFailureContext {
+    operations: usize,
+    initial_artifacts: usize,
+    initial_boundaries: usize,
+    initial_effect_pos: tex_state::EffectPos,
+}
+
+impl From<ExecError> for PrepareOperationError {
+    fn from(error: ExecError) -> Self {
+        Self {
+            error: Box::new(error),
+            unavailable: None,
+        }
+    }
+}
+
+impl From<Box<UnavailablePreparedResource>> for PrepareOperationError {
+    fn from(unavailable: Box<UnavailablePreparedResource>) -> Self {
+        let unavailable = *unavailable;
+        Self {
+            error: Box::new(unavailable.error),
+            unavailable: Some(unavailable.scanned),
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -1558,7 +1631,7 @@ impl MainControl {
         &self,
         scanned: ScannedStep,
         stores: &Universe,
-    ) -> Result<ScannedStep, ExecError> {
+    ) -> Result<ScannedStep, Box<UnavailablePreparedResource>> {
         let ScannedStep::FontDefinition {
             request, global, ..
         } = scanned
@@ -1567,12 +1640,18 @@ impl MainControl {
         };
         stores.poison_tracked_region(TrackedRegionBarrier::UnsupportedHostCapability);
         let path = crate::canonical_font_resource_path(&request.name);
-        let resource = self
-            .capabilities
-            .font(&path)
-            .ok_or_else(|| ExecError::MissingFont {
-                request: request.clone(),
-            })?;
+        let Some(resource) = self.capabilities.font(&path) else {
+            return Err(Box::new(UnavailablePreparedResource {
+                error: ExecError::MissingFont {
+                    request: request.clone(),
+                },
+                scanned: Box::new(ScannedStep::FontDefinition {
+                    request,
+                    resource: Box::new(None),
+                    global,
+                }),
+            }));
+        };
         Ok(ScannedStep::FontDefinition {
             request,
             resource: Box::new(Some(resource)),
@@ -1584,7 +1663,7 @@ impl MainControl {
         &self,
         scanned: ScannedStep,
         stores: &Universe,
-    ) -> Result<ScannedStep, ExecError> {
+    ) -> Result<ScannedStep, Box<UnavailablePreparedResource>> {
         let ScannedStep::InputStream {
             mut request,
             resource: _,
@@ -1610,12 +1689,19 @@ impl MainControl {
                     Some(resource) => Some(resource.source().clone()),
                     None if self.capabilities.input_probe_is_unavailable(&packed_name) => None,
                     None => {
-                        return Err(ExecError::MissingInputProbe {
-                            request: tex_command::FileEnquiryRequest::new(
-                                packed_name,
-                                tex_command::FileEnquiryIntent::OpenInProbe,
-                            ),
-                        });
+                        let error_request = tex_command::FileEnquiryRequest::new(
+                            packed_name,
+                            tex_command::FileEnquiryIntent::OpenInProbe,
+                        );
+                        return Err(Box::new(UnavailablePreparedResource {
+                            error: ExecError::MissingInputProbe {
+                                request: error_request,
+                            },
+                            scanned: Box::new(ScannedStep::InputStream {
+                                request,
+                                resource: None,
+                            }),
+                        }));
                     }
                 }
             }
@@ -1628,7 +1714,7 @@ impl MainControl {
         &self,
         scanned: ScannedStep,
         stores: &mut Universe,
-    ) -> Result<ScannedStep, ExecError> {
+    ) -> Result<ScannedStep, Box<UnavailablePreparedResource>> {
         let ScannedStep::PdfXImage { mut request, .. } = scanned else {
             return Ok(scanned);
         };
@@ -1643,12 +1729,17 @@ impl MainControl {
         }
         apply_pdf_image_compatibility_policy(stores);
         request.page_box = pdf_image_page_box(stores, &request);
-        let resource =
-            self.capabilities
-                .pdf_image(&request)
-                .ok_or_else(|| ExecError::MissingPdfImage {
+        let Some(resource) = self.capabilities.pdf_image(&request) else {
+            return Err(Box::new(UnavailablePreparedResource {
+                error: ExecError::MissingPdfImage {
                     request: request.clone(),
-                })?;
+                },
+                scanned: Box::new(ScannedStep::PdfXImage {
+                    request,
+                    resource: PdfImageResource::Unavailable,
+                }),
+            }));
+        };
         Ok(ScannedStep::PdfXImage { request, resource })
     }
 
@@ -1915,7 +2006,11 @@ impl MainControl {
     }
 
     fn snapshot_step(&mut self, stores: &mut Universe) -> StepSnapshot {
-        StepSnapshot::capture(self, stores)
+        StepSnapshot::capture(self, stores, true)
+    }
+
+    fn snapshot_prepared_step(&mut self, stores: &mut Universe) -> StepSnapshot {
+        StepSnapshot::capture(self, stores, false)
     }
 
     fn commit_step(&mut self, snapshot: StepSnapshot, stores: &mut Universe) {
@@ -2052,18 +2147,48 @@ impl MainControl {
             ExecError::MissingInput {
                 name,
                 original_name,
-            } => Ok(StepResult::Suspended(ResourceNeed::Input {
-                name,
-                original_name,
-            })),
+            } => {
+                let need = ResourceNeed::Input {
+                    name,
+                    original_name,
+                };
+                if let Some(pending) = self.operation_observations.as_mut() {
+                    pending.record_resource(need.clone());
+                    pending
+                        .receipt
+                        .set_termination(OperationTermination::Suspended);
+                }
+                Ok(StepResult::Suspended(need))
+            }
             ExecError::MissingInputProbe { request } => {
-                Ok(StepResult::Suspended(ResourceNeed::InputProbe { request }))
+                let need = ResourceNeed::InputProbe { request };
+                if let Some(pending) = self.operation_observations.as_mut() {
+                    pending.record_resource(need.clone());
+                    pending
+                        .receipt
+                        .set_termination(OperationTermination::Suspended);
+                }
+                Ok(StepResult::Suspended(need))
             }
             ExecError::MissingFont { request } => {
-                Ok(StepResult::Suspended(ResourceNeed::Font { request }))
+                let need = ResourceNeed::Font { request };
+                if let Some(pending) = self.operation_observations.as_mut() {
+                    pending.record_resource(need.clone());
+                    pending
+                        .receipt
+                        .set_termination(OperationTermination::Suspended);
+                }
+                Ok(StepResult::Suspended(need))
             }
             ExecError::MissingPdfImage { request } => {
-                Ok(StepResult::Suspended(ResourceNeed::PdfImage { request }))
+                let need = ResourceNeed::PdfImage { request };
+                if let Some(pending) = self.operation_observations.as_mut() {
+                    pending.record_resource(need.clone());
+                    pending
+                        .receipt
+                        .set_termination(OperationTermination::Suspended);
+                }
+                Ok(StepResult::Suspended(need))
             }
             error => Err(error),
         }
@@ -2075,6 +2200,69 @@ impl MainControl {
             stores.commit_effects(stores.world().effect_pos())?;
         }
         Ok(())
+    }
+
+    fn finish_resource_preflight_failure(
+        &mut self,
+        stores: &Universe,
+        error: ExecError,
+    ) -> Result<StepResult, ExecError> {
+        let error =
+            error.freeze_diagnostic_origin(stores, self.command.diagnostic_input_context(8));
+        match error {
+            ExecError::Captured {
+                error,
+                site,
+                frozen,
+            } => match *error {
+                ExecError::MissingInput {
+                    name,
+                    original_name,
+                } => {
+                    self.pending_resource_site = Some(site);
+                    Ok(self.observed_suspension(ResourceNeed::Input {
+                        name,
+                        original_name,
+                    }))
+                }
+                ExecError::MissingInputProbe { request } => {
+                    self.pending_resource_site = Some(site);
+                    Ok(self.observed_suspension(ResourceNeed::InputProbe { request }))
+                }
+                error => Err(ExecError::Captured {
+                    error: Box::new(error),
+                    site,
+                    frozen,
+                }),
+            },
+            ExecError::MissingInput {
+                name,
+                original_name,
+            } => Ok(self.observed_suspension(ResourceNeed::Input {
+                name,
+                original_name,
+            })),
+            ExecError::MissingInputProbe { request } => {
+                Ok(self.observed_suspension(ResourceNeed::InputProbe { request }))
+            }
+            ExecError::MissingFont { request } => {
+                Ok(self.observed_suspension(ResourceNeed::Font { request }))
+            }
+            ExecError::MissingPdfImage { request } => {
+                Ok(self.observed_suspension(ResourceNeed::PdfImage { request }))
+            }
+            error => Err(error),
+        }
+    }
+
+    fn observed_suspension(&mut self, need: ResourceNeed) -> StepResult {
+        if let Some(pending) = self.operation_observations.as_mut() {
+            pending.record_resource(need.clone());
+            pending
+                .receipt
+                .set_termination(OperationTermination::Suspended);
+        }
+        StepResult::Suspended(need)
     }
 
     /// Returns the command site retained for the most recent resource need.
@@ -2748,6 +2936,19 @@ impl MainControl {
         {
             return true;
         }
+        if matches!(
+            self.modes.current_mode(),
+            Mode::Vertical | Mode::InternalVertical
+        ) && matches!(
+            delivery,
+            OperationDelivery::Replay(Some(command))
+                if matches!(
+                    command.meaning(),
+                    Meaning::UnexpandablePrimitive(UnexpandablePrimitive::PdfStartLink)
+                )
+        ) {
+            return true;
+        }
         if matches!(delivery, OperationDelivery::Expanding { .. }) {
             return true;
         }
@@ -2847,15 +3048,20 @@ impl MainControl {
     fn finish_direct_failure(
         &mut self,
         stores: &mut Universe,
+        operation_mark: tex_state::DirectOperationMark,
         error: ExecError,
-        operations: usize,
-        initial_artifacts: usize,
-        initial_boundaries: usize,
-        initial_effect_pos: tex_state::EffectPos,
+        context: DirectFailureContext,
     ) -> Result<StepResult, ExecError> {
+        let DirectFailureContext {
+            operations,
+            initial_artifacts,
+            initial_boundaries,
+            initial_effect_pos,
+        } = context;
         let error =
             error.freeze_diagnostic_origin(stores, self.command.diagnostic_input_context(8));
         let Some(fatal) = error.as_fatal() else {
+            stores.discard_direct_operation_allocations(operation_mark);
             return Err(error);
         };
         let context = self.command.output_open_context(&stores.command_context());
@@ -2882,7 +3088,7 @@ impl MainControl {
         ]);
         let evidence_error =
             self.admit_observed_receipt(stores, OperationTermination::Fatal(fatal));
-        stores.commit_direct_operation();
+        stores.commit_direct_operation(operation_mark);
         self.record_direct_episode_commit(
             stores,
             operations,
@@ -2905,6 +3111,7 @@ impl MainControl {
         &mut self,
         stores: &mut Universe,
         max_operations: usize,
+        mut tracked_region: Option<&mut Option<Result<TrackedRegionRecord, TrackedRegionError>>>,
     ) -> Result<StepResult, ExecError> {
         let initial_boundaries = self.completed_boundaries.len();
         let initial_effect_pos = stores.world().effect_pos();
@@ -2914,9 +3121,27 @@ impl MainControl {
         let initial_error_count = stores.world().error_channel().error_count();
         let mut operations = 0_usize;
         let mut direct_attempt_recorded = false;
+        let mut episode_tracked_mark = if tracked_region.is_some() {
+            match stores.begin_tracked_region() {
+                Ok(mark) => Some(mark),
+                Err(error) => {
+                    if let Some(outcome) = tracked_region.as_deref_mut() {
+                        *outcome = Some(Err(error));
+                    }
+                    None
+                }
+            }
+        } else {
+            None
+        };
 
         loop {
-            let preflight = if let Some(command) = self.pending_preflight_command.take() {
+            let preflight = if let Some(pending) = self.pending_resource_operation.take() {
+                PreflightDelivery {
+                    delivery: OperationDelivery::Prepared(pending.scanned),
+                    capabilities: pending.capabilities,
+                }
+            } else if let Some(command) = self.pending_preflight_command.take() {
                 match command {
                     PendingPreflightCommand::Settled(command) => PreflightDelivery {
                         capabilities: crate::transaction_protocol::canonical_command_capabilities(
@@ -2933,16 +3158,37 @@ impl MainControl {
                             delivery: OperationDelivery::Expanding { command, main_loop },
                         }
                     }
+                    PendingPreflightCommand::ImmediatePdfRetry(primitive) => {
+                        let meaning = Meaning::UnexpandablePrimitive(primitive);
+                        PreflightDelivery {
+                            capabilities:
+                                crate::transaction_protocol::canonical_command_capabilities(meaning),
+                            delivery: OperationDelivery::ImmediatePdfRetry(primitive),
+                        }
+                    }
                 }
             } else {
                 let preflight = match self.preflight_replay_delivery(stores) {
                     Ok(preflight) => preflight,
                     Err(error) => {
+                        if let Some(mark) = episode_tracked_mark.take() {
+                            let _ = stores.abandon_tracked_region(mark);
+                        }
                         if execution_error_is_fuel(&error) {
                             self.episode_telemetry
                                 .record_semantic_barrier(crate::SemanticEpisodeBarrier::Fuel);
                         }
-                        return Err(error);
+                        let result = self.finish_resource_preflight_failure(stores, error);
+                        if matches!(result, Ok(StepResult::Suspended(_))) {
+                            self.advance_telemetry.rollbacks += 1;
+                            #[cfg(feature = "profiling")]
+                            self.episode_telemetry
+                                .record_rollback(crate::SemanticEpisodeBarrier::Resource, 1);
+                            #[cfg(not(feature = "profiling"))]
+                            self.episode_telemetry
+                                .record_rollback(crate::SemanticEpisodeBarrier::Resource);
+                        }
+                        return result;
                     }
                 };
                 let Some(preflight) = preflight else {
@@ -2961,13 +3207,152 @@ impl MainControl {
                         OperationDelivery::Replay(None),
                         OperationTransaction::Advance,
                         1,
-                        None,
+                        tracked_region.as_deref_mut(),
                     );
                 };
                 preflight
             };
 
-            if self.command_requires_transaction(
+            if let crate::transaction_protocol::CommandPreflight::Resource(_) =
+                preflight.capabilities.preflight()
+                && !(stores.int_param(IntParam::PDF_OUTPUT) <= 0
+                    && matches!(
+                        &preflight.delivery,
+                        OperationDelivery::Replay(Some(command))
+                            if matches!(
+                                command.meaning(),
+                                Meaning::UnexpandablePrimitive(
+                                    UnexpandablePrimitive::PdfXImage
+                                )
+                            )
+                    ))
+            {
+                if operations != 0 {
+                    self.record_direct_episode_commit(
+                        stores,
+                        operations,
+                        crate::EpisodeCommitBoundary::SliceLimit,
+                        initial_artifacts,
+                        initial_boundaries,
+                        initial_effect_pos,
+                    );
+                }
+                self.episode_telemetry.record_attempt();
+                self.advance_telemetry.attempts += 1;
+                let tracked_mark = episode_tracked_mark.take();
+                let retry_command = match &preflight.delivery {
+                    OperationDelivery::Replay(Some(command)) => {
+                        Some(PendingPreflightCommand::Settled(command.clone()))
+                    }
+                    OperationDelivery::Expanding { command, main_loop } => {
+                        Some(PendingPreflightCommand::Expanding {
+                            command: command.clone(),
+                            main_loop: *main_loop,
+                        })
+                    }
+                    OperationDelivery::ImmediatePdfRetry(primitive) => {
+                        Some(PendingPreflightCommand::ImmediatePdfRetry(*primitive))
+                    }
+                    OperationDelivery::Replay(None)
+                    | OperationDelivery::Settled(_)
+                    | OperationDelivery::Alignment(_)
+                    | OperationDelivery::Prepared(_) => None,
+                };
+                let prepared = match self.prepare_operation(stores, preflight.delivery) {
+                    Ok(prepared) => prepared,
+                    Err(failure) => {
+                        if let Some(mark) = tracked_mark {
+                            let _ = stores.abandon_tracked_region(mark);
+                        }
+                        if let Some(scanned) = failure.unavailable {
+                            self.pending_resource_operation = Some(PendingResourceOperation {
+                                scanned,
+                                capabilities: preflight.capabilities,
+                            });
+                            self.advance_telemetry.rollbacks += 1;
+                            #[cfg(feature = "profiling")]
+                            self.episode_telemetry
+                                .record_rollback(crate::SemanticEpisodeBarrier::Resource, 1);
+                            #[cfg(not(feature = "profiling"))]
+                            self.episode_telemetry
+                                .record_rollback(crate::SemanticEpisodeBarrier::Resource);
+                            return self.finish_resource_preflight_failure(stores, *failure.error);
+                        }
+                        let result = self.finish_resource_preflight_failure(stores, *failure.error);
+                        if matches!(result, Ok(StepResult::Suspended(_))) {
+                            self.pending_preflight_command = retry_command;
+                            self.advance_telemetry.rollbacks += 1;
+                            #[cfg(feature = "profiling")]
+                            self.episode_telemetry
+                                .record_rollback(crate::SemanticEpisodeBarrier::Resource, 1);
+                            #[cfg(not(feature = "profiling"))]
+                            self.episode_telemetry
+                                .record_rollback(crate::SemanticEpisodeBarrier::Resource);
+                        }
+                        return result;
+                    }
+                };
+                let operation_mark = stores.begin_direct_operation();
+                let applied = self.apply_prepared_operation(stores, prepared);
+                self.record_save_stack_usage(stores);
+                let boundary = self.episode_commit_boundary(
+                    stores,
+                    None,
+                    &applied,
+                    1,
+                    1,
+                    initial_boundaries,
+                    initial_effect_pos,
+                    initial_artifacts,
+                    initial_format_dump,
+                    initial_diagnostic,
+                    initial_error_count,
+                    tracked_region.is_some(),
+                );
+                let step = match applied {
+                    Ok(step) => step,
+                    Err(error) => {
+                        return self.finish_direct_failure(
+                            stores,
+                            operation_mark,
+                            error,
+                            DirectFailureContext {
+                                operations: 1,
+                                initial_artifacts,
+                                initial_boundaries,
+                                initial_effect_pos,
+                            },
+                        );
+                    }
+                };
+                if let Some(error) =
+                    self.admit_observed_receipt(stores, operation_termination(step, self.fatal))
+                {
+                    stores.commit_direct_operation(operation_mark);
+                    return Err(error);
+                }
+                stores.commit_direct_operation(operation_mark);
+                let tracked_result = tracked_mark.map(|mark| stores.finish_tracked_region(mark));
+                self.record_direct_episode_commit(
+                    stores,
+                    1,
+                    boundary.unwrap_or(crate::EpisodeCommitBoundary::SliceLimit),
+                    initial_artifacts,
+                    initial_boundaries,
+                    initial_effect_pos,
+                );
+                if let (Some(outcome), Some(result)) =
+                    (tracked_region.as_deref_mut(), tracked_result)
+                {
+                    *outcome = Some(result);
+                }
+                return Ok(StepResult::Progress(step));
+            }
+
+            if matches!(
+                preflight.capabilities.preflight(),
+                crate::transaction_protocol::CommandPreflight::Transaction(_)
+            ) || self.command_requires_transaction(
                 stores,
                 preflight.capabilities,
                 &preflight.delivery,
@@ -2982,7 +3367,8 @@ impl MainControl {
                         initial_effect_pos,
                     );
                 }
-                let retry_command = match &preflight.delivery {
+                let tracked_mark = episode_tracked_mark.take();
+                let mut retry_command = match &preflight.delivery {
                     OperationDelivery::Replay(Some(command)) => {
                         Some(PendingPreflightCommand::Settled(command.clone()))
                     }
@@ -2992,34 +3378,131 @@ impl MainControl {
                             main_loop: *main_loop,
                         })
                     }
+                    OperationDelivery::ImmediatePdfRetry(primitive) => {
+                        Some(PendingPreflightCommand::ImmediatePdfRetry(*primitive))
+                    }
                     OperationDelivery::Replay(None)
+                    | OperationDelivery::Settled(_)
                     | OperationDelivery::Alignment(_)
                     | OperationDelivery::Prepared(_) => None,
                 };
-                let result = self.execute_aggregate_operation(
-                    stores,
-                    preflight.delivery,
-                    OperationTransaction::Advance,
-                    1,
-                    None,
-                );
-                let retryable_failure = match &result {
-                    Err(error) => {
-                        let preserves_xform_reservation =
-                            matches!(error, ExecError::PdfXFormVoidBox)
-                                || matches!(
-                                    error,
-                                    ExecError::Captured { error, .. }
-                                        if matches!(error.as_ref(), ExecError::PdfXFormVoidBox)
-                                );
-                        error.as_fatal().is_none() && !preserves_xform_reservation
+                let prepared = match self.prepare_operation(stores, preflight.delivery) {
+                    Ok(prepared) => prepared,
+                    Err(failure) => {
+                        if let Some(mark) = tracked_mark {
+                            let _ = stores.abandon_tracked_region(mark);
+                        }
+                        if let Some(scanned) = failure.unavailable {
+                            self.pending_resource_operation = Some(PendingResourceOperation {
+                                scanned,
+                                capabilities: preflight.capabilities,
+                            });
+                            return self.finish_resource_preflight_failure(stores, *failure.error);
+                        }
+                        self.pending_preflight_command = retry_command;
+                        let error = (*failure.error).freeze_diagnostic_origin(
+                            stores,
+                            self.command.diagnostic_input_context(8),
+                        );
+                        Self::publish_pdf_fatal_error(stores, &error)?;
+                        return Err(error);
                     }
-                    Ok(_) => false,
                 };
-                if matches!(result, Ok(StepResult::Suspended(_))) || retryable_failure {
-                    self.pending_preflight_command = retry_command;
+                if let ScannedStep::ImmediateExtension(ImmediateExtension::PdfExtensionInDviMode(
+                    primitive,
+                )) = &prepared.scanned
+                {
+                    retry_command = Some(PendingPreflightCommand::ImmediatePdfRetry(*primitive));
                 }
-                return result;
+                if let crate::transaction_protocol::CommandPreflight::Transaction(transaction) =
+                    preflight.capabilities.preflight()
+                {
+                    let transaction = transaction.transaction();
+                    transaction
+                        .admit(transaction.projection())
+                        .expect("preflight owns the exact narrow projection");
+                }
+                self.episode_telemetry.record_attempt();
+                self.advance_telemetry.attempts += 1;
+                let operation_mark = stores.begin_direct_operation();
+                let applied = self.apply_prepared_operation(stores, prepared);
+                self.record_save_stack_usage(stores);
+                let boundary = self.episode_commit_boundary(
+                    stores,
+                    None,
+                    &applied,
+                    1,
+                    1,
+                    initial_boundaries,
+                    initial_effect_pos,
+                    initial_artifacts,
+                    initial_format_dump,
+                    initial_diagnostic,
+                    initial_error_count,
+                    tracked_region.is_some(),
+                );
+                let step = match applied {
+                    Ok(step) => step,
+                    Err(error) => {
+                        if let Some(mark) = tracked_mark {
+                            if error.as_fatal().is_some() {
+                                stores.poison_tracked_region(
+                                    TrackedRegionBarrier::FatalPartialCommit,
+                                );
+                                let result = stores.finish_tracked_region(mark);
+                                if let Some(outcome) = tracked_region.as_deref_mut() {
+                                    *outcome = Some(result);
+                                }
+                            } else {
+                                let _ = stores.abandon_tracked_region(mark);
+                            }
+                        }
+                        if error.as_fatal().is_none() {
+                            self.pending_preflight_command = retry_command;
+                            stores.discard_direct_operation_allocations(operation_mark);
+                            self.advance_telemetry.commits += 1;
+                            let error = error.freeze_diagnostic_origin(
+                                stores,
+                                self.command.diagnostic_input_context(8),
+                            );
+                            Self::publish_pdf_fatal_error(stores, &error)?;
+                            return Err(error);
+                        }
+                        return self.finish_direct_failure(
+                            stores,
+                            operation_mark,
+                            error,
+                            DirectFailureContext {
+                                operations: 1,
+                                initial_artifacts,
+                                initial_boundaries,
+                                initial_effect_pos,
+                            },
+                        );
+                    }
+                };
+                if let Some(error) =
+                    self.admit_observed_receipt(stores, operation_termination(step, self.fatal))
+                {
+                    stores.commit_direct_operation(operation_mark);
+                    return Err(error);
+                }
+                stores.commit_direct_operation(operation_mark);
+                let tracked_result = tracked_mark.map(|mark| stores.finish_tracked_region(mark));
+                self.record_direct_episode_commit(
+                    stores,
+                    1,
+                    boundary.unwrap_or(crate::EpisodeCommitBoundary::SliceLimit),
+                    initial_artifacts,
+                    initial_boundaries,
+                    initial_effect_pos,
+                );
+                if let (Some(outcome), Some(result)) =
+                    (tracked_region.as_deref_mut(), tracked_result)
+                {
+                    *outcome = Some(result);
+                }
+                return Ok(StepResult::Progress(step));
             }
 
             if !direct_attempt_recorded {
@@ -3027,8 +3510,27 @@ impl MainControl {
                 self.advance_telemetry.attempts += 1;
                 direct_attempt_recorded = true;
             }
-            stores.begin_direct_operation();
+            let operation_mark = stores.begin_direct_operation();
+            let tracked_mark = episode_tracked_mark.take();
+            let preserves_undefined_for_executor_diagnostic = matches!(
+                &preflight.delivery,
+                OperationDelivery::Replay(Some(command)) | OperationDelivery::Settled(command)
+                    if matches!(command.meaning(), Meaning::Undefined | Meaning::Unknown(_))
+            );
+            // Capability preflight preserves an undefined command instead of
+            // diagnosing it inside expansion. The executor reports that one
+            // settled command without entering a second ErrorStop input
+            // dialogue; recovery input still belongs to diagnostics raised
+            // by operand scanning and semantic application.
+            let saved_interaction =
+                preserves_undefined_for_executor_diagnostic.then(|| stores.interaction_mode());
+            if saved_interaction.is_some() {
+                stores.set_interaction_mode(tex_state::InteractionMode::Nonstop);
+            }
             let applied = self.apply_operation(stores, preflight.delivery);
+            if let Some(interaction) = saved_interaction {
+                stores.set_interaction_mode(interaction);
+            }
             operations += 1;
             self.record_save_stack_usage(stores);
             let boundary = self.episode_commit_boundary(
@@ -3043,22 +3545,43 @@ impl MainControl {
                 initial_format_dump,
                 initial_diagnostic,
                 initial_error_count,
-                false,
+                tracked_region.is_some(),
             );
             let step = match applied {
                 Ok(step) => step,
                 Err(error) => {
+                    if let Some(mark) = tracked_mark {
+                        if error.as_fatal().is_some() {
+                            stores.poison_tracked_region(TrackedRegionBarrier::FatalPartialCommit);
+                            let result = stores.finish_tracked_region(mark);
+                            if let Some(outcome) = tracked_region.as_deref_mut() {
+                                *outcome = Some(result);
+                            }
+                        } else {
+                            let _ = stores.abandon_tracked_region(mark);
+                        }
+                    }
                     return self.finish_direct_failure(
                         stores,
+                        operation_mark,
                         error,
-                        operations,
-                        initial_artifacts,
-                        initial_boundaries,
-                        initial_effect_pos,
+                        DirectFailureContext {
+                            operations,
+                            initial_artifacts,
+                            initial_boundaries,
+                            initial_effect_pos,
+                        },
                     );
                 }
             };
-            stores.commit_direct_operation();
+            if let Some(error) =
+                self.admit_observed_receipt(stores, operation_termination(step, self.fatal))
+            {
+                stores.commit_direct_operation(operation_mark);
+                return Err(error);
+            }
+            stores.commit_direct_operation(operation_mark);
+            let tracked_result = tracked_mark.map(|mark| stores.finish_tracked_region(mark));
             if let Some(boundary) = boundary {
                 self.record_direct_episode_commit(
                     stores,
@@ -3068,6 +3591,11 @@ impl MainControl {
                     initial_boundaries,
                     initial_effect_pos,
                 );
+                if let (Some(outcome), Some(result)) =
+                    (tracked_region.as_deref_mut(), tracked_result)
+                {
+                    *outcome = Some(result);
+                }
                 return Ok(StepResult::Progress(step));
             }
         }
@@ -3083,12 +3611,10 @@ impl MainControl {
     ) -> Result<StepResult, ExecError> {
         if matches!(transaction, OperationTransaction::Advance)
             && matches!(&delivery, OperationDelivery::Replay(None))
-            && tracked_region.is_none()
-            && self.operation_observations.is_none()
-            && !stores.world().error_channel().has_pending_recovery()
+            && !(self.operation_observations.is_some() && self.active_alignment.is_some())
             && stores.direct_operation_supported()
         {
-            self.execute_direct_episode(stores, max_operations)
+            self.execute_direct_episode(stores, max_operations, tracked_region)
         } else {
             self.execute_aggregate_operation(
                 stores,
@@ -3130,7 +3656,11 @@ impl MainControl {
                 .maximum_live_savepoints
                 .max(self.advance_telemetry.live_savepoints);
         }
-        let snapshot = self.snapshot_step(stores);
+        let snapshot = if matches!(&delivery, OperationDelivery::Prepared(_)) {
+            self.snapshot_prepared_step(stores)
+        } else {
+            self.snapshot_step(stores)
+        };
         let tracked_mark =
             if matches!(transaction, OperationTransaction::Advance) && tracked_region.is_some() {
                 match stores.begin_tracked_region() {
@@ -5239,7 +5769,7 @@ impl MainControl {
         self.refresh_host_capabilities(stores);
 
         let mut diagnostics = Vec::new();
-        let delivery = {
+        let (delivery, settled_in_preflight) = {
             let mut processor = command_processor(
                 &mut self.command,
                 self.fuel.fuel_mut(),
@@ -5247,16 +5777,49 @@ impl MainControl {
                 &mut self.operation_observations,
                 stores,
             );
+            processor
+                .apply_error_stop_recovery()
+                .map_err(command_error)?;
             let delivery = processor
                 .get_next_with_replay_completion()
                 .map_err(command_error)?;
+            let mut settled_in_preflight = false;
+            let delivery = match delivery {
+                Some(tex_command::CommandReplayDelivery::Command(command))
+                    if matches!(
+                        command.meaning(),
+                        Meaning::Macro { .. }
+                            | Meaning::ExpandablePrimitive(_)
+                            | Meaning::Undefined
+                            | Meaning::Unknown(_)
+                    ) =>
+                {
+                    let retry = PendingPreflightCommand::Expanding {
+                        command: command.clone(),
+                        main_loop: self.main_loop_active,
+                    };
+                    prepare_command_trace(&mut processor, mode, self.shown_mode);
+                    match processor.settle_current_command(command) {
+                        Ok(settled) => {
+                            settled_in_preflight = true;
+                            settled.map(tex_command::CommandReplayDelivery::Command)
+                        }
+                        Err(error) => {
+                            drop(processor);
+                            self.pending_preflight_command = Some(retry);
+                            return Err(command_error(error));
+                        }
+                    }
+                }
+                delivery => delivery,
+            };
             diagnostics.extend(
                 processor
                     .take_semantic_diagnostics()
                     .into_iter()
                     .map(PendingDiagnostic::Command),
             );
-            delivery
+            (delivery, settled_in_preflight)
         };
         self.capture_first_causal_context(stores, &diagnostics);
         report_pending_diagnostics(stores, diagnostics)?;
@@ -5281,24 +5844,6 @@ impl MainControl {
                 capabilities: passive(),
             }));
         };
-
-        if matches!(
-            command.meaning(),
-            Meaning::Macro { .. }
-                | Meaning::ExpandablePrimitive(_)
-                | Meaning::Undefined
-                | Meaning::Unknown(_)
-        ) {
-            let capabilities =
-                crate::transaction_protocol::canonical_command_capabilities(command.meaning());
-            return Ok(Some(PreflightDelivery {
-                delivery: OperationDelivery::Expanding {
-                    command,
-                    main_loop: self.main_loop_active,
-                },
-                capabilities,
-            }));
-        }
 
         let continues_main_loop = self.main_loop_active
             && matches!(
@@ -5333,6 +5878,7 @@ impl MainControl {
                 command.meaning(),
                 Meaning::UnexpandablePrimitive(UnexpandablePrimitive::NoBoundary)
             )
+            && self.operation_observations.is_none()
         {
             return Ok(Some(PreflightDelivery {
                 delivery: OperationDelivery::Prepared(Box::new(ScannedStep::NoBoundary {
@@ -5346,7 +5892,11 @@ impl MainControl {
         let capabilities =
             crate::transaction_protocol::canonical_command_capabilities(command.meaning());
         Ok(Some(PreflightDelivery {
-            delivery: OperationDelivery::Replay(Some(command)),
+            delivery: if settled_in_preflight {
+                OperationDelivery::Settled(command)
+            } else {
+                OperationDelivery::Replay(Some(command))
+            },
             capabilities,
         }))
     }
@@ -5362,6 +5912,19 @@ impl MainControl {
         stores: &mut Universe,
         delivery: OperationDelivery,
     ) -> Result<ReplayStep, ExecError> {
+        let prepared = self
+            .prepare_operation(stores, delivery)
+            .map_err(|failure| *failure.error)?;
+        self.apply_prepared_operation(stores, prepared)
+    }
+
+    /// Completes command delivery, operand scanning, and immutable resource
+    /// resolution before any semantic transaction is opened.
+    fn prepare_operation(
+        &mut self,
+        stores: &mut Universe,
+        delivery: OperationDelivery,
+    ) -> Result<PreparedOperation, PrepareOperationError> {
         if stores.dependency_region_is_active() {
             let mode = self.modes.current_mode();
             let mode_key = DependencyKey::Engine(DependencyEngineField::Mode);
@@ -5440,6 +6003,23 @@ impl MainControl {
             let scanned = match delivery {
                 OperationDelivery::Replay(Some(command)) => {
                     processor.resume_current_command(&command);
+                    processor.observe_expanded_delivery(&command);
+                    dispatch_main_control_command(
+                        &mut processor,
+                        command,
+                        mode,
+                        &self.boxes,
+                        innermost_group,
+                        job_is_all_over,
+                        self.modes.current_list().display_eq_no().is_some(),
+                        &mut self.shown_mode,
+                        &mut diagnostics,
+                        None,
+                        self.set_box_forbidden_depth == 0,
+                    )?
+                }
+                OperationDelivery::Settled(command) => {
+                    processor.resume_current_command(&command);
                     dispatch_main_control_command(
                         &mut processor,
                         command,
@@ -5517,6 +6097,25 @@ impl MainControl {
                         &mut diagnostics,
                     )?
                 }
+                OperationDelivery::ImmediatePdfRetry(primitive) => match primitive {
+                    UnexpandablePrimitive::PdfObject => {
+                        ScannedStep::ImmediateExtension(ImmediateExtension::PdfObject(
+                            processor.scan_pdf_object_request().map_err(command_error)?,
+                        ))
+                    }
+                    UnexpandablePrimitive::PdfXForm => {
+                        ScannedStep::ImmediateExtension(ImmediateExtension::PdfForm(
+                            processor
+                                .scan_pdf_form_request(UnexpandablePrimitive::PdfXForm)
+                                .map_err(command_error)?,
+                        ))
+                    }
+                    UnexpandablePrimitive::PdfXImage => ScannedStep::PdfXImage {
+                        request: processor.scan_pdf_image_request().map_err(command_error)?,
+                        resource: PdfImageResource::Unavailable,
+                    },
+                    _ => unreachable!("only immediate PDF retries reach this delivery"),
+                },
                 OperationDelivery::Alignment(alignment) => scan_alignment_delivery_step(
                     &mut processor,
                     alignment,
@@ -5562,10 +6161,28 @@ impl MainControl {
         let scanned = self.resolve_font_resource(scanned, stores)?;
         let scanned = self.resolve_input_stream_resource(scanned, stores)?;
         let scanned = self.resolve_pdf_image_resource(scanned, stores)?;
+        Ok(PreparedOperation {
+            scanned,
+            outer_paragraph_was_active,
+            artifact_count: stores.world().artifact_commits().len(),
+            effect_count: stores.world().effect_records().len(),
+            prepared_page_count: self.prepared_dvi_pages.len(),
+        })
+    }
+
+    fn apply_prepared_operation(
+        &mut self,
+        stores: &mut Universe,
+        prepared: PreparedOperation,
+    ) -> Result<ReplayStep, ExecError> {
+        let PreparedOperation {
+            scanned,
+            outer_paragraph_was_active,
+            artifact_count,
+            effect_count,
+            prepared_page_count,
+        } = prepared;
         let parking = self.suspend_main_control_parking(&scanned);
-        let artifact_count = stores.world().artifact_commits().len();
-        let effect_count = stores.world().effect_records().len();
-        let prepared_page_count = self.prepared_dvi_pages.len();
         #[cfg(feature = "profiling")]
         tex_state::measurement::record_hot_core_phase(
             tex_state::measurement::HotCorePhase::SemanticApply,
@@ -15997,7 +16614,6 @@ fn apply_scanned_step(
                 }
                 ImmediateExtension::PdfObject(request) => {
                     if matches!(request, PdfObjectRequest::Reserve) {
-                        apply_pdf_object_request(request, stores, false)?;
                         return Err(ExecError::PdfImmediateReservedObject);
                     }
                     apply_pdf_object_request(request, stores, true)?;
@@ -18887,6 +19503,17 @@ fn command_error(error: CommandError) -> ExecError {
         | CommandError::OuterInMacroArgument
         | CommandError::UnsupportedExpandablePrimitive(_) => ExecError::Command(error),
     }
+}
+
+fn operation_termination(step: ReplayStep, fatal: Option<FatalError>) -> OperationTermination {
+    fatal.map_or_else(
+        || match step {
+            ReplayStep::Continue => OperationTermination::Continue,
+            ReplayStep::End => OperationTermination::End,
+            ReplayStep::EndOfInput => OperationTermination::EndOfInput,
+        },
+        OperationTermination::Fatal,
+    )
 }
 
 fn execution_error_is_fuel(error: &ExecError) -> bool {

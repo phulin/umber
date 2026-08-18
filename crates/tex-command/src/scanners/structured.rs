@@ -49,7 +49,7 @@ const MISSING_DELIMITER_HELP: &[&str] = &[
 ];
 
 /// Provenance for a completed structured scan.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct StructuredProvenance {
     /// Origin of the first non-ignored token accepted by the scan.
     pub primary: OriginId,
@@ -872,7 +872,7 @@ pub enum MathStyleKind {
 }
 
 /// TeX82 §§511–520's three-part current filename.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Eq, Hash, PartialEq)]
 pub struct FileNameComponents {
     pub area: String,
     pub name: String,
@@ -911,7 +911,7 @@ impl FileNameComponents {
 }
 
 /// A filename scanned from expanded command-owned input.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct ScannedFileName {
     pub components: FileNameComponents,
     pub provenance: StructuredProvenance,
@@ -3835,8 +3835,12 @@ impl CommandProcessor<'_> {
     /// Scans and opens one input through the borrow-scoped registered-input
     /// capability. No filesystem or host lookup escapes this boundary.
     pub fn open_registered_input(&mut self) -> Result<RegisteredInput, CommandError> {
-        let mut file_name = self.scan_file_name()?;
+        let mut file_name = match self.command.take_pending_input_open() {
+            Some(file_name) => file_name,
+            None => self.scan_file_name()?,
+        };
         loop {
+            let retry_file_name = file_name.clone();
             let original_name = file_name.packed();
             file_name.components.apply_default_extension(".tex");
             let has_area = !file_name.components.area.is_empty();
@@ -3911,6 +3915,7 @@ impl CommandProcessor<'_> {
                 });
             }
             if unresolved {
+                self.command.retain_pending_input_open(retry_file_name);
                 return Err(CommandError::MissingInput {
                     name: packed_name,
                     original_name,

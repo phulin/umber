@@ -320,6 +320,17 @@ pub struct LocalRetrySnapshot {
     patch_operation: Option<PatchOperationMark>,
 }
 
+/// Fixed-size allocation-domain mark for one preflighted executor operation.
+///
+/// Semantic owners commit directly or through their own journals. This mark
+/// owns only the disposable private-revision allocation suffix and therefore
+/// retains no aggregate state roots.
+#[doc(hidden)]
+#[derive(Debug)]
+pub struct DirectOperationMark {
+    patch_operation: Option<PatchOperationMark>,
+}
+
 /// One immutable accepted-generation state substrate shared by O(1) snapshots.
 #[derive(Debug)]
 pub struct GenerationSubstrate {
@@ -3168,28 +3179,48 @@ impl Universe {
     #[must_use]
     #[doc(hidden)]
     pub const fn direct_operation_supported(&self) -> bool {
-        self.private_revision_domain.is_none()
+        true
     }
 
     /// Opens an ordinary operation after capability preflight has established
     /// that it needs no rollback mark.
     #[doc(hidden)]
-    pub fn begin_direct_operation(&mut self) {
-        assert!(
-            self.private_revision_domain.is_none(),
-            "private revisions require a rollback-capable operation mark"
-        );
+    #[must_use]
+    pub fn begin_direct_operation(&mut self) -> DirectOperationMark {
+        let patch_operation = self.private_revision_domain.as_mut().map(|domain| {
+            domain
+                .begin_operation()
+                .expect("private revision owns one direct operation mark")
+        });
         self.stores.begin_direct_operation();
+        DirectOperationMark { patch_operation }
     }
 
     /// Commits an ordinary successful executor operation without creating an
     /// aggregate rollback snapshot.
     #[doc(hidden)]
-    pub fn commit_direct_operation(&mut self) {
-        assert!(
-            self.private_revision_domain.is_none(),
-            "private revisions require a rollback-capable operation mark"
-        );
+    pub fn commit_direct_operation(&mut self, mark: DirectOperationMark) {
+        match (&mut self.private_revision_domain, mark.patch_operation) {
+            (Some(domain), Some(mark)) => domain
+                .commit_operation(mark)
+                .expect("direct operation owns the active patch allocation mark"),
+            (None, None) => {}
+            _ => panic!("direct operation mark does not match its Universe"),
+        }
+        self.stores.finish_direct_operation();
+    }
+
+    /// Discards private-revision allocations from a failed direct operation.
+    /// Canonical partial semantic state is retained.
+    #[doc(hidden)]
+    pub fn discard_direct_operation_allocations(&mut self, mark: DirectOperationMark) {
+        match (&mut self.private_revision_domain, mark.patch_operation) {
+            (Some(domain), Some(mark)) => domain
+                .rollback_operation(mark)
+                .expect("direct operation owns the active patch allocation mark"),
+            (None, None) => {}
+            _ => panic!("direct operation mark does not match its Universe"),
+        }
         self.stores.finish_direct_operation();
     }
 

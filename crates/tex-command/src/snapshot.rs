@@ -291,6 +291,8 @@ pub enum CommandSummaryError {
     ScannerWarningContext,
     /// A command diagnostic has not yet crossed the executor boundary.
     PendingSemanticDiagnostic,
+    /// A scanned `\input` filename is awaiting host acquisition.
+    ResourceSuspension,
 }
 
 impl fmt::Display for CommandSummaryError {
@@ -310,6 +312,7 @@ impl fmt::Display for CommandSummaryError {
             Self::PendingSemanticDiagnostic => {
                 "a command semantic diagnostic is awaiting executor delivery"
             }
+            Self::ResourceSuspension => "an input-open continuation is awaiting a resource",
         })
     }
 }
@@ -386,6 +389,9 @@ impl CommandState {
         if !self.semantic_diagnostics.is_empty() {
             return Err(CommandSummaryError::PendingSemanticDiagnostic);
         }
+        if self.pending_input_open.is_some() {
+            return Err(CommandSummaryError::ResourceSuspension);
+        }
         if self.transient.active_expansion_depth != 0
             || !self.replay_completions.is_empty()
             || !self.pending_replay_completions.is_empty()
@@ -444,6 +450,7 @@ impl CommandState {
             pending_replay_completions: Vec::new(),
             semantic_diagnostics: Vec::new(),
             name_in_progress: false,
+            pending_input_open: None,
             named_token_list_pushes: Vec::new(),
             file_framing_events: Vec::new(),
             usage,

@@ -219,6 +219,35 @@ pub(super) enum UndefinedHandling {
 }
 
 impl CommandProcessor<'_> {
+    /// Settles one raw command already delivered by the same processor
+    /// episode. This is the capability-preflight seam: macro/expandable
+    /// nesting and ordered raw/expanded observations remain in one borrow.
+    #[doc(hidden)]
+    pub fn settle_current_command(
+        &mut self,
+        command: CurrentCommand,
+    ) -> Result<Option<CurrentCommand>, CommandError> {
+        let result = self.delivery_driver(
+            Some(command),
+            DeliveryPolicy {
+                mode: DeliveryMode::Expanded(ExpandedDeliveryPolicy {
+                    fetch: ExpandedFetch::XToken,
+                    protected_macros: ProtectedMacroHandling::Expand,
+                    undefined: UndefinedHandling::Preserve,
+                    observation: ExpandedObservationPolicy::Commit,
+                    first_command: FirstCommandPolicy::Ordinary,
+                }),
+                replay_completion: ReplayCompletionPolicy::Consume,
+                control_sequence_creation: ControlSequenceCreation::Forbid,
+                alignment_interception: AlignmentInterceptionPolicy::Scalar,
+            },
+        )?;
+        Ok(result.map(|event| match event {
+            DeliveryEvent::Command(command) => command,
+            _ => unreachable!("preflight settlement returns one command"),
+        }))
+    }
+
     /// Delivers one ordinary expanded command through TeX.web's `get_x_token`.
     ///
     /// This thin canonical entry point selects the ordinary policy of the
@@ -841,7 +870,8 @@ impl CommandProcessor<'_> {
         }
     }
 
-    pub(crate) fn observe_expanded_delivery(&mut self, command: &CurrentCommand) {
+    #[doc(hidden)]
+    pub fn observe_expanded_delivery(&mut self, command: &CurrentCommand) {
         observe!(self, {
             #[cfg(test)]
             {

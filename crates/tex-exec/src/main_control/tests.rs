@@ -4374,8 +4374,8 @@ fn production_batch_keeps_ordinary_prefix_on_resource_need() {
     );
     let suspended = control.advance_telemetry();
     assert_eq!(suspended.rollbacks, 1);
-    assert_eq!(suspended.resource_replayed_delivered_tokens, 1);
-    assert_eq!(suspended.resource_replayed_dispatches, 1);
+    assert_eq!(suspended.resource_replayed_delivered_tokens, 0);
+    assert_eq!(suspended.resource_replayed_dispatches, 0);
 
     control.capabilities_mut().register_input(
         "child.tex",
@@ -4397,26 +4397,26 @@ fn production_batch_keeps_ordinary_prefix_on_resource_need() {
     assert_eq!(
         direct_work,
         tex_command::CommandWorkCounters {
-            fuel_charges: 24,
-            token_frame_steps: 24,
-            expanded_deliveries: 21,
-            meaning_lookups: 6,
+            fuel_charges: 17,
+            token_frame_steps: 17,
+            expanded_deliveries: 14,
+            meaning_lookups: 5,
             scanner_tokens: 0,
             write_expansions: 0,
         },
         "the direct prefix and one-command retry have exact actual work"
     );
     assert_eq!(telemetry.rollbacks, 1);
-    assert_eq!(telemetry.resource_replayed_delivered_tokens, 1);
-    assert_eq!(telemetry.resource_replayed_dispatches, 1);
+    assert_eq!(telemetry.resource_replayed_delivered_tokens, 0);
+    assert_eq!(telemetry.resource_replayed_dispatches, 0);
     assert_eq!(telemetry.attempts, telemetry.commits + telemetry.rollbacks);
 
     // Negative control for the superseded transaction boundary. The same
-    // current compatibility adapter, widened to the historical 256-operation
-    // rollback root, must redo the successful assignment after the resource
-    // miss. These exact deltas prove that direct-prefix commit eliminates real
-    // command work; production must neither restore nor synthetically charge
-    // it merely to reproduce a pre-cutover fixed-fuel vector.
+    // aggregate adapter, widened to the historical 256-operation rollback
+    // root, must redo both the successful assignment and the input filename
+    // scan after the resource miss. These exact deltas prove that direct-prefix
+    // commit and the retained typed resource continuation eliminate real
+    // command work; production must not synthetically recreate it.
     let mut aggregate_stores = crate::test_harness::universe_with_plain_catcodes();
     let mut aggregate = MainControl::tex82_initex(&mut aggregate_stores);
     register_source(&mut aggregate, br"\count0=11 \input child\end");
@@ -4456,10 +4456,10 @@ fn production_batch_keeps_ordinary_prefix_on_resource_need() {
     assert_eq!(
         aggregate.command_work(),
         tex_command::CommandWorkCounters {
-            fuel_charges: direct_work.fuel_charges + 8,
-            token_frame_steps: direct_work.token_frame_steps + 8,
-            expanded_deliveries: direct_work.expanded_deliveries + 9,
-            meaning_lookups: direct_work.meaning_lookups + 2,
+            fuel_charges: direct_work.fuel_charges + 15,
+            token_frame_steps: direct_work.token_frame_steps + 15,
+            expanded_deliveries: direct_work.expanded_deliveries + 16,
+            meaning_lookups: direct_work.meaning_lookups + 3,
             scanner_tokens: direct_work.scanner_tokens,
             write_expansions: direct_work.write_expansions,
         },
@@ -4524,10 +4524,7 @@ fn deferred_effect_and_ordinary_pdf_commands_open_no_aggregate_savepoint() {
             .expect("ordinary PDF node commits"),
         StepResult::Progress(ReplayStep::Continue)
     );
-    assert_eq!(
-        pdf_control.advance_telemetry().maximum_live_savepoints,
-        0
-    );
+    assert_eq!(pdf_control.advance_telemetry().maximum_live_savepoints, 0);
 }
 
 #[test]
@@ -6611,12 +6608,16 @@ fn pdf_link_vertical_mode_rejects_before_operand_scan_without_mutation() {
         .modes
         .push(Mode::Horizontal)
         .expect("test mode push");
-    assert!(matches!(
-        control.step(&mut stores),
-        Err(ExecError::PdfNavigation(
-            "pdfTeX error (ext1): action type missing"
-        ))
-    ));
+    let action_error = control.step(&mut stores);
+    assert!(
+        matches!(
+            action_error,
+            Err(ExecError::PdfNavigation(
+                "pdfTeX error (ext1): action type missing"
+            ))
+        ),
+        "unexpected action error: {action_error:?}"
+    );
     let terminal = terminal_text(&stores);
     assert!(terminal.contains("! pdfTeX error (ext1): action type missing."));
     assert!(terminal.contains("Fatal error occurred, no output PDF file produced!"));

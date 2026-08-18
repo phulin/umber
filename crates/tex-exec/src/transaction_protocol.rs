@@ -5,7 +5,7 @@
 //! the fixed fields of `tex_state`'s `HotSnapshot`; the cutover stages consume
 //! these descriptors when borrowing the corresponding marks.
 
-use tex_state::meaning::{Meaning, UnexpandablePrimitive};
+use tex_state::meaning::{ExpandablePrimitive, Meaning, UnexpandablePrimitive};
 
 macro_rules! bitset {
     ($(#[$meta:meta])* $visibility:vis struct $name:ident($storage:ty);) => {
@@ -592,6 +592,18 @@ fn late_effect(effect: EffectCapabilities) -> CommandCapabilities {
     )
 }
 
+fn late_state(family: CanonicalCommandFamily, mutation: StateOwners) -> CommandCapabilities {
+    CommandCapabilities::from_parts(
+        family,
+        mutation,
+        ResourceCapabilities::NONE,
+        EffectCapabilities::NONE,
+        OutputCapabilities::NONE,
+        RecoveryCapabilities::LATE_FAILURE,
+        Some(NarrowTransactionSpec::new(mutation)),
+    )
+}
+
 fn publication(
     mutation: StateOwners,
     output: OutputCapabilities,
@@ -613,6 +625,9 @@ fn publication(
 pub fn canonical_command_capabilities(meaning: Meaning) -> CommandCapabilities {
     match meaning {
         Meaning::Undefined | Meaning::Unknown(_) => diagnostic(StateOwners::NONE),
+        Meaning::ExpandablePrimitive(ExpandablePrimitive::Input) => {
+            resource(ResourceCapabilities::INPUT)
+        }
         Meaning::Relax | Meaning::ExpandablePrimitive(_) | Meaning::Macro { .. } => {
             ordinary(CanonicalCommandFamily::Passive, StateOwners::NONE)
         }
@@ -780,6 +795,7 @@ fn primitive_capabilities(primitive: UnexpandablePrimitive) -> CommandCapabiliti
         | P::BeginR
         | P::EndR
         | P::QuitVMode => ordinary(CanonicalCommandFamily::Material, MATERIAL),
+        P::PdfStartLink => late_state(CanonicalCommandFamily::Material, PDF),
         P::PdfLiteral
         | P::PdfSetMatrix
         | P::PdfSave
@@ -804,7 +820,6 @@ fn primitive_capabilities(primitive: UnexpandablePrimitive) -> CommandCapabiliti
         | P::PdfFakeSpace
         | P::PdfSpaceFont
         | P::PdfAnnot
-        | P::PdfStartLink
         | P::PdfEndLink
         | P::PdfRunningLinkOn
         | P::PdfRunningLinkOff

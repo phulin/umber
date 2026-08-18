@@ -86,6 +86,10 @@ pub struct CommandState {
     pub(crate) semantic_diagnostics: Vec<CommandSemanticDiagnostic>,
     /// TeX82 §527's rollback-coupled `name_in_progress` recursion guard.
     pub(crate) name_in_progress: bool,
+    /// A fully scanned `\input` filename waiting for immutable host
+    /// acquisition. Retrying the opener consumes this value instead of
+    /// delivering or scanning its operand again.
+    pub(crate) pending_input_open: Option<crate::ScannedFileName>,
     /// Named token-list levels installed since the executor last drained
     /// them, in push order.
     ///
@@ -421,6 +425,15 @@ impl CommandState {
 
     pub(crate) const fn name_in_progress(&self) -> bool {
         self.name_in_progress
+    }
+
+    pub(crate) fn take_pending_input_open(&mut self) -> Option<crate::ScannedFileName> {
+        self.pending_input_open.take()
+    }
+
+    pub(crate) fn retain_pending_input_open(&mut self, file_name: crate::ScannedFileName) {
+        debug_assert!(self.pending_input_open.is_none());
+        self.pending_input_open = Some(file_name);
     }
 
     pub(crate) fn begin_file_name(&mut self) -> Result<(), crate::CommandError> {
