@@ -52,8 +52,8 @@ exact vector:
 | Weak-index exact comparisons |        0 |
 | Weak-index content hashes    |        0 |
 
-The gate also asserts exact delivered token values for every row. It passes at
-commit `55154ac7bc95176a896af497da88958a6564b329`.
+The gate also asserts exact delivered token values for every row. Its final
+rerun passes at commit `c71527e4061f799f9589a0a4cf33f8de4b28ae8a`.
 
 ## Immutable prefix evidence
 
@@ -85,12 +85,21 @@ are recorded without charging work that no longer occurs. Relative to the
 historical vector, expanded deliveries are `-35,929`, meaning lookups are
 `-226,313`, scanner-status tokens are `+262,625`, and write expansions are
 `-86`. The scanner increase is an endpoint-mix redistribution within the exact
-11,999,815 raw frames, not additional raw work. The current row took
-34.07 seconds wall with 707,760 KiB peak RSS under the unchanged 120-second,
-1,536-MiB guard; those timing values remain diagnostic across the transaction
-contract change. The local evidence is under `target/umber2-awgc.3.4`; its
-`evidence.sha256` file has SHA-256
-`f467191567a0f5a85c92d394ba92bc6e2e028b36952aeec7af08e7245f80259b`.
+11,999,815 raw frames, not additional raw work.
+
+The final guarded rerun is from commit
+`c71527e4061f799f9589a0a4cf33f8de4b28ae8a`. The feature-enabled profiling
+binary has SHA-256
+`372c8dcbb2dae619ceb9e26a57f3469a259887908ba05b7cd48951d3b923877c`,
+its redirected build log has SHA-256
+`91668c5f0d87cb4e65c73bead0e7d8b2ecd790b5ee0a5978ec90d1d9ada60215`,
+and the versioned run script has SHA-256
+`1a5d0b0a4ca0f5b951f48022228de5d9d881850e7f76c39eb842f45197e6cb86`.
+The full process took 33.57 seconds wall with 707,576 KiB peak RSS; the engine
+interval took 33.39 seconds with zero major faults. Those timings remain
+diagnostic across the transaction contract change. Local evidence is under
+`target/umber2-awgc.3.4`; its `evidence.sha256` file has SHA-256
+`af77e128462f43ec341877d1db7512cba43e4fa541263b84718fa65aa0579d2f`.
 
 ## Earliest transition
 
@@ -115,7 +124,11 @@ charged. Packed ownership neither owns nor caused the delta.
 
 ## Validation
 
-The focused `tex-command` suite, the assertion-bearing packed cutover gate,
-the exhaustive canonical command tracer, and `cargo test -q --tests` pass.
-`scripts/check.sh` reports all four dprint, Biome, rustfmt, and declared clippy
-gates passed.
+The assertion-bearing packed cutover gate, the focused direct-prefix accounting
+control, and `cargo test -q --tests` pass on the final tree. The exhaustive
+canonical command tracer was not repeated after `umber2-awgc.12`: production
+semantics are byte-identical to its accepted clean tree because the intervening
+candidate was reverted, and the remaining commits add only the focused test and
+documentation. That accepted exhaustive receipt reports zero ordered semantic
+or advisory geometry differences. `scripts/check.sh` reports all four dprint,
+Biome, rustfmt, and declared clippy gates passed.

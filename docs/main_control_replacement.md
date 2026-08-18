@@ -327,13 +327,16 @@ The packed cutover itself has an assertion-bearing warmed gate for ordinary
 source delivery, packed backup/replay, stored replay, and macro matching,
 argument replay, and expansion. All four rows require exactly zero allocation,
 requested bytes, `Arc` and weak retains, weak upgrades, weak-index work, exact
-comparisons, and content hashes. The structural gate passes, but promotion is
-blocked by `umber2-awgc.12`: the immutable 12,000,000-fuel arXiv prefix retains
-the exact frame-step boundary while its other command-work counters differ
-from the frozen census after the direct-operation transaction cutover. The
-audit and exact vectors are published in
-[`umber2-awgc.3.4`](writeback/umber2-awgc.3.4.md); neither `.3.4` nor `.3` is
-accepted on tracer cleanliness alone.
+comparisons, and content hashes. The structural gate passes. The immutable
+12,000,000-fuel arXiv prefix retains exact fuel and frame-step coordinates;
+under the versioned direct-prefix contract in
+[`umber2-awgc.12`](writeback/umber2-awgc.12.md), its four secondary counters
+carry attributed deltas for aggregate replay that no longer occurs after the
+accepted transaction cutover. The final audit, current guarded receipt, and
+exact vectors are published in
+[`umber2-awgc.3.4`](writeback/umber2-awgc.3.4.md). Promotion requires that
+evidence together with the clean exhaustive semantic tracer; neither channel
+substitutes for the other.
 
 Arena accounting uses two deliberately separate measures. _Logical values_
 and _logical value bytes_ count only live initialized elements and
