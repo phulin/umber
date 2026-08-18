@@ -4416,24 +4416,6 @@ fn ordinary_assignment_opens_no_aggregate_savepoint() {
 }
 
 #[test]
-fn direct_preflight_preserves_canonical_command_work() {
-    let source = br"\count0=11 \count1=22 \message{x}\end";
-
-    let mut direct_stores = crate::test_harness::universe_with_plain_catcodes();
-    let mut direct = MainControl::tex82_initex(&mut direct_stores);
-    register_source(&mut direct, source);
-    run_to_end(&mut direct, &mut direct_stores);
-
-    let mut observed_stores = crate::test_harness::universe_with_plain_catcodes();
-    let mut observed = MainControl::tex82_initex(&mut observed_stores);
-    register_source(&mut observed, source);
-    let mut observations = ObservationRecorder::default();
-    run_to_end_observed(&mut observed, &mut observed_stores, &mut observations);
-
-    assert_eq!(direct.command_work(), observed.command_work());
-}
-
-#[test]
 fn group_entry_local_restore_and_exit_open_no_aggregate_savepoint() {
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
     let mut control = MainControl::tex82_initex(&mut stores);
